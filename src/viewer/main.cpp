@@ -3458,14 +3458,50 @@ private:
         SDL_SetRenderDrawColor(ren_, 120, 105, 80, 255);
         SDL_RenderDrawLineF(ren_, 0, bar.y, float(winW), bar.y);
 
-        // Bottom-LEFT: clickable build icons for the selected builder.
+        char buf[96];
+        auto shade = [&](float x, float w) {
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 110);
+            SDL_FRect z{x, bar.y + 4, w, kBarH - 8.0f};
+            SDL_RenderFillRectF(ren_, &z);
+        };
+
+        // Bottom-LEFT: portrait + stats for the selected unit.
+        if (!selection_.empty() && hudFont_.ok()) {
+            const auto* u = world_.unit(selection_.front());
+            if (u && u->alive() && u->type) {
+                float px = 8;
+                shade(px, 248);
+                SDL_Texture* ic = iconFor(u->type->id);
+                if (ic) {
+                    SDL_FRect pr{px + 4, bar.y + 8, 56, kBarH - 20.0f};
+                    SDL_RenderCopyF(ren_, ic, nullptr, &pr);
+                    SDL_SetRenderDrawColor(ren_, 120, 110, 80, 255);
+                    SDL_RenderDrawRectF(ren_, &pr);
+                }
+                float tx = px + 70;
+                hudFont_.draw(ren_, u->type->name, tx, bar.y + 16, 1.6f,
+                              {240, 228, 190, 255});
+                std::snprintf(buf, sizeof buf, "HP %d/%d", int(u->hp),
+                              int(u->type->maxHp));
+                hudFont_.draw(ren_, buf, tx, bar.y + 40, 1.4f, {190, 230, 170, 255});
+                if (selection_.size() > 1) {
+                    std::snprintf(buf, sizeof buf, "+%zu MORE",
+                                  selection_.size() - 1);
+                    hudFont_.draw(ren_, buf, tx, bar.y + 58, 1.3f, {180, 180, 160, 255});
+                }
+            }
+        }
+
+        // Bottom-CENTER: clickable build icons for the selected builder.
         iconRects_.clear();
         const auto* b = selectedBuilder();
         if (b) {
             const auto& menu = registry_.buildable(b->type->id);
-            float x = 8;
-            for (size_t i = 0; i < menu.size() && i < 10; ++i) {
-                const auto* bt = registry_.find(menu[i]);
+            int n = std::min<int>(int(menu.size()), 10);
+            float rowW = n > 0 ? n * 66.0f - 6.0f : 0;
+            float x = (float(winW) - rowW) * 0.5f;
+            for (int i = 0; i < n; ++i) {
+                const auto* bt = registry_.find(menu[size_t(i)]);
                 if (!bt) continue;
                 SDL_FRect r{x, bar.y + 6, 60, kBarH - 16.0f};
                 SDL_SetRenderDrawColor(ren_, 20, 18, 14, 235);
@@ -3482,17 +3518,13 @@ private:
                 SDL_SetRenderDrawColor(ren_, hot ? 255 : 110, hot ? 230 : 100,
                                        hot ? 120 : 70, 255);
                 SDL_RenderDrawRectF(ren_, &r);
-                if (hudFont_.ok() && i < 9) {
-                    char num[4];
-                    std::snprintf(num, sizeof num, "%zu", i + 1);
-                    hudFont_.draw(ren_, num, r.x + 3, r.y + 12, 1.2f,
-                                  {255, 255, 200, 255});
-                }
                 if (hot && hudFont_.ok()) {
                     char tip[80];
                     std::snprintf(tip, sizeof tip, "%s  %d MANA", bt->name.c_str(),
                                   int(bt->buildCost));
-                    hudFont_.draw(ren_, tip, 8, bar.y - 8, 1.5f, {235, 225, 180, 255});
+                    float tw = float(hudFont_.width(tip, 1.5f));
+                    hudFont_.draw(ren_, tip, r.x + 30 - tw / 2, bar.y - 10, 1.5f,
+                                  {235, 225, 180, 255});
                 }
                 iconRects_.push_back({r, bt});
                 x += 66;
@@ -3502,53 +3534,24 @@ private:
                 std::snprintf(q, sizeof q, "TRAINING %s (%zu)",
                               b->buildQueue.front()->name.c_str(),
                               b->buildQueue.size());
-                hudFont_.draw(ren_, q, 8, bar.y - 24, 1.4f, {150, 200, 255, 255});
+                float qw = float(hudFont_.width(q, 1.4f));
+                hudFont_.draw(ren_, q, (float(winW) - qw) * 0.5f, bar.y - 28, 1.4f,
+                              {150, 200, 255, 255});
             }
         }
 
-        // Bottom-RIGHT: fixed mana zone at the edge; unit stats to its left.
+        // Bottom-RIGHT: mogrium.
         if (hudFont_.ok()) {
-            char buf[96];
             auto& tm = world_.team(localTeam_);
-            float manaX = float(winW) - 170;
-            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 110);
-            SDL_FRect mz{manaX - 6, bar.y + 4, 170, kBarH - 8.0f};
-            SDL_RenderFillRectF(ren_, &mz);
-            hudFont_.draw(ren_, "MANA", manaX, bar.y + 18, 1.3f, {120, 200, 255, 255});
-            std::snprintf(buf, sizeof buf, "%d/%d", int(tm.mana),
+            float manaX = float(winW) - 176;
+            shade(manaX - 8, 184);
+            hudFont_.draw(ren_, "MOGRIUM", manaX, bar.y + 14, 1.3f,
+                          {120, 200, 255, 255});
+            std::snprintf(buf, sizeof buf, "%d / %d", int(tm.mana),
                           int(std::max(tm.storage, 100.0f)));
-            hudFont_.draw(ren_, buf, manaX, bar.y + 40, 1.5f, {200, 230, 255, 255});
-            std::snprintf(buf, sizeof buf, "+%d", int(tm.income));
-            hudFont_.draw(ren_, buf, manaX, bar.y + 60, 1.3f, {150, 240, 180, 255});
-
-            if (!selection_.empty()) {
-                const auto* u = world_.unit(selection_.front());
-                if (u && u->alive() && u->type) {
-                    float px = manaX - 260;
-                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 110);
-                    SDL_FRect sz{px - 6, bar.y + 4, 250, kBarH - 8.0f};
-                    SDL_RenderFillRectF(ren_, &sz);
-                    SDL_Texture* ic = iconFor(u->type->id);
-                    if (ic) {
-                        SDL_FRect pr{px, bar.y + 8, 56, kBarH - 20.0f};
-                        SDL_RenderCopyF(ren_, ic, nullptr, &pr);
-                        SDL_SetRenderDrawColor(ren_, 120, 110, 80, 255);
-                        SDL_RenderDrawRectF(ren_, &pr);
-                    }
-                    hudFont_.draw(ren_, u->type->name, px + 64, bar.y + 26, 1.5f,
-                                  {235, 225, 190, 255});
-                    std::snprintf(buf, sizeof buf, "%d/%d", int(u->hp),
-                                  int(u->type->maxHp));
-                    hudFont_.draw(ren_, buf, px + 64, bar.y + 46, 1.5f,
-                                  {190, 230, 170, 255});
-                    if (selection_.size() > 1) {
-                        std::snprintf(buf, sizeof buf, "+%zu MORE",
-                                      selection_.size() - 1);
-                        hudFont_.draw(ren_, buf, px + 64, bar.y + 64, 1.3f,
-                                      {180, 180, 160, 255});
-                    }
-                }
-            }
+            hudFont_.draw(ren_, buf, manaX, bar.y + 36, 1.6f, {205, 232, 255, 255});
+            std::snprintf(buf, sizeof buf, "+%d / sec", int(tm.income));
+            hudFont_.draw(ren_, buf, manaX, bar.y + 58, 1.3f, {150, 240, 180, 255});
         }
     }
 
