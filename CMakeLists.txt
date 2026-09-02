@@ -17,6 +17,8 @@ find_package(ZLIB REQUIRED)
 
 add_library(tak-formats
   src/hpi/hpi.cpp
+  src/gaf/gaf.cpp
+  src/util/png.cpp
 )
 target_include_directories(tak-formats PUBLIC src)
 target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB)
@@ -25,6 +27,9 @@ target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB)
 
 add_executable(hpitool tools/hpitool.cpp)
 target_link_libraries(hpitool PRIVATE tak-formats)
+
+add_executable(gaftool tools/gaftool.cpp)
+target_link_libraries(gaftool PRIVATE tak-formats)
 
 # --- Viewer (needs SDL2; skipped with a warning if unavailable) ---------------
 
