@@ -33,6 +33,7 @@ struct UnitType {
     float maxHp = 100;
     bool canMove = false;
     bool isBuilder = false;
+    bool onMana = false;    // must be built on a mana deposit (yardmap 'S'), e.g. lodestones
     float buildCost = 0;    // mana
     float buildTime = 0;    // work units; seconds = buildTime / builder workerTime
     float workerTime = 1;
@@ -179,6 +180,13 @@ public:
     // building's id, or 0 if the site is invalid.
     int startBuild(int builderId, const UnitType* type, float x, float z);
     bool canPlace(const UnitType* type, float x, float z) const;
+    // Mana deposit ("Sacred Stone") spots, in world px. Lodestones (onMana)
+    // can only be built on one, but only when the map actually has any.
+    void setManaSpots(std::vector<std::pair<float, float>> spots) {
+        manaSpots_ = std::move(spots);
+    }
+    bool hasManaSpots() const { return !manaSpots_.empty(); }
+    bool onManaSpot(float x, float z) const;
     Team& team(int i) { return teams_[size_t(i)]; }
 
     // Which team the fog-of-war grid tracks (default 0 = local player).
@@ -228,6 +236,7 @@ private:
     int visW_ = 0, visH_ = 0;
     float visTimer_ = 0;
     std::vector<Unit> units_;
+    std::vector<std::pair<float, float>> manaSpots_;
     std::vector<Projectile> projectiles_;
     std::vector<Team> teams_ = std::vector<Team>(4);
     NavGrid nav_, navWater_, navHover_;

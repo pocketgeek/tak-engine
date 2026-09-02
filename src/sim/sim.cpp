@@ -65,6 +65,10 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             {
                 std::string ym = info->valueOr("yardmap", "");
                 std::erase_if(ym, [](char c) { return c == ' ' || c == '\t'; });
+                // A stray 'S' (not a full footprint map) marks a lodestone that
+                // must sit on a mana deposit.
+                t.onMana = ym.find('S') != std::string::npos ||
+                           ym.find('s') != std::string::npos;
                 if (int(ym.size()) == t.footX * t.footZ) t.yardMap = ym;
             }
             t.canTransport = info->numberOr("cantransport", 0) != 0;
@@ -540,8 +544,19 @@ void World::tickCombat(Unit& u, float dt) {
                 fire(u, *target, int(i));
 }
 
+bool World::onManaSpot(float x, float z) const {
+    for (const auto& [sx, sz] : manaSpots_) {
+        float dx = sx - x, dz = sz - z;
+        if (dx * dx + dz * dz < 20.0f * 20.0f) return true;
+    }
+    return false;
+}
+
 bool World::canPlace(const UnitType* type, float x, float z) const {
     if (!type) return false;
+    // Lodestones must sit on a mana deposit — but only on maps that have any
+    // (deposit-less maps let them build on open ground).
+    if (type->onMana && !manaSpots_.empty() && !onManaSpot(x, z)) return false;
     int cx = int(x) / 16 - type->footX / 2, cz = int(z) / 16 - type->footZ / 2;
     for (int j = 0; j < type->footZ; ++j)
         for (int i = 0; i < type->footX; ++i)
