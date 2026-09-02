@@ -2517,6 +2517,9 @@ private:
     }
 
     void drawUnit(const tak::sim::Unit& u) {
+        // Nothing is there yet until the builder arrives and construction (the
+        // conjure/fade) actually begins.
+        if (u.underConstruction && !u.buildBegun) return;
         auto vt = visuals_.find(unitType_.at(u.id));
         if (vt == visuals_.end()) return;
         const Anim* anim = nullptr;

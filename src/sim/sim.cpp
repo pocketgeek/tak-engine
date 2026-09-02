@@ -595,6 +595,7 @@ void World::tickConstruction(Unit& b, float dt) {
     float dx = site->x - b.x, dz = site->z - b.z;
     float reach = 16.0f * float(std::max(site->type->footX, site->type->footZ)) / 2 + 40;
     if (dx * dx + dz * dz > reach * reach) return;   // still walking there
+    site->buildBegun = true;   // in range: the site starts materialising now
     b.orders.clear();
     b.speed = 0;
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
