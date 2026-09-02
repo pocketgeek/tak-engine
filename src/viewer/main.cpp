@@ -1849,16 +1849,26 @@ public:
                 continue;
             }
             if (a.flying) {
-                // Keep the flap + head-sway loops alive; never reset for a walk.
-                if (a.vm->threadCount() == 0) {
-                    a.vm->start("fly");
-                    a.vm->start("HeadTurner");
-                }
                 // Take off when moving, settle back to the ground when idle.
                 float cruise = u.type ? u.type->cruiseAlt : 0.0f;
                 float target = (u.walking() || !u.orders.empty()) ? cruise : 0.0f;
                 float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise
                 a.altitude += std::clamp(target - a.altitude, -step, step);
+
+                // Feed the flight-state statics the COB flight machine expects.
+                // setSFXoccupy(5) marks "in the air" (static6=1) so FlightControl
+                // animates; BeginFlight/BeginLanding handle the transition.
+                bool airborne = a.altitude > std::max(cruise, 1.0f) * 0.35f;
+                if (airborne != a.airborne) {
+                    a.airborne = airborne;
+                    if (airborne) { a.vm->start("BeginFlight"); a.vm->start("setSFXoccupy", {5}); }
+                    else { a.vm->start("BeginLanding"); a.vm->start("setSFXoccupy", {0}); }
+                }
+                bool moving = u.walking();
+                if (moving != a.goState) {
+                    a.goState = moving;
+                    a.vm->start(moving ? "Go" : "Stop");
+                }
             } else {
                 bool m = u.walking();
                 if (m != a.walking) {
@@ -2366,9 +2376,10 @@ private:
         bool producing = false;
         bool firing = false;
         bool flying = false;
-        float altitude = 0;   // flyers: 0 grounded, rising to cruiseAlt in flight
+        bool airborne = false;   // flight-state edge tracking (drives BeginFlight/land)
+        bool goState = false;    // move-state edge tracking (drives Go/Stop)
+        float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
     };
-    static constexpr float kFlyPitch = 1.2f;   // forward "superman" lean at cruise
 
     void registerUnit(const tak::sim::Unit& u) {
         const std::string& typeId = u.type->id;
@@ -2423,14 +2434,11 @@ private:
             // flight scripts; without these they sit in the landed rest pose
             // (which also reads as facing the wrong way).
             if (u.type && u.type->canFly) {
-                // "fly" flaps the deployed wings without the body-reorienting
-                // piece turns that "soar"/BeginFlight apply (those expect
-                // flight-control statics we don't feed, and leave her facing a
-                // fixed wrong way). With just Create+fly she keeps the model's
-                // authored heading, matching the ground units.
+                // Authentic flight: Create waits until built, then starts the
+                // FlightControl + RestoreWatcher loops. FlightControl itself
+                // drives launch/fly/soar, gated on the flight-state statics we
+                // feed below via setSFXoccupy / BeginFlight / Go.
                 a.vm->start("Create");
-                a.vm->start("fly");          // wing flap
-                a.vm->start("HeadTurner");   // head sway (piece 23 only, safe)
                 a.flying = true;
             }
         } catch (const std::exception&) { /* unit stays unanimated */ }
@@ -2513,14 +2521,8 @@ private:
 
         tris_.clear();
         Xform base;
-        if (u.type && u.type->canFly && u.type->cruiseAlt > 0) {
-            // Rise to cruise altitude and lean forward (superman) in proportion
-            // to how airborne she is; grounded she stands upright.
-            float alt = anim ? anim->altitude : u.type->cruiseAlt;
-            float frac = std::clamp(alt / u.type->cruiseAlt, 0.0f, 1.0f);
-            float pitch[3] = {-kFlyPitch * frac, 0, 0};
-            base = Xform().then(0, alt, 0, pitch);
-        }
+        if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
+            base.t[1] = anim ? anim->altitude : u.type->cruiseAlt;   // cruise height
         // Buildings are stationary; their billboards are authored facing the
         // camera (yaw 0). Mobile units turn to face their heading; the +pi
         // aligns the models' authored forward axis with the movement dir.
@@ -2534,7 +2536,10 @@ private:
         // Flyer models are built mirrored across the N-S axis relative to the
         // ground units, so they read correct N/S but backward E/W. Negating
         // the heading reflects E<->W (and diagonals) while leaving N/S.
-        if (u.type && u.type->canFly) facing = -facing;
+        // Flyer models read backward with facing=heading, and the authentic
+        // flight scripts (soar) add a further 180° body turn, so face them at
+        // -heading + pi. Verified against a ground unit in all directions.
+        if (u.type && u.type->canFly) facing = 3.14159265f - facing;
         collect(vt->second.model.root, base, anim, facing, u.team);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
