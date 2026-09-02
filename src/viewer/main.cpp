@@ -3168,7 +3168,7 @@ int main(int argc, char** argv) {
     }
     std::string mode = argv[1];
     std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
-    int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH;
+    int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 0;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
@@ -3209,6 +3209,7 @@ int main(int argc, char** argv) {
             winW = std::atoi(argv[++i]);
             winH = std::atoi(argv[++i]);
         }
+        else if (a == "--maxfps" && i + 1 < argc) maxFps = std::atoi(argv[++i]);
 
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
         else if (a == "--selonly") selonly = true;
@@ -3428,6 +3429,17 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "fps: %.0f\n", fpsFrames / secs);
             fpsFrames = 0;
             fpsStart = SDL_GetPerformanceCounter();
+        }
+        if (maxFps > 0) {
+            static uint64_t prevPresent = 0;
+            uint64_t nowp = SDL_GetPerformanceCounter();
+            double target = 1.0 / maxFps;
+            double elapsed = prevPresent ? double(nowp - prevPresent) /
+                                               double(SDL_GetPerformanceFrequency())
+                                         : target;
+            if (elapsed < target)
+                SDL_Delay(uint32_t((target - elapsed) * 1000.0));
+            prevPresent = SDL_GetPerformanceCounter();
         }
 
         if (!shot.empty()) {
