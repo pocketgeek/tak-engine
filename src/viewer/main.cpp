@@ -251,7 +251,7 @@ private:
         for (const auto& e : std::filesystem::directory_iterator(texDir)) {
             if (e.path().extension() != ".gaf") continue;
             try {
-                for (auto& seq : tak::gaf::load(e.path(), pal)) {
+                for (auto& seq : tak::gaf::load(e.path(), pal, 5)) {
                     if (seq.frames.empty()) continue;
                     auto& f = seq.frames[0];
                     if (f.width == 0 || f.height == 0) continue;
@@ -1398,6 +1398,13 @@ public:
         mapView_.setOffset(x - 640 / mapView_.zoom(), z - 400 / mapView_.zoom());
     }
 
+    void lodeTest() {
+        aiEnabled_ = false;
+        float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        spawn("zonlode", cx, cz, 3.14159f, 0);
+        mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
+    }
+
     void guardTest() {
         // Squad guards the first unit; the first unit marches east alone.
         int leader = -1;
@@ -2099,13 +2106,19 @@ private:
                                o.y + (ps ? ps->move[1] : 0),
                                o.z + (ps ? ps->move[2] : 0),
                                ps ? ps->rot : kNoRot);
-        // Ground-plate reference pieces (AraGP, araground, ...) are never drawn.
+        // Hidden pieces: ground-reference plates (AraGP, araground, zonnull,
+        // zon_gpoly, ...) and deactivated-state duplicates (*off), which the
+        // game shows only via activation scripts we don't run.
         std::string oname = o.name;
         std::transform(oname.begin(), oname.end(), oname.begin(), ::tolower);
-        bool groundPlate = oname.size() >= 2 &&
-                           (oname.substr(oname.size() - 2) == "gp" ||
-                            oname.find("ground") != std::string::npos ||
-                            oname.find("gpoly") != std::string::npos);
+        auto ends = [&](const char* suf) {
+            size_t n = std::strlen(suf);
+            return oname.size() >= n && oname.compare(oname.size() - n, n, suf) == 0;
+        };
+        bool groundPlate = ends("gp") || ends("null") || ends("off") ||
+                           oname.find("ground") != std::string::npos ||
+                           oname.find("gpoly") != std::string::npos ||
+                           oname.find("gpoint") != std::string::npos;
         const float tilt = 1.05f;   // ~60 degrees down
         float cy = std::cos(heading + 3.14159f), sy = std::sin(heading + 3.14159f);
         float ct = std::cos(tilt), st = std::sin(tilt);
@@ -2924,7 +2937,8 @@ int main(int argc, char** argv) {
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
          misstest = false, nofog = false, doLook = false, creon = false,
-         hilltest = false, keytest = false, guardtest = false, selonly = false;
+         hilltest = false, keytest = false, guardtest = false, selonly = false,
+         lodetest = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -2947,6 +2961,7 @@ int main(int argc, char** argv) {
         else if (a == "--aiside" && i + 1 < argc) aiSide = argv[++i];
         else if (a == "--keytest") keytest = true;
         else if (a == "--guardtest") guardtest = true;
+        else if (a == "--lodetest") lodetest = true;
         else if (a == "--selonly") selonly = true;
 
         else if (a == "--host" && i + 1 < argc) hostPort = std::atoi(argv[++i]);
@@ -3018,6 +3033,7 @@ int main(int argc, char** argv) {
             if (creon) gameView->creonDemo();
             if (hilltest) gameView->hillTest();
             if (guardtest) gameView->guardTest();
+            if (lodetest) gameView->lodeTest();
             if (nofog) gameView->noFog_ = true;
             if (doLook) gameView->lookAt(lookX, lookZ);
             if (amphib) gameView->amphibDemo();
