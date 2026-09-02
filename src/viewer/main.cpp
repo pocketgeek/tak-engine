@@ -13,6 +13,7 @@
 #include "cob/vm.h"
 #include "crt/crt.h"
 #include "gaf/gaf.h"
+#include "net/lockstep.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
 #include "tdo/tdo.h"
@@ -808,7 +809,12 @@ public:
                    !selection_.empty()) {
             pendingCmd_ = 'p';
         } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_h) {
-            for (int id : selection_) world_.stop(id);
+            for (int id : selection_) {
+                tak::net::Command c;
+                c.kind = tak::net::Cmd::Stop;
+                c.unitId = id;
+                issue(c);
+            }
         } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
             e.key.keysym.sym <= SDLK_6 && !selection_.empty()) {
             const auto* b = world_.unit(selection_.front());
@@ -818,7 +824,13 @@ public:
                 if (slot < menu.size()) {
                     const auto* bt = registry_.find(menu[slot]);
                     if (b->type->canMove) placing_ = bt;   // mobile builder: place
-                    else world_.train(b->id, bt);          // building: train
+                    else if (bt) {                          // building: train
+                        tak::net::Command c;
+                        c.kind = tak::net::Cmd::Train;
+                        c.unitId = b->id;
+                        std::snprintf(c.type, sizeof c.type, "%s", bt->id.c_str());
+                        issue(c);
+                    }
                 }
             }
         } else if (e.type == SDL_MOUSEWHEEL || e.type == SDL_KEYDOWN) {
@@ -839,8 +851,14 @@ public:
             float wz = mapView_.offY() + e.button.y / zm;
             bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
             for (int id : selection_) {
-                if (pendingCmd_ == 'a') world_.attackMove(id, wx, wz, queue);
-                else world_.patrol(id, wx, wz);
+                tak::net::Command c;
+                c.kind = pendingCmd_ == 'a' ? tak::net::Cmd::AttackMove
+                                            : tak::net::Cmd::Patrol;
+                c.unitId = id;
+                c.x = wx;
+                c.z = wz;
+                c.queue = queue;
+                issue(c);
             }
             voice(selection_.front(), pendingCmd_ == 'a' ? "attack" : "patrol");
             pendingCmd_ = 0;
@@ -848,9 +866,16 @@ public:
                    placing_) {
             float wx = mapView_.offX() + e.button.x / zm;
             float wz = mapView_.offY() + e.button.y / zm;
-            if (!selection_.empty() &&
-                world_.startBuild(selection_.front(), placing_, wx, wz))
+            if (!selection_.empty() && world_.canPlace(placing_, wx, wz)) {
+                tak::net::Command c;
+                c.kind = tak::net::Cmd::Build;
+                c.unitId = selection_.front();
+                c.x = wx;
+                c.z = wz;
+                std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
+                issue(c);
                 placing_ = nullptr;
+            }
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
                    placing_) {
             placing_ = nullptr;
@@ -881,7 +906,7 @@ public:
                 }
             } else {
                 for (auto& u : world_.units())
-                    if (u.alive() && u.team == 0 && u.x >= x0 && u.x <= x1 &&
+                    if (u.alive() && u.team == localTeam_ && u.x >= x0 && u.x <= x1 &&
                         u.z >= z0 && u.z <= z1)
                         selection_.push_back(u.id);
             }
@@ -894,7 +919,12 @@ public:
             // Selected transport with cargo: right-click = sail + disembark.
             if (first && first->type && first->type->canTransport &&
                 !first->cargo.empty()) {
-                world_.unloadAt(first->id, wx, wz);
+                tak::net::Command c;
+                c.kind = tak::net::Cmd::Unload;
+                c.unitId = first->id;
+                c.x = wx;
+                c.z = wz;
+                issue(c);
                 return;
             }
             // Clicking a friendly transport = board it.
@@ -908,7 +938,13 @@ public:
                 if (dx * dx + dz * dz < bestT) { bestT = dx * dx + dz * dz; friendlyTransport = u.id; }
             }
             if (friendlyTransport >= 0) {
-                for (int id : selection_) world_.loadInto(id, friendlyTransport);
+                for (int id : selection_) {
+                    tak::net::Command c;
+                    c.kind = tak::net::Cmd::Load;
+                    c.unitId = id;
+                    c.targetId = friendlyTransport;
+                    issue(c);
+                }
                 return;
             }
             // Clicking near an enemy = attack; else formation move.
@@ -920,7 +956,14 @@ public:
                 if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
             }
             if (enemy >= 0) {
-                for (int id : selection_) world_.attack(id, enemy, queue);
+                for (int id : selection_) {
+                    tak::net::Command c;
+                    c.kind = tak::net::Cmd::Attack;
+                    c.unitId = id;
+                    c.targetId = enemy;
+                    c.queue = queue;
+                    issue(c);
+                }
                 voice(selection_.front(), "attack");
             } else {
                 voice(selection_.front(), "move");
@@ -932,13 +975,92 @@ public:
                 for (int id : selection_) {
                     const auto* u = world_.unit(id);
                     if (!u) continue;
-                    float ox = std::clamp(u->x - cx, -60.0f, 60.0f);
-                    float oz = std::clamp(u->z - cz, -60.0f, 60.0f);
-                    world_.order(id, wx + ox, wz + oz, queue);
+                    tak::net::Command c;
+                    c.kind = tak::net::Cmd::Move;
+                    c.unitId = id;
+                    c.x = wx + std::clamp(u->x - cx, -60.0f, 60.0f);
+                    c.z = wz + std::clamp(u->z - cz, -60.0f, 60.0f);
+                    c.queue = queue;
+                    issue(c);
                 }
             }
         }
     }
+
+    void setNet(tak::net::Session* net) {
+        net_ = net;
+        localTeam_ = net->localPlayer();
+        world_.setVisTeam(localTeam_);
+        aiEnabled_ = false;   // both sides are human in a net game
+    }
+
+    // Route a command: apply immediately offline, schedule via net online.
+    void issue(tak::net::Command c) {
+        c.player = uint8_t(localTeam_);
+        if (net_) net_->issue(c);
+        else apply(c);
+    }
+
+    void apply(const tak::net::Command& c) {
+        using tak::net::Cmd;
+        // Only allow commanding units the issuing player owns.
+        auto owns = [&](int id) {
+            const auto* u = world_.unit(id);
+            return u && u->team == int(c.player);
+        };
+        switch (c.kind) {
+            case Cmd::Move:
+                if (owns(c.unitId)) world_.order(c.unitId, c.x, c.z, c.queue);
+                break;
+            case Cmd::Attack:
+                if (owns(c.unitId)) world_.attack(c.unitId, c.targetId, c.queue);
+                break;
+            case Cmd::AttackMove:
+                if (owns(c.unitId)) world_.attackMove(c.unitId, c.x, c.z, c.queue);
+                break;
+            case Cmd::Patrol:
+                if (owns(c.unitId)) world_.patrol(c.unitId, c.x, c.z);
+                break;
+            case Cmd::Stop:
+                if (owns(c.unitId)) world_.stop(c.unitId);
+                break;
+            case Cmd::Train:
+                if (owns(c.unitId)) world_.train(c.unitId, registry_.find(c.type));
+                break;
+            case Cmd::Build:
+                if (owns(c.unitId))
+                    world_.startBuild(c.unitId, registry_.find(c.type), c.x, c.z);
+                break;
+            case Cmd::Load:
+                if (owns(c.unitId)) world_.loadInto(c.unitId, c.targetId);
+                break;
+            case Cmd::Unload:
+                if (owns(c.unitId)) world_.unloadAt(c.unitId, c.x, c.z);
+                break;
+        }
+    }
+
+    // One lockstep step: returns false while stalled waiting for the peer.
+    bool netStep() {
+        std::vector<tak::net::Command> cmds;
+        if (!net_->exchange(netTick_, cmds, 2000)) {
+            netError_ = net_->error();
+            return false;
+        }
+        for (const auto& c : cmds) apply(c);
+        update(1.0f / 30.0f);
+        if (netTick_ % tak::net::kHashInterval == 0) {
+            uint64_t h = world_.stateHash();
+            std::printf("HASH %u %016llx\n", netTick_, (unsigned long long)h);
+            if (!net_->checkHash(netTick_, h)) netError_ = net_->error();
+        }
+        ++netTick_;
+        return true;
+    }
+
+    uint32_t netTick() const { return netTick_; }
+    const std::string& netError() const { return netError_; }
+    bool isNet() const { return net_ != nullptr; }
 
     void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }
 
@@ -1069,7 +1191,14 @@ public:
     void marchTo(float dx, float dz) {
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         for (auto& u : world_.units())
-            if (u.team == 0) world_.attackMove(u.id, cx + dx, cz + dz, false);
+            if (u.team == localTeam_ && u.type && u.type->canMove) {
+                tak::net::Command c;
+                c.kind = tak::net::Cmd::AttackMove;
+                c.unitId = u.id;
+                c.x = cx + dx;
+                c.z = cz + dz;
+                issue(c);
+            }
     }
 
     void update(float dt) {
@@ -1157,8 +1286,9 @@ public:
             sawTeam_[0] |= alive[0] > 0;
             sawTeam_[1] |= alive[1] > 0;
             if (sawTeam_[0] && sawTeam_[1]) {
-                if (alive[1] == 0) outcome_ = 1;
-                else if (alive[0] == 0) outcome_ = -1;
+                int other = localTeam_ == 0 ? 1 : 0;
+                if (alive[other] == 0) outcome_ = 1;
+                else if (alive[localTeam_] == 0) outcome_ = -1;
             }
         }
         if (follow_ && !world_.units().empty()) {
@@ -1255,7 +1385,7 @@ public:
         }
         for (auto& u : world_.units()) {
             if (u.deadFor >= 4.0f || u.embarked()) continue;
-            if (!noFog_ && u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;
+            if (!noFog_ && u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
             items.push_back({u.z, &u, nullptr});
         }
         std::sort(items.begin(), items.end(),
@@ -1322,7 +1452,7 @@ public:
         // Health bars for damaged or selected units.
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
-            if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;
+            if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
             bool sel = std::find(selection_.begin(), selection_.end(), u.id) !=
                        selection_.end();
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
@@ -1342,7 +1472,7 @@ public:
         // Production progress above busy buildings.
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
-            if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;
+            if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
             float total = u.buildQueue.front()->buildTime /
                           std::max(u.type->workerTime, 0.01f);
             float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
@@ -1359,7 +1489,7 @@ public:
 
         // Team-0 mana bar + HUD text, top left.
         {
-            auto& tm = world_.team(0);
+            auto& tm = world_.team(localTeam_);
             float cap = std::max(tm.storage, 100.0f);
             SDL_FRect bg{10, 10, 180, 12};
             SDL_SetRenderDrawColor(ren_, 20, 20, 30, 230);
@@ -1411,6 +1541,18 @@ public:
             for (const auto& l : briefing_) {
                 hudFont_.draw(ren_, l, bg.x + 8, y, 1.4f, {220, 215, 180, 255});
                 y += 16;
+            }
+        }
+        if (net_ && hudFont_.ok()) {
+            char nb[64];
+            std::snprintf(nb, sizeof nb, "NET P%d  TICK %u", localTeam_ + 1, netTick_);
+            hudFont_.draw(ren_, nb, float(winW) - 200, float(winH) - 14, 1.4f,
+                          {140, 200, 255, 255});
+            if (!netError_.empty()) {
+                std::string msg = "NETWORK: " + netError_;
+                float tw = float(hudFont_.width(msg, 2.0f));
+                hudFont_.draw(ren_, msg, (float(winW) - tw) / 2, 150, 2.0f,
+                              {255, 120, 100, 255});
             }
         }
         if (pendingCmd_ && hudFont_.ok()) {
@@ -1742,6 +1884,10 @@ private:
     bool dragging_ = false;
     float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
     char pendingCmd_ = 0;   // 'a' = attack-move, 'p' = patrol (awaiting click)
+    tak::net::Session* net_ = nullptr;
+    int localTeam_ = 0;
+    uint32_t netTick_ = 0;
+    std::string netError_;
     bool follow_ = false;
     bool trace_ = false;
 public:
@@ -1800,10 +1946,10 @@ private:
         };
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
-            if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;
+            if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
             SDL_FPoint p = toMini(u.x, u.z);
             SDL_FRect dot{p.x - 1.5f, p.y - 1.5f, 3, 3};
-            if (u.team == 0) SDL_SetRenderDrawColor(ren_, 90, 160, 255, 255);
+            if (u.team == localTeam_) SDL_SetRenderDrawColor(ren_, 90, 160, 255, 255);
             else SDL_SetRenderDrawColor(ren_, 255, 80, 60, 255);
             SDL_RenderFillRectF(ren_, &dot);
         }
@@ -2160,7 +2306,8 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::string mode = argv[1];
-    std::string shot, cobPath, anim;
+    std::string shot, cobPath, anim, joinAddr;
+    int hostPort = 0, joinPort = 0;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
@@ -2182,6 +2329,11 @@ int main(int argc, char** argv) {
         else if (a == "--mission") missionFlag = true;
         else if (a == "--misstest") misstest = true;
         else if (a == "--creon") creon = true;
+        else if (a == "--host" && i + 1 < argc) hostPort = std::atoi(argv[++i]);
+        else if (a == "--join" && i + 2 < argc) {
+            joinAddr = argv[++i];
+            joinPort = std::atoi(argv[++i]);
+        }
         else if (a == "--nofog") nofog = true;
         else if (a == "--look" && i + 2 < argc) {
             lookX = std::stof(argv[++i]);
@@ -2197,6 +2349,20 @@ int main(int argc, char** argv) {
         else args.push_back(a);
     }
     if (!shot.empty()) SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
+
+    std::unique_ptr<tak::net::Session> net;
+    if (hostPort || joinPort) {
+        net = std::make_unique<tak::net::Session>();
+        bool ok = hostPort ? (std::printf("hosting on port %d, waiting for peer...\n",
+                                          hostPort),
+                              net->host(uint16_t(hostPort), 60))
+                           : net->join(joinAddr, uint16_t(joinPort));
+        if (!ok) {
+            std::fprintf(stderr, "net: %s\n", net->error().c_str());
+            return 1;
+        }
+        std::printf("net: connected as player %d\n", net->localPlayer() + 1);
+    }
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -2222,6 +2388,7 @@ int main(int argc, char** argv) {
             gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo,
                                                   scenario, missionFlag,
                                                   navy || amphib);
+            if (net) gameView->setNet(net.get());
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);
             if (trace) gameView->setTrace(true);
@@ -2249,6 +2416,7 @@ int main(int argc, char** argv) {
     }
 
     bool running = true;
+    float netAccum = 0;
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
         SDL_Event e;
@@ -2274,7 +2442,26 @@ int main(int argc, char** argv) {
         SDL_RenderClear(ren);
         if (mapView) mapView->draw(w, h);
         if (modelView) modelView->draw(w, h, dt);
-        if (gameView) { gameView->update(dt); gameView->draw(w, h); }
+        if (gameView) {
+            if (gameView->isNet()) {
+                netAccum += dt;
+                // Catch up at most a few steps per frame; block briefly on peer.
+                int steps = 0;
+                while (netAccum >= 1.0f / 30.0f && steps < 4 &&
+                       gameView->netError().empty()) {
+                    if (gameView->netStep()) {
+                        netAccum -= 1.0f / 30.0f;
+                        ++steps;
+                    } else {
+                        break;   // stalled or errored; keep rendering
+                    }
+                }
+                if (netAccum > 0.5f) netAccum = 0.5f;
+            } else {
+                gameView->update(dt);
+            }
+            gameView->draw(w, h);
+        }
         SDL_RenderPresent(ren);
 
         if (!shot.empty()) {

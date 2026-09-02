@@ -33,6 +33,11 @@ place buildings at a selected builder, arrows/middle-drag = scroll,
 wheel = zoom, minimap click = jump camera, S = screenshot. `--demo`
 stages an AI-vs-AI war; `--mission` loads a campaign mission's .ota/.cob.
 
+Multiplayer (2-player TCP lockstep): host runs with `--host 7777`, the
+other player adds `--join <host-ip> 7777`. Host commands the Aramon
+base (blue, west), joiner commands Taros (east). Both machines need
+the same engine build and game data.
+
 ## Building
 
 Requires CMake ≥ 3.24, a C++20 compiler, and Ninja. SDL2 is found on the

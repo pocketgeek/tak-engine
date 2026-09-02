@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <map>
@@ -172,7 +173,12 @@ public:
     bool canPlace(const UnitType* type, float x, float z) const;
     Team& team(int i) { return teams_[size_t(i)]; }
 
-    // Team-0 fog of war over 16px cells: 0 hidden, 1 explored, 2 visible.
+    // Which team the fog-of-war grid tracks (default 0 = local player).
+    void setVisTeam(int t) { visTeam_ = t; }
+    int visTeam() const { return visTeam_; }
+    // Deterministic digest of sim state, for lockstep sync checking.
+    uint64_t stateHash() const;
+    // Fog of war for the local team over 16px cells: 0 hidden, 1 explored, 2 visible.
     const std::vector<uint8_t>& visibility() const { return vis_; }
     int visW() const { return visW_; }
     int visH() const { return visH_; }
@@ -209,6 +215,7 @@ private:
     void updateVisibility();
 
     std::vector<uint8_t> vis_;
+    int visTeam_ = 0;
     int visW_ = 0, visH_ = 0;
     float visTimer_ = 0;
     std::vector<Unit> units_;

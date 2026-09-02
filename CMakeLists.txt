@@ -26,6 +26,7 @@ add_library(tak-formats
   src/cob/vm.cpp
   src/sim/sim.cpp
   src/crt/crt.cpp
+  src/net/lockstep.cpp
   src/util/png.cpp
   src/util/jpeg.cpp
   src/terrain/terrain.cpp

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 
 namespace tak::sim {
 
@@ -556,7 +557,7 @@ void World::updateVisibility() {
     for (auto& v : vis_)
         if (v == 2) v = 1;
     for (const auto& u : units_) {
-        if (!u.alive() || u.team != 0 || !u.type) continue;
+        if (!u.alive() || u.team != visTeam_ || !u.type) continue;
         int r = int(u.type->sight) / 16 + 1;
         int cx = int(u.x) / 16, cz = int(u.z) / 16;
         for (int dz = -r; dz <= r; ++dz)
@@ -718,6 +719,36 @@ void World::tick(float dt) {
             b.x += dx * push; b.z += dz * push;
         }
     }
+}
+
+uint64_t World::stateHash() const {
+    // FNV-1a over the quantities that must agree between lockstep peers.
+    uint64_t h = 1469598103934665603ULL;
+    auto mix = [&h](uint64_t v) {
+        for (int i = 0; i < 8; ++i) {
+            h ^= (v >> (i * 8)) & 0xFF;
+            h *= 1099511628211ULL;
+        }
+    };
+    auto mixf = [&](float f) {
+        uint32_t b;
+        static_assert(sizeof b == sizeof f);
+        std::memcpy(&b, &f, 4);
+        mix(b);
+    };
+    for (const auto& u : units_) {
+        mix(uint64_t(u.id));
+        mix(uint64_t(u.team));
+        mixf(u.x);
+        mixf(u.z);
+        mixf(u.hp);
+        mixf(u.heading);
+        mix(uint64_t(u.orders.size()));
+        mix(uint64_t(u.alive() ? 1 : 0));
+    }
+    mix(uint64_t(projectiles_.size()));
+    for (const auto& t : teams_) mixf(t.mana);
+    return h;
 }
 
 } // namespace tak::sim
