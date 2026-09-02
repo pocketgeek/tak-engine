@@ -234,7 +234,7 @@ public:
                    std::max({hix - lox, hiy - loy, 1e-3f});
             fitted_ = true;
         }
-        std::sort(tris_.begin(), tris_.end(),
+        std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float s = fit_ * zoom_;
         float cx = (lox + hix) / 2, cy = (loy + hiy) / 2;
@@ -1845,7 +1845,7 @@ public:
             if (!noFog_ && u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
             items.push_back({u.z, &u, nullptr});
         }
-        std::sort(items.begin(), items.end(),
+        std::stable_sort(items.begin(), items.end(),
                   [](const Item& a, const Item& b) { return a.z < b.z; });
         for (const auto& it : items) {
             if (it.f) {
@@ -2263,7 +2263,7 @@ private:
         // (billboard flip), so the facing yaw negates the heading.
         float facing = (u.type && u.type->canMove) ? -u.heading : 0.0f;
         collect(vt->second.model.root, base, anim, facing, u.team);
-        std::sort(tris_.begin(), tris_.end(),
+        std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
         float ax = (u.x - mapView_.offX()) * zm;
@@ -3148,7 +3148,7 @@ int main(int argc, char** argv) {
     }
     std::string mode = argv[1];
     std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
-    int hostPort = 0, joinPort = 0;
+    int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
@@ -3185,6 +3185,10 @@ int main(int argc, char** argv) {
         else if (a == "--soundtest") soundtest = true;
 
         else if (a == "--tilt" && i + 1 < argc) gTilt = std::stof(argv[++i]);
+        else if (a == "--winsize" && i + 2 < argc) {
+            winW = std::atoi(argv[++i]);
+            winH = std::atoi(argv[++i]);
+        }
 
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
         else if (a == "--selonly") selonly = true;
@@ -3229,7 +3233,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     SDL_Window* win = SDL_CreateWindow("takview", SDL_WINDOWPOS_CENTERED,
-                                       SDL_WINDOWPOS_CENTERED, kWinW, kWinH,
+                                       SDL_WINDOWPOS_CENTERED, winW, winH,
                                        SDL_WINDOW_RESIZABLE);
     SDL_Renderer* ren = SDL_CreateRenderer(
         win, -1, shot.empty() ? SDL_RENDERER_PRESENTVSYNC : SDL_RENDERER_SOFTWARE);
@@ -3237,6 +3241,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
         return 1;
     }
+    if (shot.empty()) SDL_RenderSetVSync(ren, 1);   // explicit vsync, avoids tearing
 
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;
