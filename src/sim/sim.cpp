@@ -57,6 +57,8 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             t.storage = float(info->numberOr("mogriumstorage", 0));
             t.footX = int(info->numberOr("footprintx", 1));
             t.footZ = int(info->numberOr("footprintz", 1));
+            t.canTransport = info->numberOr("cantransport", 0) != 0;
+            t.transportCap = int(info->numberOr("transportcapacity", 0));
             t.soundClass = lower(info->valueOr("soundcategory",
                                                info->valueOr("soundclass", "")));
             t.sight = float(info->numberOr("sightdistance", 180));
@@ -212,7 +214,7 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1)
     static const int DX[8] = {1, -1, 0, 0, 1, 1, -1, -1};
     static const int DZ[8] = {0, 0, 1, -1, 1, -1, 1, -1};
     int expansions = 0;
-    while (!open.empty() && expansions++ < 40000) {
+    while (!open.empty() && expansions++ < 400000) {
         std::pop_heap(open.begin(), open.end(), cmp);
         Node n = open.back();
         open.pop_back();
@@ -276,6 +278,84 @@ void World::order(int unitId, float x, float z, bool queue) {
     u->orders.push_back({x, z, 0});
 }
 
+void World::loadInto(int unitId, int transportId) {
+    Unit* u = unit(unitId);
+    Unit* t = unit(transportId);
+    if (!u || !t || !u->alive() || !t->alive() || u->embarked()) return;
+    if (!u->type || !u->type->canMove || u->type->domain != UnitType::Domain::Ground)
+        return;
+    if (!t->type || !t->type->canTransport || u->team != t->team) return;
+    if (int(t->cargo.size()) >= t->type->transportCap) return;
+    u->orders.clear();
+    Order o;
+    o.targetId = transportId;
+    o.load = true;
+    u->orders.push_back(o);
+}
+
+void World::unloadAt(int transportId, float x, float z) {
+    Unit* t = unit(transportId);
+    if (!t || !t->alive() || t->cargo.empty()) return;
+    t->orders.clear();
+    // Sail there through the transport's own domain, then disembark.
+    const NavGrid& grid = navFor(t->type);
+    if (!grid.empty()) {
+        auto path = grid.findPath(t->x, t->z, x, z);
+        for (size_t i = 0; i + 1 < path.size(); ++i) t->orders.push_back(path[i]);
+    }
+    Order o;
+    o.x = x;
+    o.z = z;
+    o.unload = true;
+    t->orders.push_back(o);
+}
+
+void World::tickTransport(Unit& u, float dt) {
+    (void)dt;
+    Order& o = u.orders.front();
+    if (o.load) {
+        Unit* t = unit(o.targetId);
+        if (!t || !t->alive() || !t->type ||
+            int(t->cargo.size()) >= t->type->transportCap) {
+            u.orders.pop_front();
+            return;
+        }
+        float dx = t->x - u.x, dz = t->z - u.z;
+        o.x = t->x;
+        o.z = t->z;
+        if (dx * dx + dz * dz < 70 * 70) {
+            u.inTransport = t->id;
+            t->cargo.push_back(u.id);
+            u.orders.clear();
+            u.speed = 0;
+        }
+        return;
+    }
+    // unload: sail close to the point, then place cargo on nearby land.
+    float dx = o.x - u.x, dz = o.z - u.z;
+    if (dx * dx + dz * dz > 150 * 150) return;   // keep sailing
+    int cx = int(o.x) / 16, cz = int(o.z) / 16;
+    for (int id : u.cargo) {
+        Unit* c = unit(id);
+        if (!c) continue;
+        // Spiral out for a free ground cell.
+        for (int r = 0; r < 12 && c->inTransport; ++r)
+            for (int j = -r; j <= r && c->inTransport; ++j)
+                for (int i = -r; i <= r && c->inTransport; ++i) {
+                    if (std::max(std::abs(i), std::abs(j)) != r) continue;
+                    if (!nav_.walkable(cx + i, cz + j)) continue;
+                    c->x = float(cx + i) * 16 + 8;
+                    c->z = float(cz + j) * 16 + 8;
+                    c->inTransport = 0;
+                }
+    }
+    std::erase_if(u.cargo, [&](int id) {
+        Unit* c = unit(id);
+        return !c || !c->inTransport;
+    });
+    if (u.cargo.empty()) u.orders.pop_front();
+}
+
 void World::attack(int unitId, int targetId, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || u->type->weapon.damage <= 0) return;
@@ -315,7 +395,7 @@ void World::tickCombat(Unit& u, float dt) {
         int best = 0;
         float bestD = ar * ar;
         for (auto& e : units_) {
-            if (!e.alive() || e.team == u.team || !e.type) continue;
+            if (!e.alive() || e.embarked() || e.team == u.team || !e.type) continue;
             float dx = e.x - u.x, dz = e.z - u.z;
             float d = dx * dx + dz * dz;
             if (d < bestD) { bestD = d; best = e.id; }
@@ -500,7 +580,7 @@ void World::tick(float dt) {
         p.z += p.vz * dt;
         p.life -= dt;
         Unit* t = unit(p.targetId);
-        if (t && t->alive()) {
+        if (t && t->alive() && !t->embarked()) {
             float dx = t->x - p.x, dz = t->z - p.z;
             if (dx * dx + dz * dz < 8 * 8) {
                 t->hp -= p.damage;
@@ -516,10 +596,20 @@ void World::tick(float dt) {
         if (u.hp <= 0) { u.deadFor = 0; u.orders.clear(); u.speed = 0; continue; }
 
         if (u.underConstruction) continue;   // silent until finished
-        tickCombat(u, dt);
+        if (u.embarked()) {                  // riding a transport
+            Unit* t = unit(u.inTransport);
+            if (t && t->alive()) { u.x = t->x; u.z = t->z; }
+            else u.deadFor = 0;              // transport lost with all hands
+            continue;
+        }
+        if (!u.orders.empty() && (u.orders.front().load || u.orders.front().unload))
+            tickTransport(u, dt);
+        else
+            tickCombat(u, dt);
 
         bool combatHold =
-            !u.orders.empty() && u.orders.front().targetId != 0 && [&] {
+            !u.orders.empty() && u.orders.front().targetId != 0 &&
+            !u.orders.front().load && [&] {
                 Unit* t = unit(u.orders.front().targetId);
                 if (!t) return false;
                 float dx = t->x - u.x, dz = t->z - u.z;
@@ -564,10 +654,10 @@ void World::tick(float dt) {
     constexpr float kSep = 13.0f;
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& a = units_[i];
-        if (!a.alive() || !a.type || !a.type->canMove || a.type->canFly) continue;
+        if (!a.alive() || a.embarked() || !a.type || !a.type->canMove || a.type->canFly) continue;
         for (size_t j = i + 1; j < units_.size(); ++j) {
             Unit& b = units_[j];
-            if (!b.alive() || !b.type || !b.type->canMove || b.type->canFly) continue;
+            if (!b.alive() || b.embarked() || !b.type || !b.type->canMove || b.type->canFly) continue;
             float dx = b.x - a.x, dz = b.z - a.z;
             float d2 = dx * dx + dz * dz;
             if (d2 >= kSep * kSep || d2 < 1e-6f) {

@@ -43,6 +43,8 @@ struct UnitType {
     float cruiseAlt = 0;      // world units above ground when flying
     enum class Domain { Ground, Water, Hover };
     Domain domain = Domain::Ground;   // from FBI movementclass prefix
+    bool canTransport = false;
+    int transportCap = 0;     // units carried (FBI transportcapacity)
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     Weapon weapon;         // WEAPON1; weapon.damage == 0 means unarmed
 };
@@ -64,7 +66,9 @@ private:
 
 struct Order {
     float x = 0, z = 0;
-    int targetId = 0;      // nonzero = attack order on that unit
+    int targetId = 0;      // nonzero = attack (or board, if load) target
+    bool load = false;     // board the friendly transport `targetId`
+    bool unload = false;   // sail to (x,z) and disembark cargo
 };
 
 struct Unit {
@@ -81,6 +85,8 @@ struct Unit {
     bool justFired = false;   // set for one tick when the weapon fires
     bool underConstruction = false;
     int buildSiteId = 0;   // builder: id of the building it is constructing
+    int inTransport = 0;   // id of carrying transport, 0 = none
+    std::vector<int> cargo;
     std::deque<Order> orders;
     // Production (buildings with a build tree).
     std::deque<const UnitType*> buildQueue;
@@ -88,6 +94,7 @@ struct Unit {
     int justBuilt = 0;         // unit id produced this tick (viewer hook), else 0
 
     bool alive() const { return deadFor < 0; }
+    bool embarked() const { return inTransport != 0; }
     bool moving() const { return alive() && (speed > 1.0f || !orders.empty()); }
 };
 
@@ -167,6 +174,9 @@ public:
     void order(int unitId, float x, float z, bool queue);
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);
+    // Board a friendly transport / sail to (x,z) and disembark.
+    void loadInto(int unitId, int transportId);
+    void unloadAt(int transportId, float x, float z);
     void tick(float dt);
 
     std::vector<Unit>& units() { return units_; }
@@ -179,6 +189,7 @@ private:
     void fire(Unit& u, Unit& target);
 
     void tickProduction(Unit& u, float dt);
+    void tickTransport(Unit& u, float dt);
     void tickConstruction(Unit& u, float dt);
     void updateVisibility();
 

@@ -553,7 +553,7 @@ private:
 class GameView {
 public:
     GameView(SDL_Renderer* ren, const std::string& tntPath, const std::string& terrainDir,
-             const std::string& dataRoot, bool demo, bool scenario)
+             const std::string& dataRoot, bool demo, bool scenario, bool bare)
         : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot) {
         registry_.loadDir(dataRoot_ + "/units");
         registry_.loadBuildTree(dataRoot_ + "/canbuild");
@@ -588,6 +588,7 @@ public:
                           mapView_.map().height, mapView_.map().seaLevel);
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         mapView_.setOffset(cx - 640 / 0.9f + 110, cz - 400 / 0.9f + 20);
+        if (!bare) {
         const char* aramon[] = {"araarch", "araarch", "araarch", "arasword",
                                 "arasword", "araarch"};
         const char* taros[] = {"tararch", "tararch", "tardemon", "tararch",
@@ -615,6 +616,16 @@ public:
         spawn("tarlode", cx + 220, cz - 30, 3.14159f, 1);
         world_.team(1).mana = 800;
         builderId_ = spawn("arabuild", cx - 320, cz + 80, 3.14159f, 0);
+        if (demo) {
+            for (size_t k = 0; k < teamA.size(); ++k)
+                world_.attack(teamA[k], teamB[k % teamB.size()], false);
+            for (size_t k = 0; k < teamB.size(); ++k)
+                world_.attack(teamB[k], teamA[k % teamA.size()], false);
+            for (int k = 0; k < 4; ++k)
+                world_.train(keepId_, registry_.find("araarch"));
+            demoAi_ = true;
+        }
+        }
 
         try {
             hudFont_ = Font(ren_, dataRoot_ + "/fonts/bodfontbody.gaf");
@@ -629,15 +640,6 @@ public:
             world_.nav().block(int(u.x) / 16 - u.type->footX / 2,
                                int(u.z) / 16 - u.type->footZ / 2,
                                u.type->footX, u.type->footZ, true);
-        }
-        if (demo) {
-            for (size_t k = 0; k < teamA.size(); ++k)
-                world_.attack(teamA[k], teamB[k % teamB.size()], false);
-            for (size_t k = 0; k < teamB.size(); ++k)
-                world_.attack(teamB[k], teamA[k % teamA.size()], false);
-            for (int k = 0; k < 4; ++k)
-                world_.train(keepId_, registry_.find("araarch"));
-            demoAi_ = true;
         }
     }
 
@@ -716,12 +718,32 @@ public:
             float wx = mapView_.offX() + e.button.x / zm;
             float wz = mapView_.offY() + e.button.y / zm;
             bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+            const auto* first = world_.unit(selection_.front());
+            // Selected transport with cargo: right-click = sail + disembark.
+            if (first && first->type && first->type->canTransport &&
+                !first->cargo.empty()) {
+                world_.unloadAt(first->id, wx, wz);
+                return;
+            }
+            // Clicking a friendly transport = board it.
+            int friendlyTransport = -1;
+            float bestT = 24 * 24;
+            for (auto& u : world_.units()) {
+                if (!u.alive() || !first || u.team != first->team || !u.type ||
+                    !u.type->canTransport)
+                    continue;
+                float dx = u.x - wx, dz = u.z - wz;
+                if (dx * dx + dz * dz < bestT) { bestT = dx * dx + dz * dz; friendlyTransport = u.id; }
+            }
+            if (friendlyTransport >= 0) {
+                for (int id : selection_) world_.loadInto(id, friendlyTransport);
+                return;
+            }
             // Clicking near an enemy = attack; else formation move.
             int enemy = -1;
             float best = 20 * 20;
-            const auto* first = world_.unit(selection_.front());
             for (auto& u : world_.units()) {
-                if (!u.alive() || !first || u.team == first->team) continue;
+                if (!u.alive() || u.embarked() || !first || u.team == first->team) continue;
                 float dx = u.x - wx, dz = u.z - wz;
                 if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
             }
@@ -747,6 +769,62 @@ public:
     }
 
     void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }
+
+    void amphibDemo() {
+        aiEnabled_ = false;
+        amphib_ = true;
+        const auto* shipType = registry_.find("vertrans");
+        const auto& ground = world_.nav();
+        const auto& water = world_.navFor(shipType);
+        float cx = float(mapView_.map().width) * 8, cz = float(mapView_.map().height) * 8;
+
+        // Walk outward from the island center along a direction: last land
+        // cell with deep water a bit beyond = a beach; return both spots.
+        auto findBeach = [&](float ax, float az, float* bx, float* bz, float* wx2,
+                             float* wz2) {
+            for (float r = 0; r < 4000; r += 16) {
+                int gx = int(cx + ax * r) / 16, gz = int(cz + az * r) / 16;
+                if (!ground.walkable(gx, gz)) {
+                    for (float rw = r + 48; rw < r + 400; rw += 16) {
+                        int wxc = int(cx + ax * rw) / 16, wzc = int(cz + az * rw) / 16;
+                        if (water.walkable(wxc, wzc)) {
+                            *bx = cx + ax * (r - 32);
+                            *bz = cz + az * (r - 32);
+                            *wx2 = cx + ax * rw;
+                            *wz2 = cz + az * rw;
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        };
+        float bax, baz, wax, waz, bbx, bbz, wbx, wbz;
+        if (!findBeach(-0.9f, 0.44f, &bax, &baz, &wax, &waz) ||
+            !findBeach(0.44f, -0.9f, &bbx, &bbz, &wbx, &wbz)) {
+            std::printf("amphib: no beaches found\n");
+            return;
+        }
+        std::printf("amphib: embark beach (%.0f,%.0f) landing (%.0f,%.0f)\n", bax, baz,
+                    bbx, bbz);
+        amphibLandX_ = bbx;
+        amphibLandZ_ = bbz;
+        amphibSeaX_ = wbx;
+        amphibSeaZ_ = wbz;
+
+        transportId_ = spawn("vertrans", wax, waz, 0, 0);
+        const char* squad[] = {"araarch", "araarch", "arasword", "arasword"};
+        int i = 0;
+        for (const char* t : squad) {
+            int id = spawn(t, bax + float(i % 2) * 24 - 12, baz + float(i / 2) * 24 - 12,
+                           0, 0);
+            if (id >= 0) {
+                world_.loadInto(id, transportId_);
+                ++amphibSquad_;
+            }
+            ++i;
+        }
+    }
 
     void navyDemo() {
         aiEnabled_ = false;
@@ -801,14 +879,34 @@ public:
         for (auto& u : world_.units())
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
         tickAi(dt);
+        if (amphib_) {
+            auto* t = world_.unit(transportId_);
+            if (t && t->alive()) {
+                if (amphibPhase_ == 0 && int(t->cargo.size()) >= amphibSquad_) {
+                    world_.unloadAt(transportId_, amphibSeaX_, amphibSeaZ_);
+                    amphibPhase_ = 1;
+                } else if (amphibPhase_ == 1 && t->cargo.empty()) {
+                    for (auto& u : world_.units())
+                        if (u.alive() && !u.embarked() && u.team == 0 && u.type &&
+                            u.type->canMove && !u.type->canTransport)
+                            world_.order(u.id, amphibLandX_, amphibLandZ_, false);
+                    amphibPhase_ = 2;
+                }
+            }
+        }
 
-        // Victory check: a side with no living units loses.
+        // Victory check: a side with no living units loses. Only armed
+        // once both sides have fielded units (staged demos may not).
         if (outcome_ == 0) {
             int alive[2] = {0, 0};
             for (auto& u : world_.units())
                 if (u.alive() && u.team < 2) ++alive[u.team];
-            if (alive[1] == 0) outcome_ = 1;
-            else if (alive[0] == 0) outcome_ = -1;
+            sawTeam_[0] |= alive[0] > 0;
+            sawTeam_[1] |= alive[1] > 0;
+            if (sawTeam_[0] && sawTeam_[1]) {
+                if (alive[1] == 0) outcome_ = 1;
+                else if (alive[0] == 0) outcome_ = -1;
+            }
         }
         if (follow_ && !world_.units().empty()) {
             float cx = 0, cz = 0;
@@ -865,7 +963,7 @@ public:
         mapView_.draw(winW, winH);
         std::vector<const tak::sim::Unit*> order;
         for (auto& u : world_.units()) {
-            if (u.deadFor >= 4.0f) continue;             // corpses linger briefly
+            if (u.deadFor >= 4.0f || u.embarked()) continue;
             if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;   // fogged
             order.push_back(&u);
         }
@@ -898,7 +996,7 @@ public:
 
         // Health bars for damaged or selected units.
         for (const auto& u : world_.units()) {
-            if (!u.alive() || !u.type) continue;
+            if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;
             bool sel = std::find(selection_.begin(), selection_.end(), u.id) !=
                        selection_.end();
@@ -1309,7 +1407,7 @@ private:
             return SDL_FPoint{r.x + wx / mapW * r.w, r.y + wz / mapH * r.h};
         };
         for (const auto& u : world_.units()) {
-            if (!u.alive() || !u.type) continue;
+            if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;
             SDL_FPoint p = toMini(u.x, u.z);
             SDL_FRect dot{p.x - 1.5f, p.y - 1.5f, 3, 3};
@@ -1396,8 +1494,12 @@ private:
     SoundClasses soundClasses_;
     uint32_t salt_ = 0;
     int outcome_ = 0;   // 0 = playing, 1 = victory, -1 = defeat
+    bool sawTeam_[2] = {false, false};
     bool demoAi_ = false;
     bool aiEnabled_ = true;
+    bool amphib_ = false;
+    int amphibPhase_ = 0, amphibSquad_ = 0, transportId_ = -1;
+    float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
     Font hudFont_, bigFont_;
 };
 
@@ -1417,7 +1519,7 @@ int main(int argc, char** argv) {
     std::string shot, cobPath, anim;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
-         scenario = false, navy = false;
+         scenario = false, navy = false, amphib = false;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
@@ -1430,6 +1532,7 @@ int main(int argc, char** argv) {
         else if (a == "--testbuild") testbuild = true;
         else if (a == "--scenario") scenario = true;
         else if (a == "--navy") navy = true;
+        else if (a == "--amphib") amphib = true;
         else if (a == "--follow" && i + 1 < argc) followZoom = std::stof(argv[++i]);
         else if (a == "--march" && i + 2 < argc) {
             marchX = std::stof(argv[++i]);
@@ -1462,12 +1565,13 @@ int main(int argc, char** argv) {
             mapView = std::make_unique<MapView>(ren, args[0], args[1]);
         } else if (mode == "game" && args.size() >= 3) {
             gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo,
-                                                  scenario);
+                                                  scenario, navy || amphib);
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);
             if (trace) gameView->setTrace(true);
             if (testbuild) gameView->testBuild();
             if (navy) gameView->navyDemo();
+            if (amphib) gameView->amphibDemo();
             if (startTime > 0) gameView->advance(startTime);
         } else if (mode == "model" && !args.empty()) {
             modelView = std::make_unique<ModelView>(ren, args[0],
