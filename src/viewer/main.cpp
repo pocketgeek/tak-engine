@@ -87,6 +87,12 @@ public:
     // (0,0).
     void clampOffset(int winW, int winH) {
         int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;
+        // Don't allow zooming out past the point where the map fills the
+        // window in one dimension — otherwise the view runs off the map edges.
+        if (mapW > 0 && mapH > 0) {
+            float minZoom = std::max(float(winW) / mapW, float(winH) / mapH);
+            if (zoom_ < minZoom) zoom_ = minZoom;
+        }
         float maxX = mapW - winW / zoom_, maxY = mapH - winH / zoom_;
         offX_ = maxX <= 0 ? maxX / 2 : std::clamp(offX_, 0.0f, maxX);
         offY_ = maxY <= 0 ? maxY / 2 : std::clamp(offY_, 0.0f, maxY);
@@ -1843,8 +1849,11 @@ public:
                 continue;
             }
             if (a.flying) {
-                // Keep the wing-flap loop alive; never reset for a walk cycle.
-                if (a.vm->threadCount() == 0) a.vm->start("fly");
+                // Keep the flap + head-sway loops alive; never reset for a walk.
+                if (a.vm->threadCount() == 0) {
+                    a.vm->start("fly");
+                    a.vm->start("HeadTurner");
+                }
                 // Take off when moving, settle back to the ground when idle.
                 float cruise = u.type ? u.type->cruiseAlt : 0.0f;
                 float target = (u.walking() || !u.orders.empty()) ? cruise : 0.0f;
@@ -1880,7 +1889,7 @@ public:
                 }
             }
             // Flyers flap harder: run their wing script at a livelier pace.
-            a.vm->tick(a.flying ? dt * 2.2f : dt);
+            a.vm->tick(a.flying ? dt * 3.6f : dt);
         }
     }
 
@@ -2417,7 +2426,8 @@ private:
                 // fixed wrong way). With just Create+fly she keeps the model's
                 // authored heading, matching the ground units.
                 a.vm->start("Create");
-                a.vm->start("fly");
+                a.vm->start("fly");          // wing flap
+                a.vm->start("HeadTurner");   // head sway (piece 23 only, safe)
                 a.flying = true;
             }
         } catch (const std::exception&) { /* unit stays unanimated */ }
