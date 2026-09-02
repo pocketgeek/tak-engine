@@ -94,26 +94,47 @@ Triggers loadTriggers(const std::filesystem::path& path) {
         }
     }
 
-    // Body: token walk — 64-byte printable slots or 4-byte ints (zeros skipped).
-    size_t pos = t + 16;
-    while (pos + 4 <= defsEnd) {
-        if (pos + 64 <= defsEnd) {
-            const char* p = reinterpret_cast<const char*>(&d[pos]);
-            size_t len = strnlen(p, 63);
-            bool printable = len > 0;
-            for (size_t i = 0; i < len && printable; ++i)
-                if (uint8_t(p[i]) < 32 || uint8_t(p[i]) >= 127) printable = false;
-            if (printable && (len > 2 || (std::isdigit(uint8_t(p[0]))))) {
-                std::string sv(p, len);
+    // Body: records = {ints[0..4], slots[5][64]}. A slot is valid when its
+    // text is printable and the remainder of the 64 bytes is zero.
+    auto slotOk = [&](size_t off) {
+        if (off + 64 > d.size()) return false;
+        size_t n = 0;
+        while (n < 64 && d[off + n]) ++n;
+        if (n == 64) return false;
+        for (size_t i = 0; i < n; ++i)
+            if (d[off + i] < 32 || d[off + i] >= 127) return false;
+        for (size_t i = n; i < 64; ++i)
+            if (d[off + i]) return false;
+        return true;
+    };
+    size_t pos = t + 8;   // header is {version, numTriggers}
+    while (pos + 320 <= defsEnd) {
+        bool hit = false;
+        for (int nints = 0; nints <= 4; ++nints) {
+            size_t base = pos + size_t(nints) * 4;
+            if (base + 320 > defsEnd) break;
+            bool ok = true;
+            for (int i = 0; i < 5 && ok; ++i)
+                if (!slotOk(base + size_t(i) * 64)) ok = false;
+            if (!ok) continue;
+            TrigRecord rec;
+            for (int i = 0; i < nints; ++i)
+                rec.ints.push_back(int32_t(u32(d, pos + size_t(i) * 4)));
+            for (int i = 0; i < 5; ++i) {
+                const char* p = reinterpret_cast<const char*>(&d[base + size_t(i) * 64]);
+                std::string sv(p, strnlen(p, 63));
                 while (!sv.empty() && sv.back() == ' ') sv.pop_back();
-                out.strings.push_back(std::move(sv));
-                pos += 64;
-                continue;
+                if (!sv.empty()) rec.slots.push_back(sv);
             }
+            for (auto& sv : rec.slots) out.strings.push_back(sv);
+            for (auto v : rec.ints)
+                if (v) out.ints.push_back(v);
+            out.records.push_back(std::move(rec));
+            pos = base + 320;
+            hit = true;
+            break;
         }
-        int32_t v = int32_t(u32(d, pos));
-        if (v != 0) out.ints.push_back(v);
-        pos += 4;
+        if (!hit) pos += 4;
     }
     return out;
 }

@@ -34,8 +34,20 @@ struct Region {
     int x1 = 0, z1 = 0, x2 = 0, z2 = 0;   // cells
 };
 
+// One trigger record: 1-4 leading ints then five 64-byte operand slots.
+// The record's opcode is the LAST int (earlier ints are trailing params
+// of the previous record). Known ops: 1 = at-time(seconds), 7 = spawn
+// (type, region), 13 = score-count(type, region), 16 = count-condition
+// (n, type, region), 2/17/18 = variable ops, 3 = var compare.
+struct TrigRecord {
+    std::vector<int32_t> ints;
+    std::vector<std::string> slots;   // non-empty slots, in order
+    int32_t op() const { return ints.empty() ? 0 : ints.back(); }
+};
+
 struct Triggers {
     int numTriggers = 0;
+    std::vector<TrigRecord> records;
     std::vector<std::string> strings;   // slot strings in stream order
     std::vector<int32_t> ints;          // int params in stream order
     std::vector<Region> regions;

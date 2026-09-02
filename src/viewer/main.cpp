@@ -723,15 +723,36 @@ public:
             // Skirmish victory rule from the map's trigger section: a scoring
             // unit type, a scoring region, and a time limit.
             auto trig = tak::crt::loadTriggers(crtPath);
-            for (const auto& r : trig.regions)
-                if (r.name.rfind("Player", 0) != 0 && r.x2 > r.x1) scenRegion_ = r;
-            for (const auto& sv : trig.strings) {
-                std::string lo = sv;
-                std::transform(lo.begin(), lo.end(), lo.begin(), ::tolower);
-                if (!scenUnit_ && registry_.find(lo)) scenUnit_ = registry_.find(lo);
-                if (scenTime_ <= 0 && sv.size() >= 2 &&
-                    sv.find_first_not_of("0123456789") == std::string::npos) {
-                    int v = std::atoi(sv.c_str());
+            // Scoring rule comes from an op-13 record (score-count of a unit
+            // type in a region); the time limit is the first op-1 timer that
+            // follows it. Maps without op 13 (pure last-alive arenas) get no
+            // scoring rule.
+            bool sawScore = false;
+            for (const auto& rec : trig.records) {
+                if (!sawScore && rec.op() == 13 && rec.slots.size() == 2) {
+                    std::string lo = rec.slots[0];
+                    std::transform(lo.begin(), lo.end(), lo.begin(), ::tolower);
+                    scenUnit_ = registry_.find(lo);
+                    if (!scenUnit_) continue;
+                    bool found = false;
+                    for (const auto& r : trig.regions)
+                        if (r.name == rec.slots[1]) {
+                            scenRegion_ = r;
+                            found = true;
+                        }
+                    if (!found) {   // e.g. 'Anywhere': the whole map
+                        scenRegion_.name = rec.slots[1];
+                        scenRegion_.x1 = 0;
+                        scenRegion_.z1 = 0;
+                        scenRegion_.x2 = mapView_.map().width;
+                        scenRegion_.z2 = mapView_.map().height;
+                    }
+                    sawScore = true;
+                } else if (sawScore && scenTime_ <= 0 && rec.op() == 1 &&
+                           rec.slots.size() == 1 &&
+                           rec.slots[0].find_first_not_of("0123456789") ==
+                               std::string::npos) {
+                    int v = std::atoi(rec.slots[0].c_str());
                     if (v >= 60 && v <= 7200) scenTime_ = float(v);
                 }
             }
@@ -739,6 +760,67 @@ public:
                 std::printf("scenario rule: most %s in '%s' after %.0fs\n",
                             scenUnit_->name.c_str(), scenRegion_.name.c_str(),
                             scenTime_);
+
+            // Trigger-record rules: timed spawns (op 1 sets the time
+            // context, following op 7s spawn then), maintain-count
+            // respawns (op 16 then op 7s), and timed player messages.
+            auto regionOf = [&](const std::string& nm) -> const tak::crt::Region* {
+                for (const auto& r : trig.regions)
+                    if (r.name == nm) return &r;
+                return nullptr;
+            };
+            float timeCtx = 0;
+            int maintainN = 0;
+            std::string maintainType, maintainRegion;
+            for (const auto& rec : trig.records) {
+                int op = rec.op();
+                if (op == 1 && rec.slots.size() == 1 &&
+                    rec.slots[0].find_first_not_of("0123456789") == std::string::npos) {
+                    timeCtx = float(std::atoi(rec.slots[0].c_str()));
+                    maintainN = 0;
+                } else if (op == 16 && rec.slots.size() == 3) {
+                    maintainN = std::atoi(rec.slots[0].c_str());
+                    maintainType = rec.slots[1];
+                    maintainRegion = rec.slots[2];
+                } else if (op == 7 && rec.slots.size() == 2) {
+                    std::string ty = rec.slots[0];
+                    std::transform(ty.begin(), ty.end(), ty.begin(), ::tolower);
+                    const auto* rg = regionOf(rec.slots[1]);
+                    if (!registry_.find(ty) || !rg) continue;
+                    SpawnRule sr;
+                    sr.type = ty;
+                    sr.x = float(rg->x1 + rg->x2) * 8;
+                    sr.z = float(rg->z1 + rg->z2) * 8;
+                    // Spawns into a "Player N" zone belong to that player.
+                    sr.team = 3;
+                    if (rec.slots[1].size() >= 8 &&
+                        (rec.slots[1][0] == 'P' || rec.slots[1][0] == 'p'))
+                        sr.team = std::clamp(rec.slots[1].back() - '1', 0, 3);
+                    if (maintainN > 0) {
+                        sr.maintainCount = maintainN;
+                        std::string mt = maintainType;
+                        std::transform(mt.begin(), mt.end(), mt.begin(), ::tolower);
+                        sr.maintainType = mt;
+                        if (const auto* mr = regionOf(maintainRegion)) sr.maintainRect = *mr;
+                        else {
+                            sr.maintainRect.x1 = 0;
+                            sr.maintainRect.z1 = 0;
+                            sr.maintainRect.x2 = mapView_.map().width;
+                            sr.maintainRect.z2 = mapView_.map().height;
+                        }
+                    } else {
+                        sr.atTime = timeCtx;
+                    }
+                    spawnRules_.push_back(std::move(sr));
+                } else if (rec.slots.size() == 2 &&
+                           rec.slots[0].rfind("Player", 0) == 0 &&
+                           rec.slots[1].size() > 10) {
+                    messages_.push_back({timeCtx, rec.slots[1]});
+                }
+            }
+            if (!spawnRules_.empty())
+                std::printf("scenario: %zu trigger spawn rules, %zu messages\n",
+                            spawnRules_.size(), messages_.size());
             return;
         }
 
@@ -1234,6 +1316,36 @@ public:
         tickAi(dt);
         if (briefTimer_ > 0) briefTimer_ -= dt;
         animClock_ += dt;
+        if (!spawnRules_.empty() || !messages_.empty()) scenClock2_ += dt;
+        for (auto& sr : spawnRules_) {
+            if (sr.atTime >= 0) {
+                if (!sr.done && scenClock2_ >= sr.atTime) {
+                    sr.done = true;
+                    spawn(sr.type, sr.x, sr.z, 0, sr.team);
+                    if (hudFont_.ok()) { notice_ = "A POWER AWAKENS"; noticeTimer_ = 5; }
+                }
+            } else if (sr.maintainCount > 0) {
+                sr.cooldown -= dt;
+                if (sr.cooldown > 0) continue;
+                sr.cooldown = 5;
+                int have = 0;
+                for (auto& u : world_.units()) {
+                    if (!u.alive() || !u.type || u.type->id != sr.maintainType) continue;
+                    int cx = int(u.x) / 16, cz = int(u.z) / 16;
+                    if (cx >= sr.maintainRect.x1 && cz >= sr.maintainRect.z1 &&
+                        cx <= sr.maintainRect.x2 && cz <= sr.maintainRect.z2)
+                        ++have;
+                }
+                if (have < sr.maintainCount) spawn(sr.type, sr.x, sr.z, 0, sr.team);
+            }
+        }
+        for (auto& m : messages_) {
+            if (m.first >= 0 && scenClock2_ >= m.first) {
+                notice_ = m.second;
+                noticeTimer_ = 8;
+                m.first = -1;
+            }
+        }
         if (scenUnit_ && scenTime_ > 0 && outcome_ == 0) {
             scenClock_ += dt;
             if (scenClock_ >= scenTime_) {
@@ -1972,9 +2084,22 @@ private:
 public:
     bool noFog_ = false;
 private:
+    struct SpawnRule {
+        std::string type;
+        float x = 0, z = 0;
+        float atTime = -1;        // >= 0: spawn once at this time
+        int maintainCount = 0;    // > 0: respawn while count(maintainType) < N
+        std::string maintainType;
+        tak::crt::Region maintainRect;
+        int team = 3;
+        bool done = false;
+        float cooldown = 0;
+    };
+    std::vector<SpawnRule> spawnRules_;
+    std::vector<std::pair<float, std::string>> messages_;
     const tak::sim::UnitType* scenUnit_ = nullptr;
     tak::crt::Region scenRegion_;
-    float scenTime_ = 0, scenClock_ = 0;
+    float scenTime_ = 0, scenClock_ = 0, scenClock2_ = 0;
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = 0, mouseY_ = 0;
