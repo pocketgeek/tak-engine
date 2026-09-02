@@ -754,8 +754,18 @@ public:
     void input(const SDL_Event& e, int winW, int winH) {
         (void)winW; (void)winH;
         float zm = mapView_.zoom();
-        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && placing_) {
+        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE &&
+            (placing_ || pendingCmd_)) {
             placing_ = nullptr;
+            pendingCmd_ = 0;
+        } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_a &&
+                   !selection_.empty()) {
+            pendingCmd_ = 'a';
+        } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_p &&
+                   !selection_.empty()) {
+            pendingCmd_ = 'p';
+        } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_h) {
+            for (int id : selection_) world_.stop(id);
         } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
             e.key.keysym.sym <= SDLK_6 && !selection_.empty()) {
             const auto* b = world_.unit(selection_.front());
@@ -780,6 +790,17 @@ public:
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    minimapClick(float(e.button.x), float(e.button.y), winH)) {
             // camera moved via minimap
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
+                   pendingCmd_) {
+            float wx = mapView_.offX() + e.button.x / zm;
+            float wz = mapView_.offY() + e.button.y / zm;
+            bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+            for (int id : selection_) {
+                if (pendingCmd_ == 'a') world_.attackMove(id, wx, wz, queue);
+                else world_.patrol(id, wx, wz);
+            }
+            voice(selection_.front(), pendingCmd_ == 'a' ? "attack" : "patrol");
+            pendingCmd_ = 0;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    placing_) {
             float wx = mapView_.offX() + e.button.x / zm;
@@ -988,7 +1009,7 @@ public:
     void marchTo(float dx, float dz) {
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         for (auto& u : world_.units())
-            if (u.team == 0) world_.order(u.id, cx + dx, cz + dz, false);
+            if (u.team == 0) world_.attackMove(u.id, cx + dx, cz + dz, false);
     }
 
     void update(float dt) {
@@ -1254,6 +1275,11 @@ public:
                 hudFont_.draw(ren_, l, bg.x + 8, y, 1.4f, {220, 215, 180, 255});
                 y += 16;
             }
+        }
+        if (pendingCmd_ && hudFont_.ok()) {
+            const char* msg = pendingCmd_ == 'a' ? "ATTACK-MOVE: CLICK TARGET"
+                                                 : "PATROL: CLICK WAYPOINT";
+            hudFont_.draw(ren_, msg, 12, 100, 1.6f, {255, 200, 120, 255});
         }
         if (noticeTimer_ > 0 && hudFont_.ok() && !notice_.empty()) {
             float tw = float(hudFont_.width(notice_, 2.5f));
@@ -1539,6 +1565,7 @@ private:
     std::vector<int> selection_;
     bool dragging_ = false;
     float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
+    char pendingCmd_ = 0;   // 'a' = attack-move, 'p' = patrol (awaiting click)
     bool follow_ = false;
     bool trace_ = false;
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;

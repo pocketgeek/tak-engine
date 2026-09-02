@@ -356,6 +356,31 @@ void World::tickTransport(Unit& u, float dt) {
     if (u.cargo.empty()) u.orders.pop_front();
 }
 
+void World::attackMove(int unitId, float x, float z, bool queue) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type || !u->type->canMove) return;
+    size_t before = queue ? u->orders.size() : 0;
+    order(unitId, x, z, queue);
+    for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].attackMove = true;
+}
+
+void World::patrol(int unitId, float x, float z) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type || !u->type->canMove) return;
+    u->orders.clear();
+    Order a;
+    a.x = u->x; a.z = u->z; a.patrol = true; a.attackMove = true;
+    Order b;
+    b.x = x; b.z = z; b.patrol = true; b.attackMove = true;
+    u->orders.push_back(b);
+    u->orders.push_back(a);
+}
+
+void World::stop(int unitId) {
+    Unit* u = unit(unitId);
+    if (u) u->orders.clear();
+}
+
 void World::attack(int unitId, int targetId, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || u->type->weapon.damage <= 0) return;
@@ -389,8 +414,12 @@ void World::fire(Unit& u, Unit& target) {
 void World::tickCombat(Unit& u, float dt) {
     if (u.reloadLeft > 0) u.reloadLeft -= dt;
 
-    // Auto-acquire: idle armed units engage the nearest enemy in reach.
-    if (u.orders.empty() && u.type->weapon.damage > 0) {
+    // Auto-acquire: idle armed units engage the nearest enemy in reach;
+    // attack-movers and patrollers interrupt their route to fight.
+    bool acquiring = u.orders.empty() ||
+                     (u.orders.front().targetId == 0 &&
+                      (u.orders.front().attackMove || u.orders.front().patrol));
+    if (acquiring && u.type->weapon.damage > 0) {
         float ar = u.type->weapon.range + 90;
         int best = 0;
         float bestD = ar * ar;
@@ -400,7 +429,7 @@ void World::tickCombat(Unit& u, float dt) {
             float d = dx * dx + dz * dz;
             if (d < bestD) { bestD = d; best = e.id; }
         }
-        if (best) u.orders.push_back({0, 0, best});
+        if (best) u.orders.push_front({0, 0, best});
     }
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
 
@@ -624,7 +653,11 @@ void World::tick(float dt) {
             float dx = o.x - u.x, dz = o.z - u.z;
             float dist = std::sqrt(dx * dx + dz * dz);
             if (dist < 3.0f) {
-                if (o.targetId == 0) u.orders.pop_front();
+                if (o.targetId == 0) {
+                    Order done = o;
+                    u.orders.pop_front();
+                    if (done.patrol) u.orders.push_back(done);
+                }
                 continue;
             }
             float want = std::atan2(dx, dz);
