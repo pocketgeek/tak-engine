@@ -1400,6 +1400,14 @@ public:
     }
 
     std::string lodeUnit;
+    void fireTest() {
+        aiEnabled_ = false;
+        float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        int a = spawn("araarch", cx - 40, cz, 1.57f, 0);
+        int e = spawn("tararch", cx + 200, cz, -1.57f, 1);
+        world_.attack(a, e, false);
+        mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
+    }
     void lodeTest() {
         aiEnabled_ = false;
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
@@ -1596,13 +1604,14 @@ public:
                 else
                     sounds_.play("bow2");
                 // Play the unit's own firing animation while standing.
-                if (it != anims_.end() && !u.moving()) {
+                if (it != anims_.end() && !u.walking()) {
                     auto& fa = it->second;
                     fa.vm->reset();
                     fa.vm->setStatic(0, 0);
                     fa.vm->start("FireWeapon") || fa.vm->start("attack1") ||
-                        fa.vm->start("MeleeStrike");
+                        fa.vm->start("fire") || fa.vm->start("MeleeAttack");
                     fa.walking = false;
+                    fa.firing = true;
                 }
             }
             if (it == anims_.end()) continue;
@@ -1622,13 +1631,14 @@ public:
                 a.vm->tick(dt);
                 continue;
             }
-            bool m = u.moving();
+            bool m = u.walking();
             if (m != a.walking) {
                 a.walking = m;
                 a.vm->reset();
                 a.vm->setStatic(0, m ? 1 : 0);
                 if (m) { a.vm->start("walk_legs") || a.vm->start("walk"); }
                 else { a.vm->start("restore_legs") || a.vm->start("restore_x"); }
+                a.firing = false;
             } else if (m && a.vm->threadCount() == 0) {
                 // The walk script is single-pass; the engine re-invokes it
                 // each cycle while the unit keeps moving.
@@ -1951,6 +1961,7 @@ private:
         bool walking = false;
         bool dying = false;
         bool producing = false;
+        bool firing = false;
     };
 
     void registerUnit(const tak::sim::Unit& u) {
@@ -2946,6 +2957,7 @@ int main(int argc, char** argv) {
          hilltest = false, keytest = false, guardtest = false, selonly = false,
          lodetest = false;
     std::string lodeUnitName;
+    bool firetest = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -2969,6 +2981,7 @@ int main(int argc, char** argv) {
         else if (a == "--keytest") keytest = true;
         else if (a == "--guardtest") guardtest = true;
         else if (a == "--lodetest") lodetest = true;
+        else if (a == "--firetest") firetest = true;
 
         else if (a == "--tilt" && i + 1 < argc) gTilt = std::stof(argv[++i]);
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
@@ -3032,7 +3045,7 @@ int main(int argc, char** argv) {
         } else if (mode == "game" && args.size() >= 3) {
             gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo,
                                                   scenario, missionFlag,
-                                                  navy || amphib, side, aiSide);
+                                                  navy || amphib || firetest, side, aiSide);
             if (net) gameView->setNet(net.get());
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);
@@ -3044,6 +3057,7 @@ int main(int argc, char** argv) {
             if (hilltest) gameView->hillTest();
             if (guardtest) gameView->guardTest();
             if (lodetest) { gameView->lodeUnit = lodeUnitName; gameView->lodeTest(); }
+            if (firetest) gameView->fireTest();
 
             if (nofog) gameView->noFog_ = true;
             if (doLook) gameView->lookAt(lookX, lookZ);

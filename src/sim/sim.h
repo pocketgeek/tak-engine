@@ -109,6 +109,9 @@ struct Unit {
     bool alive() const { return deadFor < 0; }
     bool embarked() const { return inTransport != 0; }
     bool moving() const { return alive() && (speed > 1.0f || !orders.empty()); }
+    // Actually translating (for the walk animation), vs standing with an
+    // attack/queued order.
+    bool walking() const { return alive() && speed > 3.0f; }
 };
 
 struct Projectile {
