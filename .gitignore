@@ -6,6 +6,6 @@ build/
 .cache/
 compile_commands.json
 
-# User audio override archives (game-derived, keep local)
-*.hpi
-*.HPI
+# Game-derived HPI archives dropped at the repo root (never commit)
+/*.hpi
+/*.HPI
