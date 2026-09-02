@@ -556,9 +556,32 @@ private:
 // (shift queues waypoints), arrows scroll, wheel zoom.
 class GameView {
 public:
+    struct FactionKit {
+        const char* keep;
+        const char* lode;
+        const char* builder;
+        const char* squad[4];
+    };
+    static const FactionKit& kit(const std::string& side) {
+        static const std::map<std::string, FactionKit> kits = {
+            {"ara", {"arakeep", "aralode", "arabuild",
+                     {"araarch", "araarch", "arasword", "arasword"}}},
+            {"tar", {"tardung", "tarlode", "tarnecro",
+                     {"tararch", "tararch", "tardemon", "tartb"}}},
+            {"ver", {"verkeep", "verlode", "verliege",
+                     {"verarch", "verarch", "versword", "versword"}}},
+            {"zon", {"", "zonlode", "zonhand",
+                     {"zongob", "zongob", "zongob", "zonhand"}}},
+            {"cre", {"creacad", "crelode", "cremech",
+                     {"creauto", "creauto", "crebeas", "creshoc"}}},
+        };
+        auto it = kits.find(side);
+        return it != kits.end() ? it->second : kits.at("ara");
+    }
+
     GameView(SDL_Renderer* ren, const std::string& tntPath, const std::string& terrainDir,
              const std::string& dataRoot, bool demo, bool scenario, bool mission,
-             bool bare)
+             bool bare, const std::string& side = "ara", const std::string& aiSide = "tar")
         : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot) {
         registry_.loadDir(dataRoot_ + "/units");
         registry_.loadBuildTree(dataRoot_ + "/canbuild");
@@ -845,33 +868,34 @@ public:
         }
         mapView_.setOffset(cx - 640 / 0.9f + 110, cz - 400 / 0.9f + 20);
         if (!bare) {
-        const char* aramon[] = {"araarch", "araarch", "araarch", "arasword",
-                                "arasword", "araarch"};
-        const char* taros[] = {"tararch", "tararch", "tardemon", "tararch",
-                               "tardemon", "tararch"};
+        const FactionKit& pk = kit(side);
+        const FactionKit& ak = kit(aiSide);
+        aiCycle_ = {ak.squad[0], ak.squad[1], ak.squad[2], ak.squad[3]};
         std::vector<int> teamA, teamB;
-        int i = 0;
-        for (const char* t : aramon) {
-            int id = spawn(t, cx - 160 + float(i % 2) * 26, cz - 60 + float(i / 2) * 30, 1.57f, 0);
+        for (int i = 0; i < 6; ++i) {
+            int id = spawn(pk.squad[i % 4], cx - 160 + float(i % 2) * 26,
+                           cz - 60 + float(i / 2) * 30, 1.57f, 0);
             if (id >= 0) teamA.push_back(id);
-            ++i;
         }
-        i = 0;
-        for (const char* t : taros) {
-            int id = spawn(t, cx + 160 + float(i % 2) * 26, cz - 60 + float(i / 2) * 30,
-                           -1.57f, 1);
+        for (int i = 0; i < 6; ++i) {
+            int id = spawn(ak.squad[i % 4], cx + 160 + float(i % 2) * 26,
+                           cz - 60 + float(i / 2) * 30, -1.57f, 1);
             if (id >= 0) teamB.push_back(id);
-            ++i;
         }
-        // Bases: player Keep + Lodestones west, AI Abyss + Lodestones east.
-        keepId_ = spawn("arakeep", cx - 260, cz + 30, 3.14159f, 0);
-        spawn("aralode", cx - 340, cz - 30, 3.14159f, 0);
-        spawn("aralode", cx - 180, cz - 30, 3.14159f, 0);
-        aiKeepId_ = spawn("tardung", cx + 300, cz + 30, 3.14159f, 1);
-        spawn("tarlode", cx + 380, cz - 30, 3.14159f, 1);
-        spawn("tarlode", cx + 220, cz - 30, 3.14159f, 1);
+        // Bases: player west, AI east. Zhon has no keep: extra handlers
+        // and lodestones instead.
+        if (pk.keep[0]) keepId_ = spawn(pk.keep, cx - 260, cz + 30, 3.14159f, 0);
+        else {
+            spawn(pk.builder, cx - 260, cz + 30, 3.14159f, 0);
+            spawn(pk.lode, cx - 260, cz + 90, 3.14159f, 0);
+        }
+        spawn(pk.lode, cx - 340, cz - 30, 3.14159f, 0);
+        spawn(pk.lode, cx - 180, cz - 30, 3.14159f, 0);
+        if (ak.keep[0]) aiKeepId_ = spawn(ak.keep, cx + 300, cz + 30, 3.14159f, 1);
+        spawn(ak.lode, cx + 380, cz - 30, 3.14159f, 1);
+        spawn(ak.lode, cx + 220, cz - 30, 3.14159f, 1);
         world_.team(1).mana = 800;
-        builderId_ = spawn("arabuild", cx - 320, cz + 80, 3.14159f, 0);
+        builderId_ = spawn(pk.builder, cx - 320, cz + 80, 3.14159f, 0);
         if (demo) {
             for (size_t k = 0; k < teamA.size(); ++k)
                 world_.attack(teamA[k], teamB[k % teamB.size()], false);
@@ -1780,18 +1804,18 @@ private:
         if (!aiEnabled_ || aiTimer_ > 0 || outcome_ != 0) return;
         aiTimer_ = 1.0f;
 
-        runAi(1, aiKeepId_, std::array<const char*, 4>{"tararch", "tartb", "tararch",
-                                                       "tarbeak"});
+        runAi(1, aiKeepId_, aiCycle_);
         // In demo mode team 0 is AI-driven too: a full war plays itself out.
         if (demoAi_)
-            runAi(0, keepId_, std::array<const char*, 4>{"araarch", "arasword", "araarch",
-                                                         "araknigh"});
+            runAi(0, keepId_, std::array<std::string, 4>{"araarch", "arasword",
+                                                         "araarch", "araknigh"});
     }
 
-    void runAi(int team, int keepId, std::array<const char*, 4> cycle) {
+    void runAi(int team, int keepId, const std::array<std::string, 4>& cycle) {
         auto* keep = world_.unit(keepId);
         if (keep && keep->alive() && keep->buildQueue.empty())
-            world_.train(keepId, registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]));
+            world_.train(keepId,
+                         registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]));
 
         std::vector<int> idle;
         for (auto& u : world_.units())
@@ -2108,6 +2132,7 @@ private:
     SDL_Texture* panelTex_ = nullptr;
     int panelW_ = 0, panelH_ = 0;
     int aiTrained_ = 0;
+    std::array<std::string, 4> aiCycle_ = {"tararch", "tartb", "tararch", "tarbeak"};
     float aiTimer_ = 0;
     static constexpr int kMiniSize = 180;
 
@@ -2586,7 +2611,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::string mode = argv[1];
-    std::string shot, cobPath, anim, joinAddr;
+    std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
     int hostPort = 0, joinPort = 0;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
@@ -2611,6 +2636,8 @@ int main(int argc, char** argv) {
         else if (a == "--misstest") misstest = true;
         else if (a == "--creon") creon = true;
         else if (a == "--hilltest") hilltest = true;
+        else if (a == "--side" && i + 1 < argc) side = argv[++i];
+        else if (a == "--aiside" && i + 1 < argc) aiSide = argv[++i];
         else if (a == "--host" && i + 1 < argc) hostPort = std::atoi(argv[++i]);
         else if (a == "--join" && i + 2 < argc) {
             joinAddr = argv[++i];
@@ -2669,7 +2696,7 @@ int main(int argc, char** argv) {
         } else if (mode == "game" && args.size() >= 3) {
             gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo,
                                                   scenario, missionFlag,
-                                                  navy || amphib);
+                                                  navy || amphib, side, aiSide);
             if (net) gameView->setNet(net.get());
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);

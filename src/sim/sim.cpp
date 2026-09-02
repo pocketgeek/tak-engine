@@ -528,7 +528,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     Unit* site = unit(id);
     site->underConstruction = true;
     site->hp = type->maxHp * 0.05f;
-    blockFootprint(nav_, *type, x, z, true);
+    if (!type->canMove) blockFootprint(nav_, *type, x, z, true);
     b = unit(builderId);   // spawn may have reallocated units_
     b->buildSiteId = id;
     order(builderId, x, z + float(type->footZ) * 8 + 24, false);

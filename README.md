@@ -31,7 +31,10 @@ Controls: drag = box-select, right-click = move/attack (shift queues),
 A + click = attack-move, P + click = patrol, H = halt, 1–6 = train or
 place buildings at a selected builder, arrows/middle-drag = scroll,
 wheel = zoom, minimap click = jump camera, S = screenshot. `--demo`
-stages an AI-vs-AI war; `--mission` loads a campaign mission's .ota/.cob.
+stages an AI-vs-AI war; `--mission` loads a campaign mission's .ota/.cob;
+`--side ara|tar|ver|zon|cre` picks your faction and `--aiside` the
+enemy's (Zhon has no Keep — Beast Handlers summon creatures via the
+build ghost; Creon needs the Iron Plague data).
 
 Multiplayer (2-player TCP lockstep): host runs with `--host 7777`, the
 other player adds `--join <host-ip> 7777`. Host commands the Aramon
