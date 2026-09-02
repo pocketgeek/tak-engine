@@ -1,0 +1,10 @@
+/home/pocket_geek/TAK/build-dbg/CMakeFiles/tak-formats.dir
+/home/pocket_geek/TAK/build-dbg/CMakeFiles/hpitool.dir
+/home/pocket_geek/TAK/build-dbg/CMakeFiles/gaftool.dir
+/home/pocket_geek/TAK/build-dbg/CMakeFiles/tnttool.dir
+/home/pocket_geek/TAK/build-dbg/CMakeFiles/takview.dir
+/home/pocket_geek/TAK/build-dbg/CMakeFiles/modeltool.dir
+/home/pocket_geek/TAK/build-dbg/CMakeFiles/tdftool.dir
+/home/pocket_geek/TAK/build-dbg/CMakeFiles/cobtool.dir
+/home/pocket_geek/TAK/build-dbg/CMakeFiles/edit_cache.dir
+/home/pocket_geek/TAK/build-dbg/CMakeFiles/rebuild_cache.dir

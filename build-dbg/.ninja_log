@@ -1,0 +1,22 @@
+# ninja log v7
+2	441	1788369661608796510	CMakeFiles/tak-formats.dir/src/net/lockstep.cpp.o	63e41a4fb5496fcb
+2	472	1788369661609171147	CMakeFiles/tak-formats.dir/src/util/jpeg.cpp.o	8b249d483ef8cecd
+1	481	1788369661608161978	CMakeFiles/tak-formats.dir/src/tnt/tnt.cpp.o	a2153cec67f4fddd
+2	515	1788369661608973833	CMakeFiles/tak-formats.dir/src/util/png.cpp.o	6ecc72eeb8e1056e
+2	518	1788369661609254847	CMakeFiles/tak-formats.dir/src/terrain/terrain.cpp.o	e6ba577d5822afd2
+1	524	1788369661606375315	CMakeFiles/tak-formats.dir/src/hpi/hpi.cpp.o	598e9e554fedc9c5
+1	572	1788369661608076740	CMakeFiles/tak-formats.dir/src/gaf/gaf.cpp.o	b071d126e294f6bf
+2	585	1788369661608467838	CMakeFiles/tak-formats.dir/src/cob/cob.cpp.o	19bd7a131b76e7e
+2	633	1788369661608374380	CMakeFiles/tak-formats.dir/src/tdf/tdf.cpp.o	8f4c7b394a834870
+2	652	1788369661608719389	CMakeFiles/tak-formats.dir/src/crt/crt.cpp.o	79e8289a04ae5b15
+1	656	1788369661608249963	CMakeFiles/tak-formats.dir/src/tdo/tdo.cpp.o	ab60a3b5a763077
+2	661	1788369661608545046	CMakeFiles/tak-formats.dir/src/cob/vm.cpp.o	94f949e405540425
+2	1183	1788369661608629343	CMakeFiles/tak-formats.dir/src/sim/sim.cpp.o	d44b68e976a38c5c
+1183	1259	1788369662788387695	libtak-formats.a	31783621d50250ae
+3	2977	1788369661609353649	CMakeFiles/takview.dir/src/viewer/main.cpp.o	7225d85315e69baf
+2977	3088	1788369664582406485	takview	752b81bd70969c9a
+2	2894	1788369790269722889	CMakeFiles/takview.dir/src/viewer/main.cpp.o	7225d85315e69baf
+2894	3005	1788369793161753179	takview	752b81bd70969c9a
+2	983	1788370026387202046	CMakeFiles/tak-formats.dir/src/sim/sim.cpp.o	d44b68e976a38c5c
+983	1055	1788370027368212416	libtak-formats.a	31783621d50250ae
+1055	1155	1788370027440213177	takview	752b81bd70969c9a
