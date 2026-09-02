@@ -62,6 +62,7 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             t.soundClass = lower(info->valueOr("soundcategory",
                                                info->valueOr("soundclass", "")));
             t.sight = float(info->numberOr("sightdistance", 180));
+            t.corpse = lower(info->valueOr("corpse", ""));
             t.canFly = info->numberOr("canfly", 0) != 0;
             std::string mc = lower(info->valueOr("movementclass", ""));
             if (mc.rfind("water", 0) == 0) t.domain = UnitType::Domain::Water;

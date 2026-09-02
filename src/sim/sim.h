@@ -46,6 +46,7 @@ struct UnitType {
     bool canTransport = false;
     int transportCap = 0;     // units carried (FBI transportcapacity)
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
+    std::string corpse;       // FBI corpse feature name
     Weapon weapon;         // WEAPON1; weapon.damage == 0 means unarmed
 };
 

@@ -31,6 +31,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -654,8 +655,22 @@ public:
                     std::string clean;
                     for (char c : line)
                         if (uint8_t(c) >= 32 && uint8_t(c) < 127) clean += c;
-                    if (!clean.empty()) briefing_.push_back("- " + clean);
+                    while (!clean.empty() && clean.back() == ' ') clean.pop_back();
+                    if (clean.empty()) continue;
+                    // Wrap to ~54 chars per line for the panel.
+                    std::string cur = "- ";
+                    std::istringstream ws(clean);
+                    std::string word;
+                    while (ws >> word) {
+                        if (cur.size() + word.size() > 54) {
+                            briefing_.push_back(cur);
+                            cur = "  ";
+                        }
+                        cur += word + " ";
+                    }
+                    if (cur.size() > 2) briefing_.push_back(cur);
                 }
+                if (briefing_.size() > 10) briefing_.resize(10);
                 briefTimer_ = 30;
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "mission cob: %s\n", e.what());
@@ -1025,6 +1040,12 @@ public:
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
         tickAi(dt);
         if (briefTimer_ > 0) briefTimer_ -= dt;
+        for (auto& u : world_.units()) {
+            if (u.alive() || u.deadFor < 4.0f || corpsed_.count(u.id)) continue;
+            corpsed_.insert(u.id);
+            if (u.type && !u.type->corpse.empty())
+                addFeature(u.type->corpse, u.x, u.z, false);
+        }
         if (noticeTimer_ > 0) noticeTimer_ -= dt;
         if (missionVm_) {
             missionVm_->tick(dt);
@@ -1182,6 +1203,12 @@ public:
         for (const auto& it : items) {
             if (it.f) {
                 const auto& f = *it.f;
+                if (f.shadow) {
+                    SDL_FRect sd{(f.x - mapView_.offX() - float(f.sxoff)) * zm0,
+                                 (f.z - mapView_.offY() - float(f.syoff)) * zm0,
+                                 float(f.sw) * zm0, float(f.sh) * zm0};
+                    SDL_RenderCopyF(ren_, f.shadow, nullptr, &sd);
+                }
                 SDL_FRect dst{(f.x - mapView_.offX() - float(f.xoff)) * zm0,
                               (f.z - mapView_.offY() - float(f.yoff)) * zm0,
                               float(f.w) * zm0, float(f.h) * zm0};
@@ -1308,7 +1335,7 @@ public:
         // Mission briefing (first 30s) and event notices.
         if (briefTimer_ > 0 && hudFont_.ok()) {
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-            SDL_FRect bg{float(winW) - 470, 8, 462,
+            SDL_FRect bg{float(winW) - 560, 8, 552,
                          14.0f + 16.0f * float(briefing_.size())};
             SDL_SetRenderDrawColor(ren_, 10, 10, 20, 170);
             SDL_RenderFillRectF(ren_, &bg);
@@ -1709,16 +1736,25 @@ private:
 
     struct FeatureInst {
         SDL_Texture* tex = nullptr;
+        SDL_Texture* shadow = nullptr;
         int w = 0, h = 0, xoff = 0, yoff = 0;
+        int sw = 0, sh = 0, sxoff = 0, syoff = 0;
         float x = 0, z = 0;
     };
     std::vector<FeatureInst> features_;
 
-    void loadFeatures() {
-        const auto& names = mapView_.map().featureNames;
-        if (names.empty()) return;
-        // Feature definitions from data/features/**/*.tdf
-        std::map<std::string, tak::tdf::Node> defs;
+    struct FeatArt {
+        SDL_Texture* tex = nullptr;
+        SDL_Texture* shadow = nullptr;
+        int w = 0, h = 0, xoff = 0, yoff = 0;
+        int sw = 0, sh = 0, sxoff = 0, syoff = 0;
+    };
+    std::map<std::string, tak::tdf::Node> featureDefs_;
+    std::map<std::string, tak::gaf::Palette> featurePals_;
+    std::map<std::string, FeatArt> featureArt_;
+
+    void loadFeatureDefs() {
+        if (!featureDefs_.empty()) return;
         try {
             for (const auto& e : std::filesystem::recursive_directory_iterator(
                      dataRoot_ + "/features")) {
@@ -1728,97 +1764,119 @@ private:
                     for (const auto& n : root.childOrder) {
                         std::string k = n;
                         std::transform(k.begin(), k.end(), k.begin(), ::tolower);
-                        defs[k] = root.children.at(n);
+                        featureDefs_[k] = root.children.at(n);
                     }
                 } catch (const std::exception&) {}
             }
-        } catch (const std::exception&) { return; }
+        } catch (const std::exception&) {}
+    }
 
-        std::map<std::string, tak::gaf::Palette> pals;
-        auto palette = [&](std::string world) -> const tak::gaf::Palette* {
-            std::transform(world.begin(), world.end(), world.begin(), ::tolower);
-            auto it = pals.find(world);
-            if (it != pals.end()) return &it->second;
-            const std::string cands[] = {world + "_features.pcx", world + ".pcx",
-                                         std::string("aramon_features.pcx")};
-            for (const std::string& cand : cands) {
-                try {
-                    return &pals.emplace(world, tak::gaf::Palette::load(
-                                                    dataRoot_ + "/palettes/" + cand))
-                                .first->second;
-                } catch (const std::exception&) {}
-            }
-            return nullptr;
-        };
+    const tak::gaf::Palette* featurePalette(std::string world) {
+        std::transform(world.begin(), world.end(), world.begin(), ::tolower);
+        auto it = featurePals_.find(world);
+        if (it != featurePals_.end()) return &it->second;
+        const std::string cands[] = {world + "_features.pcx", world + ".pcx",
+                                     std::string("aramon_features.pcx")};
+        for (const std::string& cand : cands) {
+            try {
+                return &featurePals_
+                            .emplace(world, tak::gaf::Palette::load(
+                                                dataRoot_ + "/palettes/" + cand))
+                            .first->second;
+            } catch (const std::exception&) {}
+        }
+        return nullptr;
+    }
 
-        struct Art { SDL_Texture* tex; int w, h, xoff, yoff; };
-        std::map<std::string, Art> artCache;
-        auto art = [&](const tak::tdf::Node& def) -> Art* {
-            std::string file = def.valueOr("filename", "");
-            std::string seq = def.valueOr("seqname", "");
-            std::string key = file + "|" + seq;
-            auto it = artCache.find(key);
-            if (it != artCache.end()) return it->second.tex ? &it->second : nullptr;
-            Art a{};
-            const auto* pal = palette(def.valueOr("world", "aramon"));
-            if (pal) {
-                try {
-                    std::string f = file;
-                    std::transform(f.begin(), f.end(), f.begin(), ::tolower);
-                    for (auto& sq : tak::gaf::load(dataRoot_ + "/anims/" + f + ".gaf",
-                                                   *pal)) {
-                        if (sq.name.size() != seq.size()) continue;
-                        bool eq = true;
-                        for (size_t i = 0; i < seq.size(); ++i)
-                            if (std::tolower(sq.name[i]) != std::tolower(seq[i])) {
-                                eq = false;
-                                break;
-                            }
-                        if (!eq || sq.frames.empty()) continue;
-                        auto& fr = sq.frames[0];
-                        if (fr.width == 0) continue;
+    FeatArt* featureArtFor(const tak::tdf::Node& def) {
+        std::string file = def.valueOr("filename", "");
+        std::string seq = def.valueOr("seqname", "");
+        std::string seqShad = def.valueOr("seqnameshad", "");
+        std::string key = file + "|" + seq;
+        auto it = featureArt_.find(key);
+        if (it != featureArt_.end()) return it->second.tex ? &it->second : nullptr;
+        FeatArt a{};
+        const auto* pal = featurePalette(def.valueOr("world", "aramon"));
+        if (pal) {
+            try {
+                std::string f = file;
+                std::transform(f.begin(), f.end(), f.begin(), ::tolower);
+                auto ieq = [](const std::string& x, const std::string& y) {
+                    if (x.size() != y.size()) return false;
+                    for (size_t i = 0; i < x.size(); ++i)
+                        if (std::tolower(x[i]) != std::tolower(y[i])) return false;
+                    return true;
+                };
+                for (auto& sq : tak::gaf::load(dataRoot_ + "/anims/" + f + ".gaf", *pal)) {
+                    if (sq.frames.empty() || sq.frames[0].width == 0) continue;
+                    auto& fr = sq.frames[0];
+                    if (ieq(sq.name, seq)) {
                         a.tex = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                                   SDL_TEXTUREACCESS_STATIC, fr.width,
                                                   fr.height);
                         SDL_UpdateTexture(a.tex, nullptr, fr.rgba.data(), fr.width * 4);
                         SDL_SetTextureBlendMode(a.tex, SDL_BLENDMODE_BLEND);
-                        a.w = fr.width;
-                        a.h = fr.height;
-                        a.xoff = fr.xoff;
-                        a.yoff = fr.yoff;
-                        break;
+                        a.w = fr.width; a.h = fr.height;
+                        a.xoff = fr.xoff; a.yoff = fr.yoff;
+                    } else if (!seqShad.empty() && ieq(sq.name, seqShad)) {
+                        // Shadow: silhouette drawn as translucent black.
+                        std::vector<uint8_t> px = fr.rgba;
+                        for (size_t i = 0; i + 3 < px.size(); i += 4) {
+                            px[i] = px[i + 1] = px[i + 2] = 0;
+                            px[i + 3] = px[i + 3] ? 90 : 0;
+                        }
+                        a.shadow = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                     SDL_TEXTUREACCESS_STATIC, fr.width,
+                                                     fr.height);
+                        SDL_UpdateTexture(a.shadow, nullptr, px.data(), fr.width * 4);
+                        SDL_SetTextureBlendMode(a.shadow, SDL_BLENDMODE_BLEND);
+                        a.sw = fr.width; a.sh = fr.height;
+                        a.sxoff = fr.xoff; a.syoff = fr.yoff;
                     }
-                } catch (const std::exception&) {}
-            }
-            artCache[key] = a;
-            return a.tex ? &artCache[key] : nullptr;
-        };
+                }
+            } catch (const std::exception&) {}
+        }
+        featureArt_[key] = a;
+        return featureArt_[key].tex ? &featureArt_[key] : nullptr;
+    }
 
+    // Place one feature instance by definition name; returns success.
+    bool addFeature(const std::string& rawName, float x, float z, bool blockNav) {
+        loadFeatureDefs();
+        std::string key = rawName;
+        std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+        auto di = featureDefs_.find(key);
+        if (di == featureDefs_.end()) return false;
+        FeatArt* a = featureArtFor(di->second);
+        if (!a) return false;
+        FeatureInst inst;
+        inst.tex = a->tex;
+        inst.shadow = a->shadow;
+        inst.w = a->w; inst.h = a->h; inst.xoff = a->xoff; inst.yoff = a->yoff;
+        inst.sw = a->sw; inst.sh = a->sh; inst.sxoff = a->sxoff; inst.syoff = a->syoff;
+        inst.x = x;
+        inst.z = z;
+        features_.push_back(inst);
+        if (blockNav) {
+            int fx = int(di->second.numberOr("footprintx", 1));
+            int fz = int(di->second.numberOr("footprintz", 1));
+            world_.nav().block(int(x) / 16 - fx / 2, int(z) / 16 - fz / 2, fx, fz, true);
+        }
+        return true;
+    }
+
+    void loadFeatures() {
+        const auto& names = mapView_.map().featureNames;
+        if (names.empty()) return;
+        loadFeatureDefs();
         const auto& map = mapView_.map();
         int placed = 0;
         for (int cz = 0; cz < map.height; ++cz)
             for (int cx = 0; cx < map.width; ++cx) {
                 uint16_t v = map.features[size_t(cz) * map.width + cx];
-                if (v == 0xFFFF || v >= names.size()) continue;
-                std::string key = names[v];
-                std::transform(key.begin(), key.end(), key.begin(), ::tolower);
-                auto di = defs.find(key);
-                if (di == defs.end()) continue;
-                Art* a = art(di->second);
-                if (!a) continue;
-                FeatureInst inst;
-                inst.tex = a->tex;
-                inst.w = a->w;
-                inst.h = a->h;
-                inst.xoff = a->xoff;
-                inst.yoff = a->yoff;
-                inst.x = float(cx) * 16 + 8;
-                inst.z = float(cz) * 16 + 8;
-                features_.push_back(inst);
-                int fx = int(di->second.numberOr("footprintx", 1));
-                int fz = int(di->second.numberOr("footprintz", 1));
-                world_.nav().block(cx - fx / 2, cz - fz / 2, fx, fz, true);
-                ++placed;
+                if (v >= names.size()) continue;
+                if (addFeature(names[v], float(cx) * 16 + 8, float(cz) * 16 + 8, true))
+                    ++placed;
             }
         std::printf("features: %d placed\n", placed);
     }
@@ -1961,6 +2019,7 @@ private:
     std::string notice_;
     float noticeTimer_ = 0;
     std::set<std::pair<int, int>> inside_;
+    std::set<int> corpsed_;
     float trigTimer_ = 0;
 };
 
