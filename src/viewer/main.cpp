@@ -1040,6 +1040,7 @@ public:
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
         tickAi(dt);
         if (briefTimer_ > 0) briefTimer_ -= dt;
+        animClock_ += dt;
         for (auto& u : world_.units()) {
             if (u.alive() || u.deadFor < 4.0f || corpsed_.count(u.id)) continue;
             corpsed_.insert(u.id);
@@ -1219,7 +1220,11 @@ public:
                 SDL_FRect dst{(f.x - mapView_.offX() - float(f.xoff)) * zm0,
                               (f.z - mapView_.offY() - float(f.yoff)) * zm0,
                               float(f.w) * zm0, float(f.h) * zm0};
-                SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
+                SDL_Texture* tex = f.tex;
+                if (f.frames && f.frames->size() > 1)
+                    tex = (*f.frames)[(size_t(animClock_ * 8) + size_t(f.seed)) %
+                                      f.frames->size()];
+                SDL_RenderCopyF(ren_, tex, nullptr, &dst);
             } else {
                 // Soft shadow blob under mobile units.
                 const auto& u = *it.u;
@@ -1747,6 +1752,8 @@ private:
 
     struct FeatureInst {
         SDL_Texture* tex = nullptr;
+        const std::vector<SDL_Texture*>* frames = nullptr;
+        int seed = 0;
         SDL_Texture* shadow = nullptr;
         int w = 0, h = 0, xoff = 0, yoff = 0;
         int sw = 0, sh = 0, sxoff = 0, syoff = 0;
@@ -1759,6 +1766,7 @@ private:
         SDL_Texture* shadow = nullptr;
         int w = 0, h = 0, xoff = 0, yoff = 0;
         int sw = 0, sh = 0, sxoff = 0, syoff = 0;
+        std::vector<SDL_Texture*> frames;   // >1 entries when animating
     };
     std::map<std::string, tak::tdf::Node> featureDefs_;
     std::map<std::string, tak::gaf::Palette> featurePals_;
@@ -1822,13 +1830,26 @@ private:
                     if (sq.frames.empty() || sq.frames[0].width == 0) continue;
                     auto& fr = sq.frames[0];
                     if (ieq(sq.name, seq)) {
-                        a.tex = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
-                                                  SDL_TEXTUREACCESS_STATIC, fr.width,
-                                                  fr.height);
-                        SDL_UpdateTexture(a.tex, nullptr, fr.rgba.data(), fr.width * 4);
-                        SDL_SetTextureBlendMode(a.tex, SDL_BLENDMODE_BLEND);
-                        a.w = fr.width; a.h = fr.height;
-                        a.xoff = fr.xoff; a.yoff = fr.yoff;
+                        bool animate = def.numberOr("animating", 0) != 0 ||
+                                       def.numberOr("animatable", 0) != 0;
+                        size_t nf = animate ? sq.frames.size() : 1;
+                        for (size_t fi = 0; fi < nf; ++fi) {
+                            auto& ff = sq.frames[fi];
+                            if (ff.width == 0 || ff.height != fr.height ||
+                                ff.width != fr.width)
+                                continue;   // keep uniform dimensions only
+                            SDL_Texture* t = SDL_CreateTexture(
+                                ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
+                                ff.width, ff.height);
+                            SDL_UpdateTexture(t, nullptr, ff.rgba.data(), ff.width * 4);
+                            SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+                            a.frames.push_back(t);
+                        }
+                        if (!a.frames.empty()) {
+                            a.tex = a.frames[0];
+                            a.w = fr.width; a.h = fr.height;
+                            a.xoff = fr.xoff; a.yoff = fr.yoff;
+                        }
                     } else if (!seqShad.empty() && ieq(sq.name, seqShad)) {
                         // Shadow: silhouette drawn as translucent black.
                         std::vector<uint8_t> px = fr.rgba;
@@ -1862,6 +1883,8 @@ private:
         if (!a) return false;
         FeatureInst inst;
         inst.tex = a->tex;
+        inst.frames = &a->frames;
+        inst.seed = int(features_.size() * 7);
         inst.shadow = a->shadow;
         inst.w = a->w; inst.h = a->h; inst.xoff = a->xoff; inst.yoff = a->yoff;
         inst.sw = a->sw; inst.sh = a->sh; inst.sxoff = a->sxoff; inst.syoff = a->syoff;
@@ -2031,6 +2054,7 @@ private:
     float noticeTimer_ = 0;
     std::set<std::pair<int, int>> inside_;
     std::set<int> corpsed_;
+    float animClock_ = 0;
     float trigTimer_ = 0;
 };
 
