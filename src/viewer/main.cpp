@@ -1400,6 +1400,17 @@ public:
     }
 
     std::string lodeUnit;
+    void faceTest() {
+        aiEnabled_ = false;
+        float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        struct D { float dx, dz; };
+        float ddx[4]={0,400,0,-400}, ddz[4]={-400,0,400,0};
+        for (int i=0;i<4;i++){
+            int id=spawn("araarch", cx+ddx[i]*0.15f, cz+ddz[i]*0.15f, 0, 0);
+            world_.order(id, cx+ddx[i], cz+ddz[i], false);
+        }
+        mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
+    }
     void fireTest() {
         aiEnabled_ = false;
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
@@ -2137,7 +2148,7 @@ private:
                            oname.find("gpoly") != std::string::npos ||
                            oname.find("gpoint") != std::string::npos;
         const float tilt = gTilt;
-        float cy = std::cos(heading + 3.14159f), sy = std::sin(heading + 3.14159f);
+        float cy = std::cos(heading), sy = std::sin(heading);
         float ct = std::cos(tilt), st = std::sin(tilt);
         for (const auto& p : o.primitives) {
             if (groundPlate) break;
@@ -2959,7 +2970,7 @@ int main(int argc, char** argv) {
          hilltest = false, keytest = false, guardtest = false, selonly = false,
          lodetest = false;
     std::string lodeUnitName;
-    bool firetest = false;
+    bool firetest = false, facetest = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -2984,6 +2995,7 @@ int main(int argc, char** argv) {
         else if (a == "--guardtest") guardtest = true;
         else if (a == "--lodetest") lodetest = true;
         else if (a == "--firetest") firetest = true;
+        else if (a == "--facetest") facetest = true;
 
         else if (a == "--tilt" && i + 1 < argc) gTilt = std::stof(argv[++i]);
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
@@ -3047,7 +3059,8 @@ int main(int argc, char** argv) {
         } else if (mode == "game" && args.size() >= 3) {
             gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo,
                                                   scenario, missionFlag,
-                                                  navy || amphib || firetest, side, aiSide);
+                                                  navy || amphib || firetest || facetest,
+                                                  side, aiSide);
             if (net) gameView->setNet(net.get());
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);
@@ -3060,6 +3073,7 @@ int main(int argc, char** argv) {
             if (guardtest) gameView->guardTest();
             if (lodetest) { gameView->lodeUnit = lodeUnitName; gameView->lodeTest(); }
             if (firetest) gameView->fireTest();
+            if (facetest) gameView->faceTest();
 
             if (nofog) gameView->noFog_ = true;
             if (doLook) gameView->lookAt(lookX, lookZ);
