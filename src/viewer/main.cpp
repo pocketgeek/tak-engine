@@ -721,7 +721,7 @@ public:
             {"ver", {"vermage", "verkeep", "verlode", "verliege",
                      {"verarch", "verarch", "versword", "versword"}}},
             {"zon", {"zonhunt", "", "zonlode", "zonhand",
-                     {"zongob", "zongob", "zongob", "zonhand"}}},
+                     {"zongob", "zonter", "zontroll", "zonbat"}}},
             {"cre", {"cresage", "creacad", "crelode", "cremech",
                      {"creauto", "creauto", "crebeas", "creshoc"}}},
         };
@@ -1073,6 +1073,7 @@ public:
         aiCycle_ = {ak.squad[0], ak.squad[1], ak.squad[2], ak.squad[3]};
         aiKeepType_ = ak.keep;
         aiLodeType_ = ak.lode;
+        aiBuilderType_ = ak.builder;
         // Monarchs face one another.
         float pFace = std::atan2(ax - px, az - pz);
         float aFace = std::atan2(px - ax, pz - az);
@@ -2151,6 +2152,10 @@ private:
     void runBuildAi(int team, int monarchId, int& keepId,
                     const std::string& keepType, const std::string& lodeType,
                     const std::array<std::string, 4>& cycle) {
+        // Keepless factions (Zhon): the Monarch raises Beast Handlers and the
+        // Handlers summon the fighting creatures — a two-tier build order.
+        if (keepType.empty()) { runSummonAi(team, monarchId, lodeType, cycle); return; }
+
         if (auto* k = world_.unit(keepId); !k || !k->alive()) keepId = -1;
 
         auto* m = world_.unit(monarchId);
@@ -2200,24 +2205,97 @@ private:
             world_.train(keepId,
                          registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]));
 
-        // Once a strike force has gathered, send the non-builders at the enemy.
+        sendWaves(team);
+    }
+
+    // Zhon-style production: no keep. The Monarch builds a couple of
+    // lodestones then Beast Handlers; each idle Handler summons the next
+    // creature in the cycle (a mobile builder producing a mobile unit).
+    void runSummonAi(int team, int monarchId, const std::string& lodeType,
+                     const std::array<std::string, 4>& cycle) {
+        const auto* lt = lodeType.empty() ? nullptr : registry_.find(lodeType);
+        const auto* ht =
+            aiBuilderType_.empty() ? nullptr : registry_.find(aiBuilderType_);
+
+        auto* m = world_.unit(monarchId);
+        bool monIdle = m && m->alive() && m->type && m->type->isBuilder &&
+                       m->orders.empty() && m->buildSiteId == 0;
+        if (monIdle) {
+            // A summoning Handler drains ~25 mogrium/s but a lodestone only
+            // yields 10, so economy has to stay well ahead of Handler count.
+            // Interleave: ~3-4 lodes per Handler.
+            const tak::sim::UnitType* want = nullptr;
+            if (lt && aiLodes_ < 3) want = lt;                 // seed economy
+            else if (ht && aiHandlers_ < 1) want = ht;         // first Handler
+            else if (lt && aiLodes_ < 5) want = lt;            // grow income
+            else if (ht && aiHandlers_ < 2) want = ht;         // second Handler
+            else if (lt && aiLodes_ < 7) want = lt;            // grow income
+            else if (ht && aiHandlers_ < 3) want = ht;         // third Handler
+            if (want) {
+                float mx = m->x, mz = m->z;
+                for (float r = 70; r < 340 && want; r += 30)
+                    for (float a = 0; a < 6.28f; a += 0.5f) {
+                        float x = mx + std::cos(a) * r, z = mz + std::sin(a) * r;
+                        if (!world_.canPlace(want, x, z)) continue;
+                        int b = world_.startBuild(monarchId, want, x, z);
+                        if (b > 0) { if (want == ht) ++aiHandlers_; else ++aiLodes_; }
+                        want = nullptr;   // one order per tick
+                        break;
+                    }
+            }
+        }
+
+        // One idle Beast Handler summons the next creature in the cycle.
+        int handler = 0;
+        for (auto& u : world_.units())
+            if (u.alive() && u.team == team && u.type && u.type->isBuilder &&
+                u.id != monarchId && u.orders.empty() && u.buildSiteId == 0) {
+                handler = u.id;
+                break;
+            }
+        if (handler) {
+            const tak::sim::UnitType* ct = nullptr;
+            for (int k = 0; k < 4 && !ct; ++k) {   // skip builders in the cycle
+                const auto* c = registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]);
+                if (c && c->canMove && !c->isBuilder) ct = c;
+            }
+            if (const auto* h = ct ? world_.unit(handler) : nullptr) {
+                float hx = h->x, hz = h->z;
+                for (float r = 40; r < 170; r += 20)
+                    for (float a = 0; a < 6.28f; a += 0.6f) {
+                        float x = hx + std::cos(a) * r, z = hz + std::sin(a) * r;
+                        if (!world_.canPlace(ct, x, z)) continue;
+                        world_.startBuild(handler, ct, x, z);
+                        r = 1e9f;   // done
+                        break;
+                    }
+            }
+        }
+
+        sendWaves(team);
+    }
+
+    // Once a strike force has gathered, send the (non-builder) fighters at the
+    // nearest enemy. Ids are collected first so world_.attack never mutates a
+    // container being iterated.
+    void sendWaves(int team) {
         std::vector<int> idle;
         for (auto& u : world_.units())
             if (u.alive() && u.team == team && u.type && u.type->canMove &&
                 !u.type->isBuilder && u.orders.empty())
                 idle.push_back(u.id);
-        if (idle.size() >= 4) {
-            for (int id : idle) {
-                const auto* me = world_.unit(id);
-                int best = 0;
-                float bestD = 1e18f;
-                for (auto& e : world_.units()) {
-                    if (!e.alive() || e.team == team) continue;
-                    float dx = e.x - me->x, dz = e.z - me->z;
-                    if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; best = e.id; }
-                }
-                if (best) world_.attack(id, best, false);
+        if (idle.size() < 4) return;
+        for (int id : idle) {
+            const auto* me = world_.unit(id);
+            if (!me) continue;
+            int best = 0;
+            float bestD = 1e18f;
+            for (auto& e : world_.units()) {
+                if (!e.alive() || e.team == team) continue;
+                float dx = e.x - me->x, dz = e.z - me->z;
+                if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; best = e.id; }
             }
+            if (best) world_.attack(id, best, false);
         }
     }
 
@@ -2563,7 +2641,9 @@ private:
     int playerMonarchId_ = -1, aiMonarchId_ = -1;
     std::string aiKeepType_;    // production building the AI Monarch builds
     std::string aiLodeType_;    // AI lodestone type (economy)
+    std::string aiBuilderType_; // keepless (Zhon) AI: the Handler the Monarch builds
     int aiLodes_ = 0;           // lodestones the AI has queued so far
+    int aiHandlers_ = 0;        // Beast Handlers the AI has queued so far
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = 0, mouseY_ = 0;
     SDL_Texture* fogTex_ = nullptr;
