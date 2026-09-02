@@ -582,7 +582,9 @@ public:
     GameView(SDL_Renderer* ren, const std::string& tntPath, const std::string& terrainDir,
              const std::string& dataRoot, bool demo, bool scenario, bool mission,
              bool bare, const std::string& side = "ara", const std::string& aiSide = "tar")
-        : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot) {
+        // (side_ initialized below before loadPanel uses it)
+        : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot),
+          side_(side) {
         registry_.loadDir(dataRoot_ + "/units");
         registry_.loadBuildTree(dataRoot_ + "/canbuild");
         ipRoot_ = dataRoot_ + "/../IPData";
@@ -606,7 +608,7 @@ public:
         loadOrderButtons();
         sounds_.init(dataRoot_ + "/../english/Sounds", false);
         soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
-        loadPanel("ara");
+        loadPanel(side_);
 
         if (mission) {
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
@@ -915,7 +917,6 @@ public:
     }
 
     void input(const SDL_Event& e, int winW, int winH) {
-        (void)winW; (void)winH;
         float zm = mapView_.zoom();
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE &&
             (placing_ || pendingCmd_)) {
@@ -969,7 +970,7 @@ public:
             mouseY_ = float(e.motion.y);
             if (dragging_) { dragX1_ = float(e.motion.x); dragY1_ = float(e.motion.y); }
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
-                   e.button.y > kWinH - kBarH) {
+                   e.button.y > winH - kBarH) {
             // bottom bar: build-icon clicks; everything else is swallowed
             if (e.button.button == SDL_BUTTON_LEFT) {
                 for (const auto& [r, bt] : iconRects_) {
@@ -991,10 +992,10 @@ public:
                 }
             }
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
-                   orderColumnClick(float(e.button.x), float(e.button.y), kWinW)) {
+                   orderColumnClick(float(e.button.x), float(e.button.y), winW)) {
             // order button handled
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
-                   minimapClick(float(e.button.x), float(e.button.y), winH)) {
+                   minimapClick(float(e.button.x), float(e.button.y), winW, winH)) {
             // camera moved via minimap
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    pendingCmd_) {
@@ -1240,6 +1241,8 @@ public:
     }
 
     uint32_t netTick() const { return netTick_; }
+    tak::sim::World& worldRef() { return world_; }
+    void selectOnly(int id) { selection_.clear(); selection_.push_back(id); }
     const std::string& netError() const { return netError_; }
     bool isNet() const { return net_ != nullptr; }
 
@@ -2162,6 +2165,7 @@ private:
     MapView mapView_;
     std::string dataRoot_;
     std::string ipRoot_;
+    std::string side_ = "ara";
     tak::sim::TypeRegistry registry_;
     tak::sim::World world_;
     std::map<std::string, Visual> visuals_;
@@ -2214,10 +2218,10 @@ private:
     float aiTimer_ = 0;
     static constexpr int kMiniSize = 180;
 
-    SDL_FRect minimapRect(int winH) const {
+    SDL_FRect minimapRect(int winW, int winH) const {
         (void)winH;
         float aspect = float(mapView_.map().blocksY) / float(mapView_.map().blocksX);
-        return {float(kWinW) - kMiniSize - 10, 10, kMiniSize, kMiniSize * aspect};
+        return {float(winW) - kMiniSize - 10, 10, kMiniSize, kMiniSize * aspect};
     }
 
     void buildMinimap() {
@@ -2245,7 +2249,7 @@ private:
     void drawMinimap(int winW, int winH) {
         (void)winW;
         if (!miniTex_) buildMinimap();
-        SDL_FRect r = minimapRect(winH);
+        SDL_FRect r = minimapRect(winW, winH);
         SDL_FRect frame{r.x - 2, r.y - 2, r.w + 4, r.h + 4};
         SDL_SetRenderDrawColor(ren_, 30, 30, 40, 255);
         SDL_RenderFillRectF(ren_, &frame);
@@ -2269,20 +2273,21 @@ private:
         // Camera view rectangle.
         float zm = mapView_.zoom();
         SDL_FPoint a = toMini(mapView_.offX(), mapView_.offY());
-        SDL_FRect view{a.x, a.y, kWinW / zm / mapW * r.w, kWinH / zm / mapH * r.h};
+        SDL_FRect view{a.x, a.y, winW / zm / mapW * r.w,
+                       (winH - kBarH) / zm / mapH * r.h};
         SDL_SetRenderDrawColor(ren_, 240, 240, 240, 200);
         SDL_RenderDrawRectF(ren_, &view);
     }
 
     // Returns true if the click was inside the minimap (and moved the camera).
-    bool minimapClick(float mx, float my, int winH) {
-        SDL_FRect r = minimapRect(winH);
+    bool minimapClick(float mx, float my, int winW, int winH) {
+        SDL_FRect r = minimapRect(winW, winH);
         if (mx < r.x || my < r.y || mx > r.x + r.w || my > r.y + r.h) return false;
         float mapW = float(mapView_.map().blocksX) * 32;
         float mapH = float(mapView_.map().blocksY) * 32;
         float wx = (mx - r.x) / r.w * mapW, wz = (my - r.y) / r.h * mapH;
         float zm = mapView_.zoom();
-        mapView_.setOffset(wx - kWinW / zm / 2, wz - kWinH / zm / 2);
+        mapView_.setOffset(wx - winW / zm / 2, wz - winH / zm / 2);
         return true;
     }
 
@@ -2452,21 +2457,22 @@ private:
     }
 
     void loadPanel(const std::string& side) {
+        std::string base = dataRoot_ + "/anims/" + side + "ingame";
+        if (!std::filesystem::exists(base + ".gaf") && !ipRoot_.empty())
+            base = ipRoot_ + "/anims/" + side + "ingame";
         try {
-            auto pal = tak::gaf::Palette::load(dataRoot_ + "/anims/" + side +
-                                               "ingame.pcx");
-            for (auto& sq : tak::gaf::load(dataRoot_ + "/anims/" + side + "ingame.gaf",
-                                           pal)) {
+            auto pal = tak::gaf::Palette::load(base + ".pcx");
+            for (auto& sq : tak::gaf::load(base + ".gaf", pal)) {
                 if (sq.frames.empty()) continue;
                 auto& f = sq.frames[0];
-                if (sq.name == "AidPanel") {
+                if (sq.name == "AidPanel" || sq.name == "MainPanel") {
                     panelTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                                   SDL_TEXTUREACCESS_STATIC, f.width,
                                                   f.height);
                     SDL_UpdateTexture(panelTex_, nullptr, f.rgba.data(), f.width * 4);
                     panelW_ = f.width;
                     panelH_ = f.height;
-                } else if (sq.name == "AidBotPanel") {
+                } else if (sq.name == "AidBotPanel" || sq.name == "BottomPanel") {
                     botTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                                 SDL_TEXTUREACCESS_STATIC, f.width,
                                                 f.height);
@@ -2644,6 +2650,9 @@ private:
                 const auto* bt = registry_.find(menu[i]);
                 if (!bt) continue;
                 SDL_FRect r{x, bar.y + 6, 60, kBarH - 16.0f};
+                SDL_SetRenderDrawColor(ren_, 20, 18, 14, 235);
+                SDL_FRect rb{r.x - 1, r.y - 1, r.w + 2, r.h + 2};
+                SDL_RenderFillRectF(ren_, &rb);
                 SDL_Texture* ic = iconFor(bt->id);
                 if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &r);
                 else {
@@ -3057,7 +3066,14 @@ int main(int argc, char** argv) {
                 ev.motion.y = y;
                 SDL_PushEvent(&ev);
             };
-            if (ktPhase == 0 && ktClock > 0.3f) { click(253, 453, SDL_BUTTON_LEFT); ktPhase = 1; }
+            if (ktPhase == 0 && ktClock > 0.3f) {
+                for (auto& u : gameView->worldRef().units())
+                    if (u.alive() && u.team == 0 && u.type && u.type->isBuilder) {
+                        gameView->selectOnly(u.id);
+                        break;
+                    }
+                ktPhase = 1;
+            }
             else if (ktPhase == 1 && ktClock > 0.6f) { key(SDLK_1); ktPhase = 2; }
             else if (ktPhase == 2 && ktClock > 0.9f) { motion(400, 453); ktPhase = 3; }
             else if (ktPhase == 3 && ktClock > 1.2f) { click(400, 453, SDL_BUTTON_LEFT); ktPhase = 4; }
