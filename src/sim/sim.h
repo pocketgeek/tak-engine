@@ -84,6 +84,12 @@ struct Order {
     bool guard = false;        // follow friendly `targetId`, engage threats
 };
 
+// A queued construction: build `type` at (x, z) when the builder gets to it.
+struct BuildOrder {
+    const UnitType* type = nullptr;
+    float x = 0, z = 0;
+};
+
 struct Unit {
     int id = 0;
     int team = 0;
@@ -100,6 +106,7 @@ struct Unit {
     bool underConstruction = false;
     bool buildBegun = false;   // construction site: true once the builder arrived
     int buildSiteId = 0;   // builder: id of the building it is constructing
+    std::deque<BuildOrder> buildOrders;   // builder: queued (shift) builds
     int inTransport = 0;   // id of carrying transport, 0 = none
     std::vector<int> cargo;
     std::deque<Order> orders;
@@ -180,6 +187,9 @@ public:
     // Mobile builder constructs a building at (x, z). Returns the new
     // building's id, or 0 if the site is invalid.
     int startBuild(int builderId, const UnitType* type, float x, float z);
+    // Build now if the builder is free, else queue it (shift-click). A
+    // non-queued order replaces any pending queue.
+    void queueBuild(int builderId, const UnitType* type, float x, float z, bool queue);
     bool canPlace(const UnitType* type, float x, float z) const;
     // Mana deposit ("Sacred Stone") spots, in world px. Lodestones (onMana)
     // can only be built on one, but only when the map actually has any.

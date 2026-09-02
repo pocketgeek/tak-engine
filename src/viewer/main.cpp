@@ -1256,14 +1256,16 @@ public:
             float wx = mapView_.offX() + e.button.x / zm;
             float wz = mapView_.offY() + e.button.y / zm;
             if (!selection_.empty() && world_.canPlace(placing_, wx, wz)) {
+                bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::Build;
-                c.unitId = selection_.front();
+                c.unitId = selectedBuilder() ? selectedBuilder()->id : selection_.front();
                 c.x = wx;
                 c.z = wz;
+                c.queue = queue;
                 std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
                 issue(c);
-                placing_ = nullptr;
+                if (!queue) placing_ = nullptr;   // shift keeps placing more
             }
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
                    placing_) {
@@ -1421,7 +1423,8 @@ public:
                 break;
             case Cmd::Build:
                 if (owns(c.unitId))
-                    world_.startBuild(c.unitId, registry_.find(c.type), c.x, c.z);
+                    world_.queueBuild(c.unitId, registry_.find(c.type), c.x, c.z,
+                                      c.queue);
                 break;
             case Cmd::Guard:
                 if (owns(c.unitId)) world_.guard(c.unitId, c.targetId, c.queue);
