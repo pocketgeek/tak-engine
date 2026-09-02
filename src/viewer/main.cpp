@@ -1243,6 +1243,8 @@ public:
     uint32_t netTick() const { return netTick_; }
     tak::sim::World& worldRef() { return world_; }
     void selectOnly(int id) { selection_.clear(); selection_.push_back(id); }
+    size_t menuSize(const std::string& id) { return registry_.buildable(id).size(); }
+    bool hasIP() const { return !ipRoot_.empty(); }
     const std::string& netError() const { return netError_; }
     bool isNet() const { return net_ != nullptr; }
 
@@ -2908,7 +2910,7 @@ int main(int argc, char** argv) {
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
          misstest = false, nofog = false, doLook = false, creon = false,
-         hilltest = false, keytest = false, guardtest = false;
+         hilltest = false, keytest = false, guardtest = false, selonly = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -2931,6 +2933,7 @@ int main(int argc, char** argv) {
         else if (a == "--aiside" && i + 1 < argc) aiSide = argv[++i];
         else if (a == "--keytest") keytest = true;
         else if (a == "--guardtest") guardtest = true;
+        else if (a == "--selonly") selonly = true;
         else if (a == "--host" && i + 1 < argc) hostPort = std::atoi(argv[++i]);
         else if (a == "--join" && i + 2 < argc) {
             joinAddr = argv[++i];
@@ -3023,6 +3026,7 @@ int main(int argc, char** argv) {
     float netAccum = 0;
     int ktPhase = keytest ? 0 : -1;
     float ktClock = 0;
+    bool keytestSelectOnly = selonly;
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
         SDL_Event e;
@@ -3067,12 +3071,12 @@ int main(int argc, char** argv) {
                 SDL_PushEvent(&ev);
             };
             if (ktPhase == 0 && ktClock > 0.3f) {
+                int pick = -1;
                 for (auto& u : gameView->worldRef().units())
-                    if (u.alive() && u.team == 0 && u.type && u.type->isBuilder) {
-                        gameView->selectOnly(u.id);
-                        break;
-                    }
-                ktPhase = 1;
+                    if (u.alive() && u.team == 0 && u.type && u.type->isBuilder)
+                        pick = u.id;
+                if (pick >= 0) gameView->selectOnly(pick);
+                ktPhase = keytestSelectOnly ? 4 : 1;
             }
             else if (ktPhase == 1 && ktClock > 0.6f) { key(SDLK_1); ktPhase = 2; }
             else if (ktPhase == 2 && ktClock > 0.9f) { motion(400, 453); ktPhase = 3; }

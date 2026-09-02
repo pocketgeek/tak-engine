@@ -111,7 +111,9 @@ void TypeRegistry::loadBuildTree(const std::filesystem::path& canbuildDir) {
         }
         std::sort(entries.begin(), entries.end());
         auto& list = buildTree_[builder];
-        for (auto& [p, id] : entries) list.push_back(id);
+        for (auto& [p, id] : entries)
+            if (std::find(list.begin(), list.end(), id) == list.end())
+                list.push_back(id);
     }
 }
 
