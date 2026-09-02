@@ -574,6 +574,15 @@ public:
         if (!ipRoot_.empty() && std::filesystem::exists(ipRoot_ + "/textures"))
             loadTextures(ipRoot_ + "/textures", ipRoot_ + "/palettes/cre_textures.pcx");
         mapView_.setZoom(0.9f);
+        try {
+            hudFont_ = Font(ren_, dataRoot_ + "/fonts/bodfontbody.gaf");
+            bigFont_ = Font(ren_, dataRoot_ + "/fonts/font48.gaf");
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "font load: %s\n", e.what());
+        }
+        sounds_.init(dataRoot_ + "/../english/Sounds", false);
+        soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
+        loadPanel("ara");
 
         if (mission) {
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
@@ -621,7 +630,6 @@ public:
             }
             aiEnabled_ = false;   // no wave AI; guards fight via auto-acquire
             loadFeatures();
-
             // Mission scripts: run the authentic COB event handlers.
             try {
                 std::filesystem::path cobPath = tntPath;
@@ -686,12 +694,6 @@ public:
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "mission cob: %s\n", e.what());
             }
-            try {
-                hudFont_ = Font(ren_, dataRoot_ + "/fonts/bodfontbody.gaf");
-                bigFont_ = Font(ren_, dataRoot_ + "/fonts/font48.gaf");
-            } catch (const std::exception&) {}
-            sounds_.init(dataRoot_ + "/../english/Sounds", false);
-            soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
             return;
         }
 
@@ -717,6 +719,26 @@ public:
                                       cz / float(n) - 400 / 0.9f);
             aiEnabled_ = false;   // placements only; auto-acquire still fights
             loadFeatures();
+
+            // Skirmish victory rule from the map's trigger section: a scoring
+            // unit type, a scoring region, and a time limit.
+            auto trig = tak::crt::loadTriggers(crtPath);
+            for (const auto& r : trig.regions)
+                if (r.name.rfind("Player", 0) != 0 && r.x2 > r.x1) scenRegion_ = r;
+            for (const auto& sv : trig.strings) {
+                std::string lo = sv;
+                std::transform(lo.begin(), lo.end(), lo.begin(), ::tolower);
+                if (!scenUnit_ && registry_.find(lo)) scenUnit_ = registry_.find(lo);
+                if (scenTime_ <= 0 && sv.size() >= 2 &&
+                    sv.find_first_not_of("0123456789") == std::string::npos) {
+                    int v = std::atoi(sv.c_str());
+                    if (v >= 60 && v <= 7200) scenTime_ = float(v);
+                }
+            }
+            if (scenUnit_ && scenTime_ > 0 && !scenRegion_.name.empty())
+                std::printf("scenario rule: most %s in '%s' after %.0fs\n",
+                            scenUnit_->name.c_str(), scenRegion_.name.c_str(),
+                            scenTime_);
             return;
         }
 
@@ -779,15 +801,6 @@ public:
         }
         }
 
-        try {
-            hudFont_ = Font(ren_, dataRoot_ + "/fonts/bodfontbody.gaf");
-            bigFont_ = Font(ren_, dataRoot_ + "/fonts/font48.gaf");
-        } catch (const std::exception& e) {
-            std::fprintf(stderr, "font load: %s\n", e.what());
-        }
-        sounds_.init(dataRoot_ + "/../english/Sounds", false);
-        soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
-        loadPanel("ara");
         for (auto& u : world_.units()) {
             if (!u.type || u.type->canMove) continue;
             tak::sim::blockFootprint(world_.nav(), *u.type, u.x, u.z, true);
@@ -1145,6 +1158,17 @@ public:
         mapView_.setOffset(1500 - 640 / 0.9f, 1380 - 400 / 0.9f);
     }
 
+    void hillTest() {
+        // Team 0 gets 2 scoring units in the region, team 1 gets 1.
+        if (!scenUnit_ || scenRegion_.name.empty()) return;
+        float cx = float(scenRegion_.x1 + scenRegion_.x2) * 8;
+        float cz = float(scenRegion_.z1 + scenRegion_.z2) * 8;
+        spawn(scenUnit_->id, cx - 20, cz, 0, 0);
+        spawn(scenUnit_->id, cx + 20, cz, 0, 0);
+        spawn(scenUnit_->id, cx, cz + 30, 0, 1);
+        scenClock_ = scenTime_ - 12;   // fast-forward the timer for testing
+    }
+
     void creonDemo() {
         aiEnabled_ = false;
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
@@ -1210,6 +1234,29 @@ public:
         tickAi(dt);
         if (briefTimer_ > 0) briefTimer_ -= dt;
         animClock_ += dt;
+        if (scenUnit_ && scenTime_ > 0 && outcome_ == 0) {
+            scenClock_ += dt;
+            if (scenClock_ >= scenTime_) {
+                int counts[4] = {0, 0, 0, 0};
+                for (auto& u : world_.units()) {
+                    if (!u.alive() || !u.type || u.type != scenUnit_) continue;
+                    int cx = int(u.x) / 16, cz = int(u.z) / 16;
+                    if (cx >= scenRegion_.x1 && cz >= scenRegion_.z1 &&
+                        cx <= scenRegion_.x2 && cz <= scenRegion_.z2 && u.team < 4)
+                        ++counts[u.team];
+                }
+                int best = 0;
+                for (int i = 1; i < 4; ++i)
+                    if (counts[i] > counts[best]) best = i;
+                bool tie = false;
+                for (int i = 0; i < 4; ++i)
+                    if (i != best && counts[i] == counts[best]) tie = true;
+                std::printf("scenario result: %d %d %d %d -> %s\n", counts[0],
+                            counts[1], counts[2], counts[3],
+                            tie ? "tie" : (best == localTeam_ ? "win" : "loss"));
+                outcome_ = (!tie && best == localTeam_) ? 1 : -1;
+            }
+        }
         for (auto& u : world_.units()) {
             if (u.alive() || u.deadFor < 4.0f || corpsed_.count(u.id)) continue;
             corpsed_.insert(u.id);
@@ -1558,6 +1605,13 @@ public:
                 hudFont_.draw(ren_, msg, (float(winW) - tw) / 2, 150, 2.0f,
                               {255, 120, 100, 255});
             }
+        }
+        if (scenUnit_ && scenTime_ > 0 && outcome_ == 0 && hudFont_.ok()) {
+            char sb[96];
+            int rem = int(scenTime_ - scenClock_);
+            std::snprintf(sb, sizeof sb, "%s IN %s: %d:%02d", scenUnit_->name.c_str(),
+                          scenRegion_.name.c_str(), rem / 60, rem % 60);
+            hudFont_.draw(ren_, sb, 12, 46, 1.5f, {255, 220, 140, 255});
         }
         if (pendingCmd_ && hudFont_.ok()) {
             const char* msg = pendingCmd_ == 'a' ? "ATTACK-MOVE: CLICK TARGET"
@@ -1918,6 +1972,9 @@ private:
 public:
     bool noFog_ = false;
 private:
+    const tak::sim::UnitType* scenUnit_ = nullptr;
+    tak::crt::Region scenRegion_;
+    float scenTime_ = 0, scenClock_ = 0;
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = 0, mouseY_ = 0;
@@ -2409,7 +2466,8 @@ int main(int argc, char** argv) {
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
-         misstest = false, nofog = false, doLook = false, creon = false;
+         misstest = false, nofog = false, doLook = false, creon = false,
+         hilltest = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -2427,6 +2485,7 @@ int main(int argc, char** argv) {
         else if (a == "--mission") missionFlag = true;
         else if (a == "--misstest") misstest = true;
         else if (a == "--creon") creon = true;
+        else if (a == "--hilltest") hilltest = true;
         else if (a == "--host" && i + 1 < argc) hostPort = std::atoi(argv[++i]);
         else if (a == "--join" && i + 2 < argc) {
             joinAddr = argv[++i];
@@ -2494,6 +2553,7 @@ int main(int argc, char** argv) {
             if (navy) gameView->navyDemo();
             if (misstest) gameView->missionTest();
             if (creon) gameView->creonDemo();
+            if (hilltest) gameView->hillTest();
             if (nofog) gameView->noFog_ = true;
             if (doLook) gameView->lookAt(lookX, lookZ);
             if (amphib) gameView->amphibDemo();
