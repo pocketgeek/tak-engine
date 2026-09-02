@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <set>
@@ -590,7 +591,13 @@ public:
                         if (uid >= 0) {
                             ++n;
                             float hpp = float(u.numberOr("healthpercentage", 100));
-                            if (auto* su = world_.unit(uid)) su->hp *= hpp / 100.0f;
+                            if (auto* su = world_.unit(uid)) {
+                                su->hp *= hpp / 100.0f;
+                                if (su->type->canMove &&
+                                    su->type->domain ==
+                                        tak::sim::UnitType::Domain::Ground)
+                                    reinfPool_[team].push_back(id);
+                            }
                             if (team == 0) { cx += x; cz += z; ++pc; }
                         }
                     }
@@ -638,6 +645,17 @@ public:
                 };
                 missionVm_->start("Start");
                 std::printf("mission scripts: running\n");
+                std::filesystem::path txtPath = tntPath;
+                txtPath.replace_extension(".txt");
+                std::ifstream bf(txtPath);
+                std::string line;
+                while (std::getline(bf, line) && briefing_.size() < 8) {
+                    std::string clean;
+                    for (char c : line)
+                        if (uint8_t(c) >= 32 && uint8_t(c) < 127) clean += c;
+                    if (!clean.empty()) briefing_.push_back("- " + clean);
+                }
+                briefTimer_ = 30;
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "mission cob: %s\n", e.what());
             }
@@ -978,8 +996,30 @@ public:
         for (auto& u : world_.units())
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
         tickAi(dt);
+        if (briefTimer_ > 0) briefTimer_ -= dt;
+        if (noticeTimer_ > 0) noticeTimer_ -= dt;
         if (missionVm_) {
             missionVm_->tick(dt);
+            // Engine sweep: armed regions fire TriggerHit per player unit
+            // inside. One-shot story triggers disarm themselves in-script;
+            // viccheck re-arms its counting region every loop.
+            trigTimer_ -= dt;
+            if (trigTimer_ <= 0) {
+                trigTimer_ = 0.3f;
+                for (auto& [rid, r] : regions_) {
+                    if (!r.armed) continue;
+                    for (auto& u : world_.units()) {
+                        if (!u.alive() || u.embarked() || u.team != 0) continue;
+                        int cx = int(u.x) / 16, cz = int(u.z) / 16;
+                        bool inside = r.rect
+                            ? (cx >= r.a && cz >= r.b && cx <= r.c && cz <= r.d)
+                            : ((cx - r.a) * (cx - r.a) + (cz - r.b) * (cz - r.b) <=
+                               r.c * r.c);
+                        if (inside && missionVm_->threadCount() < 200)
+                            missionVm_->start("TriggerHit", {rid, u.id, 0});
+                    }
+                }
+            }
             if (trace_) {
                 static float dbg = 0;
                 dbg += dt;
@@ -1200,6 +1240,25 @@ public:
                     }
                 }
             }
+        }
+
+        // Mission briefing (first 30s) and event notices.
+        if (briefTimer_ > 0 && hudFont_.ok()) {
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_FRect bg{float(winW) - 470, 8, 462,
+                         14.0f + 16.0f * float(briefing_.size())};
+            SDL_SetRenderDrawColor(ren_, 10, 10, 20, 170);
+            SDL_RenderFillRectF(ren_, &bg);
+            float y = 24;
+            for (const auto& l : briefing_) {
+                hudFont_.draw(ren_, l, bg.x + 8, y, 1.4f, {220, 215, 180, 255});
+                y += 16;
+            }
+        }
+        if (noticeTimer_ > 0 && hudFont_.ok() && !notice_.empty()) {
+            float tw = float(hudFont_.width(notice_, 2.5f));
+            hudFont_.draw(ren_, notice_, (float(winW) - tw) / 2, 120, 2.5f,
+                          {255, 230, 120, 255});
         }
 
         // Victory / defeat banner.
@@ -1620,41 +1679,44 @@ private:
 
     int32_t mapCommand(int sub, const std::vector<int32_t>& a) {
         switch (sub) {
-            case 0:   // define region: rect (id,x1,z1,x2,z2) or circle (id,x,z,r)
-                if (a.size() == 5) regions_[a[0]] = {a[1], a[2], a[3], a[4], true};
-                else if (a.size() == 4) regions_[a[0]] = {a[1], a[2], a[3], 0, false};
+            case 0:   // define (and arm) region: rect or circle, cells
+                if (a.size() == 5) regions_[a[0]] = {a[1], a[2], a[3], a[4], true, true};
+                else if (a.size() == 4)
+                    regions_[a[0]] = {a[1], a[2], a[3], 0, false, true};
                 return 0;
-            case 1: {  // sweep region: fire TriggerHit per player unit inside
-                auto it = regions_.find(a.empty() ? -1 : a[0]);
-                if (it == regions_.end() || !missionVm_) return 0;
-                const auto& r = it->second;
-                int count = 0;
+            case 1:   // disarm region (one-shot triggers disarm themselves)
+                if (!a.empty()) {
+                    auto it = regions_.find(a[0]);
+                    if (it != regions_.end()) it->second.armed = false;
+                }
+                return 0;
+            case 2: {   // nearest unit of player a[0] to cell (a[1],a[2])
+                if (a.size() < 3) return 0;
+                int team = std::clamp(a[0] - 1, 0, 3);
+                float wx = float(a[1]) * 16 + 8, wz = float(a[2]) * 16 + 8;
+                int best = 0;
+                float bestD = 1e18f;
                 for (auto& u : world_.units()) {
-                    if (!u.alive() || u.embarked() || u.team != 0) continue;
-                    int cx = int(u.x) / 16, cz = int(u.z) / 16;
-                    bool inside;
-                    if (r.rect)
-                        inside = cx >= r.a && cz >= r.b && cx <= r.c && cz <= r.d;
-                    else {
-                        int dx = cx - r.a, dz = cz - r.b;
-                        inside = dx * dx + dz * dz <= r.c * r.c;
-                    }
-                    if (inside) {
-                        ++count;
-                        if (missionVm_->threadCount() < 200)
-                            missionVm_->start("TriggerHit", {a[0], u.id, 0});
-                    }
+                    if (!u.alive() || u.team != team) continue;
+                    float dx = u.x - wx, dz = u.z - wz;
+                    if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; best = u.id; }
                 }
-                if (trace_) {
-                    static int logged = 0;
-                    if (logged++ < 8)
-                        std::printf("SWEEP region %d -> %d units\n",
-                                    a.empty() ? -1 : a[0], count);
-                }
-                if (false) for (auto& u : world_.units()) {
-                    (void)u;
-                }
-                return count;
+                return best;
+            }
+            case 4: {   // HEURISTIC: spawn a reinforcement for player a[0]
+                if (a.size() < 3) return 0;
+                int team = std::clamp(a[0] - 1, 0, 3);
+                auto& pool = reinfPool_[team];
+                if (pool.empty()) return 0;
+                const std::string& type = pool[size_t(reinfIdx_++) % pool.size()];
+                float wx = float(a[1]) * 16 + 8, wz = float(a[2]) * 16 + 8;
+                int id = spawn(type, wx + float(reinfIdx_ % 3) * 18,
+                               wz + float(reinfIdx_ % 2) * 18, 3.14159f, team);
+                if (id >= 0 && team == 0 && hudFont_.ok()) notice_ = "REINFORCEMENTS!";
+                if (trace_) std::printf("SPAWN4 %s team%d at %d,%d -> id %d\n",
+                                        type.c_str(), team, a[1], a[2], id);
+                if (id >= 0) noticeTimer_ = 6;
+                return id;
             }
             case 8: case 9: case 12: case 13: case 14:
                 if (a.empty()) return missionTowerIdx_;   // type-constant heuristic
@@ -1683,12 +1745,20 @@ private:
     float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
     Font hudFont_, bigFont_;
 
-    struct Region { int a, b, c, d; bool rect; };
+    struct Region { int a, b, c, d; bool rect; bool armed; };
     std::unique_ptr<tak::cob::Vm> missionVm_;
     std::vector<std::string> missionRoster_;
     std::map<int, Region> regions_;
     int missionTowerIdx_ = -1;
     std::set<int> building_;
+    std::map<int, std::vector<std::string>> reinfPool_;
+    int reinfIdx_ = 0;
+    std::vector<std::string> briefing_;
+    float briefTimer_ = 0;
+    std::string notice_;
+    float noticeTimer_ = 0;
+    std::set<std::pair<int, int>> inside_;
+    float trigTimer_ = 0;
 };
 
 } // namespace
