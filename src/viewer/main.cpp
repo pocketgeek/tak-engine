@@ -13,6 +13,7 @@
 #include "cob/vm.h"
 #include "crt/crt.h"
 #include "gaf/gaf.h"
+#include "hpi/hpi.h"
 #include "net/lockstep.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
@@ -31,6 +32,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <random>
 #include <set>
 #include <sstream>
@@ -375,6 +377,34 @@ public:
         if (dev_) SDL_PauseAudioDevice(dev_, 0);
     }
 
+    // Override built-in sounds with WAVs from an HPI archive (e.g. a
+    // click.hpi that replaces the faction order tones). Decoded straight
+    // into the cache so they win over the on-disk originals.
+    void loadHpiOverrides(const std::filesystem::path& hpiPath) {
+        if (!std::filesystem::exists(hpiPath)) return;
+        try {
+            tak::hpi::Archive ar(hpiPath);
+            int n = 0;
+            for (const auto& e : ar.entries()) {
+                if (e.isDirectory) continue;
+                std::string ext = std::filesystem::path(e.path).extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                if (ext != ".wav") continue;
+                std::string stem = std::filesystem::path(e.path).stem().string();
+                std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
+                auto bytes = ar.read(e);
+                if (auto pcm = decodeWav(bytes.data(), bytes.size())) {
+                    cache_[stem] = std::move(*pcm);
+                    ++n;
+                }
+            }
+            std::fprintf(stderr, "sound overrides: %d from %s\n", n,
+                         hpiPath.string().c_str());
+        } catch (const std::exception& ex) {
+            std::fprintf(stderr, "sound override load: %s\n", ex.what());
+        }
+    }
+
     bool has(const std::string& name) const {
         std::string n = name;
         std::transform(n.begin(), n.end(), n.begin(), ::tolower);
@@ -407,29 +437,41 @@ private:
         size_t pos = 0;
     };
 
-    const std::vector<int16_t>* load(const std::string& key, const std::string& path) {
-        auto it = cache_.find(key);
-        if (it != cache_.end()) return &it->second;
+    // Decode a WAV (from memory) to the mixer's 11025 Hz mono S16 format.
+    std::optional<std::vector<int16_t>> decodeWav(const uint8_t* data, size_t size) {
         SDL_AudioSpec spec{};
         Uint8* buf = nullptr;
         Uint32 len = 0;
-        if (!SDL_LoadWAV(path.c_str(), &spec, &buf, &len)) return nullptr;
+        SDL_RWops* rw = SDL_RWFromConstMem(data, int(size));
+        if (!rw || !SDL_LoadWAV_RW(rw, 1, &spec, &buf, &len)) return std::nullopt;
         SDL_AudioCVT cvt;
         if (SDL_BuildAudioCVT(&cvt, spec.format, spec.channels, spec.freq, AUDIO_S16SYS,
                               1, 11025) < 0) {
             SDL_FreeWAV(buf);
-            return nullptr;
+            return std::nullopt;
         }
         std::vector<uint8_t> work(size_t(len) * size_t(std::max(cvt.len_mult, 1)));
         std::memcpy(work.data(), buf, len);
         SDL_FreeWAV(buf);
         cvt.buf = work.data();
         cvt.len = int(len);
-        if (cvt.needed && SDL_ConvertAudio(&cvt) != 0) return nullptr;
+        if (cvt.needed && SDL_ConvertAudio(&cvt) != 0) return std::nullopt;
         size_t outBytes = cvt.needed ? size_t(cvt.len_cvt) : len;
         std::vector<int16_t> out(outBytes / 2);
         std::memcpy(out.data(), work.data(), out.size() * 2);
-        return &cache_.emplace(key, std::move(out)).first->second;
+        return out;
+    }
+
+    const std::vector<int16_t>* load(const std::string& key, const std::string& path) {
+        auto it = cache_.find(key);
+        if (it != cache_.end()) return &it->second;
+        std::ifstream f(path, std::ios::binary);
+        if (!f) return nullptr;
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)),
+                                   std::istreambuf_iterator<char>());
+        auto pcm = decodeWav(bytes.data(), bytes.size());
+        if (!pcm) return nullptr;
+        return &cache_.emplace(key, std::move(*pcm)).first->second;
     }
 
     static void mixThunk(void* ud, Uint8* stream, int len) {
@@ -700,6 +742,11 @@ public:
         }
         loadOrderButtons();
         sounds_.init(dataRoot_ + "/../english/Sounds", false);
+        for (const std::string cand : {dataRoot_ + "/../../click.hpi",
+                                       dataRoot_ + "/../../game/click.hpi",
+                                       dataRoot_ + "/click.hpi",
+                                       std::string("click.hpi")})
+            if (std::filesystem::exists(cand)) { sounds_.loadHpiOverrides(cand); break; }
         sounds_.startMusic(dataRoot_, factionMusicTracks(side_));
         soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
         loadPanel(side_);
@@ -3047,20 +3094,8 @@ private:
     void voice(int unitId, const std::string& event) {
         const auto* u = world_.unit(unitId);
         if (!u || !u->type || u->type->soundClass.empty()) return;
-        const auto* wav = soundClasses_.pick(u->type->soundClass, event, salt_++);
-        if (!wav) return;
-        // The sound-class order-ack tones (TONEARA/TONETAR/...) are the "bong";
-        // play a softer UI click for order confirmation instead.
-        std::string lo = *wav;
-        std::transform(lo.begin(), lo.end(), lo.begin(), ::tolower);
-        if (lo.rfind("tone", 0) == 0) {
-            static const char* clicks[] = {"int_clickwood1", "int_clickwood2",
-                                           "int_clickwood3", "int_clickwood4",
-                                           "int_clickwood5", "int_clickwood6"};
-            sounds_.play(clicks[salt_++ % 6]);
-        } else {
+        if (const auto* wav = soundClasses_.pick(u->type->soundClass, event, salt_++))
             sounds_.play(*wav);
-        }
     }
 
     SoundBank sounds_;
