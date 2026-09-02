@@ -960,14 +960,24 @@ public:
                     }
                 }
             }
-        } else if (e.type == SDL_MOUSEWHEEL || e.type == SDL_KEYDOWN) {
+        } else if (e.type == SDL_MOUSEWHEEL) {
+            // Zoom toward the cursor: keep the world point under the mouse fixed.
+            float wx = mapView_.offX() + mouseX_ / mapView_.zoom();
+            float wz = mapView_.offY() + mouseY_ / mapView_.zoom();
+            mapView_.input(e);   // applies the clamped zoom step
+            float nz = mapView_.zoom();
+            mapView_.setOffset(wx - mouseX_ / nz, wz - mouseY_ / nz);
+        } else if (e.type == SDL_KEYDOWN) {
             mapView_.input(e);
         } else if (e.type == SDL_MOUSEMOTION) {
-            if (e.motion.state & SDL_BUTTON_MMASK)   // middle-drag scrolls
-                mapView_.setOffset(mapView_.offX() - e.motion.xrel / zm,
-                                   mapView_.offY() - e.motion.yrel / zm);
             mouseX_ = float(e.motion.x);
             mouseY_ = float(e.motion.y);
+            if (draggingMinimap_) {
+                minimapClick(mouseX_, mouseY_, winW, winH);
+            } else if (e.motion.state & SDL_BUTTON_MMASK) {   // middle-drag scrolls
+                mapView_.setOffset(mapView_.offX() - e.motion.xrel / zm,
+                                   mapView_.offY() - e.motion.yrel / zm);
+            }
             if (dragging_) { dragX1_ = float(e.motion.x); dragY1_ = float(e.motion.y); }
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.y > winH - kBarH) {
@@ -996,7 +1006,7 @@ public:
             // order button handled
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    minimapClick(float(e.button.x), float(e.button.y), winW, winH)) {
-            // camera moved via minimap
+            draggingMinimap_ = true;   // camera follows the drag until release
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    pendingCmd_) {
             float wx = mapView_.offX() + e.button.x / zm;
@@ -1062,6 +1072,9 @@ public:
             dragging_ = true;
             dragX0_ = dragX1_ = float(e.button.x);
             dragY0_ = dragY1_ = float(e.button.y);
+        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
+                   draggingMinimap_) {
+            draggingMinimap_ = false;
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
             dragging_ = false;
             float x0 = mapView_.offX() + std::min(dragX0_, dragX1_) / zm;
@@ -2177,6 +2190,7 @@ private:
     std::vector<Tri> tris_;
     std::vector<int> selection_;
     bool dragging_ = false;
+    bool draggingMinimap_ = false;
     float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
     char pendingCmd_ = 0;   // 'a' = attack-move, 'p' = patrol (awaiting click)
     tak::net::Session* net_ = nullptr;
@@ -2934,6 +2948,7 @@ int main(int argc, char** argv) {
         else if (a == "--keytest") keytest = true;
         else if (a == "--guardtest") guardtest = true;
         else if (a == "--selonly") selonly = true;
+
         else if (a == "--host" && i + 1 < argc) hostPort = std::atoi(argv[++i]);
         else if (a == "--join" && i + 2 < argc) {
             joinAddr = argv[++i];
@@ -3027,6 +3042,7 @@ int main(int argc, char** argv) {
     int ktPhase = keytest ? 0 : -1;
     float ktClock = 0;
     bool keytestSelectOnly = selonly;
+
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
         SDL_Event e;
@@ -3071,13 +3087,16 @@ int main(int argc, char** argv) {
                 SDL_PushEvent(&ev);
             };
             if (ktPhase == 0 && ktClock > 0.3f) {
-                int pick = -1;
-                for (auto& u : gameView->worldRef().units())
-                    if (u.alive() && u.team == 0 && u.type && u.type->isBuilder)
-                        pick = u.id;
-                if (pick >= 0) gameView->selectOnly(pick);
-                ktPhase = keytestSelectOnly ? 4 : 1;
+                {
+                    int pick = -1;
+                    for (auto& u : gameView->worldRef().units())
+                        if (u.alive() && u.team == 0 && u.type && u.type->isBuilder)
+                            pick = u.id;
+                    if (pick >= 0) gameView->selectOnly(pick);
+                    ktPhase = keytestSelectOnly ? 4 : 1;
+                }
             }
+
             else if (ktPhase == 1 && ktClock > 0.6f) { key(SDLK_1); ktPhase = 2; }
             else if (ktPhase == 2 && ktClock > 0.9f) { motion(400, 453); ktPhase = 3; }
             else if (ktPhase == 3 && ktClock > 1.2f) { click(400, 453, SDL_BUTTON_LEFT); ktPhase = 4; }
