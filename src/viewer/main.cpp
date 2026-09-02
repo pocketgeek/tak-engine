@@ -1898,8 +1898,10 @@ public:
                     }
                 }
             }
-            // Flyers flap harder: run their wing script at a livelier pace.
-            a.vm->tick(a.flying ? dt * 3.6f : dt);
+            // The FlightControl machine is timed for real time; over-ticking it
+            // makes the wing keyframes snap past each other (crossing, not
+            // flapping), so flyers run at 1x like everything else.
+            a.vm->tick(dt);
         }
     }
 
