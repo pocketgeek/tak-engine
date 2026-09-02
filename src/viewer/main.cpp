@@ -31,6 +31,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string>
@@ -437,6 +438,12 @@ private:
 
     void mix(int16_t* out, int n) {
         std::memset(out, 0, size_t(n) * 2);
+        // Background music bed (quieter than SFX).
+        for (int i = 0; i < n; ++i) {
+            if (musicPos_ >= music_.size()) { musicDone_ = true; break; }
+            int v = out[i] + (music_[musicPos_++] * musicVol_) / 256;
+            out[i] = int16_t(std::clamp(v, -32768, 32767));
+        }
         for (auto& c : channels_) {
             if (!c.data) continue;
             for (int i = 0; i < n && c.pos < c.data->size(); ++i, ++c.pos) {
@@ -446,9 +453,84 @@ private:
         }
     }
 
+public:
+    // Find and begin playing the shuffled music playlist. `dataRoot` is the
+    // extracted data dir; music may live there or in the raw game install.
+    void startMusic(const std::string& dataRoot) {
+        const std::string cands[] = {
+            dataRoot + "/../Music", dataRoot + "/../music",
+            dataRoot + "/../../game/Music", dataRoot + "/../../game/music",
+            dataRoot + "/Music",
+        };
+        std::string dir;
+        for (const auto& c : cands)
+            if (std::filesystem::is_directory(c)) { dir = c; break; }
+        if (dir.empty()) return;
+        try {
+            for (const auto& e : std::filesystem::directory_iterator(dir)) {
+                std::string ext = e.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                if (ext == ".wav") playlist_.push_back(e.path().string());
+            }
+        } catch (const std::exception&) { return; }
+        std::sort(playlist_.begin(), playlist_.end());
+        if (!playlist_.empty() && dev_) {
+            std::shuffle(playlist_.begin(), playlist_.end(),
+                         std::mt19937{std::random_device{}()});
+            loadTrack(0);
+        }
+    }
+
+    // Advance to the next track when the current one finishes (call per frame).
+    void pollMusic() {
+        if (musicDone_ && !playlist_.empty()) {
+            musicDone_ = false;
+            loadTrack((musicTrack_ + 1) % playlist_.size());
+        }
+    }
+
+    void setMusicVolume(int v) { musicVol_ = std::clamp(v, 0, 256); }
+
+private:
+    void loadTrack(size_t idx) {
+        SDL_AudioSpec spec{};
+        Uint8* buf = nullptr;
+        Uint32 len = 0;
+        if (!SDL_LoadWAV(playlist_[idx].c_str(), &spec, &buf, &len)) return;
+        SDL_AudioCVT cvt;
+        if (SDL_BuildAudioCVT(&cvt, spec.format, spec.channels, spec.freq, AUDIO_S16SYS,
+                              1, 11025) < 0) {
+            SDL_FreeWAV(buf);
+            return;
+        }
+        std::vector<uint8_t> work(size_t(len) * size_t(std::max(cvt.len_mult, 1)));
+        std::memcpy(work.data(), buf, len);
+        SDL_FreeWAV(buf);
+        cvt.buf = work.data();
+        cvt.len = int(len);
+        if (cvt.needed && SDL_ConvertAudio(&cvt) != 0) return;
+        size_t outBytes = cvt.needed ? size_t(cvt.len_cvt) : len;
+        std::vector<int16_t> pcm(outBytes / 2);
+        std::memcpy(pcm.data(), work.data(), pcm.size() * 2);
+        SDL_LockAudioDevice(dev_);
+        music_ = std::move(pcm);
+        musicPos_ = 0;
+        musicTrack_ = idx;
+        musicDone_ = false;
+        SDL_UnlockAudioDevice(dev_);
+        if (verbose_)
+            std::printf("MUSIC %s (%zu samples)\n", playlist_[idx].c_str(),
+                        music_.size());
+    }
+
     std::map<std::string, std::string> index_;
     std::map<std::string, std::vector<int16_t>> cache_;
     Channel channels_[8];
+    std::vector<std::string> playlist_;
+    std::vector<int16_t> music_;
+    size_t musicPos_ = 0, musicTrack_ = 0;
+    int musicVol_ = 90;   // out of 256
+    bool musicDone_ = false;
     SDL_AudioDeviceID dev_ = 0;
     SDL_AudioSpec spec_{};
     bool verbose_ = false;
@@ -1451,6 +1533,7 @@ public:
     }
 
     void update(float dt) {
+        sounds_.pollMusic();
         world_.tick(dt);
         for (auto& u : world_.units())
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
