@@ -1855,20 +1855,8 @@ public:
                 float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise
                 a.altitude += std::clamp(target - a.altitude, -step, step);
 
-                // Feed the flight-state statics the COB flight machine expects.
-                // setSFXoccupy(5) marks "in the air" (static6=1) so FlightControl
-                // animates; BeginFlight/BeginLanding handle the transition.
-                bool airborne = a.altitude > std::max(cruise, 1.0f) * 0.35f;
-                if (airborne != a.airborne) {
-                    a.airborne = airborne;
-                    if (airborne) { a.vm->start("BeginFlight"); a.vm->start("setSFXoccupy", {5}); }
-                    else { a.vm->start("BeginLanding"); a.vm->start("setSFXoccupy", {0}); }
-                }
-                bool moving = u.walking();
-                if (moving != a.goState) {
-                    a.goState = moving;
-                    a.vm->start(moving ? "Go" : "Stop");
-                }
+                // Keep the flight animation looping.
+                if (a.vm->threadCount() == 0) a.vm->start("fly");
             } else {
                 bool m = u.walking();
                 if (m != a.walking) {
@@ -2378,8 +2366,6 @@ private:
         bool producing = false;
         bool firing = false;
         bool flying = false;
-        bool airborne = false;   // flight-state edge tracking (drives BeginFlight/land)
-        bool goState = false;    // move-state edge tracking (drives Go/Stop)
         float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
     };
 
@@ -2436,11 +2422,13 @@ private:
             // flight scripts; without these they sit in the landed rest pose
             // (which also reads as facing the wrong way).
             if (u.type && u.type->canFly) {
-                // Authentic flight: Create waits until built, then starts the
-                // FlightControl + RestoreWatcher loops. FlightControl itself
-                // drives launch/fly/soar, gated on the flight-state statics we
-                // feed below via setSFXoccupy / BeginFlight / Go.
-                a.vm->start("Create");
+                // Run the authentic "fly" flight animation (full body pose +
+                // wing beat). It gates its whole body on static8, so set that;
+                // we drive "fly" directly rather than via FlightControl because
+                // FlightControl also mixes in "soar", whose dramatic hip move
+                // reads as the wings crossing over in our top-down projection.
+                a.vm->setStatic(8, 1);
+                a.vm->start("fly");
                 a.flying = true;
             }
         } catch (const std::exception&) { /* unit stays unanimated */ }
@@ -2538,10 +2526,9 @@ private:
         // Flyer models are built mirrored across the N-S axis relative to the
         // ground units, so they read correct N/S but backward E/W. Negating
         // the heading reflects E<->W (and diagonals) while leaving N/S.
-        // Flyer models read backward with facing=heading, and the authentic
-        // flight scripts (soar) add a further 180° body turn, so face them at
-        // -heading + pi. Verified against a ground unit in all directions.
-        if (u.type && u.type->canFly) facing = 3.14159265f - facing;
+        // Flyer models are built mirrored across the N-S axis vs the ground
+        // units, so negate the heading to face them the right way.
+        if (u.type && u.type->canFly) facing = -facing;
         collect(vt->second.model.root, base, anim, facing, u.team);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
