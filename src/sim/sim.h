@@ -190,6 +190,8 @@ public:
     // Build now if the builder is free, else queue it (shift-click). A
     // non-queued order replaces any pending queue.
     void queueBuild(int builderId, const UnitType* type, float x, float z, bool queue);
+    // Abandon a builder's queued builds and drop any not-yet-started site.
+    void cancelBuilds(int builderId);
     bool canPlace(const UnitType* type, float x, float z) const;
     // Mana deposit ("Sacred Stone") spots, in world px. Lodestones (onMana)
     // can only be built on one, but only when the map actually has any.

@@ -596,6 +596,24 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
         b->buildOrders.push_back({type, x, z});     // busy: queue behind it
 }
 
+void World::cancelBuilds(int builderId) {
+    Unit* b = unit(builderId);
+    if (!b) return;
+    b->buildOrders.clear();
+    if (b->buildSiteId) {
+        Unit* site = unit(b->buildSiteId);
+        // A site that never actually started building is just a ghost — remove
+        // it so its marker/ghost doesn't linger.
+        if (site && site->underConstruction && !site->buildBegun) {
+            if (site->type && !site->type->canMove)
+                blockFootprint(nav_, *site->type, site->x, site->z, false);
+            site->underConstruction = false;
+            site->deadFor = 1000.0f;   // fully gone (painter skips deadFor>=4)
+        }
+        b->buildSiteId = 0;
+    }
+}
+
 void World::tickConstruction(Unit& b, float dt) {
     Unit* site = unit(b.buildSiteId);
     if (!site || !site->alive() || !site->underConstruction) {

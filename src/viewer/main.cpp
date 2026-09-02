@@ -1413,21 +1413,24 @@ public:
             const auto* u = world_.unit(id);
             return u && u->team == int(c.player);
         };
+        // A fresh redirect order (not a shift-queued one) also abandons any
+        // pending build queue, so its ghosts don't linger.
+        auto redirect = [&] { if (!c.queue) world_.cancelBuilds(c.unitId); };
         switch (c.kind) {
             case Cmd::Move:
-                if (owns(c.unitId)) world_.order(c.unitId, c.x, c.z, c.queue);
+                if (owns(c.unitId)) { redirect(); world_.order(c.unitId, c.x, c.z, c.queue); }
                 break;
             case Cmd::Attack:
-                if (owns(c.unitId)) world_.attack(c.unitId, c.targetId, c.queue);
+                if (owns(c.unitId)) { redirect(); world_.attack(c.unitId, c.targetId, c.queue); }
                 break;
             case Cmd::AttackMove:
-                if (owns(c.unitId)) world_.attackMove(c.unitId, c.x, c.z, c.queue);
+                if (owns(c.unitId)) { redirect(); world_.attackMove(c.unitId, c.x, c.z, c.queue); }
                 break;
             case Cmd::Patrol:
-                if (owns(c.unitId)) world_.patrol(c.unitId, c.x, c.z);
+                if (owns(c.unitId)) { world_.cancelBuilds(c.unitId); world_.patrol(c.unitId, c.x, c.z); }
                 break;
             case Cmd::Stop:
-                if (owns(c.unitId)) world_.stop(c.unitId);
+                if (owns(c.unitId)) { world_.cancelBuilds(c.unitId); world_.stop(c.unitId); }
                 break;
             case Cmd::Train:
                 if (owns(c.unitId)) world_.train(c.unitId, registry_.find(c.type));
