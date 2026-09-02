@@ -38,6 +38,7 @@ struct UnitType {
     float income = 0;       // mana/sec (mogriumincome)
     float storage = 0;      // mana cap contribution (mogriumstorage)
     int footX = 1, footZ = 1;
+    std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     Weapon weapon;         // WEAPON1; weapon.damage == 0 means unarmed
 };
 

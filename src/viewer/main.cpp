@@ -13,6 +13,7 @@
 #include "cob/vm.h"
 #include "gaf/gaf.h"
 #include "sim/sim.h"
+#include "tdf/tdf.h"
 #include "tdo/tdo.h"
 #include "terrain/terrain.h"
 #include "tnt/tnt.h"
@@ -24,6 +25,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <string>
@@ -339,6 +341,149 @@ private:
     bool spin_ = true, fitted_ = false;
 };
 
+// Minimal 8-channel WAV mixer over an SDL audio device (the game's WAVs are
+// 11025 Hz 8-bit mono). Failing to open audio is non-fatal: play() no-ops.
+class SoundBank {
+public:
+    void init(const std::string& soundsDir, bool verbose) {
+        verbose_ = verbose;
+        try {
+            for (const auto& e : std::filesystem::directory_iterator(soundsDir)) {
+                std::string stem = e.path().stem().string();
+                std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
+                index_[stem] = e.path().string();
+            }
+        } catch (const std::exception&) { return; }
+
+        if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
+        SDL_AudioSpec want{};
+        want.freq = 11025;
+        want.format = AUDIO_S16SYS;
+        want.channels = 1;
+        want.samples = 1024;
+        want.callback = &SoundBank::mixThunk;
+        want.userdata = this;
+        dev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &spec_, 0);
+        if (dev_) SDL_PauseAudioDevice(dev_, 0);
+    }
+
+    bool has(const std::string& name) const {
+        std::string n = name;
+        std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+        return index_.count(n) != 0;
+    }
+
+    void setVerbose(bool v) { verbose_ = v; }
+
+    void play(const std::string& name) {
+        std::string n = name;
+        std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+        auto it = index_.find(n);
+        if (it == index_.end()) return;
+        if (verbose_) std::printf("SND %s\n", n.c_str());
+        const auto* samples = load(n, it->second);
+        if (!samples || !dev_) return;
+        SDL_LockAudioDevice(dev_);
+        for (auto& c : channels_)
+            if (c.pos >= (c.data ? c.data->size() : 0)) {
+                c.data = samples;
+                c.pos = 0;
+                break;
+            }
+        SDL_UnlockAudioDevice(dev_);
+    }
+
+private:
+    struct Channel {
+        const std::vector<int16_t>* data = nullptr;
+        size_t pos = 0;
+    };
+
+    const std::vector<int16_t>* load(const std::string& key, const std::string& path) {
+        auto it = cache_.find(key);
+        if (it != cache_.end()) return &it->second;
+        SDL_AudioSpec spec{};
+        Uint8* buf = nullptr;
+        Uint32 len = 0;
+        if (!SDL_LoadWAV(path.c_str(), &spec, &buf, &len)) return nullptr;
+        SDL_AudioCVT cvt;
+        if (SDL_BuildAudioCVT(&cvt, spec.format, spec.channels, spec.freq, AUDIO_S16SYS,
+                              1, 11025) < 0) {
+            SDL_FreeWAV(buf);
+            return nullptr;
+        }
+        std::vector<uint8_t> work(size_t(len) * size_t(std::max(cvt.len_mult, 1)));
+        std::memcpy(work.data(), buf, len);
+        SDL_FreeWAV(buf);
+        cvt.buf = work.data();
+        cvt.len = int(len);
+        if (cvt.needed && SDL_ConvertAudio(&cvt) != 0) return nullptr;
+        size_t outBytes = cvt.needed ? size_t(cvt.len_cvt) : len;
+        std::vector<int16_t> out(outBytes / 2);
+        std::memcpy(out.data(), work.data(), out.size() * 2);
+        return &cache_.emplace(key, std::move(out)).first->second;
+    }
+
+    static void mixThunk(void* ud, Uint8* stream, int len) {
+        static_cast<SoundBank*>(ud)->mix(reinterpret_cast<int16_t*>(stream), len / 2);
+    }
+
+    void mix(int16_t* out, int n) {
+        std::memset(out, 0, size_t(n) * 2);
+        for (auto& c : channels_) {
+            if (!c.data) continue;
+            for (int i = 0; i < n && c.pos < c.data->size(); ++i, ++c.pos) {
+                int v = out[i] + (*c.data)[c.pos] / 2;
+                out[i] = int16_t(std::clamp(v, -32768, 32767));
+            }
+        }
+    }
+
+    std::map<std::string, std::string> index_;
+    std::map<std::string, std::vector<int16_t>> cache_;
+    Channel channels_[8];
+    SDL_AudioDeviceID dev_ = 0;
+    SDL_AudioSpec spec_{};
+    bool verbose_ = false;
+};
+
+// Sound classes: gamedata/soundclasses/*.tdf map a class to event ->
+// candidate WAV names.
+class SoundClasses {
+public:
+    void load(const std::string& dir) {
+        try {
+            for (const auto& e : std::filesystem::directory_iterator(dir)) {
+                if (e.path().extension() != ".tdf") continue;
+                try {
+                    auto root = tak::tdf::parse(e.path());
+                    for (const auto& clsName : root.childOrder) {
+                        auto& cls = classes_[clsName];
+                        const auto& node = root.children.at(clsName);
+                        for (const auto& evName : node.childOrder) {
+                            auto& list = cls[evName];
+                            for (const auto& [wav, weight] : node.children.at(evName).values)
+                                list.push_back(wav);
+                        }
+                    }
+                } catch (const std::exception&) {}
+            }
+        } catch (const std::exception&) {}
+    }
+
+    const std::string* pick(const std::string& cls, const std::string& event,
+                            uint32_t salt) const {
+        auto ci = classes_.find(cls);
+        if (ci == classes_.end()) return nullptr;
+        auto ei = ci->second.find(event);
+        if (ei == ci->second.end() || ei->second.empty()) return nullptr;
+        return &ei->second[salt % ei->second.size()];
+    }
+
+private:
+    std::map<std::string, std::map<std::string, std::vector<std::string>>> classes_;
+};
+
 // TAK GAF bitmap font: 256 glyph frames, one per codepoint, palette from
 // the same-stem 1x1 PCX.
 class Font {
@@ -450,6 +595,8 @@ public:
         } catch (const std::exception& e) {
             std::fprintf(stderr, "font load: %s\n", e.what());
         }
+        sounds_.init(dataRoot_ + "/../english/Sounds", false);
+        soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
         for (auto& u : world_.units()) {
             if (!u.type || u.type->canMove) continue;
             world_.nav().block(int(u.x) / 16 - u.type->footX / 2,
@@ -507,7 +654,10 @@ public:
                     float dx = u.x - wx, dz = u.z - wz;
                     if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; hit = u.id; }
                 }
-                if (hit >= 0) selection_.push_back(hit);
+                if (hit >= 0) {
+                    selection_.push_back(hit);
+                    voice(hit, "select");
+                }
             } else {
                 for (auto& u : world_.units())
                     if (u.alive() && u.team == 0 && u.x >= x0 && u.x <= x1 &&
@@ -530,7 +680,9 @@ public:
             }
             if (enemy >= 0) {
                 for (int id : selection_) world_.attack(id, enemy, queue);
+                voice(selection_.front(), "attack");
             } else {
+                voice(selection_.front(), "move");
                 float cx = 0, cz = 0;
                 int n = 0;
                 for (int id : selection_)
@@ -577,6 +729,12 @@ public:
             mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
         }
         for (auto& u : world_.units()) {
+            if (u.justFired && u.type) {
+                if (u.type->weapon.melee)
+                    sounds_.play("ahitfl0" + std::to_string(1 + (salt_++ % 3)));
+                else
+                    sounds_.play("bow2");
+            }
             auto it = anims_.find(u.id);
             if (it == anims_.end()) continue;
             auto& a = it->second;
@@ -586,6 +744,9 @@ public:
                     a.vm->reset();
                     a.vm->setStatic(0, 0);
                     a.vm->start("death") || a.vm->start("Dying") || a.vm->start("Killed");
+                    const std::string& id = u.type->id;
+                    if (sounds_.has(id + "die1")) sounds_.play(id + "die1");
+                    else if (sounds_.has(id + "die2")) sounds_.play(id + "die2");
                 }
                 a.vm->tick(dt);
                 continue;
@@ -742,7 +903,7 @@ public:
         }
     }
 
-    void setTrace(bool on) { trace_ = on; }
+    void setTrace(bool on) { trace_ = on; sounds_.setVerbose(on); }
 
 private:
     // Simple wave AI: keep the production queue full, and when enough idle
@@ -988,6 +1149,16 @@ private:
     int keepId_ = -1, aiKeepId_ = -1;
     int aiTrained_ = 0;
     float aiTimer_ = 0;
+    void voice(int unitId, const std::string& event) {
+        const auto* u = world_.unit(unitId);
+        if (!u || !u->type || u->type->soundClass.empty()) return;
+        if (const auto* wav = soundClasses_.pick(u->type->soundClass, event, salt_++))
+            sounds_.play(*wav);
+    }
+
+    SoundBank sounds_;
+    SoundClasses soundClasses_;
+    uint32_t salt_ = 0;
     int outcome_ = 0;   // 0 = playing, 1 = victory, -1 = defeat
     bool demoAi_ = false;
     Font hudFont_, bigFont_;

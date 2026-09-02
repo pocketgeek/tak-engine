@@ -7,13 +7,29 @@ This project contains **no game content**. You must own the original game
 (e.g. the GOG release of *Total Annihilation: Kingdoms + The Iron Plague*)
 and place its data files in `assets/` (gitignored) to use the engine.
 
-## Roadmap
+## Status
 
-1. **Format tooling** — read TAK's HPI archives; decode GAF sprite banks,
-   TNT maps, TDF/FBI unit definitions.
-2. **Asset viewer** — SDL2/OpenGL app to browse sprites, animations, and maps.
-3. **Simulation** — units, orders, COB script VM, mana economy, combat.
-4. **Game** — playable skirmish, then deterministic lockstep multiplayer.
+1. ~~**Format tooling**~~ ✅ HPI v2, GAF/TAF, TNT, 3DO, COB, TDF/FBI/OTA,
+   GAF fonts, WAV — all retail files parse.
+2. ~~**Asset viewer**~~ ✅ `takview map` / `takview model` (textured,
+   COB-animated).
+3. ~~**Simulation**~~ ✅ movement, A* pathfinding, combat, mana economy,
+   production, per-unit COB VMs, sound.
+4. **Game** — playable skirmish vs a wave AI works today (`takview game`);
+   next: fog of war, building placement, campaign loading, lockstep
+   multiplayer.
+
+## Quick start (after placing game data in assets/)
+
+```sh
+tools/… # extract: ./build/hpitool extract assets/game/<archive>.hpi assets/extracted/<name>
+./build/takview game "assets/extracted/maps/Maps/King of the Hill.tnt" \
+    assets/extracted/terrain/terrain assets/extracted/data
+```
+
+Controls: drag = box-select, right-click = move/attack (shift queues),
+1–6 = train at a selected building, arrows/middle-drag = scroll,
+wheel = zoom. `--demo` stages an AI-vs-AI war.
 
 ## Building
 

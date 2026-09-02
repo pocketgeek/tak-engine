@@ -57,6 +57,8 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             t.storage = float(info->numberOr("mogriumstorage", 0));
             t.footX = int(info->numberOr("footprintx", 1));
             t.footZ = int(info->numberOr("footprintz", 1));
+            t.soundClass = lower(info->valueOr("soundcategory",
+                                               info->valueOr("soundclass", "")));
             if (const auto* w = root.child("WEAPON1")) {
                 t.weapon.name = w->valueOr("name", "");
                 t.weapon.range = float(w->numberOr("range", 0));
@@ -422,6 +424,28 @@ void World::tick(float dt) {
 
             u.x += std::sin(u.heading) * u.speed * dt;
             u.z += std::cos(u.heading) * u.speed * dt;
+        }
+    }
+
+    // Separation: push overlapping mobile units apart.
+    constexpr float kSep = 13.0f;
+    for (size_t i = 0; i < units_.size(); ++i) {
+        Unit& a = units_[i];
+        if (!a.alive() || !a.type || !a.type->canMove) continue;
+        for (size_t j = i + 1; j < units_.size(); ++j) {
+            Unit& b = units_[j];
+            if (!b.alive() || !b.type || !b.type->canMove) continue;
+            float dx = b.x - a.x, dz = b.z - a.z;
+            float d2 = dx * dx + dz * dz;
+            if (d2 >= kSep * kSep || d2 < 1e-6f) {
+                if (d2 < 1e-6f) { b.x += 1.0f; }   // exactly stacked: nudge
+                continue;
+            }
+            float d = std::sqrt(d2);
+            float push = (kSep - d) * 0.5f;
+            dx /= d; dz /= d;
+            a.x -= dx * push; a.z -= dz * push;
+            b.x += dx * push; b.z += dz * push;
         }
     }
 }
