@@ -11,6 +11,7 @@
 // (e.g. palettes/ara_textures.pcx from sidedata.tdf).
 
 #include "cob/vm.h"
+#include "crt/crt.h"
 #include "gaf/gaf.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
@@ -552,12 +553,37 @@ private:
 class GameView {
 public:
     GameView(SDL_Renderer* ren, const std::string& tntPath, const std::string& terrainDir,
-             const std::string& dataRoot, bool demo)
+             const std::string& dataRoot, bool demo, bool scenario)
         : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot) {
         registry_.loadDir(dataRoot_ + "/units");
         registry_.loadBuildTree(dataRoot_ + "/canbuild");
         loadTextures(dataRoot_ + "/textures", dataRoot_ + "/palettes/ara_textures.pcx");
         mapView_.setZoom(0.9f);
+
+        if (scenario) {
+            world_.setNav(tak::sim::NavGrid(mapView_.map().heights,
+                                            mapView_.map().width,
+                                            mapView_.map().height));
+            std::filesystem::path crtPath = tntPath;
+            crtPath.replace_extension(".crt");
+            if (!std::filesystem::exists(crtPath)) crtPath.replace_extension(".CRT");
+            auto placements = tak::crt::load(crtPath);
+            std::printf("scenario: %zu placements\n", placements.size());
+            float cx = 0, cz = 0;
+            int n = 0;
+            for (const auto& p : placements) {
+                std::string id = p.name;
+                std::transform(id.begin(), id.end(), id.begin(), ::tolower);
+                int team = std::clamp(p.player, 0, 3);
+                if (spawn(id, p.x, p.z, 3.14159f, team) >= 0 && team == 0) {
+                    cx += p.x; cz += p.z; ++n;
+                }
+            }
+            if (n) mapView_.setOffset(cx / float(n) - 640 / 0.9f,
+                                      cz / float(n) - 400 / 0.9f);
+            aiEnabled_ = false;   // placements only; auto-acquire still fights
+            return;
+        }
 
         world_.setNav(tak::sim::NavGrid(mapView_.map().heights, mapView_.map().width,
                                         mapView_.map().height));
@@ -1359,7 +1385,8 @@ int main(int argc, char** argv) {
     std::string mode = argv[1];
     std::string shot, cobPath, anim;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
-    bool demo = false, doMarch = false, trace = false, testbuild = false;
+    bool demo = false, doMarch = false, trace = false, testbuild = false,
+         scenario = false;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
@@ -1370,6 +1397,7 @@ int main(int argc, char** argv) {
         else if (a == "--demo") demo = true;
         else if (a == "--trace") trace = true;
         else if (a == "--testbuild") testbuild = true;
+        else if (a == "--scenario") scenario = true;
         else if (a == "--follow" && i + 1 < argc) followZoom = std::stof(argv[++i]);
         else if (a == "--march" && i + 2 < argc) {
             marchX = std::stof(argv[++i]);
@@ -1401,7 +1429,8 @@ int main(int argc, char** argv) {
         if (mode == "map" && args.size() >= 2) {
             mapView = std::make_unique<MapView>(ren, args[0], args[1]);
         } else if (mode == "game" && args.size() >= 3) {
-            gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo);
+            gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo,
+                                                  scenario);
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);
             if (trace) gameView->setTrace(true);
