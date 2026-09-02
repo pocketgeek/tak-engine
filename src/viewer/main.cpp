@@ -2164,8 +2164,10 @@ private:
                     xf.apply(o.vertices[vi], o.vertices[vi + 1], o.vertices[vi + 2], w);
                     float rx = w[0] * cy + w[2] * sy;
                     float rz = -w[0] * sy + w[2] * cy;
-                    float ry = w[1] * ct - rz * st;
-                    depth += rz * ct + w[1] * st;
+                    // TAK billboards lean back (+y and +z together); moving
+                    // away (+z) reads upward on screen, adding to height.
+                    float ry = w[1] * ct + rz * st;
+                    depth += rz * ct - w[1] * st;
                     tri.v[k].position = {rx, -ry};
                     static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
                     tri.v[k].tex_coord = uv[idx[k] & 3];
