@@ -1512,17 +1512,23 @@ private:
             try {
                 for (auto& seq : tak::gaf::load(e.path(), *pal, 5)) {
                     if (seq.frames.empty()) continue;
-                    auto& f = seq.frames[0];
-                    if (f.width == 0 || f.height == 0) continue;
                     std::string name = seq.name;
                     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                     if (textures_.count(name)) continue;
-                    SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
-                                                       SDL_TEXTUREACCESS_STATIC,
-                                                       f.width, f.height);
-                    SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
-                    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-                    textures_[name] = t;
+                    // 10-frame sequences are per-player team colors.
+                    size_t n = seq.frames.size() == 10 ? 10 : 1;
+                    std::vector<SDL_Texture*> frames;
+                    for (size_t i = 0; i < n; ++i) {
+                        auto& f = seq.frames[i];
+                        if (f.width == 0 || f.height == 0) break;
+                        SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                           SDL_TEXTUREACCESS_STATIC,
+                                                           f.width, f.height);
+                        SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
+                        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+                        frames.push_back(t);
+                    }
+                    if (!frames.empty()) textures_[name] = std::move(frames);
                 }
             } catch (const std::exception&) {}
         }
@@ -1548,7 +1554,7 @@ private:
         Xform base;
         if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
             base.t[1] = u.type->cruiseAlt;   // flyers cruise above the ground
-        collect(vt->second.model.root, base, anim, u.heading);
+        collect(vt->second.model.root, base, anim, u.heading, u.team);
         std::sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
@@ -1568,7 +1574,7 @@ private:
     // Project model triangles relative to the unit anchor: yaw by heading,
     // fixed tilt so models read against TAK's painted top-down terrain.
     void collect(const tak::tdo::Object& o, const Xform& parent, const Anim* anim,
-                 float heading) {
+                 float heading, int team) {
         static const float kNoRot[3] = {0, 0, 0};
         const tak::cob::PieceState* ps = pieceFor(anim, o.name);
         if (ps && !ps->visible) return;
@@ -1594,7 +1600,9 @@ private:
                 std::string name = p.texture;
                 std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                 auto it = textures_.find(name);
-                if (it != textures_.end()) tex = it->second;
+                if (it != textures_.end() && !it->second.empty())
+                    tex = it->second[size_t(team) < it->second.size() ? size_t(team)
+                                                                      : 0];
             }
             for (size_t i = 1; i + 1 < p.indices.size(); ++i) {
                 size_t idx[3] = {0, i, i + 1};
@@ -1622,7 +1630,7 @@ private:
                 tris_.push_back(tri);
             }
         }
-        for (const auto& c : o.children) collect(c, xf, anim, heading);
+        for (const auto& c : o.children) collect(c, xf, anim, heading, team);
     }
 
     void drawBrackets(float wx, float wz, float r) {
@@ -1659,7 +1667,7 @@ private:
     std::map<std::string, Visual> visuals_;
     std::map<int, std::string> unitType_;
     std::map<int, Anim> anims_;
-    std::map<std::string, SDL_Texture*> textures_;
+    std::map<std::string, std::vector<SDL_Texture*>> textures_;
     std::vector<Tri> tris_;
     std::vector<int> selection_;
     bool dragging_ = false;
