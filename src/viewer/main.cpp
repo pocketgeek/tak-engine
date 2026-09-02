@@ -78,6 +78,20 @@ public:
         }
     }
 
+    // Create any terrain chunk textures that will be visible this frame.
+    // Called BEFORE the render pass so texture creation never interleaves
+    // with draw calls (which glitches the whole frame on some backends).
+    void ensureChunks(int winW, int winH) {
+        int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;
+        offX_ = std::clamp(offX_, 0.0f, std::max(0.0f, mapW - winW / zoom_));
+        offY_ = std::clamp(offY_, 0.0f, std::max(0.0f, mapH - winH / zoom_));
+        int c0x = int(offX_) / kChunk, c0y = int(offY_) / kChunk;
+        int c1x = int(offX_ + winW / zoom_) / kChunk, c1y = int(offY_ + winH / zoom_) / kChunk;
+        for (int cy = c0y; cy <= c1y; ++cy)
+            for (int cx = c0x; cx <= c1x; ++cx)
+                chunk(cx, cy);
+    }
+
     void draw(int winW, int winH) {
         int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;
         offX_ = std::clamp(offX_, 0.0f, std::max(0.0f, mapW - winW / zoom_));
@@ -1822,6 +1836,12 @@ public:
         }
     }
 
+    // Create textures (terrain chunks, minimap) before the render pass.
+    void prepare(int winW, int winH) {
+        mapView_.ensureChunks(winW, winH);
+        if (!miniTex_) buildMinimap();
+    }
+
     void draw(int winW, int winH) {
         mapView_.draw(winW, winH);
         float zm0 = mapView_.zoom();
@@ -3360,6 +3380,10 @@ int main(int argc, char** argv) {
 
         int w, h;
         SDL_GetRendererOutputSize(ren, &w, &h);
+        // Create textures before the render pass (mid-pass creation glitches
+        // the whole frame on some backends).
+        if (mapView) mapView->ensureChunks(w, h);
+        if (gameView) gameView->prepare(w, h);
         SDL_SetRenderDrawColor(ren, 18, 18, 26, 255);
         SDL_RenderClear(ren);
         if (mapView) mapView->draw(w, h);
