@@ -19,6 +19,7 @@ add_library(tak-formats
   src/hpi/hpi.cpp
   src/gaf/gaf.cpp
   src/tnt/tnt.cpp
+  src/tdo/tdo.cpp
   src/util/png.cpp
 )
 target_include_directories(tak-formats PUBLIC src)
@@ -48,3 +49,6 @@ if(TAK_BUILD_VIEWER)
     message(WARNING "SDL2 not found — skipping takview. Install SDL2-devel.")
   endif()
 endif()
+
+add_executable(modeltool tools/modeltool.cpp)
+target_link_libraries(modeltool PRIVATE tak-formats)
