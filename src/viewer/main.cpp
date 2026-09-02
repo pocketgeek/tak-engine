@@ -2174,6 +2174,29 @@ private:
         }
     }
 
+    // Start a building for the AI: lodestones go on the nearest free mana
+    // deposit (when the map has any), everything else probes outward from the
+    // builder. Returns the new building's id, or 0.
+    int aiPlace(int builderId, const tak::sim::UnitType* t, float nx, float nz) {
+        if (!t) return 0;
+        if (t->onMana && world_.hasManaSpots()) {
+            float bestD = 1e18f, bx = 0, bz = 0;
+            bool found = false;
+            for (const auto& [sx, sz] : manaSpots_) {
+                if (!world_.canPlace(t, sx, sz)) continue;   // taken or blocked
+                float dx = sx - nx, dz = sz - nz, d = dx * dx + dz * dz;
+                if (d < bestD) { bestD = d; bx = sx; bz = sz; found = true; }
+            }
+            return found ? world_.startBuild(builderId, t, bx, bz) : 0;
+        }
+        for (float r = 70; r < 340; r += 30)
+            for (float a = 0; a < 6.28f; a += 0.5f) {
+                float x = nx + std::cos(a) * r, z = nz + std::sin(a) * r;
+                if (world_.canPlace(t, x, z)) return world_.startBuild(builderId, t, x, z);
+            }
+        return 0;
+    }
+
     // Bootstrapping AI: the Monarch raises lodestones for income, then its
     // keep, then the keep trains a rolling army that attacks in waves.
     void runBuildAi(int team, int monarchId, int& keepId,
@@ -2209,20 +2232,10 @@ private:
             if (lt && aiLodes_ < needLodes) want = lt;
             else if (kt && keepId < 0) want = kt;
             else if (lt && aiLodes_ < needLodes + 2) want = lt;
-            if (want) {
-                for (float r = 70; r < 340 && want; r += 30) {
-                    for (float a = 0; a < 6.28f; a += 0.5f) {
-                        float x = m->x + std::cos(a) * r, z = m->z + std::sin(a) * r;
-                        if (!world_.canPlace(want, x, z)) continue;
-                        int b = world_.startBuild(monarchId, want, x, z);
-                        if (b > 0) {
-                            if (want->id == keepType) keepId = b;
-                            else ++aiLodes_;
-                        }
-                        want = nullptr;   // one build order per tick
-                        break;
-                    }
-                }
+            int b = aiPlace(monarchId, want, m->x, m->z);
+            if (b > 0) {
+                if (want->id == keepType) keepId = b;
+                else ++aiLodes_;
             }
         }
 
@@ -2258,18 +2271,8 @@ private:
             else if (ht && aiHandlers_ < 2) want = ht;         // second Handler
             else if (lt && aiLodes_ < 7) want = lt;            // grow income
             else if (ht && aiHandlers_ < 3) want = ht;         // third Handler
-            if (want) {
-                float mx = m->x, mz = m->z;
-                for (float r = 70; r < 340 && want; r += 30)
-                    for (float a = 0; a < 6.28f; a += 0.5f) {
-                        float x = mx + std::cos(a) * r, z = mz + std::sin(a) * r;
-                        if (!world_.canPlace(want, x, z)) continue;
-                        int b = world_.startBuild(monarchId, want, x, z);
-                        if (b > 0) { if (want == ht) ++aiHandlers_; else ++aiLodes_; }
-                        want = nullptr;   // one order per tick
-                        break;
-                    }
-            }
+            int b = aiPlace(monarchId, want, m->x, m->z);
+            if (b > 0) { if (want == ht) ++aiHandlers_; else ++aiLodes_; }
         }
 
         // One idle Beast Handler summons the next creature in the cycle.
@@ -2797,6 +2800,7 @@ private:
         bool mana = false;   // a Sacred Stone mana deposit (lodestone spot)
     };
     std::vector<FeatureInst> features_;
+    std::vector<std::pair<float, float>> manaSpots_;   // Sacred Stone deposits
 
     struct FeatArt {
         SDL_Texture* tex = nullptr;
@@ -2956,6 +2960,12 @@ private:
                     ++placed;
             }
         std::printf("features: %d placed\n", placed);
+        // Register the Sacred Stone deposits so lodestones can only build on
+        // them (and the AI knows where to put them).
+        manaSpots_.clear();
+        for (const auto& f : features_)
+            if (f.mana) manaSpots_.push_back({f.x, f.z});
+        world_.setManaSpots(manaSpots_);
     }
 
     // Track numbers for a side from gamedata/sidedata.tdf (falls back to IP).
