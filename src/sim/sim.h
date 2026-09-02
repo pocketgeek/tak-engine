@@ -38,6 +38,7 @@ struct UnitType {
     float income = 0;       // mana/sec (mogriumincome)
     float storage = 0;      // mana cap contribution (mogriumstorage)
     int footX = 1, footZ = 1;
+    float sight = 180;        // px (FBI sightdistance)
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     Weapon weapon;         // WEAPON1; weapon.damage == 0 means unarmed
 };
@@ -73,6 +74,8 @@ struct Unit {
     float reloadLeft = 0;
     float deadFor = -1;    // >= 0 once dead; counts up for death animation
     bool justFired = false;   // set for one tick when the weapon fires
+    bool underConstruction = false;
+    int buildSiteId = 0;   // builder: id of the building it is constructing
     std::deque<Order> orders;
     // Production (buildings with a build tree).
     std::deque<const UnitType*> buildQueue;
@@ -132,7 +135,22 @@ public:
     NavGrid& nav() { return nav_; }
     // Queue production of `typeId` at a builder building.
     void train(int builderId, const UnitType* type);
+    // Mobile builder constructs a building at (x, z). Returns the new
+    // building's id, or 0 if the site is invalid.
+    int startBuild(int builderId, const UnitType* type, float x, float z);
+    bool canPlace(const UnitType* type, float x, float z) const;
     Team& team(int i) { return teams_[size_t(i)]; }
+
+    // Team-0 fog of war over 16px cells: 0 hidden, 1 explored, 2 visible.
+    const std::vector<uint8_t>& visibility() const { return vis_; }
+    int visW() const { return visW_; }
+    int visH() const { return visH_; }
+    bool cellVisible(float x, float z) const {
+        if (vis_.empty()) return true;
+        int cx = int(x) / 16, cz = int(z) / 16;
+        if (cx < 0 || cz < 0 || cx >= visW_ || cz >= visH_) return false;
+        return vis_[size_t(cz) * visW_ + cx] == 2;
+    }
     // Move order; queue appends.
     void order(int unitId, float x, float z, bool queue);
     // Attack order on an enemy unit.
@@ -149,7 +167,12 @@ private:
     void fire(Unit& u, Unit& target);
 
     void tickProduction(Unit& u, float dt);
+    void tickConstruction(Unit& u, float dt);
+    void updateVisibility();
 
+    std::vector<uint8_t> vis_;
+    int visW_ = 0, visH_ = 0;
+    float visTimer_ = 0;
     std::vector<Unit> units_;
     std::vector<Projectile> projectiles_;
     std::vector<Team> teams_ = std::vector<Team>(4);

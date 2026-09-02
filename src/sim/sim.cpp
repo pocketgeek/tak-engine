@@ -59,6 +59,7 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             t.footZ = int(info->numberOr("footprintz", 1));
             t.soundClass = lower(info->valueOr("soundcategory",
                                                info->valueOr("soundclass", "")));
+            t.sight = float(info->numberOr("sightdistance", 180));
             if (const auto* w = root.child("WEAPON1")) {
                 t.weapon.name = w->valueOr("name", "");
                 t.weapon.range = float(w->numberOr("range", 0));
@@ -319,14 +320,93 @@ void World::tickCombat(Unit& u, float dt) {
     if (std::abs(diff) < 0.2f && u.reloadLeft <= 0) fire(u, *target);
 }
 
+bool World::canPlace(const UnitType* type, float x, float z) const {
+    if (!type) return false;
+    int cx = int(x) / 16 - type->footX / 2, cz = int(z) / 16 - type->footZ / 2;
+    for (int j = 0; j < type->footZ; ++j)
+        for (int i = 0; i < type->footX; ++i)
+            if (!nav_.walkable(cx + i, cz + j)) return false;
+    for (const auto& u : units_) {
+        if (!u.alive()) continue;
+        float dx = u.x - x, dz = u.z - z;
+        float min = 16.0f * float(std::max(type->footX, type->footZ)) / 2 + 12;
+        if (dx * dx + dz * dz < min * min) return false;
+    }
+    return true;
+}
+
+int World::startBuild(int builderId, const UnitType* type, float x, float z) {
+    Unit* b = unit(builderId);
+    if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove)
+        return 0;
+    if (!canPlace(type, x, z)) return 0;
+    int id = spawn(type, x, z, 3.14159f, b->team);
+    Unit* site = unit(id);
+    site->underConstruction = true;
+    site->hp = type->maxHp * 0.05f;
+    nav_.block(int(x) / 16 - type->footX / 2, int(z) / 16 - type->footZ / 2,
+               type->footX, type->footZ, true);
+    b = unit(builderId);   // spawn may have reallocated units_
+    b->buildSiteId = id;
+    order(builderId, x, z + float(type->footZ) * 8 + 24, false);
+    return id;
+}
+
+void World::tickConstruction(Unit& b, float dt) {
+    Unit* site = unit(b.buildSiteId);
+    if (!site || !site->alive() || !site->underConstruction) {
+        b.buildSiteId = 0;
+        return;
+    }
+    float dx = site->x - b.x, dz = site->z - b.z;
+    float reach = 16.0f * float(std::max(site->type->footX, site->type->footZ)) / 2 + 40;
+    if (dx * dx + dz * dz > reach * reach) return;   // still walking there
+    b.orders.clear();
+    b.speed = 0;
+    float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
+    Team& tm = teams_[size_t(b.team)];
+    float cost = site->type->buildCost * dt / std::max(total, 0.01f);
+    if (tm.mana < cost) return;
+    tm.mana -= cost;
+    site->hp += site->type->maxHp * 0.95f * dt / std::max(total, 0.01f);
+    if (site->hp >= site->type->maxHp) {
+        site->hp = site->type->maxHp;
+        site->underConstruction = false;
+        b.buildSiteId = 0;
+    }
+}
+
 void World::train(int builderId, const UnitType* type) {
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !type) return;
     b->buildQueue.push_back(type);
 }
 
+void World::updateVisibility() {
+    if (nav_.empty()) return;
+    if (vis_.empty()) {
+        visW_ = nav_.width();
+        visH_ = nav_.height();
+        vis_.assign(size_t(visW_) * visH_, 0);
+    }
+    for (auto& v : vis_)
+        if (v == 2) v = 1;
+    for (const auto& u : units_) {
+        if (!u.alive() || u.team != 0 || !u.type) continue;
+        int r = int(u.type->sight) / 16 + 1;
+        int cx = int(u.x) / 16, cz = int(u.z) / 16;
+        for (int dz = -r; dz <= r; ++dz)
+            for (int dx = -r; dx <= r; ++dx) {
+                if (dx * dx + dz * dz > r * r) continue;
+                int x = cx + dx, z = cz + dz;
+                if (x >= 0 && z >= 0 && x < visW_ && z < visH_)
+                    vis_[size_t(z) * visW_ + x] = 2;
+            }
+    }
+}
+
 void World::tickProduction(Unit& u, float dt) {
-    if (u.buildQueue.empty()) return;
+    if (u.underConstruction || u.buildQueue.empty()) return;
     const UnitType* t = u.buildQueue.front();
     float total = t->buildTime / std::max(u.type->workerTime, 0.01f);
     Team& tm = teams_[size_t(u.team)];
@@ -361,6 +441,16 @@ void World::tick(float dt) {
 
     for (auto& u : units_)
         if (u.alive() && u.type) tickProduction(u, dt);
+    for (size_t i = 0; i < units_.size(); ++i) {
+        Unit& u = units_[i];
+        if (u.alive() && u.type && u.buildSiteId) tickConstruction(u, dt);
+    }
+
+    visTimer_ -= dt;
+    if (visTimer_ <= 0) {
+        visTimer_ = 0.25f;
+        updateVisibility();
+    }
 
     // Projectiles.
     for (auto& p : projectiles_) {
@@ -383,6 +473,7 @@ void World::tick(float dt) {
         if (!u.alive()) { u.deadFor += dt; continue; }
         if (u.hp <= 0) { u.deadFor = 0; u.orders.clear(); u.speed = 0; continue; }
 
+        if (u.underConstruction) continue;   // silent until finished
         tickCombat(u, dt);
 
         bool combatHold =

@@ -588,6 +588,7 @@ public:
         spawn("tarlode", cx + 380, cz - 30, 3.14159f, 1);
         spawn("tarlode", cx + 220, cz - 30, 3.14159f, 1);
         world_.team(1).mana = 800;
+        builderId_ = spawn("arabuild", cx - 320, cz + 80, 3.14159f, 0);
 
         try {
             hudFont_ = Font(ren_, dataRoot_ + "/fonts/bodfontbody.gaf");
@@ -617,14 +618,19 @@ public:
     void input(const SDL_Event& e, int winW, int winH) {
         (void)winW; (void)winH;
         float zm = mapView_.zoom();
-        if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
+        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && placing_) {
+            placing_ = nullptr;
+        } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
             e.key.keysym.sym <= SDLK_6 && !selection_.empty()) {
             const auto* b = world_.unit(selection_.front());
             if (b && b->type && b->type->isBuilder) {
                 const auto& menu = registry_.buildable(b->type->id);
                 size_t slot = size_t(e.key.keysym.sym - SDLK_1);
-                if (slot < menu.size())
-                    world_.train(b->id, registry_.find(menu[slot]));
+                if (slot < menu.size()) {
+                    const auto* bt = registry_.find(menu[slot]);
+                    if (b->type->canMove) placing_ = bt;   // mobile builder: place
+                    else world_.train(b->id, bt);          // building: train
+                }
             }
         } else if (e.type == SDL_MOUSEWHEEL || e.type == SDL_KEYDOWN) {
             mapView_.input(e);
@@ -632,7 +638,19 @@ public:
             if (e.motion.state & SDL_BUTTON_MMASK)   // middle-drag scrolls
                 mapView_.setOffset(mapView_.offX() - e.motion.xrel / zm,
                                    mapView_.offY() - e.motion.yrel / zm);
+            mouseX_ = float(e.motion.x);
+            mouseY_ = float(e.motion.y);
             if (dragging_) { dragX1_ = float(e.motion.x); dragY1_ = float(e.motion.y); }
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
+                   placing_) {
+            float wx = mapView_.offX() + e.button.x / zm;
+            float wz = mapView_.offY() + e.button.y / zm;
+            if (!selection_.empty() &&
+                world_.startBuild(selection_.front(), placing_, wx, wz))
+                placing_ = nullptr;
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
+                   placing_) {
+            placing_ = nullptr;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             dragging_ = true;
             dragX0_ = dragX1_ = float(e.button.x);
@@ -701,6 +719,25 @@ public:
 
     void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }
 
+    void testBuild() {
+        aiEnabled_ = false;
+        const auto* keep = world_.unit(keepId_);
+        if (!keep) return;
+        const auto* lode = registry_.find("aralode");
+        // Probe outward from the keep for the first legal site.
+        for (float r = 90; r < 400; r += 24) {
+            for (float a = 0; a < 6.28f; a += 0.5f) {
+                float x = keep->x + std::cos(a) * r, z = keep->z + std::sin(a) * r;
+                if (world_.canPlace(lode, x, z)) {
+                    int id = world_.startBuild(builderId_, lode, x, z);
+                    std::printf("testbuild: site id %d at %.0f,%.0f\n", id, x, z);
+                    return;
+                }
+            }
+        }
+        std::printf("testbuild: no site found\n");
+    }
+
     void marchTo(float dx, float dz) {
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         for (auto& u : world_.units())
@@ -766,21 +803,28 @@ public:
     void draw(int winW, int winH) {
         mapView_.draw(winW, winH);
         std::vector<const tak::sim::Unit*> order;
-        for (auto& u : world_.units())
-            if (u.deadFor < 4.0f) order.push_back(&u);   // corpses linger briefly
+        for (auto& u : world_.units()) {
+            if (u.deadFor >= 4.0f) continue;             // corpses linger briefly
+            if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;   // fogged
+            order.push_back(&u);
+        }
         std::sort(order.begin(), order.end(),
                   [](auto* a, auto* b) { return a->z < b->z; });
         for (const auto* u : order) drawUnit(*u);
 
-        // Projectiles: short bright streaks.
+        // Projectiles: short bright streaks (only where visible).
         float zm = mapView_.zoom();
         SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
         for (const auto& p : world_.projectiles()) {
+            if (!world_.cellVisible(p.x, p.z)) continue;
             float sx = (p.x - mapView_.offX()) * zm;
             float sy = (p.z - mapView_.offY()) * zm - 8 * zm;
             SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.03f * zm,
                                 sy - p.vz * 0.03f * zm);
         }
+
+        drawFog();
+        if (placing_) drawGhost();
 
         for (int id : selection_) {
             const auto* u = world_.unit(id);
@@ -793,6 +837,7 @@ public:
         // Health bars for damaged or selected units.
         for (const auto& u : world_.units()) {
             if (!u.alive() || !u.type) continue;
+            if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;
             bool sel = std::find(selection_.begin(), selection_.end(), u.id) !=
                        selection_.end();
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
@@ -812,6 +857,7 @@ public:
         // Production progress above busy buildings.
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
+            if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;
             float total = u.buildQueue.front()->buildTime /
                           std::max(u.type->workerTime, 0.01f);
             float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
@@ -910,7 +956,7 @@ private:
     // fighters have gathered, throw them at the nearest player unit.
     void tickAi(float dt) {
         aiTimer_ -= dt;
-        if (aiTimer_ > 0 || outcome_ != 0) return;
+        if (!aiEnabled_ || aiTimer_ > 0 || outcome_ != 0) return;
         aiTimer_ = 1.0f;
 
         runAi(1, aiKeepId_, std::array<const char*, 4>{"tararch", "tartb", "tararch",
@@ -1146,9 +1192,60 @@ private:
     float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
     bool follow_ = false;
     bool trace_ = false;
-    int keepId_ = -1, aiKeepId_ = -1;
+    int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
+    const tak::sim::UnitType* placing_ = nullptr;
+    float mouseX_ = 0, mouseY_ = 0;
+    SDL_Texture* fogTex_ = nullptr;
     int aiTrained_ = 0;
     float aiTimer_ = 0;
+    void drawFog() {
+        const auto& vis = world_.visibility();
+        if (vis.empty()) return;
+        int w = world_.visW(), h = world_.visH();
+        if (!fogTex_) {
+            fogTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                        SDL_TEXTUREACCESS_STREAMING, w, h);
+            SDL_SetTextureBlendMode(fogTex_, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(fogTex_, SDL_ScaleModeLinear);
+        }
+        void* px = nullptr;
+        int pitch = 0;
+        if (SDL_LockTexture(fogTex_, nullptr, &px, &pitch) == 0) {
+            for (int z = 0; z < h; ++z) {
+                uint32_t* row = reinterpret_cast<uint32_t*>(
+                    static_cast<uint8_t*>(px) + size_t(z) * size_t(pitch));
+                for (int x = 0; x < w; ++x) {
+                    uint8_t v = vis[size_t(z) * w + x];
+                    uint8_t a = v == 2 ? 0 : (v == 1 ? 110 : 235);
+                    row[x] = uint32_t(a) << 24;   // black with alpha (RGBA32 LE)
+                }
+            }
+            SDL_UnlockTexture(fogTex_);
+        }
+        float zm = mapView_.zoom();
+        SDL_FRect dst{-mapView_.offX() * zm, -mapView_.offY() * zm,
+                      float(w) * 16 * zm, float(h) * 16 * zm};
+        SDL_RenderCopyF(ren_, fogTex_, nullptr, &dst);
+    }
+
+    void drawGhost() {
+        float zm = mapView_.zoom();
+        float wx = mapView_.offX() + mouseX_ / zm;
+        float wz = mapView_.offY() + mouseY_ / zm;
+        bool ok = world_.canPlace(placing_, wx, wz);
+        float hw = float(placing_->footX) * 8 * zm, hh = float(placing_->footZ) * 8 * zm;
+        SDL_FRect r{(wx - mapView_.offX()) * zm - hw, (wz - mapView_.offY()) * zm - hh,
+                    hw * 2, hh * 2};
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ren_, ok ? 90 : 230, ok ? 220 : 60, 70, 90);
+        SDL_RenderFillRectF(ren_, &r);
+        SDL_SetRenderDrawColor(ren_, ok ? 120 : 255, ok ? 255 : 80, 90, 220);
+        SDL_RenderDrawRectF(ren_, &r);
+        if (hudFont_.ok())
+            hudFont_.draw(ren_, placing_->name, r.x, r.y - 4, 1.5f,
+                          {230, 230, 200, 255});
+    }
+
     void voice(int unitId, const std::string& event) {
         const auto* u = world_.unit(unitId);
         if (!u || !u->type || u->type->soundClass.empty()) return;
@@ -1161,6 +1258,7 @@ private:
     uint32_t salt_ = 0;
     int outcome_ = 0;   // 0 = playing, 1 = victory, -1 = defeat
     bool demoAi_ = false;
+    bool aiEnabled_ = true;
     Font hudFont_, bigFont_;
 };
 
@@ -1179,7 +1277,7 @@ int main(int argc, char** argv) {
     std::string mode = argv[1];
     std::string shot, cobPath, anim;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
-    bool demo = false, doMarch = false, trace = false;
+    bool demo = false, doMarch = false, trace = false, testbuild = false;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
@@ -1189,6 +1287,7 @@ int main(int argc, char** argv) {
         else if (a == "--time" && i + 1 < argc) startTime = std::stof(argv[++i]);
         else if (a == "--demo") demo = true;
         else if (a == "--trace") trace = true;
+        else if (a == "--testbuild") testbuild = true;
         else if (a == "--follow" && i + 1 < argc) followZoom = std::stof(argv[++i]);
         else if (a == "--march" && i + 2 < argc) {
             marchX = std::stof(argv[++i]);
@@ -1224,6 +1323,7 @@ int main(int argc, char** argv) {
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);
             if (trace) gameView->setTrace(true);
+            if (testbuild) gameView->testBuild();
             if (startTime > 0) gameView->advance(startTime);
         } else if (mode == "model" && !args.empty()) {
             modelView = std::make_unique<ModelView>(ren, args[0],
