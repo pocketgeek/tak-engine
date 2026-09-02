@@ -58,6 +58,11 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             t.storage = float(info->numberOr("mogriumstorage", 0));
             t.footX = int(info->numberOr("footprintx", 1));
             t.footZ = int(info->numberOr("footprintz", 1));
+            {
+                std::string ym = info->valueOr("yardmap", "");
+                std::erase_if(ym, [](char c) { return c == ' ' || c == '\t'; });
+                if (int(ym.size()) == t.footX * t.footZ) t.yardMap = ym;
+            }
             t.canTransport = info->numberOr("cantransport", 0) != 0;
             t.transportCap = int(info->numberOr("transportcapacity", 0));
             t.soundClass = lower(info->valueOr("soundcategory",
@@ -159,6 +164,20 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
         for (int x = 0; x < w; ++x)
             if (seaLevel - int(heights[size_t(z) * w + x]) > 0)
                 navHover_.block(x, z, 1, 1, false);
+}
+
+void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked) {
+    int cx = int(x) / 16 - t.footX / 2, cz = int(z) / 16 - t.footZ / 2;
+    if (t.yardMap.empty()) {
+        nav.block(cx, cz, t.footX, t.footZ, blocked);
+        return;
+    }
+    for (int j = 0; j < t.footZ; ++j)
+        for (int i = 0; i < t.footX; ++i) {
+            char c = t.yardMap[size_t(j) * t.footX + i];
+            if (c == 'o' || c == 'O')
+                nav.block(cx + i, cz + j, 1, 1, blocked);
+        }
 }
 
 void NavGrid::block(int cx, int cz, int w, int h, bool blocked) {
@@ -509,8 +528,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     Unit* site = unit(id);
     site->underConstruction = true;
     site->hp = type->maxHp * 0.05f;
-    nav_.block(int(x) / 16 - type->footX / 2, int(z) / 16 - type->footZ / 2,
-               type->footX, type->footZ, true);
+    blockFootprint(nav_, *type, x, z, true);
     b = unit(builderId);   // spawn may have reallocated units_
     b->buildSiteId = id;
     order(builderId, x, z + float(type->footZ) * 8 + 24, false);

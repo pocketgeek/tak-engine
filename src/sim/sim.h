@@ -39,6 +39,7 @@ struct UnitType {
     float income = 0;       // mana/sec (mogriumincome)
     float storage = 0;      // mana cap contribution (mogriumstorage)
     int footX = 1, footZ = 1;
+    std::string yardMap;      // footX*footZ chars; 'o' blocks, '.'/'c' passable
     float sight = 180;        // px (FBI sightdistance)
     bool canFly = false;
     float cruiseAlt = 0;      // world units above ground when flying
@@ -146,6 +147,9 @@ private:
     std::vector<uint8_t> cells_;
     int w_ = 0, h_ = 0;
 };
+
+// Block/unblock a building's yardmap-aware footprint on a nav grid.
+void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked);
 
 struct Team {
     float mana = 500;

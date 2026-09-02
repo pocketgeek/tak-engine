@@ -787,11 +787,10 @@ public:
         }
         sounds_.init(dataRoot_ + "/../english/Sounds", false);
         soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
+        loadPanel("ara");
         for (auto& u : world_.units()) {
             if (!u.type || u.type->canMove) continue;
-            world_.nav().block(int(u.x) / 16 - u.type->footX / 2,
-                               int(u.z) / 16 - u.type->footZ / 2,
-                               u.type->footX, u.type->footZ, true);
+            tak::sim::blockFootprint(world_.nav(), *u.type, u.x, u.z, true);
         }
     }
 
@@ -842,6 +841,9 @@ public:
             mouseX_ = float(e.motion.x);
             mouseY_ = float(e.motion.y);
             if (dragging_) { dragX1_ = float(e.motion.x); dragY1_ = float(e.motion.y); }
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && panelTex_ &&
+                   e.button.x > kWinW - panelW_) {
+            // clicks on the side panel do not reach the world
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    minimapClick(float(e.button.x), float(e.button.y), winH)) {
             // camera moved via minimap
@@ -1497,7 +1499,7 @@ public:
             SDL_FRect fg{12, 12, 176 * std::clamp(tm.mana / cap, 0.0f, 1.0f), 8};
             SDL_SetRenderDrawColor(ren_, 80, 200, 255, 255);
             SDL_RenderFillRectF(ren_, &fg);
-            if (hudFont_.ok()) {
+            if (hudFont_.ok() && !panelTex_) {
                 char buf[96];
                 std::snprintf(buf, sizeof buf, "MANA %d/%d  +%d", int(tm.mana), int(cap),
                               int(tm.income));
@@ -1529,6 +1531,8 @@ public:
                 }
             }
         }
+
+        drawPanel(winW, winH);
 
         // Mission briefing (first 30s) and event notices.
         if (briefTimer_ > 0 && hudFont_.ok()) {
@@ -1919,6 +1923,8 @@ private:
     float mouseX_ = 0, mouseY_ = 0;
     SDL_Texture* fogTex_ = nullptr;
     SDL_Texture* miniTex_ = nullptr;
+    SDL_Texture* panelTex_ = nullptr;
+    int panelW_ = 0, panelH_ = 0;
     int aiTrained_ = 0;
     float aiTimer_ = 0;
     static constexpr int kMiniSize = 180;
@@ -2157,6 +2163,77 @@ private:
                     ++placed;
             }
         std::printf("features: %d placed\n", placed);
+    }
+
+    void loadPanel(const std::string& side) {
+        try {
+            auto pal = tak::gaf::Palette::load(dataRoot_ + "/anims/" + side +
+                                               "ingame.pcx");
+            for (auto& sq : tak::gaf::load(dataRoot_ + "/anims/" + side + "ingame.gaf",
+                                           pal)) {
+                if (sq.name != "AidPanel" || sq.frames.empty()) continue;
+                auto& f = sq.frames[0];
+                panelTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                              SDL_TEXTUREACCESS_STATIC, f.width,
+                                              f.height);
+                SDL_UpdateTexture(panelTex_, nullptr, f.rgba.data(), f.width * 4);
+                panelW_ = f.width;
+                panelH_ = f.height;
+            }
+        } catch (const std::exception&) {}
+    }
+
+    void drawPanel(int winW, int winH) {
+        if (!panelTex_) return;
+        for (int y = 0; y < winH; y += panelH_) {
+            SDL_Rect dst{winW - panelW_, y, panelW_, panelH_};
+            SDL_RenderCopy(ren_, panelTex_, nullptr, &dst);
+        }
+        if (!hudFont_.ok()) return;
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        SDL_FRect back{float(winW - panelW_) + 4, 10, float(panelW_) - 8, 64};
+        SDL_SetRenderDrawColor(ren_, 8, 8, 12, 170);
+        SDL_RenderFillRectF(ren_, &back);
+        if (!selection_.empty()) {
+            SDL_FRect back2{float(winW - panelW_) + 4, 90, float(panelW_) - 8, 150};
+            SDL_RenderFillRectF(ren_, &back2);
+        }
+        float px = float(winW - panelW_) + 10;
+        auto& tm = world_.team(localTeam_);
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "MANA");
+        hudFont_.draw(ren_, buf, px, 24, 1.5f, {120, 200, 255, 255});
+        std::snprintf(buf, sizeof buf, "%d/%d", int(tm.mana),
+                      int(std::max(tm.storage, 100.0f)));
+        hudFont_.draw(ren_, buf, px, 42, 1.5f, {200, 225, 255, 255});
+        std::snprintf(buf, sizeof buf, "+%d", int(tm.income));
+        hudFont_.draw(ren_, buf, px, 60, 1.5f, {160, 255, 180, 255});
+        if (!selection_.empty()) {
+            const auto* u = world_.unit(selection_.front());
+            if (u && u->alive() && u->type) {
+                hudFont_.draw(ren_, u->type->name, px, 96, 1.4f, {230, 225, 190, 255});
+                std::snprintf(buf, sizeof buf, "%d/%d", int(u->hp),
+                              int(u->type->maxHp));
+                hudFont_.draw(ren_, buf, px, 112, 1.4f, {220, 200, 170, 255});
+                if (u->type->isBuilder) {
+                    const auto& menu = registry_.buildable(u->type->id);
+                    float y = 140;
+                    for (size_t i = 0; i < menu.size() && i < 6; ++i) {
+                        const auto* bt = registry_.find(menu[i]);
+                        std::snprintf(buf, sizeof buf, "%zu %s", i + 1,
+                                      bt ? bt->name.c_str() : menu[i].c_str());
+                        hudFont_.draw(ren_, buf, px, y, 1.3f, {190, 205, 180, 255});
+                        y += 15;
+                    }
+                    if (!u->buildQueue.empty()) {
+                        std::snprintf(buf, sizeof buf, "> %s (%zu)",
+                                      u->buildQueue.front()->name.c_str(),
+                                      u->buildQueue.size());
+                        hudFont_.draw(ren_, buf, px, y + 6, 1.3f, {150, 200, 255, 255});
+                    }
+                }
+            }
+        }
     }
 
     void drawFog() {
