@@ -20,6 +20,7 @@ add_library(tak-formats
   src/gaf/gaf.cpp
   src/tnt/tnt.cpp
   src/tdo/tdo.cpp
+  src/tdf/tdf.cpp
   src/util/png.cpp
 )
 target_include_directories(tak-formats PUBLIC src)
@@ -52,3 +53,6 @@ endif()
 
 add_executable(modeltool tools/modeltool.cpp)
 target_link_libraries(modeltool PRIVATE tak-formats)
+
+add_executable(tdftool tools/tdftool.cpp)
+target_link_libraries(tdftool PRIVATE tak-formats)
