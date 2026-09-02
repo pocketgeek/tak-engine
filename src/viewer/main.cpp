@@ -2258,7 +2258,10 @@ private:
         // Buildings are stationary; their billboards are authored facing the
         // camera (yaw 0). Mobile units turn to face their heading; the +pi
         // aligns the models' authored forward axis with the movement dir.
-        float facing = (u.type && u.type->canMove) ? u.heading + 3.14159f : 0.0f;
+        // Buildings are stationary (camera-facing billboards, yaw 0). Mobile
+        // units face their heading; the render z-axis is inverted vs the sim
+        // (billboard flip), so the facing yaw negates the heading.
+        float facing = (u.type && u.type->canMove) ? -u.heading : 0.0f;
         collect(vt->second.model.root, base, anim, facing, u.team);
         std::sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
@@ -3182,6 +3185,7 @@ int main(int argc, char** argv) {
         else if (a == "--soundtest") soundtest = true;
 
         else if (a == "--tilt" && i + 1 < argc) gTilt = std::stof(argv[++i]);
+
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
         else if (a == "--selonly") selonly = true;
 
