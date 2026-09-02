@@ -200,8 +200,9 @@ void Vm::run(Thread& t) {
             case 0x10001000: case 0x1000B000: {                               // MOVE[_NOW]
                 int piece = arg(0), axis = arg(1);
                 bool now = op == 0x1000B000;
-                float speed = now ? 0 : float(pop(t)) * kLinear * kTick;
+                // Push order is [speed, target]: target is on top.
                 float target = float(pop(t)) * kLinear;
+                float speed = now ? 0 : float(pop(t)) * kLinear * kTick;
                 if (piece >= 0 && size_t(piece) < pieces_.size() && axis >= 0 && axis < 3) {
                     auto& p = pieces_[size_t(piece)];
                     if (now || speed <= 0) { p.move[axis] = target; p.moving[axis] = false; }
@@ -216,8 +217,9 @@ void Vm::run(Thread& t) {
             case 0x10002000: case 0x1000C000: {                               // TURN[_NOW]
                 int piece = arg(0), axis = arg(1);
                 bool now = op == 0x1000C000;
-                float speed = now ? 0 : float(pop(t)) * kAngle * kTick;
+                // Push order is [speed, target]: target is on top.
                 float target = float(pop(t)) * kAngle;
+                float speed = now ? 0 : float(pop(t)) * kAngle * kTick;
                 if (piece >= 0 && size_t(piece) < pieces_.size() && axis >= 0 && axis < 3) {
                     auto& p = pieces_[size_t(piece)];
                     if (now || speed <= 0) { p.rot[axis] = target; p.turning[axis] = false; }

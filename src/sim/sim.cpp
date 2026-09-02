@@ -38,14 +38,25 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             t.id = lower(info->valueOr("objectname", e.path().stem().string()));
             t.name = info->valueOr("name", t.id);
             t.side = info->valueOr("side", "");
-            t.canMove = info->numberOr("canmove", 0) != 0;
-            t.maxVel = float(info->numberOr("maxvelocity", 1)) * kTick;
+            // Buildings often declare canmove=1; bmcode (0 = building,
+            // 1 = mobile unit) is the authoritative mobility flag.
+            t.canMove = info->numberOr("canmove", 0) != 0 &&
+                        info->numberOr("bmcode", 1) != 0;
+            t.maxVel = float(info->numberOr("maxvelocity", 0)) * kTick;
             t.accel = float(info->numberOr("acceleration", 0.5)) * kTick;
             t.brake = float(info->numberOr("brakerate", 0.5)) * kTick;
             // FBI turnrate is COB angle units per tick.
             float tr = float(info->numberOr("turnrate", 500));
             t.turnRate = tr * kCobAngle * kTick;
             t.maxHp = float(info->numberOr("maxdamage", 100));
+            t.isBuilder = info->numberOr("builder", 0) != 0;
+            t.buildCost = float(info->numberOr("buildcost", 0));
+            t.buildTime = float(info->numberOr("buildtime", 0));
+            t.workerTime = float(info->numberOr("workertime", 1));
+            t.income = float(info->numberOr("mogriumincome", 0));
+            t.storage = float(info->numberOr("mogriumstorage", 0));
+            t.footX = int(info->numberOr("footprintx", 1));
+            t.footZ = int(info->numberOr("footprintz", 1));
             if (const auto* w = root.child("WEAPON1")) {
                 t.weapon.name = w->valueOr("name", "");
                 t.weapon.range = float(w->numberOr("range", 0));
@@ -60,6 +71,32 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             // Skip malformed definitions rather than fail the registry.
         }
     }
+}
+
+void TypeRegistry::loadBuildTree(const std::filesystem::path& canbuildDir) {
+    for (const auto& b : std::filesystem::directory_iterator(canbuildDir)) {
+        if (!b.is_directory()) continue;
+        std::string builder = lower(b.path().filename().string());
+        std::vector<std::pair<double, std::string>> entries;
+        for (const auto& e : std::filesystem::directory_iterator(b.path())) {
+            if (lower(e.path().extension().string()) != ".tdf") continue;
+            double prio = 99;
+            try {
+                auto root = tdf::parse(e.path());
+                if (const auto* m = root.child("Menu")) prio = m->numberOr("priority", 99);
+            } catch (const std::exception&) {}
+            entries.push_back({prio, lower(e.path().stem().string())});
+        }
+        std::sort(entries.begin(), entries.end());
+        auto& list = buildTree_[builder];
+        for (auto& [p, id] : entries) list.push_back(id);
+    }
+}
+
+const std::vector<std::string>& TypeRegistry::buildable(const std::string& builderId) const {
+    static const std::vector<std::string> kEmpty;
+    auto it = buildTree_.find(lower(builderId));
+    return it == buildTree_.end() ? kEmpty : it->second;
 }
 
 const UnitType* TypeRegistry::find(const std::string& id) const {
@@ -84,6 +121,13 @@ Unit* World::unit(int id) {
     for (auto& u : units_)
         if (u.id == id) return &u;
     return nullptr;
+}
+
+void NavGrid::block(int cx, int cz, int w, int h, bool blocked) {
+    for (int z = cz; z < cz + h; ++z)
+        for (int x = cx; x < cx + w; ++x)
+            if (x >= 0 && z >= 0 && x < w_ && z < h_)
+                cells_[size_t(z) * w_ + x] = blocked ? 0 : 1;
 }
 
 NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int cliff)
@@ -255,8 +299,48 @@ void World::tickCombat(Unit& u, float dt) {
     if (std::abs(diff) < 0.2f && u.reloadLeft <= 0) fire(u, *target);
 }
 
+void World::train(int builderId, const UnitType* type) {
+    Unit* b = unit(builderId);
+    if (!b || !b->alive() || !type) return;
+    b->buildQueue.push_back(type);
+}
+
+void World::tickProduction(Unit& u, float dt) {
+    if (u.buildQueue.empty()) return;
+    const UnitType* t = u.buildQueue.front();
+    float total = t->buildTime / std::max(u.type->workerTime, 0.01f);
+    Team& tm = teams_[size_t(u.team)];
+    float cost = t->buildCost * dt / std::max(total, 0.01f);
+    if (tm.mana < cost) return;   // stalled: no mana
+    tm.mana -= cost;
+    u.buildProgress += dt;
+    if (u.buildProgress >= total) {
+        u.buildProgress = 0;
+        u.buildQueue.pop_front();
+        // Spawn just south of the footprint, walk to a rally point.
+        float sx = u.x, sz = u.z + float(u.type->footZ) * 8 + 20;
+        int id = spawn(t, sx, sz, 3.14159f, u.team);
+        order(id, sx + float((id % 5) - 2) * 22, sz + 60, false);
+        u.justBuilt = id;
+    }
+}
+
 void World::tick(float dt) {
-    for (auto& u : units_) u.justFired = false;
+    for (auto& u : units_) { u.justFired = false; u.justBuilt = 0; }
+
+    // Economy: recompute income/storage, apply income.
+    for (auto& tm : teams_) { tm.income = 0; tm.storage = 0; }
+    for (auto& u : units_) {
+        if (!u.alive() || !u.type) continue;
+        auto& tm = teams_[size_t(u.team)];
+        tm.income += u.type->income;
+        tm.storage += u.type->storage;
+    }
+    for (auto& tm : teams_)
+        tm.mana = std::min(tm.mana + tm.income * dt, std::max(tm.storage, 100.0f));
+
+    for (auto& u : units_)
+        if (u.alive() && u.type) tickProduction(u, dt);
 
     // Projectiles.
     for (auto& p : projectiles_) {

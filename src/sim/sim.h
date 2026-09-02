@@ -31,6 +31,13 @@ struct UnitType {
     float turnRate = 6;    // rad/s
     float maxHp = 100;
     bool canMove = false;
+    bool isBuilder = false;
+    float buildCost = 0;    // mana
+    float buildTime = 0;    // work units; seconds = buildTime / builder workerTime
+    float workerTime = 1;
+    float income = 0;       // mana/sec (mogriumincome)
+    float storage = 0;      // mana cap contribution (mogriumstorage)
+    int footX = 1, footZ = 1;
     Weapon weapon;         // WEAPON1; weapon.damage == 0 means unarmed
 };
 
@@ -38,11 +45,15 @@ class TypeRegistry {
 public:
     // Parse every .fbi in a directory (extracted data/units).
     void loadDir(const std::filesystem::path& unitsDir);
+    // Parse canbuild/<builder>/<buildable>.tdf into the build tree.
+    void loadBuildTree(const std::filesystem::path& canbuildDir);
     const UnitType* find(const std::string& id) const;
     const std::map<std::string, UnitType>& all() const { return types_; }
+    const std::vector<std::string>& buildable(const std::string& builderId) const;
 
 private:
     std::map<std::string, UnitType> types_;
+    std::map<std::string, std::vector<std::string>> buildTree_;
 };
 
 struct Order {
@@ -62,6 +73,10 @@ struct Unit {
     float deadFor = -1;    // >= 0 once dead; counts up for death animation
     bool justFired = false;   // set for one tick when the weapon fires
     std::deque<Order> orders;
+    // Production (buildings with a build tree).
+    std::deque<const UnitType*> buildQueue;
+    float buildProgress = 0;   // seconds of work done on queue front
+    int justBuilt = 0;         // unit id produced this tick (viewer hook), else 0
 
     bool alive() const { return deadFor < 0; }
     bool moving() const { return alive() && (speed > 1.0f || !orders.empty()); }
@@ -89,6 +104,8 @@ public:
     bool empty() const { return cells_.empty(); }
     int width() const { return w_; }
     int height() const { return h_; }
+    // Mark a rectangle of cells blocked (building footprint) or clear.
+    void block(int cx, int cz, int w, int h, bool blocked);
 
     // A* in cell space (16px cells), with waypoint simplification.
     // Returns world-space waypoints; empty if unreachable.
@@ -101,10 +118,20 @@ private:
     int w_ = 0, h_ = 0;
 };
 
+struct Team {
+    float mana = 500;
+    float storage = 0;   // recomputed each tick from alive units
+    float income = 0;
+};
+
 class World {
 public:
     int spawn(const UnitType* type, float x, float z, float heading = 0, int team = 0);
     void setNav(NavGrid grid) { nav_ = std::move(grid); }
+    NavGrid& nav() { return nav_; }
+    // Queue production of `typeId` at a builder building.
+    void train(int builderId, const UnitType* type);
+    Team& team(int i) { return teams_[size_t(i)]; }
     // Move order; queue appends.
     void order(int unitId, float x, float z, bool queue);
     // Attack order on an enemy unit.
@@ -120,8 +147,11 @@ private:
     void tickCombat(Unit& u, float dt);
     void fire(Unit& u, Unit& target);
 
+    void tickProduction(Unit& u, float dt);
+
     std::vector<Unit> units_;
     std::vector<Projectile> projectiles_;
+    std::vector<Team> teams_ = std::vector<Team>(4);
     NavGrid nav_;
     int nextId_ = 1;
 };

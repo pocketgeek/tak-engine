@@ -348,6 +348,7 @@ public:
              const std::string& dataRoot, bool demo)
         : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot) {
         registry_.loadDir(dataRoot_ + "/units");
+        registry_.loadBuildTree(dataRoot_ + "/canbuild");
         loadTextures(dataRoot_ + "/textures", dataRoot_ + "/palettes/ara_textures.pcx");
         mapView_.setZoom(0.9f);
 
@@ -373,18 +374,40 @@ public:
             if (id >= 0) teamB.push_back(id);
             ++i;
         }
+        // A Keep (HQ) and two Lodestones (mana economy) for team 0; building
+        // footprints block the nav grid.
+        keepId_ = spawn("arakeep", cx - 260, cz + 30, 3.14159f, 0);
+        spawn("aralode", cx - 340, cz - 30, 3.14159f, 0);
+        spawn("aralode", cx - 180, cz - 30, 3.14159f, 0);
+        for (auto& u : world_.units()) {
+            if (u.team != 0 || !u.type || u.type->canMove) continue;
+            world_.nav().block(int(u.x) / 16 - u.type->footX / 2,
+                               int(u.z) / 16 - u.type->footZ / 2,
+                               u.type->footX, u.type->footZ, true);
+        }
         if (demo) {
             for (size_t k = 0; k < teamA.size(); ++k)
                 world_.attack(teamA[k], teamB[k % teamB.size()], false);
             for (size_t k = 0; k < teamB.size(); ++k)
                 world_.attack(teamB[k], teamA[k % teamA.size()], false);
+            for (int k = 0; k < 4; ++k)
+                world_.train(keepId_, registry_.find("araarch"));
         }
     }
 
     void input(const SDL_Event& e, int winW, int winH) {
         (void)winW; (void)winH;
         float zm = mapView_.zoom();
-        if (e.type == SDL_MOUSEWHEEL || e.type == SDL_KEYDOWN) {
+        if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
+            e.key.keysym.sym <= SDLK_6 && !selection_.empty()) {
+            const auto* b = world_.unit(selection_.front());
+            if (b && b->type && b->type->isBuilder) {
+                const auto& menu = registry_.buildable(b->type->id);
+                size_t slot = size_t(e.key.keysym.sym - SDLK_1);
+                if (slot < menu.size())
+                    world_.train(b->id, registry_.find(menu[slot]));
+            }
+        } else if (e.type == SDL_MOUSEWHEEL || e.type == SDL_KEYDOWN) {
             mapView_.input(e);
         } else if (e.type == SDL_MOUSEMOTION) {
             if (e.motion.state & SDL_BUTTON_MMASK)   // middle-drag scrolls
@@ -462,6 +485,8 @@ public:
 
     void update(float dt) {
         world_.tick(dt);
+        for (auto& u : world_.units())
+            if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
         if (follow_ && !world_.units().empty()) {
             float cx = 0, cz = 0;
             for (auto& u : world_.units()) { cx += u.x; cz += u.z; }
@@ -541,6 +566,35 @@ public:
             SDL_RenderFillRectF(ren_, &fg);
         }
 
+        // Production progress above busy buildings.
+        for (const auto& u : world_.units()) {
+            if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
+            float total = u.buildQueue.front()->buildTime /
+                          std::max(u.type->workerTime, 0.01f);
+            float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
+            float bw = 40 * zm, bh = std::max(3.0f, 4 * zm);
+            float bx = (u.x - mapView_.offX()) * zm - bw / 2;
+            float by = (u.z - mapView_.offY()) * zm - float(u.type->footZ) * 8 * zm - 14 * zm;
+            SDL_FRect bg{bx - 1, by - 1, bw + 2, bh + 2};
+            SDL_SetRenderDrawColor(ren_, 10, 10, 10, 220);
+            SDL_RenderFillRectF(ren_, &bg);
+            SDL_FRect fg{bx, by, bw * frac, bh};
+            SDL_SetRenderDrawColor(ren_, 90, 170, 255, 255);
+            SDL_RenderFillRectF(ren_, &fg);
+        }
+
+        // Team-0 mana bar, top left.
+        {
+            auto& tm = world_.team(0);
+            float cap = std::max(tm.storage, 100.0f);
+            SDL_FRect bg{10, 10, 180, 12};
+            SDL_SetRenderDrawColor(ren_, 20, 20, 30, 230);
+            SDL_RenderFillRectF(ren_, &bg);
+            SDL_FRect fg{12, 12, 176 * std::clamp(tm.mana / cap, 0.0f, 1.0f), 8};
+            SDL_SetRenderDrawColor(ren_, 80, 200, 255, 255);
+            SDL_RenderFillRectF(ren_, &fg);
+        }
+
         if (dragging_) {
             SDL_FRect r{std::min(dragX0_, dragX1_), std::min(dragY0_, dragY1_),
                         std::abs(dragX1_ - dragX0_), std::abs(dragY1_ - dragY0_)};
@@ -575,18 +629,16 @@ private:
         bool dying = false;
     };
 
-    int spawn(const std::string& typeId, float x, float z, float heading, int team) {
-        const auto* type = registry_.find(typeId);
-        if (!type) return -1;
+    void registerUnit(const tak::sim::Unit& u) {
+        const std::string& typeId = u.type->id;
         if (!visuals_.count(typeId)) {
             try {
                 visuals_[typeId] = {tak::tdo::load(dataRoot_ + "/objects3d/" + typeId + ".3do")};
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "no model for %s: %s\n", typeId.c_str(), e.what());
-                return -1;
+                return;
             }
         }
-        int id = world_.spawn(type, x, z, heading, team);
         Anim a;
         try {
             auto cobFile = tak::cob::load(dataRoot_ + "/scripts/" + typeId + ".cob");
@@ -597,8 +649,16 @@ private:
             }
             a.vm = std::make_unique<tak::cob::Vm>(std::move(cobFile));
         } catch (const std::exception&) { /* unit stays unanimated */ }
-        if (a.vm) anims_[id] = std::move(a);
-        unitType_[id] = typeId;
+        if (a.vm) anims_[u.id] = std::move(a);
+        unitType_[u.id] = typeId;
+    }
+
+    int spawn(const std::string& typeId, float x, float z, float heading, int team) {
+        const auto* type = registry_.find(typeId);
+        if (!type) return -1;
+        int id = world_.spawn(type, x, z, heading, team);
+        if (const auto* u = world_.unit(id)) registerUnit(*u);
+        if (!unitType_.count(id)) return -1;
         return id;
     }
 
@@ -688,7 +748,8 @@ private:
         std::transform(oname.begin(), oname.end(), oname.begin(), ::tolower);
         bool groundPlate = oname.size() >= 2 &&
                            (oname.substr(oname.size() - 2) == "gp" ||
-                            oname.find("ground") != std::string::npos);
+                            oname.find("ground") != std::string::npos ||
+                            oname.find("gpoly") != std::string::npos);
         const float tilt = 1.05f;   // ~60 degrees down
         float cy = std::cos(heading + 3.14159f), sy = std::sin(heading + 3.14159f);
         float ct = std::cos(tilt), st = std::sin(tilt);
@@ -758,6 +819,7 @@ private:
     float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
     bool follow_ = false;
     bool trace_ = false;
+    int keepId_ = -1;
 };
 
 } // namespace
