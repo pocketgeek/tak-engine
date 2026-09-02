@@ -1836,12 +1836,8 @@ public:
                 continue;
             }
             if (a.flying) {
-                // Flyers run continuous flight scripts (wings flapping) started
-                // at spawn — never reset them for a walk cycle. Just keep the
-                // flap loop alive if it ever drains.
-                if (a.vm->threadCount() == 0)
-                    a.vm->start("fly") || a.vm->start("soar") ||
-                        a.vm->start("BeginFlight");
+                // Keep the wing-flap loop alive; never reset for a walk cycle.
+                if (a.vm->threadCount() == 0) a.vm->start("fly");
             } else {
                 bool m = u.walking();
                 if (m != a.walking) {
@@ -2400,8 +2396,13 @@ private:
             // flight scripts; without these they sit in the landed rest pose
             // (which also reads as facing the wrong way).
             if (u.type && u.type->canFly) {
+                // "fly" flaps the deployed wings without the body-reorienting
+                // piece turns that "soar"/BeginFlight apply (those expect
+                // flight-control statics we don't feed, and leave her facing a
+                // fixed wrong way). With just Create+fly she keeps the model's
+                // authored heading, matching the ground units.
                 a.vm->start("Create");
-                a.vm->start("soar") || a.vm->start("fly");
+                a.vm->start("fly");
                 a.flying = true;
             }
         } catch (const std::exception&) { /* unit stays unanimated */ }
@@ -2496,9 +2497,6 @@ private:
         // units face their heading directly: the model's forward axis (+z)
         // maps to (sin yaw, cos yaw), matching the sim's movement vector.
         float facing = (u.type && u.type->canMove) ? u.heading : 0.0f;
-        // Flyer models (e.g. Thirsha) are authored facing the opposite way to
-        // the walking units, so they read as flying backward without a flip.
-        if (u.type && u.type->canFly) facing += 3.14159265f;
         collect(vt->second.model.root, base, anim, facing, u.team);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
