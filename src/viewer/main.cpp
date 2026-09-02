@@ -553,12 +553,61 @@ private:
 class GameView {
 public:
     GameView(SDL_Renderer* ren, const std::string& tntPath, const std::string& terrainDir,
-             const std::string& dataRoot, bool demo, bool scenario, bool bare)
+             const std::string& dataRoot, bool demo, bool scenario, bool mission,
+             bool bare)
         : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot) {
         registry_.loadDir(dataRoot_ + "/units");
         registry_.loadBuildTree(dataRoot_ + "/canbuild");
         loadTextures(dataRoot_ + "/textures", dataRoot_ + "/palettes/ara_textures.pcx");
         mapView_.setZoom(0.9f);
+
+        if (mission) {
+            world_.setTerrain(mapView_.map().heights, mapView_.map().width,
+                              mapView_.map().height, mapView_.map().seaLevel);
+            std::filesystem::path otaPath = tntPath;
+            otaPath.replace_extension(".ota");
+            try {
+                auto ota = tak::tdf::parse(otaPath);
+                const auto* gh = ota.child("globalheader");
+                const auto* md = gh ? gh->child("map data") : nullptr;
+                const auto* units = md ? md->child("units") : nullptr;
+                std::printf("mission: %s\n",
+                            gh ? gh->valueOr("missiondescription", "").c_str() : "");
+                int n = 0;
+                float cx = 0, cz = 0;
+                int pc = 0;
+                if (units)
+                    for (const auto& key : units->childOrder) {
+                        const auto& u = units->children.at(key);
+                        std::string id = u.valueOr("unitname", "");
+                        std::transform(id.begin(), id.end(), id.begin(), ::tolower);
+                        int player = int(u.numberOr("player", 1));
+                        float x = float(u.numberOr("xpos", 0)) * 16 + 8;
+                        float z = float(u.numberOr("zpos", 0)) * 16 + 8;
+                        int team = std::clamp(player - 1, 0, 3);
+                        int uid = spawn(id, x, z, 3.14159f, team);
+                        if (uid >= 0) {
+                            ++n;
+                            float hpp = float(u.numberOr("healthpercentage", 100));
+                            if (auto* su = world_.unit(uid)) su->hp *= hpp / 100.0f;
+                            if (team == 0) { cx += x; cz += z; ++pc; }
+                        }
+                    }
+                std::printf("mission: %d units spawned\n", n);
+                if (pc) mapView_.setOffset(cx / float(pc) - 640 / 0.9f,
+                                           cz / float(pc) - 400 / 0.9f);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "mission load: %s\n", e.what());
+            }
+            aiEnabled_ = false;   // no wave AI; guards fight via auto-acquire
+            try {
+                hudFont_ = Font(ren_, dataRoot_ + "/fonts/bodfontbody.gaf");
+                bigFont_ = Font(ren_, dataRoot_ + "/fonts/font48.gaf");
+            } catch (const std::exception&) {}
+            sounds_.init(dataRoot_ + "/../english/Sounds", false);
+            soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
+            return;
+        }
 
         if (scenario) {
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
@@ -1519,7 +1568,7 @@ int main(int argc, char** argv) {
     std::string shot, cobPath, anim;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
-         scenario = false, navy = false, amphib = false;
+         scenario = false, navy = false, amphib = false, missionFlag = false;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
@@ -1533,6 +1582,7 @@ int main(int argc, char** argv) {
         else if (a == "--scenario") scenario = true;
         else if (a == "--navy") navy = true;
         else if (a == "--amphib") amphib = true;
+        else if (a == "--mission") missionFlag = true;
         else if (a == "--follow" && i + 1 < argc) followZoom = std::stof(argv[++i]);
         else if (a == "--march" && i + 2 < argc) {
             marchX = std::stof(argv[++i]);
@@ -1565,7 +1615,8 @@ int main(int argc, char** argv) {
             mapView = std::make_unique<MapView>(ren, args[0], args[1]);
         } else if (mode == "game" && args.size() >= 3) {
             gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo,
-                                                  scenario, navy || amphib);
+                                                  scenario, missionFlag,
+                                                  navy || amphib);
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);
             if (trace) gameView->setTrace(true);
