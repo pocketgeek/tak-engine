@@ -2497,6 +2497,10 @@ private:
         // units face their heading directly: the model's forward axis (+z)
         // maps to (sin yaw, cos yaw), matching the sim's movement vector.
         float facing = (u.type && u.type->canMove) ? u.heading : 0.0f;
+        // Flyer models are built mirrored across the N-S axis relative to the
+        // ground units, so they read correct N/S but backward E/W. Negating
+        // the heading reflects E<->W (and diagonals) while leaving N/S.
+        if (u.type && u.type->canFly) facing = -facing;
         collect(vt->second.model.root, base, anim, facing, u.team);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
