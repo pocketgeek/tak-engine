@@ -2281,7 +2281,10 @@ private:
         // Buildings are stationary (camera-facing billboards, yaw 0). Mobile
         // units face their heading; the render z-axis is inverted vs the sim
         // (billboard flip), so the facing yaw negates the heading.
-        float facing = (u.type && u.type->canMove) ? -u.heading : 0.0f;
+        // Buildings are stationary (camera-facing billboards, yaw 0). Mobile
+        // units face their heading directly: the model's forward axis (+z)
+        // maps to (sin yaw, cos yaw), matching the sim's movement vector.
+        float facing = (u.type && u.type->canMove) ? u.heading : 0.0f;
         collect(vt->second.model.root, base, anim, facing, u.team);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
@@ -3210,6 +3213,7 @@ int main(int argc, char** argv) {
             winH = std::atoi(argv[++i]);
         }
         else if (a == "--maxfps" && i + 1 < argc) maxFps = std::atoi(argv[++i]);
+
 
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
         else if (a == "--selonly") selonly = true;
