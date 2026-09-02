@@ -586,6 +586,16 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     return id;
 }
 
+void World::queueBuild(int builderId, const UnitType* type, float x, float z, bool queue) {
+    Unit* b = unit(builderId);
+    if (!b || !type) return;
+    if (!queue) b->buildOrders.clear();   // fresh order clears the pending queue
+    if (b->buildSiteId == 0 && b->buildOrders.empty())
+        startBuild(builderId, type, x, z);          // builder is free: start now
+    else if (canPlace(type, x, z))
+        b->buildOrders.push_back({type, x, z});     // busy: queue behind it
+}
+
 void World::tickConstruction(Unit& b, float dt) {
     Unit* site = unit(b.buildSiteId);
     if (!site || !site->alive() || !site->underConstruction) {
@@ -607,7 +617,16 @@ void World::tickConstruction(Unit& b, float dt) {
     if (site->hp >= site->type->maxHp) {
         site->hp = site->type->maxHp;
         site->underConstruction = false;
+        int bid = b.id;
         b.buildSiteId = 0;
+        // Kick off the next queued build (skipping any whose spot is now taken).
+        // startBuild may reallocate units_, so re-fetch by id each pass.
+        while (Unit* nb = unit(bid)) {
+            if (nb->buildOrders.empty()) break;
+            BuildOrder o = nb->buildOrders.front();
+            nb->buildOrders.pop_front();
+            if (startBuild(bid, o.type, o.x, o.z) != 0) break;
+        }
     }
 }
 
