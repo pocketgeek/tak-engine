@@ -37,6 +37,10 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             if (!info) continue;
             UnitType t;
             t.id = lower(info->valueOr("objectname", e.path().stem().string()));
+            // Don't let a later dir (e.g. the Iron Plague data, whose
+            // tarnecr2.fbi also claims objectname TARNECRO) clobber a unit
+            // the base game already defined. First definition wins.
+            if (types_.count(t.id)) continue;
             t.name = info->valueOr("name", t.id);
             t.side = info->valueOr("side", "");
             // Buildings often declare canmove=1; bmcode (0 = building,

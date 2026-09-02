@@ -43,11 +43,16 @@ Control groups: **Ctrl+1–9/0** assign the selection, **1–9/0** recall it,
 Click the build icons at a selected builder/keep to train or place,
 arrows/middle-drag = scroll, wheel = zoom (toward cursor),
 minimap click/drag = move camera. Background music plays from the game soundtrack. Frame rate is capped
-at 60 fps (`--maxfps N`, or `--maxfps 0` for uncapped). `--demo`
-stages an AI-vs-AI war; `--mission` loads a campaign mission's .ota/.cob;
-`--side ara|tar|ver|zon|cre` picks your faction and `--aiside` the
-enemy's (Zhon has no Keep — Beast Handlers summon creatures via the
-build ghost; Creon needs the Iron Plague data).
+at 60 fps (`--maxfps N`, or `--maxfps 0` for uncapped).
+
+Each side begins a skirmish with **only its Monarch**, dropped on the
+map's real start positions (read from the `.ota`). The Monarch generates
+a trickle of mogrium and builds the first lodestones and keep, which then
+train the army — the AI opponent bootstraps the same way. `--demo`
+instead stages a ready-army AI-vs-AI war; `--mission` loads a campaign
+mission's .ota/.cob; `--side ara|tar|ver|zon|cre` picks your faction and
+`--aiside` the enemy's (Zhon has no Keep — its Monarch and Beast Handlers
+summon creatures; Creon needs the Iron Plague data).
 
 Multiplayer (2-player TCP lockstep): host runs with `--host 7777`, the
 other player adds `--join <host-ip> 7777`. Host commands the Aramon
