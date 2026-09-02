@@ -3248,6 +3248,7 @@ int main(int argc, char** argv) {
         std::printf("net: connected as player %d\n", net->localPlayer() + 1);
     }
 
+    if (shot.empty()) SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
@@ -3261,7 +3262,14 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
         return 1;
     }
-    if (shot.empty()) SDL_RenderSetVSync(ren, 1);   // explicit vsync, avoids tearing
+    if (shot.empty()) {
+        int vs = SDL_RenderSetVSync(ren, 1);   // explicit vsync, avoids tearing
+        SDL_RendererInfo ri{};
+        SDL_GetRendererInfo(ren, &ri);
+        std::fprintf(stderr, "renderer: %s, vsync=%s%s\n", ri.name ? ri.name : "?",
+                     (ri.flags & SDL_RENDERER_PRESENTVSYNC) ? "flag" : "no-flag",
+                     vs == 0 ? "+set" : "+setFAILED");
+    }
 
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;
@@ -3409,6 +3417,18 @@ int main(int argc, char** argv) {
             gameView->draw(w, h);
         }
         SDL_RenderPresent(ren);
+
+        // FPS report once a second: ~60 means vsync works; hundreds means it
+        // isn't and the display is tearing.
+        static int fpsFrames = 0;
+        static uint64_t fpsStart = SDL_GetPerformanceCounter();
+        if (++fpsFrames >= 120) {
+            double secs = double(SDL_GetPerformanceCounter() - fpsStart) /
+                          double(SDL_GetPerformanceFrequency());
+            std::fprintf(stderr, "fps: %.0f\n", fpsFrames / secs);
+            fpsFrames = 0;
+            fpsStart = SDL_GetPerformanceCounter();
+        }
 
         if (!shot.empty()) {
             // Render a few frames so lazy content settles, then capture.
