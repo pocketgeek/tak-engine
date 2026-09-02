@@ -927,6 +927,9 @@ public:
         } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_p &&
                    !selection_.empty()) {
             pendingCmd_ = 'p';
+        } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_g &&
+                   !selection_.empty()) {
+            pendingCmd_ = 'g';
         } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_h) {
             for (int id : selection_) {
                 tak::net::Command c;
@@ -998,6 +1001,30 @@ public:
             float wx = mapView_.offX() + e.button.x / zm;
             float wz = mapView_.offY() + e.button.y / zm;
             bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+            if (pendingCmd_ == 'g') {
+                // Guard: needs a friendly unit under the click.
+                int buddy = -1;
+                float best = 24 * 24;
+                for (auto& u : world_.units()) {
+                    if (!u.alive() || u.team != localTeam_) continue;
+                    float dx = u.x - wx, dz = u.z - wz;
+                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; buddy = u.id; }
+                }
+                if (buddy >= 0) {
+                    for (int id : selection_) {
+                        if (id == buddy) continue;
+                        tak::net::Command c;
+                        c.kind = tak::net::Cmd::Guard;
+                        c.unitId = id;
+                        c.targetId = buddy;
+                        c.queue = queue;
+                        issue(c);
+                    }
+                    voice(selection_.front(), "guard");
+                }
+                pendingCmd_ = 0;
+                return;
+            }
             for (int id : selection_) {
                 tak::net::Command c;
                 c.kind = pendingCmd_ == 'a'   ? tak::net::Cmd::AttackMove
@@ -1182,6 +1209,9 @@ public:
                 if (owns(c.unitId))
                     world_.startBuild(c.unitId, registry_.find(c.type), c.x, c.z);
                 break;
+            case Cmd::Guard:
+                if (owns(c.unitId)) world_.guard(c.unitId, c.targetId, c.queue);
+                break;
             case Cmd::Load:
                 if (owns(c.unitId)) world_.loadInto(c.unitId, c.targetId);
                 break;
@@ -1348,6 +1378,17 @@ public:
 
     void lookAt(float x, float z) {
         mapView_.setOffset(x - 640 / mapView_.zoom(), z - 400 / mapView_.zoom());
+    }
+
+    void guardTest() {
+        // Squad guards the first unit; the first unit marches east alone.
+        int leader = -1;
+        for (auto& u : world_.units())
+            if (u.alive() && u.team == 0 && u.type && u.type->canMove) {
+                if (leader < 0) leader = u.id;
+                else world_.guard(u.id, leader, false);
+            }
+        if (leader >= 0) world_.order(leader, 1500, 950, false);
     }
 
     void marchTo(float dx, float dz) {
@@ -1783,6 +1824,7 @@ public:
         if (pendingCmd_ && hudFont_.ok()) {
             const char* msg = pendingCmd_ == 'a'   ? "ATTACK-MOVE: CLICK TARGET"
                               : pendingCmd_ == 'p' ? "PATROL: CLICK WAYPOINT"
+                              : pendingCmd_ == 'g' ? "GUARD: CLICK FRIENDLY UNIT"
                                                    : "MOVE: CLICK DESTINATION";
             hudFont_.draw(ren_, msg, 12, 100, 1.6f, {255, 200, 120, 255});
         }
@@ -2478,6 +2520,7 @@ private:
         grab("actionbuttons", "MoveButton", 'm', "MOVE");
         grab("actionbuttons", "AttackButton", 'a', "ATTACK");
         grab("actionbuttons", "PatrolButton", 'p', "PATROL");
+        grab("actionbuttons", "GuardButton", 'g', "GUARD");
         grab("igcommonbuttons", "StopButton", 0, "STOP", 1, 2, 3);
     }
 
@@ -2856,7 +2899,7 @@ int main(int argc, char** argv) {
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
          misstest = false, nofog = false, doLook = false, creon = false,
-         hilltest = false, keytest = false;
+         hilltest = false, keytest = false, guardtest = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -2878,6 +2921,7 @@ int main(int argc, char** argv) {
         else if (a == "--side" && i + 1 < argc) side = argv[++i];
         else if (a == "--aiside" && i + 1 < argc) aiSide = argv[++i];
         else if (a == "--keytest") keytest = true;
+        else if (a == "--guardtest") guardtest = true;
         else if (a == "--host" && i + 1 < argc) hostPort = std::atoi(argv[++i]);
         else if (a == "--join" && i + 2 < argc) {
             joinAddr = argv[++i];
@@ -2946,6 +2990,7 @@ int main(int argc, char** argv) {
             if (misstest) gameView->missionTest();
             if (creon) gameView->creonDemo();
             if (hilltest) gameView->hillTest();
+            if (guardtest) gameView->guardTest();
             if (nofog) gameView->noFog_ = true;
             if (doLook) gameView->lookAt(lookX, lookZ);
             if (amphib) gameView->amphibDemo();

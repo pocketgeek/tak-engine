@@ -16,7 +16,7 @@ constexpr uint32_t kInputDelay = 4;      // ticks
 constexpr uint32_t kHashInterval = 30;   // ticks
 
 enum class Cmd : uint8_t {
-    Move, Attack, AttackMove, Patrol, Stop, Train, Build, Load, Unload,
+    Move, Attack, AttackMove, Patrol, Stop, Train, Build, Load, Unload, Guard,
 };
 
 struct Command {

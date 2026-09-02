@@ -80,6 +80,7 @@ struct Order {
     bool unload = false;   // sail to (x,z) and disembark cargo
     bool attackMove = false;   // engage enemies encountered en route
     bool patrol = false;       // loop: completed orders re-queue at the back
+    bool guard = false;        // follow friendly `targetId`, engage threats
 };
 
 struct Unit {
@@ -196,6 +197,7 @@ public:
     void order(int unitId, float x, float z, bool queue);
     void attackMove(int unitId, float x, float z, bool queue);
     void patrol(int unitId, float x, float z);
+    void guard(int unitId, int targetId, bool queue);
     void stop(int unitId);
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);

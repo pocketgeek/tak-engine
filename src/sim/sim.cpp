@@ -402,6 +402,20 @@ void World::patrol(int unitId, float x, float z) {
     u->orders.push_back(a);
 }
 
+void World::guard(int unitId, int targetId, bool queue) {
+    Unit* u = unit(unitId);
+    Unit* t = unit(targetId);
+    if (!u || !t || !u->alive() || !t->alive() || u->id == t->id) return;
+    if (!u->type || !u->type->canMove || u->team != t->team) return;
+    if (!queue) u->orders.clear();
+    Order o;
+    o.targetId = targetId;
+    o.guard = true;
+    o.x = t->x;
+    o.z = t->z;
+    u->orders.push_back(o);
+}
+
 void World::stop(int unitId) {
     Unit* u = unit(unitId);
     if (u) u->orders.clear();
@@ -448,7 +462,8 @@ void World::tickCombat(Unit& u, float dt) {
     // attack-movers and patrollers interrupt their route to fight.
     bool acquiring = u.orders.empty() ||
                      (u.orders.front().targetId == 0 &&
-                      (u.orders.front().attackMove || u.orders.front().patrol));
+                      (u.orders.front().attackMove || u.orders.front().patrol)) ||
+                     u.orders.front().guard;
     if (acquiring && u.type->weapon.damage > 0) {
         float ar = u.type->maxRange() + 90;
         int best = 0;
@@ -462,6 +477,21 @@ void World::tickCombat(Unit& u, float dt) {
         if (best) u.orders.push_front({0, 0, best});
     }
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
+
+    if (u.orders.front().guard) {
+        Order& o = u.orders.front();
+        Unit* t = unit(o.targetId);
+        if (!t || !t->alive()) {
+            u.orders.pop_front();
+            return;
+        }
+        o.x = t->x;
+        o.z = t->z;
+        float dx = t->x - u.x, dz = t->z - u.z;
+        if (dx * dx + dz * dz <= 70 * 70)
+            u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
+        return;   // movement walks toward o when out of reach
+    }
 
     Unit* target = unit(u.orders.front().targetId);
     if (!target || !target->alive()) {
@@ -671,7 +701,7 @@ void World::tick(float dt) {
 
         bool combatHold =
             !u.orders.empty() && u.orders.front().targetId != 0 &&
-            !u.orders.front().load && [&] {
+            !u.orders.front().load && !u.orders.front().guard && [&] {
                 Unit* t = unit(u.orders.front().targetId);
                 if (!t) return false;
                 float dx = t->x - u.x, dz = t->z - u.z;
@@ -685,6 +715,7 @@ void World::tick(float dt) {
             const Order& o = u.orders.front();
             float dx = o.x - u.x, dz = o.z - u.z;
             float dist = std::sqrt(dx * dx + dz * dz);
+            if (o.guard && dist <= 70.0f) continue;   // in escort position
             if (dist < 3.0f) {
                 if (o.targetId == 0) {
                     Order done = o;
