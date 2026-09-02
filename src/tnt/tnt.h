@@ -34,6 +34,7 @@ struct Map {
 
     int minimapW = 0, minimapH = 0;
     std::vector<uint8_t> minimap;    // 8-bit indexed
+    std::vector<std::string> featureNames;   // indexed by feature-layer values
 
     static Map load(const std::filesystem::path& file);
 

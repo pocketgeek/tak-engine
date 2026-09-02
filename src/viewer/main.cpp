@@ -608,6 +608,7 @@ public:
                 std::fprintf(stderr, "mission load: %s\n", e.what());
             }
             aiEnabled_ = false;   // no wave AI; guards fight via auto-acquire
+            loadFeatures();
 
             // Mission scripts: run the authentic COB event handlers.
             try {
@@ -689,11 +690,13 @@ public:
             if (n) mapView_.setOffset(cx / float(n) - 640 / 0.9f,
                                       cz / float(n) - 400 / 0.9f);
             aiEnabled_ = false;   // placements only; auto-acquire still fights
+            loadFeatures();
             return;
         }
 
         world_.setTerrain(mapView_.map().heights, mapView_.map().width,
                           mapView_.map().height, mapView_.map().seaLevel);
+        loadFeatures();
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         mapView_.setOffset(cx - 640 / 0.9f + 110, cz - 400 / 0.9f + 20);
         if (!bare) {
@@ -1006,6 +1009,10 @@ public:
         std::printf("testbuild: no site found\n");
     }
 
+    void lookAt(float x, float z) {
+        mapView_.setOffset(x - 640 / mapView_.zoom(), z - 400 / mapView_.zoom());
+    }
+
     void marchTo(float dx, float dz) {
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         for (auto& u : world_.units())
@@ -1149,15 +1156,50 @@ public:
 
     void draw(int winW, int winH) {
         mapView_.draw(winW, winH);
-        std::vector<const tak::sim::Unit*> order;
+        float zm0 = mapView_.zoom();
+
+        // Painter list: features and units together, sorted by map z.
+        struct Item { float z; const tak::sim::Unit* u; const FeatureInst* f; };
+        std::vector<Item> items;
+        const auto& vis = world_.visibility();
+        int vw = world_.visW();
+        for (const auto& f : features_) {
+            int cx = int(f.x) / 16, cz = int(f.z) / 16;
+            if (!noFog_ && !vis.empty() && (cx < 0 || cz < 0 || cx >= vw ||
+                                 vis[size_t(cz) * vw + cx] == 0))
+                continue;   // unexplored
+            float sx = (f.x - mapView_.offX()) * zm0, sy = (f.z - mapView_.offY()) * zm0;
+            if (sx < -200 || sy < -200 || sx > winW + 200 || sy > winH + 200) continue;
+            items.push_back({f.z, nullptr, &f});
+        }
         for (auto& u : world_.units()) {
             if (u.deadFor >= 4.0f || u.embarked()) continue;
-            if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;   // fogged
-            order.push_back(&u);
+            if (!noFog_ && u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;
+            items.push_back({u.z, &u, nullptr});
         }
-        std::sort(order.begin(), order.end(),
-                  [](auto* a, auto* b) { return a->z < b->z; });
-        for (const auto* u : order) drawUnit(*u);
+        std::sort(items.begin(), items.end(),
+                  [](const Item& a, const Item& b) { return a.z < b.z; });
+        for (const auto& it : items) {
+            if (it.f) {
+                const auto& f = *it.f;
+                SDL_FRect dst{(f.x - mapView_.offX() - float(f.xoff)) * zm0,
+                              (f.z - mapView_.offY() - float(f.yoff)) * zm0,
+                              float(f.w) * zm0, float(f.h) * zm0};
+                SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
+            } else {
+                // Soft shadow blob under mobile units.
+                const auto& u = *it.u;
+                if (u.alive() && u.type && u.type->canMove && !u.type->canFly) {
+                    SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 70);
+                    float sx = (u.x - mapView_.offX()) * zm0;
+                    float sy = (u.z - mapView_.offY()) * zm0 + 2 * zm0;
+                    SDL_FRect sh{sx - 7 * zm0, sy - 2.5f * zm0, 14 * zm0, 5 * zm0};
+                    SDL_RenderFillRectF(ren_, &sh);
+                }
+                drawUnit(u);
+            }
+        }
 
         // Projectiles: short bright streaks (only where visible).
         float zm = mapView_.zoom();
@@ -1177,7 +1219,7 @@ public:
         for (int id : selection_) {
             const auto* u = world_.unit(id);
             if (!u || !u->alive()) continue;
-            drawRing(u->x, u->z, 14);
+            drawBrackets(u->x, u->z, 11);
             for (const auto& o : u->orders)
                 if (o.targetId == 0) drawRing(o.x, o.z, 4);
         }
@@ -1540,6 +1582,20 @@ private:
         for (const auto& c : o.children) collect(c, xf, anim, heading);
     }
 
+    void drawBrackets(float wx, float wz, float r) {
+        // TAK-style selection: four green corner chevrons, slightly flattened.
+        float zm = mapView_.zoom();
+        float cx = (wx - mapView_.offX()) * zm, cy = (wz - mapView_.offY()) * zm;
+        float rx = r * zm, ry = r * 0.65f * zm, L = r * 0.45f * zm;
+        SDL_SetRenderDrawColor(ren_, 70, 240, 90, 255);
+        for (int sx = -1; sx <= 1; sx += 2)
+            for (int sy = -1; sy <= 1; sy += 2) {
+                float px = cx + sx * rx, py = cy + sy * ry;
+                SDL_RenderDrawLineF(ren_, px, py, px - sx * L, py);
+                SDL_RenderDrawLineF(ren_, px, py, px, py - sy * L * 0.65f);
+            }
+    }
+
     void drawRing(float wx, float wz, float r) {
         float zm = mapView_.zoom();
         SDL_SetRenderDrawColor(ren_, 90, 255, 120, 255);
@@ -1568,6 +1624,9 @@ private:
     char pendingCmd_ = 0;   // 'a' = attack-move, 'p' = patrol (awaiting click)
     bool follow_ = false;
     bool trace_ = false;
+public:
+    bool noFog_ = false;
+private:
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = 0, mouseY_ = 0;
@@ -1648,7 +1707,124 @@ private:
         return true;
     }
 
+    struct FeatureInst {
+        SDL_Texture* tex = nullptr;
+        int w = 0, h = 0, xoff = 0, yoff = 0;
+        float x = 0, z = 0;
+    };
+    std::vector<FeatureInst> features_;
+
+    void loadFeatures() {
+        const auto& names = mapView_.map().featureNames;
+        if (names.empty()) return;
+        // Feature definitions from data/features/**/*.tdf
+        std::map<std::string, tak::tdf::Node> defs;
+        try {
+            for (const auto& e : std::filesystem::recursive_directory_iterator(
+                     dataRoot_ + "/features")) {
+                if (e.path().extension() != ".tdf") continue;
+                try {
+                    auto root = tak::tdf::parse(e.path());
+                    for (const auto& n : root.childOrder) {
+                        std::string k = n;
+                        std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+                        defs[k] = root.children.at(n);
+                    }
+                } catch (const std::exception&) {}
+            }
+        } catch (const std::exception&) { return; }
+
+        std::map<std::string, tak::gaf::Palette> pals;
+        auto palette = [&](std::string world) -> const tak::gaf::Palette* {
+            std::transform(world.begin(), world.end(), world.begin(), ::tolower);
+            auto it = pals.find(world);
+            if (it != pals.end()) return &it->second;
+            const std::string cands[] = {world + "_features.pcx", world + ".pcx",
+                                         std::string("aramon_features.pcx")};
+            for (const std::string& cand : cands) {
+                try {
+                    return &pals.emplace(world, tak::gaf::Palette::load(
+                                                    dataRoot_ + "/palettes/" + cand))
+                                .first->second;
+                } catch (const std::exception&) {}
+            }
+            return nullptr;
+        };
+
+        struct Art { SDL_Texture* tex; int w, h, xoff, yoff; };
+        std::map<std::string, Art> artCache;
+        auto art = [&](const tak::tdf::Node& def) -> Art* {
+            std::string file = def.valueOr("filename", "");
+            std::string seq = def.valueOr("seqname", "");
+            std::string key = file + "|" + seq;
+            auto it = artCache.find(key);
+            if (it != artCache.end()) return it->second.tex ? &it->second : nullptr;
+            Art a{};
+            const auto* pal = palette(def.valueOr("world", "aramon"));
+            if (pal) {
+                try {
+                    std::string f = file;
+                    std::transform(f.begin(), f.end(), f.begin(), ::tolower);
+                    for (auto& sq : tak::gaf::load(dataRoot_ + "/anims/" + f + ".gaf",
+                                                   *pal)) {
+                        if (sq.name.size() != seq.size()) continue;
+                        bool eq = true;
+                        for (size_t i = 0; i < seq.size(); ++i)
+                            if (std::tolower(sq.name[i]) != std::tolower(seq[i])) {
+                                eq = false;
+                                break;
+                            }
+                        if (!eq || sq.frames.empty()) continue;
+                        auto& fr = sq.frames[0];
+                        if (fr.width == 0) continue;
+                        a.tex = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                  SDL_TEXTUREACCESS_STATIC, fr.width,
+                                                  fr.height);
+                        SDL_UpdateTexture(a.tex, nullptr, fr.rgba.data(), fr.width * 4);
+                        SDL_SetTextureBlendMode(a.tex, SDL_BLENDMODE_BLEND);
+                        a.w = fr.width;
+                        a.h = fr.height;
+                        a.xoff = fr.xoff;
+                        a.yoff = fr.yoff;
+                        break;
+                    }
+                } catch (const std::exception&) {}
+            }
+            artCache[key] = a;
+            return a.tex ? &artCache[key] : nullptr;
+        };
+
+        const auto& map = mapView_.map();
+        int placed = 0;
+        for (int cz = 0; cz < map.height; ++cz)
+            for (int cx = 0; cx < map.width; ++cx) {
+                uint16_t v = map.features[size_t(cz) * map.width + cx];
+                if (v == 0xFFFF || v >= names.size()) continue;
+                std::string key = names[v];
+                std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+                auto di = defs.find(key);
+                if (di == defs.end()) continue;
+                Art* a = art(di->second);
+                if (!a) continue;
+                FeatureInst inst;
+                inst.tex = a->tex;
+                inst.w = a->w;
+                inst.h = a->h;
+                inst.xoff = a->xoff;
+                inst.yoff = a->yoff;
+                inst.x = float(cx) * 16 + 8;
+                inst.z = float(cz) * 16 + 8;
+                features_.push_back(inst);
+                int fx = int(di->second.numberOr("footprintx", 1));
+                int fz = int(di->second.numberOr("footprintz", 1));
+                world_.nav().block(cx - fx / 2, cz - fz / 2, fx, fz, true);
+                ++placed;
+            }
+        std::printf("features: %d placed\n", placed);
+    }
+
     void drawFog() {
+        if (noFog_) return;
         const auto& vis = world_.visibility();
         if (vis.empty()) return;
         int w = world_.visW(), h = world_.visH();
@@ -1805,7 +1981,8 @@ int main(int argc, char** argv) {
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
-         misstest = false;
+         misstest = false, nofog = false, doLook = false;
+    float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
@@ -1821,6 +1998,12 @@ int main(int argc, char** argv) {
         else if (a == "--amphib") amphib = true;
         else if (a == "--mission") missionFlag = true;
         else if (a == "--misstest") misstest = true;
+        else if (a == "--nofog") nofog = true;
+        else if (a == "--look" && i + 2 < argc) {
+            lookX = std::stof(argv[++i]);
+            lookZ = std::stof(argv[++i]);
+            doLook = true;
+        }
         else if (a == "--follow" && i + 1 < argc) followZoom = std::stof(argv[++i]);
         else if (a == "--march" && i + 2 < argc) {
             marchX = std::stof(argv[++i]);
@@ -1861,6 +2044,8 @@ int main(int argc, char** argv) {
             if (testbuild) gameView->testBuild();
             if (navy) gameView->navyDemo();
             if (misstest) gameView->missionTest();
+            if (nofog) gameView->noFog_ = true;
+            if (doLook) gameView->lookAt(lookX, lookZ);
             if (amphib) gameView->amphibDemo();
             if (startTime > 0) gameView->advance(startTime);
         } else if (mode == "model" && !args.empty()) {

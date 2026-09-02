@@ -63,6 +63,18 @@ Map Map::load(const std::filesystem::path& file) {
     need(d, pRows, blocks, "tile rows");
     m.tileRows.assign(d.begin() + pRows, d.begin() + pRows + blocks);
 
+    // Feature-name table: header words 6/7 = pointer + count;
+    // 132-byte records with the name at offset +4.
+    uint32_t pFeatNames = u32(&d[24]);
+    uint32_t featCount = u32(&d[28]);
+    if (pFeatNames && featCount && featCount < 4096 &&
+        uint64_t(pFeatNames) + uint64_t(featCount) * 132 <= d.size()) {
+        for (uint32_t i = 0; i < featCount; ++i) {
+            const char* nm = reinterpret_cast<const char*>(&d[pFeatNames + i * 132 + 4]);
+            m.featureNames.emplace_back(nm, strnlen(nm, 64));
+        }
+    }
+
     if (pMinimap && pMinimap + 8 <= d.size()) {
         m.minimapW = int(u32(&d[pMinimap]));
         m.minimapH = int(u32(&d[pMinimap + 4]));
