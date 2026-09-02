@@ -1931,6 +1931,9 @@ public:
                 continue;   // unexplored
             float sx = (f.x - mapView_.offX()) * zm0, sy = (f.z - mapView_.offY()) * zm0;
             if (sx < -200 || sy < -200 || sx > winW + 200 || sy > winH + 200) continue;
+            // A mana deposit is consumed once a lodestone is built on it — hide
+            // the marker so it doesn't draw over the building.
+            if (f.mana && buildingAt(f.x, f.z)) continue;
             items.push_back({f.z, nullptr, &f});
         }
         for (auto& u : world_.units()) {
@@ -2509,6 +2512,16 @@ private:
         for (size_t i = 0; i < a->pieceNames.size(); ++i)
             if (a->pieceNames[i] == n) return &a->vm->pieces()[i];
         return nullptr;
+    }
+
+    // True if a building (any live non-mobile unit) stands on (x, z).
+    bool buildingAt(float x, float z) const {
+        for (const auto& u : world_.units()) {
+            if (!u.alive() || !u.type || u.type->canMove) continue;
+            float dx = u.x - x, dz = u.z - z;
+            if (dx * dx + dz * dz < 20.0f * 20.0f) return true;
+        }
+        return false;
     }
 
     void drawUnit(const tak::sim::Unit& u) {
