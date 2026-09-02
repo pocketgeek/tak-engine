@@ -3,6 +3,7 @@
 #include "cob/cob.h"
 
 #include <cstdint>
+#include <functional>
 #include <random>
 #include <vector>
 
@@ -31,6 +32,11 @@ public:
 
     // Start a script by name with integer args; returns false if unknown.
     bool start(const std::string& script, const std::vector<int32_t>& args = {});
+
+    // Engine hooks (mission scripting). Defaults: return 0 / ignore.
+    std::function<int32_t(int sub, const std::vector<int32_t>&)> onMapCommand;
+    std::function<int32_t(int32_t valId, const std::vector<int32_t>&)> onGet;
+    std::function<void(int32_t valId, int32_t value)> onSetUnitValue;
     void setStatic(size_t i, int32_t v);
     void reset() { threads_.clear(); }   // stop all threads, keep piece poses
 
@@ -40,6 +46,13 @@ public:
     const std::vector<PieceState>& pieces() const { return pieces_; }
     const File& file() const { return file_; }
     bool anyThreadAlive() const;
+    size_t threadCount() const { return threads_.size(); }
+    std::vector<uint32_t> threadPcs() const {
+        std::vector<uint32_t> out;
+        for (const auto& t : threads_) out.push_back(t.pc);
+        return out;
+    }
+    int32_t getStatic(size_t i) const { return i < statics_.size() ? statics_[i] : 0; }
 
 private:
     struct Thread {
@@ -62,6 +75,8 @@ private:
     std::vector<int32_t> statics_;
     std::vector<PieceState> pieces_;
     std::vector<Thread> threads_;
+    std::vector<Thread> pending_;
+    bool ticking_ = false;
     float now_ = 0;
     std::mt19937 rng_{12345};
 };

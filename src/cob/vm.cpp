@@ -33,7 +33,10 @@ bool Vm::start(const std::string& script, const std::vector<int32_t>& args) {
     t.pc = file_.scripts[size_t(idx)].entry;
     t.locals = args;
     t.locals.resize(std::max<size_t>(args.size(), 16), 0);
-    threads_.push_back(std::move(t));
+    // Starting from inside a hook while tick() iterates threads_ must not
+    // invalidate the iteration: defer to end of tick.
+    if (ticking_) pending_.push_back(std::move(t));
+    else threads_.push_back(std::move(t));
     return true;
 }
 
@@ -75,8 +78,12 @@ void Vm::tick(float dt) {
         }
     }
 
-    for (auto& t : threads_)
-        if (!t.dead) run(t);
+    ticking_ = true;
+    for (size_t i = 0; i < threads_.size(); ++i)
+        if (!threads_[i].dead) run(threads_[i]);
+    ticking_ = false;
+    for (auto& t : pending_) threads_.push_back(std::move(t));
+    pending_.clear();
     std::erase_if(threads_, [](const Thread& t) { return t.dead; });
 }
 
@@ -138,9 +145,16 @@ void Vm::run(Thread& t) {
                 push(t, lo + int32_t(rng_() % uint32_t(hi - lo + 1)));
                 t.pc += 1; break;
             }
-            case 0x10042000: pop(t); push(t, 0); t.pc += 1; break;            // GET_UNIT_VALUE
-            case 0x10043000: {                                                // GET (4 params)
-                pop(t); pop(t); pop(t); pop(t); push(t, 0); t.pc += 1; break;
+            case 0x10042000: {                                                // GET_UNIT_VALUE
+                int32_t valId = pop(t);
+                push(t, onGet ? onGet(valId, {}) : 0);
+                t.pc += 1; break;
+            }
+            case 0x10043000: {                                                // GET (valId + 4)
+                int32_t p4 = pop(t), p3 = pop(t), p2 = pop(t), p1 = pop(t);
+                int32_t valId = pop(t);
+                push(t, onGet ? onGet(valId, {p1, p2, p3, p4}) : 0);
+                t.pc += 1; break;
             }
 
             case 0x10051000: { auto b = pop(t), a = pop(t); push(t, a < b); t.pc += 1; break; }
@@ -157,16 +171,20 @@ void Vm::run(Thread& t) {
                 int32_t script = arg(0), nparams = arg(1);
                 std::vector<int32_t> params(size_t(std::max(nparams, 0)));
                 for (int i = nparams - 1; i >= 0; --i) params[size_t(i)] = pop(t);
+                t.pc += 3;
                 if (script >= 0 && size_t(script) < file_.scripts.size()) {
                     Thread nt;
                     nt.pc = file_.scripts[size_t(script)].entry;
                     nt.locals = params;
                     nt.locals.resize(std::max<size_t>(params.size(), 16), 0);
                     nt.signalMask = t.signalMask;
-                    threads_.push_back(std::move(nt));
-                    return;  // threads_ may have reallocated; t is invalid
+                    // Defer during tick: pushing to threads_ would invalidate
+                    // the reference we are executing from.
+                    if (ticking_) pending_.push_back(std::move(nt));
+                    else threads_.push_back(std::move(nt));
+                    return;   // resume parent next tick from its advanced pc
                 }
-                t.pc += 3; break;
+                break;
             }
             case 0x10062000: {                                                // CALL_SCRIPT
                 int32_t script = arg(0), nparams = arg(1);
@@ -258,8 +276,19 @@ void Vm::run(Thread& t) {
             case 0x10010000: pop(t); t.pc += 2; break;                        // EMIT_SFX
             case 0x10071000: pop(t); t.pc += 2; break;                        // EXPLODE
             case 0x10072000: t.pc += 2; break;                                // PLAY_SOUND
-            case 0x10073000: t.pc += 3; break;                                // MAP_COMMAND
-            case 0x10082000: pop(t); pop(t); t.pc += 1; break;                // SET_UNIT_VALUE
+            case 0x10073000: {                                                // MAP_COMMAND
+                int sub = arg(0), argc = arg(1);
+                std::vector<int32_t> params(size_t(std::max(argc, 0)));
+                for (int i = argc - 1; i >= 0; --i) params[size_t(i)] = pop(t);
+                push(t, onMapCommand ? onMapCommand(sub, params) : 0);
+                t.pc += 3; break;
+            }
+            case 0x10082000: {                                                // SET_UNIT_VALUE
+                int32_t value = pop(t);
+                int32_t valId = pop(t);
+                if (onSetUnitValue) onSetUnitValue(valId, value);
+                t.pc += 1; break;
+            }
             case 0x10083000: pop(t); pop(t); pop(t); t.pc += 1; break;        // ATTACH
             case 0x10084000: pop(t); t.pc += 1; break;                        // DROP
 

@@ -29,6 +29,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -600,6 +601,46 @@ public:
                 std::fprintf(stderr, "mission load: %s\n", e.what());
             }
             aiEnabled_ = false;   // no wave AI; guards fight via auto-acquire
+
+            // Mission scripts: run the authentic COB event handlers.
+            try {
+                std::filesystem::path cobPath = tntPath;
+                cobPath.replace_extension(".cob");
+                std::filesystem::path tdfPath = tntPath;
+                tdfPath.replace_extension(".tdf");
+                auto roster = tak::tdf::parse(tdfPath);
+                for (const auto& name : roster.childOrder) {
+                    std::string n = name;
+                    std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+                    missionRoster_.push_back(n);
+                    if (n == "verat" || n == "araat" || n == "tarat" || n == "zonat")
+                        missionTowerIdx_ = int(missionRoster_.size()) - 1;
+                }
+                missionVm_ = std::make_unique<tak::cob::Vm>(tak::cob::load(cobPath));
+                missionVm_->onMapCommand = [this](int sub, const std::vector<int32_t>& a)
+                    -> int32_t { return mapCommand(sub, a); };
+                missionVm_->onGet = [this](int32_t valId, const std::vector<int32_t>& a)
+                    -> int32_t {
+                    if (valId == 30 && !a.empty()) {
+                        int idx = rosterIndexOf(a[0]);
+                        if (trace_) {
+                            static int lg = 0;
+                            if (lg++ < 8)
+                                std::printf("GET30 unit=%d -> roster %d (tower=%d)\n",
+                                            a[0], idx, missionTowerIdx_);
+                        }
+                        return idx;
+                    }
+                    return 0;
+                };
+                missionVm_->onSetUnitValue = [this](int32_t valId, int32_t value) {
+                    if (valId == 2 && value == 1 && outcome_ == 0) outcome_ = 1;
+                };
+                missionVm_->start("Start");
+                std::printf("mission scripts: running\n");
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "mission cob: %s\n", e.what());
+            }
             try {
                 hudFont_ = Font(ren_, dataRoot_ + "/fonts/bodfontbody.gaf");
                 bigFont_ = Font(ren_, dataRoot_ + "/fonts/font48.gaf");
@@ -898,6 +939,15 @@ public:
         mapView_.setOffset(1500 - 640 / 0.9f, 1380 - 400 / 0.9f);
     }
 
+    void missionTest() {
+        // Plant 4 Watch Towers + escorts inside mission06's forest-edge
+        // region (cells 147,119-269,210) to exercise the victory script.
+        for (int i = 0; i < 4; ++i)
+            spawn("verat", 3300 + float(i % 2) * 60, 2600 + float(i / 2) * 60, 0, 0);
+        spawn("versword", 3260, 2700, 0, 0);
+        mapView_.setOffset(3300 - 640 / 0.9f, 2620 - 400 / 0.9f);
+    }
+
     void testBuild() {
         aiEnabled_ = false;
         const auto* keep = world_.unit(keepId_);
@@ -928,6 +978,32 @@ public:
         for (auto& u : world_.units())
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
         tickAi(dt);
+        if (missionVm_) {
+            missionVm_->tick(dt);
+            if (trace_) {
+                static float dbg = 0;
+                dbg += dt;
+                if (dbg > 2) {
+                    dbg = 0;
+                    std::printf("MSTAT s0=%d threads=%zu pcs:",
+                                missionVm_->getStatic(0), missionVm_->threadCount());
+                    std::map<uint32_t, int> hist;
+                    for (auto pc : missionVm_->threadPcs()) ++hist[pc];
+                    for (auto& [pc, n] : hist) std::printf(" %u x%d", pc, n);
+                    std::printf("\n");
+                }
+            }
+            for (auto& u : world_.units()) {
+                if (u.team != 0) continue;
+                if (u.justBuilt) missionVm_->start("UnitCreated", {u.justBuilt, 0});
+                bool wasBuilding = building_.count(u.id) != 0;
+                if (u.underConstruction) building_.insert(u.id);
+                else if (wasBuilding) {
+                    building_.erase(u.id);
+                    missionVm_->start("UnitCreated", {u.id, 0});
+                }
+            }
+        }
         if (amphib_) {
             auto* t = world_.unit(transportId_);
             if (t && t->alive()) {
@@ -992,6 +1068,8 @@ public:
                     const std::string& id = u.type->id;
                     if (sounds_.has(id + "die1")) sounds_.play(id + "die1");
                     else if (sounds_.has(id + "die2")) sounds_.play(id + "die2");
+                    if (missionVm_ && u.team == 0)
+                        missionVm_->start("UnitDestroyed", {u.id});
                 }
                 a.vm->tick(dt);
                 continue;
@@ -1532,6 +1610,60 @@ private:
                           {230, 230, 200, 255});
     }
 
+    int rosterIndexOf(int unitId) {
+        auto* u = world_.unit(unitId);
+        if (!u || !u->type) return -1;
+        for (size_t i = 0; i < missionRoster_.size(); ++i)
+            if (missionRoster_[i] == u->type->id) return int(i);
+        return -1;
+    }
+
+    int32_t mapCommand(int sub, const std::vector<int32_t>& a) {
+        switch (sub) {
+            case 0:   // define region: rect (id,x1,z1,x2,z2) or circle (id,x,z,r)
+                if (a.size() == 5) regions_[a[0]] = {a[1], a[2], a[3], a[4], true};
+                else if (a.size() == 4) regions_[a[0]] = {a[1], a[2], a[3], 0, false};
+                return 0;
+            case 1: {  // sweep region: fire TriggerHit per player unit inside
+                auto it = regions_.find(a.empty() ? -1 : a[0]);
+                if (it == regions_.end() || !missionVm_) return 0;
+                const auto& r = it->second;
+                int count = 0;
+                for (auto& u : world_.units()) {
+                    if (!u.alive() || u.embarked() || u.team != 0) continue;
+                    int cx = int(u.x) / 16, cz = int(u.z) / 16;
+                    bool inside;
+                    if (r.rect)
+                        inside = cx >= r.a && cz >= r.b && cx <= r.c && cz <= r.d;
+                    else {
+                        int dx = cx - r.a, dz = cz - r.b;
+                        inside = dx * dx + dz * dz <= r.c * r.c;
+                    }
+                    if (inside) {
+                        ++count;
+                        if (missionVm_->threadCount() < 200)
+                            missionVm_->start("TriggerHit", {a[0], u.id, 0});
+                    }
+                }
+                if (trace_) {
+                    static int logged = 0;
+                    if (logged++ < 8)
+                        std::printf("SWEEP region %d -> %d units\n",
+                                    a.empty() ? -1 : a[0], count);
+                }
+                if (false) for (auto& u : world_.units()) {
+                    (void)u;
+                }
+                return count;
+            }
+            case 8: case 9: case 12: case 13: case 14:
+                if (a.empty()) return missionTowerIdx_;   // type-constant heuristic
+                return 0;
+            default:
+                return 0;
+        }
+    }
+
     void voice(int unitId, const std::string& event) {
         const auto* u = world_.unit(unitId);
         if (!u || !u->type || u->type->soundClass.empty()) return;
@@ -1550,6 +1682,13 @@ private:
     int amphibPhase_ = 0, amphibSquad_ = 0, transportId_ = -1;
     float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
     Font hudFont_, bigFont_;
+
+    struct Region { int a, b, c, d; bool rect; };
+    std::unique_ptr<tak::cob::Vm> missionVm_;
+    std::vector<std::string> missionRoster_;
+    std::map<int, Region> regions_;
+    int missionTowerIdx_ = -1;
+    std::set<int> building_;
 };
 
 } // namespace
@@ -1568,7 +1707,8 @@ int main(int argc, char** argv) {
     std::string shot, cobPath, anim;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
-         scenario = false, navy = false, amphib = false, missionFlag = false;
+         scenario = false, navy = false, amphib = false, missionFlag = false,
+         misstest = false;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
@@ -1583,6 +1723,7 @@ int main(int argc, char** argv) {
         else if (a == "--navy") navy = true;
         else if (a == "--amphib") amphib = true;
         else if (a == "--mission") missionFlag = true;
+        else if (a == "--misstest") misstest = true;
         else if (a == "--follow" && i + 1 < argc) followZoom = std::stof(argv[++i]);
         else if (a == "--march" && i + 2 < argc) {
             marchX = std::stof(argv[++i]);
@@ -1622,6 +1763,7 @@ int main(int argc, char** argv) {
             if (trace) gameView->setTrace(true);
             if (testbuild) gameView->testBuild();
             if (navy) gameView->navyDemo();
+            if (misstest) gameView->missionTest();
             if (amphib) gameView->amphibDemo();
             if (startTime > 0) gameView->advance(startTime);
         } else if (mode == "model" && !args.empty()) {
