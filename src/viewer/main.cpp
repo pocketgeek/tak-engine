@@ -3168,7 +3168,7 @@ int main(int argc, char** argv) {
     }
     std::string mode = argv[1];
     std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
-    int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 0;
+    int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 60;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
@@ -3263,14 +3263,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
         return 1;
     }
-    if (shot.empty()) {
-        int vs = SDL_RenderSetVSync(ren, 1);   // explicit vsync, avoids tearing
-        SDL_RendererInfo ri{};
-        SDL_GetRendererInfo(ren, &ri);
-        std::fprintf(stderr, "renderer: %s, vsync=%s%s\n", ri.name ? ri.name : "?",
-                     (ri.flags & SDL_RENDERER_PRESENTVSYNC) ? "flag" : "no-flag",
-                     vs == 0 ? "+set" : "+setFAILED");
-    }
+    if (shot.empty()) SDL_RenderSetVSync(ren, 1);   // explicit vsync
 
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;
@@ -3419,17 +3412,6 @@ int main(int argc, char** argv) {
         }
         SDL_RenderPresent(ren);
 
-        // FPS report once a second: ~60 means vsync works; hundreds means it
-        // isn't and the display is tearing.
-        static int fpsFrames = 0;
-        static uint64_t fpsStart = SDL_GetPerformanceCounter();
-        if (++fpsFrames >= 120) {
-            double secs = double(SDL_GetPerformanceCounter() - fpsStart) /
-                          double(SDL_GetPerformanceFrequency());
-            std::fprintf(stderr, "fps: %.0f\n", fpsFrames / secs);
-            fpsFrames = 0;
-            fpsStart = SDL_GetPerformanceCounter();
-        }
         if (maxFps > 0) {
             static uint64_t prevPresent = 0;
             uint64_t nowp = SDL_GetPerformanceCounter();

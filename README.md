@@ -31,7 +31,8 @@ Controls: drag = box-select, right-click = move/attack (shift queues),
 A + click = attack-move, P + click = patrol, H = halt, click the build icons (or 1–6) at a
 selected builder/keep to train or place, arrows/middle-drag = scroll,
 wheel = zoom (toward cursor), minimap click/drag = move camera,
-S = screenshot. Background music plays from the game soundtrack. `--demo`
+S = screenshot. Background music plays from the game soundtrack. Frame rate is capped
+at 60 fps (`--maxfps N`, or `--maxfps 0` for uncapped). `--demo`
 stages an AI-vs-AI war; `--mission` loads a campaign mission's .ota/.cob;
 `--side ara|tar|ver|zon|cre` picks your faction and `--aiside` the
 enemy's (Zhon has no Keep — Beast Handlers summon creatures via the
