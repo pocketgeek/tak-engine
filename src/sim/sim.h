@@ -98,6 +98,7 @@ struct Unit {
     float deadFor = -1;    // >= 0 once dead; counts up for death animation
     bool justFired = false;   // set for one tick when the weapon fires
     bool underConstruction = false;
+    bool buildBegun = false;   // construction site: true once the builder arrived
     int buildSiteId = 0;   // builder: id of the building it is constructing
     int inTransport = 0;   // id of carrying transport, 0 = none
     std::vector<int> cargo;
