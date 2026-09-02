@@ -1,8 +1,8 @@
 # Original game assets — never commit Cavedog's copyrighted content
 assets/
 
-# Build output
-build/
+# Build output (build/, build-dbg/, build-asan/, …)
+build*/
 .cache/
 compile_commands.json
 
