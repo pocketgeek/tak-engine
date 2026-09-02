@@ -3564,7 +3564,7 @@ private:
                 SDL_RenderDrawRectF(ren_, &r);
                 if (hot && hudFont_.ok()) {
                     char tip[80];
-                    std::snprintf(tip, sizeof tip, "%s  %d MOGRIUM", bt->name.c_str(),
+                    std::snprintf(tip, sizeof tip, "%s  %d MANA", bt->name.c_str(),
                                   int(bt->buildCost));
                     float tw = float(hudFont_.width(tip, 1.5f));
                     float tipx = std::clamp(r.x + 30 - tw / 2, 4.0f, winW - tw - 4);
@@ -3592,7 +3592,7 @@ private:
             auto& tm = world_.team(localTeam_);
             float manaX = float(winW) - 176;
             shade(manaX - 8, 184);
-            statText("MOGRIUM", manaX, bar.y + 22, 1.4f);
+            statText("MANA", manaX, bar.y + 22, 1.4f);
             std::snprintf(buf, sizeof buf, "%d / %d", int(tm.mana),
                           int(std::max(tm.storage, 100.0f)));
             statText(buf, manaX, bar.y + 48, 2.0f);
