@@ -465,7 +465,10 @@ public:
         std::string dir;
         for (const auto& c : cands)
             if (std::filesystem::is_directory(c)) { dir = c; break; }
-        if (dir.empty()) return;
+        if (dir.empty()) {
+            std::fprintf(stderr, "music: no Music/ directory found\n");
+            return;
+        }
         try {
             for (const auto& e : std::filesystem::directory_iterator(dir)) {
                 std::string ext = e.path().extension().string();
@@ -474,6 +477,8 @@ public:
             }
         } catch (const std::exception&) { return; }
         std::sort(playlist_.begin(), playlist_.end());
+        std::fprintf(stderr, "music: %zu tracks in %s, audio=%s\n", playlist_.size(),
+                     dir.c_str(), dev_ ? "yes" : "NO DEVICE");
         if (!playlist_.empty() && dev_) {
             std::shuffle(playlist_.begin(), playlist_.end(),
                          std::mt19937{std::random_device{}()});
@@ -496,10 +501,14 @@ private:
         SDL_AudioSpec spec{};
         Uint8* buf = nullptr;
         Uint32 len = 0;
-        if (!SDL_LoadWAV(playlist_[idx].c_str(), &spec, &buf, &len)) return;
+        if (!SDL_LoadWAV(playlist_[idx].c_str(), &spec, &buf, &len)) {
+            std::fprintf(stderr, "music: LoadWAV failed: %s\n", SDL_GetError());
+            return;
+        }
         SDL_AudioCVT cvt;
         if (SDL_BuildAudioCVT(&cvt, spec.format, spec.channels, spec.freq, AUDIO_S16SYS,
                               1, 11025) < 0) {
+            std::fprintf(stderr, "music: BuildAudioCVT failed: %s\n", SDL_GetError());
             SDL_FreeWAV(buf);
             return;
         }
@@ -508,7 +517,10 @@ private:
         SDL_FreeWAV(buf);
         cvt.buf = work.data();
         cvt.len = int(len);
-        if (cvt.needed && SDL_ConvertAudio(&cvt) != 0) return;
+        if (cvt.needed && SDL_ConvertAudio(&cvt) != 0) {
+            std::fprintf(stderr, "music: ConvertAudio failed: %s\n", SDL_GetError());
+            return;
+        }
         size_t outBytes = cvt.needed ? size_t(cvt.len_cvt) : len;
         std::vector<int16_t> pcm(outBytes / 2);
         std::memcpy(pcm.data(), work.data(), pcm.size() * 2);
@@ -518,9 +530,8 @@ private:
         musicTrack_ = idx;
         musicDone_ = false;
         SDL_UnlockAudioDevice(dev_);
-        if (verbose_)
-            std::printf("MUSIC %s (%zu samples)\n", playlist_[idx].c_str(),
-                        music_.size());
+        std::fprintf(stderr, "music: now playing %s (%zu samples)\n",
+                     playlist_[idx].c_str(), music_.size());
     }
 
     std::map<std::string, std::string> index_;
@@ -690,6 +701,7 @@ public:
         }
         loadOrderButtons();
         sounds_.init(dataRoot_ + "/../english/Sounds", false);
+        sounds_.startMusic(dataRoot_);
         soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
         loadPanel(side_);
 
