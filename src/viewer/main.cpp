@@ -93,6 +93,7 @@ public:
     float offX() const { return offX_; }
     float offY() const { return offY_; }
     float zoom() const { return zoom_; }
+    tak::terrain::Compositor& compositor() { return comp_; }
     void setZoom(float z) { zoom_ = z; }
     void setOffset(float x, float y) { offX_ = x; offY_ = y; }
     const tak::tnt::Map& map() const { return map_; }
@@ -642,6 +643,9 @@ public:
             mouseY_ = float(e.motion.y);
             if (dragging_) { dragX1_ = float(e.motion.x); dragY1_ = float(e.motion.y); }
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
+                   minimapClick(float(e.button.x), float(e.button.y), winH)) {
+            // camera moved via minimap
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    placing_) {
             float wx = mapView_.offX() + e.button.x / zm;
             float wz = mapView_.offY() + e.button.y / zm;
@@ -825,6 +829,7 @@ public:
 
         drawFog();
         if (placing_) drawGhost();
+        drawMinimap(winW, winH);
 
         for (int id : selection_) {
             const auto* u = world_.unit(id);
@@ -1088,7 +1093,10 @@ private:
         if (at != anims_.end()) anim = &at->second;
 
         tris_.clear();
-        collect(vt->second.model.root, Xform{}, anim, u.heading);
+        Xform base;
+        if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
+            base.t[1] = u.type->cruiseAlt;   // flyers cruise above the ground
+        collect(vt->second.model.root, base, anim, u.heading);
         std::sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
@@ -1196,8 +1204,82 @@ private:
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = 0, mouseY_ = 0;
     SDL_Texture* fogTex_ = nullptr;
+    SDL_Texture* miniTex_ = nullptr;
     int aiTrained_ = 0;
     float aiTimer_ = 0;
+    static constexpr int kMiniSize = 180;
+
+    SDL_FRect minimapRect(int winH) const {
+        float aspect = float(mapView_.map().blocksY) / float(mapView_.map().blocksX);
+        return {10, float(winH) - 10 - kMiniSize * aspect, kMiniSize, kMiniSize * aspect};
+    }
+
+    void buildMinimap() {
+        int bw = mapView_.map().blocksX, bh = mapView_.map().blocksY;
+        std::vector<uint8_t> pix(size_t(bw) * bh * 4);
+        std::vector<uint8_t> block(32 * 32 * 4);
+        for (int bz = 0; bz < bh; ++bz)
+            for (int bx = 0; bx < bw; ++bx) {
+                mapView_.compositor().renderBlock(mapView_.map(), bx, bz, block, 32, 0, 0);
+                uint32_t r = 0, g = 0, b = 0;
+                for (size_t i = 0; i < block.size(); i += 4) {
+                    r += block[i]; g += block[i + 1]; b += block[i + 2];
+                }
+                size_t n = block.size() / 4;
+                uint8_t* p = &pix[(size_t(bz) * bw + bx) * 4];
+                p[0] = uint8_t(r / n); p[1] = uint8_t(g / n); p[2] = uint8_t(b / n);
+                p[3] = 255;
+            }
+        miniTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                     SDL_TEXTUREACCESS_STATIC, bw, bh);
+        SDL_UpdateTexture(miniTex_, nullptr, pix.data(), bw * 4);
+        SDL_SetTextureScaleMode(miniTex_, SDL_ScaleModeLinear);
+    }
+
+    void drawMinimap(int winW, int winH) {
+        (void)winW;
+        if (!miniTex_) buildMinimap();
+        SDL_FRect r = minimapRect(winH);
+        SDL_FRect frame{r.x - 2, r.y - 2, r.w + 4, r.h + 4};
+        SDL_SetRenderDrawColor(ren_, 30, 30, 40, 255);
+        SDL_RenderFillRectF(ren_, &frame);
+        SDL_RenderCopyF(ren_, miniTex_, nullptr, &r);
+        if (fogTex_) SDL_RenderCopyF(ren_, fogTex_, nullptr, &r);
+
+        float mapW = float(mapView_.map().blocksX) * 32;
+        float mapH = float(mapView_.map().blocksY) * 32;
+        auto toMini = [&](float wx, float wz) {
+            return SDL_FPoint{r.x + wx / mapW * r.w, r.y + wz / mapH * r.h};
+        };
+        for (const auto& u : world_.units()) {
+            if (!u.alive() || !u.type) continue;
+            if (u.team != 0 && !world_.cellVisible(u.x, u.z)) continue;
+            SDL_FPoint p = toMini(u.x, u.z);
+            SDL_FRect dot{p.x - 1.5f, p.y - 1.5f, 3, 3};
+            if (u.team == 0) SDL_SetRenderDrawColor(ren_, 90, 160, 255, 255);
+            else SDL_SetRenderDrawColor(ren_, 255, 80, 60, 255);
+            SDL_RenderFillRectF(ren_, &dot);
+        }
+        // Camera view rectangle.
+        float zm = mapView_.zoom();
+        SDL_FPoint a = toMini(mapView_.offX(), mapView_.offY());
+        SDL_FRect view{a.x, a.y, kWinW / zm / mapW * r.w, kWinH / zm / mapH * r.h};
+        SDL_SetRenderDrawColor(ren_, 240, 240, 240, 200);
+        SDL_RenderDrawRectF(ren_, &view);
+    }
+
+    // Returns true if the click was inside the minimap (and moved the camera).
+    bool minimapClick(float mx, float my, int winH) {
+        SDL_FRect r = minimapRect(winH);
+        if (mx < r.x || my < r.y || mx > r.x + r.w || my > r.y + r.h) return false;
+        float mapW = float(mapView_.map().blocksX) * 32;
+        float mapH = float(mapView_.map().blocksY) * 32;
+        float wx = (mx - r.x) / r.w * mapW, wz = (my - r.y) / r.h * mapH;
+        float zm = mapView_.zoom();
+        mapView_.setOffset(wx - kWinW / zm / 2, wz - kWinH / zm / 2);
+        return true;
+    }
+
     void drawFog() {
         const auto& vis = world_.visibility();
         if (vis.empty()) return;

@@ -39,6 +39,8 @@ struct UnitType {
     float storage = 0;      // mana cap contribution (mogriumstorage)
     int footX = 1, footZ = 1;
     float sight = 180;        // px (FBI sightdistance)
+    bool canFly = false;
+    float cruiseAlt = 0;      // world units above ground when flying
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     Weapon weapon;         // WEAPON1; weapon.damage == 0 means unarmed
 };

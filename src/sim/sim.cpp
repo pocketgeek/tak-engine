@@ -60,6 +60,8 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             t.soundClass = lower(info->valueOr("soundcategory",
                                                info->valueOr("soundclass", "")));
             t.sight = float(info->numberOr("sightdistance", 180));
+            t.canFly = info->numberOr("canfly", 0) != 0;
+            t.cruiseAlt = float(info->numberOr("cruisealt", 0)) / 4;
             if (const auto* w = root.child("WEAPON1")) {
                 t.weapon.name = w->valueOr("name", "");
                 t.weapon.range = float(w->numberOr("range", 0));
@@ -235,6 +237,10 @@ void World::order(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || !u->type->canMove) return;
     if (!queue) u->orders.clear();
+    if (u->type->canFly) {
+        u->orders.push_back({x, z, 0});
+        return;
+    }
     if (!nav_.empty()) {
         auto path = nav_.findPath(u->x, u->z, x, z);
         if (!path.empty()) {
@@ -522,10 +528,10 @@ void World::tick(float dt) {
     constexpr float kSep = 13.0f;
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& a = units_[i];
-        if (!a.alive() || !a.type || !a.type->canMove) continue;
+        if (!a.alive() || !a.type || !a.type->canMove || a.type->canFly) continue;
         for (size_t j = i + 1; j < units_.size(); ++j) {
             Unit& b = units_[j];
-            if (!b.alive() || !b.type || !b.type->canMove) continue;
+            if (!b.alive() || !b.type || !b.type->canMove || b.type->canFly) continue;
             float dx = b.x - a.x, dz = b.z - a.z;
             float d2 = dx * dx + dz * dz;
             if (d2 >= kSep * kSep || d2 < 1e-6f) {
