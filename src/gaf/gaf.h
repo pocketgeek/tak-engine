@@ -38,7 +38,9 @@ struct Sequence {
 };
 
 // Decode a whole GAF/TAF file. `pal` is used for 8-bit entries; TAF
-// truecolor entries ignore it.
-std::vector<Sequence> load(const std::filesystem::path& file, const Palette& pal);
+// truecolor entries ignore it. `transparentIndex` >= 0 makes that palette
+// index fully transparent (render.tdf: transparentcolor=5 for 3DO textures).
+std::vector<Sequence> load(const std::filesystem::path& file, const Palette& pal,
+                           int transparentIndex = -1);
 
 } // namespace tak::gaf

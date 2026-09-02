@@ -353,15 +353,29 @@ public:
 
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         mapView_.setOffset(cx - 640 / 0.9f + 110, cz - 400 / 0.9f + 20);
-        const char* squad[] = {"araarch", "araarch", "araarch", "arasword",
-                               "arasword", "araarch"};
+        const char* aramon[] = {"araarch", "araarch", "araarch", "arasword",
+                                "arasword", "araarch"};
+        const char* taros[] = {"tararch", "tararch", "tardemon", "tararch",
+                               "tardemon", "tararch"};
+        std::vector<int> teamA, teamB;
         int i = 0;
-        for (const char* t : squad) {
-            int id = spawn(t, cx + float(i % 3) * 28 - 28, cz + float(i / 3) * 28 - 14);
-            if (demo && id >= 0)
-                world_.order(id, cx + 220 + float(i % 3) * 24, cz - 60 + float(i / 3) * 26,
-                             false);
+        for (const char* t : aramon) {
+            int id = spawn(t, cx - 160 + float(i % 2) * 26, cz - 60 + float(i / 2) * 30, 1.57f, 0);
+            if (id >= 0) teamA.push_back(id);
             ++i;
+        }
+        i = 0;
+        for (const char* t : taros) {
+            int id = spawn(t, cx + 160 + float(i % 2) * 26, cz - 60 + float(i / 2) * 30,
+                           -1.57f, 1);
+            if (id >= 0) teamB.push_back(id);
+            ++i;
+        }
+        if (demo) {
+            for (size_t k = 0; k < teamA.size(); ++k)
+                world_.attack(teamA[k], teamB[k % teamB.size()], false);
+            for (size_t k = 0; k < teamB.size(); ++k)
+                world_.attack(teamB[k], teamA[k % teamA.size()], false);
         }
     }
 
@@ -383,7 +397,17 @@ public:
                 }
             } else if (e.button.button == SDL_BUTTON_RIGHT && selected_ >= 0) {
                 bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
-                world_.order(selected_, wx, wz, queue);
+                // Clicking near an enemy of the selected unit = attack order.
+                const auto* sel = world_.unit(selected_);
+                int enemy = -1;
+                float best = 20 * 20;
+                for (auto& u : world_.units()) {
+                    if (!u.alive() || !sel || u.team == sel->team) continue;
+                    float dx = u.x - wx, dz = u.z - wz;
+                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
+                }
+                if (enemy >= 0) world_.attack(selected_, enemy, queue);
+                else world_.order(selected_, wx, wz, queue);
             }
         }
     }
@@ -403,6 +427,16 @@ public:
             auto it = anims_.find(u.id);
             if (it == anims_.end()) continue;
             auto& a = it->second;
+            if (!u.alive()) {
+                if (!a.dying) {
+                    a.dying = true;
+                    a.vm->reset();
+                    a.vm->setStatic(0, 0);
+                    a.vm->start("death") || a.vm->start("Dying") || a.vm->start("Killed");
+                }
+                a.vm->tick(dt);
+                continue;
+            }
             bool m = u.moving();
             if (m != a.walking) {
                 a.walking = m;
@@ -418,13 +452,28 @@ public:
     void draw(int winW, int winH) {
         mapView_.draw(winW, winH);
         std::vector<const tak::sim::Unit*> order;
-        for (auto& u : world_.units()) order.push_back(&u);
+        for (auto& u : world_.units())
+            if (u.deadFor < 4.0f) order.push_back(&u);   // corpses linger briefly
         std::sort(order.begin(), order.end(),
                   [](auto* a, auto* b) { return a->z < b->z; });
         for (const auto* u : order) drawUnit(*u);
+
+        // Projectiles: short bright streaks.
+        float zm = mapView_.zoom();
+        SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
+        for (const auto& p : world_.projectiles()) {
+            float sx = (p.x - mapView_.offX()) * zm;
+            float sy = (p.z - mapView_.offY()) * zm - 8 * zm;
+            SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.03f * zm,
+                                sy - p.vz * 0.03f * zm);
+        }
+
         if (const auto* u = world_.unit(selected_)) {
-            drawRing(u->x, u->z, 14);
-            for (const auto& o : u->orders) drawRing(o.x, o.z, 4);
+            if (u->alive()) {
+                drawRing(u->x, u->z, 14);
+                for (const auto& o : u->orders)
+                    if (o.targetId == 0) drawRing(o.x, o.z, 4);
+            }
         }
     }
 
@@ -440,9 +489,10 @@ private:
         std::unique_ptr<tak::cob::Vm> vm;
         std::vector<std::string> pieceNames;
         bool walking = false;
+        bool dying = false;
     };
 
-    int spawn(const std::string& typeId, float x, float z) {
+    int spawn(const std::string& typeId, float x, float z, float heading, int team) {
         const auto* type = registry_.find(typeId);
         if (!type) return -1;
         if (!visuals_.count(typeId)) {
@@ -453,7 +503,7 @@ private:
                 return -1;
             }
         }
-        int id = world_.spawn(type, x, z, 3.14159f);
+        int id = world_.spawn(type, x, z, heading, team);
         Anim a;
         try {
             auto cobFile = tak::cob::load(dataRoot_ + "/scripts/" + typeId + ".cob");
@@ -469,12 +519,25 @@ private:
         return id;
     }
 
-    void loadTextures(const std::string& texDir, const std::string& palettePath) {
-        auto pal = tak::gaf::Palette::load(palettePath);
+    void loadTextures(const std::string& texDir, const std::string& defaultPalette) {
+        // Faction texture banks use their own palettes (sidedata.tdf).
+        std::map<std::string, tak::gaf::Palette> pals;
+        pals["ara"] = tak::gaf::Palette::load(defaultPalette);
+        for (const char* side : {"tar", "ver", "zon", "aid"}) {
+            try {
+                pals[side] = tak::gaf::Palette::load(
+                    dataRoot_ + "/palettes/" + std::string(side) + "_textures.pcx");
+            } catch (const std::exception&) {}
+        }
         for (const auto& e : std::filesystem::directory_iterator(texDir)) {
             if (e.path().extension() != ".gaf") continue;
+            std::string stem = e.path().stem().string();
+            std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
+            const auto* pal = &pals.at("ara");
+            auto pit = pals.find(stem.substr(0, 3));
+            if (pit != pals.end()) pal = &pit->second;
             try {
-                for (auto& seq : tak::gaf::load(e.path(), pal)) {
+                for (auto& seq : tak::gaf::load(e.path(), *pal, 5)) {
                     if (seq.frames.empty()) continue;
                     auto& f = seq.frames[0];
                     if (f.width == 0 || f.height == 0) continue;
@@ -485,6 +548,7 @@ private:
                                                        SDL_TEXTUREACCESS_STATIC,
                                                        f.width, f.height);
                     SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
+                    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
                     textures_[name] = t;
                 }
             } catch (const std::exception&) {}

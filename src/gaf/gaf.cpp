@@ -190,7 +190,8 @@ Palette Palette::load(const std::filesystem::path& palFile) {
     return pal;
 }
 
-std::vector<Sequence> load(const std::filesystem::path& file, const Palette& pal) {
+std::vector<Sequence> load(const std::filesystem::path& file, const Palette& pal,
+                           int transparentIndex) {
     std::ifstream in(file, std::ios::binary);
     if (!in) throw std::runtime_error("cannot open " + file.string());
     std::vector<uint8_t> d(std::filesystem::file_size(file));
@@ -212,8 +213,17 @@ std::vector<Sequence> load(const std::filesystem::path& file, const Palette& pal
         const char* nm = reinterpret_cast<const char*>(&d[e + 8]);
         seq.name.assign(nm, strnlen(nm, 32));
         need(d, e + 40, uint64_t(numFrames) * 8, "frame pointers");
-        for (uint16_t f = 0; f < numFrames; ++f)
-            seq.frames.push_back(decodeFrame(d, u32(&d[e + 40 + f * 8]), pal));
+        for (uint16_t f = 0; f < numFrames; ++f) {
+            Frame fr = decodeFrame(d, u32(&d[e + 40 + f * 8]), pal);
+            if (transparentIndex >= 0) {
+                const uint8_t* key = pal.rgba[transparentIndex];
+                for (size_t px = 0; px + 3 < fr.rgba.size(); px += 4)
+                    if (fr.rgba[px] == key[0] && fr.rgba[px + 1] == key[1] &&
+                        fr.rgba[px + 2] == key[2])
+                        fr.rgba[px + 3] = 0;
+            }
+            seq.frames.push_back(std::move(fr));
+        }
         out.push_back(std::move(seq));
     }
     return out;
