@@ -796,13 +796,22 @@ public:
             mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
         }
         for (auto& u : world_.units()) {
+            auto it = anims_.find(u.id);
             if (u.justFired && u.type) {
                 if (u.type->weapon.melee)
                     sounds_.play("ahitfl0" + std::to_string(1 + (salt_++ % 3)));
                 else
                     sounds_.play("bow2");
+                // Play the unit's own firing animation while standing.
+                if (it != anims_.end() && !u.moving()) {
+                    auto& fa = it->second;
+                    fa.vm->reset();
+                    fa.vm->setStatic(0, 0);
+                    fa.vm->start("FireWeapon") || fa.vm->start("attack1") ||
+                        fa.vm->start("MeleeStrike");
+                    fa.walking = false;
+                }
             }
-            auto it = anims_.find(u.id);
             if (it == anims_.end()) continue;
             auto& a = it->second;
             if (!u.alive()) {
