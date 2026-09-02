@@ -38,6 +38,7 @@
 
 namespace {
 
+float gTilt = 0.72f;
 constexpr int kWinW = 1280, kWinH = 800;
 
 void screenshot(SDL_Renderer* ren, int w, int h, const std::string& path) {
@@ -1398,10 +1399,11 @@ public:
         mapView_.setOffset(x - 640 / mapView_.zoom(), z - 400 / mapView_.zoom());
     }
 
+    std::string lodeUnit;
     void lodeTest() {
         aiEnabled_ = false;
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
-        spawn("zonlode", cx, cz, 3.14159f, 0);
+        spawn(lodeUnit.empty()?"zonlode":lodeUnit, cx, cz, 3.14159f, 0);
         mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
     }
 
@@ -1627,6 +1629,10 @@ public:
                 a.vm->setStatic(0, m ? 1 : 0);
                 if (m) { a.vm->start("walk_legs") || a.vm->start("walk"); }
                 else { a.vm->start("restore_legs") || a.vm->start("restore_x"); }
+            } else if (m && a.vm->threadCount() == 0) {
+                // The walk script is single-pass; the engine re-invokes it
+                // each cycle while the unit keeps moving.
+                a.vm->start("walk_legs") || a.vm->start("walk");
             }
             if (u.type && !u.type->canMove) {   // buildings: yard/production anims
                 bool busy = !u.buildQueue.empty();
@@ -2119,7 +2125,7 @@ private:
                            oname.find("ground") != std::string::npos ||
                            oname.find("gpoly") != std::string::npos ||
                            oname.find("gpoint") != std::string::npos;
-        const float tilt = 1.05f;   // ~60 degrees down
+        const float tilt = gTilt;
         float cy = std::cos(heading + 3.14159f), sy = std::sin(heading + 3.14159f);
         float ct = std::cos(tilt), st = std::sin(tilt);
         for (const auto& p : o.primitives) {
@@ -2939,6 +2945,7 @@ int main(int argc, char** argv) {
          misstest = false, nofog = false, doLook = false, creon = false,
          hilltest = false, keytest = false, guardtest = false, selonly = false,
          lodetest = false;
+    std::string lodeUnitName;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -2962,6 +2969,9 @@ int main(int argc, char** argv) {
         else if (a == "--keytest") keytest = true;
         else if (a == "--guardtest") guardtest = true;
         else if (a == "--lodetest") lodetest = true;
+
+        else if (a == "--tilt" && i + 1 < argc) gTilt = std::stof(argv[++i]);
+        else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
         else if (a == "--selonly") selonly = true;
 
         else if (a == "--host" && i + 1 < argc) hostPort = std::atoi(argv[++i]);
@@ -3033,7 +3043,8 @@ int main(int argc, char** argv) {
             if (creon) gameView->creonDemo();
             if (hilltest) gameView->hillTest();
             if (guardtest) gameView->guardTest();
-            if (lodetest) gameView->lodeTest();
+            if (lodetest) { gameView->lodeUnit = lodeUnitName; gameView->lodeTest(); }
+
             if (nofog) gameView->noFog_ = true;
             if (doLook) gameView->lookAt(lookX, lookZ);
             if (amphib) gameView->amphibDemo();
