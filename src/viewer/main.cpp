@@ -1855,8 +1855,24 @@ public:
                 float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise
                 a.altitude += std::clamp(target - a.altitude, -step, step);
 
-                // Keep the flight animation looping.
-                if (a.vm->threadCount() == 0) a.vm->start("fly");
+                // Only run the flight animation while she's actually off the
+                // ground; on landing, restore the standing pose.
+                bool air = a.altitude > std::max(cruise, 1.0f) * 0.3f;
+                if (air) {
+                    if (!a.airborne) {
+                        a.airborne = true;
+                        a.vm->reset();
+                        a.vm->setStatic(8, 1);   // gate that "fly" animates on
+                        a.vm->start("fly");
+                    } else if (a.vm->threadCount() == 0) {
+                        a.vm->start("fly");       // keep the beat looping
+                    }
+                } else if (a.airborne) {
+                    a.airborne = false;
+                    a.vm->reset();
+                    a.vm->setStatic(8, 0);
+                    a.vm->start("restore_x");     // fold back to a standing pose
+                }
             } else {
                 bool m = u.walking();
                 if (m != a.walking) {
@@ -2366,6 +2382,7 @@ private:
         bool producing = false;
         bool firing = false;
         bool flying = false;
+        bool airborne = false;   // true while the flight animation should run
         float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
     };
 
@@ -2421,16 +2438,8 @@ private:
             // Flyers deploy their wings and start flapping at spawn via their
             // flight scripts; without these they sit in the landed rest pose
             // (which also reads as facing the wrong way).
-            if (u.type && u.type->canFly) {
-                // Run the authentic "fly" flight animation (full body pose +
-                // wing beat). It gates its whole body on static8, so set that;
-                // we drive "fly" directly rather than via FlightControl because
-                // FlightControl also mixes in "soar", whose dramatic hip move
-                // reads as the wings crossing over in our top-down projection.
-                a.vm->setStatic(8, 1);
-                a.vm->start("fly");
-                a.flying = true;
-            }
+            if (u.type && u.type->canFly)
+                a.flying = true;   // starts grounded; the update loop flies her
         } catch (const std::exception&) { /* unit stays unanimated */ }
         if (a.vm) anims_[u.id] = std::move(a);
         unitType_[u.id] = typeId;
@@ -2526,9 +2535,10 @@ private:
         // Flyer models are built mirrored across the N-S axis relative to the
         // ground units, so they read correct N/S but backward E/W. Negating
         // the heading reflects E<->W (and diagonals) while leaving N/S.
-        // Flyer models are built mirrored across the N-S axis vs the ground
-        // units, so negate the heading to face them the right way.
-        if (u.type && u.type->canFly) facing = -facing;
+        // Flyer models read backward vs the ground units, and the running fly
+        // pose adds a further 180° body turn, so face them at -heading + pi.
+        // Verified against a ground unit moving in each direction.
+        if (u.type && u.type->canFly) facing = 3.14159265f - facing;
         collect(vt->second.model.root, base, anim, facing, u.team);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
