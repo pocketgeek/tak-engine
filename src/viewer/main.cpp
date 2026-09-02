@@ -1074,49 +1074,16 @@ public:
     }
 
     void input(const SDL_Event& e, int winW, int winH) {
+        winW_ = winW;
+        winH_ = winH;
         float zm = mapView_.zoom();
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE &&
             (placing_ || pendingCmd_)) {
             placing_ = nullptr;
             pendingCmd_ = 0;
-        } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_a &&
-                   !selection_.empty()) {
-            pendingCmd_ = 'a';
-        } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_p &&
-                   !selection_.empty()) {
-            pendingCmd_ = 'p';
-        } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_g &&
-                   !selection_.empty()) {
-            pendingCmd_ = 'g';
-        } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_h) {
-            for (int id : selection_) {
-                tak::net::Command c;
-                c.kind = tak::net::Cmd::Stop;
-                c.unitId = id;
-                issue(c);
-            }
-        } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
-            e.key.keysym.sym <= SDLK_6 && !selection_.empty()) {
-            const tak::sim::Unit* b = nullptr;
-            for (int id : selection_) {   // first builder anywhere in selection
-                const auto* u = world_.unit(id);
-                if (u && u->type && u->type->isBuilder) { b = u; break; }
-            }
-            if (b) {
-                const auto& menu = registry_.buildable(b->type->id);
-                size_t slot = size_t(e.key.keysym.sym - SDLK_1);
-                if (slot < menu.size()) {
-                    const auto* bt = registry_.find(menu[slot]);
-                    if (b->type->canMove) placing_ = bt;   // mobile builder: place
-                    else if (bt) {                          // building: train
-                        tak::net::Command c;
-                        c.kind = tak::net::Cmd::Train;
-                        c.unitId = b->id;
-                        std::snprintf(c.type, sizeof c.type, "%s", bt->id.c_str());
-                        issue(c);
-                    }
-                }
-            }
+        } else if (e.type == SDL_KEYDOWN && handleKey(e.key.keysym.sym,
+                                                       SDL_GetModState())) {
+            // handled by the hotkey dispatcher
         } else if (e.type == SDL_MOUSEWHEEL) {
             // Zoom toward the cursor: keep the world point under the mouse fixed.
             float wx = mapView_.offX() + mouseX_ / mapView_.zoom();
@@ -1193,20 +1160,40 @@ public:
                 pendingCmd_ = 0;
                 return;
             }
+            // 'a' (attack) targets an enemy under the click if there is one,
+            // otherwise falls through to attack-move on the ground.
+            int enemy = -1;
+            if (pendingCmd_ == 'a') {
+                const auto* first = world_.unit(selection_.front());
+                float best = 20 * 20;
+                for (auto& u : world_.units()) {
+                    if (!u.alive() || u.embarked() || !first || u.team == first->team)
+                        continue;
+                    float dx = u.x - wx, dz = u.z - wz;
+                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
+                }
+            }
             for (int id : selection_) {
                 tak::net::Command c;
-                c.kind = pendingCmd_ == 'a'   ? tak::net::Cmd::AttackMove
-                         : pendingCmd_ == 'p' ? tak::net::Cmd::Patrol
-                                              : tak::net::Cmd::Move;
+                if (enemy >= 0) {
+                    c.kind = tak::net::Cmd::Attack;
+                    c.targetId = enemy;
+                } else {
+                    c.kind = (pendingCmd_ == 'f' || pendingCmd_ == 'a')
+                                 ? tak::net::Cmd::AttackMove
+                             : pendingCmd_ == 'p' ? tak::net::Cmd::Patrol
+                                                  : tak::net::Cmd::Move;
+                    c.x = wx;
+                    c.z = wz;
+                }
                 c.unitId = id;
-                c.x = wx;
-                c.z = wz;
                 c.queue = queue;
                 issue(c);
             }
-            voice(selection_.front(), pendingCmd_ == 'a'   ? "attack"
-                                      : pendingCmd_ == 'p' ? "patrol"
-                                                           : "move");
+            voice(selection_.front(),
+                  (pendingCmd_ == 'a' || pendingCmd_ == 'f') ? "attack"
+                  : pendingCmd_ == 'p'                       ? "patrol"
+                                                             : "move");
             pendingCmd_ = 0;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    placing_) {
@@ -1614,6 +1601,7 @@ public:
 
     void update(float dt) {
         sounds_.pollMusic();
+        if (paused_) return;   // freeze the sim; input/render keep running
         world_.tick(dt);
         for (auto& u : world_.units())
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
@@ -2043,7 +2031,8 @@ public:
             hudFont_.draw(ren_, sb, 12, 46, 1.5f, {255, 220, 140, 255});
         }
         if (pendingCmd_ && hudFont_.ok()) {
-            const char* msg = pendingCmd_ == 'a'   ? "ATTACK-MOVE: CLICK TARGET"
+            const char* msg = pendingCmd_ == 'a'   ? "ATTACK: CLICK TARGET"
+                              : pendingCmd_ == 'f' ? "FIGHT-MOVE: CLICK DESTINATION"
                               : pendingCmd_ == 'p' ? "PATROL: CLICK WAYPOINT"
                               : pendingCmd_ == 'g' ? "GUARD: CLICK FRIENDLY UNIT"
                                                    : "MOVE: CLICK DESTINATION";
@@ -2053,6 +2042,11 @@ public:
             float tw = float(hudFont_.width(notice_, 2.5f));
             hudFont_.draw(ren_, notice_, (float(winW) - tw) / 2, 120, 2.5f,
                           {255, 230, 120, 255});
+        }
+        if (paused_ && bigFont_.ok()) {
+            const char* msg = "PAUSED";
+            float tw = float(bigFont_.width(msg, 1.2f));
+            bigFont_.draw(ren_, msg, (winW - tw) / 2, 60, 1.2f, {255, 230, 120, 255});
         }
 
         // Victory / defeat banner.
@@ -2414,7 +2408,11 @@ private:
     bool dragging_ = false;
     bool draggingMinimap_ = false;
     float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
-    char pendingCmd_ = 0;   // 'a' = attack-move, 'p' = patrol (awaiting click)
+    char pendingCmd_ = 0;   // armed order awaiting a click: 'f' fight-move,
+                            // 'm' move, 'a' attack, 'p' patrol, 'g' guard
+    std::map<int, std::vector<int>> groups_;   // control groups 0-9
+    bool paused_ = false;
+    int winW_ = 0, winH_ = 0;   // last-known window size (for centering/culling)
     tak::net::Session* net_ = nullptr;
     int localTeam_ = 0;
     uint32_t netTick_ = 0;
@@ -2795,6 +2793,8 @@ private:
         grab("actionbuttons", "AttackButton", 'a', "ATTACK");
         grab("actionbuttons", "PatrolButton", 'p', "PATROL");
         grab("actionbuttons", "GuardButton", 'g', "GUARD");
+        // Fight-move (Keys.TDF LOWER_F) reuses the Attack glyph, tinted.
+        grab("actionbuttons", "AttackButton", 'f', "FIGHT-MOVE");
         grab("igcommonbuttons", "StopButton", 0, "STOP", 1, 2, 3);
     }
 
@@ -2882,6 +2882,118 @@ private:
             if (u && u->alive() && u->type && u->type->isBuilder) return u;
         }
         return nullptr;
+    }
+
+    // Keys.TDF-derived hotkeys. Returns true when the key was consumed.
+    bool handleKey(SDL_Keycode key, uint16_t mod) {
+        bool ctrl = (mod & KMOD_CTRL) != 0;
+        bool shift = (mod & KMOD_SHIFT) != 0;
+
+        // Pause toggle works without a selection.
+        if (key == SDLK_PAUSE) { paused_ = !paused_; return true; }
+
+        // Control groups on the number row: plain digit recalls, CTRL assigns,
+        // CTRL+SHIFT appends the current selection. Digit 0 is group 10.
+        int digit = -1;
+        if (key >= SDLK_0 && key <= SDLK_9) digit = int(key - SDLK_0);
+        if (digit >= 0) {
+            int g = digit == 0 ? 10 : digit;
+            if (ctrl && shift) {   // add selection to the group
+                auto& grp = groups_[g];
+                for (int id : selection_)
+                    if (std::find(grp.begin(), grp.end(), id) == grp.end())
+                        grp.push_back(id);
+            } else if (ctrl) {     // (re)assign the group
+                groups_[g] = selection_;
+            } else {               // recall, dropping dead members
+                selection_.clear();
+                for (int id : groups_[g])
+                    if (const auto* u = world_.unit(id); u && u->alive())
+                        selection_.push_back(id);
+                if (!selection_.empty()) {
+                    centerOn(selection_.front());
+                    voice(selection_.front(), "select");
+                }
+            }
+            return true;
+        }
+
+        // Selection commands (modifier-based, no armed order).
+        if (ctrl && key == SDLK_a) { selectOwned([](const tak::sim::Unit&){ return true; });
+                                     return true; }
+        if (ctrl && key == SDLK_z) {   // all of the currently-selected type
+            const auto* first = selection_.empty() ? nullptr
+                                                    : world_.unit(selection_.front());
+            const auto* t = first ? first->type : nullptr;
+            if (t) selectOwned([t](const tak::sim::Unit& u){ return u.type == t; });
+            return true;
+        }
+        if (ctrl && key == SDLK_u) {   // everything visible on screen
+            selectOwned([this](const tak::sim::Unit& u){ return onScreen(u); });
+            return true;
+        }
+        if (ctrl) return false;   // other CTRL combos fall through to the map view
+
+        // Order commands need at least one selected unit.
+        if (selection_.empty()) return false;
+        switch (key) {
+            case SDLK_f: pendingCmd_ = 'f'; return true;   // fight-move
+            case SDLK_m: pendingCmd_ = 'm'; return true;   // move
+            case SDLK_a: pendingCmd_ = 'a'; return true;   // attack
+            case SDLK_p: pendingCmd_ = 'p'; return true;   // patrol
+            case SDLK_g: pendingCmd_ = 'g'; return true;   // guard
+            case SDLK_s:                                   // stop (immediate)
+                for (int id : selection_) {
+                    tak::net::Command c;
+                    c.kind = tak::net::Cmd::Stop;
+                    c.unitId = id;
+                    issue(c);
+                }
+                pendingCmd_ = 0;
+                return true;
+            case SDLK_n: cycleNextUnit(); return true;     // next unit
+            default: return false;
+        }
+    }
+
+    // Replace the selection with every owned, living unit matching `pred`.
+    template <class Pred>
+    void selectOwned(Pred pred) {
+        selection_.clear();
+        for (auto& u : world_.units())
+            if (u.alive() && u.team == localTeam_ && u.type && pred(u))
+                selection_.push_back(u.id);
+        if (!selection_.empty()) voice(selection_.front(), "select");
+    }
+
+    bool onScreen(const tak::sim::Unit& u) const {
+        float sx = (u.x - mapView_.offX()) * mapView_.zoom();
+        float sy = (u.z - mapView_.offY()) * mapView_.zoom();
+        return sx >= 0 && sy >= 0 && sx <= float(winW_) && sy <= float(winH_) - kBarH;
+    }
+
+    // Cycle the selection to the next owned unit (single-select stepping).
+    void cycleNextUnit() {
+        std::vector<int> owned;
+        for (auto& u : world_.units())
+            if (u.alive() && u.team == localTeam_ && u.type && u.type->canMove)
+                owned.push_back(u.id);
+        if (owned.empty()) return;
+        int cur = selection_.empty() ? -1 : selection_.front();
+        auto it = std::find(owned.begin(), owned.end(), cur);
+        int next = (it == owned.end() || it + 1 == owned.end())
+                       ? owned.front()
+                       : *(it + 1);
+        selection_ = {next};
+        centerOn(next);
+        voice(next, "select");
+    }
+
+    void centerOn(int id) {
+        const auto* u = world_.unit(id);
+        if (!u) return;
+        mapView_.setOffset(u->x - (winW_ / 2.0f) / mapView_.zoom(),
+                           u->z - (winH_ / 2.0f) / mapView_.zoom());
     }
 
     void drawPanel(int winW, int winH) {
@@ -3327,7 +3439,9 @@ int main(int argc, char** argv) {
             if (e.type == SDL_QUIT ||
                 (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE))
                 running = false;
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_s)
+            // 'S' grabs a screenshot in the asset viewers; in game it is the
+            // Stop hotkey (Keys.TDF LOWER_S), handled by GameView::input.
+            if (!gameView && e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_s)
                 screenshot(ren, kWinW, kWinH, "takview_shot.png");
             int ww, wh;
             SDL_GetRendererOutputSize(ren, &ww, &wh);
@@ -3374,7 +3488,7 @@ int main(int argc, char** argv) {
                 }
             }
 
-            else if (ktPhase == 1 && ktClock > 0.6f) { key(SDLK_1); ktPhase = 2; }
+            else if (ktPhase == 1 && ktClock > 0.6f) { key(SDLK_f); ktPhase = 2; }
             else if (ktPhase == 2 && ktClock > 0.9f) { motion(400, 453); ktPhase = 3; }
             else if (ktPhase == 3 && ktClock > 1.2f) { click(400, 453, SDL_BUTTON_LEFT); ktPhase = 4; }
             else if (ktPhase == 4 && ktClock > 1.5f) { click(253, 453, SDL_BUTTON_LEFT); motion(1250, 245); ktPhase = 5; }
