@@ -2200,7 +2200,10 @@ private:
         Xform base;
         if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
             base.t[1] = u.type->cruiseAlt;   // flyers cruise above the ground
-        collect(vt->second.model.root, base, anim, u.heading, u.team);
+        // Buildings are stationary; their billboards are authored facing the
+        // camera (heading 0). Only mobile units turn to face their heading.
+        float facing = (u.type && u.type->canMove) ? u.heading : 0.0f;
+        collect(vt->second.model.root, base, anim, facing, u.team);
         std::sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
