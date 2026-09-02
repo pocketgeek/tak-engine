@@ -1123,11 +1123,18 @@ public:
             }
         }
         if (follow_ && !world_.units().empty()) {
+            // Track moving friendly units; fall back to everyone.
             float cx = 0, cz = 0;
-            for (auto& u : world_.units()) { cx += u.x; cz += u.z; }
-            cx /= float(world_.units().size());
-            cz /= float(world_.units().size());
-            mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
+            int n = 0;
+            for (auto& u : world_.units())
+                if (u.alive() && u.team == 0 && u.type && u.type->canMove &&
+                    u.moving()) { cx += u.x; cz += u.z; ++n; }
+            if (!n)
+                for (auto& u : world_.units())
+                    if (u.alive()) { cx += u.x; cz += u.z; ++n; }
+            if (n)
+                mapView_.setOffset(cx / float(n) - 640 / mapView_.zoom(),
+                                   cz / float(n) - 400 / mapView_.zoom());
         }
         for (auto& u : world_.units()) {
             auto it = anims_.find(u.id);
@@ -1233,10 +1240,14 @@ public:
         SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
         for (const auto& p : world_.projectiles()) {
             if (!world_.cellVisible(p.x, p.z)) continue;
+            // Ballistic arc: peak height scales with flight time.
+            float t = std::clamp(p.age / std::max(p.flight, 0.05f), 0.0f, 1.0f);
+            float peak = std::min(40.0f, p.flight * 28.0f);
+            float h = 8 + 4 * peak * t * (1 - t);
             float sx = (p.x - mapView_.offX()) * zm;
-            float sy = (p.z - mapView_.offY()) * zm - 8 * zm;
-            SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.03f * zm,
-                                sy - p.vz * 0.03f * zm);
+            float sy = (p.z - mapView_.offY()) * zm - h * zm;
+            SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.035f * zm,
+                                sy - p.vz * 0.035f * zm + (t < 0.5f ? 2.5f : -2.5f) * zm);
         }
 
         drawFog();

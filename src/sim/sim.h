@@ -108,6 +108,8 @@ struct Projectile {
     int targetId = 0;
     int fromTeam = 0;
     float life = 0;        // seconds left before it fizzles
+    float age = 0;         // seconds since launch
+    float flight = 1;      // expected seconds to target (for the render arc)
 };
 
 // Walkability grid derived from TNT heights: a cell is blocked when the

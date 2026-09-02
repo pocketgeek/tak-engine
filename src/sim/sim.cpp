@@ -409,6 +409,7 @@ void World::fire(Unit& u, Unit& target) {
     p.targetId = target.id;
     p.fromTeam = u.team;
     p.life = dist / vel + 0.5f;
+    p.flight = dist / vel;
     projectiles_.push_back(p);
 }
 
@@ -609,6 +610,7 @@ void World::tick(float dt) {
         p.x += p.vx * dt;
         p.z += p.vz * dt;
         p.life -= dt;
+        p.age += dt;
         Unit* t = unit(p.targetId);
         if (t && t->alive() && !t->embarked()) {
             float dx = t->x - p.x, dz = t->z - p.z;
