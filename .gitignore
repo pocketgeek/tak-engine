@@ -1,0 +1,7 @@
+# Original game assets — never commit Cavedog's copyrighted content
+assets/
+
+# Build output
+build/
+.cache/
+compile_commands.json
