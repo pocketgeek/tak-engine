@@ -797,6 +797,14 @@ public:
         try {
             hudFont_ = Font(ren_, dataRoot_ + "/fonts/bodfontbody.gaf");
             bigFont_ = Font(ren_, dataRoot_ + "/fonts/font48.gaf");
+            // A plain, legible font for the HUD stat readouts.
+            try { statFont_ = Font(ren_, dataRoot_ +
+                                   "/fonts/b_times new roman (100b).gaf"); }
+            catch (const std::exception&) {
+                try { statFont_ = Font(ren_, dataRoot_ +
+                                       "/fonts/ig_times new roman (100).gaf"); }
+                catch (const std::exception&) {}
+            }
         } catch (const std::exception& e) {
             std::fprintf(stderr, "font load: %s\n", e.what());
         }
@@ -3447,6 +3455,15 @@ private:
         return {180, 170, 140, 255};
     }
 
+    // Plain black stat text on the faction-coloured panels.
+    void statText(const std::string& s, float x, float y, float scale) {
+        const Font& f = statFont_.ok() ? statFont_ : hudFont_;
+        f.draw(ren_, s, x, y, scale, {0, 0, 0, 255});
+    }
+    int statWidth(const std::string& s, float scale) const {
+        return (statFont_.ok() ? statFont_ : hudFont_).width(s, scale);
+    }
+
     // HUD text with a full dark outline so it reads over any panel.
     void hudText(const std::string& s, float x, float y, float scale, SDL_Color c) {
         static const int o[8][2] = {{-1, -1}, {0, -1}, {1, -1}, {-1, 0},
@@ -3483,20 +3500,17 @@ private:
 
         char buf[96];
         SDL_Color fc = factionColor();
+        // A solid faction-coloured panel with a dark frame — black text on top.
         auto shade = [&](float x, float w) {
             SDL_FRect z{x, bar.y + 4, w, kBarH - 8.0f};
-            SDL_SetRenderDrawColor(ren_, fc.r / 4, fc.g / 4, fc.b / 4, 225);
-            SDL_RenderFillRectF(ren_, &z);   // dark faction-tinted panel
-            // double faction-coloured border for a clear frame
-            SDL_SetRenderDrawColor(ren_, fc.r, fc.g, fc.b, 245);
+            SDL_SetRenderDrawColor(ren_, fc.r, fc.g, fc.b, 255);
+            SDL_RenderFillRectF(ren_, &z);
+            SDL_SetRenderDrawColor(ren_, 20, 18, 16, 255);
             SDL_RenderDrawRectF(ren_, &z);
-            SDL_FRect z2{z.x + 1, z.y + 1, z.w - 2, z.h - 2};
-            SDL_SetRenderDrawColor(ren_, fc.r / 2, fc.g / 2, fc.b / 2, 200);
-            SDL_RenderDrawRectF(ren_, &z2);
         };
 
         // Bottom-LEFT: portrait + stats for the selected unit.
-        if (!selection_.empty() && hudFont_.ok()) {
+        if (!selection_.empty() && statFont_.ok()) {
             const auto* u = world_.unit(selection_.front());
             if (u && u->alive() && u->type) {
                 float px = 8;
@@ -3505,18 +3519,18 @@ private:
                 if (ic) {
                     SDL_FRect pr{px + 4, bar.y + 8, 56, kBarH - 20.0f};
                     SDL_RenderCopyF(ren_, ic, nullptr, &pr);
-                    SDL_SetRenderDrawColor(ren_, fc.r, fc.g, fc.b, 255);
+                    SDL_SetRenderDrawColor(ren_, 20, 18, 16, 255);
                     SDL_RenderDrawRectF(ren_, &pr);
                 }
                 float tx = px + 70;
-                hudText(u->type->name, tx, bar.y + 18, 1.7f, {255, 245, 215, 255});
+                statText(u->type->name, tx, bar.y + 24, 0.62f);
                 std::snprintf(buf, sizeof buf, "HP %d/%d", int(u->hp),
                               int(u->type->maxHp));
-                hudText(buf, tx, bar.y + 42, 1.4f, {180, 245, 175, 255});
+                statText(buf, tx, bar.y + 48, 0.55f);
                 if (selection_.size() > 1) {
                     std::snprintf(buf, sizeof buf, "+%zu MORE",
                                   selection_.size() - 1);
-                    hudText(buf, tx, bar.y + 60, 1.3f, {210, 210, 195, 255});
+                    statText(buf, tx, bar.y + 64, 0.48f);
                 }
             }
         }
@@ -3573,16 +3587,16 @@ private:
         }
 
         // Bottom-RIGHT: mogrium.
-        if (hudFont_.ok()) {
+        if (statFont_.ok()) {
             auto& tm = world_.team(localTeam_);
             float manaX = float(winW) - 176;
             shade(manaX - 8, 184);
-            hudText("MOGRIUM", manaX, bar.y + 16, 1.3f, {150, 215, 255, 255});
+            statText("MOGRIUM", manaX, bar.y + 24, 0.5f);
             std::snprintf(buf, sizeof buf, "%d / %d", int(tm.mana),
                           int(std::max(tm.storage, 100.0f)));
-            hudText(buf, manaX, bar.y + 40, 1.6f, {215, 238, 255, 255});
+            statText(buf, manaX, bar.y + 48, 0.62f);
             std::snprintf(buf, sizeof buf, "+%d / sec", int(tm.income));
-            hudText(buf, manaX, bar.y + 62, 1.3f, {170, 245, 190, 255});
+            statText(buf, manaX, bar.y + 64, 0.48f);
         }
     }
 
@@ -3752,7 +3766,7 @@ private:
     bool amphib_ = false;
     int amphibPhase_ = 0, amphibSquad_ = 0, transportId_ = -1;
     float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
-    Font hudFont_, bigFont_;
+    Font hudFont_, bigFont_, statFont_;
 
     struct Region { int a, b, c, d; bool rect; bool armed; };
     std::unique_ptr<tak::cob::Vm> missionVm_;
