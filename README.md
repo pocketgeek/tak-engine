@@ -52,6 +52,13 @@ cmake -B build -G Ninja
 cmake --build build
 ```
 
+## Sound overrides
+
+`overrides/click.hpi` replaces the faction order-acknowledgement tones
+with a soft click (the game plays either that or the unit voice line).
+Drop your own `click.hpi` (an HPI archive of replacement `sounds/*.wav`)
+next to the game data to override it, exactly like the original game.
+
 ## Layout
 
 - `src/hpi/` — HPI archive reader (TAK uses a revised format vs. classic TA)

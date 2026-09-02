@@ -742,8 +742,10 @@ public:
         }
         loadOrderButtons();
         sounds_.init(dataRoot_ + "/../english/Sounds", false);
-        for (const std::string cand : {dataRoot_ + "/../../click.hpi",
-                                       dataRoot_ + "/../../game/click.hpi",
+        // Bundled sound override (repo overrides/), then any user override
+        // archives dropped next to the data or at the working dir.
+        for (const std::string cand : {std::string("overrides/click.hpi"),
+                                       dataRoot_ + "/../../overrides/click.hpi",
                                        dataRoot_ + "/click.hpi",
                                        std::string("click.hpi")})
             if (std::filesystem::exists(cand)) { sounds_.loadHpiOverrides(cand); break; }
