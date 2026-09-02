@@ -10,6 +10,7 @@
 // Textures dir = extracted data/textures; palette = faction palette PCX
 // (e.g. palettes/ara_textures.pcx from sidedata.tdf).
 
+#include "cob/vm.h"
 #include "gaf/gaf.h"
 #include "tdo/tdo.h"
 #include "terrain/terrain.h"
@@ -125,12 +126,61 @@ struct Tri {
     float depth;
 };
 
+// Column-major-ish 3x3 rotation + translation, composed down the piece tree.
+struct Xform {
+    float m[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    float t[3] = {0, 0, 0};
+
+    Xform then(float ox, float oy, float oz, const float rot[3]) const {
+        // Local = T(offset) * Ry * Rx * Rz
+        float cx = std::cos(rot[0]), sx = std::sin(rot[0]);
+        float cy = std::cos(rot[1]), sy = std::sin(rot[1]);
+        float cz = std::cos(rot[2]), sz = std::sin(rot[2]);
+        float r[9] = {
+            cy * cz + sy * sx * sz, -cy * sz + sy * sx * cz, sy * cx,
+            cx * sz, cx * cz, -sx,
+            -sy * cz + cy * sx * sz, sy * sz + cy * sx * cz, cy * cx,
+        };
+        Xform out;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) {
+                out.m[i * 3 + j] = 0;
+                for (int k = 0; k < 3; ++k)
+                    out.m[i * 3 + j] += m[i * 3 + k] * r[k * 3 + j];
+            }
+        out.t[0] = t[0] + m[0] * ox + m[1] * oy + m[2] * oz;
+        out.t[1] = t[1] + m[3] * ox + m[4] * oy + m[5] * oz;
+        out.t[2] = t[2] + m[6] * ox + m[7] * oy + m[8] * oz;
+        return out;
+    }
+
+    void apply(float x, float y, float z, float out[3]) const {
+        out[0] = t[0] + m[0] * x + m[1] * y + m[2] * z;
+        out[1] = t[1] + m[3] * x + m[4] * y + m[5] * z;
+        out[2] = t[2] + m[6] * x + m[7] * y + m[8] * z;
+    }
+};
+
 class ModelView {
 public:
     ModelView(SDL_Renderer* ren, const std::string& path, const std::string& texDir,
-              const std::string& palettePath)
+              const std::string& palettePath, const std::string& cobPath,
+              const std::string& anim)
         : ren_(ren), model_(tak::tdo::load(path)) {
         if (!texDir.empty() && !palettePath.empty()) loadTextures(texDir, palettePath);
+        if (!cobPath.empty() && !anim.empty()) {
+            vm_ = std::make_unique<tak::cob::Vm>(tak::cob::load(cobPath));
+            vm_->setStatic(0, 1);   // convention: static 0 = "is walking" flag
+            if (!vm_->start(anim))
+                std::fprintf(stderr, "no script '%s' in %s\n", anim.c_str(),
+                             cobPath.c_str());
+            // Map piece numbers to lowercase object names.
+            for (const auto& p : vm_->file().pieces) {
+                std::string n = p;
+                std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+                pieceNames_.push_back(n);
+            }
+        }
     }
 
     void input(const SDL_Event& e) {
@@ -145,9 +195,10 @@ public:
 
     void draw(int winW, int winH, float dt) {
         if (spin_) yaw_ += dt * 0.8f;
+        if (vm_) vm_->tick(dt);
 
         tris_.clear();
-        walk(model_.root, 0, 0, 0);
+        walk(model_.root, Xform{});
         if (tris_.empty()) return;
 
         // Center and fit every frame (cheap, and stays correct as it spins).
@@ -211,8 +262,23 @@ private:
         out = {rx, -ry};
     }
 
-    void walk(const tak::tdo::Object& o, float px, float py, float pz) {
-        float bx = px + o.x, by = py + o.y, bz = pz + o.z;
+    const tak::cob::PieceState* pieceFor(const std::string& objName) const {
+        if (!vm_) return nullptr;
+        std::string n = objName;
+        std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+        for (size_t i = 0; i < pieceNames_.size(); ++i)
+            if (pieceNames_[i] == n) return &vm_->pieces()[i];
+        return nullptr;
+    }
+
+    void walk(const tak::tdo::Object& o, const Xform& parent) {
+        static const float kNoRot[3] = {0, 0, 0};
+        const tak::cob::PieceState* ps = pieceFor(o.name);
+        if (ps && !ps->visible) return;
+        Xform xf = parent.then(o.x + (ps ? ps->move[0] : 0),
+                               o.y + (ps ? ps->move[1] : 0),
+                               o.z + (ps ? ps->move[2] : 0),
+                               ps ? ps->rot : kNoRot);
         for (const auto& p : o.primitives) {
             if (p.indices.size() < 3) continue;
             SDL_Texture* tex = nullptr;
@@ -231,9 +297,9 @@ private:
                 for (int k = 0; k < 3; ++k) {
                     size_t vi = size_t(p.indices[idx[k]]) * 3;
                     if (vi + 2 >= o.vertices.size()) { tri.tex = nullptr; break; }
-                    float d;
-                    project(bx + o.vertices[vi], by + o.vertices[vi + 1],
-                            bz + o.vertices[vi + 2], tri.v[k].position, d);
+                    float w[3], d;
+                    xf.apply(o.vertices[vi], o.vertices[vi + 1], o.vertices[vi + 2], w);
+                    project(w[0], w[1], w[2], tri.v[k].position, d);
                     depth += d;
                     static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
                     tri.v[k].tex_coord = uv[idx[k] & 3];
@@ -244,11 +310,20 @@ private:
                 tris_.push_back(tri);
             }
         }
-        for (const auto& c : o.children) walk(c, bx, by, bz);
+        for (const auto& c : o.children) walk(c, xf);
     }
 
+public:
+    void advance(float seconds) {
+        if (!vm_) return;
+        for (float t = 0; t < seconds; t += 1.0f / 30.0f) vm_->tick(1.0f / 30.0f);
+    }
+
+private:
     SDL_Renderer* ren_;
     tak::tdo::Model model_;
+    std::unique_ptr<tak::cob::Vm> vm_;
+    std::vector<std::string> pieceNames_;
     std::map<std::string, SDL_Texture*> textures_;
     std::vector<Tri> tris_;
     float yaw_ = 0.7f, pitch_ = 0.4f, zoom_ = 1.0f, fit_ = 1.0f;
@@ -266,11 +341,16 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::string mode = argv[1];
-    std::string shot;
+    std::string shot, cobPath, anim;
+    float startTime = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
-        if (std::string(argv[i]) == "--shot" && i + 1 < argc) shot = argv[++i];
-        else args.push_back(argv[i]);
+        std::string a = argv[i];
+        if (a == "--shot" && i + 1 < argc) shot = argv[++i];
+        else if (a == "--cob" && i + 1 < argc) cobPath = argv[++i];
+        else if (a == "--anim" && i + 1 < argc) anim = argv[++i];
+        else if (a == "--time" && i + 1 < argc) startTime = std::stof(argv[++i]);
+        else args.push_back(a);
     }
     if (!shot.empty()) SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
 
@@ -296,7 +376,9 @@ int main(int argc, char** argv) {
         } else if (mode == "model" && !args.empty()) {
             modelView = std::make_unique<ModelView>(ren, args[0],
                                                     args.size() > 1 ? args[1] : "",
-                                                    args.size() > 2 ? args[2] : "");
+                                                    args.size() > 2 ? args[2] : "",
+                                                    cobPath, anim);
+            if (startTime > 0) modelView->advance(startTime);
         } else {
             std::fprintf(stderr, "bad arguments\n");
             return 2;

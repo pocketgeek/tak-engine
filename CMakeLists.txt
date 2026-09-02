@@ -22,6 +22,8 @@ add_library(tak-formats
   src/tnt/tnt.cpp
   src/tdo/tdo.cpp
   src/tdf/tdf.cpp
+  src/cob/cob.cpp
+  src/cob/vm.cpp
   src/util/png.cpp
   src/util/jpeg.cpp
   src/terrain/terrain.cpp
@@ -59,3 +61,6 @@ target_link_libraries(modeltool PRIVATE tak-formats)
 
 add_executable(tdftool tools/tdftool.cpp)
 target_link_libraries(tdftool PRIVATE tak-formats)
+
+add_executable(cobtool tools/cobtool.cpp)
+target_link_libraries(cobtool PRIVATE tak-formats)
