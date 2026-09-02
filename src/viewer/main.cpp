@@ -1493,6 +1493,12 @@ public:
     }
 
     std::string lodeUnit;
+    void soundTest() {
+        aiEnabled_ = false;
+        int id = spawn("araarch", 900, 1000, 0, 0);
+        selection_ = {id};
+        for (int i = 0; i < 8; i++) voice(id, "move");
+    }
     void faceTest() {
         aiEnabled_ = false;
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
@@ -3041,8 +3047,20 @@ private:
     void voice(int unitId, const std::string& event) {
         const auto* u = world_.unit(unitId);
         if (!u || !u->type || u->type->soundClass.empty()) return;
-        if (const auto* wav = soundClasses_.pick(u->type->soundClass, event, salt_++))
+        const auto* wav = soundClasses_.pick(u->type->soundClass, event, salt_++);
+        if (!wav) return;
+        // The sound-class order-ack tones (TONEARA/TONETAR/...) are the "bong";
+        // play a softer UI click for order confirmation instead.
+        std::string lo = *wav;
+        std::transform(lo.begin(), lo.end(), lo.begin(), ::tolower);
+        if (lo.rfind("tone", 0) == 0) {
+            static const char* clicks[] = {"int_clickwood1", "int_clickwood2",
+                                           "int_clickwood3", "int_clickwood4",
+                                           "int_clickwood5", "int_clickwood6"};
+            sounds_.play(clicks[salt_++ % 6]);
+        } else {
             sounds_.play(*wav);
+        }
     }
 
     SoundBank sounds_;
@@ -3097,7 +3115,7 @@ int main(int argc, char** argv) {
          hilltest = false, keytest = false, guardtest = false, selonly = false,
          lodetest = false;
     std::string lodeUnitName;
-    bool firetest = false, facetest = false;
+    bool firetest = false, facetest = false, soundtest = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -3123,6 +3141,7 @@ int main(int argc, char** argv) {
         else if (a == "--lodetest") lodetest = true;
         else if (a == "--firetest") firetest = true;
         else if (a == "--facetest") facetest = true;
+        else if (a == "--soundtest") soundtest = true;
 
         else if (a == "--tilt" && i + 1 < argc) gTilt = std::stof(argv[++i]);
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
@@ -3201,6 +3220,7 @@ int main(int argc, char** argv) {
             if (lodetest) { gameView->lodeUnit = lodeUnitName; gameView->lodeTest(); }
             if (firetest) gameView->fireTest();
             if (facetest) gameView->faceTest();
+            if (soundtest) { gameView->setTrace(true); gameView->soundTest(); }
 
             if (nofog) gameView->noFog_ = true;
             if (doLook) gameView->lookAt(lookX, lookZ);
