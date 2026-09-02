@@ -561,9 +561,8 @@ public:
         mapView_.setZoom(0.9f);
 
         if (scenario) {
-            world_.setNav(tak::sim::NavGrid(mapView_.map().heights,
-                                            mapView_.map().width,
-                                            mapView_.map().height));
+            world_.setTerrain(mapView_.map().heights, mapView_.map().width,
+                              mapView_.map().height, mapView_.map().seaLevel);
             std::filesystem::path crtPath = tntPath;
             crtPath.replace_extension(".crt");
             if (!std::filesystem::exists(crtPath)) crtPath.replace_extension(".CRT");
@@ -585,8 +584,8 @@ public:
             return;
         }
 
-        world_.setNav(tak::sim::NavGrid(mapView_.map().heights, mapView_.map().width,
-                                        mapView_.map().height));
+        world_.setTerrain(mapView_.map().heights, mapView_.map().width,
+                          mapView_.map().height, mapView_.map().seaLevel);
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         mapView_.setOffset(cx - 640 / 0.9f + 110, cz - 400 / 0.9f + 20);
         const char* aramon[] = {"araarch", "araarch", "araarch", "arasword",
@@ -748,6 +747,29 @@ public:
     }
 
     void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }
+
+    void navyDemo() {
+        aiEnabled_ = false;
+        struct S { const char* t; float x, z; int team; };
+        const S fleet[] = {
+            {"verflag", 1150, 1250, 0}, {"verman", 1080, 1150, 0},
+            {"verman", 1220, 1130, 0},  {"verharp", 1020, 1260, 0},
+            {"vertre", 1100, 1360, 0},
+            {"npcbotl", 1750, 1500, 1}, {"npcbotl", 1830, 1600, 1},
+            {"monpiran", 1700, 1400, 1}, {"monpiran", 1780, 1420, 1},
+            {"monpiran", 1650, 1500, 1},
+        };
+        std::vector<int> a, b;
+        for (const auto& sp : fleet) {
+            int id = spawn(sp.t, sp.x, sp.z, sp.team == 0 ? 1.57f : -1.57f, sp.team);
+            if (id >= 0) (sp.team == 0 ? a : b).push_back(id);
+        }
+        for (size_t i = 0; i < a.size(); ++i)
+            world_.attack(a[i], b[i % b.size()], false);
+        for (size_t i = 0; i < b.size(); ++i)
+            world_.attack(b[i], a[i % a.size()], false);
+        mapView_.setOffset(1500 - 640 / 0.9f, 1380 - 400 / 0.9f);
+    }
 
     void testBuild() {
         aiEnabled_ = false;
@@ -1395,7 +1417,7 @@ int main(int argc, char** argv) {
     std::string shot, cobPath, anim;
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
-         scenario = false;
+         scenario = false, navy = false;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
@@ -1407,6 +1429,7 @@ int main(int argc, char** argv) {
         else if (a == "--trace") trace = true;
         else if (a == "--testbuild") testbuild = true;
         else if (a == "--scenario") scenario = true;
+        else if (a == "--navy") navy = true;
         else if (a == "--follow" && i + 1 < argc) followZoom = std::stof(argv[++i]);
         else if (a == "--march" && i + 2 < argc) {
             marchX = std::stof(argv[++i]);
@@ -1444,6 +1467,7 @@ int main(int argc, char** argv) {
             if (doMarch) gameView->marchTo(marchX, marchZ);
             if (trace) gameView->setTrace(true);
             if (testbuild) gameView->testBuild();
+            if (navy) gameView->navyDemo();
             if (startTime > 0) gameView->advance(startTime);
         } else if (mode == "model" && !args.empty()) {
             modelView = std::make_unique<ModelView>(ren, args[0],

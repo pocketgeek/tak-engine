@@ -32,6 +32,7 @@ Map Map::load(const std::filesystem::path& file) {
     Map m;
     m.width = int(u32(&d[4]));
     m.height = int(u32(&d[8]));
+    m.seaLevel = int(u32(&d[12]));
     m.blocksX = m.width / 2;
     m.blocksY = m.height / 2;
 

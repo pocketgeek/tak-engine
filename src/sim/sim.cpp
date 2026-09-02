@@ -61,6 +61,9 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
                                                info->valueOr("soundclass", "")));
             t.sight = float(info->numberOr("sightdistance", 180));
             t.canFly = info->numberOr("canfly", 0) != 0;
+            std::string mc = lower(info->valueOr("movementclass", ""));
+            if (mc.rfind("water", 0) == 0) t.domain = UnitType::Domain::Water;
+            else if (mc.rfind("hover", 0) == 0) t.domain = UnitType::Domain::Hover;
             t.cruiseAlt = float(info->numberOr("cruisealt", 0)) / 4;
             if (const auto* w = root.child("WEAPON1")) {
                 t.weapon.name = w->valueOr("name", "");
@@ -126,6 +129,27 @@ Unit* World::unit(int id) {
     for (auto& u : units_)
         if (u.id == id) return &u;
     return nullptr;
+}
+
+void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel) {
+    // Ground: no cliffs, water at most ankle deep (moveinfo MaxWaterDepth ~20).
+    nav_ = NavGrid(heights, w, h, 20);
+    for (int z = 0; z < h; ++z)
+        for (int x = 0; x < w; ++x)
+            if (seaLevel - int(heights[size_t(z) * w + x]) > 20)
+                nav_.block(x, z, 1, 1, true);
+    // Water: needs depth (moveinfo MinWaterDepth ~13); slope irrelevant.
+    navWater_ = NavGrid(heights, w, h, 255);
+    for (int z = 0; z < h; ++z)
+        for (int x = 0; x < w; ++x)
+            if (seaLevel - int(heights[size_t(z) * w + x]) < 13)
+                navWater_.block(x, z, 1, 1, true);
+    // Hover: land without cliffs, or any water.
+    navHover_ = NavGrid(heights, w, h, 20);
+    for (int z = 0; z < h; ++z)
+        for (int x = 0; x < w; ++x)
+            if (seaLevel - int(heights[size_t(z) * w + x]) > 0)
+                navHover_.block(x, z, 1, 1, false);
 }
 
 void NavGrid::block(int cx, int cz, int w, int h, bool blocked) {
@@ -241,8 +265,9 @@ void World::order(int unitId, float x, float z, bool queue) {
         u->orders.push_back({x, z, 0});
         return;
     }
-    if (!nav_.empty()) {
-        auto path = nav_.findPath(u->x, u->z, x, z);
+    const NavGrid& grid = navFor(u->type);
+    if (!grid.empty()) {
+        auto path = grid.findPath(u->x, u->z, x, z);
         if (!path.empty()) {
             for (const auto& o : path) u->orders.push_back(o);
             return;
@@ -312,9 +337,20 @@ void World::tickCombat(Unit& u, float dt) {
         return;
     }
     if (dist > w.range * 0.95f) {
-        // Advance toward the target: rewrite the head order's move point.
-        u.orders.front().x = target->x;
-        u.orders.front().z = target->z;
+        // Advance toward the target, steering around impassable terrain.
+        u.repathLeft -= dt;
+        Order& o = u.orders.front();
+        o.x = target->x;
+        o.z = target->z;
+        const NavGrid& grid = navFor(u.type);
+        if (!u.type->canFly && !grid.empty() && u.repathLeft <= 0) {
+            u.repathLeft = 0.7f;
+            auto path = grid.findPath(u.x, u.z, target->x, target->z);
+            if (!path.empty()) {
+                o.x = path.front().x;
+                o.z = path.front().z;
+            }
+        }
         return;   // movement handled by the normal move logic
     }
     // In range: stop and face the target.

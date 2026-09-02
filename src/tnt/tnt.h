@@ -23,6 +23,7 @@ namespace tak::tnt {
 
 struct Map {
     int width = 0, height = 0;       // in 16px cells
+    int seaLevel = 0;                // heights below this are water
     int blocksX = 0, blocksY = 0;    // in 32px blocks (width/2, height/2)
 
     std::vector<uint8_t> heights;    // width*height

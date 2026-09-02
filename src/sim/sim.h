@@ -41,6 +41,8 @@ struct UnitType {
     float sight = 180;        // px (FBI sightdistance)
     bool canFly = false;
     float cruiseAlt = 0;      // world units above ground when flying
+    enum class Domain { Ground, Water, Hover };
+    Domain domain = Domain::Ground;   // from FBI movementclass prefix
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     Weapon weapon;         // WEAPON1; weapon.damage == 0 means unarmed
 };
@@ -74,6 +76,7 @@ struct Unit {
     float speed = 0;       // px/s
     float hp = 100;
     float reloadLeft = 0;
+    float repathLeft = 0;   // chase steering repath countdown
     float deadFor = -1;    // >= 0 once dead; counts up for death animation
     bool justFired = false;   // set for one tick when the weapon fires
     bool underConstruction = false;
@@ -133,8 +136,15 @@ struct Team {
 class World {
 public:
     int spawn(const UnitType* type, float x, float z, float heading = 0, int team = 0);
+    // Build per-domain nav grids from heights + sea level.
+    void setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel);
     void setNav(NavGrid grid) { nav_ = std::move(grid); }
     NavGrid& nav() { return nav_; }
+    const NavGrid& navFor(const UnitType* t) const {
+        if (t && t->domain == UnitType::Domain::Water) return navWater_;
+        if (t && t->domain == UnitType::Domain::Hover) return navHover_;
+        return nav_;
+    }
     // Queue production of `typeId` at a builder building.
     void train(int builderId, const UnitType* type);
     // Mobile builder constructs a building at (x, z). Returns the new
@@ -178,7 +188,7 @@ private:
     std::vector<Unit> units_;
     std::vector<Projectile> projectiles_;
     std::vector<Team> teams_ = std::vector<Team>(4);
-    NavGrid nav_;
+    NavGrid nav_, navWater_, navHover_;
     int nextId_ = 1;
 };
 
