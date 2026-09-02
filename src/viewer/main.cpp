@@ -1980,6 +1980,12 @@ public:
             }
         }
 
+        // Ghosts of the local player's queued (shift) build orders.
+        for (const auto& u : world_.units())
+            if (u.alive() && u.team == localTeam_)
+                for (const auto& bo : u.buildOrders)
+                    if (bo.type) drawGhostAt(bo.type, bo.x, bo.z);
+
         // Projectiles: short bright streaks (only where visible).
         float zm = mapView_.zoom();
         SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
@@ -2011,6 +2017,7 @@ public:
         // Health bars for damaged or selected units.
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
+            if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
             if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
             bool sel = std::find(selection_.begin(), selection_.end(), u.id) !=
                        selection_.end();
@@ -2519,10 +2526,53 @@ private:
         return nullptr;
     }
 
+    // The 3DO model for a type, loading it on demand (a queued build may have
+    // no live unit of that type yet).
+    const tak::tdo::Model* ghostModel(const std::string& typeId) {
+        auto it = visuals_.find(typeId);
+        if (it != visuals_.end()) return &it->second.model;
+        for (const std::string& root : {dataRoot_, ipRoot_}) {
+            if (root.empty()) continue;
+            try {
+                visuals_[typeId] = {tak::tdo::load(root + "/objects3d/" + typeId + ".3do")};
+                return &visuals_[typeId].model;
+            } catch (const std::exception&) {}
+        }
+        return nullptr;
+    }
+
+    // Draw a translucent, faintly blue ghost of a building where it will be
+    // built later (a queued or not-yet-started site).
+    void drawGhostAt(const tak::sim::UnitType* type, float x, float z) {
+        const tak::tdo::Model* model = ghostModel(type->id);
+        if (!model) return;
+        tris_.clear();
+        collect(model->root, Xform{}, nullptr, 0.0f, localTeam_);
+        std::stable_sort(tris_.begin(), tris_.end(),
+                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        float zm = mapView_.zoom();
+        float ax = (x - mapView_.offX()) * zm, ay = (z - mapView_.offY()) * zm;
+        for (auto& t : tris_) {
+            SDL_Vertex v[3];
+            for (int i = 0; i < 3; ++i) {
+                v[i] = t.v[i];
+                v[i].position.x = v[i].position.x * zm + ax;
+                v[i].position.y = v[i].position.y * zm + ay;
+                v[i].color.a = 130;
+                v[i].color.r = Uint8(v[i].color.r * 0.55f);   // shift toward blue
+                v[i].color.g = Uint8(v[i].color.g * 0.8f);
+            }
+            SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
+        }
+    }
+
     void drawUnit(const tak::sim::Unit& u) {
-        // Nothing is there yet until the builder arrives and construction (the
-        // conjure/fade) actually begins.
-        if (u.underConstruction && !u.buildBegun) return;
+        // A placed-but-not-yet-started site shows as a faint ghost until the
+        // builder arrives and it begins conjuring for real.
+        if (u.underConstruction && !u.buildBegun) {
+            if (u.type) drawGhostAt(u.type, u.x, u.z);
+            return;
+        }
         auto vt = visuals_.find(unitType_.at(u.id));
         if (vt == visuals_.end()) return;
         const Anim* anim = nullptr;
