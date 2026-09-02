@@ -603,6 +603,7 @@ public:
         } catch (const std::exception& e) {
             std::fprintf(stderr, "font load: %s\n", e.what());
         }
+        loadOrderButtons();
         sounds_.init(dataRoot_ + "/../english/Sounds", false);
         soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
         loadPanel("ara");
@@ -987,6 +988,9 @@ public:
                 }
             }
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
+                   orderColumnClick(float(e.button.x), float(e.button.y), kWinW)) {
+            // order button handled
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    minimapClick(float(e.button.x), float(e.button.y), winH)) {
             // camera moved via minimap
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
@@ -996,15 +1000,18 @@ public:
             bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
             for (int id : selection_) {
                 tak::net::Command c;
-                c.kind = pendingCmd_ == 'a' ? tak::net::Cmd::AttackMove
-                                            : tak::net::Cmd::Patrol;
+                c.kind = pendingCmd_ == 'a'   ? tak::net::Cmd::AttackMove
+                         : pendingCmd_ == 'p' ? tak::net::Cmd::Patrol
+                                              : tak::net::Cmd::Move;
                 c.unitId = id;
                 c.x = wx;
                 c.z = wz;
                 c.queue = queue;
                 issue(c);
             }
-            voice(selection_.front(), pendingCmd_ == 'a' ? "attack" : "patrol");
+            voice(selection_.front(), pendingCmd_ == 'a'   ? "attack"
+                                      : pendingCmd_ == 'p' ? "patrol"
+                                                           : "move");
             pendingCmd_ = 0;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    placing_) {
@@ -1648,6 +1655,7 @@ public:
         drawFog();
         if (placing_) drawGhost();
         drawMinimap(winW, winH);
+        drawOrderColumn(winW, winH);
 
         for (int id : selection_) {
             const auto* u = world_.unit(id);
@@ -1773,8 +1781,9 @@ public:
             hudFont_.draw(ren_, sb, 12, 46, 1.5f, {255, 220, 140, 255});
         }
         if (pendingCmd_ && hudFont_.ok()) {
-            const char* msg = pendingCmd_ == 'a' ? "ATTACK-MOVE: CLICK TARGET"
-                                                 : "PATROL: CLICK WAYPOINT";
+            const char* msg = pendingCmd_ == 'a'   ? "ATTACK-MOVE: CLICK TARGET"
+                              : pendingCmd_ == 'p' ? "PATROL: CLICK WAYPOINT"
+                                                   : "MOVE: CLICK DESTINATION";
             hudFont_.draw(ren_, msg, 12, 100, 1.6f, {255, 200, 120, 255});
         }
         if (noticeTimer_ > 0 && hudFont_.ok() && !notice_.empty()) {
@@ -2429,6 +2438,107 @@ private:
 
     static constexpr int kBarH = 72;
 
+    struct OrderBtn {
+        SDL_Texture* frames[3] = {nullptr, nullptr, nullptr};   // normal/hover/armed
+        int w = 0, h = 0;
+        char cmd = 0;        // 'm','a','p'; 0 = stop (instant)
+        const char* label;
+    };
+    std::vector<OrderBtn> orderBtns_;
+
+    void loadOrderButtons() {
+        auto grab = [&](const char* gaf, const char* seq, char cmd,
+                        const char* label, int f0 = 0, int f1 = 1, int f2 = 2) {
+            try {
+                auto pal = tak::gaf::Palette::load(dataRoot_ + "/anims/" +
+                                                   std::string(gaf) + ".pcx");
+                for (auto& sq : tak::gaf::load(
+                         dataRoot_ + "/anims/" + std::string(gaf) + ".gaf", pal)) {
+                    if (sq.name != seq || sq.frames.size() < 3) continue;
+                    OrderBtn b;
+                    b.cmd = cmd;
+                    b.label = label;
+                    int idx[3] = {f0, f1, f2};
+                    for (int i = 0; i < 3; ++i) {
+                        auto& f = sq.frames[size_t(idx[i])];
+                        if (f.width == 0) continue;
+                        b.frames[i] = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                        SDL_TEXTUREACCESS_STATIC,
+                                                        f.width, f.height);
+                        SDL_UpdateTexture(b.frames[i], nullptr, f.rgba.data(),
+                                          f.width * 4);
+                        SDL_SetTextureBlendMode(b.frames[i], SDL_BLENDMODE_BLEND);
+                        b.w = f.width;
+                        b.h = f.height;
+                    }
+                    if (b.frames[0]) orderBtns_.push_back(b);
+                }
+            } catch (const std::exception&) {}
+        };
+        grab("actionbuttons", "MoveButton", 'm', "MOVE");
+        grab("actionbuttons", "AttackButton", 'a', "ATTACK");
+        grab("actionbuttons", "PatrolButton", 'p', "PATROL");
+        grab("igcommonbuttons", "StopButton", 0, "STOP", 1, 2, 3);
+    }
+
+    SDL_FRect orderBtnRect(size_t i, int winW) const {
+        return {float(winW) - 54, 220 + float(i) * 52, 44, 44};
+    }
+
+    void drawOrderColumn(int winW, int winH) {
+        (void)winH;
+        if (orderBtns_.empty() || selection_.empty()) return;
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        SDL_FRect col{float(winW) - 60, 210, 56,
+                      float(orderBtns_.size()) * 52 + 12};
+        SDL_SetRenderDrawColor(ren_, 20, 18, 16, 170);
+        SDL_RenderFillRectF(ren_, &col);
+        SDL_SetRenderDrawColor(ren_, 120, 105, 80, 255);
+        SDL_RenderDrawRectF(ren_, &col);
+        for (size_t i = 0; i < orderBtns_.size(); ++i) {
+            const auto& b = orderBtns_[i];
+            SDL_FRect r = orderBtnRect(i, winW);
+            bool hot = mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y &&
+                       mouseY_ <= r.y + r.h;
+            bool armed = b.cmd && pendingCmd_ == b.cmd;
+            SDL_Texture* t = armed && b.frames[2] ? b.frames[2]
+                             : hot && b.frames[1] ? b.frames[1]
+                                                  : b.frames[0];
+            SDL_RenderCopyF(ren_, t, nullptr, &r);
+            if (armed) {
+                SDL_SetRenderDrawColor(ren_, 255, 220, 90, 255);
+                SDL_RenderDrawRectF(ren_, &r);
+            }
+            if (hot && hudFont_.ok()) {
+                float tw = float(hudFont_.width(b.label, 1.3f));
+                hudFont_.draw(ren_, b.label, r.x - tw - 8, r.y + 26, 1.3f,
+                              {235, 225, 180, 255});
+            }
+        }
+    }
+
+    // Returns true if the click hit (and was handled by) the order column.
+    bool orderColumnClick(float mx, float my, int winW) {
+        if (orderBtns_.empty() || selection_.empty()) return false;
+        for (size_t i = 0; i < orderBtns_.size(); ++i) {
+            SDL_FRect r = orderBtnRect(i, winW);
+            if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+            const auto& b = orderBtns_[i];
+            if (b.cmd) {
+                pendingCmd_ = b.cmd;
+            } else {
+                for (int id : selection_) {
+                    tak::net::Command c;
+                    c.kind = tak::net::Cmd::Stop;
+                    c.unitId = id;
+                    issue(c);
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
     SDL_Texture* iconFor(const std::string& typeId) {
         auto it = icons_.find(typeId);
         if (it != icons_.end()) return it->second;
@@ -2906,7 +3016,7 @@ int main(int argc, char** argv) {
             else if (ktPhase == 1 && ktClock > 0.6f) { key(SDLK_1); ktPhase = 2; }
             else if (ktPhase == 2 && ktClock > 0.9f) { motion(400, 453); ktPhase = 3; }
             else if (ktPhase == 3 && ktClock > 1.2f) { click(400, 453, SDL_BUTTON_LEFT); ktPhase = 4; }
-            else if (ktPhase == 4 && ktClock > 1.5f) { click(253, 453, SDL_BUTTON_LEFT); motion(40, 760); ktPhase = 5; }
+            else if (ktPhase == 4 && ktClock > 1.5f) { click(253, 453, SDL_BUTTON_LEFT); motion(1250, 245); ktPhase = 5; }
             else if (ktPhase == 5 && ktClock > 1.9f) {
                 std::printf("KEYTEST done\n");
                 ktPhase = -1;
