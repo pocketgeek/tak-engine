@@ -2496,6 +2496,9 @@ private:
         // units face their heading directly: the model's forward axis (+z)
         // maps to (sin yaw, cos yaw), matching the sim's movement vector.
         float facing = (u.type && u.type->canMove) ? u.heading : 0.0f;
+        // Flyer models (e.g. Thirsha) are authored facing the opposite way to
+        // the walking units, so they read as flying backward without a flip.
+        if (u.type && u.type->canFly) facing += 3.14159265f;
         collect(vt->second.model.root, base, anim, facing, u.team);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
