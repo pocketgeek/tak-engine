@@ -1872,7 +1872,8 @@ public:
                     }
                 }
             }
-            a.vm->tick(dt);
+            // Flyers flap harder: run their wing script at a livelier pace.
+            a.vm->tick(a.flying ? dt * 2.2f : dt);
         }
     }
 
@@ -3693,6 +3694,22 @@ int main(int argc, char** argv) {
                 screenshot(ren, kWinW, kWinH, "takview_shot.png");
             int ww, wh;
             SDL_GetRendererOutputSize(ren, &ww, &wh);
+            // Mouse events arrive in window points; the renderer (and all our
+            // world<->screen math) works in output pixels. When those differ
+            // — e.g. a maximized window on a scaled display — rescale so
+            // zoom-to-cursor and clicks land where the pointer actually is.
+            int wpw = 0, wph = 0;
+            SDL_GetWindowSize(win, &wpw, &wph);
+            if (wpw > 0 && wph > 0 && (wpw != ww || wph != wh)) {
+                double sx = double(ww) / wpw, sy = double(wh) / wph;
+                if (e.type == SDL_MOUSEMOTION) {
+                    e.motion.x = int(e.motion.x * sx); e.motion.y = int(e.motion.y * sy);
+                    e.motion.xrel = int(e.motion.xrel * sx);
+                    e.motion.yrel = int(e.motion.yrel * sy);
+                } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                    e.button.x = int(e.button.x * sx); e.button.y = int(e.button.y * sy);
+                }
+            }
             if (mapView) mapView->input(e);
             if (modelView) modelView->input(e);
             if (gameView) gameView->input(e, ww, wh);
