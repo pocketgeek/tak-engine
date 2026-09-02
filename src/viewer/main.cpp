@@ -1255,21 +1255,32 @@ public:
                    placing_) {
             float wx = mapView_.offX() + e.button.x / zm;
             float wz = mapView_.offY() + e.button.y / zm;
-            if (!selection_.empty() && world_.canPlace(placing_, wx, wz)) {
-                bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+            if (SDL_GetModState() & KMOD_SHIFT) {
+                // Shift: begin a drag — a whole line of these gets queued on
+                // release (a single shift-click is just a zero-length line).
+                buildDrag_ = true;
+                bdX0_ = wx;
+                bdZ0_ = wz;
+            } else if (!selection_.empty() && world_.canPlace(placing_, wx, wz)) {
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::Build;
                 c.unitId = selectedBuilder() ? selectedBuilder()->id : selection_.front();
                 c.x = wx;
                 c.z = wz;
-                c.queue = queue;
                 std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
                 issue(c);
-                if (!queue) placing_ = nullptr;   // shift keeps placing more
+                placing_ = nullptr;
             }
+        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
+                   buildDrag_) {
+            buildDrag_ = false;
+            placeBuildLine(bdX0_, bdZ0_, mapView_.offX() + e.button.x / zm,
+                           mapView_.offY() + e.button.y / zm);
+            if (!(SDL_GetModState() & KMOD_SHIFT)) placing_ = nullptr;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
                    placing_) {
             placing_ = nullptr;
+            buildDrag_ = false;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             dragging_ = true;
             dragX0_ = dragX1_ = float(e.button.x);
@@ -2002,7 +2013,14 @@ public:
         }
 
         drawFog();
-        if (placing_) drawGhost();
+        if (buildDrag_ && placing_) {
+            float mx = mapView_.offX() + mouseX_ / mapView_.zoom();
+            float mz = mapView_.offY() + mouseY_ / mapView_.zoom();
+            for (auto& [x, z] : buildLinePositions(bdX0_, bdZ0_, mx, mz))
+                drawGhostAt(placing_, x, z);
+        } else if (placing_) {
+            drawGhost();
+        }
         drawMinimap(winW, winH);
         drawOrderColumn(winW, winH);
 
@@ -2771,6 +2789,8 @@ private:
     std::vector<Tri> tris_;
     std::vector<int> selection_;
     bool dragging_ = false;
+    bool buildDrag_ = false;          // shift-drag placing a line of buildings
+    float bdX0_ = 0, bdZ0_ = 0;       // build-drag start (world)
     bool draggingMinimap_ = false;
     float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
     char pendingCmd_ = 0;   // armed order awaiting a click: 'f' fight-move,
@@ -3558,6 +3578,37 @@ private:
         SDL_FRect dst{-mapView_.offX() * zm, -mapView_.offY() * zm,
                       float(w) * 16 * zm, float(h) * 16 * zm};
         SDL_RenderCopyF(ren_, fogTex_, nullptr, &dst);
+    }
+
+    // Positions along a build-drag line, spaced by the building's footprint.
+    std::vector<std::pair<float, float>> buildLinePositions(
+        float x0, float z0, float x1, float z1) const {
+        std::vector<std::pair<float, float>> out;
+        if (!placing_) return out;
+        float sp = std::max({placing_->footX, placing_->footZ, 1}) * 16.0f;
+        float dx = x1 - x0, dz = z1 - z0, len = std::sqrt(dx * dx + dz * dz);
+        int n = int(len / sp);
+        float ux = len > 1e-3f ? dx / len : 0, uz = len > 1e-3f ? dz / len : 0;
+        for (int i = 0; i <= n; ++i)
+            out.push_back({x0 + ux * sp * i, z0 + uz * sp * i});
+        return out;
+    }
+
+    // Queue a whole line of the current building from a shift-drag.
+    void placeBuildLine(float x0, float z0, float x1, float z1) {
+        if (!placing_ || selection_.empty()) return;
+        int builderId = selectedBuilder() ? selectedBuilder()->id : selection_.front();
+        for (auto& [x, z] : buildLinePositions(x0, z0, x1, z1)) {
+            if (!world_.canPlace(placing_, x, z)) continue;
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Build;
+            c.unitId = builderId;
+            c.x = x;
+            c.z = z;
+            c.queue = true;   // all queued; the first starts if the builder is free
+            std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
+            issue(c);
+        }
     }
 
     void drawGhost() {
