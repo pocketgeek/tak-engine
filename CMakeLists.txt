@@ -13,10 +13,13 @@ add_compile_options(-Wall -Wextra)
 
 # --- Format libraries (no external dependencies) ------------------------------
 
+find_package(ZLIB REQUIRED)
+
 add_library(tak-formats
   src/hpi/hpi.cpp
 )
 target_include_directories(tak-formats PUBLIC src)
+target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB)
 
 # --- Command-line tools -------------------------------------------------------
 
