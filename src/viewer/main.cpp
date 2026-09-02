@@ -454,9 +454,10 @@ private:
     }
 
 public:
-    // Find and begin playing the shuffled music playlist. `dataRoot` is the
-    // extracted data dir; music may live there or in the raw game install.
-    void startMusic(const std::string& dataRoot) {
+    // Begin playing a shuffled playlist of the given track numbers (a
+    // faction's tracks, per sidedata.tdf). Empty = all 20. `dataRoot` is
+    // the extracted data dir; music may live there or in the game install.
+    void startMusic(const std::string& dataRoot, const std::vector<int>& tracks) {
         const std::string cands[] = {
             dataRoot + "/../Music", dataRoot + "/../music",
             dataRoot + "/../../game/Music", dataRoot + "/../../game/music",
@@ -469,16 +470,15 @@ public:
             std::fprintf(stderr, "music: no Music/ directory found\n");
             return;
         }
-        try {
-            for (const auto& e : std::filesystem::directory_iterator(dir)) {
-                std::string ext = e.path().extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                if (ext == ".wav") playlist_.push_back(e.path().string());
-            }
-        } catch (const std::exception&) { return; }
-        std::sort(playlist_.begin(), playlist_.end());
-        std::fprintf(stderr, "music: %zu tracks in %s, audio=%s\n", playlist_.size(),
-                     dir.c_str(), dev_ ? "yes" : "NO DEVICE");
+        std::vector<int> want = tracks;
+        if (want.empty())
+            for (int i = 1; i <= 20; ++i) want.push_back(i);
+        for (int n : want) {
+            std::string path = dir + "/track" + std::to_string(n) + ".wav";
+            if (std::filesystem::exists(path)) playlist_.push_back(path);
+        }
+        std::fprintf(stderr, "music: %zu faction tracks, audio=%s\n", playlist_.size(),
+                     dev_ ? "yes" : "NO DEVICE");
         if (!playlist_.empty() && dev_) {
             std::shuffle(playlist_.begin(), playlist_.end(),
                          std::mt19937{std::random_device{}()});
@@ -530,8 +530,7 @@ private:
         musicTrack_ = idx;
         musicDone_ = false;
         SDL_UnlockAudioDevice(dev_);
-        std::fprintf(stderr, "music: now playing %s (%zu samples)\n",
-                     playlist_[idx].c_str(), music_.size());
+        std::fprintf(stderr, "music: now playing %s\n", playlist_[idx].c_str());
     }
 
     std::map<std::string, std::string> index_;
@@ -701,7 +700,7 @@ public:
         }
         loadOrderButtons();
         sounds_.init(dataRoot_ + "/../english/Sounds", false);
-        sounds_.startMusic(dataRoot_);
+        sounds_.startMusic(dataRoot_, factionMusicTracks(side_));
         soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
         loadPanel(side_);
 
@@ -2608,6 +2607,36 @@ private:
                     ++placed;
             }
         std::printf("features: %d placed\n", placed);
+    }
+
+    // Track numbers for a side from gamedata/sidedata.tdf (falls back to IP).
+    std::vector<int> factionMusicTracks(const std::string& side) {
+        std::string want = side;   // "ara" -> match "ARAMON" etc.
+        std::transform(want.begin(), want.end(), want.begin(), ::toupper);
+        const std::string prefixes[] = {
+            std::string("ARA=ARAMON"), "TAR=TAROS", "VER=VERUNA", "ZON=ZHON",
+            "CRE=CREON"};
+        std::string full;
+        for (const auto& m : prefixes)
+            if (m.substr(0, 3) == want) full = m.substr(4);
+        std::vector<int> out;
+        for (const std::string root : {dataRoot_, ipRoot_}) {
+            if (root.empty()) continue;
+            try {
+                auto sd = tak::tdf::parse(root + "/gamedata/sidedata.tdf");
+                for (const auto& key : sd.childOrder) {
+                    const auto& sec = sd.children.at(key);
+                    std::string nm = sec.valueOr("name", "");
+                    std::transform(nm.begin(), nm.end(), nm.begin(), ::toupper);
+                    if (nm != full) continue;
+                    std::istringstream ts(sec.valueOr("musictracks", ""));
+                    int t;
+                    while (ts >> t) out.push_back(t);
+                    if (!out.empty()) return out;
+                }
+            } catch (const std::exception&) {}
+        }
+        return out;
     }
 
     void loadPanel(const std::string& side) {
