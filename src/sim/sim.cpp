@@ -638,9 +638,13 @@ void World::tickProduction(Unit& u, float dt) {
         u.buildQueue.pop_front();
         // Spawn just south of the footprint, walk to a rally point.
         float sx = u.x, sz = u.z + float(u.type->footZ) * 8 + 20;
-        int id = spawn(t, sx, sz, 3.14159f, u.team);
+        // spawn() push_backs into units_ and may reallocate it, invalidating
+        // `u`. Capture the producer's id first and re-fetch afterwards rather
+        // than touching the dangling reference.
+        int producerId = u.id, team = u.team;
+        int id = spawn(t, sx, sz, 3.14159f, team);
         order(id, sx + float((id % 5) - 2) * 22, sz + 60, false);
-        u.justBuilt = id;
+        if (Unit* pu = unit(producerId)) pu->justBuilt = id;
     }
 }
 
@@ -658,8 +662,12 @@ void World::tick(float dt) {
     for (auto& tm : teams_)
         tm.mana = std::min(tm.mana + tm.income * dt, std::max(tm.storage, 100.0f));
 
-    for (auto& u : units_)
+    // Index-based: tickProduction can spawn a trained unit, reallocating
+    // units_ and invalidating any range-for iterator over it.
+    for (size_t i = 0, n = units_.size(); i < n; ++i) {
+        Unit& u = units_[i];
         if (u.alive() && u.type) tickProduction(u, dt);
+    }
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& u = units_[i];
         if (u.alive() && u.type && u.buildSiteId) tickConstruction(u, dt);

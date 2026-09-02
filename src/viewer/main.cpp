@@ -1079,9 +1079,11 @@ public:
         playerMonarchId_ = spawn(pk.monarch, px, pz, pFace, 0);
         builderId_ = playerMonarchId_;
         aiMonarchId_ = spawn(ak.monarch, ax, az, aFace, 1);
-        // Enough mogrium to bootstrap: build lodestones for income, then a keep.
-        world_.team(0).mana = 2500;
-        world_.team(1).mana = 2500;
+        // Enough mogrium to bootstrap the opening: a handful of lodestones for
+        // income and the start of a keep, without being able to skip economy
+        // and rush one to completion.
+        world_.team(0).mana = 2800;
+        world_.team(1).mana = 2800;
         if (demo) {
             // Showcase: skip the slow build-up and pit two ready armies at the
             // start positions against each other.
@@ -2155,11 +2157,26 @@ private:
         bool monIdle = m && m->alive() && m->type && m->type->isBuilder &&
                        m->orders.empty() && m->buildSiteId == 0;
         if (monIdle) {
-            // Priority: two lodestones, then the keep, then a few more lodes.
+            // Lay down enough lodestones that their income covers the keep's
+            // mogrium drain (buildCost*workerTime/buildTime) before committing
+            // to it — otherwise the keep starves and crawls. Cheaper keeps
+            // (Aramon) need ~3 lodes, pricier ones (Taros/Creon) more.
+            const auto* kt = keepType.empty() ? nullptr : registry_.find(keepType);
+            const auto* lt = lodeType.empty() ? nullptr : registry_.find(lodeType);
+            int needLodes = 3;
+            if (kt && m->type) {
+                float drain = kt->buildCost * m->type->workerTime /
+                              std::max(kt->buildTime, 1.0f);
+                float perLode = lt ? std::max(lt->income, 1.0f) : 10.0f;
+                needLodes = std::clamp(
+                    int(std::ceil((drain - m->type->income) / perLode)), 3, 8);
+            }
+            // Priority: economy lodes, then the keep, then a small buffer of
+            // extra lodes to fund production.
             const tak::sim::UnitType* want = nullptr;
-            if (aiLodes_ < 2 && !lodeType.empty()) want = registry_.find(lodeType);
-            else if (keepId < 0 && !keepType.empty()) want = registry_.find(keepType);
-            else if (aiLodes_ < 5 && !lodeType.empty()) want = registry_.find(lodeType);
+            if (lt && aiLodes_ < needLodes) want = lt;
+            else if (kt && keepId < 0) want = kt;
+            else if (lt && aiLodes_ < needLodes + 2) want = lt;
             if (want) {
                 for (float r = 70; r < 340 && want; r += 30) {
                     for (float a = 0; a < 6.28f; a += 0.5f) {

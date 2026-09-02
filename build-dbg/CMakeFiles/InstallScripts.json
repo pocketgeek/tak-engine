@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/pocket_geek/TAK/build-dbg/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
