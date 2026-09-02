@@ -1807,11 +1807,11 @@ public:
                     sounds_.play("ahitfl0" + std::to_string(1 + (salt_++ % 3)));
                 else
                     sounds_.play("bow2");
-                // Play the unit's own firing animation while standing.
+                // Play the unit's own firing animation while standing. Flyers
+                // keep their continuous flight threads running, so don't reset.
                 if (it != anims_.end() && !u.walking()) {
                     auto& fa = it->second;
-                    fa.vm->reset();
-                    fa.vm->setStatic(0, 0);
+                    if (!fa.flying) { fa.vm->reset(); fa.vm->setStatic(0, 0); }
                     fa.vm->start("FireWeapon") || fa.vm->start("attack1") ||
                         fa.vm->start("fire") || fa.vm->start("MeleeAttack");
                     fa.walking = false;
@@ -1835,18 +1835,27 @@ public:
                 a.vm->tick(dt);
                 continue;
             }
-            bool m = u.walking();
-            if (m != a.walking) {
-                a.walking = m;
-                a.vm->reset();
-                a.vm->setStatic(0, m ? 1 : 0);
-                if (m) { a.vm->start("walk_legs") || a.vm->start("walk"); }
-                else { a.vm->start("restore_legs") || a.vm->start("restore_x"); }
-                a.firing = false;
-            } else if (m && a.vm->threadCount() == 0) {
-                // The walk script is single-pass; the engine re-invokes it
-                // each cycle while the unit keeps moving.
-                a.vm->start("walk_legs") || a.vm->start("walk");
+            if (a.flying) {
+                // Flyers run continuous flight scripts (wings flapping) started
+                // at spawn — never reset them for a walk cycle. Just keep the
+                // flap loop alive if it ever drains.
+                if (a.vm->threadCount() == 0)
+                    a.vm->start("fly") || a.vm->start("soar") ||
+                        a.vm->start("BeginFlight");
+            } else {
+                bool m = u.walking();
+                if (m != a.walking) {
+                    a.walking = m;
+                    a.vm->reset();
+                    a.vm->setStatic(0, m ? 1 : 0);
+                    if (m) { a.vm->start("walk_legs") || a.vm->start("walk"); }
+                    else { a.vm->start("restore_legs") || a.vm->start("restore_x"); }
+                    a.firing = false;
+                } else if (m && a.vm->threadCount() == 0) {
+                    // The walk script is single-pass; the engine re-invokes it
+                    // each cycle while the unit keeps moving.
+                    a.vm->start("walk_legs") || a.vm->start("walk");
+                }
             }
             if (u.type && !u.type->canMove) {   // buildings: yard/production anims
                 bool busy = !u.buildQueue.empty();
@@ -2335,6 +2344,7 @@ private:
         bool dying = false;
         bool producing = false;
         bool firing = false;
+        bool flying = false;
     };
 
     void registerUnit(const tak::sim::Unit& u) {
@@ -2386,6 +2396,14 @@ private:
                     default: return 0;
                 }
             };
+            // Flyers deploy their wings and start flapping at spawn via their
+            // flight scripts; without these they sit in the landed rest pose
+            // (which also reads as facing the wrong way).
+            if (u.type && u.type->canFly) {
+                a.vm->start("Create");
+                a.vm->start("soar") || a.vm->start("fly");
+                a.flying = true;
+            }
         } catch (const std::exception&) { /* unit stays unanimated */ }
         if (a.vm) anims_[u.id] = std::move(a);
         unitType_[u.id] = typeId;
@@ -2740,6 +2758,7 @@ private:
         int w = 0, h = 0, xoff = 0, yoff = 0;
         int sw = 0, sh = 0, sxoff = 0, syoff = 0;
         float x = 0, z = 0;
+        bool mana = false;   // a Sacred Stone mana deposit (lodestone spot)
     };
     std::vector<FeatureInst> features_;
 
@@ -2872,8 +2891,14 @@ private:
         inst.sw = a->sw; inst.sh = a->sh; inst.sxoff = a->sxoff; inst.syoff = a->syoff;
         inst.x = x;
         inst.z = z;
+        // Mana deposits ("Sacred Stone", category=Mana) are the spots you build
+        // lodestones ON, so they must stay buildable (walkable) — never block
+        // the nav grid for them, or canPlace rejects the deposit itself.
+        std::string cat = di->second.valueOr("category", "");
+        std::transform(cat.begin(), cat.end(), cat.begin(), ::tolower);
+        inst.mana = (cat == "mana");
         features_.push_back(inst);
-        if (blockNav) {
+        if (blockNav && !inst.mana) {
             int fx = int(di->second.numberOr("footprintx", 1));
             int fz = int(di->second.numberOr("footprintz", 1));
             world_.nav().block(int(x) / 16 - fx / 2, int(z) / 16 - fz / 2, fx, fz, true);
