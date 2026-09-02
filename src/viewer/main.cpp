@@ -693,7 +693,8 @@ public:
               float scale = 1, SDL_Color tint = {255, 255, 255, 255}) const {
         for (unsigned char c : text) {
             const Glyph& g = glyphs_[c];
-            if (g.tex) {
+            // Some fonts have a visible space glyph (a dot) — never draw it.
+            if (g.tex && c != ' ') {
                 SDL_SetTextureColorMod(g.tex, tint.r, tint.g, tint.b);
                 SDL_FRect dst{x, y - g.yoff * scale, g.w * scale, g.h * scale};
                 SDL_RenderCopyF(ren, g.tex, nullptr, &dst);
@@ -3514,7 +3515,7 @@ private:
             const auto* u = world_.unit(selection_.front());
             if (u && u->alive() && u->type) {
                 float px = 8;
-                shade(px, 248);
+                shade(px, 288);
                 SDL_Texture* ic = iconFor(u->type->id);
                 if (ic) {
                     SDL_FRect pr{px + 4, bar.y + 8, 56, kBarH - 20.0f};
@@ -3523,14 +3524,14 @@ private:
                     SDL_RenderDrawRectF(ren_, &pr);
                 }
                 float tx = px + 70;
-                statText(u->type->name, tx, bar.y + 24, 0.62f);
+                statText(u->type->name, tx, bar.y + 26, 2.0f);
                 std::snprintf(buf, sizeof buf, "HP %d/%d", int(u->hp),
                               int(u->type->maxHp));
-                statText(buf, tx, bar.y + 48, 0.55f);
+                statText(buf, tx, bar.y + 50, 1.8f);
                 if (selection_.size() > 1) {
                     std::snprintf(buf, sizeof buf, "+%zu MORE",
                                   selection_.size() - 1);
-                    statText(buf, tx, bar.y + 64, 0.48f);
+                    statText(buf, tx, bar.y + 66, 1.4f);
                 }
             }
         }
@@ -3591,12 +3592,12 @@ private:
             auto& tm = world_.team(localTeam_);
             float manaX = float(winW) - 176;
             shade(manaX - 8, 184);
-            statText("MOGRIUM", manaX, bar.y + 24, 0.5f);
+            statText("MOGRIUM", manaX, bar.y + 22, 1.4f);
             std::snprintf(buf, sizeof buf, "%d / %d", int(tm.mana),
                           int(std::max(tm.storage, 100.0f)));
-            statText(buf, manaX, bar.y + 48, 0.62f);
+            statText(buf, manaX, bar.y + 48, 2.0f);
             std::snprintf(buf, sizeof buf, "+%d / sec", int(tm.income));
-            statText(buf, manaX, bar.y + 64, 0.48f);
+            statText(buf, manaX, bar.y + 66, 1.4f);
         }
     }
 
