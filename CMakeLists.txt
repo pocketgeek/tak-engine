@@ -24,6 +24,7 @@ add_library(tak-formats
   src/tdf/tdf.cpp
   src/cob/cob.cpp
   src/cob/vm.cpp
+  src/sim/sim.cpp
   src/util/png.cpp
   src/util/jpeg.cpp
   src/terrain/terrain.cpp

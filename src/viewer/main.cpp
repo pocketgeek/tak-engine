@@ -12,6 +12,7 @@
 
 #include "cob/vm.h"
 #include "gaf/gaf.h"
+#include "sim/sim.h"
 #include "tdo/tdo.h"
 #include "terrain/terrain.h"
 #include "tnt/tnt.h"
@@ -85,6 +86,13 @@ public:
                 SDL_RenderCopy(ren_, t, nullptr, &dst);
             }
     }
+
+    float offX() const { return offX_; }
+    float offY() const { return offY_; }
+    float zoom() const { return zoom_; }
+    void setZoom(float z) { zoom_ = z; }
+    void setOffset(float x, float y) { offX_ = x; offY_ = y; }
+    const tak::tnt::Map& map() const { return map_; }
 
 private:
     static constexpr int kChunk = 512;
@@ -330,6 +338,278 @@ private:
     bool spin_ = true, fitted_ = false;
 };
 
+// --------------------------------------------------------------- game mode
+
+// Units simulated on a real map: left-click select, right-click move order
+// (shift queues waypoints), arrows scroll, wheel zoom.
+class GameView {
+public:
+    GameView(SDL_Renderer* ren, const std::string& tntPath, const std::string& terrainDir,
+             const std::string& dataRoot, bool demo)
+        : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot) {
+        registry_.loadDir(dataRoot_ + "/units");
+        loadTextures(dataRoot_ + "/textures", dataRoot_ + "/palettes/ara_textures.pcx");
+        mapView_.setZoom(0.9f);
+
+        float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        mapView_.setOffset(cx - 640 / 0.9f + 110, cz - 400 / 0.9f + 20);
+        const char* squad[] = {"araarch", "araarch", "araarch", "arasword",
+                               "arasword", "araarch"};
+        int i = 0;
+        for (const char* t : squad) {
+            int id = spawn(t, cx + float(i % 3) * 28 - 28, cz + float(i / 3) * 28 - 14);
+            if (demo && id >= 0)
+                world_.order(id, cx + 220 + float(i % 3) * 24, cz - 60 + float(i / 3) * 26,
+                             false);
+            ++i;
+        }
+    }
+
+    void input(const SDL_Event& e, int winW, int winH) {
+        (void)winW; (void)winH;
+        if (e.type == SDL_MOUSEWHEEL) {
+            mapView_.input(e);
+        } else if (e.type == SDL_KEYDOWN) {
+            mapView_.input(e);
+        } else if (e.type == SDL_MOUSEBUTTONDOWN) {
+            float wx = mapView_.offX() + e.button.x / mapView_.zoom();
+            float wz = mapView_.offY() + e.button.y / mapView_.zoom();
+            if (e.button.button == SDL_BUTTON_LEFT) {
+                selected_ = -1;
+                float best = 24 * 24;
+                for (auto& u : world_.units()) {
+                    float dx = u.x - wx, dz = u.z - wz;
+                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; selected_ = u.id; }
+                }
+            } else if (e.button.button == SDL_BUTTON_RIGHT && selected_ >= 0) {
+                bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+                world_.order(selected_, wx, wz, queue);
+            }
+        }
+    }
+
+    void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }
+
+    void update(float dt) {
+        world_.tick(dt);
+        if (follow_ && !world_.units().empty()) {
+            float cx = 0, cz = 0;
+            for (auto& u : world_.units()) { cx += u.x; cz += u.z; }
+            cx /= float(world_.units().size());
+            cz /= float(world_.units().size());
+            mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
+        }
+        for (auto& u : world_.units()) {
+            auto it = anims_.find(u.id);
+            if (it == anims_.end()) continue;
+            auto& a = it->second;
+            bool m = u.moving();
+            if (m != a.walking) {
+                a.walking = m;
+                a.vm->reset();
+                a.vm->setStatic(0, m ? 1 : 0);
+                if (m) { a.vm->start("walk_legs") || a.vm->start("walk"); }
+                else { a.vm->start("restore_legs") || a.vm->start("restore_x"); }
+            }
+            a.vm->tick(dt);
+        }
+    }
+
+    void draw(int winW, int winH) {
+        mapView_.draw(winW, winH);
+        std::vector<const tak::sim::Unit*> order;
+        for (auto& u : world_.units()) order.push_back(&u);
+        std::sort(order.begin(), order.end(),
+                  [](auto* a, auto* b) { return a->z < b->z; });
+        for (const auto* u : order) drawUnit(*u);
+        if (const auto* u = world_.unit(selected_)) {
+            drawRing(u->x, u->z, 14);
+            for (const auto& o : u->orders) drawRing(o.x, o.z, 4);
+        }
+    }
+
+    void advance(float seconds) {
+        for (float t = 0; t < seconds; t += 1.0f / 30.0f) update(1.0f / 30.0f);
+    }
+
+private:
+    struct Visual {
+        tak::tdo::Model model;
+    };
+    struct Anim {
+        std::unique_ptr<tak::cob::Vm> vm;
+        std::vector<std::string> pieceNames;
+        bool walking = false;
+    };
+
+    int spawn(const std::string& typeId, float x, float z) {
+        const auto* type = registry_.find(typeId);
+        if (!type) return -1;
+        if (!visuals_.count(typeId)) {
+            try {
+                visuals_[typeId] = {tak::tdo::load(dataRoot_ + "/objects3d/" + typeId + ".3do")};
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "no model for %s: %s\n", typeId.c_str(), e.what());
+                return -1;
+            }
+        }
+        int id = world_.spawn(type, x, z, 3.14159f);
+        Anim a;
+        try {
+            auto cobFile = tak::cob::load(dataRoot_ + "/scripts/" + typeId + ".cob");
+            for (const auto& p : cobFile.pieces) {
+                std::string n = p;
+                std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+                a.pieceNames.push_back(n);
+            }
+            a.vm = std::make_unique<tak::cob::Vm>(std::move(cobFile));
+        } catch (const std::exception&) { /* unit stays unanimated */ }
+        if (a.vm) anims_[id] = std::move(a);
+        unitType_[id] = typeId;
+        return id;
+    }
+
+    void loadTextures(const std::string& texDir, const std::string& palettePath) {
+        auto pal = tak::gaf::Palette::load(palettePath);
+        for (const auto& e : std::filesystem::directory_iterator(texDir)) {
+            if (e.path().extension() != ".gaf") continue;
+            try {
+                for (auto& seq : tak::gaf::load(e.path(), pal)) {
+                    if (seq.frames.empty()) continue;
+                    auto& f = seq.frames[0];
+                    if (f.width == 0 || f.height == 0) continue;
+                    std::string name = seq.name;
+                    std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+                    if (textures_.count(name)) continue;
+                    SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                       SDL_TEXTUREACCESS_STATIC,
+                                                       f.width, f.height);
+                    SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
+                    textures_[name] = t;
+                }
+            } catch (const std::exception&) {}
+        }
+    }
+
+    const tak::cob::PieceState* pieceFor(const Anim* a, const std::string& objName) const {
+        if (!a || !a->vm) return nullptr;
+        std::string n = objName;
+        std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+        for (size_t i = 0; i < a->pieceNames.size(); ++i)
+            if (a->pieceNames[i] == n) return &a->vm->pieces()[i];
+        return nullptr;
+    }
+
+    void drawUnit(const tak::sim::Unit& u) {
+        auto vt = visuals_.find(unitType_.at(u.id));
+        if (vt == visuals_.end()) return;
+        const Anim* anim = nullptr;
+        auto at = anims_.find(u.id);
+        if (at != anims_.end()) anim = &at->second;
+
+        tris_.clear();
+        collect(vt->second.model.root, Xform{}, anim, u.heading);
+        std::sort(tris_.begin(), tris_.end(),
+                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        float zm = mapView_.zoom();
+        float ax = (u.x - mapView_.offX()) * zm;
+        float ay = (u.z - mapView_.offY()) * zm;
+        for (auto& t : tris_) {
+            SDL_Vertex v[3];
+            for (int i = 0; i < 3; ++i) {
+                v[i] = t.v[i];
+                v[i].position.x = v[i].position.x * zm + ax;
+                v[i].position.y = v[i].position.y * zm + ay;
+            }
+            SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
+        }
+    }
+
+    // Project model triangles relative to the unit anchor: yaw by heading,
+    // fixed tilt so models read against TAK's painted top-down terrain.
+    void collect(const tak::tdo::Object& o, const Xform& parent, const Anim* anim,
+                 float heading) {
+        static const float kNoRot[3] = {0, 0, 0};
+        const tak::cob::PieceState* ps = pieceFor(anim, o.name);
+        if (ps && !ps->visible) return;
+        Xform xf = parent.then(o.x + (ps ? ps->move[0] : 0),
+                               o.y + (ps ? ps->move[1] : 0),
+                               o.z + (ps ? ps->move[2] : 0),
+                               ps ? ps->rot : kNoRot);
+        // Ground-plate reference pieces (AraGP, araground, ...) are never drawn.
+        std::string oname = o.name;
+        std::transform(oname.begin(), oname.end(), oname.begin(), ::tolower);
+        bool groundPlate = oname.size() >= 2 &&
+                           (oname.substr(oname.size() - 2) == "gp" ||
+                            oname.find("ground") != std::string::npos);
+        const float tilt = 1.05f;   // ~60 degrees down
+        float cy = std::cos(heading + 3.14159f), sy = std::sin(heading + 3.14159f);
+        float ct = std::cos(tilt), st = std::sin(tilt);
+        for (const auto& p : o.primitives) {
+            if (groundPlate) break;
+            if (p.indices.size() < 3) continue;
+            SDL_Texture* tex = nullptr;
+            if (!p.texture.empty()) {
+                std::string name = p.texture;
+                std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+                auto it = textures_.find(name);
+                if (it != textures_.end()) tex = it->second;
+            }
+            for (size_t i = 1; i + 1 < p.indices.size(); ++i) {
+                size_t idx[3] = {0, i, i + 1};
+                Tri tri{};
+                tri.tex = tex;
+                float depth = 0;
+                bool ok = true;
+                for (int k = 0; k < 3; ++k) {
+                    size_t vi = size_t(p.indices[idx[k]]) * 3;
+                    if (vi + 2 >= o.vertices.size()) { ok = false; break; }
+                    float w[3];
+                    xf.apply(o.vertices[vi], o.vertices[vi + 1], o.vertices[vi + 2], w);
+                    float rx = w[0] * cy + w[2] * sy;
+                    float rz = -w[0] * sy + w[2] * cy;
+                    float ry = w[1] * ct - rz * st;
+                    depth += rz * ct + w[1] * st;
+                    tri.v[k].position = {rx, -ry};
+                    static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+                    tri.v[k].tex_coord = uv[idx[k] & 3];
+                    tri.v[k].color = tex ? SDL_Color{255, 255, 255, 255}
+                                         : SDL_Color{170, 170, 180, 255};
+                }
+                if (!ok) continue;
+                tri.depth = depth / 3;
+                tris_.push_back(tri);
+            }
+        }
+        for (const auto& c : o.children) collect(c, xf, anim, heading);
+    }
+
+    void drawRing(float wx, float wz, float r) {
+        float zm = mapView_.zoom();
+        SDL_SetRenderDrawColor(ren_, 90, 255, 120, 255);
+        SDL_FPoint pts[25];
+        for (int i = 0; i <= 24; ++i) {
+            float a = float(i) / 24 * 2 * 3.14159f;
+            pts[i] = {(wx + std::cos(a) * r - mapView_.offX()) * zm,
+                      (wz + std::sin(a) * r * 0.7f - mapView_.offY()) * zm};
+        }
+        SDL_RenderDrawLinesF(ren_, pts, 25);
+    }
+
+    SDL_Renderer* ren_;
+    MapView mapView_;
+    std::string dataRoot_;
+    tak::sim::TypeRegistry registry_;
+    tak::sim::World world_;
+    std::map<std::string, Visual> visuals_;
+    std::map<int, std::string> unitType_;
+    std::map<int, Anim> anims_;
+    std::map<std::string, SDL_Texture*> textures_;
+    std::vector<Tri> tris_;
+    int selected_ = -1;
+    bool follow_ = false;
+};
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -337,12 +617,15 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: takview map <map.tnt> <terrain-dir> [--shot out.png]\n"
                      "       takview model <file.3do> [textures-dir palette.pcx] "
-                     "[--shot out.png]\n");
+                     "[--cob f.cob --anim script] [--shot out.png]\n"
+                     "       takview game <map.tnt> <terrain-dir> <data-root> "
+                     "[--demo] [--time s] [--shot out.png]\n");
         return 2;
     }
     std::string mode = argv[1];
     std::string shot, cobPath, anim;
-    float startTime = 0;
+    float startTime = 0, followZoom = 0;
+    bool demo = false;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
@@ -350,6 +633,8 @@ int main(int argc, char** argv) {
         else if (a == "--cob" && i + 1 < argc) cobPath = argv[++i];
         else if (a == "--anim" && i + 1 < argc) anim = argv[++i];
         else if (a == "--time" && i + 1 < argc) startTime = std::stof(argv[++i]);
+        else if (a == "--demo") demo = true;
+        else if (a == "--follow" && i + 1 < argc) followZoom = std::stof(argv[++i]);
         else args.push_back(a);
     }
     if (!shot.empty()) SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
@@ -370,9 +655,14 @@ int main(int argc, char** argv) {
 
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;
+    std::unique_ptr<GameView> gameView;
     try {
         if (mode == "map" && args.size() >= 2) {
             mapView = std::make_unique<MapView>(ren, args[0], args[1]);
+        } else if (mode == "game" && args.size() >= 3) {
+            gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo);
+            if (followZoom > 0) gameView->setFollow(followZoom);
+            if (startTime > 0) gameView->advance(startTime);
         } else if (mode == "model" && !args.empty()) {
             modelView = std::make_unique<ModelView>(ren, args[0],
                                                     args.size() > 1 ? args[1] : "",
@@ -398,8 +688,11 @@ int main(int argc, char** argv) {
                 running = false;
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_s)
                 screenshot(ren, kWinW, kWinH, "takview_shot.png");
+            int ww, wh;
+            SDL_GetRendererOutputSize(ren, &ww, &wh);
             if (mapView) mapView->input(e);
             if (modelView) modelView->input(e);
+            if (gameView) gameView->input(e, ww, wh);
         }
         uint64_t now = SDL_GetPerformanceCounter();
         float dt = float(now - last) / float(SDL_GetPerformanceFrequency());
@@ -411,6 +704,7 @@ int main(int argc, char** argv) {
         SDL_RenderClear(ren);
         if (mapView) mapView->draw(w, h);
         if (modelView) modelView->draw(w, h, dt);
+        if (gameView) { gameView->update(dt); gameView->draw(w, h); }
         SDL_RenderPresent(ren);
 
         if (!shot.empty()) {

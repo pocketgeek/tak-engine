@@ -32,6 +32,7 @@ public:
     // Start a script by name with integer args; returns false if unknown.
     bool start(const std::string& script, const std::vector<int32_t>& args = {});
     void setStatic(size_t i, int32_t v);
+    void reset() { threads_.clear(); }   // stop all threads, keep piece poses
 
     // Advance time by dt seconds: run threads, progress animations.
     void tick(float dt);
