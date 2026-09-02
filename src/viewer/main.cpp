@@ -1869,7 +1869,11 @@ public:
             if (a.flying) {
                 // Take off when moving, settle back to the ground when idle.
                 float cruise = u.type ? u.type->cruiseAlt : 0.0f;
-                float target = (u.walking() || !u.orders.empty()) ? cruise : 0.0f;
+                // Stay airborne while doing anything — moving, or hovering to
+                // conjure a build/summon — and only land when fully idle.
+                bool busy = u.walking() || !u.orders.empty() ||
+                            u.buildSiteId != 0 || !u.buildOrders.empty();
+                float target = busy ? cruise : 0.0f;
                 float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise
                 a.altitude += std::clamp(target - a.altitude, -step, step);
 
