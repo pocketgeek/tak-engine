@@ -935,8 +935,12 @@ public:
             }
         } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
             e.key.keysym.sym <= SDLK_6 && !selection_.empty()) {
-            const auto* b = world_.unit(selection_.front());
-            if (b && b->type && b->type->isBuilder) {
+            const tak::sim::Unit* b = nullptr;
+            for (int id : selection_) {   // first builder anywhere in selection
+                const auto* u = world_.unit(id);
+                if (u && u->type && u->type->isBuilder) { b = u; break; }
+            }
+            if (b) {
                 const auto& menu = registry_.buildable(b->type->id);
                 size_t slot = size_t(e.key.keysym.sym - SDLK_1);
                 if (slot < menu.size()) {
@@ -2617,7 +2621,7 @@ int main(int argc, char** argv) {
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
          misstest = false, nofog = false, doLook = false, creon = false,
-         hilltest = false;
+         hilltest = false, keytest = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -2638,6 +2642,7 @@ int main(int argc, char** argv) {
         else if (a == "--hilltest") hilltest = true;
         else if (a == "--side" && i + 1 < argc) side = argv[++i];
         else if (a == "--aiside" && i + 1 < argc) aiSide = argv[++i];
+        else if (a == "--keytest") keytest = true;
         else if (a == "--host" && i + 1 < argc) hostPort = std::atoi(argv[++i]);
         else if (a == "--join" && i + 2 < argc) {
             joinAddr = argv[++i];
@@ -2727,6 +2732,8 @@ int main(int argc, char** argv) {
 
     bool running = true;
     float netAccum = 0;
+    int ktPhase = keytest ? 0 : -1;
+    float ktClock = 0;
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
         SDL_Event e;
@@ -2745,6 +2752,40 @@ int main(int argc, char** argv) {
         uint64_t now = SDL_GetPerformanceCounter();
         float dt = float(now - last) / float(SDL_GetPerformanceFrequency());
         last = now;
+        if (ktPhase >= 0) {
+            ktClock += dt;
+            auto click = [&](int x, int y, uint8_t btn) {
+                SDL_Event ev{};
+                ev.type = SDL_MOUSEBUTTONDOWN;
+                ev.button.button = btn;
+                ev.button.x = x;
+                ev.button.y = y;
+                SDL_PushEvent(&ev);
+                ev.type = SDL_MOUSEBUTTONUP;
+                SDL_PushEvent(&ev);
+            };
+            auto key = [&](SDL_Keycode k) {
+                SDL_Event ev{};
+                ev.type = SDL_KEYDOWN;
+                ev.key.keysym.sym = k;
+                SDL_PushEvent(&ev);
+            };
+            auto motion = [&](int x, int y) {
+                SDL_Event ev{};
+                ev.type = SDL_MOUSEMOTION;
+                ev.motion.x = x;
+                ev.motion.y = y;
+                SDL_PushEvent(&ev);
+            };
+            if (ktPhase == 0 && ktClock > 0.3f) { click(253, 453, SDL_BUTTON_LEFT); ktPhase = 1; }
+            else if (ktPhase == 1 && ktClock > 0.6f) { key(SDLK_1); ktPhase = 2; }
+            else if (ktPhase == 2 && ktClock > 0.9f) { motion(400, 453); ktPhase = 3; }
+            else if (ktPhase == 3 && ktClock > 1.2f) { click(400, 453, SDL_BUTTON_LEFT); ktPhase = 4; }
+            else if (ktPhase == 4 && ktClock > 1.6f) {
+                std::printf("KEYTEST done\n");
+                ktPhase = -1;
+            }
+        }
 
         int w, h;
         SDL_GetRendererOutputSize(ren, &w, &h);
@@ -2777,7 +2818,7 @@ int main(int argc, char** argv) {
         if (!shot.empty()) {
             // Render a few frames so lazy content settles, then capture.
             static int frames = 0;
-            if (++frames >= 3) {
+            if (++frames >= 3 && ktPhase < 0) {
                 screenshot(ren, w, h, shot);
                 running = false;
             }
