@@ -68,15 +68,20 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             if (mc.rfind("water", 0) == 0) t.domain = UnitType::Domain::Water;
             else if (mc.rfind("hover", 0) == 0) t.domain = UnitType::Domain::Hover;
             t.cruiseAlt = float(info->numberOr("cruisealt", 0)) / 4;
-            if (const auto* w = root.child("WEAPON1")) {
-                t.weapon.name = w->valueOr("name", "");
-                t.weapon.range = float(w->numberOr("range", 0));
-                t.weapon.reload = float(w->numberOr("reloadtime", 1));
-                t.weapon.projVel = float(w->numberOr("weaponvelocity", 0));
-                t.weapon.melee = lower(w->valueOr("type", "")) == "melee";
+            for (int slot = 1; slot <= 3; ++slot) {
+                const auto* w = root.child("WEAPON" + std::to_string(slot));
+                if (!w) continue;
+                Weapon wp;
+                wp.name = w->valueOr("name", "");
+                wp.range = float(w->numberOr("range", 0));
+                wp.reload = float(w->numberOr("reloadtime", 1));
+                wp.projVel = float(w->numberOr("weaponvelocity", 0));
+                wp.melee = lower(w->valueOr("type", "")) == "melee";
                 if (const auto* dmg = w->child("DAMAGE"))
-                    t.weapon.damage = float(dmg->numberOr("default", 0));
+                    wp.damage = float(dmg->numberOr("default", 0));
+                if (wp.damage > 0) t.weapons.push_back(wp);
             }
+            if (!t.weapons.empty()) t.weapon = t.weapons[0];
             types_[t.id] = std::move(t);
         } catch (const std::exception&) {
             // Skip malformed definitions rather than fail the registry.
@@ -389,8 +394,9 @@ void World::attack(int unitId, int targetId, bool queue) {
     u->orders.push_back({0, 0, targetId});
 }
 
-void World::fire(Unit& u, Unit& target) {
-    const Weapon& w = u.type->weapon;
+void World::fire(Unit& u, Unit& target, int slot) {
+    const Weapon& w = u.type->weapons[size_t(slot)];
+    u.reloads[slot] = w.reload;
     u.reloadLeft = w.reload;
     u.justFired = true;
     if (w.melee || w.projVel <= 0) {
@@ -415,6 +421,8 @@ void World::fire(Unit& u, Unit& target) {
 
 void World::tickCombat(Unit& u, float dt) {
     if (u.reloadLeft > 0) u.reloadLeft -= dt;
+    for (auto& r : u.reloads)
+        if (r > 0) r -= dt;
 
     // Auto-acquire: idle armed units engage the nearest enemy in reach;
     // attack-movers and patrollers interrupt their route to fight.
@@ -422,7 +430,7 @@ void World::tickCombat(Unit& u, float dt) {
                      (u.orders.front().targetId == 0 &&
                       (u.orders.front().attackMove || u.orders.front().patrol));
     if (acquiring && u.type->weapon.damage > 0) {
-        float ar = u.type->weapon.range + 90;
+        float ar = u.type->maxRange() + 90;
         int best = 0;
         float bestD = ar * ar;
         for (auto& e : units_) {
@@ -442,12 +450,12 @@ void World::tickCombat(Unit& u, float dt) {
     }
     float dx = target->x - u.x, dz = target->z - u.z;
     float dist = std::sqrt(dx * dx + dz * dz);
-    const Weapon& w = u.type->weapon;
-    if (!u.type->canMove && dist > w.range) {   // static units can't chase
+    float best = u.type->maxRange();
+    if (!u.type->canMove && dist > best) {      // static units can't chase
         u.orders.pop_front();
         return;
     }
-    if (dist > w.range * 0.95f) {
+    if (dist > best * 0.95f) {
         // Advance toward the target, steering around impassable terrain.
         u.repathLeft -= dt;
         Order& o = u.orders.front();
@@ -470,7 +478,10 @@ void World::tickCombat(Unit& u, float dt) {
     float diff = angleDiff(want, u.heading);
     float maxTurn = u.type->turnRate * dt;
     u.heading += std::clamp(diff, -maxTurn, maxTurn);
-    if (std::abs(diff) < 0.2f && u.reloadLeft <= 0) fire(u, *target);
+    if (std::abs(diff) < 0.2f)
+        for (size_t i = 0; i < u.type->weapons.size() && i < 3; ++i)
+            if (u.reloads[i] <= 0 && dist <= u.type->weapons[i].range * 1.0f)
+                fire(u, *target, int(i));
 }
 
 bool World::canPlace(const UnitType* type, float x, float z) const {
@@ -645,7 +656,7 @@ void World::tick(float dt) {
                 Unit* t = unit(u.orders.front().targetId);
                 if (!t) return false;
                 float dx = t->x - u.x, dz = t->z - u.z;
-                return std::sqrt(dx * dx + dz * dz) <= u.type->weapon.range * 0.95f;
+                return std::sqrt(dx * dx + dz * dz) <= u.type->maxRange() * 0.95f;
             }();
         if (combatHold) continue;
 

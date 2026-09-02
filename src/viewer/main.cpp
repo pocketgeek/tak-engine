@@ -713,6 +713,21 @@ public:
                           mapView_.map().height, mapView_.map().seaLevel);
         loadFeatures();
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        // Nudge the demo anchor to buildable ground if the center is bad.
+        if (const auto* keepType = registry_.find("arakeep")) {
+            for (float r = 0; r < 900 && !world_.canPlace(keepType, cx - 260, cz + 30);
+                 r += 40) {
+                bool found = false;
+                for (float ang = 0; ang < 6.28f && !found; ang += 0.6f) {
+                    float nx = cx + std::cos(ang) * r, nz = cz + std::sin(ang) * r;
+                    if (world_.canPlace(keepType, nx - 260, nz + 30) &&
+                        world_.canPlace(keepType, nx + 300, nz + 30)) {
+                        cx = nx; cz = nz; found = true;
+                    }
+                }
+                if (found) break;
+            }
+        }
         mapView_.setOffset(cx - 640 / 0.9f + 110, cz - 400 / 0.9f + 20);
         if (!bare) {
         const char* aramon[] = {"araarch", "araarch", "araarch", "arasword",
@@ -1179,6 +1194,20 @@ public:
                 if (m) { a.vm->start("walk_legs") || a.vm->start("walk"); }
                 else { a.vm->start("restore_legs") || a.vm->start("restore_x"); }
             }
+            if (u.type && !u.type->canMove) {   // buildings: yard/production anims
+                bool busy = !u.buildQueue.empty();
+                if (busy != a.producing) {
+                    a.producing = busy;
+                    a.vm->reset();
+                    if (busy) {
+                        a.vm->start("startbuild") || a.vm->start("OpenYard") ||
+                            a.vm->start("Activate");
+                    } else {
+                        a.vm->start("stopbuild") || a.vm->start("CloseYard") ||
+                            a.vm->start("Deactivate");
+                    }
+                }
+            }
             a.vm->tick(dt);
         }
     }
@@ -1457,6 +1486,7 @@ private:
         std::vector<std::string> pieceNames;
         bool walking = false;
         bool dying = false;
+        bool producing = false;
     };
 
     void registerUnit(const tak::sim::Unit& u) {

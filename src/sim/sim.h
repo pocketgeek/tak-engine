@@ -47,7 +47,13 @@ struct UnitType {
     int transportCap = 0;     // units carried (FBI transportcapacity)
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     std::string corpse;       // FBI corpse feature name
-    Weapon weapon;         // WEAPON1; weapon.damage == 0 means unarmed
+    Weapon weapon;            // primary (WEAPON1); damage 0 = unarmed
+    std::vector<Weapon> weapons;   // all slots (WEAPON1..3)
+    float maxRange() const {
+        float r = 0;
+        for (const auto& w : weapons) r = std::max(r, w.range);
+        return r;
+    }
 };
 
 class TypeRegistry {
@@ -82,7 +88,8 @@ struct Unit {
     float heading = 0;     // radians, 0 = +z
     float speed = 0;       // px/s
     float hp = 100;
-    float reloadLeft = 0;
+    float reloadLeft = 0;          // primary slot (kept for anim hooks)
+    float reloads[3] = {0, 0, 0};  // per weapon slot
     float repathLeft = 0;   // chase steering repath countdown
     float deadFor = -1;    // >= 0 once dead; counts up for death animation
     bool justFired = false;   // set for one tick when the weapon fires
@@ -194,7 +201,7 @@ public:
 
 private:
     void tickCombat(Unit& u, float dt);
-    void fire(Unit& u, Unit& target);
+    void fire(Unit& u, Unit& target, int slot);
 
     void tickProduction(Unit& u, float dt);
     void tickTransport(Unit& u, float dt);
