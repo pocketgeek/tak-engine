@@ -964,9 +964,28 @@ public:
             mouseX_ = float(e.motion.x);
             mouseY_ = float(e.motion.y);
             if (dragging_) { dragX1_ = float(e.motion.x); dragY1_ = float(e.motion.y); }
-        } else if (e.type == SDL_MOUSEBUTTONDOWN && panelTex_ &&
-                   e.button.x > kWinW - panelW_) {
-            // clicks on the side panel do not reach the world
+        } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                   e.button.y > kWinH - kBarH) {
+            // bottom bar: build-icon clicks; everything else is swallowed
+            if (e.button.button == SDL_BUTTON_LEFT) {
+                for (const auto& [r, bt] : iconRects_) {
+                    if (e.button.x < r.x || e.button.x > r.x + r.w ||
+                        e.button.y < r.y || e.button.y > r.y + r.h)
+                        continue;
+                    const auto* b = selectedBuilder();
+                    if (!b || !bt) break;
+                    if (b->type->canMove) {
+                        placing_ = bt;
+                    } else {
+                        tak::net::Command c;
+                        c.kind = tak::net::Cmd::Train;
+                        c.unitId = b->id;
+                        std::snprintf(c.type, sizeof c.type, "%s", bt->id.c_str());
+                        issue(c);
+                    }
+                    break;
+                }
+            }
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    minimapClick(float(e.button.x), float(e.button.y), winH)) {
             // camera moved via minimap
@@ -1676,8 +1695,8 @@ public:
             SDL_RenderFillRectF(ren_, &fg);
         }
 
-        // Team-0 mana bar + HUD text, top left.
-        {
+        // Team mana bar top left (legacy; only without the bottom bar).
+        if (!panelTex_) {
             auto& tm = world_.team(localTeam_);
             float cap = std::max(tm.storage, 100.0f);
             SDL_FRect bg{10, 10, 180, 12};
@@ -2135,14 +2154,19 @@ private:
     SDL_Texture* miniTex_ = nullptr;
     SDL_Texture* panelTex_ = nullptr;
     int panelW_ = 0, panelH_ = 0;
+    SDL_Texture* botTex_ = nullptr;
+    int botW_ = 0, botH_ = 0;
+    std::map<std::string, SDL_Texture*> icons_;
+    std::vector<std::pair<SDL_FRect, const tak::sim::UnitType*>> iconRects_;
     int aiTrained_ = 0;
     std::array<std::string, 4> aiCycle_ = {"tararch", "tartb", "tararch", "tarbeak"};
     float aiTimer_ = 0;
     static constexpr int kMiniSize = 180;
 
     SDL_FRect minimapRect(int winH) const {
+        (void)winH;
         float aspect = float(mapView_.map().blocksY) / float(mapView_.map().blocksX);
-        return {10, float(winH) - 10 - kMiniSize * aspect, kMiniSize, kMiniSize * aspect};
+        return {float(kWinW) - kMiniSize - 10, 10, kMiniSize, kMiniSize * aspect};
     }
 
     void buildMinimap() {
@@ -2382,65 +2406,166 @@ private:
                                                "ingame.pcx");
             for (auto& sq : tak::gaf::load(dataRoot_ + "/anims/" + side + "ingame.gaf",
                                            pal)) {
-                if (sq.name != "AidPanel" || sq.frames.empty()) continue;
+                if (sq.frames.empty()) continue;
                 auto& f = sq.frames[0];
-                panelTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
-                                              SDL_TEXTUREACCESS_STATIC, f.width,
-                                              f.height);
-                SDL_UpdateTexture(panelTex_, nullptr, f.rgba.data(), f.width * 4);
-                panelW_ = f.width;
-                panelH_ = f.height;
+                if (sq.name == "AidPanel") {
+                    panelTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                  SDL_TEXTUREACCESS_STATIC, f.width,
+                                                  f.height);
+                    SDL_UpdateTexture(panelTex_, nullptr, f.rgba.data(), f.width * 4);
+                    panelW_ = f.width;
+                    panelH_ = f.height;
+                } else if (sq.name == "AidBotPanel") {
+                    botTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                SDL_TEXTUREACCESS_STATIC, f.width,
+                                                f.height);
+                    SDL_UpdateTexture(botTex_, nullptr, f.rgba.data(), f.width * 4);
+                    botW_ = f.width;
+                    botH_ = f.height;
+                }
             }
         } catch (const std::exception&) {}
     }
 
+    static constexpr int kBarH = 72;
+
+    SDL_Texture* iconFor(const std::string& typeId) {
+        auto it = icons_.find(typeId);
+        if (it != icons_.end()) return it->second;
+        SDL_Texture* tex = nullptr;
+        for (const std::string root : {dataRoot_, ipRoot_}) {
+            if (root.empty()) continue;
+            try {
+                auto img = tak::jpeg::load(root + "/anims/buildpic/" + typeId + ".jpg");
+                tex = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                        SDL_TEXTUREACCESS_STATIC, img.width,
+                                        img.height);
+                SDL_UpdateTexture(tex, nullptr, img.rgba.data(), img.width * 4);
+                break;
+            } catch (const std::exception&) {}
+        }
+        icons_[typeId] = tex;
+        return tex;
+    }
+
+    // The selected builder (any builder in the selection).
+    const tak::sim::Unit* selectedBuilder() {
+        for (int id : selection_) {
+            const auto* u = world_.unit(id);
+            if (u && u->alive() && u->type && u->type->isBuilder) return u;
+        }
+        return nullptr;
+    }
+
     void drawPanel(int winW, int winH) {
-        if (!panelTex_) return;
-        for (int y = 0; y < winH; y += panelH_) {
-            SDL_Rect dst{winW - panelW_, y, panelW_, panelH_};
-            SDL_RenderCopy(ren_, panelTex_, nullptr, &dst);
+        // Bottom bar: stone strip across the full width.
+        SDL_FRect bar{0, float(winH - kBarH), float(winW), float(kBarH)};
+        if (botTex_) {
+            for (int x = 0; x < winW; x += botW_) {
+                SDL_Rect dst{x, winH - kBarH, botW_, kBarH};
+                SDL_RenderCopy(ren_, botTex_, nullptr, &dst);
+            }
+        } else if (panelTex_) {
+            for (int x = 0; x < winW; x += panelW_) {
+                SDL_Rect src{0, 40, panelW_, kBarH};
+                SDL_Rect dst{x, winH - kBarH, panelW_, kBarH};
+                SDL_RenderCopy(ren_, panelTex_, &src, &dst);
+            }
+        } else {
+            SDL_SetRenderDrawColor(ren_, 42, 38, 34, 255);
+            SDL_RenderFillRectF(ren_, &bar);
         }
-        if (!hudFont_.ok()) return;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        SDL_FRect back{float(winW - panelW_) + 4, 10, float(panelW_) - 8, 64};
-        SDL_SetRenderDrawColor(ren_, 8, 8, 12, 170);
-        SDL_RenderFillRectF(ren_, &back);
-        if (!selection_.empty()) {
-            SDL_FRect back2{float(winW - panelW_) + 4, 90, float(panelW_) - 8, 150};
-            SDL_RenderFillRectF(ren_, &back2);
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 90);
+        SDL_RenderFillRectF(ren_, &bar);
+        SDL_SetRenderDrawColor(ren_, 120, 105, 80, 255);
+        SDL_RenderDrawLineF(ren_, 0, bar.y, float(winW), bar.y);
+
+        // Bottom-LEFT: clickable build icons for the selected builder.
+        iconRects_.clear();
+        const auto* b = selectedBuilder();
+        if (b) {
+            const auto& menu = registry_.buildable(b->type->id);
+            float x = 8;
+            for (size_t i = 0; i < menu.size() && i < 10; ++i) {
+                const auto* bt = registry_.find(menu[i]);
+                if (!bt) continue;
+                SDL_FRect r{x, bar.y + 6, 60, kBarH - 16.0f};
+                SDL_Texture* ic = iconFor(bt->id);
+                if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &r);
+                else {
+                    SDL_SetRenderDrawColor(ren_, 60, 55, 50, 255);
+                    SDL_RenderFillRectF(ren_, &r);
+                }
+                bool hot = mouseX_ >= r.x && mouseX_ <= r.x + r.w &&
+                           mouseY_ >= r.y && mouseY_ <= r.y + r.h;
+                SDL_SetRenderDrawColor(ren_, hot ? 255 : 110, hot ? 230 : 100,
+                                       hot ? 120 : 70, 255);
+                SDL_RenderDrawRectF(ren_, &r);
+                if (hudFont_.ok() && i < 9) {
+                    char num[4];
+                    std::snprintf(num, sizeof num, "%zu", i + 1);
+                    hudFont_.draw(ren_, num, r.x + 3, r.y + 12, 1.2f,
+                                  {255, 255, 200, 255});
+                }
+                if (hot && hudFont_.ok()) {
+                    char tip[80];
+                    std::snprintf(tip, sizeof tip, "%s  %d MANA", bt->name.c_str(),
+                                  int(bt->buildCost));
+                    hudFont_.draw(ren_, tip, 8, bar.y - 8, 1.5f, {235, 225, 180, 255});
+                }
+                iconRects_.push_back({r, bt});
+                x += 66;
+            }
+            if (!b->buildQueue.empty() && hudFont_.ok()) {
+                char q[64];
+                std::snprintf(q, sizeof q, "TRAINING %s (%zu)",
+                              b->buildQueue.front()->name.c_str(),
+                              b->buildQueue.size());
+                hudFont_.draw(ren_, q, 8, bar.y - 24, 1.4f, {150, 200, 255, 255});
+            }
         }
-        float px = float(winW - panelW_) + 10;
-        auto& tm = world_.team(localTeam_);
-        char buf[96];
-        std::snprintf(buf, sizeof buf, "MANA");
-        hudFont_.draw(ren_, buf, px, 24, 1.5f, {120, 200, 255, 255});
-        std::snprintf(buf, sizeof buf, "%d/%d", int(tm.mana),
-                      int(std::max(tm.storage, 100.0f)));
-        hudFont_.draw(ren_, buf, px, 42, 1.5f, {200, 225, 255, 255});
-        std::snprintf(buf, sizeof buf, "+%d", int(tm.income));
-        hudFont_.draw(ren_, buf, px, 60, 1.5f, {160, 255, 180, 255});
-        if (!selection_.empty()) {
-            const auto* u = world_.unit(selection_.front());
-            if (u && u->alive() && u->type) {
-                hudFont_.draw(ren_, u->type->name, px, 96, 1.4f, {230, 225, 190, 255});
-                std::snprintf(buf, sizeof buf, "%d/%d", int(u->hp),
-                              int(u->type->maxHp));
-                hudFont_.draw(ren_, buf, px, 112, 1.4f, {220, 200, 170, 255});
-                if (u->type->isBuilder) {
-                    const auto& menu = registry_.buildable(u->type->id);
-                    float y = 140;
-                    for (size_t i = 0; i < menu.size() && i < 6; ++i) {
-                        const auto* bt = registry_.find(menu[i]);
-                        std::snprintf(buf, sizeof buf, "%zu %s", i + 1,
-                                      bt ? bt->name.c_str() : menu[i].c_str());
-                        hudFont_.draw(ren_, buf, px, y, 1.3f, {190, 205, 180, 255});
-                        y += 15;
+
+        // Bottom-RIGHT: fixed mana zone at the edge; unit stats to its left.
+        if (hudFont_.ok()) {
+            char buf[96];
+            auto& tm = world_.team(localTeam_);
+            float manaX = float(winW) - 170;
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 110);
+            SDL_FRect mz{manaX - 6, bar.y + 4, 170, kBarH - 8.0f};
+            SDL_RenderFillRectF(ren_, &mz);
+            hudFont_.draw(ren_, "MANA", manaX, bar.y + 18, 1.3f, {120, 200, 255, 255});
+            std::snprintf(buf, sizeof buf, "%d/%d", int(tm.mana),
+                          int(std::max(tm.storage, 100.0f)));
+            hudFont_.draw(ren_, buf, manaX, bar.y + 40, 1.5f, {200, 230, 255, 255});
+            std::snprintf(buf, sizeof buf, "+%d", int(tm.income));
+            hudFont_.draw(ren_, buf, manaX, bar.y + 60, 1.3f, {150, 240, 180, 255});
+
+            if (!selection_.empty()) {
+                const auto* u = world_.unit(selection_.front());
+                if (u && u->alive() && u->type) {
+                    float px = manaX - 260;
+                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 110);
+                    SDL_FRect sz{px - 6, bar.y + 4, 250, kBarH - 8.0f};
+                    SDL_RenderFillRectF(ren_, &sz);
+                    SDL_Texture* ic = iconFor(u->type->id);
+                    if (ic) {
+                        SDL_FRect pr{px, bar.y + 8, 56, kBarH - 20.0f};
+                        SDL_RenderCopyF(ren_, ic, nullptr, &pr);
+                        SDL_SetRenderDrawColor(ren_, 120, 110, 80, 255);
+                        SDL_RenderDrawRectF(ren_, &pr);
                     }
-                    if (!u->buildQueue.empty()) {
-                        std::snprintf(buf, sizeof buf, "> %s (%zu)",
-                                      u->buildQueue.front()->name.c_str(),
-                                      u->buildQueue.size());
-                        hudFont_.draw(ren_, buf, px, y + 6, 1.3f, {150, 200, 255, 255});
+                    hudFont_.draw(ren_, u->type->name, px + 64, bar.y + 26, 1.5f,
+                                  {235, 225, 190, 255});
+                    std::snprintf(buf, sizeof buf, "%d/%d", int(u->hp),
+                                  int(u->type->maxHp));
+                    hudFont_.draw(ren_, buf, px + 64, bar.y + 46, 1.5f,
+                                  {190, 230, 170, 255});
+                    if (selection_.size() > 1) {
+                        std::snprintf(buf, sizeof buf, "+%zu MORE",
+                                      selection_.size() - 1);
+                        hudFont_.draw(ren_, buf, px + 64, bar.y + 64, 1.3f,
+                                      {180, 180, 160, 255});
                     }
                 }
             }
@@ -2781,7 +2906,8 @@ int main(int argc, char** argv) {
             else if (ktPhase == 1 && ktClock > 0.6f) { key(SDLK_1); ktPhase = 2; }
             else if (ktPhase == 2 && ktClock > 0.9f) { motion(400, 453); ktPhase = 3; }
             else if (ktPhase == 3 && ktClock > 1.2f) { click(400, 453, SDL_BUTTON_LEFT); ktPhase = 4; }
-            else if (ktPhase == 4 && ktClock > 1.6f) {
+            else if (ktPhase == 4 && ktClock > 1.5f) { click(253, 453, SDL_BUTTON_LEFT); motion(40, 760); ktPhase = 5; }
+            else if (ktPhase == 5 && ktClock > 1.9f) {
                 std::printf("KEYTEST done\n");
                 ktPhase = -1;
             }

@@ -28,8 +28,8 @@ tools/… # extract: ./build/hpitool extract assets/game/<archive>.hpi assets/ex
 ```
 
 Controls: drag = box-select, right-click = move/attack (shift queues),
-A + click = attack-move, P + click = patrol, H = halt, 1–6 = train or
-place buildings at a selected builder, arrows/middle-drag = scroll,
+A + click = attack-move, P + click = patrol, H = halt, click the build icons (or 1–6) at a
+selected builder/keep to train or place, arrows/middle-drag = scroll,
 wheel = zoom, minimap click = jump camera, S = screenshot. `--demo`
 stages an AI-vs-AI war; `--mission` loads a campaign mission's .ota/.cob;
 `--side ara|tar|ver|zon|cre` picks your faction and `--aiside` the
