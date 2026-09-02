@@ -86,10 +86,115 @@ Unit* World::unit(int id) {
     return nullptr;
 }
 
+NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int cliff)
+    : w_(w), h_(h) {
+    cells_.assign(size_t(w) * h, 1);
+    for (int z = 0; z < h; ++z)
+        for (int x = 0; x < w; ++x) {
+            int lo = 255, hi = 0;
+            for (int dz = -1; dz <= 1; ++dz)
+                for (int dx = -1; dx <= 1; ++dx) {
+                    int nx = std::clamp(x + dx, 0, w - 1);
+                    int nz = std::clamp(z + dz, 0, h - 1);
+                    int v = heights[size_t(nz) * w + nx];
+                    lo = std::min(lo, v);
+                    hi = std::max(hi, v);
+                }
+            if (hi - lo > cliff) cells_[size_t(z) * w + x] = 0;
+        }
+}
+
+bool NavGrid::lineClear(int x0, int z0, int x1, int z1) const {
+    int dx = std::abs(x1 - x0), dz = -std::abs(z1 - z0);
+    int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1, err = dx + dz;
+    while (true) {
+        if (!walkable(x0, z0)) return false;
+        if (x0 == x1 && z0 == z1) return true;
+        int e2 = 2 * err;
+        if (e2 >= dz) { err += dz; x0 += sx; }
+        if (e2 <= dx) { err += dx; z0 += sz; }
+    }
+}
+
+std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1) const {
+    constexpr int kCell = 16;
+    int sx = int(wx0) / kCell, sz = int(wz0) / kCell;
+    int tx = int(wx1) / kCell, tz = int(wz1) / kCell;
+    if (!walkable(tx, tz) || !walkable(sx, sz)) return {};
+    if (lineClear(sx, sz, tx, tz)) return {{wx1, wz1, 0}};
+
+    // A* over cells, octile heuristic.
+    struct Node { float f; int idx; };
+    auto cmp = [](const Node& a, const Node& b) { return a.f > b.f; };
+    std::vector<Node> open;
+    std::vector<float> g(size_t(w_) * h_, 1e30f);
+    std::vector<int> from(size_t(w_) * h_, -1);
+    auto hcost = [&](int x, int z) {
+        float ax = float(std::abs(x - tx)), az = float(std::abs(z - tz));
+        return std::max(ax, az) + 0.41421f * std::min(ax, az);
+    };
+    int start = sz * w_ + sx, goal = tz * w_ + tx;
+    g[size_t(start)] = 0;
+    open.push_back({hcost(sx, sz), start});
+    static const int DX[8] = {1, -1, 0, 0, 1, 1, -1, -1};
+    static const int DZ[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+    int expansions = 0;
+    while (!open.empty() && expansions++ < 40000) {
+        std::pop_heap(open.begin(), open.end(), cmp);
+        Node n = open.back();
+        open.pop_back();
+        if (n.idx == goal) break;
+        int cx = n.idx % w_, cz = n.idx / w_;
+        for (int d = 0; d < 8; ++d) {
+            int nx = cx + DX[d], nz = cz + DZ[d];
+            if (!walkable(nx, nz)) continue;
+            if (d >= 4 && (!walkable(cx + DX[d], cz) || !walkable(cx, cz + DZ[d])))
+                continue;   // no diagonal corner cutting
+            float step = d >= 4 ? 1.41421f : 1.0f;
+            float ng = g[size_t(n.idx)] + step;
+            int ni = nz * w_ + nx;
+            if (ng < g[size_t(ni)]) {
+                g[size_t(ni)] = ng;
+                from[size_t(ni)] = n.idx;
+                open.push_back({ng + hcost(nx, nz), ni});
+                std::push_heap(open.begin(), open.end(), cmp);
+            }
+        }
+    }
+    if (from[size_t(goal)] < 0) return {};
+
+    std::vector<std::pair<int, int>> cells;
+    for (int i = goal; i >= 0; i = from[size_t(i)]) {
+        cells.push_back({i % w_, i / w_});
+        if (i == start) break;
+    }
+    std::reverse(cells.begin(), cells.end());
+
+    // Simplify: greedily skip waypoints with a clear straight line.
+    std::vector<Order> out;
+    size_t anchor = 0;
+    for (size_t i = 2; i < cells.size(); ++i) {
+        if (!lineClear(cells[anchor].first, cells[anchor].second, cells[i].first,
+                       cells[i].second)) {
+            anchor = i - 1;
+            out.push_back({cells[anchor].first * 16.0f + 8, cells[anchor].second * 16.0f + 8, 0});
+        }
+    }
+    out.push_back({wx1, wz1, 0});
+    return out;
+}
+
 void World::order(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || !u->type->canMove) return;
     if (!queue) u->orders.clear();
+    if (!nav_.empty()) {
+        auto path = nav_.findPath(u->x, u->z, x, z);
+        if (!path.empty()) {
+            for (const auto& o : path) u->orders.push_back(o);
+            return;
+        }
+    }
     u->orders.push_back({x, z, 0});
 }
 

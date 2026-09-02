@@ -76,9 +76,35 @@ struct Projectile {
     float life = 0;        // seconds left before it fizzles
 };
 
+// Walkability grid derived from TNT heights: a cell is blocked when the
+// local height spread exceeds a cliff threshold.
+class NavGrid {
+public:
+    NavGrid() = default;
+    NavGrid(const std::vector<uint8_t>& heights, int w, int h, int cliff = 20);
+
+    bool walkable(int cx, int cz) const {
+        return cx >= 0 && cz >= 0 && cx < w_ && cz < h_ && cells_[size_t(cz) * w_ + cx];
+    }
+    bool empty() const { return cells_.empty(); }
+    int width() const { return w_; }
+    int height() const { return h_; }
+
+    // A* in cell space (16px cells), with waypoint simplification.
+    // Returns world-space waypoints; empty if unreachable.
+    std::vector<Order> findPath(float x0, float z0, float x1, float z1) const;
+
+private:
+    bool lineClear(int x0, int z0, int x1, int z1) const;
+
+    std::vector<uint8_t> cells_;
+    int w_ = 0, h_ = 0;
+};
+
 class World {
 public:
     int spawn(const UnitType* type, float x, float z, float heading = 0, int team = 0);
+    void setNav(NavGrid grid) { nav_ = std::move(grid); }
     // Move order; queue appends.
     void order(int unitId, float x, float z, bool queue);
     // Attack order on an enemy unit.
@@ -96,6 +122,7 @@ private:
 
     std::vector<Unit> units_;
     std::vector<Projectile> projectiles_;
+    NavGrid nav_;
     int nextId_ = 1;
 };
 

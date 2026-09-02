@@ -351,6 +351,8 @@ public:
         loadTextures(dataRoot_ + "/textures", dataRoot_ + "/palettes/ara_textures.pcx");
         mapView_.setZoom(0.9f);
 
+        world_.setNav(tak::sim::NavGrid(mapView_.map().heights, mapView_.map().width,
+                                        mapView_.map().height));
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         mapView_.setOffset(cx - 640 / 0.9f + 110, cz - 400 / 0.9f + 20);
         const char* aramon[] = {"araarch", "araarch", "araarch", "arasword",
@@ -381,38 +383,82 @@ public:
 
     void input(const SDL_Event& e, int winW, int winH) {
         (void)winW; (void)winH;
-        if (e.type == SDL_MOUSEWHEEL) {
+        float zm = mapView_.zoom();
+        if (e.type == SDL_MOUSEWHEEL || e.type == SDL_KEYDOWN) {
             mapView_.input(e);
-        } else if (e.type == SDL_KEYDOWN) {
-            mapView_.input(e);
-        } else if (e.type == SDL_MOUSEBUTTONDOWN) {
-            float wx = mapView_.offX() + e.button.x / mapView_.zoom();
-            float wz = mapView_.offY() + e.button.y / mapView_.zoom();
-            if (e.button.button == SDL_BUTTON_LEFT) {
-                selected_ = -1;
+        } else if (e.type == SDL_MOUSEMOTION) {
+            if (e.motion.state & SDL_BUTTON_MMASK)   // middle-drag scrolls
+                mapView_.setOffset(mapView_.offX() - e.motion.xrel / zm,
+                                   mapView_.offY() - e.motion.yrel / zm);
+            if (dragging_) { dragX1_ = float(e.motion.x); dragY1_ = float(e.motion.y); }
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+            dragging_ = true;
+            dragX0_ = dragX1_ = float(e.button.x);
+            dragY0_ = dragY1_ = float(e.button.y);
+        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+            dragging_ = false;
+            float x0 = mapView_.offX() + std::min(dragX0_, dragX1_) / zm;
+            float x1 = mapView_.offX() + std::max(dragX0_, dragX1_) / zm;
+            float z0 = mapView_.offY() + std::min(dragY0_, dragY1_) / zm;
+            float z1 = mapView_.offY() + std::max(dragY0_, dragY1_) / zm;
+            bool isClick = (x1 - x0) < 6 && (z1 - z0) < 6;
+            selection_.clear();
+            if (isClick) {
+                float wx = (x0 + x1) / 2, wz = (z0 + z1) / 2;
+                int hit = -1;
                 float best = 24 * 24;
                 for (auto& u : world_.units()) {
+                    if (!u.alive()) continue;
                     float dx = u.x - wx, dz = u.z - wz;
-                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; selected_ = u.id; }
+                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; hit = u.id; }
                 }
-            } else if (e.button.button == SDL_BUTTON_RIGHT && selected_ >= 0) {
-                bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
-                // Clicking near an enemy of the selected unit = attack order.
-                const auto* sel = world_.unit(selected_);
-                int enemy = -1;
-                float best = 20 * 20;
-                for (auto& u : world_.units()) {
-                    if (!u.alive() || !sel || u.team == sel->team) continue;
-                    float dx = u.x - wx, dz = u.z - wz;
-                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
+                if (hit >= 0) selection_.push_back(hit);
+            } else {
+                for (auto& u : world_.units())
+                    if (u.alive() && u.team == 0 && u.x >= x0 && u.x <= x1 &&
+                        u.z >= z0 && u.z <= z1)
+                        selection_.push_back(u.id);
+            }
+        } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                   e.button.button == SDL_BUTTON_RIGHT && !selection_.empty()) {
+            float wx = mapView_.offX() + e.button.x / zm;
+            float wz = mapView_.offY() + e.button.y / zm;
+            bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+            // Clicking near an enemy = attack; else formation move.
+            int enemy = -1;
+            float best = 20 * 20;
+            const auto* first = world_.unit(selection_.front());
+            for (auto& u : world_.units()) {
+                if (!u.alive() || !first || u.team == first->team) continue;
+                float dx = u.x - wx, dz = u.z - wz;
+                if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
+            }
+            if (enemy >= 0) {
+                for (int id : selection_) world_.attack(id, enemy, queue);
+            } else {
+                float cx = 0, cz = 0;
+                int n = 0;
+                for (int id : selection_)
+                    if (const auto* u = world_.unit(id)) { cx += u->x; cz += u->z; ++n; }
+                if (n) { cx /= float(n); cz /= float(n); }
+                for (int id : selection_) {
+                    const auto* u = world_.unit(id);
+                    if (!u) continue;
+                    float ox = std::clamp(u->x - cx, -60.0f, 60.0f);
+                    float oz = std::clamp(u->z - cz, -60.0f, 60.0f);
+                    world_.order(id, wx + ox, wz + oz, queue);
                 }
-                if (enemy >= 0) world_.attack(selected_, enemy, queue);
-                else world_.order(selected_, wx, wz, queue);
             }
         }
     }
 
     void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }
+
+    void marchTo(float dx, float dz) {
+        float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        for (auto& u : world_.units())
+            if (u.team == 0) world_.order(u.id, cx + dx, cz + dz, false);
+    }
 
     void update(float dt) {
         world_.tick(dt);
@@ -468,18 +514,55 @@ public:
                                 sy - p.vz * 0.03f * zm);
         }
 
-        if (const auto* u = world_.unit(selected_)) {
-            if (u->alive()) {
-                drawRing(u->x, u->z, 14);
-                for (const auto& o : u->orders)
-                    if (o.targetId == 0) drawRing(o.x, o.z, 4);
-            }
+        for (int id : selection_) {
+            const auto* u = world_.unit(id);
+            if (!u || !u->alive()) continue;
+            drawRing(u->x, u->z, 14);
+            for (const auto& o : u->orders)
+                if (o.targetId == 0) drawRing(o.x, o.z, 4);
+        }
+
+        // Health bars for damaged or selected units.
+        for (const auto& u : world_.units()) {
+            if (!u.alive() || !u.type) continue;
+            bool sel = std::find(selection_.begin(), selection_.end(), u.id) !=
+                       selection_.end();
+            float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
+            if (!sel && frac >= 1.0f) continue;
+            float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
+            float bx = (u.x - mapView_.offX()) * zm - bw / 2;
+            float by = (u.z - mapView_.offY()) * zm - 30 * zm;
+            SDL_FRect bg{bx - 1, by - 1, bw + 2, bh + 2};
+            SDL_SetRenderDrawColor(ren_, 10, 10, 10, 220);
+            SDL_RenderFillRectF(ren_, &bg);
+            SDL_FRect fg{bx, by, bw * frac, bh};
+            SDL_SetRenderDrawColor(ren_, uint8_t(230 * (1 - frac) + 40 * frac),
+                                   uint8_t(200 * frac + 40 * (1 - frac)), 40, 255);
+            SDL_RenderFillRectF(ren_, &fg);
+        }
+
+        if (dragging_) {
+            SDL_FRect r{std::min(dragX0_, dragX1_), std::min(dragY0_, dragY1_),
+                        std::abs(dragX1_ - dragX0_), std::abs(dragY1_ - dragY0_)};
+            SDL_SetRenderDrawColor(ren_, 120, 255, 150, 200);
+            SDL_RenderDrawRectF(ren_, &r);
         }
     }
 
     void advance(float seconds) {
-        for (float t = 0; t < seconds; t += 1.0f / 30.0f) update(1.0f / 30.0f);
+        float printed = 0;
+        for (float t = 0; t < seconds; t += 1.0f / 30.0f) {
+            update(1.0f / 30.0f);
+            if (trace_ && t >= printed) {
+                printed += 0.5f;
+                for (auto& u : world_.units())
+                    if (u.team == 0 && u.alive())
+                        std::printf("TRACE %.1f %d %.1f %.1f\n", t, u.id, u.x, u.z);
+            }
+        }
     }
+
+    void setTrace(bool on) { trace_ = on; }
 
 private:
     struct Visual {
@@ -670,8 +753,11 @@ private:
     std::map<int, Anim> anims_;
     std::map<std::string, SDL_Texture*> textures_;
     std::vector<Tri> tris_;
-    int selected_ = -1;
+    std::vector<int> selection_;
+    bool dragging_ = false;
+    float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
     bool follow_ = false;
+    bool trace_ = false;
 };
 
 } // namespace
@@ -688,8 +774,8 @@ int main(int argc, char** argv) {
     }
     std::string mode = argv[1];
     std::string shot, cobPath, anim;
-    float startTime = 0, followZoom = 0;
-    bool demo = false;
+    float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
+    bool demo = false, doMarch = false, trace = false;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
@@ -698,7 +784,13 @@ int main(int argc, char** argv) {
         else if (a == "--anim" && i + 1 < argc) anim = argv[++i];
         else if (a == "--time" && i + 1 < argc) startTime = std::stof(argv[++i]);
         else if (a == "--demo") demo = true;
+        else if (a == "--trace") trace = true;
         else if (a == "--follow" && i + 1 < argc) followZoom = std::stof(argv[++i]);
+        else if (a == "--march" && i + 2 < argc) {
+            marchX = std::stof(argv[++i]);
+            marchZ = std::stof(argv[++i]);
+            doMarch = true;
+        }
         else args.push_back(a);
     }
     if (!shot.empty()) SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
@@ -726,6 +818,8 @@ int main(int argc, char** argv) {
         } else if (mode == "game" && args.size() >= 3) {
             gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo);
             if (followZoom > 0) gameView->setFollow(followZoom);
+            if (doMarch) gameView->marchTo(marchX, marchZ);
+            if (trace) gameView->setTrace(true);
             if (startTime > 0) gameView->advance(startTime);
         } else if (mode == "model" && !args.empty()) {
             modelView = std::make_unique<ModelView>(ren, args[0],
