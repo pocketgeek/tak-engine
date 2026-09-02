@@ -1838,6 +1838,11 @@ public:
             if (a.flying) {
                 // Keep the wing-flap loop alive; never reset for a walk cycle.
                 if (a.vm->threadCount() == 0) a.vm->start("fly");
+                // Take off when moving, settle back to the ground when idle.
+                float cruise = u.type ? u.type->cruiseAlt : 0.0f;
+                float target = (u.walking() || !u.orders.empty()) ? cruise : 0.0f;
+                float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise
+                a.altitude += std::clamp(target - a.altitude, -step, step);
             } else {
                 bool m = u.walking();
                 if (m != a.walking) {
@@ -2341,7 +2346,9 @@ private:
         bool producing = false;
         bool firing = false;
         bool flying = false;
+        float altitude = 0;   // flyers: 0 grounded, rising to cruiseAlt in flight
     };
+    static constexpr float kFlyPitch = 1.2f;   // forward "superman" lean at cruise
 
     void registerUnit(const tak::sim::Unit& u) {
         const std::string& typeId = u.type->id;
@@ -2485,8 +2492,14 @@ private:
 
         tris_.clear();
         Xform base;
-        if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
-            base.t[1] = u.type->cruiseAlt;   // flyers cruise above the ground
+        if (u.type && u.type->canFly && u.type->cruiseAlt > 0) {
+            // Rise to cruise altitude and lean forward (superman) in proportion
+            // to how airborne she is; grounded she stands upright.
+            float alt = anim ? anim->altitude : u.type->cruiseAlt;
+            float frac = std::clamp(alt / u.type->cruiseAlt, 0.0f, 1.0f);
+            float pitch[3] = {-kFlyPitch * frac, 0, 0};
+            base = Xform().then(0, alt, 0, pitch);
+        }
         // Buildings are stationary; their billboards are authored facing the
         // camera (yaw 0). Mobile units turn to face their heading; the +pi
         // aligns the models' authored forward axis with the movement dir.
