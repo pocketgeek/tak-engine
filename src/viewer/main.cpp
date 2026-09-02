@@ -21,6 +21,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -338,6 +339,66 @@ private:
     bool spin_ = true, fitted_ = false;
 };
 
+// TAK GAF bitmap font: 256 glyph frames, one per codepoint, palette from
+// the same-stem 1x1 PCX.
+class Font {
+public:
+    Font() = default;
+    Font(SDL_Renderer* ren, const std::filesystem::path& gafPath) {
+        auto pcx = gafPath;
+        pcx.replace_extension(".pcx");
+        auto pal = tak::gaf::Palette::load(pcx);
+        auto seqs = tak::gaf::load(gafPath, pal);
+        if (seqs.empty()) return;
+        auto& frames = seqs[0].frames;
+        for (size_t i = 0; i < frames.size() && i < 256; ++i) {
+            auto& f = frames[i];
+            Glyph g;
+            g.w = f.width;
+            g.h = f.height;
+            g.yoff = f.yoff;
+            if (f.width > 0 && f.height > 0) {
+                g.tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,
+                                          SDL_TEXTUREACCESS_STATIC, f.width, f.height);
+                SDL_UpdateTexture(g.tex, nullptr, f.rgba.data(), f.width * 4);
+                SDL_SetTextureBlendMode(g.tex, SDL_BLENDMODE_BLEND);
+            }
+            glyphs_[i] = g;
+        }
+        ok_ = true;
+    }
+
+    bool ok() const { return ok_; }
+
+    int width(const std::string& text, float scale = 1) const {
+        float x = 0;
+        for (unsigned char c : text) x += advance(glyphs_[c]) * scale;
+        return int(x);
+    }
+
+    void draw(SDL_Renderer* ren, const std::string& text, float x, float y,
+              float scale = 1, SDL_Color tint = {255, 255, 255, 255}) const {
+        for (unsigned char c : text) {
+            const Glyph& g = glyphs_[c];
+            if (g.tex) {
+                SDL_SetTextureColorMod(g.tex, tint.r, tint.g, tint.b);
+                SDL_FRect dst{x, y - g.yoff * scale, g.w * scale, g.h * scale};
+                SDL_RenderCopyF(ren, g.tex, nullptr, &dst);
+            }
+            x += advance(g) * scale;
+        }
+    }
+
+private:
+    struct Glyph {
+        SDL_Texture* tex = nullptr;
+        int w = 0, h = 0, yoff = 0;
+    };
+    static float advance(const Glyph& g) { return g.w > 0 ? float(g.w + 2) : 4.0f; }
+    Glyph glyphs_[256] = {};
+    bool ok_ = false;
+};
+
 // --------------------------------------------------------------- game mode
 
 // Units simulated on a real map: left-click select, right-click move order
@@ -374,13 +435,23 @@ public:
             if (id >= 0) teamB.push_back(id);
             ++i;
         }
-        // A Keep (HQ) and two Lodestones (mana economy) for team 0; building
-        // footprints block the nav grid.
+        // Bases: player Keep + Lodestones west, AI Abyss + Lodestones east.
         keepId_ = spawn("arakeep", cx - 260, cz + 30, 3.14159f, 0);
         spawn("aralode", cx - 340, cz - 30, 3.14159f, 0);
         spawn("aralode", cx - 180, cz - 30, 3.14159f, 0);
+        aiKeepId_ = spawn("tardung", cx + 300, cz + 30, 3.14159f, 1);
+        spawn("tarlode", cx + 380, cz - 30, 3.14159f, 1);
+        spawn("tarlode", cx + 220, cz - 30, 3.14159f, 1);
+        world_.team(1).mana = 800;
+
+        try {
+            hudFont_ = Font(ren_, dataRoot_ + "/fonts/bodfontbody.gaf");
+            bigFont_ = Font(ren_, dataRoot_ + "/fonts/font48.gaf");
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "font load: %s\n", e.what());
+        }
         for (auto& u : world_.units()) {
-            if (u.team != 0 || !u.type || u.type->canMove) continue;
+            if (!u.type || u.type->canMove) continue;
             world_.nav().block(int(u.x) / 16 - u.type->footX / 2,
                                int(u.z) / 16 - u.type->footZ / 2,
                                u.type->footX, u.type->footZ, true);
@@ -392,6 +463,7 @@ public:
                 world_.attack(teamB[k], teamA[k % teamA.size()], false);
             for (int k = 0; k < 4; ++k)
                 world_.train(keepId_, registry_.find("araarch"));
+            demoAi_ = true;
         }
     }
 
@@ -487,6 +559,16 @@ public:
         world_.tick(dt);
         for (auto& u : world_.units())
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
+        tickAi(dt);
+
+        // Victory check: a side with no living units loses.
+        if (outcome_ == 0) {
+            int alive[2] = {0, 0};
+            for (auto& u : world_.units())
+                if (u.alive() && u.team < 2) ++alive[u.team];
+            if (alive[1] == 0) outcome_ = 1;
+            else if (alive[0] == 0) outcome_ = -1;
+        }
         if (follow_ && !world_.units().empty()) {
             float cx = 0, cz = 0;
             for (auto& u : world_.units()) { cx += u.x; cz += u.z; }
@@ -583,7 +665,7 @@ public:
             SDL_RenderFillRectF(ren_, &fg);
         }
 
-        // Team-0 mana bar, top left.
+        // Team-0 mana bar + HUD text, top left.
         {
             auto& tm = world_.team(0);
             float cap = std::max(tm.storage, 100.0f);
@@ -593,6 +675,50 @@ public:
             SDL_FRect fg{12, 12, 176 * std::clamp(tm.mana / cap, 0.0f, 1.0f), 8};
             SDL_SetRenderDrawColor(ren_, 80, 200, 255, 255);
             SDL_RenderFillRectF(ren_, &fg);
+            if (hudFont_.ok()) {
+                char buf[96];
+                std::snprintf(buf, sizeof buf, "MANA %d/%d  +%d", int(tm.mana), int(cap),
+                              int(tm.income));
+                hudFont_.draw(ren_, buf, 198, 21, 1.5f, {170, 225, 255, 255});
+                if (!selection_.empty()) {
+                    const auto* u = world_.unit(selection_.front());
+                    if (u && u->alive() && u->type) {
+                        std::snprintf(buf, sizeof buf, "%s  %d/%d", u->type->name.c_str(),
+                                      int(u->hp), int(u->type->maxHp));
+                        hudFont_.draw(ren_, buf, 12, 40, 1.5f, {220, 220, 190, 255});
+                        if (u->type->isBuilder) {
+                            const auto& menu = registry_.buildable(u->type->id);
+                            std::string m;
+                            for (size_t i = 0; i < menu.size() && i < 6; ++i) {
+                                const auto* bt = registry_.find(menu[i]);
+                                m += std::to_string(i + 1) + ":" +
+                                     (bt ? bt->name : menu[i]) + "  ";
+                            }
+                            if (!m.empty())
+                                hudFont_.draw(ren_, m, 12, 58, 1.5f, {180, 200, 170, 255});
+                            if (!u->buildQueue.empty()) {
+                                std::snprintf(buf, sizeof buf, "TRAINING %s (%zu queued)",
+                                              u->buildQueue.front()->name.c_str(),
+                                              u->buildQueue.size());
+                                hudFont_.draw(ren_, buf, 12, 76, 1.5f, {150, 200, 255, 255});
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Victory / defeat banner.
+        if (outcome_ != 0 && bigFont_.ok()) {
+            const char* msg = outcome_ > 0 ? "VICTORY" : "DEFEAT";
+            SDL_Color col = outcome_ > 0 ? SDL_Color{255, 220, 90, 255}
+                                         : SDL_Color{255, 90, 70, 255};
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_FRect shade{0, float(winH) / 2 - 60, float(winW), 120};
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
+            SDL_RenderFillRectF(ren_, &shade);
+            float tw = float(bigFont_.width(msg, 1.5f));
+            bigFont_.draw(ren_, msg, (winW - tw) / 2, float(winH) / 2 + 24, 1.5f, col);
         }
 
         if (dragging_) {
@@ -619,6 +745,46 @@ public:
     void setTrace(bool on) { trace_ = on; }
 
 private:
+    // Simple wave AI: keep the production queue full, and when enough idle
+    // fighters have gathered, throw them at the nearest player unit.
+    void tickAi(float dt) {
+        aiTimer_ -= dt;
+        if (aiTimer_ > 0 || outcome_ != 0) return;
+        aiTimer_ = 1.0f;
+
+        runAi(1, aiKeepId_, std::array<const char*, 4>{"tararch", "tartb", "tararch",
+                                                       "tarbeak"});
+        // In demo mode team 0 is AI-driven too: a full war plays itself out.
+        if (demoAi_)
+            runAi(0, keepId_, std::array<const char*, 4>{"araarch", "arasword", "araarch",
+                                                         "araknigh"});
+    }
+
+    void runAi(int team, int keepId, std::array<const char*, 4> cycle) {
+        auto* keep = world_.unit(keepId);
+        if (keep && keep->alive() && keep->buildQueue.empty())
+            world_.train(keepId, registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]));
+
+        std::vector<int> idle;
+        for (auto& u : world_.units())
+            if (u.alive() && u.team == team && u.type && u.type->canMove &&
+                u.orders.empty())
+                idle.push_back(u.id);
+        if (idle.size() >= 4) {
+            for (int id : idle) {
+                const auto* me = world_.unit(id);
+                int best = 0;
+                float bestD = 1e18f;
+                for (auto& e : world_.units()) {
+                    if (!e.alive() || e.team == team) continue;
+                    float dx = e.x - me->x, dz = e.z - me->z;
+                    if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; best = e.id; }
+                }
+                if (best) world_.attack(id, best, false);
+            }
+        }
+    }
+
     struct Visual {
         tak::tdo::Model model;
     };
@@ -819,7 +985,12 @@ private:
     float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
     bool follow_ = false;
     bool trace_ = false;
-    int keepId_ = -1;
+    int keepId_ = -1, aiKeepId_ = -1;
+    int aiTrained_ = 0;
+    float aiTimer_ = 0;
+    int outcome_ = 0;   // 0 = playing, 1 = victory, -1 = defeat
+    bool demoAi_ = false;
+    Font hudFont_, bigFont_;
 };
 
 } // namespace

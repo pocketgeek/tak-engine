@@ -274,6 +274,20 @@ void World::fire(Unit& u, Unit& target) {
 
 void World::tickCombat(Unit& u, float dt) {
     if (u.reloadLeft > 0) u.reloadLeft -= dt;
+
+    // Auto-acquire: idle armed units engage the nearest enemy in reach.
+    if (u.orders.empty() && u.type->weapon.damage > 0) {
+        float ar = u.type->weapon.range + 90;
+        int best = 0;
+        float bestD = ar * ar;
+        for (auto& e : units_) {
+            if (!e.alive() || e.team == u.team || !e.type) continue;
+            float dx = e.x - u.x, dz = e.z - u.z;
+            float d = dx * dx + dz * dz;
+            if (d < bestD) { bestD = d; best = e.id; }
+        }
+        if (best) u.orders.push_back({0, 0, best});
+    }
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
 
     Unit* target = unit(u.orders.front().targetId);
@@ -284,6 +298,10 @@ void World::tickCombat(Unit& u, float dt) {
     float dx = target->x - u.x, dz = target->z - u.z;
     float dist = std::sqrt(dx * dx + dz * dz);
     const Weapon& w = u.type->weapon;
+    if (!u.type->canMove && dist > w.range) {   // static units can't chase
+        u.orders.pop_front();
+        return;
+    }
     if (dist > w.range * 0.95f) {
         // Advance toward the target: rewrite the head order's move point.
         u.orders.front().x = target->x;
