@@ -673,7 +673,7 @@ public:
                     std::istringstream ws(clean);
                     std::string word;
                     while (ws >> word) {
-                        if (cur.size() + word.size() > 54) {
+                        if (cur.size() + word.size() > 42) {
                             briefing_.push_back(cur);
                             cur = "  ";
                         }
@@ -1682,6 +1682,27 @@ private:
                 a.pieceNames.push_back(n);
             }
             a.vm = std::make_unique<tak::cob::Vm>(std::move(cobFile));
+            // TA COB unit-state queries answered from the sim.
+            int unitId = u.id;
+            a.vm->onGet = [this, unitId](int32_t valId,
+                                         const std::vector<int32_t>&) -> int32_t {
+                const auto* su = world_.unit(unitId);
+                if (!su || !su->type) return 0;
+                switch (valId) {
+                    case 0:  return su->buildQueue.empty() ? 0 : 1;   // ACTIVATION
+                    case 3:  return int32_t(su->hp / su->type->maxHp * 100);  // HEALTH
+                    case 5:  return su->moving() ? 1 : 0;             // BUSY
+                    case 8:  {                                        // UNIT_XZ
+                        int32_t x = int32_t(su->x) & 0xFFFF;
+                        int32_t z = int32_t(su->z) & 0xFFFF;
+                        return (x << 16) | z;
+                    }
+                    case 16: return su->underConstruction              // BUILD_PCT_LEFT
+                                 ? int32_t(100 - su->hp / su->type->maxHp * 100)
+                                 : 0;
+                    default: return 0;
+                }
+            };
         } catch (const std::exception&) { /* unit stays unanimated */ }
         if (a.vm) anims_[u.id] = std::move(a);
         unitType_[u.id] = typeId;
