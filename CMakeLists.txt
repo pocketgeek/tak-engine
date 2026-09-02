@@ -18,6 +18,7 @@ find_package(ZLIB REQUIRED)
 add_library(tak-formats
   src/hpi/hpi.cpp
   src/gaf/gaf.cpp
+  src/tnt/tnt.cpp
   src/util/png.cpp
 )
 target_include_directories(tak-formats PUBLIC src)
@@ -30,6 +31,9 @@ target_link_libraries(hpitool PRIVATE tak-formats)
 
 add_executable(gaftool tools/gaftool.cpp)
 target_link_libraries(gaftool PRIVATE tak-formats)
+
+add_executable(tnttool tools/tnttool.cpp)
+target_link_libraries(tnttool PRIVATE tak-formats)
 
 # --- Viewer (needs SDL2; skipped with a warning if unavailable) ---------------
 
