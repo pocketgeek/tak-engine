@@ -561,7 +561,17 @@ public:
         : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot) {
         registry_.loadDir(dataRoot_ + "/units");
         registry_.loadBuildTree(dataRoot_ + "/canbuild");
+        ipRoot_ = dataRoot_ + "/../IPData";
+        if (std::filesystem::exists(ipRoot_ + "/units")) {
+            registry_.loadDir(ipRoot_ + "/units");
+            if (std::filesystem::exists(ipRoot_ + "/canbuild"))
+                registry_.loadBuildTree(ipRoot_ + "/canbuild");
+        } else {
+            ipRoot_.clear();
+        }
         loadTextures(dataRoot_ + "/textures", dataRoot_ + "/palettes/ara_textures.pcx");
+        if (!ipRoot_.empty() && std::filesystem::exists(ipRoot_ + "/textures"))
+            loadTextures(ipRoot_ + "/textures", ipRoot_ + "/palettes/cre_textures.pcx");
         mapView_.setZoom(0.9f);
 
         if (mission) {
@@ -1009,6 +1019,19 @@ public:
         for (size_t i = 0; i < b.size(); ++i)
             world_.attack(b[i], a[i % a.size()], false);
         mapView_.setOffset(1500 - 640 / 0.9f, 1380 - 400 / 0.9f);
+    }
+
+    void creonDemo() {
+        aiEnabled_ = false;
+        float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        const char* squad[] = {"cregod",  "creiron", "creauto", "creauto",
+                               "crebeas", "cregatl", "creshoc", "credrag"};
+        int i = 0;
+        for (const char* t : squad) {
+            spawn(t, cx - 100 + float(i % 4) * 60, cz - 40 + float(i / 4) * 70, 1.57f, 0);
+            ++i;
+        }
+        mapView_.setOffset(cx - 640 / 0.9f, cz - 400 / 0.9f);
     }
 
     void missionTest() {
@@ -1494,14 +1517,23 @@ private:
         if (!visuals_.count(typeId)) {
             try {
                 visuals_[typeId] = {tak::tdo::load(dataRoot_ + "/objects3d/" + typeId + ".3do")};
-            } catch (const std::exception& e) {
-                std::fprintf(stderr, "no model for %s: %s\n", typeId.c_str(), e.what());
-                return;
+            } catch (const std::exception&) {
+                try {
+                    visuals_[typeId] = {
+                        tak::tdo::load(ipRoot_ + "/objects3d/" + typeId + ".3do")};
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "no model for %s: %s\n", typeId.c_str(),
+                                 e.what());
+                    return;
+                }
             }
         }
         Anim a;
         try {
-            auto cobFile = tak::cob::load(dataRoot_ + "/scripts/" + typeId + ".cob");
+            std::string cobPath = dataRoot_ + "/scripts/" + typeId + ".cob";
+            if (!std::filesystem::exists(cobPath) && !ipRoot_.empty())
+                cobPath = ipRoot_ + "/scripts/" + typeId + ".cob";
+            auto cobFile = tak::cob::load(cobPath);
             for (const auto& p : cobFile.pieces) {
                 std::string n = p;
                 std::transform(n.begin(), n.end(), n.begin(), ::tolower);
@@ -1530,6 +1562,12 @@ private:
             try {
                 pals[side] = tak::gaf::Palette::load(
                     dataRoot_ + "/palettes/" + std::string(side) + "_textures.pcx");
+            } catch (const std::exception&) {}
+        }
+        if (!ipRoot_.empty()) {
+            try {
+                pals["cre"] = tak::gaf::Palette::load(ipRoot_ +
+                                                      "/palettes/cre_textures.pcx");
             } catch (const std::exception&) {}
         }
         for (const auto& e : std::filesystem::directory_iterator(texDir)) {
@@ -1692,6 +1730,7 @@ private:
     SDL_Renderer* ren_;
     MapView mapView_;
     std::string dataRoot_;
+    std::string ipRoot_;
     tak::sim::TypeRegistry registry_;
     tak::sim::World world_;
     std::map<std::string, Visual> visuals_;
@@ -2051,6 +2090,18 @@ private:
                 if (id >= 0) noticeTimer_ = 6;
                 return id;
             }
+            case 3: case 5: {   // HEURISTIC: activate spawned unit - join force
+                if (a.empty()) return 0;
+                const auto* u = world_.unit(a[0]);
+                if (!u) return 0;
+                float bx = 0, bz = 0;
+                int n = 0;
+                for (auto& o : world_.units())
+                    if (o.alive() && o.team == u->team && o.id != u->id && o.type &&
+                        o.type->canMove) { bx += o.x; bz += o.z; ++n; }
+                if (n) world_.attackMove(a[0], bx / float(n), bz / float(n), false);
+                return 0;
+            }
             case 8: case 9: case 12: case 13: case 14:
                 if (a.empty()) return missionTowerIdx_;   // type-constant heuristic
                 return 0;
@@ -2113,7 +2164,7 @@ int main(int argc, char** argv) {
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
-         misstest = false, nofog = false, doLook = false;
+         misstest = false, nofog = false, doLook = false, creon = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -2130,6 +2181,7 @@ int main(int argc, char** argv) {
         else if (a == "--amphib") amphib = true;
         else if (a == "--mission") missionFlag = true;
         else if (a == "--misstest") misstest = true;
+        else if (a == "--creon") creon = true;
         else if (a == "--nofog") nofog = true;
         else if (a == "--look" && i + 2 < argc) {
             lookX = std::stof(argv[++i]);
@@ -2176,6 +2228,7 @@ int main(int argc, char** argv) {
             if (testbuild) gameView->testBuild();
             if (navy) gameView->navyDemo();
             if (misstest) gameView->missionTest();
+            if (creon) gameView->creonDemo();
             if (nofog) gameView->noFog_ = true;
             if (doLook) gameView->lookAt(lookX, lookZ);
             if (amphib) gameView->amphibDemo();
