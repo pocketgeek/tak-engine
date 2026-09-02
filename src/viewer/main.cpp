@@ -706,26 +706,59 @@ private:
 class GameView {
 public:
     struct FactionKit {
-        const char* keep;
+        const char* monarch;   // hero commander the faction starts with
+        const char* keep;      // production building the monarch builds first
         const char* lode;
         const char* builder;
         const char* squad[4];
     };
     static const FactionKit& kit(const std::string& side) {
         static const std::map<std::string, FactionKit> kits = {
-            {"ara", {"arakeep", "aralode", "arabuild",
+            {"ara", {"araking", "arakeep", "aralode", "arabuild",
                      {"araarch", "araarch", "arasword", "arasword"}}},
-            {"tar", {"tardung", "tarlode", "tarnecro",
+            {"tar", {"tarnecro", "tardung", "tarlode", "tarnecro",
                      {"tararch", "tararch", "tardemon", "tartb"}}},
-            {"ver", {"verkeep", "verlode", "verliege",
+            {"ver", {"vermage", "verkeep", "verlode", "verliege",
                      {"verarch", "verarch", "versword", "versword"}}},
-            {"zon", {"", "zonlode", "zonhand",
+            {"zon", {"zonhunt", "", "zonlode", "zonhand",
                      {"zongob", "zongob", "zongob", "zonhand"}}},
-            {"cre", {"creacad", "crelode", "cremech",
+            {"cre", {"cresage", "creacad", "crelode", "cremech",
                      {"creauto", "creauto", "crebeas", "creshoc"}}},
         };
         auto it = kits.find(side);
         return it != kits.end() ? it->second : kits.at("ara");
+    }
+
+    // Player start positions from the map's sibling .ota, in world pixels,
+    // ordered StartPos1, StartPos2, …. OTA coordinates are in 16px cells.
+    static std::vector<std::pair<float, float>> parseStartPositions(
+        const std::string& tntPath) {
+        std::vector<std::pair<float, float>> out;
+        std::filesystem::path ota = tntPath;
+        ota.replace_extension(".ota");
+        if (!std::filesystem::exists(ota)) return out;
+        try {
+            auto root = tak::tdf::parse(ota);
+            const auto* gh = root.child("globalheader");
+            const auto* md = gh ? gh->child("map data") : nullptr;
+            const auto* sp = md ? md->child("specials") : nullptr;
+            if (!sp) return out;
+            std::map<int, std::pair<float, float>> byIndex;
+            for (const auto& name : sp->childOrder) {
+                const auto* s = sp->child(name);
+                if (!s) continue;
+                std::string what = s->valueOr("specialwhat", "");
+                if (what.rfind("StartPos", 0) != 0 &&
+                    what.rfind("startpos", 0) != 0)
+                    continue;
+                int n = std::atoi(what.c_str() + 8);
+                if (n <= 0) continue;
+                byIndex[n] = {float(s->numberOr("xpos", 0) * 16),
+                              float(s->numberOr("zpos", 0) * 16)};
+            }
+            for (auto& [n, pos] : byIndex) out.push_back(pos);
+        } catch (const std::exception&) {}
+        return out;
     }
 
     GameView(SDL_Renderer* ren, const std::string& tntPath, const std::string& terrainDir,
@@ -1011,58 +1044,64 @@ public:
                           mapView_.map().height, mapView_.map().seaLevel);
         loadFeatures();
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
-        // Nudge the demo anchor to buildable ground if the center is bad.
-        if (const auto* keepType = registry_.find("arakeep")) {
-            for (float r = 0; r < 900 && !world_.canPlace(keepType, cx - 260, cz + 30);
-                 r += 40) {
-                bool found = false;
-                for (float ang = 0; ang < 6.28f && !found; ang += 0.6f) {
-                    float nx = cx + std::cos(ang) * r, nz = cz + std::sin(ang) * r;
-                    if (world_.canPlace(keepType, nx - 260, nz + 30) &&
-                        world_.canPlace(keepType, nx + 300, nz + 30)) {
-                        cx = nx; cz = nz; found = true;
-                    }
+
+        // Each side starts with only its Monarch, dropped on the map's real
+        // start positions (from the .ota). Pick the two furthest-apart spots
+        // so the player and the AI begin on opposite sides.
+        auto starts = parseStartPositions(tntPath);
+        float px = cx - 260, pz = cz + 30;   // fallbacks near map center
+        float ax = cx + 300, az = cz + 30;
+        if (starts.size() >= 2) {
+            size_t bi = 0, bj = 1;
+            float bestD = -1;
+            for (size_t i = 0; i < starts.size(); ++i)
+                for (size_t j = i + 1; j < starts.size(); ++j) {
+                    float dx = starts[i].first - starts[j].first;
+                    float dz = starts[i].second - starts[j].second;
+                    if (dx * dx + dz * dz > bestD) { bestD = dx * dx + dz * dz; bi = i; bj = j; }
                 }
-                if (found) break;
-            }
+            px = starts[bi].first;  pz = starts[bi].second;
+            ax = starts[bj].first;  az = starts[bj].second;
+        } else if (starts.size() == 1) {
+            px = starts[0].first; pz = starts[0].second;
         }
-        mapView_.setOffset(cx - 640 / 0.9f + 110, cz - 400 / 0.9f + 20);
+        // Camera opens on the player's Monarch.
+        mapView_.setOffset(px - 640 / 0.9f, pz - 400 / 0.9f);
         if (!bare) {
         const FactionKit& pk = kit(side);
         const FactionKit& ak = kit(aiSide);
         aiCycle_ = {ak.squad[0], ak.squad[1], ak.squad[2], ak.squad[3]};
-        std::vector<int> teamA, teamB;
-        for (int i = 0; i < 6; ++i) {
-            int id = spawn(pk.squad[i % 4], cx - 160 + float(i % 2) * 26,
-                           cz - 60 + float(i / 2) * 30, 1.57f, 0);
-            if (id >= 0) teamA.push_back(id);
-        }
-        for (int i = 0; i < 6; ++i) {
-            int id = spawn(ak.squad[i % 4], cx + 160 + float(i % 2) * 26,
-                           cz - 60 + float(i / 2) * 30, -1.57f, 1);
-            if (id >= 0) teamB.push_back(id);
-        }
-        // Bases: player west, AI east. Zhon has no keep: extra handlers
-        // and lodestones instead.
-        if (pk.keep[0]) keepId_ = spawn(pk.keep, cx - 260, cz + 30, 3.14159f, 0);
-        else {
-            spawn(pk.builder, cx - 260, cz + 30, 3.14159f, 0);
-            spawn(pk.lode, cx - 260, cz + 90, 3.14159f, 0);
-        }
-        spawn(pk.lode, cx - 340, cz - 30, 3.14159f, 0);
-        spawn(pk.lode, cx - 180, cz - 30, 3.14159f, 0);
-        if (ak.keep[0]) aiKeepId_ = spawn(ak.keep, cx + 300, cz + 30, 3.14159f, 1);
-        spawn(ak.lode, cx + 380, cz - 30, 3.14159f, 1);
-        spawn(ak.lode, cx + 220, cz - 30, 3.14159f, 1);
-        world_.team(1).mana = 800;
-        builderId_ = spawn(pk.builder, cx - 320, cz + 80, 3.14159f, 0);
+        aiKeepType_ = ak.keep;
+        aiLodeType_ = ak.lode;
+        // Monarchs face one another.
+        float pFace = std::atan2(ax - px, az - pz);
+        float aFace = std::atan2(px - ax, pz - az);
+        playerMonarchId_ = spawn(pk.monarch, px, pz, pFace, 0);
+        builderId_ = playerMonarchId_;
+        aiMonarchId_ = spawn(ak.monarch, ax, az, aFace, 1);
+        // Enough mogrium to bootstrap: build lodestones for income, then a keep.
+        world_.team(0).mana = 2500;
+        world_.team(1).mana = 2500;
         if (demo) {
-            for (size_t k = 0; k < teamA.size(); ++k)
-                world_.attack(teamA[k], teamB[k % teamB.size()], false);
-            for (size_t k = 0; k < teamB.size(); ++k)
-                world_.attack(teamB[k], teamA[k % teamA.size()], false);
-            for (int k = 0; k < 4; ++k)
-                world_.train(keepId_, registry_.find("araarch"));
+            // Showcase: skip the slow build-up and pit two ready armies at the
+            // start positions against each other.
+            std::vector<int> teamA, teamB;
+            for (int i = 0; i < 6; ++i) {
+                int a = spawn(pk.squad[i % 4], px + float(i % 2) * 26,
+                              pz - 60 + float(i / 2) * 30, pFace, 0);
+                int b = spawn(ak.squad[i % 4], ax + float(i % 2) * 26,
+                              az - 60 + float(i / 2) * 30, aFace, 1);
+                if (a >= 0) teamA.push_back(a);
+                if (b >= 0) teamB.push_back(b);
+            }
+            if (pk.keep[0]) keepId_ = spawn(pk.keep, px, pz + 60, pFace, 0);
+            if (ak.keep[0]) aiKeepId_ = spawn(ak.keep, ax, az + 60, aFace, 1);
+            if (!teamA.empty() && !teamB.empty()) {
+                for (size_t k = 0; k < teamA.size(); ++k)
+                    world_.attack(teamA[k], teamB[k % teamB.size()], false);
+                for (size_t k = 0; k < teamB.size(); ++k)
+                    world_.attack(teamB[k], teamA[k % teamA.size()], false);
+            }
             demoAi_ = true;
         }
         }
@@ -2093,11 +2132,76 @@ private:
         if (!aiEnabled_ || aiTimer_ > 0 || outcome_ != 0) return;
         aiTimer_ = 1.0f;
 
-        runAi(1, aiKeepId_, aiCycle_);
-        // In demo mode team 0 is AI-driven too: a full war plays itself out.
-        if (demoAi_)
+        if (demoAi_) {
+            // Showcase: both pre-built armies simply fight.
+            runAi(1, aiKeepId_, aiCycle_);
             runAi(0, keepId_, std::array<std::string, 4>{"araarch", "arasword",
                                                          "araarch", "araknigh"});
+        } else {
+            // Skirmish: the AI Monarch bootstraps a base and produces.
+            runBuildAi(1, aiMonarchId_, aiKeepId_, aiKeepType_, aiLodeType_,
+                       aiCycle_);
+        }
+    }
+
+    // Bootstrapping AI: the Monarch raises lodestones for income, then its
+    // keep, then the keep trains a rolling army that attacks in waves.
+    void runBuildAi(int team, int monarchId, int& keepId,
+                    const std::string& keepType, const std::string& lodeType,
+                    const std::array<std::string, 4>& cycle) {
+        if (auto* k = world_.unit(keepId); !k || !k->alive()) keepId = -1;
+
+        auto* m = world_.unit(monarchId);
+        bool monIdle = m && m->alive() && m->type && m->type->isBuilder &&
+                       m->orders.empty() && m->buildSiteId == 0;
+        if (monIdle) {
+            // Priority: two lodestones, then the keep, then a few more lodes.
+            const tak::sim::UnitType* want = nullptr;
+            if (aiLodes_ < 2 && !lodeType.empty()) want = registry_.find(lodeType);
+            else if (keepId < 0 && !keepType.empty()) want = registry_.find(keepType);
+            else if (aiLodes_ < 5 && !lodeType.empty()) want = registry_.find(lodeType);
+            if (want) {
+                for (float r = 70; r < 340 && want; r += 30) {
+                    for (float a = 0; a < 6.28f; a += 0.5f) {
+                        float x = m->x + std::cos(a) * r, z = m->z + std::sin(a) * r;
+                        if (!world_.canPlace(want, x, z)) continue;
+                        int b = world_.startBuild(monarchId, want, x, z);
+                        if (b > 0) {
+                            if (want->id == keepType) keepId = b;
+                            else ++aiLodes_;
+                        }
+                        want = nullptr;   // one build order per tick
+                        break;
+                    }
+                }
+            }
+        }
+
+        auto* keep = world_.unit(keepId);
+        if (keep && keep->alive() && !keep->underConstruction &&
+            keep->buildQueue.empty())
+            world_.train(keepId,
+                         registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]));
+
+        // Once a strike force has gathered, send the non-builders at the enemy.
+        std::vector<int> idle;
+        for (auto& u : world_.units())
+            if (u.alive() && u.team == team && u.type && u.type->canMove &&
+                !u.type->isBuilder && u.orders.empty())
+                idle.push_back(u.id);
+        if (idle.size() >= 4) {
+            for (int id : idle) {
+                const auto* me = world_.unit(id);
+                int best = 0;
+                float bestD = 1e18f;
+                for (auto& e : world_.units()) {
+                    if (!e.alive() || e.team == team) continue;
+                    float dx = e.x - me->x, dz = e.z - me->z;
+                    if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; best = e.id; }
+                }
+                if (best) world_.attack(id, best, false);
+            }
+        }
     }
 
     void runAi(int team, int keepId, const std::array<std::string, 4>& cycle) {
@@ -2439,6 +2543,10 @@ private:
     tak::crt::Region scenRegion_;
     float scenTime_ = 0, scenClock_ = 0, scenClock2_ = 0;
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
+    int playerMonarchId_ = -1, aiMonarchId_ = -1;
+    std::string aiKeepType_;    // production building the AI Monarch builds
+    std::string aiLodeType_;    // AI lodestone type (economy)
+    int aiLodes_ = 0;           // lodestones the AI has queued so far
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = 0, mouseY_ = 0;
     SDL_Texture* fogTex_ = nullptr;
