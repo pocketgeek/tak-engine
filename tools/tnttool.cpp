@@ -4,6 +4,7 @@
 //   tnttool heightmap <map.tnt> <out.png>
 //   tnttool minimap <map.tnt> <out.png>   (grayscale; palette applied later)
 
+#include "terrain/terrain.h"
 #include "tnt/tnt.h"
 #include "util/png.h"
 
@@ -12,7 +13,8 @@
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "usage: tnttool info|heightmap|minimap <map.tnt> [out.png]\n";
+        std::cerr << "usage: tnttool info|heightmap|minimap <map.tnt> [out.png]\n"
+                     "       tnttool render <map.tnt> <terrain-dir> <out.png>\n";
         return 2;
     }
     std::string cmd = argv[1];
@@ -29,6 +31,12 @@ int main(int argc, char** argv) {
                 if (f != 0xFFFF) ++feats;
             std::cout << "feature cells: " << feats << "\n";
             std::cout << "minimap: " << m.minimapW << "x" << m.minimapH << "\n";
+        } else if (cmd == "render" && argc >= 5) {
+            tak::terrain::Compositor comp(argv[3]);
+            auto img = comp.renderMap(m);
+            tak::png::write(argv[4], img.width, img.height, img.rgba);
+            std::cout << "wrote " << argv[4] << " (" << img.width << "x" << img.height
+                      << ")\n";
         } else if ((cmd == "heightmap" || cmd == "minimap") && argc >= 4) {
             int w, h;
             const std::vector<uint8_t>* src;

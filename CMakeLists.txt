@@ -14,6 +14,7 @@ add_compile_options(-Wall -Wextra)
 # --- Format libraries (no external dependencies) ------------------------------
 
 find_package(ZLIB REQUIRED)
+find_package(JPEG REQUIRED)
 
 add_library(tak-formats
   src/hpi/hpi.cpp
@@ -22,9 +23,11 @@ add_library(tak-formats
   src/tdo/tdo.cpp
   src/tdf/tdf.cpp
   src/util/png.cpp
+  src/util/jpeg.cpp
+  src/terrain/terrain.cpp
 )
 target_include_directories(tak-formats PUBLIC src)
-target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB)
+target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG)
 
 # --- Command-line tools -------------------------------------------------------
 
