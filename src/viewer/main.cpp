@@ -3434,6 +3434,25 @@ private:
                            u->z - (winH_ / 2.0f) / mapView_.zoom());
     }
 
+    SDL_Color factionColor() const {
+        if (side_ == "ara") return {70, 130, 240, 255};   // Aramon blue
+        if (side_ == "tar") return {205, 65, 60, 255};    // Taros red
+        if (side_ == "ver") return {60, 195, 195, 255};   // Veruna teal
+        if (side_ == "zon") return {120, 205, 80, 255};   // Zhon green
+        if (side_ == "cre") return {230, 145, 50, 255};   // Creon orange
+        return {180, 170, 140, 255};
+    }
+
+    // HUD text with a full dark outline so it reads over any panel.
+    void hudText(const std::string& s, float x, float y, float scale, SDL_Color c) {
+        static const int o[8][2] = {{-1, -1}, {0, -1}, {1, -1}, {-1, 0},
+                                    {1, 0},   {-1, 1}, {0, 1},  {1, 1}};
+        for (auto& d : o)
+            hudFont_.draw(ren_, s, x + d[0] * 1.3f, y + d[1] * 1.3f, scale,
+                          {0, 0, 0, 220});
+        hudFont_.draw(ren_, s, x, y, scale, c);
+    }
+
     void drawPanel(int winW, int winH) {
         // Bottom bar: stone strip across the full width.
         SDL_FRect bar{0, float(winH - kBarH), float(winW), float(kBarH)};
@@ -3459,10 +3478,17 @@ private:
         SDL_RenderDrawLineF(ren_, 0, bar.y, float(winW), bar.y);
 
         char buf[96];
+        SDL_Color fc = factionColor();
         auto shade = [&](float x, float w) {
-            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 110);
             SDL_FRect z{x, bar.y + 4, w, kBarH - 8.0f};
-            SDL_RenderFillRectF(ren_, &z);
+            SDL_SetRenderDrawColor(ren_, fc.r / 4, fc.g / 4, fc.b / 4, 225);
+            SDL_RenderFillRectF(ren_, &z);   // dark faction-tinted panel
+            // double faction-coloured border for a clear frame
+            SDL_SetRenderDrawColor(ren_, fc.r, fc.g, fc.b, 245);
+            SDL_RenderDrawRectF(ren_, &z);
+            SDL_FRect z2{z.x + 1, z.y + 1, z.w - 2, z.h - 2};
+            SDL_SetRenderDrawColor(ren_, fc.r / 2, fc.g / 2, fc.b / 2, 200);
+            SDL_RenderDrawRectF(ren_, &z2);
         };
 
         // Bottom-LEFT: portrait + stats for the selected unit.
@@ -3475,19 +3501,18 @@ private:
                 if (ic) {
                     SDL_FRect pr{px + 4, bar.y + 8, 56, kBarH - 20.0f};
                     SDL_RenderCopyF(ren_, ic, nullptr, &pr);
-                    SDL_SetRenderDrawColor(ren_, 120, 110, 80, 255);
+                    SDL_SetRenderDrawColor(ren_, fc.r, fc.g, fc.b, 255);
                     SDL_RenderDrawRectF(ren_, &pr);
                 }
                 float tx = px + 70;
-                hudFont_.draw(ren_, u->type->name, tx, bar.y + 16, 1.6f,
-                              {240, 228, 190, 255});
+                hudText(u->type->name, tx, bar.y + 18, 1.7f, {255, 245, 215, 255});
                 std::snprintf(buf, sizeof buf, "HP %d/%d", int(u->hp),
                               int(u->type->maxHp));
-                hudFont_.draw(ren_, buf, tx, bar.y + 40, 1.4f, {190, 230, 170, 255});
+                hudText(buf, tx, bar.y + 42, 1.4f, {180, 245, 175, 255});
                 if (selection_.size() > 1) {
                     std::snprintf(buf, sizeof buf, "+%zu MORE",
                                   selection_.size() - 1);
-                    hudFont_.draw(ren_, buf, tx, bar.y + 58, 1.3f, {180, 180, 160, 255});
+                    hudText(buf, tx, bar.y + 60, 1.3f, {210, 210, 195, 255});
                 }
             }
         }
@@ -3520,11 +3545,14 @@ private:
                 SDL_RenderDrawRectF(ren_, &r);
                 if (hot && hudFont_.ok()) {
                     char tip[80];
-                    std::snprintf(tip, sizeof tip, "%s  %d MANA", bt->name.c_str(),
+                    std::snprintf(tip, sizeof tip, "%s  %d MOGRIUM", bt->name.c_str(),
                                   int(bt->buildCost));
                     float tw = float(hudFont_.width(tip, 1.5f));
-                    hudFont_.draw(ren_, tip, r.x + 30 - tw / 2, bar.y - 10, 1.5f,
-                                  {235, 225, 180, 255});
+                    float tipx = std::clamp(r.x + 30 - tw / 2, 4.0f, winW - tw - 4);
+                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 200);
+                    SDL_FRect tb{tipx - 4, bar.y - 30, tw + 8, 24};
+                    SDL_RenderFillRectF(ren_, &tb);
+                    hudText(tip, tipx, bar.y - 12, 1.5f, {255, 240, 190, 255});
                 }
                 iconRects_.push_back({r, bt});
                 x += 66;
@@ -3535,8 +3563,8 @@ private:
                               b->buildQueue.front()->name.c_str(),
                               b->buildQueue.size());
                 float qw = float(hudFont_.width(q, 1.4f));
-                hudFont_.draw(ren_, q, (float(winW) - qw) * 0.5f, bar.y - 28, 1.4f,
-                              {150, 200, 255, 255});
+                hudText(q, (float(winW) - qw) * 0.5f, bar.y - 28, 1.4f,
+                        {160, 210, 255, 255});
             }
         }
 
@@ -3545,13 +3573,12 @@ private:
             auto& tm = world_.team(localTeam_);
             float manaX = float(winW) - 176;
             shade(manaX - 8, 184);
-            hudFont_.draw(ren_, "MOGRIUM", manaX, bar.y + 14, 1.3f,
-                          {120, 200, 255, 255});
+            hudText("MOGRIUM", manaX, bar.y + 16, 1.3f, {150, 215, 255, 255});
             std::snprintf(buf, sizeof buf, "%d / %d", int(tm.mana),
                           int(std::max(tm.storage, 100.0f)));
-            hudFont_.draw(ren_, buf, manaX, bar.y + 36, 1.6f, {205, 232, 255, 255});
+            hudText(buf, manaX, bar.y + 40, 1.6f, {215, 238, 255, 255});
             std::snprintf(buf, sizeof buf, "+%d / sec", int(tm.income));
-            hudFont_.draw(ren_, buf, manaX, bar.y + 58, 1.3f, {150, 240, 180, 255});
+            hudText(buf, manaX, bar.y + 62, 1.3f, {170, 245, 190, 255});
         }
     }
 
