@@ -81,10 +81,19 @@ public:
     // Create any terrain chunk textures that will be visible this frame.
     // Called BEFORE the render pass so texture creation never interleaves
     // with draw calls (which glitches the whole frame on some backends).
-    void ensureChunks(int winW, int winH) {
+    // Keep the camera on the map. When the view is wider/taller than the map
+    // (small map, or a maximized window), center it instead of pinning it to
+    // the top-left corner — pinning makes zoom-to-cursor appear to drift toward
+    // (0,0).
+    void clampOffset(int winW, int winH) {
         int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;
-        offX_ = std::clamp(offX_, 0.0f, std::max(0.0f, mapW - winW / zoom_));
-        offY_ = std::clamp(offY_, 0.0f, std::max(0.0f, mapH - winH / zoom_));
+        float maxX = mapW - winW / zoom_, maxY = mapH - winH / zoom_;
+        offX_ = maxX <= 0 ? maxX / 2 : std::clamp(offX_, 0.0f, maxX);
+        offY_ = maxY <= 0 ? maxY / 2 : std::clamp(offY_, 0.0f, maxY);
+    }
+
+    void ensureChunks(int winW, int winH) {
+        clampOffset(winW, winH);
         int c0x = int(offX_) / kChunk, c0y = int(offY_) / kChunk;
         int c1x = int(offX_ + winW / zoom_) / kChunk, c1y = int(offY_ + winH / zoom_) / kChunk;
         for (int cy = c0y; cy <= c1y; ++cy)
@@ -93,9 +102,7 @@ public:
     }
 
     void draw(int winW, int winH) {
-        int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;
-        offX_ = std::clamp(offX_, 0.0f, std::max(0.0f, mapW - winW / zoom_));
-        offY_ = std::clamp(offY_, 0.0f, std::max(0.0f, mapH - winH / zoom_));
+        clampOffset(winW, winH);
 
         int c0x = int(offX_) / kChunk, c0y = int(offY_) / kChunk;
         int c1x = int(offX_ + winW / zoom_) / kChunk, c1y = int(offY_ + winH / zoom_) / kChunk;
