@@ -2549,12 +2549,27 @@ private:
         float zm = mapView_.zoom();
         float ax = (u.x - mapView_.offX()) * zm;
         float ay = (u.z - mapView_.offY()) * zm;
+        // Conjuring: while a unit is built/summoned it fades in from ~0 to 100%
+        // (its hp fills 5%->100%) with a shimmering cyan pulse that fades out
+        // as it finishes materialising.
+        bool conjuring = u.underConstruction && u.type;
+        float p = conjuring ? std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f) : 1.0f;
+        Uint8 alpha = Uint8(p * 255.0f);
         for (auto& t : tris_) {
             SDL_Vertex v[3];
             for (int i = 0; i < 3; ++i) {
                 v[i] = t.v[i];
                 v[i].position.x = v[i].position.x * zm + ax;
                 v[i].position.y = v[i].position.y * zm + ay;
+                if (conjuring) {
+                    float pulse = 0.5f + 0.5f * std::sin(animClock_ * 7.0f +
+                                                         v[i].position.y * 0.03f);
+                    float glow = (1.0f - p) * pulse;   // 0 once fully formed
+                    v[i].color.a = alpha;
+                    v[i].color.r = Uint8(v[i].color.r * (1.0f - 0.75f * glow));
+                    v[i].color.g = Uint8(v[i].color.g * (1.0f - 0.25f * glow));
+                    // blue channel left high, so the shimmer reads cyan
+                }
             }
             SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
         }
