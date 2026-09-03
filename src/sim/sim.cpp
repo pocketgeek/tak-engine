@@ -5,9 +5,14 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <queue>
 
 namespace tak::sim {
+
+bool gInstantBuild = false;
 
 namespace {
 
@@ -27,6 +32,22 @@ float angleDiff(float a, float b) {
 }
 
 } // namespace
+
+void TypeRegistry::loadMoveInfo(const std::filesystem::path& tdf) {
+    try {
+        auto root = tdf::parse(tdf);
+        for (const auto& cn : root.childOrder) {
+            const tdf::Node& c = root.children.at(cn);
+            std::string name = lower(c.valueOr("Name", ""));
+            if (name.empty()) continue;
+            MoveClass m;
+            m.maxSlope = float(c.numberOr("MaxSlope", 255));
+            m.maxWaterDepth = float(c.numberOr("MaxWaterDepth", 255));
+            m.minWaterDepth = float(c.numberOr("MinWaterDepth", 0));
+            moveClasses_[name] = m;
+        }
+    } catch (const std::exception&) {}   // no MOVEINFO -> units keep FBI defaults
+}
 
 void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
     for (const auto& e : std::filesystem::directory_iterator(unitsDir)) {
@@ -48,8 +69,11 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             t.canMove = info->numberOr("canmove", 0) != 0 &&
                         info->numberOr("bmcode", 1) != 0;
             t.maxVel = float(info->numberOr("maxvelocity", 0)) * kTick;
-            t.accel = float(info->numberOr("acceleration", 0.5)) * kTick;
-            t.brake = float(info->numberOr("brakerate", 0.5)) * kTick;
+            // Velocity is px/tick (*kTick => px/s); acceleration and braking are
+            // px/tick^2, so they need kTick^2. Using kTick left accel 30x too
+            // small, so high-maxVel flyers never reached speed and all crawled.
+            t.accel = float(info->numberOr("acceleration", 0.5)) * kTick * kTick;
+            t.brake = float(info->numberOr("brakerate", 0.5)) * kTick * kTick;
             // FBI turnrate is COB angle units per tick.
             float tr = float(info->numberOr("turnrate", 500));
             t.turnRate = tr * kCobAngle * kTick;
@@ -71,16 +95,70 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
                            ym.find('s') != std::string::npos;
                 if (int(ym.size()) == t.footX * t.footZ) t.yardMap = ym;
             }
+            // Every lodestone (Lodestone / Divine Lodestone) must sit on a mana
+            // deposit, even ones whose FBI omits the 'S' yardmap (e.g. crelode).
+            if (t.id.find("lode") != std::string::npos ||
+                t.id.find("mana") != std::string::npos)
+                t.onMana = true;
             t.canTransport = info->numberOr("cantransport", 0) != 0;
             t.transportCap = int(info->numberOr("transportcapacity", 0));
             t.soundClass = lower(info->valueOr("soundcategory",
                                                info->valueOr("soundclass", "")));
             t.sight = float(info->numberOr("sightdistance", 180));
             t.corpse = lower(info->valueOr("corpse", ""));
+            t.shadowArt = lower(info->valueOr("shadowart", ""));
+            t.veteranModel = lower(info->valueOr("veteranmodel", ""));
+            t.bodyType = lower(info->valueOr("bodytype", "default"));
+            // Extended stats.
+            t.healTime = float(info->numberOr("healtime", 0));
+            t.leash = float(info->numberOr("maneuverleashlength", 0));
+            t.waterMult = float(info->numberOr("watermultiplier",
+                                info->numberOr("watermultipliser", 1)));
+            t.roadMult = float(info->numberOr("roadmultiplier",
+                               info->numberOr("roadmultplier", 1)));
+            t.maxWaterDepth = float(info->numberOr("maxwaterdepth", 0));
+            t.maxSlope = float(info->numberOr("maxslope", 255));
+            t.radar = float(info->numberOr("radardistance", 0));
+            t.xpValue = int(info->numberOr("experiencepoints", 0));
+            t.noVeteran = info->numberOr("noveteran", 0) != 0;
+            t.maxMana = float(info->numberOr("maxmana", 0));
+            t.manaRegen = float(info->numberOr("manarechargerate", 0));
+            t.canReclaim = info->numberOr("canreclaim", 0) != 0;
+            t.canResurrect = info->numberOr("canresurrect", 0) != 0;
+            t.canCapture = info->numberOr("cancapture", 0) != 0;
+            t.canCloak = info->numberOr("cancloak", 0) != 0;
+            t.cloakCost = float(info->numberOr("cloakcost", 0));
+            t.cloakCostMove = float(info->numberOr("cloakcostmoving", t.cloakCost));
+            t.minCloakDist = float(info->numberOr("mincloakdistance", 0));
+            t.hoverAttack = info->numberOr("hoverattack", 0) != 0;
+            t.attractsGods = info->numberOr("attractsgods", 0) != 0;
+            t.onOffable = info->numberOr("onoffable", 0) != 0;
+            t.activateWhenBuilt = info->numberOr("activatewhenbuilt", 1) != 0;
+            t.cantBeStoned = info->numberOr("cantbestoned", 0) != 0;
+            t.cantBeFrozen = info->numberOr("cantbefrozen", 0) != 0;
+            t.cantBeCaptured = info->numberOr("cantbecaptured", 0) != 0;
+            t.cantBeTransported = info->numberOr("cantbetransported", 0) != 0;
+            t.transportSize = int(info->numberOr("transportsize", 1));
+            {   // bloodcolor1 = "r g b"
+                std::string bc = info->valueOr("bloodcolor1", "");
+                int r = 150, g = 30, b = 10;
+                if (std::sscanf(bc.c_str(), "%d %d %d", &r, &g, &b) >= 1) {
+                    t.blood[0] = uint8_t(std::clamp(r, 0, 255));
+                    t.blood[1] = uint8_t(std::clamp(g, 0, 255));
+                    t.blood[2] = uint8_t(std::clamp(b, 0, 255));
+                }
+            }
             t.canFly = info->numberOr("canfly", 0) != 0;
             std::string mc = lower(info->valueOr("movementclass", ""));
             if (mc.rfind("water", 0) == 0) t.domain = UnitType::Domain::Water;
             else if (mc.rfind("hover", 0) == 0) t.domain = UnitType::Domain::Hover;
+            // Inherit terrain limits from the MOVEINFO movement class (the real
+            // source of slope/water limits; most FBIs don't carry their own).
+            if (auto mci = moveClasses_.find(mc); mci != moveClasses_.end()) {
+                t.maxSlope = mci->second.maxSlope;
+                t.maxWaterDepth = mci->second.maxWaterDepth;
+                t.minWaterDepth = mci->second.minWaterDepth;
+            }
             t.cruiseAlt = float(info->numberOr("cruisealt", 0)) / 4;
             for (int slot = 1; slot <= 3; ++slot) {
                 const auto* w = root.child("WEAPON" + std::to_string(slot));
@@ -91,11 +169,110 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
                 wp.reload = float(w->numberOr("reloadtime", 1));
                 wp.projVel = float(w->numberOr("weaponvelocity", 0));
                 wp.melee = lower(w->valueOr("type", "")) == "melee";
-                if (const auto* dmg = w->child("DAMAGE"))
+                // Visual family: FBI hweffect is authoritative (it names the hit
+                // effect); fall back to subtype/damagetype/name when it is absent.
+                std::string hwe = lower(w->valueOr("hweffect", ""));
+                std::string wtag = hwe + " " +
+                                   lower(w->valueOr("subtype", "")) + " " +
+                                   lower(w->valueOr("damagetype", "")) + " " +
+                                   lower(wp.name);
+                if (wtag.find("lightning") != std::string::npos)
+                    wp.fx = WeaponFx::Lightning;
+                else if (wtag.find("fire") != std::string::npos ||
+                         wtag.find("flame") != std::string::npos ||
+                         wtag.find("breath") != std::string::npos) {
+                    wp.fx = WeaponFx::Fire;
+                    // Fire "breath" is a short-range emission, not a long shot;
+                    // cap the range so the drake closes in instead of breathing
+                    // from across the map.
+                    wp.range = std::min(wp.range, 170.0f);
+                }
+                // aimtolerance is in COB angle units; convert to radians. Ballistic
+                // weapons lob an arc (viewer draws it); soundhitclass = impact sound.
+                wp.aimTol = float(w->numberOr("aimtolerance",
+                                  w->numberOr("aimtolerence", 1024))) * float(kCobAngle);
+                wp.ballistic = lower(w->valueOr("type", "")) == "ballistic";
+                wp.soundHit = lower(w->valueOr("soundhitclass",
+                                               w->valueOr("soundhit", "")));
+                wp.explosionClass = lower(w->valueOr("explosionclass", ""));
+                wp.waterExplosionClass = lower(w->valueOr("waterexplosionclass", ""));
+                wp.radiusArt[0] = lower(w->valueOr("radiusart0", ""));
+                wp.radiusArt[1] = lower(w->valueOr("radiusart1", ""));
+                wp.radiusArt[2] = lower(w->valueOr("radiusart2", ""));
+                wp.ringCount = int(w->numberOr("ringcount", 0));
+                wp.ringDelay = float(w->numberOr("ringdelay", 0.2));
+                wp.ringDur = float(w->numberOr("ringduration", 1.0));
+                wp.spriteCount = int(w->numberOr("spritecount", 24));
+                wp.shakeMag = float(w->numberOr("shakemagnitude", 0));
+                wp.shakeDur = float(w->numberOr("shakeduration", 0));
+                wp.fireStarter = w->numberOr("firestarter", 0) != 0;
+                wp.minRange = float(w->numberOr("minrange", 0));
+                wp.noAir = w->numberOr("noairweapon", 0) != 0;
+                wp.manaCost = float(w->numberOr("manapershot", 0));
+                // Status-effect weapons (Creon freeze, medusa/paralyzer, petrify),
+                // inferred from the hit-effect / damagetype / name.
+                {
+                    std::string s = hwe + " " + lower(w->valueOr("damagetype", "")) +
+                                    " " + lower(w->valueOr("soundhitclass", "")) + " " +
+                                    lower(wp.name);
+                    if (s.find("freeze") != std::string::npos ||
+                        s.find("frost") != std::string::npos ||
+                        s.find("hail") != std::string::npos)
+                        wp.status = Weapon::Status::Frozen;
+                    else if (s.find("petrif") != std::string::npos ||
+                             s.find("stone") != std::string::npos ||
+                             s.find("medusa") != std::string::npos)
+                        wp.status = Weapon::Status::Stoned;
+                    else if (s.find("paraly") != std::string::npos)
+                        wp.status = Weapon::Status::Paralyzed;
+                    if (wp.status != Weapon::Status::None)
+                        wp.statusDur = float(w->numberOr("duration", 5.0));
+                }
+                wp.aoe = float(w->numberOr("areaofeffect", 0));
+                // The FBI data misspells this key both ways; accept either.
+                wp.edge = float(w->numberOr("edgeeffectiveness",
+                                w->numberOr("edgeeffectivness", 1.0)));
+                if (const auto* dmg = w->child("DAMAGE")) {
                     wp.damage = float(dmg->numberOr("default", 0));
+                    // Per-target-category damage (every DAMAGE key but `default`).
+                    for (const auto& [k, v] : dmg->values)
+                        if (k != "default")
+                            wp.dmgVs[k] = float(std::atof(v.c_str()));
+                }
                 if (wp.damage > 0) t.weapons.push_back(wp);
             }
             if (!t.weapons.empty()) t.weapon = t.weapons[0];
+            // Stat auras: [AdjustArmor]/[AdjustAttack]/[AdjustJoy] blocks under
+            // UNITINFO make the unit a continuous buff/debuff field on nearby units.
+            {
+                struct AK { const char* tag; Aura::Kind kind; };
+                for (const AK& ak : {AK{"AdjustArmor", Aura::Kind::Armor},
+                                     AK{"AdjustAttack", Aura::Kind::Attack},
+                                     AK{"AdjustJoy", Aura::Kind::Joy}}) {
+                    if (const auto* a = info->child(ak.tag)) {
+                        Aura au;
+                        au.kind = ak.kind;
+                        au.amount = float(a->numberOr("adjustment", 1));
+                        au.affectsEnemy = a->numberOr("affectsenemy", 0) != 0;
+                        au.radius = float(a->numberOr("radius", 200));
+                        au.edge = float(a->numberOr("edgeeffectiveness", 1));
+                        t.auras.push_back(au);
+                    }
+                }
+            }
+            // Target-category tokens for weapons' per-category damage: split
+            // `category`, plus `damagecategory` and `tedclass`, all lowercased.
+            {
+                std::string cat = lower(info->valueOr("category", "")) + " " +
+                                  lower(info->valueOr("damagecategory", "")) + " " +
+                                  lower(info->valueOr("tedclass", ""));
+                std::string tok;
+                for (char c : cat + " ") {
+                    if (c == ' ' || c == '\t') {
+                        if (!tok.empty()) { t.categories.push_back(tok); tok.clear(); }
+                    } else tok.push_back(c);
+                }
+            }
             types_[t.id] = std::move(t);
         } catch (const std::exception&) {
             // Skip malformed definitions rather than fail the registry.
@@ -145,6 +322,10 @@ int World::spawn(const UnitType* type, float x, float z, float heading, int team
     u.z = z;
     u.heading = heading;
     u.hp = type ? type->maxHp : 100;
+    u.mana = type ? type->maxMana : 0;   // casters start with a full pool
+    u.active = type ? type->activateWhenBuilt : true;
+    u.homeX = x;
+    u.homeZ = z;
     units_.push_back(u);
     return u.id;
 }
@@ -174,6 +355,25 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
         for (int x = 0; x < w; ++x)
             if (seaLevel - int(heights[size_t(z) * w + x]) > 0)
                 navHover_.block(x, z, 1, 1, false);
+    // Per-cell slope (max 3x3 height spread) and water depth, for per-unit
+    // maxSlope / maxWaterDepth checks on top of the shared domain grids.
+    terW_ = w; terH_ = h;
+    slope_.assign(size_t(w) * h, 0);
+    depth_.assign(size_t(w) * h, 0);
+    for (int z = 0; z < h; ++z)
+        for (int x = 0; x < w; ++x) {
+            int lo = 255, hi = 0;
+            for (int dz = -1; dz <= 1; ++dz)
+                for (int dx = -1; dx <= 1; ++dx) {
+                    int nx = std::clamp(x + dx, 0, w - 1);
+                    int nz = std::clamp(z + dz, 0, h - 1);
+                    int v = heights[size_t(nz) * w + nx];
+                    lo = std::min(lo, v); hi = std::max(hi, v);
+                }
+            slope_[size_t(z) * w + x] = uint8_t(std::min(255, hi - lo));
+            int d = seaLevel - int(heights[size_t(z) * w + x]);
+            depth_[size_t(z) * w + x] = uint8_t(std::clamp(d, 0, 255));
+        }
 }
 
 void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked) {
@@ -188,6 +388,106 @@ void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool bloc
             if (c == 'o' || c == 'O')
                 nav.block(cx + i, cz + j, 1, 1, blocked);
         }
+}
+
+bool FlowField::build(const NavGrid& nav, float gx, float gz) {
+    w_ = nav.width();
+    h_ = nav.height();
+    if (nav.empty() || w_ <= 0 || h_ <= 0) { w_ = h_ = 0; return false; }
+    int gcx = std::clamp(int(gx) / 16, 0, w_ - 1);
+    int gcz = std::clamp(int(gz) / 16, 0, h_ - 1);
+    // Snap a blocked goal (a click on a wall/building) to the nearest walkable
+    // cell, spiralling out, so the wavefront has somewhere to start.
+    if (!nav.walkable(gcx, gcz)) {
+        bool found = false;
+        for (int r = 1; r < 24 && !found; ++r)
+            for (int j = -r; j <= r && !found; ++j)
+                for (int i = -r; i <= r && !found; ++i) {
+                    if (std::max(std::abs(i), std::abs(j)) != r) continue;
+                    if (nav.walkable(gcx + i, gcz + j)) {
+                        gcx += i; gcz += j; found = true;
+                    }
+                }
+        if (!found) { w_ = h_ = 0; return false; }
+    }
+    goal_ = gcz * w_ + gcx;
+
+    const size_t n = size_t(w_) * h_;
+    // Integration field in "centi-cells": orthogonal step 10, diagonal 14, so a
+    // uint16 covers paths up to ~6500 cells. Dijkstra out from the goal.
+    dist_.assign(n, 0xFFFF);
+    struct Node { int cost, idx; };
+    struct Cmp { bool operator()(const Node& a, const Node& b) const { return a.cost > b.cost; } };
+    std::priority_queue<Node, std::vector<Node>, Cmp> pq;
+    dist_[size_t(goal_)] = 0;
+    pq.push({0, goal_});
+    static const int dcx[8] = {1, -1, 0, 0, 1, 1, -1, -1};
+    static const int dcz[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+    static const int dcost[8] = {10, 10, 10, 10, 14, 14, 14, 14};
+    while (!pq.empty()) {
+        Node cur = pq.top();
+        pq.pop();
+        if (cur.cost > dist_[size_t(cur.idx)]) continue;
+        int cx = cur.idx % w_, cz = cur.idx / w_;
+        for (int k = 0; k < 8; ++k) {
+            int nx = cx + dcx[k], nz = cz + dcz[k];
+            if (!nav.walkable(nx, nz)) continue;
+            // No diagonal corner-cutting past a blocked orthogonal neighbour.
+            if (k >= 4 && (!nav.walkable(cx + dcx[k], cz) ||
+                           !nav.walkable(cx, cz + dcz[k])))
+                continue;
+            int nd = cur.cost + dcost[k];
+            size_t ni = size_t(nz) * w_ + nx;
+            if (nd < dist_[ni] && nd < 0xFFFF) {
+                dist_[ni] = uint16_t(nd);
+                pq.push({nd, int(ni)});
+            }
+        }
+    }
+
+    // Flow field: each walkable cell points at the reachable neighbour with the
+    // lowest integration cost (steepest descent toward the goal).
+    dirx_.assign(n, 0.0f);
+    dirz_.assign(n, 0.0f);
+    for (int cz = 0; cz < h_; ++cz)
+        for (int cx = 0; cx < w_; ++cx) {
+            size_t i = size_t(cz) * w_ + cx;
+            if (dist_[i] == 0xFFFF || int(i) == goal_) continue;
+            int best = -1, bestD = dist_[i];
+            float bx = 0, bz = 0;
+            for (int k = 0; k < 8; ++k) {
+                int nx = cx + dcx[k], nz = cz + dcz[k];
+                if (!nav.walkable(nx, nz)) continue;
+                if (k >= 4 && (!nav.walkable(cx + dcx[k], cz) ||
+                               !nav.walkable(cx, cz + dcz[k])))
+                    continue;
+                int d = dist_[size_t(nz) * w_ + nx];
+                if (d < bestD) { bestD = d; best = k; bx = float(dcx[k]); bz = float(dcz[k]); }
+            }
+            if (best >= 0) {
+                float inv = 1.0f / std::sqrt(bx * bx + bz * bz);
+                dirx_[i] = bx * inv;
+                dirz_[i] = bz * inv;
+            }
+        }
+    return true;
+}
+
+void FlowField::dirAt(float x, float z, float& dx, float& dz) const {
+    dx = dz = 0;
+    if (w_ <= 0) return;
+    int cx = int(x) / 16, cz = int(z) / 16;
+    if (cx < 0 || cz < 0 || cx >= w_ || cz >= h_) return;
+    size_t i = size_t(cz) * w_ + cx;
+    dx = dirx_[i];
+    dz = dirz_[i];
+}
+
+bool FlowField::reachable(float x, float z) const {
+    if (w_ <= 0) return false;
+    int cx = int(x) / 16, cz = int(z) / 16;
+    if (cx < 0 || cz < 0 || cx >= w_ || cz >= h_) return false;
+    return dist_[size_t(cz) * w_ + cx] != 0xFFFF;
 }
 
 void NavGrid::block(int cx, int cz, int w, int h, bool blocked) {
@@ -224,6 +524,22 @@ bool NavGrid::lineClear(int x0, int z0, int x1, int z1) const {
         int e2 = 2 * err;
         if (e2 >= dz) { err += dz; x0 += sx; }
         if (e2 <= dx) { err += dx; z0 += sz; }
+    }
+}
+
+bool NavGrid::losBetween(float wx0, float wz0, float wx1, float wz1) const {
+    if (empty()) return true;
+    int x0 = int(wx0) / 16, z0 = int(wz0) / 16;
+    int x1 = int(wx1) / 16, z1 = int(wz1) / 16;
+    int dx = std::abs(x1 - x0), dz = -std::abs(z1 - z0);
+    int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1, err = dx + dz;
+    while (true) {
+        if (x0 == x1 && z0 == z1) return true;   // reached target cell (endpoint)
+        int e2 = 2 * err;
+        if (e2 >= dz) { err += dz; x0 += sx; }
+        if (e2 <= dx) { err += dx; z0 += sz; }
+        if (x0 == x1 && z0 == z1) return true;   // stepped onto the endpoint
+        if (!walkable(x0, z0)) return false;     // a wall stands between them
     }
 }
 
@@ -295,12 +611,42 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1)
     return out;
 }
 
+const FlowField* World::flowFor(const UnitType* type, float gx, float gz) {
+    const NavGrid& grid = navFor(type);
+    if (grid.empty()) return nullptr;
+    int cx = std::clamp(int(gx) / 16, 0, grid.width() - 1);
+    int cz = std::clamp(int(gz) / 16, 0, grid.height() - 1);
+    int domain = type ? int(type->domain) : 0;
+    long long key = domain * 100000000LL + (long long)(cz * grid.width() + cx);
+    auto it = flowCache_.find(key);
+    if (it != flowCache_.end()) return it->second.ready() ? &it->second : nullptr;
+    // Bound the cache so a game of many distinct move orders can't grow it
+    // without limit; group/wave goals (the ones that matter for crowds) recur.
+    if (flowCache_.size() > 48) flowCache_.clear();
+    FlowField ff;
+    ff.build(grid, gx, gz);
+    auto& stored = flowCache_[key];
+    stored = std::move(ff);
+    return stored.ready() ? &stored : nullptr;
+}
+
 void World::order(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || !u->type->canMove) return;
     if (!queue) u->orders.clear();
     if (u->type->canFly) {
         u->orders.push_back({x, z, 0});
+        return;
+    }
+    // Ground/water units steer by a shared flow field toward the goal, so a
+    // crowd sent to the same point spreads and flows around obstacles instead of
+    // funnelling single-file into a corner. Only fall back to A* waypoints when
+    // no field can be built or the goal is unreachable from here.
+    const FlowField* ff = flowFor(u->type, x, z);
+    if (ff && ff->reachable(u->x, u->z)) {
+        Order o;
+        o.x = x; o.z = z; o.flow = true;
+        u->orders.push_back(o);
         return;
     }
     const NavGrid& grid = navFor(u->type);
@@ -320,8 +666,13 @@ void World::loadInto(int unitId, int transportId) {
     if (!u || !t || !u->alive() || !t->alive() || u->embarked()) return;
     if (!u->type || !u->type->canMove || u->type->domain != UnitType::Domain::Ground)
         return;
+    if (u->type->cantBeTransported) return;   // e.g. heavy/anchored units
     if (!t->type || !t->type->canTransport || u->team != t->team) return;
-    if (int(t->cargo.size()) >= t->type->transportCap) return;
+    // transportsize: sum the slot cost of the current cargo, not just the count.
+    int used = 0;
+    for (int id : t->cargo)
+        if (const Unit* c = unit(id)) used += c->type ? c->type->transportSize : 1;
+    if (used + u->type->transportSize > t->type->transportCap) return;
     u->orders.clear();
     Order o;
     o.targetId = transportId;
@@ -438,13 +789,84 @@ void World::attack(int unitId, int targetId, bool queue) {
     u->orders.push_back({0, 0, targetId});
 }
 
+float Weapon::damageVs(const UnitType* t) const {
+    if (t && !dmgVs.empty())
+        for (const auto& c : t->categories) {
+            auto it = dmgVs.find(c);
+            if (it != dmgVs.end()) return it->second;
+        }
+    return damage;
+}
+
+void World::applyHit(const Weapon& w, float hx, float hz, int fromTeam, int fromId,
+                     Unit* primary) {
+    // Record the impact for the viewer (hit sound / effect).
+    hits_.push_back({hx, hz, &w, primary ? primary->type : nullptr});
+    // Attacker's veteran attack multiplier boosts damage dealt (retail scales the
+    // attacker's attack stat by vetMul); the victim's boosts armour (below).
+    const Unit* attacker = fromId ? unit(fromId) : nullptr;
+    // Attack multiplier = veterancy × live aura buff (AdjustAttack).
+    float atkMul = attacker ? attacker->vetMul() * attacker->atkBuff : 1.0f;
+    // Damage + status one victim, honouring veterancy, auras and immunities.
+    auto hurt = [&](Unit& e, float scale) {
+        if (e.stonedFor > 0) return;   // petrified units are impervious
+        // base × attacker-attack (↑) ÷ victim-armour (↓); armour = veterancy × aura.
+        float armour = std::max(e.vetMul() * e.armBuff, 0.01f);
+        float dealt = w.damageVs(e.type) * atkMul / armour * scale;
+        e.hp -= dealt;
+        if (fromId) e.lastHitBy = fromId;
+        if (w.status != Weapon::Status::None && e.type) {
+            bool immune =
+                (w.status == Weapon::Status::Frozen && e.type->cantBeFrozen) ||
+                (w.status == Weapon::Status::Stoned && e.type->cantBeStoned);
+            if (!immune) {
+                float& t = w.status == Weapon::Status::Frozen   ? e.frozenFor
+                         : w.status == Weapon::Status::Stoned   ? e.stonedFor
+                                                                : e.paralyzedFor;
+                t = std::max(t, w.statusDur);
+                e.speed = 0;
+            }
+        }
+    };
+    if (primary) hurt(*primary, 1.0f);
+    if (w.aoe <= 0) return;
+    // Splash the surrounding enemies, scaled from full at the centre to `edge`
+    // at the rim (so an area weapon actually hits a crowd, per its FBI aoe).
+    const float aoe = w.aoe;
+    int splashed = 0;
+    forEachNear(hx, hz, aoe, [&](int idx) {
+        Unit& e = units_[size_t(idx)];
+        if (!e.alive() || e.embarked() || !e.type || e.team == fromTeam) return;
+        if (&e == primary) return;   // already took the direct hit
+        float dx = e.x - hx, dz = e.z - hz;
+        float d = std::sqrt(dx * dx + dz * dz);
+        if (d > aoe) return;
+        float scale = 1.0f - (d / aoe) * (1.0f - w.edge);
+        hurt(e, scale);
+        ++splashed;
+    });
+    static const bool kLog = std::getenv("TAK_SPLASHLOG") != nullptr;
+    if (splashed && kLog)
+        std::fprintf(stderr, "splash %s aoe=%.0f hit %d extra\n",
+                     w.name.c_str(), aoe, splashed);
+}
+
 void World::fire(Unit& u, Unit& target, int slot) {
     const Weapon& w = u.type->weapons[size_t(slot)];
-    u.reloads[slot] = w.reload;
-    u.reloadLeft = w.reload;
+    // manapershot: a caster spends personal mana to fire; if it can't pay, the
+    // shot doesn't happen (reload not consumed, so it fires the moment it can).
+    if (w.manaCost > 0 && u.type->maxMana > 0) {
+        if (u.mana < w.manaCost) return;
+        u.mana -= w.manaCost;
+    }
+    // Veterans reload faster (retail divides the cooldown by the veteran multiplier).
+    float rl = w.reload / std::max(u.vetMul(), 0.01f);
+    u.reloads[slot] = rl;
+    u.reloadLeft = rl;
     u.justFired = true;
     if (w.melee || w.projVel <= 0) {
-        target.hp -= w.damage;
+        // Instant hit (melee swing / hitscan bolt): apply damage + splash now.
+        applyHit(w, target.x, target.z, u.team, u.id, &target);
         return;
     }
     Projectile p;
@@ -456,8 +878,11 @@ void World::fire(Unit& u, Unit& target, int slot) {
     p.vx = dx / dist * vel;
     p.vz = dz / dist * vel;
     p.damage = w.damage;
+    p.wsrc = &w;
     p.targetId = target.id;
     p.fromTeam = u.team;
+    p.fromId = u.id;
+    p.fx = w.fx;
     p.life = dist / vel + 0.5f;
     p.flight = dist / vel;
     projectiles_.push_back(p);
@@ -467,6 +892,7 @@ void World::tickCombat(Unit& u, float dt) {
     if (u.reloadLeft > 0) u.reloadLeft -= dt;
     for (auto& r : u.reloads)
         if (r > 0) r -= dt;
+    if (!u.active) return;   // onoffable unit powered down: no acquisition/fire
 
     // Auto-acquire: idle armed units engage the nearest enemy in reach;
     // attack-movers and patrollers interrupt their route to fight.
@@ -474,16 +900,29 @@ void World::tickCombat(Unit& u, float dt) {
                      (u.orders.front().targetId == 0 &&
                       (u.orders.front().attackMove || u.orders.front().patrol)) ||
                      u.orders.front().guard;
+    // Can any of this unit's weapons engage enemy `e`? (noairweapon gates flyers.)
+    auto canTarget = [&](const Unit& e) {
+        if (e.cloaked) return false;   // cloaked units are invisible to auto-acquire
+        for (const auto& wp : u.type->weapons)
+            if (!(e.type->canFly && wp.noAir)) return true;
+        return false;
+    };
     if (acquiring && u.type->weapon.damage > 0) {
         float ar = u.type->maxRange() + 90;
         int best = 0;
         float bestD = ar * ar;
-        for (auto& e : units_) {
-            if (!e.alive() || e.embarked() || e.team == u.team || !e.type) continue;
+        // maneuverleashlength: don't chase beyond `leash` from the idle anchor.
+        float leash2 = u.type->leash > 0 ? u.type->leash * u.type->leash : 1e30f;
+        forEachNear(u.x, u.z, ar, [&](int idx) {
+            const Unit& e = units_[size_t(idx)];
+            if (!e.alive() || e.embarked() || e.team == u.team || !e.type) return;
+            if (!canTarget(e)) return;
+            float hx = e.x - u.homeX, hz = e.z - u.homeZ;
+            if (hx * hx + hz * hz > leash2) return;   // outside the leash
             float dx = e.x - u.x, dz = e.z - u.z;
             float d = dx * dx + dz * dz;
             if (d < bestD) { bestD = d; best = e.id; }
-        }
+        });
         if (best) u.orders.push_front({0, 0, best});
     }
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
@@ -511,11 +950,16 @@ void World::tickCombat(Unit& u, float dt) {
     float dx = target->x - u.x, dz = target->z - u.z;
     float dist = std::sqrt(dx * dx + dz * dz);
     float best = u.type->maxRange();
+    // Ranged units need a clear line to shoot; a wall between them means close
+    // in / reposition rather than firing through it (melee & flyers are exempt).
+    bool needLoS = best > 64.0f && !u.type->canFly &&
+                   target->type && !target->type->canFly;
+    bool los = !needLoS || nav_.losBetween(u.x, u.z, target->x, target->z);
     if (!u.type->canMove && dist > best) {      // static units can't chase
         u.orders.pop_front();
         return;
     }
-    if (dist > best * 0.95f) {
+    if (dist > best * 0.95f || (!los && u.type->canMove)) {
         // Advance toward the target, steering around impassable terrain.
         u.repathLeft -= dt;
         Order& o = u.orders.front();
@@ -538,10 +982,61 @@ void World::tickCombat(Unit& u, float dt) {
     float diff = angleDiff(want, u.heading);
     float maxTurn = u.type->turnRate * dt;
     u.heading += std::clamp(diff, -maxTurn, maxTurn);
-    if (std::abs(diff) < 0.2f)
-        for (size_t i = 0; i < u.type->weapons.size() && i < 3; ++i)
-            if (u.reloads[i] <= 0 && dist <= u.type->weapons[i].range * 1.0f)
-                fire(u, *target, int(i));
+    // Fire each ready slot whose target is in the [minrange, range] band, within
+    // its aimtolerance, and (unless noairweapon) allowed to hit a flyer.
+    for (size_t i = 0; i < u.type->weapons.size() && i < 3; ++i) {
+        const Weapon& wp = u.type->weapons[i];
+        if (wp.noAir && target->type && target->type->canFly) continue;
+        if (!wp.melee && !los) continue;   // no clear shot through the wall
+        if (u.reloads[i] <= 0 && dist <= wp.range && dist >= wp.minRange &&
+            std::abs(diff) < std::max(wp.aimTol, 0.03f))
+            fire(u, *target, int(i));
+    }
+    // cancapture: a charmer converts the target after sustained contact (~3s) or
+    // once it is worn down, rather than killing it.
+    if (u.type->canCapture && target->type && !target->type->cantBeCaptured) {
+        u.captureProg += dt;
+        if (u.captureProg > 3.0f || target->hp < target->type->maxHp * 0.25f) {
+            target->team = u.team;
+            target->orders.clear();
+            target->hp = std::max(target->hp, target->type->maxHp * 0.5f);
+            target->lastHitBy = 0;
+            u.captureProg = 0;
+            u.orders.pop_front();   // done with this one
+        }
+    }
+}
+
+void World::rebuildGrid() {
+    gCell_ = 32.0f;
+    float minx = 1e30f, minz = 1e30f, maxx = -1e30f, maxz = -1e30f;
+    bool any = false;
+    // Include ALL alive units (buildings too) so combat can target structures.
+    auto inGrid = [](const Unit& u) {
+        return u.alive() && !u.embarked() && u.type;
+    };
+    for (const auto& u : units_) {
+        if (!inGrid(u)) continue;
+        any = true;
+        minx = std::min(minx, u.x); maxx = std::max(maxx, u.x);
+        minz = std::min(minz, u.z); maxz = std::max(maxz, u.z);
+    }
+    if (!any) { gW_ = gH_ = 0; return; }
+    gOx_ = minx - gCell_;
+    gOz_ = minz - gCell_;
+    gW_ = int((maxx - minx) / gCell_) + 3;
+    gH_ = int((maxz - minz) / gCell_) + 3;
+    gHead_.assign(size_t(gW_) * gH_, -1);
+    gNext_.assign(units_.size(), -1);
+    for (size_t i = 0; i < units_.size(); ++i) {
+        const Unit& u = units_[i];
+        if (!inGrid(u)) continue;
+        int cx = std::clamp(int((u.x - gOx_) / gCell_), 0, gW_ - 1);
+        int cz = std::clamp(int((u.z - gOz_) / gCell_), 0, gH_ - 1);
+        int c = cz * gW_ + cx;
+        gNext_[i] = gHead_[size_t(c)];
+        gHead_[size_t(c)] = int(i);
+    }
 }
 
 bool World::onManaSpot(float x, float z) const {
@@ -555,12 +1050,34 @@ bool World::onManaSpot(float x, float z) const {
 bool World::canPlace(const UnitType* type, float x, float z) const {
     if (!type) return false;
     // Lodestones must sit on a mana deposit — but only on maps that have any
-    // (deposit-less maps let them build on open ground).
-    if (type->onMana && !manaSpots_.empty() && !onManaSpot(x, z)) return false;
+    // (deposit-less maps let them build on open ground). And only ONE lodestone
+    // per deposit: reject if another already occupies the target deposit.
+    if (type->onMana && !manaSpots_.empty()) {
+        int spot = -1;
+        float best = 24.0f * 24.0f;
+        for (size_t i = 0; i < manaSpots_.size(); ++i) {
+            float dx = manaSpots_[i].first - x, dz = manaSpots_[i].second - z;
+            float d = dx * dx + dz * dz;
+            if (d < best) { best = d; spot = int(i); }
+        }
+        if (spot < 0) return false;   // not on any deposit
+        float sx = manaSpots_[size_t(spot)].first, sz = manaSpots_[size_t(spot)].second;
+        // One lodestone per deposit. Some Sacred Stones register as two adjacent
+        // spots (~22-40px apart); a 44px exclusion merges those into one deposit
+        // so a second lodestone can't squeeze onto the same stone.
+        for (const auto& u : units_) {
+            if (!u.alive() || !u.type || !u.type->onMana) continue;
+            float dx = u.x - sx, dz = u.z - sz;
+            if (dx * dx + dz * dz < 44.0f * 44.0f) return false;   // deposit taken
+        }
+    }
+    // Check the domain-appropriate grid so water units (Kraken) require water
+    // and land units require land, rather than always testing the ground grid.
+    const NavGrid& grid = navFor(type);
     int cx = int(x) / 16 - type->footX / 2, cz = int(z) / 16 - type->footZ / 2;
     for (int j = 0; j < type->footZ; ++j)
         for (int i = 0; i < type->footX; ++i)
-            if (!nav_.walkable(cx + i, cz + j)) return false;
+            if (!grid.walkable(cx + i, cz + j)) return false;
     for (const auto& u : units_) {
         if (!u.alive()) continue;
         float dx = u.x - x, dz = u.z - z;
@@ -579,7 +1096,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     Unit* site = unit(id);
     site->underConstruction = true;
     site->hp = type->maxHp * 0.05f;
-    if (!type->canMove) blockFootprint(nav_, *type, x, z, true);
+    if (!type->canMove) { blockFootprint(nav_, *type, x, z, true); flowCache_.clear(); }
     b = unit(builderId);   // spawn may have reallocated units_
     b->buildSiteId = id;
     order(builderId, x, z + float(type->footZ) * 8 + 24, false);
@@ -605,8 +1122,10 @@ void World::cancelBuilds(int builderId) {
         // A site that never actually started building is just a ghost — remove
         // it so its marker/ghost doesn't linger.
         if (site && site->underConstruction && !site->buildBegun) {
-            if (site->type && !site->type->canMove)
+            if (site->type && !site->type->canMove) {
                 blockFootprint(nav_, *site->type, site->x, site->z, false);
+                flowCache_.clear();
+            }
             site->underConstruction = false;
             site->deadFor = 1000.0f;   // fully gone (painter skips deadFor>=4)
         }
@@ -628,10 +1147,14 @@ void World::tickConstruction(Unit& b, float dt) {
     b.speed = 0;
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
     Team& tm = teams_[size_t(b.team)];
-    float cost = site->type->buildCost * dt / std::max(total, 0.01f);
-    if (tm.mana < cost) return;
-    tm.mana -= cost;
-    site->hp += site->type->maxHp * 0.95f * dt / std::max(total, 0.01f);
+    if (gInstantBuild) {
+        site->hp = site->type->maxHp;   // finishes this tick, free
+    } else {
+        float cost = site->type->buildCost * dt / std::max(total, 0.01f);
+        if (tm.mana < cost) return;
+        tm.mana -= cost;
+        site->hp += site->type->maxHp * 0.95f * dt / std::max(total, 0.01f);
+    }
     if (site->hp >= site->type->maxHp) {
         site->hp = site->type->maxHp;
         site->underConstruction = false;
@@ -654,6 +1177,77 @@ void World::train(int builderId, const UnitType* type) {
     b->buildQueue.push_back(type);
 }
 
+void World::tickAuras(float dt) {
+    // Every unit's buffs relax back toward 1.0; aura projectors then refresh the
+    // units in their radius, so a buff holds while in range and fades on leaving.
+    float relax = std::min(1.0f, 2.0f * dt);   // ~0.5s to fade after leaving range
+    for (auto& u : units_) {
+        if (!u.alive()) continue;
+        u.atkBuff += (1.0f - u.atkBuff) * relax;
+        u.armBuff += (1.0f - u.armBuff) * relax;
+    }
+    for (size_t i = 0; i < units_.size(); ++i) {
+        Unit& s = units_[i];
+        if (!s.alive() || s.embarked() || !s.type || s.type->auras.empty() ||
+            s.underConstruction || !s.active || s.incapacitated())
+            continue;
+        for (const Aura& a : s.type->auras) {
+            if (a.kind == Aura::Kind::Joy || a.radius <= 0) continue;  // morale: not modelled
+            float r2 = a.radius * a.radius;
+            forEachNear(s.x, s.z, a.radius, [&](int idx) {
+                Unit& e = units_[size_t(idx)];
+                if (!e.alive() || e.embarked() || !e.type) return;
+                bool enemy = e.team != s.team;
+                if (enemy != a.affectsEnemy) return;   // buff friends OR debuff foes
+                float dx = e.x - s.x, dz = e.z - s.z;
+                float d2 = dx * dx + dz * dz;
+                if (d2 > r2) return;
+                // edgeeffectiveness: full at centre, (amount blended toward 1 by edge) at rim.
+                float t = std::sqrt(d2) / a.radius;
+                float amt = 1.0f + (a.amount - 1.0f) * (1.0f - t * (1.0f - a.edge));
+                float& buff = a.kind == Aura::Kind::Armor ? e.armBuff : e.atkBuff;
+                buff = a.affectsEnemy ? std::min(buff, amt) : std::max(buff, amt);
+            });
+        }
+    }
+}
+
+void World::tickAbilities(float /*dt*/) {
+    // A corpse is a recently-dead unit still lying on the field.
+    auto isCorpse = [](const Unit& c) {
+        return c.type && !c.alive() && c.deadFor >= 0 && c.deadFor < 30.0f;
+    };
+    struct Revive { const UnitType* type; float x, z; int team; };
+    std::vector<Revive> revives;
+    const float kR = 56.0f;
+    for (size_t i = 0; i < units_.size(); ++i) {
+        Unit& u = units_[i];
+        if (!u.alive() || !u.type || u.underConstruction || u.incapacitated()) continue;
+        if (!u.type->canReclaim && !u.type->canResurrect) continue;
+        if (!u.orders.empty()) continue;   // only while idle (not mid-order)
+        // Corpses are dead (not in the spatial grid), so scan directly.
+        for (size_t j = 0; j < units_.size(); ++j) {
+            Unit& c = units_[j];
+            if (j == i || !isCorpse(c)) continue;
+            float dx = c.x - u.x, dz = c.z - u.z;
+            if (dx * dx + dz * dz > kR * kR) continue;
+            if (u.type->canResurrect && c.team == u.team) {
+                float cost = c.type->buildCost;
+                Team& tm = teams_[size_t(u.team)];
+                if (tm.mana >= cost) {
+                    tm.mana -= cost;
+                    revives.push_back({c.type, c.x, c.z, u.team});
+                    c.deadFor = 1000.0f;   // consumed
+                }
+            } else if (u.type->canReclaim) {
+                teams_[size_t(u.team)].mana += c.type->buildCost * 0.25f;
+                c.deadFor = 1000.0f;       // reclaimed away
+            }
+        }
+    }
+    for (const auto& r : revives) spawn(r.type, r.x, r.z, 3.14159f, r.team);
+}
+
 void World::updateVisibility() {
     if (nav_.empty()) return;
     if (vis_.empty()) {
@@ -665,7 +1259,8 @@ void World::updateVisibility() {
         if (v == 2) v = 1;
     for (const auto& u : units_) {
         if (!u.alive() || u.team != visTeam_ || !u.type) continue;
-        int r = int(u.type->sight) / 16 + 1;
+        // Reveal to the greater of sight and radar range (radardistance).
+        int r = int(std::max(u.type->sight, u.type->radar)) / 16 + 1;
         int cx = int(u.x) / 16, cz = int(u.z) / 16;
         for (int dz = -r; dz <= r; ++dz)
             for (int dx = -r; dx <= r; ++dx) {
@@ -682,10 +1277,14 @@ void World::tickProduction(Unit& u, float dt) {
     const UnitType* t = u.buildQueue.front();
     float total = t->buildTime / std::max(u.type->workerTime, 0.01f);
     Team& tm = teams_[size_t(u.team)];
-    float cost = t->buildCost * dt / std::max(total, 0.01f);
-    if (tm.mana < cost) return;   // stalled: no mana
-    tm.mana -= cost;
-    u.buildProgress += dt;
+    if (gInstantBuild) {
+        u.buildProgress = total;   // finishes this tick, free
+    } else {
+        float cost = t->buildCost * dt / std::max(total, 0.01f);
+        if (tm.mana < cost) return;   // stalled: no mana
+        tm.mana -= cost;
+        u.buildProgress += dt;
+    }
     if (u.buildProgress >= total) {
         u.buildProgress = 0;
         u.buildQueue.pop_front();
@@ -703,17 +1302,28 @@ void World::tickProduction(Unit& u, float dt) {
 
 void World::tick(float dt) {
     for (auto& u : units_) { u.justFired = false; u.justBuilt = 0; }
+    hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
+    clock_ += dt;    // wall-clock since the match started (for god timing)
 
     // Economy: recompute income/storage, apply income.
     for (auto& tm : teams_) { tm.income = 0; tm.storage = 0; }
+    std::vector<int> godPriests(teams_.size(), 0);
     for (auto& u : units_) {
         if (!u.alive() || !u.type) continue;
         auto& tm = teams_[size_t(u.team)];
         tm.income += u.type->income;
         tm.storage += u.type->storage;
+        if (u.type->attractsGods && !u.underConstruction) godPriests[size_t(u.team)]++;
     }
     for (auto& tm : teams_)
         tm.mana = std::min(tm.mana + tm.income * dt, std::max(tm.storage, 100.0f));
+    // God favour: a team's priests channel its mana income into favour while any
+    // is present; it fills toward kGodFavorNeeded, then godReady() lets the god come.
+    if (godsEnabled_)
+        for (size_t t = 0; t < teams_.size(); ++t)
+            if (godPriests[t] > 0)
+                teams_[t].godFavor = std::min(kGodFavorNeeded,
+                    teams_[t].godFavor + std::max(teams_[t].income, 20.0f) * dt);
 
     // Index-based: tickProduction can spawn a trained unit, reallocating
     // units_ and invalidating any range-for iterator over it.
@@ -734,25 +1344,86 @@ void World::tick(float dt) {
 
     // Projectiles.
     for (auto& p : projectiles_) {
+        float ox = p.x, oz = p.z;        // segment start (before this step)
         p.x += p.vx * dt;
         p.z += p.vz * dt;
         p.life -= dt;
         p.age += dt;
         Unit* t = unit(p.targetId);
         if (t && t->alive() && !t->embarked()) {
-            float dx = t->x - p.x, dz = t->z - p.z;
-            if (dx * dx + dz * dz < 8 * 8) {
-                t->hp -= p.damage;
+            // Distance from the target to the segment travelled this tick, so a
+            // fast projectile (e.g. the totem's lightning, ~50px/tick) can't
+            // skip past the small hit radius between ticks.
+            float sx = p.x - ox, sz = p.z - oz;
+            float seg = sx * sx + sz * sz;
+            float u = seg > 0 ? ((t->x - ox) * sx + (t->z - oz) * sz) / seg : 0.0f;
+            u = std::clamp(u, 0.0f, 1.0f);
+            float cx = ox + u * sx, cz = oz + u * sz;
+            float dx = t->x - cx, dz = t->z - cz;
+            float r = t->type ? 8.0f + 8.0f * float(std::max(t->type->footX,
+                                                             t->type->footZ)) : 8.0f;
+            if (dx * dx + dz * dz < r * r) {
+                // Apply the impact: direct hit + area splash (per the weapon's
+                // FBI areaofeffect), using the grid from the previous rebuild.
+                if (p.wsrc) applyHit(*p.wsrc, t->x, t->z, p.fromTeam, p.fromId, t);
+                else t->hp -= p.damage;
                 p.life = -1;
             }
         }
     }
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
+    rebuildGrid();   // spatial hash for this tick (combat acquire + separation)
+
     for (auto& u : units_) {
         if (!u.type) continue;
         if (!u.alive()) { u.deadFor += dt; continue; }
-        if (u.hp <= 0) { u.deadFor = 0; u.orders.clear(); u.speed = 0; continue; }
+        if (u.hp <= 0) {
+            // Award the destroyed unit's experiencepoints to the killer, then set
+            // its veteran level = accumulatedXP / the killer's OWN experiencepoints,
+            // capped at 10 (retail KINGDOMS.icd). No HP-pool change — veterancy
+            // works through the attack/armor multipliers, not a bigger health bar.
+            if (u.lastHitBy && u.type) {
+                Unit* k = unit(u.lastHitBy);
+                if (k && k->alive() && k->type && k->type->canMove &&
+                    !k->type->noVeteran) {
+                    // One veteran level per kill, capped at 10 (retail counts
+                    // kills, not the victim's value — so a cheap unit that lands
+                    // a single big kill doesn't jump straight to max veterancy).
+                    k->xp += 1;
+                    k->veteran = std::min(10, k->xp);
+                }
+            }
+            u.deadFor = 0; u.orders.clear(); u.speed = 0; continue;
+        }
+
+        // Status timers count down; HP regenerates (healtime); mana recharges.
+        if (u.frozenFor > 0) u.frozenFor = std::max(0.0f, u.frozenFor - dt);
+        if (u.stonedFor > 0) u.stonedFor = std::max(0.0f, u.stonedFor - dt);
+        if (u.paralyzedFor > 0) u.paralyzedFor = std::max(0.0f, u.paralyzedFor - dt);
+        if (u.type->healTime > 0 && u.hp < u.type->maxHp)
+            u.hp = std::min(u.type->maxHp, u.hp + dt / u.type->healTime);
+        if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
+            u.mana = std::min(u.type->maxMana, u.mana + u.type->manaRegen * dt);
+        if (u.orders.empty()) { u.homeX = u.x; u.homeZ = u.z; }   // leash anchor
+
+        // Cloaking: drains team mana; an enemy within mincloakdistance forces a
+        // decloak, and so does running dry of mana.
+        if (u.type->canCloak) {
+            bool enemyNear = false;
+            float md = std::max(u.type->minCloakDist, 1.0f);
+            forEachNear(u.x, u.z, md, [&](int idx) {
+                const Unit& e = units_[size_t(idx)];
+                if (e.alive() && !e.embarked() && e.team != u.team && e.type) {
+                    float dx = e.x - u.x, dz = e.z - u.z;
+                    if (dx * dx + dz * dz <= md * md) enemyNear = true;
+                }
+            });
+            float cost = (u.speed > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
+            Team& tm = teams_[size_t(u.team)];
+            if (!enemyNear && tm.mana >= cost) { tm.mana -= cost; u.cloaked = true; }
+            else u.cloaked = false;
+        }
 
         if (u.underConstruction) continue;   // silent until finished
         if (u.embarked()) {                  // riding a transport
@@ -761,6 +1432,8 @@ void World::tick(float dt) {
             else u.deadFor = 0;              // transport lost with all hands
             continue;
         }
+        // Frozen / petrified / paralyzed: the unit is inert this tick.
+        if (u.incapacitated()) { u.speed = 0; continue; }
         if (!u.orders.empty() && (u.orders.front().load || u.orders.front().unload))
             tickTransport(u, dt);
         else
@@ -772,7 +1445,12 @@ void World::tick(float dt) {
                 Unit* t = unit(u.orders.front().targetId);
                 if (!t) return false;
                 float dx = t->x - u.x, dz = t->z - u.z;
-                return std::sqrt(dx * dx + dz * dz) <= u.type->maxRange() * 0.95f;
+                if (std::sqrt(dx * dx + dz * dz) > u.type->maxRange() * 0.95f) return false;
+                // Don't sit still with no shot: a ranged unit whose line to the
+                // target is blocked keeps moving to get around the wall.
+                bool needLoS = u.type->maxRange() > 64.0f && !u.type->canFly &&
+                               t->type && !t->type->canFly && u.type->canMove;
+                return !needLoS || nav_.losBetween(u.x, u.z, t->x, t->z);
             }();
         if (combatHold) continue;
 
@@ -783,7 +1461,11 @@ void World::tick(float dt) {
             float dx = o.x - u.x, dz = o.z - u.z;
             float dist = std::sqrt(dx * dx + dz * dz);
             if (o.guard && dist <= 70.0f) continue;   // in escort position
-            if (dist < 3.0f) {
+            // Flow-field orders complete a little short of the goal so a crowd
+            // sharing one destination settles into a blob (spread by separation)
+            // instead of every unit fighting for the exact same point.
+            float arrive = o.flow ? 16.0f : 3.0f;
+            if (dist < arrive) {
                 if (o.targetId == 0) {
                     Order done = o;
                     u.orders.pop_front();
@@ -792,12 +1474,27 @@ void World::tick(float dt) {
                 continue;
             }
             float want = std::atan2(dx, dz);
+            if (o.flow) {
+                // Steer along the shared flow field; near the goal (or in an
+                // unreachable pocket) the field goes flat and we home straight in.
+                const FlowField* ff = flowFor(u.type, o.x, o.z);
+                float fx = 0, fz = 0;
+                if (ff) ff->dirAt(u.x, u.z, fx, fz);
+                if (fx != 0 || fz != 0) want = std::atan2(fx, fz);
+            }
             float diff = angleDiff(want, u.heading);
             float maxTurn = u.type->turnRate * dt;
             u.heading += std::clamp(diff, -maxTurn, maxTurn);
 
             // Brake into the waypoint if it's the last one; slow for big turns.
             float target = u.type->maxVel;
+            // watermultiplier: a ground unit wading shallow water moves slower.
+            if (!u.type->canFly && u.type->waterMult != 1.0f && !depth_.empty()) {
+                int cx = int(u.x) / 16, cz = int(u.z) / 16;
+                if (cx >= 0 && cz >= 0 && cx < terW_ && cz < terH_ &&
+                    depth_[size_t(cz) * terW_ + cx] > 0)
+                    target *= u.type->waterMult;
+            }
             if (std::abs(diff) > 0.8f) target *= 0.3f;
             bool last = u.orders.size() == 1;
             if (last) {
@@ -809,30 +1506,141 @@ void World::tick(float dt) {
             else
                 u.speed = std::max(u.speed - u.type->brake * dt, target);
 
-            u.x += std::sin(u.heading) * u.speed * dt;
-            u.z += std::cos(u.heading) * u.speed * dt;
+            float mx = std::sin(u.heading) * u.speed * dt;
+            float mz = std::cos(u.heading) * u.speed * dt;
+            // Collide ground/water units with the nav grid so they can't walk
+            // through walls and buildings (pathfinding routes around, but direct
+            // steering in combat did not). Slide along a blocked axis.
+            if (u.type->canFly) {
+                u.x += mx; u.z += mz;
+            } else {
+                const NavGrid& g = navFor(u.type);
+                auto free = [&](float nx, float nz) {
+                    return g.empty() || passable(u.type, int(nx) / 16, int(nz) / 16);
+                };
+                if (free(u.x + mx, u.z + mz)) { u.x += mx; u.z += mz; }
+                else if (free(u.x + mx, u.z)) { u.x += mx; }
+                else if (free(u.x, u.z + mz)) { u.z += mz; }
+                else {
+                    // Fully blocked (a wall dead-ahead the straight path clipped):
+                    // stop and repath around it toward the final destination, so
+                    // the unit routes around instead of wedging permanently.
+                    u.speed = 0;
+                    u.repathLeft -= dt;
+                    if (!g.empty() && u.repathLeft <= 0 &&
+                        u.orders.front().targetId == 0) {
+                        u.repathLeft = 0.5f;
+                        float tx = u.orders.back().x, tz = u.orders.back().z;
+                        auto path = g.findPath(u.x, u.z, tx, tz);
+                        if (!path.empty()) {
+                            u.orders.clear();
+                            for (const auto& wp : path) u.orders.push_back(wp);
+                        }
+                    }
+                }
+            }
+
+            // Stuck watchdog: a unit that wants to move but makes no headway
+            // (crowd jam at a corner/chokepoint) gets nudged sideways and
+            // repathed to break the deadlock. Half the units nudge each way so
+            // a crowd splits around an obstacle instead of piling up.
+            if (!u.type->canFly) {
+                float moved = std::hypot(u.x - u.stuckX, u.z - u.stuckZ);
+                if (moved > 11.0f) {
+                    u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
+                } else {
+                    u.stuckFor += dt;
+                    if (u.stuckFor > 1.0f) {
+                        u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
+                        const NavGrid& g = navFor(u.type);
+                        auto free = [&](float nx, float nz) {
+                            return g.empty() || g.walkable(int(nx) / 16, int(nz) / 16);
+                        };
+                        float px = std::cos(u.heading), pz = -std::sin(u.heading);
+                        float s = (u.id & 1) ? 1.0f : -1.0f;
+                        for (float d : {20.0f, 34.0f}) {
+                            if (free(u.x + px * s * d, u.z + pz * s * d)) {
+                                u.x += px * s * d * 0.5f; u.z += pz * s * d * 0.5f; break;
+                            }
+                            if (free(u.x - px * s * d, u.z - pz * s * d)) {
+                                u.x -= px * s * d * 0.5f; u.z -= pz * s * d * 0.5f; break;
+                            }
+                        }
+                        if (!g.empty() && u.orders.front().targetId == 0) {
+                            auto path = g.findPath(u.x, u.z, u.orders.back().x,
+                                                   u.orders.back().z);
+                            if (!path.empty()) {
+                                u.orders.clear();
+                                for (const auto& wp : path) u.orders.push_back(wp);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // Separation: push overlapping mobile units apart.
+    // Separation: push overlapping mobile units apart. The spatial hash limits
+    // each unit to its ~3x3 neighbourhood, so this is O(n) not O(n^2). Each pair
+    // is handled once (by the lower index), so the result matches the old loop.
+    rebuildGrid();   // units moved this tick; rebuild for accurate neighbours
+    tickAbilities(dt);   // reclaim / resurrect corpses (uses the fresh grid)
+    tickAuras(dt);       // AdjustArmor/Attack stat auras (uses the fresh grid)
     constexpr float kSep = 13.0f;
+    auto ok = [&](const Unit& u, float nx, float nz) {
+        const NavGrid& g = navFor(u.type);
+        return g.empty() || g.walkable(int(nx) / 16, int(nz) / 16);
+    };
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& a = units_[i];
         if (!a.alive() || a.embarked() || !a.type || !a.type->canMove || a.type->canFly) continue;
-        for (size_t j = i + 1; j < units_.size(); ++j) {
-            Unit& b = units_[j];
-            if (!b.alive() || b.embarked() || !b.type || !b.type->canMove || b.type->canFly) continue;
+        forEachNear(a.x, a.z, kSep, [&](int j) {
+            if (size_t(j) <= i) return;   // handle each pair once, and skip self
+            Unit& b = units_[size_t(j)];
+            if (!b.alive() || b.embarked() || !b.type || !b.type->canMove || b.type->canFly) return;
             float dx = b.x - a.x, dz = b.z - a.z;
             float d2 = dx * dx + dz * dz;
-            if (d2 >= kSep * kSep || d2 < 1e-6f) {
-                if (d2 < 1e-6f) { b.x += 1.0f; }   // exactly stacked: nudge
-                continue;
-            }
+            if (d2 >= kSep * kSep) return;
+            if (d2 < 1e-6f) { b.x += 1.0f; return; }   // exactly stacked: nudge
             float d = std::sqrt(d2);
             float push = (kSep - d) * 0.5f;
             dx /= d; dz /= d;
-            a.x -= dx * push; a.z -= dz * push;
-            b.x += dx * push; b.z += dz * push;
+            float axn = a.x - dx * push, azn = a.z - dz * push;
+            float bxn = b.x + dx * push, bzn = b.z + dz * push;
+            if (ok(a, axn, azn)) { a.x = axn; a.z = azn; }
+            if (ok(b, bxn, bzn)) { b.x = bxn; b.z = bzn; }
+        });
+    }
+
+    // Unstick: any ground unit that ends up inside a blocked cell (spawned by a
+    // building, shoved by a crowd, or clipped a corner) is nudged toward the
+    // nearest walkable cell so it can never wedge permanently.
+    for (auto& u : units_) {
+        if (!u.alive() || u.embarked() || !u.type || !u.type->canMove ||
+            u.type->canFly)
+            continue;
+        const NavGrid& g = navFor(u.type);
+        if (g.empty()) continue;
+        int cx = int(u.x) / 16, cz = int(u.z) / 16;
+        if (g.walkable(cx, cz)) continue;
+        float bestD = 1e18f, tx = u.x, tz = u.z;
+        bool found = false;
+        for (int r = 1; r <= 4 && !found; ++r)
+            for (int dz = -r; dz <= r; ++dz)
+                for (int dx = -r; dx <= r; ++dx) {
+                    if (!g.walkable(cx + dx, cz + dz)) continue;
+                    float wx = (cx + dx) * 16 + 8.0f, wz = (cz + dz) * 16 + 8.0f;
+                    float d = (wx - u.x) * (wx - u.x) + (wz - u.z) * (wz - u.z);
+                    if (d < bestD) { bestD = d; tx = wx; tz = wz; found = true; }
+                }
+        if (found) {
+            float dx = tx - u.x, dz = tz - u.z;
+            float dl = std::sqrt(dx * dx + dz * dz);
+            if (dl > 1e-3f) {
+                float step = std::min(dl, 40.0f * dt + 3.0f);
+                u.x += dx / dl * step;
+                u.z += dz / dl * step;
+            }
         }
     }
 }

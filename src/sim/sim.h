@@ -9,17 +9,65 @@
 
 namespace tak::sim {
 
+// Cheat: when true, construction and production complete instantly and cost no
+// mana (set via the takview `--cheat` flag).
+extern bool gInstantBuild;
+
 // Unit stats loaded from .fbi files. Velocities are in map pixels per
 // second (FBI values are per original 30Hz tick), headings in radians
 // with 0 facing +z and the model's forward axis.
+
+// Visual family for a weapon's projectile (drives how the viewer draws it).
+enum class WeaponFx { Arrow, Lightning, Fire };
+
+struct UnitType;   // for Weapon::damageVs
 
 struct Weapon {
     std::string name;
     float range = 0;         // px
     float reload = 1;        // seconds
-    float damage = 0;
+    float damage = 0;        // DAMAGE.default (base, used when no category matches)
     float projVel = 0;       // px/s; 0 = instant (melee)
     bool melee = false;
+    float aoe = 0;           // areaofeffect radius (px); >0 = splash
+    float edge = 1;          // edgeeffectiveness: damage fraction at the aoe edge
+    float aimTol = 0.1f;     // aimtolerance in radians: how close to on-target to fire
+    bool ballistic = false;  // FBI weapon type = Ballistic (lobbed arc, not flat)
+    float minRange = 0;      // minrange: can't hit targets closer than this
+    bool noAir = false;      // noairweapon: cannot target flying units
+    float manaCost = 0;      // manapershot: mana drained from the firer per shot
+    // Status effect this weapon inflicts (freeze/petrify/paralyze), 0 = none.
+    enum class Status { None, Frozen, Stoned, Paralyzed } status = Status::None;
+    float statusDur = 0;     // seconds the inflicted status lasts
+    std::string soundHit;    // soundhitclass: impact-sound class (arrow/sword/cannon..)
+    std::string explosionClass;       // explosionclass: impact effect (gamedata/explosions)
+    std::string waterExplosionClass;  // waterexplosionclass: impact effect over water
+    // Area-effect shockwave rings emitted at this weapon's impact.
+    std::string radiusArt[3];   // radiusart0..2: expanding-ring effect anims
+    int   ringCount = 0;        // ringcount: how many rings
+    float ringDelay = 0.2f;     // ringdelay: seconds between successive rings
+    float ringDur = 1.0f;       // ringduration: seconds each ring lasts
+    int   spriteCount = 24;     // spritecount: sprites arranged around each ring
+    float shakeMag = 0;         // shakemagnitude: camera-shake intensity on impact
+    float shakeDur = 0;         // shakeduration: seconds the shake lasts
+    bool  fireStarter = false;  // firestarter: leaves ground fire at the impact
+    // Per-target-category damage overrides (DAMAGE keys other than `default`),
+    // keyed by lowercased category token (e.g. "monarch", "dragon", "fort").
+    std::map<std::string, float> dmgVs;
+    WeaponFx fx = WeaponFx::Arrow;
+    // Damage this weapon deals to a unit of type `t` (category override, else base).
+    float damageVs(const UnitType* t) const;
+};
+
+// A stat aura from an [AdjustArmor]/[AdjustAttack]/[AdjustJoy] weapon block: the
+// unit continuously scales nearby units' armour or attack (multiplier) — friends
+// up (affectsenemy=0) or enemies down (affectsenemy=1) — falling to `edge` at the rim.
+struct Aura {
+    enum class Kind { Armor, Attack, Joy } kind = Kind::Armor;
+    float amount = 1;        // multiplier (Armor/Attack); additive morale (Joy)
+    bool  affectsEnemy = false;
+    float radius = 0;
+    float edge = 1;          // edgeeffectiveness at the radius edge
 };
 
 struct UnitType {
@@ -41,6 +89,9 @@ struct UnitType {
     float storage = 0;      // mana cap contribution (mogriumstorage)
     int footX = 1, footZ = 1;
     std::string yardMap;      // footX*footZ chars; 'o' blocks, '.'/'c' passable
+    // Lowercased target-category tokens (from FBI category/damagecategory/tedclass),
+    // matched against a weapon's per-category damage overrides.
+    std::vector<std::string> categories;
     float sight = 180;        // px (FBI sightdistance)
     bool canFly = false;
     float cruiseAlt = 0;      // world units above ground when flying
@@ -49,7 +100,40 @@ struct UnitType {
     bool canTransport = false;
     int transportCap = 0;     // units carried (FBI transportcapacity)
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
+    std::string bodyType = "default";   // FBI bodytype (flesh/armor/wood/..) = hit-sound material
     std::string corpse;       // FBI corpse feature name
+    std::string shadowArt;    // FBI shadowart: shadow sprite name in shadows.gaf
+    std::string veteranModel; // veteranmodel: 3DO the unit swaps to at max veterancy
+    // --- extended FBI stats -------------------------------------------------
+    float healTime = 0;       // healtime: seconds per HP regenerated (0 = no regen)
+    float leash = 0;          // maneuverleashlength: max auto-chase distance (0 = unlimited)
+    float waterMult = 1;      // watermultiplier: speed factor in shallow water
+    float roadMult = 1;       // roadmultiplier (parsed; no road-tile data to apply it)
+    float maxWaterDepth = 0;  // deepest water a ground unit may wade into
+    float maxSlope = 255;     // steepest cell height-spread the unit may cross
+    float minWaterDepth = 0;  // shallowest water a water unit needs (from MOVEINFO)
+    float radar = 0;          // radardistance: fog-reveal radius (separate from sight)
+    int   xpValue = 0;        // experiencepoints: XP granted to whoever kills this unit,
+                              // and the per-veteran-level XP divisor for THIS unit
+    bool  noVeteran = false;  // noveteran: this unit can never gain veterancy
+    float maxMana = 0;        // per-unit mana pool (casters); 0 = uses no personal mana
+    float manaRegen = 0;      // manarechargerate: personal mana regained per second
+    bool  canReclaim = false; // canreclaim: builder can reclaim corpses/features for mana
+    bool  canResurrect = false;   // canresurrect: can revive nearby corpses
+    bool  canCapture = false;     // cancapture: can convert an enemy unit to its team
+    bool  canCloak = false;       // cancloak
+    float cloakCost = 0;          // cloakcost: mana/sec while cloaked and idle
+    float cloakCostMove = 0;      // cloakcostmoving: mana/sec while cloaked and moving
+    float minCloakDist = 0;       // mincloakdistance: an enemy this close forces uncloak
+    bool  hoverAttack = false;    // hoverattack: flyer stops to attack instead of strafing
+    bool  attractsGods = false;   // attractsgods: priest channels god favour
+    bool  onOffable = false;      // onoffable: can be toggled active/inactive
+    bool  activateWhenBuilt = true;   // activatewhenbuilt (default on)
+    bool  cantBeStoned = false, cantBeFrozen = false;
+    bool  cantBeCaptured = false, cantBeTransported = false;
+    int   transportSize = 1;      // transportsize: transport slots this unit occupies
+    uint8_t blood[3] = {150, 30, 10};   // bloodcolor1 (r,g,b) for hit/death spray
+    std::vector<Aura> auras;   // stat auras projected onto nearby units
     Weapon weapon;            // primary (WEAPON1); damage 0 = unarmed
     std::vector<Weapon> weapons;   // all slots (WEAPON1..3)
     float maxRange() const {
@@ -59,8 +143,19 @@ struct UnitType {
     }
 };
 
+// A pathfinding movement class from gamedata/MOVEINFO.tdf: per-class terrain
+// limits that a unit inherits via its FBI `movementclass`.
+struct MoveClass {
+    float maxSlope = 255;
+    float maxWaterDepth = 255;
+    float minWaterDepth = 0;
+};
+
 class TypeRegistry {
 public:
+    // Parse gamedata/MOVEINFO.tdf (movement classes). Call BEFORE loadDir so
+    // units can inherit their class's slope / water limits.
+    void loadMoveInfo(const std::filesystem::path& tdf);
     // Parse every .fbi in a directory (extracted data/units).
     void loadDir(const std::filesystem::path& unitsDir);
     // Parse canbuild/<builder>/<buildable>.tdf into the build tree.
@@ -72,6 +167,7 @@ public:
 private:
     std::map<std::string, UnitType> types_;
     std::map<std::string, std::vector<std::string>> buildTree_;
+    std::map<std::string, MoveClass> moveClasses_;   // lowercased name -> limits
 };
 
 struct Order {
@@ -82,6 +178,7 @@ struct Order {
     bool attackMove = false;   // engage enemies encountered en route
     bool patrol = false;       // loop: completed orders re-queue at the back
     bool guard = false;        // follow friendly `targetId`, engage threats
+    bool flow = false;         // steer by the shared flow field toward (x,z)
 };
 
 // A queued construction: build `type` at (x, z) when the builder gets to it.
@@ -101,8 +198,24 @@ struct Unit {
     float reloadLeft = 0;          // primary slot (kept for anim hooks)
     float reloads[3] = {0, 0, 0};  // per weapon slot
     float repathLeft = 0;   // chase steering repath countdown
+    float stuckFor = 0;     // seconds wanting to move but making no progress
+    float stuckX = 0, stuckZ = 0;   // position when the stuck timer last reset
     float deadFor = -1;    // >= 0 once dead; counts up for death animation
-    bool justFired = false;   // set for one tick when the weapon fires
+    // --- extended runtime state --------------------------------------------
+    float mana = 0;        // personal mana pool (casters), capped at type->maxMana
+    int   xp = 0;          // accumulated experience from kills
+    int   veteran = 0;     // veteran level (0..10); scales attack/armor/reload
+    float atkBuff = 1;     // live attack multiplier from auras (decays to 1)
+    float armBuff = 1;     // live armour multiplier from auras (decays to 1)
+    float frozenFor = 0;   // >0 = frozen solid (can't act); counts down
+    float stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
+    float paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
+    bool  cloaked = false; // currently invisible to enemies
+    bool  active = true;   // onoffable units: false = powered down
+    int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
+    float captureProg = 0; // canCapture units: seconds spent charming the current target
+    float homeX = 0, homeZ = 0;   // leash anchor (idle position) for auto-chase
+    bool  justFired = false;   // set for one tick when the weapon fires
     bool underConstruction = false;
     bool buildBegun = false;   // construction site: true once the builder arrived
     int buildSiteId = 0;   // builder: id of the building it is constructing
@@ -117,6 +230,12 @@ struct Unit {
 
     bool alive() const { return deadFor < 0; }
     bool embarked() const { return inTransport != 0; }
+    // Frozen/petrified/paralyzed units can't move, turn, or fire.
+    bool incapacitated() const { return frozenFor > 0 || stonedFor > 0 || paralyzedFor > 0; }
+    // Veterancy stat multiplier (retail: base 1.0, +10% per level, level capped
+    // at 10 => up to 2.0x). Scales attack up, armor up (less damage taken), and
+    // reload down (faster). Verified against KINGDOMS.icd. See retail-engine-internals.
+    float vetMul() const { return 1.0f + 0.10f * float(veteran); }
     bool moving() const { return alive() && (speed > 1.0f || !orders.empty()); }
     // Actually translating (for the walk animation), vs standing with an
     // attack/queued order.
@@ -132,6 +251,9 @@ struct Projectile {
     float life = 0;        // seconds left before it fizzles
     float age = 0;         // seconds since launch
     float flight = 1;      // expected seconds to target (for the render arc)
+    int fromId = 0;        // firing unit id (for kill attribution / veterancy)
+    const Weapon* wsrc = nullptr;   // source weapon (splash + per-category damage)
+    WeaponFx fx = WeaponFx::Arrow;   // how the viewer draws it
 };
 
 // Walkability grid derived from TNT heights: a cell is blocked when the
@@ -154,6 +276,10 @@ public:
     // Returns world-space waypoints; empty if unreachable.
     std::vector<Order> findPath(float x0, float z0, float x1, float z1) const;
 
+    // Line of sight: no blocked cell strictly between the two world points
+    // (endpoints excluded, so a target standing on/near a wall still counts).
+    bool losBetween(float wx0, float wz0, float wx1, float wz1) const;
+
 private:
     bool lineClear(int x0, int z0, int x1, int z1) const;
 
@@ -164,10 +290,40 @@ private:
 // Block/unblock a building's yardmap-aware footprint on a nav grid.
 void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked);
 
+// A flow field: a per-cell direction pointing along the shortest walkable path
+// toward a single goal, built by a wavefront (Dijkstra) out from the goal. Many
+// units heading to the same goal share one field, so a crowd spreads and flows
+// around obstacles instead of single-filing into a corner. Deterministic (built
+// purely from the nav grid), so it is safe under lockstep. Cells are 16px, same
+// as the NavGrid it is built from.
+class FlowField {
+public:
+    // Build the field over `nav` toward the goal at world (gx, gz). If that cell
+    // is blocked, the goal snaps to the nearest walkable cell. Returns false if
+    // the grid is empty or no walkable goal cell exists.
+    bool build(const NavGrid& nav, float gx, float gz);
+    bool ready() const { return w_ > 0; }
+    int goalCell() const { return goal_; }
+    // Unit direction at world (x, z); (0,0) at/near the goal, off-grid, or in an
+    // unreachable pocket (caller should then steer straight at the goal).
+    void dirAt(float x, float z, float& dx, float& dz) const;
+    // Was the goal cell reachable from (x,z)? (finite integration distance)
+    bool reachable(float x, float z) const;
+
+private:
+    int w_ = 0, h_ = 0, goal_ = -1;
+    std::vector<float> dirx_, dirz_;
+    std::vector<uint16_t> dist_;   // integration field (0xFFFF = unreachable)
+};
+
 struct Team {
     float mana = 500;
     float storage = 0;   // recomputed each tick from alive units
     float income = 0;
+    // God economy: priests (attractsgods) channel mana into favour; once it fills
+    // after the gods' appear time, the faction's god can manifest (once).
+    float godFavor = 0;
+    bool  godSummoned = false;
 };
 
 class World {
@@ -200,7 +356,25 @@ public:
     }
     bool hasManaSpots() const { return !manaSpots_.empty(); }
     bool onManaSpot(float x, float z) const;
+    // True if (x,z) lies over water (for choosing the water impact effect).
+    bool isWater(float x, float z) const {
+        if (depth_.empty()) return false;
+        int cx = int(x) / 16, cz = int(z) / 16;
+        if (cx < 0 || cz < 0 || cx >= terW_ || cz >= terH_) return false;
+        return depth_[size_t(cz) * terW_ + cx] > 0;
+    }
     Team& team(int i) { return teams_[size_t(i)]; }
+
+    // God economy (gamedata/Gods.tdf). Enable it, then a team whose god favour
+    // fills after `appearSec` may manifest its god — the viewer polls godReady().
+    void enableGods(float appearSec) { godsEnabled_ = true; godAppearTime_ = appearSec; }
+    bool godsEnabled() const { return godsEnabled_; }
+    float clock() const { return clock_; }
+    static constexpr float kGodFavorNeeded = 3000.0f;
+    bool godReady(int t) const {
+        return godsEnabled_ && !teams_[size_t(t)].godSummoned &&
+               clock_ >= godAppearTime_ && teams_[size_t(t)].godFavor >= kGodFavorNeeded;
+    }
 
     // Which team the fog-of-war grid tracks (default 0 = local player).
     void setVisTeam(int t) { visTeam_ = t; }
@@ -217,12 +391,19 @@ public:
         if (cx < 0 || cz < 0 || cx >= visW_ || cz >= visH_) return false;
         return vis_[size_t(cz) * visW_ + cx] == 2;
     }
-    // Move order; queue appends.
+    // Move order; queue appends. Ground units steer by a shared flow field
+    // toward (x,z) (crowd-friendly); flyers and unreachable goals fall back to
+    // A* waypoints.
     void order(int unitId, float x, float z, bool queue);
     void attackMove(int unitId, float x, float z, bool queue);
     void patrol(int unitId, float x, float z);
     void guard(int unitId, int targetId, bool queue);
     void stop(int unitId);
+    // Toggle an onoffable unit's active state (gates, sacred fire, etc.).
+    void setActive(int unitId, bool on) {
+        Unit* u = unit(unitId);
+        if (u && u->type && u->type->onOffable) u->active = on;
+    }
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);
     // Board a friendly transport / sail to (x,z) and disembark.
@@ -235,14 +416,59 @@ public:
     const std::vector<Projectile>& projectiles() const { return projectiles_; }
     Unit* unit(int id);
 
+    // Weapon impacts this tick (view-side: impact sound + effect). Carries the
+    // source weapon (soundhitclass / hweffect) and the unit struck (body material
+    // for the material-specific hit sound). Cleared at the start of each tick.
+    struct HitFx { float x = 0, z = 0; const Weapon* weapon = nullptr;
+                   const UnitType* target = nullptr; };
+    const std::vector<HitFx>& hits() const { return hits_; }
+    void clearHits() { hits_.clear(); }
+
 private:
     void tickCombat(Unit& u, float dt);
     void fire(Unit& u, Unit& target, int slot);
+    // Apply a weapon's damage at (hx,hz): the direct hit on `primary` plus, if
+    // the weapon has areaofeffect, splash on other enemies of `fromTeam` scaled
+    // from full at the centre to `edge` at the rim. Per-category damage per victim.
+    void applyHit(const Weapon& w, float hx, float hz, int fromTeam, int fromId, Unit* primary);
 
     void tickProduction(Unit& u, float dt);
     void tickTransport(Unit& u, float dt);
     void tickConstruction(Unit& u, float dt);
+    void tickAbilities(float dt);   // reclaim / resurrect on nearby corpses
+    void tickAuras(float dt);       // AdjustArmor/Attack stat auras
     void updateVisibility();
+
+    // Return a flow field toward world (gx,gz) over `type`'s nav grid, built and
+    // cached on first use (keyed by goal cell + domain). Cleared when the nav
+    // grid changes (a building is placed or removed). nullptr if unbuildable.
+    const FlowField* flowFor(const UnitType* type, float gx, float gz);
+    std::map<long long, FlowField> flowCache_;
+
+    // Uniform spatial hash over mobile units, rebuilt each tick, so the
+    // separation and combat-acquisition passes are O(n) instead of O(n^2).
+    void rebuildGrid();
+    // Call fn(int unitIndex) for every mobile unit whose cell lies within
+    // `radius` of (x,z). Iterates cells in a fixed order, so it is deterministic.
+    template <class F>
+    void forEachNear(float x, float z, float radius, F&& fn) const {
+        if (gW_ <= 0) return;
+        int r = int(radius / gCell_) + 1;
+        int cx = int((x - gOx_) / gCell_), cz = int((z - gOz_) / gCell_);
+        for (int dz = -r; dz <= r; ++dz) {
+            int gz = cz + dz;
+            if (gz < 0 || gz >= gH_) continue;
+            for (int dx = -r; dx <= r; ++dx) {
+                int gx = cx + dx;
+                if (gx < 0 || gx >= gW_) continue;
+                for (int i = gHead_[size_t(gz) * gW_ + gx]; i >= 0; i = gNext_[size_t(i)])
+                    fn(i);
+            }
+        }
+    }
+    std::vector<int> gHead_, gNext_;
+    int gW_ = 0, gH_ = 0;
+    float gCell_ = 32.0f, gOx_ = 0, gOz_ = 0;
 
     std::vector<uint8_t> vis_;
     int visTeam_ = 0;
@@ -251,8 +477,32 @@ private:
     std::vector<Unit> units_;
     std::vector<std::pair<float, float>> manaSpots_;
     std::vector<Projectile> projectiles_;
+    std::vector<HitFx> hits_;
     std::vector<Team> teams_ = std::vector<Team>(4);
+    bool godsEnabled_ = false;
+    float godAppearTime_ = 1e9f, clock_ = 0;
     NavGrid nav_, navWater_, navHover_;
+    // Per-cell terrain metrics (16px cells) for per-unit passability limits.
+    std::vector<uint8_t> slope_;   // local height spread
+    std::vector<uint8_t> depth_;   // water depth (sea level - height), 0 on land
+    int terW_ = 0, terH_ = 0;
+    // A cell passable for `t`, honouring its maxSlope / maxWaterDepth on top of
+    // the shared domain nav grid.
+    bool passable(const UnitType* t, int cx, int cz) const {
+        if (!navFor(t).walkable(cx, cz)) return false;
+        if (!t || slope_.empty()) return true;
+        if (cx < 0 || cz < 0 || cx >= terW_ || cz >= terH_) return false;
+        size_t i = size_t(cz) * terW_ + cx;
+        if (t->domain == UnitType::Domain::Ground) {
+            if (slope_[i] > t->maxSlope) return false;                 // too steep
+            if (t->maxWaterDepth > 0 && depth_[i] > t->maxWaterDepth)  // too deep
+                return false;
+        } else if (t->domain == UnitType::Domain::Water) {
+            if (t->minWaterDepth > 0 && depth_[i] < t->minWaterDepth)  // too shallow
+                return false;
+        }
+        return true;
+    }
     int nextId_ = 1;
 };
 
