@@ -3427,7 +3427,9 @@ private:
     // map's ground level; water and flat ground are unaffected.
     int heightRef_ = -1;                          // map ground level (modal height)
     float kHeightScale_ = 1.1f;                    // screen-Y lift per height unit (N, also occlusion + picking)
-    float kHeightScaleX_ = 1.1f;                   // screen-X lift per height unit (view tilts diagonally; +X = west)
+    float kHeightScaleX_ = 0.0f;                   // screen-X lift per height unit (+X = west). Off by default:
+                                                   // a large value makes the diagonal picking march overshoot
+                                                   // thin N-S walls. Opt in / tune small via TAK_HSCALEX.
     int kOccScan_ = 12;                            // cells to scan south for a wall
     // Height above ground at a world point, bilinearly sampled so lifts ramp
     // smoothly across a slope. Lazily initialises the modal ground reference and
@@ -3485,11 +3487,15 @@ private:
         float maxH = std::max(0.0f, float(255 - (heightRef_ < 0 ? 0 : heightRef_)));
         float bestH = 0.0f;
         float prevDiff = heightAbove(cwx, cwz);   // actualH - 0 at h = 0
-        for (float h = 1.5f; h <= maxH + 2; h += 1.5f) {
+        const float step = 1.0f;
+        for (float h = step; h <= maxH + 2; h += step) {
             float ax = cwx + h * kHeightScaleX_;
             float az = cwz + h * kHeightScale_;
             float diff = heightAbove(ax, az) - h;
-            if (prevDiff > 0 && diff <= 0) bestH = h;   // keep the largest (front-most)
+            // Front-most self-consistent surface: interpolate the zero-crossing of
+            // (actualHeight - h) so we land ON the surface, not past its far edge.
+            if (prevDiff > 0 && diff <= 0)
+                bestH = (h - step) + step * prevDiff / (prevDiff - diff);
             prevDiff = diff;
         }
         wx = std::clamp(cwx + bestH * kHeightScaleX_, 0.0f, float(m.width * 16 - 1));
