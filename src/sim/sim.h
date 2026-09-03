@@ -276,9 +276,11 @@ public:
     // Returns world-space waypoints; empty if unreachable.
     std::vector<Order> findPath(float x0, float z0, float x1, float z1) const;
 
-    // Line of sight: no blocked cell strictly between the two world points
-    // (endpoints excluded, so a target standing on/near a wall still counts).
-    bool losBetween(float wx0, float wz0, float wx1, float wz1) const;
+    // Line of sight: no blocked cell between the two world points, ignoring cells
+    // within `skip0`/`skip1` cells of each endpoint — so a shooter or target's own
+    // building footprint doesn't block the shot, but a wall between them does.
+    bool losBetween(float wx0, float wz0, float wx1, float wz1,
+                    int skip0 = 0, int skip1 = 0) const;
 
 private:
     bool lineClear(int x0, int z0, int x1, int z1) const;
