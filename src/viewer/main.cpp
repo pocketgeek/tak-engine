@@ -4066,7 +4066,7 @@ private:
                 blockText(b.label, r.x - tw - 9, r.y + 18, px, {235, 225, 180, 255});
             }
         }
-        drawWeaponButtons(winW);
+        drawWeaponButtons(winW, winH);
     }
 
     // The front selected unit, if it has more than one weapon (worth a picker).
@@ -4080,13 +4080,14 @@ private:
     std::vector<SDL_FRect> weaponRects_;
     // A small row of weapon-select buttons under the order column: retail fires
     // only the active weapon; click (or press W to cycle) to pick another.
-    void drawWeaponButtons(int winW) {
+    void drawWeaponButtons(int winW, int winH) {
         weaponRects_.clear();
         const auto* u = multiWeaponSel();
         if (!u) return;
         int n = int(u->type->weapons.size());
         const float bw = 26, gap = 4;
-        float y = 210 + float(orderBtns_.size()) * 52 + 20;
+        // A row just above the HUD bar, under the order column (always visible).
+        float y = float(winH) - kBarH - bw - 8;
         float row = n * bw + (n - 1) * gap;
         float x0 = float(winW) - 60 + (56 - row) / 2;
         for (int i = 0; i < n; ++i) {
