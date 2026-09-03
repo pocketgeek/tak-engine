@@ -85,6 +85,8 @@ void Vm::tick(float dt) {
                 p.rot[a] = angTowards(p.rot[a], p.rotTarget[a], p.rotSpeed[a] * dt);
                 if (p.rot[a] == p.rotTarget[a]) p.turning[a] = false;
             }
+            if (p.spinAccel[a] > 0 && p.spin[a] != p.spinTarget[a])
+                p.spin[a] = towards(p.spin[a], p.spinTarget[a], p.spinAccel[a] * dt);
             p.rot[a] += p.spin[a] * dt;
         }
     }
@@ -264,18 +266,29 @@ void Vm::run(Thread& t) {
                 t.pc += 3; break;
             }
             case 0x10003000: {                                                // SPIN
+                // Retail pops speed (target rate) first, then acceleration; it
+                // ramps the rate up at that accel, or jumps instantly if accel==0.
                 int piece = arg(0), axis = arg(1);
-                pop(t);  // acceleration (ignored: jump straight to speed)
-                float speed = float(pop(t)) * kAngle;
-                if (piece >= 0 && size_t(piece) < pieces_.size() && axis >= 0 && axis < 3)
-                    pieces_[size_t(piece)].spin[axis] = speed;
+                float target = float(pop(t)) * kAngle;   // target rate (rad/sec)
+                float accel = float(pop(t)) * kAngle;    // ramp (rad/sec^2)
+                if (piece >= 0 && size_t(piece) < pieces_.size() && axis >= 0 && axis < 3) {
+                    auto& p = pieces_[size_t(piece)];
+                    p.spinTarget[axis] = target;
+                    p.spinAccel[axis] = std::abs(accel);
+                    if (accel == 0) p.spin[axis] = target;
+                }
                 t.pc += 3; break;
             }
             case 0x10004000: {                                                // STOP_SPIN
+                // Decelerate the rate toward 0 at the given decel (0 = stop dead).
                 int piece = arg(0), axis = arg(1);
-                pop(t);  // deceleration
-                if (piece >= 0 && size_t(piece) < pieces_.size() && axis >= 0 && axis < 3)
-                    pieces_[size_t(piece)].spin[axis] = 0;
+                float decel = float(pop(t)) * kAngle;
+                if (piece >= 0 && size_t(piece) < pieces_.size() && axis >= 0 && axis < 3) {
+                    auto& p = pieces_[size_t(piece)];
+                    p.spinTarget[axis] = 0;
+                    p.spinAccel[axis] = std::abs(decel);
+                    if (decel == 0) p.spin[axis] = 0;
+                }
                 t.pc += 3; break;
             }
             case 0x10005000:                                                  // SHOW

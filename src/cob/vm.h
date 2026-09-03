@@ -16,8 +16,12 @@ namespace tak::cob {
 struct PieceState {
     float move[3] = {0, 0, 0};      // world units
     float rot[3] = {0, 0, 0};       // radians
-    float spin[3] = {0, 0, 0};      // radians/sec
+    float spin[3] = {0, 0, 0};      // current rate, radians/sec
     bool visible = true;
+
+    // Spin ramp: SPIN accelerates the rate toward spinTarget, STOP_SPIN
+    // decelerates it toward 0, both at spinAccel rad/sec^2 (0 = jump instantly).
+    float spinTarget[3] = {0, 0, 0}, spinAccel[3] = {0, 0, 0};
 
     // In-flight animations (target + speed per axis).
     float moveTarget[3] = {0, 0, 0}, moveSpeed[3] = {0, 0, 0};
