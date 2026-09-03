@@ -3423,7 +3423,7 @@ private:
     // map's ground level; water and flat ground are unaffected.
     int heightRef_ = -1;                          // map ground level (modal height)
     float kHeightScale_ = 0.9f;                    // world-px lift per height unit
-    float kOccScale_ = 1.2f;                       // wall-top north projection scale
+    float kOccScale_ = 1.1f;                       // wall-top north projection scale
     int kOccScan_ = 12;                            // cells to scan south for a wall
     float terrainLift(float wx, float wz) {
         const auto& m = mapView_.map();
@@ -3435,8 +3435,6 @@ private:
             for (int i = 1; i < 256; ++i) if (hist[i] > hist[best]) best = i;
             heightRef_ = best;
             if (const char* e = getenv("TAK_HSCALE")) kHeightScale_ = std::stof(e);
-            if (const char* e = getenv("TAK_OCCSCALE")) kOccScale_ = std::stof(e);
-            if (const char* e = getenv("TAK_OCCSCAN")) kOccScan_ = std::atoi(e);
             if (getenv("TAK_HDEBUG")) showHDebug_ = true;
         }
         // Bilinear sample of the height grid (cell centres at 16k+8) so the lift
