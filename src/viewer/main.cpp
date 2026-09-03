@@ -1346,11 +1346,13 @@ public:
                         continue;
                     const auto* b = selectedBuilder();
                     if (!b || !bt) break;
-                    if (b->type->canMove) {
+                    bool ctrl = (SDL_GetModState() & KMOD_CTRL) != 0;
+                    if (b->type->canMove && !ctrl) {
                         placing_ = bt;
                     } else {
+                        // Ctrl+click on a conjurer's icon toggles infinite build.
                         tak::net::Command c;
-                        c.kind = tak::net::Cmd::Train;
+                        c.kind = ctrl ? tak::net::Cmd::RepeatTrain : tak::net::Cmd::Train;
                         c.unitId = b->id;
                         std::snprintf(c.type, sizeof c.type, "%s", bt->id.c_str());
                         issue(c);
@@ -1636,6 +1638,9 @@ public:
                 break;
             case Cmd::SetWeapon:
                 if (owns(c.unitId)) world_.setWeapon(c.unitId, c.targetId);
+                break;
+            case Cmd::RepeatTrain:
+                if (owns(c.unitId)) world_.setRepeat(c.unitId, registry_.find(c.type));
                 break;
         }
     }
@@ -4643,6 +4648,15 @@ private:
                 SDL_SetRenderDrawColor(ren_, hot ? 255 : 110, hot ? 230 : 100,
                                        hot ? 120 : 70, 255);
                 SDL_RenderDrawRectF(ren_, &r);
+                // Infinite-build marker: bright +++ over the repeating unit's icon.
+                if (b->repeatType == bt) {
+                    float px = 2.8f;
+                    float pw = blockWidth("+++", px);
+                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
+                    SDL_FRect pb{r.x + (r.w - pw) / 2 - 3, r.y + 4, pw + 6, 22};
+                    SDL_RenderFillRectF(ren_, &pb);
+                    blockText("+++", r.x + (r.w - pw) / 2, r.y + 7, px, {120, 255, 130, 255});
+                }
                 if (hot) {
                     char tip[80];
                     std::snprintf(tip, sizeof tip, "%s  %d MANA", bt->name.c_str(),

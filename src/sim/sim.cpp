@@ -1243,6 +1243,17 @@ void World::train(int builderId, const UnitType* type) {
     b->buildQueue.push_back(type);
 }
 
+void World::setRepeat(int builderId, const UnitType* type) {
+    Unit* b = unit(builderId);
+    if (!b || !b->alive() || !type) return;
+    if (b->repeatType == type) {
+        b->repeatType = nullptr;   // ctrl+click again: stop the loop
+    } else {
+        b->repeatType = type;
+        if (b->buildQueue.empty()) b->buildQueue.push_back(type);   // kick it off
+    }
+}
+
 void World::tickAuras(float dt) {
     // Every unit's buffs relax back toward 1.0; aura projectors then refresh the
     // units in their radius, so a buff holds while in range and fades on leaving.
@@ -1343,26 +1354,47 @@ void World::tickProduction(Unit& u, float dt) {
     const UnitType* t = u.buildQueue.front();
     float total = t->buildTime / std::max(u.type->workerTime, 0.01f);
     Team& tm = teams_[size_t(u.team)];
-    if (gInstantBuild) {
-        u.buildProgress = total;   // finishes this tick, free
-    } else {
-        float cost = t->buildCost * dt / std::max(total, 0.01f);
-        if (tm.mana < cost) return;   // stalled: no mana
-        tm.mana -= cost;
-        u.buildProgress += dt;
+    // Accumulate work (spending mana) until complete. Once complete, buildProgress
+    // holds at `total` and grows only as a wait timer below.
+    if (u.buildProgress < total) {
+        if (gInstantBuild) {
+            u.buildProgress = total;   // finishes this tick, free
+        } else {
+            float cost = t->buildCost * dt / std::max(total, 0.01f);
+            if (tm.mana < cost) return;   // stalled: no mana
+            tm.mana -= cost;
+            u.buildProgress += dt;
+        }
+        if (u.buildProgress < total) return;   // not done yet
     }
-    if (u.buildProgress >= total) {
-        u.buildProgress = 0;
-        u.buildQueue.pop_front();
-        // Spawn just south of the footprint, walk to a rally point.
-        float sx = u.x, sz = u.z + float(u.type->footZ) * 8 + 20;
-        // spawn() push_backs into units_ and may reallocate it, invalidating
-        // `u`. Capture the producer's id first and re-fetch afterwards rather
-        // than touching the dangling reference.
-        int producerId = u.id, team = u.team;
-        int id = spawn(t, sx, sz, 3.14159f, team);
-        order(id, sx + float((id % 5) - 2) * 22, sz + 60, false);
-        if (Unit* pu = unit(producerId)) pu->justBuilt = id;
+    // Finished: the conjured unit emerges just south of the footprint and walks to
+    // a rally point. Hold it until that tile is clear so a repeat/queued build
+    // doesn't stack units on top of each other -- but never wait forever (2.5s cap)
+    // if the exit is jammed.
+    float sx = u.x, sz = u.z + float(u.type->footZ) * 8 + 20;
+    float r = std::max(t->footX, t->footZ) * 8.0f + 8.0f;
+    bool clear = true;
+    forEachNear(sx, sz, r, [&](int idx) {
+        const Unit& e = units_[size_t(idx)];
+        if (!e.alive() || e.id == u.id) return;
+        float dx = e.x - sx, dz = e.z - sz;
+        if (dx * dx + dz * dz < r * r) clear = false;
+    });
+    if (!clear && u.buildProgress < total + 2.5f) {
+        u.buildProgress += dt;   // waiting for the tile to clear (no mana spent)
+        return;
+    }
+    u.buildProgress = 0;
+    u.buildQueue.pop_front();
+    // spawn() may reallocate units_, invalidating `u`; capture the id and re-fetch.
+    int producerId = u.id, team = u.team;
+    int id = spawn(t, sx, sz, 3.14159f, team);
+    order(id, sx + float((id % 5) - 2) * 22, sz + 60, false);
+    if (Unit* pu = unit(producerId)) {
+        pu->justBuilt = id;
+        // Infinite build: re-queue so the next one starts once this one clears.
+        if (pu->buildQueue.empty() && pu->repeatType)
+            pu->buildQueue.push_back(pu->repeatType);
     }
 }
 

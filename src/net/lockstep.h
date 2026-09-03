@@ -17,7 +17,8 @@ constexpr uint32_t kHashInterval = 30;   // ticks
 
 enum class Cmd : uint8_t {
     Move, Attack, AttackMove, Patrol, Stop, Train, Build, Load, Unload, Guard,
-    SetWeapon,   // targetId = weapon slot (0=primary, 1, 2)
+    SetWeapon,     // targetId = weapon slot (0=primary, 1, 2)
+    RepeatTrain,   // ctrl+click a conjure icon: toggle infinite production of `type`
 };
 
 struct Command {
