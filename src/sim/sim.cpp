@@ -911,8 +911,12 @@ void World::tickCombat(Unit& u, float dt) {
         float ar = u.type->maxRange() + 90;
         int best = 0;
         float bestD = ar * ar;
-        // maneuverleashlength: don't chase beyond `leash` from the idle anchor.
-        float leash2 = u.type->leash > 0 ? u.type->leash * u.type->leash : 1e30f;
+        // maneuverleashlength limits how far an IDLE defender will chase from its
+        // post. It must NOT apply while attack-moving/patrolling — those orders
+        // mean "advance and engage everything en route", so an army that has
+        // travelled far from its spawn still acquires (incl. just-conjured foes).
+        float leash2 = (u.orders.empty() && u.type->leash > 0)
+                           ? u.type->leash * u.type->leash : 1e30f;
         forEachNear(u.x, u.z, ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
             if (!e.alive() || e.embarked() || e.team == u.team || !e.type) return;
