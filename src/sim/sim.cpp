@@ -355,6 +355,35 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
         for (int x = 0; x < w; ++x)
             if (seaLevel - int(heights[size_t(z) * w + x]) > 0)
                 navHover_.block(x, z, 1, 1, false);
+    // Occlusion block: a wall's baked-relief art leans its top up-and-north over
+    // the low ground behind it (the 2.5D projection), so a unit that stops on that
+    // ground is drawn hidden "behind the wall". Block those cells for land units so
+    // they can't settle there -- the flat wall TOP has no higher cell to its south,
+    // so it stays walkable (a reachable rampart). This mirrors the renderer's
+    // occlusion exactly (modal ground height as the reference, ~1.1 px of northward
+    // projection per height unit, scanning south = toward the camera).
+    {
+        long hist[256] = {0};
+        for (uint8_t v : heights) hist[v]++;
+        int ref = 0;
+        for (int i = 1; i < 256; ++i) if (hist[i] > hist[ref]) ref = i;
+        const float kProj = 1.1f;
+        for (int z = 0; z < h; ++z)
+            for (int x = 0; x < w; ++x) {
+                int hu = heights[size_t(z) * w + x];
+                for (int d = 1; d <= 7; ++d) {
+                    int nz = z + d;
+                    if (nz >= h) break;
+                    int hw = heights[size_t(nz) * w + x];
+                    if (hw <= hu + 24) continue;   // not a wall relative to this cell
+                    if (float(hw - ref) * kProj > float(d) * 16.0f) {
+                        nav_.block(x, z, 1, 1, true);
+                        navHover_.block(x, z, 1, 1, true);
+                        break;
+                    }
+                }
+            }
+    }
     // Per-cell slope (max 3x3 height spread) and water depth, for per-unit
     // maxSlope / maxWaterDepth checks on top of the shared domain grids.
     terW_ = w; terH_ = h;
