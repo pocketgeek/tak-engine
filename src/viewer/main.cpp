@@ -4086,10 +4086,12 @@ private:
         if (!u) return;
         int n = int(u->type->weapons.size());
         const float bw = 26, gap = 4;
-        // A row just above the HUD bar, under the order column (always visible).
+        // A row just above the HUD bar, right-aligned to the order column's right
+        // edge (the row can be wider than the 56px column, so don't centre it or it
+        // runs off the screen edge).
         float y = float(winH) - kBarH - bw - 8;
         float row = n * bw + (n - 1) * gap;
-        float x0 = float(winW) - 60 + (56 - row) / 2;
+        float x0 = float(winW) - 4 - row;
         for (int i = 0; i < n; ++i) {
             SDL_FRect r{x0 + i * (bw + gap), y, bw, bw};
             weaponRects_.push_back(r);
