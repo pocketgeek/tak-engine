@@ -114,7 +114,6 @@ public:
 
     void draw(int winW, int winH) {
         clampOffset(winW, winH);
-        if (displaced()) { drawDisplaced(winW, winH); return; }
 
         int c0x = int(offX_) / kChunk, c0y = int(offY_) / kChunk;
         int c1x = int(offX_ + winW / zoom_) / kChunk, c1y = int(offY_ + winH / zoom_) / kChunk;
@@ -163,71 +162,6 @@ private:
         SDL_UpdateTexture(t, nullptr, buf.data(), kChunk * 4);
         chunks_[key] = t;
         return t;
-    }
-
-    // --- experimental height-displaced terrain (TAK_DISPLACE=1) ---
-    // Draw each 32px block as its own quad, offset UP the screen by its terrain
-    // height, back-to-front, so the terrain rises with the units that stand on it
-    // (the baked cliff-face art fills the vertical step). A/B against the flat
-    // chunk path so we can see whether it aligns units without distorting terrain.
-    int hRef_ = -1;
-    float hScale_ = 0.9f;   // matches GameView's unit lift so units sit on the terrain
-    std::map<std::pair<int, int>, SDL_Texture*> blockTex_;
-    float blockLift(int bx, int by) {
-        if (map_.heights.empty()) return 0.0f;
-        if (hRef_ < 0) {
-            long hist[256] = {0};
-            for (uint8_t v : map_.heights) hist[v]++;
-            int best = 0;
-            for (int i = 1; i < 256; ++i) if (hist[i] > hist[best]) best = i;
-            hRef_ = best;
-            if (const char* e = getenv("TAK_HSCALE")) hScale_ = std::stof(e);
-        }
-        int W = map_.width, H = map_.height, hmax = 0;
-        for (int dz = 0; dz < 2; ++dz)
-            for (int dx = 0; dx < 2; ++dx) {
-                int cx = std::clamp(bx * 2 + dx, 0, W - 1);
-                int cz = std::clamp(by * 2 + dz, 0, H - 1);
-                hmax = std::max(hmax, int(map_.heights[size_t(cz) * W + cx]));
-            }
-        return std::max(0.0f, float(hmax - hRef_) * hScale_);
-    }
-    SDL_Texture* blockTex(int bx, int by) {
-        if (bx < 0 || by < 0 || bx >= map_.blocksX || by >= map_.blocksY) return nullptr;
-        auto key = std::make_pair(bx, by);
-        auto it = blockTex_.find(key);
-        if (it != blockTex_.end()) return it->second;
-        std::vector<uint8_t> buf(size_t(32) * 32 * 4, 0);
-        comp_.renderBlock(map_, bx, by, buf, 32, 0, 0);
-        SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
-                                           SDL_TEXTUREACCESS_STATIC, 32, 32);
-        SDL_UpdateTexture(t, nullptr, buf.data(), 32 * 4);
-        blockTex_[key] = t;
-        return t;
-    }
-    bool displaced() {
-        static int d = getenv("TAK_DISPLACE") ? 1 : 0;
-        return d != 0;
-    }
-    void drawDisplaced(int winW, int winH) {
-        int b0x = std::max(0, int(offX_) / 32 - 1);
-        int b0y = std::max(0, int(offY_) / 32 - 1);
-        int b1x = std::min(map_.blocksX - 1, int(offX_ + winW / zoom_) / 32 + 1);
-        int b1y = std::min(map_.blocksY - 1, int(offY_ + winH / zoom_) / 32 + 8);
-        for (int by = b0y; by <= b1y; ++by)
-            for (int bx = b0x; bx <= b1x; ++bx) {
-                SDL_Texture* t = blockTex(bx, by);
-                if (!t) continue;
-                float lift = blockLift(bx, by);
-                float below = blockLift(bx, by + 1);
-                float skirt = std::max(0.0f, lift - below);   // gap to the block below
-                int x0 = int(std::lround((bx * 32 - offX_) * zoom_));
-                int y0 = int(std::lround((by * 32 - offY_ - lift) * zoom_));
-                int x1 = int(std::lround(((bx + 1) * 32 - offX_) * zoom_));
-                int y1 = int(std::lround(((by + 1) * 32 - offY_ - lift + skirt) * zoom_));
-                SDL_Rect dst{x0, y0, x1 - x0 + 1, y1 - y0 + 1};
-                SDL_RenderCopy(ren_, t, nullptr, &dst);
-            }
     }
 
     SDL_Renderer* ren_;
@@ -3491,8 +3425,7 @@ private:
     // the elevation the tile art shows instead of the flat grid cell. Zero at the
     // map's ground level; water and flat ground are unaffected.
     int heightRef_ = -1;                          // map ground level (modal height)
-    float kHeightScale_ = 0.9f;                    // world-px lift per height unit
-    float kOccScale_ = 1.1f;                       // wall-top north projection scale
+    float kHeightScale_ = 1.1f;                    // world-px lift per height unit (also occlusion + picking)
     int kOccScan_ = 12;                            // cells to scan south for a wall
     float terrainLift(float wx, float wz) {
         const auto& m = mapView_.map();
@@ -3570,10 +3503,9 @@ private:
             int h = m.heights[size_t(cz) * m.width + cx];
             if (h <= hUnit + 24) continue;   // not a wall relative to this unit
             // The wall's painted top projects north of its heightmap footprint by
-            // ~height*kOccScale_ (the art leans it up-and-back). kOccScale_ is a
-            // touch larger than the unit-seating lift because tall walls project
-            // further than a per-cell lift predicts.
-            float proj = std::max(0.0f, float(h - heightRef_) * kOccScale_);
+            // ~height*kHeightScale_ (the art leans it up-and-back) -- the same scale
+            // the unit lift and picking use, so occlusion, seating and clicks agree.
+            float proj = std::max(0.0f, float(h - heightRef_) * kHeightScale_);
             float wy = (float(cz) * 16 + 8 - mapView_.offY()) * zm - proj * zm;
             if (wy < best) best = wy;
         }
