@@ -527,19 +527,24 @@ bool NavGrid::lineClear(int x0, int z0, int x1, int z1) const {
     }
 }
 
-bool NavGrid::losBetween(float wx0, float wz0, float wx1, float wz1) const {
+bool NavGrid::losBetween(float wx0, float wz0, float wx1, float wz1,
+                         int skip0, int skip1) const {
     if (empty()) return true;
-    int x0 = int(wx0) / 16, z0 = int(wz0) / 16;
-    int x1 = int(wx1) / 16, z1 = int(wz1) / 16;
-    int dx = std::abs(x1 - x0), dz = -std::abs(z1 - z0);
-    int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1, err = dx + dz;
+    int ex0 = int(wx0) / 16, ez0 = int(wz0) / 16;
+    int ex1 = int(wx1) / 16, ez1 = int(wz1) / 16;
+    int x0 = ex0, z0 = ez0;
+    int dx = std::abs(ex1 - x0), dz = -std::abs(ez1 - z0);
+    int sx = x0 < ex1 ? 1 : -1, sz = z0 < ez1 ? 1 : -1, err = dx + dz;
     while (true) {
-        if (x0 == x1 && z0 == z1) return true;   // reached target cell (endpoint)
+        if (x0 == ex1 && z0 == ez1) return true;   // reached the target cell
         int e2 = 2 * err;
         if (e2 >= dz) { err += dz; x0 += sx; }
         if (e2 <= dx) { err += dx; z0 += sz; }
-        if (x0 == x1 && z0 == z1) return true;   // stepped onto the endpoint
-        if (!walkable(x0, z0)) return false;     // a wall stands between them
+        if (x0 == ex1 && z0 == ez1) return true;   // stepped onto the endpoint
+        // Ignore cells inside either endpoint's own footprint (Chebyshev radius).
+        if (std::max(std::abs(x0 - ex0), std::abs(z0 - ez0)) <= skip0) continue;
+        if (std::max(std::abs(x0 - ex1), std::abs(z0 - ez1)) <= skip1) continue;
+        if (!walkable(x0, z0)) return false;       // a wall stands between them
     }
 }
 
@@ -917,15 +922,26 @@ void World::tickCombat(Unit& u, float dt) {
         // travelled far from its spawn still acquires (incl. just-conjured foes).
         float leash2 = (u.orders.empty() && u.type->leash > 0)
                            ? u.type->leash * u.type->leash : 1e30f;
+        // A ranged unit only auto-acquires enemies it can actually see, so it
+        // doesn't charge a target hidden behind a wall (which caused pile-ups at
+        // corners). Melee/flyers acquire regardless.
+        bool ranged = u.type->maxRange() > 64.0f && !u.type->canFly;
+        int uFoot = std::max(u.type->footX, u.type->footZ) / 2;
         forEachNear(u.x, u.z, ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
             if (!e.alive() || e.embarked() || e.team == u.team || !e.type) return;
+            if (e.underConstruction) return;   // don't auto-react to a site still conjuring
             if (!canTarget(e)) return;
             float hx = e.x - u.homeX, hz = e.z - u.homeZ;
             if (hx * hx + hz * hz > leash2) return;   // outside the leash
             float dx = e.x - u.x, dz = e.z - u.z;
             float d = dx * dx + dz * dz;
-            if (d < bestD) { bestD = d; best = e.id; }
+            if (d >= bestD) return;
+            if (ranged && !e.type->canFly &&
+                !nav_.losBetween(u.x, u.z, e.x, e.z, uFoot,
+                                 std::max(e.type->footX, e.type->footZ) / 2))
+                return;                         // no clear shot: don't acquire it
+            bestD = d; best = e.id;
         });
         if (best) u.orders.push_front({0, 0, best});
     }
@@ -958,7 +974,10 @@ void World::tickCombat(Unit& u, float dt) {
     // in / reposition rather than firing through it (melee & flyers are exempt).
     bool needLoS = best > 64.0f && !u.type->canFly &&
                    target->type && !target->type->canFly;
-    bool los = !needLoS || nav_.losBetween(u.x, u.z, target->x, target->z);
+    bool los = !needLoS ||
+               nav_.losBetween(u.x, u.z, target->x, target->z,
+                               std::max(u.type->footX, u.type->footZ) / 2,
+                               std::max(target->type->footX, target->type->footZ) / 2);
     if (!u.type->canMove && dist > best) {      // static units can't chase
         u.orders.pop_front();
         return;
@@ -1454,7 +1473,10 @@ void World::tick(float dt) {
                 // target is blocked keeps moving to get around the wall.
                 bool needLoS = u.type->maxRange() > 64.0f && !u.type->canFly &&
                                t->type && !t->type->canFly && u.type->canMove;
-                return !needLoS || nav_.losBetween(u.x, u.z, t->x, t->z);
+                return !needLoS ||
+                       nav_.losBetween(u.x, u.z, t->x, t->z,
+                                       std::max(u.type->footX, u.type->footZ) / 2,
+                                       std::max(t->type->footX, t->type->footZ) / 2);
             }();
         if (combatHold) continue;
 
@@ -1520,7 +1542,10 @@ void World::tick(float dt) {
             } else {
                 const NavGrid& g = navFor(u.type);
                 auto free = [&](float nx, float nz) {
-                    return g.empty() || passable(u.type, int(nx) / 16, int(nz) / 16);
+                    // Use the SAME grid the pathfinder used, so a unit never
+                    // stalls on a cell its own path routed it through. (The
+                    // per-unit slope/water limits still gate placement/pathing.)
+                    return g.empty() || g.walkable(int(nx) / 16, int(nz) / 16);
                 };
                 if (free(u.x + mx, u.z + mz)) { u.x += mx; u.z += mz; }
                 else if (free(u.x + mx, u.z)) { u.x += mx; }
