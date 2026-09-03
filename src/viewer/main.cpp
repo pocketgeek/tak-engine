@@ -3145,6 +3145,23 @@ private:
         float zm = mapView_.zoom();
         float ax = (u.x - mapView_.offX()) * zm;
         float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
+        // Terrain occlusion: if a wall between the unit and the camera projects its
+        // top above the unit's feet, clip the model to that line and re-draw the
+        // hidden part as a faint team-tinted silhouette showing through the wall.
+        float occY = wallOcclusionY(u.x, u.z);
+        // Flyers ride above the terrain, so a wall never hides them.
+        bool occluded = !(u.type && u.type->canFly) && occY < ay - 2.0f;
+        int outW = 0, outH = 0;
+        SDL_bool hadClip = SDL_FALSE;
+        SDL_Rect prevClip{};
+        if (occluded) {
+            SDL_GetRendererOutputSize(ren_, &outW, &outH);
+            hadClip = SDL_RenderIsClipEnabled(ren_);
+            if (hadClip) SDL_RenderGetClipRect(ren_, &prevClip);
+            int line = std::clamp(int(occY), 0, outH);
+            SDL_Rect top{0, 0, outW, line};   // only pixels above the wall top show
+            SDL_RenderSetClipRect(ren_, &top);
+        }
         // Ground shadow (FBI shadowart, from shadows.gaf): drawn under the model
         // at the unit's ground point, nudged for the sun; a flyer's shadow sits
         // further out and stays on the ground while the model rides its altitude.
@@ -3220,6 +3237,28 @@ private:
                         SDL_RenderCopyF(ren_, fx, nullptr, &d);
                     }
             }
+        }
+
+        // Occluded: re-draw the hidden lower part as a faint, flat team-coloured
+        // silhouette through the wall, so a unit behind cover is never fully lost.
+        if (occluded) {
+            int line = std::clamp(int(occY), 0, outH);
+            SDL_Rect bot{0, line, outW, std::max(0, outH - line)};
+            SDL_RenderSetClipRect(ren_, &bot);
+            SDL_Color tc = teamColor(u.team);
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            for (auto& t : tris_) {
+                SDL_Vertex v[3];
+                for (int i = 0; i < 3; ++i) {
+                    v[i] = t.v[i];
+                    v[i].position.x = v[i].position.x * zm + ax;
+                    v[i].position.y = v[i].position.y * zm + ay;
+                    v[i].color = SDL_Color{tc.r, tc.g, tc.b, 70};
+                }
+                SDL_RenderGeometry(ren_, nullptr, v, 3, nullptr, 0);
+            }
+            if (hadClip) SDL_RenderSetClipRect(ren_, &prevClip);
+            else SDL_RenderSetClipRect(ren_, nullptr);
         }
     }
 
@@ -3407,6 +3446,34 @@ private:
         float h = H(x0, z0) * (1 - fx) * (1 - fz) + H(x1, z0) * fx * (1 - fz) +
                   H(x0, z1) * (1 - fx) * fz + H(x1, z1) * fx * fz;
         return std::max(0.0f, (h - float(heightRef_)) * kHeightScale_);
+    }
+
+    // Terrain occlusion: a wall's baked-relief art projects up-and-north over the
+    // flat ground behind it, but terrain is painted before units, so a unit on
+    // that ground would draw ON the wall. Find the screen-Y of the projected top
+    // surface of the tallest wall BETWEEN this unit and the camera (i.e. to its
+    // south, larger z). Units are then clipped to above that line and the hidden
+    // part re-drawn as a faint silhouette. Returns a huge value when nothing
+    // occludes the unit. kHeightScale_/heightRef_ are lazily set by terrainLift.
+    float wallOcclusionY(float wx, float wz) {
+        const auto& m = mapView_.map();
+        if (m.heights.empty()) return 1e9f;
+        terrainLift(wx, wz);   // ensure heightRef_/kHeightScale_ are initialised
+        float zm = mapView_.zoom();
+        int cx = std::clamp(int(wx) / 16, 0, m.width - 1);
+        int cz0 = std::clamp(int(wz) / 16, 0, m.height - 1);
+        int hUnit = m.heights[size_t(cz0) * m.width + cx];
+        float best = 1e9f;
+        for (int dz = 1; dz <= 7; ++dz) {
+            int cz = cz0 + dz;
+            if (cz >= m.height) break;
+            int h = m.heights[size_t(cz) * m.width + cx];
+            if (h <= hUnit + 24) continue;   // not a wall relative to this unit
+            float lift = std::max(0.0f, float(h - heightRef_) * kHeightScale_);
+            float wy = (float(cz) * 16 + 8 - mapView_.offY()) * zm - lift * zm;
+            if (wy < best) best = wy;
+        }
+        return best;
     }
     uint32_t netTick_ = 0;
     std::string netError_;
