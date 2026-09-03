@@ -3468,30 +3468,32 @@ private:
     // FRONT-MOST surface (largest z) that projects to the click, like a depth pick.
     void pickWorld(float sx, float sy, float& wx, float& wz) {
         float zm = mapView_.zoom();
-        wx = mapView_.offX() + sx / zm;
-        float target = mapView_.offY() + sy / zm;   // flat (no-lift) world z
-        wz = target;
+        // Flat (no-lift) world position of the click.
+        float cwx = mapView_.offX() + sx / zm;
+        float cwz = mapView_.offY() + sy / zm;
+        wx = cwx; wz = cwz;
         const auto& m = mapView_.map();
         if (m.heights.empty()) return;
-        // A ground point at world z projects to screen z' = z - lift(wx,z). We want
-        // the largest z with z - lift == target. Scan the lift's reach south of the
-        // flat estimate and keep the front-most crossing.
-        terrainLift(wx, target);   // ensure heightRef_/kHeightScale_ are initialised
-        float maxLift = std::max(0.0f, float(255 - (heightRef_ < 0 ? 0 : heightRef_))) *
-                        kHeightScale_;
-        float bestZ = target;
-        float prevH = target - terrainLift(wx, target);   // h(z) = z - lift(wx,z)
-        for (float z = target + 1.5f; z <= target + maxLift + 4; z += 1.5f) {
-            float h = z - terrainLift(wx, z);
-            if (prevH < target && h >= target) bestZ = z;   // front-most upward crossing
-            prevH = h;
+        heightAbove(cwx, cwz);   // init ref/scales
+        // A surface cell of height h renders at flat position (wx - h*scaleX,
+        // wz - h*scaleY), so a point that projects to this click satisfies
+        // (wx, wz) = (cwx + h*scaleX, cwz + h*scaleY) with h = heightAbove(wx, wz).
+        // March h outward (both axes move together along the tilt) and take the
+        // front-most self-consistent surface -- the largest h where the candidate's
+        // actual height drops through the assumed h. Handles the X/Z coupling so a
+        // click on a wall top resolves to that top, not the ground behind it.
+        float maxH = std::max(0.0f, float(255 - (heightRef_ < 0 ? 0 : heightRef_)));
+        float bestH = 0.0f;
+        float prevDiff = heightAbove(cwx, cwz);   // actualH - 0 at h = 0
+        for (float h = 1.5f; h <= maxH + 2; h += 1.5f) {
+            float ax = cwx + h * kHeightScaleX_;
+            float az = cwz + h * kHeightScale_;
+            float diff = heightAbove(ax, az) - h;
+            if (prevDiff > 0 && diff <= 0) bestH = h;   // keep the largest (front-most)
+            prevDiff = diff;
         }
-        wz = std::clamp(bestZ, 0.0f, float(m.height * 16 - 1));
-        // Undo the sideways (X) part of the tilt too: the surface at the resolved
-        // cell was drawn shifted by terrainLiftX, so the click's true world X is the
-        // flat estimate plus that shift.
-        wx = std::clamp(mapView_.offX() + sx / zm + terrainLiftX(wx, wz),
-                        0.0f, float(m.width * 16 - 1));
+        wx = std::clamp(cwx + bestH * kHeightScaleX_, 0.0f, float(m.width * 16 - 1));
+        wz = std::clamp(cwz + bestH * kHeightScale_, 0.0f, float(m.height * 16 - 1));
     }
 
     // Terrain occlusion: a wall's baked-relief art projects up-and-north over the
