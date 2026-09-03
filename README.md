@@ -69,8 +69,10 @@ train the army — the AI opponent bootstraps the same way. `--demo`
 instead stages a ready-army AI-vs-AI war; `--mission` loads a campaign
 mission's .ota/.cob; `--side ara|tar|ver|zon|cre` picks your faction and
 `--aiside` the enemy's (Zhon has no Keep — its Monarch and Beast Handlers
-summon creatures; Creon needs the Iron Plague data). `--cheat` makes all
-construction and production finish instantly and cost no mana.
+summon creatures; Creon needs the Iron Plague data). `--color N` /
+`--aicolor N` (0–9) choose the player-colour variant your / the AI's units
+render in, independent of faction. `--cheat` makes all construction and
+production finish instantly and cost no mana.
 
 In a god-enabled match, a faction whose priests (`attractsgods` units) have
 channelled enough mana favour manifests its **god** among its forces once the
