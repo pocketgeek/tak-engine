@@ -23,6 +23,22 @@ and place its data files in `assets/` (gitignored) to use the engine.
    `MAP_COMMAND` scripting API and `.crt` scenario/trigger parsing.
 6. ~~**Multiplayer**~~ ✅ 2-player TCP lockstep, verified deterministic
    (commands scheduled at tick+4, periodic state-hash sync check).
+7. ~~**Combat & unit depth**~~ ✅ the FBI/weapon data is driven faithfully:
+   HP regen, veterancy (kills → +10%/level attack·armour·reload, gold sheen,
+   promoted `veteranmodel`), per-unit mana pools & mana-per-shot, area-of-effect
+   splash + per-target-category damage, status weapons (freeze / petrify /
+   paralyze / mind-control) with immunities, cloaking, reclaim / resurrect /
+   capture, `AdjustArmor`/`AdjustAttack` stat auras, terrain-class movement
+   (`MOVEINFO.tdf` slope/water limits + water/road speed), radar sight,
+   line-of-sight firing (no shooting through walls), flow-field group movement,
+   and a summonable-god economy.
+8. ~~**Effects & audio**~~ ✅ real GAF/TAF explosion, splash, shockwave-ring,
+   ground-fire and muzzle-flash effects; material-specific impact sounds; unit
+   shadows; camera shake; positional/surround audio.
+
+Many of these were cross-checked by disassembling the retail engine
+(`KINGDOMS.icd`) — see `docs/retail-engine.md` for the findings (class model,
+config schema, and the veterancy/build formulas read out of the binary).
 
 ## Quick start (after placing game data in assets/)
 
@@ -41,9 +57,10 @@ unit, Esc cancels an armed order. Selection: **Ctrl+A** = all your units,
 Control groups: **Ctrl+1–9/0** assign the selection, **1–9/0** recall it,
 **Ctrl+Shift+1–9/0** add to a group. **Pause** toggles pause.
 Click the build icons at a selected builder/keep to train or place,
-arrows/middle-drag = scroll, wheel = zoom (toward cursor),
-minimap click/drag = move camera. Background music plays from the game soundtrack. Frame rate is capped
-at 60 fps (`--maxfps N`, or `--maxfps 0` for uncapped).
+arrows/middle-drag/**screen-edge** = scroll, wheel = zoom (toward cursor),
+minimap click/drag = move camera. **F4** toggles a per-faction unit counter
+with the live frame rate. Background music plays from the game soundtrack. Frame
+rate is capped at 60 fps (`--maxfps N`, or `--maxfps 0` for uncapped).
 
 Each side begins a skirmish with **only its Monarch**, dropped on the
 map's real start positions (read from the `.ota`). The Monarch generates
@@ -52,7 +69,8 @@ train the army — the AI opponent bootstraps the same way. `--demo`
 instead stages a ready-army AI-vs-AI war; `--mission` loads a campaign
 mission's .ota/.cob; `--side ara|tar|ver|zon|cre` picks your faction and
 `--aiside` the enemy's (Zhon has no Keep — its Monarch and Beast Handlers
-summon creatures; Creon needs the Iron Plague data).
+summon creatures; Creon needs the Iron Plague data). `--cheat` makes all
+construction and production finish instantly and cost no mana.
 
 Multiplayer (2-player TCP lockstep): host runs with `--host 7777`, the
 other player adds `--join <host-ip> 7777`. Host commands the Aramon

@@ -26,17 +26,22 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -393,14 +398,24 @@ public:
         } catch (const std::exception&) { return; }
 
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
+        // Auto-detect the device's channel layout so positional audio can pan
+        // across stereo (L/R) or surround (adds front/rear) speakers.
+        int chans = 2;
+        SDL_AudioSpec def{};
+        if (SDL_GetDefaultAudioInfo(nullptr, &def, 0) == 0 && def.channels >= 2)
+            chans = std::min<int>(def.channels, 8);
         SDL_AudioSpec want{};
         want.freq = 11025;
         want.format = AUDIO_S16SYS;
-        want.channels = 1;
+        want.channels = Uint8(chans);
         want.samples = 1024;
         want.callback = &SoundBank::mixThunk;
         want.userdata = this;
-        dev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &spec_, 0);
+        dev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &spec_,
+                                   SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
+        chan_ = dev_ ? (spec_.channels ? spec_.channels : 2) : 1;
+        std::fprintf(stderr, "audio: %d output channels%s\n", chan_,
+                     chan_ >= 4 ? " (surround: front/rear enabled)" : "");
         if (dev_) SDL_PauseAudioDevice(dev_, 0);
     }
 
@@ -440,7 +455,25 @@ public:
 
     void setVerbose(bool v) { verbose_ = v; }
 
-    void play(const std::string& name) {
+    // The listener (camera) frame in world coords, so positional sounds pan by
+    // where the source sits on screen. halfW/halfH are half the visible extent.
+    void setListener(float cx, float cz, float halfW, float halfH) {
+        listenX_ = cx; listenZ_ = cz;
+        listenHW_ = std::max(halfW, 1.0f); listenHH_ = std::max(halfH, 1.0f);
+    }
+
+    // Non-positional (UI, music-adjacent) — centred across all speakers.
+    void play(const std::string& name) { playAt(name, 0.0f, 0.0f); }
+
+    // Positional: pan by the source's world position relative to the listener.
+    // Left/right from x; front(up)/rear(down) from z on surround setups.
+    void playWorld(const std::string& name, float x, float z) {
+        float pan = std::clamp((x - listenX_) / listenHW_, -1.0f, 1.0f);
+        float depth = std::clamp((z - listenZ_) / listenHH_, -1.0f, 1.0f);
+        playAt(name, pan, depth);
+    }
+
+    void playAt(const std::string& name, float pan, float depth) {
         std::string n = name;
         std::transform(n.begin(), n.end(), n.begin(), ::tolower);
         auto it = index_.find(n);
@@ -453,6 +486,8 @@ public:
             if (c.pos >= (c.data ? c.data->size() : 0)) {
                 c.data = samples;
                 c.pos = 0;
+                c.pan = pan;
+                c.depth = depth;
                 break;
             }
         SDL_UnlockAudioDevice(dev_);
@@ -462,7 +497,31 @@ private:
     struct Channel {
         const std::vector<int16_t>* data = nullptr;
         size_t pos = 0;
+        float pan = 0, depth = 0;   // -1..+1 : left..right, front..rear
     };
+
+    // Per-output-channel gains for a source at (pan, depth). Equal-power pan
+    // left/right; on surround layouts also crossfade front/rear by depth.
+    void channelGains(float pan, float depth, float* g) const {
+        float lg = std::sqrt(std::clamp((1 - pan) * 0.5f, 0.0f, 1.0f));
+        float rg = std::sqrt(std::clamp((1 + pan) * 0.5f, 0.0f, 1.0f));
+        float fg = std::sqrt(std::clamp((1 - depth) * 0.5f, 0.0f, 1.0f));
+        float bg = std::sqrt(std::clamp((1 + depth) * 0.5f, 0.0f, 1.0f));
+        for (int i = 0; i < chan_; ++i) g[i] = 0;
+        float cg = (1.0f - std::fabs(pan)) * 0.7f;   // centre channel content
+        switch (chan_) {
+            case 1: g[0] = 1.0f; break;
+            case 2: g[0] = lg; g[1] = rg; break;                       // FL FR
+            case 4: g[0]=lg*fg; g[1]=rg*fg; g[2]=lg*bg; g[3]=rg*bg; break;  // FL FR BL BR
+            case 6:  // FL FR FC LFE BL BR
+                g[0]=lg*fg; g[1]=rg*fg; g[2]=cg*fg; g[3]=0; g[4]=lg*bg; g[5]=rg*bg; break;
+            case 8:  // FL FR FC LFE BL BR SL SR
+                g[0]=lg*fg; g[1]=rg*fg; g[2]=cg*fg; g[3]=0;
+                g[4]=lg*bg; g[5]=rg*bg; g[6]=lg*0.7f; g[7]=rg*0.7f; break;
+            default: g[0]=lg; if (chan_>1) g[1]=rg; break;
+        }
+    }
+    float listenX_ = 0, listenZ_ = 0, listenHW_ = 1, listenHH_ = 1;
 
     // Decode a WAV (from memory) to the mixer's 11025 Hz mono S16 format.
     std::optional<std::vector<int16_t>> decodeWav(const uint8_t* data, size_t size) {
@@ -507,17 +566,28 @@ private:
 
     void mix(int16_t* out, int n) {
         std::memset(out, 0, size_t(n) * 2);
-        // Background music bed (quieter than SFX).
-        for (int i = 0; i < n; ++i) {
+        int ch = std::max(chan_, 1);
+        int frames = n / ch;
+        auto add = [&](int f, int ci, int v) {
+            int idx = f * ch + ci;
+            out[idx] = int16_t(std::clamp(out[idx] + v, -32768, 32767));
+        };
+        // Background music bed (quieter than SFX), spread across all speakers.
+        for (int f = 0; f < frames; ++f) {
             if (musicPos_ >= music_.size()) { musicDone_ = true; break; }
-            int v = out[i] + (music_[musicPos_++] * musicVol_) / 256;
-            out[i] = int16_t(std::clamp(v, -32768, 32767));
+            int m = (music_[musicPos_++] * musicVol_) / 256;
+            int mc = m / (ch > 2 ? 2 : 1);   // don't get louder with more speakers
+            for (int ci = 0; ci < ch; ++ci) add(f, ci, mc);
         }
+        // Positional SFX: pan each into the speaker layout.
+        float g[8];
         for (auto& c : channels_) {
             if (!c.data) continue;
-            for (int i = 0; i < n && c.pos < c.data->size(); ++i, ++c.pos) {
-                int v = out[i] + (*c.data)[c.pos] / 2;
-                out[i] = int16_t(std::clamp(v, -32768, 32767));
+            channelGains(c.pan, c.depth, g);
+            for (int f = 0; f < frames && c.pos < c.data->size(); ++f, ++c.pos) {
+                int s = (*c.data)[c.pos] / 2;
+                for (int ci = 0; ci < ch; ++ci)
+                    if (g[ci] != 0.0f) add(f, ci, int(s * g[ci]));
             }
         }
     }
@@ -612,6 +682,7 @@ private:
     bool musicDone_ = false;
     SDL_AudioDeviceID dev_ = 0;
     SDL_AudioSpec spec_{};
+    int chan_ = 1;              // output channel count (2=stereo, 4/6/8=surround)
     bool verbose_ = false;
 };
 
@@ -713,6 +784,82 @@ private:
     bool ok_ = false;
 };
 
+// ------------------------------------------------------------- thread pool
+
+// Persistent worker pool for data-parallel loops (e.g. per-unit animation VM
+// ticks). parallelFor splits [0,count) into chunks pulled off an atomic counter
+// and blocks until all are done; the calling thread participates as one worker.
+class ThreadPool {
+public:
+    ThreadPool() {
+        unsigned n = std::thread::hardware_concurrency();
+        n_ = n ? n : 1;
+        for (unsigned i = 1; i < n_; ++i)
+            workers_.emplace_back([this] { workerLoop(); });
+    }
+    ~ThreadPool() {
+        { std::lock_guard<std::mutex> lk(m_); stop_ = true; }
+        cv_.notify_all();
+        for (auto& t : workers_) t.join();
+    }
+    ThreadPool(const ThreadPool&) = delete;
+    ThreadPool& operator=(const ThreadPool&) = delete;
+
+    template <class F>
+    void parallelFor(size_t count, F&& f) {
+        if (count == 0) return;
+        if (n_ == 1 || count < 32) { f(size_t(0), count); return; }  // not worth it
+        std::function<void(size_t, size_t)> fn =
+            [&f](size_t b, size_t e) { f(b, e); };
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            fn_ = &fn;
+            count_ = count;
+            next_.store(0, std::memory_order_relaxed);
+            active_ = n_;
+            ++gen_;
+        }
+        cv_.notify_all();
+        runChunks();
+        std::unique_lock<std::mutex> lk(m_);
+        doneCv_.wait(lk, [this] { return active_ == 0; });
+        fn_ = nullptr;
+    }
+
+private:
+    void runChunks() {
+        constexpr size_t kChunk = 8;
+        for (;;) {
+            size_t b = next_.fetch_add(kChunk, std::memory_order_relaxed);
+            if (b >= count_) break;
+            size_t e = std::min(b + kChunk, count_);
+            (*fn_)(b, e);
+        }
+        std::lock_guard<std::mutex> lk(m_);
+        if (--active_ == 0) doneCv_.notify_one();
+    }
+    void workerLoop() {
+        unsigned seen = 0;
+        for (;;) {
+            std::unique_lock<std::mutex> lk(m_);
+            cv_.wait(lk, [this, &seen] { return stop_ || gen_ != seen; });
+            if (stop_) return;
+            seen = gen_;
+            lk.unlock();
+            runChunks();
+        }
+    }
+    unsigned n_ = 1;
+    std::vector<std::thread> workers_;
+    std::mutex m_;
+    std::condition_variable cv_, doneCv_;
+    std::function<void(size_t, size_t)>* fn_ = nullptr;
+    size_t count_ = 0;
+    std::atomic<size_t> next_{0};
+    unsigned active_ = 0, gen_ = 0;
+    bool stop_ = false;
+};
+
 // --------------------------------------------------------------- game mode
 
 // Units simulated on a real map: left-click select, right-click move order
@@ -781,6 +928,17 @@ public:
         // (side_ initialized below before loadPanel uses it)
         : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot),
           side_(side) {
+        registry_.loadMoveInfo(dataRoot_ + "/gamedata/moveinfo.tdf");
+        // God economy timing (gamedata/Gods.tdf). TAK_GODTIME overrides the
+        // appear time (seconds) for testing; otherwise use AppearTimeMin minutes.
+        try {
+            auto g = tak::tdf::parse(dataRoot_ + "/gamedata/gods.tdf");
+            if (const auto* tm = g.child("TIMING")) {
+                float appear = float(tm->numberOr("AppearTimeMin", 30.0)) * 60.0f;
+                if (const char* e = getenv("TAK_GODTIME")) appear = std::stof(e);
+                world_.enableGods(appear);
+            }
+        } catch (const std::exception&) {}
         registry_.loadDir(dataRoot_ + "/units");
         registry_.loadBuildTree(dataRoot_ + "/canbuild");
         ipRoot_ = dataRoot_ + "/../IPData";
@@ -1297,7 +1455,11 @@ public:
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
                    draggingMinimap_) {
             draggingMinimap_ = false;
-        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
+                   dragging_) {
+            // Only complete a box/click-select if the press actually began on
+            // the map. A release after an icon click or a build placement must
+            // NOT clear the selection using stale drag coordinates.
             dragging_ = false;
             float x0 = mapView_.offX() + std::min(dragX0_, dragX1_) / zm;
             float x1 = mapView_.offX() + std::max(dragX0_, dragX1_) / zm;
@@ -1634,7 +1796,7 @@ public:
     void faceTest() {
         aiEnabled_ = false;
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
-        struct D { float dx, dz; };
+        // araarch (correct, +h) vs zonhand, both walking east, arrows on.
         float ddx[4]={0,400,0,-400}, ddz[4]={-400,0,400,0};
         for (int i=0;i<4;i++){
             int id=spawn("araarch", cx+ddx[i]*0.15f, cz+ddz[i]*0.15f, 0, 0);
@@ -1681,10 +1843,102 @@ public:
             }
     }
 
+    // Smoothed render FPS for the F4 overlay (set from the main loop each frame).
+    void setFps(float f) { fps_ = fps_ > 0 ? fps_ * 0.9f + f * 0.1f : f; }
+
+    // Mouse edge scrolling: pan the camera while the cursor rests in the margin
+    // at a window edge. The bottom trigger sits just above the HUD panel so it
+    // doesn't fight the build icons.
+    void edgeScroll(float dt, float zm) {
+        if (winW_ <= 0 || winH_ <= 0) return;
+        if (mouseX_ < 0 || mouseX_ > winW_ || mouseY_ < 0 || mouseY_ > winH_) return;
+        const float margin = 24.0f, panPx = 1000.0f;   // px/s at zoom 1
+        float botLimit = float(winH_) - kBarH;          // top of the HUD panel
+        float sx = 0, sz = 0;
+        if (mouseX_ < margin) sx = -1;
+        else if (mouseX_ > winW_ - margin) sx = 1;
+        if (mouseY_ < margin) sz = -1;
+        else if (mouseY_ > botLimit - margin && mouseY_ <= botLimit) sz = 1;
+        if (sx == 0 && sz == 0) return;
+        follow_ = false;   // the player is driving the camera now
+        mapView_.setOffset(mapView_.offX() + sx * panPx * dt / zm,
+                           mapView_.offY() + sz * panPx * dt / zm);
+    }
+
     void update(float dt) {
         sounds_.pollMusic();
+        // Listener = the camera view, so positional sounds pan by screen position.
+        float zm = std::max(mapView_.zoom(), 1e-3f);
+        float halfW = (winW_ / 2.0f) / zm, halfH = (winH_ / 2.0f) / zm;
+        sounds_.setListener(mapView_.offX() + halfW, mapView_.offY() + halfH,
+                            halfW, halfH);
+        edgeScroll(dt, zm);    // pan when the cursor rests near a screen edge
         if (paused_) return;   // freeze the sim; input/render keep running
         world_.tick(dt);
+        // Weapon impacts this tick: play each weapon's soundhitclass, picking the
+        // material-specific variant from the struck unit's bodytype (flesh/armor/..).
+        for (const auto& h : world_.hits()) {
+            if (h.weapon && !h.weapon->soundHit.empty()) {
+                const std::string& body = h.target ? h.target->bodyType : std::string("default");
+                const std::string* wav = soundClasses_.pick(h.weapon->soundHit, body, salt_++);
+                if (!wav) wav = soundClasses_.pick(h.weapon->soundHit, "default", salt_++);
+                if (wav) sounds_.playWorld(*wav, h.x, h.z);
+            }
+            // Impact visual: play the weapon's real GAF/TAF explosion effect
+            // (water variant over water); fall back to procedural particles when
+            // the class or its art is unavailable.
+            if (h.weapon) {
+                const std::string& cls = (world_.isWater(h.x, h.z) &&
+                                          !h.weapon->waterExplosionClass.empty())
+                                             ? h.weapon->waterExplosionClass
+                                             : h.weapon->explosionClass;
+                if (!spawnEffect(cls, h.x, h.z)) spawnImpact(*h.weapon, h.x, h.z);
+            }
+            // Weapon area-effect: expanding shockwave rings (radiusart, staggered
+            // by ringdelay) and ground fire (firestarter) at the impact.
+            if (h.weapon) {
+                float maxR = std::max(h.weapon->aoe * 0.5f, 48.0f);
+                for (int i = 0; i < h.weapon->ringCount && i < 3; ++i)
+                    if (!h.weapon->radiusArt[i].empty())
+                        spawnRing(h.weapon->radiusArt[i], h.x, h.z,
+                                  float(i) * h.weapon->ringDelay, h.weapon->ringDur,
+                                  h.weapon->spriteCount, maxR);
+                if (h.weapon->fireStarter && !world_.isWater(h.x, h.z))
+                    spawnEffectAnim("flame", h.x, h.z, 0.0f, 0.0f, 5);   // fire lingers
+                // Camera shake for heavy impacts you can actually see.
+                if (h.weapon->shakeMag > 0 && world_.cellVisible(h.x, h.z))
+                    triggerShake(h.weapon->shakeMag, h.weapon->shakeDur);
+            }
+            if (h.target && h.target->bodyType == "flesh")
+                spawnBurst(h.x, h.z, 5, h.target->blood[0], h.target->blood[1],
+                           h.target->blood[2], 26, 1.8f, 0);
+        }
+        world_.clearHits();
+        updateParticles(dt);
+        updateEffects(dt);
+        updateRings(dt);
+        if (shakeTime_ > 0) shakeTime_ = std::max(0.0f, shakeTime_ - dt);
+        // God economy: once a team's favour fills after the appear time, its
+        // faction's god manifests among its forces.
+        if (world_.godsEnabled())
+            for (int t = 0; t < 4; ++t)
+                if (world_.godReady(t)) summonGod(t);
+        if (getenv("TAK_STUCKSTAT")) {   // crowd-jam diagnostic
+            static float acc = 0; acc += dt;
+            if (acc >= 2.0f) {
+                acc = 0;
+                int moving = 0, stalled = 0, ordered = 0;
+                for (auto& u : world_.units()) {
+                    if (!u.alive() || !u.type || !u.type->canMove || u.type->canFly ||
+                        u.orders.empty() || u.orders.front().targetId != 0) continue;
+                    ordered++;
+                    if (u.speed > 3.0f) moving++; else stalled++;
+                }
+                std::printf("stuckstat t=%.0f ordered=%d moving=%d stalled=%d\n",
+                            animClock_, ordered, moving, stalled);
+                std::fflush(stdout);
+            }
+        }
         for (auto& u : world_.units())
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
         tickAi(dt);
@@ -1841,12 +2095,29 @@ public:
                                    cz / float(n) - 400 / mapView_.zoom());
         }
         for (auto& u : world_.units()) {
+            if (u.alive()) maybeSwapVeteranModel(u);
             auto it = anims_.find(u.id);
             if (u.justFired && u.type) {
-                if (u.type->weapon.melee)
-                    sounds_.play("ahitfl0" + std::to_string(1 + (salt_++ % 3)));
+                using Fx = tak::sim::WeaponFx;
+                const auto& w = u.type->weapon;
+                if (w.melee)
+                    sounds_.playWorld("ahitfl0" + std::to_string(1 + (salt_++ % 3)), u.x, u.z);
+                else if (w.fx == Fx::Fire)
+                    sounds_.playWorld(sounds_.has("firedrag") ? "firedrag" : "fireflsh", u.x, u.z);
+                else if (w.fx == Fx::Lightning)
+                    sounds_.playWorld("lightng" + std::to_string(1 + (salt_++ % 3)), u.x, u.z);
                 else
-                    sounds_.play("bow2");
+                    sounds_.playWorld("bow2", u.x, u.z);
+                // Muzzle flash: a quick bright puff at the weapon, just ahead of
+                // the unit along its facing (skip melee swings).
+                if (!w.melee) {
+                    float fx = u.x + std::sin(u.heading) * 11.0f;
+                    float fz = u.z + std::cos(u.heading) * 11.0f;
+                    Uint8 mr = 255, mg = 235, mb = 150;   // arrow/generic = warm
+                    if (w.fx == Fx::Lightning) { mr = 200; mg = 225; mb = 255; }
+                    else if (w.fx == Fx::Fire) { mr = 255; mg = 150; mb = 60; }
+                    spawnBurst(fx, fz, 4, mr, mg, mb, 14, 1.4f, 0);
+                }
                 // Play the unit's own firing animation while standing. Flyers
                 // keep their continuous flight threads running, so don't reset.
                 if (it != anims_.end() && !u.walking()) {
@@ -1867,33 +2138,53 @@ public:
                     a.vm->setStatic(0, 0);
                     a.vm->start("death") || a.vm->start("Dying") || a.vm->start("Killed");
                     const std::string& id = u.type->id;
-                    if (sounds_.has(id + "die1")) sounds_.play(id + "die1");
-                    else if (sounds_.has(id + "die2")) sounds_.play(id + "die2");
+                    if (sounds_.has(id + "die1")) sounds_.playWorld(id + "die1", u.x, u.z);
+                    else if (sounds_.has(id + "die2")) sounds_.playWorld(id + "die2", u.x, u.z);
+                    // Death effect: a real GAF explosion sized to the unit (bigger
+                    // footprint => bigger blast), plus blood particles for flesh.
+                    int foot = std::max(u.type->footX, u.type->footZ);
+                    const char* deathCls = foot >= 3 ? "large explosion"
+                                         : foot == 2 ? "medium explosion"
+                                                     : "small explosion";
+                    spawnEffect(deathCls, u.x, u.z);
+                    if (u.type->bodyType == "flesh") {
+                        spawnEffect("blood explosion", u.x, u.z);
+                        spawnBurst(u.x, u.z, 14, u.type->blood[0], u.type->blood[1],
+                                   u.type->blood[2], 40, 2.2f, 0);
+                    } else
+                        spawnBurst(u.x, u.z, 10, 110, 100, 90, 30, 2.4f, 1);
                     if (missionVm_ && u.team == 0)
                         missionVm_->start("UnitDestroyed", {u.id});
                 }
-                a.vm->tick(dt);
-                continue;
+                continue;   // VM advanced in the parallel pass below
             }
             if (a.flying) {
                 // Take off when moving, settle back to the ground when idle.
                 float cruise = u.type ? u.type->cruiseAlt : 0.0f;
-                // Stay airborne while doing anything — moving, or hovering to
-                // conjure a build/summon — and only land when fully idle.
+                // Flyers cruise while doing anything — moving, or hovering to
+                // conjure — and touch down when idle, playing the `land` script
+                // for a proper folded-wing landed pose (not the wings-spread
+                // rest "T-pose").
                 bool busy = u.walking() || !u.orders.empty() ||
                             u.buildSiteId != 0 || !u.buildOrders.empty();
                 float target = busy ? cruise : 0.0f;
                 float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise
                 a.altitude += std::clamp(target - a.altitude, -step, step);
 
-                // Only run the flight animation while she's actually off the
-                // ground; on landing, restore the standing pose.
+                // Run the flight animation whenever she is airborne (always, in
+                // practice, since idle only settles to a low hover).
                 bool air = a.altitude > std::max(cruise, 1.0f) * 0.3f;
+                // The flyer `fly` script gates its whole body/wing animation on
+                // a static whose index differs per unit (zonhunt=8, zongod and
+                // zonharp=7); a.flyGate is read from the bytecode. Setting the
+                // wrong index leaves `fly` inert — the unit sits in its wings-
+                // spread rest pose (a T-pose) and never picks up the fly-pose
+                // body turn, so it reads static and backward.
                 if (air) {
                     if (!a.airborne) {
                         a.airborne = true;
                         a.vm->reset();
-                        a.vm->setStatic(8, 1);   // gate that "fly" animates on
+                        a.vm->setStatic(a.flyGate, 1);   // gate that "fly" animates on
                         a.vm->start("fly");
                     } else if (a.vm->threadCount() == 0) {
                         a.vm->start("fly");       // keep the beat looping
@@ -1901,8 +2192,8 @@ public:
                 } else if (a.airborne) {
                     a.airborne = false;
                     a.vm->reset();
-                    a.vm->setStatic(8, 0);
-                    a.vm->start("restore_x");     // fold back to a standing pose
+                    a.vm->setStatic(a.flyGate, 0);
+                    a.vm->start("land") || a.vm->start("restore_x");   // landed pose
                 }
             } else {
                 bool m = u.walking();
@@ -1933,11 +2224,20 @@ public:
                     }
                 }
             }
-            // The FlightControl machine is timed for real time; over-ticking it
-            // makes the wing keyframes snap past each other (crossing, not
-            // flapping), so flyers run at 1x like everything else.
-            a.vm->tick(dt);
+            // (The VM itself is advanced in the parallel pass below.)
         }
+
+        // Advance every unit's animation VM in parallel. Each VM is independent:
+        // it only reads sim state through onGet (no writes) and its EMIT_SFX/
+        // PLAY_SOUND opcodes are no-ops here, so ticking off the main thread is
+        // safe. The state transitions above (sounds, script starts) stayed
+        // serial. Flyer VMs still advance at 1x real time.
+        vmTick_.clear();
+        for (auto& [id, a] : anims_)
+            if (a.vm) vmTick_.push_back(a.vm.get());
+        pool_.parallelFor(vmTick_.size(), [&](size_t b, size_t e) {
+            for (size_t i = b; i < e; ++i) vmTick_[i]->tick(dt);
+        });
     }
 
     // Create textures (terrain chunks, minimap) before the render pass.
@@ -1947,6 +2247,19 @@ public:
     }
 
     void draw(int winW, int winH) {
+        // Camera shake: nudge the map offset by a decaying oscillation for this
+        // frame, so the whole world jolts; the offset is restored at the end so
+        // the camera and UI stay put. shakemagnitude ~3 => a few px of jolt.
+        float shakeBaseX = mapView_.offX(), shakeBaseY = mapView_.offY();
+        bool shaking = shakeTime_ > 0 && shakeDur_ > 0;
+        if (shaking) {
+            float decay = shakeTime_ / shakeDur_;
+            float amp = shakeMag_ * 3.0f * decay;    // pixels
+            float dx = amp * std::sin(animClock_ * 91.0f);
+            float dz = amp * std::cos(animClock_ * 73.0f);
+            float zm = std::max(mapView_.zoom(), 1e-3f);
+            mapView_.setOffset(shakeBaseX + dx / zm, shakeBaseY + dz / zm);
+        }
         mapView_.draw(winW, winH);
         float zm0 = mapView_.zoom();
 
@@ -2013,20 +2326,73 @@ public:
                 for (const auto& bo : u.buildOrders)
                     if (bo.type) drawGhostAt(bo.type, bo.x, bo.z);
 
-        // Projectiles: short bright streaks (only where visible).
+        // Projectiles: drawn per weapon family (only where visible).
         float zm = mapView_.zoom();
-        SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
         for (const auto& p : world_.projectiles()) {
             if (!world_.cellVisible(p.x, p.z)) continue;
-            // Ballistic arc: peak height scales with flight time.
             float t = std::clamp(p.age / std::max(p.flight, 0.05f), 0.0f, 1.0f);
-            float peak = std::min(40.0f, p.flight * 28.0f);
-            float h = 8 + 4 * peak * t * (1 - t);
-            float sx = (p.x - mapView_.offX()) * zm;
-            float sy = (p.z - mapView_.offY()) * zm - h * zm;
-            SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.035f * zm,
-                                sy - p.vz * 0.035f * zm + (t < 0.5f ? 2.5f : -2.5f) * zm);
+            if (p.fx == tak::sim::WeaponFx::Lightning) {
+                // Flat, fast, jagged blue-white bolt from source toward target.
+                float sx = (p.x - mapView_.offX()) * zm;
+                float sy = (p.z - mapView_.offY()) * zm - 12 * zm;
+                float len = 22.0f;
+                float bx = -p.vx, bz = -p.vz;
+                float bl = std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
+                bx /= bl; bz /= bl;
+                float px = sx, py = sy;
+                SDL_SetRenderDrawColor(ren_, 210, 230, 255, 255);
+                for (int s = 1; s <= 4; ++s) {
+                    float d = len * zm * s / 4.0f;
+                    float jitter = ((s * 1327 + int(p.age * 900)) % 7 - 3) * 1.6f * zm;
+                    float nx = sx + bx * d - bz * jitter;
+                    float ny = sy + bz * d + bx * jitter - 12 * zm * s / 4.0f;
+                    SDL_RenderDrawLineF(ren_, px, py, nx, ny);
+                    px = nx; py = ny;
+                }
+            } else if (p.fx == tak::sim::WeaponFx::Fire) {
+                // Flame breath: a short stream of flickering orange/yellow puffs
+                // trailing behind the leading tip, not a single fireball.
+                float bx = -p.vx, bz = -p.vz;
+                float bl = std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
+                bx /= bl; bz /= bl;
+                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+                for (int s = 0; s < 5; ++s) {
+                    float back = s * 6.0f;   // world px behind the tip
+                    float wob = ((s * 811 + int(p.age * 1000)) % 5 - 2) * 2.0f;
+                    float fx = p.x + bx * back - bz * wob;
+                    float fz = p.z + bz * back + bx * wob;
+                    float sx = (fx - mapView_.offX()) * zm;
+                    float sy = (fz - mapView_.offY()) * zm - 12 * zm;
+                    float r = (4.0f - s * 0.6f) * zm;   // shrinks toward the tail
+                    Uint8 aA = Uint8(200 - s * 30);
+                    // outer orange
+                    SDL_SetRenderDrawColor(ren_, 230, 90, 25, aA);
+                    SDL_FRect o{sx - r, sy - r, 2 * r, 2 * r};
+                    SDL_RenderFillRectF(ren_, &o);
+                    // hot yellow core at the leading puffs
+                    if (s < 2) {
+                        SDL_SetRenderDrawColor(ren_, 255, 220, 110, aA);
+                        SDL_FRect c{sx - r * 0.45f, sy - r * 0.45f, r * 0.9f, r * 0.9f};
+                        SDL_RenderFillRectF(ren_, &c);
+                    }
+                }
+            } else {
+                // Arrow/bolt/cannonball: a yellow streak. Ballistic weapons (FBI
+                // type = Ballistic) lob a high arc scaled by flight time; other
+                // shots (line-of-sight bolts) fly nearly flat.
+                bool bal = p.wsrc && p.wsrc->ballistic;
+                float peak = bal ? std::min(95.0f, p.flight * 55.0f)
+                                 : std::min(18.0f, p.flight * 12.0f);
+                float h = 8 + 4 * peak * t * (1 - t);
+                float sx = (p.x - mapView_.offX()) * zm;
+                float sy = (p.z - mapView_.offY()) * zm - h * zm;
+                SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
+                SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.035f * zm,
+                                    sy - p.vz * 0.035f * zm + (t < 0.5f ? 2.5f : -2.5f) * zm);
+            }
         }
+        drawParticles();
+        drawEffects();
 
         drawFog();
         if (buildDrag_ && placing_) {
@@ -2130,7 +2496,11 @@ public:
             }
         }
 
+        // Restore the un-shaken camera so the HUD/panel stays rock-steady.
+        if (shaking) mapView_.setOffset(shakeBaseX, shakeBaseY);
+
         drawPanel(winW, winH);
+        if (showCounts_) drawUnitCounts(winW);
 
         // Mission briefing (first 30s) and event notices.
         if (briefTimer_ > 0 && hudFont_.ok()) {
@@ -2373,25 +2743,29 @@ private:
     // Once a strike force has gathered, send the (non-builder) fighters at the
     // nearest enemy. Ids are collected first so world_.attack never mutates a
     // container being iterated.
+    // Send the idle army as one cohesive wave: attack-move the whole group to a
+    // single rally target (the enemy nearest the group's centre) so they share
+    // one flow field and flow around obstacles together, engaging what they meet
+    // en route — instead of each unit A*-chasing its own nearest foe and jamming.
     void sendWaves(int team) {
         std::vector<int> idle;
+        double sx = 0, sz = 0;
         for (auto& u : world_.units())
             if (u.alive() && u.team == team && u.type && u.type->canMove &&
-                !u.type->isBuilder && u.orders.empty())
+                !u.type->isBuilder && u.orders.empty()) {
                 idle.push_back(u.id);
-        if (idle.size() < 4) return;
-        for (int id : idle) {
-            const auto* me = world_.unit(id);
-            if (!me) continue;
-            int best = 0;
-            float bestD = 1e18f;
-            for (auto& e : world_.units()) {
-                if (!e.alive() || e.team == team) continue;
-                float dx = e.x - me->x, dz = e.z - me->z;
-                if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; best = e.id; }
+                sx += u.x; sz += u.z;
             }
-            if (best) world_.attack(id, best, false);
+        if (idle.size() < 4) return;
+        float cx = float(sx / idle.size()), cz = float(sz / idle.size());
+        float tx = 0, tz = 0, bestD = 1e18f;
+        for (auto& e : world_.units()) {
+            if (!e.alive() || e.team == team || !e.type) continue;
+            float dx = e.x - cx, dz = e.z - cz;
+            if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; tx = e.x; tz = e.z; }
         }
+        if (bestD > 1e17f) return;   // no enemy found
+        for (int id : idle) world_.attackMove(id, tx, tz, false);
     }
 
     void runAi(int team, int keepId, const std::array<std::string, 4>& cycle) {
@@ -2401,22 +2775,23 @@ private:
                          registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]));
 
         std::vector<int> idle;
+        double sx = 0, sz = 0;
         for (auto& u : world_.units())
             if (u.alive() && u.team == team && u.type && u.type->canMove &&
-                u.orders.empty())
+                u.orders.empty()) {
                 idle.push_back(u.id);
-        if (idle.size() >= 4) {
-            for (int id : idle) {
-                const auto* me = world_.unit(id);
-                int best = 0;
-                float bestD = 1e18f;
-                for (auto& e : world_.units()) {
-                    if (!e.alive() || e.team == team) continue;
-                    float dx = e.x - me->x, dz = e.z - me->z;
-                    if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; best = e.id; }
-                }
-                if (best) world_.attack(id, best, false);
+                sx += u.x; sz += u.z;
             }
+        if (idle.size() >= 4) {
+            float cx = float(sx / idle.size()), cz = float(sz / idle.size());
+            float tx = 0, tz = 0, bestD = 1e18f;
+            for (auto& e : world_.units()) {
+                if (!e.alive() || e.team == team || !e.type) continue;
+                float dx = e.x - cx, dz = e.z - cz;
+                if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; tx = e.x; tz = e.z; }
+            }
+            if (bestD < 1e17f)
+                for (int id : idle) world_.attackMove(id, tx, tz, false);
         }
     }
 
@@ -2433,7 +2808,62 @@ private:
         bool flying = false;
         bool airborne = false;   // true while the flight animation should run
         float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
+        int flyGate = 8;         // static index that this unit's `fly` gates on
+        bool flyHalfTurn = true; // fly pose adds 180deg => face pi-heading, else -heading
     };
+
+    // The `fly` script's first instruction is a PUSH_STATIC that gates the
+    // whole animation; different flyers use different indices (zonhunt=8,
+    // zongod/zonharp=7). Read it straight from the bytecode.
+    static int flyGateOf(const tak::cob::Vm& vm) {
+        const auto& f = vm.file();
+        int si = f.scriptIndex("fly");
+        if (si < 0) return 8;
+        uint32_t e = f.scripts[size_t(si)].entry;
+        if (e + 1 < f.code.size() && f.code[e] == 0x10021004)   // PUSH_STATIC
+            return int(f.code[e + 1]);
+        return 8;
+    }
+
+    // Zhon flyer models are mirrored (base facing -heading); some fly poses turn
+    // the body a further 180deg (=> pi-heading), others don't (zondrake, zongryp
+    // and zonflies fly backward with pi-heading). The discriminator is the `fly`
+    // setup's first hip (piece 0) vertical (axis 1) MOVE_NOW: only a NEGATIVE
+    // offset means +180 (pi-heading). Positive or absent => plain -heading.
+    static bool flyHalfTurnOf(const tak::cob::Vm& vm) {
+        const auto& f = vm.file();
+        int si = f.scriptIndex("fly");
+        if (si < 0) return false;
+        uint32_t e = f.scripts[size_t(si)].entry;
+        uint32_t end = size_t(si) + 1 < f.scripts.size()
+                           ? f.scripts[size_t(si) + 1].entry
+                           : uint32_t(f.code.size());
+        for (uint32_t i = e; i + 2 < end; ++i)
+            if (f.code[i] == 0x1000B000 && f.code[i + 1] == 0 && f.code[i + 2] == 1) {
+                if (i >= 2 && f.code[i - 2] == 0x10021001)   // preceding PUSH_CONST
+                    return int32_t(f.code[i - 1]) < 0;       // negative => +180 (pi-heading)
+                return false;
+            }
+        return false;   // no hip vertical move => plain -heading
+    }
+
+    // At max veterancy, a unit with a `veteranmodel` swaps its mesh for the
+    // fancier promoted 3DO (same piece structure, so the COB/anim carries over).
+    void maybeSwapVeteranModel(const tak::sim::Unit& u) {
+        if (!u.type || u.veteran < 10 || u.type->veteranModel.empty()) return;
+        const std::string& vm = u.type->veteranModel;
+        auto it = unitType_.find(u.id);
+        if (it == unitType_.end() || it->second == vm) return;   // not drawn yet / done
+        if (!visuals_.count(vm)) {
+            try {
+                visuals_[vm] = {tak::tdo::load(dataRoot_ + "/objects3d/" + vm + ".3do")};
+            } catch (const std::exception&) {
+                try { visuals_[vm] = {tak::tdo::load(ipRoot_ + "/objects3d/" + vm + ".3do")}; }
+                catch (const std::exception&) { return; }   // no promoted mesh: keep base
+            }
+        }
+        it->second = vm;   // draw the promoted mesh from now on
+    }
 
     void registerUnit(const tak::sim::Unit& u) {
         const std::string& typeId = u.type->id;
@@ -2487,11 +2917,42 @@ private:
             // Flyers deploy their wings and start flapping at spawn via their
             // flight scripts; without these they sit in the landed rest pose
             // (which also reads as facing the wrong way).
-            if (u.type && u.type->canFly)
+            if (u.type && u.type->canFly) {
                 a.flying = true;   // starts grounded; the update loop flies her
+                a.flyGate = flyGateOf(*a.vm);
+                a.flyHalfTurn = flyHalfTurnOf(*a.vm);
+                // Start in the folded landed pose, not the wings-spread rest
+                // pose, so a flyer that spawns idle and never takes off (e.g. the
+                // Monarch at game start) doesn't sit in a T-pose.
+                a.vm->start("land");
+            } else if (u.type && !u.type->canMove) {
+                // Buildings: run the COB constructor so ambient loops start
+                // (e.g. the Sacred Fire's Create kicks off its FireControl
+                // flicker). Harmless for buildings without one.
+                a.vm->start("Create");
+            }
         } catch (const std::exception&) { /* unit stays unanimated */ }
         if (a.vm) anims_[u.id] = std::move(a);
         unitType_[u.id] = typeId;
+    }
+
+    // Manifest team `t`'s faction god at its army's centre (once favour fills).
+    void summonGod(int t) {
+        float cx = 0, cz = 0; int n = 0; std::string side;
+        for (const auto& u : world_.units())
+            if (u.alive() && u.team == t && u.type && !u.underConstruction) {
+                cx += u.x; cz += u.z; ++n;
+                if (side.empty() && !u.type->side.empty()) side = u.type->side;
+            }
+        world_.team(t).godSummoned = true;   // mark handled regardless
+        if (!n || side.empty()) return;
+        std::transform(side.begin(), side.end(), side.begin(), ::tolower);
+        const auto* god = registry_.find(side + "god");
+        if (!god) return;
+        int id = spawn(side + "god", cx / n, cz / n, 3.14159f, t);
+        (void)id;
+        if (t == localTeam_ && hudFont_.ok()) { notice_ = "YOUR GOD HAS ANSWERED"; noticeTimer_ = 6; }
+        else if (hudFont_.ok()) { notice_ = "AN ENEMY GOD RISES"; noticeTimer_ = 6; }
     }
 
     int spawn(const std::string& typeId, float x, float z, float heading, int team) {
@@ -2617,41 +3078,64 @@ private:
         Xform base;
         if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
             base.t[1] = anim ? anim->altitude : u.type->cruiseAlt;   // cruise height
-        // Buildings are stationary; their billboards are authored facing the
-        // camera (yaw 0). Mobile units turn to face their heading; the +pi
-        // aligns the models' authored forward axis with the movement dir.
-        // Buildings are stationary (camera-facing billboards, yaw 0). Mobile
-        // units face their heading; the render z-axis is inverted vs the sim
-        // (billboard flip), so the facing yaw negates the heading.
-        // Buildings are stationary (camera-facing billboards, yaw 0). Mobile
-        // units face their heading directly: the model's forward axis (+z)
-        // maps to (sin yaw, cos yaw), matching the sim's movement vector.
-        float facing = (u.type && u.type->canMove) ? u.heading : 0.0f;
-        // Flyer models are built mirrored across the N-S axis relative to the
-        // ground units, so they read correct N/S but backward E/W. Negating
-        // the heading reflects E<->W (and diagonals) while leaving N/S.
-        // Flyer models read backward vs the ground units, and the running fly
-        // pose adds a further 180° body turn, so face them at -heading + pi.
-        // Verified against a ground unit moving in each direction.
-        if (u.type && u.type->canFly) facing = 3.14159265f - facing;
-        collect(vt->second.model.root, base, anim, facing, u.team);
+        // Buildings are camera-facing billboards (yaw 0). Mobile units face
+        // their heading directly: the model's forward axis (+z) maps to
+        // (sin heading, cos heading), matching the sim's movement vector. This
+        // is correct for EVERY faction — a numerical axis test (model +z / +x
+        // projected through the transform) shows Zhon ground units match a
+        // known-correct Aramon unit exactly at facing=heading. (All models share
+        // one handedness, so none are mirror images; the earlier Zhon mirror/
+        // -heading special-case was wrong — it faced them backward AND reflected
+        // the legs, the "walking sideways/backwards" bug.)
+        // Facing: the models' E/W axis is inverted vs the sim, so the base for
+        // every mobile unit is `-heading` (verified with sword units of all
+        // factions — arasword/tardemon/zonorc all point their weapon toward
+        // movement only at -heading; +heading points it backward). Flyers whose
+        // running fly pose adds a 180° body turn use `pi - heading` (= -heading
+        // + 180); a.flyHalfTurn (read from the fly bytecode) picks those.
+        float facing = (u.type && u.type->canMove) ? -u.heading : 0.0f;
+        bool mirror = false;
+        if (u.type && u.type->canFly && anim && anim->flyHalfTurn)
+            facing = 3.14159265f - u.heading;
+        collect(vt->second.model.root, base, anim, facing, u.team, mirror);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
         float ax = (u.x - mapView_.offX()) * zm;
         float ay = (u.z - mapView_.offY()) * zm;
+        // Ground shadow (FBI shadowart, from shadows.gaf): drawn under the model
+        // at the unit's ground point, nudged for the sun; a flyer's shadow sits
+        // further out and stays on the ground while the model rides its altitude.
+        if (u.type && !u.underConstruction) {
+            if (const ShadowTex* sh = shadowFor(u.type->shadowArt)) {
+                float alt = anim ? anim->altitude : 0.0f;
+                float sox = (6.0f + alt * 0.5f) * zm, soy = (3.0f + alt * 0.25f) * zm;
+                SDL_FRect dst{ax - sh->xoff * zm + sox, ay - sh->yoff * zm + soy,
+                              sh->w * zm, sh->h * zm};
+                SDL_RenderCopyF(ren_, sh->tex, nullptr, &dst);
+            }
+        }
         // Conjuring: while a unit is built/summoned it fades in from ~0 to 100%
         // (its hp fills 5%->100%) with a shimmering cyan pulse that fades out
         // as it finishes materialising.
         bool conjuring = u.underConstruction && u.type;
         float p = conjuring ? std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f) : 1.0f;
         Uint8 alpha = Uint8(p * 255.0f);
+        // Veterancy tint: a promoted unit takes on a golden sheen that deepens
+        // with its level (up to ~55% blend toward gold at level 10).
+        float vetGold = (!conjuring && u.veteran > 0)
+                            ? std::min(u.veteran, 10) / 10.0f * 0.55f : 0.0f;
         for (auto& t : tris_) {
             SDL_Vertex v[3];
             for (int i = 0; i < 3; ++i) {
                 v[i] = t.v[i];
                 v[i].position.x = v[i].position.x * zm + ax;
                 v[i].position.y = v[i].position.y * zm + ay;
+                if (vetGold > 0) {
+                    v[i].color.r = Uint8(v[i].color.r + (255 - v[i].color.r) * vetGold);
+                    v[i].color.g = Uint8(v[i].color.g + (200 - v[i].color.g) * vetGold * 0.85f);
+                    v[i].color.b = Uint8(v[i].color.b * (1.0f - vetGold * 0.7f));
+                }
                 if (conjuring) {
                     float pulse = 0.5f + 0.5f * std::sin(animClock_ * 7.0f +
                                                          v[i].position.y * 0.03f);
@@ -2698,7 +3182,7 @@ private:
     // Project model triangles relative to the unit anchor: yaw by heading,
     // fixed tilt so models read against TAK's painted top-down terrain.
     void collect(const tak::tdo::Object& o, const Xform& parent, const Anim* anim,
-                 float heading, int team) {
+                 float heading, int team, bool mirror = false, bool isRoot = true) {
         static const float kNoRot[3] = {0, 0, 0};
         const tak::cob::PieceState* ps = pieceFor(anim, o.name);
         if (ps && !ps->visible) return;
@@ -2706,16 +3190,18 @@ private:
                                o.y + (ps ? ps->move[1] : 0),
                                o.z + (ps ? ps->move[2] : 0),
                                ps ? ps->rot : kNoRot);
-        // Hidden pieces: ground-reference plates (AraGP, araground, zonnull,
-        // zon_gpoly, ...) and deactivated-state duplicates (*off), which the
-        // game shows only via activation scripts we don't run.
+        // Hidden pieces: ground-reference plates and deactivated-state
+        // duplicates (*off), which the game shows only via activation scripts
+        // we don't run. The model ROOT is always the flat base plate (AraGP,
+        // zonnull, or just the unit name like zontrain/zonharpy1) with the real
+        // model in its children, so skip its own primitives unconditionally.
         std::string oname = o.name;
         std::transform(oname.begin(), oname.end(), oname.begin(), ::tolower);
         auto ends = [&](const char* suf) {
             size_t n = std::strlen(suf);
             return oname.size() >= n && oname.compare(oname.size() - n, n, suf) == 0;
         };
-        bool groundPlate = ends("gp") || ends("null") || ends("off") ||
+        bool groundPlate = isRoot || ends("gp") || ends("null") || ends("off") ||
                            oname.find("ground") != std::string::npos ||
                            oname.find("gpoly") != std::string::npos ||
                            oname.find("gpoint") != std::string::npos;
@@ -2745,8 +3231,9 @@ private:
                     if (vi + 2 >= o.vertices.size()) { ok = false; break; }
                     float w[3];
                     xf.apply(o.vertices[vi], o.vertices[vi + 1], o.vertices[vi + 2], w);
-                    float rx = w[0] * cy + w[2] * sy;
-                    float rz = -w[0] * sy + w[2] * cy;
+                    float wx = mirror ? -w[0] : w[0];   // un-mirror Zhon models on X
+                    float rx = wx * cy + w[2] * sy;
+                    float rz = -wx * sy + w[2] * cy;
                     // TAK billboards lean back (+y and +z together); moving
                     // away (+z) reads upward on screen, adding to height.
                     float ry = w[1] * ct + rz * st;
@@ -2762,7 +3249,7 @@ private:
                 tris_.push_back(tri);
             }
         }
-        for (const auto& c : o.children) collect(c, xf, anim, heading, team);
+        for (const auto& c : o.children) collect(c, xf, anim, heading, team, mirror, false);
     }
 
     void drawBrackets(float wx, float wz, float r) {
@@ -2813,6 +3300,8 @@ private:
                             // 'm' move, 'a' attack, 'p' patrol, 'g' guard
     std::map<int, std::vector<int>> groups_;   // control groups 0-9
     bool paused_ = false;
+    bool showCounts_ = false;   // F4: per-faction live unit counts
+    float fps_ = 0;             // smoothed render FPS, shown on the F4 overlay
     int winW_ = 0, winH_ = 0;   // last-known window size (for centering/culling)
     tak::net::Session* net_ = nullptr;
     int localTeam_ = 0;
@@ -2957,6 +3446,40 @@ private:
     std::map<std::string, tak::tdf::Node> featureDefs_;
     std::map<std::string, tak::gaf::Palette> featurePals_;
     std::map<std::string, FeatArt> featureArt_;
+
+    // Unit ground shadows: the sprites from data/anims/shadows.gaf named by each
+    // unit's FBI `shadowart`, recoloured to translucent black. Loaded once.
+    struct ShadowTex { SDL_Texture* tex = nullptr; int w = 0, h = 0, xoff = 0, yoff = 0; };
+    std::map<std::string, ShadowTex> shadowTex_;
+    bool shadowsLoaded_ = false;
+    const ShadowTex* shadowFor(const std::string& art) {
+        if (art.empty()) return nullptr;
+        if (!shadowsLoaded_) {
+            shadowsLoaded_ = true;
+            const auto* pal = featurePalette("aramon");
+            if (pal) try {
+                for (auto& sq : tak::gaf::load(dataRoot_ + "/anims/shadows.gaf", *pal)) {
+                    if (sq.frames.empty() || sq.frames[0].width == 0) continue;
+                    auto& fr = sq.frames[0];
+                    std::vector<uint8_t> px = fr.rgba;   // silhouette -> translucent black
+                    for (size_t i = 0; i + 3 < px.size(); i += 4) {
+                        px[i] = px[i + 1] = px[i + 2] = 0;
+                        px[i + 3] = px[i + 3] ? 90 : 0;
+                    }
+                    SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                       SDL_TEXTUREACCESS_STATIC,
+                                                       fr.width, fr.height);
+                    SDL_UpdateTexture(t, nullptr, px.data(), fr.width * 4);
+                    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+                    std::string name = sq.name;
+                    std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+                    shadowTex_[name] = {t, fr.width, fr.height, fr.xoff, fr.yoff};
+                }
+            } catch (const std::exception&) {}
+        }
+        auto it = shadowTex_.find(art);
+        return it != shadowTex_.end() ? &it->second : nullptr;
+    }
 
     void loadFeatureDefs() {
         if (!featureDefs_.empty()) return;
@@ -3106,11 +3629,38 @@ private:
             }
         std::printf("features: %d placed\n", placed);
         // Register the Sacred Stone deposits so lodestones can only build on
-        // them (and the AI knows where to put them).
-        manaSpots_.clear();
+        // them (and the AI knows where to put them). One visual deposit often
+        // has several category=mana features (the rune circle plus a crystal and
+        // runed stones ~50px apart), so cluster them (union-find, 60px link) and
+        // keep ONE spot per cluster — otherwise several lodestones pile onto what
+        // reads as a single deposit.
+        std::vector<std::pair<float, float>> raw;
         for (const auto& f : features_)
-            if (f.mana) manaSpots_.push_back({f.x, f.z});
+            if (f.mana) raw.push_back({f.x, f.z});
+        std::vector<int> par(raw.size());
+        for (size_t i = 0; i < par.size(); ++i) par[i] = int(i);
+        std::function<int(int)> find = [&](int a) {
+            while (par[size_t(a)] != a) { par[size_t(a)] = par[size_t(par[size_t(a)])]; a = par[size_t(a)]; }
+            return a;
+        };
+        const float link2 = 60.0f * 60.0f;
+        for (size_t i = 0; i < raw.size(); ++i)
+            for (size_t j = i + 1; j < raw.size(); ++j) {
+                float dx = raw[i].first - raw[j].first, dz = raw[i].second - raw[j].second;
+                if (dx * dx + dz * dz < link2) par[size_t(find(int(i)))] = find(int(j));
+            }
+        std::map<int, std::pair<std::pair<double, double>, int>> acc;   // root -> (sum, count)
+        for (size_t i = 0; i < raw.size(); ++i) {
+            auto& a = acc[find(int(i))];
+            a.first.first += raw[i].first; a.first.second += raw[i].second; ++a.second;
+        }
+        manaSpots_.clear();
+        for (auto& [root, a] : acc)
+            manaSpots_.push_back({float(a.first.first / a.second),
+                                  float(a.first.second / a.second)});
         world_.setManaSpots(manaSpots_);
+        std::printf("mana deposits: %zu (from %zu features)\n",
+                    manaSpots_.size(), raw.size());
     }
 
     // Track numbers for a side from gamedata/sidedata.tdf (falls back to IP).
@@ -3277,10 +3827,13 @@ private:
                 SDL_SetRenderDrawColor(ren_, 255, 220, 90, 255);
                 SDL_RenderDrawRectF(ren_, &r);
             }
-            if (hot && hudFont_.ok()) {
-                float tw = float(hudFont_.width(b.label, 1.3f));
-                hudFont_.draw(ren_, b.label, r.x - tw - 8, r.y + 26, 1.3f,
-                              {235, 225, 180, 255});
+            if (hot) {
+                float px = 1.8f;
+                float tw = blockWidth(b.label, px);
+                SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
+                SDL_FRect tb{r.x - tw - 14, r.y + 14, tw + 10, 22};
+                SDL_RenderFillRectF(ren_, &tb);
+                blockText(b.label, r.x - tw - 9, r.y + 18, px, {235, 225, 180, 255});
             }
         }
     }
@@ -3342,6 +3895,7 @@ private:
 
         // Pause toggle works without a selection.
         if (key == SDLK_PAUSE) { paused_ = !paused_; return true; }
+        if (key == SDLK_F4) { showCounts_ = !showCounts_; return true; }
 
         // Control groups on the number row: plain digit recalls, CTRL assigns,
         // CTRL+SHIFT appends the current selection. Digit 0 is group 10.
@@ -3450,20 +4004,61 @@ private:
     SDL_Color factionColor() const {
         if (side_ == "ara") return {70, 130, 240, 255};   // Aramon blue
         if (side_ == "tar") return {205, 65, 60, 255};    // Taros red
-        if (side_ == "ver") return {60, 195, 195, 255};   // Veruna teal
-        if (side_ == "zon") return {120, 205, 80, 255};   // Zhon green
+        if (side_ == "ver") return {70, 185, 90, 255};    // Veruna green
+        if (side_ == "zon") return {235, 205, 55, 255};   // Zhon yellow
         if (side_ == "cre") return {230, 145, 50, 255};   // Creon orange
         return {180, 170, 140, 255};
     }
 
-    // Plain black stat text on the faction-coloured panels.
-    void statText(const std::string& s, float x, float y, float scale) {
-        const Font& f = statFont_.ok() ? statFont_ : hudFont_;
-        f.draw(ren_, s, x, y, scale, {0, 0, 0, 255});
+    // A built-in 5x7 pixel font (uppercase, digits, a few symbols), drawn as
+    // solid blocks — unmistakably legible at any size, unlike the game's small
+    // decorative fonts. Each glyph is 5 columns; bit 0 of a column is the top.
+    static const uint8_t* glyph5x7(char c) {
+        static const std::map<char, std::array<uint8_t, 5>> F = {
+            {'0',{0x3E,0x51,0x49,0x45,0x3E}}, {'1',{0x00,0x42,0x7F,0x40,0x00}},
+            {'2',{0x42,0x61,0x51,0x49,0x46}}, {'3',{0x21,0x41,0x45,0x4B,0x31}},
+            {'4',{0x18,0x14,0x12,0x7F,0x10}}, {'5',{0x27,0x45,0x45,0x45,0x39}},
+            {'6',{0x3C,0x4A,0x49,0x49,0x30}}, {'7',{0x01,0x71,0x09,0x05,0x03}},
+            {'8',{0x36,0x49,0x49,0x49,0x36}}, {'9',{0x06,0x49,0x49,0x29,0x1E}},
+            {'A',{0x7E,0x11,0x11,0x11,0x7E}}, {'B',{0x7F,0x49,0x49,0x49,0x36}},
+            {'C',{0x3E,0x41,0x41,0x41,0x22}}, {'D',{0x7F,0x41,0x41,0x22,0x1C}},
+            {'E',{0x7F,0x49,0x49,0x49,0x41}}, {'F',{0x7F,0x09,0x09,0x09,0x01}},
+            {'G',{0x3E,0x41,0x49,0x49,0x7A}}, {'H',{0x7F,0x08,0x08,0x08,0x7F}},
+            {'I',{0x00,0x41,0x7F,0x41,0x00}}, {'J',{0x20,0x40,0x41,0x3F,0x01}},
+            {'K',{0x7F,0x08,0x14,0x22,0x41}}, {'L',{0x7F,0x40,0x40,0x40,0x40}},
+            {'M',{0x7F,0x02,0x0C,0x02,0x7F}}, {'N',{0x7F,0x04,0x08,0x10,0x7F}},
+            {'O',{0x3E,0x41,0x41,0x41,0x3E}}, {'P',{0x7F,0x09,0x09,0x09,0x06}},
+            {'Q',{0x3E,0x41,0x51,0x21,0x5E}}, {'R',{0x7F,0x09,0x19,0x29,0x46}},
+            {'S',{0x46,0x49,0x49,0x49,0x31}}, {'T',{0x01,0x01,0x7F,0x01,0x01}},
+            {'U',{0x3F,0x40,0x40,0x40,0x3F}}, {'V',{0x1F,0x20,0x40,0x20,0x1F}},
+            {'W',{0x7F,0x20,0x18,0x20,0x7F}}, {'X',{0x63,0x14,0x08,0x14,0x63}},
+            {'Y',{0x07,0x08,0x70,0x08,0x07}}, {'Z',{0x61,0x51,0x49,0x45,0x43}},
+            {'/',{0x20,0x10,0x08,0x04,0x02}}, {'+',{0x08,0x08,0x3E,0x08,0x08}},
+            {'-',{0x08,0x08,0x08,0x08,0x08}}, {':',{0x00,0x36,0x36,0x00,0x00}},
+            {'.',{0x00,0x60,0x60,0x00,0x00}}, {'%',{0x63,0x13,0x08,0x64,0x63}},
+        };
+        auto it = F.find(c);
+        return it == F.end() ? nullptr : it->second.data();
     }
-    int statWidth(const std::string& s, float scale) const {
-        return (statFont_.ok() ? statFont_ : hudFont_).width(s, scale);
+
+    // Draw text in the built-in block font. `px` is the size of one font pixel.
+    void blockText(const std::string& s, float x, float y, float px, SDL_Color c) {
+        SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, c.a);
+        float cx = x;
+        for (char ch : s) {
+            char u = char(std::toupper((unsigned char)ch));
+            const uint8_t* cols = glyph5x7(u);
+            if (!cols) { cx += 4 * px; continue; }   // space / unknown
+            for (int col = 0; col < 5; ++col)
+                for (int row = 0; row < 7; ++row)
+                    if (cols[col] & (1 << row)) {
+                        SDL_FRect r{cx + col * px, y + row * px, px, px};
+                        SDL_RenderFillRectF(ren_, &r);
+                    }
+            cx += 6 * px;
+        }
     }
+    float blockWidth(const std::string& s, float px) const { return s.size() * 6 * px; }
 
     // HUD text with a full dark outline so it reads over any panel.
     void hudText(const std::string& s, float x, float y, float scale, SDL_Color c) {
@@ -3473,6 +4068,52 @@ private:
             hudFont_.draw(ren_, s, x + d[0] * 1.3f, y + d[1] * 1.3f, scale,
                           {0, 0, 0, 220});
         hudFont_.draw(ren_, s, x, y, scale, c);
+    }
+
+    static SDL_Color sideColor(const std::string& side) {
+        std::string l = side;
+        std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+        if (l == "ara") return {70, 130, 240, 255};
+        if (l == "tar") return {205, 65, 60, 255};
+        if (l == "ver") return {70, 185, 90, 255};
+        if (l == "zon") return {235, 205, 55, 255};
+        if (l == "cre") return {230, 145, 50, 255};
+        return {210, 210, 210, 255};
+    }
+
+    // F4: per-faction live unit counts, top-left.
+    void drawUnitCounts(int winW) {
+        int cnt[4] = {0, 0, 0, 0};
+        std::string sd[4];
+        for (const auto& u : world_.units()) {
+            if (!u.alive() || !u.type) continue;
+            int t = u.team;
+            if (t < 0 || t >= 4) continue;
+            ++cnt[t];
+            if (sd[t].empty()) sd[t] = u.type->side;
+        }
+        int rows = 0;
+        for (int t = 0; t < 4; ++t) if (cnt[t] > 0) ++rows;
+        const float px = 2.4f, lh = 7 * px + 9, x = 12;
+        float y = 12;
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 175);
+        SDL_FRect bg{x - 7, y - 7, 210, (rows + 1) * lh + 8};
+        SDL_RenderFillRectF(ren_, &bg);
+        char buf[64];
+        // FPS first, in a neutral grey.
+        std::snprintf(buf, sizeof buf, "FPS %d", int(fps_ + 0.5f));
+        blockText(buf, x, y, px, SDL_Color{190, 190, 195, 255});
+        y += lh;
+        for (int t = 0; t < 4; ++t) {
+            if (cnt[t] == 0) continue;
+            std::string s = sd[t];
+            std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+            std::snprintf(buf, sizeof buf, "%s  %d", s.c_str(), cnt[t]);
+            blockText(buf, x, y, px, sideColor(sd[t]));
+            y += lh;
+        }
+        (void)winW;
     }
 
     void drawPanel(int winW, int winH) {
@@ -3524,14 +4165,15 @@ private:
                     SDL_RenderDrawRectF(ren_, &pr);
                 }
                 float tx = px + 70;
-                statText(u->type->name, tx, bar.y + 26, 2.0f);
+                SDL_Color blk{0, 0, 0, 255};
+                blockText(u->type->name, tx, bar.y + 9, 2.6f, blk);
                 std::snprintf(buf, sizeof buf, "HP %d/%d", int(u->hp),
                               int(u->type->maxHp));
-                statText(buf, tx, bar.y + 50, 1.8f);
+                blockText(buf, tx, bar.y + 32, 2.3f, blk);
                 if (selection_.size() > 1) {
                     std::snprintf(buf, sizeof buf, "+%zu MORE",
                                   selection_.size() - 1);
-                    statText(buf, tx, bar.y + 66, 1.4f);
+                    blockText(buf, tx, bar.y + 52, 1.8f, blk);
                 }
             }
         }
@@ -3562,42 +4204,45 @@ private:
                 SDL_SetRenderDrawColor(ren_, hot ? 255 : 110, hot ? 230 : 100,
                                        hot ? 120 : 70, 255);
                 SDL_RenderDrawRectF(ren_, &r);
-                if (hot && hudFont_.ok()) {
+                if (hot) {
                     char tip[80];
                     std::snprintf(tip, sizeof tip, "%s  %d MANA", bt->name.c_str(),
                                   int(bt->buildCost));
-                    float tw = float(hudFont_.width(tip, 1.5f));
-                    float tipx = std::clamp(r.x + 30 - tw / 2, 4.0f, winW - tw - 4);
-                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 200);
-                    SDL_FRect tb{tipx - 4, bar.y - 30, tw + 8, 24};
+                    float px = 2.0f;
+                    float tw = blockWidth(tip, px);
+                    float tipx = std::clamp(r.x + 30 - tw / 2, 6.0f, winW - tw - 6);
+                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
+                    SDL_FRect tb{tipx - 6, bar.y - 34, tw + 12, 26};
                     SDL_RenderFillRectF(ren_, &tb);
-                    hudText(tip, tipx, bar.y - 12, 1.5f, {255, 240, 190, 255});
+                    blockText(tip, tipx, bar.y - 30, px, {255, 240, 190, 255});
                 }
                 iconRects_.push_back({r, bt});
                 x += 66;
             }
-            if (!b->buildQueue.empty() && hudFont_.ok()) {
+            if (!b->buildQueue.empty()) {
                 char q[64];
                 std::snprintf(q, sizeof q, "TRAINING %s (%zu)",
                               b->buildQueue.front()->name.c_str(),
                               b->buildQueue.size());
-                float qw = float(hudFont_.width(q, 1.4f));
-                hudText(q, (float(winW) - qw) * 0.5f, bar.y - 28, 1.4f,
-                        {160, 210, 255, 255});
+                float px = 1.8f;
+                float qw = blockWidth(q, px);
+                blockText(q, (float(winW) - qw) * 0.5f, bar.y - 30, px,
+                          {160, 210, 255, 255});
             }
         }
 
-        // Bottom-RIGHT: mogrium.
-        if (statFont_.ok()) {
+        // Bottom-RIGHT: mana.
+        {
             auto& tm = world_.team(localTeam_);
-            float manaX = float(winW) - 176;
-            shade(manaX - 8, 184);
-            statText("MANA", manaX, bar.y + 22, 1.4f);
-            std::snprintf(buf, sizeof buf, "%d / %d", int(tm.mana),
+            float manaX = float(winW) - 192;
+            shade(manaX - 8, 200);
+            SDL_Color blk{0, 0, 0, 255};
+            blockText("MANA", manaX, bar.y + 9, 2.0f, blk);
+            std::snprintf(buf, sizeof buf, "%d/%d", int(tm.mana),
                           int(std::max(tm.storage, 100.0f)));
-            statText(buf, manaX, bar.y + 48, 2.0f);
-            std::snprintf(buf, sizeof buf, "+%d / sec", int(tm.income));
-            statText(buf, manaX, bar.y + 66, 1.4f);
+            blockText(buf, manaX, bar.y + 30, 2.3f, blk);
+            std::snprintf(buf, sizeof buf, "+%d/SEC", int(tm.income));
+            blockText(buf, manaX, bar.y + 52, 1.8f, blk);
         }
     }
 
@@ -3676,9 +4321,14 @@ private:
         SDL_RenderFillRectF(ren_, &r);
         SDL_SetRenderDrawColor(ren_, ok ? 120 : 255, ok ? 255 : 80, 90, 220);
         SDL_RenderDrawRectF(ren_, &r);
-        if (hudFont_.ok())
-            hudFont_.draw(ren_, placing_->name, r.x, r.y - 4, 1.5f,
-                          {230, 230, 200, 255});
+        {
+            float px = 1.8f;
+            float tw = blockWidth(placing_->name, px);
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 190);
+            SDL_FRect tb{r.x - 4, r.y - 22, tw + 8, 20};
+            SDL_RenderFillRectF(ren_, &tb);
+            blockText(placing_->name, r.x, r.y - 18, px, {230, 230, 200, 255});
+        }
     }
 
     int rosterIndexOf(int unitId) {
@@ -3754,10 +4404,263 @@ private:
         const auto* u = world_.unit(unitId);
         if (!u || !u->type || u->type->soundClass.empty()) return;
         if (const auto* wav = soundClasses_.pick(u->type->soundClass, event, salt_++))
-            sounds_.play(*wav);
+            sounds_.playWorld(*wav, u->x, u->z);
+    }
+
+    // --- GAF/TAF impact effects (gamedata/explosions -> data/anims/*.taf) ------
+    struct EFrame { SDL_Texture* tex = nullptr; int w = 0, h = 0, ax = 0, ay = 0; };
+    struct EffectAnim { std::vector<EFrame> frames; };
+    std::map<std::string, std::vector<std::string>> explosionClasses_;  // class -> anim names
+    std::map<std::string, EffectAnim> effectAnims_;                     // anim name -> frames
+    bool explosionsLoaded_ = false;
+    struct EffectInst {
+        const EffectAnim* anim = nullptr;
+        float x = 0, z = 0, age = 0;
+        float delay = 0;   // seconds before it starts playing
+        float dur = 0;     // seconds for one playthrough (0 => use kEffectFps)
+        int loops = 1;     // how many times to repeat (ground fire loops)
+    };
+    std::vector<EffectInst> effects_;
+    static constexpr float kEffectFps = 20.0f;
+
+    // Per-loop playback length of an effect instance, in seconds.
+    static float effLoopLen(const EffectInst& e) {
+        return e.dur > 0 ? e.dur : float(e.anim->frames.size()) / kEffectFps;
+    }
+    // Play a named effect anim at (x,z), optionally delayed / stretched / looped.
+    void spawnEffectAnim(const std::string& anim, float x, float z,
+                         float delay = 0, float dur = 0, int loops = 1) {
+        const EffectAnim* ea = effectFor(anim);
+        if (ea) effects_.push_back({ea, x, z, 0.0f, delay, dur, loops});
+    }
+
+    void loadExplosionClasses() {
+        if (explosionsLoaded_) return;
+        explosionsLoaded_ = true;
+        try {
+            auto root = tak::tdf::parse(dataRoot_ +
+                                        "/gamedata/explosions/explosions.tdf");
+            for (const auto& cls : root.childOrder) {
+                const auto& node = root.children.at(cls);
+                auto& list = explosionClasses_[cls];   // cls is already lowercased
+                for (const auto& vn : node.childOrder) {
+                    const auto& v = node.children.at(vn);
+                    std::string a = v.valueOr("anim", v.valueOr("gaf", ""));
+                    if (!a.empty()) {
+                        std::transform(a.begin(), a.end(), a.begin(), ::tolower);
+                        list.push_back(a);
+                    }
+                }
+            }
+        } catch (const std::exception&) {}
+    }
+    // Load a named effect animation from its TAF/GAF (truecolor _4444 preferred).
+    const EffectAnim* effectFor(const std::string& animName) {
+        auto it = effectAnims_.find(animName);
+        if (it != effectAnims_.end())
+            return it->second.frames.empty() ? nullptr : &it->second;
+        EffectAnim ea;
+        const auto* pal = featurePalette("aramon");   // ignored for truecolor TAF
+        for (const std::string suf : {"_4444.taf", "_1555.taf", ".taf", ".gaf"}) {
+            if (!ea.frames.empty()) break;
+            try {
+                auto seqs = tak::gaf::load(dataRoot_ + "/anims/" + animName + suf,
+                                           pal ? *pal : tak::gaf::Palette{});
+                const tak::gaf::Sequence* seq = nullptr;
+                for (auto& s : seqs) {
+                    if (s.frames.empty()) continue;
+                    if (!seq) seq = &s;
+                    std::string sn = s.name;
+                    std::transform(sn.begin(), sn.end(), sn.begin(), ::tolower);
+                    if (sn == animName) { seq = &s; break; }
+                }
+                if (!seq) continue;
+                for (auto& fr : seq->frames) {
+                    if (fr.width == 0 || fr.height == 0) continue;
+                    SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                       SDL_TEXTUREACCESS_STATIC,
+                                                       fr.width, fr.height);
+                    SDL_UpdateTexture(t, nullptr, fr.rgba.data(), fr.width * 4);
+                    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_ADD);   // fiery glow
+                    ea.frames.push_back({t, fr.width, fr.height, fr.xoff, fr.yoff});
+                }
+            } catch (const std::exception&) {}
+        }
+        auto& stored = effectAnims_[animName];
+        stored = std::move(ea);
+        return stored.frames.empty() ? nullptr : &stored;
+    }
+    // Play the named explosion class (a random variant) at (x,z). Returns false
+    // if the class/art is unavailable (caller then falls back to particles).
+    bool spawnEffect(const std::string& cls, float x, float z) {
+        if (cls.empty()) return false;
+        loadExplosionClasses();
+        auto it = explosionClasses_.find(cls);
+        if (it == explosionClasses_.end() || it->second.empty()) return false;
+        const std::string& anim = it->second[salt_++ % it->second.size()];
+        const EffectAnim* ea = effectFor(anim);
+        if (!ea) return false;
+        effects_.push_back({ea, x, z, 0.0f});
+        static const bool kLog = getenv("TAK_FXLOG") != nullptr;
+        if (kLog) std::fprintf(stderr, "t=%.2f effect '%s' anim '%s' (%zu frames)\n",
+                               animClock_, cls.c_str(), anim.c_str(), ea->frames.size());
+        return true;
+    }
+    void updateEffects(float dt) {
+        for (auto& e : effects_) e.age += dt;
+        std::erase_if(effects_, [](const EffectInst& e) {
+            if (!e.anim || e.anim->frames.empty()) return true;
+            float local = e.age - e.delay;
+            return local >= effLoopLen(e) * float(std::max(e.loops, 1));
+        });
+    }
+    // A shockwave ring: `sprites` copies of an effect anim arranged around a
+    // circle that expands from the centre to maxR over `dur` (TAK radiusart).
+    struct RingFx {
+        const EffectAnim* anim = nullptr;
+        float x = 0, z = 0, age = 0, delay = 0, dur = 1.2f, maxR = 120;
+        int sprites = 24;
+    };
+    // Camera shake (weapon shakemagnitude/shakeduration on heavy impacts).
+    float shakeTime_ = 0, shakeDur_ = 0, shakeMag_ = 0;
+    void triggerShake(float mag, float dur) {
+        if (mag <= 0 || dur <= 0) return;
+        // Let a stronger/longer quake override a fading one.
+        if (mag * dur >= shakeMag_ * shakeTime_) {
+            shakeMag_ = mag; shakeDur_ = dur; shakeTime_ = dur;
+        }
+    }
+
+    std::vector<RingFx> rings_;
+    void spawnRing(const std::string& anim, float x, float z, float delay,
+                   float dur, int sprites, float maxR) {
+        const EffectAnim* ea = effectFor(anim);
+        if (ea) rings_.push_back({ea, x, z, 0.0f, delay, dur, maxR,
+                                  std::clamp(sprites, 6, 48)});
+    }
+    void updateRings(float dt) {
+        for (auto& r : rings_) r.age += dt;
+        std::erase_if(rings_, [](const RingFx& r) { return r.age - r.delay >= r.dur; });
+    }
+    void drawRings() {
+        float zm = mapView_.zoom();
+        for (const auto& r : rings_) {
+            float local = r.age - r.delay;
+            if (local < 0 || !r.anim || r.anim->frames.empty()) continue;
+            if (!world_.cellVisible(r.x, r.z)) continue;
+            float t = std::clamp(local / std::max(r.dur, 1e-3f), 0.0f, 1.0f);
+            float radius = r.maxR * t;
+            int nf = int(r.anim->frames.size());
+            const EFrame& f = r.anim->frames[size_t(std::clamp(int(t * nf), 0, nf - 1))];
+            for (int k = 0; k < r.sprites; ++k) {
+                float a = 6.2831853f * float(k) / float(r.sprites);
+                float wx = r.x + std::cos(a) * radius, wz = r.z + std::sin(a) * radius;
+                float sx = (wx - mapView_.offX()) * zm - f.ax * zm;
+                float sy = (wz - mapView_.offY()) * zm - f.ay * zm;
+                SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
+                SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
+            }
+        }
+    }
+
+    void drawEffects() {
+        drawRings();
+        float zm = mapView_.zoom();
+        for (const auto& e : effects_) {
+            if (!e.anim || e.anim->frames.empty()) continue;
+            float local = e.age - e.delay;
+            if (local < 0) continue;                // still waiting to start
+            if (!world_.cellVisible(e.x, e.z)) continue;
+            float per = effLoopLen(e);
+            float within = local - std::floor(local / per) * per;   // into this loop
+            int nf = int(e.anim->frames.size());
+            int fi = std::clamp(int(within / per * float(nf)), 0, nf - 1);
+            const EFrame& f = e.anim->frames[size_t(fi)];
+            float sx = (e.x - mapView_.offX()) * zm - f.ax * zm;
+            float sy = (e.z - mapView_.offY()) * zm - f.ay * zm;
+            SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
+            SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
+        }
+    }
+
+    // Procedural particle for impact explosions, flame, and blood spray.
+    struct Particle {
+        float x = 0, z = 0, vx = 0, vz = 0, alt = 0, valt = 0;
+        float life = 0, maxLife = 1, size = 3;
+        Uint8 r = 255, g = 200, b = 80;
+        int kind = 0;   // 0 spark/blood (gravity), 1 smoke (rises, fades)
+    };
+    std::vector<Particle> particles_;
+    // Spawn a burst of `n` particles at (x,z) with a colour and speed spread.
+    void spawnBurst(float x, float z, int n, Uint8 r, Uint8 g, Uint8 b,
+                    float spread, float sizeMax, int kind) {
+        for (int i = 0; i < n; ++i) {
+            Particle p;
+            p.x = x; p.z = z;
+            float ang = float(salt_++ % 628) / 100.0f;
+            float sp = spread * (0.3f + float(salt_++ % 100) / 100.0f);
+            p.vx = std::sin(ang) * sp;
+            p.vz = std::cos(ang) * sp;
+            p.alt = 4;
+            p.valt = kind == 1 ? 18.0f : (30.0f + float(salt_++ % 40));
+            p.maxLife = p.life = 0.35f + float(salt_++ % 50) / 100.0f;
+            p.size = 1.5f + float(salt_++ % 100) / 100.0f * sizeMax;
+            p.r = r; p.g = g; p.b = b; p.kind = kind;
+            particles_.push_back(p);
+        }
+    }
+    // An impact effect scaled to the weapon: fire/lightning tinted, aoe-sized.
+    void spawnImpact(const tak::sim::Weapon& w, float x, float z) {
+        using Fx = tak::sim::WeaponFx;
+        float sc = 1.0f + std::min(w.aoe, 200.0f) / 40.0f;
+        int n = int(6 + std::min(w.aoe, 200.0f) / 6);
+        if (w.fx == Fx::Fire) {
+            spawnBurst(x, z, n, 240, 130, 40, 34 * sc, 2.4f * sc, 0);
+            spawnBurst(x, z, n / 2, 90, 80, 80, 20 * sc, 3.0f * sc, 1);   // smoke
+        } else if (w.fx == Fx::Lightning) {
+            spawnBurst(x, z, n, 200, 225, 255, 40 * sc, 2.0f * sc, 0);
+        } else {
+            spawnBurst(x, z, n, 210, 200, 170, 26 * sc, 2.0f * sc, 0);   // dust
+            spawnBurst(x, z, n / 3, 110, 100, 90, 16 * sc, 2.6f * sc, 1);
+        }
+    }
+    void updateParticles(float dt) {
+        static const bool kLog = getenv("TAK_FXLOG") != nullptr;
+        if (kLog && !particles_.empty()) {
+            static size_t peak = 0;
+            if (particles_.size() > peak) {
+                peak = particles_.size();
+                std::fprintf(stderr, "particles: %zu live (peak)\n", peak);
+            }
+        }
+        for (auto& p : particles_) {
+            p.life -= dt;
+            p.x += p.vx * dt; p.z += p.vz * dt;
+            p.alt += p.valt * dt;
+            p.valt -= (p.kind == 1 ? 6.0f : 90.0f) * dt;   // smoke floats, sparks fall
+            p.vx *= 0.92f; p.vz *= 0.92f;
+        }
+        std::erase_if(particles_, [](const Particle& p) { return p.life <= 0; });
+    }
+    void drawParticles() {
+        float zm = mapView_.zoom();
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        for (const auto& p : particles_) {
+            if (!world_.cellVisible(p.x, p.z)) continue;
+            float t = std::clamp(p.life / std::max(p.maxLife, 1e-3f), 0.0f, 1.0f);
+            float sx = (p.x - mapView_.offX()) * zm;
+            float sy = (p.z - mapView_.offY()) * zm - p.alt * zm;
+            float r = p.size * zm * (p.kind == 1 ? (1.4f - t) : t);
+            Uint8 a = Uint8(std::clamp(t * 255.0f, 0.0f, 255.0f));
+            SDL_SetRenderDrawColor(ren_, p.r, p.g, p.b, a);
+            SDL_FRect rc{sx - r, sy - r, 2 * r, 2 * r};
+            SDL_RenderFillRectF(ren_, &rc);
+        }
     }
 
     SoundBank sounds_;
+    ThreadPool pool_;                       // for parallel per-unit VM ticks
+    std::vector<tak::cob::Vm*> vmTick_;     // scratch list for the parallel pass
     SoundClasses soundClasses_;
     uint32_t salt_ = 0;
     int outcome_ = 0;   // 0 = playing, 1 = victory, -1 = defeat
@@ -3854,6 +4757,7 @@ int main(int argc, char** argv) {
             joinPort = std::atoi(argv[++i]);
         }
         else if (a == "--nofog") nofog = true;
+        else if (a == "--cheat") tak::sim::gInstantBuild = true;
         else if (a == "--look" && i + 2 < argc) {
             lookX = std::stof(argv[++i]);
             lookZ = std::stof(argv[++i]);
@@ -4032,6 +4936,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        if (gameView && dt > 0) gameView->setFps(1.0f / dt);
         int w, h;
         SDL_GetRendererOutputSize(ren, &w, &h);
         // Create textures before the render pass (mid-pass creation glitches
