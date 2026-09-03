@@ -11,12 +11,23 @@ constexpr float kPi = 3.14159265358979f;
 // COB angles: 65536 units per full circle. Linear: 65536 per world unit.
 constexpr float kAngle = 2 * kPi / 65536.0f;
 constexpr float kLinear = 1.0f / 65536.0f;
-// COB speeds are per original 30Hz game tick.
-constexpr float kTick = 30.0f;
+// COB move/turn/spin speeds are per SECOND. (Retail stores speed/30 as a per-frame
+// step at its fixed 30Hz update -- i.e. `speed` angle-or-linear units per second --
+// so we step by speed*dt in real time and they integrate to the same rate.)
 
 float towards(float cur, float target, float step) {
     if (cur < target) return std::min(cur + step, target);
     return std::max(cur - step, target);
+}
+
+// Angular step toward a target along the SHORTEST path, like the retail COB
+// interpreter (which compares abs(target-cur) to a half-circle and flips the
+// turn direction). Without this, a turn from e.g. 350deg to 10deg sweeps the
+// long way through 180deg instead of the short way through 0.
+float angTowards(float cur, float target, float step) {
+    float d = std::remainder(target - cur, 2 * kPi);   // shortest signed delta in (-pi,pi]
+    if (std::abs(d) <= step) return target;
+    return cur + (d > 0 ? step : -step);
 }
 
 } // namespace
@@ -71,7 +82,7 @@ void Vm::tick(float dt) {
                 if (p.move[a] == p.moveTarget[a]) p.moving[a] = false;
             }
             if (p.turning[a]) {
-                p.rot[a] = towards(p.rot[a], p.rotTarget[a], p.rotSpeed[a] * dt);
+                p.rot[a] = angTowards(p.rot[a], p.rotTarget[a], p.rotSpeed[a] * dt);
                 if (p.rot[a] == p.rotTarget[a]) p.turning[a] = false;
             }
             p.rot[a] += p.spin[a] * dt;
@@ -182,7 +193,10 @@ void Vm::run(Thread& t) {
                     // the reference we are executing from.
                     if (ticking_) pending_.push_back(std::move(nt));
                     else threads_.push_back(std::move(nt));
-                    return;   // resume parent next tick from its advanced pc
+                    // Retail continues the parent immediately (pc already advanced
+                    // by 3), rather than yielding -- so a script that starts several
+                    // sub-scripts kicks them all off in the same tick.
+                    break;
                 }
                 break;
             }
@@ -220,7 +234,7 @@ void Vm::run(Thread& t) {
                 bool now = op == 0x1000B000;
                 // Push order is [speed, target]: target is on top.
                 float target = float(pop(t)) * kLinear;
-                float speed = now ? 0 : float(pop(t)) * kLinear * kTick;
+                float speed = now ? 0 : float(pop(t)) * kLinear;
                 if (piece >= 0 && size_t(piece) < pieces_.size() && axis >= 0 && axis < 3) {
                     auto& p = pieces_[size_t(piece)];
                     if (now || speed <= 0) { p.move[axis] = target; p.moving[axis] = false; }
@@ -237,7 +251,7 @@ void Vm::run(Thread& t) {
                 bool now = op == 0x1000C000;
                 // Push order is [speed, target]: target is on top.
                 float target = float(pop(t)) * kAngle;
-                float speed = now ? 0 : float(pop(t)) * kAngle * kTick;
+                float speed = now ? 0 : float(pop(t)) * kAngle;
                 if (piece >= 0 && size_t(piece) < pieces_.size() && axis >= 0 && axis < 3) {
                     auto& p = pieces_[size_t(piece)];
                     if (now || speed <= 0) { p.rot[axis] = target; p.turning[axis] = false; }
@@ -252,7 +266,7 @@ void Vm::run(Thread& t) {
             case 0x10003000: {                                                // SPIN
                 int piece = arg(0), axis = arg(1);
                 pop(t);  // acceleration (ignored: jump straight to speed)
-                float speed = float(pop(t)) * kAngle * kTick;
+                float speed = float(pop(t)) * kAngle;
                 if (piece >= 0 && size_t(piece) < pieces_.size() && axis >= 0 && axis < 3)
                     pieces_[size_t(piece)].spin[axis] = speed;
                 t.pc += 3; break;
