@@ -3423,6 +3423,8 @@ private:
     // map's ground level; water and flat ground are unaffected.
     int heightRef_ = -1;                          // map ground level (modal height)
     float kHeightScale_ = 0.9f;                    // world-px lift per height unit
+    float kOccScale_ = 1.2f;                       // wall-top north projection scale
+    int kOccScan_ = 12;                            // cells to scan south for a wall
     float terrainLift(float wx, float wz) {
         const auto& m = mapView_.map();
         if (m.heights.empty() || m.width <= 0) return 0.0f;
@@ -3433,6 +3435,9 @@ private:
             for (int i = 1; i < 256; ++i) if (hist[i] > hist[best]) best = i;
             heightRef_ = best;
             if (const char* e = getenv("TAK_HSCALE")) kHeightScale_ = std::stof(e);
+            if (const char* e = getenv("TAK_OCCSCALE")) kOccScale_ = std::stof(e);
+            if (const char* e = getenv("TAK_OCCSCAN")) kOccScan_ = std::atoi(e);
+            if (getenv("TAK_HDEBUG")) showHDebug_ = true;
         }
         // Bilinear sample of the height grid (cell centres at 16k+8) so the lift
         // ramps smoothly across a slope instead of stepping at cell boundaries.
@@ -3464,13 +3469,17 @@ private:
         int cz0 = std::clamp(int(wz) / 16, 0, m.height - 1);
         int hUnit = m.heights[size_t(cz0) * m.width + cx];
         float best = 1e9f;
-        for (int dz = 1; dz <= 7; ++dz) {
+        for (int dz = 1; dz <= kOccScan_; ++dz) {
             int cz = cz0 + dz;
             if (cz >= m.height) break;
             int h = m.heights[size_t(cz) * m.width + cx];
             if (h <= hUnit + 24) continue;   // not a wall relative to this unit
-            float lift = std::max(0.0f, float(h - heightRef_) * kHeightScale_);
-            float wy = (float(cz) * 16 + 8 - mapView_.offY()) * zm - lift * zm;
+            // The wall's painted top projects north of its heightmap footprint by
+            // ~height*kOccScale_ (the art leans it up-and-back). kOccScale_ is a
+            // touch larger than the unit-seating lift because tall walls project
+            // further than a per-cell lift predicts.
+            float proj = std::max(0.0f, float(h - heightRef_) * kOccScale_);
+            float wy = (float(cz) * 16 + 8 - mapView_.offY()) * zm - proj * zm;
             if (wy < best) best = wy;
         }
         return best;
@@ -4295,6 +4304,12 @@ private:
             int h = m.heights[size_t(cz) * m.width + cx];
             std::snprintf(buf, sizeof buf, "h%d L%d", h, int(lift + 0.5f));
             blockText(buf, sx + 5, liftY - 30, 1.4f, SDL_Color{255, 255, 120, 255});
+            // Computed occlusion clip line (green): units are clipped above this.
+            float occ = wallOcclusionY(u.x, u.z);
+            if (occ < rawY) {
+                SDL_SetRenderDrawColor(ren_, 40, 255, 40, 255);
+                SDL_RenderDrawLineF(ren_, sx - 30, occ, sx + 30, occ);
+            }
         }
     }
 
