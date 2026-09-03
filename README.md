@@ -59,8 +59,10 @@ Control groups: **Ctrl+1–9/0** assign the selection, **1–9/0** recall it,
 Click the build icons at a selected builder/keep to train or place,
 arrows/middle-drag/**screen-edge** = scroll, wheel = zoom (toward cursor),
 minimap click/drag = move camera. **F4** toggles a per-faction unit counter
-with the live frame rate. Background music plays from the game soundtrack. Frame
-rate is capped at 60 fps (`--maxfps N`, or `--maxfps 0` for uncapped).
+with the live frame rate; **F6** opens the player-colour picker (click a swatch
+to recolour your units, HUD and minimap). Background music plays from the game
+soundtrack. Frame rate is capped at 60 fps (`--maxfps N`, or `--maxfps 0` for
+uncapped).
 
 Each side begins a skirmish with **only its Monarch**, dropped on the
 map's real start positions (read from the `.ota`). The Monarch generates

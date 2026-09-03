@@ -1326,6 +1326,9 @@ public:
                                    mapView_.offY() - e.motion.yrel / zm);
             }
             if (dragging_) { dragX1_ = float(e.motion.x); dragY1_ = float(e.motion.y); }
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
+                   colorPickerClick(float(e.button.x), float(e.button.y))) {
+            // colour picker swatch handled
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.y > winH - kBarH) {
             // bottom bar: build-icon clicks; everything else is swallowed
@@ -2505,6 +2508,7 @@ public:
 
         drawPanel(winW, winH);
         if (showCounts_) drawUnitCounts(winW);
+        if (showColorPicker_) drawColorPicker(winW, winH);
 
         // Mission briefing (first 30s) and event notices.
         if (briefTimer_ > 0 && hudFont_.ok()) {
@@ -2999,6 +3003,36 @@ private:
                     if (textures_.count(name)) continue;
                     // 10-frame sequences are per-player team colors.
                     size_t n = seq.frames.size() == 10 ? 10 : 1;
+                    // Sample the actual 10 player-colour RGBs once, from a logo/
+                    // insignia texture (mostly pure team colour), so the HUD and
+                    // minimap can match whatever colour a team renders in.
+                    if (!sampledColors_ && n == 10 &&
+                        name.find("logo") != std::string::npos) {
+                        for (size_t i = 0; i < 10; ++i) {
+                            const auto& f = seq.frames[i];
+                            // Saturation-weighted average: the pure team-colour
+                            // pixels dominate, grey shading/outlines contribute little.
+                            double r = 0, g = 0, b = 0, wsum = 0;
+                            for (size_t k = 0; k + 3 < f.rgba.size(); k += 4) {
+                                if (f.rgba[k + 3] < 128) continue;
+                                int R = f.rgba[k], G = f.rgba[k + 1], B = f.rgba[k + 2];
+                                int mx = std::max({R, G, B}), mn = std::min({R, G, B});
+                                if (mx < 45) continue;                 // skip outlines
+                                double w = double(mx - mn) + 4.0;      // ~saturation
+                                w *= w;                                // emphasise colour
+                                r += R * w; g += G * w; b += B * w; wsum += w;
+                            }
+                            if (wsum > 0) {
+                                // Brighten a touch so a swatch reads clearly.
+                                auto up = [](double v) {
+                                    return Uint8(std::min(255.0, v * 1.25));
+                                };
+                                playerColors_[i] = {up(r / wsum), up(g / wsum),
+                                                    up(b / wsum), 255};
+                            }
+                        }
+                        sampledColors_ = true;
+                    }
                     std::vector<SDL_Texture*> frames;
                     for (size_t i = 0; i < n; ++i) {
                         auto& f = seq.frames[i];
@@ -3312,13 +3346,30 @@ private:
     std::map<int, std::vector<int>> groups_;   // control groups 0-9
     bool paused_ = false;
     bool showCounts_ = false;   // F4: per-faction live unit counts
+    bool showColorPicker_ = false;   // F6: pick the player colour
+    std::vector<std::pair<SDL_FRect, int>> colorRects_;   // picker swatch hit boxes
     float fps_ = 0;             // smoothed render FPS, shown on the F4 overlay
     int winW_ = 0, winH_ = 0;   // last-known window size (for centering/culling)
     tak::net::Session* net_ = nullptr;
     int localTeam_ = 0;
     // Player-colour slot per team (which colour variant of each unit texture to
-    // use); defaults to the team index. Overridable via --color / --aicolor.
+    // use); defaults to the team index. Overridable via --color / --aicolor and
+    // the in-game picker.
     int colorSlot_[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+    // The 10 player-colour RGBs (sampled from a team-coloured logo texture at
+    // load; the fallback below is a sensible distinct palette). Used so the HUD
+    // and minimap match whatever slot a team renders in.
+    SDL_Color playerColors_[10] = {
+        {70, 130, 240, 255}, {215, 60, 55, 255}, {70, 185, 90, 255},
+        {235, 205, 55, 255}, {225, 225, 225, 255}, {80, 200, 205, 255},
+        {160, 95, 205, 255}, {230, 145, 50, 255}, {230, 120, 180, 255},
+        {120, 120, 130, 255}};
+    bool sampledColors_ = false;
+    // RGB a team's units render in (its slot's player colour).
+    SDL_Color teamColor(int team) const {
+        int s = (team >= 0 && team < 8) ? colorSlot_[team] : 0;
+        return playerColors_[(s >= 0 && s < 10) ? s : 0];
+    }
     uint32_t netTick_ = 0;
     std::string netError_;
     bool follow_ = false;
@@ -3412,8 +3463,8 @@ private:
             if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
             SDL_FPoint p = toMini(u.x, u.z);
             SDL_FRect dot{p.x - 1.5f, p.y - 1.5f, 3, 3};
-            if (u.team == localTeam_) SDL_SetRenderDrawColor(ren_, 90, 160, 255, 255);
-            else SDL_SetRenderDrawColor(ren_, 255, 80, 60, 255);
+            SDL_Color tc = teamColor(u.team);
+            SDL_SetRenderDrawColor(ren_, tc.r, tc.g, tc.b, 255);
             SDL_RenderFillRectF(ren_, &dot);
         }
         // Camera view rectangle.
@@ -3910,6 +3961,7 @@ private:
         // Pause toggle works without a selection.
         if (key == SDLK_PAUSE) { paused_ = !paused_; return true; }
         if (key == SDLK_F4) { showCounts_ = !showCounts_; return true; }
+        if (key == SDLK_F6) { showColorPicker_ = !showColorPicker_; return true; }
 
         // Control groups on the number row: plain digit recalls, CTRL assigns,
         // CTRL+SHIFT appends the current selection. Digit 0 is group 10.
@@ -4015,14 +4067,8 @@ private:
                            u->z - (winH_ / 2.0f) / mapView_.zoom());
     }
 
-    SDL_Color factionColor() const {
-        if (side_ == "ara") return {70, 130, 240, 255};   // Aramon blue
-        if (side_ == "tar") return {205, 65, 60, 255};    // Taros red
-        if (side_ == "ver") return {70, 185, 90, 255};    // Veruna green
-        if (side_ == "zon") return {235, 205, 55, 255};   // Zhon yellow
-        if (side_ == "cre") return {230, 145, 50, 255};   // Creon orange
-        return {180, 170, 140, 255};
-    }
+    // The player's HUD accent — follows their chosen player colour, not faction.
+    SDL_Color factionColor() const { return teamColor(localTeam_); }
 
     // A built-in 5x7 pixel font (uppercase, digits, a few symbols), drawn as
     // solid blocks — unmistakably legible at any size, unlike the game's small
@@ -4124,10 +4170,51 @@ private:
             std::string s = sd[t];
             std::transform(s.begin(), s.end(), s.begin(), ::toupper);
             std::snprintf(buf, sizeof buf, "%s  %d", s.c_str(), cnt[t]);
-            blockText(buf, x, y, px, sideColor(sd[t]));
+            blockText(buf, x, y, px, teamColor(t));
             y += lh;
         }
         (void)winW;
+    }
+
+    // In-game player-colour picker (F6): a row of swatches; click one to recolour
+    // your units, HUD and minimap. Swatch rects are cached for click hit-testing.
+    void drawColorPicker(int winW, int winH) {
+        colorRects_.clear();
+        const float sw = 30, gap = 6, pad = 10;
+        float rowW = 10 * sw + 9 * gap;
+        float x0 = (winW - rowW) / 2.0f;
+        float y0 = float(winH) - kBarH - 52;
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 190);
+        SDL_FRect bg{x0 - pad, y0 - 22, rowW + 2 * pad, sw + 34};
+        SDL_RenderFillRectF(ren_, &bg);
+        blockText("PLAYER COLOR", x0, y0 - 18, 1.8f, SDL_Color{210, 210, 215, 255});
+        for (int i = 0; i < 10; ++i) {
+            SDL_FRect r{x0 + i * (sw + gap), y0, sw, sw};
+            SDL_Color c = playerColors_[i];
+            SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
+            SDL_RenderFillRectF(ren_, &r);
+            // Frame; the current selection gets a bright, thick border.
+            bool cur = colorSlot_[localTeam_] == i;
+            SDL_SetRenderDrawColor(ren_, cur ? 255 : 20, cur ? 255 : 18,
+                                   cur ? 255 : 16, 255);
+            SDL_RenderDrawRectF(ren_, &r);
+            if (cur) {
+                SDL_FRect r2{r.x - 2, r.y - 2, r.w + 4, r.h + 4};
+                SDL_RenderDrawRectF(ren_, &r2);
+            }
+            colorRects_.push_back({r, i});
+        }
+    }
+    // Handle a click on the colour picker; returns true if it consumed the click.
+    bool colorPickerClick(float mx, float my) {
+        if (!showColorPicker_) return false;
+        for (const auto& [r, slot] : colorRects_)
+            if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
+                colorSlot_[localTeam_] = slot;
+                return true;
+            }
+        return false;
     }
 
     void drawPanel(int winW, int winH) {
