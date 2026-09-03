@@ -72,6 +72,10 @@ mission's .ota/.cob; `--side ara|tar|ver|zon|cre` picks your faction and
 summon creatures; Creon needs the Iron Plague data). `--cheat` makes all
 construction and production finish instantly and cost no mana.
 
+In a god-enabled match, a faction whose priests (`attractsgods` units) have
+channelled enough mana favour manifests its **god** among its forces once the
+appear time passes — set `TAK_GODTIME=<seconds>` to shorten it for testing.
+
 Multiplayer (2-player TCP lockstep): host runs with `--host 7777`, the
 other player adds `--join <host-ip> 7777`. Host commands the Aramon
 base (blue, west), joiner commands Taros (east). Both machines need
@@ -110,4 +114,5 @@ next to the game data to override it, exactly like the original game.
 - `src/viewer/` — SDL2 application (`takview`: asset viewer + game)
 - `tools/` — command-line format tools (`hpitool`, `gaftool`, `tnttool`,
   `modeltool`, `cobtool`, `tdftool`)
-- `docs/` — format notes as we verify them against real data
+- `docs/` — format notes and reverse-engineering findings
+  (`retail-engine.md` documents the `KINGDOMS.icd` disassembly)
