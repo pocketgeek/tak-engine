@@ -1846,6 +1846,11 @@ public:
     // Smoothed render FPS for the F4 overlay (set from the main loop each frame).
     void setFps(float f) { fps_ = fps_ > 0 ? fps_ * 0.9f + f * 0.1f : f; }
 
+    // Choose which player-colour variant a team's units render in.
+    void setTeamColor(int team, int slot) {
+        if (team >= 0 && team < 8 && slot >= 0) colorSlot_[team] = slot;
+    }
+
     // Mouse edge scrolling: pan the camera while the cursor rests in the margin
     // at a window edge — including the very bottom of the screen (the HUD panel
     // never sits at the extreme edge, so this doesn't fight the build icons).
@@ -3122,8 +3127,10 @@ private:
         Uint8 alpha = Uint8(p * 255.0f);
         // Veterancy tint: a promoted unit takes on a golden sheen that deepens
         // with its level (up to ~55% blend toward gold at level 10).
-        float vetGold = (!conjuring && u.veteran > 0)
-                            ? std::min(u.veteran, 10) / 10.0f * 0.55f : 0.0f;
+        // Only a seasoned veteran (several kills) takes the golden sheen, so a
+        // battle-worn army isn't broadly gold and fresh units stay their team colour.
+        float vetGold = (!conjuring && u.veteran >= 4)
+                            ? float(std::min(u.veteran, 10) - 3) / 7.0f * 0.5f : 0.0f;
         for (auto& t : tris_) {
             SDL_Vertex v[3];
             for (int i = 0; i < 3; ++i) {
@@ -3215,9 +3222,14 @@ private:
                 std::string name = p.texture;
                 std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                 auto it = textures_.find(name);
-                if (it != textures_.end() && !it->second.empty())
-                    tex = it->second[size_t(team) < it->second.size() ? size_t(team)
-                                                                      : 0];
+                if (it != textures_.end() && !it->second.empty()) {
+                    // Each texture carries one variant per player colour; a team's
+                    // slot is remappable (--color / --aicolor) so a side isn't
+                    // locked to the colour of its team index.
+                    size_t ci = size_t(colorSlot_[team & 7]);
+
+                    tex = it->second[ci < it->second.size() ? ci : 0];
+                }
             }
             for (size_t i = 1; i + 1 < p.indices.size(); ++i) {
                 size_t idx[3] = {0, i, i + 1};
@@ -3304,6 +3316,9 @@ private:
     int winW_ = 0, winH_ = 0;   // last-known window size (for centering/culling)
     tak::net::Session* net_ = nullptr;
     int localTeam_ = 0;
+    // Player-colour slot per team (which colour variant of each unit texture to
+    // use); defaults to the team index. Overridable via --color / --aicolor.
+    int colorSlot_[8] = {0, 1, 2, 3, 4, 5, 6, 7};
     uint32_t netTick_ = 0;
     std::string netError_;
     bool follow_ = false;
@@ -4704,6 +4719,7 @@ int main(int argc, char** argv) {
     std::string mode = argv[1];
     std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
     int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 60;
+    int playerColor = -1, aiColor = -1;   // --color / --aicolor slot overrides
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
     bool demo = false, doMarch = false, trace = false, testbuild = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
@@ -4732,6 +4748,8 @@ int main(int argc, char** argv) {
         else if (a == "--hilltest") hilltest = true;
         else if (a == "--side" && i + 1 < argc) side = argv[++i];
         else if (a == "--aiside" && i + 1 < argc) aiSide = argv[++i];
+        else if (a == "--color" && i + 1 < argc) playerColor = std::atoi(argv[++i]);
+        else if (a == "--aicolor" && i + 1 < argc) aiColor = std::atoi(argv[++i]);
         else if (a == "--keytest") keytest = true;
         else if (a == "--guardtest") guardtest = true;
         else if (a == "--lodetest") lodetest = true;
@@ -4813,6 +4831,8 @@ int main(int argc, char** argv) {
                                                   scenario, missionFlag,
                                                   navy || amphib || firetest || facetest,
                                                   side, aiSide);
+            if (playerColor >= 0) gameView->setTeamColor(0, playerColor);
+            if (aiColor >= 0) gameView->setTeamColor(1, aiColor);
             if (net) gameView->setNet(net.get());
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);
