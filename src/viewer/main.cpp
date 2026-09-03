@@ -2319,7 +2319,8 @@ public:
                     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
                     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 70);
                     float sx = (u.x - mapView_.offX()) * zm0;
-                    float sy = (u.z - mapView_.offY()) * zm0 + 2 * zm0;
+                    float sy = (u.z - mapView_.offY()) * zm0 + 2 * zm0
+                               - terrainLift(u.x, u.z) * zm0;
                     SDL_FRect sh{sx - 7 * zm0, sy - 2.5f * zm0, 14 * zm0, 5 * zm0};
                     SDL_RenderFillRectF(ren_, &sh);
                 }
@@ -2341,7 +2342,7 @@ public:
             if (p.fx == tak::sim::WeaponFx::Lightning) {
                 // Flat, fast, jagged blue-white bolt from source toward target.
                 float sx = (p.x - mapView_.offX()) * zm;
-                float sy = (p.z - mapView_.offY()) * zm - 12 * zm;
+                float sy = (p.z - mapView_.offY()) * zm - 12 * zm - terrainLift(p.x, p.z) * zm;
                 float len = 22.0f;
                 float bx = -p.vx, bz = -p.vz;
                 float bl = std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
@@ -2392,7 +2393,7 @@ public:
                                  : std::min(18.0f, p.flight * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
                 float sx = (p.x - mapView_.offX()) * zm;
-                float sy = (p.z - mapView_.offY()) * zm - h * zm;
+                float sy = (p.z - mapView_.offY()) * zm - h * zm - terrainLift(p.x, p.z) * zm;
                 SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
                 SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.035f * zm,
                                     sy - p.vz * 0.035f * zm + (t < 0.5f ? 2.5f : -2.5f) * zm);
@@ -2432,7 +2433,7 @@ public:
             if (!sel && frac >= 1.0f) continue;
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
             float bx = (u.x - mapView_.offX()) * zm - bw / 2;
-            float by = (u.z - mapView_.offY()) * zm - 30 * zm;
+            float by = (u.z - mapView_.offY()) * zm - 30 * zm - terrainLift(u.x, u.z) * zm;
             SDL_FRect bg{bx - 1, by - 1, bw + 2, bh + 2};
             SDL_SetRenderDrawColor(ren_, 10, 10, 10, 220);
             SDL_RenderFillRectF(ren_, &bg);
@@ -2451,7 +2452,8 @@ public:
             float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
             float bw = 40 * zm, bh = std::max(3.0f, 4 * zm);
             float bx = (u.x - mapView_.offX()) * zm - bw / 2;
-            float by = (u.z - mapView_.offY()) * zm - float(u.type->footZ) * 8 * zm - 14 * zm;
+            float by = (u.z - mapView_.offY()) * zm - float(u.type->footZ) * 8 * zm - 14 * zm
+                       - terrainLift(u.x, u.z) * zm;
             SDL_FRect bg{bx - 1, by - 1, bw + 2, bh + 2};
             SDL_SetRenderDrawColor(ren_, 10, 10, 10, 220);
             SDL_RenderFillRectF(ren_, &bg);
@@ -3084,7 +3086,8 @@ private:
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
-        float ax = (x - mapView_.offX()) * zm, ay = (z - mapView_.offY()) * zm;
+        float ax = (x - mapView_.offX()) * zm;
+        float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
         for (auto& t : tris_) {
             SDL_Vertex v[3];
             for (int i = 0; i < 3; ++i) {
@@ -3140,7 +3143,7 @@ private:
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
         float ax = (u.x - mapView_.offX()) * zm;
-        float ay = (u.z - mapView_.offY()) * zm;
+        float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
         // Ground shadow (FBI shadowart, from shadows.gaf): drawn under the model
         // at the unit's ground point, nudged for the sun; a flyer's shadow sits
         // further out and stays on the ground while the model rides its altitude.
@@ -3300,7 +3303,8 @@ private:
     void drawBrackets(float wx, float wz, float r) {
         // TAK-style selection: four green corner chevrons, slightly flattened.
         float zm = mapView_.zoom();
-        float cx = (wx - mapView_.offX()) * zm, cy = (wz - mapView_.offY()) * zm;
+        float cx = (wx - mapView_.offX()) * zm;
+        float cy = (wz - mapView_.offY()) * zm - terrainLift(wx, wz) * zm;
         float rx = r * zm, ry = r * 0.65f * zm, L = r * 0.45f * zm;
         SDL_SetRenderDrawColor(ren_, 70, 240, 90, 255);
         for (int sx = -1; sx <= 1; sx += 2)
@@ -3313,12 +3317,13 @@ private:
 
     void drawRing(float wx, float wz, float r) {
         float zm = mapView_.zoom();
+        float lift = terrainLift(wx, wz) * zm;
         SDL_SetRenderDrawColor(ren_, 90, 255, 120, 255);
         SDL_FPoint pts[25];
         for (int i = 0; i <= 24; ++i) {
             float a = float(i) / 24 * 2 * 3.14159f;
             pts[i] = {(wx + std::cos(a) * r - mapView_.offX()) * zm,
-                      (wz + std::sin(a) * r * 0.7f - mapView_.offY()) * zm};
+                      (wz + std::sin(a) * r * 0.7f - mapView_.offY()) * zm - lift};
         }
         SDL_RenderDrawLinesF(ren_, pts, 25);
     }
@@ -3369,6 +3374,29 @@ private:
     SDL_Color teamColor(int team) const {
         int s = (team >= 0 && team < 8) ? colorSlot_[team] : 0;
         return playerColors_[(s >= 0 && s < 10) ? s : 0];
+    }
+
+    // Height-aware 2.5D: the world-pixel lift for a point, from the terrain height
+    // under it, so a unit (and its shadow/health bar/selection/effects) sits on
+    // the elevation the tile art shows instead of the flat grid cell. Zero at the
+    // map's ground level; water and flat ground are unaffected.
+    int heightRef_ = -1;                          // map ground level (modal height)
+    float kHeightScale_ = 0.6f;                    // world-px lift per height unit
+    float terrainLift(float wx, float wz) {
+        const auto& m = mapView_.map();
+        if (m.heights.empty() || m.width <= 0) return 0.0f;
+        if (heightRef_ < 0) {
+            long hist[256] = {0};
+            for (uint8_t v : m.heights) hist[v]++;
+            int best = 0;
+            for (int i = 1; i < 256; ++i) if (hist[i] > hist[best]) best = i;
+            heightRef_ = best;
+            if (const char* e = getenv("TAK_HSCALE")) kHeightScale_ = std::stof(e);
+        }
+        int cx = std::clamp(int(wx) / 16, 0, m.width - 1);
+        int cz = std::clamp(int(wz) / 16, 0, m.height - 1);
+        int h = m.heights[size_t(cz) * m.width + cx];
+        return std::max(0.0f, float(h - heightRef_) * kHeightScale_);
     }
     uint32_t netTick_ = 0;
     std::string netError_;
@@ -4657,7 +4685,7 @@ private:
                 float a = 6.2831853f * float(k) / float(r.sprites);
                 float wx = r.x + std::cos(a) * radius, wz = r.z + std::sin(a) * radius;
                 float sx = (wx - mapView_.offX()) * zm - f.ax * zm;
-                float sy = (wz - mapView_.offY()) * zm - f.ay * zm;
+                float sy = (wz - mapView_.offY()) * zm - f.ay * zm - terrainLift(r.x, r.z) * zm;
                 SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
                 SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
             }
@@ -4678,7 +4706,7 @@ private:
             int fi = std::clamp(int(within / per * float(nf)), 0, nf - 1);
             const EFrame& f = e.anim->frames[size_t(fi)];
             float sx = (e.x - mapView_.offX()) * zm - f.ax * zm;
-            float sy = (e.z - mapView_.offY()) * zm - f.ay * zm;
+            float sy = (e.z - mapView_.offY()) * zm - f.ay * zm - terrainLift(e.x, e.z) * zm;
             SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
             SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
         }
@@ -4750,7 +4778,7 @@ private:
             if (!world_.cellVisible(p.x, p.z)) continue;
             float t = std::clamp(p.life / std::max(p.maxLife, 1e-3f), 0.0f, 1.0f);
             float sx = (p.x - mapView_.offX()) * zm;
-            float sy = (p.z - mapView_.offY()) * zm - p.alt * zm;
+            float sy = (p.z - mapView_.offY()) * zm - p.alt * zm - terrainLift(p.x, p.z) * zm;
             float r = p.size * zm * (p.kind == 1 ? (1.4f - t) : t);
             Uint8 a = Uint8(std::clamp(t * 255.0f, 0.0f, 255.0f));
             SDL_SetRenderDrawColor(ren_, p.r, p.g, p.b, a);
