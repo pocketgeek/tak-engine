@@ -1315,6 +1315,12 @@ public:
             float nz = mapView_.zoom();
             mapView_.setOffset(wx - mouseX_ / nz, wz - mouseY_ / nz);
         } else if (e.type == SDL_KEYDOWN) {
+            // Arrow-key panning takes the camera off the tracked selection.
+            switch (e.key.keysym.sym) {
+                case SDLK_LEFT: case SDLK_RIGHT: case SDLK_UP: case SDLK_DOWN:
+                    trackSel_ = false; break;
+                default: break;
+            }
             mapView_.input(e);
         } else if (e.type == SDL_MOUSEMOTION) {
             mouseX_ = float(e.motion.x);
@@ -1322,6 +1328,7 @@ public:
             if (draggingMinimap_) {
                 minimapClick(mouseX_, mouseY_, winW, winH);
             } else if (e.motion.state & SDL_BUTTON_MMASK) {   // middle-drag scrolls
+                trackSel_ = false;
                 mapView_.setOffset(mapView_.offX() - e.motion.xrel / zm,
                                    mapView_.offY() - e.motion.yrel / zm);
             }
@@ -1357,6 +1364,7 @@ public:
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    minimapClick(float(e.button.x), float(e.button.y), winW, winH)) {
             draggingMinimap_ = true;   // camera follows the drag until release
+            trackSel_ = false;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    pendingCmd_) {
             float wx, wz;
@@ -1874,6 +1882,7 @@ public:
         else if (mouseY_ > winH_ - margin) sz = 1;      // real screen bottom edge
         if (sx == 0 && sz == 0) return;
         follow_ = false;   // the player is driving the camera now
+        trackSel_ = false;
         mapView_.setOffset(mapView_.offX() + sx * panPx * dt / zm,
                            mapView_.offY() + sz * panPx * dt / zm);
     }
@@ -2093,6 +2102,8 @@ public:
                 else if (alive[localTeam_] == 0) outcome_ = -1;
             }
         }
+        // T-tracking: keep the camera on the selection; drop out if it's all gone.
+        if (trackSel_ && !centerOnSelection()) trackSel_ = false;
         if (follow_ && !world_.units().empty()) {
             // Track moving friendly units; fall back to everyone.
             float cx = 0, cz = 0;
@@ -3538,6 +3549,7 @@ private:
     uint32_t netTick_ = 0;
     std::string netError_;
     bool follow_ = false;
+    bool trackSel_ = false;   // T: keep the camera centred on the selection
     bool trace_ = false;
 public:
     bool noFog_ = false;
@@ -4271,6 +4283,11 @@ private:
                 }
                 pendingCmd_ = 0;
                 return true;
+            case SDLK_t:                                   // track/untrack selection
+                trackSel_ = !trackSel_;
+                if (trackSel_) centerOnSelection();
+                pendingCmd_ = 0;
+                return true;
             case SDLK_n: cycleNextUnit(); return true;     // next unit
             default: return false;
         }
@@ -4314,6 +4331,21 @@ private:
         if (!u) return;
         mapView_.setOffset(u->x - (winW_ / 2.0f) / mapView_.zoom(),
                            u->z - (winH_ / 2.0f) / mapView_.zoom());
+    }
+
+    // Centre the camera on the average position of the live selected units.
+    // Returns false if nothing in the selection is still alive.
+    bool centerOnSelection() {
+        float cx = 0, cz = 0;
+        int n = 0;
+        for (int id : selection_) {
+            const auto* u = world_.unit(id);
+            if (u && u->alive()) { cx += u->x; cz += u->z; ++n; }
+        }
+        if (!n) return false;
+        mapView_.setOffset(cx / n - (winW_ / 2.0f) / mapView_.zoom(),
+                           cz / n - (winH_ / 2.0f) / mapView_.zoom());
+        return true;
     }
 
     // The player's HUD accent — follows their chosen player colour, not faction.
