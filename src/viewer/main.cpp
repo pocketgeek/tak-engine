@@ -2510,6 +2510,7 @@ public:
 
         drawPanel(winW, winH);
         if (showCounts_) drawUnitCounts(winW);
+        if (showHDebug_) drawHDebug();
         if (showColorPicker_) drawColorPicker(winW, winH);
 
         // Mission briefing (first 30s) and event notices.
@@ -3352,6 +3353,7 @@ private:
     bool paused_ = false;
     bool showCounts_ = false;   // F4: per-faction live unit counts
     bool showColorPicker_ = false;   // F6: pick the player colour
+    bool showHDebug_ = false;   // F7: terrain-height / lift diagnostic overlay
     std::vector<std::pair<SDL_FRect, int>> colorRects_;   // picker swatch hit boxes
     float fps_ = 0;             // smoothed render FPS, shown on the F4 overlay
     int winW_ = 0, winH_ = 0;   // last-known window size (for centering/culling)
@@ -3998,6 +4000,7 @@ private:
         if (key == SDLK_PAUSE) { paused_ = !paused_; return true; }
         if (key == SDLK_F4) { showCounts_ = !showCounts_; return true; }
         if (key == SDLK_F6) { showColorPicker_ = !showColorPicker_; return true; }
+        if (key == SDLK_F7) { showHDebug_ = !showHDebug_; return true; }
 
         // Control groups on the number row: plain digit recalls, CTRL assigns,
         // CTRL+SHIFT appends the current selection. Digit 0 is group 10.
@@ -4178,6 +4181,56 @@ private:
     }
 
     // F4: per-faction live unit counts, top-left.
+    // F7 diagnostic: tint elevated cells, and for each unit show its cell height,
+    // computed lift, its RAW (unlifted) foot position (magenta dot) vs its LIFTED
+    // foot position (cyan dot). Lets us see whether a unit that looks "on the wall"
+    // is actually on a high heightmap cell or on flat ground beside painted relief.
+    void drawHDebug() {
+        const auto& m = mapView_.map();
+        if (m.heights.empty()) return;
+        float zm = mapView_.zoom();
+        // Tint cells whose height is well above ground (candidate "wall" cells).
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        int cx0 = std::max(0, int(mapView_.offX()) / 16 - 1);
+        int cz0 = std::max(0, int(mapView_.offY()) / 16 - 1);
+        int cx1 = std::min(m.width, cx0 + int(1000 / zm / 16) + 3);
+        int cz1 = std::min(m.height, cz0 + int(1000 / zm / 16) + 3);
+        for (int cz = cz0; cz < cz1; ++cz)
+            for (int cx = cx0; cx < cx1; ++cx) {
+                int h = m.heights[size_t(cz) * m.width + cx];
+                int d = h - (heightRef_ < 0 ? 0 : heightRef_);
+                if (d < 8) continue;
+                Uint8 a = Uint8(std::min(150, 30 + d));
+                SDL_SetRenderDrawColor(ren_, 220, 40, 40, a);
+                SDL_FRect r{(cx * 16.0f - mapView_.offX()) * zm,
+                            (cz * 16.0f - mapView_.offY()) * zm, 16 * zm, 16 * zm};
+                SDL_RenderFillRectF(ren_, &r);
+            }
+        char buf[64];
+        for (const auto& u : world_.units()) {
+            if (!u.alive() || !u.type) continue;
+            if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z) && !noFog_) continue;
+            float sx = (u.x - mapView_.offX()) * zm;
+            float rawY = (u.z - mapView_.offY()) * zm;
+            float lift = terrainLift(u.x, u.z);
+            float liftY = rawY - lift * zm;
+            // raw foot (magenta) and lifted foot (cyan)
+            SDL_SetRenderDrawColor(ren_, 255, 0, 255, 255);
+            SDL_FRect rr{sx - 2, rawY - 2, 4, 4};
+            SDL_RenderFillRectF(ren_, &rr);
+            SDL_SetRenderDrawColor(ren_, 0, 255, 255, 255);
+            SDL_FRect lr{sx - 2, liftY - 2, 4, 4};
+            SDL_RenderFillRectF(ren_, &lr);
+            SDL_SetRenderDrawColor(ren_, 255, 0, 255, 200);
+            SDL_RenderDrawLineF(ren_, sx, rawY, sx, liftY);
+            int cx = std::clamp(int(u.x) / 16, 0, m.width - 1);
+            int cz = std::clamp(int(u.z) / 16, 0, m.height - 1);
+            int h = m.heights[size_t(cz) * m.width + cx];
+            std::snprintf(buf, sizeof buf, "h%d L%d", h, int(lift + 0.5f));
+            blockText(buf, sx + 5, liftY - 30, 1.4f, SDL_Color{255, 255, 120, 255});
+        }
+    }
+
     void drawUnitCounts(int winW) {
         int cnt[4] = {0, 0, 0, 0};
         std::string sd[4];
