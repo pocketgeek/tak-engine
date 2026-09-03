@@ -228,6 +228,7 @@ struct Unit {
     std::deque<const UnitType*> buildQueue;
     float buildProgress = 0;   // seconds of work done on queue front
     int justBuilt = 0;         // unit id produced this tick (viewer hook), else 0
+    const UnitType* repeatType = nullptr;   // infinite production: re-queue when idle
 
     bool alive() const { return deadFor < 0; }
     bool embarked() const { return inTransport != 0; }
@@ -343,6 +344,7 @@ public:
     }
     // Queue production of `typeId` at a builder building.
     void train(int builderId, const UnitType* type);
+    void setRepeat(int builderId, const UnitType* type);   // toggle infinite build
     // Mobile builder constructs a building at (x, z). Returns the new
     // building's id, or 0 if the site is invalid.
     int startBuild(int builderId, const UnitType* type, float x, float z);
