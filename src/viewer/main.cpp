@@ -2321,7 +2321,7 @@ public:
                 if (u.alive() && u.type && u.type->canMove && !u.type->canFly) {
                     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
                     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 70);
-                    float sx = (u.x - mapView_.offX()) * zm0;
+                    float sx = (u.x - mapView_.offX()) * zm0 - terrainLiftX(u.x, u.z) * zm0;
                     float sy = (u.z - mapView_.offY()) * zm0 + 2 * zm0
                                - terrainLift(u.x, u.z) * zm0;
                     SDL_FRect sh{sx - 7 * zm0, sy - 2.5f * zm0, 14 * zm0, 5 * zm0};
@@ -2344,7 +2344,7 @@ public:
             float t = std::clamp(p.age / std::max(p.flight, 0.05f), 0.0f, 1.0f);
             if (p.fx == tak::sim::WeaponFx::Lightning) {
                 // Flat, fast, jagged blue-white bolt from source toward target.
-                float sx = (p.x - mapView_.offX()) * zm;
+                float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
                 float sy = (p.z - mapView_.offY()) * zm - 12 * zm - terrainLift(p.x, p.z) * zm;
                 float len = 22.0f;
                 float bx = -p.vx, bz = -p.vz;
@@ -2395,7 +2395,7 @@ public:
                 float peak = bal ? std::min(95.0f, p.flight * 55.0f)
                                  : std::min(18.0f, p.flight * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
-                float sx = (p.x - mapView_.offX()) * zm;
+                float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
                 float sy = (p.z - mapView_.offY()) * zm - h * zm - terrainLift(p.x, p.z) * zm;
                 SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
                 SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.035f * zm,
@@ -2435,7 +2435,7 @@ public:
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
             if (!sel && frac >= 1.0f) continue;
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
-            float bx = (u.x - mapView_.offX()) * zm - bw / 2;
+            float bx = (u.x - mapView_.offX()) * zm - bw / 2 - terrainLiftX(u.x, u.z) * zm;
             float by = (u.z - mapView_.offY()) * zm - 30 * zm - terrainLift(u.x, u.z) * zm;
             SDL_FRect bg{bx - 1, by - 1, bw + 2, bh + 2};
             SDL_SetRenderDrawColor(ren_, 10, 10, 10, 220);
@@ -2454,7 +2454,7 @@ public:
                           std::max(u.type->workerTime, 0.01f);
             float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
             float bw = 40 * zm, bh = std::max(3.0f, 4 * zm);
-            float bx = (u.x - mapView_.offX()) * zm - bw / 2;
+            float bx = (u.x - mapView_.offX()) * zm - bw / 2 - terrainLiftX(u.x, u.z) * zm;
             float by = (u.z - mapView_.offY()) * zm - float(u.type->footZ) * 8 * zm - 14 * zm
                        - terrainLift(u.x, u.z) * zm;
             SDL_FRect bg{bx - 1, by - 1, bw + 2, bh + 2};
@@ -3090,7 +3090,7 @@ private:
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
-        float ax = (x - mapView_.offX()) * zm;
+        float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
         float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
         for (auto& t : tris_) {
             SDL_Vertex v[3];
@@ -3146,7 +3146,7 @@ private:
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
-        float ax = (u.x - mapView_.offX()) * zm;
+        float ax = (u.x - mapView_.offX()) * zm - terrainLiftX(u.x, u.z) * zm;
         float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
         // Terrain occlusion: if a wall between the unit and the camera projects its
         // top above the unit's feet, clip the model to that line and re-draw the
@@ -3346,7 +3346,7 @@ private:
     void drawBrackets(float wx, float wz, float r) {
         // TAK-style selection: four green corner chevrons, slightly flattened.
         float zm = mapView_.zoom();
-        float cx = (wx - mapView_.offX()) * zm;
+        float cx = (wx - mapView_.offX()) * zm - terrainLiftX(wx, wz) * zm;
         float cy = (wz - mapView_.offY()) * zm - terrainLift(wx, wz) * zm;
         float rx = r * zm, ry = r * 0.65f * zm, L = r * 0.45f * zm;
         SDL_SetRenderDrawColor(ren_, 70, 240, 90, 255);
@@ -3361,11 +3361,12 @@ private:
     void drawRing(float wx, float wz, float r) {
         float zm = mapView_.zoom();
         float lift = terrainLift(wx, wz) * zm;
+        float liftX = terrainLiftX(wx, wz) * zm;
         SDL_SetRenderDrawColor(ren_, 90, 255, 120, 255);
         SDL_FPoint pts[25];
         for (int i = 0; i <= 24; ++i) {
             float a = float(i) / 24 * 2 * 3.14159f;
-            pts[i] = {(wx + std::cos(a) * r - mapView_.offX()) * zm,
+            pts[i] = {(wx + std::cos(a) * r - mapView_.offX()) * zm - liftX,
                       (wz + std::sin(a) * r * 0.7f - mapView_.offY()) * zm - lift};
         }
         SDL_RenderDrawLinesF(ren_, pts, 25);
@@ -3425,9 +3426,13 @@ private:
     // the elevation the tile art shows instead of the flat grid cell. Zero at the
     // map's ground level; water and flat ground are unaffected.
     int heightRef_ = -1;                          // map ground level (modal height)
-    float kHeightScale_ = 1.1f;                    // world-px lift per height unit (also occlusion + picking)
+    float kHeightScale_ = 1.1f;                    // screen-Y lift per height unit (N, also occlusion + picking)
+    float kHeightScaleX_ = 1.1f;                   // screen-X lift per height unit (view tilts diagonally; +X = west)
     int kOccScan_ = 12;                            // cells to scan south for a wall
-    float terrainLift(float wx, float wz) {
+    // Height above ground at a world point, bilinearly sampled so lifts ramp
+    // smoothly across a slope. Lazily initialises the modal ground reference and
+    // reads the tunable scales / debug flag from the environment.
+    float heightAbove(float wx, float wz) {
         const auto& m = mapView_.map();
         if (m.heights.empty() || m.width <= 0) return 0.0f;
         if (heightRef_ < 0) {
@@ -3437,10 +3442,9 @@ private:
             for (int i = 1; i < 256; ++i) if (hist[i] > hist[best]) best = i;
             heightRef_ = best;
             if (const char* e = getenv("TAK_HSCALE")) kHeightScale_ = std::stof(e);
+            if (const char* e = getenv("TAK_HSCALEX")) kHeightScaleX_ = std::stof(e);
             if (getenv("TAK_HDEBUG")) showHDebug_ = true;
         }
-        // Bilinear sample of the height grid (cell centres at 16k+8) so the lift
-        // ramps smoothly across a slope instead of stepping at cell boundaries.
         float gx = (wx - 8.0f) / 16.0f, gz = (wz - 8.0f) / 16.0f;
         int x0 = std::clamp(int(std::floor(gx)), 0, m.width - 1);
         int z0 = std::clamp(int(std::floor(gz)), 0, m.height - 1);
@@ -3450,8 +3454,12 @@ private:
         auto H = [&](int x, int z) { return float(m.heights[size_t(z) * m.width + x]); };
         float h = H(x0, z0) * (1 - fx) * (1 - fz) + H(x1, z0) * fx * (1 - fz) +
                   H(x0, z1) * (1 - fx) * fz + H(x1, z1) * fx * fz;
-        return std::max(0.0f, (h - float(heightRef_)) * kHeightScale_);
+        return std::max(0.0f, h - float(heightRef_));
     }
+    // Screen-space displacement of a world point's surface from its flat grid cell,
+    // baked into the tile art by the tilted 2.5D view: up (Y) AND sideways (X).
+    float terrainLift(float wx, float wz) { return heightAbove(wx, wz) * kHeightScale_; }
+    float terrainLiftX(float wx, float wz) { return heightAbove(wx, wz) * kHeightScaleX_; }
 
     // Height-aware picking: invert the render lift so a click on elevated terrain
     // (a wall/plateau top, drawn lifted UP on screen) resolves to the cell whose
@@ -3479,6 +3487,11 @@ private:
             prevH = h;
         }
         wz = std::clamp(bestZ, 0.0f, float(m.height * 16 - 1));
+        // Undo the sideways (X) part of the tilt too: the surface at the resolved
+        // cell was drawn shifted by terrainLiftX, so the click's true world X is the
+        // flat estimate plus that shift.
+        wx = std::clamp(mapView_.offX() + sx / zm + terrainLiftX(wx, wz),
+                        0.0f, float(m.width * 16 - 1));
     }
 
     // Terrain occlusion: a wall's baked-relief art projects up-and-north over the
@@ -4316,13 +4329,14 @@ private:
             float sx = (u.x - mapView_.offX()) * zm;
             float rawY = (u.z - mapView_.offY()) * zm;
             float lift = terrainLift(u.x, u.z);
+            float liftX = terrainLiftX(u.x, u.z) * zm;
             float liftY = rawY - lift * zm;
-            // raw foot (magenta) and lifted foot (cyan)
+            // raw foot (magenta) and lifted foot (cyan, incl. sideways tilt)
             SDL_SetRenderDrawColor(ren_, 255, 0, 255, 255);
             SDL_FRect rr{sx - 2, rawY - 2, 4, 4};
             SDL_RenderFillRectF(ren_, &rr);
             SDL_SetRenderDrawColor(ren_, 0, 255, 255, 255);
-            SDL_FRect lr{sx - 2, liftY - 2, 4, 4};
+            SDL_FRect lr{sx - liftX - 2, liftY - 2, 4, 4};
             SDL_RenderFillRectF(ren_, &lr);
             SDL_SetRenderDrawColor(ren_, 255, 0, 255, 200);
             SDL_RenderDrawLineF(ren_, sx, rawY, sx, liftY);
@@ -4854,7 +4868,7 @@ private:
             for (int k = 0; k < r.sprites; ++k) {
                 float a = 6.2831853f * float(k) / float(r.sprites);
                 float wx = r.x + std::cos(a) * radius, wz = r.z + std::sin(a) * radius;
-                float sx = (wx - mapView_.offX()) * zm - f.ax * zm;
+                float sx = (wx - mapView_.offX()) * zm - f.ax * zm - terrainLiftX(r.x, r.z) * zm;
                 float sy = (wz - mapView_.offY()) * zm - f.ay * zm - terrainLift(r.x, r.z) * zm;
                 SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
                 SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
@@ -4875,7 +4889,7 @@ private:
             int nf = int(e.anim->frames.size());
             int fi = std::clamp(int(within / per * float(nf)), 0, nf - 1);
             const EFrame& f = e.anim->frames[size_t(fi)];
-            float sx = (e.x - mapView_.offX()) * zm - f.ax * zm;
+            float sx = (e.x - mapView_.offX()) * zm - f.ax * zm - terrainLiftX(e.x, e.z) * zm;
             float sy = (e.z - mapView_.offY()) * zm - f.ay * zm - terrainLift(e.x, e.z) * zm;
             SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
             SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
@@ -4947,7 +4961,7 @@ private:
         for (const auto& p : particles_) {
             if (!world_.cellVisible(p.x, p.z)) continue;
             float t = std::clamp(p.life / std::max(p.maxLife, 1e-3f), 0.0f, 1.0f);
-            float sx = (p.x - mapView_.offX()) * zm;
+            float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
             float sy = (p.z - mapView_.offY()) * zm - p.alt * zm - terrainLift(p.x, p.z) * zm;
             float r = p.size * zm * (p.kind == 1 ? (1.4f - t) : t);
             Uint8 a = Uint8(std::clamp(t * 255.0f, 0.0f, 255.0f));
