@@ -821,6 +821,13 @@ void World::stop(int unitId) {
     if (u) u->orders.clear();
 }
 
+void World::setWeapon(int unitId, int slot) {
+    Unit* u = unit(unitId);
+    if (!u || !u->type) return;
+    int n = int(u->type->weapons.size());
+    if (n > 0) u->weaponSlot = std::clamp(slot, 0, n - 1);
+}
+
 void World::attack(int unitId, int targetId, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || u->type->weapon.damage <= 0) return;
@@ -1003,7 +1010,13 @@ void World::tickCombat(Unit& u, float dt) {
     }
     float dx = target->x - u.x, dz = target->z - u.z;
     float dist = std::sqrt(dx * dx + dz * dz);
-    float best = u.type->maxRange();
+    // Only the player-selected weapon fires (retail auto-fires the primary; the
+    // player picks secondary/tertiary via its command button). Approach to that
+    // weapon's range, not the longest.
+    int slot = u.type->weapons.empty()
+                   ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
+    const Weapon* sel = slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
+    float best = sel ? sel->range : u.type->maxRange();
     // Ranged units need a clear line to shoot; a wall between them means close
     // in / reposition rather than firing through it (melee & flyers are exempt).
     bool needLoS = best > 64.0f && !u.type->canFly &&
@@ -1039,16 +1052,12 @@ void World::tickCombat(Unit& u, float dt) {
     float diff = angleDiff(want, u.heading);
     float maxTurn = u.type->turnRate * dt;
     u.heading += std::clamp(diff, -maxTurn, maxTurn);
-    // Fire each ready slot whose target is in the [minrange, range] band, within
-    // its aimtolerance, and (unless noairweapon) allowed to hit a flyer.
-    for (size_t i = 0; i < u.type->weapons.size() && i < 3; ++i) {
-        const Weapon& wp = u.type->weapons[i];
-        if (wp.noAir && target->type && target->type->canFly) continue;
-        if (!wp.melee && !los) continue;   // no clear shot through the wall
-        if (u.reloads[i] <= 0 && dist <= wp.range && dist >= wp.minRange &&
-            std::abs(diff) < std::max(wp.aimTol, 0.03f))
-            fire(u, *target, int(i));
-    }
+    // Fire the selected weapon when the target is in its [minrange, range] band,
+    // within aimtolerance, has a clear shot, and (unless noairweapon) may hit air.
+    if (sel && !(sel->noAir && target->type && target->type->canFly) &&
+        (sel->melee || los) && u.reloads[slot] <= 0 && dist <= sel->range &&
+        dist >= sel->minRange && std::abs(diff) < std::max(sel->aimTol, 0.03f))
+        fire(u, *target, slot);
     // cancapture: a charmer converts the target after sustained contact (~3s) or
     // once it is worn down, rather than killing it.
     if (u.type->canCapture && target->type && !target->type->cantBeCaptured) {

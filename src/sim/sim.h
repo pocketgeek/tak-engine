@@ -197,6 +197,7 @@ struct Unit {
     float hp = 100;
     float reloadLeft = 0;          // primary slot (kept for anim hooks)
     float reloads[3] = {0, 0, 0};  // per weapon slot
+    int   weaponSlot = 0;          // active weapon (0=primary); player-selectable
     float repathLeft = 0;   // chase steering repath countdown
     float stuckFor = 0;     // seconds wanting to move but making no progress
     float stuckX = 0, stuckZ = 0;   // position when the stuck timer last reset
@@ -401,6 +402,7 @@ public:
     void patrol(int unitId, float x, float z);
     void guard(int unitId, int targetId, bool queue);
     void stop(int unitId);
+    void setWeapon(int unitId, int slot);   // choose the active weapon (0=primary)
     // Toggle an onoffable unit's active state (gates, sacred fire, etc.).
     void setActive(int unitId, bool on) {
         Unit* u = unit(unitId);

@@ -1626,6 +1626,9 @@ public:
             case Cmd::Unload:
                 if (owns(c.unitId)) world_.unloadAt(c.unitId, c.x, c.z);
                 break;
+            case Cmd::SetWeapon:
+                if (owns(c.unitId)) world_.setWeapon(c.unitId, c.targetId);
+                break;
         }
     }
 
@@ -4063,10 +4066,83 @@ private:
                 blockText(b.label, r.x - tw - 9, r.y + 18, px, {235, 225, 180, 255});
             }
         }
+        drawWeaponButtons(winW);
+    }
+
+    // The front selected unit, if it has more than one weapon (worth a picker).
+    const tak::sim::Unit* multiWeaponSel() {
+        if (selection_.empty()) return nullptr;
+        const auto* u = world_.unit(selection_.front());
+        if (u && u->alive() && u->type && u->type->weapons.size() > 1) return u;
+        return nullptr;
+    }
+
+    std::vector<SDL_FRect> weaponRects_;
+    // A small row of weapon-select buttons under the order column: retail fires
+    // only the active weapon; click (or press W to cycle) to pick another.
+    void drawWeaponButtons(int winW) {
+        weaponRects_.clear();
+        const auto* u = multiWeaponSel();
+        if (!u) return;
+        int n = int(u->type->weapons.size());
+        const float bw = 26, gap = 4;
+        float y = 210 + float(orderBtns_.size()) * 52 + 20;
+        float row = n * bw + (n - 1) * gap;
+        float x0 = float(winW) - 60 + (56 - row) / 2;
+        for (int i = 0; i < n; ++i) {
+            SDL_FRect r{x0 + i * (bw + gap), y, bw, bw};
+            weaponRects_.push_back(r);
+            bool active = u->weaponSlot == i;
+            bool hot = mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y &&
+                       mouseY_ <= r.y + r.h;
+            SDL_SetRenderDrawColor(ren_, active ? 90 : 34, active ? 70 : 30,
+                                   active ? 30 : 26, 235);
+            SDL_RenderFillRectF(ren_, &r);
+            SDL_SetRenderDrawColor(ren_, active ? 255 : (hot ? 200 : 120),
+                                   active ? 220 : (hot ? 180 : 105),
+                                   active ? 90 : 80, 255);
+            SDL_RenderDrawRectF(ren_, &r);
+            char lbl[4];
+            std::snprintf(lbl, sizeof lbl, "%d", i + 1);
+            blockText(lbl, r.x + 8, r.y + 6, 2.0f,
+                      active ? SDL_Color{255, 240, 180, 255} : SDL_Color{205, 195, 165, 255});
+            if (hot && !u->type->weapons[size_t(i)].name.empty()) {
+                const std::string& nm = u->type->weapons[size_t(i)].name;
+                float px = 1.6f, tw = blockWidth(nm.c_str(), px);
+                SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
+                SDL_FRect tb{r.x - tw - 14, r.y + 4, tw + 10, 20};
+                SDL_RenderFillRectF(ren_, &tb);
+                blockText(nm.c_str(), r.x - tw - 9, r.y + 7, px, {235, 225, 180, 255});
+            }
+        }
+    }
+
+    // Issue SetWeapon(slot) for every selected unit that has that slot.
+    void selectWeapon(int slot) {
+        for (int id : selection_) {
+            const auto* u = world_.unit(id);
+            if (!u || !u->type || int(u->type->weapons.size()) <= slot) continue;
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::SetWeapon;
+            c.unitId = id;
+            c.targetId = slot;
+            issue(c);
+        }
+    }
+
+    bool weaponButtonClick(float mx, float my) {
+        for (size_t i = 0; i < weaponRects_.size(); ++i) {
+            const auto& r = weaponRects_[i];
+            if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+            selectWeapon(int(i));
+            return true;
+        }
+        return false;
     }
 
     // Returns true if the click hit (and was handled by) the order column.
     bool orderColumnClick(float mx, float my, int winW) {
+        if (weaponButtonClick(mx, my)) return true;
         if (orderBtns_.empty() || selection_.empty()) return false;
         for (size_t i = 0; i < orderBtns_.size(); ++i) {
             SDL_FRect r = orderBtnRect(i, winW);
@@ -4176,6 +4252,13 @@ private:
             case SDLK_a: pendingCmd_ = 'a'; return true;   // attack
             case SDLK_p: pendingCmd_ = 'p'; return true;   // patrol
             case SDLK_g: pendingCmd_ = 'g'; return true;   // guard
+            case SDLK_w:                                   // cycle active weapon
+                if (const auto* u = multiWeaponSel()) {
+                    int n = int(u->type->weapons.size());
+                    selectWeapon((u->weaponSlot + 1) % n);
+                }
+                pendingCmd_ = 0;
+                return true;
             case SDLK_s:                                   // stop (immediate)
                 for (int id : selection_) {
                     tak::net::Command c;
