@@ -1359,8 +1359,8 @@ public:
             draggingMinimap_ = true;   // camera follows the drag until release
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    pendingCmd_) {
-            float wx = mapView_.offX() + e.button.x / zm;
-            float wz = mapView_.offY() + e.button.y / zm;
+            float wx, wz;
+            pickWorld(float(e.button.x), float(e.button.y), wx, wz);
             bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
             if (pendingCmd_ == 'g') {
                 // Guard: needs a friendly unit under the click.
@@ -1471,7 +1471,10 @@ public:
             bool isClick = (x1 - x0) < 6 && (z1 - z0) < 6;
             selection_.clear();
             if (isClick) {
-                float wx = (x0 + x1) / 2, wz = (z0 + z1) / 2;
+                // Height-aware: resolve the click to the cell under the cursor so a
+                // unit standing on a lifted wall top can be selected where it's drawn.
+                float wx, wz;
+                pickWorld((dragX0_ + dragX1_) / 2, (dragY0_ + dragY1_) / 2, wx, wz);
                 int hit = -1;
                 float best = 24 * 24;
                 for (auto& u : world_.units()) {
@@ -1491,8 +1494,8 @@ public:
             }
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.button == SDL_BUTTON_RIGHT && !selection_.empty()) {
-            float wx = mapView_.offX() + e.button.x / zm;
-            float wz = mapView_.offY() + e.button.y / zm;
+            float wx, wz;
+            pickWorld(float(e.button.x), float(e.button.y), wx, wz);
             bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
             const auto* first = world_.unit(selection_.front());
             // Selected transport with cargo: right-click = sail + disembark.
@@ -3449,6 +3452,34 @@ private:
         float h = H(x0, z0) * (1 - fx) * (1 - fz) + H(x1, z0) * fx * (1 - fz) +
                   H(x0, z1) * (1 - fx) * fz + H(x1, z1) * fx * fz;
         return std::max(0.0f, (h - float(heightRef_)) * kHeightScale_);
+    }
+
+    // Height-aware picking: invert the render lift so a click on elevated terrain
+    // (a wall/plateau top, drawn lifted UP on screen) resolves to the cell whose
+    // *lifted* position is under the cursor, not the flat cell the raw screen->world
+    // map would give (which lands on the low ground behind the wall). Returns the
+    // FRONT-MOST surface (largest z) that projects to the click, like a depth pick.
+    void pickWorld(float sx, float sy, float& wx, float& wz) {
+        float zm = mapView_.zoom();
+        wx = mapView_.offX() + sx / zm;
+        float target = mapView_.offY() + sy / zm;   // flat (no-lift) world z
+        wz = target;
+        const auto& m = mapView_.map();
+        if (m.heights.empty()) return;
+        // A ground point at world z projects to screen z' = z - lift(wx,z). We want
+        // the largest z with z - lift == target. Scan the lift's reach south of the
+        // flat estimate and keep the front-most crossing.
+        terrainLift(wx, target);   // ensure heightRef_/kHeightScale_ are initialised
+        float maxLift = std::max(0.0f, float(255 - (heightRef_ < 0 ? 0 : heightRef_))) *
+                        kHeightScale_;
+        float bestZ = target;
+        float prevH = target - terrainLift(wx, target);   // h(z) = z - lift(wx,z)
+        for (float z = target + 1.5f; z <= target + maxLift + 4; z += 1.5f) {
+            float h = z - terrainLift(wx, z);
+            if (prevH < target && h >= target) bestZ = z;   // front-most upward crossing
+            prevH = h;
+        }
+        wz = std::clamp(bestZ, 0.0f, float(m.height * 16 - 1));
     }
 
     // Terrain occlusion: a wall's baked-relief art projects up-and-north over the
