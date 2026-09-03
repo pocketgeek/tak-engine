@@ -1847,18 +1847,17 @@ public:
     void setFps(float f) { fps_ = fps_ > 0 ? fps_ * 0.9f + f * 0.1f : f; }
 
     // Mouse edge scrolling: pan the camera while the cursor rests in the margin
-    // at a window edge. The bottom trigger sits just above the HUD panel so it
-    // doesn't fight the build icons.
+    // at a window edge — including the very bottom of the screen (the HUD panel
+    // never sits at the extreme edge, so this doesn't fight the build icons).
     void edgeScroll(float dt, float zm) {
         if (winW_ <= 0 || winH_ <= 0) return;
         if (mouseX_ < 0 || mouseX_ > winW_ || mouseY_ < 0 || mouseY_ > winH_) return;
         const float margin = 24.0f, panPx = 1000.0f;   // px/s at zoom 1
-        float botLimit = float(winH_) - kBarH;          // top of the HUD panel
         float sx = 0, sz = 0;
         if (mouseX_ < margin) sx = -1;
         else if (mouseX_ > winW_ - margin) sx = 1;
         if (mouseY_ < margin) sz = -1;
-        else if (mouseY_ > botLimit - margin && mouseY_ <= botLimit) sz = 1;
+        else if (mouseY_ > winH_ - margin) sz = 1;      // real screen bottom edge
         if (sx == 0 && sz == 0) return;
         follow_ = false;   // the player is driving the camera now
         mapView_.setOffset(mapView_.offX() + sx * panPx * dt / zm,
