@@ -531,16 +531,21 @@ NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int cliff)
     cells_.assign(size_t(w) * h, 1);
     for (int z = 0; z < h; ++z)
         for (int x = 0; x < w; ++x) {
-            int lo = 255, hi = 0;
+            // Block a cell only if a NEIGHBOUR rises more than `cliff` above it (a
+            // face you can't climb). A cell that merely sits beside a DROP -- the
+            // flat top edge of a cliff/plateau/wall -- stays walkable, so units can
+            // be commanded right to the rim, not just the interior. (Using the local
+            // max-min spread instead wrongly blocked the whole edge ring of every
+            // plateau, leaving only its middle reachable.)
+            int self = heights[size_t(z) * w + x];
+            int hi = self;
             for (int dz = -1; dz <= 1; ++dz)
                 for (int dx = -1; dx <= 1; ++dx) {
                     int nx = std::clamp(x + dx, 0, w - 1);
                     int nz = std::clamp(z + dz, 0, h - 1);
-                    int v = heights[size_t(nz) * w + nx];
-                    lo = std::min(lo, v);
-                    hi = std::max(hi, v);
+                    hi = std::max(hi, int(heights[size_t(nz) * w + nx]));
                 }
-            if (hi - lo > cliff) cells_[size_t(z) * w + x] = 0;
+            if (hi - self > cliff) cells_[size_t(z) * w + x] = 0;
         }
 }
 
