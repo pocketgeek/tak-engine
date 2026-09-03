@@ -3381,7 +3381,7 @@ private:
     // the elevation the tile art shows instead of the flat grid cell. Zero at the
     // map's ground level; water and flat ground are unaffected.
     int heightRef_ = -1;                          // map ground level (modal height)
-    float kHeightScale_ = 0.6f;                    // world-px lift per height unit
+    float kHeightScale_ = 0.9f;                    // world-px lift per height unit
     float terrainLift(float wx, float wz) {
         const auto& m = mapView_.map();
         if (m.heights.empty() || m.width <= 0) return 0.0f;
@@ -3393,10 +3393,18 @@ private:
             heightRef_ = best;
             if (const char* e = getenv("TAK_HSCALE")) kHeightScale_ = std::stof(e);
         }
-        int cx = std::clamp(int(wx) / 16, 0, m.width - 1);
-        int cz = std::clamp(int(wz) / 16, 0, m.height - 1);
-        int h = m.heights[size_t(cz) * m.width + cx];
-        return std::max(0.0f, float(h - heightRef_) * kHeightScale_);
+        // Bilinear sample of the height grid (cell centres at 16k+8) so the lift
+        // ramps smoothly across a slope instead of stepping at cell boundaries.
+        float gx = (wx - 8.0f) / 16.0f, gz = (wz - 8.0f) / 16.0f;
+        int x0 = std::clamp(int(std::floor(gx)), 0, m.width - 1);
+        int z0 = std::clamp(int(std::floor(gz)), 0, m.height - 1);
+        int x1 = std::min(x0 + 1, m.width - 1), z1 = std::min(z0 + 1, m.height - 1);
+        float fx = std::clamp(gx - float(x0), 0.0f, 1.0f);
+        float fz = std::clamp(gz - float(z0), 0.0f, 1.0f);
+        auto H = [&](int x, int z) { return float(m.heights[size_t(z) * m.width + x]); };
+        float h = H(x0, z0) * (1 - fx) * (1 - fz) + H(x1, z0) * fx * (1 - fz) +
+                  H(x0, z1) * (1 - fx) * fz + H(x1, z1) * fx * fz;
+        return std::max(0.0f, (h - float(heightRef_)) * kHeightScale_);
     }
     uint32_t netTick_ = 0;
     std::string netError_;
