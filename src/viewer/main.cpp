@@ -2405,17 +2405,31 @@ public:
         for (const auto* u : visUnits_) atlasFor(colorSlot_[u->player & 7]);
         // Ensure an impostor sprite exists for every visible model when zoomed out
         // enough that LOD may kick in (main thread; the parallel pass only reads it).
-        if (lodEnabled_ && mapView_.zoom() < kLodZoomGate)
-            for (const auto* u : visUnits_)
-                if (u->type)
-                    ensureImpostor(unitType_.at(u->id), colorSlot_[u->player & 7],
-                                   u->type->canMove);
-        // Bake sprite sheets for every visible model when sprite mode is on.
-        if (spritesEnabled_)
-            for (const auto* u : visUnits_)
-                if (u->type)
-                    bakeSprites(unitType_.at(u->id), colorSlot_[u->player & 7],
-                                u->type->canMove, u->type->canFly);
+        // Budgeted: a few NEW bakes per frame, so a first zoom-out over a mixed army
+        // spreads its render-target allocations/captures across frames instead of
+        // bursting them all into one already-slow frame (units not yet baked just
+        // draw as full models for a few more frames).
+        if (lodEnabled_ && mapView_.zoom() < kLodZoomGate) {
+            int budget = 2;
+            for (const auto* u : visUnits_) {
+                if (!u->type) continue;
+                auto key = std::make_pair(unitType_.at(u->id), colorSlot_[u->player & 7]);
+                if (impostors_.count(key)) continue;
+                if (budget-- <= 0) break;
+                ensureImpostor(key.first, key.second, u->type->canMove);
+            }
+        }
+        // Bake sprite sheets for visible models when sprite mode is on -- one NEW
+        // set per frame (each is kSprFacings x kSprFrames render-target captures).
+        if (spritesEnabled_) {
+            for (const auto* u : visUnits_) {
+                if (!u->type) continue;
+                auto key = std::make_pair(unitType_.at(u->id), colorSlot_[u->player & 7]);
+                if (sprites_.count(key)) continue;
+                bakeSprites(key.first, key.second, u->type->canMove, u->type->canFly);
+                break;
+            }
+        }
         double _pt0 = double(SDL_GetPerformanceCounter());
         pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
             thread_local std::vector<Tri> scratch;
@@ -3471,6 +3485,25 @@ private:
     std::map<std::string, float> modelH_;    // model projected height (px @ zoom 1)
     SDL_Texture* impAtlas_ = nullptr;
     int impAtlasDim_ = 4096, impCurX_ = 0, impCurY_ = 0, impShelfH_ = 0;
+    // After a failed GPU texture allocation (VRAM pressure), pause every bake /
+    // atlas creation path for a few seconds instead of retrying next frame. The
+    // bake paths run per visible unit per frame, so an un-cached failure becomes
+    // a driver-flooding allocation storm: observed on an 8GB card driving a
+    // 7680x2160 desktop as ~6k/sec nvidia-drm NVKMS GEM allocation errors that
+    // starved the compositor itself ("Failed to start frame" = whole-screen
+    // flicker). Units render as full 3D models during the pause -- correct, just
+    // less cheap -- and baking resumes automatically once the pause lapses.
+    uint32_t gpuAllocBackoffUntil_ = 0;
+    bool gpuAllocBlocked() const {
+        return gpuAllocBackoffUntil_ != 0 &&
+               SDL_GetTicks() < gpuAllocBackoffUntil_;
+    }
+    void noteGpuAllocFail() {
+        if (!gpuAllocBlocked())
+            std::fprintf(stderr, "gpu: texture allocation failed (VRAM pressure?) "
+                                 "-- pausing atlas/sprite baking for 3s\n");
+        gpuAllocBackoffUntil_ = SDL_GetTicks() + 3000;
+    }
     static constexpr float kImpScale = 2.0f;    // impostor render supersampling
 
     // Sprite sheets: the locomotion animation (walk / fly) baked to a grid of
@@ -3508,7 +3541,11 @@ public:
     void autoTuneSprites(float frameMs) {
         frameEma_ = frameEma_ * 0.85f + frameMs * 0.15f;
         if (spriteMode_ == SPR_ON)  { spritesEnabled_ = true;  return; }
-        if (spriteMode_ == SPR_OFF) { spritesEnabled_ = false; return; }
+        if (spriteMode_ == SPR_OFF) {
+            spritesEnabled_ = false;
+            if (!sprPages_.empty()) freeSpritePages();
+            return;
+        }
         // AUTO. Sprites help only a real crowd, so gate both on frames slower than
         // ~55fps (18ms) AND enough on-screen units -- that keeps a startup/asset
         // hitch with few units from latching them on. A kept-up frame reads ~16.6ms
@@ -3518,15 +3555,17 @@ public:
             if (frameEma_ > 18.0f && visUnits_.size() >= 64) spritesEnabled_ = true;
         } else if (visUnits_.size() < 32) {
             spritesEnabled_ = false;
+            freeSpritePages();   // return the 64MB/page VRAM while sprites are off
         }
     }
 private:
 
     // Allocate a fresh cleared sprite-atlas page. Returns false if it can't.
     bool newSprPage() {
+        if (gpuAllocBlocked()) return false;   // don't retry a failed 64MB alloc per frame
         SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                            SDL_TEXTUREACCESS_TARGET, sprAtlasDim_, sprAtlasDim_);
-        if (!t) return false;
+        if (!t) { noteGpuAllocFail(); return false; }
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
         SDL_Texture* p0 = SDL_GetRenderTarget(ren_);
@@ -3548,16 +3587,30 @@ public:
     // render-target-backed cache so the pre-pass re-bakes them cleanly next frame.
     // Surface-backed caches (shadows, build FX) keep their pixels and are untouched.
     void invalidateRenderTargets() {
-        for (SDL_Texture* t : sprPages_) if (t) SDL_DestroyTexture(t);
-        sprPages_.clear();
-        sprites_.clear();
-        sprCurX_ = sprCurY_ = sprShelfH_ = 0;
+        freeSpritePages();
         for (SDL_Texture* t : atlasTex_) if (t) SDL_DestroyTexture(t);
         atlasTex_.clear();
         impostors_.clear();
         if (impAtlas_) { SDL_DestroyTexture(impAtlas_); impAtlas_ = nullptr; }
         impCurX_ = impCurY_ = impShelfH_ = 0;
     }
+private:
+    // Release the sprite-sheet pages (they're 64MB of VRAM each). Called when
+    // sprite mode turns off -- on a card shared with a huge desktop the memory
+    // matters more than the rebake cost, which is budgeted anyway -- and on a
+    // render-target reset, where the pixels are gone regardless.
+    // NOTE: the auto-tune call site runs between draw() (which queues batched
+    // SDL_RenderGeometry commands referencing these pages) and RenderPresent.
+    // That is safe because SDL_DestroyTexture flushes pending render commands
+    // that reference the texture (SDL >= 2.0.10) -- if draws ever bypass SDL's
+    // command queue, move the auto-tune free to before update() instead.
+    void freeSpritePages() {
+        for (SDL_Texture* t : sprPages_) if (t) SDL_DestroyTexture(t);
+        sprPages_.clear();
+        sprites_.clear();
+        sprCurX_ = sprCurY_ = sprShelfH_ = 0;
+    }
+public:
 private:
     bool lodEnabled_ = true;    // distant impostors on by default; F8 toggles
     float lodPx_ = 64.0f;                        // model shorter than this -> impostor
@@ -3627,9 +3680,10 @@ private:
         if (atlasW_ <= 0) return nullptr;
         if (int(atlasTex_.size()) <= slot) atlasTex_.resize(size_t(slot) + 1, nullptr);
         if (atlasTex_[slot]) return atlasTex_[slot];
+        if (gpuAllocBlocked()) return nullptr;   // don't retry a failed alloc per frame
         SDL_Texture* atlas = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                                SDL_TEXTUREACCESS_TARGET, atlasW_, atlasH_);
-        if (!atlas) return nullptr;
+        if (!atlas) { noteGpuAllocFail(); return nullptr; }
         SDL_SetTextureBlendMode(atlas, SDL_BLENDMODE_BLEND);
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
         SDL_SetRenderTarget(ren_, atlas);
@@ -3658,10 +3712,12 @@ private:
         auto vt = visuals_.find(modelKey);
         if (vt == visuals_.end()) return;
         SDL_Texture* atlas = atlasFor(slot);
+        if (!atlas) return;   // slot atlas unavailable (alloc backoff): bake later
         if (!impAtlas_) {
+            if (gpuAllocBlocked()) return;   // don't retry a failed 64MB alloc per frame
             impAtlas_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                           SDL_TEXTUREACCESS_TARGET, impAtlasDim_, impAtlasDim_);
-            if (!impAtlas_) return;
+            if (!impAtlas_) { noteGpuAllocFail(); return; }
             SDL_SetTextureBlendMode(impAtlas_, SDL_BLENDMODE_BLEND);
             SDL_SetTextureScaleMode(impAtlas_, SDL_ScaleModeLinear);
             SDL_Texture* p0 = SDL_GetRenderTarget(ren_);
@@ -3671,7 +3727,8 @@ private:
             SDL_RenderClear(ren_);
             SDL_SetRenderTarget(ren_, p0);
         }
-        Impostor imp;
+        Impostor imp{};   // zero-init: never cache uninitialized facing rects
+        bool full = false;
         std::vector<Tri> scratch;
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
         SDL_SetRenderTarget(ren_, impAtlas_);
@@ -3700,7 +3757,7 @@ private:
             int w = std::clamp(int(std::ceil((maxX - minX) * S)) + 2 * pad, 2, 400);
             int h = std::clamp(int(std::ceil((maxY - minY) * S)) + 2 * pad, 2, 400);
             if (impCurX_ + w > impAtlasDim_) { impCurX_ = 0; impCurY_ += impShelfH_ + 1; impShelfH_ = 0; }
-            if (impCurY_ + h > impAtlasDim_) break;   // atlas full; leave not-ready
+            if (impCurY_ + h > impAtlasDim_) { full = true; break; }   // atlas full
             int rx = impCurX_, ry = impCurY_;
             for (auto& t : scratch) {
                 SDL_Vertex v[3];
@@ -3720,7 +3777,10 @@ private:
             maxH = std::max(maxH, maxY - minY);
         }
         SDL_SetRenderTarget(ren_, prev);
-        imp.ready = true;
+        // Ready only when every facing baked. On atlas-full, the cached not-ready
+        // entry keeps the unit on its full 3D model (and stops per-frame retries)
+        // instead of drawing garbage rects for the unbaked facings.
+        imp.ready = !full;
         impostors_[key] = imp;
         modelH_[modelKey] = maxH;
     }
@@ -3755,6 +3815,9 @@ private:
     void bakeSprites(const std::string& typeId, int slot, bool canMove, bool canFly) {
         auto key = std::make_pair(typeId, slot);
         if (sprites_.count(key)) return;
+        // During an allocation backoff, don't reserve the key yet -- so the bake
+        // happens properly once VRAM pressure clears, instead of never.
+        if (gpuAllocBlocked()) return;
         sprites_[key] = SpriteSet{};   // reserve (not ready)
         auto vt = visuals_.find(typeId);
         if (vt == visuals_.end()) return;
@@ -3802,7 +3865,10 @@ private:
                 tmp.vm->start("walk_legs") || tmp.vm->start("walk");
         };
         SDL_Texture* atlas = atlasFor(slot);
-        if (sprPages_.empty() && !newSprPage()) return;
+        // A page-allocation failure is transient (VRAM pressure) -- un-reserve the
+        // key so this type rebakes after the backoff, unlike the permanent
+        // no-COB/no-model reservations above.
+        if (sprPages_.empty() && !newSprPage()) { sprites_.erase(key); return; }
         SpriteSet ss;
         ss.frames = animated ? kSprFrames : 1;
         std::vector<Tri> scratch;
@@ -3835,7 +3901,7 @@ private:
             }
             period = std::clamp(period, 0.3f, 2.0f);
         }
-        bool atlasFull = false;
+        bool atlasFull = false, pageAllocFailed = false;
         SDL_Texture* target = sprPages_.back();
         // Capture the current VM pose at facing fi into a packed cell of `target`.
         auto capture = [&](int fi, SDL_Rect& outR, SDL_FRect& outB) {
@@ -3890,10 +3956,12 @@ private:
                     capture(fi, ss.rect[fi][k], ss.bbox[fi][k]);
             }
             if (!atlasFull) { ss.page = target; break; }
-            if (attempt == 0 && !newSprPage()) break;   // couldn't allocate a page
+            if (attempt == 0 && !newSprPage()) { pageAllocFailed = true; break; }
         }
         SDL_SetRenderTarget(ren_, prev);
-        if (atlasFull || !ss.page) return;   // leave reserved not-ready -> full model
+        // Transient VRAM failure: un-reserve so the type rebakes after the backoff.
+        if (pageAllocFailed) { sprites_.erase(key); return; }
+        if (atlasFull || !ss.page) return;   // doesn't fit a fresh page -> full model
         ss.period = period;
         ss.ready = true;
         sprites_[key] = ss;
@@ -5133,6 +5201,7 @@ private:
     SDL_Texture* modelIconTex(const std::string& id, int slot, bool canMove) {
         auto keyp = std::make_pair(id, slot);
         if (auto it = modelIcons_.find(keyp); it != modelIcons_.end()) return it->second;
+        if (gpuAllocBlocked()) return nullptr;   // retry after the alloc backoff lapses
         modelIcons_[keyp] = nullptr;   // cache the attempt (success or failure) up front
         if (!ghostModel(id)) return nullptr;
         auto vt = visuals_.find(id);
@@ -5155,7 +5224,9 @@ private:
         const int ICON = 64;
         SDL_Texture* tgt = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                              SDL_TEXTUREACCESS_TARGET, ICON, ICON);
-        if (!tgt) return nullptr;
+        // Transient VRAM failure: un-cache so the icon renders after the backoff
+        // (the up-front nullptr stays only for permanent no-model failures).
+        if (!tgt) { noteGpuAllocFail(); modelIcons_.erase(keyp); return nullptr; }
         SDL_SetTextureBlendMode(tgt, SDL_BLENDMODE_BLEND);
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
         SDL_SetRenderTarget(ren_, tgt);
