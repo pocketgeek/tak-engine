@@ -125,10 +125,11 @@ identical sim with only ~35-byte commands on the wire, verified by a periodic
 state-hash cross-check. All players connect out to the one server, so no NAT or
 port-forwarding on the players' side. Everyone needs the same engine build and
 game data (the handshake gates protocol version). See
-`docs/multiplayer-design.md` for the full design and milestone plan; the
-in-client lobby currently auto-matchmakes (a browser/slot-editing UI, server-run
-AI, and reconnect are the remaining milestones). The old 2-player `--host`/`--join`
-peer mode is retired.
+`docs/multiplayer-design.md` for the full design and milestone plan. The
+in-client lobby has a game browser, a create-game dialog, and a room screen
+where each player picks their faction, colour, and team and readies up (the host
+opens/closes slots, kicks, and starts). Server-run AI and reconnect are the
+remaining milestones. The old 2-player `--host`/`--join` peer mode is retired.
 
 ## Building
 
