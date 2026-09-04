@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -343,7 +344,17 @@ struct Player {
     float godFavor = 0;
     bool  godSummoned = false;
     int   kills = 0;     // enemy units this player has destroyed (F4 overlay)
+    // Alliance layer above ownership: players sharing a team fight together and
+    // share vision. Default (set at game setup) = the player's own index, i.e.
+    // a free-for-all where everyone is on their own team. Immutable in v1 --
+    // if diplomacy ever makes it mutable it must be a sequenced command AND
+    // enter stateHash (see docs/multiplayer-design.md).
+    int   team = 0;
+    bool  defeated = false;   // no living units; set by the sim's win check
 };
+
+// Max simultaneous players/teams (the retail map ceiling is 8 start positions).
+constexpr int kMaxPlayers = 8;
 
 class World {
 public:
@@ -384,6 +395,29 @@ public:
         return depth_[size_t(cz) * terW_ + cx] > 0;
     }
     Player& player(int i) { return players_[size_t(i)]; }
+    const Player& player(int i) const { return players_[size_t(i)]; }
+    int numPlayers() const { return int(players_.size()); }
+    // Size the player table for a match (default 4 for single-player/scenarios).
+    // Call BEFORE spawning any units -- shrinking it after would leave units with
+    // an out-of-range owner index (dereferenced unchecked in the economy loop).
+    void setPlayerCount(int n) {
+        players_.assign(size_t(std::clamp(n, 1, kMaxPlayers)), Player{});
+        for (int i = 0; i < numPlayers(); ++i) players_[size_t(i)].team = i;
+    }
+    // Assign a player's team, clamped to a valid team id [0, numPlayers). Teams
+    // are 0..n-1 by construction; keeping them in range is the invariant that the
+    // outcome check and the viewer's per-team arrays rely on -- so the sim owns
+    // it rather than trusting setup (a lobby, or the TAK_FFA dev harness).
+    void setTeam(int player, int team) {
+        if (player < 0 || player >= numPlayers()) return;
+        players_[size_t(player)].team = std::clamp(team, 0, numPlayers() - 1);
+    }
+    // Two players are allied if they share a team (a player is allied to itself).
+    bool allied(int a, int b) const {
+        if (a == b) return true;
+        if (a < 0 || b < 0 || a >= numPlayers() || b >= numPlayers()) return false;
+        return players_[size_t(a)].team == players_[size_t(b)].team;
+    }
 
     // God economy (gamedata/Gods.tdf). Enable it, then a player whose god favour
     // fills after `appearSec` may manifest its god — the viewer polls godReady().
@@ -395,6 +429,14 @@ public:
         return godsEnabled_ && !players_[size_t(t)].godSummoned &&
                clock_ >= godAppearTime_ && players_[size_t(t)].godFavor >= kGodFavorNeeded;
     }
+
+    // Win/defeat, computed sim-side so every lockstep peer agrees on the same
+    // tick. A player is defeated when it has no living units; a team is out when
+    // all its players are. Returns the surviving team id once exactly one team
+    // remains (the winner), or -1 while >1 team still has units. Updates each
+    // Player::defeated as a side effect. Idempotent; call once per tick.
+    int updateOutcome();
+    int winningTeam() const { return winningTeam_; }
 
     // Which player the fog-of-war grid tracks (default 0 = local player).
     void setVisPlayer(int t) { visPlayer_ = t; }
@@ -505,7 +547,12 @@ private:
     std::vector<std::pair<float, float>> manaSpots_;
     std::vector<Projectile> projectiles_;
     std::vector<HitFx> hits_;
-    std::vector<Player> players_ = std::vector<Player>(4);
+    std::vector<Player> players_ = []{
+        std::vector<Player> v(4);
+        for (int i = 0; i < 4; ++i) v[size_t(i)].team = i;
+        return v;
+    }();
+    int winningTeam_ = -1;
     bool godsEnabled_ = false;
     float godAppearTime_ = 1e9f, clock_ = 0;
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition

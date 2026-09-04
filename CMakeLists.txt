@@ -37,6 +37,16 @@ add_library(tak-formats
 target_include_directories(tak-formats PUBLIC src)
 target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG)
 
+# Determinism: the simulation (src/sim) must produce bit-identical results across
+# machines running the same binary for lockstep multiplayer. Disable floating-
+# point contraction (FMA fuses a*b+c differently on different CPUs) and never
+# enable -ffast-math on this library. See docs/multiplayer-design.md. (A fuller
+# cross-build contract -- a deterministic sin/cos/atan2 shim -- comes later; this
+# covers same-binary play, which is the v1 requirement.)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(tak-formats PRIVATE -ffp-contract=off)
+endif()
+
 # --- Command-line tools -------------------------------------------------------
 
 add_executable(hpitool tools/hpitool.cpp)
