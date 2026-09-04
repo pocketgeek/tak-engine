@@ -338,6 +338,13 @@ const UnitType* TypeRegistry::find(const std::string& id) const {
 int World::spawn(const UnitType* type, float x, float z, float heading, int player) {
     Unit u;
     u.id = nextId_++;
+    // Clamp to a valid player slot: every players_[u.player] index downstream is
+    // unchecked, so an out-of-range owner would read/write past the vector.
+    if (player < 0 || player >= int(players_.size())) {
+        std::fprintf(stderr, "sim: spawn player %d out of range [0,%d) -> clamped to 0\n",
+                     player, int(players_.size()));
+        player = 0;
+    }
     u.player = player;
     u.type = type;
     u.x = x;
@@ -950,7 +957,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     int splashed = 0;
     forEachNear(hx, hz, aoe, [&](int idx) {
         Unit& e = units_[size_t(idx)];
-        if (!e.alive() || e.embarked() || !e.type || e.player == fromPlayer) return;
+        if (!e.alive() || e.embarked() || !e.type || allied(e.player, fromPlayer)) return;
         if (&e == primary) return;   // already took the direct hit
         float dx = e.x - hx, dz = e.z - hz;
         float d = std::sqrt(dx * dx + dz * dz);
@@ -1045,7 +1052,7 @@ void World::tickCombat(Unit& u, float dt) {
         int uFoot = std::max(u.type->footX, u.type->footZ) / 2;
         forEachNear(u.x, u.z, ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
-            if (!e.alive() || e.embarked() || e.player == u.player || !e.type) return;
+            if (!e.alive() || e.embarked() || allied(e.player, u.player) || !e.type) return;
             if (e.underConstruction) return;   // don't auto-react to a site still conjuring
             if (!canTarget(e)) return;
             float hx = e.x - u.homeX, hz = e.z - u.homeZ;
@@ -1135,7 +1142,8 @@ void World::tickCombat(Unit& u, float dt) {
         fire(u, *target, slot);
     // cancapture: a charmer converts the target after sustained contact (~3s) or
     // once it is worn down, rather than killing it.
-    if (u.type->canCapture && target->type && !target->type->cantBeCaptured) {
+    if (u.type->canCapture && target->type && !target->type->cantBeCaptured &&
+        !allied(u.player, target->player)) {
         u.captureProg += dt;
         if (u.captureProg > 3.0f || target->hp < target->type->maxHp * 0.25f) {
             target->player = u.player;
@@ -1356,7 +1364,7 @@ void World::tickAuras(float dt) {
             forEachNear(s.x, s.z, a.radius, [&](int idx) {
                 Unit& e = units_[size_t(idx)];
                 if (!e.alive() || e.embarked() || !e.type) return;
-                bool enemy = e.player != s.player;
+                bool enemy = !allied(e.player, s.player);
                 if (enemy != a.affectsEnemy) return;   // buff friends OR debuff foes
                 float dx = e.x - s.x, dz = e.z - s.z;
                 float d2 = dx * dx + dz * dz;
@@ -1409,6 +1417,7 @@ void World::tickAbilities(float /*dt*/) {
 
 void World::updateVisibility() {
     if (nav_.empty()) return;
+    if (visPlayer_ < 0) return;   // headless referee: nothing renders, no fog needed
     if (vis_.empty()) {
         visW_ = nav_.width();
         visH_ = nav_.height();
@@ -1417,7 +1426,10 @@ void World::updateVisibility() {
     for (auto& v : vis_)
         if (v == 2) v = 1;
     for (const auto& u : units_) {
-        if (!u.alive() || u.player != visPlayer_ || !u.type) continue;
+        // Shared team vision: every unit on the viewing player's team reveals fog
+        // (a negative visPlayer_ -- the headless referee -- reveals nothing).
+        if (!u.alive() || !u.type || visPlayer_ < 0 || !allied(u.player, visPlayer_))
+            continue;
         // Reveal to the greater of sight and radar range (radardistance).
         int r = int(std::max(u.type->sight, u.type->radar)) / 16 + 1;
         int cx = int(u.x) / 16, cz = int(u.z) / 16;
@@ -1577,7 +1589,7 @@ void World::tick(float dt) {
                 // Credit the killer's player with an enemy kill (F4 overlay). Counts
                 // even if the killer is a structure or has since died -- what
                 // matters is who landed the fatal blow, not that it still lives.
-                if (k && k->type && k->player != u.player &&
+                if (k && k->type && !allied(k->player, u.player) &&
                     k->player >= 0 && k->player < int(players_.size()))
                     players_[size_t(k->player)].kills++;
                 if (k && k->alive() && k->type && k->type->canMove &&
@@ -1609,7 +1621,7 @@ void World::tick(float dt) {
             float md = std::max(u.type->minCloakDist, 1.0f);
             forEachNear(u.x, u.z, md, [&](int idx) {
                 const Unit& e = units_[size_t(idx)];
-                if (e.alive() && !e.embarked() && e.player != u.player && e.type) {
+                if (e.alive() && !e.embarked() && !allied(e.player, u.player) && e.type) {
                     float dx = e.x - u.x, dz = e.z - u.z;
                     if (dx * dx + dz * dz <= md * md) enemyNear = true;
                 }
@@ -1864,6 +1876,9 @@ void World::tick(float dt) {
             }
         }
     }
+    // Win/defeat is derived from unit state on every sim (clients + referee),
+    // so all peers agree on the tick a team is eliminated / the game is won.
+    updateOutcome();
     if (g_phase) {
         auto _end = std::chrono::steady_clock::now();
         double tsep = std::chrono::duration<double,std::milli>(_end-_sep0).count();
@@ -1901,11 +1916,70 @@ uint64_t World::stateHash() const {
         mixf(u.hp);
         mixf(u.heading);
         mix(uint64_t(u.orders.size()));
+        // Order target + attack-move flag: two sims can hold the same order
+        // COUNT while chasing different targets -- fold the head order in so a
+        // divergence shows up before damage lands (the referee must attribute
+        // desyncs fast at 8 players).
+        if (!u.orders.empty()) {
+            const Order& o = u.orders.front();
+            mix(uint64_t(uint32_t(o.targetId)));
+            mix(uint64_t(o.attackMove ? 1 : 0));
+            mixf(o.x);
+            mixf(o.z);
+        }
         mix(uint64_t(u.alive() ? 1 : 0));
+        mix(uint64_t(u.veteran));
+        mixf(u.reloads[0]);
     }
+    // Projectiles: count alone hides same-count divergence, so fold owner and
+    // position of each in flight (mixf hashes the exact bits -- deterministic
+    // across peers and NaN-safe, unlike an int cast).
     mix(uint64_t(projectiles_.size()));
-    for (const auto& t : players_) mixf(t.mana);
+    for (const auto& p : projectiles_) {
+        mix(uint64_t(uint32_t(p.fromPlayer)));
+        mixf(p.x);
+        mixf(p.z);
+    }
+    for (const auto& t : players_) {
+        mixf(t.mana);
+        mixf(t.godFavor);
+        // Team assignment drives sim behaviour (splash/acquire/auras) but is set
+        // from setup -- fold it in so a lobby/config mismatch faults immediately
+        // as a desync instead of diverging mysteriously.
+        mix(uint64_t(uint32_t(t.team)));
+    }
     return h;
+}
+
+int World::updateOutcome() {
+    // A player is defeated when it has no living units. Compute per-player
+    // alive counts, then per-team. This runs on every sim (referee included),
+    // so all peers conclude win/defeat on the same tick.
+    std::vector<int> aliveByPlayer(players_.size(), 0);
+    for (const auto& u : units_)
+        if (u.alive() && u.type &&
+            u.player >= 0 && u.player < int(players_.size()))
+            ++aliveByPlayer[size_t(u.player)];
+    for (int p = 0; p < int(players_.size()); ++p)
+        players_[size_t(p)].defeated = (aliveByPlayer[size_t(p)] == 0);
+
+    // Count DISTINCT teams that still have a living unit (robust to any team id,
+    // not just 0..n-1): a surviving player counts its team once -- the first time
+    // that team appears among survivors. If exactly one team remains it wins.
+    int survivingTeam = -1, survivingCount = 0;
+    for (int p = 0; p < int(players_.size()); ++p) {
+        if (aliveByPlayer[size_t(p)] == 0) continue;
+        int tm = players_[size_t(p)].team;
+        bool firstOfTeam = true;
+        for (int q = 0; q < p; ++q)
+            if (aliveByPlayer[size_t(q)] > 0 && players_[size_t(q)].team == tm) {
+                firstOfTeam = false;
+                break;
+            }
+        if (firstOfTeam) { ++survivingCount; survivingTeam = tm; }
+    }
+    winningTeam_ = (survivingCount == 1) ? survivingTeam : -1;
+    return winningTeam_;
 }
 
 } // namespace tak::sim

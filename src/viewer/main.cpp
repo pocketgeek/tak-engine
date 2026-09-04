@@ -1270,6 +1270,53 @@ public:
         }
         // Camera opens on the player's Monarch.
         mapView_.setOffset(px - 640 / 0.9f, pz - 400 / 0.9f);
+        // Dev harness: TAK_FFA=N or TAK_FFA=N,t0.t1.t2... sets up an N-player
+        // game (each on its own team unless a team list is given), one monarch +
+        // a small army per player at N start positions, all AI-driven. Verifies
+        // the 8-player / team / shared-vision / win-condition paths before the
+        // real lobby exists. (multiplayer M1)
+        if (const char* ff = std::getenv("TAK_FFA")) {
+            int n = std::atoi(ff);
+            n = std::clamp(n, 2, tak::sim::kMaxPlayers);
+            std::vector<int> teams(size_t(n), 0);
+            for (int i = 0; i < n; ++i) teams[size_t(i)] = i;   // default: FFA
+            if (const char* comma = std::strchr(ff, ',')) {     // optional team list
+                std::string ts(comma + 1);
+                int i = 0;
+                for (size_t p = 0; p < ts.size() && i < n; ) {
+                    size_t dot = ts.find('.', p);
+                    teams[size_t(i++)] = std::atoi(ts.substr(p, dot - p).c_str());
+                    if (dot == std::string::npos) break;
+                    p = dot + 1;
+                }
+            }
+            world_.setPlayerCount(n);
+            for (int i = 0; i < n; ++i) world_.setTeam(i, teams[size_t(i)]);
+            // Spread players across the N most mutually-distant start positions
+            // (fall back to a ring around centre when the map has too few).
+            std::vector<std::pair<float, float>> spots = starts;
+            while (int(spots.size()) < n) {
+                float ang = float(spots.size()) / float(n) * 6.2831853f;
+                spots.push_back({cx + std::cos(ang) * 300, cz + std::sin(ang) * 300});
+            }
+            const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
+            for (int i = 0; i < n; ++i) {
+                const FactionKit& fk = kit(sides[i % 5]);
+                float mx = spots[size_t(i)].first, mz = spots[size_t(i)].second;
+                int mon = spawn(fk.monarch, mx, mz, 0, i);
+                if (i == 0) { playerMonarchId_ = mon; builderId_ = mon; }
+                for (int s = 0; s < 4; ++s)
+                    spawn(fk.squad[s % 4], mx + (s % 2) * 26 - 13, mz - 50 + (s / 2) * 26, 0, i);
+                world_.player(i).mana = 2800;
+            }
+            ffaPlayers_ = n;
+            demoAi_ = true;   // (harness) all players AI-driven
+            for (auto& u : world_.units()) {
+                if (!u.type || u.type->canMove) continue;
+                tak::sim::blockFootprint(world_.nav(), *u.type, u.x, u.z, true);
+            }
+            return;
+        }
         if (!bare) {
         const FactionKit& pk = kit(side);
         const FactionKit& ak = kit(aiSide);
@@ -1435,7 +1482,8 @@ public:
                 const auto* first = world_.unit(selection_.front());
                 float best = 20 * 20;
                 for (auto& u : world_.units()) {
-                    if (!u.alive() || u.embarked() || !first || u.player == first->player)
+                    if (!u.alive() || u.embarked() || !first ||
+                        world_.allied(u.player, first->player))
                         continue;
                     float dx = u.x - wx, dz = u.z - wz;
                     if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
@@ -1571,11 +1619,13 @@ public:
                 }
                 return;
             }
-            // Clicking near an enemy = attack; else formation move.
+            // Clicking near an enemy = attack; else formation move. (Allies are
+            // not enemies -- clicking one falls through to a move, not an attack.)
             int enemy = -1;
             float best = 20 * 20;
             for (auto& u : world_.units()) {
-                if (!u.alive() || u.embarked() || !first || u.player == first->player) continue;
+                if (!u.alive() || u.embarked() || !first ||
+                    world_.allied(u.player, first->player)) continue;
                 float dx = u.x - wx, dz = u.z - wz;
                 if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
             }
@@ -1998,7 +2048,7 @@ public:
         // God economy: once a player's favour fills after the appear time, its
         // faction's god manifests among its forces.
         if (world_.godsEnabled())
-            for (int t = 0; t < 4; ++t)
+            for (int t = 0; t < world_.numPlayers(); ++t)
                 if (world_.godReady(t)) summonGod(t);
         if (getenv("TAK_STUCKSTAT")) {   // crowd-jam diagnostic
             static float acc = 0; acc += dt;
@@ -2143,18 +2193,30 @@ public:
             }
         }
 
-        // Victory check: a side with no living units loses. Only armed
-        // once both sides have fielded units (staged demos may not).
+        // Victory check: last team standing. The sim computes winningTeam() and
+        // per-player defeated flags each tick (deterministic across peers); the
+        // viewer just maps that to this player's win/lose banner. Only armed once
+        // at least two teams have fielded units (staged demos may field one).
         if (outcome_ == 0) {
-            int alive[2] = {0, 0};
-            for (auto& u : world_.units())
-                if (u.alive() && u.player < 2) ++alive[u.player];
-            sawPlayer_[0] |= alive[0] > 0;
-            sawPlayer_[1] |= alive[1] > 0;
-            if (sawPlayer_[0] && sawPlayer_[1]) {
-                int other = localPlayer_ == 0 ? 1 : 0;
-                if (alive[other] == 0) outcome_ = 1;
-                else if (alive[localPlayer_] == 0) outcome_ = -1;
+            int teamsSeen = 0;
+            for (int t = 0; t < world_.numPlayers(); ++t) {
+                bool any = false;
+                for (auto& u : world_.units())
+                    if (u.alive() && u.type && world_.player(u.player).team == t) { any = true; break; }
+                if (any) sawTeam_[t] = true;
+                if (sawTeam_[t]) ++teamsSeen;
+            }
+            int win = world_.winningTeam();
+            if (teamsSeen >= 2 && win >= 0) {
+                outcome_ = (win == world_.player(localPlayer_).team) ? 1 : -1;
+            } else if (world_.player(localPlayer_).defeated && teamsSeen >= 2) {
+                // My whole team may still be alive via allies; only lose when the
+                // sim says my team is gone, but a solo (FFA) defeat ends my game.
+                bool teamAlive = false;
+                for (int p = 0; p < world_.numPlayers(); ++p)
+                    if (world_.player(p).team == world_.player(localPlayer_).team &&
+                        !world_.player(p).defeated) { teamAlive = true; break; }
+                if (!teamAlive) outcome_ = -1;
             }
         }
         // T-tracking: keep the camera on the selection; drop out if it's all gone.
@@ -2378,7 +2440,7 @@ public:
             // and every render path does unitType_.at(u.id) -- skip it here so none
             // of them throw (a throw in the parallel projection aborts the process).
             if (!unitType_.count(u.id)) continue;
-            if (!noFog_ && u.player != localPlayer_ && !world_.cellVisible(u.x, u.z)) continue;
+            if (!noFog_ && !alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
             // Frustum cull: only units whose anchor falls in (or just outside) the
             // map viewport are projected and drawn. The margin is generous and
             // asymmetric -- models extend well above their anchor, so a unit above
@@ -2726,7 +2788,7 @@ public:
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
-            if (u.player != localPlayer_ && !world_.cellVisible(u.x, u.z)) continue;
+            if (!alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
             // Only damaged units show a health bar -- a unit at full HP never does,
             // selected or not.
@@ -2750,7 +2812,7 @@ public:
         // Production progress above busy buildings.
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
-            if (u.player != localPlayer_ && !world_.cellVisible(u.x, u.z)) continue;
+            if (!alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
             float total = u.buildQueue.front()->buildTime /
                           std::max(u.type->workerTime, 0.01f);
             float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
@@ -2932,8 +2994,12 @@ private:
         aiTimer_ = 1.0f;
 
         if (!aiProfileLoaded_) loadAiProfile();
-        tickAiWeighted(1);              // the AI opponent
-        if (demoAi_) tickAiWeighted(0); // showcase: player side is AI too
+        if (ffaPlayers_ > 0) {
+            for (int p = 0; p < ffaPlayers_; ++p) tickAiWeighted(p);   // dev harness
+        } else {
+            tickAiWeighted(1);              // the AI opponent
+            if (demoAi_) tickAiWeighted(0); // showcase: player side is AI too
+        }
     }
 
     // Parse the retail AI profile (ai/default.txt): "weight <unit> N" / "limit <unit>
@@ -3088,7 +3154,8 @@ private:
                                const tak::sim::UnitType* atype, float& tx, float& tz) {
         std::vector<std::pair<float, std::pair<float, float>>> es;
         for (auto& e : world_.units()) {
-            if (!e.alive() || e.embarked() || e.player == player || !e.type) continue;
+            if (!e.alive() || e.embarked() || world_.allied(e.player, player) || !e.type)
+                continue;
             float dx = e.x - cx, dz = e.z - cz;
             es.push_back({dx * dx + dz * dz, {e.x, e.z}});
         }
@@ -4359,7 +4426,11 @@ private:
     bool paused_ = false;
     int gameSpeed_ = 0;         // -10..+10 game-speed level (+/- keys); 0 = normal
     // 10^(level/10): +10 = 10x, 0 = 1x, -10 = 0.1x.
-    float speedMult() const { return std::pow(10.0f, float(gameSpeed_) / 10.0f); }
+    // Game-speed multiplier. Forced to 1x in a networked game: the peers advance
+    // the sim in lockstep at a fixed step, so scaling one peer's dt would desync.
+    float speedMult() const {
+        return net_ ? 1.0f : std::pow(10.0f, float(gameSpeed_) / 10.0f);
+    }
     bool showCounts_ = false;   // F4: per-faction live unit counts
     bool showColorPicker_ = false;   // F6: pick the player colour
     bool showHDebug_ = false;   // F7: terrain-height / lift diagnostic overlay
@@ -4609,7 +4680,7 @@ private:
         shadowBatch_.clear();
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
-            if (u.player != localPlayer_ && !world_.cellVisible(u.x, u.z)) continue;
+            if (!alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
             SDL_FPoint p = toMini(u.x, u.z);
             SDL_Color tc = playerColor(u.player);
             pushQuad(shadowBatch_, p.x - 1.5f, p.y - 1.5f, 3, 3, tc);
@@ -5275,6 +5346,11 @@ private:
         if (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS ||
             key == SDLK_MINUS || key == SDLK_KP_MINUS) {
             bool up = (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS);
+            if (net_) {   // lockstep peers must share one clock
+                notice_ = "GAME SPEED LOCKED IN NET GAMES";
+                noticeTimer_ = 2;
+                return true;
+            }
             gameSpeed_ = std::clamp(gameSpeed_ + (up ? 1 : -1), -10, 10);
             notice_ = "GAME SPEED " + std::string(gameSpeed_ > 0 ? "+" : "") +
                       std::to_string(gameSpeed_);
@@ -5505,6 +5581,10 @@ private:
     // The player's HUD accent — follows their chosen player colour, not faction.
     SDL_Color factionColor() const { return playerColor(localPlayer_); }
 
+    // Is this player on the local player's team? (Allies share vision, so their
+    // units render/appear on the minimap through fog just like your own.)
+    bool alliedToLocal(int player) const { return world_.allied(player, localPlayer_); }
+
     // A built-in 5x7 pixel font (uppercase, digits, a few symbols), drawn as
     // solid blocks — unmistakably legible at any size, unlike the game's small
     // decorative fonts. Each glyph is 5 columns; bit 0 of a column is the top.
@@ -5605,7 +5685,7 @@ private:
         char buf[64];
         for (const auto& u : world_.units()) {
             if (!u.alive() || !u.type) continue;
-            if (u.player != localPlayer_ && !world_.cellVisible(u.x, u.z) && !noFog_) continue;
+            if (!alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z) && !noFog_) continue;
             float sx = (u.x - mapView_.offX()) * zm;
             float rawY = (u.z - mapView_.offY()) * zm;
             float lift = terrainLift(u.x, u.z);
@@ -5635,17 +5715,18 @@ private:
     }
 
     void drawUnitCounts(int winW) {
-        int cnt[4] = {0, 0, 0, 0};
-        std::string sd[4];
+        int cnt[tak::sim::kMaxPlayers] = {};
+        std::string sd[tak::sim::kMaxPlayers];
+        int np = world_.numPlayers();
         for (const auto& u : world_.units()) {
             if (!u.alive() || !u.type) continue;
             int t = u.player;
-            if (t < 0 || t >= 4) continue;
+            if (t < 0 || t >= np) continue;
             ++cnt[t];
             if (sd[t].empty()) sd[t] = u.type->side;
         }
         int rows = 0;
-        for (int t = 0; t < 4; ++t) if (cnt[t] > 0) ++rows;
+        for (int t = 0; t < np; ++t) if (cnt[t] > 0) ++rows;
         const float px = 2.4f, lh = 7 * px + 9, x = 12;
         float y = 12;
         const float colUnits = x + 108, colKills = x + 186;
@@ -5660,10 +5741,13 @@ private:
         blockText("UNITS", colUnits, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
         blockText("KILLS", colKills, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
         y += lh;
-        for (int t = 0; t < 4; ++t) {
+        for (int t = 0; t < np; ++t) {
             if (cnt[t] == 0) continue;
             std::string s = sd[t];
             std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+            // With >2 players a faction can repeat; prefix the player number so
+            // rows stay distinct (the colour still matches their units).
+            if (np > 2) s = "P" + std::to_string(t + 1) + " " + s;
             SDL_Color c = playerColor(t);
             blockText(s, x, y, px, c);
             std::snprintf(buf, sizeof buf, "%d", cnt[t]);
@@ -6281,9 +6365,13 @@ private:
     SoundClasses soundClasses_;
     uint32_t salt_ = 0;
     int outcome_ = 0;   // 0 = playing, 1 = victory, -1 = defeat
-    bool sawPlayer_[2] = {false, false};
+    bool sawTeam_[tak::sim::kMaxPlayers] = {};   // teams that have ever fielded a unit
     bool demoAi_ = false;
     bool aiEnabled_ = true;
+    // Dev-only N-player free-for-all / teams harness (TAK_FFA=N[,teams]); the
+    // real lobby (multiplayer M3) replaces it. When >0, tickAi drives every
+    // AI player, not just player 1.
+    int ffaPlayers_ = 0;
     bool amphib_ = false;
     int amphibPhase_ = 0, amphibSquad_ = 0, transportId_ = -1;
     float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
