@@ -1367,10 +1367,12 @@ public:
                    minimapClick(float(e.button.x), float(e.button.y), winW, winH)) {
             draggingMinimap_ = true;   // camera follows the drag until release
             trackSel_ = false;
-        } else if ((e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) &&
+        } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.x > mapViewW(winW) && e.button.y < winH - kBarH) {
-            // Right-hand panel background (not a minimap/button hit): swallow it so
-            // it never starts a box-select or an order on the map.
+            // Right-hand panel background (not a minimap/button hit): swallow the
+            // press so it can't start a box-select or drop an order on the map.
+            // Only the PRESS -- releases must still fall through (e.g. to end a
+            // minimap drag or a box-select that began over the map).
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    pendingCmd_) {
             float wx, wz;
