@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace tak::hpi {
@@ -59,5 +60,45 @@ private:
 
 HeaderInfo inspect(const std::filesystem::path& archive);
 std::string describe(const HeaderInfo& info);
+
+// A directory's worth of archives, layered exactly as the retail engine does
+// (verified by disassembling KINGDOMS.icd's file-open path, 0x53aff0):
+//
+//   1. A loose file on disk (dir/<path>) overrides everything -- the engine
+//      fopen()s the plain path first and only falls back to archives.
+//   2. Otherwise all *.hpi then *.ufo in the directory are searched, and when
+//      the same internal path exists in several, the one whose directory entry
+//      has the NEWEST date (file entry +0x10) wins; a tie keeps the earlier
+//      mount (*.hpi before *.ufo, alphabetical). This is why each retail patch
+//      shipped a new HPI that simply superseded older copies of a file.
+//
+// So dropping newer patch archives (or a loose override file) into a game
+// directory Just Works, same as the original.
+class MountSet {
+public:
+    explicit MountSet(const std::filesystem::path& dir);
+
+    // Is `path` resolvable (loose file or in some archive)?
+    bool has(const std::string& path) const;
+    // Read a file by internal path (case-insensitive, '/' or '\\'). Throws if
+    // absent. A loose file on disk wins; otherwise the newest archive copy.
+    std::vector<uint8_t> read(const std::string& path) const;
+    // Every archive-provided path after conflict resolution (loose-only files
+    // are not listed -- they're already on disk).
+    std::vector<std::string> paths() const;
+    // Human-readable winning source of `path` (for tooling/debug).
+    std::string sourceOf(const std::string& path) const;
+
+    const std::vector<std::filesystem::path>& archiveFiles() const { return archiveFiles_; }
+
+private:
+    struct Win { int archive; Entry entry; };   // archive index into archives_
+    static std::string key(std::string p);       // lowercased, '/'-separated
+
+    std::filesystem::path dir_;
+    std::vector<Archive> archives_;
+    std::vector<std::filesystem::path> archiveFiles_;
+    std::unordered_map<std::string, Win> map_;   // winning archive entry per path
+};
 
 } // namespace tak::hpi

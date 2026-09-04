@@ -16,7 +16,11 @@ static int usage() {
     std::cerr << "usage: hpitool inspect <archive.hpi>...\n"
                  "       hpitool list <archive.hpi>\n"
                  "       hpitool cat <archive.hpi> <internal-path>\n"
-                 "       hpitool extract <archive.hpi> <outdir>\n";
+                 "       hpitool extract <archive.hpi> <outdir>\n"
+                 "       hpitool merge <hpi-dir> <outdir>   "
+                 "# all *.hpi/*.ufo, retail precedence (newest wins)\n"
+                 "       hpitool where <hpi-dir> <internal-path>  "
+                 "# show which archive wins a path\n";
     return 2;
 }
 
@@ -73,6 +77,30 @@ int main(int argc, char** argv) {
                 ++files;
             }
             std::cout << "extracted " << files << " files to " << outDir.string() << "\n";
+        } else if (cmd == "merge" && argc >= 4) {
+            // Layer every *.hpi/*.ufo in a directory with the retail precedence
+            // (newest file date wins; loose files on disk override) and extract
+            // the resolved result -- what the retail engine would actually see.
+            tak::hpi::MountSet ms(argv[2]);
+            fs::path outDir = argv[3];
+            std::cerr << "mounting " << ms.archiveFiles().size() << " archive(s):\n";
+            for (const auto& a : ms.archiveFiles())
+                std::cerr << "  " << a.filename().string() << "\n";
+            size_t files = 0;
+            for (const auto& p : ms.paths()) {
+                fs::path out = outDir / p;
+                fs::create_directories(out.parent_path());
+                auto data = ms.read(p);
+                std::ofstream f(out, std::ios::binary);
+                f.write(reinterpret_cast<const char*>(data.data()),
+                        static_cast<std::streamsize>(data.size()));
+                if (!f) throw std::runtime_error("write failed: " + out.string());
+                ++files;
+            }
+            std::cout << "merged " << files << " files to " << outDir.string() << "\n";
+        } else if (cmd == "where" && argc >= 4) {
+            tak::hpi::MountSet ms(argv[2]);
+            std::cout << argv[3] << " -> " << ms.sourceOf(argv[3]) << "\n";
         } else {
             return usage();
         }

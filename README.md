@@ -52,10 +52,23 @@ config schema, and the veterancy/build formulas read out of the binary).
 ## Quick start (after placing game data in assets/)
 
 ```sh
-tools/… # extract: ./build/hpitool extract assets/game/<archive>.hpi assets/extracted/<name>
+# extract one archive:
+./build/hpitool extract assets/game/<archive>.hpi assets/extracted/<name>
+# ...or merge a whole game directory the way the retail engine layers it
+# (all *.hpi/*.ufo, patch archives override the base — see below):
+./build/hpitool merge assets/game assets/extracted
 ./build/takview game "assets/extracted/maps/Maps/King of the Hill.tnt" \
     assets/extracted/terrain/terrain assets/extracted/data
 ```
+
+**HPI precedence** — the retail game shipped each update as a new HPI/UFO that
+superseded older copies of a file. `hpitool merge` reproduces the exact rule
+(reverse-engineered from `KINGDOMS.icd`): a loose file on disk wins; otherwise,
+across all `*.hpi` then `*.ufo` in the directory, the copy whose archive entry
+has the **newest date** wins (ties keep the earlier-mounted, `*.hpi` before
+`*.ufo`). `hpitool where <dir> <path>` shows which archive a given file resolves
+to. So dropping newer patch archives (e.g. `V3Rocket.hpi`) into the game
+directory Just Works, as the original did.
 
 Controls (hotkeys follow the game's `Keys.TDF`): drag = box-select,
 right-click = move/attack (shift queues). Order keys arm a command you then

@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <stdexcept>
 
@@ -201,6 +202,98 @@ std::string describe(const HeaderInfo& info) {
     out << buf;
     out << "size:       " << info.fileSize << " bytes\n";
     return out.str();
+}
+
+// ---- MountSet: retail asset precedence over a directory of archives --------
+
+std::string MountSet::key(std::string p) {
+    for (char& c : p) {
+        if (c == '\\') c = '/';
+        else c = char(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (!p.empty() && p.front() == '/') p.erase(p.begin());
+    return p;
+}
+
+MountSet::MountSet(const std::filesystem::path& dir) : dir_(dir) {
+    namespace fs = std::filesystem;
+    // Collect *.hpi then *.ufo, each group alphabetical -- the order the retail
+    // FindFirstFile("*.HPI") / ("*.UFO") scan yields and mounts them in.
+    std::vector<fs::path> hpis, ufos;
+    if (fs::is_directory(dir_))
+        for (const auto& e : fs::directory_iterator(dir_)) {
+            if (!e.is_regular_file()) continue;
+            std::string ext = e.path().extension().string();
+            for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (ext == ".hpi") hpis.push_back(e.path());
+            else if (ext == ".ufo") ufos.push_back(e.path());
+        }
+    // Case-insensitive filename sort, like the retail FindFirstFile scan (so a
+    // tie in file date breaks the same way it did originally).
+    auto ci = [](const fs::path& a, const fs::path& b) {
+        std::string x = a.filename().string(), y = b.filename().string();
+        for (char& c : x) c = char(std::tolower(static_cast<unsigned char>(c)));
+        for (char& c : y) c = char(std::tolower(static_cast<unsigned char>(c)));
+        return x < y;
+    };
+    std::sort(hpis.begin(), hpis.end(), ci);
+    std::sort(ufos.begin(), ufos.end(), ci);
+    archiveFiles_ = hpis;
+    archiveFiles_.insert(archiveFiles_.end(), ufos.begin(), ufos.end());
+
+    // Mount each; resolve conflicts by newest entry date (a strict '>' keeps the
+    // earlier mount on a tie, matching the retail 'jae' comparison).
+    for (const auto& file : archiveFiles_) {
+        int idx = int(archives_.size());
+        try {
+            archives_.emplace_back(file);
+        } catch (const std::exception&) {
+            continue;   // skip an unreadable archive rather than abort the mount
+        }
+        for (const auto& e : archives_.back().entries()) {
+            if (e.isDirectory) continue;
+            std::string k = key(e.path);
+            auto it = map_.find(k);
+            if (it == map_.end() || e.date > it->second.entry.date)
+                map_[k] = Win{idx, e};
+        }
+    }
+}
+
+bool MountSet::has(const std::string& path) const {
+    std::filesystem::path loose = dir_ / path;
+    if (std::filesystem::is_regular_file(loose)) return true;
+    return map_.count(key(path)) != 0;
+}
+
+std::vector<uint8_t> MountSet::read(const std::string& path) const {
+    // 1. A loose file on disk overrides archives (the engine fopen()s first).
+    std::filesystem::path loose = dir_ / path;
+    if (std::filesystem::is_regular_file(loose)) {
+        std::ifstream f(loose, std::ios::binary);
+        return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+    }
+    // 2. Otherwise the winning (newest) archive copy.
+    auto it = map_.find(key(path));
+    if (it == map_.end()) throw std::runtime_error("not in mount set: " + path);
+    return archives_[size_t(it->second.archive)].read(it->second.entry);
+}
+
+std::vector<std::string> MountSet::paths() const {
+    std::vector<std::string> out;
+    out.reserve(map_.size());
+    for (const auto& [k, w] : map_) out.push_back(w.entry.path);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+std::string MountSet::sourceOf(const std::string& path) const {
+    std::filesystem::path loose = dir_ / path;
+    if (std::filesystem::is_regular_file(loose)) return loose.string() + " (loose)";
+    auto it = map_.find(key(path));
+    if (it == map_.end()) return "<absent>";
+    return archiveFiles_[size_t(it->second.archive)].filename().string() +
+           "!" + it->second.entry.path;
 }
 
 } // namespace tak::hpi
