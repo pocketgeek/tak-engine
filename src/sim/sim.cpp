@@ -296,6 +296,10 @@ void TypeRegistry::loadBuildTree(const std::filesystem::path& canbuildDir) {
         }
         std::sort(entries.begin(), entries.end());
         auto& list = buildTree_[builder];
+        // First dir to define a builder wins it whole -- so a Crusades-balance
+        // canbuildcb loaded before canbuild replaces that builder's menu rather
+        // than merging with it. (No effect on the usual single load.)
+        if (!list.empty()) continue;
         for (auto& [p, id] : entries)
             if (std::find(list.begin(), list.end(), id) == list.end())
                 list.push_back(id);
