@@ -2370,7 +2370,8 @@ public:
         for (const auto* u : visUnits_) atlasFor(colorSlot_[u->team & 7]);
         // Ensure an impostor sprite exists for every visible model when zoomed out
         // enough that LOD may kick in (main thread; the parallel pass only reads it).
-        if (lodEnabled_ && mapView_.zoom() < kLodZoomGate)
+        if (lodEnabled_ && (mapView_.zoom() < kLodZoomGate ||
+                            visUnits_.size() > size_t(kCrowdLod)))
             for (const auto* u : visUnits_)
                 if (u->type)
                     ensureImpostor(unitType_.at(u->id), colorSlot_[u->team & 7],
@@ -3338,6 +3339,8 @@ private:
     bool lodEnabled_ = true;
     float lodPx_ = 112.0f;                       // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 1.2f; // skip LOD entirely when zoomed in
+    static constexpr float kCrowdLod = 500.0f;  // on-screen units above which LOD
+                                                // grows aggressive and ignores zoom
 
     static int facingIndex(float heading) {
         return int(std::lround(heading / (2.0f * 3.14159265f) * 8.0f)) & 7;
@@ -3513,11 +3516,17 @@ private:
         float ax = (u.x - mapView_.offX()) * zm - terrainLiftX(u.x, u.z) * zm;
         float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
         // Level of detail: draw a small unit as a cached impostor billboard.
-        if (lodEnabled_ && zm < kLodZoomGate) {
+        // The size threshold scales up with the on-screen crowd, and a big crowd
+        // also overrides the zoom gate -- so thousands of units use impostors even
+        // when zoomed in, but zooming onto a small group (few units survive the
+        // frustum cull) keeps full detail.
+        float crowd = float(visUnits_.size());
+        float effLod = lodPx_ * std::max(1.0f, crowd / kCrowdLod);
+        if (lodEnabled_ && (zm < kLodZoomGate || crowd > kCrowdLod)) {
             auto hit = modelH_.find(vt->first);
             auto iit = impostors_.find(std::make_pair(vt->first, slot));
             if (hit != modelH_.end() && iit != impostors_.end() && iit->second.ready
-                && hit->second * zm < lodPx_) {
+                && hit->second * zm < effLod) {
                 const Impostor& imp = iit->second;
                 int f = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f);
                 const SDL_Rect& r = imp.rect[f];
