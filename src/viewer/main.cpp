@@ -3337,7 +3337,7 @@ private:
     SDL_Texture* impAtlas_ = nullptr;
     int impAtlasDim_ = 4096, impCurX_ = 0, impCurY_ = 0, impShelfH_ = 0;
     static constexpr float kImpScale = 2.0f;    // impostor render supersampling
-    bool lodEnabled_ = true;
+    bool lodEnabled_ = false;   // impostors off by default; F8 toggles them on
     float lodPx_ = 112.0f;                       // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 1.2f; // skip LOD entirely when zoomed in
     static constexpr float kCrowdLod = 500.0f;  // on-screen units above which LOD
