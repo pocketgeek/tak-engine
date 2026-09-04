@@ -2586,7 +2586,10 @@ public:
                 if (o.targetId == 0) drawRing(o.x, o.z, 4);
         }
 
-        // Health bars for damaged or selected units.
+        // Health bars for damaged or selected units -- viewport-culled and batched
+        // into one draw call (each was two state-changing FillRects, so a damaged
+        // crowd used to break the render batch thousands of times a frame).
+        shadowBatch_.clear();
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
@@ -2598,13 +2601,17 @@ public:
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
             float bx = (u.x - mapView_.offX()) * zm - bw / 2 - terrainLiftX(u.x, u.z) * zm;
             float by = (u.z - mapView_.offY()) * zm - 30 * zm - terrainLift(u.x, u.z) * zm;
-            SDL_FRect bg{bx - 1, by - 1, bw + 2, bh + 2};
-            SDL_SetRenderDrawColor(ren_, 10, 10, 10, 220);
-            SDL_RenderFillRectF(ren_, &bg);
-            SDL_FRect fg{bx, by, bw * frac, bh};
-            SDL_SetRenderDrawColor(ren_, uint8_t(230 * (1 - frac) + 40 * frac),
-                                   uint8_t(200 * frac + 40 * (1 - frac)), 40, 255);
-            SDL_RenderFillRectF(ren_, &fg);
+            if (bx < -40 || bx > mvw + 40 || by < -40 || by > winH + 40) continue;
+            pushQuad(shadowBatch_, bx - 1, by - 1, bw + 2, bh + 2,
+                     SDL_Color{10, 10, 10, 220});
+            pushQuad(shadowBatch_, bx, by, bw * frac, bh,
+                     SDL_Color{uint8_t(230 * (1 - frac) + 40 * frac),
+                               uint8_t(200 * frac + 40 * (1 - frac)), 40, 255});
+        }
+        if (!shadowBatch_.empty()) {
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_RenderGeometry(ren_, nullptr, shadowBatch_.data(),
+                               int(shadowBatch_.size()), nullptr, 0);
         }
 
         // Production progress above busy buildings.
@@ -3818,9 +3825,12 @@ private:
     std::string side_ = "ara";
     tak::sim::TypeRegistry registry_;
     tak::sim::World world_;
-    std::map<std::string, Visual> visuals_;
-    std::map<int, std::string> unitType_;
-    std::map<int, Anim> anims_;
+    // Hash maps (not std::map): these are looked up per unit per frame in the
+    // serial anim loop and the parallel projection, and tree traversals were a
+    // measurable slice of the update cost at thousands of units.
+    std::unordered_map<std::string, Visual> visuals_;
+    std::unordered_map<int, std::string> unitType_;
+    std::unordered_map<int, Anim> anims_;
     std::map<std::string, std::vector<SDL_Texture*>> textures_;
     std::vector<Tri> tris_;
     std::vector<SDL_Vertex> triBatch_;   // reused per-unit vertex batch
