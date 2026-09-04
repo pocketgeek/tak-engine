@@ -1884,13 +1884,13 @@ public:
         if (winW_ <= 0 || winH_ <= 0) return;
         if (mouseX_ < 0 || mouseX_ > winW_ || mouseY_ < 0 || mouseY_ > winH_) return;
         const float margin = 24.0f, panPx = 1000.0f;   // px/s at zoom 1
-        float mvw = float(mapViewW(winW_));
-        if (mouseX_ > mvw) return;   // over the right-hand panel: don't scroll
+        // Trigger at the real window edges (incl. the far right, past the panel),
+        // so the player pushes to the screen edge to scroll -- not to the map edge.
         float sx = 0, sz = 0;
         if (mouseX_ < margin) sx = -1;
-        else if (mouseX_ > mvw - margin) sx = 1;   // right edge of the map view
+        else if (mouseX_ > winW_ - margin) sx = 1;
         if (mouseY_ < margin) sz = -1;
-        else if (mouseY_ > winH_ - margin) sz = 1;      // real screen bottom edge
+        else if (mouseY_ > winH_ - margin) sz = 1;
         if (sx == 0 && sz == 0) return;
         follow_ = false;   // the player is driving the camera now
         trackSel_ = false;
