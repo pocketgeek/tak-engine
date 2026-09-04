@@ -958,7 +958,14 @@ void World::tickCombat(Unit& u, float dt) {
             if (!(e.type->canFly && wp.noAir)) return true;
         return false;
     };
-    if (acquiring && u.type->weapon.damage > 0) {
+    // Auto-acquisition is staggered across ticks by unit id: an idle armed unit
+    // rescans for a target every kAcqStride ticks (~0.13s at 30Hz), not every
+    // tick. That turns the dense-crowd O(n^2) neighbour scan into O(n^2/stride)
+    // -- the dominant sim cost when thousands of idle armed units pile together.
+    // Deterministic (id+tick, identical on every lockstep peer), so no desync.
+    constexpr uint32_t kAcqStride = 4;
+    bool acqTurn = (uint32_t(u.id) + tickCounter_) % kAcqStride == 0;
+    if (acquiring && u.type->weapon.damage > 0 && acqTurn) {
         float ar = u.type->maxRange() + 90;
         int best = 0;
         float bestD = ar * ar;
@@ -1407,6 +1414,7 @@ void World::tickProduction(Unit& u, float dt) {
 }
 
 void World::tick(float dt) {
+    ++tickCounter_;
     for (auto& u : units_) { u.justFired = false; u.justBuilt = 0; }
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
     clock_ += dt;    // wall-clock since the match started (for god timing)
