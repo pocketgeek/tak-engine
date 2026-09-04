@@ -8,6 +8,7 @@
 #include "hpi/hpi.h"
 
 #include <fstream>
+#include <cctype>
 #include <iostream>
 
 namespace fs = std::filesystem;
@@ -88,7 +89,13 @@ int main(int argc, char** argv) {
                 std::cerr << "  " << a.filename().string() << "\n";
             size_t files = 0;
             for (const auto& p : ms.paths()) {
-                fs::path out = outDir / p;
+                // Lowercase the output path. The retail engine is case-insensitive
+                // (Windows), but archives disagree on case for the same logical file
+                // (data.hpi "gamedata/" vs V3Rocket "GameData/"); on a case-sensitive
+                // filesystem a lowercase tree is what the engine's lookups expect.
+                std::string lp = p;
+                for (char& c : lp) c = char(std::tolower((unsigned char)c));
+                fs::path out = outDir / lp;
                 fs::create_directories(out.parent_path());
                 auto data = ms.read(p);
                 std::ofstream f(out, std::ios::binary);
