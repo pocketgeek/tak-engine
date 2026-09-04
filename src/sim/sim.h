@@ -386,6 +386,8 @@ public:
         manaSpots_ = std::move(spots);
     }
     bool hasManaSpots() const { return !manaSpots_.empty(); }
+    const std::vector<std::pair<float, float>>& manaSpots() const { return manaSpots_; }
+    uint32_t tickCount() const { return tickCounter_; }
     bool onManaSpot(float x, float z) const;
     // True if (x,z) lies over water (for choosing the water impact effect).
     bool isWater(float x, float z) const {
@@ -461,7 +463,7 @@ public:
     // Can a unit of `type` at (fx,fz) actually reach goal (gx,gz)? (flow-field
     // connectivity). Lets the AI pick a REACHABLE target instead of one that's
     // merely nearest in a straight line but walled off (army would stall/pile).
-    bool pathExists(const UnitType* type, float gx, float gz, float fx, float fz);
+    bool pathExists(const UnitType* type, float gx, float gz, float fx, float fz) const;
     void patrol(int unitId, float x, float z);
     void guard(int unitId, int targetId, bool queue);
     void stop(int unitId);
@@ -484,6 +486,9 @@ public:
     const std::vector<Unit>& units() const { return units_; }
     const std::vector<Projectile>& projectiles() const { return projectiles_; }
     Unit* unit(int id);
+    const Unit* unit(int id) const {
+        return const_cast<World*>(this)->unit(id);
+    }
 
     // Weapon impacts this tick (view-side: impact sound + effect). Carries the
     // source weapon (soundhitclass / hweffect) and the unit struck (body material
@@ -511,8 +516,13 @@ private:
     // Return a flow field toward world (gx,gz) over `type`'s nav grid, built and
     // cached on first use (keyed by goal cell + domain). Cleared when the nav
     // grid changes (a building is placed or removed). nullptr if unbuildable.
-    const FlowField* flowFor(const UnitType* type, float gx, float gz);
-    std::map<long long, FlowField> flowCache_;
+    // const: the flow field is a PURE MEMO of (nav grid, goal, domain) -- content
+    // never depends on when/whether it was built -- so building a cache entry the
+    // AI needs (on the server, where clients don't) cannot perturb sim state. The
+    // cache is therefore mutable and this is a logical-const query. Single-threaded
+    // per world (not safe to call off the sim thread). See docs/multiplayer-design.md.
+    const FlowField* flowFor(const UnitType* type, float gx, float gz) const;
+    mutable std::map<long long, FlowField> flowCache_;
 
     // Uniform spatial hash over mobile units, rebuilt each tick, so the
     // separation and combat-acquisition passes are O(n) instead of O(n^2).

@@ -686,7 +686,7 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1)
     return out;
 }
 
-const FlowField* World::flowFor(const UnitType* type, float gx, float gz) {
+const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const {
     const NavGrid& grid = navFor(type);
     if (grid.empty()) return nullptr;
     int cx = std::clamp(int(gx) / 16, 0, grid.width() - 1);
@@ -755,7 +755,7 @@ void World::order(int unitId, float x, float z, bool queue) {
     u->orders.push_back({x, z, 0});
 }
 
-bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float fz) {
+bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float fz) const {
     const FlowField* ff = flowFor(type, gx, gz);
     return ff && ff->reachable(fx, fz);
 }

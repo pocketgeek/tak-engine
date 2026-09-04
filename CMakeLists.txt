@@ -28,6 +28,7 @@ add_library(tak-formats
   src/cob/cob.cpp
   src/cob/vm.cpp
   src/sim/sim.cpp
+  src/ai/ai.cpp
   src/crt/crt.cpp
   src/net/lockstep.cpp
   src/util/png.cpp
