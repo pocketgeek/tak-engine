@@ -15,6 +15,11 @@ namespace tak::sim {
 
 bool gInstantBuild = false;
 
+// TAK_PHASE sim profiler globals (zero cost when unset).
+static const bool g_phase = getenv("TAK_PHASE") != nullptr;
+static double g_tcomb = 0, g_flowMs = 0, g_pathMs = 0;
+static long g_flowN = 0, g_pathN = 0;
+
 namespace {
 
 constexpr float kPi = 3.14159265358979f;
@@ -681,7 +686,9 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) {
     // without limit; group/wave goals (the ones that matter for crowds) recur.
     if (flowCache_.size() > 48) flowCache_.clear();
     FlowField ff;
-    ff.build(grid, gx, gz);
+    if (g_phase) { auto _b0=std::chrono::steady_clock::now(); ff.build(grid, gx, gz);
+        g_flowMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_b0).count(); ++g_flowN; }
+    else ff.build(grid, gx, gz);
     auto& stored = flowCache_[key];
     stored = std::move(ff);
     return stored.ready() ? &stored : nullptr;
@@ -1439,12 +1446,11 @@ void World::tickProduction(Unit& u, float dt) {
     }
 }
 
-static double g_tcomb=0;
-static const bool g_phase = getenv("TAK_PHASE") != nullptr;   // sim phase profiler
 void World::tick(float dt) {
     ++tickCounter_;
     std::chrono::steady_clock::time_point _tk0, _sep0; double g_tsep=0;
-    if (g_phase) { _tk0 = std::chrono::steady_clock::now(); g_tcomb = 0; }
+    if (g_phase) { _tk0 = std::chrono::steady_clock::now();
+                   g_tcomb = g_flowMs = g_pathMs = 0; g_flowN = g_pathN = 0; }
     // Cap A* repaths per tick: a big group that jams while moving can trip the
     // blocked/stuck watchdogs en masse, and hundreds of path searches in one tick
     // stall the sim. Deferred units retry a later tick. Deterministic (fixed budget,
@@ -1697,7 +1703,7 @@ void World::tick(float dt) {
                             u.orders.clear();
                         } else if (pathBudget_ > 0) {
                             --pathBudget_;
-                            auto path = g.findPath(u.x, u.z, tx, tz);
+                            auto _p0=std::chrono::steady_clock::now(); auto path = g.findPath(u.x, u.z, tx, tz); if(g_phase){ g_pathMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_p0).count(); ++g_pathN; }
                             if (!path.empty()) {
                                 u.orders.clear();
                                 for (const auto& wp : path) u.orders.push_back(wp);
@@ -1741,7 +1747,7 @@ void World::tick(float dt) {
                                 u.orders.clear();   // unreachable -> give up, no A*
                             } else if (pathBudget_ > 0) {
                                 --pathBudget_;
-                                auto path = g.findPath(u.x, u.z, tx, tz);
+                                auto _p0=std::chrono::steady_clock::now(); auto path = g.findPath(u.x, u.z, tx, tz); if(g_phase){ g_pathMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_p0).count(); ++g_pathN; }
                                 if (!path.empty()) {
                                     u.orders.clear();
                                     for (const auto& wp : path) u.orders.push_back(wp);
@@ -1822,10 +1828,12 @@ void World::tick(float dt) {
         auto _end = std::chrono::steady_clock::now();
         double tsep = std::chrono::duration<double,std::milli>(_end-_sep0).count();
         double ttot = std::chrono::duration<double,std::milli>(_end-_tk0).count();
-        if (ttot > 15.0) {   // only report a real stall
+        static double thr = getenv("TAK_PHASE_MS") ? atof(getenv("TAK_PHASE_MS")) : 15.0;
+        if (ttot > thr) {   // only report a stall (threshold tunable via TAK_PHASE_MS)
             int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
-            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f other=%.1f units=%d\n",
-                         ttot, g_tcomb, tsep, ttot - g_tcomb - tsep, alive);
+            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f flow=%.1f(x%ld) path=%.1f(x%ld) other=%.1f units=%d\n",
+                         ttot, g_tcomb, tsep, g_flowMs, g_flowN, g_pathMs, g_pathN,
+                         ttot - g_tcomb - tsep - g_flowMs - g_pathMs, alive);
         }
     }
 }
