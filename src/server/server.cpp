@@ -5,11 +5,12 @@
 // server buckets them per tick, closes one tick every 1/30 s, and broadcasts a
 // TickBundle to every client in the game. Clients advance their sims in step.
 //
-// M3 scope: humans only, no server-side sim. Desync is detected by CROSS-
-// CHECKING the StateHash every client reports for a tick -- when they disagree
-// the minority is flagged Desynced. The referee sim (a headless World on the
-// server) and server-hosted AI come in M4, which also extracts the SDL-free
-// game setup the sim needs.
+// With --data the server runs a REFEREE sim (a headless World built by the same
+// setupMatch the clients use) that also hosts the AI players: each tick the AI
+// controllers append their orders to the bundle, and the referee's own state
+// hash is the canonical one clients are checked against (with a suspicion rule
+// that blames the referee if every client agrees against it). Without --data the
+// server is a pure relay and clients cross-check hashes among themselves (M3).
 
 #include <poll.h>
 #include <sys/socket.h>
@@ -22,14 +23,18 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "ai/ai.h"
 #include "net/conn.h"
 #include "net/protocol.h"
+#include "sim/matchsetup.h"
+#include "sim/sim.h"
 
 using namespace tak::net;
 
@@ -75,6 +80,12 @@ struct Room {
     // hash cross-check: tick -> (clientId -> hash)
     std::map<uint32_t, std::map<uint32_t, uint64_t>> hashes;
     std::map<uint32_t, bool> desyncFlagged;     // clientId -> already told
+    // referee sim (server-side, drives server-hosted AI + a canonical hash)
+    std::unique_ptr<tak::sim::World> ref;
+    const tak::sim::TypeRegistry* reg = nullptr;   // the balance this game uses
+    std::vector<tak::ai::Controller> ai;        // one per AI slot
+    std::map<uint32_t, uint64_t> refHash;       // tick -> referee hash (bounded ring)
+    bool refSuspect = false;                    // referee itself suspected desynced
     Room() { for (int i = 0; i < kMaxSlots; ++i) slotClient[i] = -1; }
     int capacity() const { return cap; }
     int humanCount() const {
@@ -91,11 +102,30 @@ struct Room {
 
 class Server {
 public:
-    explicit Server(uint16_t port) : port_(port) {}
+    Server(uint16_t port, const std::string& dataRoot) : port_(port), dataRoot_(dataRoot) {
+        if (!dataRoot_.empty()) {
+            tak::sim::setupRegistry(registry_, dataRoot_, false);
+            if (std::filesystem::is_directory(dataRoot_ + "/unitscb")) {
+                tak::sim::setupRegistry(registryCb_, dataRoot_, true);
+                haveCb_ = true;
+            }
+            aiProfile_ = tak::ai::loadProfile(dataRoot_);
+            haveData_ = true;
+            std::fprintf(stderr, "takserver: loaded game data from %s (referee sim + AI enabled%s)\n",
+                         dataRoot_.c_str(), haveCb_ ? ", +Crusades" : "");
+        }
+    }
     int run();
 
 private:
     uint16_t port_;
+    std::string dataRoot_;
+    bool haveData_ = false, haveCb_ = false;
+    tak::sim::TypeRegistry registry_, registryCb_;
+    tak::ai::Profile aiProfile_;
+    const tak::sim::TypeRegistry& registryFor(bool crusades) const {
+        return (crusades && haveCb_) ? registryCb_ : registry_;
+    }
     int listenFd_ = -1;
     uint32_t nextClientId_ = 1, nextRoomId_ = 1;
     std::unordered_map<uint32_t, std::unique_ptr<Client>> clients_;
@@ -298,12 +328,37 @@ void Server::tryStart(Client& c) {
         if (s.type == 1 && !s.ready) return;             // a human isn't ready
         if (s.color < 10) { if (usedColor[s.color]) return; usedColor[s.color] = true; }
     }
-    // M3 has no server AI; reject games that request AI slots for now.
-    for (int i = 0; i < kMaxSlots; ++i)
-        if (r->slots[i].type == 2) return;   // AI comes in M4
+    // AI slots require the server to have game data (referee sim).
+    bool anyAi = false;
+    for (int i = 0; i < kMaxSlots; ++i) if (r->slots[i].type == 2) anyAi = true;
+    if (anyAi && !haveData_) return;   // can't host AI without --data
     r->running = true;
     r->tick = 0;
     r->nextTickMs = nowMs();
+    // Build the referee sim (and AI controllers) if we have game data. The world
+    // is built by the SAME setupMatch the clients use, so its hash is canonical.
+    if (haveData_) {
+        int maxSlot = 0;
+        for (int i = 0; i < kMaxSlots; ++i)
+            if (r->slots[i].type == 1 || r->slots[i].type == 2) maxSlot = i;
+        tak::sim::MatchConfig cfg;
+        cfg.tntPath = dataRoot_ + "/maps/" + r->mapId + ".tnt";
+        cfg.dataRoot = dataRoot_;
+        cfg.gods = r->opts.gods != 0;
+        cfg.slots.resize(size_t(maxSlot + 1));
+        for (int i = 0; i <= maxSlot; ++i) {
+            const auto& s = r->slots[i];
+            cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team};
+        }
+        r->reg = &registryFor(r->opts.crusades != 0);
+        r->ref = std::make_unique<tak::sim::World>();
+        r->ref->setVisPlayer(-1);   // headless referee: no fog pass
+        tak::sim::setupMatch(*r->ref, *r->reg, cfg);
+        r->ai.reserve(size_t(maxSlot + 1));
+        for (int i = 0; i <= maxSlot; ++i)
+            if (r->slots[i].type == 2)
+                r->ai.emplace_back(i, *r->reg, aiProfile_, 0x7a6b0000u + r->id);
+    }
     // GameStarting: final slot table + options + seeds + resume tokens (per client).
     for (int i = 0; i < kMaxSlots; ++i) {
         if (r->slotClient[i] < 0) continue;
@@ -401,17 +456,37 @@ void Server::checkHashes(Room& r, uint32_t tick) {
     for (int i = 0; i < kMaxSlots; ++i)
         if (r.slots[i].type == 1 && r.slotClient[i] >= 0) ++live;
     if (int(it->second.size()) < live || live == 0) return;
-    // Majority hash wins; the minority are desynced.
-    std::map<uint64_t, int> tally;
-    for (auto& [cid, h] : it->second) ++tally[h];
-    uint64_t majority = 0; int best = -1;
-    for (auto& [h, cnt] : tally) if (cnt > best) { best = cnt; majority = h; }
+
+    // The canonical hash: the referee's for this tick if we ran a referee sim,
+    // else the clients' majority (relay-only mode).
+    bool haveRef = r.ref && r.refHash.count(tick);
+    uint64_t canon;
+    if (haveRef) {
+        canon = r.refHash[tick];
+        // Referee suspicion: if every client agrees with each other but NOT with
+        // the referee, the server's own sim is the odd one out (a server-side
+        // bug) -- don't punish the clients; flag the referee and stop dropping.
+        std::map<uint64_t, int> ctally;
+        for (auto& [cid, h] : it->second) ++ctally[h];
+        if (ctally.size() == 1 && it->second.begin()->second != canon && !r.refSuspect) {
+            r.refSuspect = true;
+            std::fprintf(stderr, "game %u: REFEREE SUSPECT at tick %u -- all %d clients agree "
+                                 "with each other but disagree with the server sim; not dropping.\n",
+                         r.id, tick, live);
+        }
+        if (r.refSuspect) { r.hashes.erase(r.hashes.begin(), std::next(it)); return; }
+    } else {
+        std::map<uint64_t, int> tally;
+        for (auto& [cid, h] : it->second) ++tally[h];
+        int best = -1;
+        for (auto& [h, cnt] : tally) if (cnt > best) { best = cnt; canon = h; }
+    }
     for (auto& [cid, h] : it->second) {
-        if (h != majority && !r.desyncFlagged[cid]) {
+        if (h != canon && !r.desyncFlagged[cid]) {
             r.desyncFlagged[cid] = true;
             auto ci = clients_.find(cid);
             if (ci != clients_.end()) {
-                Writer w; w.u32(tick); w.str("desync detected (state diverged from the other players)");
+                Writer w; w.u32(tick); w.str("desync detected (state diverged from the game)");
                 ci->second->conn.send(Msg::Desynced, w);
                 std::fprintf(stderr, "game %u: client %u DESYNCED at tick %u\n", r.id, cid, tick);
             }
@@ -429,9 +504,15 @@ void Server::closeTick(Room& r) {
                 if (it == clients_.end() || !it->second->loaded) { r.nextTickMs = nowMs() + 100; return; }
             }
     }
+    // Server-hosted AI: each controller observes the referee world (state after
+    // tick-1) and appends its orders to this tick's bundle, exactly like a client.
+    if (r.ref)
+        for (auto& ctl : r.ai)
+            ctl.tick(*r.ref, r.tick, [&r](const Command& c) { r.pending.push_back(c); });
+
     Writer w;
     w.u32(r.tick);
-    // sort by player then arrival (stable): bucket by player.
+    // Deterministic order: sort by player, stable within a player (arrival order).
     std::stable_sort(r.pending.begin(), r.pending.end(),
                      [](const Command& a, const Command& b) { return a.player < b.player; });
     w.u32(uint32_t(r.pending.size()));
@@ -439,6 +520,16 @@ void Server::closeTick(Room& r) {
     w.u32(uint32_t(r.pendingEvents.size()));
     for (const auto& e : r.pendingEvents) { w.u8(uint8_t(e.kind)); w.u8(e.player); }
     broadcastRoom(r, Msg::TickBundle, w);
+
+    // Advance the referee sim by this same bundle, then record its canonical hash.
+    if (r.ref) {
+        for (const auto& cmd : r.pending) tak::sim::applyCommand(*r.ref, *r.reg, cmd);
+        for (const auto& e : r.pendingEvents) tak::sim::applyEvent(*r.ref, e);
+        r.ref->tick(1.0f / kServerHz);
+        r.refHash[r.tick] = r.ref->stateHash();
+        // bound the ring
+        while (r.refHash.size() > 300) r.refHash.erase(r.refHash.begin());
+    }
     r.pending.clear();
     r.pendingEvents.clear();
     r.tick++;
@@ -544,13 +635,17 @@ int Server::run() {
 
 int main(int argc, char** argv) {
     uint16_t port = 7677;
+    std::string dataRoot;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--port") && i + 1 < argc) port = uint16_t(std::atoi(argv[++i]));
+        else if (!std::strcmp(argv[i], "--data") && i + 1 < argc) dataRoot = argv[++i];
         else if (!std::strcmp(argv[i], "--help")) {
-            std::printf("usage: takserver [--port N]  (default 7677)\n");
+            std::printf("usage: takserver [--port N] [--data <extracted-data-dir>]\n"
+                        "  --data enables the referee sim + server-hosted AI; without it the\n"
+                        "  server is a pure relay (clients cross-check hashes among themselves).\n");
             return 0;
         }
     }
-    Server s(port);
+    Server s(port, dataRoot);
     return s.run();
 }

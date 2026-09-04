@@ -17,6 +17,7 @@
 #include "ai/ai.h"
 #include "net/client.h"
 #include "net/lockstep.h"
+#include "sim/matchsetup.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
 #include "tdo/tdo.h"
@@ -1707,44 +1708,30 @@ public:
         int maxSlot = 0;
         for (int i = 0; i < tak::net::kMaxSlots; ++i)
             if (room.slots[i].type == 1 || room.slots[i].type == 2) maxSlot = i;
-        world_.setPlayerCount(maxSlot + 1);
-        for (int i = 0; i <= maxSlot; ++i) {
-            world_.setTeam(i, room.slots[i].team);
-            colorSlot_[i & 7] = room.slots[i].color % 10;
-        }
-        // Assign the N most mutually-distant start positions to the used slots.
-        auto starts = parseStartPositions(tntPath_);
-        float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
-        std::vector<std::pair<float, float>> spots = starts;
-        int used = 0;
-        for (int i = 0; i <= maxSlot; ++i)
-            if (room.slots[i].type == 1 || room.slots[i].type == 2) ++used;
-        while (int(spots.size()) < used) {
-            float a = float(spots.size()) / float(std::max(used, 1)) * 6.2831853f;
-            spots.push_back({cx + std::cos(a) * 300, cz + std::sin(a) * 300});
-        }
-        const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
-        int spot = 0;
+        // Build the world through the SHARED setup so the server's referee sim and
+        // every client produce a bit-identical world (and hash). Client-only bits
+        // (colours, camera, local player, panel) stay here.
+        tak::sim::MatchConfig cfg;
+        cfg.tntPath = tntPath_;
+        cfg.dataRoot = dataRoot_;
+        cfg.gods = room.opts.gods != 0;
+        cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
             const auto& s = room.slots[i];
-            if (s.type != 1 && s.type != 2) continue;
-            std::string fkSide = sides[s.faction % 5];
-            const FactionKit& fk = kit(fkSide);
-            float mx = spots[size_t(spot)].first, mz = spots[size_t(spot)].second;
-            ++spot;
-            int mon = spawn(fk.monarch, mx, mz, 0, i);
-            if (i == room.mySlot) { playerMonarchId_ = mon; builderId_ = mon; }
-            world_.player(i).mana = 2800;
+            cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team};
+            colorSlot_[i & 7] = s.color % 10;
         }
+        auto spots = tak::sim::setupMatch(world_, registry_, cfg);
+        // client-only presentation
         localPlayer_ = room.mySlot < 0 ? 0 : room.mySlot;
         world_.setVisPlayer(localPlayer_);
+        for (auto& u : world_.units())
+            if (u.player == localPlayer_ && u.type) { playerMonarchId_ = u.id; builderId_ = u.id; break; }
+        const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
         side_ = sides[room.slots[localPlayer_].faction % 5];
         loadPanel(side_);
-        mapView_.setOffset(spots[0].first - 640 / 0.9f, spots[0].second - 400 / 0.9f);
-        for (auto& u : world_.units()) {
-            if (!u.type || u.type->canMove) continue;
-            tak::sim::blockFootprint(world_.nav(), *u.type, u.x, u.z, true);
-        }
+        if (!spots.empty())
+            mapView_.setOffset(spots[0].first - 640 / 0.9f, spots[0].second - 400 / 0.9f);
     }
 
     // One networked frame: pump the connection, send this frame's local orders,
@@ -1766,6 +1753,9 @@ public:
     }
 
     uint64_t worldHashPublic() const { return world_.stateHash(); }
+    size_t aliveUnits() const {
+        size_t n = 0; for (auto& u : world_.units()) if (u.alive() && u.type) ++n; return n;
+    }
 
     // Drive one iteration of the multiplayer lobby + game. autoMode: 0 = don't
     // auto-drive the lobby (a real UI will), 1 = auto-host (create + start at 2+
@@ -1776,7 +1766,7 @@ public:
         if (!mp_->poll()) { netError_ = mp_->error(); return false; }
         S st = mp_->state();
         if (st == S::Done) { if (netError_.empty()) netError_ = mp_->error(); return false; }
-        if (st == S::Lobby && autoMode == 1) {
+        if (st == S::Lobby && (autoMode == 1 || autoMode == 4)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             mp_->createGame("headless", "", mapId, o, mpCapacity());
         } else if (st == S::Lobby && (autoMode == 2 || autoMode == 3)) {
@@ -1793,13 +1783,19 @@ public:
             if (r.mySlot >= 0) {
                 mp_->setSlot(r.mySlot, 1, uint8_t(r.mySlot % 5), uint8_t(r.mySlot),
                              uint8_t(r.mySlot), 1);
+                // autoMode 4 (AI-game host): also seat one AI opponent in slot 1.
+                if (autoMode == 4 && r.mySlot == 0)
+                    mp_->setSlot(1, 2, 1, 1, 1, 1);   // AI, tar, colour 1, team 1
                 mpReadied_ = true;
             }
-        } else if (st == S::InRoom && (autoMode == 1 || autoMode == 3) && !mpStarted_ &&
+        } else if (st == S::InRoom && (autoMode == 1 || autoMode == 3 || autoMode == 4) &&
+                   !mpStarted_ &&
                    mp_->room().hostId == mp_->myClientId()) {
             int ready = 0;
-            for (int i = 0; i < tak::net::kMaxSlots; ++i)
-                if (mp_->room().slots[i].type == 1 && mp_->room().slots[i].ready) ++ready;
+            for (int i = 0; i < tak::net::kMaxSlots; ++i) {
+                const auto& s = mp_->room().slots[i];
+                if ((s.type == 1 && s.ready) || s.type == 2) ++ready;   // human-ready or AI
+            }
             if (ready >= 2) { mp_->startGame(); mpStarted_ = true; }
         } else if (mp_->starting() && !mpSetupDone_) {
             startMpGame(mp_->startRoom(), mp_->startSeed());
@@ -1811,71 +1807,11 @@ public:
         return true;
     }
 
-    // A sequenced lifecycle event from the tick bundle (M3: none are generated;
-    // handler is here so the wire format is honoured when M5 adds forfeits).
-    void applyEvent(const tak::net::Event& e) {
-        int p = e.player;
-        if (p < 0 || p >= world_.numPlayers()) return;
-        // Forfeit/Leave: the player's units go inert (stop). Disposal per the
-        // forfeit rule is M5 work.
-        for (auto& u : world_.units())
-            if (u.alive() && u.player == p) world_.stop(u.id);
-    }
+    void applyEvent(const tak::net::Event& e) { tak::sim::applyEvent(world_, e); }
 
-    void apply(const tak::net::Command& c) {
-        using tak::net::Cmd;
-        // Only allow commanding units the issuing player owns.
-        auto owns = [&](int id) {
-            const auto* u = world_.unit(id);
-            return u && u->player == int(c.player);
-        };
-        // A fresh redirect order (not a shift-queued one) also abandons any
-        // pending build queue, so its ghosts don't linger.
-        auto redirect = [&] { if (!c.queue) world_.cancelBuilds(c.unitId); };
-        switch (c.kind) {
-            case Cmd::Move:
-                if (owns(c.unitId)) { redirect(); world_.order(c.unitId, c.x, c.z, c.queue); }
-                break;
-            case Cmd::Attack:
-                if (owns(c.unitId)) { redirect(); world_.attack(c.unitId, c.targetId, c.queue); }
-                break;
-            case Cmd::AttackMove:
-                if (owns(c.unitId)) { redirect(); world_.attackMove(c.unitId, c.x, c.z, c.queue); }
-                break;
-            case Cmd::Patrol:
-                if (owns(c.unitId)) { world_.cancelBuilds(c.unitId); world_.patrol(c.unitId, c.x, c.z); }
-                break;
-            case Cmd::Stop:
-                if (owns(c.unitId)) { world_.cancelBuilds(c.unitId); world_.stop(c.unitId); }
-                break;
-            case Cmd::Train:
-                if (owns(c.unitId)) world_.train(c.unitId, registry_.find(c.type));
-                break;
-            case Cmd::Build:
-                if (owns(c.unitId))
-                    world_.queueBuild(c.unitId, registry_.find(c.type), c.x, c.z,
-                                      c.queue);
-                break;
-            case Cmd::Guard:
-                if (owns(c.unitId)) world_.guard(c.unitId, c.targetId, c.queue);
-                break;
-            case Cmd::Load:
-                if (owns(c.unitId)) world_.loadInto(c.unitId, c.targetId);
-                break;
-            case Cmd::Unload:
-                if (owns(c.unitId)) world_.unloadAt(c.unitId, c.x, c.z);
-                break;
-            case Cmd::SetWeapon:
-                if (owns(c.unitId)) world_.setWeapon(c.unitId, c.targetId);
-                break;
-            case Cmd::RepeatTrain:
-                if (owns(c.unitId)) world_.setRepeat(c.unitId, registry_.find(c.type));
-                break;
-            case Cmd::Destroy:
-                if (owns(c.unitId)) world_.destroy(c.unitId);
-                break;
-        }
-    }
+    // Apply one command (shared with the server's referee sim, so both mutate
+    // the world identically).
+    void apply(const tak::net::Command& c) { tak::sim::applyCommand(world_, registry_, c); }
 
     // One lockstep step: returns false while stalled waiting for the peer.
     uint32_t netTick() const { return netTick_; }
@@ -6692,6 +6628,7 @@ int main(int argc, char** argv) {
         // Headless multiplayer test drivers (auto-play through the server).
         else if (a == "--mphost") mpHeadless = 1;   // create a game, start it, play
         else if (a == "--mpjoin") mpHeadless = 2;   // join the first game, play
+        else if (a == "--mpai") mpHeadless = 4;     // host vs one server-run AI
         else if (a == "--nofog") nofog = true;
         else if (a == "--cheat") tak::sim::gInstantBuild = true;
         else if (a == "--look" && i + 2 < argc) {
@@ -6822,8 +6759,9 @@ int main(int argc, char** argv) {
             if (int(gameView->netTick()) >= limitTicks) break;
             SDL_Delay(2);
         }
-        std::fprintf(stderr, "mp-headless done: tick=%u hash=%016llx err=%s\n",
+        std::fprintf(stderr, "mp-headless done: tick=%u hash=%016llx units=%zu err=%s\n",
                      gameView->netTick(), (unsigned long long)gameView->worldHashPublic(),
+                     gameView->aliveUnits(),
                      gameView->netError().empty() ? "none" : gameView->netError().c_str());
         mp->disconnect();
         return gameView->netError().empty() ? 0 : 1;
