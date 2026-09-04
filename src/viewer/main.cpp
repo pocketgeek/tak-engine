@@ -1369,10 +1369,14 @@ public:
             trackSel_ = false;
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.x > mapViewW(winW) && e.button.y < winH - kBarH) {
-            // Right-hand panel background (not a minimap/button hit): swallow the
-            // press so it can't start a box-select or drop an order on the map.
-            // Only the PRESS -- releases must still fall through (e.g. to end a
-            // minimap drag or a box-select that began over the map).
+            // Right-hand panel press. A right-click on the minimap orders the
+            // selection to that world point; every other panel press is swallowed
+            // so it can't start a box-select or drop an order on the map. (Only the
+            // PRESS -- releases still fall through to end a drag/box-select.)
+            if (e.button.button == SDL_BUTTON_RIGHT &&
+                minimapOrder(float(e.button.x), float(e.button.y), winW, winH,
+                             (SDL_GetModState() & KMOD_SHIFT) != 0))
+                trackSel_ = false;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    pendingCmd_) {
             float wx, wz;
@@ -3683,14 +3687,41 @@ private:
     }
 
     // Returns true if the click was inside the minimap (and moved the camera).
-    bool minimapClick(float mx, float my, int winW, int winH) {
+    // Map a minimap-space click to world coords; false if outside the minimap.
+    bool minimapToWorld(float mx, float my, int winW, int winH, float& wx, float& wz) {
         SDL_FRect r = minimapRect(winW, winH);
         if (mx < r.x || my < r.y || mx > r.x + r.w || my > r.y + r.h) return false;
-        float mapW = float(mapView_.map().blocksX) * 32;
-        float mapH = float(mapView_.map().blocksY) * 32;
-        float wx = (mx - r.x) / r.w * mapW, wz = (my - r.y) / r.h * mapH;
-        float zm = mapView_.zoom();
-        mapView_.setOffset(wx - winW / zm / 2, wz - winH / zm / 2);
+        wx = (mx - r.x) / r.w * float(mapView_.map().blocksX) * 32;
+        wz = (my - r.y) / r.h * float(mapView_.map().blocksY) * 32;
+        return true;
+    }
+
+    bool minimapClick(float mx, float my, int winW, int winH) {
+        float wx, wz;
+        if (!minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
+        float zm = mapView_.zoom();   // centre the clicked point in the map viewport
+        mapView_.setOffset(wx - mapViewW(winW) / zm / 2,
+                           wz - (winH - int(kBarH)) / zm / 2);
+        return true;
+    }
+
+    // Right-click on the minimap: order the selection to that world point.
+    bool minimapOrder(float mx, float my, int winW, int winH, bool queue) {
+        float wx, wz;
+        if (selection_.empty() || !minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
+        for (int id : selection_) {
+            const auto* u = world_.unit(id);
+            if (!u || u->team != localTeam_) continue;
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Move;
+            c.unitId = id;
+            c.x = wx;
+            c.z = wz;
+            c.queue = queue ? 1 : 0;
+            issue(c);
+        }
+        if (const auto* u = world_.unit(selection_.front()); u && u->team == localTeam_)
+            voice(selection_.front(), "move");
         return true;
     }
 
