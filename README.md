@@ -16,7 +16,7 @@ and place its data files in `assets/` (gitignored) to use the engine.
 3. ~~**Simulation**~~ ✅ movement, A* pathfinding, combat, mana economy,
    production, per-unit COB VMs, sound.
 4. ~~**Game**~~ ✅ playable skirmish vs AI (`takview game`): fog of war,
-   minimap, building placement, production, team colors, faction select,
+   minimap, building placement, production, player colors, faction select,
    a classic HUD (build icons, order-button column, mana/stats),
    `Keys.TDF` hotkeys, and per-faction soundtrack music.
 5. ~~**Campaign**~~ ✅ mission loading via `.ota`/`.cob` with the

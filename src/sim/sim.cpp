@@ -335,10 +335,10 @@ const UnitType* TypeRegistry::find(const std::string& id) const {
     return it == types_.end() ? nullptr : &it->second;
 }
 
-int World::spawn(const UnitType* type, float x, float z, float heading, int team) {
+int World::spawn(const UnitType* type, float x, float z, float heading, int player) {
     Unit u;
     u.id = nextId_++;
-    u.team = team;
+    u.player = player;
     u.type = type;
     u.x = x;
     u.z = z;
@@ -760,7 +760,7 @@ void World::loadInto(int unitId, int transportId) {
     if (!u->type || !u->type->canMove || u->type->domain != UnitType::Domain::Ground)
         return;
     if (u->type->cantBeTransported) return;   // e.g. heavy/anchored units
-    if (!t->type || !t->type->canTransport || u->team != t->team) return;
+    if (!t->type || !t->type->canTransport || u->player != t->player) return;
     // transportsize: sum the slot cost of the current cargo, not just the count.
     int used = 0;
     for (int id : t->cargo)
@@ -860,7 +860,7 @@ void World::guard(int unitId, int targetId, bool queue) {
     Unit* u = unit(unitId);
     Unit* t = unit(targetId);
     if (!u || !t || !u->alive() || !t->alive() || u->id == t->id) return;
-    if (!u->type || !u->type->canMove || u->team != t->team) return;
+    if (!u->type || !u->type->canMove || u->player != t->player) return;
     if (!queue) u->orders.clear();
     Order o;
     o.targetId = targetId;
@@ -903,7 +903,7 @@ float Weapon::damageVs(const UnitType* t) const {
     return damage;
 }
 
-void World::applyHit(const Weapon& w, float hx, float hz, int fromTeam, int fromId,
+void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId,
                      Unit* primary) {
     // Record the impact for the viewer (hit sound / effect).
     hits_.push_back({hx, hz, &w, primary ? primary->type : nullptr});
@@ -941,7 +941,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromTeam, int from
     int splashed = 0;
     forEachNear(hx, hz, aoe, [&](int idx) {
         Unit& e = units_[size_t(idx)];
-        if (!e.alive() || e.embarked() || !e.type || e.team == fromTeam) return;
+        if (!e.alive() || e.embarked() || !e.type || e.player == fromPlayer) return;
         if (&e == primary) return;   // already took the direct hit
         float dx = e.x - hx, dz = e.z - hz;
         float d = std::sqrt(dx * dx + dz * dz);
@@ -971,7 +971,7 @@ void World::fire(Unit& u, Unit& target, int slot) {
     u.justFired = true;
     if (w.melee || w.projVel <= 0) {
         // Instant hit (melee swing / hitscan bolt): apply damage + splash now.
-        applyHit(w, target.x, target.z, u.team, u.id, &target);
+        applyHit(w, target.x, target.z, u.player, u.id, &target);
         return;
     }
     Projectile p;
@@ -985,7 +985,7 @@ void World::fire(Unit& u, Unit& target, int slot) {
     p.damage = w.damage;
     p.wsrc = &w;
     p.targetId = target.id;
-    p.fromTeam = u.team;
+    p.fromPlayer = u.player;
     p.fromId = u.id;
     p.fx = w.fx;
     p.life = dist / vel + 0.5f;
@@ -1036,7 +1036,7 @@ void World::tickCombat(Unit& u, float dt) {
         int uFoot = std::max(u.type->footX, u.type->footZ) / 2;
         forEachNear(u.x, u.z, ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
-            if (!e.alive() || e.embarked() || e.team == u.team || !e.type) return;
+            if (!e.alive() || e.embarked() || e.player == u.player || !e.type) return;
             if (e.underConstruction) return;   // don't auto-react to a site still conjuring
             if (!canTarget(e)) return;
             float hx = e.x - u.homeX, hz = e.z - u.homeZ;
@@ -1129,7 +1129,7 @@ void World::tickCombat(Unit& u, float dt) {
     if (u.type->canCapture && target->type && !target->type->cantBeCaptured) {
         u.captureProg += dt;
         if (u.captureProg > 3.0f || target->hp < target->type->maxHp * 0.25f) {
-            target->team = u.team;
+            target->player = u.player;
             target->orders.clear();
             target->hp = std::max(target->hp, target->type->maxHp * 0.5f);
             target->lastHitBy = 0;
@@ -1224,7 +1224,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove)
         return 0;
     if (!canPlace(type, x, z)) return 0;
-    int id = spawn(type, x, z, 3.14159f, b->team);
+    int id = spawn(type, x, z, 3.14159f, b->player);
     Unit* site = unit(id);
     site->underConstruction = true;
     site->hp = type->maxHp * 0.05f;
@@ -1282,7 +1282,7 @@ void World::tickConstruction(Unit& b, float dt) {
     b.orders.clear();
     b.speed = 0;
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
-    Team& tm = teams_[size_t(b.team)];
+    Player& tm = players_[size_t(b.player)];
     if (gInstantBuild) {
         site->hp = site->type->maxHp;   // finishes this tick, free
     } else {
@@ -1347,7 +1347,7 @@ void World::tickAuras(float dt) {
             forEachNear(s.x, s.z, a.radius, [&](int idx) {
                 Unit& e = units_[size_t(idx)];
                 if (!e.alive() || e.embarked() || !e.type) return;
-                bool enemy = e.team != s.team;
+                bool enemy = e.player != s.player;
                 if (enemy != a.affectsEnemy) return;   // buff friends OR debuff foes
                 float dx = e.x - s.x, dz = e.z - s.z;
                 float d2 = dx * dx + dz * dz;
@@ -1367,7 +1367,7 @@ void World::tickAbilities(float /*dt*/) {
     auto isCorpse = [](const Unit& c) {
         return c.type && !c.alive() && c.deadFor >= 0 && c.deadFor < 30.0f;
     };
-    struct Revive { const UnitType* type; float x, z; int team; };
+    struct Revive { const UnitType* type; float x, z; int player; };
     std::vector<Revive> revives;
     const float kR = 56.0f;
     for (size_t i = 0; i < units_.size(); ++i) {
@@ -1381,21 +1381,21 @@ void World::tickAbilities(float /*dt*/) {
             if (j == i || !isCorpse(c)) continue;
             float dx = c.x - u.x, dz = c.z - u.z;
             if (dx * dx + dz * dz > kR * kR) continue;
-            if (u.type->canResurrect && c.team == u.team) {
+            if (u.type->canResurrect && c.player == u.player) {
                 float cost = c.type->buildCost;
-                Team& tm = teams_[size_t(u.team)];
+                Player& tm = players_[size_t(u.player)];
                 if (tm.mana >= cost) {
                     tm.mana -= cost;
-                    revives.push_back({c.type, c.x, c.z, u.team});
+                    revives.push_back({c.type, c.x, c.z, u.player});
                     c.deadFor = 1000.0f;   // consumed
                 }
             } else if (u.type->canReclaim) {
-                teams_[size_t(u.team)].mana += c.type->buildCost * 0.25f;
+                players_[size_t(u.player)].mana += c.type->buildCost * 0.25f;
                 c.deadFor = 1000.0f;       // reclaimed away
             }
         }
     }
-    for (const auto& r : revives) spawn(r.type, r.x, r.z, 3.14159f, r.team);
+    for (const auto& r : revives) spawn(r.type, r.x, r.z, 3.14159f, r.player);
 }
 
 void World::updateVisibility() {
@@ -1408,7 +1408,7 @@ void World::updateVisibility() {
     for (auto& v : vis_)
         if (v == 2) v = 1;
     for (const auto& u : units_) {
-        if (!u.alive() || u.team != visTeam_ || !u.type) continue;
+        if (!u.alive() || u.player != visPlayer_ || !u.type) continue;
         // Reveal to the greater of sight and radar range (radardistance).
         int r = int(std::max(u.type->sight, u.type->radar)) / 16 + 1;
         int cx = int(u.x) / 16, cz = int(u.z) / 16;
@@ -1426,7 +1426,7 @@ void World::tickProduction(Unit& u, float dt) {
     if (u.underConstruction || u.buildQueue.empty()) return;
     const UnitType* t = u.buildQueue.front();
     float total = t->buildTime / std::max(u.type->workerTime, 0.01f);
-    Team& tm = teams_[size_t(u.team)];
+    Player& tm = players_[size_t(u.player)];
     // Accumulate work (spending mana) until complete. Once complete, buildProgress
     // holds at `total` and grows only as a wait timer below.
     if (u.buildProgress < total) {
@@ -1460,8 +1460,8 @@ void World::tickProduction(Unit& u, float dt) {
     u.buildProgress = 0;
     u.buildQueue.pop_front();
     // spawn() may reallocate units_, invalidating `u`; capture the id and re-fetch.
-    int producerId = u.id, team = u.team;
-    int id = spawn(t, sx, sz, 3.14159f, team);
+    int producerId = u.id, player = u.player;
+    int id = spawn(t, sx, sz, 3.14159f, player);
     order(id, sx + float((id % 5) - 2) * 22, sz + 60, false);
     if (Unit* pu = unit(producerId)) {
         pu->justBuilt = id;
@@ -1486,24 +1486,24 @@ void World::tick(float dt) {
     clock_ += dt;    // wall-clock since the match started (for god timing)
 
     // Economy: recompute income/storage, apply income.
-    for (auto& tm : teams_) { tm.income = 0; tm.storage = 0; }
-    std::vector<int> godPriests(teams_.size(), 0);
+    for (auto& tm : players_) { tm.income = 0; tm.storage = 0; }
+    std::vector<int> godPriests(players_.size(), 0);
     for (auto& u : units_) {
         if (!u.alive() || !u.type) continue;
-        auto& tm = teams_[size_t(u.team)];
+        auto& tm = players_[size_t(u.player)];
         tm.income += u.type->income;
         tm.storage += u.type->storage;
-        if (u.type->attractsGods && !u.underConstruction) godPriests[size_t(u.team)]++;
+        if (u.type->attractsGods && !u.underConstruction) godPriests[size_t(u.player)]++;
     }
-    for (auto& tm : teams_)
+    for (auto& tm : players_)
         tm.mana = std::min(tm.mana + tm.income * dt, std::max(tm.storage, 100.0f));
-    // God favour: a team's priests channel its mana income into favour while any
+    // God favour: a player's priests channel its mana income into favour while any
     // is present; it fills toward kGodFavorNeeded, then godReady() lets the god come.
     if (godsEnabled_)
-        for (size_t t = 0; t < teams_.size(); ++t)
+        for (size_t t = 0; t < players_.size(); ++t)
             if (godPriests[t] > 0)
-                teams_[t].godFavor = std::min(kGodFavorNeeded,
-                    teams_[t].godFavor + std::max(teams_[t].income, 20.0f) * dt);
+                players_[t].godFavor = std::min(kGodFavorNeeded,
+                    players_[t].godFavor + std::max(players_[t].income, 20.0f) * dt);
 
     // Index-based: tickProduction can spawn a trained unit, reallocating
     // units_ and invalidating any range-for iterator over it.
@@ -1545,7 +1545,7 @@ void World::tick(float dt) {
             if (dx * dx + dz * dz < r * r) {
                 // Apply the impact: direct hit + area splash (per the weapon's
                 // FBI areaofeffect), using the grid from the previous rebuild.
-                if (p.wsrc) applyHit(*p.wsrc, t->x, t->z, p.fromTeam, p.fromId, t);
+                if (p.wsrc) applyHit(*p.wsrc, t->x, t->z, p.fromPlayer, p.fromId, t);
                 else t->hp -= p.damage;
                 p.life = -1;
             }
@@ -1565,6 +1565,12 @@ void World::tick(float dt) {
             // works through the attack/armor multipliers, not a bigger health bar.
             if (u.lastHitBy && u.type) {
                 Unit* k = unit(u.lastHitBy);
+                // Credit the killer's player with an enemy kill (F4 overlay). Counts
+                // even if the killer is a structure or has since died -- what
+                // matters is who landed the fatal blow, not that it still lives.
+                if (k && k->type && k->player != u.player &&
+                    k->player >= 0 && k->player < int(players_.size()))
+                    players_[size_t(k->player)].kills++;
                 if (k && k->alive() && k->type && k->type->canMove &&
                     !k->type->noVeteran) {
                     // One veteran level per kill, capped at 10 (retail counts
@@ -1587,20 +1593,20 @@ void World::tick(float dt) {
             u.mana = std::min(u.type->maxMana, u.mana + u.type->manaRegen * dt);
         if (u.orders.empty()) { u.homeX = u.x; u.homeZ = u.z; }   // leash anchor
 
-        // Cloaking: drains team mana; an enemy within mincloakdistance forces a
+        // Cloaking: drains player mana; an enemy within mincloakdistance forces a
         // decloak, and so does running dry of mana.
         if (u.type->canCloak) {
             bool enemyNear = false;
             float md = std::max(u.type->minCloakDist, 1.0f);
             forEachNear(u.x, u.z, md, [&](int idx) {
                 const Unit& e = units_[size_t(idx)];
-                if (e.alive() && !e.embarked() && e.team != u.team && e.type) {
+                if (e.alive() && !e.embarked() && e.player != u.player && e.type) {
                     float dx = e.x - u.x, dz = e.z - u.z;
                     if (dx * dx + dz * dz <= md * md) enemyNear = true;
                 }
             });
             float cost = (u.speed > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
-            Team& tm = teams_[size_t(u.team)];
+            Player& tm = players_[size_t(u.player)];
             if (!enemyNear && tm.mana >= cost) { tm.mana -= cost; u.cloaked = true; }
             else u.cloaked = false;
         }
@@ -1880,7 +1886,7 @@ uint64_t World::stateHash() const {
     };
     for (const auto& u : units_) {
         mix(uint64_t(u.id));
-        mix(uint64_t(u.team));
+        mix(uint64_t(u.player));
         mixf(u.x);
         mixf(u.z);
         mixf(u.hp);
@@ -1889,7 +1895,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(u.alive() ? 1 : 0));
     }
     mix(uint64_t(projectiles_.size()));
-    for (const auto& t : teams_) mixf(t.mana);
+    for (const auto& t : players_) mixf(t.mana);
     return h;
 }
 

@@ -122,7 +122,7 @@ struct UnitType {
     float manaRegen = 0;      // manarechargerate: personal mana regained per second
     bool  canReclaim = false; // canreclaim: builder can reclaim corpses/features for mana
     bool  canResurrect = false;   // canresurrect: can revive nearby corpses
-    bool  canCapture = false;     // cancapture: can convert an enemy unit to its team
+    bool  canCapture = false;     // cancapture: can convert an enemy unit to its player
     bool  canCloak = false;       // cancloak
     float cloakCost = 0;          // cloakcost: mana/sec while cloaked and idle
     float cloakCostMove = 0;      // cloakcostmoving: mana/sec while cloaked and moving
@@ -199,7 +199,7 @@ struct BuildOrder {
 
 struct Unit {
     int id = 0;
-    int team = 0;
+    int player = 0;
     const UnitType* type = nullptr;
     float x = 0, z = 0;
     float heading = 0;     // radians, 0 = +z
@@ -259,7 +259,7 @@ struct Projectile {
     float vx = 0, vz = 0;
     float damage = 0;
     int targetId = 0;
-    int fromTeam = 0;
+    int fromPlayer = 0;
     float life = 0;        // seconds left before it fizzles
     float age = 0;         // seconds since launch
     float flight = 1;      // expected seconds to target (for the render arc)
@@ -334,7 +334,7 @@ private:
     std::vector<uint16_t> dist_;   // integration field (0xFFFF = unreachable)
 };
 
-struct Team {
+struct Player {
     float mana = 500;
     float storage = 0;   // recomputed each tick from alive units
     float income = 0;
@@ -342,11 +342,12 @@ struct Team {
     // after the gods' appear time, the faction's god can manifest (once).
     float godFavor = 0;
     bool  godSummoned = false;
+    int   kills = 0;     // enemy units this player has destroyed (F4 overlay)
 };
 
 class World {
 public:
-    int spawn(const UnitType* type, float x, float z, float heading = 0, int team = 0);
+    int spawn(const UnitType* type, float x, float z, float heading = 0, int player = 0);
     // Build per-domain nav grids from heights + sea level.
     void setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel);
     void setNav(NavGrid grid) { nav_ = std::move(grid); }
@@ -382,25 +383,25 @@ public:
         if (cx < 0 || cz < 0 || cx >= terW_ || cz >= terH_) return false;
         return depth_[size_t(cz) * terW_ + cx] > 0;
     }
-    Team& team(int i) { return teams_[size_t(i)]; }
+    Player& player(int i) { return players_[size_t(i)]; }
 
-    // God economy (gamedata/Gods.tdf). Enable it, then a team whose god favour
+    // God economy (gamedata/Gods.tdf). Enable it, then a player whose god favour
     // fills after `appearSec` may manifest its god — the viewer polls godReady().
     void enableGods(float appearSec) { godsEnabled_ = true; godAppearTime_ = appearSec; }
     bool godsEnabled() const { return godsEnabled_; }
     float clock() const { return clock_; }
     static constexpr float kGodFavorNeeded = 3000.0f;
     bool godReady(int t) const {
-        return godsEnabled_ && !teams_[size_t(t)].godSummoned &&
-               clock_ >= godAppearTime_ && teams_[size_t(t)].godFavor >= kGodFavorNeeded;
+        return godsEnabled_ && !players_[size_t(t)].godSummoned &&
+               clock_ >= godAppearTime_ && players_[size_t(t)].godFavor >= kGodFavorNeeded;
     }
 
-    // Which team the fog-of-war grid tracks (default 0 = local player).
-    void setVisTeam(int t) { visTeam_ = t; }
-    int visTeam() const { return visTeam_; }
+    // Which player the fog-of-war grid tracks (default 0 = local player).
+    void setVisPlayer(int t) { visPlayer_ = t; }
+    int visPlayer() const { return visPlayer_; }
     // Deterministic digest of sim state, for lockstep sync checking.
     uint64_t stateHash() const;
-    // Fog of war for the local team over 16px cells: 0 hidden, 1 explored, 2 visible.
+    // Fog of war for the local player over 16px cells: 0 hidden, 1 explored, 2 visible.
     const std::vector<uint8_t>& visibility() const { return vis_; }
     int visW() const { return visW_; }
     int visH() const { return visH_; }
@@ -452,9 +453,9 @@ private:
     void tickCombat(Unit& u, float dt);
     void fire(Unit& u, Unit& target, int slot);
     // Apply a weapon's damage at (hx,hz): the direct hit on `primary` plus, if
-    // the weapon has areaofeffect, splash on other enemies of `fromTeam` scaled
+    // the weapon has areaofeffect, splash on other enemies of `fromPlayer` scaled
     // from full at the centre to `edge` at the rim. Per-category damage per victim.
-    void applyHit(const Weapon& w, float hx, float hz, int fromTeam, int fromId, Unit* primary);
+    void applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId, Unit* primary);
 
     void tickProduction(Unit& u, float dt);
     void tickTransport(Unit& u, float dt);
@@ -495,14 +496,14 @@ private:
     float gCell_ = 32.0f, gOx_ = 0, gOz_ = 0;
 
     std::vector<uint8_t> vis_;
-    int visTeam_ = 0;
+    int visPlayer_ = 0;
     int visW_ = 0, visH_ = 0;
     float visTimer_ = 0;
     std::vector<Unit> units_;
     std::vector<std::pair<float, float>> manaSpots_;
     std::vector<Projectile> projectiles_;
     std::vector<HitFx> hits_;
-    std::vector<Team> teams_ = std::vector<Team>(4);
+    std::vector<Player> players_ = std::vector<Player>(4);
     bool godsEnabled_ = false;
     float godAppearTime_ = 1e9f, clock_ = 0;
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
