@@ -82,8 +82,9 @@ game speed over −10…+10 (0 = normal; +10 = 10×, −10 = 0.1×).
 Click the build icons at a selected builder/keep to train or place,
 arrows/middle-drag/**screen-edge** = scroll, wheel = zoom (toward cursor),
 minimap click/drag = move camera; right-click the minimap moves the selection.
-**Ctrl+D** destroys the selected unit(s). **F4** toggles a per-faction unit
-counter with the live frame rate; **F6** opens the player-colour picker (click a
+**Ctrl+D** destroys the selected unit(s). **F4** toggles a per-player status
+panel — live frame rate plus each player's unit count and enemy kills;
+**F6** opens the player-colour picker (click a
 swatch to recolour your units, HUD and minimap). Units render as full 3D
 models by default; **F10** cycles sprite-sheet rendering **AUTO** (the default —
 it switches to the cheaper animated sprites only while the frame can't hold
