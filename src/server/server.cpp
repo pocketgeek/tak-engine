@@ -100,6 +100,7 @@ struct Room {
     // durability (M5): the full bundle log for reconnect/replay, per-slot resume
     // tokens, and drop-hold / auto-pause state.
     std::vector<std::vector<uint8_t>> log;      // serialized TickBundle payload per tick
+    SlotInfo startSlots[kMaxSlots];             // slot config at game start (for the replay)
     uint64_t slotToken[kMaxSlots] = {};         // resume token per human slot (0 = none)
     bool slotDropped[kMaxSlots] = {};           // slot held after a mid-game disconnect
     uint64_t graceDeadline[kMaxSlots] = {};     // forfeit time for a dropped slot
@@ -127,6 +128,7 @@ struct Room {
 
 class Server {
 public:
+    void setReplayDir(const std::string& d) { replayDir_ = d; }
     Server(uint16_t port, const std::string& dataRoot) : port_(port), dataRoot_(dataRoot) {
         if (!dataRoot_.empty()) {
             tak::sim::setupRegistry(registry_, dataRoot_, false);
@@ -151,6 +153,7 @@ private:
     const tak::sim::TypeRegistry& registryFor(bool crusades) const {
         return (crusades && haveCb_) ? registryCb_ : registry_;
     }
+    std::string replayDir_;
     int listenFd_ = -1;
     uint32_t nextClientId_ = 1, nextRoomId_ = 1;
     std::unordered_map<uint32_t, std::unique_ptr<Client>> clients_;
@@ -172,7 +175,44 @@ private:
     void checkHashes(Room& r, uint32_t tick);
     void dropClient(uint32_t id, const char* reason);
     void writeSlots(Writer& w, Room& r);
+    void writeReplay(Room& r);
 };
+
+// A running game is abandoned once no human slot has a live or held (dropped-
+// within-grace) client -- then it can be torn down and its replay written.
+static bool roomActive(const Room& r) {
+    for (int i = 0; i < kMaxSlots; ++i)
+        if (r.slots[i].type == 1 && (r.slotClient[i] >= 0 || r.slotDropped[i])) return true;
+    return false;
+}
+
+void Server::writeReplay(Room& r) {
+    if (replayDir_.empty() || r.log.empty()) return;
+    // Self-contained replay: header (format, map, options, final slot table,
+    // seed) + every tick bundle. A viewer can rebuild the world and play it back.
+    Writer w;
+    for (char ch : {'T', 'A', 'K', 'R'}) w.u8(uint8_t(ch));
+    w.u32(1);                 // replay format version
+    w.u32(kNetVersion);
+    w.str(r.mapId);
+    w.u8(r.opts.crusades); w.u8(r.opts.gods); w.u8(r.opts.forfeitSelfDestruct);
+    w.u32(0x7a6b0000u + r.id);
+    w.u8(uint8_t(kMaxSlots));
+    for (int i = 0; i < kMaxSlots; ++i) {
+        const SlotInfo& s = r.startSlots[i];   // start config, not the forfeited end state
+        w.u8(s.type); w.u8(s.faction); w.u8(s.color); w.u8(s.team);
+    }
+    w.u32(uint32_t(r.log.size()));
+    for (const auto& b : r.log) { w.u32(uint32_t(b.size())); w.b.insert(w.b.end(), b.begin(), b.end()); }
+    std::string path = replayDir_ + "/game-" + std::to_string(r.id) + "-" +
+                       std::to_string(r.createdMs) + ".takrep";
+    if (FILE* f = std::fopen(path.c_str(), "wb")) {
+        std::fwrite(w.b.data(), 1, w.b.size(), f);
+        std::fclose(f);
+        std::fprintf(stderr, "game %u: wrote replay %s (%zu ticks, %zu bytes)\n",
+                     r.id, path.c_str(), r.log.size(), w.b.size());
+    }
+}
 
 void Server::sendReject(Client& c, const std::string& why) {
     Writer w; w.str(why);
@@ -406,6 +446,7 @@ void Server::tryStart(Client& c) {
     r->running = true;
     r->tick = 0;
     r->nextTickMs = nowMs();
+    for (int i = 0; i < kMaxSlots; ++i) r->startSlots[i] = r->slots[i];   // for the replay
     // Build the referee sim (and AI controllers) if we have game data. The world
     // is built by the SAME setupMatch the clients use, so its hash is canonical.
     if (haveData_) {
@@ -738,6 +779,16 @@ int Server::run() {
                 }
             }
         }
+        // Tear down abandoned running games (everyone left/forfeited): write the
+        // replay, then erase.
+        std::vector<uint32_t> doneRooms;
+        for (auto& [rid, r] : rooms_)
+            if (r.running && !roomActive(r)) doneRooms.push_back(rid);
+        for (uint32_t rid : doneRooms) {
+            writeReplay(rooms_.at(rid));
+            std::fprintf(stderr, "game %u ended (all players gone)\n", rid);
+            rooms_.erase(rid);
+        }
         // Close ticks for running, unpaused rooms whose deadline passed.
         now = nowMs();
         for (auto& [rid, r] : rooms_)
@@ -764,17 +815,21 @@ int main(int argc, char** argv) {
     if (const char* g = std::getenv("TAK_GRACE_MS")) kGraceMs = uint64_t(std::atoll(g));
     if (const char* b = std::getenv("TAK_PAUSE_BUDGET_MS")) kPauseBudgetMs = uint64_t(std::atoll(b));
     uint16_t port = 7677;
-    std::string dataRoot;
+    std::string dataRoot, replayDir;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--port") && i + 1 < argc) port = uint16_t(std::atoi(argv[++i]));
         else if (!std::strcmp(argv[i], "--data") && i + 1 < argc) dataRoot = argv[++i];
+        else if (!std::strcmp(argv[i], "--replaydir") && i + 1 < argc) replayDir = argv[++i];
         else if (!std::strcmp(argv[i], "--help")) {
-            std::printf("usage: takserver [--port N] [--data <extracted-data-dir>]\n"
+            std::printf("usage: takserver [--port N] [--data <extracted-data-dir>] "
+                        "[--replaydir <dir>]\n"
                         "  --data enables the referee sim + server-hosted AI; without it the\n"
-                        "  server is a pure relay (clients cross-check hashes among themselves).\n");
+                        "  server is a pure relay (clients cross-check hashes among themselves).\n"
+                        "  --replaydir writes a .takrep replay file per finished game.\n");
             return 0;
         }
     }
     Server s(port, dataRoot);
+    if (!replayDir.empty()) s.setReplayDir(replayDir);
     return s.run();
 }
