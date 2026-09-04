@@ -83,10 +83,13 @@ arrows/middle-drag/**screen-edge** = scroll, wheel = zoom (toward cursor),
 minimap click/drag = move camera; right-click the minimap moves the selection.
 **Ctrl+D** destroys the selected unit(s). **F4** toggles a per-faction unit
 counter with the live frame rate; **F6** opens the player-colour picker (click a
-swatch to recolour your units, HUD and minimap); **F10** toggles animated
-sprite-sheet rendering (on by default) vs. full 3D models; **F8** toggles the
-distance impostor level-of-detail. Background music plays from the game
-soundtrack. Frame rate is capped at 60 fps (`--maxfps N`, or `--maxfps 0` for
+swatch to recolour your units, HUD and minimap). Units render as full 3D
+models by default; **F10** cycles sprite-sheet rendering **AUTO** (the default —
+it switches to the cheaper animated sprites only while the frame can't hold
+60 fps with a real crowd on screen, back to 3D once it clears) → **ON** →
+**OFF**. **F8** toggles the distance-impostor level-of-detail (on by default),
+which replaces a unit with a cached billboard only when it's really zoomed out
+and small on screen. Background music plays from the game soundtrack. Frame rate is capped at 60 fps (`--maxfps N`, or `--maxfps 0` for
 uncapped); `--novsync` disables vsync (the window title shows live FPS).
 
 Each side begins a skirmish with **only its Monarch**, dropped on the
