@@ -1367,6 +1367,10 @@ public:
                    minimapClick(float(e.button.x), float(e.button.y), winW, winH)) {
             draggingMinimap_ = true;   // camera follows the drag until release
             trackSel_ = false;
+        } else if ((e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) &&
+                   e.button.x > mapViewW(winW) && e.button.y < winH - kBarH) {
+            // Right-hand panel background (not a minimap/button hit): swallow it so
+            // it never starts a box-select or an order on the map.
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    pendingCmd_) {
             float wx, wz;
@@ -1880,9 +1884,11 @@ public:
         if (winW_ <= 0 || winH_ <= 0) return;
         if (mouseX_ < 0 || mouseX_ > winW_ || mouseY_ < 0 || mouseY_ > winH_) return;
         const float margin = 24.0f, panPx = 1000.0f;   // px/s at zoom 1
+        float mvw = float(mapViewW(winW_));
+        if (mouseX_ > mvw) return;   // over the right-hand panel: don't scroll
         float sx = 0, sz = 0;
         if (mouseX_ < margin) sx = -1;
-        else if (mouseX_ > winW_ - margin) sx = 1;
+        else if (mouseX_ > mvw - margin) sx = 1;   // right edge of the map view
         if (mouseY_ < margin) sz = -1;
         else if (mouseY_ > winH_ - margin) sz = 1;      // real screen bottom edge
         if (sx == 0 && sz == 0) return;
@@ -2271,7 +2277,7 @@ public:
 
     // Create textures (terrain chunks, minimap) before the render pass.
     void prepare(int winW, int winH) {
-        mapView_.ensureChunks(winW, winH);
+        mapView_.ensureChunks(mapViewW(winW), winH);
         if (!miniTex_) buildMinimap();
     }
 
@@ -2289,7 +2295,12 @@ public:
             float zm = std::max(mapView_.zoom(), 1e-3f);
             mapView_.setOffset(shakeBaseX + dx / zm, shakeBaseY + dz / zm);
         }
-        mapView_.draw(winW, winH);
+        // Everything world-space (map, units, effects, bars) is clipped to the map
+        // viewport so it never bleeds under the right-hand panel.
+        int mvw = mapViewW(winW);
+        SDL_Rect worldClip{0, 0, mvw, winH};
+        SDL_RenderSetClipRect(ren_, &worldClip);
+        mapView_.draw(mvw, winH);
         float zm0 = mapView_.zoom();
 
         // Painter list: features and units together, sorted by map z.
@@ -2433,8 +2444,6 @@ public:
         } else if (placing_) {
             drawGhost();
         }
-        drawMinimap(winW, winH);
-        drawOrderColumn(winW, winH);
 
         for (int id : selection_) {
             const auto* u = world_.unit(id);
@@ -2529,6 +2538,15 @@ public:
 
         // Restore the un-shaken camera so the HUD/panel stays rock-steady.
         if (shaking) mapView_.setOffset(shakeBaseX, shakeBaseY);
+
+        // Done with world-space: drop the clip and draw the right-hand panel and
+        // its minimap + order column on a solid strip (never over the map).
+        SDL_RenderSetClipRect(ren_, nullptr);
+        SDL_SetRenderDrawColor(ren_, 16, 14, 12, 255);
+        SDL_FRect panelStrip{float(mvw), 0, float(winW - mvw), float(winH) - kBarH};
+        SDL_RenderFillRectF(ren_, &panelStrip);
+        drawMinimap(winW, winH);
+        drawOrderColumn(winW, winH);
 
         drawPanel(winW, winH);
         if (showCounts_) drawUnitCounts(winW);
@@ -3596,6 +3614,10 @@ private:
     std::array<std::string, 4> aiCycle_ = {"tararch", "tartb", "tararch", "tarbeak"};
     float aiTimer_ = 0;
     static constexpr int kMiniSize = 180;
+    // Right-side UI strip (minimap + order/weapon buttons). The map view is kept
+    // to the left of it so the panel never draws over the world.
+    static constexpr int kPanelW = kMiniSize + 20;
+    int mapViewW(int winW) const { return std::max(64, winW - kPanelW); }
 
     SDL_FRect minimapRect(int winW, int winH) const {
         (void)winH;
