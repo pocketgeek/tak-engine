@@ -2288,6 +2288,12 @@ public:
         if (!miniTex_) buildMinimap();
     }
 
+    // Fetch and reset the per-draw sub-phase timers (for TAK_PROF).
+    void takeProf(double& projMs, double& submitMs) {
+        projMs = profProjMs_; submitMs = profSubmitMs_;
+        profProjMs_ = 0; profSubmitMs_ = 0;
+    }
+
     void draw(int winW, int winH) {
         // Camera shake: nudge the map offset by a decaying oscillation for this
         // frame, so the whole world jolts; the offset is restored at the end so
@@ -2358,11 +2364,15 @@ public:
         // Build the texture atlas for every colour slot in view (main thread; the
         // parallel pass below only reads the finished atlas pointers).
         for (const auto* u : visUnits_) atlasFor(colorSlot_[u->team & 7]);
+        double _pt0 = double(SDL_GetPerformanceCounter());
         pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
             thread_local std::vector<Tri> scratch;
             for (size_t i = b; i < e; ++i)
                 buildUnitGeom(*visUnits_[i], geomPool_[i], scratch);
         });
+        double _ptFreq = double(SDL_GetPerformanceFrequency()) / 1000.0;
+        profProjMs_ += (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq;
+        double _st0 = double(SDL_GetPerformanceCounter());
 
         // Is this unit drawn whole by drawUnit (needs clip rects / interleaved
         // effects) rather than folded into the shared batches?
@@ -2467,6 +2477,7 @@ public:
             }
         }
         flushBodies();
+        profSubmitMs_ += (double(SDL_GetPerformanceCounter()) - _st0) / _ptFreq;
 
         // Ghosts of the local player's queued (shift) build orders.
         for (const auto& u : world_.units())
@@ -3271,6 +3282,7 @@ private:
     };
     std::vector<const tak::sim::Unit*> visUnits_;
     std::vector<SDL_Vertex> unitBatch_, shadowBatch_;   // cross-unit render batches
+    double profProjMs_ = 0, profSubmitMs_ = 0;          // TAK_PROF sub-phase timers
 
     // Texture atlas: every unit texture packed into one big texture per player-
     // colour slot, so a whole model (and a whole crowd of one team) shares a
@@ -5737,8 +5749,18 @@ int main(int argc, char** argv) {
         if (gameView) gameView->prepare(w, h);
         SDL_SetRenderDrawColor(ren, 18, 18, 26, 255);
         SDL_RenderClear(ren);
+        // Optional per-phase profiler (TAK_PROF=1): prints where each frame's
+        // wall-clock goes, once a second, so a stall can be localised on real
+        // hardware that the headless software renderer can't show.
+        static const bool prof = getenv("TAK_PROF") != nullptr;
+        static double pTer = 0, pUpd = 0, pDraw = 0, pPres = 0, pAcc = 0;
+        static int pFrames = 0;
+        auto pnow = [] { return double(SDL_GetPerformanceCounter()) /
+                         double(SDL_GetPerformanceFrequency()) * 1000.0; };
+        double t0 = prof ? pnow() : 0;
         if (mapView) mapView->draw(w, h);
         if (modelView) modelView->draw(w, h, dt);
+        double t1 = prof ? pnow() : 0;
         if (gameView) {
             if (gameView->isNet()) {
                 netAccum += dt;
@@ -5757,9 +5779,29 @@ int main(int argc, char** argv) {
             } else {
                 gameView->update(dt);
             }
+            double t2 = prof ? pnow() : 0;
             gameView->draw(w, h);
+            double t3 = prof ? pnow() : 0;
+            if (prof) { pTer += t1 - t0; pUpd += t2 - t1; pDraw += t3 - t2; }
         }
+        double t4 = prof ? pnow() : 0;
         SDL_RenderPresent(ren);
+        if (prof) {
+            double t5 = pnow();
+            pPres += t5 - t4;
+            pAcc += t5 - t0; ++pFrames;
+            if (pAcc >= 1000.0) {
+                double proj = 0, submit = 0;
+                if (gameView) gameView->takeProf(proj, submit);
+                std::printf("PROF fps=%.0f | terrain=%.1f update=%.1f draw=%.1f "
+                            "[proj=%.1f submit=%.1f] present=%.1f (ms/frame avg)\n",
+                            pFrames * 1000.0 / pAcc, pTer / pFrames, pUpd / pFrames,
+                            pDraw / pFrames, proj / pFrames, submit / pFrames,
+                            pPres / pFrames);
+                std::fflush(stdout);
+                pTer = pUpd = pDraw = pPres = pAcc = 0; pFrames = 0;
+            }
+        }
 
         if (maxFps > 0) {
             static uint64_t prevPresent = 0;
