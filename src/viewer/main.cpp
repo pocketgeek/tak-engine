@@ -3335,7 +3335,8 @@ private:
     std::map<std::pair<std::string, int>, Impostor> impostors_;  // (model, slot)
     std::map<std::string, float> modelH_;    // model projected height (px @ zoom 1)
     SDL_Texture* impAtlas_ = nullptr;
-    int impAtlasDim_ = 2048, impCurX_ = 0, impCurY_ = 0, impShelfH_ = 0;
+    int impAtlasDim_ = 4096, impCurX_ = 0, impCurY_ = 0, impShelfH_ = 0;
+    static constexpr float kImpScale = 2.0f;    // impostor render supersampling
     bool lodEnabled_ = true;
     float lodPx_ = 112.0f;                       // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 1.2f; // skip LOD entirely when zoomed in
@@ -3469,9 +3470,12 @@ private:
                     maxY = std::max(maxY, t.v[i].position.y);
                 }
             if (scratch.empty()) { minX = minY = 0; maxX = maxY = 1; }
-            const int pad = 1;
-            int w = std::clamp(int(std::ceil(maxX - minX)) + 2 * pad, 2, 200);
-            int h = std::clamp(int(std::ceil(maxY - minY)) + 2 * pad, 2, 200);
+            // Render at kImpScale x native resolution so an impostor stays crisp
+            // when a big crowd is viewed close and the sprite is upscaled.
+            const float S = kImpScale;
+            const int pad = 2;
+            int w = std::clamp(int(std::ceil((maxX - minX) * S)) + 2 * pad, 2, 400);
+            int h = std::clamp(int(std::ceil((maxY - minY) * S)) + 2 * pad, 2, 400);
             if (impCurX_ + w > impAtlasDim_) { impCurX_ = 0; impCurY_ += impShelfH_ + 1; impShelfH_ = 0; }
             if (impCurY_ + h > impAtlasDim_) break;   // atlas full; leave not-ready
             int rx = impCurX_, ry = impCurY_;
@@ -3479,13 +3483,15 @@ private:
                 SDL_Vertex v[3];
                 for (int i = 0; i < 3; ++i) {
                     v[i] = t.v[i];
-                    v[i].position.x = t.v[i].position.x - minX + float(rx + pad);
-                    v[i].position.y = t.v[i].position.y - minY + float(ry + pad);
+                    v[i].position.x = (t.v[i].position.x - minX) * S + float(rx + pad);
+                    v[i].position.y = (t.v[i].position.y - minY) * S + float(ry + pad);
                 }
                 SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
             }
             imp.rect[k] = SDL_Rect{rx, ry, w, h};
-            imp.bbox[k] = SDL_FRect{minX - pad, minY - pad, float(w), float(h)};
+            // bbox drives on-screen placement, so it stays in native units: the
+            // 2x cell (incl. pad) maps back to w/S x h/S native pixels.
+            imp.bbox[k] = SDL_FRect{minX - pad / S, minY - pad / S, w / S, h / S};
             impCurX_ += w + 1;
             impShelfH_ = std::max(impShelfH_, h);
             maxH = std::max(maxH, maxY - minY);
