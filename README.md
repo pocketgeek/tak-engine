@@ -77,7 +77,8 @@ click to place — **F** = fight-move (attack-move), **M** = move, **A** = attac
 unit, Esc cancels an armed order. Selection: **Ctrl+A** = all your units,
 **Ctrl+Z** = all of the selected type, **Ctrl+U** = everything on screen.
 Control groups: **Ctrl+1–9/0** assign the selection, **1–9/0** recall it,
-**Ctrl+Shift+1–9/0** add to a group. **Pause** toggles pause.
+**Ctrl+Shift+1–9/0** add to a group. **Pause** toggles pause. **+**/**−** step the
+game speed over −10…+10 (0 = normal; +10 = 10×, −10 = 0.1×).
 Click the build icons at a selected builder/keep to train or place,
 arrows/middle-drag/**screen-edge** = scroll, wheel = zoom (toward cursor),
 minimap click/drag = move camera; right-click the minimap moves the selection.
