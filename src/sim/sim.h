@@ -406,6 +406,10 @@ public:
     // A* waypoints.
     void order(int unitId, float x, float z, bool queue);
     void attackMove(int unitId, float x, float z, bool queue);
+    // Can a unit of `type` at (fx,fz) actually reach goal (gx,gz)? (flow-field
+    // connectivity). Lets the AI pick a REACHABLE target instead of one that's
+    // merely nearest in a straight line but walled off (army would stall/pile).
+    bool pathExists(const UnitType* type, float gx, float gz, float fx, float fz);
     void patrol(int unitId, float x, float z);
     void guard(int unitId, int targetId, bool queue);
     void stop(int unitId);

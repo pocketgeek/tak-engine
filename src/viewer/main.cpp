@@ -3054,24 +3054,47 @@ private:
     // single rally target (the enemy nearest the group's centre) so they share
     // one flow field and flow around obstacles together, engaging what they meet
     // en route — instead of each unit A*-chasing its own nearest foe and jamming.
+    // Nearest enemy of another team the group at (cx,cz) can actually REACH (flow
+    // connectivity), scanning closest-first. Picking merely the straight-line
+    // nearest foe on a maze sends the army at a walled-off target it can't get to,
+    // so it stalls and piles against the wall (or, with the repath give-up, drifts
+    // back to the keep). Returns false if no reachable enemy is near.
+    bool nearestReachableEnemy(int team, float cx, float cz,
+                               const tak::sim::UnitType* atype, float& tx, float& tz) {
+        std::vector<std::pair<float, std::pair<float, float>>> es;
+        for (auto& e : world_.units()) {
+            if (!e.alive() || e.embarked() || e.team == team || !e.type) continue;
+            float dx = e.x - cx, dz = e.z - cz;
+            es.push_back({dx * dx + dz * dz, {e.x, e.z}});
+        }
+        if (es.empty()) return false;
+        std::sort(es.begin(), es.end());
+        int checked = 0;
+        for (auto& e : es) {
+            if (++checked > 16) break;   // bound the reachability probes (flow builds)
+            if (!atype || world_.pathExists(atype, e.second.first, e.second.second, cx, cz)) {
+                tx = e.second.first; tz = e.second.second;
+                return true;
+            }
+        }
+        return false;
+    }
+
     void sendWaves(int team) {
         std::vector<int> idle;
         double sx = 0, sz = 0;
+        const tak::sim::UnitType* atype = nullptr;
         for (auto& u : world_.units())
             if (u.alive() && u.team == team && u.type && u.type->canMove &&
                 !u.type->isBuilder && u.orders.empty()) {
                 idle.push_back(u.id);
                 sx += u.x; sz += u.z;
+                if (!atype && !u.type->canFly) atype = u.type;
             }
         if (idle.size() < 4) return;
         float cx = float(sx / idle.size()), cz = float(sz / idle.size());
-        float tx = 0, tz = 0, bestD = 1e18f;
-        for (auto& e : world_.units()) {
-            if (!e.alive() || e.team == team || !e.type) continue;
-            float dx = e.x - cx, dz = e.z - cz;
-            if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; tx = e.x; tz = e.z; }
-        }
-        if (bestD > 1e17f) return;   // no enemy found
+        float tx = 0, tz = 0;
+        if (!nearestReachableEnemy(team, cx, cz, atype, tx, tz)) return;
         for (int id : idle) world_.attackMove(id, tx, tz, false);
     }
 
@@ -3083,21 +3106,18 @@ private:
 
         std::vector<int> idle;
         double sx = 0, sz = 0;
+        const tak::sim::UnitType* atype = nullptr;
         for (auto& u : world_.units())
             if (u.alive() && u.team == team && u.type && u.type->canMove &&
                 u.orders.empty()) {
                 idle.push_back(u.id);
                 sx += u.x; sz += u.z;
+                if (!atype && !u.type->canFly) atype = u.type;
             }
         if (idle.size() >= 4) {
             float cx = float(sx / idle.size()), cz = float(sz / idle.size());
-            float tx = 0, tz = 0, bestD = 1e18f;
-            for (auto& e : world_.units()) {
-                if (!e.alive() || e.team == team || !e.type) continue;
-                float dx = e.x - cx, dz = e.z - cz;
-                if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; tx = e.x; tz = e.z; }
-            }
-            if (bestD < 1e17f)
+            float tx = 0, tz = 0;
+            if (nearestReachableEnemy(team, cx, cz, atype, tx, tz))
                 for (int id : idle) world_.attackMove(id, tx, tz, false);
         }
     }
