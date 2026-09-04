@@ -1914,7 +1914,10 @@ public:
                             halfW, halfH);
         edgeScroll(dt, zm);    // pan when the cursor rests near a screen edge
         if (paused_) return;   // freeze the sim; input/render keep running
+        double _sim0 = double(SDL_GetPerformanceCounter());
         world_.tick(dt);
+        profSimMs_ += (double(SDL_GetPerformanceCounter()) - _sim0)
+                      / (double(SDL_GetPerformanceFrequency()) / 1000.0);
         // Weapon impacts this tick: play each weapon's soundhitclass, picking the
         // material-specific variant from the struck unit's bodytype (flesh/armor/..).
         for (const auto& h : world_.hits()) {
@@ -2289,10 +2292,10 @@ public:
     }
 
     // Fetch and reset the per-draw sub-phase timers (for TAK_PROF).
-    void takeProf(double& projMs, double& submitMs, long& lod, long& full) {
-        projMs = profProjMs_; submitMs = profSubmitMs_;
+    void takeProf(double& projMs, double& submitMs, double& simMs, long& lod, long& full) {
+        projMs = profProjMs_; submitMs = profSubmitMs_; simMs = profSimMs_;
         lod = lodDrawn_; full = fullDrawn_;
-        profProjMs_ = 0; profSubmitMs_ = 0; lodDrawn_ = 0; fullDrawn_ = 0;
+        profProjMs_ = 0; profSubmitMs_ = 0; profSimMs_ = 0; lodDrawn_ = 0; fullDrawn_ = 0;
     }
 
     void draw(int winW, int winH) {
@@ -3304,7 +3307,7 @@ private:
     };
     std::vector<const tak::sim::Unit*> visUnits_;
     std::vector<SDL_Vertex> unitBatch_, shadowBatch_;   // cross-unit render batches
-    double profProjMs_ = 0, profSubmitMs_ = 0;          // TAK_PROF sub-phase timers
+    double profProjMs_ = 0, profSubmitMs_ = 0, profSimMs_ = 0;   // TAK_PROF sub-phase timers
     long lodDrawn_ = 0, fullDrawn_ = 0;                 // impostor vs full-model counts
 
     // Texture atlas: every unit texture packed into one big texture per player-
@@ -4077,15 +4080,19 @@ private:
         auto toMini = [&](float wx, float wz) {
             return SDL_FPoint{r.x + wx / mapW * r.w, r.y + wz / mapH * r.h};
         };
+        // All unit dots batched into one draw call (per-unit FillRect + colour
+        // set was thousands of state changes a frame at large unit counts).
+        shadowBatch_.clear();
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
             SDL_FPoint p = toMini(u.x, u.z);
-            SDL_FRect dot{p.x - 1.5f, p.y - 1.5f, 3, 3};
             SDL_Color tc = teamColor(u.team);
-            SDL_SetRenderDrawColor(ren_, tc.r, tc.g, tc.b, 255);
-            SDL_RenderFillRectF(ren_, &dot);
+            pushQuad(shadowBatch_, p.x - 1.5f, p.y - 1.5f, 3, 3, tc);
         }
+        if (!shadowBatch_.empty())
+            SDL_RenderGeometry(ren_, nullptr, shadowBatch_.data(),
+                               int(shadowBatch_.size()), nullptr, 0);
         // Camera view rectangle.
         float zm = mapView_.zoom();
         SDL_FPoint a = toMini(mapView_.offX(), mapView_.offY());
@@ -5959,15 +5966,15 @@ int main(int argc, char** argv) {
             pPres += t5 - t4;
             pAcc += t5 - t0; ++pFrames;
             if (pAcc >= 1000.0) {
-                double proj = 0, submit = 0; long lod = 0, full = 0;
-                if (gameView) gameView->takeProf(proj, submit, lod, full);
-                std::printf("PROF fps=%.0f | terrain=%.1f update=%.1f draw=%.1f "
-                            "[proj=%.1f submit=%.1f] present=%.1f | impostor=%ld "
-                            "full=%ld (ms/frame avg)\n",
-                            pFrames * 1000.0 / pAcc, pTer / pFrames, pUpd / pFrames,
+                double proj = 0, submit = 0, sim = 0; long lod = 0, full = 0;
+                if (gameView) gameView->takeProf(proj, submit, sim, lod, full);
+                std::printf("PROF fps=%.0f | update=%.1f [sim=%.1f] draw=%.1f "
+                            "[proj=%.1f submit=%.1f other=%.1f] present=%.1f | "
+                            "impostor=%ld full=%ld\n",
+                            pFrames * 1000.0 / pAcc, pUpd / pFrames, sim / pFrames,
                             pDraw / pFrames, proj / pFrames, submit / pFrames,
-                            pPres / pFrames, lod / std::max(1, pFrames),
-                            full / std::max(1, pFrames));
+                            (pDraw - proj - submit) / pFrames, pPres / pFrames,
+                            lod / std::max(1, pFrames), full / std::max(1, pFrames));
                 std::fflush(stdout);
                 pTer = pUpd = pDraw = pPres = pAcc = 0; pFrames = 0;
             }
