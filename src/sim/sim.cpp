@@ -497,16 +497,14 @@ bool FlowField::build(const NavGrid& nav, float gx, float gz) {
         }
     }
 
-    // Flow field: each walkable cell points at the reachable neighbour with the
-    // lowest integration cost (steepest descent toward the goal).
-    dirx_.assign(n, 0.0f);
-    dirz_.assign(n, 0.0f);
+    // Flow field: each walkable cell stores the reachable neighbour index (0-7)
+    // with the lowest integration cost (steepest descent toward the goal), -1 = none.
+    dir_.assign(n, int8_t(-1));
     for (int cz = 0; cz < h_; ++cz)
         for (int cx = 0; cx < w_; ++cx) {
             size_t i = size_t(cz) * w_ + cx;
             if (dist_[i] == 0xFFFF || int(i) == goal_) continue;
             int best = -1, bestD = dist_[i];
-            float bx = 0, bz = 0;
             for (int k = 0; k < 8; ++k) {
                 int nx = cx + dcx[k], nz = cz + dcz[k];
                 if (!nav.walkable(nx, nz)) continue;
@@ -514,13 +512,9 @@ bool FlowField::build(const NavGrid& nav, float gx, float gz) {
                                !nav.walkable(cx, cz + dcz[k])))
                     continue;
                 int d = dist_[size_t(nz) * w_ + nx];
-                if (d < bestD) { bestD = d; best = k; bx = float(dcx[k]); bz = float(dcz[k]); }
+                if (d < bestD) { bestD = d; best = k; }
             }
-            if (best >= 0) {
-                float inv = 1.0f / std::sqrt(bx * bx + bz * bz);
-                dirx_[i] = bx * inv;
-                dirz_[i] = bz * inv;
-            }
+            dir_[i] = int8_t(best);
         }
     return true;
 }
@@ -530,9 +524,13 @@ void FlowField::dirAt(float x, float z, float& dx, float& dz) const {
     if (w_ <= 0) return;
     int cx = int(x) / 16, cz = int(z) / 16;
     if (cx < 0 || cz < 0 || cx >= w_ || cz >= h_) return;
-    size_t i = size_t(cz) * w_ + cx;
-    dx = dirx_[i];
-    dz = dirz_[i];
+    int8_t d = dir_[size_t(cz) * w_ + cx];
+    if (d < 0) return;   // goal cell / unreachable: (0,0), caller steers straight
+    // Unit vectors for neighbour indices 0-7 (ortho then diagonal, normalised).
+    static const float NX[8] = {1, -1, 0, 0, 0.70711f, 0.70711f, -0.70711f, -0.70711f};
+    static const float NZ[8] = {0, 0, 1, -1, 0.70711f, -0.70711f, 0.70711f, -0.70711f};
+    dx = NX[d];
+    dz = NZ[d];
 }
 
 bool FlowField::reachable(float x, float z) const {
@@ -681,14 +679,28 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) {
     int domain = type ? int(type->domain) : 0;
     long long key = domain * 100000000LL + (long long)(cz * grid.width() + cx);
     auto it = flowCache_.find(key);
-    if (it != flowCache_.end()) return it->second.ready() ? &it->second : nullptr;
-    // Bound the cache so a game of many distinct move orders can't grow it
-    // without limit; group/wave goals (the ones that matter for crowds) recur.
-    if (flowCache_.size() > 48) flowCache_.clear();
+    if (it != flowCache_.end()) {
+        it->second.used = tickCounter_;
+        return it->second.ready() ? &it->second : nullptr;
+    }
+    // Evict the least-recently-used field(s) when the cache is full, rather than
+    // wiping ALL of them. The old clear-all meant a game with more concurrently
+    // live goals than the cap (e.g. a big move order + a busy AI army) rebuilt
+    // every field EVERY tick -- a full-map Dijkstra x N -- and stalled the sim to
+    // single-digit fps. Fields are ~0.3MB each (1-byte dir index), so a generous
+    // cap holds every live goal without thrashing.
+    constexpr size_t kFlowCap = 128;
+    while (flowCache_.size() >= kFlowCap) {
+        auto oldest = flowCache_.begin();
+        for (auto i = std::next(flowCache_.begin()); i != flowCache_.end(); ++i)
+            if (i->second.used < oldest->second.used) oldest = i;
+        flowCache_.erase(oldest);
+    }
     FlowField ff;
     if (g_phase) { auto _b0=std::chrono::steady_clock::now(); ff.build(grid, gx, gz);
         g_flowMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_b0).count(); ++g_flowN; }
     else ff.build(grid, gx, gz);
+    ff.used = tickCounter_;
     auto& stored = flowCache_[key];
     stored = std::move(ff);
     return stored.ready() ? &stored : nullptr;
