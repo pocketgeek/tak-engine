@@ -3080,13 +3080,23 @@ private:
         return false;
     }
 
+    // A fighter free to be thrown into a wave: idle, or merely gathering (a plain
+    // move, e.g. the just-produced unit's walk to the keep rally) -- NOT one already
+    // attack-moving or engaged. Grabbing gatherers matters because a crowd jamming at
+    // the rally never goes fully idle, so an "idle only" check never launched a wave
+    // and the AI never attacked.
+    static bool waveFree(const tak::sim::Unit& u) {
+        return u.orders.empty() ||
+               (u.orders.front().targetId == 0 && !u.orders.front().attackMove);
+    }
+
     void sendWaves(int team) {
         std::vector<int> idle;
         double sx = 0, sz = 0;
         const tak::sim::UnitType* atype = nullptr;
         for (auto& u : world_.units())
             if (u.alive() && u.team == team && u.type && u.type->canMove &&
-                !u.type->isBuilder && u.orders.empty()) {
+                !u.type->isBuilder && waveFree(u)) {
                 idle.push_back(u.id);
                 sx += u.x; sz += u.z;
                 if (!atype && !u.type->canFly) atype = u.type;
@@ -3109,7 +3119,7 @@ private:
         const tak::sim::UnitType* atype = nullptr;
         for (auto& u : world_.units())
             if (u.alive() && u.team == team && u.type && u.type->canMove &&
-                u.orders.empty()) {
+                waveFree(u)) {
                 idle.push_back(u.id);
                 sx += u.x; sz += u.z;
                 if (!atype && !u.type->canFly) atype = u.type;
