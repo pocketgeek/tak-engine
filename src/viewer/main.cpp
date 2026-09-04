@@ -2438,6 +2438,8 @@ public:
                 if (git == geomIndex_.end()) continue;
                 const UnitGeom& g = geomPool_[size_t(git->second)];
                 if (special(u, g) || !u.type || u.underConstruction) continue;
+                // Impostor-sized units are too small for a ground shadow to read.
+                if (impAtlas_ && !g.runs.empty() && g.runs[0].first == impAtlas_) continue;
                 const ShadowTex* sh = shadowFor(u.type->shadowArt);
                 if (!sh) continue;
                 if (sh->tex != st) { flush(); st = sh->tex; }
