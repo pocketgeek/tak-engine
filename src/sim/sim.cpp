@@ -740,6 +740,11 @@ void World::order(int unitId, float x, float z, bool queue) {
     u->orders.push_back({x, z, 0});
 }
 
+bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float fz) {
+    const FlowField* ff = flowFor(type, gx, gz);
+    return ff && ff->reachable(fx, fz);
+}
+
 void World::loadInto(int unitId, int transportId) {
     Unit* u = unit(unitId);
     Unit* t = unit(transportId);
