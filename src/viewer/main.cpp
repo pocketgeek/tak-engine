@@ -1780,6 +1780,10 @@ public:
             const auto& s = room.slots[i];
             cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team};
             colorSlot_[i & 7] = s.color % 10;
+            playerAi_[i & 7] = (s.type == 2);
+            playerName_[i & 7] = s.type == 2 ? ("AI " + std::to_string(i + 1))
+                                 : s.name.empty() ? ("Player " + std::to_string(i + 1))
+                                                  : s.name;
         }
         auto spots = tak::sim::setupMatch(world_, registry_, cfg);
         // client-only presentation
@@ -4518,6 +4522,8 @@ private:
         return mp_ ? 1.0f : std::pow(10.0f, float(gameSpeed_) / 10.0f);
     }
     bool showCounts_ = false;   // F4: per-faction live unit counts
+    std::string playerName_[8];   // net games: display name per player (from lobby)
+    bool playerAi_[8] = {};       // net games: which players are server-run AI
     bool showColorPicker_ = false;   // F6: pick the player colour
     bool showHDebug_ = false;   // F7: terrain-height / lift diagnostic overlay
     std::vector<std::pair<SDL_FRect, int>> colorRects_;   // picker swatch hit boxes
@@ -6090,14 +6096,25 @@ private:
             ++cnt[t];
             if (sd[t].empty()) sd[t] = u.type->side;
         }
+        // In a net game (or replay) this is a full scoreboard: every player is
+        // listed with their name, team, and defeat status. Offline it stays the
+        // compact "who has units" readout.
+        bool board = mp_ || replayMode_;
+        // Are there real alliances (a team with 2+ members)? If so, show a team tag.
+        bool teams = false;
+        { int tc[tak::sim::kMaxPlayers] = {};
+          for (int t = 0; t < np; ++t) tc[world_.player(t).team % tak::sim::kMaxPlayers]++;
+          for (int t = 0; t < tak::sim::kMaxPlayers; ++t) if (tc[t] > 1) teams = true; }
         int rows = 0;
-        for (int t = 0; t < np; ++t) if (cnt[t] > 0) ++rows;
+        for (int t = 0; t < np; ++t) if (board || cnt[t] > 0) ++rows;
         const float px = 2.4f, lh = 7 * px + 9, x = 12;
         float y = 12;
-        const float colUnits = x + 108, colKills = x + 186;
+        const float nameX = x + (teams ? 40 : 0);
+        const float panelW = (board || teams) ? 340.0f : 270.0f;
+        const float colUnits = x + panelW - 128, colKills = x + panelW - 50;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 175);
-        SDL_FRect bg{x - 7, y - 7, 270, (rows + 1) * lh + 8};
+        SDL_FRect bg{x - 7, y - 7, panelW, (rows + 1) * lh + 8};
         SDL_RenderFillRectF(ren_, &bg);
         char buf[64];
         // FPS on the left; UNITS / KILLS column headers on the right.
@@ -6107,18 +6124,33 @@ private:
         blockText("KILLS", colKills, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
         y += lh;
         for (int t = 0; t < np; ++t) {
-            if (cnt[t] == 0) continue;
-            std::string s = sd[t];
-            std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-            // With >2 players a faction can repeat; prefix the player number so
-            // rows stay distinct (the colour still matches their units).
-            if (np > 2) s = "P" + std::to_string(t + 1) + " " + s;
+            if (!board && cnt[t] == 0) continue;
+            bool dead = world_.player(t).defeated;
             SDL_Color c = playerColor(t);
-            blockText(s, x, y, px, c);
+            if (dead) { c.r /= 2; c.g /= 2; c.b /= 2; }   // dim a knocked-out player
+            if (teams) {   // small team tag, e.g. "T2"
+                std::snprintf(buf, sizeof buf, "T%d", world_.player(t).team + 1);
+                blockText(buf, x, y, 1.8f, dead ? SDL_Color{110, 110, 115, 255}
+                                                : SDL_Color{170, 175, 185, 255});
+            }
+            // Label: the player's name in a net game, else the faction. A faction
+            // can repeat with >2 players, so the offline label carries a P# prefix.
+            std::string s;
+            if (mp_ && !playerName_[t & 7].empty()) {
+                s = playerName_[t & 7];
+                if (s.size() > 12) s = s.substr(0, 12);
+            } else {
+                s = sd[t].empty() ? std::string("--") : sd[t];
+                std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+                if (np > 2) s = "P" + std::to_string(t + 1) + " " + s;
+            }
+            blockText(s, nameX, y, px, c);
             std::snprintf(buf, sizeof buf, "%d", cnt[t]);
             blockText(buf, colUnits, y, px, c);
             std::snprintf(buf, sizeof buf, "%d", world_.player(t).kills);
             blockText(buf, colKills, y, px, c);
+            if (dead) blockText("OUT", nameX + blockWidth(s, px) + 8, y, 1.7f,
+                                SDL_Color{210, 90, 70, 255});
             y += lh;
         }
         (void)winW;
