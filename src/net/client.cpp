@@ -146,9 +146,10 @@ void MpClient::onFrame(const Frame& f) {
 void MpClient::listGames() { send(Msg::ListGames); }
 
 void MpClient::createGame(const std::string& name, const std::string& password,
-                          const std::string& mapId, const GameOptions& o) {
+                          const std::string& mapId, const GameOptions& o, uint8_t capacity) {
     Writer w; w.str(name); w.str(password); w.str(mapId);
     w.u8(o.crusades); w.u8(o.gods); w.u8(o.forfeitSelfDestruct);
+    w.u8(capacity);   // map's start-position count (the server has no map data)
     send(Msg::CreateGame, w);
 }
 
