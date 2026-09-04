@@ -3391,11 +3391,15 @@ private:
     struct SpriteSet {
         SDL_Rect rect[kSprFacings][kSprFrames];
         SDL_FRect bbox[kSprFacings][kSprFrames];
+        SDL_Rect landRect[kSprFacings];   // flyers: static folded/landed pose
+        SDL_FRect landBbox[kSprFacings];
         int frames = 1;      // 1 for static (buildings), kSprFrames for movers
+        bool hasLand = false;
         bool ready = false;
     };
     std::map<std::pair<std::string, int>, SpriteSet> sprites_;
     SDL_Texture* sprAtlas_ = nullptr;
+    int sprAtlasDim_ = 8192;   // holds ~15 unit types at 16 facings x 8 frames x2
     int sprCurX_ = 0, sprCurY_ = 0, sprShelfH_ = 0;
     bool spritesEnabled_ = false;
     bool lodEnabled_ = false;   // impostors off by default; F8 toggles them on
@@ -3615,7 +3619,7 @@ private:
         SDL_Texture* atlas = atlasFor(slot);
         if (!sprAtlas_) {
             sprAtlas_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
-                                          SDL_TEXTUREACCESS_TARGET, impAtlasDim_, impAtlasDim_);
+                                          SDL_TEXTUREACCESS_TARGET, sprAtlasDim_, sprAtlasDim_);
             if (!sprAtlas_) return;
             SDL_SetTextureBlendMode(sprAtlas_, SDL_BLENDMODE_BLEND);
             SDL_SetTextureScaleMode(sprAtlas_, SDL_ScaleModeLinear);
@@ -3633,47 +3637,63 @@ private:
         SDL_SetRenderTarget(ren_, sprAtlas_);
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         const float S = kImpScale, kPi = 3.14159265f, period = 0.9f;
-        for (int k = 0; k < ss.frames; ++k) {
-            if (k > 0) for (int s = 0; s < 4; ++s) tmp.vm->tick(period / ss.frames / 4);
-            for (int fi = 0; fi < kSprFacings; ++fi) {
-                float heading = float(fi) / kSprFacings * 2.0f * kPi;
-                float facing = canFly ? (halfTurn ? (kPi - heading) : -heading)
-                                      : (canMove ? -heading : 0.0f);
-                scratch.clear();
-                collect(scratch, atlas, vt->second.model.root, Xform{}, &tmp, facing, 0, false);
-                std::stable_sort(scratch.begin(), scratch.end(),
-                          [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
-                float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
-                for (auto& t : scratch)
-                    for (int i = 0; i < 3; ++i) {
-                        minX = std::min(minX, t.v[i].position.x);
-                        minY = std::min(minY, t.v[i].position.y);
-                        maxX = std::max(maxX, t.v[i].position.x);
-                        maxY = std::max(maxY, t.v[i].position.y);
-                    }
-                if (scratch.empty()) { minX = minY = 0; maxX = maxY = 1; }
-                const int pad = 2;
-                int w = std::clamp(int(std::ceil((maxX - minX) * S)) + 2 * pad, 2, 400);
-                int h = std::clamp(int(std::ceil((maxY - minY) * S)) + 2 * pad, 2, 400);
-                if (sprCurX_ + w > impAtlasDim_) { sprCurX_ = 0; sprCurY_ += sprShelfH_ + 1; sprShelfH_ = 0; }
-                if (sprCurY_ + h > impAtlasDim_) { SDL_SetRenderTarget(ren_, prev); return; }  // full
-                int rx = sprCurX_, ry = sprCurY_;
-                for (auto& t : scratch) {
-                    SDL_Vertex v[3];
-                    for (int i = 0; i < 3; ++i) {
-                        v[i] = t.v[i];
-                        v[i].position.x = (t.v[i].position.x - minX) * S + float(rx + pad);
-                        v[i].position.y = (t.v[i].position.y - minY) * S + float(ry + pad);
-                    }
-                    SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
+        bool atlasFull = false;
+        // Capture the current VM pose at facing fi into a packed atlas cell.
+        auto capture = [&](int fi, SDL_Rect& outR, SDL_FRect& outB) {
+            float heading = float(fi) / kSprFacings * 2.0f * kPi;
+            float facing = canFly ? (halfTurn ? (kPi - heading) : -heading)
+                                  : (canMove ? -heading : 0.0f);
+            scratch.clear();
+            collect(scratch, atlas, vt->second.model.root, Xform{}, &tmp, facing, 0, false);
+            std::stable_sort(scratch.begin(), scratch.end(),
+                      [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+            float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
+            for (auto& t : scratch)
+                for (int i = 0; i < 3; ++i) {
+                    minX = std::min(minX, t.v[i].position.x);
+                    minY = std::min(minY, t.v[i].position.y);
+                    maxX = std::max(maxX, t.v[i].position.x);
+                    maxY = std::max(maxY, t.v[i].position.y);
                 }
-                ss.rect[fi][k] = SDL_Rect{rx, ry, w, h};
-                ss.bbox[fi][k] = SDL_FRect{minX - pad / S, minY - pad / S, w / S, h / S};
-                sprCurX_ += w + 1;
-                sprShelfH_ = std::max(sprShelfH_, h);
+            if (scratch.empty()) { minX = minY = 0; maxX = maxY = 1; }
+            const int pad = 2;
+            int w = std::clamp(int(std::ceil((maxX - minX) * S)) + 2 * pad, 2, 400);
+            int h = std::clamp(int(std::ceil((maxY - minY) * S)) + 2 * pad, 2, 400);
+            if (sprCurX_ + w > sprAtlasDim_) { sprCurX_ = 0; sprCurY_ += sprShelfH_ + 1; sprShelfH_ = 0; }
+            if (sprCurY_ + h > sprAtlasDim_) { atlasFull = true; return; }
+            int rx = sprCurX_, ry = sprCurY_;
+            for (auto& t : scratch) {
+                SDL_Vertex v[3];
+                for (int i = 0; i < 3; ++i) {
+                    v[i] = t.v[i];
+                    v[i].position.x = (t.v[i].position.x - minX) * S + float(rx + pad);
+                    v[i].position.y = (t.v[i].position.y - minY) * S + float(ry + pad);
+                }
+                SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
             }
+            outR = SDL_Rect{rx, ry, w, h};
+            outB = SDL_FRect{minX - pad / S, minY - pad / S, w / S, h / S};
+            sprCurX_ += w + 1;
+            sprShelfH_ = std::max(sprShelfH_, h);
+        };
+        for (int k = 0; k < ss.frames && !atlasFull; ++k) {
+            if (k > 0) for (int s = 0; s < 4; ++s) tmp.vm->tick(period / ss.frames / 4);
+            for (int fi = 0; fi < kSprFacings && !atlasFull; ++fi)
+                capture(fi, ss.rect[fi][k], ss.bbox[fi][k]);
+        }
+        // Flyers also get a static landed/folded pose (so a landed swarm is cheap,
+        // not a fall-back to full models).
+        if (canFly && !atlasFull) {
+            tmp.vm->reset();
+            tmp.vm->setStatic(tmp.flyGate, 0);
+            tmp.vm->start("land");
+            for (int s = 0; s < 15; ++s) tmp.vm->tick(1.0f / 30);
+            for (int fi = 0; fi < kSprFacings && !atlasFull; ++fi)
+                capture(fi, ss.landRect[fi], ss.landBbox[fi]);
+            ss.hasLand = !atlasFull;
         }
         SDL_SetRenderTarget(ren_, prev);
+        if (atlasFull) return;   // leave reserved not-ready -> full model
         ss.ready = true;
         sprites_[key] = ss;
     }
@@ -3701,27 +3721,33 @@ private:
         // locomotion cycle. Attack/death poses keep the full 3D model (rare).
         if (spritesEnabled_) {
             auto sit = sprites_.find(std::make_pair(vt->first, slot));
-            // A landed flyer shows its full landed model, not the flapping sprite;
-            // attack/death poses likewise keep the full 3D model.
+            // A landed flyer uses its static folded pose (not the flapping cycle);
+            // attack/death poses keep the full 3D model.
             bool grounded = (u.type && u.type->canFly) && !(anim && anim->airborne);
-            bool locoPose = !grounded && !(anim && (anim->dying || anim->firing));
-            if (sit != sprites_.end() && sit->second.ready && locoPose) {
+            bool special = anim && (anim->dying || anim->firing);
+            if (sit != sprites_.end() && sit->second.ready && !special) {
                 const SpriteSet& ss = sit->second;
                 int fi = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f,
                                      kSprFacings);
-                int frame = 0;
-                if (ss.frames > 1) {
-                    bool moving = (u.type && u.type->canFly) || u.moving();
-                    if (moving)
-                        frame = (int(animClock_ * 12.0f) + u.id) % ss.frames;
+                SDL_Rect r{};
+                SDL_FRect bb{};
+                bool useSprite = true;
+                if (grounded) {
+                    if (ss.hasLand) { r = ss.landRect[fi]; bb = ss.landBbox[fi]; }
+                    else useSprite = false;           // no landed pose -> full model
+                } else {
+                    int frame = 0;
+                    if (ss.frames > 1) {
+                        bool moving = (u.type && u.type->canFly) || u.moving();
+                        if (moving) frame = (int(animClock_ * 12.0f) + u.id) % ss.frames;
+                    }
+                    r = ss.rect[fi][frame]; bb = ss.bbox[fi][frame];
                 }
-                const SDL_Rect& r = ss.rect[fi][frame];
-                const SDL_FRect& bb = ss.bbox[fi][frame];
-                if (r.w > 2 && r.h > 2) {   // valid cell; a bad one falls to full model
+                if (useSprite && r.w > 2 && r.h > 2) {   // else falls to full model
                     float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
                     float qx = ax + bb.x * zm;
                     float qy = ay + bb.y * zm - alt * 0.8f * zm;
-                    float inv = 1.0f / float(impAtlasDim_);
+                    float inv = 1.0f / float(sprAtlasDim_);
                     pushQuadUV(g.verts, qx, qy, bb.w * zm, bb.h * zm,
                                float(r.x) * inv, float(r.y) * inv,
                                float(r.x + r.w) * inv, float(r.y + r.h) * inv,
@@ -4965,6 +4991,23 @@ private:
                     if (spawn("zondrake", x, z, 0.0f, localTeam_) >= 0) ++made;
                 }
             notice_ = "SPAWNED " + std::to_string(made) + " DRAKES";
+            noticeTimer_ = 3;
+            return true;
+        }
+        // F11: stress test -- spawn 500 Zhon hunters across the current view.
+        if (key == SDLK_F11) {
+            float zm = std::max(mapView_.zoom(), 1e-3f);
+            float cx = mapView_.offX() + (winW_ / 2.0f) / zm;
+            float cz = mapView_.offY() + (winH_ / 2.0f) / zm;
+            const int nx = 25, nz = 20;
+            int made = 0;
+            for (int j = 0; j < nz; ++j)
+                for (int i = 0; i < nx; ++i) {
+                    float x = cx + (i - (nx - 1) * 0.5f) * 20.0f;
+                    float z = cz + (j - (nz - 1) * 0.5f) * 18.0f;
+                    if (spawn("zonhunt", x, z, 0.0f, localTeam_) >= 0) ++made;
+                }
+            notice_ = "SPAWNED " + std::to_string(made) + " HUNTERS";
             noticeTimer_ = 3;
             return true;
         }
