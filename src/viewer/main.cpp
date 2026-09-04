@@ -1369,9 +1369,21 @@ public:
         }
     }
 
+    // True while the multiplayer lobby is showing (before the game world exists).
+    bool inLobbyPhase() const {
+        if (!mp_ || mpSetupDone_) return false;
+        auto s = mp_->state();
+        return s == tak::net::MpClient::State::Connecting ||
+               s == tak::net::MpClient::State::Lobby ||
+               s == tak::net::MpClient::State::InRoom ||
+               s == tak::net::MpClient::State::Done;
+    }
+    void setMpMapId(const std::string& id) { mpMapId_ = id; }
+
     void input(const SDL_Event& e, int winW, int winH) {
         winW_ = winW;
         winH_ = winH;
+        if (inLobbyPhase()) { lobbyInput(e, winW, winH); return; }
         float zm = mapView_.zoom();
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE &&
             (placing_ || pendingCmd_)) {
@@ -2506,6 +2518,7 @@ public:
     }
 
     void draw(int winW, int winH) {
+        if (inLobbyPhase()) { drawLobby(winW, winH); return; }
         // Camera shake: nudge the map offset by a decaying oscillation for this
         // frame, so the whole world jolts; the offset is restored at the end so
         // the camera and UI stay put. shakemagnitude ~3 => a few px of jolt.
@@ -4377,6 +4390,14 @@ private:
     std::vector<tak::net::Command> outbox_;   // local orders to send to the server
     uint64_t mpListMs_ = 0, mpFirstListMs_ = 0;   // auto-join: ListGames timing
     bool mpReadied_ = false, mpStarted_ = false, mpSetupDone_ = false;
+    // interactive lobby UI state
+    enum class LobbyScreen { Browser, Create, Room } lobbyScreen_ = LobbyScreen::Browser;
+    int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
+    std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
+    bool createCrusades_ = false, createGods_ = false;
+    std::string mpMapId_;   // set from the launched map basename
+    std::vector<std::pair<std::string, std::string>> chatLog_;
+    std::vector<std::pair<SDL_FRect, std::function<void()>>> lobbyHots_;
     int localPlayer_ = 0;
     // Player-colour slot per player (which colour variant of each unit texture to
     // use); defaults to the player index. Overridable via --color / --aicolor and
@@ -5572,6 +5593,264 @@ private:
     }
     float blockWidth(const std::string& s, float px) const { return s.size() * 6 * px; }
 
+    // ==================== interactive multiplayer lobby ====================
+
+    static const char* factionName(int f) {
+        static const char* n[5] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
+        return n[f % 5];
+    }
+    bool lbHot(const SDL_FRect& r) const {
+        return mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y && mouseY_ <= r.y + r.h;
+    }
+    // A clickable button: panel + centered label; registers its action.
+    void lbBtn(float x, float y, float w, float h, const std::string& label, bool enabled,
+               std::function<void()> action, SDL_Color base = {60, 66, 86, 255}) {
+        SDL_FRect r{x, y, w, h};
+        bool hot = enabled && lbHot(r);
+        SDL_Color c = enabled ? (hot ? SDL_Color{90, 110, 150, 255} : base)
+                              : SDL_Color{40, 42, 50, 255};
+        SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
+        SDL_RenderFillRectF(ren_, &r);
+        SDL_SetRenderDrawColor(ren_, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
+        SDL_RenderDrawRectF(ren_, &r);
+        float px = 2.0f, tw = blockWidth(label, px);
+        blockText(label, x + (w - tw) / 2, y + (h - 7 * px) / 2, px,
+                  enabled ? SDL_Color{225, 230, 240, 255} : SDL_Color{110, 115, 125, 255});
+        if (enabled && action) lobbyHots_.push_back({r, std::move(action)});
+    }
+    // A text-input field: label + box; clicking activates it (id != 0).
+    void lbField(float x, float y, float w, const std::string& label,
+                 const std::string& value, int id) {
+        blockText(label, x, y, 1.6f, {150, 155, 170, 255});
+        SDL_FRect r{x, y + 14, w, 22};
+        bool active = (lbField_ == id);
+        SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255);
+        SDL_RenderFillRectF(ren_, &r);
+        SDL_SetRenderDrawColor(ren_, active ? 200 : 90, active ? 210 : 100, active ? 130 : 130, 255);
+        SDL_RenderDrawRectF(ren_, &r);
+        std::string shown = value + (active ? "_" : "");
+        blockText(shown, x + 6, y + 20, 1.8f, {225, 230, 240, 255});
+        lobbyHots_.push_back({r, [this, id] { lbField_ = id; SDL_StartTextInput(); }});
+    }
+    void colorSwatch(float x, float y, float s, int color, std::function<void()> action) {
+        SDL_FRect r{x, y, s, s};
+        SDL_Color c = playerColors_[color % 10];
+        SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
+        SDL_RenderFillRectF(ren_, &r);
+        SDL_SetRenderDrawColor(ren_, lbHot(r) ? 255 : 30, lbHot(r) ? 255 : 30, 30, 255);
+        SDL_RenderDrawRectF(ren_, &r);
+        if (action) lobbyHots_.push_back({r, std::move(action)});
+    }
+
+    void drawLobby(int winW, int winH) {
+        lobbyHots_.clear();
+        // absorb any new chat
+        if (mp_) for (auto& m : mp_->takeChat()) chatLog_.push_back(m);
+        // ground
+        SDL_SetRenderDrawColor(ren_, 16, 18, 26, 255);
+        SDL_RenderClear(ren_);
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        float cx = winW / 2.0f;
+        blockText("TA:KINGDOMS  MULTIPLAYER", cx - blockWidth("TA:KINGDOMS  MULTIPLAYER", 2.6f) / 2,
+                  24, 2.6f, {210, 200, 150, 255});
+        if (!mp_) return;
+        auto st = mp_->state();
+        if (st == tak::net::MpClient::State::Connecting) {
+            blockText("connecting to server...", cx - 120, winH / 2.0f, 2.0f, {200, 200, 210, 255});
+            return;
+        }
+        if (st == tak::net::MpClient::State::Done) {
+            std::string m = "disconnected: " + (mp_->error().empty() ? std::string("server closed") : mp_->error());
+            blockText(m, cx - blockWidth(m, 2.0f) / 2, winH / 2.0f, 2.0f, {255, 130, 110, 255});
+            return;
+        }
+        if (st == tak::net::MpClient::State::InRoom) drawRoom(winW, winH);
+        else if (lobbyScreen_ == LobbyScreen::Create) drawCreate(winW, winH);
+        else drawBrowser(winW, winH);
+    }
+
+    void drawBrowser(int winW, int winH) {
+        (void)winH;
+        // keep the list fresh without needing a manual refresh
+        if (SDL_GetTicks64() - mpListMs_ > 1000) { mp_->listGames(); mpListMs_ = SDL_GetTicks64(); }
+        float x = 60, y = 80, w = winW - 120.0f;
+        blockText("GAMES", x, y, 2.2f, {200, 205, 220, 255});
+        lbBtn(x + w - 200, y - 6, 95, 26, "REFRESH", true, [this] { mp_->listGames(); });
+        lbBtn(x + w - 100, y - 6, 100, 26, "CREATE", true,
+              [this] { lobbyScreen_ = LobbyScreen::Create; });
+        y += 34;
+        // column header
+        blockText("NAME", x + 8, y, 1.6f, {130, 135, 150, 255});
+        blockText("MAP", x + 220, y, 1.6f, {130, 135, 150, 255});
+        blockText("PLAYERS", x + w - 200, y, 1.6f, {130, 135, 150, 255});
+        y += 20;
+        const auto& games = mp_->games();
+        if (games.empty())
+            blockText("no games -- create one, or refresh", x + 8, y + 10, 1.8f, {150, 150, 160, 255});
+        for (const auto& g : games) {
+            SDL_FRect row{x, y, w, 30};
+            bool hot = lbHot(row) && !g.running;
+            SDL_SetRenderDrawColor(ren_, hot ? 46 : 30, hot ? 52 : 34, hot ? 72 : 44, 255);
+            SDL_RenderFillRectF(ren_, &row);
+            blockText(g.name, x + 8, y + 8, 1.8f, {225, 228, 236, 255});
+            blockText(g.mapId, x + 220, y + 8, 1.6f, {180, 185, 195, 255});
+            char pc[32]; std::snprintf(pc, sizeof pc, "%d/%d", g.players, g.capacity);
+            blockText(pc, x + w - 200, y + 8, 1.8f, {200, 205, 215, 255});
+            if (g.passworded) blockText("LOCK", x + w - 120, y + 8, 1.6f, {230, 200, 120, 255});
+            if (g.running) blockText("RUNNING", x + w - 70, y + 8, 1.6f, {230, 140, 120, 255});
+            else lobbyHots_.push_back({row, [this, id = g.id] { mp_->joinGame(id, joinPass_); }});
+            y += 34;
+        }
+        // password entry for locked games
+        lbField(x, winH - 70.0f, 200, "PASSWORD (for locked games)", joinPass_, 3);
+        lbBtn(winW - 120.0f, winH - 44.0f, 100, 28, "QUIT", true, [this] { mp_->disconnect(); });
+    }
+
+    void drawCreate(int winW, int winH) {
+        (void)winH;
+        float x = 80, y = 90;
+        blockText("CREATE GAME", x, y, 2.2f, {200, 205, 220, 255}); y += 40;
+        lbField(x, y, 260, "GAME NAME", createName_, 1); y += 46;
+        lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 46;
+        blockText(std::string("MAP: ") + mpMapId_, x, y, 1.8f, {180, 185, 195, 255}); y += 30;
+        lbBtn(x, y, 150, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
+              [this] { createCrusades_ = !createCrusades_; }); y += 34;
+        lbBtn(x, y, 150, 26, createGods_ ? "GODS: ON" : "GODS: OFF", true,
+              [this] { createGods_ = !createGods_; }); y += 44;
+        lbBtn(x, y, 120, 30, "CREATE", !createName_.empty(), [this] {
+            tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0; o.gods = createGods_ ? 1 : 0;
+            mp_->createGame(createName_, createPass_, mpMapId_, o);
+            lobbyScreen_ = LobbyScreen::Browser;
+        });
+        lbBtn(x + 132, y, 120, 30, "CANCEL", true, [this] { lobbyScreen_ = LobbyScreen::Browser; });
+    }
+
+    void drawRoom(int winW, int winH) {
+        const auto& room = mp_->room();
+        float x = 40, y = 78;
+        blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
+        blockText(std::string("MAP  ") + room.mapId, x + winW - 320, y + 4, 1.8f, {180, 185, 195, 255});
+        y += 34;
+        bool host = (room.hostId == mp_->myClientId());
+        // slot table
+        const char* typeName[4] = {"OPEN", "HUMAN", "AI", "CLOSED"};
+        for (int i = 0; i < tak::net::kMaxSlots; ++i) {
+            const auto& s = room.slots[i];
+            bool mine = (i == room.mySlot);
+            SDL_FRect row{x, y, winW - 320.0f, 30};
+            SDL_SetRenderDrawColor(ren_, mine ? 40 : 26, mine ? 48 : 30, mine ? 66 : 40, 255);
+            SDL_RenderFillRectF(ren_, &row);
+            char sn[8]; std::snprintf(sn, sizeof sn, "%d", i + 1);
+            blockText(sn, x + 8, y + 8, 1.8f, {150, 155, 170, 255});
+            // type (host may cycle open<->closed on empty slots)
+            SDL_Color tcol = s.type == 1 ? SDL_Color{200, 230, 200, 255}
+                           : s.type == 2 ? SDL_Color{230, 220, 150, 255}
+                                         : SDL_Color{130, 135, 150, 255};
+            blockText(typeName[s.type % 4], x + 34, y + 8, 1.6f, tcol);
+            if (host && s.type != 1) {
+                SDL_FRect tb{x + 34, y + 6, 60, 18};
+                lobbyHots_.push_back({tb, [this, i, t = s.type] {
+                    // cycle OPEN(0) <-> CLOSED(3) (AI is M4)
+                    mp_->setSlot(i, t == 0 ? 3 : 0, mpRoom().slots[i].faction,
+                                 mpRoom().slots[i].color, mpRoom().slots[i].team, 0); }});
+            }
+            if (s.type == 1) blockText(s.name, x + 100, y + 8, 1.8f, {225, 228, 236, 255});
+            // faction / color / team / ready are editable on your own row.
+            bool canEdit = mine;
+            blockText(factionName(s.faction), x + 260, y + 8, 1.6f, {200, 205, 215, 255});
+            if (canEdit) { SDL_FRect fb{x + 260, y + 6, 90, 18};
+                lobbyHots_.push_back({fb, [this, i] { const auto& s2 = mpRoom().slots[i];
+                    mp_->setSlot(i, 1, (s2.faction + 1) % 5, s2.color, s2.team, s2.ready); }}); }
+            colorSwatch(x + 360, y + 5, 20, s.color, canEdit ? std::function<void()>([this, i] {
+                const auto& s2 = mpRoom().slots[i];
+                mp_->setSlot(i, 1, s2.faction, (s2.color + 1) % 10, s2.team, s2.ready); }) : nullptr);
+            char tm[8]; std::snprintf(tm, sizeof tm, "T%d", s.team + 1);
+            blockText(tm, x + 392, y + 8, 1.8f, {200, 205, 215, 255});
+            if (canEdit) { SDL_FRect teb{x + 392, y + 6, 34, 18};
+                lobbyHots_.push_back({teb, [this, i] { const auto& s2 = mpRoom().slots[i];
+                    mp_->setSlot(i, 1, s2.faction, s2.color, uint8_t((s2.team + 1) % tak::net::kMaxSlots), s2.ready); }}); }
+            if (s.type == 1) {
+                SDL_Color rc = s.ready ? SDL_Color{130, 230, 140, 255} : SDL_Color{120, 125, 135, 255};
+                blockText(s.ready ? "READY" : "NOT READY", x + 440, y + 8, 1.6f, rc);
+            }
+            // host kick button for other humans
+            if (host && s.type == 1 && !mine) {
+                lbBtn(x + row.w - 54, y + 3, 50, 22, "KICK", true, [this, i] { mp_->kick(i); });
+            }
+            y += 34;
+        }
+        y += 10;
+        // controls
+        bool iAmReady = room.mySlot >= 0 && room.slots[room.mySlot].ready;
+        lbBtn(x, y, 130, 30, iAmReady ? "UNREADY" : "READY", room.mySlot >= 0, [this, iAmReady] {
+            const auto& s = mpRoom().slots[mpRoom().mySlot];
+            mp_->setSlot(mpRoom().mySlot, 1, s.faction, s.color, s.team, iAmReady ? 0 : 1); });
+        // start (host): enabled when >=2 used slots and all humans ready and colors unique
+        bool canStart = host && startValid(room);
+        lbBtn(x + 142, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
+              {70, 110, 70, 255});
+        lbBtn(x + 284, y, 120, 30, "LEAVE", true, [this] {
+            mp_->leaveGame(); lobbyScreen_ = LobbyScreen::Browser;
+            mpReadied_ = false; mpStarted_ = false; });
+        // chat panel on the right
+        float chx = winW - 300.0f, chy = 78, chw = 280;
+        SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
+        SDL_FRect cp{chx, chy, chw, winH - 150.0f}; SDL_RenderFillRectF(ren_, &cp);
+        blockText("CHAT", chx + 8, chy + 6, 1.8f, {160, 165, 180, 255});
+        float ly = chy + cp.h - 20;
+        for (auto it = chatLog_.rbegin(); it != chatLog_.rend() && ly > chy + 26; ++it) {
+            std::string line = it->first + ": " + it->second;
+            if (line.size() > 40) line = line.substr(0, 40);
+            blockText(line, chx + 8, ly, 1.4f, {200, 205, 215, 255});
+            ly -= 16;
+        }
+        lbField(chx, winH - 66.0f, chw - 70, "SAY", chatDraft_, 4);
+        lbBtn(chx + chw - 62, winH - 52.0f, 56, 24, "SEND", !chatDraft_.empty(), [this] {
+            mp_->chat(chatDraft_); chatDraft_.clear(); });
+    }
+
+    static bool startValid(const tak::net::RoomView& room) {
+        int used = 0; bool color[10] = {};
+        for (int i = 0; i < tak::net::kMaxSlots; ++i) {
+            const auto& s = room.slots[i];
+            if (s.type != 1 && s.type != 2) continue;
+            ++used;
+            if (s.type == 1 && !s.ready) return false;
+            if (s.color < 10) { if (color[s.color]) return false; color[s.color] = true; }
+        }
+        return used >= 2;
+    }
+    const tak::net::RoomView& mpRoom() const { return mp_->room(); }
+
+    void lobbyInput(const SDL_Event& e, int winW, int winH) {
+        (void)winW; (void)winH;
+        if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
+        else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+            mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
+            lbField_ = 0; SDL_StopTextInput();
+            for (auto& [r, action] : lobbyHots_)
+                if (mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y && mouseY_ <= r.y + r.h) {
+                    action(); break;
+                }
+        } else if (e.type == SDL_TEXTINPUT && lbField_) {
+            std::string* f = lbFieldBuf();
+            if (f && f->size() < 24) *f += e.text.text;
+        } else if (e.type == SDL_KEYDOWN && lbField_) {
+            if (e.key.keysym.sym == SDLK_BACKSPACE) { std::string* f = lbFieldBuf(); if (f && !f->empty()) f->pop_back(); }
+            else if (e.key.keysym.sym == SDLK_RETURN) {
+                if (lbField_ == 4 && !chatDraft_.empty()) { mp_->chat(chatDraft_); chatDraft_.clear(); }
+                lbField_ = 0; SDL_StopTextInput();
+            } else if (e.key.keysym.sym == SDLK_ESCAPE) { lbField_ = 0; SDL_StopTextInput(); }
+        }
+    }
+    std::string* lbFieldBuf() {
+        switch (lbField_) {
+            case 1: return &createName_; case 2: return &createPass_;
+            case 3: return &joinPass_; case 4: return &chatDraft_;
+            default: return nullptr;
+        }
+    }
+
     // HUD text with a full dark outline so it reads over any panel.
     void hudText(const std::string& s, float x, float y, float scale, SDL_Color c) {
         static const int o[8][2] = {{-1, -1}, {0, -1}, {1, -1}, {-1, 0},
@@ -6472,7 +6751,10 @@ int main(int argc, char** argv) {
                                                   scenario, missionFlag,
                                                   navy || amphib || firetest || facetest || mp,
                                                   side, aiSide, crusades);
-            if (mp) gameView->setMpClient(mp.get());
+            if (mp) {
+                gameView->setMpClient(mp.get());
+                gameView->setMpMapId(std::filesystem::path(args[0]).stem().string());
+            }
             // Never let the window shrink below what the widest build-icon row
             // needs (full-size icons), and grow it now if it opened smaller.
             {
@@ -6667,7 +6949,10 @@ int main(int argc, char** argv) {
                 // advances the lobby (auto-matchmaking for now -- a lobby UI is
                 // follow-on), and simulates every delivered tick. (void)netAccum.
                 (void)netAccum;
-                gameView->mpAutoStep(3, serverMapId, crusades);   // 3 = join-or-create
+                // TAK_MPAUTO=N overrides the lobby driver (0 = UI-driven, the
+                // default; 1 = auto-host; 2 = auto-join) -- handy for screenshots.
+                static int autoOv = std::getenv("TAK_MPAUTO") ? std::atoi(std::getenv("TAK_MPAUTO")) : 0;
+                gameView->mpAutoStep(autoOv, serverMapId, crusades);
             } else {
                 gameView->update(dt);
             }
