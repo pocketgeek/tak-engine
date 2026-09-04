@@ -150,11 +150,23 @@ bool Session::pump(int timeoutMs) {
     size_t pos = 0;
     while (rxBuf_.size() - pos >= 4) {
         uint32_t len = get32(&rxBuf_[pos]);
+        // A frame is at least the kind byte; cap the size so a malformed or
+        // hostile length prefix can't balloon rxBuf_ unboundedly.
+        if (len < 1 || len > (1u << 20)) { error_ = "malformed frame"; return false; }
         if (rxBuf_.size() - pos - 4 < len) break;
         const uint8_t* p = &rxBuf_[pos + 4];
         uint8_t kind = p[0];
         const uint8_t* body = p + 1;
-        if (kind == kCommands && len >= 1 + 8) {
+        if (kind == kHello && len >= 1 + 4) {
+            // Enforce the protocol version (it used to be sent and ignored).
+            uint32_t ver = get32(body);
+            if (ver != kProtocolVersion) {
+                error_ = "protocol version mismatch (local " +
+                         std::to_string(kProtocolVersion) + ", peer " +
+                         std::to_string(ver) + ") -- both machines need the same build";
+                return false;
+            }
+        } else if (kind == kCommands && len >= 1 + 8) {
             uint32_t tick = get32(body);
             uint32_t n = get32(body + 4);
             TickCmds tc{tick, {}};
