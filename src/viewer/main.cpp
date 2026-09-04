@@ -2376,6 +2376,12 @@ public:
                 if (u->type)
                     ensureImpostor(unitType_.at(u->id), colorSlot_[u->team & 7],
                                    u->type->canMove);
+        // Bake sprite sheets for every visible model when sprite mode is on.
+        if (spritesEnabled_)
+            for (const auto* u : visUnits_)
+                if (u->type)
+                    bakeSprites(unitType_.at(u->id), colorSlot_[u->team & 7],
+                                u->type->canMove, u->type->canFly);
         double _pt0 = double(SDL_GetPerformanceCounter());
         pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
             thread_local std::vector<Tri> scratch;
@@ -3375,6 +3381,23 @@ private:
     SDL_Texture* impAtlas_ = nullptr;
     int impAtlasDim_ = 4096, impCurX_ = 0, impCurY_ = 0, impShelfH_ = 0;
     static constexpr float kImpScale = 2.0f;    // impostor render supersampling
+
+    // Sprite sheets: the locomotion animation (walk / fly) baked to a grid of
+    // frames x 8 facings per model+colour, so a unit draws as one animated quad
+    // instead of a live model -- the classic-RTS way to run thousands cheaply.
+    // Full-3D is kept for attack/death/build poses (rare, few at a time).
+    static constexpr int kSprFrames = 8;    // locomotion-cycle frames baked
+    static constexpr int kSprFacings = 8;
+    struct SpriteSet {
+        SDL_Rect rect[kSprFacings][kSprFrames];
+        SDL_FRect bbox[kSprFacings][kSprFrames];
+        int frames = 1;      // 1 for static (buildings), kSprFrames for movers
+        bool ready = false;
+    };
+    std::map<std::pair<std::string, int>, SpriteSet> sprites_;
+    SDL_Texture* sprAtlas_ = nullptr;
+    int sprCurX_ = 0, sprCurY_ = 0, sprShelfH_ = 0;
+    bool spritesEnabled_ = false;
     bool lodEnabled_ = false;   // impostors off by default; F8 toggles them on
     float lodPx_ = 112.0f;                       // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 1.2f; // skip LOD entirely when zoomed in
@@ -3540,6 +3563,114 @@ private:
         modelH_[modelKey] = maxH;
     }
 
+    // A standalone COB VM for a type (no live unit), for baking sprites. onGet
+    // answers "healthy and moving" so locomotion scripts animate.
+    std::unique_ptr<tak::cob::Vm> loadTypeVm(const std::string& typeId,
+                                             std::vector<std::string>& names) {
+        std::string cobPath = dataRoot_ + "/scripts/" + typeId + ".cob";
+        if (!std::filesystem::exists(cobPath) && !ipRoot_.empty())
+            cobPath = ipRoot_ + "/scripts/" + typeId + ".cob";
+        try {
+            auto cobFile = tak::cob::load(cobPath);
+            names.clear();
+            for (const auto& p : cobFile.pieces) {
+                std::string n = p;
+                std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+                names.push_back(n);
+            }
+            auto vm = std::make_unique<tak::cob::Vm>(std::move(cobFile));
+            vm->onGet = [](int32_t v, const std::vector<int32_t>&) -> int32_t {
+                switch (v) { case 3: return 100; case 5: return 1; default: return 0; }
+            };
+            return vm;
+        } catch (const std::exception&) { return nullptr; }
+    }
+
+    // Bake a model's locomotion cycle (walk / fly) into the sprite atlas: kSprFrames
+    // poses x 8 facings, at 2x native. Main thread only (render target); one-time
+    // per model+colour. A reserved not-ready entry is left if there's no COB so we
+    // don't retry every frame (that unit just keeps using its full model).
+    void bakeSprites(const std::string& typeId, int slot, bool canMove, bool canFly) {
+        auto key = std::make_pair(typeId, slot);
+        if (sprites_.count(key)) return;
+        sprites_[key] = SpriteSet{};   // reserve (not ready)
+        auto vt = visuals_.find(typeId);
+        if (vt == visuals_.end()) return;
+        std::vector<std::string> names;
+        auto vm = loadTypeVm(typeId, names);
+        if (!vm) return;
+        Anim tmp;
+        tmp.pieceNames = names;
+        tmp.vm = std::move(vm);
+        tmp.flyGate = flyGateOf(*tmp.vm);
+        bool animated = canMove || canFly;
+        if (canFly) { tmp.vm->setStatic(tmp.flyGate, 1); tmp.vm->start("fly"); }
+        else if (canMove) { tmp.vm->start("walk_legs") || tmp.vm->start("walk"); }
+        SDL_Texture* atlas = atlasFor(slot);
+        if (!sprAtlas_) {
+            sprAtlas_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                          SDL_TEXTUREACCESS_TARGET, impAtlasDim_, impAtlasDim_);
+            if (!sprAtlas_) return;
+            SDL_SetTextureBlendMode(sprAtlas_, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(sprAtlas_, SDL_ScaleModeLinear);
+            SDL_Texture* p0 = SDL_GetRenderTarget(ren_);
+            SDL_SetRenderTarget(ren_, sprAtlas_);
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
+            SDL_RenderClear(ren_);
+            SDL_SetRenderTarget(ren_, p0);
+        }
+        SpriteSet ss;
+        ss.frames = animated ? kSprFrames : 1;
+        std::vector<Tri> scratch;
+        SDL_Texture* prev = SDL_GetRenderTarget(ren_);
+        SDL_SetRenderTarget(ren_, sprAtlas_);
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        const float S = kImpScale, kPi = 3.14159265f, period = 0.9f;
+        for (int k = 0; k < ss.frames; ++k) {
+            if (k > 0) for (int s = 0; s < 4; ++s) tmp.vm->tick(period / ss.frames / 4);
+            for (int fi = 0; fi < kSprFacings; ++fi) {
+                float heading = float(fi) / kSprFacings * 2.0f * kPi;
+                float facing = canFly ? (kPi - heading) : (canMove ? -heading : 0.0f);
+                scratch.clear();
+                collect(scratch, atlas, vt->second.model.root, Xform{}, &tmp, facing, 0, false);
+                std::stable_sort(scratch.begin(), scratch.end(),
+                          [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+                float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
+                for (auto& t : scratch)
+                    for (int i = 0; i < 3; ++i) {
+                        minX = std::min(minX, t.v[i].position.x);
+                        minY = std::min(minY, t.v[i].position.y);
+                        maxX = std::max(maxX, t.v[i].position.x);
+                        maxY = std::max(maxY, t.v[i].position.y);
+                    }
+                if (scratch.empty()) { minX = minY = 0; maxX = maxY = 1; }
+                const int pad = 2;
+                int w = std::clamp(int(std::ceil((maxX - minX) * S)) + 2 * pad, 2, 400);
+                int h = std::clamp(int(std::ceil((maxY - minY) * S)) + 2 * pad, 2, 400);
+                if (sprCurX_ + w > impAtlasDim_) { sprCurX_ = 0; sprCurY_ += sprShelfH_ + 1; sprShelfH_ = 0; }
+                if (sprCurY_ + h > impAtlasDim_) { SDL_SetRenderTarget(ren_, prev); return; }  // full
+                int rx = sprCurX_, ry = sprCurY_;
+                for (auto& t : scratch) {
+                    SDL_Vertex v[3];
+                    for (int i = 0; i < 3; ++i) {
+                        v[i] = t.v[i];
+                        v[i].position.x = (t.v[i].position.x - minX) * S + float(rx + pad);
+                        v[i].position.y = (t.v[i].position.y - minY) * S + float(ry + pad);
+                    }
+                    SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
+                }
+                ss.rect[fi][k] = SDL_Rect{rx, ry, w, h};
+                ss.bbox[fi][k] = SDL_FRect{minX - pad / S, minY - pad / S, w / S, h / S};
+                sprCurX_ += w + 1;
+                sprShelfH_ = std::max(sprShelfH_, h);
+            }
+        }
+        SDL_SetRenderTarget(ren_, prev);
+        ss.ready = true;
+        sprites_[key] = ss;
+    }
+
     // Project + transform one unit's model into screen-space, coloured vertex runs.
     // No SDL calls and only reads shared state (models/textures/heightmap/anim), so
     // it is safe to run for many units at once on the worker pool. drawUnit() then
@@ -3559,6 +3690,36 @@ private:
         int slot = colorSlot_[u.team & 7];
         float ax = (u.x - mapView_.offX()) * zm - terrainLiftX(u.x, u.z) * zm;
         float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
+        // Sprite sheet: draw a moving/idle unit as one animated quad from the baked
+        // locomotion cycle. Attack/death poses keep the full 3D model (rare).
+        if (spritesEnabled_) {
+            auto sit = sprites_.find(std::make_pair(vt->first, slot));
+            bool locoPose = !(anim && (anim->dying || anim->firing));
+            if (sit != sprites_.end() && sit->second.ready && locoPose) {
+                const SpriteSet& ss = sit->second;
+                int fi = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f);
+                int frame = 0;
+                if (ss.frames > 1) {
+                    bool moving = (u.type && u.type->canFly) || u.moving();
+                    if (moving)
+                        frame = (int(animClock_ * 12.0f) + u.id) % ss.frames;
+                }
+                const SDL_Rect& r = ss.rect[fi][frame];
+                const SDL_FRect& bb = ss.bbox[fi][frame];
+                float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
+                float qx = ax + bb.x * zm;
+                float qy = ay + bb.y * zm - alt * 0.8f * zm;
+                float inv = 1.0f / float(impAtlasDim_);
+                pushQuadUV(g.verts, qx, qy, bb.w * zm, bb.h * zm,
+                           float(r.x) * inv, float(r.y) * inv,
+                           float(r.x + r.w) * inv, float(r.y + r.h) * inv,
+                           SDL_Color{255, 255, 255, 255});
+                g.runs.push_back({sprAtlas_, 6});
+                g.ax = ax; g.ay = ay; g.alt = alt;
+                g.occY = wallOcclusionY(u.x, u.z);
+                return;
+            }
+        }
         // Level of detail: draw a small unit as a cached impostor billboard.
         // The size threshold scales up with the on-screen crowd, and a big crowd
         // also overrides the zoom gate -- so thousands of units use impostors even
@@ -4750,6 +4911,12 @@ private:
         if (key == SDLK_F8) {                     // toggle LOD impostors (A/B perf)
             lodEnabled_ = !lodEnabled_;
             notice_ = lodEnabled_ ? "LOD ON" : "LOD OFF";
+            noticeTimer_ = 2;
+            return true;
+        }
+        if (key == SDLK_F10) {                    // toggle animated sprite sheets
+            spritesEnabled_ = !spritesEnabled_;
+            notice_ = spritesEnabled_ ? "SPRITES ON" : "SPRITES OFF";
             noticeTimer_ = 2;
             return true;
         }
