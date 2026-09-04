@@ -2637,6 +2637,13 @@ public:
                 float cy = (u.z - mapView_.offY()) * zms - terrainLift(u.x, u.z) * zms;
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
                 float rr = 11.0f, rx = rr * zms, ry = rr * 0.65f * zms;
+                if (rx < 9.0f) {
+                    // Tiny on screen (a whole army zoomed out): one small marker
+                    // quad instead of eight bracket segments -- 8x less geometry.
+                    float s = std::max(2.0f, rx * 0.6f);
+                    pushQuad(shadowBatch_, cx - s, cy - s * 0.65f, 2 * s, 2 * s * 0.65f, grn);
+                    continue;
+                }
                 float L = rr * 0.45f * zms, th = std::max(1.0f, 1.2f * zms);
                 for (int sx = -1; sx <= 1; sx += 2)
                     for (int sy = -1; sy <= 1; sy += 2) {
@@ -2666,7 +2673,10 @@ public:
             if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
             bool sel = selSet_.count(u.id) != 0;
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
-            if (!sel && frac >= 1.0f) continue;
+            // Full-health units show a bar only if selected and big enough on screen
+            // (a selected army zoomed out doesn't need thousands of full green bars);
+            // damaged units always show one.
+            if (frac >= 1.0f && (!sel || 26.0f * zm < 22.0f)) continue;
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
             float bx = (u.x - mapView_.offX()) * zm - bw / 2 - terrainLiftX(u.x, u.z) * zm;
             float by = (u.z - mapView_.offY()) * zm - 30 * zm - terrainLift(u.x, u.z) * zm;
