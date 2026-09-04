@@ -936,7 +936,7 @@ public:
              bool crusades = false)
         // (side_ initialized below before loadPanel uses it)
         : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot),
-          side_(side), tntPath_(tntPath) {
+          side_(side), tntPath_(tntPath), crusades_(crusades) {
         registry_.loadMoveInfo(dataRoot_ + "/gamedata/moveinfo.tdf");
         // God economy timing (gamedata/Gods.tdf). TAK_GODTIME overrides the
         // appear time (seconds) for testing; otherwise use AppearTimeMin minutes.
@@ -1711,6 +1711,16 @@ public:
         // Build the world through the SHARED setup so the server's referee sim and
         // every client produce a bit-identical world (and hash). Client-only bits
         // (colours, camera, local player, panel) stay here.
+        // The game's balance is the ROOM's (a lobby choice), which may differ
+        // from how this client was launched. Rebuild the registry to match so our
+        // world -- and hash -- agree with the server's referee. (Crusades only
+        // re-tunes stats/build trees; models/textures are shared and id-keyed, so
+        // they need no reload.)
+        if ((room.opts.crusades != 0) != crusades_) {
+            registry_ = tak::sim::TypeRegistry{};
+            tak::sim::setupRegistry(registry_, dataRoot_, room.opts.crusades != 0);
+            crusades_ = room.opts.crusades != 0;
+        }
         tak::sim::MatchConfig cfg;
         cfg.tntPath = tntPath_;
         cfg.dataRoot = dataRoot_;
@@ -4290,6 +4300,7 @@ private:
     std::string dataRoot_;
     std::string ipRoot_;
     std::string tntPath_;   // map path (for MP start-position setup)
+    bool crusades_ = false; // which balance registry_ currently holds
     std::string side_ = "ara";
     tak::sim::TypeRegistry registry_;
     tak::sim::World world_;

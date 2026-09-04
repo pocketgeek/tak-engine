@@ -22,10 +22,10 @@ and place its data files in `assets/` (gitignored) to use the engine.
 5. ~~**Campaign**~~ ✅ mission loading via `.ota`/`.cob` with the
    `MAP_COMMAND` scripting API and `.crt` scenario/trigger parsing.
 6. **Multiplayer** 🚧 client–server (a central `takserver` relays a
-   server-sequenced deterministic lockstep for up to 8 players/teams). Core
-   proven: clients play a full game through the server bit-identically. Lobby
-   UI, server-run AI, and reconnect are in progress — see
-   `docs/multiplayer-design.md`.
+   server-sequenced deterministic lockstep for up to 8 players/teams, with a
+   lobby GUI). With `--data` the server also runs a referee sim that hosts the
+   AI players and validates every client's state hash. Reconnect is the main
+   remaining piece — see `docs/multiplayer-design.md`.
 7. ~~**Combat & unit depth**~~ ✅ the FBI/weapon data is driven faithfully:
    HP regen, veterancy (kills → +10%/level attack·armour·reload, gold sheen,
    promoted `veteranmodel`), per-unit mana pools & mana-per-shot, area-of-effect
@@ -121,10 +121,14 @@ Multiplayer is **client–server**: run the headless `takserver` (default port
 `takview game <map> <terrain> <data> --server <host> [--serverport N] [--name X]`.
 The server hosts a lobby and relays a server-sequenced deterministic lockstep —
 up to 8 players on up to 8 teams (allies share vision), each machine running the
-identical sim with only ~35-byte commands on the wire, verified by a periodic
-state-hash cross-check. All players connect out to the one server, so no NAT or
-port-forwarding on the players' side. Everyone needs the same engine build and
-game data (the handshake gates protocol version). See
+identical sim with only ~35-byte commands on the wire. Start the server with
+`takserver --port 7677 --data <extracted-data-dir>` and it also runs a **referee
+simulation** that hosts the AI players (so the host's machine isn't loaded by
+them) and holds the canonical state hash every client is checked against; without
+`--data` it is a pure relay and clients cross-check hashes among themselves. All
+players connect out to the one server, so no NAT or port-forwarding on the
+players' side. Everyone needs the same engine build and game data (the handshake
+gates protocol version). See
 `docs/multiplayer-design.md` for the full design and milestone plan. The
 in-client lobby has a game browser, a create-game dialog, and a room screen
 where each player picks their faction, colour, and team and readies up (the host
