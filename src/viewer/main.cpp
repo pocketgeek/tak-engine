@@ -3232,29 +3232,41 @@ private:
         // battle-worn army isn't broadly gold and fresh units stay their team colour.
         float vetGold = (!conjuring && u.veteran >= 4)
                             ? float(std::min(u.veteran, 10) - 3) / 7.0f * 0.5f : 0.0f;
+        // Batch the model's triangles into one RenderGeometry call per texture
+        // (they're depth-sorted, so flush only when the texture changes). A whole
+        // model was ~50 draw calls; now it's usually 1 -- the big win for crowds.
+        triBatch_.clear();
+        SDL_Texture* curTex = nullptr;
+        auto flush = [&] {
+            if (!triBatch_.empty())
+                SDL_RenderGeometry(ren_, curTex, triBatch_.data(),
+                                   int(triBatch_.size()), nullptr, 0);
+            triBatch_.clear();
+        };
         for (auto& t : tris_) {
-            SDL_Vertex v[3];
+            if (t.tex != curTex) { flush(); curTex = t.tex; }
             for (int i = 0; i < 3; ++i) {
-                v[i] = t.v[i];
-                v[i].position.x = v[i].position.x * zm + ax;
-                v[i].position.y = v[i].position.y * zm + ay;
+                SDL_Vertex v = t.v[i];
+                v.position.x = v.position.x * zm + ax;
+                v.position.y = v.position.y * zm + ay;
                 if (vetGold > 0) {
-                    v[i].color.r = Uint8(v[i].color.r + (255 - v[i].color.r) * vetGold);
-                    v[i].color.g = Uint8(v[i].color.g + (200 - v[i].color.g) * vetGold * 0.85f);
-                    v[i].color.b = Uint8(v[i].color.b * (1.0f - vetGold * 0.7f));
+                    v.color.r = Uint8(v.color.r + (255 - v.color.r) * vetGold);
+                    v.color.g = Uint8(v.color.g + (200 - v.color.g) * vetGold * 0.85f);
+                    v.color.b = Uint8(v.color.b * (1.0f - vetGold * 0.7f));
                 }
                 if (conjuring) {
                     float pulse = 0.5f + 0.5f * std::sin(animClock_ * 7.0f +
-                                                         v[i].position.y * 0.03f);
+                                                         v.position.y * 0.03f);
                     float glow = (1.0f - p) * pulse;   // 0 once fully formed
-                    v[i].color.a = alpha;
-                    v[i].color.r = Uint8(v[i].color.r * (1.0f - 0.75f * glow));
-                    v[i].color.g = Uint8(v[i].color.g * (1.0f - 0.25f * glow));
+                    v.color.a = alpha;
+                    v.color.r = Uint8(v.color.r * (1.0f - 0.75f * glow));
+                    v.color.g = Uint8(v.color.g * (1.0f - 0.25f * glow));
                     // blue channel left high, so the shimmer reads cyan
                 }
+                triBatch_.push_back(v);
             }
-            SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
         }
+        flush();
 
         // Conjure effect: sprinkle the faction's build/summon sparkle over the
         // footprint while the unit materialises, each staggered so they twinkle
@@ -3427,6 +3439,7 @@ private:
     std::map<int, Anim> anims_;
     std::map<std::string, std::vector<SDL_Texture*>> textures_;
     std::vector<Tri> tris_;
+    std::vector<SDL_Vertex> triBatch_;   // reused per-unit vertex batch
     std::vector<int> selection_;
     bool dragging_ = false;
     bool buildDrag_ = false;          // shift-drag placing a line of buildings
