@@ -3393,6 +3393,7 @@ private:
         SDL_FRect bbox[kSprFacings][kSprFrames];
         SDL_Texture* page = nullptr;   // which sprite-atlas page holds this set
         int frames = 1;      // 1 for static (buildings), kSprFrames for movers
+        float period = 0.9f; // real locomotion cycle length (s) the frames span
         bool ready = false;
     };
     std::map<std::pair<std::string, int>, SpriteSet> sprites_;
@@ -3643,7 +3644,34 @@ private:
         ss.frames = animated ? kSprFrames : 1;
         std::vector<Tri> scratch;
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
-        const float S = kImpScale, kPi = 3.14159265f, period = 0.9f;
+        const float S = kImpScale, kPi = 3.14159265f;
+        // Estimate the real locomotion cycle length so the baked frames span one
+        // actual cycle (not a guessed 0.9s). TA locomotion scripts play once then
+        // hold, so the cycle = how long the pose keeps changing; if it never
+        // settles (a truly looping script) or settles instantly, fall back to 0.9s.
+        auto sig = [&] {
+            double s = 0;
+            for (const auto& pc : tmp.vm->pieces())
+                s += std::sin(pc.rot[0]) + std::sin(pc.rot[1]) + std::sin(pc.rot[2])
+                   + pc.move[0] + pc.move[1] + pc.move[2];
+            return float(s);
+        };
+        float period = 0.9f;
+        if (animated) {
+            initAnim();
+            const float dt = 1.0f / 60.0f;
+            float prev = sig();
+            int stable = 0;
+            for (float t = dt; t < 2.5f; t += dt) {
+                tmp.vm->tick(dt);
+                float s = sig();
+                if (std::fabs(s - prev) < 1e-4f) {
+                    if (++stable >= 6 && t - 6 * dt > 0.25f) { period = t - 6 * dt; break; }
+                } else stable = 0;
+                prev = s;
+            }
+            period = std::clamp(period, 0.3f, 2.0f);
+        }
         bool atlasFull = false;
         SDL_Texture* target = sprPages_.back();
         // Capture the current VM pose at facing fi into a packed cell of `target`.
@@ -3703,6 +3731,7 @@ private:
         }
         SDL_SetRenderTarget(ren_, prev);
         if (atlasFull || !ss.page) return;   // leave reserved not-ready -> full model
+        ss.period = period;
         ss.ready = true;
         sprites_[key] = ss;
     }
@@ -3742,7 +3771,10 @@ private:
                 int frame = 0;
                 if (ss.frames > 1 && !grounded) {
                     bool moving = (u.type && u.type->canFly) || u.moving();
-                    if (moving) frame = (int(animClock_ * 12.0f) + u.id) % ss.frames;
+                    if (moving) {
+                        float rate = float(ss.frames) / std::max(0.05f, ss.period);
+                        frame = (int(animClock_ * rate) + u.id) % ss.frames;
+                    }
                 }
                 const SDL_Rect& r = ss.rect[fi][frame];
                 const SDL_FRect& bb = ss.bbox[fi][frame];
