@@ -5465,7 +5465,7 @@ int main(int argc, char** argv) {
          hilltest = false, keytest = false, guardtest = false, selonly = false,
          lodetest = false;
     std::string lodeUnitName;
-    bool firetest = false, facetest = false, soundtest = false;
+    bool firetest = false, facetest = false, soundtest = false, noVsync = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -5501,6 +5501,7 @@ int main(int argc, char** argv) {
             winH = std::atoi(argv[++i]);
         }
         else if (a == "--maxfps" && i + 1 < argc) maxFps = std::atoi(argv[++i]);
+        else if (a == "--novsync") noVsync = true;
 
 
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
@@ -5550,13 +5551,18 @@ int main(int argc, char** argv) {
     SDL_Window* win = SDL_CreateWindow("takview", SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, winW, winH,
                                        SDL_WINDOW_RESIZABLE);
-    SDL_Renderer* ren = SDL_CreateRenderer(
-        win, -1, shot.empty() ? SDL_RENDERER_PRESENTVSYNC : SDL_RENDERER_SOFTWARE);
+    Uint32 renFlags = SDL_RENDERER_SOFTWARE;
+    if (shot.empty()) renFlags = noVsync ? SDL_RENDERER_ACCELERATED
+                                         : SDL_RENDERER_PRESENTVSYNC;
+    SDL_Renderer* ren = SDL_CreateRenderer(win, -1, renFlags);
     if (!ren) {
         std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
         return 1;
     }
-    if (shot.empty()) SDL_RenderSetVSync(ren, 1);   // explicit vsync
+    // Vsync avoids tearing but, with double buffering, halves the frame rate the
+    // moment a frame overruns one refresh even when there's headroom. --novsync
+    // unlocks it (useful to see true throughput / for high-refresh displays).
+    if (shot.empty()) SDL_RenderSetVSync(ren, noVsync ? 0 : 1);
 
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;
@@ -5647,6 +5653,18 @@ int main(int argc, char** argv) {
         uint64_t now = SDL_GetPerformanceCounter();
         float dt = float(now - last) / float(SDL_GetPerformanceFrequency());
         last = now;
+        // FPS readout in the window title (updated ~4x/sec).
+        {
+            static float fpsAcc = 0; static int fpsFrames = 0;
+            fpsAcc += dt; ++fpsFrames;
+            if (fpsAcc >= 0.25f) {
+                char title[64];
+                std::snprintf(title, sizeof title, "takview  |  %.0f fps",
+                              float(fpsFrames) / fpsAcc);
+                SDL_SetWindowTitle(win, title);
+                fpsAcc = 0; fpsFrames = 0;
+            }
+        }
         if (ktPhase >= 0) {
             ktClock += dt;
             auto click = [&](int x, int y, uint8_t btn) {
