@@ -15,6 +15,7 @@
 #include "gaf/gaf.h"
 #include "hpi/hpi.h"
 #include "ai/ai.h"
+#include "net/client.h"
 #include "net/lockstep.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
@@ -32,6 +33,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -933,7 +935,7 @@ public:
              bool crusades = false)
         // (side_ initialized below before loadPanel uses it)
         : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot),
-          side_(side) {
+          side_(side), tntPath_(tntPath) {
         registry_.loadMoveInfo(dataRoot_ + "/gamedata/moveinfo.tdf");
         // God economy timing (gamedata/Gods.tdf). TAK_GODTIME overrides the
         // appear time (seconds) for testing; otherwise use AppearTimeMin minutes.
@@ -1663,18 +1665,143 @@ public:
         }
     }
 
-    void setNet(tak::net::Session* net) {
-        net_ = net;
-        localPlayer_ = net->localPlayer();
-        world_.setVisPlayer(localPlayer_);
-        aiEnabled_ = false;   // both sides are human in a net game
+    // Attach the multiplayer client. The game world is set up later, from the
+    // server's GameStarting (startMpGame), not from the constructor.
+    void setMpClient(tak::net::MpClient* mp) {
+        mp_ = mp;
+        aiEnabled_ = false;   // the server owns any AI; clients are all human
     }
+    bool isNet() const { return mp_ != nullptr; }
 
-    // Route a command: apply immediately offline, schedule via net online.
+    // Route a command: offline it applies immediately; in a net game it is queued
+    // for the server, which stamps ownership and sequences it into a tick bundle.
     void issue(tak::net::Command c) {
         c.player = uint8_t(localPlayer_);
-        if (net_) net_->issue(c);
+        if (mp_) outbox_.push_back(c);
         else apply(c);
+    }
+
+    // Set up the world for a multiplayer match from the server's final slot
+    // table: one player per used slot (sim player index == slot), teams/colours
+    // per slot, a monarch spawned at a start position each, seeded starting mana.
+    void startMpGame(const tak::net::RoomView& room, uint32_t seed) {
+        (void)seed;
+        int maxSlot = 0;
+        for (int i = 0; i < tak::net::kMaxSlots; ++i)
+            if (room.slots[i].type == 1 || room.slots[i].type == 2) maxSlot = i;
+        world_.setPlayerCount(maxSlot + 1);
+        for (int i = 0; i <= maxSlot; ++i) {
+            world_.setTeam(i, room.slots[i].team);
+            colorSlot_[i & 7] = room.slots[i].color % 10;
+        }
+        // Assign the N most mutually-distant start positions to the used slots.
+        auto starts = parseStartPositions(tntPath_);
+        float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        std::vector<std::pair<float, float>> spots = starts;
+        int used = 0;
+        for (int i = 0; i <= maxSlot; ++i)
+            if (room.slots[i].type == 1 || room.slots[i].type == 2) ++used;
+        while (int(spots.size()) < used) {
+            float a = float(spots.size()) / float(std::max(used, 1)) * 6.2831853f;
+            spots.push_back({cx + std::cos(a) * 300, cz + std::sin(a) * 300});
+        }
+        const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
+        int spot = 0;
+        for (int i = 0; i <= maxSlot; ++i) {
+            const auto& s = room.slots[i];
+            if (s.type != 1 && s.type != 2) continue;
+            std::string fkSide = sides[s.faction % 5];
+            const FactionKit& fk = kit(fkSide);
+            float mx = spots[size_t(spot)].first, mz = spots[size_t(spot)].second;
+            ++spot;
+            int mon = spawn(fk.monarch, mx, mz, 0, i);
+            if (i == room.mySlot) { playerMonarchId_ = mon; builderId_ = mon; }
+            world_.player(i).mana = 2800;
+        }
+        localPlayer_ = room.mySlot < 0 ? 0 : room.mySlot;
+        world_.setVisPlayer(localPlayer_);
+        side_ = sides[room.slots[localPlayer_].faction % 5];
+        loadPanel(side_);
+        mapView_.setOffset(spots[0].first - 640 / 0.9f, spots[0].second - 400 / 0.9f);
+        for (auto& u : world_.units()) {
+            if (!u.type || u.type->canMove) continue;
+            tak::sim::blockFootprint(world_.nav(), *u.type, u.x, u.z, true);
+        }
+    }
+
+    // One networked frame: pump the connection, send this frame's local orders,
+    // and simulate every tick the server has delivered a bundle for. Returns
+    // false when the game/connection ends (see netError()).
+    bool mpStep() {
+        if (!mp_->poll()) { netError_ = mp_->error().empty() ? "disconnected" : mp_->error(); return false; }
+        if (mp_->desynced()) { netError_ = mp_->desyncReason(); return false; }
+        if (!outbox_.empty()) { mp_->sendCommands(outbox_); outbox_.clear(); }
+        tak::net::Bundle bd;
+        while (outcome_ == 0 && mp_->takeBundle(netTick_, bd)) {
+            for (const auto& c : bd.cmds) apply(c);
+            for (const auto& e : bd.events) applyEvent(e);
+            update(1.0f / 30.0f);
+            if (netTick_ % 30 == 0) mp_->sendHash(netTick_, world_.stateHash());
+            ++netTick_;
+        }
+        return true;
+    }
+
+    uint64_t worldHashPublic() const { return world_.stateHash(); }
+
+    // Drive one iteration of the multiplayer lobby + game. autoMode: 0 = don't
+    // auto-drive the lobby (a real UI will), 1 = auto-host (create + start at 2+
+    // ready), 2 = auto-join the first game. Returns false when the session ends.
+    // (M3 uses the auto modes; the interactive lobby UI is follow-on work.)
+    bool mpAutoStep(int autoMode, const std::string& mapId, bool crusades) {
+        using S = tak::net::MpClient::State;
+        if (!mp_->poll()) { netError_ = mp_->error(); return false; }
+        S st = mp_->state();
+        if (st == S::Done) { if (netError_.empty()) netError_ = mp_->error(); return false; }
+        if (st == S::Lobby && autoMode == 1) {
+            tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
+            mp_->createGame("headless", "", mapId, o);
+        } else if (st == S::Lobby && (autoMode == 2 || autoMode == 3)) {
+            // Poll the game list; join the first, or (mode 3) create if none appear.
+            if (SDL_GetTicks64() - mpListMs_ > 300) { mp_->listGames(); mpListMs_ = SDL_GetTicks64(); }
+            if (!mp_->games().empty()) mp_->joinGame(mp_->games().front().id, "");
+            else if (autoMode == 3 && mpListMs_ && SDL_GetTicks64() - mpFirstListMs_ > 800) {
+                tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
+                mp_->createGame(mapId, "", mapId, o);
+            }
+            if (!mpFirstListMs_) mpFirstListMs_ = SDL_GetTicks64();
+        } else if (st == S::InRoom && autoMode && !mpReadied_) {
+            const auto& r = mp_->room();
+            if (r.mySlot >= 0) {
+                mp_->setSlot(r.mySlot, 1, uint8_t(r.mySlot % 5), uint8_t(r.mySlot),
+                             uint8_t(r.mySlot), 1);
+                mpReadied_ = true;
+            }
+        } else if (st == S::InRoom && (autoMode == 1 || autoMode == 3) && !mpStarted_ &&
+                   mp_->room().hostId == mp_->myClientId()) {
+            int ready = 0;
+            for (int i = 0; i < tak::net::kMaxSlots; ++i)
+                if (mp_->room().slots[i].type == 1 && mp_->room().slots[i].ready) ++ready;
+            if (ready >= 2) { mp_->startGame(); mpStarted_ = true; }
+        } else if (mp_->starting() && !mpSetupDone_) {
+            startMpGame(mp_->startRoom(), mp_->startSeed());
+            mp_->reportLoaded();
+            mpSetupDone_ = true;
+        } else if (st == S::InGame) {
+            return mpStep();
+        }
+        return true;
+    }
+
+    // A sequenced lifecycle event from the tick bundle (M3: none are generated;
+    // handler is here so the wire format is honoured when M5 adds forfeits).
+    void applyEvent(const tak::net::Event& e) {
+        int p = e.player;
+        if (p < 0 || p >= world_.numPlayers()) return;
+        // Forfeit/Leave: the player's units go inert (stop). Disposal per the
+        // forfeit rule is M5 work.
+        for (auto& u : world_.units())
+            if (u.alive() && u.player == p) world_.stop(u.id);
     }
 
     void apply(const tak::net::Command& c) {
@@ -1733,30 +1860,12 @@ public:
     }
 
     // One lockstep step: returns false while stalled waiting for the peer.
-    bool netStep() {
-        std::vector<tak::net::Command> cmds;
-        if (!net_->exchange(netTick_, cmds, 2000)) {
-            netError_ = net_->error();
-            return false;
-        }
-        for (const auto& c : cmds) apply(c);
-        update(1.0f / 30.0f);
-        if (netTick_ % tak::net::kHashInterval == 0) {
-            uint64_t h = world_.stateHash();
-            std::printf("HASH %u %016llx\n", netTick_, (unsigned long long)h);
-            if (!net_->checkHash(netTick_, h)) netError_ = net_->error();
-        }
-        ++netTick_;
-        return true;
-    }
-
     uint32_t netTick() const { return netTick_; }
     tak::sim::World& worldRef() { return world_; }
     void selectOnly(int id) { selection_.clear(); selection_.push_back(id); }
     size_t menuSize(const std::string& id) { return registry_.buildable(id).size(); }
     bool hasIP() const { return !ipRoot_.empty(); }
     const std::string& netError() const { return netError_; }
-    bool isNet() const { return net_ != nullptr; }
 
     void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }
 
@@ -2903,7 +3012,7 @@ public:
                 y += 16;
             }
         }
-        if (net_ && hudFont_.ok()) {
+        if (mp_ && hudFont_.ok()) {
             char nb[64];
             std::snprintf(nb, sizeof nb, "NET P%d  TICK %u", localPlayer_ + 1, netTick_);
             hudFont_.draw(ren_, nb, float(winW) - 200, float(winH) - 14, 1.4f,
@@ -4225,6 +4334,7 @@ private:
     MapView mapView_;
     std::string dataRoot_;
     std::string ipRoot_;
+    std::string tntPath_;   // map path (for MP start-position setup)
     std::string side_ = "ara";
     tak::sim::TypeRegistry registry_;
     tak::sim::World world_;
@@ -4255,7 +4365,7 @@ private:
     // Game-speed multiplier. Forced to 1x in a networked game: the peers advance
     // the sim in lockstep at a fixed step, so scaling one peer's dt would desync.
     float speedMult() const {
-        return net_ ? 1.0f : std::pow(10.0f, float(gameSpeed_) / 10.0f);
+        return mp_ ? 1.0f : std::pow(10.0f, float(gameSpeed_) / 10.0f);
     }
     bool showCounts_ = false;   // F4: per-faction live unit counts
     bool showColorPicker_ = false;   // F6: pick the player colour
@@ -4263,7 +4373,10 @@ private:
     std::vector<std::pair<SDL_FRect, int>> colorRects_;   // picker swatch hit boxes
     float fps_ = 0;             // smoothed render FPS, shown on the F4 overlay
     int winW_ = 0, winH_ = 0;   // last-known window size (for centering/culling)
-    tak::net::Session* net_ = nullptr;
+    tak::net::MpClient* mp_ = nullptr;
+    std::vector<tak::net::Command> outbox_;   // local orders to send to the server
+    uint64_t mpListMs_ = 0, mpFirstListMs_ = 0;   // auto-join: ListGames timing
+    bool mpReadied_ = false, mpStarted_ = false, mpSetupDone_ = false;
     int localPlayer_ = 0;
     // Player-colour slot per player (which colour variant of each unit texture to
     // use); defaults to the player index. Overridable via --color / --aicolor and
@@ -5170,7 +5283,7 @@ private:
         if (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS ||
             key == SDLK_MINUS || key == SDLK_KP_MINUS) {
             bool up = (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS);
-            if (net_) {   // lockstep peers must share one clock
+            if (mp_) {   // lockstep peers must share one clock
                 notice_ = "GAME SPEED LOCKED IN NET GAMES";
                 noticeTimer_ = 2;
                 return true;
@@ -5231,7 +5344,7 @@ private:
         }
         // F9/F11 stress spawns mutate the world outside the command path, so
         // they are dev-only: in a networked game they would instantly desync.
-        if ((key == SDLK_F9 || key == SDLK_F11) && net_) {
+        if ((key == SDLK_F9 || key == SDLK_F11) && mp_) {
             notice_ = "STRESS SPAWN DISABLED IN NET GAMES";
             noticeTimer_ = 2;
             return true;
@@ -6233,6 +6346,8 @@ int main(int argc, char** argv) {
     }
     std::string mode = argv[1];
     std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
+    std::string serverHost, playerName;
+    int serverPort = 7677, mpHeadless = 0;
     int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 60;
     int playerColor = -1, aiColor = -1;   // --color / --aicolor slot overrides
     float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
@@ -6286,11 +6401,12 @@ int main(int argc, char** argv) {
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
         else if (a == "--selonly") selonly = true;
 
-        else if (a == "--host" && i + 1 < argc) hostPort = std::atoi(argv[++i]);
-        else if (a == "--join" && i + 2 < argc) {
-            joinAddr = argv[++i];
-            joinPort = std::atoi(argv[++i]);
-        }
+        else if (a == "--server" && i + 1 < argc) serverHost = argv[++i];
+        else if (a == "--serverport" && i + 1 < argc) serverPort = std::atoi(argv[++i]);
+        else if (a == "--name" && i + 1 < argc) playerName = argv[++i];
+        // Headless multiplayer test drivers (auto-play through the server).
+        else if (a == "--mphost") mpHeadless = 1;   // create a game, start it, play
+        else if (a == "--mpjoin") mpHeadless = 2;   // join the first game, play
         else if (a == "--nofog") nofog = true;
         else if (a == "--cheat") tak::sim::gInstantBuild = true;
         else if (a == "--look" && i + 2 < argc) {
@@ -6306,21 +6422,21 @@ int main(int argc, char** argv) {
         }
         else args.push_back(a);
     }
-    if (!shot.empty()) SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
+    if (!shot.empty() || mpHeadless) SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
+    (void)hostPort; (void)joinPort; (void)joinAddr;   // --host/--join retired (see --server)
 
-    std::unique_ptr<tak::net::Session> net;
-    if (hostPort || joinPort) {
-        net = std::make_unique<tak::net::Session>();
-        bool ok = hostPort ? (std::printf("hosting on port %d, waiting for peer...\n",
-                                          hostPort),
-                              net->host(uint16_t(hostPort), 60))
-                           : net->join(joinAddr, uint16_t(joinPort));
-        if (!ok) {
-            std::fprintf(stderr, "net: %s\n", net->error().c_str());
+    // Connect to the multiplayer server, if requested.
+    std::unique_ptr<tak::net::MpClient> mp;
+    if (!serverHost.empty()) {
+        mp = std::make_unique<tak::net::MpClient>();
+        if (playerName.empty()) playerName = "player";
+        if (!mp->connect(serverHost, uint16_t(serverPort), playerName)) {
+            std::fprintf(stderr, "server: %s\n", mp->error().c_str());
             return 1;
         }
-        std::printf("net: connected as player %d\n", net->localPlayer() + 1);
+        std::printf("connected to %s:%d as '%s'\n", serverHost.c_str(), serverPort, playerName.c_str());
     }
+
 
     if (shot.empty()) SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -6350,10 +6466,13 @@ int main(int argc, char** argv) {
         if (mode == "map" && args.size() >= 2) {
             mapView = std::make_unique<MapView>(ren, args[0], args[1]);
         } else if (mode == "game" && args.size() >= 3) {
+            // A multiplayer client builds the world from the server's GameStarting
+            // later, so it constructs "bare" (no single-player 2-monarch spawn).
             gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo,
                                                   scenario, missionFlag,
-                                                  navy || amphib || firetest || facetest,
+                                                  navy || amphib || firetest || facetest || mp,
                                                   side, aiSide, crusades);
+            if (mp) gameView->setMpClient(mp.get());
             // Never let the window shrink below what the widest build-icon row
             // needs (full-size icons), and grow it now if it opened smaller.
             {
@@ -6365,7 +6484,6 @@ int main(int argc, char** argv) {
             }
             if (playerColor >= 0) gameView->setPlayerColor(0, playerColor);
             if (aiColor >= 0) gameView->setPlayerColor(1, aiColor);
-            if (net) gameView->setNet(net.get());
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);
             if (trace) gameView->setTrace(true);
@@ -6401,9 +6519,27 @@ int main(int argc, char** argv) {
 
     bool running = true;
     float netAccum = 0;
+    std::string serverMapId = args.empty() ? "" : std::filesystem::path(args[0]).stem().string();
     int ktPhase = keytest ? 0 : -1;
     float ktClock = 0;
     bool keytestSelectOnly = selonly;
+
+    // Headless multiplayer test driver: auto-run the lobby + game loop against
+    // takserver and print periodic hashes. Proves the server-sequenced lockstep
+    // end to end without any SDL UI. (--mphost creates+starts, --mpjoin joins.)
+    if (gameView && mp && mpHeadless) {
+        std::string mapId = std::filesystem::path(args[0]).stem().string();
+        int limitTicks = int((startTime > 0 ? startTime : 60) * 30);
+        while (gameView->mpAutoStep(mpHeadless, mapId, crusades)) {
+            if (int(gameView->netTick()) >= limitTicks) break;
+            SDL_Delay(2);
+        }
+        std::fprintf(stderr, "mp-headless done: tick=%u hash=%016llx err=%s\n",
+                     gameView->netTick(), (unsigned long long)gameView->worldHashPublic(),
+                     gameView->netError().empty() ? "none" : gameView->netError().c_str());
+        mp->disconnect();
+        return gameView->netError().empty() ? 0 : 1;
+    }
 
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
@@ -6527,19 +6663,11 @@ int main(int argc, char** argv) {
         double t1 = prof ? pnow() : 0;
         if (gameView) {
             if (gameView->isNet()) {
-                netAccum += dt;
-                // Catch up at most a few steps per frame; block briefly on peer.
-                int steps = 0;
-                while (netAccum >= 1.0f / 30.0f && steps < 4 &&
-                       gameView->netError().empty()) {
-                    if (gameView->netStep()) {
-                        netAccum -= 1.0f / 30.0f;
-                        ++steps;
-                    } else {
-                        break;   // stalled or errored; keep rendering
-                    }
-                }
-                if (netAccum > 0.5f) netAccum = 0.5f;
+                // Server-sequenced lockstep: one mpAutoStep pumps the connection,
+                // advances the lobby (auto-matchmaking for now -- a lobby UI is
+                // follow-on), and simulates every delivered tick. (void)netAccum.
+                (void)netAccum;
+                gameView->mpAutoStep(3, serverMapId, crusades);   // 3 = join-or-create
             } else {
                 gameView->update(dt);
             }

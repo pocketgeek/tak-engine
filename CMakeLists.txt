@@ -33,6 +33,7 @@ add_library(tak-formats
   src/net/lockstep.cpp
   src/net/protocol.cpp
   src/net/conn.cpp
+  src/net/client.cpp
   src/util/png.cpp
   src/util/jpeg.cpp
   src/terrain/terrain.cpp
