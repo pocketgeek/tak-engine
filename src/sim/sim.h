@@ -315,9 +315,13 @@ public:
     // Was the goal cell reachable from (x,z)? (finite integration distance)
     bool reachable(float x, float z) const;
 
+    uint32_t used = 0;   // tick of last use, for the flow-cache LRU eviction
+
 private:
     int w_ = 0, h_ = 0, goal_ = -1;
-    std::vector<float> dirx_, dirz_;
+    std::vector<int8_t> dir_;      // per cell: best neighbour index 0-7, -1 = none
+                                   // (1 byte, not two floats -- keeps the LRU cache
+                                   // of fields small enough to hold every live goal)
     std::vector<uint16_t> dist_;   // integration field (0xFFFF = unreachable)
 };
 
