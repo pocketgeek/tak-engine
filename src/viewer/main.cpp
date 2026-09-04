@@ -2364,6 +2364,13 @@ public:
         // Build the texture atlas for every colour slot in view (main thread; the
         // parallel pass below only reads the finished atlas pointers).
         for (const auto* u : visUnits_) atlasFor(colorSlot_[u->team & 7]);
+        // Ensure an impostor sprite exists for every visible model when zoomed out
+        // enough that LOD may kick in (main thread; the parallel pass only reads it).
+        if (lodEnabled_ && mapView_.zoom() < kLodZoomGate)
+            for (const auto* u : visUnits_)
+                if (u->type)
+                    ensureImpostor(unitType_.at(u->id), colorSlot_[u->team & 7],
+                                   u->type->canMove);
         double _pt0 = double(SDL_GetPerformanceCounter());
         pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
             thread_local std::vector<Tri> scratch;
@@ -3293,12 +3300,43 @@ private:
     std::vector<SDL_Texture*> atlasTex_;   // per colour slot; nullptr until built
     bool atlasLaidOut_ = false;
 
+    // Level of detail: a unit smaller than kLodPx on screen is drawn as a single
+    // billboard quad sampling a pre-rendered impostor sprite (8 facings, cached
+    // per model+colour, packed into impAtlas_) instead of its full ~200-triangle
+    // model. That cuts the per-frame vertex count ~100x for a zoomed-out crowd --
+    // the thing that pins the render thread and the GPU at thousands of units.
+    struct Impostor {
+        SDL_Rect rect[8];    // where each facing sits in impAtlas_
+        SDL_FRect bbox[8];   // model's screen bbox at zoom 1 (x,y = offset from anchor)
+        bool ready = false;
+    };
+    std::map<std::pair<std::string, int>, Impostor> impostors_;  // (model, slot)
+    std::map<std::string, float> modelH_;    // model projected height (px @ zoom 1)
+    SDL_Texture* impAtlas_ = nullptr;
+    int impAtlasDim_ = 2048, impCurX_ = 0, impCurY_ = 0, impShelfH_ = 0;
+    bool lodEnabled_ = true;
+    static constexpr float kLodPx = 40.0f;      // model shorter than this -> impostor
+    static constexpr float kLodZoomGate = 1.2f; // skip LOD entirely when zoomed in
+
+    static int facingIndex(float heading) {
+        return int(std::lround(heading / (2.0f * 3.14159265f) * 8.0f)) & 7;
+    }
+
     // Append two triangles for an axis-aligned quad (shared by shadow blobs and
     // shadow sprites; uv is ignored when the batch is drawn untextured).
     static void pushQuad(std::vector<SDL_Vertex>& b, float x, float y, float w,
                          float h, SDL_Color c) {
         SDL_Vertex tl{{x, y}, c, {0, 0}}, tr{{x + w, y}, c, {1, 0}},
                    br{{x + w, y + h}, c, {1, 1}}, bl{{x, y + h}, c, {0, 1}};
+        b.push_back(tl); b.push_back(tr); b.push_back(br);
+        b.push_back(tl); b.push_back(br); b.push_back(bl);
+    }
+    // Textured quad with explicit UV corners (for impostor billboards).
+    static void pushQuadUV(std::vector<SDL_Vertex>& b, float x, float y, float w,
+                           float h, float u0, float v0, float u1, float v1,
+                           SDL_Color c) {
+        SDL_Vertex tl{{x, y}, c, {u0, v0}}, tr{{x + w, y}, c, {u1, v0}},
+                   br{{x + w, y + h}, c, {u1, v1}}, bl{{x, y + h}, c, {u0, v1}};
         b.push_back(tl); b.push_back(tr); b.push_back(br);
         b.push_back(tl); b.push_back(br); b.push_back(bl);
     }
@@ -3363,6 +3401,77 @@ private:
         return atlas;
     }
 
+    // Render a model's 8 facings into the impostor atlas once and cache the rects
+    // + per-facing bounding box. Main thread only (render target); must run before
+    // the parallel geometry pass reads it.
+    void ensureImpostor(const std::string& modelKey, int slot, bool canMove) {
+        auto key = std::make_pair(modelKey, slot);
+        if (impostors_.count(key)) return;
+        auto vt = visuals_.find(modelKey);
+        if (vt == visuals_.end()) return;
+        SDL_Texture* atlas = atlasFor(slot);
+        if (!impAtlas_) {
+            impAtlas_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                          SDL_TEXTUREACCESS_TARGET, impAtlasDim_, impAtlasDim_);
+            if (!impAtlas_) return;
+            SDL_SetTextureBlendMode(impAtlas_, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(impAtlas_, SDL_ScaleModeLinear);
+            SDL_Texture* p0 = SDL_GetRenderTarget(ren_);
+            SDL_SetRenderTarget(ren_, impAtlas_);
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
+            SDL_RenderClear(ren_);
+            SDL_SetRenderTarget(ren_, p0);
+        }
+        Impostor imp;
+        std::vector<Tri> scratch;
+        SDL_Texture* prev = SDL_GetRenderTarget(ren_);
+        SDL_SetRenderTarget(ren_, impAtlas_);
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        float maxH = 1.0f;
+        for (int k = 0; k < 8; ++k) {
+            float heading = float(k) / 8.0f * 2.0f * 3.14159265f;
+            float facing = canMove ? -heading : 0.0f;
+            scratch.clear();
+            collect(scratch, atlas, vt->second.model.root, Xform{}, nullptr, facing, 0, false);
+            std::stable_sort(scratch.begin(), scratch.end(),
+                      [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+            float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
+            for (auto& t : scratch)
+                for (int i = 0; i < 3; ++i) {
+                    minX = std::min(minX, t.v[i].position.x);
+                    minY = std::min(minY, t.v[i].position.y);
+                    maxX = std::max(maxX, t.v[i].position.x);
+                    maxY = std::max(maxY, t.v[i].position.y);
+                }
+            if (scratch.empty()) { minX = minY = 0; maxX = maxY = 1; }
+            const int pad = 1;
+            int w = std::clamp(int(std::ceil(maxX - minX)) + 2 * pad, 2, 200);
+            int h = std::clamp(int(std::ceil(maxY - minY)) + 2 * pad, 2, 200);
+            if (impCurX_ + w > impAtlasDim_) { impCurX_ = 0; impCurY_ += impShelfH_ + 1; impShelfH_ = 0; }
+            if (impCurY_ + h > impAtlasDim_) break;   // atlas full; leave not-ready
+            int rx = impCurX_, ry = impCurY_;
+            for (auto& t : scratch) {
+                SDL_Vertex v[3];
+                for (int i = 0; i < 3; ++i) {
+                    v[i] = t.v[i];
+                    v[i].position.x = t.v[i].position.x - minX + float(rx + pad);
+                    v[i].position.y = t.v[i].position.y - minY + float(ry + pad);
+                }
+                SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
+            }
+            imp.rect[k] = SDL_Rect{rx, ry, w, h};
+            imp.bbox[k] = SDL_FRect{minX - pad, minY - pad, float(w), float(h)};
+            impCurX_ += w + 1;
+            impShelfH_ = std::max(impShelfH_, h);
+            maxH = std::max(maxH, maxY - minY);
+        }
+        SDL_SetRenderTarget(ren_, prev);
+        imp.ready = true;
+        impostors_[key] = imp;
+        modelH_[modelKey] = maxH;
+    }
+
     // Project + transform one unit's model into screen-space, coloured vertex runs.
     // No SDL calls and only reads shared state (models/textures/heightmap/anim), so
     // it is safe to run for many units at once on the worker pool. drawUnit() then
@@ -3378,6 +3487,35 @@ private:
         auto at = anims_.find(u.id);
         if (at != anims_.end()) anim = &at->second;
 
+        float zm = mapView_.zoom();
+        int slot = colorSlot_[u.team & 7];
+        float ax = (u.x - mapView_.offX()) * zm - terrainLiftX(u.x, u.z) * zm;
+        float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
+        // Level of detail: draw a small unit as a cached impostor billboard.
+        if (lodEnabled_ && zm < kLodZoomGate) {
+            auto hit = modelH_.find(vt->first);
+            auto iit = impostors_.find(std::make_pair(vt->first, slot));
+            if (hit != modelH_.end() && iit != impostors_.end() && iit->second.ready
+                && hit->second * zm < kLodPx) {
+                const Impostor& imp = iit->second;
+                int f = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f);
+                const SDL_Rect& r = imp.rect[f];
+                const SDL_FRect& bb = imp.bbox[f];
+                float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
+                float qx = ax + bb.x * zm;
+                float qy = ay + bb.y * zm - alt * 0.8f * zm;   // ~lift a flyer's sprite
+                float inv = 1.0f / float(impAtlasDim_);
+                pushQuadUV(g.verts, qx, qy, bb.w * zm, bb.h * zm,
+                           float(r.x) * inv, float(r.y) * inv,
+                           float(r.x + r.w) * inv, float(r.y + r.h) * inv,
+                           SDL_Color{255, 255, 255, 255});
+                g.runs.push_back({impAtlas_, 6});
+                g.ax = ax; g.ay = ay; g.alt = alt;
+                g.occY = wallOcclusionY(u.x, u.z);
+                return;
+            }
+        }
+
         scratch.clear();
         Xform base;
         if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
@@ -3386,15 +3524,11 @@ private:
         bool mirror = false;
         if (u.type && u.type->canFly && anim && anim->flyHalfTurn)
             facing = 3.14159265f - u.heading;
-        int slot = colorSlot_[u.team & 7];
         SDL_Texture* atlas = (slot >= 0 && size_t(slot) < atlasTex_.size())
                                  ? atlasTex_[size_t(slot)] : nullptr;
         collect(scratch, atlas, vt->second.model.root, base, anim, facing, u.team, mirror);
         std::stable_sort(scratch.begin(), scratch.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
-        float zm = mapView_.zoom();
-        float ax = (u.x - mapView_.offX()) * zm - terrainLiftX(u.x, u.z) * zm;
-        float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
         g.ax = ax; g.ay = ay;
         g.alt = anim ? anim->altitude : 0.0f;
         g.occY = wallOcclusionY(u.x, u.z);
@@ -4532,6 +4666,12 @@ private:
         if (key == SDLK_F4) { showCounts_ = !showCounts_; return true; }
         if (key == SDLK_F6) { showColorPicker_ = !showColorPicker_; return true; }
         if (key == SDLK_F7) { showHDebug_ = !showHDebug_; return true; }
+        if (key == SDLK_F8) {                     // toggle LOD impostors (A/B perf)
+            lodEnabled_ = !lodEnabled_;
+            notice_ = lodEnabled_ ? "LOD ON" : "LOD OFF";
+            noticeTimer_ = 2;
+            return true;
+        }
         // F9: stress test -- spawn 500 Zhon drakes across the current view.
         if (key == SDLK_F9) {
             float zm = std::max(mapView_.zoom(), 1e-3f);
