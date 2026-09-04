@@ -391,13 +391,15 @@ class SoundBank {
 public:
     void init(const std::string& soundsDir, bool verbose) {
         verbose_ = verbose;
+        // A missing sounds dir must NOT skip audio init (music uses the same
+        // device); just index whatever's there.
         try {
             for (const auto& e : std::filesystem::directory_iterator(soundsDir)) {
                 std::string stem = e.path().stem().string();
                 std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
                 index_[stem] = e.path().string();
             }
-        } catch (const std::exception&) { return; }
+        } catch (const std::exception&) { /* no sounds dir -- music still plays */ }
 
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
         // Auto-detect the device's channel layout so positional audio can pan
@@ -971,7 +973,12 @@ public:
         }
         loadOrderButtons();
         loadBuildFx();
-        sounds_.init(dataRoot_ + "/../english/Sounds", false);
+        // Sounds live at <data>/sounds in a merged tree, or ../english/Sounds in
+        // the old per-archive layout.
+        std::string soundsDir = dataRoot_ + "/sounds";
+        if (!std::filesystem::exists(soundsDir))
+            soundsDir = dataRoot_ + "/../english/Sounds";
+        sounds_.init(soundsDir, false);
         // Bundled sound override (repo overrides/), then any user override
         // archives dropped next to the data or at the working dir.
         for (const std::string cand : {std::string("overrides/click.hpi"),
