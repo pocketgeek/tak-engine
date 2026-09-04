@@ -3387,7 +3387,7 @@ private:
     // instead of a live model -- the classic-RTS way to run thousands cheaply.
     // Full-3D is kept for attack/death/build poses (rare, few at a time).
     static constexpr int kSprFrames = 8;    // locomotion-cycle frames baked
-    static constexpr int kSprFacings = 8;
+    static constexpr int kSprFacings = 16;  // 16 => ~22.5deg turn granularity
     struct SpriteSet {
         SDL_Rect rect[kSprFacings][kSprFrames];
         SDL_FRect bbox[kSprFacings][kSprFrames];
@@ -3404,8 +3404,10 @@ private:
     static constexpr float kCrowdLod = 500.0f;  // on-screen units above which LOD
                                                 // grows aggressive and ignores zoom
 
-    static int facingIndex(float heading) {
-        return int(std::lround(heading / (2.0f * 3.14159265f) * 8.0f)) & 7;
+    static int facingIndex(float heading, int n) {
+        int k = int(std::lround(heading / (2.0f * 3.14159265f) * float(n)));
+        k %= n; if (k < 0) k += n;
+        return k;
     }
 
     // Append two triangles for an axis-aligned quad (shared by shadow blobs and
@@ -3604,7 +3606,11 @@ private:
         tmp.vm = std::move(vm);
         tmp.flyGate = flyGateOf(*tmp.vm);
         bool animated = canMove || canFly;
-        if (canFly) { tmp.vm->setStatic(tmp.flyGate, 1); tmp.vm->start("fly"); }
+        // Match the live unit's facing convention: flyers face pi-heading only when
+        // their fly script adds the 180 body turn (flyHalfTurnOf), else -heading.
+        bool halfTurn = canFly && flyHalfTurnOf(*tmp.vm);
+        if (canFly) { tmp.vm->setStatic(tmp.flyGate, 1); tmp.vm->start("fly");
+                      for (int s = 0; s < 8; ++s) tmp.vm->tick(1.0f / 30); }  // settle into flight
         else if (canMove) { tmp.vm->start("walk_legs") || tmp.vm->start("walk"); }
         SDL_Texture* atlas = atlasFor(slot);
         if (!sprAtlas_) {
@@ -3631,7 +3637,8 @@ private:
             if (k > 0) for (int s = 0; s < 4; ++s) tmp.vm->tick(period / ss.frames / 4);
             for (int fi = 0; fi < kSprFacings; ++fi) {
                 float heading = float(fi) / kSprFacings * 2.0f * kPi;
-                float facing = canFly ? (kPi - heading) : (canMove ? -heading : 0.0f);
+                float facing = canFly ? (halfTurn ? (kPi - heading) : -heading)
+                                      : (canMove ? -heading : 0.0f);
                 scratch.clear();
                 collect(scratch, atlas, vt->second.model.root, Xform{}, &tmp, facing, 0, false);
                 std::stable_sort(scratch.begin(), scratch.end(),
@@ -3694,10 +3701,14 @@ private:
         // locomotion cycle. Attack/death poses keep the full 3D model (rare).
         if (spritesEnabled_) {
             auto sit = sprites_.find(std::make_pair(vt->first, slot));
-            bool locoPose = !(anim && (anim->dying || anim->firing));
+            // A landed flyer shows its full landed model, not the flapping sprite;
+            // attack/death poses likewise keep the full 3D model.
+            bool grounded = (u.type && u.type->canFly) && !(anim && anim->airborne);
+            bool locoPose = !grounded && !(anim && (anim->dying || anim->firing));
             if (sit != sprites_.end() && sit->second.ready && locoPose) {
                 const SpriteSet& ss = sit->second;
-                int fi = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f);
+                int fi = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f,
+                                     kSprFacings);
                 int frame = 0;
                 if (ss.frames > 1) {
                     bool moving = (u.type && u.type->canFly) || u.moving();
@@ -3706,18 +3717,20 @@ private:
                 }
                 const SDL_Rect& r = ss.rect[fi][frame];
                 const SDL_FRect& bb = ss.bbox[fi][frame];
-                float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
-                float qx = ax + bb.x * zm;
-                float qy = ay + bb.y * zm - alt * 0.8f * zm;
-                float inv = 1.0f / float(impAtlasDim_);
-                pushQuadUV(g.verts, qx, qy, bb.w * zm, bb.h * zm,
-                           float(r.x) * inv, float(r.y) * inv,
-                           float(r.x + r.w) * inv, float(r.y + r.h) * inv,
-                           SDL_Color{255, 255, 255, 255});
-                g.runs.push_back({sprAtlas_, 6});
-                g.ax = ax; g.ay = ay; g.alt = alt;
-                g.occY = wallOcclusionY(u.x, u.z);
-                return;
+                if (r.w > 2 && r.h > 2) {   // valid cell; a bad one falls to full model
+                    float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
+                    float qx = ax + bb.x * zm;
+                    float qy = ay + bb.y * zm - alt * 0.8f * zm;
+                    float inv = 1.0f / float(impAtlasDim_);
+                    pushQuadUV(g.verts, qx, qy, bb.w * zm, bb.h * zm,
+                               float(r.x) * inv, float(r.y) * inv,
+                               float(r.x + r.w) * inv, float(r.y + r.h) * inv,
+                               SDL_Color{255, 255, 255, 255});
+                    g.runs.push_back({sprAtlas_, 6});
+                    g.ax = ax; g.ay = ay; g.alt = alt;
+                    g.occY = wallOcclusionY(u.x, u.z);
+                    return;
+                }
             }
         }
         // Level of detail: draw a small unit as a cached impostor billboard.
@@ -3733,7 +3746,7 @@ private:
             if (hit != modelH_.end() && iit != impostors_.end() && iit->second.ready
                 && hit->second * zm < effLod) {
                 const Impostor& imp = iit->second;
-                int f = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f);
+                int f = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f, 8);
                 const SDL_Rect& r = imp.rect[f];
                 const SDL_FRect& bb = imp.bbox[f];
                 float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
@@ -4917,6 +4930,15 @@ private:
         if (key == SDLK_F10) {                    // toggle animated sprite sheets
             spritesEnabled_ = !spritesEnabled_;
             notice_ = spritesEnabled_ ? "SPRITES ON" : "SPRITES OFF";
+            noticeTimer_ = 2;
+            return true;
+        }
+        if (key == SDLK_d && ctrl) {              // kill the selected unit(s)
+            int n = 0;
+            for (int id : selection_)
+                if (auto* su = world_.unit(id))
+                    if (su->alive()) { su->hp = 0; ++n; }
+            notice_ = "KILLED " + std::to_string(n);
             noticeTimer_ = 2;
             return true;
         }
