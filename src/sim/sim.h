@@ -165,6 +165,13 @@ public:
     const UnitType* find(const std::string& id) const;
     const std::map<std::string, UnitType>& all() const { return types_; }
     const std::vector<std::string>& buildable(const std::string& builderId) const;
+    // Largest build menu of any builder (drives the minimum window width so the
+    // whole icon row always fits at full size -- some Crusades menus reach 13).
+    std::size_t maxBuildMenu() const {
+        std::size_t m = 0;
+        for (const auto& [id, list] : buildTree_) m = std::max(m, list.size());
+        return m;
+    }
 
 private:
     std::map<std::string, UnitType> types_;
