@@ -2331,6 +2331,14 @@ public:
         for (auto& u : world_.units()) {
             if (u.deadFor >= 4.0f || u.embarked()) continue;
             if (!noFog_ && u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
+            // Frustum cull: only units whose anchor falls in (or just outside) the
+            // map viewport are projected and drawn. The margin is generous and
+            // asymmetric -- models extend well above their anchor, so a unit above
+            // the top edge can still show its lower body. Without this, every
+            // fog-visible unit was drawn regardless of camera position, so the
+            // frame rate didn't improve when the crowd scrolled off screen.
+            float sx = (u.x - mapView_.offX()) * zm0, sy = (u.z - mapView_.offY()) * zm0;
+            if (sx < -160 || sx > mvw + 160 || sy < -260 || sy > winH + 120) continue;
             items.push_back({u.z, &u, nullptr});
         }
         std::stable_sort(items.begin(), items.end(),
