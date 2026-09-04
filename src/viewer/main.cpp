@@ -35,6 +35,7 @@
 #include <functional>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -2619,18 +2620,21 @@ public:
             drawGhost();
         }
 
-        // Selection brackets: batched into one draw (each was a colour-set + 8 line
-        // calls per unit -- selecting thousands broke the batch thousands of times).
-        // Viewport-culled; drawn as thin green quads.
+        // Selection membership as a hash set: the old code did world_.unit(id) (a
+        // linear scan) per selected unit and std::find(selection_) per world unit
+        // -- both O(n^2) once a big army was selected, which tanked the frame.
+        selSet_.clear();
+        selSet_.insert(selection_.begin(), selection_.end());
+        // Selection brackets: iterate units once, batched into a single draw
+        // (viewport-culled, thin green quads).
         shadowBatch_.clear();
-        {
+        if (!selSet_.empty()) {
             const SDL_Color grn{70, 240, 90, 255};
             float zms = mapView_.zoom();
-            for (int id : selection_) {
-                const auto* u = world_.unit(id);
-                if (!u || !u->alive()) continue;
-                float cx = (u->x - mapView_.offX()) * zms - terrainLiftX(u->x, u->z) * zms;
-                float cy = (u->z - mapView_.offY()) * zms - terrainLift(u->x, u->z) * zms;
+            for (const auto& u : world_.units()) {
+                if (!u.alive() || !selSet_.count(u.id)) continue;
+                float cx = (u.x - mapView_.offX()) * zms - terrainLiftX(u.x, u.z) * zms;
+                float cy = (u.z - mapView_.offY()) * zms - terrainLift(u.x, u.z) * zms;
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
                 float rr = 11.0f, rx = rr * zms, ry = rr * 0.65f * zms;
                 float L = rr * 0.45f * zms, th = std::max(1.0f, 1.2f * zms);
@@ -2642,19 +2646,14 @@ public:
                         pushQuad(shadowBatch_, px - th * 0.5f,
                                  std::min(py, py - sy * L * 0.65f), th, L * 0.65f, grn);
                     }
+                for (const auto& o : u.orders)   // move-order rings (few)
+                    if (o.targetId == 0) drawRing(o.x, o.z, 4);
             }
             if (!shadowBatch_.empty()) {
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
                 SDL_RenderGeometry(ren_, nullptr, shadowBatch_.data(),
                                    int(shadowBatch_.size()), nullptr, 0);
             }
-        }
-        // Move-order rings (only units with a move order have any).
-        for (int id : selection_) {
-            const auto* u = world_.unit(id);
-            if (!u || !u->alive()) continue;
-            for (const auto& o : u->orders)
-                if (o.targetId == 0) drawRing(o.x, o.z, 4);
         }
 
         // Health bars for damaged or selected units -- viewport-culled and batched
@@ -2665,8 +2664,7 @@ public:
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
             if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
-            bool sel = std::find(selection_.begin(), selection_.end(), u.id) !=
-                       selection_.end();
+            bool sel = selSet_.count(u.id) != 0;
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
             if (!sel && frac >= 1.0f) continue;
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
@@ -4145,6 +4143,7 @@ private:
     std::vector<UnitGeom> geomPool_;              // reused across frames (keeps capacity)
     std::unordered_map<int, int> geomIndex_;     // unit id -> slot in geomPool_
     std::vector<int> selection_;
+    std::unordered_set<int> selSet_;   // rebuilt each draw for O(1) membership
     bool dragging_ = false;
     bool buildDrag_ = false;          // shift-drag placing a line of buildings
     float bdX0_ = 0, bdZ0_ = 0;       // build-drag start (world)
