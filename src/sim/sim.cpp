@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -339,6 +340,15 @@ int World::spawn(const UnitType* type, float x, float z, float heading, int team
 }
 
 Unit* World::unit(int id) {
+    // units_ is append-only with sequential ids (u.id = nextId_++ then push_back,
+    // never erased), so id == index + 1 -- an O(1) lookup. This is called per unit
+    // every tick in combat (unit(targetId)); the old linear scan made a big battle
+    // O(n^2) and stalled the sim to single-digit fps. The scan stays as a fallback
+    // in case that invariant is ever broken.
+    if (id >= 1 && size_t(id) <= units_.size()) {
+        Unit& u = units_[size_t(id) - 1];
+        if (u.id == id) return &u;
+    }
     for (auto& u : units_)
         if (u.id == id) return &u;
     return nullptr;
@@ -1429,8 +1439,12 @@ void World::tickProduction(Unit& u, float dt) {
     }
 }
 
+static double g_tcomb=0;
+static const bool g_phase = getenv("TAK_PHASE") != nullptr;   // sim phase profiler
 void World::tick(float dt) {
     ++tickCounter_;
+    std::chrono::steady_clock::time_point _tk0, _sep0; double g_tsep=0;
+    if (g_phase) { _tk0 = std::chrono::steady_clock::now(); g_tcomb = 0; }
     // Cap A* repaths per tick: a big group that jams while moving can trip the
     // blocked/stuck watchdogs en masse, and hundreds of path searches in one tick
     // stall the sim. Deferred units retry a later tick. Deterministic (fixed budget,
@@ -1571,8 +1585,8 @@ void World::tick(float dt) {
         if (u.incapacitated()) { u.speed = 0; continue; }
         if (!u.orders.empty() && (u.orders.front().load || u.orders.front().unload))
             tickTransport(u, dt);
-        else
-            tickCombat(u, dt);
+        else if (g_phase) { auto _c0=std::chrono::steady_clock::now(); tickCombat(u, dt); g_tcomb += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_c0).count(); }
+        else tickCombat(u, dt);
 
         bool combatHold =
             !u.orders.empty() && u.orders.front().targetId != 0 &&
@@ -1740,6 +1754,7 @@ void World::tick(float dt) {
         }
     }
 
+    if (g_phase) _sep0 = std::chrono::steady_clock::now();
     // Separation: push overlapping mobile units apart. The spatial hash limits
     // each unit to its ~3x3 neighbourhood, so this is O(n) not O(n^2). Each pair
     // is handled once (by the lower index), so the result matches the old loop.
@@ -1801,6 +1816,16 @@ void World::tick(float dt) {
                 u.x += dx / dl * step;
                 u.z += dz / dl * step;
             }
+        }
+    }
+    if (g_phase) {
+        auto _end = std::chrono::steady_clock::now();
+        double tsep = std::chrono::duration<double,std::milli>(_end-_sep0).count();
+        double ttot = std::chrono::duration<double,std::milli>(_end-_tk0).count();
+        if (ttot > 15.0) {   // only report a real stall
+            int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
+            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f other=%.1f units=%d\n",
+                         ttot, g_tcomb, tsep, ttot - g_tcomb - tsep, alive);
         }
     }
 }
