@@ -2948,7 +2948,15 @@ private:
         // Handlers summon the fighting creatures — a two-tier build order.
         if (keepType.empty()) { runSummonAi(team, monarchId, lodeType, cycle); return; }
 
-        if (auto* k = world_.unit(keepId); !k || !k->alive()) keepId = -1;
+        // Track every keep (the AI builds several and expands). Seed from the
+        // legacy single keepId, then drop any that have died.
+        if (keepId >= 0 &&
+            std::find(aiKeeps_.begin(), aiKeeps_.end(), keepId) == aiKeeps_.end())
+            aiKeeps_.push_back(keepId);
+        aiKeeps_.erase(std::remove_if(aiKeeps_.begin(), aiKeeps_.end(),
+                       [&](int id) { auto* k = world_.unit(id); return !k || !k->alive(); }),
+                       aiKeeps_.end());
+        keepId = aiKeeps_.empty() ? -1 : aiKeeps_.front();
 
         auto* m = world_.unit(monarchId);
         bool monIdle = m && m->alive() && m->type && m->type->isBuilder &&
@@ -2968,24 +2976,32 @@ private:
                 needLodes = std::clamp(
                     int(std::ceil((drain - m->type->income) / perLode)), 3, 8);
             }
-            // Priority: economy lodes, then the keep, then a small buffer of
-            // extra lodes to fund production.
+            // Bootstrap: enough economy for the first keep, then that keep. After
+            // that, EXPAND -- keep claiming mana deposits and add another keep for
+            // every few lodestones (up to a cap), so the AI grows several bases and
+            // a bigger production base instead of stopping at one.
             const tak::sim::UnitType* want = nullptr;
-            if (lt && aiLodes_ < needLodes) want = lt;
-            else if (kt && keepId < 0) want = kt;
-            else if (lt && aiLodes_ < needLodes + 2) want = lt;
+            if (lt && aiLodes_ < needLodes) want = lt;             // seed economy
+            else if (kt && aiKeeps_.empty()) want = kt;            // first keep
+            else {
+                int keepsWanted = std::clamp(1 + aiLodes_ / 4, 1, 4);
+                if (kt && int(aiKeeps_.size()) < keepsWanted) want = kt;  // expand keeps
+                else if (lt && aiLodes_ < 14) want = lt;                  // expand economy
+            }
             int b = aiPlace(monarchId, want, m->x, m->z);
             if (b > 0) {
-                if (want->id == keepType) keepId = b;
+                if (want == kt) { aiKeeps_.push_back(b); if (keepId < 0) keepId = b; }
                 else ++aiLodes_;
             }
         }
 
-        auto* keep = world_.unit(keepId);
-        if (keep && keep->alive() && !keep->underConstruction &&
-            keep->buildQueue.empty())
-            world_.train(keepId,
-                         registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]));
+        // Every idle keep trains the rolling army cycle.
+        for (int kid : aiKeeps_) {
+            auto* keep = world_.unit(kid);
+            if (keep && keep->alive() && !keep->underConstruction &&
+                keep->buildQueue.empty())
+                world_.train(kid, registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]));
+        }
 
         sendWaves(team);
     }
@@ -4472,6 +4488,7 @@ private:
     std::string aiLodeType_;    // AI lodestone type (economy)
     std::string aiBuilderType_; // keepless (Zhon) AI: the Handler the Monarch builds
     int aiLodes_ = 0;           // lodestones the AI has queued so far
+    std::vector<int> aiKeeps_;  // all the AI's keeps (it builds several + expands)
     int aiHandlers_ = 0;        // Beast Handlers the AI has queued so far
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = -1, mouseY_ = -1;   // -1 until the first real mouse motion, so
