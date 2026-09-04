@@ -4,6 +4,7 @@
 #include <deque>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -167,6 +168,7 @@ public:
 
 private:
     std::map<std::string, UnitType> types_;
+    std::set<std::string> canonicalTypes_;   // ids whose defining .fbi filename == objectname
     std::map<std::string, std::vector<std::string>> buildTree_;
     std::map<std::string, MoveClass> moveClasses_;   // lowercased name -> limits
 };

@@ -63,11 +63,19 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
             const auto* info = root.child("UNITINFO");
             if (!info) continue;
             UnitType t;
-            t.id = lower(info->valueOr("objectname", e.path().stem().string()));
-            // Don't let a later dir (e.g. the Iron Plague data, whose
-            // tarnecr2.fbi also claims objectname TARNECRO) clobber a unit
-            // the base game already defined. First definition wins.
-            if (types_.count(t.id)) continue;
+            std::string stem = lower(e.path().stem().string());
+            t.id = lower(info->valueOr("objectname", stem));
+            // Two files can claim the same objectname (e.g. the Iron Plague campaign's
+            // tarnecr2.fbi also declares objectname TARNECRO, but drops builder=1). The
+            // CANONICAL definition is the one whose filename matches the objectname
+            // (tarnecro.fbi); it must win even though a variant may sort earlier. So:
+            // keep the first def UNLESS this is the canonical file and the existing def
+            // was only a variant -- then replace it.
+            bool canonical = (stem == t.id);
+            if (types_.count(t.id)) {
+                if (!canonical || canonicalTypes_.count(t.id)) continue;   // keep existing
+            }
+            if (canonical) canonicalTypes_.insert(t.id);
             t.name = info->valueOr("name", t.id);
             t.side = info->valueOr("side", "");
             // Buildings often declare canmove=1; bmcode (0 = building,
