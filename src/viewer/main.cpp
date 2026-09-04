@@ -2355,14 +2355,87 @@ public:
             if (it.u) { geomIndex_[it.u->id] = int(visUnits_.size());
                         visUnits_.push_back(it.u); }
         if (geomPool_.size() < visUnits_.size()) geomPool_.resize(visUnits_.size());
+        // Build the texture atlas for every colour slot in view (main thread; the
+        // parallel pass below only reads the finished atlas pointers).
+        for (const auto* u : visUnits_) atlasFor(colorSlot_[u->team & 7]);
         pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
             thread_local std::vector<Tri> scratch;
             for (size_t i = b; i < e; ++i)
                 buildUnitGeom(*visUnits_[i], geomPool_[i], scratch);
         });
 
+        // Is this unit drawn whole by drawUnit (needs clip rects / interleaved
+        // effects) rather than folded into the shared batches?
+        auto special = [&](const tak::sim::Unit& u, const UnitGeom& g) {
+            bool occluded = !g.canFly && g.occY < g.ay - 2.0f;
+            bool conjuring = u.underConstruction && u.type;
+            return occluded || conjuring;
+        };
+
+        // Pass 1: every normal unit's ground shadows, batched. Soft blobs go into
+        // one untextured triangle batch; FBI shadow sprites are batched per shadow
+        // texture. Drawn first so all shadows sit under all bodies. (Special units
+        // draw their own shadow inside drawUnit in pass 2.)
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        shadowBatch_.clear();
+        for (const auto& it : items) {
+            if (!it.u) continue;
+            const auto& u = *it.u;
+            // Soft blob batches for every mobile ground unit, special or not (a
+            // special unit's own body still draws whole in pass 2).
+            if (u.alive() && u.type && u.type->canMove && !u.type->canFly) {
+                float sx = (u.x - mapView_.offX()) * zm0 - terrainLiftX(u.x, u.z) * zm0;
+                float sy = (u.z - mapView_.offY()) * zm0 + 2 * zm0
+                           - terrainLift(u.x, u.z) * zm0;
+                pushQuad(shadowBatch_, sx - 7 * zm0, sy - 2.5f * zm0,
+                         14 * zm0, 5 * zm0, SDL_Color{0, 0, 0, 70});
+            }
+        }
+        if (!shadowBatch_.empty())
+            SDL_RenderGeometry(ren_, nullptr, shadowBatch_.data(),
+                               int(shadowBatch_.size()), nullptr, 0);
+        {   // FBI shadow sprites, batched by shadow texture (flush on change).
+            unitBatch_.clear();
+            SDL_Texture* st = nullptr;
+            auto flush = [&] {
+                if (!unitBatch_.empty())
+                    SDL_RenderGeometry(ren_, st, unitBatch_.data(),
+                                       int(unitBatch_.size()), nullptr, 0);
+                unitBatch_.clear();
+            };
+            for (const auto& it : items) {
+                if (!it.u) continue;
+                const auto& u = *it.u;
+                auto git = geomIndex_.find(u.id);
+                if (git == geomIndex_.end()) continue;
+                const UnitGeom& g = geomPool_[size_t(git->second)];
+                if (special(u, g) || !u.type || u.underConstruction) continue;
+                const ShadowTex* sh = shadowFor(u.type->shadowArt);
+                if (!sh) continue;
+                if (sh->tex != st) { flush(); st = sh->tex; }
+                float sox = (6.0f + g.alt * 0.5f) * zm0, soy = (3.0f + g.alt * 0.25f) * zm0;
+                pushQuad(unitBatch_, g.ax - sh->xoff * zm0 + sox,
+                         g.ay - sh->yoff * zm0 + soy, sh->w * zm0, sh->h * zm0,
+                         SDL_Color{255, 255, 255, 255});
+            }
+            flush();
+        }
+
+        // Pass 2: bodies (feature sprites + unit models) in depth order. Unit
+        // models are accumulated into one batch and flushed only when the texture
+        // changes or a feature/special unit interrupts the run -- so a crowd of one
+        // unit type collapses to a handful of draw calls instead of one per unit.
+        unitBatch_.clear();
+        SDL_Texture* bt = nullptr;
+        auto flushBodies = [&] {
+            if (!unitBatch_.empty())
+                SDL_RenderGeometry(ren_, bt, unitBatch_.data(),
+                                   int(unitBatch_.size()), nullptr, 0);
+            unitBatch_.clear();
+        };
         for (const auto& it : items) {
             if (it.f) {
+                flushBodies();
                 const auto& f = *it.f;
                 if (f.shadow) {
                     SDL_FRect sd{(f.x - mapView_.offX() - float(f.sxoff)) * zm0,
@@ -2379,20 +2452,21 @@ public:
                                       f.frames->size()];
                 SDL_RenderCopyF(ren_, tex, nullptr, &dst);
             } else {
-                // Soft shadow blob under mobile units.
                 const auto& u = *it.u;
-                if (u.alive() && u.type && u.type->canMove && !u.type->canFly) {
-                    SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 70);
-                    float sx = (u.x - mapView_.offX()) * zm0 - terrainLiftX(u.x, u.z) * zm0;
-                    float sy = (u.z - mapView_.offY()) * zm0 + 2 * zm0
-                               - terrainLift(u.x, u.z) * zm0;
-                    SDL_FRect sh{sx - 7 * zm0, sy - 2.5f * zm0, 14 * zm0, 5 * zm0};
-                    SDL_RenderFillRectF(ren_, &sh);
+                auto git = geomIndex_.find(u.id);
+                if (git == geomIndex_.end()) continue;
+                const UnitGeom& g = geomPool_[size_t(git->second)];
+                if (special(u, g)) { flushBodies(); drawUnit(u); continue; }
+                int off = 0;
+                for (const auto& r : g.runs) {
+                    if (r.first != bt) { flushBodies(); bt = r.first; }
+                    unitBatch_.insert(unitBatch_.end(), g.verts.begin() + off,
+                                      g.verts.begin() + off + r.second);
+                    off += r.second;
                 }
-                drawUnit(u);
             }
         }
+        flushBodies();
 
         // Ghosts of the local player's queued (shift) build orders.
         for (const auto& u : world_.units())
@@ -3156,24 +3230,35 @@ private:
         const tak::tdo::Model* model = ghostModel(type->id);
         if (!model) return;
         tris_.clear();
-        collect(tris_, model->root, Xform{}, nullptr, 0.0f, localTeam_);
+        SDL_Texture* atlas = atlasFor(colorSlot_[localTeam_ & 7]);
+        collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localTeam_);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
         float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
         float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
+        // Batch by texture (flush on change), like a live unit.
+        triBatch_.clear();
+        SDL_Texture* cur = nullptr;
+        auto flush = [&] {
+            if (!triBatch_.empty())
+                SDL_RenderGeometry(ren_, cur, triBatch_.data(),
+                                   int(triBatch_.size()), nullptr, 0);
+            triBatch_.clear();
+        };
         for (auto& t : tris_) {
-            SDL_Vertex v[3];
+            if (t.tex != cur) { flush(); cur = t.tex; }
             for (int i = 0; i < 3; ++i) {
-                v[i] = t.v[i];
-                v[i].position.x = v[i].position.x * zm + ax;
-                v[i].position.y = v[i].position.y * zm + ay;
-                v[i].color.a = 130;
-                v[i].color.r = Uint8(v[i].color.r * 0.55f);   // shift toward blue
-                v[i].color.g = Uint8(v[i].color.g * 0.8f);
+                SDL_Vertex v = t.v[i];
+                v.position.x = v.position.x * zm + ax;
+                v.position.y = v.position.y * zm + ay;
+                v.color.a = 130;
+                v.color.r = Uint8(v.color.r * 0.55f);   // shift toward blue
+                v.color.g = Uint8(v.color.g * 0.8f);
+                triBatch_.push_back(v);
             }
-            SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
         }
+        flush();
     }
 
     // Per-unit screen-space geometry, built in parallel each frame (the expensive
@@ -3181,10 +3266,90 @@ private:
     struct UnitGeom {
         std::vector<SDL_Vertex> verts;                  // transformed, coloured
         std::vector<std::pair<SDL_Texture*, int>> runs; // (texture, vertex count)
-        float ax = 0, ay = 0, occY = 0;
+        float ax = 0, ay = 0, occY = 0, alt = 0;
         bool canFly = false;
     };
     std::vector<const tak::sim::Unit*> visUnits_;
+    std::vector<SDL_Vertex> unitBatch_, shadowBatch_;   // cross-unit render batches
+
+    // Texture atlas: every unit texture packed into one big texture per player-
+    // colour slot, so a whole model (and a whole crowd of one team) shares a
+    // single texture and collapses to a handful of draw calls. Depth-sorted
+    // multi-texture models otherwise force ~one draw call per triangle.
+    std::unordered_map<std::string, SDL_Rect> atlasRect_;  // name -> content rect
+    int atlasW_ = 0, atlasH_ = 0;
+    std::vector<SDL_Texture*> atlasTex_;   // per colour slot; nullptr until built
+    bool atlasLaidOut_ = false;
+
+    // Append two triangles for an axis-aligned quad (shared by shadow blobs and
+    // shadow sprites; uv is ignored when the batch is drawn untextured).
+    static void pushQuad(std::vector<SDL_Vertex>& b, float x, float y, float w,
+                         float h, SDL_Color c) {
+        SDL_Vertex tl{{x, y}, c, {0, 0}}, tr{{x + w, y}, c, {1, 0}},
+                   br{{x + w, y + h}, c, {1, 1}}, bl{{x, y + h}, c, {0, 1}};
+        b.push_back(tl); b.push_back(tr); b.push_back(br);
+        b.push_back(tl); b.push_back(br); b.push_back(bl);
+    }
+
+    // Shelf-pack every loaded unit texture into a single atlas layout (rects are
+    // shared across colour slots -- only the pixels differ). Called once, lazily.
+    void buildAtlasLayout() {
+        atlasLaidOut_ = true;
+        struct Item { const std::string* name; int w, h; };
+        std::vector<Item> items;
+        items.reserve(textures_.size());
+        for (auto& [name, frames] : textures_) {
+            if (frames.empty()) continue;
+            int w = 0, h = 0;
+            SDL_QueryTexture(frames[0], nullptr, nullptr, &w, &h);
+            if (w <= 0 || h <= 0 || w > 512 || h > 512) continue;   // skip oddities
+            items.push_back({&name, w, h});
+        }
+        // Tallest first packs tightest.
+        std::sort(items.begin(), items.end(),
+                  [](const Item& a, const Item& b) { return a.h > b.h; });
+        const int pad = 2, W = 2048;
+        int x = pad, y = pad, shelfH = 0;
+        for (const auto& it : items) {
+            if (x + it.w + pad > W) { x = pad; y += shelfH + pad; shelfH = 0; }
+            atlasRect_[*it.name] = SDL_Rect{x, y, it.w, it.h};
+            x += it.w + pad;
+            shelfH = std::max(shelfH, it.h);
+        }
+        atlasW_ = W;
+        atlasH_ = y + shelfH + pad;
+    }
+
+    // Build (or return cached) the atlas texture for one colour slot by blitting
+    // each texture's slot variant into its packed rect. Main thread only (render
+    // target), so it must run before the parallel geometry pass.
+    SDL_Texture* atlasFor(int slot) {
+        if (slot < 0) slot = 0;
+        if (!atlasLaidOut_) buildAtlasLayout();
+        if (atlasW_ <= 0) return nullptr;
+        if (int(atlasTex_.size()) <= slot) atlasTex_.resize(size_t(slot) + 1, nullptr);
+        if (atlasTex_[slot]) return atlasTex_[slot];
+        SDL_Texture* atlas = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                               SDL_TEXTUREACCESS_TARGET, atlasW_, atlasH_);
+        if (!atlas) return nullptr;
+        SDL_SetTextureBlendMode(atlas, SDL_BLENDMODE_BLEND);
+        SDL_Texture* prev = SDL_GetRenderTarget(ren_);
+        SDL_SetRenderTarget(ren_, atlas);
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
+        SDL_RenderClear(ren_);
+        for (const auto& [name, r] : atlasRect_) {
+            auto it = textures_.find(name);
+            if (it == textures_.end() || it->second.empty()) continue;
+            size_t ci = size_t(slot) < it->second.size() ? size_t(slot) : 0;
+            SDL_Rect dst = r;
+            SDL_RenderCopy(ren_, it->second[ci], nullptr, &dst);
+        }
+        SDL_SetRenderTarget(ren_, prev);
+        SDL_SetTextureScaleMode(atlas, SDL_ScaleModeNearest);   // no atlas edge bleed
+        atlasTex_[slot] = atlas;
+        return atlas;
+    }
 
     // Project + transform one unit's model into screen-space, coloured vertex runs.
     // No SDL calls and only reads shared state (models/textures/heightmap/anim), so
@@ -3209,13 +3374,17 @@ private:
         bool mirror = false;
         if (u.type && u.type->canFly && anim && anim->flyHalfTurn)
             facing = 3.14159265f - u.heading;
-        collect(scratch, vt->second.model.root, base, anim, facing, u.team, mirror);
+        int slot = colorSlot_[u.team & 7];
+        SDL_Texture* atlas = (slot >= 0 && size_t(slot) < atlasTex_.size())
+                                 ? atlasTex_[size_t(slot)] : nullptr;
+        collect(scratch, atlas, vt->second.model.root, base, anim, facing, u.team, mirror);
         std::stable_sort(scratch.begin(), scratch.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
         float ax = (u.x - mapView_.offX()) * zm - terrainLiftX(u.x, u.z) * zm;
         float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
         g.ax = ax; g.ay = ay;
+        g.alt = anim ? anim->altitude : 0.0f;
         g.occY = wallOcclusionY(u.x, u.z);
         bool conjuring = u.underConstruction && u.type;
         float p = conjuring ? std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f) : 1.0f;
@@ -3352,15 +3521,17 @@ private:
             SDL_RenderSetClipRect(ren_, &bot);
             SDL_Color tc = teamColor(u.team);
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-            // g.verts are already screen-space; re-tint flat and re-submit.
-            for (size_t i = 0; i + 2 < g.verts.size(); i += 3) {
-                SDL_Vertex v[3];
-                for (int k = 0; k < 3; ++k) {
-                    v[k] = g.verts[i + size_t(k)];
-                    v[k].color = SDL_Color{tc.r, tc.g, tc.b, 70};
-                }
-                SDL_RenderGeometry(ren_, nullptr, v, 3, nullptr, 0);
+            // The silhouette is flat, untextured and single-colour, so the whole
+            // model collapses to ONE draw call: re-tint every vertex and submit.
+            triBatch_.clear();
+            for (const SDL_Vertex& sv : g.verts) {
+                SDL_Vertex v = sv;
+                v.color = SDL_Color{tc.r, tc.g, tc.b, 70};
+                triBatch_.push_back(v);
             }
+            if (!triBatch_.empty())
+                SDL_RenderGeometry(ren_, nullptr, triBatch_.data(),
+                                   int(triBatch_.size()), nullptr, 0);
             if (hadClip) SDL_RenderSetClipRect(ren_, &prevClip);
             else SDL_RenderSetClipRect(ren_, nullptr);
         }
@@ -3368,9 +3539,9 @@ private:
 
     // Project model triangles relative to the unit anchor: yaw by heading,
     // fixed tilt so models read against TAK's painted top-down terrain.
-    void collect(std::vector<Tri>& out, const tak::tdo::Object& o, const Xform& parent,
-                 const Anim* anim, float heading, int team, bool mirror = false,
-                 bool isRoot = true) {
+    void collect(std::vector<Tri>& out, SDL_Texture* atlas, const tak::tdo::Object& o,
+                 const Xform& parent, const Anim* anim, float heading, int team,
+                 bool mirror = false, bool isRoot = true) {
         static const float kNoRot[3] = {0, 0, 0};
         const tak::cob::PieceState* ps = pieceFor(anim, o.name);
         if (ps && !ps->visible) return;
@@ -3400,17 +3571,23 @@ private:
             if (groundPlate) break;
             if (p.indices.size() < 3) continue;
             SDL_Texture* tex = nullptr;
+            const SDL_Rect* arect = nullptr;
             if (!p.texture.empty()) {
                 std::string name = p.texture;
                 std::transform(name.begin(), name.end(), name.begin(), ::tolower);
-                auto it = textures_.find(name);
-                if (it != textures_.end() && !it->second.empty()) {
-                    // Each texture carries one variant per player colour; a team's
-                    // slot is remappable (--color / --aicolor) so a side isn't
-                    // locked to the colour of its team index.
-                    size_t ci = size_t(colorSlot_[team & 7]);
-
-                    tex = it->second[ci < it->second.size() ? ci : 0];
+                auto rit = atlasRect_.find(name);
+                if (atlas && rit != atlasRect_.end()) {
+                    tex = atlas;             // whole model shares one atlas texture
+                    arect = &rit->second;
+                } else {
+                    // Fallback for any texture not packed into the atlas.
+                    auto it = textures_.find(name);
+                    if (it != textures_.end() && !it->second.empty()) {
+                        // Each texture carries one variant per player colour; a
+                        // team's slot is remappable (--color / --aicolor).
+                        size_t ci = size_t(colorSlot_[team & 7]);
+                        tex = it->second[ci < it->second.size() ? ci : 0];
+                    }
                 }
             }
             for (size_t i = 1; i + 1 < p.indices.size(); ++i) {
@@ -3433,7 +3610,11 @@ private:
                     depth += rz * ct - w[1] * st;
                     tri.v[k].position = {rx, -ry};
                     static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
-                    tri.v[k].tex_coord = uv[idx[k] & 3];
+                    SDL_FPoint c = uv[idx[k] & 3];
+                    tri.v[k].tex_coord = arect
+                        ? SDL_FPoint{(float(arect->x) + c.x * float(arect->w)) / float(atlasW_),
+                                     (float(arect->y) + c.y * float(arect->h)) / float(atlasH_)}
+                        : c;
                     tri.v[k].color = tex ? SDL_Color{255, 255, 255, 255}
                                          : SDL_Color{170, 170, 180, 255};
                 }
@@ -3443,7 +3624,7 @@ private:
             }
         }
         for (const auto& c : o.children)
-            collect(out, c, xf, anim, heading, team, mirror, false);
+            collect(out, atlas, c, xf, anim, heading, team, mirror, false);
     }
 
     void drawBrackets(float wx, float wz, float r) {
