@@ -41,7 +41,7 @@ public:
     bool join(const std::string& addr, uint16_t port);
 
     bool connected() const { return fd_ >= 0; }
-    // 0 = host (team 0), 1 = client (team 1).
+    // 0 = host (player 0), 1 = client (player 1).
     int localPlayer() const { return local_; }
 
     // Queue a local command; it is sent scheduled for currentTick + delay.

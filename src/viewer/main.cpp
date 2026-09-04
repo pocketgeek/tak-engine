@@ -1023,11 +1023,11 @@ public:
                         const auto& u = units->children.at(key);
                         std::string id = u.valueOr("unitname", "");
                         std::transform(id.begin(), id.end(), id.begin(), ::tolower);
-                        int player = int(u.numberOr("player", 1));
+                        int playerSlot = int(u.numberOr("player", 1));
                         float x = float(u.numberOr("xpos", 0)) * 16 + 8;
                         float z = float(u.numberOr("zpos", 0)) * 16 + 8;
-                        int team = std::clamp(player - 1, 0, 3);
-                        int uid = spawn(id, x, z, 3.14159f, team);
+                        int player = std::clamp(playerSlot - 1, 0, 3);
+                        int uid = spawn(id, x, z, 3.14159f, player);
                         if (uid >= 0) {
                             ++n;
                             float hpp = float(u.numberOr("healthpercentage", 100));
@@ -1036,9 +1036,9 @@ public:
                                 if (su->type->canMove &&
                                     su->type->domain ==
                                         tak::sim::UnitType::Domain::Ground)
-                                    reinfPool_[team].push_back(id);
+                                    reinfPool_[player].push_back(id);
                             }
-                            if (team == 0) { cx += x; cz += z; ++pc; }
+                            if (player == 0) { cx += x; cz += z; ++pc; }
                         }
                     }
                 std::printf("mission: %d units spawned\n", n);
@@ -1129,8 +1129,8 @@ public:
             for (const auto& p : placements) {
                 std::string id = p.name;
                 std::transform(id.begin(), id.end(), id.begin(), ::tolower);
-                int team = std::clamp(p.player, 0, 3);
-                if (spawn(id, p.x, p.z, 3.14159f, team) >= 0 && team == 0) {
+                int player = std::clamp(p.player, 0, 3);
+                if (spawn(id, p.x, p.z, 3.14159f, player) >= 0 && player == 0) {
                     cx += p.x; cz += p.z; ++n;
                 }
             }
@@ -1211,10 +1211,10 @@ public:
                     sr.x = float(rg->x1 + rg->x2) * 8;
                     sr.z = float(rg->z1 + rg->z2) * 8;
                     // Spawns into a "Player N" zone belong to that player.
-                    sr.team = 3;
+                    sr.player = 3;
                     if (rec.slots[1].size() >= 8 &&
                         (rec.slots[1][0] == 'P' || rec.slots[1][0] == 'p'))
-                        sr.team = std::clamp(rec.slots[1].back() - '1', 0, 3);
+                        sr.player = std::clamp(rec.slots[1].back() - '1', 0, 3);
                     if (maintainN > 0) {
                         sr.maintainCount = maintainN;
                         std::string mt = maintainType;
@@ -1286,27 +1286,27 @@ public:
         // Enough mogrium to bootstrap the opening: a handful of lodestones for
         // income and the start of a keep, without being able to skip economy
         // and rush one to completion.
-        world_.team(0).mana = 2800;
-        world_.team(1).mana = 2800;
+        world_.player(0).mana = 2800;
+        world_.player(1).mana = 2800;
         if (demo) {
             // Showcase: skip the slow build-up and pit two ready armies at the
             // start positions against each other.
-            std::vector<int> teamA, teamB;
+            std::vector<int> playerA, playerB;
             for (int i = 0; i < 6; ++i) {
                 int a = spawn(pk.squad[i % 4], px + float(i % 2) * 26,
                               pz - 60 + float(i / 2) * 30, pFace, 0);
                 int b = spawn(ak.squad[i % 4], ax + float(i % 2) * 26,
                               az - 60 + float(i / 2) * 30, aFace, 1);
-                if (a >= 0) teamA.push_back(a);
-                if (b >= 0) teamB.push_back(b);
+                if (a >= 0) playerA.push_back(a);
+                if (b >= 0) playerB.push_back(b);
             }
             if (pk.keep[0]) keepId_ = spawn(pk.keep, px, pz + 60, pFace, 0);
             if (ak.keep[0]) aiKeepId_ = spawn(ak.keep, ax, az + 60, aFace, 1);
-            if (!teamA.empty() && !teamB.empty()) {
-                for (size_t k = 0; k < teamA.size(); ++k)
-                    world_.attack(teamA[k], teamB[k % teamB.size()], false);
-                for (size_t k = 0; k < teamB.size(); ++k)
-                    world_.attack(teamB[k], teamA[k % teamA.size()], false);
+            if (!playerA.empty() && !playerB.empty()) {
+                for (size_t k = 0; k < playerA.size(); ++k)
+                    world_.attack(playerA[k], playerB[k % playerB.size()], false);
+                for (size_t k = 0; k < playerB.size(); ++k)
+                    world_.attack(playerB[k], playerA[k % playerA.size()], false);
             }
             demoAi_ = true;
         }
@@ -1409,7 +1409,7 @@ public:
                 int buddy = -1;
                 float best = 24 * 24;
                 for (auto& u : world_.units()) {
-                    if (!u.alive() || u.team != localTeam_) continue;
+                    if (!u.alive() || u.player != localPlayer_) continue;
                     float dx = u.x - wx, dz = u.z - wz;
                     if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; buddy = u.id; }
                 }
@@ -1435,7 +1435,7 @@ public:
                 const auto* first = world_.unit(selection_.front());
                 float best = 20 * 20;
                 for (auto& u : world_.units()) {
-                    if (!u.alive() || u.embarked() || !first || u.team == first->team)
+                    if (!u.alive() || u.embarked() || !first || u.player == first->player)
                         continue;
                     float dx = u.x - wx, dz = u.z - wz;
                     if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
@@ -1530,7 +1530,7 @@ public:
                 }
             } else {
                 for (auto& u : world_.units())
-                    if (u.alive() && u.team == localTeam_ && u.x >= x0 && u.x <= x1 &&
+                    if (u.alive() && u.player == localPlayer_ && u.x >= x0 && u.x <= x1 &&
                         u.z >= z0 && u.z <= z1)
                         selection_.push_back(u.id);
             }
@@ -1555,7 +1555,7 @@ public:
             int friendlyTransport = -1;
             float bestT = 24 * 24;
             for (auto& u : world_.units()) {
-                if (!u.alive() || !first || u.team != first->team || !u.type ||
+                if (!u.alive() || !first || u.player != first->player || !u.type ||
                     !u.type->canTransport)
                     continue;
                 float dx = u.x - wx, dz = u.z - wz;
@@ -1575,7 +1575,7 @@ public:
             int enemy = -1;
             float best = 20 * 20;
             for (auto& u : world_.units()) {
-                if (!u.alive() || u.embarked() || !first || u.team == first->team) continue;
+                if (!u.alive() || u.embarked() || !first || u.player == first->player) continue;
                 float dx = u.x - wx, dz = u.z - wz;
                 if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
             }
@@ -1613,14 +1613,14 @@ public:
 
     void setNet(tak::net::Session* net) {
         net_ = net;
-        localTeam_ = net->localPlayer();
-        world_.setVisTeam(localTeam_);
+        localPlayer_ = net->localPlayer();
+        world_.setVisPlayer(localPlayer_);
         aiEnabled_ = false;   // both sides are human in a net game
     }
 
     // Route a command: apply immediately offline, schedule via net online.
     void issue(tak::net::Command c) {
-        c.player = uint8_t(localTeam_);
+        c.player = uint8_t(localPlayer_);
         if (net_) net_->issue(c);
         else apply(c);
     }
@@ -1630,7 +1630,7 @@ public:
         // Only allow commanding units the issuing player owns.
         auto owns = [&](int id) {
             const auto* u = world_.unit(id);
-            return u && u->team == int(c.player);
+            return u && u->player == int(c.player);
         };
         // A fresh redirect order (not a shift-queued one) also abandons any
         // pending build queue, so its ghosts don't linger.
@@ -1763,7 +1763,7 @@ public:
 
     void navyDemo() {
         aiEnabled_ = false;
-        struct S { const char* t; float x, z; int team; };
+        struct S { const char* t; float x, z; int player; };
         const S fleet[] = {
             {"verflag", 1150, 1250, 0}, {"verman", 1080, 1150, 0},
             {"verman", 1220, 1130, 0},  {"verharp", 1020, 1260, 0},
@@ -1774,8 +1774,8 @@ public:
         };
         std::vector<int> a, b;
         for (const auto& sp : fleet) {
-            int id = spawn(sp.t, sp.x, sp.z, sp.team == 0 ? 1.57f : -1.57f, sp.team);
-            if (id >= 0) (sp.team == 0 ? a : b).push_back(id);
+            int id = spawn(sp.t, sp.x, sp.z, sp.player == 0 ? 1.57f : -1.57f, sp.player);
+            if (id >= 0) (sp.player == 0 ? a : b).push_back(id);
         }
         for (size_t i = 0; i < a.size(); ++i)
             world_.attack(a[i], b[i % b.size()], false);
@@ -1785,7 +1785,7 @@ public:
     }
 
     void hillTest() {
-        // Team 0 gets 2 scoring units in the region, team 1 gets 1.
+        // Player 0 gets 2 scoring units in the region, player 1 gets 1.
         if (!scenUnit_ || scenRegion_.name.empty()) return;
         float cx = float(scenRegion_.x1 + scenRegion_.x2) * 8;
         float cz = float(scenRegion_.z1 + scenRegion_.z2) * 8;
@@ -1877,7 +1877,7 @@ public:
         // Squad guards the first unit; the first unit marches east alone.
         int leader = -1;
         for (auto& u : world_.units())
-            if (u.alive() && u.team == 0 && u.type && u.type->canMove) {
+            if (u.alive() && u.player == 0 && u.type && u.type->canMove) {
                 if (leader < 0) leader = u.id;
                 else world_.guard(u.id, leader, false);
             }
@@ -1887,7 +1887,7 @@ public:
     void marchTo(float dx, float dz) {
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         for (auto& u : world_.units())
-            if (u.team == localTeam_ && u.type && u.type->canMove) {
+            if (u.player == localPlayer_ && u.type && u.type->canMove) {
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::AttackMove;
                 c.unitId = u.id;
@@ -1900,9 +1900,9 @@ public:
     // Smoothed render FPS for the F4 overlay (set from the main loop each frame).
     void setFps(float f) { fps_ = fps_ > 0 ? fps_ * 0.9f + f * 0.1f : f; }
 
-    // Choose which player-colour variant a team's units render in.
-    void setTeamColor(int team, int slot) {
-        if (team >= 0 && team < 8 && slot >= 0) colorSlot_[team] = slot;
+    // Choose which player-colour variant a player's units render in.
+    void setPlayerColor(int player, int slot) {
+        if (player >= 0 && player < 8 && slot >= 0) colorSlot_[player] = slot;
     }
 
     // Mouse edge scrolling: pan the camera while the cursor rests in the margin
@@ -1992,7 +1992,7 @@ public:
         updateEffects(dt);
         updateRings(dt);
         if (shakeTime_ > 0) shakeTime_ = std::max(0.0f, shakeTime_ - dt);
-        // God economy: once a team's favour fills after the appear time, its
+        // God economy: once a player's favour fills after the appear time, its
         // faction's god manifests among its forces.
         if (world_.godsEnabled())
             for (int t = 0; t < 4; ++t)
@@ -2023,7 +2023,7 @@ public:
             if (sr.atTime >= 0) {
                 if (!sr.done && scenClock2_ >= sr.atTime) {
                     sr.done = true;
-                    spawn(sr.type, sr.x, sr.z, 0, sr.team);
+                    spawn(sr.type, sr.x, sr.z, 0, sr.player);
                     if (hudFont_.ok()) { notice_ = "A POWER AWAKENS"; noticeTimer_ = 5; }
                 }
             } else if (sr.maintainCount > 0) {
@@ -2038,7 +2038,7 @@ public:
                         cx <= sr.maintainRect.x2 && cz <= sr.maintainRect.z2)
                         ++have;
                 }
-                if (have < sr.maintainCount) spawn(sr.type, sr.x, sr.z, 0, sr.team);
+                if (have < sr.maintainCount) spawn(sr.type, sr.x, sr.z, 0, sr.player);
             }
         }
         for (auto& m : messages_) {
@@ -2056,8 +2056,8 @@ public:
                     if (!u.alive() || !u.type || u.type != scenUnit_) continue;
                     int cx = int(u.x) / 16, cz = int(u.z) / 16;
                     if (cx >= scenRegion_.x1 && cz >= scenRegion_.z1 &&
-                        cx <= scenRegion_.x2 && cz <= scenRegion_.z2 && u.team < 4)
-                        ++counts[u.team];
+                        cx <= scenRegion_.x2 && cz <= scenRegion_.z2 && u.player < 4)
+                        ++counts[u.player];
                 }
                 int best = 0;
                 for (int i = 1; i < 4; ++i)
@@ -2067,8 +2067,8 @@ public:
                     if (i != best && counts[i] == counts[best]) tie = true;
                 std::printf("scenario result: %d %d %d %d -> %s\n", counts[0],
                             counts[1], counts[2], counts[3],
-                            tie ? "tie" : (best == localTeam_ ? "win" : "loss"));
-                outcome_ = (!tie && best == localTeam_) ? 1 : -1;
+                            tie ? "tie" : (best == localPlayer_ ? "win" : "loss"));
+                outcome_ = (!tie && best == localPlayer_) ? 1 : -1;
             }
         }
         for (auto& u : world_.units()) {
@@ -2089,7 +2089,7 @@ public:
                 for (auto& [rid, r] : regions_) {
                     if (!r.armed) continue;
                     for (auto& u : world_.units()) {
-                        if (!u.alive() || u.embarked() || u.team != 0) continue;
+                        if (!u.alive() || u.embarked() || u.player != 0) continue;
                         int cx = int(u.x) / 16, cz = int(u.z) / 16;
                         bool inside = r.rect
                             ? (cx >= r.a && cz >= r.b && cx <= r.c && cz <= r.d)
@@ -2114,7 +2114,7 @@ public:
                 }
             }
             for (auto& u : world_.units()) {
-                if (u.team != 0) continue;
+                if (u.player != 0) continue;
                 if (u.justBuilt) missionVm_->start("UnitCreated", {u.justBuilt, 0});
                 bool wasBuilding = building_.count(u.id) != 0;
                 if (u.underConstruction) building_.insert(u.id);
@@ -2132,7 +2132,7 @@ public:
                     amphibPhase_ = 1;
                 } else if (amphibPhase_ == 1 && t->cargo.empty()) {
                     for (auto& u : world_.units())
-                        if (u.alive() && !u.embarked() && u.team == 0 && u.type &&
+                        if (u.alive() && !u.embarked() && u.player == 0 && u.type &&
                             u.type->canMove && !u.type->canTransport)
                             world_.order(u.id, amphibLandX_, amphibLandZ_, false);
                     amphibPhase_ = 2;
@@ -2145,13 +2145,13 @@ public:
         if (outcome_ == 0) {
             int alive[2] = {0, 0};
             for (auto& u : world_.units())
-                if (u.alive() && u.team < 2) ++alive[u.team];
-            sawTeam_[0] |= alive[0] > 0;
-            sawTeam_[1] |= alive[1] > 0;
-            if (sawTeam_[0] && sawTeam_[1]) {
-                int other = localTeam_ == 0 ? 1 : 0;
+                if (u.alive() && u.player < 2) ++alive[u.player];
+            sawPlayer_[0] |= alive[0] > 0;
+            sawPlayer_[1] |= alive[1] > 0;
+            if (sawPlayer_[0] && sawPlayer_[1]) {
+                int other = localPlayer_ == 0 ? 1 : 0;
                 if (alive[other] == 0) outcome_ = 1;
-                else if (alive[localTeam_] == 0) outcome_ = -1;
+                else if (alive[localPlayer_] == 0) outcome_ = -1;
             }
         }
         // T-tracking: keep the camera on the selection; drop out if it's all gone.
@@ -2161,7 +2161,7 @@ public:
             float cx = 0, cz = 0;
             int n = 0;
             for (auto& u : world_.units())
-                if (u.alive() && u.team == 0 && u.type && u.type->canMove &&
+                if (u.alive() && u.player == 0 && u.type && u.type->canMove &&
                     u.moving()) { cx += u.x; cz += u.z; ++n; }
             if (!n)
                 for (auto& u : world_.units())
@@ -2229,7 +2229,7 @@ public:
                                    u.type->blood[2], 40, 2.2f, 0);
                     } else
                         spawnBurst(u.x, u.z, 10, 110, 100, 90, 30, 2.4f, 1);
-                    if (missionVm_ && u.team == 0)
+                    if (missionVm_ && u.player == 0)
                         missionVm_->start("UnitDestroyed", {u.id});
                 }
                 continue;   // VM advanced in the parallel pass below
@@ -2375,7 +2375,7 @@ public:
             // and every render path does unitType_.at(u.id) -- skip it here so none
             // of them throw (a throw in the parallel projection aborts the process).
             if (!unitType_.count(u.id)) continue;
-            if (!noFog_ && u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
+            if (!noFog_ && u.player != localPlayer_ && !world_.cellVisible(u.x, u.z)) continue;
             // Frustum cull: only units whose anchor falls in (or just outside) the
             // map viewport are projected and drawn. The margin is generous and
             // asymmetric -- models extend well above their anchor, so a unit above
@@ -2402,19 +2402,19 @@ public:
         if (geomPool_.size() < visUnits_.size()) geomPool_.resize(visUnits_.size());
         // Build the texture atlas for every colour slot in view (main thread; the
         // parallel pass below only reads the finished atlas pointers).
-        for (const auto* u : visUnits_) atlasFor(colorSlot_[u->team & 7]);
+        for (const auto* u : visUnits_) atlasFor(colorSlot_[u->player & 7]);
         // Ensure an impostor sprite exists for every visible model when zoomed out
         // enough that LOD may kick in (main thread; the parallel pass only reads it).
         if (lodEnabled_ && mapView_.zoom() < kLodZoomGate)
             for (const auto* u : visUnits_)
                 if (u->type)
-                    ensureImpostor(unitType_.at(u->id), colorSlot_[u->team & 7],
+                    ensureImpostor(unitType_.at(u->id), colorSlot_[u->player & 7],
                                    u->type->canMove);
         // Bake sprite sheets for every visible model when sprite mode is on.
         if (spritesEnabled_)
             for (const auto* u : visUnits_)
                 if (u->type)
-                    bakeSprites(unitType_.at(u->id), colorSlot_[u->team & 7],
+                    bakeSprites(unitType_.at(u->id), colorSlot_[u->player & 7],
                                 u->type->canMove, u->type->canFly);
         double _pt0 = double(SDL_GetPerformanceCounter());
         pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
@@ -2577,7 +2577,7 @@ public:
 
         // Ghosts of the local player's queued (shift) build orders.
         for (const auto& u : world_.units())
-            if (u.alive() && u.team == localTeam_)
+            if (u.alive() && u.player == localPlayer_)
                 for (const auto& bo : u.buildOrders)
                     if (bo.type) drawGhostAt(bo.type, bo.x, bo.z);
 
@@ -2709,7 +2709,7 @@ public:
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
-            if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
+            if (u.player != localPlayer_ && !world_.cellVisible(u.x, u.z)) continue;
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
             // Only damaged units show a health bar -- a unit at full HP never does,
             // selected or not.
@@ -2733,7 +2733,7 @@ public:
         // Production progress above busy buildings.
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
-            if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
+            if (u.player != localPlayer_ && !world_.cellVisible(u.x, u.z)) continue;
             float total = u.buildQueue.front()->buildTime /
                           std::max(u.type->workerTime, 0.01f);
             float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
@@ -2749,9 +2749,9 @@ public:
             SDL_RenderFillRectF(ren_, &fg);
         }
 
-        // Team mana bar top left (legacy; only without the bottom bar).
+        // Player mana bar top left (legacy; only without the bottom bar).
         if (!panelTex_) {
-            auto& tm = world_.team(localTeam_);
+            auto& tm = world_.player(localPlayer_);
             float cap = std::max(tm.storage, 100.0f);
             SDL_FRect bg{10, 10, 180, 12};
             SDL_SetRenderDrawColor(ren_, 20, 20, 30, 230);
@@ -2824,7 +2824,7 @@ public:
         }
         if (net_ && hudFont_.ok()) {
             char nb[64];
-            std::snprintf(nb, sizeof nb, "NET P%d  TICK %u", localTeam_ + 1, netTick_);
+            std::snprintf(nb, sizeof nb, "NET P%d  TICK %u", localPlayer_ + 1, netTick_);
             hudFont_.draw(ren_, nb, float(winW) - 200, float(winH) - 14, 1.4f,
                           {140, 200, 255, 255});
             if (!netError_.empty()) {
@@ -2888,7 +2888,7 @@ public:
             if (trace_ && t >= printed) {
                 printed += 0.5f;
                 for (auto& u : world_.units())
-                    if (u.team == 0 && u.alive())
+                    if (u.player == 0 && u.alive())
                         std::printf("TRACE %.1f %d %.1f %.1f\n", t, u.id, u.x, u.z);
             }
         }
@@ -2942,15 +2942,15 @@ private:
         }
     }
 
-    int aiCount(int team, const std::string& id) {
+    int aiCount(int player, const std::string& id) {
         int n = 0;
         for (auto& u : world_.units())
-            if (u.team == team && u.type && u.alive() && u.type->id == id) ++n;
+            if (u.player == player && u.type && u.alive() && u.type->id == id) ++n;
         return n;
     }
-    // Reserve fraction of a team's mana; drives the retail "economy tweak".
-    float aiManaRatio(int team) {
-        const auto& tm = world_.team(team);
+    // Reserve fraction of a player's mana; drives the retail "economy tweak".
+    float aiManaRatio(int player) {
+        const auto& tm = world_.player(player);
         return tm.mana / std::max(tm.storage, 100.0f);
     }
 
@@ -2958,12 +2958,12 @@ private:
     // weight is its probability share; anything at its limit is excluded; army units
     // are scaled by econFactor (rich economy => more army). Skips structures the
     // economy can't yet fund so a builder never traps itself on a stalled site.
-    const tak::sim::UnitType* aiWeightedPick(int team, const tak::sim::Unit& producer,
+    const tak::sim::UnitType* aiWeightedPick(int player, const tak::sim::Unit& producer,
                                              int econFactor) {
         const auto& menu = registry_.buildable(producer.type->id);
         const tak::sim::UnitType* chosen = nullptr;
         int total = 0;
-        float income = world_.team(team).income;
+        float income = world_.player(player).income;
         for (const auto& id : menu) {
             const auto* ut = registry_.find(id);
             if (!ut) continue;
@@ -2972,7 +2972,7 @@ private:
             if (w <= 0) continue;
             auto li = aiLimit_.find(id);
             int lim = li == aiLimit_.end() ? -1 : li->second;
-            if (lim >= 0 && aiCount(team, id) >= lim) continue;
+            if (lim >= 0 && aiCount(player, id) >= lim) continue;
             bool economy = ut->income > 0 || ut->onMana;
             bool structure = !ut->canMove;
             // Don't start a non-economy building the economy can't yet drive: its
@@ -3010,12 +3010,12 @@ private:
 
     // One AI update tick (once/sec): every idle producer weighted-random builds from
     // its own menu under the profile's limits; when a strike force has pooled, attack.
-    void tickAiWeighted(int team) {
-        int econFactor = aiManaRatio(team) >= 0.5f ? 2 : 1;
+    void tickAiWeighted(int player) {
+        int econFactor = aiManaRatio(player) >= 0.5f ? 2 : 1;
         // Snapshot producer ids first (production can reallocate units_).
         std::vector<int> producers;
         for (auto& u : world_.units()) {
-            if (!u.alive() || u.team != team || !u.type) continue;
+            if (!u.alive() || u.player != player || !u.type) continue;
             if (u.type->canMove && u.type->isBuilder && u.orders.empty() &&
                 u.buildSiteId == 0)
                 producers.push_back(u.id);                        // idle mobile builder
@@ -3026,10 +3026,10 @@ private:
         for (int pid : producers) {
             auto* p = world_.unit(pid);
             if (!p || !p->alive()) continue;
-            if (const auto* pick = aiWeightedPick(team, *p, econFactor))
+            if (const auto* pick = aiWeightedPick(player, *p, econFactor))
                 aiProduce(*p, pick);
         }
-        sendWaves(team);   // pool idle fighters into a wave at a reachable enemy
+        sendWaves(player);   // pool idle fighters into a wave at a reachable enemy
     }
 
     // Start a building for the AI: lodestones go on the nearest free mana
@@ -3062,16 +3062,16 @@ private:
     // single rally target (the enemy nearest the group's centre) so they share
     // one flow field and flow around obstacles together, engaging what they meet
     // en route — instead of each unit A*-chasing its own nearest foe and jamming.
-    // Nearest enemy of another team the group at (cx,cz) can actually REACH (flow
+    // Nearest enemy of another player the group at (cx,cz) can actually REACH (flow
     // connectivity), scanning closest-first. Picking merely the straight-line
     // nearest foe on a maze sends the army at a walled-off target it can't get to,
     // so it stalls and piles against the wall (or, with the repath give-up, drifts
     // back to the keep). Returns false if no reachable enemy is near.
-    bool nearestReachableEnemy(int team, float cx, float cz,
+    bool nearestReachableEnemy(int player, float cx, float cz,
                                const tak::sim::UnitType* atype, float& tx, float& tz) {
         std::vector<std::pair<float, std::pair<float, float>>> es;
         for (auto& e : world_.units()) {
-            if (!e.alive() || e.embarked() || e.team == team || !e.type) continue;
+            if (!e.alive() || e.embarked() || e.player == player || !e.type) continue;
             float dx = e.x - cx, dz = e.z - cz;
             es.push_back({dx * dx + dz * dz, {e.x, e.z}});
         }
@@ -3098,12 +3098,12 @@ private:
                (u.orders.front().targetId == 0 && !u.orders.front().attackMove);
     }
 
-    void sendWaves(int team) {
+    void sendWaves(int player) {
         std::vector<int> idle;
         double sx = 0, sz = 0;
         const tak::sim::UnitType* atype = nullptr;
         for (auto& u : world_.units())
-            if (u.alive() && u.team == team && u.type && u.type->canMove &&
+            if (u.alive() && u.player == player && u.type && u.type->canMove &&
                 !u.type->isBuilder && waveFree(u)) {
                 idle.push_back(u.id);
                 sx += u.x; sz += u.z;
@@ -3112,7 +3112,7 @@ private:
         if (idle.size() < 4) return;
         float cx = float(sx / idle.size()), cz = float(sz / idle.size());
         float tx = 0, tz = 0;
-        if (!nearestReachableEnemy(team, cx, cz, atype, tx, tz)) return;
+        if (!nearestReachableEnemy(player, cx, cz, atype, tx, tz)) return;
         for (int id : idle) world_.attackMove(id, tx, tz, false);
     }
 
@@ -3258,29 +3258,29 @@ private:
         unitType_[u.id] = typeId;
     }
 
-    // Manifest team `t`'s faction god at its army's centre (once favour fills).
+    // Manifest player `t`'s faction god at its army's centre (once favour fills).
     void summonGod(int t) {
         float cx = 0, cz = 0; int n = 0; std::string side;
         for (const auto& u : world_.units())
-            if (u.alive() && u.team == t && u.type && !u.underConstruction) {
+            if (u.alive() && u.player == t && u.type && !u.underConstruction) {
                 cx += u.x; cz += u.z; ++n;
                 if (side.empty() && !u.type->side.empty()) side = u.type->side;
             }
-        world_.team(t).godSummoned = true;   // mark handled regardless
+        world_.player(t).godSummoned = true;   // mark handled regardless
         if (!n || side.empty()) return;
         std::transform(side.begin(), side.end(), side.begin(), ::tolower);
         const auto* god = registry_.find(side + "god");
         if (!god) return;
         int id = spawn(side + "god", cx / n, cz / n, 3.14159f, t);
         (void)id;
-        if (t == localTeam_ && hudFont_.ok()) { notice_ = "YOUR GOD HAS ANSWERED"; noticeTimer_ = 6; }
+        if (t == localPlayer_ && hudFont_.ok()) { notice_ = "YOUR GOD HAS ANSWERED"; noticeTimer_ = 6; }
         else if (hudFont_.ok()) { notice_ = "AN ENEMY GOD RISES"; noticeTimer_ = 6; }
     }
 
-    int spawn(const std::string& typeId, float x, float z, float heading, int team) {
+    int spawn(const std::string& typeId, float x, float z, float heading, int player) {
         const auto* type = registry_.find(typeId);
         if (!type) return -1;
-        int id = world_.spawn(type, x, z, heading, team);
+        int id = world_.spawn(type, x, z, heading, player);
         if (const auto* u = world_.unit(id)) registerUnit(*u);
         if (!unitType_.count(id)) return -1;
         return id;
@@ -3315,16 +3315,16 @@ private:
                     std::string name = seq.name;
                     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                     if (textures_.count(name)) continue;
-                    // 10-frame sequences are per-player team colors.
+                    // 10-frame sequences are per-player colours.
                     size_t n = seq.frames.size() == 10 ? 10 : 1;
                     // Sample the actual 10 player-colour RGBs once, from a logo/
-                    // insignia texture (mostly pure team colour), so the HUD and
-                    // minimap can match whatever colour a team renders in.
+                    // insignia texture (mostly pure player colour), so the HUD and
+                    // minimap can match whatever colour a player renders in.
                     if (!sampledColors_ && n == 10 &&
                         name.find("logo") != std::string::npos) {
                         for (size_t i = 0; i < 10; ++i) {
                             const auto& f = seq.frames[i];
-                            // Saturation-weighted average: the pure team-colour
+                            // Saturation-weighted average: the pure player-colour
                             // pixels dominate, grey shading/outlines contribute little.
                             double r = 0, g = 0, b = 0, wsum = 0;
                             for (size_t k = 0; k + 3 < f.rgba.size(); k += 4) {
@@ -3394,8 +3394,8 @@ private:
         const tak::tdo::Model* model = ghostModel(type->id);
         if (!model) return;
         tris_.clear();
-        SDL_Texture* atlas = atlasFor(colorSlot_[localTeam_ & 7]);
-        collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localTeam_);
+        SDL_Texture* atlas = atlasFor(colorSlot_[localPlayer_ & 7]);
+        collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
@@ -3448,7 +3448,7 @@ private:
     long lodDrawn_ = 0, fullDrawn_ = 0;                 // impostor vs full-model counts
 
     // Texture atlas: every unit texture packed into one big texture per player-
-    // colour slot, so a whole model (and a whole crowd of one team) shares a
+    // colour slot, so a whole model (and a whole crowd of one player) shares a
     // single texture and collapses to a handful of draw calls. Depth-sorted
     // multi-texture models otherwise force ~one draw call per triangle.
     std::unordered_map<std::string, SDL_Rect> atlasRect_;  // name -> content rect
@@ -3917,7 +3917,7 @@ private:
         if (at != anims_.end()) anim = &at->second;
 
         float zm = mapView_.zoom();
-        int slot = colorSlot_[u.team & 7];
+        int slot = colorSlot_[u.player & 7];
         float ax = (u.x - mapView_.offX()) * zm - terrainLiftX(u.x, u.z) * zm;
         float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
         // Sprite sheet: draw a moving/idle unit as one animated quad from the baked
@@ -3996,7 +3996,7 @@ private:
             facing = 3.14159265f - u.heading;
         SDL_Texture* atlas = (slot >= 0 && size_t(slot) < atlasTex_.size())
                                  ? atlasTex_[size_t(slot)] : nullptr;
-        collect(scratch, atlas, vt->second.model.root, base, anim, facing, u.team, mirror);
+        collect(scratch, atlas, vt->second.model.root, base, anim, facing, u.player, mirror);
         std::stable_sort(scratch.begin(), scratch.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         g.ax = ax; g.ay = ay;
@@ -4063,7 +4063,7 @@ private:
         float ax = g.ax, ay = g.ay;
         // Terrain occlusion: if a wall between the unit and the camera projects its
         // top above the unit's feet, clip the model to that line and re-draw the
-        // hidden part as a faint team-tinted silhouette showing through the wall.
+        // hidden part as a faint player-tinted silhouette showing through the wall.
         // Flyers ride above the terrain, so a wall never hides them.
         float occY = g.occY;
         bool occluded = !g.canFly && occY < ay - 2.0f;
@@ -4129,13 +4129,13 @@ private:
             }
         }
 
-        // Occluded: re-draw the hidden lower part as a faint, flat team-coloured
+        // Occluded: re-draw the hidden lower part as a faint, flat player-coloured
         // silhouette through the wall, so a unit behind cover is never fully lost.
         if (occluded) {
             int line = std::clamp(int(occY), 0, outH);
             SDL_Rect bot{0, line, outW, std::max(0, outH - line)};
             SDL_RenderSetClipRect(ren_, &bot);
-            SDL_Color tc = teamColor(u.team);
+            SDL_Color tc = playerColor(u.player);
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             // The silhouette is flat, untextured and single-colour, so the whole
             // model collapses to ONE draw call: re-tint every vertex and submit.
@@ -4156,7 +4156,7 @@ private:
     // Project model triangles relative to the unit anchor: yaw by heading,
     // fixed tilt so models read against TAK's painted top-down terrain.
     void collect(std::vector<Tri>& out, SDL_Texture* atlas, const tak::tdo::Object& o,
-                 const Xform& parent, const Anim* anim, float heading, int team,
+                 const Xform& parent, const Anim* anim, float heading, int player,
                  bool mirror = false, bool isRoot = true) {
         static const float kNoRot[3] = {0, 0, 0};
         const tak::cob::PieceState* ps = pieceFor(anim, o.name);
@@ -4200,8 +4200,8 @@ private:
                     auto it = textures_.find(name);
                     if (it != textures_.end() && !it->second.empty()) {
                         // Each texture carries one variant per player colour; a
-                        // team's slot is remappable (--color / --aicolor).
-                        size_t ci = size_t(colorSlot_[team & 7]);
+                        // player's slot is remappable (--color / --aicolor).
+                        size_t ci = size_t(colorSlot_[player & 7]);
                         tex = it->second[ci < it->second.size() ? ci : 0];
                     }
                 }
@@ -4240,7 +4240,7 @@ private:
             }
         }
         for (const auto& c : o.children)
-            collect(out, atlas, c, xf, anim, heading, team, mirror, false);
+            collect(out, atlas, c, xf, anim, heading, player, mirror, false);
     }
 
     void drawRing(float wx, float wz, float r) {
@@ -4296,23 +4296,24 @@ private:
     float fps_ = 0;             // smoothed render FPS, shown on the F4 overlay
     int winW_ = 0, winH_ = 0;   // last-known window size (for centering/culling)
     tak::net::Session* net_ = nullptr;
-    int localTeam_ = 0;
-    // Player-colour slot per team (which colour variant of each unit texture to
-    // use); defaults to the team index. Overridable via --color / --aicolor and
+    int localPlayer_ = 0;
+    // Player-colour slot per player (which colour variant of each unit texture to
+    // use); defaults to the player index. Overridable via --color / --aicolor and
     // the in-game picker.
     int colorSlot_[8] = {0, 1, 2, 3, 4, 5, 6, 7};
-    // The 10 player-colour RGBs (sampled from a team-coloured logo texture at
+    // The 10 player-colour RGBs (sampled from a player-coloured logo texture at
     // load; the fallback below is a sensible distinct palette). Used so the HUD
-    // and minimap match whatever slot a team renders in.
+    // and minimap match whatever slot a player renders in.
     SDL_Color playerColors_[10] = {
         {70, 130, 240, 255}, {215, 60, 55, 255}, {70, 185, 90, 255},
         {235, 205, 55, 255}, {225, 225, 225, 255}, {80, 200, 205, 255},
         {160, 95, 205, 255}, {230, 145, 50, 255}, {230, 120, 180, 255},
         {120, 120, 130, 255}};
     bool sampledColors_ = false;
-    // RGB a team's units render in (its slot's player colour).
-    SDL_Color teamColor(int team) const {
-        int s = (team >= 0 && team < 8) ? colorSlot_[team] : 0;
+    // RGB a player's units render in (its slot's player colour). The argument is
+    // the sim ownership index (Unit::player) -- one player per slot in skirmish.
+    SDL_Color playerColor(int player) const {
+        int s = (player >= 0 && player < 8) ? colorSlot_[player] : 0;
         return playerColors_[(s >= 0 && s < 10) ? s : 0];
     }
 
@@ -4442,7 +4443,7 @@ private:
         int maintainCount = 0;    // > 0: respawn while count(maintainType) < N
         std::string maintainType;
         tak::crt::Region maintainRect;
-        int team = 3;
+        int player = 3;
         bool done = false;
         float cooldown = 0;
     };
@@ -4537,9 +4538,9 @@ private:
         shadowBatch_.clear();
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
-            if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
+            if (u.player != localPlayer_ && !world_.cellVisible(u.x, u.z)) continue;
             SDL_FPoint p = toMini(u.x, u.z);
-            SDL_Color tc = teamColor(u.team);
+            SDL_Color tc = playerColor(u.player);
             pushQuad(shadowBatch_, p.x - 1.5f, p.y - 1.5f, 3, 3, tc);
         }
         if (!shadowBatch_.empty())
@@ -4579,7 +4580,7 @@ private:
         if (selection_.empty() || !minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
         for (int id : selection_) {
             const auto* u = world_.unit(id);
-            if (!u || u->team != localTeam_) continue;
+            if (!u || u->player != localPlayer_) continue;
             tak::net::Command c;
             c.kind = tak::net::Cmd::Move;
             c.unitId = id;
@@ -4588,7 +4589,7 @@ private:
             c.queue = queue ? 1 : 0;
             issue(c);
         }
-        if (const auto* u = world_.unit(selection_.front()); u && u->team == localTeam_)
+        if (const auto* u = world_.unit(selection_.front()); u && u->player == localPlayer_)
             voice(selection_.front(), "move");
         return true;
     }
@@ -5257,7 +5258,7 @@ private:
                 for (int i = 0; i < nx; ++i) {
                     float x = cx + (i - (nx - 1) * 0.5f) * 24.0f;
                     float z = cz + (j - (nz - 1) * 0.5f) * 22.0f;
-                    if (spawn("zondrake", x, z, 0.0f, localTeam_) >= 0) ++made;
+                    if (spawn("zondrake", x, z, 0.0f, localPlayer_) >= 0) ++made;
                 }
             notice_ = "SPAWNED " + std::to_string(made) + " DRAKES";
             noticeTimer_ = 3;
@@ -5274,7 +5275,7 @@ private:
                 for (int i = 0; i < nx; ++i) {
                     float x = cx + (i - (nx - 1) * 0.5f) * 20.0f;
                     float z = cz + (j - (nz - 1) * 0.5f) * 18.0f;
-                    if (spawn("zontroll", x, z, 0.0f, localTeam_) >= 0) ++made;
+                    if (spawn("zontroll", x, z, 0.0f, localPlayer_) >= 0) ++made;
                 }
             notice_ = "SPAWNED " + std::to_string(made) + " TROLLS";
             noticeTimer_ = 3;
@@ -5362,7 +5363,7 @@ private:
     void selectOwned(Pred pred) {
         selection_.clear();
         for (auto& u : world_.units())
-            if (u.alive() && u.team == localTeam_ && u.type && pred(u))
+            if (u.alive() && u.player == localPlayer_ && u.type && pred(u))
                 selection_.push_back(u.id);
         if (!selection_.empty()) voice(selection_.front(), "select");
     }
@@ -5377,7 +5378,7 @@ private:
     void cycleNextUnit() {
         std::vector<int> owned;
         for (auto& u : world_.units())
-            if (u.alive() && u.team == localTeam_ && u.type && u.type->canMove)
+            if (u.alive() && u.player == localPlayer_ && u.type && u.type->canMove)
                 owned.push_back(u.id);
         if (owned.empty()) return;
         int cur = selection_.empty() ? -1 : selection_.front();
@@ -5413,7 +5414,7 @@ private:
     }
 
     // The player's HUD accent — follows their chosen player colour, not faction.
-    SDL_Color factionColor() const { return teamColor(localTeam_); }
+    SDL_Color factionColor() const { return playerColor(localPlayer_); }
 
     // A built-in 5x7 pixel font (uppercase, digits, a few symbols), drawn as
     // solid blocks — unmistakably legible at any size, unlike the game's small
@@ -5515,7 +5516,7 @@ private:
         char buf[64];
         for (const auto& u : world_.units()) {
             if (!u.alive() || !u.type) continue;
-            if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z) && !noFog_) continue;
+            if (u.player != localPlayer_ && !world_.cellVisible(u.x, u.z) && !noFog_) continue;
             float sx = (u.x - mapView_.offX()) * zm;
             float rawY = (u.z - mapView_.offY()) * zm;
             float lift = terrainLift(u.x, u.z);
@@ -5549,7 +5550,7 @@ private:
         std::string sd[4];
         for (const auto& u : world_.units()) {
             if (!u.alive() || !u.type) continue;
-            int t = u.team;
+            int t = u.player;
             if (t < 0 || t >= 4) continue;
             ++cnt[t];
             if (sd[t].empty()) sd[t] = u.type->side;
@@ -5558,21 +5559,28 @@ private:
         for (int t = 0; t < 4; ++t) if (cnt[t] > 0) ++rows;
         const float px = 2.4f, lh = 7 * px + 9, x = 12;
         float y = 12;
+        const float colUnits = x + 108, colKills = x + 186;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 175);
-        SDL_FRect bg{x - 7, y - 7, 210, (rows + 1) * lh + 8};
+        SDL_FRect bg{x - 7, y - 7, 270, (rows + 1) * lh + 8};
         SDL_RenderFillRectF(ren_, &bg);
         char buf[64];
-        // FPS first, in a neutral grey.
+        // FPS on the left; UNITS / KILLS column headers on the right.
         std::snprintf(buf, sizeof buf, "FPS %d", int(fps_ + 0.5f));
         blockText(buf, x, y, px, SDL_Color{190, 190, 195, 255});
+        blockText("UNITS", colUnits, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
+        blockText("KILLS", colKills, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
         y += lh;
         for (int t = 0; t < 4; ++t) {
             if (cnt[t] == 0) continue;
             std::string s = sd[t];
             std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-            std::snprintf(buf, sizeof buf, "%s  %d", s.c_str(), cnt[t]);
-            blockText(buf, x, y, px, teamColor(t));
+            SDL_Color c = playerColor(t);
+            blockText(s, x, y, px, c);
+            std::snprintf(buf, sizeof buf, "%d", cnt[t]);
+            blockText(buf, colUnits, y, px, c);
+            std::snprintf(buf, sizeof buf, "%d", world_.player(t).kills);
+            blockText(buf, colKills, y, px, c);
             y += lh;
         }
         (void)winW;
@@ -5597,7 +5605,7 @@ private:
             SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
             SDL_RenderFillRectF(ren_, &r);
             // Frame; the current selection gets a bright, thick border.
-            bool cur = colorSlot_[localTeam_] == i;
+            bool cur = colorSlot_[localPlayer_] == i;
             SDL_SetRenderDrawColor(ren_, cur ? 255 : 20, cur ? 255 : 18,
                                    cur ? 255 : 16, 255);
             SDL_RenderDrawRectF(ren_, &r);
@@ -5613,7 +5621,7 @@ private:
         if (!showColorPicker_) return false;
         for (const auto& [r, slot] : colorRects_)
             if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
-                colorSlot_[localTeam_] = slot;
+                colorSlot_[localPlayer_] = slot;
                 return true;
             }
         return false;
@@ -5704,7 +5712,7 @@ private:
                 SDL_FRect rb{r.x - 1, r.y - 1, r.w + 2, r.h + 2};
                 SDL_RenderFillRectF(ren_, &rb);
                 SDL_Texture* ic = iconFor(bt->id);
-                if (!ic) ic = modelIconTex(bt->id, colorSlot_[localTeam_ & 7], bt->canMove);
+                if (!ic) ic = modelIconTex(bt->id, colorSlot_[localPlayer_ & 7], bt->canMove);
                 if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &r);
                 else {
                     SDL_SetRenderDrawColor(ren_, 60, 55, 50, 255);
@@ -5753,7 +5761,7 @@ private:
 
         // Bottom-RIGHT: mana.
         {
-            auto& tm = world_.team(localTeam_);
+            auto& tm = world_.player(localPlayer_);
             float manaX = float(winW) - 192;
             shade(manaX - 8, 200);
             SDL_Color blk{0, 0, 0, 255};
@@ -5874,12 +5882,12 @@ private:
                 return 0;
             case 2: {   // nearest unit of player a[0] to cell (a[1],a[2])
                 if (a.size() < 3) return 0;
-                int team = std::clamp(a[0] - 1, 0, 3);
+                int player = std::clamp(a[0] - 1, 0, 3);
                 float wx = float(a[1]) * 16 + 8, wz = float(a[2]) * 16 + 8;
                 int best = 0;
                 float bestD = 1e18f;
                 for (auto& u : world_.units()) {
-                    if (!u.alive() || u.team != team) continue;
+                    if (!u.alive() || u.player != player) continue;
                     float dx = u.x - wx, dz = u.z - wz;
                     if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; best = u.id; }
                 }
@@ -5887,16 +5895,16 @@ private:
             }
             case 4: {   // HEURISTIC: spawn a reinforcement for player a[0]
                 if (a.size() < 3) return 0;
-                int team = std::clamp(a[0] - 1, 0, 3);
-                auto& pool = reinfPool_[team];
+                int player = std::clamp(a[0] - 1, 0, 3);
+                auto& pool = reinfPool_[player];
                 if (pool.empty()) return 0;
                 const std::string& type = pool[size_t(reinfIdx_++) % pool.size()];
                 float wx = float(a[1]) * 16 + 8, wz = float(a[2]) * 16 + 8;
                 int id = spawn(type, wx + float(reinfIdx_ % 3) * 18,
-                               wz + float(reinfIdx_ % 2) * 18, 3.14159f, team);
-                if (id >= 0 && team == 0 && hudFont_.ok()) notice_ = "REINFORCEMENTS!";
-                if (trace_) std::printf("SPAWN4 %s team%d at %d,%d -> id %d\n",
-                                        type.c_str(), team, a[1], a[2], id);
+                               wz + float(reinfIdx_ % 2) * 18, 3.14159f, player);
+                if (id >= 0 && player == 0 && hudFont_.ok()) notice_ = "REINFORCEMENTS!";
+                if (trace_) std::printf("SPAWN4 %s player%d at %d,%d -> id %d\n",
+                                        type.c_str(), player, a[1], a[2], id);
                 if (id >= 0) noticeTimer_ = 6;
                 return id;
             }
@@ -5907,7 +5915,7 @@ private:
                 float bx = 0, bz = 0;
                 int n = 0;
                 for (auto& o : world_.units())
-                    if (o.alive() && o.team == u->team && o.id != u->id && o.type &&
+                    if (o.alive() && o.player == u->player && o.id != u->id && o.type &&
                         o.type->canMove) { bx += o.x; bz += o.z; ++n; }
                 if (n) world_.attackMove(a[0], bx / float(n), bz / float(n), false);
                 return 0;
@@ -6184,7 +6192,7 @@ private:
     SoundClasses soundClasses_;
     uint32_t salt_ = 0;
     int outcome_ = 0;   // 0 = playing, 1 = victory, -1 = defeat
-    bool sawTeam_[2] = {false, false};
+    bool sawPlayer_[2] = {false, false};
     bool demoAi_ = false;
     bool aiEnabled_ = true;
     bool amphib_ = false;
@@ -6354,8 +6362,8 @@ int main(int argc, char** argv) {
                 SDL_GetWindowSize(win, &cw, &ch);
                 if (cw < minW) SDL_SetWindowSize(win, minW, ch);
             }
-            if (playerColor >= 0) gameView->setTeamColor(0, playerColor);
-            if (aiColor >= 0) gameView->setTeamColor(1, aiColor);
+            if (playerColor >= 0) gameView->setPlayerColor(0, playerColor);
+            if (aiColor >= 0) gameView->setPlayerColor(1, aiColor);
             if (net) gameView->setNet(net.get());
             if (followZoom > 0) gameView->setFollow(followZoom);
             if (doMarch) gameView->marchTo(marchX, marchZ);
@@ -6478,7 +6486,7 @@ int main(int argc, char** argv) {
                 {
                     int pick = -1;
                     for (auto& u : gameView->worldRef().units())
-                        if (u.alive() && u.team == 0 && u.type && u.type->isBuilder)
+                        if (u.alive() && u.player == 0 && u.type && u.type->isBuilder)
                             pick = u.id;
                     if (pick >= 0) gameView->selectOnly(pick);
                     ktPhase = keytestSelectOnly ? 4 : 1;
