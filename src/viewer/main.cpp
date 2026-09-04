@@ -2341,6 +2341,10 @@ public:
         }
         for (auto& u : world_.units()) {
             if (u.deadFor >= 4.0f || u.embarked()) continue;
+            // Unregistered (e.g. a type whose model failed to load): not drawable,
+            // and every render path does unitType_.at(u.id) -- skip it here so none
+            // of them throw (a throw in the parallel projection aborts the process).
+            if (!unitType_.count(u.id)) continue;
             if (!noFog_ && u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
             // Frustum cull: only units whose anchor falls in (or just outside) the
             // map viewport are projected and drawn. The margin is generous and
@@ -3438,7 +3442,7 @@ private:
     std::vector<SDL_Texture*> sprPages_;   // 4096 atlas pages (multi-page: scales,
     int sprAtlasDim_ = 4096;               // and 4096 targets work everywhere)
     int sprCurX_ = 0, sprCurY_ = 0, sprShelfH_ = 0;
-    bool spritesEnabled_ = false;
+    bool spritesEnabled_ = true;   // animated sprite sheets on by default (F10 toggles)
 
     // Allocate a fresh cleared sprite-atlas page. Returns false if it can't.
     bool newSprPage() {
@@ -3783,7 +3787,9 @@ private:
         g.runs.clear();
         g.canFly = u.type && u.type->canFly;
         if (u.underConstruction && !u.buildBegun) return;   // ghost drawn serially
-        auto vt = visuals_.find(unitType_.at(u.id));
+        auto ut = unitType_.find(u.id);   // defensive: a throw here would abort
+        if (ut == unitType_.end()) return;
+        auto vt = visuals_.find(ut->second);
         if (vt == visuals_.end()) return;
         const Anim* anim = nullptr;
         auto at = anims_.find(u.id);
