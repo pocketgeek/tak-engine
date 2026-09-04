@@ -2501,6 +2501,12 @@ public:
                 drawOps_.push_back({nullptr, nullptr, segTex, segStart, segCount});
                 segCount = 0;
             }
+            // Force the next run to re-anchor segStart to the current destOff. Without
+            // this, a unit whose texture matches segTex but follows a feature/special
+            // unit (which closed the segment) keeps the PREVIOUS segment's segStart and
+            // gets drawn from the wrong vertices -- so it renders an earlier unit's body
+            // and vanishes from its own spot (camera-dependent, as depth order shifts).
+            segTex = nullptr;
         };
         for (const auto& it : items) {
             if (it.f) {
@@ -3481,6 +3487,26 @@ private:
         sprCurX_ = sprCurY_ = sprShelfH_ = 0;
         return true;
     }
+public:
+    // SDL_RENDER_TARGETS_RESET / _DEVICE_RESET: on a driver or device reset, every
+    // TEXTUREACCESS_TARGET texture silently loses its pixels while its handle stays
+    // valid -- so units baked/skinned into them render fully transparent (they
+    // "disappear"), the classic intermittent-vanish some GPUs show under load or on
+    // a focus/resolution change. SDL fires this event exactly then; we drop every
+    // render-target-backed cache so the pre-pass re-bakes them cleanly next frame.
+    // Surface-backed caches (shadows, build FX) keep their pixels and are untouched.
+    void invalidateRenderTargets() {
+        for (SDL_Texture* t : sprPages_) if (t) SDL_DestroyTexture(t);
+        sprPages_.clear();
+        sprites_.clear();
+        sprCurX_ = sprCurY_ = sprShelfH_ = 0;
+        for (SDL_Texture* t : atlasTex_) if (t) SDL_DestroyTexture(t);
+        atlasTex_.clear();
+        impostors_.clear();
+        if (impAtlas_) { SDL_DestroyTexture(impAtlas_); impAtlas_ = nullptr; }
+        impCurX_ = impCurY_ = impShelfH_ = 0;
+    }
+private:
     bool lodEnabled_ = false;   // impostors off by default; F8 toggles them on
     float lodPx_ = 112.0f;                       // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 1.2f; // skip LOD entirely when zoomed in
@@ -3698,7 +3724,31 @@ private:
             tmp.vm->reset();
             if (canFly) { tmp.vm->setStatic(tmp.flyGate, 1); tmp.vm->start("fly");
                           for (int s = 0; s < 8; ++s) tmp.vm->tick(1.0f / 30); }
-            else if (canMove) { tmp.vm->start("walk_legs") || tmp.vm->start("walk"); }
+            else if (canMove) {
+                // Ground walk scripts gate their leg motion on static 0 (the "moving"
+                // flag the live anim loop sets); without it walk_legs no-ops and every
+                // baked frame is the same standing pose. Set it, exactly as the live
+                // update loop does, so the bake captures a real walk cycle.
+                tmp.vm->setStatic(0, 1);
+                tmp.vm->start("walk_legs") || tmp.vm->start("walk");
+            }
+            else {
+                // Static buildings: run the COB constructor exactly as registerUnit
+                // does for the live unit, then let it settle, so the bake reflects the
+                // same default piece visibility -- e.g. the Death Totem's Create hides
+                // its vetskull* pieces (veterancy skulls a fresh totem hasn't earned),
+                // which the sprite otherwise left visible while the 3D model hid them.
+                tmp.vm->start("Create");
+                for (int s = 0; s < 6; ++s) tmp.vm->tick(1.0f / 30);
+            }
+        };
+        // Advance the bake VM one step. A ground walk script is single-pass, so (like
+        // the live loop) re-invoke it once its thread ends, keeping the legs cycling
+        // across the whole bake window instead of freezing after the first pass.
+        auto stepVm = [&](float dt) {
+            tmp.vm->tick(dt);
+            if (canMove && !canFly && tmp.vm->threadCount() == 0)
+                tmp.vm->start("walk_legs") || tmp.vm->start("walk");
         };
         SDL_Texture* atlas = atlasFor(slot);
         if (sprPages_.empty() && !newSprPage()) return;
@@ -3725,7 +3775,7 @@ private:
             float prev = sig();
             int stable = 0;
             for (float t = dt; t < 2.5f; t += dt) {
-                tmp.vm->tick(dt);
+                tmp.vm->tick(dt);   // no re-invoke: let one walk pass settle = the cycle
                 float s = sig();
                 if (std::fabs(s - prev) < 1e-4f) {
                     if (++stable >= 6 && t - 6 * dt > 0.25f) { period = t - 6 * dt; break; }
@@ -3784,7 +3834,7 @@ private:
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             atlasFull = false;
             for (int k = 0; k < ss.frames && !atlasFull; ++k) {
-                if (k > 0) for (int s = 0; s < 4; ++s) tmp.vm->tick(period / ss.frames / 4);
+                if (k > 0) for (int s = 0; s < 4; ++s) stepVm(period / ss.frames / 4);
                 for (int fi = 0; fi < kSprFacings && !atlasFull; ++fi)
                     capture(fi, ss.rect[fi][k], ss.bbox[fi][k]);
             }
@@ -5038,6 +5088,12 @@ private:
             noticeTimer_ = 2;
             return true;
         }
+        if (key == SDLK_F10 && shift) {           // force-rebuild the baked atlases
+            invalidateRenderTargets();            // (recovers a GPU render-target reset)
+            notice_ = "REBUILT SPRITE ATLASES";
+            noticeTimer_ = 2;
+            return true;
+        }
         if (key == SDLK_F10) {                    // toggle animated sprite sheets
             spritesEnabled_ = !spritesEnabled_;
             notice_ = spritesEnabled_ ? "SPRITES ON" : "SPRITES OFF";
@@ -6202,6 +6258,11 @@ int main(int argc, char** argv) {
             if (e.type == SDL_QUIT ||
                 (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE))
                 running = false;
+            // The GPU lost every render-target texture's contents (device/driver
+            // reset). Rebuild the baked atlases so sprites don't blink out.
+            if ((e.type == SDL_RENDER_TARGETS_RESET ||
+                 e.type == SDL_RENDER_DEVICE_RESET) && gameView)
+                gameView->invalidateRenderTargets();
             // 'S' grabs a screenshot in the asset viewers; in game it is the
             // Stop hotkey (Keys.TDF LOWER_S), handled by GameView::input.
             if (!gameView && e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_s)
