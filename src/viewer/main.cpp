@@ -2395,8 +2395,7 @@ public:
         for (const auto* u : visUnits_) atlasFor(colorSlot_[u->team & 7]);
         // Ensure an impostor sprite exists for every visible model when zoomed out
         // enough that LOD may kick in (main thread; the parallel pass only reads it).
-        if (lodEnabled_ && (mapView_.zoom() < kLodZoomGate ||
-                            visUnits_.size() > size_t(kCrowdLod)))
+        if (lodEnabled_ && mapView_.zoom() < kLodZoomGate)
             for (const auto* u : visUnits_)
                 if (u->type)
                     ensureImpostor(unitType_.at(u->id), colorSlot_[u->team & 7],
@@ -2701,12 +2700,10 @@ public:
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
             if (u.team != localTeam_ && !world_.cellVisible(u.x, u.z)) continue;
-            bool sel = selSet_.count(u.id) != 0;
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
-            // Full-health units show a bar only if selected and big enough on screen
-            // (a selected army zoomed out doesn't need thousands of full green bars);
-            // damaged units always show one.
-            if (frac >= 1.0f && (!sel || 26.0f * zm < 22.0f)) continue;
+            // Only damaged units show a health bar -- a unit at full HP never does,
+            // selected or not.
+            if (frac >= 1.0f) continue;
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
             float bx = (u.x - mapView_.offX()) * zm - bw / 2 - terrainLiftX(u.x, u.z) * zm;
             float by = (u.z - mapView_.offY()) * zm - 30 * zm - terrainLift(u.x, u.z) * zm;
@@ -3439,9 +3436,10 @@ private:
     // per model+colour, packed into impAtlas_) instead of its full ~200-triangle
     // model. That cuts the per-frame vertex count ~100x for a zoomed-out crowd --
     // the thing that pins the render thread and the GPU at thousands of units.
+    static constexpr int kFacings = 16;  // facings for both impostors and sprites
     struct Impostor {
-        SDL_Rect rect[8];    // where each facing sits in impAtlas_
-        SDL_FRect bbox[8];   // model's screen bbox at zoom 1 (x,y = offset from anchor)
+        SDL_Rect rect[kFacings];   // where each facing sits in impAtlas_
+        SDL_FRect bbox[kFacings];  // model's screen bbox at zoom 1 (offset from anchor)
         bool ready = false;
     };
     std::map<std::pair<std::string, int>, Impostor> impostors_;  // (model, slot)
@@ -3455,7 +3453,7 @@ private:
     // instead of a live model -- the classic-RTS way to run thousands cheaply.
     // Full-3D is kept for attack/death/build poses (rare, few at a time).
     static constexpr int kSprFrames = 8;    // locomotion-cycle frames baked
-    static constexpr int kSprFacings = 16;  // 16 => ~22.5deg turn granularity
+    static constexpr int kSprFacings = kFacings;  // 16 => ~22.5deg turn granularity
     struct SpriteSet {
         SDL_Rect rect[kSprFacings][kSprFrames];
         SDL_FRect bbox[kSprFacings][kSprFrames];
@@ -3468,7 +3466,33 @@ private:
     std::vector<SDL_Texture*> sprPages_;   // 4096 atlas pages (multi-page: scales,
     int sprAtlasDim_ = 4096;               // and 4096 targets work everywhere)
     int sprCurX_ = 0, sprCurY_ = 0, sprShelfH_ = 0;
-    bool spritesEnabled_ = true;   // animated sprite sheets on by default (F10 toggles)
+    // Sprite mode: AUTO (default) turns sprite sheets on only while the frame can't
+    // hold 60fps, off again once the crowd clears -- so units keep full 3D detail
+    // until the scene actually needs the cheaper representation. F10 cycles
+    // AUTO -> ON -> OFF. spritesEnabled_ is the effective state auto-tune sets.
+    enum SpriteMode { SPR_AUTO, SPR_ON, SPR_OFF };
+    int spriteMode_ = SPR_AUTO;
+    bool spritesEnabled_ = false;  // effective state (managed by autoTuneSprites)
+    float workEma_ = 8.0f;         // smoothed update+draw ms (drives auto sprites)
+public:
+    // Called once per frame from the main loop with that frame's update+draw wall
+    // time (ms), measured before present so vsync/the fps cap don't skew it.
+    void autoTuneSprites(float workMs) {
+        workEma_ = workEma_ * 0.85f + workMs * 0.15f;
+        if (spriteMode_ == SPR_ON)  { spritesEnabled_ = true;  return; }
+        if (spriteMode_ == SPR_OFF) { spritesEnabled_ = false; return; }
+        // AUTO. Sprites help only a real crowd, so gate on both the frame missing the
+        // 60fps budget (16.6ms of update+draw) AND enough on-screen units -- that
+        // keeps a startup/asset hitch with few units from latching them on. The fps
+        // cap hides headroom once sprites are on, so turn back off by crowd size (a
+        // wide 64-on / 32-off gap avoids flapping) rather than by fps.
+        if (!spritesEnabled_) {
+            if (workEma_ > 16.6f && visUnits_.size() >= 64) spritesEnabled_ = true;
+        } else if (visUnits_.size() < 32) {
+            spritesEnabled_ = false;
+        }
+    }
+private:
 
     // Allocate a fresh cleared sprite-atlas page. Returns false if it can't.
     bool newSprPage() {
@@ -3507,11 +3531,10 @@ public:
         impCurX_ = impCurY_ = impShelfH_ = 0;
     }
 private:
-    bool lodEnabled_ = false;   // impostors off by default; F8 toggles them on
-    float lodPx_ = 112.0f;                       // model shorter than this -> impostor
-    static constexpr float kLodZoomGate = 1.2f; // skip LOD entirely when zoomed in
-    static constexpr float kCrowdLod = 500.0f;  // on-screen units above which LOD
-                                                // grows aggressive and ignores zoom
+    bool lodEnabled_ = true;    // distant impostors on by default; F8 toggles
+    float lodPx_ = 64.0f;                        // model shorter than this -> impostor
+    static constexpr float kLodZoomGate = 0.5f;  // LOD only when really zoomed out
+                                                 // (zoom below this); full 3D otherwise
 
     static int facingIndex(float heading, int n) {
         int k = int(std::lround(heading / (2.0f * 3.14159265f) * float(n)));
@@ -3626,8 +3649,8 @@ private:
         SDL_SetRenderTarget(ren_, impAtlas_);
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         float maxH = 1.0f;
-        for (int k = 0; k < 8; ++k) {
-            float heading = float(k) / 8.0f * 2.0f * 3.14159265f;
+        for (int k = 0; k < kFacings; ++k) {
+            float heading = float(k) / float(kFacings) * 2.0f * 3.14159265f;
             float facing = canMove ? -heading : 0.0f;
             scratch.clear();
             collect(scratch, atlas, vt->second.model.root, Xform{}, nullptr, facing, 0, false);
@@ -3908,20 +3931,16 @@ private:
                 }
             }
         }
-        // Level of detail: draw a small unit as a cached impostor billboard.
-        // The size threshold scales up with the on-screen crowd, and a big crowd
-        // also overrides the zoom gate -- so thousands of units use impostors even
-        // when zoomed in, but zooming onto a small group (few units survive the
-        // frustum cull) keeps full detail.
-        float crowd = float(visUnits_.size());
-        float effLod = lodPx_ * std::max(1.0f, crowd / kCrowdLod);
-        if (lodEnabled_ && (zm < kLodZoomGate || crowd > kCrowdLod)) {
+        // Level of detail: only when really zoomed out (zoom below the gate), draw a
+        // unit small enough on screen (< lodPx_ tall) as a cached impostor billboard
+        // instead of its model. At normal/close zoom every unit keeps full 3D.
+        if (lodEnabled_ && zm < kLodZoomGate) {
             auto hit = modelH_.find(vt->first);
             auto iit = impostors_.find(std::make_pair(vt->first, slot));
             if (hit != modelH_.end() && iit != impostors_.end() && iit->second.ready
-                && hit->second * zm < effLod) {
+                && hit->second * zm < lodPx_) {
                 const Impostor& imp = iit->second;
-                int f = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f, 8);
+                int f = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f, kFacings);
                 const SDL_Rect& r = imp.rect[f];
                 const SDL_FRect& bb = imp.bbox[f];
                 float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
@@ -5094,9 +5113,10 @@ private:
             noticeTimer_ = 2;
             return true;
         }
-        if (key == SDLK_F10) {                    // toggle animated sprite sheets
-            spritesEnabled_ = !spritesEnabled_;
-            notice_ = spritesEnabled_ ? "SPRITES ON" : "SPRITES OFF";
+        if (key == SDLK_F10) {                    // cycle sprite mode AUTO->ON->OFF
+            spriteMode_ = (spriteMode_ + 1) % 3;
+            notice_ = spriteMode_ == SPR_AUTO ? "SPRITES AUTO"
+                    : spriteMode_ == SPR_ON   ? "SPRITES ON" : "SPRITES OFF";
             noticeTimer_ = 2;
             return true;
         }
@@ -6371,6 +6391,7 @@ int main(int argc, char** argv) {
         if (mapView) mapView->draw(w, h);
         if (modelView) modelView->draw(w, h, dt);
         double t1 = prof ? pnow() : 0;
+        uint64_t workStart = SDL_GetPerformanceCounter();   // for sprite auto-tune
         if (gameView) {
             if (gameView->isNet()) {
                 netAccum += dt;
@@ -6393,6 +6414,11 @@ int main(int argc, char** argv) {
             gameView->draw(w, h);
             double t3 = prof ? pnow() : 0;
             if (prof) { pTer += t1 - t0; pUpd += t2 - t1; pDraw += t3 - t2; }
+            // Feed this frame's update+draw wall time (pre-present, so the vsync/cap
+            // wait doesn't count) to the sprite auto-tuner.
+            float workMs = float(double(SDL_GetPerformanceCounter() - workStart) /
+                                 double(SDL_GetPerformanceFrequency()) * 1000.0);
+            gameView->autoTuneSprites(workMs);
         }
         double t4 = prof ? pnow() : 0;
         SDL_RenderPresent(ren);
