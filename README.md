@@ -139,7 +139,9 @@ in-client lobby has a game browser, a create-game dialog, and a room screen
 where each player picks their faction, colour, and team and readies up (the host
 opens/closes slots, kicks, and starts). A dropped player's slot is held so they
 can rejoin with a resume token (the client replays the bundle log to catch up);
-otherwise they forfeit deterministically. Start the server with
+otherwise they forfeit deterministically. A running game can be **watched live**
+from the browser (the **WATCH** button) — a spectator replays the bundle log to
+the present, then follows along with no fog and no control. Start the server with
 `--replaydir <dir>` and it writes a self-contained `.takrep` for every finished
 game; play one back as a spectator with
 `takview replay <file.takrep> <terrain> <data>` (Pause and the **+**/**−** speed
