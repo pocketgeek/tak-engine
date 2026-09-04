@@ -2904,16 +2904,122 @@ private:
         if (!aiEnabled_ || aiTimer_ > 0 || outcome_ != 0) return;
         aiTimer_ = 1.0f;
 
-        if (demoAi_) {
-            // Showcase: both pre-built armies simply fight.
-            runAi(1, aiKeepId_, aiCycle_);
-            runAi(0, keepId_, std::array<std::string, 4>{"araarch", "arasword",
-                                                         "araarch", "araknigh"});
-        } else {
-            // Skirmish: the AI Monarch bootstraps a base and produces.
-            runBuildAi(1, aiMonarchId_, aiKeepId_, aiKeepType_, aiLodeType_,
-                       aiCycle_);
+        if (!aiProfileLoaded_) loadAiProfile();
+        tickAiWeighted(1);              // the AI opponent
+        if (demoAi_) tickAiWeighted(0); // showcase: player side is AI too
+    }
+
+    // Parse the retail AI profile (ai/default.txt): "weight <unit> N" / "limit <unit>
+    // N" lines, one file covering every faction. Missing weight => AI won't build it;
+    // missing limit => unlimited (-1).
+    void loadAiProfile() {
+        aiProfileLoaded_ = true;
+        for (std::string path : {dataRoot_ + "/ai/default.txt",
+                                 ipRoot_.empty() ? std::string() : ipRoot_ + "/ai/default.txt"}) {
+            if (path.empty()) continue;
+            std::ifstream f(path);
+            if (!f) continue;
+            std::string kw, unit; int v;
+            for (std::string line; std::getline(f, line);) {
+                if (line.size() < 2 || line[0] == '/') continue;
+                std::istringstream ss(line);
+                if (!(ss >> kw >> unit >> v)) continue;
+                std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
+                if (kw == "weight") aiWeight_[unit] = v;
+                else if (kw == "limit") aiLimit_[unit] = v;
+            }
+            break;
         }
+    }
+
+    int aiCount(int team, const std::string& id) {
+        int n = 0;
+        for (auto& u : world_.units())
+            if (u.team == team && u.type && u.alive() && u.type->id == id) ++n;
+        return n;
+    }
+    // Reserve fraction of a team's mana; drives the retail "economy tweak".
+    float aiManaRatio(int team) {
+        const auto& tm = world_.team(team);
+        return tm.mana / std::max(tm.storage, 100.0f);
+    }
+
+    // Weighted-random pick over a producer's build menu (retail 0x412d00): a unit's
+    // weight is its probability share; anything at its limit is excluded; army units
+    // are scaled by econFactor (rich economy => more army). Skips structures the
+    // economy can't yet fund so a builder never traps itself on a stalled site.
+    const tak::sim::UnitType* aiWeightedPick(int team, const tak::sim::Unit& producer,
+                                             int econFactor) {
+        const auto& menu = registry_.buildable(producer.type->id);
+        const tak::sim::UnitType* chosen = nullptr;
+        int total = 0;
+        float income = world_.team(team).income;
+        for (const auto& id : menu) {
+            const auto* ut = registry_.find(id);
+            if (!ut) continue;
+            auto wi = aiWeight_.find(id);
+            int w = wi == aiWeight_.end() ? 0 : wi->second;
+            if (w <= 0) continue;
+            auto li = aiLimit_.find(id);
+            int lim = li == aiLimit_.end() ? -1 : li->second;
+            if (lim >= 0 && aiCount(team, id) >= lim) continue;
+            bool economy = ut->income > 0 || ut->onMana;
+            bool structure = !ut->canMove;
+            // Don't start a non-economy building the economy can't yet drive: its
+            // mogrium draw is buildCost*workerTime/buildTime (as the sim charges it).
+            // This is the economy-first / tech-progression gate (lodestones raise
+            // income, unlocking keeps, then the pricier castle) our engine lacks a
+            // formal tech tree for.
+            if (structure && !economy && ut->buildTime > 0) {
+                float wt = std::max(producer.type->workerTime, 1.0f);
+                float drain = ut->buildCost * wt / ut->buildTime;
+                if (income < drain) continue;
+            }
+            if (ut->canMove && !ut->isBuilder) w *= econFactor;   // army: economy tweak
+            total += w;
+            if (aiRand(total) < w) chosen = ut;                   // reservoir sample
+        }
+        return chosen;
+    }
+
+    // Turn a pick into an order: a factory (keep/castle) trains a mobile unit; a
+    // mobile builder places a structure or conjures a mobile unit near itself.
+    void aiProduce(tak::sim::Unit& p, const tak::sim::UnitType* pick) {
+        if (!pick->canMove) {                       // structure
+            if (p.type->canMove && p.type->isBuilder) aiPlace(p.id, pick, p.x, p.z);
+        } else if (!p.type->canMove) {              // factory trains mobile
+            world_.train(p.id, pick);
+        } else if (p.type->isBuilder) {             // mobile builder conjures mobile
+            for (float r = 40; r < 170 && p.alive(); r += 20)
+                for (float a = 0; a < 6.28f; a += 0.6f) {
+                    float x = p.x + std::cos(a) * r, z = p.z + std::sin(a) * r;
+                    if (world_.canPlace(pick, x, z)) { world_.startBuild(p.id, pick, x, z); return; }
+                }
+        }
+    }
+
+    // One AI update tick (once/sec): every idle producer weighted-random builds from
+    // its own menu under the profile's limits; when a strike force has pooled, attack.
+    void tickAiWeighted(int team) {
+        int econFactor = aiManaRatio(team) >= 0.5f ? 2 : 1;
+        // Snapshot producer ids first (production can reallocate units_).
+        std::vector<int> producers;
+        for (auto& u : world_.units()) {
+            if (!u.alive() || u.team != team || !u.type) continue;
+            if (u.type->canMove && u.type->isBuilder && u.orders.empty() &&
+                u.buildSiteId == 0)
+                producers.push_back(u.id);                        // idle mobile builder
+            else if (!u.type->canMove && !u.underConstruction && u.buildQueue.empty() &&
+                     !registry_.buildable(u.type->id).empty())
+                producers.push_back(u.id);                        // idle factory
+        }
+        for (int pid : producers) {
+            auto* p = world_.unit(pid);
+            if (!p || !p->alive()) continue;
+            if (const auto* pick = aiWeightedPick(team, *p, econFactor))
+                aiProduce(*p, pick);
+        }
+        sendWaves(team);   // pool idle fighters into a wave at a reachable enemy
     }
 
     // Start a building for the AI: lodestones go on the nearest free mana
@@ -2937,130 +3043,6 @@ private:
                 if (world_.canPlace(t, x, z)) return world_.startBuild(builderId, t, x, z);
             }
         return 0;
-    }
-
-    // Bootstrapping AI: the Monarch raises lodestones for income, then its
-    // keep, then the keep trains a rolling army that attacks in waves.
-    void runBuildAi(int team, int monarchId, int& keepId,
-                    const std::string& keepType, const std::string& lodeType,
-                    const std::array<std::string, 4>& cycle) {
-        // Keepless factions (Zhon): the Monarch raises Beast Handlers and the
-        // Handlers summon the fighting creatures — a two-tier build order.
-        if (keepType.empty()) { runSummonAi(team, monarchId, lodeType, cycle); return; }
-
-        // Track every keep (the AI builds several and expands). Seed from the
-        // legacy single keepId, then drop any that have died.
-        if (keepId >= 0 &&
-            std::find(aiKeeps_.begin(), aiKeeps_.end(), keepId) == aiKeeps_.end())
-            aiKeeps_.push_back(keepId);
-        aiKeeps_.erase(std::remove_if(aiKeeps_.begin(), aiKeeps_.end(),
-                       [&](int id) { auto* k = world_.unit(id); return !k || !k->alive(); }),
-                       aiKeeps_.end());
-        keepId = aiKeeps_.empty() ? -1 : aiKeeps_.front();
-
-        auto* m = world_.unit(monarchId);
-        bool monIdle = m && m->alive() && m->type && m->type->isBuilder &&
-                       m->orders.empty() && m->buildSiteId == 0;
-        if (monIdle) {
-            // Lay down enough lodestones that their income covers the keep's
-            // mogrium drain (buildCost*workerTime/buildTime) before committing
-            // to it — otherwise the keep starves and crawls. Cheaper keeps
-            // (Aramon) need ~3 lodes, pricier ones (Taros/Creon) more.
-            const auto* kt = keepType.empty() ? nullptr : registry_.find(keepType);
-            const auto* lt = lodeType.empty() ? nullptr : registry_.find(lodeType);
-            int needLodes = 3;
-            if (kt && m->type) {
-                float drain = kt->buildCost * m->type->workerTime /
-                              std::max(kt->buildTime, 1.0f);
-                float perLode = lt ? std::max(lt->income, 1.0f) : 10.0f;
-                needLodes = std::clamp(
-                    int(std::ceil((drain - m->type->income) / perLode)), 3, 8);
-            }
-            // Bootstrap: enough economy for the first keep, then that keep. After
-            // that, EXPAND -- keep claiming mana deposits and add another keep for
-            // every few lodestones (up to a cap), so the AI grows several bases and
-            // a bigger production base instead of stopping at one.
-            const tak::sim::UnitType* want = nullptr;
-            if (lt && aiLodes_ < needLodes) want = lt;             // seed economy
-            else if (kt && aiKeeps_.empty()) want = kt;            // first keep
-            else {
-                int keepsWanted = std::clamp(1 + aiLodes_ / 4, 1, 4);
-                if (kt && int(aiKeeps_.size()) < keepsWanted) want = kt;  // expand keeps
-                else if (lt && aiLodes_ < 14) want = lt;                  // expand economy
-            }
-            int b = aiPlace(monarchId, want, m->x, m->z);
-            if (b > 0) {
-                if (want == kt) { aiKeeps_.push_back(b); if (keepId < 0) keepId = b; }
-                else ++aiLodes_;
-            }
-        }
-
-        // Every idle keep trains the rolling army cycle.
-        for (int kid : aiKeeps_) {
-            auto* keep = world_.unit(kid);
-            if (keep && keep->alive() && !keep->underConstruction &&
-                keep->buildQueue.empty())
-                world_.train(kid, registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]));
-        }
-
-        sendWaves(team);
-    }
-
-    // Zhon-style production: no keep. The Monarch builds a couple of
-    // lodestones then Beast Handlers; each idle Handler summons the next
-    // creature in the cycle (a mobile builder producing a mobile unit).
-    void runSummonAi(int team, int monarchId, const std::string& lodeType,
-                     const std::array<std::string, 4>& cycle) {
-        const auto* lt = lodeType.empty() ? nullptr : registry_.find(lodeType);
-        const auto* ht =
-            aiBuilderType_.empty() ? nullptr : registry_.find(aiBuilderType_);
-
-        auto* m = world_.unit(monarchId);
-        bool monIdle = m && m->alive() && m->type && m->type->isBuilder &&
-                       m->orders.empty() && m->buildSiteId == 0;
-        if (monIdle) {
-            // A summoning Handler drains ~25 mogrium/s but a lodestone only
-            // yields 10, so economy has to stay well ahead of Handler count.
-            // Interleave: ~3-4 lodes per Handler.
-            const tak::sim::UnitType* want = nullptr;
-            if (lt && aiLodes_ < 3) want = lt;                 // seed economy
-            else if (ht && aiHandlers_ < 1) want = ht;         // first Handler
-            else if (lt && aiLodes_ < 5) want = lt;            // grow income
-            else if (ht && aiHandlers_ < 2) want = ht;         // second Handler
-            else if (lt && aiLodes_ < 7) want = lt;            // grow income
-            else if (ht && aiHandlers_ < 3) want = ht;         // third Handler
-            int b = aiPlace(monarchId, want, m->x, m->z);
-            if (b > 0) { if (want == ht) ++aiHandlers_; else ++aiLodes_; }
-        }
-
-        // One idle Beast Handler summons the next creature in the cycle.
-        int handler = 0;
-        for (auto& u : world_.units())
-            if (u.alive() && u.team == team && u.type && u.type->isBuilder &&
-                u.id != monarchId && u.orders.empty() && u.buildSiteId == 0) {
-                handler = u.id;
-                break;
-            }
-        if (handler) {
-            const tak::sim::UnitType* ct = nullptr;
-            for (int k = 0; k < 4 && !ct; ++k) {   // skip builders in the cycle
-                const auto* c = registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]);
-                if (c && c->canMove && !c->isBuilder) ct = c;
-            }
-            if (const auto* h = ct ? world_.unit(handler) : nullptr) {
-                float hx = h->x, hz = h->z;
-                for (float r = 40; r < 170; r += 20)
-                    for (float a = 0; a < 6.28f; a += 0.6f) {
-                        float x = hx + std::cos(a) * r, z = hz + std::sin(a) * r;
-                        if (!world_.canPlace(ct, x, z)) continue;
-                        world_.startBuild(handler, ct, x, z);
-                        r = 1e9f;   // done
-                        break;
-                    }
-            }
-        }
-
-        sendWaves(team);
     }
 
     // Once a strike force has gathered, send the (non-builder) fighters at the
@@ -3124,29 +3106,6 @@ private:
         for (int id : idle) world_.attackMove(id, tx, tz, false);
     }
 
-    void runAi(int team, int keepId, const std::array<std::string, 4>& cycle) {
-        auto* keep = world_.unit(keepId);
-        if (keep && keep->alive() && keep->buildQueue.empty())
-            world_.train(keepId,
-                         registry_.find(cycle[size_t(aiTrained_++) % cycle.size()]));
-
-        std::vector<int> idle;
-        double sx = 0, sz = 0;
-        const tak::sim::UnitType* atype = nullptr;
-        for (auto& u : world_.units())
-            if (u.alive() && u.team == team && u.type && u.type->canMove &&
-                waveFree(u)) {
-                idle.push_back(u.id);
-                sx += u.x; sz += u.z;
-                if (!atype && !u.type->canFly) atype = u.type;
-            }
-        if (idle.size() >= 4) {
-            float cx = float(sx / idle.size()), cz = float(sz / idle.size());
-            float tx = 0, tz = 0;
-            if (nearestReachableEnemy(team, cx, cz, atype, tx, tz))
-                for (int id : idle) world_.attackMove(id, tx, tz, false);
-        }
-    }
 
     struct Visual {
         tak::tdo::Model model;
@@ -4489,6 +4448,14 @@ private:
     std::string aiBuilderType_; // keepless (Zhon) AI: the Handler the Monarch builds
     int aiLodes_ = 0;           // lodestones the AI has queued so far
     std::vector<int> aiKeeps_;  // all the AI's keeps (it builds several + expands)
+    // Retail AI profile (ai/default.txt): per-unit build weight and count limit,
+    // reverse-engineered from KINGDOMS.icd. weight = probability share in a weighted-
+    // random pick among a producer's eligible menu; limit = hard cap (-1 unlimited).
+    std::unordered_map<std::string, int> aiWeight_, aiLimit_;
+    bool aiProfileLoaded_ = false;
+    uint32_t aiRng_ = 0x1234567u;
+    int aiRand(int n) { aiRng_ = aiRng_ * 1103515245u + 12345u;   // deterministic LCG
+        return n > 0 ? int((aiRng_ >> 16) % uint32_t(n)) : 0; }
     int aiHandlers_ = 0;        // Beast Handlers the AI has queued so far
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = -1, mouseY_ = -1;   // -1 until the first real mouse motion, so
