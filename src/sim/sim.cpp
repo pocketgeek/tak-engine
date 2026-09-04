@@ -880,6 +880,15 @@ void World::stop(int unitId) {
     u->buildProgress = 0;
 }
 
+void World::destroy(int unitId) {
+    // Self-destruct: drop hp to zero and let the normal death processing in
+    // tick() handle the rest (kill credit is skipped -- lastHitBy is cleared).
+    Unit* u = unit(unitId);
+    if (!u || !u->alive()) return;
+    u->hp = 0;
+    u->lastHitBy = 0;
+}
+
 void World::setWeapon(int unitId, int slot) {
     Unit* u = unit(unitId);
     if (!u || !u->type) return;

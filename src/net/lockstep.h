@@ -11,7 +11,7 @@ namespace tak::net {
 // at T + kInputDelay on both sides. A state hash is exchanged every
 // kHashInterval ticks to detect desync.
 
-constexpr uint32_t kProtocolVersion = 1;
+constexpr uint32_t kProtocolVersion = 2;   // v2: Cmd::Destroy; hello is enforced
 constexpr uint32_t kInputDelay = 4;      // ticks
 constexpr uint32_t kHashInterval = 30;   // ticks
 
@@ -19,6 +19,8 @@ enum class Cmd : uint8_t {
     Move, Attack, AttackMove, Patrol, Stop, Train, Build, Load, Unload, Guard,
     SetWeapon,     // targetId = weapon slot (0=primary, 1, 2)
     RepeatTrain,   // ctrl+click a conjure icon: toggle infinite production of `type`
+    Destroy,       // self-destruct unitId (Ctrl+D) -- via the command path so
+                   // networked sims stay in lockstep
 };
 
 struct Command {

@@ -423,6 +423,8 @@ public:
     void patrol(int unitId, float x, float z);
     void guard(int unitId, int targetId, bool queue);
     void stop(int unitId);
+    // Self-destruct a living unit (Ctrl+D via the command path; no kill credit).
+    void destroy(int unitId);
     void setWeapon(int unitId, int slot);   // choose the active weapon (0=primary)
     // Toggle an onoffable unit's active state (gates, sacred fire, etc.).
     void setActive(int unitId, bool on) {

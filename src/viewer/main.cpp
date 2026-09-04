@@ -1674,6 +1674,9 @@ public:
             case Cmd::RepeatTrain:
                 if (owns(c.unitId)) world_.setRepeat(c.unitId, registry_.find(c.type));
                 break;
+            case Cmd::Destroy:
+                if (owns(c.unitId)) world_.destroy(c.unitId);
+                break;
         }
     }
 
@@ -5300,12 +5303,20 @@ private:
             noticeTimer_ = 2;
             return true;
         }
-        if (key == SDLK_d && ctrl) {              // kill the selected unit(s)
+        if (key == SDLK_d && ctrl) {              // self-destruct the selected unit(s)
+            // Through the command path (Cmd::Destroy), not a direct hp write --
+            // a local mutation would silently desync a networked game.
             int n = 0;
             for (int id : selection_)
                 if (auto* su = world_.unit(id))
-                    if (su->alive()) { su->hp = 0; ++n; }
-            notice_ = "KILLED " + std::to_string(n);
+                    if (su->alive() && su->player == localPlayer_) {
+                        tak::net::Command c;
+                        c.kind = tak::net::Cmd::Destroy;
+                        c.unitId = id;
+                        issue(c);
+                        ++n;
+                    }
+            notice_ = "DESTRUCT " + std::to_string(n);
             noticeTimer_ = 2;
             return true;
         }
@@ -5315,6 +5326,13 @@ private:
             lodPx_ = std::clamp(lodPx_ + (key == SDLK_RIGHTBRACKET ? 16.0f : -16.0f),
                                 16.0f, 400.0f);
             notice_ = "LOD THRESHOLD " + std::to_string(int(lodPx_)) + "px";
+            noticeTimer_ = 2;
+            return true;
+        }
+        // F9/F11 stress spawns mutate the world outside the command path, so
+        // they are dev-only: in a networked game they would instantly desync.
+        if ((key == SDLK_F9 || key == SDLK_F11) && net_) {
+            notice_ = "STRESS SPAWN DISABLED IN NET GAMES";
             noticeTimer_ = 2;
             return true;
         }
