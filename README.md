@@ -24,8 +24,11 @@ and place its data files in `assets/` (gitignored) to use the engine.
 6. **Multiplayer** 🚧 client–server (a central `takserver` relays a
    server-sequenced deterministic lockstep for up to 8 players/teams, with a
    lobby GUI). With `--data` the server also runs a referee sim that hosts the
-   AI players and validates every client's state hash. Reconnect is the main
-   remaining piece — see `docs/multiplayer-design.md`.
+   AI players and validates every client's state hash. A dropped player's slot
+   is held and can be reclaimed via a resume token (the client replays the
+   bundle log to catch up); if not, they forfeit deterministically. Polish
+   (spectators, alliance economy, cross-build determinism) remains — see
+   `docs/multiplayer-design.md`.
 7. ~~**Combat & unit depth**~~ ✅ the FBI/weapon data is driven faithfully:
    HP regen, veterancy (kills → +10%/level attack·armour·reload, gold sheen,
    promoted `veteranmodel`), per-unit mana pools & mana-per-shot, area-of-effect
