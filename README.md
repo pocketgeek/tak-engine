@@ -99,7 +99,10 @@ mission's .ota/.cob; `--side ara|tar|ver|zon|cre` picks your faction and
 summon creatures; Creon needs the Iron Plague data). `--color N` /
 `--aicolor N` (0–9) choose the player-colour variant your / the AI's units
 render in, independent of faction. `--cheat` makes all construction and
-production finish instantly and cost no mana.
+production finish instantly and cost no mana. `--crusades` uses the **Crusades
+balance** — the alternate unit stats and build menus the final patch shipped
+for ranked "Darien Crusades" play (`unitscb`/`canbuildcb` in the data, layered
+over the base roster).
 
 In a god-enabled match, a faction whose priests (`attractsgods` units) have
 channelled enough mana favour manifests its **god** among its forces once the

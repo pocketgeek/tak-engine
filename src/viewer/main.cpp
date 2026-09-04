@@ -928,7 +928,8 @@ public:
 
     GameView(SDL_Renderer* ren, const std::string& tntPath, const std::string& terrainDir,
              const std::string& dataRoot, bool demo, bool scenario, bool mission,
-             bool bare, const std::string& side = "ara", const std::string& aiSide = "tar")
+             bool bare, const std::string& side = "ara", const std::string& aiSide = "tar",
+             bool crusades = false)
         // (side_ initialized below before loadPanel uses it)
         : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot),
           side_(side) {
@@ -943,6 +944,18 @@ public:
                 world_.enableGods(appear);
             }
         } catch (const std::exception&) {}
+        // Crusades balance: the final patch shipped alternate unit stats and
+        // build menus (units/->UnitsCB, canbuild/->CanBuildCB in the retail
+        // engine) used for ranked "Darien Crusades" play. Load the CB dirs FIRST
+        // so their versions win (loadDir/loadBuildTree are first-definition-wins);
+        // the base dirs then fill in units the CB set left unchanged.
+        if (crusades) {
+            std::string ucb = dataRoot_ + "/unitscb", ccb = dataRoot_ + "/canbuildcb";
+            if (std::filesystem::is_directory(ucb)) registry_.loadDir(ucb);
+            if (std::filesystem::is_directory(ccb)) registry_.loadBuildTree(ccb);
+            std::fprintf(stderr, "balance: Crusades (unitscb/canbuildcb)%s\n",
+                         std::filesystem::is_directory(ucb) ? "" : " -- NOT FOUND");
+        }
         registry_.loadDir(dataRoot_ + "/units");
         registry_.loadBuildTree(dataRoot_ + "/canbuild");
         ipRoot_ = dataRoot_ + "/../IPData";
@@ -6029,6 +6042,7 @@ int main(int argc, char** argv) {
          lodetest = false;
     std::string lodeUnitName;
     bool firetest = false, facetest = false, soundtest = false, noVsync = false;
+    bool crusades = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
     for (int i = 2; i < argc; ++i) {
@@ -6065,6 +6079,7 @@ int main(int argc, char** argv) {
         }
         else if (a == "--maxfps" && i + 1 < argc) maxFps = std::atoi(argv[++i]);
         else if (a == "--novsync") noVsync = true;
+        else if (a == "--crusades") crusades = true;
 
 
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
@@ -6137,7 +6152,7 @@ int main(int argc, char** argv) {
             gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo,
                                                   scenario, missionFlag,
                                                   navy || amphib || firetest || facetest,
-                                                  side, aiSide);
+                                                  side, aiSide, crusades);
             if (playerColor >= 0) gameView->setTeamColor(0, playerColor);
             if (aiColor >= 0) gameView->setTeamColor(1, aiColor);
             if (net) gameView->setNet(net.get());
