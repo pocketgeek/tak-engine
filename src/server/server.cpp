@@ -80,6 +80,7 @@ struct Room {
     uint32_t hostId = 0;
     SlotInfo slots[kMaxSlots];
     int slotClient[kMaxSlots];      // client id in each slot, -1 = none/ai/open
+    std::vector<uint32_t> spectators;   // watching, not seated (no slot, no hash)
     bool running = false;
     int cap = kMaxSlots;            // map capacity (from the host's CreateGame)
     uint64_t createdMs = 0;
@@ -291,6 +292,12 @@ void Server::broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptCl
         auto it = clients_.find(cid);
         if (it != clients_.end()) it->second->conn.send(kind, w);
     }
+    // Spectators receive the same stream (bundles, chat, pause/resume, status).
+    for (uint32_t cid : r.spectators) {
+        if (cid == exceptClient) continue;
+        auto it = clients_.find(cid);
+        if (it != clients_.end()) it->second->conn.send(kind, w);
+    }
 }
 
 void Server::lobbyMsg(Client& c, const Frame& f) {
@@ -395,6 +402,32 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                          room.id, c.id, slot, room.log.size());
             break;
         }
+        case Msg::Spectate: {
+            Reader r(f.payload.data(), f.payload.size());
+            uint32_t gid = r.u32(); std::string pass = r.str();
+            if (!r.ok) return;
+            auto it = rooms_.find(gid);
+            auto reject = [&](const std::string& why) {
+                Writer jr; jr.u8(0); jr.u8(0); jr.str(why); c.conn.send(Msg::JoinResult, jr);
+            };
+            if (it == rooms_.end() || !it->second.running) { reject("game not found or ended"); break; }
+            Room& room = it->second;
+            if (!room.password.empty() && room.password != pass) { reject("wrong password"); break; }
+            // Seat nothing: a spectator has no slot, sends no commands or hashes,
+            // and holds nothing on disconnect. It just receives the stream.
+            if (std::find(room.spectators.begin(), room.spectators.end(), c.id) == room.spectators.end())
+                room.spectators.push_back(c.id);
+            c.state = Client::InGame; c.roomId = gid; c.slot = -1; c.loaded = true;
+            // GameStarting (slot 0xFF = spectator) rebuilds the world; the whole
+            // bundle log replays it to now, then live bundles stream via broadcast.
+            Writer w; writeSlots(w, room);
+            w.u8(0xFF); w.u32(0x7a6b0000u + room.id); w.u64(0);
+            c.conn.send(Msg::GameStarting, w);
+            for (const auto& bundle : room.log) c.conn.send(Msg::TickBundle, bundle);
+            std::fprintf(stderr, "game %u: client %u SPECTATING (replaying %zu ticks)\n",
+                         room.id, c.id, room.log.size());
+            break;
+        }
         default: break;   // ignore other messages while in the lobby
     }
 }
@@ -402,6 +435,17 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
 void Server::leaveRoom(Client& c, const char* reason) {
     Room* r = roomOf(c);
     if (!r) return;
+    // A spectator just detaches from the stream -- no slot, nothing to forfeit.
+    {
+        auto& sp = r->spectators;
+        auto it = std::find(sp.begin(), sp.end(), c.id);
+        if (it != sp.end()) {
+            sp.erase(it);
+            c.state = Client::Lobby; c.roomId = 0; c.slot = -1; c.loaded = false;
+            std::fprintf(stderr, "client %u stopped spectating game %u (%s)\n", c.id, r->id, reason);
+            return;
+        }
+    }
     if (c.slot >= 0 && c.slot < kMaxSlots) {
         r->slotClient[c.slot] = -1;
         if (!r->running) { r->slots[c.slot].type = 0; r->slots[c.slot].name.clear(); }
@@ -785,7 +829,17 @@ int Server::run() {
         for (auto& [rid, r] : rooms_)
             if (r.running && !roomActive(r)) doneRooms.push_back(rid);
         for (uint32_t rid : doneRooms) {
-            writeReplay(rooms_.at(rid));
+            Room& r = rooms_.at(rid);
+            writeReplay(r);
+            // Detach any lingering spectators before the room vanishes: reset their
+            // server-side state to Lobby (their client already shows the game's end
+            // from the sim, and can browse/leave on its own).
+            for (uint32_t sid : r.spectators) {
+                auto it = clients_.find(sid);
+                if (it == clients_.end()) continue;
+                it->second->state = Client::Lobby;
+                it->second->roomId = 0; it->second->slot = -1;
+            }
             std::fprintf(stderr, "game %u ended (all players gone)\n", rid);
             rooms_.erase(rid);
         }
