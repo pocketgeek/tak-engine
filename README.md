@@ -26,8 +26,10 @@ and place its data files in `assets/` (gitignored) to use the engine.
    lobby GUI). With `--data` the server also runs a referee sim that hosts the
    AI players and validates every client's state hash. A dropped player's slot
    is held and can be reclaimed via a resume token (the client replays the
-   bundle log to catch up); if not, they forfeit deterministically. Polish
-   (spectators, alliance economy, cross-build determinism) remains — see
+   bundle log to catch up); if not, they forfeit deterministically. Finished
+   games are written as self-contained `.takrep` replays, running games can be
+   watched live, in-game chat and an 8-player scoreboard are in. Remaining
+   polish (optional alliance economy, cross-build determinism) — see
    `docs/multiplayer-design.md`.
 7. ~~**Combat & unit depth**~~ ✅ the FBI/weapon data is driven faithfully:
    HP regen, veterancy (kills → +10%/level attack·armour·reload, gold sheen,
