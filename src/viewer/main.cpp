@@ -34,6 +34,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1889,7 +1890,7 @@ public:
     void edgeScroll(float dt, float zm) {
         if (winW_ <= 0 || winH_ <= 0) return;
         if (mouseX_ < 0 || mouseX_ > winW_ || mouseY_ < 0 || mouseY_ > winH_) return;
-        const float margin = 24.0f, panPx = 1000.0f;   // px/s at zoom 1
+        const float margin = 24.0f, panPx = 2000.0f;   // px/s at zoom 1
         // Trigger at the real window edges (incl. the far right, past the panel),
         // so the player pushes to the screen edge to scroll -- not to the map edge.
         float sx = 0, sz = 0;
@@ -2334,6 +2335,24 @@ public:
         }
         std::stable_sort(items.begin(), items.end(),
                   [](const Item& a, const Item& b) { return a.z < b.z; });
+
+        // Project every visible unit's model in parallel before drawing. This is
+        // the heavy per-frame CPU work (matrix-transforming each unit's model tree
+        // and building its vertex buffer); the render thread then only submits the
+        // finished geometry, one texture-batched draw call per unit. Without this
+        // the whole frame is single-threaded and pegs one core at large unit counts.
+        visUnits_.clear();
+        geomIndex_.clear();
+        for (const auto& it : items)
+            if (it.u) { geomIndex_[it.u->id] = int(visUnits_.size());
+                        visUnits_.push_back(it.u); }
+        if (geomPool_.size() < visUnits_.size()) geomPool_.resize(visUnits_.size());
+        pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
+            thread_local std::vector<Tri> scratch;
+            for (size_t i = b; i < e; ++i)
+                buildUnitGeom(*visUnits_[i], geomPool_[i], scratch);
+        });
+
         for (const auto& it : items) {
             if (it.f) {
                 const auto& f = *it.f;
@@ -3129,7 +3148,7 @@ private:
         const tak::tdo::Model* model = ghostModel(type->id);
         if (!model) return;
         tris_.clear();
-        collect(model->root, Xform{}, nullptr, 0.0f, localTeam_);
+        collect(tris_, model->root, Xform{}, nullptr, 0.0f, localTeam_);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
@@ -3149,6 +3168,85 @@ private:
         }
     }
 
+    // Per-unit screen-space geometry, built in parallel each frame (the expensive
+    // model projection) so the single render thread only submits draw calls.
+    struct UnitGeom {
+        std::vector<SDL_Vertex> verts;                  // transformed, coloured
+        std::vector<std::pair<SDL_Texture*, int>> runs; // (texture, vertex count)
+        float ax = 0, ay = 0, occY = 0;
+        bool canFly = false;
+    };
+    std::vector<const tak::sim::Unit*> visUnits_;
+
+    // Project + transform one unit's model into screen-space, coloured vertex runs.
+    // No SDL calls and only reads shared state (models/textures/heightmap/anim), so
+    // it is safe to run for many units at once on the worker pool. drawUnit() then
+    // just submits g.runs. `scratch` is a reusable per-thread triangle buffer.
+    void buildUnitGeom(const tak::sim::Unit& u, UnitGeom& g, std::vector<Tri>& scratch) {
+        g.verts.clear();
+        g.runs.clear();
+        g.canFly = u.type && u.type->canFly;
+        if (u.underConstruction && !u.buildBegun) return;   // ghost drawn serially
+        auto vt = visuals_.find(unitType_.at(u.id));
+        if (vt == visuals_.end()) return;
+        const Anim* anim = nullptr;
+        auto at = anims_.find(u.id);
+        if (at != anims_.end()) anim = &at->second;
+
+        scratch.clear();
+        Xform base;
+        if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
+            base.t[1] = anim ? anim->altitude : u.type->cruiseAlt;
+        float facing = (u.type && u.type->canMove) ? -u.heading : 0.0f;
+        bool mirror = false;
+        if (u.type && u.type->canFly && anim && anim->flyHalfTurn)
+            facing = 3.14159265f - u.heading;
+        collect(scratch, vt->second.model.root, base, anim, facing, u.team, mirror);
+        std::stable_sort(scratch.begin(), scratch.end(),
+                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        float zm = mapView_.zoom();
+        float ax = (u.x - mapView_.offX()) * zm - terrainLiftX(u.x, u.z) * zm;
+        float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
+        g.ax = ax; g.ay = ay;
+        g.occY = wallOcclusionY(u.x, u.z);
+        bool conjuring = u.underConstruction && u.type;
+        float p = conjuring ? std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f) : 1.0f;
+        Uint8 alpha = Uint8(p * 255.0f);
+        float vetGold = (!conjuring && u.veteran >= 4)
+                            ? float(std::min(u.veteran, 10) - 3) / 7.0f * 0.5f : 0.0f;
+        SDL_Texture* cur = nullptr;
+        int runStart = 0;
+        for (auto& t : scratch) {
+            if (t.tex != cur) {
+                if (int(g.verts.size()) > runStart)
+                    g.runs.push_back({cur, int(g.verts.size()) - runStart});
+                cur = t.tex;
+                runStart = int(g.verts.size());
+            }
+            for (int i = 0; i < 3; ++i) {
+                SDL_Vertex v = t.v[i];
+                v.position.x = v.position.x * zm + ax;
+                v.position.y = v.position.y * zm + ay;
+                if (vetGold > 0) {
+                    v.color.r = Uint8(v.color.r + (255 - v.color.r) * vetGold);
+                    v.color.g = Uint8(v.color.g + (200 - v.color.g) * vetGold * 0.85f);
+                    v.color.b = Uint8(v.color.b * (1.0f - vetGold * 0.7f));
+                }
+                if (conjuring) {
+                    float pulse = 0.5f + 0.5f * std::sin(animClock_ * 7.0f +
+                                                         v.position.y * 0.03f);
+                    float glow = (1.0f - p) * pulse;
+                    v.color.a = alpha;
+                    v.color.r = Uint8(v.color.r * (1.0f - 0.75f * glow));
+                    v.color.g = Uint8(v.color.g * (1.0f - 0.25f * glow));
+                }
+                g.verts.push_back(v);
+            }
+        }
+        if (int(g.verts.size()) > runStart)
+            g.runs.push_back({cur, int(g.verts.size()) - runStart});
+    }
+
     void drawUnit(const tak::sim::Unit& u) {
         // A placed-but-not-yet-started site shows as a faint ghost until the
         // builder arrives and it begins conjuring for real.
@@ -3162,41 +3260,20 @@ private:
         auto at = anims_.find(u.id);
         if (at != anims_.end()) anim = &at->second;
 
-        tris_.clear();
-        Xform base;
-        if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
-            base.t[1] = anim ? anim->altitude : u.type->cruiseAlt;   // cruise height
-        // Buildings are camera-facing billboards (yaw 0). Mobile units face
-        // their heading directly: the model's forward axis (+z) maps to
-        // (sin heading, cos heading), matching the sim's movement vector. This
-        // is correct for EVERY faction — a numerical axis test (model +z / +x
-        // projected through the transform) shows Zhon ground units match a
-        // known-correct Aramon unit exactly at facing=heading. (All models share
-        // one handedness, so none are mirror images; the earlier Zhon mirror/
-        // -heading special-case was wrong — it faced them backward AND reflected
-        // the legs, the "walking sideways/backwards" bug.)
-        // Facing: the models' E/W axis is inverted vs the sim, so the base for
-        // every mobile unit is `-heading` (verified with sword units of all
-        // factions — arasword/tardemon/zonorc all point their weapon toward
-        // movement only at -heading; +heading points it backward). Flyers whose
-        // running fly pose adds a 180° body turn use `pi - heading` (= -heading
-        // + 180); a.flyHalfTurn (read from the fly bytecode) picks those.
-        float facing = (u.type && u.type->canMove) ? -u.heading : 0.0f;
-        bool mirror = false;
-        if (u.type && u.type->canFly && anim && anim->flyHalfTurn)
-            facing = 3.14159265f - u.heading;
-        collect(vt->second.model.root, base, anim, facing, u.team, mirror);
-        std::stable_sort(tris_.begin(), tris_.end(),
-                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        // The model projection (collect + sort + screen transform + colour) was
+        // done for every visible unit in parallel on the worker pool this frame;
+        // here we just look up the result and submit its draw calls.
+        auto git = geomIndex_.find(u.id);
+        if (git == geomIndex_.end()) return;
+        UnitGeom& g = geomPool_[size_t(git->second)];
         float zm = mapView_.zoom();
-        float ax = (u.x - mapView_.offX()) * zm - terrainLiftX(u.x, u.z) * zm;
-        float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
+        float ax = g.ax, ay = g.ay;
         // Terrain occlusion: if a wall between the unit and the camera projects its
         // top above the unit's feet, clip the model to that line and re-draw the
         // hidden part as a faint team-tinted silhouette showing through the wall.
-        float occY = wallOcclusionY(u.x, u.z);
         // Flyers ride above the terrain, so a wall never hides them.
-        bool occluded = !(u.type && u.type->canFly) && occY < ay - 2.0f;
+        float occY = g.occY;
+        bool occluded = !g.canFly && occY < ay - 2.0f;
         int outW = 0, outH = 0;
         SDL_bool hadClip = SDL_FALSE;
         SDL_Rect prevClip{};
@@ -3220,53 +3297,15 @@ private:
                 SDL_RenderCopyF(ren_, sh->tex, nullptr, &dst);
             }
         }
-        // Conjuring: while a unit is built/summoned it fades in from ~0 to 100%
-        // (its hp fills 5%->100%) with a shimmering cyan pulse that fades out
-        // as it finishes materialising.
+        // Submit the pre-built, depth-sorted vertex runs -- one SDL_RenderGeometry
+        // per texture (usually 1 per unit). The veterancy/conjure colour tint was
+        // already baked into the vertices on the worker pool.
         bool conjuring = u.underConstruction && u.type;
-        float p = conjuring ? std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f) : 1.0f;
-        Uint8 alpha = Uint8(p * 255.0f);
-        // Veterancy tint: a promoted unit takes on a golden sheen that deepens
-        // with its level (up to ~55% blend toward gold at level 10).
-        // Only a seasoned veteran (several kills) takes the golden sheen, so a
-        // battle-worn army isn't broadly gold and fresh units stay their team colour.
-        float vetGold = (!conjuring && u.veteran >= 4)
-                            ? float(std::min(u.veteran, 10) - 3) / 7.0f * 0.5f : 0.0f;
-        // Batch the model's triangles into one RenderGeometry call per texture
-        // (they're depth-sorted, so flush only when the texture changes). A whole
-        // model was ~50 draw calls; now it's usually 1 -- the big win for crowds.
-        triBatch_.clear();
-        SDL_Texture* curTex = nullptr;
-        auto flush = [&] {
-            if (!triBatch_.empty())
-                SDL_RenderGeometry(ren_, curTex, triBatch_.data(),
-                                   int(triBatch_.size()), nullptr, 0);
-            triBatch_.clear();
-        };
-        for (auto& t : tris_) {
-            if (t.tex != curTex) { flush(); curTex = t.tex; }
-            for (int i = 0; i < 3; ++i) {
-                SDL_Vertex v = t.v[i];
-                v.position.x = v.position.x * zm + ax;
-                v.position.y = v.position.y * zm + ay;
-                if (vetGold > 0) {
-                    v.color.r = Uint8(v.color.r + (255 - v.color.r) * vetGold);
-                    v.color.g = Uint8(v.color.g + (200 - v.color.g) * vetGold * 0.85f);
-                    v.color.b = Uint8(v.color.b * (1.0f - vetGold * 0.7f));
-                }
-                if (conjuring) {
-                    float pulse = 0.5f + 0.5f * std::sin(animClock_ * 7.0f +
-                                                         v.position.y * 0.03f);
-                    float glow = (1.0f - p) * pulse;   // 0 once fully formed
-                    v.color.a = alpha;
-                    v.color.r = Uint8(v.color.r * (1.0f - 0.75f * glow));
-                    v.color.g = Uint8(v.color.g * (1.0f - 0.25f * glow));
-                    // blue channel left high, so the shimmer reads cyan
-                }
-                triBatch_.push_back(v);
-            }
+        int off = 0;
+        for (const auto& r : g.runs) {
+            SDL_RenderGeometry(ren_, r.first, g.verts.data() + off, r.second, nullptr, 0);
+            off += r.second;
         }
-        flush();
 
         // Conjure effect: sprinkle the faction's build/summon sparkle over the
         // footprint while the unit materialises, each staggered so they twinkle
@@ -3305,13 +3344,12 @@ private:
             SDL_RenderSetClipRect(ren_, &bot);
             SDL_Color tc = teamColor(u.team);
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-            for (auto& t : tris_) {
+            // g.verts are already screen-space; re-tint flat and re-submit.
+            for (size_t i = 0; i + 2 < g.verts.size(); i += 3) {
                 SDL_Vertex v[3];
-                for (int i = 0; i < 3; ++i) {
-                    v[i] = t.v[i];
-                    v[i].position.x = v[i].position.x * zm + ax;
-                    v[i].position.y = v[i].position.y * zm + ay;
-                    v[i].color = SDL_Color{tc.r, tc.g, tc.b, 70};
+                for (int k = 0; k < 3; ++k) {
+                    v[k] = g.verts[i + size_t(k)];
+                    v[k].color = SDL_Color{tc.r, tc.g, tc.b, 70};
                 }
                 SDL_RenderGeometry(ren_, nullptr, v, 3, nullptr, 0);
             }
@@ -3322,8 +3360,9 @@ private:
 
     // Project model triangles relative to the unit anchor: yaw by heading,
     // fixed tilt so models read against TAK's painted top-down terrain.
-    void collect(const tak::tdo::Object& o, const Xform& parent, const Anim* anim,
-                 float heading, int team, bool mirror = false, bool isRoot = true) {
+    void collect(std::vector<Tri>& out, const tak::tdo::Object& o, const Xform& parent,
+                 const Anim* anim, float heading, int team, bool mirror = false,
+                 bool isRoot = true) {
         static const float kNoRot[3] = {0, 0, 0};
         const tak::cob::PieceState* ps = pieceFor(anim, o.name);
         if (ps && !ps->visible) return;
@@ -3392,10 +3431,11 @@ private:
                 }
                 if (!ok) continue;
                 tri.depth = depth / 3;
-                tris_.push_back(tri);
+                out.push_back(tri);
             }
         }
-        for (const auto& c : o.children) collect(c, xf, anim, heading, team, mirror, false);
+        for (const auto& c : o.children)
+            collect(out, c, xf, anim, heading, team, mirror, false);
     }
 
     void drawBrackets(float wx, float wz, float r) {
@@ -3440,6 +3480,8 @@ private:
     std::map<std::string, std::vector<SDL_Texture*>> textures_;
     std::vector<Tri> tris_;
     std::vector<SDL_Vertex> triBatch_;   // reused per-unit vertex batch
+    std::vector<UnitGeom> geomPool_;              // reused across frames (keeps capacity)
+    std::unordered_map<int, int> geomIndex_;     // unit id -> slot in geomPool_
     std::vector<int> selection_;
     bool dragging_ = false;
     bool buildDrag_ = false;          // shift-drag placing a line of buildings
