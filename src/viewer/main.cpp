@@ -2289,9 +2289,10 @@ public:
     }
 
     // Fetch and reset the per-draw sub-phase timers (for TAK_PROF).
-    void takeProf(double& projMs, double& submitMs) {
+    void takeProf(double& projMs, double& submitMs, long& lod, long& full) {
         projMs = profProjMs_; submitMs = profSubmitMs_;
-        profProjMs_ = 0; profSubmitMs_ = 0;
+        lod = lodDrawn_; full = fullDrawn_;
+        profProjMs_ = 0; profSubmitMs_ = 0; lodDrawn_ = 0; fullDrawn_ = 0;
     }
 
     void draw(int winW, int winH) {
@@ -2379,6 +2380,13 @@ public:
         });
         double _ptFreq = double(SDL_GetPerformanceFrequency()) / 1000.0;
         profProjMs_ += (double(SDL_GetPerformanceCounter()) - _pt0) / _ptFreq;
+        // Tally impostor vs full-model draws this frame (for TAK_PROF).
+        for (size_t _i = 0; _i < visUnits_.size(); ++_i) {
+            const auto& _g = geomPool_[_i];
+            if (_g.runs.empty()) continue;
+            if (impAtlas_ && _g.runs[0].first == impAtlas_) ++lodDrawn_;
+            else ++fullDrawn_;
+        }
         double _st0 = double(SDL_GetPerformanceCounter());
 
         // Is this unit drawn whole by drawUnit (needs clip rects / interleaved
@@ -3290,6 +3298,7 @@ private:
     std::vector<const tak::sim::Unit*> visUnits_;
     std::vector<SDL_Vertex> unitBatch_, shadowBatch_;   // cross-unit render batches
     double profProjMs_ = 0, profSubmitMs_ = 0;          // TAK_PROF sub-phase timers
+    long lodDrawn_ = 0, fullDrawn_ = 0;                 // impostor vs full-model counts
 
     // Texture atlas: every unit texture packed into one big texture per player-
     // colour slot, so a whole model (and a whole crowd of one team) shares a
@@ -3315,7 +3324,7 @@ private:
     SDL_Texture* impAtlas_ = nullptr;
     int impAtlasDim_ = 2048, impCurX_ = 0, impCurY_ = 0, impShelfH_ = 0;
     bool lodEnabled_ = true;
-    static constexpr float kLodPx = 40.0f;      // model shorter than this -> impostor
+    float lodPx_ = 64.0f;                        // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 1.2f; // skip LOD entirely when zoomed in
 
     static int facingIndex(float heading) {
@@ -3496,7 +3505,7 @@ private:
             auto hit = modelH_.find(vt->first);
             auto iit = impostors_.find(std::make_pair(vt->first, slot));
             if (hit != modelH_.end() && iit != impostors_.end() && iit->second.ready
-                && hit->second * zm < kLodPx) {
+                && hit->second * zm < lodPx_) {
                 const Impostor& imp = iit->second;
                 int f = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f);
                 const SDL_Rect& r = imp.rect[f];
@@ -4669,6 +4678,15 @@ private:
         if (key == SDLK_F8) {                     // toggle LOD impostors (A/B perf)
             lodEnabled_ = !lodEnabled_;
             notice_ = lodEnabled_ ? "LOD ON" : "LOD OFF";
+            noticeTimer_ = 2;
+            return true;
+        }
+        // [ and ] tune the LOD size threshold live (raise it to make impostors
+        // engage at larger on-screen sizes / less zoom-out).
+        if (key == SDLK_LEFTBRACKET || key == SDLK_RIGHTBRACKET) {
+            lodPx_ = std::clamp(lodPx_ + (key == SDLK_RIGHTBRACKET ? 16.0f : -16.0f),
+                                16.0f, 400.0f);
+            notice_ = "LOD THRESHOLD " + std::to_string(int(lodPx_)) + "px";
             noticeTimer_ = 2;
             return true;
         }
@@ -5931,13 +5949,15 @@ int main(int argc, char** argv) {
             pPres += t5 - t4;
             pAcc += t5 - t0; ++pFrames;
             if (pAcc >= 1000.0) {
-                double proj = 0, submit = 0;
-                if (gameView) gameView->takeProf(proj, submit);
+                double proj = 0, submit = 0; long lod = 0, full = 0;
+                if (gameView) gameView->takeProf(proj, submit, lod, full);
                 std::printf("PROF fps=%.0f | terrain=%.1f update=%.1f draw=%.1f "
-                            "[proj=%.1f submit=%.1f] present=%.1f (ms/frame avg)\n",
+                            "[proj=%.1f submit=%.1f] present=%.1f | impostor=%ld "
+                            "full=%ld (ms/frame avg)\n",
                             pFrames * 1000.0 / pAcc, pTer / pFrames, pUpd / pFrames,
                             pDraw / pFrames, proj / pFrames, submit / pFrames,
-                            pPres / pFrames);
+                            pPres / pFrames, lod / std::max(1, pFrames),
+                            full / std::max(1, pFrames));
                 std::fflush(stdout);
                 pTer = pUpd = pDraw = pPres = pAcc = 0; pFrames = 0;
             }
