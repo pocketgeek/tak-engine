@@ -1,0 +1,550 @@
+// takserver: the central multiplayer server (docs/multiplayer-design.md, M3).
+//
+// A single-threaded poll loop hosts a lobby and any number of games. Each game
+// is a server-sequenced deterministic lockstep: clients send commands, the
+// server buckets them per tick, closes one tick every 1/30 s, and broadcasts a
+// TickBundle to every client in the game. Clients advance their sims in step.
+//
+// M3 scope: humans only, no server-side sim. Desync is detected by CROSS-
+// CHECKING the StateHash every client reports for a tick -- when they disagree
+// the minority is flagged Desynced. The referee sim (a headless World on the
+// server) and server-hosted AI come in M4, which also extracts the SDL-free
+// game setup the sim needs.
+
+#include <poll.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <map>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "net/conn.h"
+#include "net/protocol.h"
+
+using namespace tak::net;
+
+namespace {
+
+uint64_t nowMs() {
+    timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return uint64_t(ts.tv_sec) * 1000 + uint64_t(ts.tv_nsec) / 1000000;
+}
+
+constexpr uint64_t kPingIdleMs = 5000;    // ping a quiet client after this
+constexpr uint64_t kTimeoutMs = 15000;    // drop a silent client after this
+constexpr int kCmdCapPerTick = 64;        // per-client command cap per tick
+
+struct Client {
+    Conn conn;
+    uint32_t id = 0;
+    std::string name;
+    enum State { Handshake, Lobby, InGame } state = Handshake;
+    uint32_t roomId = 0;
+    int slot = -1;
+    uint64_t lastRecvMs = 0;
+    uint64_t lastPingMs = 0;
+    bool loaded = false;
+};
+
+struct Room {
+    uint32_t id = 0;
+    std::string name, password, mapId;
+    GameOptions opts;
+    uint32_t hostId = 0;
+    SlotInfo slots[kMaxSlots];
+    int slotClient[kMaxSlots];      // client id in each slot, -1 = none/ai/open
+    bool running = false;
+    uint64_t createdMs = 0;
+    // running state
+    uint32_t tick = 0;                          // next tick to close
+    std::vector<Command> pending;               // commands for the next tick
+    std::vector<Event> pendingEvents;           // sequenced events for the next tick
+    uint64_t nextTickMs = 0;                    // wall deadline for the next tick
+    // hash cross-check: tick -> (clientId -> hash)
+    std::map<uint32_t, std::map<uint32_t, uint64_t>> hashes;
+    std::map<uint32_t, bool> desyncFlagged;     // clientId -> already told
+    Room() { for (int i = 0; i < kMaxSlots; ++i) slotClient[i] = -1; }
+    int capacity() const { return kMaxSlots; }  // TODO(M3): cap to map start count
+    int humanCount() const {
+        int n = 0;
+        for (int i = 0; i < kMaxSlots; ++i) if (slots[i].type == 1) ++n;
+        return n;
+    }
+    int usedSlots() const {
+        int n = 0;
+        for (int i = 0; i < kMaxSlots; ++i) if (slots[i].type == 1 || slots[i].type == 2) ++n;
+        return n;
+    }
+};
+
+class Server {
+public:
+    explicit Server(uint16_t port) : port_(port) {}
+    int run();
+
+private:
+    uint16_t port_;
+    int listenFd_ = -1;
+    uint32_t nextClientId_ = 1, nextRoomId_ = 1;
+    std::unordered_map<uint32_t, std::unique_ptr<Client>> clients_;
+    std::map<uint32_t, Room> rooms_;
+
+    void onFrame(Client& c, const Frame& f);
+    void handshake(Client& c, const Frame& f);
+    void lobbyMsg(Client& c, const Frame& f);
+    void gameMsg(Client& c, const Frame& f);
+
+    void sendReject(Client& c, const std::string& why);
+    void sendGameList(Client& c);
+    void broadcastLobby(Room& r);
+    void broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptClient = 0);
+    Room* roomOf(Client& c) { auto it = rooms_.find(c.roomId); return it == rooms_.end() ? nullptr : &it->second; }
+    void leaveRoom(Client& c, const char* reason);
+    void tryStart(Client& c);
+    void closeTick(Room& r);
+    void checkHashes(Room& r, uint32_t tick);
+    void dropClient(uint32_t id, const char* reason);
+    void writeSlots(Writer& w, Room& r);
+};
+
+void Server::sendReject(Client& c, const std::string& why) {
+    Writer w; w.str(why);
+    c.conn.send(Msg::Reject, w);
+    std::fprintf(stderr, "reject client %u: %s\n", c.id, why.c_str());
+}
+
+void Server::handshake(Client& c, const Frame& f) {
+    if (f.kind != Msg::Hello) { sendReject(c, "expected Hello"); c.conn.fail("no hello"); return; }
+    Reader r(f.payload.data(), f.payload.size());
+    uint32_t ver = r.u32();
+    std::string build = r.str();
+    uint64_t dataHash = r.u64();
+    std::string name = r.str();
+    (void)build; (void)dataHash;   // logged; clients are gated by version here
+    if (!r.ok) { sendReject(c, "malformed hello"); c.conn.fail("bad hello"); return; }
+    if (ver != kNetVersion) {
+        sendReject(c, "protocol version mismatch (server " + std::to_string(kNetVersion) +
+                       ", client " + std::to_string(ver) + ") -- update your build");
+        c.conn.fail("version");
+        return;
+    }
+    c.name = name.empty() ? ("player" + std::to_string(c.id)) : name;
+    c.state = Client::Lobby;
+    Writer w; w.u32(c.id); w.str(c.name);
+    c.conn.send(Msg::Welcome, w);
+    std::fprintf(stderr, "client %u '%s' joined lobby\n", c.id, c.name.c_str());
+}
+
+void Server::sendGameList(Client& c) {
+    Writer w;
+    w.u32(uint32_t(rooms_.size()));
+    uint64_t t = nowMs();
+    for (auto& [id, r] : rooms_) {
+        w.u32(r.id);
+        w.str(r.name);
+        w.str(r.mapId);
+        w.u8(uint8_t(r.usedSlots()));
+        w.u8(uint8_t(r.capacity()));
+        w.u8(r.running ? 1 : 0);
+        w.u8(r.password.empty() ? 0 : 1);
+        w.u32(uint32_t((t - r.createdMs) / 1000));
+    }
+    c.conn.send(Msg::GameList, w);
+}
+
+void Server::writeSlots(Writer& w, Room& r) {
+    w.u32(r.id);
+    w.str(r.name);
+    w.str(r.mapId);
+    w.u8(r.opts.crusades); w.u8(r.opts.gods); w.u8(r.opts.forfeitSelfDestruct);
+    w.u32(r.hostId);
+    for (int i = 0; i < kMaxSlots; ++i) {
+        const SlotInfo& s = r.slots[i];
+        w.u8(s.type); w.u8(s.faction); w.u8(s.color); w.u8(s.team); w.u8(s.ready);
+        w.u8(uint8_t(r.hostId != 0 && r.slotClient[i] >= 0 &&
+                     uint32_t(r.slotClient[i]) == r.hostId ? 1 : 0));
+        w.str(s.name);
+    }
+}
+
+void Server::broadcastLobby(Room& r) {
+    Writer w; writeSlots(w, r);
+    for (int i = 0; i < kMaxSlots; ++i) {
+        if (r.slotClient[i] < 0) continue;
+        auto it = clients_.find(uint32_t(r.slotClient[i]));
+        if (it != clients_.end()) it->second->conn.send(Msg::LobbyState, w);
+    }
+}
+
+void Server::broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptClient) {
+    for (int i = 0; i < kMaxSlots; ++i) {
+        if (r.slotClient[i] < 0) continue;
+        uint32_t cid = uint32_t(r.slotClient[i]);
+        if (cid == exceptClient) continue;
+        auto it = clients_.find(cid);
+        if (it != clients_.end()) it->second->conn.send(kind, w);
+    }
+}
+
+void Server::lobbyMsg(Client& c, const Frame& f) {
+    switch (f.kind) {
+        case Msg::ListGames: sendGameList(c); break;
+        case Msg::CreateGame: {
+            Reader r(f.payload.data(), f.payload.size());
+            std::string name = r.str(), pass = r.str(), mapId = r.str();
+            GameOptions o; o.crusades = r.u8(); o.gods = r.u8(); o.forfeitSelfDestruct = r.u8();
+            if (!r.ok) return;
+            Room& room = rooms_[nextRoomId_];
+            room.id = nextRoomId_++;
+            room.name = name.empty() ? ("game" + std::to_string(room.id)) : name;
+            room.password = pass;
+            room.mapId = mapId;
+            room.opts = o;
+            room.hostId = c.id;
+            room.createdMs = nowMs();
+            // Host takes slot 0 (human), default faction/color/team by slot.
+            room.slots[0].type = 1; room.slots[0].faction = 0; room.slots[0].color = 0;
+            room.slots[0].team = 0; room.slots[0].name = c.name;
+            room.slotClient[0] = int(c.id);
+            for (int i = 1; i < kMaxSlots; ++i) {
+                room.slots[i].type = i < 2 ? 0 : 3;   // slot 1 open, rest closed by default
+                room.slots[i].color = uint8_t(i);
+                room.slots[i].team = uint8_t(i);
+            }
+            c.state = Client::InGame; c.roomId = room.id; c.slot = 0;
+            Writer jr; jr.u8(1); jr.u8(0); jr.str("");   // ok, slot 0
+            c.conn.send(Msg::JoinResult, jr);
+            broadcastLobby(room);
+            std::fprintf(stderr, "client %u created game %u '%s'\n", c.id, room.id, room.name.c_str());
+            break;
+        }
+        case Msg::JoinGame: {
+            Reader r(f.payload.data(), f.payload.size());
+            uint32_t gid = r.u32(); std::string pass = r.str();
+            if (!r.ok) return;
+            auto it = rooms_.find(gid);
+            auto reject = [&](const std::string& why) {
+                Writer jr; jr.u8(0); jr.u8(0); jr.str(why); c.conn.send(Msg::JoinResult, jr);
+            };
+            if (it == rooms_.end()) { reject("no such game"); break; }
+            Room& room = it->second;
+            if (room.running) { reject("game already started"); break; }
+            if (!room.password.empty() && room.password != pass) { reject("wrong password"); break; }
+            int freeSlot = -1;
+            for (int i = 0; i < kMaxSlots; ++i)
+                if (room.slots[i].type == 0) { freeSlot = i; break; }
+            if (freeSlot < 0) { reject("game is full"); break; }
+            room.slots[freeSlot].type = 1;
+            room.slots[freeSlot].name = c.name;
+            room.slotClient[freeSlot] = int(c.id);
+            c.state = Client::InGame; c.roomId = room.id; c.slot = freeSlot;
+            Writer jr; jr.u8(1); jr.u8(uint8_t(freeSlot)); jr.str("");
+            c.conn.send(Msg::JoinResult, jr);
+            broadcastLobby(room);
+            std::fprintf(stderr, "client %u joined game %u at slot %d\n", c.id, room.id, freeSlot);
+            break;
+        }
+        default: break;   // ignore other messages while in the lobby
+    }
+}
+
+void Server::leaveRoom(Client& c, const char* reason) {
+    Room* r = roomOf(c);
+    if (!r) return;
+    if (c.slot >= 0 && c.slot < kMaxSlots) {
+        r->slotClient[c.slot] = -1;
+        if (!r->running) { r->slots[c.slot].type = 0; r->slots[c.slot].name.clear(); }
+    }
+    uint32_t rid = r->id;
+    bool wasHost = (r->hostId == c.id);
+    c.state = Client::Lobby; c.roomId = 0; c.slot = -1; c.loaded = false;
+    // If the host left in the lobby, pass host to the next human (or dissolve).
+    if (!r->running && wasHost) {
+        int next = -1;
+        for (int i = 0; i < kMaxSlots; ++i)
+            if (r->slotClient[i] >= 0) { next = r->slotClient[i]; break; }
+        if (next >= 0) r->hostId = uint32_t(next);
+        else { rooms_.erase(rid); std::fprintf(stderr, "game %u dissolved\n", rid); return; }
+    }
+    if (r->slotClient) broadcastLobby(*r);
+    std::fprintf(stderr, "client %u left game %u (%s)\n", c.id, rid, reason);
+}
+
+void Server::tryStart(Client& c) {
+    Room* r = roomOf(c);
+    if (!r || r->hostId != c.id || r->running) return;
+    // Validate: >=2 used slots, every human ready, unique colors among used slots.
+    if (r->usedSlots() < 2) return;
+    bool usedColor[10] = {};
+    for (int i = 0; i < kMaxSlots; ++i) {
+        const SlotInfo& s = r->slots[i];
+        if (s.type != 1 && s.type != 2) continue;
+        if (s.type == 1 && !s.ready) return;             // a human isn't ready
+        if (s.color < 10) { if (usedColor[s.color]) return; usedColor[s.color] = true; }
+    }
+    // M3 has no server AI; reject games that request AI slots for now.
+    for (int i = 0; i < kMaxSlots; ++i)
+        if (r->slots[i].type == 2) return;   // AI comes in M4
+    r->running = true;
+    r->tick = 0;
+    r->nextTickMs = nowMs();
+    // GameStarting: final slot table + options + seeds + resume tokens (per client).
+    for (int i = 0; i < kMaxSlots; ++i) {
+        if (r->slotClient[i] < 0) continue;
+        auto it = clients_.find(uint32_t(r->slotClient[i]));
+        if (it == clients_.end()) continue;
+        Writer w; writeSlots(w, *r);
+        w.u8(uint8_t(i));                 // your slot
+        w.u32(0x7a6b0000u + r->id);       // per-game RNG seed base
+        w.u32(0);                         // resume token placeholder (M5)
+        it->second->conn.send(Msg::GameStarting, w);
+        it->second->loaded = false;
+    }
+    std::fprintf(stderr, "game %u starting with %d players\n", r->id, r->usedSlots());
+}
+
+void Server::gameMsg(Client& c, const Frame& f) {
+    Room* r = roomOf(c);
+    if (!r) return;
+    switch (f.kind) {
+        case Msg::SlotUpdate: {
+            Reader rd(f.payload.data(), f.payload.size());
+            int slot = int(rd.u8());
+            uint8_t type = rd.u8(), faction = rd.u8(), color = rd.u8(), team = rd.u8(), ready = rd.u8();
+            if (!rd.ok || slot < 0 || slot >= kMaxSlots || r->running) return;
+            bool isHost = (r->hostId == c.id);
+            // A player edits only their own slot; the host may edit any.
+            if (!isHost && slot != c.slot) return;
+            SlotInfo& s = r->slots[slot];
+            // Non-host can only touch faction/color/team/ready on their own slot.
+            if (isHost) { if (type <= 3) s.type = type; }
+            s.faction = faction % 5;
+            s.color = color % 10;
+            s.team = uint8_t(team % kMaxSlots);
+            s.ready = ready ? 1 : 0;
+            broadcastLobby(*r);
+            break;
+        }
+        case Msg::Kick: {
+            if (r->hostId != c.id || r->running) return;
+            Reader rd(f.payload.data(), f.payload.size());
+            int slot = int(rd.u8());
+            if (!rd.ok || slot < 0 || slot >= kMaxSlots) return;
+            int cid = r->slotClient[slot];
+            if (cid >= 0 && uint32_t(cid) != c.id) {
+                auto it = clients_.find(uint32_t(cid));
+                if (it != clients_.end()) { leaveRoom(*it->second, "kicked"); it->second->conn.send(Msg::Bye, Writer{}); }
+            }
+            break;
+        }
+        case Msg::StartGame: tryStart(c); break;
+        case Msg::Loaded:
+            c.loaded = true;
+            break;
+        case Msg::LeaveGame: leaveRoom(c, "left"); break;
+        case Msg::Chat: {
+            Reader rd(f.payload.data(), f.payload.size());
+            std::string text = rd.str();
+            if (!rd.ok || text.size() > 512) return;
+            Writer w; w.str(c.name); w.str(text);
+            broadcastRoom(*r, Msg::Chat, w);
+            break;
+        }
+        case Msg::PlayerCommands: {
+            if (!r->running) return;
+            Reader rd(f.payload.data(), f.payload.size());
+            uint32_t n = rd.u32();
+            if (n > uint32_t(kCmdCapPerTick)) n = kCmdCapPerTick;   // drop the excess
+            for (uint32_t i = 0; i < n && rd.ok; ++i) {
+                Command cmd = rd.cmd();
+                if (!rd.ok) break;
+                cmd.player = uint8_t(c.slot);   // server stamps ownership
+                r->pending.push_back(cmd);
+            }
+            break;
+        }
+        case Msg::StateHash: {
+            if (!r->running) return;
+            Reader rd(f.payload.data(), f.payload.size());
+            uint32_t tk = rd.u32(); uint64_t h = rd.u64();
+            if (!rd.ok) return;
+            r->hashes[tk][c.id] = h;
+            checkHashes(*r, tk);
+            break;
+        }
+        default: break;
+    }
+}
+
+void Server::checkHashes(Room& r, uint32_t tick) {
+    auto it = r.hashes.find(tick);
+    if (it == r.hashes.end()) return;
+    // Wait until every live human client in the room has reported this tick.
+    int live = 0;
+    for (int i = 0; i < kMaxSlots; ++i)
+        if (r.slots[i].type == 1 && r.slotClient[i] >= 0) ++live;
+    if (int(it->second.size()) < live || live == 0) return;
+    // Majority hash wins; the minority are desynced.
+    std::map<uint64_t, int> tally;
+    for (auto& [cid, h] : it->second) ++tally[h];
+    uint64_t majority = 0; int best = -1;
+    for (auto& [h, cnt] : tally) if (cnt > best) { best = cnt; majority = h; }
+    for (auto& [cid, h] : it->second) {
+        if (h != majority && !r.desyncFlagged[cid]) {
+            r.desyncFlagged[cid] = true;
+            auto ci = clients_.find(cid);
+            if (ci != clients_.end()) {
+                Writer w; w.u32(tick); w.str("desync detected (state diverged from the other players)");
+                ci->second->conn.send(Msg::Desynced, w);
+                std::fprintf(stderr, "game %u: client %u DESYNCED at tick %u\n", r.id, cid, tick);
+            }
+        }
+    }
+    r.hashes.erase(r.hashes.begin(), std::next(it));   // drop this and older
+}
+
+void Server::closeTick(Room& r) {
+    // All humans must have loaded before the first tick.
+    if (r.tick == 0) {
+        for (int i = 0; i < kMaxSlots; ++i)
+            if (r.slots[i].type == 1 && r.slotClient[i] >= 0) {
+                auto it = clients_.find(uint32_t(r.slotClient[i]));
+                if (it == clients_.end() || !it->second->loaded) { r.nextTickMs = nowMs() + 100; return; }
+            }
+    }
+    Writer w;
+    w.u32(r.tick);
+    // sort by player then arrival (stable): bucket by player.
+    std::stable_sort(r.pending.begin(), r.pending.end(),
+                     [](const Command& a, const Command& b) { return a.player < b.player; });
+    w.u32(uint32_t(r.pending.size()));
+    for (const auto& cmd : r.pending) w.cmd(cmd);
+    w.u32(uint32_t(r.pendingEvents.size()));
+    for (const auto& e : r.pendingEvents) { w.u8(uint8_t(e.kind)); w.u8(e.player); }
+    broadcastRoom(r, Msg::TickBundle, w);
+    r.pending.clear();
+    r.pendingEvents.clear();
+    r.tick++;
+    r.nextTickMs += 1000 / kServerHz;
+}
+
+void Server::dropClient(uint32_t id, const char* reason) {
+    auto it = clients_.find(id);
+    if (it == clients_.end()) return;
+    if (it->second->roomId) leaveRoom(*it->second, reason);
+    std::fprintf(stderr, "client %u dropped (%s)\n", id, reason);
+    clients_.erase(it);
+}
+
+void Server::onFrame(Client& c, const Frame& f) {
+    c.lastRecvMs = nowMs();
+    if (f.kind == Msg::Ping) { c.conn.send(Msg::Pong); return; }
+    if (f.kind == Msg::Pong) return;
+    if (f.kind == Msg::Bye) { c.conn.fail("bye"); return; }
+    switch (c.state) {
+        case Client::Handshake: handshake(c, f); break;
+        case Client::Lobby: lobbyMsg(c, f); break;
+        case Client::InGame: gameMsg(c, f); break;
+    }
+}
+
+int Server::run() {
+    std::string err;
+    listenFd_ = listenOn(port_, err);
+    if (listenFd_ < 0) { std::fprintf(stderr, "takserver: %s on port %u\n", err.c_str(), port_); return 1; }
+    std::fprintf(stderr, "takserver listening on port %u (protocol v%u)\n", port_, kNetVersion);
+
+    for (;;) {
+        // Build the pollfd set: listen + every client (POLLOUT when it has pending writes).
+        std::vector<pollfd> pfds;
+        std::vector<uint32_t> ids;
+        pfds.push_back({listenFd_, POLLIN, 0});
+        ids.push_back(0);
+        for (auto& [id, c] : clients_) {
+            short ev = POLLIN;
+            if (c->conn.wantWrite()) ev |= POLLOUT;
+            pfds.push_back({c->conn.fd(), ev, 0});
+            ids.push_back(id);
+        }
+        // Timeout = time until the soonest running room's next tick (or 1s idle).
+        uint64_t now = nowMs();
+        uint64_t soonest = now + 1000;
+        for (auto& [rid, r] : rooms_)
+            if (r.running && r.nextTickMs < soonest) soonest = r.nextTickMs;
+        int timeout = int(soonest > now ? soonest - now : 0);
+
+        int n = ::poll(pfds.data(), pfds.size(), timeout);
+        if (n < 0) { if (errno == EINTR) continue; break; }
+
+        // Accept new connections.
+        if (pfds[0].revents & POLLIN) {
+            for (;;) {
+                int fd = accept(listenFd_, nullptr, nullptr);
+                if (fd < 0) break;
+                setupSocket(fd);
+                auto c = std::make_unique<Client>();
+                c->id = nextClientId_++;
+                c->conn = Conn(fd);
+                c->lastRecvMs = nowMs();
+                clients_[c->id] = std::move(c);
+            }
+        }
+        // Service clients.
+        std::vector<uint32_t> dead;
+        for (size_t i = 1; i < pfds.size(); ++i) {
+            uint32_t id = ids[i];
+            auto it = clients_.find(id);
+            if (it == clients_.end()) continue;
+            Client& c = *it->second;
+            if (pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
+                if (!c.conn.recv()) { dead.push_back(id); continue; }
+                Frame fr;
+                while (c.conn.poll(fr)) { onFrame(c, fr); if (!c.conn.ok()) break; }
+            }
+            if (!c.conn.ok()) { dead.push_back(id); continue; }
+            if (pfds[i].revents & POLLOUT) c.conn.flushWrite();
+        }
+        // Close ticks for running rooms whose deadline passed.
+        now = nowMs();
+        for (auto& [rid, r] : rooms_)
+            while (r.running && r.nextTickMs <= now) closeTick(r);
+        // Flush all pending writes (bundles just queued) + keepalive + timeouts.
+        now = nowMs();
+        for (auto& [id, c] : clients_) {
+            if (!c->conn.flushWrite()) { dead.push_back(id); continue; }
+            if (c->state != Client::Handshake && now - c->lastRecvMs > kPingIdleMs &&
+                now - c->lastPingMs > kPingIdleMs) {
+                c->conn.send(Msg::Ping); c->lastPingMs = now; c->conn.flushWrite();
+            }
+            if (now - c->lastRecvMs > kTimeoutMs) dead.push_back(id);
+        }
+        for (uint32_t id : dead) dropClient(id, "disconnected");
+    }
+    return 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    uint16_t port = 7677;
+    for (int i = 1; i < argc; ++i) {
+        if (!std::strcmp(argv[i], "--port") && i + 1 < argc) port = uint16_t(std::atoi(argv[++i]));
+        else if (!std::strcmp(argv[i], "--help")) {
+            std::printf("usage: takserver [--port N]  (default 7677)\n");
+            return 0;
+        }
+    }
+    Server s(port);
+    return s.run();
+}

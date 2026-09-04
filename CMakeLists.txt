@@ -31,6 +31,8 @@ add_library(tak-formats
   src/ai/ai.cpp
   src/crt/crt.cpp
   src/net/lockstep.cpp
+  src/net/protocol.cpp
+  src/net/conn.cpp
   src/util/png.cpp
   src/util/jpeg.cpp
   src/terrain/terrain.cpp
@@ -72,6 +74,11 @@ if(TAK_BUILD_VIEWER)
     message(WARNING "SDL2 not found — skipping takview. Install SDL2-devel.")
   endif()
 endif()
+
+# --- Multiplayer server (headless; no SDL) ------------------------------------
+
+add_executable(takserver src/server/server.cpp)
+target_link_libraries(takserver PRIVATE tak-formats)
 
 add_executable(modeltool tools/modeltool.cpp)
 target_link_libraries(modeltool PRIVATE tak-formats)
