@@ -1379,6 +1379,12 @@ public:
                s == tak::net::MpClient::State::Done;
     }
     void setMpMapId(const std::string& id) { mpMapId_ = id; }
+    // The map's player capacity = its start-position count (2..8). The server has
+    // no map data, so a creating client tells it how many slots the map supports.
+    uint8_t mpCapacity() const {
+        int n = int(parseStartPositions(tntPath_).size());
+        return uint8_t(std::clamp(n < 2 ? 2 : n, 2, tak::net::kMaxSlots));
+    }
 
     void input(const SDL_Event& e, int winW, int winH) {
         winW_ = winW;
@@ -1772,14 +1778,14 @@ public:
         if (st == S::Done) { if (netError_.empty()) netError_ = mp_->error(); return false; }
         if (st == S::Lobby && autoMode == 1) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
-            mp_->createGame("headless", "", mapId, o);
+            mp_->createGame("headless", "", mapId, o, mpCapacity());
         } else if (st == S::Lobby && (autoMode == 2 || autoMode == 3)) {
             // Poll the game list; join the first, or (mode 3) create if none appear.
             if (SDL_GetTicks64() - mpListMs_ > 300) { mp_->listGames(); mpListMs_ = SDL_GetTicks64(); }
             if (!mp_->games().empty()) mp_->joinGame(mp_->games().front().id, "");
             else if (autoMode == 3 && mpListMs_ && SDL_GetTicks64() - mpFirstListMs_ > 800) {
                 tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
-                mp_->createGame(mapId, "", mapId, o);
+                mp_->createGame(mapId, "", mapId, o, mpCapacity());
             }
             if (!mpFirstListMs_) mpFirstListMs_ = SDL_GetTicks64();
         } else if (st == S::InRoom && autoMode && !mpReadied_) {
@@ -5719,7 +5725,7 @@ private:
               [this] { createGods_ = !createGods_; }); y += 44;
         lbBtn(x, y, 120, 30, "CREATE", !createName_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0; o.gods = createGods_ ? 1 : 0;
-            mp_->createGame(createName_, createPass_, mpMapId_, o);
+            mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity());
             lobbyScreen_ = LobbyScreen::Browser;
         });
         lbBtn(x + 132, y, 120, 30, "CANCEL", true, [this] { lobbyScreen_ = LobbyScreen::Browser; });

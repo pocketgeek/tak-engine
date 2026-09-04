@@ -65,6 +65,7 @@ struct Room {
     SlotInfo slots[kMaxSlots];
     int slotClient[kMaxSlots];      // client id in each slot, -1 = none/ai/open
     bool running = false;
+    int cap = kMaxSlots;            // map capacity (from the host's CreateGame)
     uint64_t createdMs = 0;
     // running state
     uint32_t tick = 0;                          // next tick to close
@@ -75,7 +76,7 @@ struct Room {
     std::map<uint32_t, std::map<uint32_t, uint64_t>> hashes;
     std::map<uint32_t, bool> desyncFlagged;     // clientId -> already told
     Room() { for (int i = 0; i < kMaxSlots; ++i) slotClient[i] = -1; }
-    int capacity() const { return kMaxSlots; }  // TODO(M3): cap to map start count
+    int capacity() const { return cap; }
     int humanCount() const {
         int n = 0;
         for (int i = 0; i < kMaxSlots; ++i) if (slots[i].type == 1) ++n;
@@ -204,21 +205,25 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             Reader r(f.payload.data(), f.payload.size());
             std::string name = r.str(), pass = r.str(), mapId = r.str();
             GameOptions o; o.crusades = r.u8(); o.gods = r.u8(); o.forfeitSelfDestruct = r.u8();
+            int cap = int(r.u8());
             if (!r.ok) return;
+            if (cap < 2 || cap > kMaxSlots) cap = kMaxSlots;   // sane default
             Room& room = rooms_[nextRoomId_];
             room.id = nextRoomId_++;
             room.name = name.empty() ? ("game" + std::to_string(room.id)) : name;
             room.password = pass;
             room.mapId = mapId;
             room.opts = o;
+            room.cap = cap;
             room.hostId = c.id;
             room.createdMs = nowMs();
-            // Host takes slot 0 (human), default faction/color/team by slot.
+            // Host takes slot 0 (human); slots up to the map capacity open, the
+            // rest closed (the map has no start position for them).
             room.slots[0].type = 1; room.slots[0].faction = 0; room.slots[0].color = 0;
             room.slots[0].team = 0; room.slots[0].name = c.name;
             room.slotClient[0] = int(c.id);
             for (int i = 1; i < kMaxSlots; ++i) {
-                room.slots[i].type = i < 2 ? 0 : 3;   // slot 1 open, rest closed by default
+                room.slots[i].type = i < cap ? 0 : 3;   // open up to capacity, else closed
                 room.slots[i].color = uint8_t(i);
                 room.slots[i].team = uint8_t(i);
             }
@@ -328,7 +333,8 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (!isHost && slot != c.slot) return;
             SlotInfo& s = r->slots[slot];
             // Non-host can only touch faction/color/team/ready on their own slot.
-            if (isHost) { if (type <= 3) s.type = type; }
+            // Slots past the map capacity stay closed (no start position for them).
+            if (isHost) { if (type <= 3 && !(slot >= r->cap && type != 3)) s.type = type; }
             s.faction = faction % 5;
             s.color = color % 10;
             s.team = uint8_t(team % kMaxSlots);

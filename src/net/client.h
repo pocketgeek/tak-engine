@@ -51,7 +51,7 @@ public:
     // ---- lobby actions -----------------------------------------------------
     void listGames();
     void createGame(const std::string& name, const std::string& password,
-                    const std::string& mapId, const GameOptions& opts);
+                    const std::string& mapId, const GameOptions& opts, uint8_t capacity);
     void joinGame(uint32_t id, const std::string& password);
     void leaveGame();
     void setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
