@@ -2456,18 +2456,56 @@ public:
         // models are accumulated into one batch and flushed only when the texture
         // changes or a feature/special unit interrupts the run -- so a crowd of one
         // unit type collapses to a handful of draw calls instead of one per unit.
-        unitBatch_.clear();
-        SDL_Texture* bt = nullptr;
-        auto flushBodies = [&] {
-            if (!unitBatch_.empty())
-                SDL_RenderGeometry(ren_, bt, unitBatch_.data(),
-                                   int(unitBatch_.size()), nullptr, 0);
-            unitBatch_.clear();
+        // Plan the draw order serially (no vertex copies), scatter the vertex
+        // copies across the worker pool, then replay the draws. This spreads the
+        // ~1.5M-vertex body assembly that used to peg one core, while keeping the
+        // exact painter order (segments broken by features / special units).
+        copyTasks_.clear();
+        drawOps_.clear();
+        int destOff = 0;
+        SDL_Texture* segTex = nullptr;
+        int segStart = 0, segCount = 0;
+        auto closeSeg = [&] {
+            if (segCount > 0) {
+                drawOps_.push_back({nullptr, nullptr, segTex, segStart, segCount});
+                segCount = 0;
+            }
         };
         for (const auto& it : items) {
             if (it.f) {
-                flushBodies();
-                const auto& f = *it.f;
+                closeSeg();
+                drawOps_.push_back({nullptr, it.f, nullptr, 0, 0});
+            } else {
+                const auto& u = *it.u;
+                auto git = geomIndex_.find(u.id);
+                if (git == geomIndex_.end()) continue;
+                const UnitGeom& g = geomPool_[size_t(git->second)];
+                if (special(u, g)) {
+                    closeSeg();
+                    drawOps_.push_back({&u, nullptr, nullptr, 0, 0});
+                    continue;
+                }
+                int src = 0;
+                for (const auto& r : g.runs) {
+                    if (r.first != segTex) { closeSeg(); segTex = r.first; segStart = destOff; }
+                    copyTasks_.push_back({git->second, src, r.second, destOff});
+                    destOff += r.second; segCount += r.second; src += r.second;
+                }
+            }
+        }
+        closeSeg();
+        bodyVerts_.resize(size_t(destOff));
+        pool_.parallelFor(copyTasks_.size(), [this](size_t b, size_t e) {
+            for (size_t i = b; i < e; ++i) {
+                const CopyTask& t = copyTasks_[i];
+                const auto& gv = geomPool_[size_t(t.geom)].verts;
+                std::copy(gv.begin() + t.src, gv.begin() + t.src + t.count,
+                          bodyVerts_.begin() + t.dst);
+            }
+        });
+        for (const DrawOp& op : drawOps_) {
+            if (op.f) {
+                const auto& f = *op.f;
                 if (f.shadow) {
                     SDL_FRect sd{(f.x - mapView_.offX() - float(f.sxoff)) * zm0,
                                  (f.z - mapView_.offY() - float(f.syoff)) * zm0,
@@ -2482,22 +2520,13 @@ public:
                     tex = (*f.frames)[(size_t(animClock_ * 8) + size_t(f.seed)) %
                                       f.frames->size()];
                 SDL_RenderCopyF(ren_, tex, nullptr, &dst);
-            } else {
-                const auto& u = *it.u;
-                auto git = geomIndex_.find(u.id);
-                if (git == geomIndex_.end()) continue;
-                const UnitGeom& g = geomPool_[size_t(git->second)];
-                if (special(u, g)) { flushBodies(); drawUnit(u); continue; }
-                int off = 0;
-                for (const auto& r : g.runs) {
-                    if (r.first != bt) { flushBodies(); bt = r.first; }
-                    unitBatch_.insert(unitBatch_.end(), g.verts.begin() + off,
-                                      g.verts.begin() + off + r.second);
-                    off += r.second;
-                }
+            } else if (op.u) {
+                drawUnit(*op.u);
+            } else if (op.count > 0) {
+                SDL_RenderGeometry(ren_, op.tex, bodyVerts_.data() + op.start,
+                                   op.count, nullptr, 0);
             }
         }
-        flushBodies();
         profSubmitMs_ += (double(SDL_GetPerformanceCounter()) - _st0) / _ptFreq;
 
         // Ghosts of the local player's queued (shift) build orders.
@@ -3310,6 +3339,15 @@ private:
     };
     std::vector<const tak::sim::Unit*> visUnits_;
     std::vector<SDL_Vertex> unitBatch_, shadowBatch_;   // cross-unit render batches
+    // Body pass assembled in parallel: plan offsets serially, scatter the vertex
+    // copies across the pool, then replay the draw ops. Keeps depth order exact.
+    std::vector<SDL_Vertex> bodyVerts_;
+    struct FeatureInst;   // defined below; DrawOp only needs the pointer type
+    struct CopyTask { int geom, src, count, dst; };
+    struct DrawOp { const tak::sim::Unit* u; const FeatureInst* f;
+                    SDL_Texture* tex; int start, count; };   // seg if u&&f both null
+    std::vector<CopyTask> copyTasks_;
+    std::vector<DrawOp> drawOps_;
     double profProjMs_ = 0, profSubmitMs_ = 0, profSimMs_ = 0;   // TAK_PROF sub-phase timers
     long lodDrawn_ = 0, fullDrawn_ = 0;                 // impostor vs full-model counts
 
