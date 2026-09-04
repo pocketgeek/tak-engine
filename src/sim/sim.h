@@ -81,6 +81,7 @@ struct UnitType {
     float maxHp = 100;
     bool canMove = false;
     bool isBuilder = false;
+    float buildDist = 0;    // FBI builddistance: how far a builder reaches to build
     bool onMana = false;    // must be built on a mana deposit (yardmap 'S'), e.g. lodestones
     float buildCost = 0;    // mana
     float buildTime = 0;    // work units; seconds = buildTime / builder workerTime
