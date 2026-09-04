@@ -5155,7 +5155,7 @@ private:
             noticeTimer_ = 3;
             return true;
         }
-        // F11: stress test -- spawn 500 Zhon hunters across the current view.
+        // F11: stress test -- spawn 500 Zhon trolls across the current view.
         if (key == SDLK_F11) {
             float zm = std::max(mapView_.zoom(), 1e-3f);
             float cx = mapView_.offX() + (winW_ / 2.0f) / zm;
@@ -5166,9 +5166,9 @@ private:
                 for (int i = 0; i < nx; ++i) {
                     float x = cx + (i - (nx - 1) * 0.5f) * 20.0f;
                     float z = cz + (j - (nz - 1) * 0.5f) * 18.0f;
-                    if (spawn("zonhunt", x, z, 0.0f, localTeam_) >= 0) ++made;
+                    if (spawn("zontroll", x, z, 0.0f, localTeam_) >= 0) ++made;
                 }
-            notice_ = "SPAWNED " + std::to_string(made) + " HUNTERS";
+            notice_ = "SPAWNED " + std::to_string(made) + " TROLLS";
             noticeTimer_ = 3;
             return true;
         }
