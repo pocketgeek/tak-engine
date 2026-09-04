@@ -21,8 +21,11 @@ and place its data files in `assets/` (gitignored) to use the engine.
    `Keys.TDF` hotkeys, and per-faction soundtrack music.
 5. ~~**Campaign**~~ ✅ mission loading via `.ota`/`.cob` with the
    `MAP_COMMAND` scripting API and `.crt` scenario/trigger parsing.
-6. ~~**Multiplayer**~~ ✅ 2-player TCP lockstep, verified deterministic
-   (commands scheduled at tick+4, periodic state-hash sync check).
+6. **Multiplayer** 🚧 client–server (a central `takserver` relays a
+   server-sequenced deterministic lockstep for up to 8 players/teams). Core
+   proven: clients play a full game through the server bit-identically. Lobby
+   UI, server-run AI, and reconnect are in progress — see
+   `docs/multiplayer-design.md`.
 7. ~~**Combat & unit depth**~~ ✅ the FBI/weapon data is driven faithfully:
    HP regen, veterancy (kills → +10%/level attack·armour·reload, gold sheen,
    promoted `veteranmodel`), per-unit mana pools & mana-per-shot, area-of-effect
@@ -113,10 +116,19 @@ In a god-enabled match, a faction whose priests (`attractsgods` units) have
 channelled enough mana favour manifests its **god** among its forces once the
 appear time passes — set `TAK_GODTIME=<seconds>` to shorten it for testing.
 
-Multiplayer (2-player TCP lockstep): host runs with `--host 7777`, the
-other player adds `--join <host-ip> 7777`. Host commands the Aramon
-base (blue, west), joiner commands Taros (east). Both machines need
-the same engine build and game data.
+Multiplayer is **client–server**: run the headless `takserver` (default port
+7677) somewhere reachable, and each player connects with
+`takview game <map> <terrain> <data> --server <host> [--serverport N] [--name X]`.
+The server hosts a lobby and relays a server-sequenced deterministic lockstep —
+up to 8 players on up to 8 teams (allies share vision), each machine running the
+identical sim with only ~35-byte commands on the wire, verified by a periodic
+state-hash cross-check. All players connect out to the one server, so no NAT or
+port-forwarding on the players' side. Everyone needs the same engine build and
+game data (the handshake gates protocol version). See
+`docs/multiplayer-design.md` for the full design and milestone plan; the
+in-client lobby currently auto-matchmakes (a browser/slot-editing UI, server-run
+AI, and reconnect are the remaining milestones). The old 2-player `--host`/`--join`
+peer mode is retired.
 
 ## Building
 
@@ -145,7 +157,10 @@ next to the game data to override it, exactly like the original game.
 - `src/tdf/` — TDF/FBI/OTA text-config parsing
 - `src/crt/` — `.crt` scenario/trigger parsing
 - `src/sim/` — deterministic simulation (movement, A* pathing, combat, economy)
-- `src/net/` — TCP lockstep multiplayer session
+- `src/net/` — multiplayer: command wire format, framed TCP connection,
+  client-server protocol, and the client handler
+- `src/server/` — `takserver`, the headless lobby + lockstep relay
+- `src/ai/` — the skirmish AI (server-portable; emits commands)
 - `src/terrain/` — terrain/palette handling
 - `src/util/` — shared helpers
 - `src/viewer/` — SDL2 application (`takview`: asset viewer + game)
