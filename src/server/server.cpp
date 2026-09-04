@@ -49,6 +49,17 @@ uint64_t nowMs() {
 constexpr uint64_t kPingIdleMs = 5000;    // ping a quiet client after this
 constexpr uint64_t kTimeoutMs = 15000;    // drop a silent client after this
 constexpr int kCmdCapPerTick = 64;        // per-client command cap per tick
+uint64_t kGraceMs = 300000;     // hold a dropped slot this long (5 min)
+uint64_t kPauseBudgetMs = 120000;  // total auto-pause a player may cause
+
+// A resume token (real entropy; not sim state so no determinism concern).
+uint64_t randToken() {
+    uint64_t v = 0;
+    FILE* f = std::fopen("/dev/urandom", "rb");
+    if (f) { if (std::fread(&v, sizeof v, 1, f) != 1) v = 0; std::fclose(f); }
+    if (v == 0) v = nowMs() * 6364136223846793005ULL + 1442695040888963407ULL;
+    return v ? v : 1;
+}
 
 struct Client {
     Conn conn;
@@ -86,7 +97,21 @@ struct Room {
     std::vector<tak::ai::Controller> ai;        // one per AI slot
     std::map<uint32_t, uint64_t> refHash;       // tick -> referee hash (bounded ring)
     bool refSuspect = false;                    // referee itself suspected desynced
+    // durability (M5): the full bundle log for reconnect/replay, per-slot resume
+    // tokens, and drop-hold / auto-pause state.
+    std::vector<std::vector<uint8_t>> log;      // serialized TickBundle payload per tick
+    uint64_t slotToken[kMaxSlots] = {};         // resume token per human slot (0 = none)
+    bool slotDropped[kMaxSlots] = {};           // slot held after a mid-game disconnect
+    uint64_t graceDeadline[kMaxSlots] = {};     // forfeit time for a dropped slot
+    bool paused = false;                        // a drop paused the game (ticks stop)
+    int pausePlayer = -1;                       // which dropped player paused it
+    uint64_t pauseStartMs = 0;                  // when the current pause began
+    uint64_t pauseBudgetMs[kMaxSlots] = {};     // remaining pause budget per player
     Room() { for (int i = 0; i < kMaxSlots; ++i) slotClient[i] = -1; }
+    bool anyDropped() const {
+        for (int i = 0; i < kMaxSlots; ++i) if (slotDropped[i]) return true;
+        return false;
+    }
     int capacity() const { return cap; }
     int humanCount() const {
         int n = 0;
@@ -290,6 +315,46 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             std::fprintf(stderr, "client %u joined game %u at slot %d\n", c.id, room.id, freeSlot);
             break;
         }
+        case Msg::Rejoin: {
+            Reader r(f.payload.data(), f.payload.size());
+            uint32_t gid = r.u32(); uint64_t token = r.u64();
+            if (!r.ok) return;
+            auto it = rooms_.find(gid);
+            auto reject = [&](const std::string& why) {
+                Writer jr; jr.u8(0); jr.u8(0); jr.str(why); c.conn.send(Msg::JoinResult, jr);
+            };
+            if (it == rooms_.end() || !it->second.running) { reject("game not found or ended"); break; }
+            Room& room = it->second;
+            int slot = -1;
+            for (int i = 0; i < kMaxSlots; ++i)
+                if (room.slotDropped[i] && token != 0 && room.slotToken[i] == token) { slot = i; break; }
+            if (slot < 0) { reject("invalid or expired resume token"); break; }
+            // Re-seat the client and rotate the token (single use).
+            room.slotClient[slot] = int(c.id);
+            room.slotDropped[slot] = false;
+            room.slotToken[slot] = randToken();
+            room.desyncFlagged.clear();   // fresh sim; old desync flags are stale
+            c.state = Client::InGame; c.roomId = gid; c.slot = slot; c.loaded = true;
+            // GameStarting rebuilds the client's world; then the whole bundle log
+            // replays it up to now, after which it receives live bundles.
+            Writer w; writeSlots(w, room);
+            w.u8(uint8_t(slot)); w.u32(0x7a6b0000u + room.id); w.u64(room.slotToken[slot]);
+            c.conn.send(Msg::GameStarting, w);
+            for (const auto& bundle : room.log) c.conn.send(Msg::TickBundle, bundle);
+            // Unpause if this was the player we were waiting on.
+            if (room.paused && room.pausePlayer == slot) {
+                room.pauseBudgetMs[slot] -= std::min(room.pauseBudgetMs[slot], nowMs() - room.pauseStartMs);
+                room.paused = false; room.pausePlayer = -1;
+                room.nextTickMs = nowMs();   // rebase the tick clock (no burst)
+                Writer rw; rw.u8(0); rw.u8(uint8_t(slot));
+                broadcastRoom(room, Msg::Resume, rw);
+            }
+            Writer ps; ps.u8(uint8_t(slot)); ps.u8(0 /*connected*/); ps.u32(0);
+            broadcastRoom(room, Msg::PlayerStatus, ps, c.id);
+            std::fprintf(stderr, "game %u: client %u REJOINED slot %d (replaying %zu ticks)\n",
+                         room.id, c.id, slot, room.log.size());
+            break;
+        }
         default: break;   // ignore other messages while in the lobby
     }
 }
@@ -300,6 +365,12 @@ void Server::leaveRoom(Client& c, const char* reason) {
     if (c.slot >= 0 && c.slot < kMaxSlots) {
         r->slotClient[c.slot] = -1;
         if (!r->running) { r->slots[c.slot].type = 0; r->slots[c.slot].name.clear(); }
+        else {
+            // Voluntary leave mid-game = immediate forfeit (sequenced event so the
+            // sim disposes the units in lockstep).
+            r->slots[c.slot].type = 3;
+            r->pendingEvents.push_back({tak::net::Event::Kind::Leave, uint8_t(c.slot)});
+        }
     }
     uint32_t rid = r->id;
     bool wasHost = (r->hostId == c.id);
@@ -359,15 +430,18 @@ void Server::tryStart(Client& c) {
             if (r->slots[i].type == 2)
                 r->ai.emplace_back(i, *r->reg, aiProfile_, 0x7a6b0000u + r->id);
     }
-    // GameStarting: final slot table + options + seeds + resume tokens (per client).
+    // GameStarting: final slot table + options + seed + a per-slot resume token
+    // (used to rejoin the held slot after a disconnect).
     for (int i = 0; i < kMaxSlots; ++i) {
+        r->pauseBudgetMs[i] = kPauseBudgetMs;
         if (r->slotClient[i] < 0) continue;
+        r->slotToken[i] = randToken();
         auto it = clients_.find(uint32_t(r->slotClient[i]));
         if (it == clients_.end()) continue;
         Writer w; writeSlots(w, *r);
         w.u8(uint8_t(i));                 // your slot
         w.u32(0x7a6b0000u + r->id);       // per-game RNG seed base
-        w.u32(0);                         // resume token placeholder (M5)
+        w.u64(r->slotToken[i]);           // resume token
         it->second->conn.send(Msg::GameStarting, w);
         it->second->loaded = false;
     }
@@ -524,6 +598,7 @@ void Server::closeTick(Room& r) {
     w.u32(uint32_t(r.pendingEvents.size()));
     for (const auto& e : r.pendingEvents) { w.u8(uint8_t(e.kind)); w.u8(e.player); }
     broadcastRoom(r, Msg::TickBundle, w);
+    r.log.push_back(w.b);   // keep the full bundle log for reconnect/replay
 
     // Advance the referee sim by this same bundle, then record its canonical hash.
     if (r.ref) {
@@ -543,7 +618,29 @@ void Server::closeTick(Room& r) {
 void Server::dropClient(uint32_t id, const char* reason) {
     auto it = clients_.find(id);
     if (it == clients_.end()) return;
-    if (it->second->roomId) leaveRoom(*it->second, reason);
+    Client& c = *it->second;
+    Room* r = c.roomId ? roomOf(c) : nullptr;
+    if (r && r->running && c.slot >= 0 && c.slot < kMaxSlots && r->slots[c.slot].type == 1) {
+        // A disconnect from a running game HOLDS the slot: the player may rejoin
+        // with their resume token within the grace window. Auto-pause (budget
+        // permitting) so nobody is fighting a frozen empire meanwhile.
+        int s = c.slot;
+        r->slotDropped[s] = true;
+        r->slotClient[s] = -1;
+        r->graceDeadline[s] = nowMs() + kGraceMs;
+        if (r->pauseBudgetMs[s] > 0 && !r->paused) {
+            r->paused = true; r->pausePlayer = s; r->pauseStartMs = nowMs();
+            Writer pw; pw.u8(1 /*drop-grace*/); pw.u8(uint8_t(s));
+            broadcastRoom(*r, Msg::Pause, pw);
+        }
+        Writer w; w.u8(uint8_t(s)); w.u8(1 /*dropped*/); w.u32(0);
+        broadcastRoom(*r, Msg::PlayerStatus, w);
+        std::fprintf(stderr, "game %u: client %u dropped -- slot %d held (grace %llus)%s\n",
+                     r->id, id, s, (unsigned long long)(kGraceMs / 1000),
+                     r->paused ? ", paused" : "");
+    } else if (r) {
+        leaveRoom(c, reason);
+    }
     std::fprintf(stderr, "client %u dropped (%s)\n", id, reason);
     clients_.erase(it);
 }
@@ -616,10 +713,35 @@ int Server::run() {
             if (!c.conn.ok()) { dead.push_back(id); continue; }
             if (pfds[i].revents & POLLOUT) c.conn.flushWrite();
         }
-        // Close ticks for running rooms whose deadline passed.
+        // Grace / pause-budget expiry: a held slot that isn't reclaimed in time,
+        // or a pause that outlasts its budget, forfeits the player. The forfeit is
+        // a SEQUENCED event so every sim (and the replay) disposes their units on
+        // the same tick.
+        now = nowMs();
+        for (auto& [rid, r] : rooms_) {
+            if (!r.running) continue;
+            bool budgetOut = r.paused && r.pausePlayer >= 0 &&
+                             now - r.pauseStartMs >= r.pauseBudgetMs[r.pausePlayer];
+            for (int i = 0; i < kMaxSlots; ++i) {
+                if (!r.slotDropped[i]) continue;
+                bool forfeit = now >= r.graceDeadline[i] ||
+                               (budgetOut && i == r.pausePlayer);
+                if (!forfeit) continue;
+                r.slotDropped[i] = false;
+                r.slots[i].type = 3;   // slot closed; the player is out
+                r.pendingEvents.push_back({tak::net::Event::Kind::Forfeit, uint8_t(i)});
+                std::fprintf(stderr, "game %u: player %d FORFEIT (grace/budget expired)\n", rid, i);
+                if (r.paused && r.pausePlayer == i) {
+                    r.paused = false; r.pausePlayer = -1; r.nextTickMs = now;
+                    Writer rw; rw.u8(0); rw.u8(uint8_t(i));
+                    broadcastRoom(r, Msg::Resume, rw);
+                }
+            }
+        }
+        // Close ticks for running, unpaused rooms whose deadline passed.
         now = nowMs();
         for (auto& [rid, r] : rooms_)
-            while (r.running && r.nextTickMs <= now) closeTick(r);
+            while (r.running && !r.paused && r.nextTickMs <= now) closeTick(r);
         // Flush all pending writes (bundles just queued) + keepalive + timeouts.
         now = nowMs();
         for (auto& [id, c] : clients_) {
@@ -638,6 +760,9 @@ int Server::run() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Test overrides for the reconnect timers (seconds).
+    if (const char* g = std::getenv("TAK_GRACE_MS")) kGraceMs = uint64_t(std::atoll(g));
+    if (const char* b = std::getenv("TAK_PAUSE_BUDGET_MS")) kPauseBudgetMs = uint64_t(std::atoll(b));
     uint16_t port = 7677;
     std::string dataRoot;
     for (int i = 1; i < argc; ++i) {
