@@ -79,6 +79,11 @@ public:
     // Reconnect to a held slot: connect() first, then rejoin() with the game id
     // and the resume token saved from the original GameStarting.
     void rejoin(uint32_t gameId, uint64_t token);
+    // Watch a running game (no slot): connect() first, then spectate(). The server
+    // replies with GameStarting (slot 0xFF -> mySlot -1) and the bundle log, then
+    // streams live bundles. A spectator sends no commands or hashes.
+    void spectate(uint32_t gameId, const std::string& password);
+    bool isSpectator() const { return spectator_; }
     // True when the last GameStarting was a REJOIN (the world must be rebuilt and
     // the bundle log replayed). Cleared once consumed.
     bool isRejoin() const { return rejoin_; }
@@ -116,6 +121,8 @@ private:
     uint64_t resumeToken_ = 0;
     bool rejoin_ = false;
     bool expectingRejoin_ = false;
+    bool spectator_ = false;
+    bool expectingSpectate_ = false;
     bool paused_ = false;
     std::map<uint32_t, Bundle> bundles_;
     bool desynced_ = false;

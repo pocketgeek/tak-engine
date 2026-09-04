@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 3;        // bumped for the client-server protocol
+constexpr uint32_t kNetVersion = 4;        // bumped for the client-server protocol
 constexpr uint32_t kMaxFrame = 1u << 16;   // 64 KB frame cap (hardening)
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate
@@ -54,6 +54,7 @@ enum class Msg : uint8_t {
     Rejoin,             // C->S: gameId, resume token -> GameStarting + bundle log
     Pause,              // S->C: cause, player (game paused; ticks stop)
     Resume,             // S->C: cause, player (game resumes)
+    Spectate,           // C->S: gameId, password -> GameStarting (slot 0xFF) + log
 };
 
 // A slot in a game's setup. type: 0=open, 1=human, 2=ai, 3=closed.

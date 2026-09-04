@@ -114,11 +114,13 @@ void MpClient::onFrame(const Frame& f) {
             uint8_t mySlot = r.u8();
             startSeed_ = r.u32();
             resumeToken_ = r.u64();
-            room_.mySlot = r.ok ? mySlot : keep;
-            // If we asked to rejoin, this GameStarting is the replay response: the
+            // 0xFF marks a spectator (no slot); map it to -1.
+            room_.mySlot = !r.ok ? keep : (mySlot == 0xFF ? -1 : int(mySlot));
+            // A rejoin OR a spectate makes this GameStarting a replay response: the
             // world must be rebuilt and the bundle log (arriving next) replayed.
-            rejoin_ = expectingRejoin_;
-            expectingRejoin_ = false;
+            spectator_ = expectingSpectate_;
+            rejoin_ = expectingRejoin_ || expectingSpectate_;
+            expectingRejoin_ = expectingSpectate_ = false;
             state_ = State::Starting;
             break;
         }
@@ -190,6 +192,12 @@ void MpClient::rejoin(uint32_t gameId, uint64_t token) {
     expectingRejoin_ = true;
     Writer w; w.u32(gameId); w.u64(token);
     send(Msg::Rejoin, w);
+}
+
+void MpClient::spectate(uint32_t gameId, const std::string& password) {
+    expectingSpectate_ = true;
+    Writer w; w.u32(gameId); w.str(password);
+    send(Msg::Spectate, w);
 }
 
 bool MpClient::takeBundle(uint32_t tick, Bundle& out) {

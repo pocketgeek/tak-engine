@@ -1744,7 +1744,7 @@ public:
     // Route a command: offline it applies immediately; in a net game it is queued
     // for the server, which stamps ownership and sequences it into a tick bundle.
     void issue(tak::net::Command c) {
-        if (replayMode_) return;   // a spectator can't order units in a recording
+        if (replayMode_ || spectating_) return;   // watch-only: can't order units
         c.player = uint8_t(localPlayer_);
         if (mp_) outbox_.push_back(c);
         else apply(c);
@@ -1813,7 +1813,9 @@ public:
             for (const auto& c : bd.cmds) apply(c);
             for (const auto& e : bd.events) applyEvent(e);
             update(1.0f / 30.0f);
-            if (netTick_ % 30 == 0) mp_->sendHash(netTick_, world_.stateHash());
+            // Spectators observe only -- they seat no player and report no hash.
+            if (netTick_ % 30 == 0 && !mp_->isSpectator())
+                mp_->sendHash(netTick_, world_.stateHash());
             ++netTick_;
             ++drained;
         }
@@ -1891,6 +1893,11 @@ public:
             // reconnect to the held slot.
             uint32_t gid = 0; uint64_t tok = 0;
             if (readResume(gid, tok) && gid) { mp_->rejoin(gid, tok); mpReadied_ = true; }
+        } else if (st == S::Lobby && autoMode == 6) {
+            // Spectate: poll the list and watch the first running game.
+            if (SDL_GetTicks64() - mpListMs_ > 300) { mp_->listGames(); mpListMs_ = SDL_GetTicks64(); }
+            for (const auto& g : mp_->games())
+                if (g.running) { mp_->spectate(g.id, ""); break; }
         } else if (st == S::Lobby && (autoMode == 2 || autoMode == 3)) {
             // Poll the game list; join the first, or (mode 3) create if none appear.
             if (SDL_GetTicks64() - mpListMs_ > 300) { mp_->listGames(); mpListMs_ = SDL_GetTicks64(); }
@@ -1920,18 +1927,25 @@ public:
             }
             if (ready >= 2) { mp_->startGame(); mpStarted_ = true; }
         } else if (mp_->isRejoin()) {
-            // Rejoin (checked BEFORE the state branches -- the replayed bundles may
-            // already have flipped the state to InGame): reset the sim and replay
-            // from tick 0. The server has queued the whole bundle log after the
-            // GameStarting; mpStep drains it, fast-forwarding to now.
+            // Rejoin OR spectate (checked BEFORE the state branches -- the replayed
+            // bundles may already have flipped the state to InGame): reset the sim
+            // and replay from tick 0. The server has queued the whole bundle log
+            // after the GameStarting; mpStep drains it, fast-forwarding to now.
+            bool spec = mp_->isSpectator();
             mp_->clearRejoin();
             world_.resetForReplay();
             netTick_ = 0; outcome_ = 0; netError_.clear();
             startMpGame(mp_->startRoom(), mp_->startSeed());
-            mp_->reportLoaded();
+            if (spec) {
+                spectating_ = true;   // watch-only: no fog, no control, no resume
+                noFog_ = true;
+            } else {
+                mp_->reportLoaded();
+                writeResume(mp_->gameId(), mp_->resumeToken());
+            }
             mpSetupDone_ = true;
-            writeResume(mp_->gameId(), mp_->resumeToken());
-            std::fprintf(stderr, "rejoined -- replaying to catch up...\n");
+            std::fprintf(stderr, spec ? "spectating -- replaying to catch up...\n"
+                                      : "rejoined -- replaying to catch up...\n");
             mpStep();   // drain the replay this frame
         } else if (mp_->starting() && !mpSetupDone_) {
             startMpGame(mp_->startRoom(), mp_->startSeed());
@@ -3152,11 +3166,18 @@ public:
             bigFont_.draw(ren_, msg, (winW - tw) / 2, 60, 1.2f, {255, 230, 120, 255});
         }
 
-        // Victory / defeat banner.
+        // Victory / defeat banner. A spectator/replay viewer isn't a participant,
+        // so it names the winner instead of "VICTORY"/"DEFEAT".
         if (outcome_ != 0 && bigFont_.ok()) {
-            const char* msg = outcome_ > 0 ? "VICTORY" : "DEFEAT";
-            SDL_Color col = outcome_ > 0 ? SDL_Color{255, 220, 90, 255}
-                                         : SDL_Color{255, 90, 70, 255};
+            std::string msg;
+            SDL_Color col{255, 220, 90, 255};
+            if (spectating_ || replayMode_) {
+                int wt = world_.winningTeam();
+                msg = wt >= 0 ? "TEAM " + std::to_string(wt + 1) + " WINS" : "GAME OVER";
+            } else {
+                msg = outcome_ > 0 ? "VICTORY" : "DEFEAT";
+                if (outcome_ < 0) col = {255, 90, 70, 255};
+            }
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             SDL_FRect shade{0, float(winH) / 2 - 60, float(winW), 120};
             SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
@@ -3170,6 +3191,18 @@ public:
                         std::abs(dragX1_ - dragX0_), std::abs(dragY1_ - dragY0_)};
             SDL_SetRenderDrawColor(ren_, 120, 255, 150, 200);
             SDL_RenderDrawRectF(ren_, &r);
+        }
+
+        // Spectator badge: a live watcher can pan/zoom but issues no orders.
+        if (spectating_ && hudFont_.ok()) {
+            const char* m = "SPECTATING";
+            float tw = float(hudFont_.width(m, 2.2f));
+            float bx = (winW - tw) / 2, by = 20;
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_FRect bg{bx - 12, by - 6, tw + 24, 30};
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
+            SDL_RenderFillRectF(ren_, &bg);
+            hudFont_.draw(ren_, m, bx, by, 2.2f, {235, 175, 110, 255});
         }
 
         // Replay scrubber: elapsed/total time and a progress bar above the HUD.
@@ -4522,6 +4555,7 @@ private:
         return mp_ ? 1.0f : std::pow(10.0f, float(gameSpeed_) / 10.0f);
     }
     bool showCounts_ = false;   // F4: per-faction live unit counts
+    bool spectating_ = false;   // watching a live net game (no control, no fog)
     std::string playerName_[8];   // net games: display name per player (from lobby)
     bool playerAi_[8] = {};       // net games: which players are server-run AI
     bool showColorPicker_ = false;   // F6: pick the player colour
@@ -5851,9 +5885,16 @@ private:
             blockText(g.mapId, x + 220, y + 8, 1.6f, {180, 185, 195, 255});
             char pc[32]; std::snprintf(pc, sizeof pc, "%d/%d", g.players, g.capacity);
             blockText(pc, x + w - 200, y + 8, 1.8f, {200, 205, 215, 255});
-            if (g.passworded) blockText("LOCK", x + w - 120, y + 8, 1.6f, {230, 200, 120, 255});
-            if (g.running) blockText("RUNNING", x + w - 70, y + 8, 1.6f, {230, 140, 120, 255});
-            else lobbyHots_.push_back({row, [this, id = g.id] { mp_->joinGame(id, joinPass_); }});
+            if (g.passworded)
+                blockText("LOCK", x + w - (g.running ? 232 : 120), y + 8, 1.6f, {230, 200, 120, 255});
+            if (g.running) {
+                // A running game can't be joined, but it can be watched live.
+                blockText("LIVE", x + w - 158, y + 8, 1.6f, {230, 140, 120, 255});
+                lbBtn(x + w - 96, y + 3, 92, 24, "WATCH", true,
+                      [this, id = g.id] { mp_->spectate(id, joinPass_); });
+            } else {
+                lobbyHots_.push_back({row, [this, id = g.id] { mp_->joinGame(id, joinPass_); }});
+            }
             y += 34;
         }
         // password entry for locked games
@@ -6928,6 +6969,7 @@ int main(int argc, char** argv) {
         else if (a == "--mpjoin") mpHeadless = 2;   // join the first game, play
         else if (a == "--mpai") mpHeadless = 4;     // host vs one server-run AI
         else if (a == "--mprejoin") mpHeadless = 5; // rejoin a held slot (resume ticket)
+        else if (a == "--mpspectate") mpHeadless = 6; // watch the first running game
         else if (a == "--nofog") nofog = true;
         else if (a == "--cheat") tak::sim::gInstantBuild = true;
         else if (a == "--look" && i + 2 < argc) {
@@ -7268,9 +7310,15 @@ int main(int argc, char** argv) {
         }
 
         if (!shot.empty()) {
-            // Render a few frames so lazy content settles, then capture.
+            // Render a few frames so lazy content settles, then capture. For content
+            // that settles asynchronously (a network spectator building its world),
+            // TAK_SHOT_MS waits that many wall-clock ms before capturing instead.
+            static const char* shotMsEnv = std::getenv("TAK_SHOT_MS");
+            static uint64_t shotT0 = SDL_GetTicks64();
             static int frames = 0;
-            if (++frames >= 3 && ktPhase < 0) {
+            bool ready = shotMsEnv ? (SDL_GetTicks64() - shotT0 >= uint64_t(std::atoi(shotMsEnv)))
+                                   : (++frames >= 3);
+            if (ready && ktPhase < 0) {
                 screenshot(ren, w, h, shot);
                 running = false;
             }
