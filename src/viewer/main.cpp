@@ -3391,17 +3391,33 @@ private:
     struct SpriteSet {
         SDL_Rect rect[kSprFacings][kSprFrames];
         SDL_FRect bbox[kSprFacings][kSprFrames];
-        SDL_Rect landRect[kSprFacings];   // flyers: static folded/landed pose
-        SDL_FRect landBbox[kSprFacings];
+        SDL_Texture* page = nullptr;   // which sprite-atlas page holds this set
         int frames = 1;      // 1 for static (buildings), kSprFrames for movers
-        bool hasLand = false;
         bool ready = false;
     };
     std::map<std::pair<std::string, int>, SpriteSet> sprites_;
-    SDL_Texture* sprAtlas_ = nullptr;
-    int sprAtlasDim_ = 8192;   // holds ~15 unit types at 16 facings x 8 frames x2
+    std::vector<SDL_Texture*> sprPages_;   // 4096 atlas pages (multi-page: scales,
+    int sprAtlasDim_ = 4096;               // and 4096 targets work everywhere)
     int sprCurX_ = 0, sprCurY_ = 0, sprShelfH_ = 0;
     bool spritesEnabled_ = false;
+
+    // Allocate a fresh cleared sprite-atlas page. Returns false if it can't.
+    bool newSprPage() {
+        SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                           SDL_TEXTUREACCESS_TARGET, sprAtlasDim_, sprAtlasDim_);
+        if (!t) return false;
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
+        SDL_Texture* p0 = SDL_GetRenderTarget(ren_);
+        SDL_SetRenderTarget(ren_, t);
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
+        SDL_RenderClear(ren_);
+        SDL_SetRenderTarget(ren_, p0);
+        sprPages_.push_back(t);
+        sprCurX_ = sprCurY_ = sprShelfH_ = 0;
+        return true;
+    }
     bool lodEnabled_ = false;   // impostors off by default; F8 toggles them on
     float lodPx_ = 112.0f;                       // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 1.2f; // skip LOD entirely when zoomed in
@@ -3613,32 +3629,24 @@ private:
         // Match the live unit's facing convention: flyers face pi-heading only when
         // their fly script adds the 180 body turn (flyHalfTurnOf), else -heading.
         bool halfTurn = canFly && flyHalfTurnOf(*tmp.vm);
-        if (canFly) { tmp.vm->setStatic(tmp.flyGate, 1); tmp.vm->start("fly");
-                      for (int s = 0; s < 8; ++s) tmp.vm->tick(1.0f / 30); }  // settle into flight
-        else if (canMove) { tmp.vm->start("walk_legs") || tmp.vm->start("walk"); }
+        // (Re)start the locomotion animation from the top -- used before each bake
+        // attempt so a retry on a fresh page re-captures the same frames.
+        auto initAnim = [&] {
+            tmp.vm->reset();
+            if (canFly) { tmp.vm->setStatic(tmp.flyGate, 1); tmp.vm->start("fly");
+                          for (int s = 0; s < 8; ++s) tmp.vm->tick(1.0f / 30); }
+            else if (canMove) { tmp.vm->start("walk_legs") || tmp.vm->start("walk"); }
+        };
         SDL_Texture* atlas = atlasFor(slot);
-        if (!sprAtlas_) {
-            sprAtlas_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
-                                          SDL_TEXTUREACCESS_TARGET, sprAtlasDim_, sprAtlasDim_);
-            if (!sprAtlas_) return;
-            SDL_SetTextureBlendMode(sprAtlas_, SDL_BLENDMODE_BLEND);
-            SDL_SetTextureScaleMode(sprAtlas_, SDL_ScaleModeLinear);
-            SDL_Texture* p0 = SDL_GetRenderTarget(ren_);
-            SDL_SetRenderTarget(ren_, sprAtlas_);
-            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
-            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
-            SDL_RenderClear(ren_);
-            SDL_SetRenderTarget(ren_, p0);
-        }
+        if (sprPages_.empty() && !newSprPage()) return;
         SpriteSet ss;
         ss.frames = animated ? kSprFrames : 1;
         std::vector<Tri> scratch;
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
-        SDL_SetRenderTarget(ren_, sprAtlas_);
-        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         const float S = kImpScale, kPi = 3.14159265f, period = 0.9f;
         bool atlasFull = false;
-        // Capture the current VM pose at facing fi into a packed atlas cell.
+        SDL_Texture* target = sprPages_.back();
+        // Capture the current VM pose at facing fi into a packed cell of `target`.
         auto capture = [&](int fi, SDL_Rect& outR, SDL_FRect& outB) {
             float heading = float(fi) / kSprFacings * 2.0f * kPi;
             float facing = canFly ? (halfTurn ? (kPi - heading) : -heading)
@@ -3676,24 +3684,25 @@ private:
             sprCurX_ += w + 1;
             sprShelfH_ = std::max(sprShelfH_, h);
         };
-        for (int k = 0; k < ss.frames && !atlasFull; ++k) {
-            if (k > 0) for (int s = 0; s < 4; ++s) tmp.vm->tick(period / ss.frames / 4);
-            for (int fi = 0; fi < kSprFacings && !atlasFull; ++fi)
-                capture(fi, ss.rect[fi][k], ss.bbox[fi][k]);
-        }
-        // Flyers also get a static landed/folded pose (so a landed swarm is cheap,
-        // not a fall-back to full models).
-        if (canFly && !atlasFull) {
-            tmp.vm->reset();
-            tmp.vm->setStatic(tmp.flyGate, 0);
-            tmp.vm->start("land");
-            for (int s = 0; s < 15; ++s) tmp.vm->tick(1.0f / 30);
-            for (int fi = 0; fi < kSprFacings && !atlasFull; ++fi)
-                capture(fi, ss.landRect[fi], ss.landBbox[fi]);
-            ss.hasLand = !atlasFull;
+        // Bake all frames into the current page; if it overflows, start a fresh
+        // page and re-bake from the top (at most one retry -- a type that can't fit
+        // an empty page is left not-ready and just uses its full model).
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            initAnim();
+            target = sprPages_.back();
+            SDL_SetRenderTarget(ren_, target);
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            atlasFull = false;
+            for (int k = 0; k < ss.frames && !atlasFull; ++k) {
+                if (k > 0) for (int s = 0; s < 4; ++s) tmp.vm->tick(period / ss.frames / 4);
+                for (int fi = 0; fi < kSprFacings && !atlasFull; ++fi)
+                    capture(fi, ss.rect[fi][k], ss.bbox[fi][k]);
+            }
+            if (!atlasFull) { ss.page = target; break; }
+            if (attempt == 0 && !newSprPage()) break;   // couldn't allocate a page
         }
         SDL_SetRenderTarget(ren_, prev);
-        if (atlasFull) return;   // leave reserved not-ready -> full model
+        if (atlasFull || !ss.page) return;   // leave reserved not-ready -> full model
         ss.ready = true;
         sprites_[key] = ss;
     }
@@ -3721,29 +3730,23 @@ private:
         // locomotion cycle. Attack/death poses keep the full 3D model (rare).
         if (spritesEnabled_) {
             auto sit = sprites_.find(std::make_pair(vt->first, slot));
-            // A landed flyer uses its static folded pose (not the flapping cycle);
-            // attack/death poses keep the full 3D model.
+            // A grounded/idle unit shows a static frame (no flap); it only cycles
+            // the animation while airborne (flyers) or moving (ground). Attack/death
+            // poses keep the full 3D model.
             bool grounded = (u.type && u.type->canFly) && !(anim && anim->airborne);
             bool special = anim && (anim->dying || anim->firing);
             if (sit != sprites_.end() && sit->second.ready && !special) {
                 const SpriteSet& ss = sit->second;
                 int fi = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f,
                                      kSprFacings);
-                SDL_Rect r{};
-                SDL_FRect bb{};
-                bool useSprite = true;
-                if (grounded) {
-                    if (ss.hasLand) { r = ss.landRect[fi]; bb = ss.landBbox[fi]; }
-                    else useSprite = false;           // no landed pose -> full model
-                } else {
-                    int frame = 0;
-                    if (ss.frames > 1) {
-                        bool moving = (u.type && u.type->canFly) || u.moving();
-                        if (moving) frame = (int(animClock_ * 12.0f) + u.id) % ss.frames;
-                    }
-                    r = ss.rect[fi][frame]; bb = ss.bbox[fi][frame];
+                int frame = 0;
+                if (ss.frames > 1 && !grounded) {
+                    bool moving = (u.type && u.type->canFly) || u.moving();
+                    if (moving) frame = (int(animClock_ * 12.0f) + u.id) % ss.frames;
                 }
-                if (useSprite && r.w > 2 && r.h > 2) {   // else falls to full model
+                const SDL_Rect& r = ss.rect[fi][frame];
+                const SDL_FRect& bb = ss.bbox[fi][frame];
+                if (r.w > 2 && r.h > 2) {   // else falls to full model
                     float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
                     float qx = ax + bb.x * zm;
                     float qy = ay + bb.y * zm - alt * 0.8f * zm;
@@ -3752,7 +3755,7 @@ private:
                                float(r.x) * inv, float(r.y) * inv,
                                float(r.x + r.w) * inv, float(r.y + r.h) * inv,
                                SDL_Color{255, 255, 255, 255});
-                    g.runs.push_back({sprAtlas_, 6});
+                    g.runs.push_back({ss.page, 6});
                     g.ax = ax; g.ay = ay; g.alt = alt;
                     g.occY = wallOcclusionY(u.x, u.z);
                     return;
