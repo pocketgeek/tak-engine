@@ -1715,6 +1715,7 @@ public:
     // Route a command: offline it applies immediately; in a net game it is queued
     // for the server, which stamps ownership and sequences it into a tick bundle.
     void issue(tak::net::Command c) {
+        if (replayMode_) return;   // a spectator can't order units in a recording
         c.player = uint8_t(localPlayer_);
         if (mp_) outbox_.push_back(c);
         else apply(c);
@@ -1799,6 +1800,41 @@ public:
         }
         return true;
     }
+
+    // ---- replay playback (.takrep) ----------------------------------------
+    // Build the world from a recorded match config and feed it the bundle log.
+    void startReplay(const tak::sim::MatchConfig& cfg,
+                     std::vector<tak::net::Bundle> bundles) {
+        auto spots = tak::sim::setupMatch(world_, registry_, cfg);
+        replayBundles_ = std::move(bundles);
+        replayMode_ = true;
+        noFog_ = true;             // a spectator sees the whole map
+        localPlayer_ = 0;
+        world_.setVisPlayer(0);
+        side_ = "ara";
+        loadPanel(side_);
+        if (!spots.empty())
+            mapView_.setOffset(spots[0].first - 640 / 0.9f, spots[0].second - 400 / 0.9f);
+    }
+    bool replayMode() const { return replayMode_; }
+    // Advance playback by `dt` (real seconds), scaled by the game-speed control;
+    // Pause freezes it. Applies each recorded bundle then ticks the world.
+    void replayStep(float dt) {
+        if (paused_ || replayTick_ >= replayBundles_.size()) return;
+        replayAccum_ += dt * speedMult();
+        int guard = 0;
+        while (replayAccum_ >= 1.0f / 30.0f && replayTick_ < replayBundles_.size() && guard < 64) {
+            const auto& bd = replayBundles_[replayTick_];
+            for (const auto& c : bd.cmds) apply(c);
+            for (const auto& e : bd.events) applyEvent(e);
+            world_.tick(1.0f / 30.0f);
+            ++replayTick_;
+            replayAccum_ -= 1.0f / 30.0f;
+            ++guard;
+        }
+    }
+    size_t replayTick() const { return replayTick_; }
+    size_t replayLength() const { return replayBundles_.size(); }
 
     uint64_t worldHashPublic() const { return world_.stateHash(); }
     size_t aliveUnits() const {
@@ -3091,6 +3127,28 @@ public:
                         std::abs(dragX1_ - dragX0_), std::abs(dragY1_ - dragY0_)};
             SDL_SetRenderDrawColor(ren_, 120, 255, 150, 200);
             SDL_RenderDrawRectF(ren_, &r);
+        }
+
+        // Replay scrubber: elapsed/total time and a progress bar above the HUD.
+        if (replayMode_ && hudFont_.ok()) {
+            int cur = int(replayTick_) / 30, tot = int(replayLength()) / 30;
+            char sb[64];
+            std::snprintf(sb, sizeof sb, "REPLAY  %d:%02d / %d:%02d%s",
+                          cur / 60, cur % 60, tot / 60, tot % 60,
+                          paused_ ? "  PAUSED" : "");
+            float bw = 360, bx = (winW - bw) / 2, by = float(winH) - 118;
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_FRect bg{bx - 8, by - 22, bw + 16, 44};
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
+            SDL_RenderFillRectF(ren_, &bg);
+            SDL_FRect track{bx, by + 6, bw, 6};
+            SDL_SetRenderDrawColor(ren_, 90, 95, 110, 220);
+            SDL_RenderFillRectF(ren_, &track);
+            float frac = replayLength() ? float(replayTick_) / float(replayLength()) : 0;
+            SDL_FRect fill{bx, by + 6, bw * frac, 6};
+            SDL_SetRenderDrawColor(ren_, 235, 205, 110, 255);
+            SDL_RenderFillRectF(ren_, &fill);
+            hudFont_.draw(ren_, sb, bx, by - 14, 1.6f, {235, 230, 210, 255});
         }
     }
 
@@ -4401,6 +4459,10 @@ private:
     std::vector<tak::net::Command> outbox_;   // local orders to send to the server
     uint64_t mpListMs_ = 0, mpFirstListMs_ = 0;   // auto-join: ListGames timing
     uint64_t mpSlowSinceMs_ = 0;                  // when the replay backlog went deep
+    bool replayMode_ = false;                     // playing a recorded .takrep
+    std::vector<tak::net::Bundle> replayBundles_;
+    size_t replayTick_ = 0;
+    float replayAccum_ = 0;
     bool mpReadied_ = false, mpStarted_ = false, mpSetupDone_ = false;
     // interactive lobby UI state
     enum class LobbyScreen { Browser, Create, Room } lobbyScreen_ = LobbyScreen::Browser;
@@ -6624,6 +6686,65 @@ private:
     float trigTimer_ = 0;
 };
 
+// A parsed .takrep: enough to rebuild the world and replay it.
+struct ReplayFile {
+    std::string mapId;
+    bool crusades = false;
+    tak::sim::MatchConfig cfg;
+    std::vector<tak::net::Bundle> bundles;
+};
+
+// Load a .takrep (header + tick bundles). Returns false on a malformed file.
+static bool loadReplayFile(const std::string& path, ReplayFile& out) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    long n = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    std::vector<uint8_t> d(size_t(n < 0 ? 0 : n));
+    if (!d.empty() && std::fread(d.data(), 1, d.size(), f) != d.size()) { std::fclose(f); return false; }
+    std::fclose(f);
+    if (d.size() < 4 || d[0] != 'T' || d[1] != 'A' || d[2] != 'K' || d[3] != 'R') return false;
+    tak::net::Reader r(d.data() + 4, d.size() - 4);
+    r.u32();                       // format version
+    r.u32();                       // protocol version
+    out.mapId = r.str();
+    uint8_t crusades = r.u8(); uint8_t gods = r.u8(); r.u8();
+    r.u32();                       // seed (setupMatch derives its own timing)
+    uint8_t nslots = r.u8();
+    out.crusades = crusades != 0;
+    out.cfg.gods = gods != 0;
+    out.cfg.slots.resize(nslots);
+    int maxUsed = 0;
+    for (int i = 0; i < nslots; ++i) {
+        uint8_t type = r.u8(), faction = r.u8(); r.u8(); uint8_t team = r.u8();
+        bool used = (type == 1 || type == 2);
+        out.cfg.slots[size_t(i)] = {used, faction % 5, team};
+        if (used) maxUsed = i;
+    }
+    // The game used setPlayerCount(maxUsedSlot+1); match it exactly (empty trailing
+    // players would otherwise enter the state hash and diverge from the recording).
+    out.cfg.slots.resize(size_t(maxUsed + 1));
+    uint32_t nticks = r.u32();
+    for (uint32_t t = 0; t < nticks && r.ok; ++t) {
+        uint32_t len = r.u32();
+        if (!r.avail(len)) return false;
+        tak::net::Reader br(r.p, len);
+        r.p += len;
+        br.u32();                  // tick index (implicit = t)
+        tak::net::Bundle bd;
+        uint32_t nc = br.u32();
+        for (uint32_t i = 0; i < nc && br.ok; ++i) bd.cmds.push_back(br.cmd());
+        uint32_t ne = br.u32();
+        for (uint32_t i = 0; i < ne && br.ok; ++i) {
+            tak::net::Event e; e.kind = tak::net::Event::Kind(br.u8()); e.player = br.u8();
+            bd.events.push_back(e);
+        }
+        out.bundles.push_back(std::move(bd));
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -6757,7 +6878,22 @@ int main(int argc, char** argv) {
     std::unique_ptr<ModelView> modelView;
     std::unique_ptr<GameView> gameView;
     try {
-        if (mode == "map" && args.size() >= 2) {
+        if (mode == "replay" && args.size() >= 3) {
+            // takview replay <file.takrep> <terrain-dir> <data-root>
+            ReplayFile rf;
+            if (!loadReplayFile(args[0], rf)) {
+                std::fprintf(stderr, "replay: cannot read %s\n", args[0].c_str());
+                return 1;
+            }
+            std::string tnt = args[2] + "/maps/" + rf.mapId + ".tnt";
+            rf.cfg.tntPath = tnt;
+            rf.cfg.dataRoot = args[2];
+            gameView = std::make_unique<GameView>(ren, tnt, args[1], args[2], false, false,
+                                                  false, /*bare=*/true, "ara", "tar", rf.crusades);
+            std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s\n", args[0].c_str(),
+                         rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "");
+            gameView->startReplay(rf.cfg, std::move(rf.bundles));
+        } else if (mode == "map" && args.size() >= 2) {
             mapView = std::make_unique<MapView>(ren, args[0], args[1]);
         } else if (mode == "game" && args.size() >= 3) {
             // A multiplayer client builds the world from the server's GameStarting
@@ -6825,6 +6961,15 @@ int main(int argc, char** argv) {
     // Headless multiplayer test driver: auto-run the lobby + game loop against
     // takserver and print periodic hashes. Proves the server-sequenced lockstep
     // end to end without any SDL UI. (--mphost creates+starts, --mpjoin joins.)
+    // Headless replay verify: play the whole recording and print the final hash.
+    if (gameView && gameView->replayMode() && std::getenv("TAK_REPLAY_VERIFY")) {
+        while (gameView->replayTick() < gameView->replayLength())
+            gameView->replayStep(10.0f);   // guard caps to 64 ticks/call
+        std::fprintf(stderr, "replay done: tick=%zu hash=%016llx units=%zu\n",
+                     gameView->replayTick(), (unsigned long long)gameView->worldHashPublic(),
+                     gameView->aliveUnits());
+        return 0;
+    }
     if (gameView && mp && mpHeadless) {
         std::string mapId = std::filesystem::path(args[0]).stem().string();
         int limitTicks = int((startTime > 0 ? startTime : 60) * 30);
@@ -6961,7 +7106,9 @@ int main(int argc, char** argv) {
         if (modelView) modelView->draw(w, h, dt);
         double t1 = prof ? pnow() : 0;
         if (gameView) {
-            if (gameView->isNet()) {
+            if (gameView->replayMode()) {
+                gameView->replayStep(dt);   // play back a recorded .takrep
+            } else if (gameView->isNet()) {
                 // Server-sequenced lockstep: one mpAutoStep pumps the connection,
                 // advances the lobby (auto-matchmaking for now -- a lobby UI is
                 // follow-on), and simulates every delivered tick. (void)netAccum.

@@ -135,8 +135,14 @@ gates protocol version). See
 `docs/multiplayer-design.md` for the full design and milestone plan. The
 in-client lobby has a game browser, a create-game dialog, and a room screen
 where each player picks their faction, colour, and team and readies up (the host
-opens/closes slots, kicks, and starts). Server-run AI and reconnect are the
-remaining milestones. The old 2-player `--host`/`--join` peer mode is retired.
+opens/closes slots, kicks, and starts). A dropped player's slot is held so they
+can rejoin with a resume token (the client replays the bundle log to catch up);
+otherwise they forfeit deterministically. Start the server with
+`--replaydir <dir>` and it writes a self-contained `.takrep` for every finished
+game; play one back as a spectator with
+`takview replay <file.takrep> <terrain> <data>` (Pause and the **+**/**−** speed
+keys scrub it; a bar shows elapsed/total time). The old 2-player
+`--host`/`--join` peer mode is retired.
 
 ## Building
 
