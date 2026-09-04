@@ -1911,7 +1911,7 @@ public:
     void edgeScroll(float dt, float zm) {
         if (winW_ <= 0 || winH_ <= 0) return;
         if (mouseX_ < 0 || mouseX_ > winW_ || mouseY_ < 0 || mouseY_ > winH_) return;
-        const float margin = 24.0f, panPx = 2000.0f;   // px/s at zoom 1
+        const float margin = 24.0f, panPx = 4000.0f;   // px/s at zoom 1
         // Trigger at the real window edges (incl. the far right, past the panel),
         // so the player pushes to the screen edge to scroll -- not to the map edge.
         float sx = 0, sz = 0;
