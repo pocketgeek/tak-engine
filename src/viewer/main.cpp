@@ -1411,6 +1411,35 @@ public:
         winW_ = winW;
         winH_ = winH;
         if (inLobbyPhase()) { lobbyInput(e, winW, winH); return; }
+        // In-game chat capture. While composing, keyboard goes to the draft;
+        // mouse events still fall through so the camera stays usable.
+        if (chatTyping_) {
+            if (e.type == SDL_TEXTINPUT) {
+                if (chatDraft_.size() < 200) chatDraft_ += e.text.text;
+                return;
+            }
+            if (e.type == SDL_KEYDOWN) {
+                SDL_Keycode k = e.key.keysym.sym;
+                if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+                    if (mp_ && !chatDraft_.empty()) mp_->chat(chatDraft_);
+                    chatDraft_.clear(); chatTyping_ = false; SDL_StopTextInput();
+                } else if (k == SDLK_ESCAPE) {
+                    chatDraft_.clear(); chatTyping_ = false; SDL_StopTextInput();
+                } else if (k == SDLK_BACKSPACE && !chatDraft_.empty()) {
+                    while (!chatDraft_.empty() && (chatDraft_.back() & 0xC0) == 0x80)
+                        chatDraft_.pop_back();          // drop a UTF-8 continuation
+                    if (!chatDraft_.empty()) chatDraft_.pop_back();
+                }
+                return;
+            }
+        }
+        // Enter opens the chat composer (net games only -- there's no one to
+        // talk to offline or in a recording).
+        if (mp_ && e.type == SDL_KEYDOWN &&
+            (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER)) {
+            chatTyping_ = true; chatDraft_.clear(); SDL_StartTextInput();
+            return;
+        }
         float zm = mapView_.zoom();
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE &&
             (placing_ || pendingCmd_)) {
@@ -2565,6 +2594,16 @@ public:
 
     void draw(int winW, int winH) {
         if (inLobbyPhase()) { drawLobby(winW, winH); return; }
+        // Pull any chat that arrived and age the overlay on a real wall clock, so
+        // it fades even while the game is paused or catching up on ticks.
+        if (mp_) {
+            for (auto& m : mp_->takeChat()) gameChat_.push_back({m.first, m.second, 0});
+            uint64_t nowMs = SDL_GetTicks64();
+            float cdt = chatLastMs_ ? (nowMs - chatLastMs_) / 1000.0f : 0;
+            chatLastMs_ = nowMs;
+            if (!chatTyping_) for (auto& g : gameChat_) g.age += cdt;
+            if (gameChat_.size() > 16) gameChat_.erase(gameChat_.begin(), gameChat_.end() - 16);
+        }
         // Camera shake: nudge the map offset by a decaying oscillation for this
         // frame, so the whole world jolts; the offset is restored at the end so
         // the camera and UI stay put. shakemagnitude ~3 => a few px of jolt.
@@ -3149,6 +3188,35 @@ public:
             SDL_SetRenderDrawColor(ren_, 235, 205, 110, 255);
             SDL_RenderFillRectF(ren_, &fill);
             hudFont_.draw(ren_, sb, bx, by - 14, 1.6f, {235, 230, 210, 255});
+        }
+
+        // In-game chat: recent lines bottom-left, plus a composer while typing.
+        if (mp_ && hudFont_.ok() && (chatTyping_ || !gameChat_.empty())) {
+            const float kFade = 10.0f;   // seconds a line stays up when not typing
+            // Gather what will be drawn (bottom-up) so we can back it with one
+            // translucent strip -- readable over bright terrain.
+            std::vector<std::pair<std::string, SDL_Color>> lines;
+            if (chatTyping_)
+                lines.push_back({"SAY> " + chatDraft_ + "_", {255, 245, 180, 255}});
+            int shown = 0;
+            for (auto it = gameChat_.rbegin(); it != gameChat_.rend() && shown < 6; ++it) {
+                if (!chatTyping_ && it->age > kFade) continue;
+                lines.push_back({it->who + ": " + it->text, {225, 228, 236, 255}});
+                ++shown;
+            }
+            float x = 14, y = float(winH) - kBarH - 14;
+            float wMax = 0;
+            for (auto& l : lines) wMax = std::max(wMax, float(hudFont_.width(l.first, 1.7f)));
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_FRect bg{x - 8, y - float(lines.size()) * 21 + 4,
+                         std::min(wMax + 16, float(winW) - x), float(lines.size()) * 21 + 6};
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 140);
+            SDL_RenderFillRectF(ren_, &bg);
+            for (auto& l : lines) {           // lines[0] is the composer / newest
+                float sc = (&l == &lines.front() && chatTyping_) ? 1.8f : 1.6f;
+                hudFont_.draw(ren_, l.first, x, y, sc, l.second);
+                y -= 21;
+            }
         }
     }
 
@@ -4472,6 +4540,12 @@ private:
     std::string mpMapId_;   // set from the launched map basename
     std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
     std::vector<std::pair<std::string, std::string>> chatLog_;
+    // In-game chat: press Enter to compose, lines fade after a while. Kept apart
+    // from the lobby chatLog_ so the in-game overlay and lobby panel don't mix.
+    bool chatTyping_ = false;
+    struct GameChat { std::string who, text; float age = 0; };
+    std::vector<GameChat> gameChat_;
+    uint64_t chatLastMs_ = 0;
     std::vector<std::pair<SDL_FRect, std::function<void()>>> lobbyHots_;
     int localPlayer_ = 0;
     // Player-colour slot per player (which colour variant of each unit texture to
