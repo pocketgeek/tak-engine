@@ -35,6 +35,15 @@ and place its data files in `assets/` (gitignored) to use the engine.
 8. ~~**Effects & audio**~~ ✅ real GAF/TAF explosion, splash, shockwave-ring,
    ground-fire and muzzle-flash effects; material-specific impact sounds; unit
    shadows; camera shake; positional/surround audio.
+9. ~~**Rendering at scale**~~ ✅ thousands of units on screen, smoothly. The
+   per-unit model projection runs across a worker pool; units are frustum-culled
+   to the viewport; every unit texture is packed into a per-colour atlas so a
+   whole army collapses to a handful of draw calls; and each unit's walk/fly
+   cycle is baked to an **animated sprite sheet** (16 facings, real per-type
+   cycle timing, multi-page atlas) drawn as a single quad — the classic-RTS
+   technique — with the full 3D model kept for close-up and attack/death poses.
+   The sim side is O(n) (spatial-hash neighbour queries, staggered target
+   acquisition), so a thousand-unit battle is CPU-cheap too.
 
 Many of these were cross-checked by disassembling the retail engine
 (`KINGDOMS.icd`) — see `docs/retail-engine.md` for the findings (class model,
@@ -58,11 +67,14 @@ Control groups: **Ctrl+1–9/0** assign the selection, **1–9/0** recall it,
 **Ctrl+Shift+1–9/0** add to a group. **Pause** toggles pause.
 Click the build icons at a selected builder/keep to train or place,
 arrows/middle-drag/**screen-edge** = scroll, wheel = zoom (toward cursor),
-minimap click/drag = move camera. **F4** toggles a per-faction unit counter
-with the live frame rate; **F6** opens the player-colour picker (click a swatch
-to recolour your units, HUD and minimap). Background music plays from the game
+minimap click/drag = move camera; right-click the minimap moves the selection.
+**Ctrl+D** destroys the selected unit(s). **F4** toggles a per-faction unit
+counter with the live frame rate; **F6** opens the player-colour picker (click a
+swatch to recolour your units, HUD and minimap); **F10** toggles animated
+sprite-sheet rendering (on by default) vs. full 3D models; **F8** toggles the
+distance impostor level-of-detail. Background music plays from the game
 soundtrack. Frame rate is capped at 60 fps (`--maxfps N`, or `--maxfps 0` for
-uncapped).
+uncapped); `--novsync` disables vsync (the window title shows live FPS).
 
 Each side begins a skirmish with **only its Monarch**, dropped on the
 map's real start positions (read from the `.ota`). The Monarch generates
