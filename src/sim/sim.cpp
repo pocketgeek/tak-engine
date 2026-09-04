@@ -101,7 +101,11 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
                 t.id.find("mana") != std::string::npos)
                 t.onMana = true;
             t.canTransport = info->numberOr("cantransport", 0) != 0;
-            t.transportCap = int(info->numberOr("transportcapacity", 0));
+            // Prefer the size-based capacity when present (it caps summed
+            // transportsize, which is what we compare); else the plain count.
+            t.transportCap = int(info->numberOr("transportsizecapacity",
+                                                info->numberOr("transportcapacity", 0)));
+            t.buildDist = float(info->numberOr("builddistance", 0));
             t.soundClass = lower(info->valueOr("soundcategory",
                                                info->valueOr("soundclass", "")));
             t.sight = float(info->numberOr("sightdistance", 180));
@@ -1222,7 +1226,11 @@ void World::tickConstruction(Unit& b, float dt) {
         return;
     }
     float dx = site->x - b.x, dz = site->z - b.z;
-    float reach = 16.0f * float(std::max(site->type->footX, site->type->footZ)) / 2 + 40;
+    float half = 16.0f * float(std::max(site->type->footX, site->type->footZ)) / 2;
+    // Reach = the builder's FBI builddistance (to the site edge) when it has one,
+    // else the default footprint-derived range.
+    float reach = std::max(half + 40.0f,
+                           b.type->buildDist > 0 ? b.type->buildDist + half : 0.0f);
     if (dx * dx + dz * dz > reach * reach) return;   // still walking there
     site->buildBegun = true;   // in range: the site starts materialising now
     b.orders.clear();
