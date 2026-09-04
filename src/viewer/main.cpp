@@ -1933,10 +1933,20 @@ public:
         float halfW = (winW_ / 2.0f) / zm, halfH = (winH_ / 2.0f) / zm;
         sounds_.setListener(mapView_.offX() + halfW, mapView_.offY() + halfH,
                             halfW, halfH);
-        edgeScroll(dt, zm);    // pan when the cursor rests near a screen edge
+        edgeScroll(dt, zm);    // pan when the cursor rests near a screen edge (real time)
         if (paused_) return;   // freeze the sim; input/render keep running
+        // Game speed: scale game time (sim, effects, AI, animation all follow dt).
+        // edgeScroll above already ran on the real dt, so the camera stays real-time.
+        dt *= speedMult();
         double _sim0 = double(SDL_GetPerformanceCounter());
-        world_.tick(dt);
+        // Advance the sim in sub-steps capped at 1/30s so fast speeds (or a laggy
+        // frame) can't move a unit far enough to tunnel a wall; effects/AI below use
+        // the full scaled dt (they only interpolate, so a big step is harmless).
+        for (float rem = dt, guard = 0; rem > 1e-5f && guard < 16; ++guard) {
+            float step = std::min(rem, 1.0f / 30.0f);
+            world_.tick(step);
+            rem -= step;
+        }
         profSimMs_ += (double(SDL_GetPerformanceCounter()) - _sim0)
                       / (double(SDL_GetPerformanceFrequency()) / 1000.0);
         // Weapon impacts this tick: play each weapon's soundhitclass, picking the
@@ -4261,6 +4271,9 @@ private:
                             // 'm' move, 'a' attack, 'p' patrol, 'g' guard
     std::map<int, std::vector<int>> groups_;   // control groups 0-9
     bool paused_ = false;
+    int gameSpeed_ = 0;         // -10..+10 game-speed level (+/- keys); 0 = normal
+    // 10^(level/10): +10 = 10x, 0 = 1x, -10 = 0.1x.
+    float speedMult() const { return std::pow(10.0f, float(gameSpeed_) / 10.0f); }
     bool showCounts_ = false;   // F4: per-faction live unit counts
     bool showColorPicker_ = false;   // F6: pick the player colour
     bool showHDebug_ = false;   // F7: terrain-height / lift diagnostic overlay
@@ -5103,6 +5116,16 @@ private:
 
         // Pause toggle works without a selection.
         if (key == SDLK_PAUSE) { paused_ = !paused_; return true; }
+        // +/- (and keypad +/-) step game speed over -10..+10 (0 = normal).
+        if (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS ||
+            key == SDLK_MINUS || key == SDLK_KP_MINUS) {
+            bool up = (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS);
+            gameSpeed_ = std::clamp(gameSpeed_ + (up ? 1 : -1), -10, 10);
+            notice_ = "GAME SPEED " + std::string(gameSpeed_ > 0 ? "+" : "") +
+                      std::to_string(gameSpeed_);
+            noticeTimer_ = 2;
+            return true;
+        }
         if (key == SDLK_F4) { showCounts_ = !showCounts_; return true; }
         if (key == SDLK_F6) { showColorPicker_ = !showColorPicker_; return true; }
         if (key == SDLK_F7) { showHDebug_ = !showHDebug_; return true; }
