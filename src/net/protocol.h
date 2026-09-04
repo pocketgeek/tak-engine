@@ -50,6 +50,10 @@ enum class Msg : uint8_t {
     StateHash,          // C->S: tick, hash
     Desynced,           // S->C: tick, reason
     PlayerStatus,       // S->C: slot, status, ping (informational)
+    // durability (M5)
+    Rejoin,             // C->S: gameId, resume token -> GameStarting + bundle log
+    Pause,              // S->C: cause, player (game paused; ticks stop)
+    Resume,             // S->C: cause, player (game resumes)
 };
 
 // A slot in a game's setup. type: 0=open, 1=human, 2=ai, 3=closed.

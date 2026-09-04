@@ -72,8 +72,18 @@ public:
     bool starting() const { return state_ == State::Starting; }
     const RoomView& startRoom() const { return room_; }   // final slots
     uint32_t startSeed() const { return startSeed_; }
+    uint32_t gameId() const { return room_.id; }
+    uint64_t resumeToken() const { return resumeToken_; }
     int myPlayer() const { return room_.mySlot; }
     void reportLoaded();
+    // Reconnect to a held slot: connect() first, then rejoin() with the game id
+    // and the resume token saved from the original GameStarting.
+    void rejoin(uint32_t gameId, uint64_t token);
+    // True when the last GameStarting was a REJOIN (the world must be rebuilt and
+    // the bundle log replayed). Cleared once consumed.
+    bool isRejoin() const { return rejoin_; }
+    void clearRejoin() { rejoin_ = false; }
+    bool paused() const { return paused_; }
 
     // In game: is bundle `tick` available? If so, consume it (once).
     bool haveBundle(uint32_t tick) const { return bundles_.count(tick) != 0; }
@@ -102,6 +112,10 @@ private:
     std::string joinErr_;
 
     uint32_t startSeed_ = 0;
+    uint64_t resumeToken_ = 0;
+    bool rejoin_ = false;
+    bool expectingRejoin_ = false;
+    bool paused_ = false;
     std::map<uint32_t, Bundle> bundles_;
     bool desynced_ = false;
     std::string desyncReason_;

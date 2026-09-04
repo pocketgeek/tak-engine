@@ -113,11 +113,17 @@ void MpClient::onFrame(const Frame& f) {
             readSlots(r, room_);
             uint8_t mySlot = r.u8();
             startSeed_ = r.u32();
-            (void)r.u32();   // resume token (M5)
+            resumeToken_ = r.u64();
             room_.mySlot = r.ok ? mySlot : keep;
+            // If we asked to rejoin, this GameStarting is the replay response: the
+            // world must be rebuilt and the bundle log (arriving next) replayed.
+            rejoin_ = expectingRejoin_;
+            expectingRejoin_ = false;
             state_ = State::Starting;
             break;
         }
+        case Msg::Pause: paused_ = true; break;
+        case Msg::Resume: paused_ = false; break;
         case Msg::TickBundle: {
             uint32_t tk = r.u32();
             Bundle bd;
@@ -179,6 +185,12 @@ void MpClient::startGame() { send(Msg::StartGame); }
 // ---- game play ------------------------------------------------------------
 
 void MpClient::reportLoaded() { send(Msg::Loaded); }
+
+void MpClient::rejoin(uint32_t gameId, uint64_t token) {
+    expectingRejoin_ = true;
+    Writer w; w.u32(gameId); w.u64(token);
+    send(Msg::Rejoin, w);
+}
 
 bool MpClient::takeBundle(uint32_t tick, Bundle& out) {
     auto it = bundles_.find(tick);

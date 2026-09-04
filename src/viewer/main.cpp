@@ -1380,6 +1380,26 @@ public:
                s == tak::net::MpClient::State::Done;
     }
     void setMpMapId(const std::string& id) { mpMapId_ = id; }
+    void setResumePath(const std::string& p) { mpResumePath_ = p; }
+    // Persist / read the resume ticket (gameId + rotating token) so a killed
+    // client can rejoin its held slot on restart.
+    void writeResume(uint32_t gid, uint64_t tok) const {
+        if (mpResumePath_.empty()) return;
+        if (FILE* f = std::fopen(mpResumePath_.c_str(), "w")) {
+            std::fprintf(f, "%u %llu\n", gid, (unsigned long long)tok);
+            std::fclose(f);
+        }
+    }
+    bool readResume(uint32_t& gid, uint64_t& tok) const {
+        if (mpResumePath_.empty()) return false;
+        FILE* f = std::fopen(mpResumePath_.c_str(), "r");
+        if (!f) return false;
+        unsigned long long t = 0;
+        bool ok = std::fscanf(f, "%u %llu", &gid, &t) == 2;
+        std::fclose(f);
+        tok = t;
+        return ok;
+    }
     // The map's player capacity = its start-position count (2..8). The server has
     // no map data, so a creating client tells it how many slots the map supports.
     uint8_t mpCapacity() const {
@@ -1779,6 +1799,11 @@ public:
         if (st == S::Lobby && (autoMode == 1 || autoMode == 4)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             mp_->createGame("headless", "", mapId, o, mpCapacity());
+        } else if (st == S::Lobby && autoMode == 5) {
+            // Rejoin: read the resume ticket the original session saved and
+            // reconnect to the held slot.
+            uint32_t gid = 0; uint64_t tok = 0;
+            if (readResume(gid, tok) && gid) { mp_->rejoin(gid, tok); mpReadied_ = true; }
         } else if (st == S::Lobby && (autoMode == 2 || autoMode == 3)) {
             // Poll the game list; join the first, or (mode 3) create if none appear.
             if (SDL_GetTicks64() - mpListMs_ > 300) { mp_->listGames(); mpListMs_ = SDL_GetTicks64(); }
@@ -1807,10 +1832,25 @@ public:
                 if ((s.type == 1 && s.ready) || s.type == 2) ++ready;   // human-ready or AI
             }
             if (ready >= 2) { mp_->startGame(); mpStarted_ = true; }
+        } else if (mp_->isRejoin()) {
+            // Rejoin (checked BEFORE the state branches -- the replayed bundles may
+            // already have flipped the state to InGame): reset the sim and replay
+            // from tick 0. The server has queued the whole bundle log after the
+            // GameStarting; mpStep drains it, fast-forwarding to now.
+            mp_->clearRejoin();
+            world_.resetForReplay();
+            netTick_ = 0; outcome_ = 0; netError_.clear();
+            startMpGame(mp_->startRoom(), mp_->startSeed());
+            mp_->reportLoaded();
+            mpSetupDone_ = true;
+            writeResume(mp_->gameId(), mp_->resumeToken());
+            std::fprintf(stderr, "rejoined -- replaying to catch up...\n");
+            mpStep();   // drain the replay this frame
         } else if (mp_->starting() && !mpSetupDone_) {
             startMpGame(mp_->startRoom(), mp_->startSeed());
             mp_->reportLoaded();
             mpSetupDone_ = true;
+            writeResume(mp_->gameId(), mp_->resumeToken());   // ticket for reconnect
         } else if (st == S::InGame) {
             return mpStep();
         }
@@ -4349,6 +4389,7 @@ private:
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
     std::string mpMapId_;   // set from the launched map basename
+    std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
     std::vector<std::pair<std::string, std::string>> chatLog_;
     std::vector<std::pair<SDL_FRect, std::function<void()>>> lobbyHots_;
     int localPlayer_ = 0;
@@ -6640,6 +6681,7 @@ int main(int argc, char** argv) {
         else if (a == "--mphost") mpHeadless = 1;   // create a game, start it, play
         else if (a == "--mpjoin") mpHeadless = 2;   // join the first game, play
         else if (a == "--mpai") mpHeadless = 4;     // host vs one server-run AI
+        else if (a == "--mprejoin") mpHeadless = 5; // rejoin a held slot (resume ticket)
         else if (a == "--nofog") nofog = true;
         else if (a == "--cheat") tak::sim::gInstantBuild = true;
         else if (a == "--look" && i + 2 < argc) {
@@ -6708,6 +6750,7 @@ int main(int argc, char** argv) {
             if (mp) {
                 gameView->setMpClient(mp.get());
                 gameView->setMpMapId(std::filesystem::path(args[0]).stem().string());
+                if (const char* rp = std::getenv("TAK_RESUME")) gameView->setResumePath(rp);
             }
             // Never let the window shrink below what the widest build-icon row
             // needs (full-size icons), and grow it now if it opened smaller.

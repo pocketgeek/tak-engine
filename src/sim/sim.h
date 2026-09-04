@@ -399,6 +399,20 @@ public:
     Player& player(int i) { return players_[size_t(i)]; }
     const Player& player(int i) const { return players_[size_t(i)]; }
     int numPlayers() const { return int(players_.size()); }
+    // Reset all simulation state so a match can be rebuilt (via setupMatch) and
+    // replayed from tick 0 deterministically -- crucially nextId_ resets so the
+    // replayed spawns get the SAME unit ids as the original run. setTerrain and
+    // setPlayerCount (called by setupMatch afterwards) rebuild nav/vis/players.
+    void resetForReplay() {
+        units_.clear();
+        projectiles_.clear();
+        hits_.clear();
+        flowCache_.clear();
+        nextId_ = 1;
+        tickCounter_ = 0;
+        clock_ = 0;
+        winningTeam_ = -1;
+    }
     // Size the player table for a match (default 4 for single-player/scenarios).
     // Call BEFORE spawning any units -- shrinking it after would leave units with
     // an out-of-range owner index (dereferenced unchecked in the economy loop).
