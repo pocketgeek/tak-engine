@@ -463,16 +463,20 @@ void Server::checkHashes(Room& r, uint32_t tick) {
     uint64_t canon;
     if (haveRef) {
         canon = r.refHash[tick];
-        // Referee suspicion: if every client agrees with each other but NOT with
-        // the referee, the server's own sim is the odd one out (a server-side
-        // bug) -- don't punish the clients; flag the referee and stop dropping.
-        std::map<uint64_t, int> ctally;
-        for (auto& [cid, h] : it->second) ++ctally[h];
-        if (ctally.size() == 1 && it->second.begin()->second != canon && !r.refSuspect) {
-            r.refSuspect = true;
-            std::fprintf(stderr, "game %u: REFEREE SUSPECT at tick %u -- all %d clients agree "
-                                 "with each other but disagree with the server sim; not dropping.\n",
-                         r.id, tick, live);
+        // Referee suspicion needs a client CONSENSUS to appeal against the server
+        // sim: with >=2 clients all agreeing with each other but NOT the referee,
+        // the server sim is the odd one out (a server bug) -- don't punish the
+        // clients. With a single client there is no consensus, so the referee is
+        // authoritative and a lone disagreeing client is simply desynced.
+        if (live >= 2) {
+            std::map<uint64_t, int> ctally;
+            for (auto& [cid, h] : it->second) ++ctally[h];
+            if (ctally.size() == 1 && it->second.begin()->second != canon && !r.refSuspect) {
+                r.refSuspect = true;
+                std::fprintf(stderr, "game %u: REFEREE SUSPECT at tick %u -- all %d clients agree "
+                                     "with each other but disagree with the server sim; not dropping.\n",
+                             r.id, tick, live);
+            }
         }
         if (r.refSuspect) { r.hashes.erase(r.hashes.begin(), std::next(it)); return; }
     } else {
