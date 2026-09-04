@@ -3473,21 +3473,24 @@ private:
     enum SpriteMode { SPR_AUTO, SPR_ON, SPR_OFF };
     int spriteMode_ = SPR_AUTO;
     bool spritesEnabled_ = false;  // effective state (managed by autoTuneSprites)
-    float workEma_ = 8.0f;         // smoothed update+draw ms (drives auto sprites)
+    float frameEma_ = 12.0f;       // smoothed real frame time ms (drives auto sprites)
 public:
-    // Called once per frame from the main loop with that frame's update+draw wall
-    // time (ms), measured before present so vsync/the fps cap don't skew it.
-    void autoTuneSprites(float workMs) {
-        workEma_ = workEma_ * 0.85f + workMs * 0.15f;
+    // Called once per frame with the whole frame's wall time (ms) -- the real cost
+    // INCLUDING the GPU present, since a big full-model crowd is GPU-bound and that
+    // cost never shows in CPU submit time (measuring update+draw alone missed it and
+    // the auto-switch never fired). Under the fps cap a kept-up frame reads ~16.6ms,
+    // so the on-threshold sits just above it; below-cap frames mean we're losing 60.
+    void autoTuneSprites(float frameMs) {
+        frameEma_ = frameEma_ * 0.85f + frameMs * 0.15f;
         if (spriteMode_ == SPR_ON)  { spritesEnabled_ = true;  return; }
         if (spriteMode_ == SPR_OFF) { spritesEnabled_ = false; return; }
-        // AUTO. Sprites help only a real crowd, so gate on both the frame missing the
-        // 60fps budget (16.6ms of update+draw) AND enough on-screen units -- that
-        // keeps a startup/asset hitch with few units from latching them on. The fps
-        // cap hides headroom once sprites are on, so turn back off by crowd size (a
-        // wide 64-on / 32-off gap avoids flapping) rather than by fps.
+        // AUTO. Sprites help only a real crowd, so gate both on frames slower than
+        // ~55fps (18ms) AND enough on-screen units -- that keeps a startup/asset
+        // hitch with few units from latching them on. A kept-up frame reads ~16.6ms
+        // (cap) or faster, so it can't reveal how much headroom a light scene has;
+        // turn sprites back off by crowd size (wide 64-on / 32-off gap = no flapping).
         if (!spritesEnabled_) {
-            if (workEma_ > 16.6f && visUnits_.size() >= 64) spritesEnabled_ = true;
+            if (frameEma_ > 18.0f && visUnits_.size() >= 64) spritesEnabled_ = true;
         } else if (visUnits_.size() < 32) {
             spritesEnabled_ = false;
         }
@@ -4428,7 +4431,9 @@ private:
     int aiLodes_ = 0;           // lodestones the AI has queued so far
     int aiHandlers_ = 0;        // Beast Handlers the AI has queued so far
     const tak::sim::UnitType* placing_ = nullptr;
-    float mouseX_ = 0, mouseY_ = 0;
+    float mouseX_ = -1, mouseY_ = -1;   // -1 until the first real mouse motion, so
+                                        // edge-scroll can't fire from a (0,0) default
+                                        // cursor on launch (before the mouse moves)
     SDL_Texture* fogTex_ = nullptr;
     SDL_Texture* miniTex_ = nullptr;
     SDL_Texture* panelTex_ = nullptr;
@@ -6391,7 +6396,6 @@ int main(int argc, char** argv) {
         if (mapView) mapView->draw(w, h);
         if (modelView) modelView->draw(w, h, dt);
         double t1 = prof ? pnow() : 0;
-        uint64_t workStart = SDL_GetPerformanceCounter();   // for sprite auto-tune
         if (gameView) {
             if (gameView->isNet()) {
                 netAccum += dt;
@@ -6414,11 +6418,9 @@ int main(int argc, char** argv) {
             gameView->draw(w, h);
             double t3 = prof ? pnow() : 0;
             if (prof) { pTer += t1 - t0; pUpd += t2 - t1; pDraw += t3 - t2; }
-            // Feed this frame's update+draw wall time (pre-present, so the vsync/cap
-            // wait doesn't count) to the sprite auto-tuner.
-            float workMs = float(double(SDL_GetPerformanceCounter() - workStart) /
-                                 double(SDL_GetPerformanceFrequency()) * 1000.0);
-            gameView->autoTuneSprites(workMs);
+            // Feed the whole real frame time (dt = last frame's total incl. present)
+            // to the sprite auto-tuner, so a GPU-bound full-model crowd triggers it.
+            gameView->autoTuneSprites(dt * 1000.0f);
         }
         double t4 = prof ? pnow() : 0;
         SDL_RenderPresent(ren);
