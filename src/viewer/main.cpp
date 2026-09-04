@@ -2619,10 +2619,40 @@ public:
             drawGhost();
         }
 
+        // Selection brackets: batched into one draw (each was a colour-set + 8 line
+        // calls per unit -- selecting thousands broke the batch thousands of times).
+        // Viewport-culled; drawn as thin green quads.
+        shadowBatch_.clear();
+        {
+            const SDL_Color grn{70, 240, 90, 255};
+            float zms = mapView_.zoom();
+            for (int id : selection_) {
+                const auto* u = world_.unit(id);
+                if (!u || !u->alive()) continue;
+                float cx = (u->x - mapView_.offX()) * zms - terrainLiftX(u->x, u->z) * zms;
+                float cy = (u->z - mapView_.offY()) * zms - terrainLift(u->x, u->z) * zms;
+                if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
+                float rr = 11.0f, rx = rr * zms, ry = rr * 0.65f * zms;
+                float L = rr * 0.45f * zms, th = std::max(1.0f, 1.2f * zms);
+                for (int sx = -1; sx <= 1; sx += 2)
+                    for (int sy = -1; sy <= 1; sy += 2) {
+                        float px = cx + sx * rx, py = cy + sy * ry;
+                        pushQuad(shadowBatch_, std::min(px, px - sx * L), py - th * 0.5f,
+                                 L, th, grn);
+                        pushQuad(shadowBatch_, px - th * 0.5f,
+                                 std::min(py, py - sy * L * 0.65f), th, L * 0.65f, grn);
+                    }
+            }
+            if (!shadowBatch_.empty()) {
+                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+                SDL_RenderGeometry(ren_, nullptr, shadowBatch_.data(),
+                                   int(shadowBatch_.size()), nullptr, 0);
+            }
+        }
+        // Move-order rings (only units with a move order have any).
         for (int id : selection_) {
             const auto* u = world_.unit(id);
             if (!u || !u->alive()) continue;
-            drawBrackets(u->x, u->z, 11);
             for (const auto& o : u->orders)
                 if (o.targetId == 0) drawRing(o.x, o.z, 4);
         }
@@ -4080,21 +4110,6 @@ private:
         }
         for (const auto& c : o.children)
             collect(out, atlas, c, xf, anim, heading, team, mirror, false);
-    }
-
-    void drawBrackets(float wx, float wz, float r) {
-        // TAK-style selection: four green corner chevrons, slightly flattened.
-        float zm = mapView_.zoom();
-        float cx = (wx - mapView_.offX()) * zm - terrainLiftX(wx, wz) * zm;
-        float cy = (wz - mapView_.offY()) * zm - terrainLift(wx, wz) * zm;
-        float rx = r * zm, ry = r * 0.65f * zm, L = r * 0.45f * zm;
-        SDL_SetRenderDrawColor(ren_, 70, 240, 90, 255);
-        for (int sx = -1; sx <= 1; sx += 2)
-            for (int sy = -1; sy <= 1; sy += 2) {
-                float px = cx + sx * rx, py = cy + sy * ry;
-                SDL_RenderDrawLineF(ren_, px, py, px - sx * L, py);
-                SDL_RenderDrawLineF(ren_, px, py, px, py - sy * L * 0.65f);
-            }
     }
 
     void drawRing(float wx, float wz, float r) {
