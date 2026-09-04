@@ -4520,6 +4520,23 @@ private:
         if (key == SDLK_F4) { showCounts_ = !showCounts_; return true; }
         if (key == SDLK_F6) { showColorPicker_ = !showColorPicker_; return true; }
         if (key == SDLK_F7) { showHDebug_ = !showHDebug_; return true; }
+        // F9: stress test -- spawn 500 Zhon drakes across the current view.
+        if (key == SDLK_F9) {
+            float zm = std::max(mapView_.zoom(), 1e-3f);
+            float cx = mapView_.offX() + (winW_ / 2.0f) / zm;
+            float cz = mapView_.offY() + (winH_ / 2.0f) / zm;
+            const int nx = 25, nz = 20;   // 25 * 20 = 500
+            int made = 0;
+            for (int j = 0; j < nz; ++j)
+                for (int i = 0; i < nx; ++i) {
+                    float x = cx + (i - (nx - 1) * 0.5f) * 24.0f;
+                    float z = cz + (j - (nz - 1) * 0.5f) * 22.0f;
+                    if (spawn("zondrake", x, z, 0.0f, localTeam_) >= 0) ++made;
+                }
+            notice_ = "SPAWNED " + std::to_string(made) + " DRAKES";
+            noticeTimer_ = 3;
+            return true;
+        }
 
         // Control groups on the number row: plain digit recalls, CTRL assigns,
         // CTRL+SHIFT appends the current selection. Digit 0 is group 10.
