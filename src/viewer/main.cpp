@@ -3324,7 +3324,7 @@ private:
     SDL_Texture* impAtlas_ = nullptr;
     int impAtlasDim_ = 2048, impCurX_ = 0, impCurY_ = 0, impShelfH_ = 0;
     bool lodEnabled_ = true;
-    float lodPx_ = 64.0f;                        // model shorter than this -> impostor
+    float lodPx_ = 112.0f;                       // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 1.2f; // skip LOD entirely when zoomed in
 
     static int facingIndex(float heading) {
