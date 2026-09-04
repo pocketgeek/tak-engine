@@ -2896,6 +2896,16 @@ public:
 
     void setTrace(bool on) { trace_ = on; sounds_.setVerbose(on); }
 
+    // Smallest window that still fits the widest build-icon row at full size
+    // (icons are 60px on a 66px pitch, centred over the map viewport with a small
+    // margin, beside the fixed right-hand panel). Enforced in main() so the icons
+    // never have to shrink and the last builder tier is never clipped off.
+    int minWindowWidth() const {
+        int n = int(registry_.maxBuildMenu());
+        int rowW = n > 0 ? (n - 1) * 66 + 60 : 0;
+        return rowW + 24 + kPanelW;
+    }
+
 private:
     // Simple wave AI: keep the production queue full, and when enough idle
     // fighters have gathered, throw them at the nearest player unit.
@@ -4468,6 +4478,7 @@ private:
     SDL_Texture* botTex_ = nullptr;
     int botW_ = 0, botH_ = 0;
     std::map<std::string, SDL_Texture*> icons_;
+    std::map<std::pair<std::string, int>, SDL_Texture*> modelIcons_;  // model-rendered fallback icons
     std::vector<std::pair<SDL_FRect, const tak::sim::UnitType*>> iconRects_;
     int aiTrained_ = 0;
     std::array<std::string, 4> aiCycle_ = {"tararch", "tartb", "tararch", "tarbeak"};
@@ -5114,6 +5125,61 @@ private:
         return tex;
     }
 
+    // Fallback build icon: render the unit's 3D model into a small cached texture,
+    // for buildables that ship no anims/buildpic. Retail never drew a build pic for
+    // the Zhon trapdoor spider (zonspide) -- a base-game creature the Crusades
+    // balance made buildable -- so without this its slot would be an empty box.
+    SDL_Texture* modelIconTex(const std::string& id, int slot, bool canMove) {
+        auto keyp = std::make_pair(id, slot);
+        if (auto it = modelIcons_.find(keyp); it != modelIcons_.end()) return it->second;
+        modelIcons_[keyp] = nullptr;   // cache the attempt (success or failure) up front
+        if (!ghostModel(id)) return nullptr;
+        auto vt = visuals_.find(id);
+        if (vt == visuals_.end()) return nullptr;
+        SDL_Texture* atlas = atlasFor(slot);
+        std::vector<Tri> scratch;
+        float facing = canMove ? -0.6f : 0.0f;   // slight 3/4 turn reads as a portrait
+        collect(scratch, atlas, vt->second.model.root, Xform{}, nullptr, facing, 0, false);
+        if (scratch.empty()) return nullptr;
+        std::stable_sort(scratch.begin(), scratch.end(),
+                         [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
+        for (auto& t : scratch)
+            for (int i = 0; i < 3; ++i) {
+                minX = std::min(minX, t.v[i].position.x);
+                minY = std::min(minY, t.v[i].position.y);
+                maxX = std::max(maxX, t.v[i].position.x);
+                maxY = std::max(maxY, t.v[i].position.y);
+            }
+        const int ICON = 64;
+        SDL_Texture* tgt = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                             SDL_TEXTUREACCESS_TARGET, ICON, ICON);
+        if (!tgt) return nullptr;
+        SDL_SetTextureBlendMode(tgt, SDL_BLENDMODE_BLEND);
+        SDL_Texture* prev = SDL_GetRenderTarget(ren_);
+        SDL_SetRenderTarget(ren_, tgt);
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
+        SDL_RenderClear(ren_);
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        float span = std::max({maxX - minX, maxY - minY, 1.0f});
+        float s = 0.82f * float(ICON) / span;
+        float ox = float(ICON) * 0.5f - (minX + maxX) * 0.5f * s;
+        float oy = float(ICON) * 0.5f - (minY + maxY) * 0.5f * s;
+        for (auto& t : scratch) {
+            SDL_Vertex v[3];
+            for (int i = 0; i < 3; ++i) {
+                v[i] = t.v[i];
+                v[i].position.x = t.v[i].position.x * s + ox;
+                v[i].position.y = t.v[i].position.y * s + oy;
+            }
+            SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
+        }
+        SDL_SetRenderTarget(ren_, prev);
+        modelIcons_[keyp] = tgt;
+        return tgt;
+    }
+
     // The selected builder (any builder in the selection).
     const tak::sim::Unit* selectedBuilder() {
         for (int id : selection_) {
@@ -5620,9 +5686,16 @@ private:
         const auto* b = selectedBuilder();
         if (b) {
             const auto& menu = registry_.buildable(b->type->id);
-            int n = std::min<int>(int(menu.size()), 10);
-            float rowW = n > 0 ? n * 66.0f - 6.0f : 0;
-            float x = (float(winW) - rowW) * 0.5f;
+            // Show the WHOLE menu at full size -- never truncate, never shrink.
+            // Some builders (the Zhon Beast Tamer under the Crusades balance) list
+            // 13 buildables, and the higher-tier builder sorts last, so a fixed cap
+            // would hide it and make that tier unreachable. The window has a minimum
+            // width (from registry_.maxBuildMenu(), set in main) so the full-size row
+            // always fits the map viewport -- centred here over the map, clear of
+            // the right-hand panel.
+            int n = int(menu.size());
+            float rowW = n > 0 ? (n - 1) * 66.0f + 60.0f : 0;
+            float x = (float(mapViewW(winW)) - rowW) * 0.5f;
             for (int i = 0; i < n; ++i) {
                 const auto* bt = registry_.find(menu[size_t(i)]);
                 if (!bt) continue;
@@ -5631,6 +5704,7 @@ private:
                 SDL_FRect rb{r.x - 1, r.y - 1, r.w + 2, r.h + 2};
                 SDL_RenderFillRectF(ren_, &rb);
                 SDL_Texture* ic = iconFor(bt->id);
+                if (!ic) ic = modelIconTex(bt->id, colorSlot_[localTeam_ & 7], bt->canMove);
                 if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &r);
                 else {
                     SDL_SetRenderDrawColor(ren_, 60, 55, 50, 255);
@@ -6271,6 +6345,15 @@ int main(int argc, char** argv) {
                                                   scenario, missionFlag,
                                                   navy || amphib || firetest || facetest,
                                                   side, aiSide, crusades);
+            // Never let the window shrink below what the widest build-icon row
+            // needs (full-size icons), and grow it now if it opened smaller.
+            {
+                int minW = gameView->minWindowWidth();
+                SDL_SetWindowMinimumSize(win, minW, 480);
+                int cw, ch;
+                SDL_GetWindowSize(win, &cw, &ch);
+                if (cw < minW) SDL_SetWindowSize(win, minW, ch);
+            }
             if (playerColor >= 0) gameView->setTeamColor(0, playerColor);
             if (aiColor >= 0) gameView->setTeamColor(1, aiColor);
             if (net) gameView->setNet(net.get());
