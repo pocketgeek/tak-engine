@@ -818,7 +818,12 @@ void World::guard(int unitId, int targetId, bool queue) {
 
 void World::stop(int unitId) {
     Unit* u = unit(unitId);
-    if (u) u->orders.clear();
+    if (!u) return;
+    u->orders.clear();
+    // Stop also halts a conjurer: cancel the infinite loop and drain the queue.
+    u->repeatType = nullptr;
+    u->buildQueue.clear();
+    u->buildProgress = 0;
 }
 
 void World::setWeapon(int unitId, int slot) {
@@ -1247,7 +1252,10 @@ void World::setRepeat(int builderId, const UnitType* type) {
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !type) return;
     if (b->repeatType == type) {
-        b->repeatType = nullptr;   // ctrl+click again: stop the loop
+        // ctrl+click the +++ icon again: stop now and clear what's pending.
+        b->repeatType = nullptr;
+        b->buildQueue.clear();
+        b->buildProgress = 0;
     } else {
         b->repeatType = type;
         if (b->buildQueue.empty()) b->buildQueue.push_back(type);   // kick it off
