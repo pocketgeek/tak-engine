@@ -489,6 +489,7 @@ private:
     bool godsEnabled_ = false;
     float godAppearTime_ = 1e9f, clock_ = 0;
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
+    int pathBudget_ = 0;         // A* repaths still allowed this tick (crowd throttle)
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
     std::vector<uint8_t> slope_;   // local height spread

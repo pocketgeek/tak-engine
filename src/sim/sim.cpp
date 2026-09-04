@@ -690,9 +690,13 @@ void World::order(int unitId, float x, float z, bool queue) {
     // funnelling single-file into a corner. Only fall back to A* waypoints when
     // no field can be built or the goal is unreachable from here.
     const FlowField* ff = flowFor(u->type, x, z);
-    if (ff && ff->reachable(u->x, u->z)) {
+    if (ff) {
+        // The flow field's reachable set is authoritative. If it's reachable, steer
+        // by the field. If NOT, the goal is genuinely cut off from this unit -- push
+        // a plain direct order and let the movement give-up cancel it, rather than
+        // run a full-grid A* per unit (500 of those on one click stalls the sim).
         Order o;
-        o.x = x; o.z = z; o.flow = true;
+        o.x = x; o.z = z; o.flow = ff->reachable(u->x, u->z);
         u->orders.push_back(o);
         return;
     }
@@ -1427,6 +1431,11 @@ void World::tickProduction(Unit& u, float dt) {
 
 void World::tick(float dt) {
     ++tickCounter_;
+    // Cap A* repaths per tick: a big group that jams while moving can trip the
+    // blocked/stuck watchdogs en masse, and hundreds of path searches in one tick
+    // stall the sim. Deferred units retry a later tick. Deterministic (fixed budget,
+    // unit-index order), so lockstep peers stay in sync.
+    pathBudget_ = 24;
     for (auto& u : units_) { u.justFired = false; u.justBuilt = 0; }
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
     clock_ += dt;    // wall-clock since the match started (for god timing)
@@ -1663,10 +1672,22 @@ void World::tick(float dt) {
                         u.orders.front().targetId == 0) {
                         u.repathLeft = 0.5f;
                         float tx = u.orders.back().x, tz = u.orders.back().z;
-                        auto path = g.findPath(u.x, u.z, tx, tz);
-                        if (!path.empty()) {
+                        // The flow field (built for this goal) already holds the
+                        // reachable set. If this unit can't reach the goal, give up
+                        // rather than run a full-grid A* that scans the whole map
+                        // before failing -- hundreds of units doing that is the sim
+                        // stall. Only repath when reachable, and within the budget.
+                        const FlowField* ff = flowFor(u.type, tx, tz);
+                        bool onWalkable = g.walkable(int(u.x) / 16, int(u.z) / 16);
+                        if (ff && onWalkable && !ff->reachable(u.x, u.z)) {
                             u.orders.clear();
-                            for (const auto& wp : path) u.orders.push_back(wp);
+                        } else if (pathBudget_ > 0) {
+                            --pathBudget_;
+                            auto path = g.findPath(u.x, u.z, tx, tz);
+                            if (!path.empty()) {
+                                u.orders.clear();
+                                for (const auto& wp : path) u.orders.push_back(wp);
+                            }
                         }
                     }
                 }
@@ -1699,11 +1720,18 @@ void World::tick(float dt) {
                             }
                         }
                         if (!g.empty() && u.orders.front().targetId == 0) {
-                            auto path = g.findPath(u.x, u.z, u.orders.back().x,
-                                                   u.orders.back().z);
-                            if (!path.empty()) {
-                                u.orders.clear();
-                                for (const auto& wp : path) u.orders.push_back(wp);
+                            float tx = u.orders.back().x, tz = u.orders.back().z;
+                            const FlowField* ff = flowFor(u.type, tx, tz);
+                            bool onWalkable = g.walkable(int(u.x) / 16, int(u.z) / 16);
+                            if (ff && onWalkable && !ff->reachable(u.x, u.z)) {
+                                u.orders.clear();   // unreachable -> give up, no A*
+                            } else if (pathBudget_ > 0) {
+                                --pathBudget_;
+                                auto path = g.findPath(u.x, u.z, tx, tz);
+                                if (!path.empty()) {
+                                    u.orders.clear();
+                                    for (const auto& wp : path) u.orders.push_back(wp);
+                                }
                             }
                         }
                     }
