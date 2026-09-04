@@ -88,6 +88,7 @@ public:
     // In game: is bundle `tick` available? If so, consume it (once).
     bool haveBundle(uint32_t tick) const { return bundles_.count(tick) != 0; }
     bool takeBundle(uint32_t tick, Bundle& out);
+    size_t bufferedBundles() const { return bundles_.size(); }   // backlog depth
     void sendCommands(const std::vector<Command>& cmds);
     void sendHash(uint32_t tick, uint64_t hash);
 

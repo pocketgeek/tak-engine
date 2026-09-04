@@ -1771,13 +1771,31 @@ public:
         if (!mp_->poll()) { netError_ = mp_->error().empty() ? "disconnected" : mp_->error(); return false; }
         if (mp_->desynced()) { netError_ = mp_->desyncReason(); return false; }
         if (!outbox_.empty()) { mp_->sendCommands(outbox_); outbox_.clear(); }
+        // Simulate every delivered tick, but cap per frame so a big catch-up
+        // (rejoin replay) stays responsive rather than freezing for seconds.
         tak::net::Bundle bd;
-        while (outcome_ == 0 && mp_->takeBundle(netTick_, bd)) {
+        int drained = 0;
+        while (outcome_ == 0 && drained < 512 && mp_->takeBundle(netTick_, bd)) {
             for (const auto& c : bd.cmds) apply(c);
             for (const auto& e : bd.events) applyEvent(e);
             update(1.0f / 30.0f);
             if (netTick_ % 30 == 0) mp_->sendHash(netTick_, world_.stateHash());
             ++netTick_;
+            ++drained;
+        }
+        // "Machine too slow" guard: if the backlog stays deep for a sustained
+        // stretch, this client can't process ticks as fast as they arrive and
+        // will never catch up -- fail clearly instead of falling ever further
+        // behind (or reconnect-looping).
+        uint64_t now = SDL_GetTicks64();
+        if (mp_->bufferedBundles() > 900) {
+            if (!mpSlowSinceMs_) mpSlowSinceMs_ = now;
+            else if (now - mpSlowSinceMs_ > 5000) {
+                netError_ = "this machine can't keep up with the game speed";
+                return false;
+            }
+        } else {
+            mpSlowSinceMs_ = 0;
         }
         return true;
     }
@@ -4382,6 +4400,7 @@ private:
     tak::net::MpClient* mp_ = nullptr;
     std::vector<tak::net::Command> outbox_;   // local orders to send to the server
     uint64_t mpListMs_ = 0, mpFirstListMs_ = 0;   // auto-join: ListGames timing
+    uint64_t mpSlowSinceMs_ = 0;                  // when the replay backlog went deep
     bool mpReadied_ = false, mpStarted_ = false, mpSetupDone_ = false;
     // interactive lobby UI state
     enum class LobbyScreen { Browser, Create, Room } lobbyScreen_ = LobbyScreen::Browser;
