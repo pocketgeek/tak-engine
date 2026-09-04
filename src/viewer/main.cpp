@@ -14,6 +14,7 @@
 #include "crt/crt.h"
 #include "gaf/gaf.h"
 #include "hpi/hpi.h"
+#include "ai/ai.h"
 #include "net/lockstep.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
@@ -1301,7 +1302,8 @@ public:
             }
             const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
             for (int i = 0; i < n; ++i) {
-                const FactionKit& fk = kit(sides[i % 5]);
+                std::string fkSide = sides[i % 5];
+                const FactionKit& fk = kit(fkSide);
                 float mx = spots[size_t(i)].first, mz = spots[size_t(i)].second;
                 int mon = spawn(fk.monarch, mx, mz, 0, i);
                 if (i == 0) { playerMonarchId_ = mon; builderId_ = mon; }
@@ -1998,6 +2000,7 @@ public:
         for (float rem = dt, guard = 0; rem > 1e-5f && guard < 16; ++guard) {
             float step = std::min(rem, 1.0f / 30.0f);
             world_.tick(step);
+            runAi();   // AI evaluated per SIM TICK -> deterministic ~1 Hz cadence
             rem -= step;
         }
         profSimMs_ += (double(SDL_GetPerformanceCounter()) - _sim0)
@@ -2068,7 +2071,6 @@ public:
         }
         for (auto& u : world_.units())
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
-        tickAi(dt);
         if (briefTimer_ > 0) briefTimer_ -= dt;
         animClock_ += dt;
         if (!spawnRules_.empty() || !messages_.empty()) scenClock2_ += dt;
@@ -2986,218 +2988,42 @@ public:
     }
 
 private:
-    // Simple wave AI: keep the production queue full, and when enough idle
-    // fighters have gathered, throw them at the nearest player unit.
-    void tickAi(float dt) {
-        aiTimer_ -= dt;
-        if (!aiEnabled_ || aiTimer_ > 0 || outcome_ != 0) return;
-        aiTimer_ = 1.0f;
-
-        if (!aiProfileLoaded_) loadAiProfile();
-        if (ffaPlayers_ > 0) {
-            for (int p = 0; p < ffaPlayers_; ++p) tickAiWeighted(p);   // dev harness
-        } else {
-            tickAiWeighted(1);              // the AI opponent
-            if (demoAi_) tickAiWeighted(0); // showcase: player side is AI too
+    // The skirmish AI now lives in src/ai (tak::ai::Controller), so it can also
+    // run headless on the multiplayer server. Here it is driven in-process: one
+    // Controller per AI player, evaluated every SIM TICK (not render frame) so its
+    // ~1 Hz decision cadence is deterministic, emitting net::Commands through a
+    // sink that feeds the normal apply() path -- exactly as a human's orders do.
+    void ensureAi() {
+        if (aiReady_) return;
+        aiReady_ = true;
+        aiProfile_ = tak::ai::loadProfile(dataRoot_, ipRoot_);
+        // Which players are AI: the FFA harness makes 0..N-1 AI; otherwise the
+        // opponent (player 1), plus player 0 in the showcase demo.
+        std::vector<int> aiPlayers;
+        if (ffaPlayers_ > 0)
+            for (int p = 0; p < ffaPlayers_; ++p) aiPlayers.push_back(p);
+        else {
+            aiPlayers.push_back(1);
+            if (demoAi_) aiPlayers.push_back(0);
         }
+        // Reserve so populating never reallocates (Controller holds reference
+        // members; moving is safe, but reserving avoids the churn entirely) and
+        // the vector stays fixed for the rest of the game.
+        aiControllers_.reserve(aiPlayers.size());
+        for (int p : aiPlayers)
+            if (p < world_.numPlayers())
+                aiControllers_.emplace_back(p, registry_, aiProfile_, kAiSeed);
     }
 
-    // Parse the retail AI profile (ai/default.txt): "weight <unit> N" / "limit <unit>
-    // N" lines, one file covering every faction. Missing weight => AI won't build it;
-    // missing limit => unlimited (-1).
-    void loadAiProfile() {
-        aiProfileLoaded_ = true;
-        for (std::string path : {dataRoot_ + "/ai/default.txt",
-                                 ipRoot_.empty() ? std::string() : ipRoot_ + "/ai/default.txt"}) {
-            if (path.empty()) continue;
-            std::ifstream f(path);
-            if (!f) continue;
-            std::string kw, unit; int v;
-            for (std::string line; std::getline(f, line);) {
-                if (line.size() < 2 || line[0] == '/') continue;
-                std::istringstream ss(line);
-                if (!(ss >> kw >> unit >> v)) continue;
-                std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
-                if (kw == "weight") aiWeight_[unit] = v;
-                else if (kw == "limit") aiLimit_[unit] = v;
-            }
-            break;
-        }
-    }
-
-    int aiCount(int player, const std::string& id) {
-        int n = 0;
-        for (auto& u : world_.units())
-            if (u.player == player && u.type && u.alive() && u.type->id == id) ++n;
-        return n;
-    }
-    // Reserve fraction of a player's mana; drives the retail "economy tweak".
-    float aiManaRatio(int player) {
-        const auto& tm = world_.player(player);
-        return tm.mana / std::max(tm.storage, 100.0f);
-    }
-
-    // Weighted-random pick over a producer's build menu (retail 0x412d00): a unit's
-    // weight is its probability share; anything at its limit is excluded; army units
-    // are scaled by econFactor (rich economy => more army). Skips structures the
-    // economy can't yet fund so a builder never traps itself on a stalled site.
-    const tak::sim::UnitType* aiWeightedPick(int player, const tak::sim::Unit& producer,
-                                             int econFactor) {
-        const auto& menu = registry_.buildable(producer.type->id);
-        const tak::sim::UnitType* chosen = nullptr;
-        int total = 0;
-        float income = world_.player(player).income;
-        for (const auto& id : menu) {
-            const auto* ut = registry_.find(id);
-            if (!ut) continue;
-            auto wi = aiWeight_.find(id);
-            int w = wi == aiWeight_.end() ? 0 : wi->second;
-            if (w <= 0) continue;
-            auto li = aiLimit_.find(id);
-            int lim = li == aiLimit_.end() ? -1 : li->second;
-            if (lim >= 0 && aiCount(player, id) >= lim) continue;
-            bool economy = ut->income > 0 || ut->onMana;
-            bool structure = !ut->canMove;
-            // Don't start a non-economy building the economy can't yet drive: its
-            // mogrium draw is buildCost*workerTime/buildTime (as the sim charges it).
-            // This is the economy-first / tech-progression gate (lodestones raise
-            // income, unlocking keeps, then the pricier castle) our engine lacks a
-            // formal tech tree for.
-            if (structure && !economy && ut->buildTime > 0) {
-                float wt = std::max(producer.type->workerTime, 1.0f);
-                float drain = ut->buildCost * wt / ut->buildTime;
-                if (income < drain) continue;
-            }
-            if (ut->canMove && !ut->isBuilder) w *= econFactor;   // army: economy tweak
-            total += w;
-            if (aiRand(total) < w) chosen = ut;                   // reservoir sample
-        }
-        return chosen;
-    }
-
-    // Turn a pick into an order: a factory (keep/castle) trains a mobile unit; a
-    // mobile builder places a structure or conjures a mobile unit near itself.
-    void aiProduce(tak::sim::Unit& p, const tak::sim::UnitType* pick) {
-        if (!pick->canMove) {                       // structure
-            if (p.type->canMove && p.type->isBuilder) aiPlace(p.id, pick, p.x, p.z);
-        } else if (!p.type->canMove) {              // factory trains mobile
-            world_.train(p.id, pick);
-        } else if (p.type->isBuilder) {             // mobile builder conjures mobile
-            for (float r = 40; r < 170 && p.alive(); r += 20)
-                for (float a = 0; a < 6.28f; a += 0.6f) {
-                    float x = p.x + std::cos(a) * r, z = p.z + std::sin(a) * r;
-                    if (world_.canPlace(pick, x, z)) { world_.startBuild(p.id, pick, x, z); return; }
-                }
-        }
-    }
-
-    // One AI update tick (once/sec): every idle producer weighted-random builds from
-    // its own menu under the profile's limits; when a strike force has pooled, attack.
-    void tickAiWeighted(int player) {
-        int econFactor = aiManaRatio(player) >= 0.5f ? 2 : 1;
-        // Snapshot producer ids first (production can reallocate units_).
-        std::vector<int> producers;
-        for (auto& u : world_.units()) {
-            if (!u.alive() || u.player != player || !u.type) continue;
-            if (u.type->canMove && u.type->isBuilder && u.orders.empty() &&
-                u.buildSiteId == 0)
-                producers.push_back(u.id);                        // idle mobile builder
-            else if (!u.type->canMove && !u.underConstruction && u.buildQueue.empty() &&
-                     !registry_.buildable(u.type->id).empty())
-                producers.push_back(u.id);                        // idle factory
-        }
-        for (int pid : producers) {
-            auto* p = world_.unit(pid);
-            if (!p || !p->alive()) continue;
-            if (const auto* pick = aiWeightedPick(player, *p, econFactor))
-                aiProduce(*p, pick);
-        }
-        sendWaves(player);   // pool idle fighters into a wave at a reachable enemy
-    }
-
-    // Start a building for the AI: lodestones go on the nearest free mana
-    // deposit (when the map has any), everything else probes outward from the
-    // builder. Returns the new building's id, or 0.
-    int aiPlace(int builderId, const tak::sim::UnitType* t, float nx, float nz) {
-        if (!t) return 0;
-        if (t->onMana && world_.hasManaSpots()) {
-            float bestD = 1e18f, bx = 0, bz = 0;
-            bool found = false;
-            for (const auto& [sx, sz] : manaSpots_) {
-                if (!world_.canPlace(t, sx, sz)) continue;   // taken or blocked
-                float dx = sx - nx, dz = sz - nz, d = dx * dx + dz * dz;
-                if (d < bestD) { bestD = d; bx = sx; bz = sz; found = true; }
-            }
-            return found ? world_.startBuild(builderId, t, bx, bz) : 0;
-        }
-        for (float r = 70; r < 340; r += 30)
-            for (float a = 0; a < 6.28f; a += 0.5f) {
-                float x = nx + std::cos(a) * r, z = nz + std::sin(a) * r;
-                if (world_.canPlace(t, x, z)) return world_.startBuild(builderId, t, x, z);
-            }
-        return 0;
-    }
-
-    // Once a strike force has gathered, send the (non-builder) fighters at the
-    // nearest enemy. Ids are collected first so world_.attack never mutates a
-    // container being iterated.
-    // Send the idle army as one cohesive wave: attack-move the whole group to a
-    // single rally target (the enemy nearest the group's centre) so they share
-    // one flow field and flow around obstacles together, engaging what they meet
-    // en route — instead of each unit A*-chasing its own nearest foe and jamming.
-    // Nearest enemy of another player the group at (cx,cz) can actually REACH (flow
-    // connectivity), scanning closest-first. Picking merely the straight-line
-    // nearest foe on a maze sends the army at a walled-off target it can't get to,
-    // so it stalls and piles against the wall (or, with the repath give-up, drifts
-    // back to the keep). Returns false if no reachable enemy is near.
-    bool nearestReachableEnemy(int player, float cx, float cz,
-                               const tak::sim::UnitType* atype, float& tx, float& tz) {
-        std::vector<std::pair<float, std::pair<float, float>>> es;
-        for (auto& e : world_.units()) {
-            if (!e.alive() || e.embarked() || world_.allied(e.player, player) || !e.type)
-                continue;
-            float dx = e.x - cx, dz = e.z - cz;
-            es.push_back({dx * dx + dz * dz, {e.x, e.z}});
-        }
-        if (es.empty()) return false;
-        std::sort(es.begin(), es.end());
-        int checked = 0;
-        for (auto& e : es) {
-            if (++checked > 16) break;   // bound the reachability probes (flow builds)
-            if (!atype || world_.pathExists(atype, e.second.first, e.second.second, cx, cz)) {
-                tx = e.second.first; tz = e.second.second;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // A fighter free to be thrown into a wave: idle, or merely gathering (a plain
-    // move, e.g. the just-produced unit's walk to the keep rally) -- NOT one already
-    // attack-moving or engaged. Grabbing gatherers matters because a crowd jamming at
-    // the rally never goes fully idle, so an "idle only" check never launched a wave
-    // and the AI never attacked.
-    static bool waveFree(const tak::sim::Unit& u) {
-        return u.orders.empty() ||
-               (u.orders.front().targetId == 0 && !u.orders.front().attackMove);
-    }
-
-    void sendWaves(int player) {
-        std::vector<int> idle;
-        double sx = 0, sz = 0;
-        const tak::sim::UnitType* atype = nullptr;
-        for (auto& u : world_.units())
-            if (u.alive() && u.player == player && u.type && u.type->canMove &&
-                !u.type->isBuilder && waveFree(u)) {
-                idle.push_back(u.id);
-                sx += u.x; sz += u.z;
-                if (!atype && !u.type->canFly) atype = u.type;
-            }
-        if (idle.size() < 4) return;
-        float cx = float(sx / idle.size()), cz = float(sz / idle.size());
-        float tx = 0, tz = 0;
-        if (!nearestReachableEnemy(player, cx, cz, atype, tx, tz)) return;
-        for (int id : idle) world_.attackMove(id, tx, tz, false);
+    // Run every AI controller for the current sim tick. Called once per world
+    // tick from the sub-step loop (so the per-30-tick cadence is exact), never in
+    // a networked game (there the server owns the AI; aiEnabled_ is false).
+    void runAi() {
+        if (!aiEnabled_ || outcome_ != 0) return;
+        ensureAi();   // builds a Controller per AI player once (none if there are none)
+        auto sink = [this](const tak::net::Command& c) { apply(c); };
+        uint32_t simTick = world_.tickCount();
+        for (auto& c : aiControllers_) c.tick(world_, simTick, sink);
     }
 
 
@@ -4601,15 +4427,14 @@ private:
     std::string aiBuilderType_; // keepless (Zhon) AI: the Handler the Monarch builds
     int aiLodes_ = 0;           // lodestones the AI has queued so far
     std::vector<int> aiKeeps_;  // all the AI's keeps (it builds several + expands)
-    // Retail AI profile (ai/default.txt): per-unit build weight and count limit,
-    // reverse-engineered from KINGDOMS.icd. weight = probability share in a weighted-
-    // random pick among a producer's eligible menu; limit = hard cap (-1 unlimited).
-    std::unordered_map<std::string, int> aiWeight_, aiLimit_;
-    bool aiProfileLoaded_ = false;
-    uint32_t aiRng_ = 0x1234567u;
-    int aiRand(int n) { aiRng_ = aiRng_ * 1103515245u + 12345u;   // deterministic LCG
-        return n > 0 ? int((aiRng_ >> 16) % uint32_t(n)) : 0; }
-    int aiHandlers_ = 0;        // Beast Handlers the AI has queued so far
+    // Server-portable skirmish AI (src/ai). aiProfile_ is the parsed
+    // ai/default.txt weight/limit table; one Controller drives each AI player,
+    // built lazily on first use. kAiSeed is fixed so a match is reproducible
+    // (the real lobby will supply a per-game seed in multiplayer M3).
+    tak::ai::Profile aiProfile_;
+    std::vector<tak::ai::Controller> aiControllers_;
+    bool aiReady_ = false;
+    static constexpr uint32_t kAiSeed = 0x1234567u;
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = -1, mouseY_ = -1;   // -1 until the first real mouse motion, so
                                         // edge-scroll can't fire from a (0,0) default
@@ -4625,7 +4450,6 @@ private:
     std::vector<std::pair<SDL_FRect, const tak::sim::UnitType*>> iconRects_;
     int aiTrained_ = 0;
     std::array<std::string, 4> aiCycle_ = {"tararch", "tartb", "tararch", "tarbeak"};
-    float aiTimer_ = 0;
     static constexpr int kMiniSize = 180;
     // Right-side UI strip (minimap + order/weapon buttons). The map view is kept
     // to the left of it so the panel never draws over the world.
@@ -6369,8 +6193,8 @@ private:
     bool demoAi_ = false;
     bool aiEnabled_ = true;
     // Dev-only N-player free-for-all / teams harness (TAK_FFA=N[,teams]); the
-    // real lobby (multiplayer M3) replaces it. When >0, tickAi drives every
-    // AI player, not just player 1.
+    // real lobby (multiplayer M3) replaces it. When >0, an AI Controller drives
+    // every player, not just player 1.
     int ffaPlayers_ = 0;
     bool amphib_ = false;
     int amphibPhase_ = 0, amphibSquad_ = 0, transportId_ = -1;
