@@ -2708,7 +2708,15 @@ public:
     }
 
     void draw(int winW, int winH) {
-        if (inLobbyPhase()) { drawLobby(winW, winH); return; }
+        if (inLobbyPhase()) {
+            // Render the whole lobby at 2x so its text/controls are large and legible;
+            // it lays out in the halved logical space, and lbHot/lobbyInput divide the
+            // mouse by the same scale so clicks still land.
+            SDL_RenderSetScale(ren_, kUiScale, kUiScale);
+            drawLobby(int(winW / kUiScale), int(winH / kUiScale));
+            SDL_RenderSetScale(ren_, 1.0f, 1.0f);
+            return;
+        }
         // Pull any chat that arrived and age the overlay on a real wall clock, so
         // it fades even while the game is paused or catching up on ticks.
         if (mp_) {
@@ -6056,8 +6064,11 @@ private:
         static const char* n[5] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
         return n[f % 5];
     }
+    // The lobby renders at kUiScale, so hit-test in the same logical space.
+    static constexpr float kUiScale = 2.0f;
     bool lbHot(const SDL_FRect& r) const {
-        return mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y && mouseY_ <= r.y + r.h;
+        float mx = mouseX_ / kUiScale, my = mouseY_ / kUiScale;
+        return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
     }
     // A clickable button: panel + centered label; registers its action.
     void lbBtn(float x, float y, float w, float h, const std::string& label, bool enabled,
@@ -6308,8 +6319,9 @@ private:
         else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
             lbField_ = 0; SDL_StopTextInput();
+            float mx = mouseX_ / kUiScale, my = mouseY_ / kUiScale;   // lobby renders at kUiScale
             for (auto& [r, action] : lobbyHots_)
-                if (mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y && mouseY_ <= r.y + r.h) {
+                if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
                     action(); break;
                 }
         } else if (e.type == SDL_TEXTINPUT && lbField_) {
