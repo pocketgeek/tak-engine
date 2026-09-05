@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 7;        // 7: Hello dataHash enforced (retail data agreement)
+constexpr uint32_t kNetVersion = 8;        // 8: dropped dead per-slot isHost byte (host derived from hostId)
 constexpr uint32_t kMaxFrame = 1u << 16;   // 64 KB frame cap (hardening)
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate
@@ -64,7 +64,6 @@ struct SlotInfo {
     uint8_t color = 0;     // 0..9 palette slot
     uint8_t team = 0;      // 0..kMaxSlots-1
     uint8_t ready = 0;
-    uint8_t isHost = 0;
     std::string name;      // player display name ("" for open/ai)
 };
 
