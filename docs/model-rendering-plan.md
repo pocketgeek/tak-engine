@@ -1,10 +1,35 @@
 # Model rendering: root cause and correction plan
 
-Status: **Defects A and C LANDED. Defect B: flyHalfTurn KEPT — its deletion was tried, shipped, found wrong
-against the running game, and REVERTED.** See the 2026-09-05 note below before ever touching flyHalfTurn again.
+Status: **RESOLVED (2026-09-05, commit 7d9d71e).** Final fix = negate BOTH piece X and Y rotations in
+`scriptRot`, and all flyers face `−heading` (flyHalfTurn deleted). Defect C (full-body walk) also landed.
 Scope: `src/viewer/main.cpp` (render-only). Sim state, heading semantics, and the lockstep hash are untouched.
 
-## Correction (2026-09-05): flyHalfTurn was RIGHT; deleting it was WRONG
+## FINAL resolution (2026-09-05, 7d9d71e) — read this first
+
+The real defect was **the piece X-rotation sign, not just Y.** `scriptRot` now negates BOTH `rot[0]` (pitch)
+and `rot[1]` (yaw): the models are authored front=−z / right=−x (a mirrored basis), so scripted X- AND Y-turns
+play mirrored unless negated. Negating X fixed two user-visible symptoms at once:
+- **Walkers' legs swung backward** ("feet on backwards / walk running backwards") — `walk_legs` is entirely
+  X-axis leg swings.
+- **Flyers flew supine** ("back to the ground") — the `fly` script pitches the body with X-axis TURNs on
+  hips/torso (positive ~35–57°), and `+X` rolled them belly-up.
+
+With X negated the flyer body sits upright, and then **every flyer flies forward at plain `−heading`** — so
+`flyHalfTurn` is gone (all movers, flyers included, use `−heading`; matches the ICD "no flyer facing branch",
+root matrix 0x4ee620 identical for all units). The earlier per-flyer π−heading split (`flyHalfTurnOf`) only
+existed to make the *supine* flyers look forward; it was masking the X bug.
+
+**Sequence of wrong turns (so nobody repeats them):** c0ab21a deleted flyHalfTurn (all −h) → flyers flew
+backward because they were still supine → reverted (fc3a04b) → then found the X-sign bug → 7d9d71e negates X
+AND deletes flyHalfTurn together. The two are coupled: −h is only correct once X is negated.
+
+**Method that finally worked** (by-eye screenshots failed repeatedly): (1) for facing, tint front pieces red /
+back pieces blue in `collect()`, render moving east, compare red vs blue centroid-x automatically; (2) for the
+X-sign, the *user* judged it live — a runtime `TAK_NEGX` toggle let them confirm the walk stayed correct and
+the flyer went belly-down. Verified across nine flyers of all five factions. The rest-pose `modeltool obj`
+oracle does NOT predict airborne facing (the fly pose re-orients the body).
+
+## (superseded) Correction attempt: flyHalfTurn was RIGHT; deleting it was WRONG
 
 Commit `c0ab21a` deleted `flyHalfTurn` (every flyer → `−heading`), justified by a rest-pose static oracle
 (`modeltool obj`: head/breast at −z, tail/hair at +z for all five Zhon flyers) plus a movement-geometry
