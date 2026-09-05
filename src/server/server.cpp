@@ -83,6 +83,7 @@ struct Room {
     int slotClient[kMaxSlots];      // client id in each slot, -1 = none/ai/open
     std::vector<uint32_t> spectators;   // watching, not seated (no slot, no hash)
     bool running = false;
+    bool priv = false;             // private (single-player): hidden from the game list
     int cap = kMaxSlots;            // map capacity (from the host's CreateGame)
     uint64_t createdMs = 0;
     // running state
@@ -301,9 +302,13 @@ void Server::handshake(Client& c, const Frame& f) {
 
 void Server::sendGameList(Client& c) {
     Writer w;
-    w.u32(uint32_t(rooms_.size()));
     uint64_t t = nowMs();
+    // Private (single-player) games are not advertised in the browser.
+    uint32_t n = 0;
+    for (auto& [id, r] : rooms_) if (!r.priv) ++n;
+    w.u32(n);
     for (auto& [id, r] : rooms_) {
+        if (r.priv) continue;
         w.u32(r.id);
         w.str(r.name);
         w.str(r.mapId);
@@ -373,6 +378,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             o.overridePolicy = r.u8();
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
+            uint8_t priv = r.u8();       // private (single-player): hidden from the list
             if (!r.ok) return;
             if (cap < 2 || cap > kMaxSlots) cap = kMaxSlots;   // sane default
             Room& room = rooms_[nextRoomId_];
@@ -381,6 +387,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             room.password = pass;
             room.mapId = mapId;
             room.opts = o;
+            room.priv = priv != 0;
             room.cap = cap;
             room.hostId = c.id;
             room.createdMs = nowMs();

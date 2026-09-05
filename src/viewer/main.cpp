@@ -14,7 +14,6 @@
 #include "crt/crt.h"
 #include "gaf/gaf.h"
 #include "hpi/hpi.h"
-#include "ai/ai.h"
 #include "net/client.h"
 #include "net/lockstep.h"
 #include "sim/matchsetup.h"
@@ -49,6 +48,46 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+// Single-player auto-launches a local takserver (AIs run only on the server).
+#include <csignal>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+namespace {
+// A local takserver spawned for single-player; killed when the client exits.
+pid_t gLocalServer = 0;
+void killLocalServer() {
+    if (gLocalServer > 0) { kill(gLocalServer, SIGTERM); waitpid(gLocalServer, nullptr, 0); gLocalServer = 0; }
+}
+// Pick a free loopback TCP port by binding to 0 and reading the assignment.
+int pickFreePort() {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 0;
+    sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int port = 0;
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0) {
+        socklen_t len = sizeof a;
+        if (getsockname(fd, reinterpret_cast<sockaddr*>(&a), &len) == 0) port = ntohs(a.sin_port);
+    }
+    ::close(fd);
+    return port;
+}
+// fork+exec a takserver for a private single-player game. Returns its pid (0 fail).
+pid_t spawnLocalServer(const std::string& serverBin, const std::string& dataRoot, int port) {
+    pid_t pid = fork();
+    if (pid < 0) return 0;
+    if (pid == 0) {
+        std::string ps = std::to_string(port);
+        execl(serverBin.c_str(), serverBin.c_str(), "--port", ps.c_str(),
+              "--data", dataRoot.c_str(), static_cast<char*>(nullptr));
+        _exit(127);   // exec failed
+    }
+    return pid;
+}
+}  // namespace
 
 namespace {
 
@@ -925,7 +964,7 @@ public:
         //  mapView_ in the member list so the Compositor can borrow it)
         : ren_(ren), vfs_(std::move(vfs)), mapView_(ren, vfs_, mapPath),
           installRoot_(installRoot), policy_(policy),
-          side_(side), mapPath_(mapPath), crusades_(crusades) {
+          side_(side), aiSide_(aiSide), mapPath_(mapPath), crusades_(crusades) {
         // Unit registry: MOVEINFO + units + canbuild (+ Crusades overlay first).
         // The VFS merges base + Iron Plague + community data into one namespace,
         // precedence resolved by the retail newest-date rule.
@@ -1870,13 +1909,17 @@ public:
         if (!mp_->poll()) { netError_ = mp_->error(); return false; }
         S st = mp_->state();
         if (st == S::Done) { if (netError_.empty()) netError_ = mp_->error(); return false; }
-        if (st == S::Lobby && (autoMode == 1 || autoMode == 4)) {
+        if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
             // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
             // slot can be an AI -- an all-AI game to watch.
             bool watch = autoMode == 1 && std::getenv("TAK_MP_WATCH");
-            mp_->createGame("headless", "", mapId, o, mpCapacity(), watch);
+            // Mode 7 is interactive SINGLE-PLAYER: a private game (hidden from the
+            // browser) with one server-run AI opponent.
+            bool priv = autoMode == 7;
+            mp_->createGame(priv ? "Single Player" : "headless", "", mapId, o,
+                            mpCapacity(), watch, priv);
         } else if (st == S::Lobby && autoMode == 5) {
             // Rejoin: read the resume ticket the original session saved and
             // reconnect to the held slot.
@@ -1907,6 +1950,13 @@ public:
                 for (int k = 0; k < nAi; ++k)
                     mp_->setSlot(k, 2, uint8_t(k % 5), uint8_t(k), uint8_t(k), 1);
                 mpReadied_ = true;
+            } else if (autoMode == 7 && r.mySlot >= 0) {
+                // Single-player: seat self with the chosen faction, one AI opponent
+                // with the chosen ai faction, and ready up.
+                mp_->setSlot(r.mySlot, 1, facIdx(side_), uint8_t(r.mySlot),
+                             uint8_t(r.mySlot), 1);
+                if (r.mySlot == 0) mp_->setSlot(1, 2, facIdx(aiSide_), 1, 1, 1);
+                mpReadied_ = true;
             } else if (r.mySlot >= 0) {
                 mp_->setSlot(r.mySlot, 1, uint8_t(r.mySlot % 5), uint8_t(r.mySlot),
                              uint8_t(r.mySlot), 1);
@@ -1926,7 +1976,8 @@ public:
                     }
                 mpReadied_ = true;
             }
-        } else if (st == S::InRoom && (autoMode == 1 || autoMode == 3 || autoMode == 4) &&
+        } else if (st == S::InRoom && (autoMode == 1 || autoMode == 3 || autoMode == 4 ||
+                                       autoMode == 7) &&
                    !mpStarted_ &&
                    mp_->room().hostId == mp_->myClientId()) {
             int ready = 0;
@@ -2239,7 +2290,6 @@ public:
         for (float rem = dt, guard = 0; rem > 1e-5f && guard < 16; ++guard) {
             float step = std::min(rem, 1.0f / 30.0f);
             world_.tick(step);
-            runAi();   // AI evaluated per SIM TICK -> deterministic ~1 Hz cadence
             rem -= step;
         }
         profSimMs_ += (double(SDL_GetPerformanceCounter()) - _sim0)
@@ -3367,45 +3417,6 @@ public:
     }
 
 private:
-    // The skirmish AI now lives in src/ai (tak::ai::Controller), so it can also
-    // run headless on the multiplayer server. Here it is driven in-process: one
-    // Controller per AI player, evaluated every SIM TICK (not render frame) so its
-    // ~1 Hz decision cadence is deterministic, emitting net::Commands through a
-    // sink that feeds the normal apply() path -- exactly as a human's orders do.
-    void ensureAi() {
-        if (aiReady_) return;
-        aiReady_ = true;
-        aiProfile_ = tak::ai::loadProfile(vfs_);
-        // Which players are AI: the FFA harness makes 0..N-1 AI; otherwise the
-        // opponent (player 1), plus player 0 in the showcase demo.
-        std::vector<int> aiPlayers;
-        if (ffaPlayers_ > 0)
-            for (int p = 0; p < ffaPlayers_; ++p) aiPlayers.push_back(p);
-        else {
-            aiPlayers.push_back(1);
-            if (demoAi_) aiPlayers.push_back(0);
-        }
-        // Reserve so populating never reallocates (Controller holds reference
-        // members; moving is safe, but reserving avoids the churn entirely) and
-        // the vector stays fixed for the rest of the game.
-        aiControllers_.reserve(aiPlayers.size());
-        for (int p : aiPlayers)
-            if (p < world_.numPlayers())
-                aiControllers_.emplace_back(p, registry_, aiProfile_, kAiSeed);
-    }
-
-    // Run every AI controller for the current sim tick. Called once per world
-    // tick from the sub-step loop (so the per-30-tick cadence is exact), never in
-    // a networked game (there the server owns the AI; aiEnabled_ is false).
-    void runAi() {
-        if (!aiEnabled_ || outcome_ != 0) return;
-        ensureAi();   // builds a Controller per AI player once (none if there are none)
-        auto sink = [this](const tak::net::Command& c) { apply(c); };
-        uint32_t simTick = world_.tickCount();
-        for (auto& c : aiControllers_) c.tick(world_, simTick, sink);
-    }
-
-
     struct Visual {
         tak::tdo::Model model;
     };
@@ -4596,6 +4607,13 @@ public:
 private:
     bool crusades_ = false; // which balance registry_ currently holds
     std::string side_ = "ara";
+    std::string aiSide_ = "tar";   // single-player: the AI opponent's faction
+    // Faction name -> wire index (0 ara, 1 tar, 2 ver, 3 zon, 4 cre).
+    static uint8_t facIdx(const std::string& s) {
+        const char* n[5] = {"ara", "tar", "ver", "zon", "cre"};
+        for (uint8_t i = 0; i < 5; ++i) if (s == n[i]) return i;
+        return 0;
+    }
     tak::sim::TypeRegistry registry_;
     tak::sim::World world_;
     // Hash maps (not std::map): these are looked up per unit per frame in the
@@ -4888,14 +4906,6 @@ private:
     std::string aiBuilderType_; // keepless (Zhon) AI: the Handler the Monarch builds
     int aiLodes_ = 0;           // lodestones the AI has queued so far
     std::vector<int> aiKeeps_;  // all the AI's keeps (it builds several + expands)
-    // Server-portable skirmish AI (src/ai). aiProfile_ is the parsed
-    // ai/default.txt weight/limit table; one Controller drives each AI player,
-    // built lazily on first use. kAiSeed is fixed so a match is reproducible
-    // (the real lobby will supply a per-game seed in multiplayer M3).
-    tak::ai::Profile aiProfile_;
-    std::vector<tak::ai::Controller> aiControllers_;
-    bool aiReady_ = false;
-    static constexpr uint32_t kAiSeed = 0x1234567u;
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = -1, mouseY_ = -1;   // -1 until the first real mouse motion, so
                                         // edge-scroll can't fire from a (0,0) default
@@ -7186,8 +7196,10 @@ int main(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr,
                      "usage: takview game <map name> --data <retail-install-dir> "
-                     "[--side X --aiside Y] [--overrides none|cosmetic|full] "
-                     "[--server host --serverport N] [--demo] [--time s] [--shot out.png]\n"
+                     "[--side X --aiside Y] [--overrides none|cosmetic|full] [--shot out.png]\n"
+                     "         single-player: no --server -> auto-hosts a private game vs a\n"
+                     "         server-run AI on a local takserver (AIs run only on the server).\n"
+                     "         multiplayer:   add --server host [--serverport N] [--name X].\n"
                      "       takview map  <map name> --data <retail-install-dir> [--shot out.png]\n"
                      "       takview replay <file.takrep> --data <retail-install-dir>\n"
                      "       takview model <file.3do> [textures-dir palette.pcx] "
@@ -7292,6 +7304,35 @@ int main(int argc, char** argv) {
     tak::hpi::Vfs vfs;
     if (!dataRoot.empty()) vfs = tak::hpi::mountRetailRoot(dataRoot, pol);
 
+    // The engine is client-server only: every real game runs on a server, and AIs
+    // run ONLY on the server. Local dev/test harnesses (which free-run the sim with
+    // no server) are DEBUG-only. A release build has none of them.
+    bool localHarness = false;
+#ifndef NDEBUG
+    localHarness = demo || scenario || missionFlag || navy || amphib || firetest ||
+                   facetest || hilltest || guardtest || lodetest || keytest ||
+                   soundtest || misstest || creon || testbuild ||
+                   (std::getenv("TAK_FFA") != nullptr);
+#endif
+    // main-loop lobby driver: 0 = UI-driven (public MP), 7 = single-player.
+    int mpAutoMode = 0;
+    if (mode == "game" && serverHost.empty() && !mpHeadless && !localHarness) {
+        // Single-player: auto-launch a private local server and play a 1-v-AI game
+        // on it (the AI runs server-side). Not visible to other players.
+        int p = pickFreePort();
+        std::string serverBin =
+            (std::filesystem::path(argv[0]).parent_path() / "takserver").string();
+        if (p <= 0 || (gLocalServer = spawnLocalServer(serverBin, dataRoot, p)) <= 0) {
+            std::fprintf(stderr, "single-player: could not launch a local server (%s)\n",
+                         serverBin.c_str());
+            return 1;
+        }
+        std::atexit(killLocalServer);
+        serverHost = "127.0.0.1"; serverPort = p; mpAutoMode = 7;
+        std::fprintf(stderr, "single-player: local server pid %d on port %d\n",
+                     int(gLocalServer), p);
+    }
+
     // Connect to the multiplayer server, if requested.
     std::unique_ptr<tak::net::MpClient> mp;
     if (!serverHost.empty()) {
@@ -7303,8 +7344,16 @@ int main(int argc, char** argv) {
         if (!dataRoot.empty())
             mp->setDataHash(tak::hpi::gameplayHash(
                 tak::hpi::mountRetailRoot(dataRoot, tak::hpi::OverridePolicy::None)));
-        if (!mp->connect(serverHost, uint16_t(serverPort), playerName)) {
+        // A freshly-spawned local server takes a couple seconds to mount + load, so
+        // retry the connect while it comes up.
+        bool ok = false;
+        for (int attempt = 0; attempt < (gLocalServer ? 60 : 1) && !ok; ++attempt) {
+            ok = mp->connect(serverHost, uint16_t(serverPort), playerName);
+            if (!ok && gLocalServer) usleep(250000);
+        }
+        if (!ok) {
             std::fprintf(stderr, "server: %s\n", mp->error().c_str());
+            killLocalServer();
             return 1;
         }
         std::printf("connected to %s:%d as '%s'\n", serverHost.c_str(), serverPort, playerName.c_str());
@@ -7384,23 +7433,29 @@ int main(int argc, char** argv) {
             if (playerColor >= 0) gameView->setPlayerColor(0, playerColor);
             if (aiColor >= 0) gameView->setPlayerColor(1, aiColor);
             if (followZoom > 0) gameView->setFollow(followZoom);
-            if (doMarch) gameView->marchTo(marchX, marchZ);
             if (trace) gameView->setTrace(true);
-            if (testbuild) gameView->testBuild();
-            if (navy) gameView->navyDemo();
-            if (misstest) gameView->missionTest();
-            if (creon) gameView->creonDemo();
-            if (hilltest) gameView->hillTest();
-            if (guardtest) gameView->guardTest();
-            if (lodetest) { gameView->lodeUnit = lodeUnitName; gameView->lodeTest(); }
-            if (firetest) gameView->fireTest();
-            if (facetest) gameView->faceTest();
-            if (soundtest) { gameView->setTrace(true); gameView->soundTest(); }
-
             if (nofog) gameView->noFog_ = true;
             if (doLook) gameView->lookAt(lookX, lookZ);
-            if (amphib) gameView->amphibDemo();
-            if (startTime > 0) gameView->advance(startTime);
+#ifndef NDEBUG
+            // Local dev/test harnesses spawn units / issue orders / fast-forward the
+            // LOCAL sim -- debug builds only, and never for a server-driven game
+            // (localHarness is false whenever a server is involved).
+            if (localHarness) {
+                if (doMarch) gameView->marchTo(marchX, marchZ);
+                if (testbuild) gameView->testBuild();
+                if (navy) gameView->navyDemo();
+                if (misstest) gameView->missionTest();
+                if (creon) gameView->creonDemo();
+                if (hilltest) gameView->hillTest();
+                if (guardtest) gameView->guardTest();
+                if (lodetest) { gameView->lodeUnit = lodeUnitName; gameView->lodeTest(); }
+                if (firetest) gameView->fireTest();
+                if (facetest) gameView->faceTest();
+                if (soundtest) { gameView->setTrace(true); gameView->soundTest(); }
+                if (amphib) gameView->amphibDemo();
+                if (startTime > 0) gameView->advance(startTime);
+            }
+#endif
         } else if (mode == "model" && !args.empty()) {
             modelView = std::make_unique<ModelView>(ren, args[0],
                                                     args.size() > 1 ? args[1] : "",
@@ -7598,7 +7653,8 @@ int main(int argc, char** argv) {
                 (void)netAccum;
                 // TAK_MPAUTO=N overrides the lobby driver (0 = UI-driven, the
                 // default; 1 = auto-host; 2 = auto-join) -- handy for screenshots.
-                static int autoOv = std::getenv("TAK_MPAUTO") ? std::atoi(std::getenv("TAK_MPAUTO")) : 0;
+                static int autoOv = std::getenv("TAK_MPAUTO")
+                                        ? std::atoi(std::getenv("TAK_MPAUTO")) : mpAutoMode;
                 gameView->mpAutoStep(autoOv, serverMapId, crusades);
             } else {
                 gameView->update(dt);

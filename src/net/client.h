@@ -57,9 +57,12 @@ public:
     void listGames();
     // spectate=true: create the game but DON'T seat the host -- it watches as a
     // slot-less spectator, freeing all capacity slots (e.g. for an all-AI game).
+    // priv=true: a private (single-player) game -- omitted from the public game
+    // list so other players don't see it. Still hosted on the server (AIs run
+    // there); the host just doesn't advertise it.
     void createGame(const std::string& name, const std::string& password,
                     const std::string& mapId, const GameOptions& opts, uint8_t capacity,
-                    bool spectate = false);
+                    bool spectate = false, bool priv = false);
     void joinGame(uint32_t id, const std::string& password);
     void leaveGame();
     void setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
