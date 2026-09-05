@@ -80,7 +80,7 @@ static void readSlots(Reader& r, RoomView& v) {
     for (int i = 0; i < kMaxSlots; ++i) {
         SlotInfo& s = v.slots[i];
         s.type = r.u8(); s.faction = r.u8(); s.color = r.u8(); s.team = r.u8();
-        s.ready = r.u8(); s.isHost = r.u8(); s.name = r.str();
+        s.ready = r.u8(); s.name = r.str();
     }
 }
 

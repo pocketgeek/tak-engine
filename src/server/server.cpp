@@ -322,8 +322,6 @@ void Server::writeSlots(Writer& w, Room& r) {
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = r.slots[i];
         w.u8(s.type); w.u8(s.faction); w.u8(s.color); w.u8(s.team); w.u8(s.ready);
-        w.u8(uint8_t(r.hostId != 0 && r.slotClient[i] >= 0 &&
-                     uint32_t(r.slotClient[i]) == r.hostId ? 1 : 0));
         w.str(s.name);
     }
 }
