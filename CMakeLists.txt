@@ -61,6 +61,9 @@ target_link_libraries(hpitool PRIVATE tak-formats)
 add_executable(detmath_test tools/detmath_test.cpp)
 target_link_libraries(detmath_test PRIVATE tak-formats)
 
+add_executable(sim_driver_equiv_test tools/sim_driver_equiv_test.cpp)
+target_link_libraries(sim_driver_equiv_test PRIVATE tak-formats)
+
 add_executable(gaftool tools/gaftool.cpp)
 target_link_libraries(gaftool PRIVATE tak-formats)
 

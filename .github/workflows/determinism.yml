@@ -46,3 +46,25 @@ jobs:
       # if the guard trips or any two builds disagree.
       - name: Cross-build determinism check
         run: sh tools/check-determinism.sh
+
+  # SP/MP driver-equivalence: the same commands+events at the same ticks yield
+  # the same sim state whether applied directly (single-player) or transported
+  # through the multiplayer wire format first. Guards a serialization bug or a
+  # sim-affecting side effect added to one driver path. Needs a real build
+  # (links tak-formats), so it runs the data-independent checks only -- the
+  # deeper data-backed leg needs the (gitignored) game assets. See
+  # docs/sp-mp-equivalence.md.
+  sim-equiv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++ cmake ninja-build libsdl2-dev zlib1g-dev libjpeg-dev
+      - name: Build + run the driver-equivalence test
+        run: |
+          cmake -B build -G Ninja
+          cmake --build build --target sim_driver_equiv_test
+          ./build/sim_driver_equiv_test
