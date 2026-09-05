@@ -1,0 +1,48 @@
+name: determinism
+
+# Cross-build determinism gate for the simulation's math shim (src/sim/detmath).
+# Lockstep multiplayer needs bit-identical sim state across DIFFERENT builds, so
+# this runs three legs -- a second compiler and a second CPU architecture --
+# plus the guard that keeps libm transcendentals out of the sim path.
+# See docs/detmath-scope.md.
+
+on:
+  push:
+    paths:
+      - 'src/sim/**'
+      - 'src/ai/**'
+      - 'tools/detmath_test.cpp'
+      - 'tools/check-detmath.sh'
+      - 'tools/check-determinism.sh'
+      - '.github/workflows/determinism.yml'
+  pull_request:
+    paths:
+      - 'src/sim/**'
+      - 'src/ai/**'
+      - 'tools/detmath_test.cpp'
+      - 'tools/check-detmath.sh'
+      - 'tools/check-determinism.sh'
+      - '.github/workflows/determinism.yml'
+  workflow_dispatch:
+
+jobs:
+  detmath:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # g++ (default) + clang (second compiler, same arch);
+      # g++-aarch64-linux-gnu is hosted on Ubuntu (ships the target libstdc++),
+      # and qemu-user-static both provides qemu-aarch64-static and registers the
+      # binfmt handler, so the ARM64 build runs under emulation.
+      - name: Install toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++ clang g++-aarch64-linux-gnu qemu-user-static
+
+      # Runs the guard + builds the shim with every compiler x opt level and
+      # under aarch64/qemu, asserting one identical golden hash. Fails the job
+      # if the guard trips or any two builds disagree.
+      - name: Cross-build determinism check
+        run: sh tools/check-determinism.sh
