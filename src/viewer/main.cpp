@@ -1671,7 +1671,7 @@ public:
                         !world_.allied(u.player, first->player)) continue;
                     float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
                     if (u.underConstruction) {
-                        if (u.player != first->player) continue;   // resume only your own
+                        // Any allied conjure (yours or a teammate's) can be revived.
                         float r = 20.0f + 8.0f * float(std::max(u.type->footX, u.type->footZ));
                         if (d < r * r && d < bestSite) { bestSite = d; siteId = u.id; }
                     } else if (d < bestAlly) { bestAlly = d; allyId = u.id; }
