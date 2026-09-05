@@ -116,7 +116,8 @@ public:
             offX_ -= e.motion.xrel / zoom_;
             offY_ -= e.motion.yrel / zoom_;
         } else if (e.type == SDL_MOUSEWHEEL) {
-            zoom_ = std::clamp(zoom_ * (e.wheel.y > 0 ? 1.25f : 0.8f), 0.05f, 4.0f);
+            // Half the old per-notch step (1.25/0.8): 1.25^0.5 in, its reciprocal out.
+            zoom_ = std::clamp(zoom_ * (e.wheel.y > 0 ? 1.118f : 0.894f), 0.05f, 4.0f);
         } else if (e.type == SDL_KEYDOWN) {
             float step = 200 / zoom_;
             switch (e.key.keysym.sym) {
@@ -3084,7 +3085,7 @@ public:
             float mx, mz;
             pickWorld(mouseX_, mouseY_, mx, mz);
             for (auto& [x, z] : buildLinePositions(bdX0_, bdZ0_, mx, mz))
-                drawGhostAt(placing_, x, z);
+                drawGhostAt(placing_, x, z, !world_.canPlace(placing_, x, z));
         } else if (placing_) {
             drawGhost();
         }
@@ -3678,7 +3679,8 @@ private:
 
     // Draw a translucent, faintly blue ghost of a building where it will be
     // built later (a queued or not-yet-started site).
-    void drawGhostAt(const tak::sim::UnitType* type, float x, float z) {
+    void drawGhostAt(const tak::sim::UnitType* type, float x, float z,
+                     bool invalid = false) {
         const tak::tdo::Model* model = ghostModel(type->id);
         if (!model) return;
         tris_.clear();
@@ -3705,9 +3707,17 @@ private:
                 SDL_Vertex v = t.v[i];
                 v.position.x = v.position.x * zm + ax;
                 v.position.y = v.position.y * zm + ay;
-                v.color.a = 130;
-                v.color.r = Uint8(v.color.r * 0.55f);   // shift toward blue
-                v.color.g = Uint8(v.color.g * 0.8f);
+                if (invalid) {
+                    // Can't build here: wash the ghost red instead of the box.
+                    v.color.a = 150;
+                    v.color.r = Uint8(std::min(255, int(v.color.r * 0.6f) + 110));
+                    v.color.g = Uint8(v.color.g * 0.30f);
+                    v.color.b = Uint8(v.color.b * 0.30f);
+                } else {
+                    v.color.a = 130;
+                    v.color.r = Uint8(v.color.r * 0.55f);   // shift toward blue
+                    v.color.g = Uint8(v.color.g * 0.8f);
+                }
                 triBatch_.push_back(v);
             }
         }
@@ -6747,7 +6757,10 @@ private:
         float x0, float z0, float x1, float z1) const {
         std::vector<std::pair<float, float>> out;
         if (!placing_) return out;
-        float sp = std::max({placing_->footX, placing_->footZ, 1}) * 16.0f;
+        // Full footprint width plus a one-cell gap: edge-to-edge spacing lets integer
+        // cell rounding of the un-aligned drag tip adjacent sites into a shared
+        // footprint cell, which makes canPlace reject every other one.
+        float sp = (std::max({placing_->footX, placing_->footZ, 1}) + 1) * 16.0f;
         float dx = x1 - x0, dz = z1 - z0, len = std::sqrt(dx * dx + dz * dz);
         int n = int(len / sp);
         float ux = len > 1e-3f ? dx / len : 0, uz = len > 1e-3f ? dz / len : 0;
@@ -6775,29 +6788,24 @@ private:
 
     void drawGhost() {
         float zm = mapView_.zoom();
-        // Resolve the elevated cell drawn under the cursor and draw the footprint
-        // lifted exactly as the placed unit/building will be, so the square sits under
-        // the mouse and shows where the thing lands.
+        // Resolve the elevated cell drawn under the cursor. Draw a translucent ghost
+        // of the thing being placed, lifted onto the relief exactly like the finished
+        // unit/building -- a plain ghost where it can go, red-washed where it can't.
         float wx, wz;
         pickWorld(mouseX_, mouseY_, wx, wz);
         bool ok = world_.canPlace(placing_, wx, wz);
-        float hw = float(placing_->footX) * 8 * zm, hh = float(placing_->footZ) * 8 * zm;
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        drawGhostAt(placing_, wx, wz, !ok);
+        // Small name tag above the ghost so the player still sees what's queued.
         float cxp = (wx - mapView_.offX()) * zm - terrainLiftX(wx, wz) * zm;
         float czp = (wz - mapView_.offY()) * zm - terrainLift(wx, wz) * zm;
-        SDL_FRect r{cxp - hw, czp - hh, hw * 2, hh * 2};
-        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren_, ok ? 90 : 230, ok ? 220 : 60, 70, 90);
-        SDL_RenderFillRectF(ren_, &r);
-        SDL_SetRenderDrawColor(ren_, ok ? 120 : 255, ok ? 255 : 80, 90, 220);
-        SDL_RenderDrawRectF(ren_, &r);
-        {
-            float px = 1.8f;
-            float tw = blockWidth(placing_->name, px);
-            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 190);
-            SDL_FRect tb{r.x - 4, r.y - 22, tw + 8, 20};
-            SDL_RenderFillRectF(ren_, &tb);
-            blockText(placing_->name, r.x, r.y - 18, px, {230, 230, 200, 255});
-        }
+        float hh = float(placing_->footZ) * 8 * zm;
+        float px = 1.8f;
+        float tw = blockWidth(placing_->name, px);
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 190);
+        SDL_FRect tb{cxp - tw / 2 - 4, czp - hh - 24, tw + 8, 20};
+        SDL_RenderFillRectF(ren_, &tb);
+        blockText(placing_->name, cxp - tw / 2, czp - hh - 20, px, {230, 230, 200, 255});
     }
 
     int rosterIndexOf(int unitId) {
