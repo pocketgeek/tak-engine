@@ -1488,7 +1488,12 @@ public:
                     const auto* b = selectedBuilder();
                     if (!b || !bt) break;
                     bool ctrl = (SDL_GetModState() & KMOD_CTRL) != 0;
-                    if (b->type->canMove && !ctrl) {
+                    // Placement (a manual click) is for STRUCTURES -- you place
+                    // buildings/lodestones -- and for MOBILE builders conjuring units
+                    // (e.g. Zhon's beast handlers). A BUILDING conjuring a mobile unit
+                    // just TRAINS it: it exits to a rally point, no placement needed.
+                    bool place = isStructure(bt) || !isStructure(b->type);
+                    if (place && !ctrl) {
                         placing_ = bt;
                     } else {
                         // Ctrl+click on a conjurer's icon toggles infinite build.
@@ -3607,7 +3612,7 @@ private:
         // A building ghost sits on its footprint like the finished building -- never
         // lift it onto the terrain relief (see uLiftY: a deposit's raised heightmap
         // would float the ghost off its spot).
-        bool lift = type->canMove;
+        bool lift = !isStructure(type);
         float ax = (x - mapView_.offX()) * zm - (lift ? terrainLiftX(x, z) : 0.0f) * zm;
         float ay = (z - mapView_.offY()) * zm - (lift ? terrainLift(x, z) : 0.0f) * zm;
         // Batch by texture (flush on change), like a live unit.
@@ -4658,12 +4663,12 @@ private:
     // structure on a cell with a raised heightmap (e.g. a mana deposit, whose
     // heightmap runs 60-200 while the sand around it is 0) floats far off its
     // base decal (which, being a feature, is drawn unlifted).
-    float uLiftY(const tak::sim::Unit& u) {
-        return (u.type && !u.type->canMove) ? 0.0f : terrainLift(u.x, u.z);
-    }
-    float uLiftX(const tak::sim::Unit& u) {
-        return (u.type && !u.type->canMove) ? 0.0f : terrainLiftX(u.x, u.z);
-    }
+    // A "structure" (building) for render/build purposes = one that can't actually
+    // move. NOTE: the FBI `canmove` flag is unreliable -- some buildings (the Keep,
+    // arakeep) set canmove=1 with NO velocity -- so key off maxVel, not type->canMove.
+    static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= 0.0f; }
+    float uLiftY(const tak::sim::Unit& u) { return isStructure(u.type) ? 0.0f : terrainLift(u.x, u.z); }
+    float uLiftX(const tak::sim::Unit& u) { return isStructure(u.type) ? 0.0f : terrainLiftX(u.x, u.z); }
 
     // Height-aware picking: invert the render lift so a click on elevated terrain
     // (a wall/plateau top, drawn lifted UP on screen) resolves to the cell whose
