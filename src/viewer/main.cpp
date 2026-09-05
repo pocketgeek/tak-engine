@@ -1543,7 +1543,7 @@ public:
             // lands there); a conjured unit uses the height-aware pick so it drops on
             // the elevated cell drawn under the cursor, not the low cell behind.
             float wx, wz;
-            pickPlace(float(e.button.x), float(e.button.y), placing_, wx, wz);
+            pickWorld(float(e.button.x), float(e.button.y), wx, wz);
             if (SDL_GetModState() & KMOD_SHIFT) {
                 // Shift: begin a drag — a whole line of these gets queued on
                 // release (a single shift-click is just a zero-length line).
@@ -1564,7 +1564,7 @@ public:
                    buildDrag_) {
             buildDrag_ = false;
             float ewx, ewz;
-            pickPlace(float(e.button.x), float(e.button.y), placing_, ewx, ewz);
+            pickWorld(float(e.button.x), float(e.button.y), ewx, ewz);
             placeBuildLine(bdX0_, bdZ0_, ewx, ewz);
             if (!(SDL_GetModState() & KMOD_SHIFT)) placing_ = nullptr;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
@@ -2963,14 +2963,18 @@ public:
         for (const DrawOp& op : drawOps_) {
             if (op.f) {
                 const auto& f = *op.f;
+                // Lift the decal onto the terrain relief just like a unit, so a mana
+                // deposit sits at the height its heightmap claims (and lodestones/units
+                // built on it line up) instead of the decal being flat.
+                float lfx = terrainLiftX(f.x, f.z) * zm0, lfy = terrainLift(f.x, f.z) * zm0;
                 if (f.shadow) {
-                    SDL_FRect sd{(f.x - mapView_.offX() - float(f.sxoff)) * zm0,
-                                 (f.z - mapView_.offY() - float(f.syoff)) * zm0,
+                    SDL_FRect sd{(f.x - mapView_.offX() - float(f.sxoff)) * zm0 - lfx,
+                                 (f.z - mapView_.offY() - float(f.syoff)) * zm0 - lfy,
                                  float(f.sw) * zm0, float(f.sh) * zm0};
                     SDL_RenderCopyF(ren_, f.shadow, nullptr, &sd);
                 }
-                SDL_FRect dst{(f.x - mapView_.offX() - float(f.xoff)) * zm0,
-                              (f.z - mapView_.offY() - float(f.yoff)) * zm0,
+                SDL_FRect dst{(f.x - mapView_.offX() - float(f.xoff)) * zm0 - lfx,
+                              (f.z - mapView_.offY() - float(f.yoff)) * zm0 - lfy,
                               float(f.w) * zm0, float(f.h) * zm0};
                 SDL_Texture* tex = f.tex;
                 if (f.frames && f.frames->size() > 1)
@@ -3071,7 +3075,7 @@ public:
         drawFog();
         if (buildDrag_ && placing_) {
             float mx, mz;
-            pickPlace(mouseX_, mouseY_, placing_, mx, mz);
+            pickWorld(mouseX_, mouseY_, mx, mz);
             for (auto& [x, z] : buildLinePositions(bdX0_, bdZ0_, mx, mz))
                 drawGhostAt(placing_, x, z);
         } else if (placing_) {
@@ -3676,12 +3680,9 @@ private:
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
-        // A building ghost sits on its footprint like the finished building -- never
-        // lift it onto the terrain relief (see uLiftY: a deposit's raised heightmap
-        // would float the ghost off its spot).
-        bool lift = !isStructure(type);
-        float ax = (x - mapView_.offX()) * zm - (lift ? terrainLiftX(x, z) : 0.0f) * zm;
-        float ay = (z - mapView_.offY()) * zm - (lift ? terrainLift(x, z) : 0.0f) * zm;
+        // The ghost lifts onto the relief exactly like the finished unit/building will.
+        float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
+        float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
         // Batch by texture (flush on change), like a live unit.
         triBatch_.clear();
         SDL_Texture* cur = nullptr;
@@ -4781,16 +4782,16 @@ private:
     float terrainLift(float wx, float wz) { return heightAbove(wx, wz) * kHeightScale_; }
     float terrainLiftX(float wx, float wz) { return heightAbove(wx, wz) * kHeightScaleX_; }
     // The terrain-relief lift is for MOBILE units standing on painted slopes. A
-    // building sits flat on its footprint, so it must never lift -- otherwise a
-    // structure on a cell with a raised heightmap (e.g. a mana deposit, whose
-    // heightmap runs 60-200 while the sand around it is 0) floats far off its
-    // base decal (which, being a feature, is drawn unlifted).
     // A "structure" (building) for render/build purposes = one that can't actually
     // move. NOTE: the FBI `canmove` flag is unreliable -- some buildings (the Keep,
     // arakeep) set canmove=1 with NO velocity -- so key off maxVel, not type->canMove.
     static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= 0.0f; }
-    float uLiftY(const tak::sim::Unit& u) { return isStructure(u.type) ? 0.0f : terrainLift(u.x, u.z); }
-    float uLiftX(const tak::sim::Unit& u) { return isStructure(u.type) ? 0.0f : terrainLiftX(u.x, u.z); }
+    // EVERYTHING on the map lifts onto the terrain relief by the same rule -- mobile
+    // units, buildings, AND the feature decals (mana deposits, trees) -- so a mana
+    // deposit sits at the height its heightmap claims and a lodestone/units built on
+    // it stack right on top instead of the decal being flat while units float above.
+    float uLiftY(const tak::sim::Unit& u) { return terrainLift(u.x, u.z); }
+    float uLiftX(const tak::sim::Unit& u) { return terrainLiftX(u.x, u.z); }
 
     // A unit's current render altitude (flyers rise to cruiseAlt; 0 for ground
     // units or units with no live anim). Used to lift a flyer's projectiles/effects
@@ -4832,24 +4833,6 @@ private:
     // *lifted* position is under the cursor, not the flat cell the raw screen->world
     // map would give (which lands on the low ground behind the wall). Returns the
     // FRONT-MOST surface (largest z) that projects to the click, like a depth pick.
-    // Screen->world for PLACING `type`. A building is NOT lifted onto the terrain
-    // relief (uLiftY: a structure renders flat on its footprint), so its ghost and
-    // green/red square project flat too; picking the lifted surface cell (pickWorld)
-    // would leave that flat square offset from the cursor on elevated ground. So a
-    // structure picks the flat cell under the cursor (square stays under the mouse
-    // and matches where the flat-rendered building lands); a liftable/conjured unit
-    // keeps the height-aware pick.
-    void pickPlace(float sx, float sy, const tak::sim::UnitType* type, float& wx, float& wz) {
-        if (type && isStructure(type)) {
-            float zm = mapView_.zoom();
-            const auto& m = mapView_.map();
-            wx = std::clamp(mapView_.offX() + sx / zm, 0.0f, float(std::max(1, m.width * 16 - 1)));
-            wz = std::clamp(mapView_.offY() + sy / zm, 0.0f, float(std::max(1, m.height * 16 - 1)));
-        } else {
-            pickWorld(sx, sy, wx, wz);
-        }
-    }
-
     void pickWorld(float sx, float sy, float& wx, float& wz) {
         float zm = mapView_.zoom();
         // Flat (no-lift) world position of the click.
@@ -6785,16 +6768,15 @@ private:
 
     void drawGhost() {
         float zm = mapView_.zoom();
-        // Pick the placement cell the same way the click handler does (flat for a
-        // building so the square stays under the cursor; height-aware for a unit),
-        // then draw the footprint at the matching screen position.
+        // Resolve the elevated cell drawn under the cursor and draw the footprint
+        // lifted exactly as the placed unit/building will be, so the square sits under
+        // the mouse and shows where the thing lands.
         float wx, wz;
-        pickPlace(mouseX_, mouseY_, placing_, wx, wz);
+        pickWorld(mouseX_, mouseY_, wx, wz);
         bool ok = world_.canPlace(placing_, wx, wz);
-        bool lift = !isStructure(placing_);
         float hw = float(placing_->footX) * 8 * zm, hh = float(placing_->footZ) * 8 * zm;
-        float cxp = (wx - mapView_.offX()) * zm - (lift ? terrainLiftX(wx, wz) : 0.0f) * zm;
-        float czp = (wz - mapView_.offY()) * zm - (lift ? terrainLift(wx, wz) : 0.0f) * zm;
+        float cxp = (wx - mapView_.offX()) * zm - terrainLiftX(wx, wz) * zm;
+        float czp = (wz - mapView_.offY()) * zm - terrainLift(wx, wz) * zm;
         SDL_FRect r{cxp - hw, czp - hh, hw * 2, hh * 2};
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren_, ok ? 90 : 230, ok ? 220 : 60, 70, 90);
