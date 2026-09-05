@@ -2537,13 +2537,13 @@ public:
                     a.walking = m;
                     a.vm->reset();
                     a.vm->setStatic(0, m ? 1 : 0);
-                    if (m) { a.vm->start("walk_legs") || a.vm->start("walk"); }
-                    else { a.vm->start("restore_legs") || a.vm->start("restore_x"); }
+                    if (m) { a.vm->start("walk") || a.vm->start("walk_legs"); }
+                    else { a.vm->start("restore_x") || a.vm->start("restore_legs"); }
                     a.firing = false;
                 } else if (m && a.vm->threadCount() == 0) {
                     // The walk script is single-pass; the engine re-invokes it
                     // each cycle while the unit keeps moving.
-                    a.vm->start("walk_legs") || a.vm->start("walk");
+                    a.vm->start("walk") || a.vm->start("walk_legs");
                 }
             }
             if (u.type && !u.type->canMove) {   // buildings: yard/production anims
@@ -4023,7 +4023,7 @@ private:
                 // baked frame is the same standing pose. Set it, exactly as the live
                 // update loop does, so the bake captures a real walk cycle.
                 tmp.vm->setStatic(0, 1);
-                tmp.vm->start("walk_legs") || tmp.vm->start("walk");
+                tmp.vm->start("walk") || tmp.vm->start("walk_legs");
             }
             else {
                 // Static buildings: run the COB constructor exactly as registerUnit
@@ -4041,7 +4041,7 @@ private:
         auto stepVm = [&](float dt) {
             tmp.vm->tick(dt);
             if (canMove && !canFly && tmp.vm->threadCount() == 0)
-                tmp.vm->start("walk_legs") || tmp.vm->start("walk");
+                tmp.vm->start("walk") || tmp.vm->start("walk_legs");
         };
         SDL_Texture* atlas = atlasFor(slot);
         // A page-allocation failure is transient (VRAM pressure) -- un-reserve the
