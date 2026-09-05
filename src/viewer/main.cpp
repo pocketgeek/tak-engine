@@ -916,12 +916,15 @@ public:
         return tak::sim::parseStartPositions(vfs_, mapPath_);
     }
 
-    GameView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& mapPath,
+    GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,
+             const std::string& installRoot, tak::hpi::OverridePolicy policy,
              bool demo, bool scenario, bool mission,
              bool bare, const std::string& side = "ara", const std::string& aiSide = "tar",
              bool crusades = false)
-        // (side_ initialized below before loadPanel uses it)
-        : ren_(ren), mapView_(ren, vfs, mapPath), vfs_(vfs),
+        // (side_ initialized below before loadPanel uses it; vfs_ must precede
+        //  mapView_ in the member list so the Compositor can borrow it)
+        : ren_(ren), vfs_(std::move(vfs)), mapView_(ren, vfs_, mapPath),
+          installRoot_(installRoot), policy_(policy),
           side_(side), mapPath_(mapPath), crusades_(crusades) {
         // Unit registry: MOVEINFO + units + canbuild (+ Crusades overlay first).
         // The VFS merges base + Iron Plague + community data into one namespace,
@@ -1681,15 +1684,17 @@ public:
         // Build the world through the SHARED setup so the server's referee sim and
         // every client produce a bit-identical world (and hash). Client-only bits
         // (colours, camera, local player, panel) stay here.
-        // The game's balance is the ROOM's (a lobby choice), which may differ
-        // from how this client was launched. Rebuild the registry to match so our
-        // world -- and hash -- agree with the server's referee. (Crusades only
-        // re-tunes stats/build trees; models/textures are shared and id-keyed, so
-        // they need no reload.)
+        // The game's balance AND override tier are the ROOM's (lobby choices), which
+        // may differ from how this client was launched. Remount to the room's tier
+        // (so gameplay overrides -- or their absence -- match the referee) and
+        // rebuild the registry, so our world and hash agree with the server's
+        // referee. remountPolicy already rebuilds the registry for the current
+        // crusades setting; handle a crusades-only change separately.
+        remountPolicy(room.opts.overridePolicy);
         if ((room.opts.crusades != 0) != crusades_) {
-            registry_ = tak::sim::TypeRegistry{};
-            tak::sim::setupRegistry(registry_, vfs_, room.opts.crusades != 0);
             crusades_ = room.opts.crusades != 0;
+            registry_ = tak::sim::TypeRegistry{};
+            tak::sim::setupRegistry(registry_, vfs_, crusades_);
         }
         tak::sim::MatchConfig cfg;
         cfg.vfs = &vfs_;
@@ -1815,8 +1820,11 @@ public:
 
     // ---- replay playback (.takrep) ----------------------------------------
     // Build the world from a recorded match config and feed it the bundle log.
-    void startReplay(const tak::sim::MatchConfig& cfg,
+    void startReplay(tak::sim::MatchConfig cfg,
                      std::vector<tak::net::Bundle> bundles) {
+        // Read through this view's own VFS (we own it), not a caller pointer.
+        cfg.vfs = &vfs_;
+        cfg.mapPath = mapPath_;
         auto spots = tak::sim::setupMatch(world_, registry_, cfg);
         replayBundles_ = std::move(bundles);
         replayMode_ = true;
@@ -1864,6 +1872,7 @@ public:
         if (st == S::Done) { if (netError_.empty()) netError_ = mp_->error(); return false; }
         if (st == S::Lobby && (autoMode == 1 || autoMode == 4)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
+            o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
             // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
             // slot can be an AI -- an all-AI game to watch.
             bool watch = autoMode == 1 && std::getenv("TAK_MP_WATCH");
@@ -1884,6 +1893,7 @@ public:
             if (!mp_->games().empty()) mp_->joinGame(mp_->games().front().id, "");
             else if (autoMode == 3 && mpListMs_ && SDL_GetTicks64() - mpFirstListMs_ > 800) {
                 tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
+            o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
                 mp_->createGame(mapId, "", mapId, o, mpCapacity());
             }
             if (!mpFirstListMs_) mpFirstListMs_ = SDL_GetTicks64();
@@ -1943,7 +1953,7 @@ public:
                 spectating_ = true;   // watch-only: no fog, no control, no resume
                 noFog_ = true;
             } else {
-                mp_->reportLoaded();
+                mp_->reportLoaded(gameDataHash());
                 writeResume(mp_->gameId(), mp_->resumeToken());
             }
             mpSetupDone_ = true;
@@ -1958,7 +1968,7 @@ public:
                 spectating_ = true;
                 noFog_ = true;
             } else {
-                mp_->reportLoaded();
+                mp_->reportLoaded(gameDataHash());
                 writeResume(mp_->gameId(), mp_->resumeToken());   // reconnect ticket
             }
             mpSetupDone_ = true;
@@ -4547,8 +4557,14 @@ private:
     }
 
     SDL_Renderer* ren_;
+    // vfs_ is declared BEFORE mapView_ so its Compositor can borrow it; it is owned
+    // here (not a reference) so a multiplayer client can REMOUNT to the room's
+    // override tier at game start -- move-assigning vfs_ keeps every borrowed
+    // pointer (MapView's Compositor) valid because the object itself is reused.
+    tak::hpi::Vfs vfs_;          // retail-root read-path (the only way we read files)
     MapView mapView_;
-    const tak::hpi::Vfs& vfs_;   // retail-root read-path (owned by main, outlives this)
+    std::string installRoot_;    // retail install dir (for remounting to a new tier)
+    tak::hpi::OverridePolicy policy_ = tak::hpi::OverridePolicy::Full;
     std::string mapPath_;        // VFS path to the map .tnt (start positions, siblings)
     // VFS read helpers -- the engine's only game-file access.
     std::vector<uint8_t> vread(const std::string& p) const { return vfs_.read(p); }
@@ -4562,6 +4578,22 @@ private:
         std::filesystem::path p = mapPath_; p.replace_extension(ext);
         return p.generic_string();
     }
+    // Remount the data set to a multiplayer room's override tier and rebuild the
+    // gameplay registry, so this client's sim reads the same gameplay data the
+    // referee does. Cosmetics already loaded stay (harmless local display).
+    void remountPolicy(uint8_t p) {
+        auto pol = tak::hpi::OverridePolicy(p <= 2 ? p : 2);
+        if (pol == policy_ || installRoot_.empty()) return;
+        policy_ = pol;
+        vfs_ = tak::hpi::mountRetailRoot(installRoot_, pol);
+        registry_ = tak::sim::TypeRegistry{};
+        tak::sim::setupRegistry(registry_, vfs_, crusades_);
+    }
+    // Fingerprint of the gameplay data THIS client will feed its sim (current tier).
+    uint64_t gameDataHash() const { return tak::hpi::gameplayHash(vfs_); }
+public:
+    uint8_t overridePolicy() const { return uint8_t(policy_); }
+private:
     bool crusades_ = false; // which balance registry_ currently holds
     std::string side_ = "ara";
     tak::sim::TypeRegistry registry_;
@@ -4636,6 +4668,7 @@ private:
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
+    uint8_t createOverride_ = 1;   // create-dialog override tier (default cosmetic)
     std::string mpMapId_;   // set from the launched map basename
     std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
     std::vector<std::pair<std::string, std::string>> chatLog_;
@@ -6106,9 +6139,17 @@ private:
         lbBtn(x, y, 150, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
               [this] { createCrusades_ = !createCrusades_; }); y += 34;
         lbBtn(x, y, 150, 26, createGods_ ? "GODS: ON" : "GODS: OFF", true,
-              [this] { createGods_ = !createGods_; }); y += 44;
+              [this] { createGods_ = !createGods_; }); y += 34;
+        // Override tier for the game: NONE (pure retail) / COSMETIC (art & sound
+        // may differ) / FULL (gameplay overrides allowed but every player must
+        // have the same ones). The host's own launch tier caps it (you can't offer
+        // FULL if you didn't mount your gameplay overrides).
+        static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
+        lbBtn(x, y, 210, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
+              [this] { createOverride_ = uint8_t((createOverride_ + 1) % 3); }); y += 44;
         lbBtn(x, y, 120, 30, "CREATE", !createName_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0; o.gods = createGods_ ? 1 : 0;
+            o.overridePolicy = createOverride_;
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity());
             lobbyScreen_ = LobbyScreen::Browser;
         });
@@ -6120,6 +6161,10 @@ private:
         float x = 40, y = 78;
         blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
         blockText(std::string("MAP  ") + room.mapId, x + winW - 320, y + 4, 1.8f, {180, 185, 195, 255});
+        // Override tier for this game (joiners adopt it; FULL needs matching gameplay files).
+        static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
+        blockText(std::string("OVERRIDES  ") + kTier[room.opts.overridePolicy & 3],
+                  x + winW - 320, y + 22, 1.5f, {150, 175, 150, 255});
         y += 34;
         bool host = (room.hostId == mp_->myClientId());
         // slot table
@@ -7078,6 +7123,7 @@ private:
 struct ReplayFile {
     std::string mapId;
     bool crusades = false;
+    uint8_t overridePolicy = 1;   // override tier the recorded game ran under
     tak::sim::MatchConfig cfg;
     std::vector<tak::net::Bundle> bundles;
 };
@@ -7094,10 +7140,11 @@ static bool loadReplayFile(const std::string& path, ReplayFile& out) {
     std::fclose(f);
     if (d.size() < 4 || d[0] != 'T' || d[1] != 'A' || d[2] != 'K' || d[3] != 'R') return false;
     tak::net::Reader r(d.data() + 4, d.size() - 4);
-    r.u32();                       // format version
+    uint32_t fmt = r.u32();        // format version
     r.u32();                       // protocol version
     out.mapId = r.str();
     uint8_t crusades = r.u8(); uint8_t gods = r.u8(); r.u8();
+    if (fmt >= 2) out.overridePolicy = r.u8();   // override tier the game ran under
     r.u32();                       // seed (setupMatch derives its own timing)
     uint8_t nslots = r.u8();
     out.crusades = crusades != 0;
@@ -7250,7 +7297,12 @@ int main(int argc, char** argv) {
     if (!serverHost.empty()) {
         mp = std::make_unique<tak::net::MpClient>();
         if (playerName.empty()) playerName = "player";
-        if (!vfs.empty()) mp->setDataHash(tak::hpi::gameplayHash(vfs));
+        // Hello carries the PURE-RETAIL gameplay fingerprint (no overrides), so the
+        // base game files are checked regardless of anyone's tier; the room's tier
+        // and its gameplay overrides are agreed later, at load.
+        if (!dataRoot.empty())
+            mp->setDataHash(tak::hpi::gameplayHash(
+                tak::hpi::mountRetailRoot(dataRoot, tak::hpi::OverridePolicy::None)));
         if (!mp->connect(serverHost, uint16_t(serverPort), playerName)) {
             std::fprintf(stderr, "server: %s\n", mp->error().c_str());
             return 1;
@@ -7293,10 +7345,12 @@ int main(int argc, char** argv) {
             }
             std::string mapPath = tak::hpi::findMap(vfs, rf.mapId);
             if (mapPath.empty()) { std::fprintf(stderr, "replay: map '%s' not found\n", rf.mapId.c_str()); return 1; }
-            rf.cfg.vfs = &vfs;
-            rf.cfg.mapPath = mapPath;
-            gameView = std::make_unique<GameView>(ren, vfs, mapPath, false, false,
-                                                  false, /*bare=*/true, "ara", "tar", rf.crusades);
+            // Replay under the tier the game was recorded at (startReplay rebinds the vfs).
+            auto rpol = tak::hpi::OverridePolicy(rf.overridePolicy <= 2 ? rf.overridePolicy : 2);
+            if (rpol != pol) vfs = tak::hpi::mountRetailRoot(dataRoot, rpol);
+            gameView = std::make_unique<GameView>(ren, std::move(vfs), mapPath, dataRoot, rpol,
+                                                  false, false, false, /*bare=*/true, "ara", "tar",
+                                                  rf.crusades);
             std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s\n", args[0].c_str(),
                          rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "");
             gameView->startReplay(rf.cfg, std::move(rf.bundles));
@@ -7309,7 +7363,7 @@ int main(int argc, char** argv) {
             if (mapPath.empty()) { std::fprintf(stderr, "map '%s' not found in %s\n", args[0].c_str(), dataRoot.c_str()); return 1; }
             // A multiplayer client builds the world from the server's GameStarting
             // later, so it constructs "bare" (no single-player 2-monarch spawn).
-            gameView = std::make_unique<GameView>(ren, vfs, mapPath, demo,
+            gameView = std::make_unique<GameView>(ren, std::move(vfs), mapPath, dataRoot, pol, demo,
                                                   scenario, missionFlag,
                                                   navy || amphib || firetest || facetest || mp,
                                                   side, aiSide, crusades);

@@ -75,6 +75,7 @@ static void readSlots(Reader& r, RoomView& v) {
     v.name = r.str();
     v.mapId = r.str();
     v.opts.crusades = r.u8(); v.opts.gods = r.u8(); v.opts.forfeitSelfDestruct = r.u8();
+    v.opts.overridePolicy = r.u8();
     v.hostId = r.u32();
     for (int i = 0; i < kMaxSlots; ++i) {
         SlotInfo& s = v.slots[i];
@@ -200,7 +201,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
                           const std::string& mapId, const GameOptions& o, uint8_t capacity,
                           bool spectate) {
     Writer w; w.str(name); w.str(password); w.str(mapId);
-    w.u8(o.crusades); w.u8(o.gods); w.u8(o.forfeitSelfDestruct);
+    w.u8(o.crusades); w.u8(o.gods); w.u8(o.forfeitSelfDestruct); w.u8(o.overridePolicy);
     w.u8(capacity);   // map's start-position count (the server has no map data)
     w.u8(spectate ? 1 : 0);   // host watches, taking no slot
     send(Msg::CreateGame, w);
@@ -231,7 +232,7 @@ void MpClient::startGame() { send(Msg::StartGame); }
 
 // ---- game play ------------------------------------------------------------
 
-void MpClient::reportLoaded() { send(Msg::Loaded); }
+void MpClient::reportLoaded(uint64_t dataHash) { Writer w; w.u64(dataHash); send(Msg::Loaded, w); }
 
 void MpClient::rejoin(uint32_t gameId, uint64_t token) {
     expectingRejoin_ = true;

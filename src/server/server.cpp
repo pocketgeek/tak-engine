@@ -134,21 +134,18 @@ public:
     void setReplayDir(const std::string& d) { replayDir_ = d; }
     Server(uint16_t port, const std::string& dataRoot) : port_(port), dataRoot_(dataRoot) {
         if (!dataRoot_.empty()) {
-            // The referee reads the retail install directly. Full overrides so a
-            // shared-install test agrees with clients; Phase 3 negotiates the policy.
-            vfs_ = tak::hpi::mountRetailRoot(dataRoot_, tak::hpi::OverridePolicy::Full);
-            tak::sim::setupRegistry(registry_, vfs_, false);
-            if (!vfs_.list("unitscb").empty()) {
-                tak::sim::setupRegistry(registryCb_, vfs_, true);
-                haveCb_ = true;
-            }
-            aiProfile_ = tak::ai::loadProfile(vfs_);
-            dataHash_ = tak::hpi::gameplayHash(vfs_);
+            // The referee reads the retail install directly, per the ROOM's override
+            // tier. Build the pure-retail set eagerly (the connection-level Hello
+            // check + the common none/cosmetic game); the Full set is built lazily
+            // the first time a Full game starts.
+            buildDataSet(retail_, tak::hpi::OverridePolicy::None);
+            aiProfile_ = tak::ai::loadProfile(retail_.vfs);
+            haveCb_ = retail_.haveCb;
             haveData_ = true;
             std::fprintf(stderr, "takserver: loaded game data from %s (referee sim + AI enabled%s), "
-                         "gameplay hash %016llx\n",
+                         "retail gameplay hash %016llx\n",
                          dataRoot_.c_str(), haveCb_ ? ", +Crusades" : "",
-                         (unsigned long long)dataHash_);
+                         (unsigned long long)retail_.hash);
         }
     }
     int run();
@@ -156,15 +153,40 @@ public:
 private:
     uint16_t port_;
     std::string dataRoot_;
-    tak::hpi::Vfs vfs_;
-    uint64_t dataHash_ = 0;             // referee's gameplay-data fingerprint (--data)
-    uint64_t relayHash_ = 0;            // pure-relay: the first client's hash (peers must match)
+    // A mounted data set at one override tier: the VFS, its base + Crusades
+    // registries, and the gameplay-data fingerprint peers are held to.
+    struct DataSet {
+        tak::hpi::Vfs vfs;
+        tak::sim::TypeRegistry reg, regCb;
+        bool haveCb = false;
+        uint64_t hash = 0;
+        bool built = false;
+    };
+    DataSet retail_, full_;            // none/cosmetic use retail_; full uses full_
+    uint64_t relayHash_ = 0;           // pure-relay: the first client's hash (peers must match)
     bool relayHashSet_ = false;
     bool haveData_ = false, haveCb_ = false;
-    tak::sim::TypeRegistry registry_, registryCb_;
     tak::ai::Profile aiProfile_;
-    const tak::sim::TypeRegistry& registryFor(bool crusades) const {
-        return (crusades && haveCb_) ? registryCb_ : registry_;
+    void buildDataSet(DataSet& ds, tak::hpi::OverridePolicy pol) {
+        ds.vfs = tak::hpi::mountRetailRoot(dataRoot_, pol);
+        tak::sim::setupRegistry(ds.reg, ds.vfs, false);
+        if (!ds.vfs.list("unitscb").empty()) {
+            tak::sim::setupRegistry(ds.regCb, ds.vfs, true);
+            ds.haveCb = true;
+        }
+        ds.hash = tak::hpi::gameplayHash(ds.vfs);
+        ds.built = true;
+    }
+    // The data set a game runs under, by its override policy (0/1 = retail, 2 = full).
+    DataSet& dataFor(uint8_t policy) {
+        DataSet& ds = (policy == 2) ? full_ : retail_;
+        if (!ds.built) buildDataSet(ds, policy == 2 ? tak::hpi::OverridePolicy::Full
+                                                    : tak::hpi::OverridePolicy::None);
+        return ds;
+    }
+    const tak::sim::TypeRegistry& registryFor(bool crusades, uint8_t policy) {
+        DataSet& ds = dataFor(policy);
+        return (crusades && ds.haveCb) ? ds.regCb : ds.reg;
     }
     std::string replayDir_;
     int listenFd_ = -1;
@@ -205,10 +227,11 @@ void Server::writeReplay(Room& r) {
     // seed) + every tick bundle. A viewer can rebuild the world and play it back.
     Writer w;
     for (char ch : {'T', 'A', 'K', 'R'}) w.u8(uint8_t(ch));
-    w.u32(1);                 // replay format version
+    w.u32(2);                 // replay format version (2: + overridePolicy byte)
     w.u32(kNetVersion);
     w.str(r.mapId);
     w.u8(r.opts.crusades); w.u8(r.opts.gods); w.u8(r.opts.forfeitSelfDestruct);
+    w.u8(r.opts.overridePolicy);
     w.u32(0x7a6b0000u + r.id);
     w.u8(uint8_t(kMaxSlots));
     for (int i = 0; i < kMaxSlots; ++i) {
@@ -252,12 +275,15 @@ void Server::handshake(Client& c, const Frame& f) {
     // data (verifies the retail files are unmodified, and that Full-override players
     // share the same overrides). With --data we hold the canonical referee hash;
     // as a pure relay we adopt the first client's and hold the rest to it.
-    uint64_t want = haveData_ ? dataHash_ : (relayHashSet_ ? relayHash_ : dataHash);
+    // The Hello hash is the client's PURE-RETAIL gameplay fingerprint (mounted with
+    // no overrides), so the base game files must match regardless of anyone's
+    // override tier. (Full-tier gameplay overrides are checked per game at Loaded.)
+    uint64_t want = haveData_ ? retail_.hash : (relayHashSet_ ? relayHash_ : dataHash);
     if (dataHash != want) {
         char msg[128];
         std::snprintf(msg, sizeof msg,
-                      "game data mismatch (server %016llx, you %016llx) -- your retail "
-                      "data or overrides differ", (unsigned long long)want,
+                      "retail game data mismatch (server %016llx, you %016llx) -- your "
+                      "base game files differ", (unsigned long long)want,
                       (unsigned long long)dataHash);
         sendReject(c, msg);
         c.conn.fail("datahash");
@@ -295,6 +321,7 @@ void Server::writeSlots(Writer& w, Room& r) {
     w.str(r.name);
     w.str(r.mapId);
     w.u8(r.opts.crusades); w.u8(r.opts.gods); w.u8(r.opts.forfeitSelfDestruct);
+    w.u8(r.opts.overridePolicy);
     w.u32(r.hostId);
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = r.slots[i];
@@ -343,6 +370,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             Reader r(f.payload.data(), f.payload.size());
             std::string name = r.str(), pass = r.str(), mapId = r.str();
             GameOptions o; o.crusades = r.u8(); o.gods = r.u8(); o.forfeitSelfDestruct = r.u8();
+            o.overridePolicy = r.u8();
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             if (!r.ok) return;
@@ -540,16 +568,20 @@ void Server::tryStart(Client& c) {
     for (int i = 0; i < kMaxSlots; ++i) r->startSlots[i] = r->slots[i];   // for the replay
     // Build the referee sim (and AI controllers) if we have game data. The world
     // is built by the SAME setupMatch the clients use, so its hash is canonical.
-    std::string mapPath = haveData_ ? tak::hpi::findMap(vfs_, r->mapId) : std::string();
+    // Everything the referee reads comes from the data set for THIS game's override
+    // tier (retail for none/cosmetic, full for full), so the referee's sim matches
+    // the clients that adopted the same tier.
+    DataSet* ds = haveData_ ? &dataFor(r->opts.overridePolicy) : nullptr;
+    std::string mapPath = ds ? tak::hpi::findMap(ds->vfs, r->mapId) : std::string();
     if (haveData_ && mapPath.empty())
         std::fprintf(stderr, "takserver: map '%s' not found in data; no referee sim\n",
                      r->mapId.c_str());
-    if (haveData_ && !mapPath.empty()) {
+    if (ds && !mapPath.empty()) {
         int maxSlot = 0;
         for (int i = 0; i < kMaxSlots; ++i)
             if (r->slots[i].type == 1 || r->slots[i].type == 2) maxSlot = i;
         tak::sim::MatchConfig cfg;
-        cfg.vfs = &vfs_;
+        cfg.vfs = &ds->vfs;
         cfg.mapPath = mapPath;
         cfg.gods = r->opts.gods != 0;
         cfg.slots.resize(size_t(maxSlot + 1));
@@ -557,7 +589,7 @@ void Server::tryStart(Client& c) {
             const auto& s = r->slots[i];
             cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team};
         }
-        r->reg = &registryFor(r->opts.crusades != 0);
+        r->reg = &registryFor(r->opts.crusades != 0, r->opts.overridePolicy);
         r->ref = std::make_unique<tak::sim::World>();
         r->ref->setVisPlayer(-1);   // headless referee: no fog pass
         tak::sim::setupMatch(*r->ref, *r->reg, cfg);
@@ -630,9 +662,33 @@ void Server::gameMsg(Client& c, const Frame& f) {
             break;
         }
         case Msg::StartGame: tryStart(c); break;
-        case Msg::Loaded:
+        case Msg::Loaded: {
+            // The client reports its gameplay-data fingerprint at the room's override
+            // tier. With referee data we hold it to the tier's canonical hash, so a
+            // Full-tier player missing (or differing on) a gameplay override is caught
+            // here, before the first tick, instead of desyncing mid-game.
+            Reader rd(f.payload.data(), f.payload.size());
+            uint64_t clientHash = rd.u64();
+            if (haveData_ && rd.ok && clientHash != 0) {
+                uint64_t want = dataFor(r->opts.overridePolicy).hash;
+                if (clientHash != want) {
+                    char msg[176];
+                    std::snprintf(msg, sizeof msg,
+                        "gameplay-override mismatch (tier %d: server %016llx, you %016llx) -- "
+                        "you don't have the same gameplay overrides as the host",
+                        int(r->opts.overridePolicy), (unsigned long long)want,
+                        (unsigned long long)clientHash);
+                    sendReject(c, msg);
+                    c.conn.fail("gamedatahash");
+                    std::fprintf(stderr, "game %u: client %u rejected at load: %016llx != %016llx (tier %d)\n",
+                        r->id, c.id, (unsigned long long)clientHash, (unsigned long long)want,
+                        int(r->opts.overridePolicy));
+                    return;
+                }
+            }
             c.loaded = true;
             break;
+        }
         case Msg::LeaveGame: leaveRoom(c, "left"); break;
         case Msg::Chat: {
             Reader rd(f.payload.data(), f.payload.size());
