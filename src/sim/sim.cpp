@@ -1312,7 +1312,7 @@ void World::assist(int builderId, int siteId) {
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove)
         return;
     if (!site || !site->alive() || !site->underConstruction ||
-        site->player != b->player)
+        !allied(site->player, b->player))
         return;
     // Latch onto the existing site; tickConstruction walks there and resumes at
     // this builder's rate (buildTime / workerTime) from the site's current HP.
