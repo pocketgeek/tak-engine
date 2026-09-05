@@ -67,8 +67,8 @@ void screenshot(SDL_Renderer* ren, int w, int h, const std::string& path) {
 
 class MapView {
 public:
-    MapView(SDL_Renderer* ren, const std::string& tntPath, const std::string& terrainDir)
-        : ren_(ren), map_(tak::tnt::Map::load(tntPath)), comp_(terrainDir) {}
+    MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& mapPath)
+        : ren_(ren), map_(tak::tnt::Map::load(vfs.read(mapPath), mapPath)), comp_(vfs) {}
 
     void input(const SDL_Event& e) {
         if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK)) {
@@ -430,17 +430,22 @@ private:
 // 11025 Hz 8-bit mono). Failing to open audio is non-fatal: play() no-ops.
 class SoundBank {
 public:
-    void init(const std::string& soundsDir, bool verbose) {
-        verbose_ = verbose;
-        // A missing sounds dir must NOT skip audio init (music uses the same
+    const tak::hpi::Vfs* vfs_ = nullptr;   // runtime read-path (owned by main)
+
+    void init(const tak::hpi::Vfs& vfs) {
+        vfs_ = &vfs;
+        // Index the sounds/ namespace by stem (user overrides already win via the
+        // VFS). A missing sounds dir must NOT skip audio init (music shares the
         // device); just index whatever's there.
-        try {
-            for (const auto& e : std::filesystem::directory_iterator(soundsDir)) {
-                std::string stem = e.path().stem().string();
-                std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
-                index_[stem] = e.path().string();
-            }
-        } catch (const std::exception&) { /* no sounds dir -- music still plays */ }
+        for (const std::string& path : vfs.list("sounds")) {
+            std::filesystem::path fp(path);
+            std::string ext = fp.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext != ".wav") continue;
+            std::string stem = fp.stem().string();
+            std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
+            index_[stem] = path;
+        }
 
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
         // Auto-detect the device's channel layout so positional audio can pan
@@ -464,33 +469,9 @@ public:
         if (dev_) SDL_PauseAudioDevice(dev_, 0);
     }
 
-    // Override built-in sounds with WAVs from an HPI archive (e.g. a
-    // click.hpi that replaces the faction order tones). Decoded straight
-    // into the cache so they win over the on-disk originals.
-    void loadHpiOverrides(const std::filesystem::path& hpiPath) {
-        if (!std::filesystem::exists(hpiPath)) return;
-        try {
-            tak::hpi::Archive ar(hpiPath);
-            int n = 0;
-            for (const auto& e : ar.entries()) {
-                if (e.isDirectory) continue;
-                std::string ext = std::filesystem::path(e.path).extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                if (ext != ".wav") continue;
-                std::string stem = std::filesystem::path(e.path).stem().string();
-                std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
-                auto bytes = ar.read(e);
-                if (auto pcm = decodeWav(bytes.data(), bytes.size())) {
-                    cache_[stem] = std::move(*pcm);
-                    ++n;
-                }
-            }
-            std::fprintf(stderr, "sound overrides: %d from %s\n", n,
-                         hpiPath.string().c_str());
-        } catch (const std::exception& ex) {
-            std::fprintf(stderr, "sound override load: %s\n", ex.what());
-        }
-    }
+    // (User sound overrides -- e.g. overrides/click.hpi replacing the faction
+    // order tones -- now arrive through the VFS's overrides layer, which wins the
+    // sounds/ namespace automatically, so no separate override loader is needed.)
 
     bool has(const std::string& name) const {
         std::string n = name;
@@ -596,10 +577,9 @@ private:
     const std::vector<int16_t>* load(const std::string& key, const std::string& path) {
         auto it = cache_.find(key);
         if (it != cache_.end()) return &it->second;
-        std::ifstream f(path, std::ios::binary);
-        if (!f) return nullptr;
-        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)),
-                                   std::istreambuf_iterator<char>());
+        if (!vfs_) return nullptr;
+        std::vector<uint8_t> bytes;
+        try { bytes = vfs_->read(path); } catch (const std::exception&) { return nullptr; }
         auto pcm = decodeWav(bytes.data(), bytes.size());
         if (!pcm) return nullptr;
         return &cache_.emplace(key, std::move(*pcm)).first->second;
@@ -641,25 +621,14 @@ public:
     // Begin playing a shuffled playlist of the given track numbers (a
     // faction's tracks, per sidedata.tdf). Empty = all 20. `dataRoot` is
     // the extracted data dir; music may live there or in the game install.
-    void startMusic(const std::string& dataRoot, const std::vector<int>& tracks) {
-        const std::string cands[] = {
-            dataRoot + "/../Music", dataRoot + "/../music",
-            dataRoot + "/../../game/Music", dataRoot + "/../../game/music",
-            dataRoot + "/Music",
-        };
-        std::string dir;
-        for (const auto& c : cands)
-            if (std::filesystem::is_directory(c)) { dir = c; break; }
-        if (dir.empty()) {
-            std::fprintf(stderr, "music: no Music/ directory found\n");
-            return;
-        }
+    void startMusic(const tak::hpi::Vfs& vfs, const std::vector<int>& tracks) {
+        vfs_ = &vfs;
         std::vector<int> want = tracks;
         if (want.empty())
             for (int i = 1; i <= 20; ++i) want.push_back(i);
         for (int n : want) {
-            std::string path = dir + "/track" + std::to_string(n) + ".wav";
-            if (std::filesystem::exists(path)) playlist_.push_back(path);
+            std::string path = "music/track" + std::to_string(n) + ".wav";
+            if (vfs.has(path)) playlist_.push_back(path);
         }
         std::fprintf(stderr, "music: %zu faction tracks, audio=%s\n", playlist_.size(),
                      dev_ ? "yes" : "NO DEVICE");
@@ -685,7 +654,10 @@ private:
         SDL_AudioSpec spec{};
         Uint8* buf = nullptr;
         Uint32 len = 0;
-        if (!SDL_LoadWAV(playlist_[idx].c_str(), &spec, &buf, &len)) {
+        std::vector<uint8_t> raw;
+        if (vfs_) { try { raw = vfs_->read(playlist_[idx]); } catch (const std::exception&) {} }
+        SDL_RWops* rw = raw.empty() ? nullptr : SDL_RWFromConstMem(raw.data(), int(raw.size()));
+        if (!rw || !SDL_LoadWAV_RW(rw, 1, &spec, &buf, &len)) {
             std::fprintf(stderr, "music: LoadWAV failed: %s\n", SDL_GetError());
             return;
         }
@@ -735,12 +707,13 @@ private:
 // candidate WAV names.
 class SoundClasses {
 public:
-    void load(const std::string& dir) {
+    void load(const tak::hpi::Vfs& vfs) {
         try {
-            for (const auto& e : std::filesystem::directory_iterator(dir)) {
-                if (e.path().extension() != ".tdf") continue;
+            for (const std::string& path : vfs.list("gamedata/soundclasses")) {
+                if (std::filesystem::path(path).extension() != ".tdf") continue;
                 try {
-                    auto root = tak::tdf::parse(e.path());
+                    auto sb = vfs.read(path);
+                    auto root = tak::tdf::parseText(std::string(sb.begin(), sb.end()), path);
                     for (const auto& clsName : root.childOrder) {
                         auto& cls = classes_[clsName];
                         const auto& node = root.children.at(clsName);
@@ -773,11 +746,12 @@ private:
 class Font {
 public:
     Font() = default;
-    Font(SDL_Renderer* ren, const std::filesystem::path& gafPath) {
-        auto pcx = gafPath;
+    Font(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& gafPath) {
+        std::filesystem::path pcx = gafPath;
         pcx.replace_extension(".pcx");
-        auto pal = tak::gaf::Palette::load(pcx);
-        auto seqs = tak::gaf::load(gafPath, pal);
+        auto pal = tak::gaf::Palette::fromBytes(vfs.read(pcx.generic_string()),
+                                                pcx.generic_string());
+        auto seqs = tak::gaf::load(vfs.read(gafPath), pal, -1, gafPath);
         if (seqs.empty()) return;
         auto& frames = seqs[0].frames;
         for (size_t i = 0; i < frames.size() && i < 256; ++i) {
@@ -935,91 +909,46 @@ public:
         return it != kits.end() ? it->second : kits.at("ara");
     }
 
-    // Player start positions from the map's sibling .ota, in world pixels,
-    // ordered StartPos1, StartPos2, …. OTA coordinates are in 16px cells.
-    static std::vector<std::pair<float, float>> parseStartPositions(
-        const std::string& tntPath) {
-        std::vector<std::pair<float, float>> out;
-        std::filesystem::path ota = tntPath;
-        ota.replace_extension(".ota");
-        if (!std::filesystem::exists(ota)) return out;
-        try {
-            auto root = tak::tdf::parse(ota);
-            const auto* gh = root.child("globalheader");
-            const auto* md = gh ? gh->child("map data") : nullptr;
-            const auto* sp = md ? md->child("specials") : nullptr;
-            if (!sp) return out;
-            std::map<int, std::pair<float, float>> byIndex;
-            for (const auto& name : sp->childOrder) {
-                const auto* s = sp->child(name);
-                if (!s) continue;
-                std::string what = s->valueOr("specialwhat", "");
-                if (what.rfind("StartPos", 0) != 0 &&
-                    what.rfind("startpos", 0) != 0)
-                    continue;
-                int n = std::atoi(what.c_str() + 8);
-                if (n <= 0) continue;
-                byIndex[n] = {float(s->numberOr("xpos", 0) * 16),
-                              float(s->numberOr("zpos", 0) * 16)};
-            }
-            for (auto& [n, pos] : byIndex) out.push_back(pos);
-        } catch (const std::exception&) {}
-        return out;
+    // Player start positions from the current map's sibling .ota, in world pixels,
+    // ordered StartPos1, StartPos2, …. Delegates to the shared sim helper so the
+    // client and the server's referee derive identical positions.
+    std::vector<std::pair<float, float>> parseStartPositions() const {
+        return tak::sim::parseStartPositions(vfs_, mapPath_);
     }
 
-    GameView(SDL_Renderer* ren, const std::string& tntPath, const std::string& terrainDir,
-             const std::string& dataRoot, bool demo, bool scenario, bool mission,
+    GameView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& mapPath,
+             bool demo, bool scenario, bool mission,
              bool bare, const std::string& side = "ara", const std::string& aiSide = "tar",
              bool crusades = false)
         // (side_ initialized below before loadPanel uses it)
-        : ren_(ren), mapView_(ren, tntPath, terrainDir), dataRoot_(dataRoot),
-          side_(side), tntPath_(tntPath), crusades_(crusades) {
-        registry_.loadMoveInfo(dataRoot_ + "/gamedata/moveinfo.tdf");
-        // God economy timing (gamedata/Gods.tdf). TAK_GODTIME overrides the
+        : ren_(ren), mapView_(ren, vfs, mapPath), vfs_(vfs),
+          side_(side), mapPath_(mapPath), crusades_(crusades) {
+        // Unit registry: MOVEINFO + units + canbuild (+ Crusades overlay first).
+        // The VFS merges base + Iron Plague + community data into one namespace,
+        // precedence resolved by the retail newest-date rule.
+        tak::sim::setupRegistry(registry_, vfs_, crusades_);
+        if (crusades_)
+            std::fprintf(stderr, "balance: Crusades (unitscb/canbuildcb)%s\n",
+                         vfs_.list("unitscb").empty() ? " -- NOT FOUND" : "");
+        // God economy timing (gamedata/gods.tdf). TAK_GODTIME overrides the
         // appear time (seconds) for testing; otherwise use AppearTimeMin minutes.
         try {
-            auto g = tak::tdf::parse(dataRoot_ + "/gamedata/gods.tdf");
+            auto g = vtdf("gamedata/gods.tdf");
             if (const auto* tm = g.child("TIMING")) {
                 float appear = float(tm->numberOr("AppearTimeMin", 30.0)) * 60.0f;
                 if (const char* e = getenv("TAK_GODTIME")) appear = std::stof(e);
                 world_.enableGods(appear);
             }
         } catch (const std::exception&) {}
-        // Crusades balance: the final patch shipped alternate unit stats and
-        // build menus (units/->UnitsCB, canbuild/->CanBuildCB in the retail
-        // engine) used for ranked "Darien Crusades" play. Load the CB dirs FIRST
-        // so their versions win (loadDir/loadBuildTree are first-definition-wins);
-        // the base dirs then fill in units the CB set left unchanged.
-        if (crusades) {
-            std::string ucb = dataRoot_ + "/unitscb", ccb = dataRoot_ + "/canbuildcb";
-            if (std::filesystem::is_directory(ucb)) registry_.loadDir(ucb);
-            if (std::filesystem::is_directory(ccb)) registry_.loadBuildTree(ccb);
-            std::fprintf(stderr, "balance: Crusades (unitscb/canbuildcb)%s\n",
-                         std::filesystem::is_directory(ucb) ? "" : " -- NOT FOUND");
-        }
-        registry_.loadDir(dataRoot_ + "/units");
-        registry_.loadBuildTree(dataRoot_ + "/canbuild");
-        ipRoot_ = dataRoot_ + "/../IPData";
-        if (std::filesystem::exists(ipRoot_ + "/units")) {
-            registry_.loadDir(ipRoot_ + "/units");
-            if (std::filesystem::exists(ipRoot_ + "/canbuild"))
-                registry_.loadBuildTree(ipRoot_ + "/canbuild");
-        } else {
-            ipRoot_.clear();
-        }
-        loadTextures(dataRoot_ + "/textures", dataRoot_ + "/palettes/ara_textures.pcx");
-        if (!ipRoot_.empty() && std::filesystem::exists(ipRoot_ + "/textures"))
-            loadTextures(ipRoot_ + "/textures", ipRoot_ + "/palettes/cre_textures.pcx");
+        loadTextures();
         mapView_.setZoom(0.9f);
         try {
-            hudFont_ = Font(ren_, dataRoot_ + "/fonts/bodfontbody.gaf");
-            bigFont_ = Font(ren_, dataRoot_ + "/fonts/font48.gaf");
+            hudFont_ = Font(ren_, vfs_, "fonts/bodfontbody.gaf");
+            bigFont_ = Font(ren_, vfs_, "fonts/font48.gaf");
             // A plain, legible font for the HUD stat readouts.
-            try { statFont_ = Font(ren_, dataRoot_ +
-                                   "/fonts/b_times new roman (100b).gaf"); }
+            try { statFont_ = Font(ren_, vfs_, "fonts/b_times new roman (100b).gaf"); }
             catch (const std::exception&) {
-                try { statFont_ = Font(ren_, dataRoot_ +
-                                       "/fonts/ig_times new roman (100).gaf"); }
+                try { statFont_ = Font(ren_, vfs_, "fonts/ig_times new roman (100).gaf"); }
                 catch (const std::exception&) {}
             }
         } catch (const std::exception& e) {
@@ -1027,30 +956,16 @@ public:
         }
         loadOrderButtons();
         loadBuildFx();
-        // Sounds live at <data>/sounds in a merged tree, or ../english/Sounds in
-        // the old per-archive layout.
-        std::string soundsDir = dataRoot_ + "/sounds";
-        if (!std::filesystem::exists(soundsDir))
-            soundsDir = dataRoot_ + "/../english/Sounds";
-        sounds_.init(soundsDir, false);
-        // Bundled sound override (repo overrides/), then any user override
-        // archives dropped next to the data or at the working dir.
-        for (const std::string cand : {std::string("overrides/click.hpi"),
-                                       dataRoot_ + "/../../overrides/click.hpi",
-                                       dataRoot_ + "/click.hpi",
-                                       std::string("click.hpi")})
-            if (std::filesystem::exists(cand)) { sounds_.loadHpiOverrides(cand); break; }
-        sounds_.startMusic(dataRoot_, factionMusicTracks(side_));
-        soundClasses_.load(dataRoot_ + "/gamedata/soundclasses");
+        sounds_.init(vfs_);
+        sounds_.startMusic(vfs_, factionMusicTracks(side_));
+        soundClasses_.load(vfs_);
         loadPanel(side_);
 
         if (mission) {
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
                               mapView_.map().height, mapView_.map().seaLevel);
-            std::filesystem::path otaPath = tntPath;
-            otaPath.replace_extension(".ota");
             try {
-                auto ota = tak::tdf::parse(otaPath);
+                auto ota = vtdf(mapSibling(".ota"));
                 const auto* gh = ota.child("globalheader");
                 const auto* md = gh ? gh->child("map data") : nullptr;
                 const auto* units = md ? md->child("units") : nullptr;
@@ -1092,11 +1007,8 @@ public:
             loadFeatures();
             // Mission scripts: run the authentic COB event handlers.
             try {
-                std::filesystem::path cobPath = tntPath;
-                cobPath.replace_extension(".cob");
-                std::filesystem::path tdfPath = tntPath;
-                tdfPath.replace_extension(".tdf");
-                auto roster = tak::tdf::parse(tdfPath);
+                std::string cobPath = mapSibling(".cob");
+                auto roster = vtdf(mapSibling(".tdf"));
                 for (const auto& name : roster.childOrder) {
                     std::string n = name;
                     std::transform(n.begin(), n.end(), n.begin(), ::tolower);
@@ -1104,7 +1016,7 @@ public:
                     if (n == "verat" || n == "araat" || n == "tarat" || n == "zonat")
                         missionTowerIdx_ = int(missionRoster_.size()) - 1;
                 }
-                missionVm_ = std::make_unique<tak::cob::Vm>(tak::cob::load(cobPath));
+                missionVm_ = std::make_unique<tak::cob::Vm>(tak::cob::load(vread(cobPath), cobPath));
                 missionVm_->onMapCommand = [this](int sub, const std::vector<int32_t>& a)
                     -> int32_t { return mapCommand(sub, a); };
                 missionVm_->onGet = [this](int32_t valId, const std::vector<int32_t>& a)
@@ -1126,9 +1038,9 @@ public:
                 };
                 missionVm_->start("Start");
                 std::printf("mission scripts: running\n");
-                std::filesystem::path txtPath = tntPath;
-                txtPath.replace_extension(".txt");
-                std::ifstream bf(txtPath);
+                std::vector<uint8_t> tb;
+                if (vhas(mapSibling(".txt"))) tb = vread(mapSibling(".txt"));
+                std::istringstream bf(std::string(tb.begin(), tb.end()));
                 std::string line;
                 while (std::getline(bf, line) && briefing_.size() < 8) {
                     std::string clean;
@@ -1160,10 +1072,9 @@ public:
         if (scenario) {
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
                               mapView_.map().height, mapView_.map().seaLevel);
-            std::filesystem::path crtPath = tntPath;
-            crtPath.replace_extension(".crt");
-            if (!std::filesystem::exists(crtPath)) crtPath.replace_extension(".CRT");
-            auto placements = tak::crt::load(crtPath);
+            std::string crtPath = mapSibling(".crt");
+            auto placements = vhas(crtPath) ? tak::crt::load(vread(crtPath))
+                                            : std::vector<tak::crt::Placement>{};
             std::printf("scenario: %zu placements\n", placements.size());
             float cx = 0, cz = 0;
             int n = 0;
@@ -1182,7 +1093,8 @@ public:
 
             // Skirmish victory rule from the map's trigger section: a scoring
             // unit type, a scoring region, and a time limit.
-            auto trig = tak::crt::loadTriggers(crtPath);
+            auto trig = vhas(crtPath) ? tak::crt::loadTriggers(vread(crtPath))
+                                      : tak::crt::Triggers{};
             // Scoring rule comes from an op-13 record (score-count of a unit
             // type in a region); the time limit is the first op-1 timer that
             // follows it. Maps without op 13 (pure last-alive arenas) get no
@@ -1292,7 +1204,7 @@ public:
         // Each side starts with only its Monarch, dropped on the map's real
         // start positions (from the .ota). Pick the two furthest-apart spots
         // so the player and the AI begin on opposite sides.
-        auto starts = parseStartPositions(tntPath);
+        auto starts = parseStartPositions();
         float px = cx - 260, pz = cz + 30;   // fallbacks near map center
         float ax = cx + 300, az = cz + 30;
         if (starts.size() >= 2) {
@@ -1440,7 +1352,7 @@ public:
     // The map's player capacity = its start-position count (2..8). The server has
     // no map data, so a creating client tells it how many slots the map supports.
     uint8_t mpCapacity() const {
-        int n = int(parseStartPositions(tntPath_).size());
+        int n = int(parseStartPositions().size());
         return uint8_t(std::clamp(n < 2 ? 2 : n, 2, tak::net::kMaxSlots));
     }
 
@@ -1776,12 +1688,12 @@ public:
         // they need no reload.)
         if ((room.opts.crusades != 0) != crusades_) {
             registry_ = tak::sim::TypeRegistry{};
-            tak::sim::setupRegistry(registry_, dataRoot_, room.opts.crusades != 0);
+            tak::sim::setupRegistry(registry_, vfs_, room.opts.crusades != 0);
             crusades_ = room.opts.crusades != 0;
         }
         tak::sim::MatchConfig cfg;
-        cfg.tntPath = tntPath_;
-        cfg.dataRoot = dataRoot_;
+        cfg.vfs = &vfs_;
+        cfg.mapPath = mapPath_;
         cfg.gods = room.opts.gods != 0;
         cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
@@ -2067,7 +1979,7 @@ public:
     tak::sim::World& worldRef() { return world_; }
     void selectOnly(int id) { if (spectating_) return; selection_.clear(); selection_.push_back(id); }
     size_t menuSize(const std::string& id) { return registry_.buildable(id).size(); }
-    bool hasIP() const { return !ipRoot_.empty(); }
+    bool hasIP() const { return vfs_.has("units/cresage.fbi"); }
     const std::string& netError() const { return netError_; }
 
     void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }
@@ -3453,7 +3365,7 @@ private:
     void ensureAi() {
         if (aiReady_) return;
         aiReady_ = true;
-        aiProfile_ = tak::ai::loadProfile(dataRoot_, ipRoot_);
+        aiProfile_ = tak::ai::loadProfile(vfs_);
         // Which players are AI: the FFA harness makes 0..N-1 AI; otherwise the
         // opponent (player 1), plus player 0 in the showcase demo.
         std::vector<int> aiPlayers;
@@ -3522,11 +3434,8 @@ private:
         if (it == unitType_.end() || it->second == vm) return;   // not drawn yet / done
         if (!visuals_.count(vm)) {
             try {
-                visuals_[vm] = {tak::tdo::load(dataRoot_ + "/objects3d/" + vm + ".3do")};
-            } catch (const std::exception&) {
-                try { visuals_[vm] = {tak::tdo::load(ipRoot_ + "/objects3d/" + vm + ".3do")}; }
-                catch (const std::exception&) { return; }   // no promoted mesh: keep base
-            }
+                visuals_[vm] = {tak::tdo::load(vread("objects3d/" + vm + ".3do"))};
+            } catch (const std::exception&) { return; }   // no promoted mesh: keep base
         }
         it->second = vm;   // draw the promoted mesh from now on
     }
@@ -3535,24 +3444,16 @@ private:
         const std::string& typeId = u.type->id;
         if (!visuals_.count(typeId)) {
             try {
-                visuals_[typeId] = {tak::tdo::load(dataRoot_ + "/objects3d/" + typeId + ".3do")};
-            } catch (const std::exception&) {
-                try {
-                    visuals_[typeId] = {
-                        tak::tdo::load(ipRoot_ + "/objects3d/" + typeId + ".3do")};
-                } catch (const std::exception& e) {
-                    std::fprintf(stderr, "no model for %s: %s\n", typeId.c_str(),
-                                 e.what());
-                    return;
-                }
+                visuals_[typeId] = {tak::tdo::load(vread("objects3d/" + typeId + ".3do"))};
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "no model for %s: %s\n", typeId.c_str(), e.what());
+                return;
             }
         }
         Anim a;
         try {
-            std::string cobPath = dataRoot_ + "/scripts/" + typeId + ".cob";
-            if (!std::filesystem::exists(cobPath) && !ipRoot_.empty())
-                cobPath = ipRoot_ + "/scripts/" + typeId + ".cob";
-            auto cobFile = tak::cob::load(cobPath);
+            std::string cobPath = "scripts/" + typeId + ".cob";
+            auto cobFile = tak::cob::load(vread(cobPath), cobPath);
             for (const auto& p : cobFile.pieces) {
                 std::string n = p;
                 std::transform(n.begin(), n.end(), n.begin(), ::tolower);
@@ -3629,31 +3530,25 @@ private:
         return id;
     }
 
-    void loadTextures(const std::string& texDir, const std::string& defaultPalette) {
-        // Faction texture banks use their own palettes (sidedata.tdf).
+    void loadTextures() {
+        // Faction texture banks use their own palettes (palettes/<side>_textures.pcx).
+        // The VFS merges base + Iron Plague (cre) texture GAFs into one namespace.
         std::map<std::string, tak::gaf::Palette> pals;
-        pals["ara"] = tak::gaf::Palette::load(defaultPalette);
-        for (const char* side : {"tar", "ver", "zon", "aid"}) {
-            try {
-                pals[side] = tak::gaf::Palette::load(
-                    dataRoot_ + "/palettes/" + std::string(side) + "_textures.pcx");
-            } catch (const std::exception&) {}
+        for (const char* side : {"ara", "tar", "ver", "zon", "aid", "cre"}) {
+            std::string pp = std::string("palettes/") + side + "_textures.pcx";
+            try { if (vfs_.has(pp)) pals[side] = tak::gaf::Palette::fromBytes(vread(pp), pp); }
+            catch (const std::exception&) {}
         }
-        if (!ipRoot_.empty()) {
-            try {
-                pals["cre"] = tak::gaf::Palette::load(ipRoot_ +
-                                                      "/palettes/cre_textures.pcx");
-            } catch (const std::exception&) {}
-        }
-        for (const auto& e : std::filesystem::directory_iterator(texDir)) {
-            if (e.path().extension() != ".gaf") continue;
-            std::string stem = e.path().stem().string();
+        if (!pals.count("ara")) return;   // no palettes available
+        for (const std::string& path : vfs_.list("textures")) {
+            if (std::filesystem::path(path).extension() != ".gaf") continue;
+            std::string stem = std::filesystem::path(path).stem().string();
             std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
             const auto* pal = &pals.at("ara");
             auto pit = pals.find(stem.substr(0, 3));
             if (pit != pals.end()) pal = &pit->second;
             try {
-                for (auto& seq : tak::gaf::load(e.path(), *pal, 5)) {
+                for (auto& seq : tak::gaf::load(vread(path), *pal, 5, path)) {
                     if (seq.frames.empty()) continue;
                     std::string name = seq.name;
                     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
@@ -3721,13 +3616,10 @@ private:
     const tak::tdo::Model* ghostModel(const std::string& typeId) {
         auto it = visuals_.find(typeId);
         if (it != visuals_.end()) return &it->second.model;
-        for (const std::string& root : {dataRoot_, ipRoot_}) {
-            if (root.empty()) continue;
-            try {
-                visuals_[typeId] = {tak::tdo::load(root + "/objects3d/" + typeId + ".3do")};
-                return &visuals_[typeId].model;
-            } catch (const std::exception&) {}
-        }
+        try {
+            visuals_[typeId] = {tak::tdo::load(vread("objects3d/" + typeId + ".3do"))};
+            return &visuals_[typeId].model;
+        } catch (const std::exception&) {}
         return nullptr;
     }
 
@@ -4122,11 +4014,9 @@ private:
     // answers "healthy and moving" so locomotion scripts animate.
     std::unique_ptr<tak::cob::Vm> loadTypeVm(const std::string& typeId,
                                              std::vector<std::string>& names) {
-        std::string cobPath = dataRoot_ + "/scripts/" + typeId + ".cob";
-        if (!std::filesystem::exists(cobPath) && !ipRoot_.empty())
-            cobPath = ipRoot_ + "/scripts/" + typeId + ".cob";
+        std::string cobPath = "scripts/" + typeId + ".cob";
         try {
-            auto cobFile = tak::cob::load(cobPath);
+            auto cobFile = tak::cob::load(vread(cobPath), cobPath);
             names.clear();
             for (const auto& p : cobFile.pieces) {
                 std::string n = p;
@@ -4658,9 +4548,20 @@ private:
 
     SDL_Renderer* ren_;
     MapView mapView_;
-    std::string dataRoot_;
-    std::string ipRoot_;
-    std::string tntPath_;   // map path (for MP start-position setup)
+    const tak::hpi::Vfs& vfs_;   // retail-root read-path (owned by main, outlives this)
+    std::string mapPath_;        // VFS path to the map .tnt (start positions, siblings)
+    // VFS read helpers -- the engine's only game-file access.
+    std::vector<uint8_t> vread(const std::string& p) const { return vfs_.read(p); }
+    bool vhas(const std::string& p) const { return vfs_.has(p); }
+    tak::tdf::Node vtdf(const std::string& p) const {
+        auto b = vfs_.read(p);
+        return tak::tdf::parseText(std::string(b.begin(), b.end()), p);
+    }
+    // A map's sibling scenario file (map.tnt -> map.ota/.cob/.tdf/.txt/.crt).
+    std::string mapSibling(const char* ext) const {
+        std::filesystem::path p = mapPath_; p.replace_extension(ext);
+        return p.generic_string();
+    }
     bool crusades_ = false; // which balance registry_ currently holds
     std::string side_ = "ara";
     tak::sim::TypeRegistry registry_;
@@ -5198,7 +5099,8 @@ private:
             shadowsLoaded_ = true;
             const auto* pal = featurePalette("aramon");
             if (pal) try {
-                for (auto& sq : tak::gaf::load(dataRoot_ + "/anims/shadows.gaf", *pal)) {
+                for (auto& sq : tak::gaf::load(vread("anims/shadows.gaf"), *pal, -1,
+                                               "anims/shadows.gaf")) {
                     if (sq.frames.empty() || sq.frames[0].width == 0) continue;
                     auto& fr = sq.frames[0];
                     std::vector<uint8_t> px = fr.rgba;   // silhouette -> translucent black
@@ -5224,11 +5126,10 @@ private:
     void loadFeatureDefs() {
         if (!featureDefs_.empty()) return;
         try {
-            for (const auto& e : std::filesystem::recursive_directory_iterator(
-                     dataRoot_ + "/features")) {
-                if (e.path().extension() != ".tdf") continue;
+            for (const std::string& path : vfs_.list("features")) {
+                if (std::filesystem::path(path).extension() != ".tdf") continue;
                 try {
-                    auto root = tak::tdf::parse(e.path());
+                    auto root = vtdf(path);
                     for (const auto& n : root.childOrder) {
                         std::string k = n;
                         std::transform(k.begin(), k.end(), k.begin(), ::tolower);
@@ -5247,9 +5148,9 @@ private:
                                      std::string("aramon_features.pcx")};
         for (const std::string& cand : cands) {
             try {
+                std::string pp = "palettes/" + cand;
                 return &featurePals_
-                            .emplace(world, tak::gaf::Palette::load(
-                                                dataRoot_ + "/palettes/" + cand))
+                            .emplace(world, tak::gaf::Palette::fromBytes(vread(pp), pp))
                             .first->second;
             } catch (const std::exception&) {}
         }
@@ -5275,7 +5176,8 @@ private:
                         if (std::tolower(x[i]) != std::tolower(y[i])) return false;
                     return true;
                 };
-                for (auto& sq : tak::gaf::load(dataRoot_ + "/anims/" + f + ".gaf", *pal)) {
+                for (auto& sq : tak::gaf::load(vread("anims/" + f + ".gaf"), *pal, -1,
+                                               "anims/" + f + ".gaf")) {
                     if (sq.frames.empty() || sq.frames[0].width == 0) continue;
                     auto& fr = sq.frames[0];
                     if (ieq(sq.name, seq)) {
@@ -5432,32 +5334,27 @@ private:
         for (const auto& m : prefixes)
             if (m.substr(0, 3) == want) full = m.substr(4);
         std::vector<int> out;
-        for (const std::string root : {dataRoot_, ipRoot_}) {
-            if (root.empty()) continue;
-            try {
-                auto sd = tak::tdf::parse(root + "/gamedata/sidedata.tdf");
-                for (const auto& key : sd.childOrder) {
-                    const auto& sec = sd.children.at(key);
-                    std::string nm = sec.valueOr("name", "");
-                    std::transform(nm.begin(), nm.end(), nm.begin(), ::toupper);
-                    if (nm != full) continue;
-                    std::istringstream ts(sec.valueOr("musictracks", ""));
-                    int t;
-                    while (ts >> t) out.push_back(t);
-                    if (!out.empty()) return out;
-                }
-            } catch (const std::exception&) {}
-        }
+        try {
+            auto sd = vtdf("gamedata/sidedata.tdf");
+            for (const auto& key : sd.childOrder) {
+                const auto& sec = sd.children.at(key);
+                std::string nm = sec.valueOr("name", "");
+                std::transform(nm.begin(), nm.end(), nm.begin(), ::toupper);
+                if (nm != full) continue;
+                std::istringstream ts(sec.valueOr("musictracks", ""));
+                int t;
+                while (ts >> t) out.push_back(t);
+                if (!out.empty()) return out;
+            }
+        } catch (const std::exception&) {}
         return out;
     }
 
     void loadPanel(const std::string& side) {
-        std::string base = dataRoot_ + "/anims/" + side + "ingame";
-        if (!std::filesystem::exists(base + ".gaf") && !ipRoot_.empty())
-            base = ipRoot_ + "/anims/" + side + "ingame";
+        std::string base = "anims/" + side + "ingame";
         try {
-            auto pal = tak::gaf::Palette::load(base + ".pcx");
-            for (auto& sq : tak::gaf::load(base + ".gaf", pal)) {
+            auto pal = tak::gaf::Palette::fromBytes(vread(base + ".pcx"), base + ".pcx");
+            for (auto& sq : tak::gaf::load(vread(base + ".gaf"), pal, -1, base + ".gaf")) {
                 if (sq.frames.empty()) continue;
                 auto& f = sq.frames[0];
                 if (sq.name == "AidPanel" || sq.name == "MainPanel") {
@@ -5500,10 +5397,10 @@ private:
         for (auto& [side, file] : maps) {
             try {
                 // TAF frames are raw ARGB; the palette arg is ignored for them.
-                auto pal = tak::gaf::Palette::load(dataRoot_ +
-                                                   "/palettes/ara_textures.pcx");
-                auto seqs = tak::gaf::load(
-                    dataRoot_ + "/anims/" + std::string(file) + "_4444.taf", pal);
+                auto pal = tak::gaf::Palette::fromBytes(vread("palettes/ara_textures.pcx"),
+                                                        "palettes/ara_textures.pcx");
+                std::string tp = "anims/" + std::string(file) + "_4444.taf";
+                auto seqs = tak::gaf::load(vread(tp), pal, -1, tp);
                 if (seqs.empty()) continue;
                 auto& frames = buildFx_[side];
                 for (auto& fr : seqs[0].frames) {
@@ -5523,10 +5420,10 @@ private:
         auto grab = [&](const char* gaf, const char* seq, char cmd,
                         const char* label, int f0 = 0, int f1 = 1, int f2 = 2) {
             try {
-                auto pal = tak::gaf::Palette::load(dataRoot_ + "/anims/" +
-                                                   std::string(gaf) + ".pcx");
-                for (auto& sq : tak::gaf::load(
-                         dataRoot_ + "/anims/" + std::string(gaf) + ".gaf", pal)) {
+                std::string pp = "anims/" + std::string(gaf) + ".pcx";
+                std::string gp = "anims/" + std::string(gaf) + ".gaf";
+                auto pal = tak::gaf::Palette::fromBytes(vread(pp), pp);
+                for (auto& sq : tak::gaf::load(vread(gp), pal, -1, gp)) {
                     if (sq.name != seq || sq.frames.size() < 3) continue;
                     OrderBtn b;
                     b.cmd = cmd;
@@ -5698,17 +5595,12 @@ private:
         auto it = icons_.find(typeId);
         if (it != icons_.end()) return it->second;
         SDL_Texture* tex = nullptr;
-        for (const std::string root : {dataRoot_, ipRoot_}) {
-            if (root.empty()) continue;
-            try {
-                auto img = tak::jpeg::load(root + "/anims/buildpic/" + typeId + ".jpg");
-                tex = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
-                                        SDL_TEXTUREACCESS_STATIC, img.width,
-                                        img.height);
-                SDL_UpdateTexture(tex, nullptr, img.rgba.data(), img.width * 4);
-                break;
-            } catch (const std::exception&) {}
-        }
+        try {
+            auto img = tak::jpeg::load(vread("anims/buildpic/" + typeId + ".jpg"));
+            tex = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                    SDL_TEXTUREACCESS_STATIC, img.width, img.height);
+            SDL_UpdateTexture(tex, nullptr, img.rgba.data(), img.width * 4);
+        } catch (const std::exception&) {}
         icons_[typeId] = tex;
         return tex;
     }
@@ -6926,8 +6818,7 @@ private:
         if (explosionsLoaded_) return;
         explosionsLoaded_ = true;
         try {
-            auto root = tak::tdf::parse(dataRoot_ +
-                                        "/gamedata/explosions/explosions.tdf");
+            auto root = vtdf("gamedata/explosions/explosions.tdf");
             for (const auto& cls : root.childOrder) {
                 const auto& node = root.children.at(cls);
                 auto& list = explosionClasses_[cls];   // cls is already lowercased
@@ -6952,8 +6843,8 @@ private:
         for (const std::string suf : {"_4444.taf", "_1555.taf", ".taf", ".gaf"}) {
             if (!ea.frames.empty()) break;
             try {
-                auto seqs = tak::gaf::load(dataRoot_ + "/anims/" + animName + suf,
-                                           pal ? *pal : tak::gaf::Palette{});
+                std::string ap = "anims/" + animName + suf;
+                auto seqs = tak::gaf::load(vread(ap), pal ? *pal : tak::gaf::Palette{}, -1, ap);
                 const tak::gaf::Sequence* seq = nullptr;
                 for (auto& s : seqs) {
                     if (s.frames.empty()) continue;
@@ -7247,16 +7138,19 @@ static bool loadReplayFile(const std::string& path, ReplayFile& out) {
 int main(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr,
-                     "usage: takview map <map.tnt> <terrain-dir> [--shot out.png]\n"
+                     "usage: takview game <map name> --data <retail-install-dir> "
+                     "[--side X --aiside Y] [--overrides none|cosmetic|full] "
+                     "[--server host --serverport N] [--demo] [--time s] [--shot out.png]\n"
+                     "       takview map  <map name> --data <retail-install-dir> [--shot out.png]\n"
+                     "       takview replay <file.takrep> --data <retail-install-dir>\n"
                      "       takview model <file.3do> [textures-dir palette.pcx] "
                      "[--cob f.cob --anim script] [--shot out.png]\n"
-                     "       takview game <map.tnt> <terrain-dir> <data-root> "
-                     "[--demo] [--time s] [--shot out.png]\n");
+                     "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ overrides/.\n");
         return 2;
     }
     std::string mode = argv[1];
     std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
-    std::string serverHost, playerName;
+    std::string serverHost, playerName, dataRoot, overridesArg;
     int serverPort = 7677, mpHeadless = 0;
     int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 60;
     int playerColor = -1, aiColor = -1;   // --color / --aicolor slot overrides
@@ -7311,6 +7205,8 @@ int main(int argc, char** argv) {
         else if (a == "--lodeunit" && i + 1 < argc) lodeUnitName = argv[++i];
         else if (a == "--selonly") selonly = true;
 
+        else if (a == "--data" && i + 1 < argc) dataRoot = argv[++i];
+        else if (a == "--overrides" && i + 1 < argc) overridesArg = argv[++i];
         else if (a == "--server" && i + 1 < argc) serverHost = argv[++i];
         else if (a == "--serverport" && i + 1 < argc) serverPort = std::atoi(argv[++i]);
         else if (a == "--name" && i + 1 < argc) playerName = argv[++i];
@@ -7372,37 +7268,52 @@ int main(int argc, char** argv) {
     // unlocks it (useful to see true throughput / for high-refresh displays).
     if (shot.empty()) SDL_RenderSetVSync(ren, noVsync ? 0 : 1);
 
+    // The runtime data set: a retail install directory (root *.hpi + Maps/ +
+    // Music/ + overrides/). This is the ONLY way the engine reads game files.
+    // It must outlive the views (GameView/MapView hold a reference), so it lives
+    // here at function scope for the whole render loop.
+    tak::hpi::OverridePolicy pol = tak::hpi::OverridePolicy::Full;
+    if (overridesArg == "none") pol = tak::hpi::OverridePolicy::None;
+    else if (overridesArg == "cosmetic") pol = tak::hpi::OverridePolicy::Cosmetic;
+    tak::hpi::Vfs vfs;
+    if (!dataRoot.empty()) vfs = tak::hpi::mountRetailRoot(dataRoot, pol);
+
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;
     std::unique_ptr<GameView> gameView;
     try {
-        if (mode == "replay" && args.size() >= 3) {
-            // takview replay <file.takrep> <terrain-dir> <data-root>
+        if (mode == "replay" && !args.empty() && !dataRoot.empty()) {
+            // takview replay <file.takrep> --data <retail-root>
             ReplayFile rf;
             if (!loadReplayFile(args[0], rf)) {
                 std::fprintf(stderr, "replay: cannot read %s\n", args[0].c_str());
                 return 1;
             }
-            std::string tnt = args[2] + "/maps/" + rf.mapId + ".tnt";
-            rf.cfg.tntPath = tnt;
-            rf.cfg.dataRoot = args[2];
-            gameView = std::make_unique<GameView>(ren, tnt, args[1], args[2], false, false,
+            std::string mapPath = tak::hpi::findMap(vfs, rf.mapId);
+            if (mapPath.empty()) { std::fprintf(stderr, "replay: map '%s' not found\n", rf.mapId.c_str()); return 1; }
+            rf.cfg.vfs = &vfs;
+            rf.cfg.mapPath = mapPath;
+            gameView = std::make_unique<GameView>(ren, vfs, mapPath, false, false,
                                                   false, /*bare=*/true, "ara", "tar", rf.crusades);
             std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s\n", args[0].c_str(),
                          rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "");
             gameView->startReplay(rf.cfg, std::move(rf.bundles));
-        } else if (mode == "map" && args.size() >= 2) {
-            mapView = std::make_unique<MapView>(ren, args[0], args[1]);
-        } else if (mode == "game" && args.size() >= 3) {
+        } else if (mode == "map" && !args.empty() && !dataRoot.empty()) {
+            std::string mapPath = tak::hpi::findMap(vfs, args[0]);
+            if (mapPath.empty()) { std::fprintf(stderr, "map '%s' not found\n", args[0].c_str()); return 1; }
+            mapView = std::make_unique<MapView>(ren, vfs, mapPath);
+        } else if (mode == "game" && !args.empty() && !dataRoot.empty()) {
+            std::string mapPath = tak::hpi::findMap(vfs, args[0]);
+            if (mapPath.empty()) { std::fprintf(stderr, "map '%s' not found in %s\n", args[0].c_str(), dataRoot.c_str()); return 1; }
             // A multiplayer client builds the world from the server's GameStarting
             // later, so it constructs "bare" (no single-player 2-monarch spawn).
-            gameView = std::make_unique<GameView>(ren, args[0], args[1], args[2], demo,
+            gameView = std::make_unique<GameView>(ren, vfs, mapPath, demo,
                                                   scenario, missionFlag,
                                                   navy || amphib || firetest || facetest || mp,
                                                   side, aiSide, crusades);
             if (mp) {
                 gameView->setMpClient(mp.get());
-                gameView->setMpMapId(std::filesystem::path(args[0]).stem().string());
+                gameView->setMpMapId(args[0]);
                 if (const char* rp = std::getenv("TAK_RESUME")) gameView->setResumePath(rp);
             }
             // Never let the window shrink below what the widest build-icon row

@@ -4,6 +4,7 @@
 //   tnttool heightmap <map.tnt> <out.png>
 //   tnttool minimap <map.tnt> <out.png>   (grayscale; palette applied later)
 
+#include "hpi/hpi.h"
 #include "terrain/terrain.h"
 #include "tnt/tnt.h"
 #include "util/png.h"
@@ -32,7 +33,9 @@ int main(int argc, char** argv) {
             std::cout << "feature cells: " << feats << "\n";
             std::cout << "minimap: " << m.minimapW << "x" << m.minimapH << "\n";
         } else if (cmd == "render" && argc >= 5) {
-            tak::terrain::Compositor comp(argv[3]);
+            // render <map.tnt> <retail-install-dir> <out.png>
+            tak::hpi::Vfs vfs = tak::hpi::mountRetailRoot(argv[3]);
+            tak::terrain::Compositor comp(vfs);
             auto img = comp.renderMap(m);
             tak::png::write(argv[4], img.width, img.height, img.rgba);
             std::cout << "wrote " << argv[4] << " (" << img.width << "x" << img.height

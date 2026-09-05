@@ -26,6 +26,8 @@ struct Profile {
 // One file covers every faction. Never throws; a missing file yields an empty
 // profile (the AI then builds nothing).
 Profile loadProfile(const std::string& dataRoot, const std::string& ipRoot = "");
+// Same, reading ai/default.txt from the runtime VFS (base + IP merged).
+Profile loadProfile(const tak::hpi::Vfs& vfs);
 
 // Sink for the commands a Controller decides to issue this tick. Offline this
 // applies them immediately; on the server it queues them into the tick sequencer.

@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "ai/ai.h"
+#include "hpi/hpi.h"
 #include "net/conn.h"
 #include "net/protocol.h"
 #include "sim/matchsetup.h"
@@ -133,12 +134,15 @@ public:
     void setReplayDir(const std::string& d) { replayDir_ = d; }
     Server(uint16_t port, const std::string& dataRoot) : port_(port), dataRoot_(dataRoot) {
         if (!dataRoot_.empty()) {
-            tak::sim::setupRegistry(registry_, dataRoot_, false);
-            if (std::filesystem::is_directory(dataRoot_ + "/unitscb")) {
-                tak::sim::setupRegistry(registryCb_, dataRoot_, true);
+            // The referee reads the retail install directly. Full overrides so a
+            // shared-install test agrees with clients; Phase 3 negotiates the policy.
+            vfs_ = tak::hpi::mountRetailRoot(dataRoot_, tak::hpi::OverridePolicy::Full);
+            tak::sim::setupRegistry(registry_, vfs_, false);
+            if (!vfs_.list("unitscb").empty()) {
+                tak::sim::setupRegistry(registryCb_, vfs_, true);
                 haveCb_ = true;
             }
-            aiProfile_ = tak::ai::loadProfile(dataRoot_);
+            aiProfile_ = tak::ai::loadProfile(vfs_);
             haveData_ = true;
             std::fprintf(stderr, "takserver: loaded game data from %s (referee sim + AI enabled%s)\n",
                          dataRoot_.c_str(), haveCb_ ? ", +Crusades" : "");
@@ -149,6 +153,7 @@ public:
 private:
     uint16_t port_;
     std::string dataRoot_;
+    tak::hpi::Vfs vfs_;
     bool haveData_ = false, haveCb_ = false;
     tak::sim::TypeRegistry registry_, registryCb_;
     tak::ai::Profile aiProfile_;
@@ -511,13 +516,17 @@ void Server::tryStart(Client& c) {
     for (int i = 0; i < kMaxSlots; ++i) r->startSlots[i] = r->slots[i];   // for the replay
     // Build the referee sim (and AI controllers) if we have game data. The world
     // is built by the SAME setupMatch the clients use, so its hash is canonical.
-    if (haveData_) {
+    std::string mapPath = haveData_ ? tak::hpi::findMap(vfs_, r->mapId) : std::string();
+    if (haveData_ && mapPath.empty())
+        std::fprintf(stderr, "takserver: map '%s' not found in data; no referee sim\n",
+                     r->mapId.c_str());
+    if (haveData_ && !mapPath.empty()) {
         int maxSlot = 0;
         for (int i = 0; i < kMaxSlots; ++i)
             if (r->slots[i].type == 1 || r->slots[i].type == 2) maxSlot = i;
         tak::sim::MatchConfig cfg;
-        cfg.tntPath = dataRoot_ + "/maps/" + r->mapId + ".tnt";
-        cfg.dataRoot = dataRoot_;
+        cfg.vfs = &vfs_;
+        cfg.mapPath = mapPath;
         cfg.gods = r->opts.gods != 0;
         cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
@@ -916,7 +925,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--data") && i + 1 < argc) dataRoot = argv[++i];
         else if (!std::strcmp(argv[i], "--replaydir") && i + 1 < argc) replayDir = argv[++i];
         else if (!std::strcmp(argv[i], "--help")) {
-            std::printf("usage: takserver [--port N] [--data <extracted-data-dir>] "
+            std::printf("usage: takserver [--port N] [--data <retail-install-dir>] "
                         "[--replaydir <dir>]\n"
                         "  --data enables the referee sim + server-hosted AI; without it the\n"
                         "  server is a pure relay (clients cross-check hashes among themselves).\n"

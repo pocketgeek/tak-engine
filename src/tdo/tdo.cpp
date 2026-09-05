@@ -95,7 +95,10 @@ Model load(const std::filesystem::path& file) {
     if (!in) throw std::runtime_error("cannot open " + file.string());
     std::vector<uint8_t> d(std::filesystem::file_size(file));
     in.read(reinterpret_cast<char*>(d.data()), static_cast<std::streamsize>(d.size()));
+    return load(d);
+}
 
+Model load(const std::vector<uint8_t>& d) {
     Model m;
     m.root = parseOne(d, 0, 0);
     return m;

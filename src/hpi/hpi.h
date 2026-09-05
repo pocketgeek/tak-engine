@@ -55,9 +55,17 @@ public:
     const Entry* find(const std::string& path) const;
 
 private:
+    // Whole-archive bytes, loaded once on the first read() and kept, so extracting
+    // many small entries doesn't re-slurp the (up to 100+ MB) file each time. Not
+    // populated at mount, so the map-browser's many .kmp archives (dir-parsed only)
+    // cost nothing until one is actually read.
+    const std::vector<uint8_t>& bytes() const;
+
     std::filesystem::path file_;
     HeaderInfo header_;
     std::vector<Entry> entries_;
+    mutable std::vector<uint8_t> fileData_;
+    mutable bool loaded_ = false;
 };
 
 HeaderInfo inspect(const std::filesystem::path& archive);
@@ -167,5 +175,14 @@ bool affectsGameplay(const std::string& path);
 // Build the runtime VFS for a retail install root (see the layer diagram above).
 Vfs mountRetailRoot(const std::filesystem::path& root,
                     OverridePolicy overrides = OverridePolicy::Full);
+
+// Resolve a map by display name (the .tnt stem, case-insensitive) to its VFS
+// path, searching both map namespaces: Maps/ (maps.hpi & co.) and kmap/ (.kmp
+// single-map archives). Returns "" if no such map. Both client and server use
+// this so a map id on the wire resolves identically on each.
+std::string findMap(const Vfs& vfs, const std::string& name);
+
+// Every map as {display name, .tnt VFS path}, sorted by name, deduped by name.
+std::vector<std::pair<std::string, std::string>> listMaps(const Vfs& vfs);
 
 } // namespace tak::hpi

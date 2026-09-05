@@ -32,8 +32,11 @@
 #include <string>
 #include <vector>
 
+#include "hpi/hpi.h"
 #include "net/protocol.h"
 #include "sim/matchsetup.h"
+
+#include <filesystem>
 
 using tak::net::Cmd;
 using tak::net::Command;
@@ -177,13 +180,20 @@ std::vector<int> monarchs(const tak::sim::World& w, int players) {
     return ids;
 }
 
-int testSimEquivalence(const std::string& tnt, const std::string& dataRoot) {
+int testSimEquivalence(const std::string& mapArg, const std::string& dataRoot) {
+    tak::hpi::Vfs vfs = tak::hpi::mountRetailRoot(dataRoot);
+    std::string mapName = std::filesystem::path(mapArg).stem().string();
+    std::string mapPath = tak::hpi::findMap(vfs, mapName);
+    if (mapPath.empty()) {
+        std::printf("sim-equivalence: SKIP (map '%s' not found)\n", mapName.c_str());
+        return 0;
+    }
     tak::sim::TypeRegistry reg;
-    tak::sim::setupRegistry(reg, dataRoot, /*crusades=*/false);
+    tak::sim::setupRegistry(reg, vfs, /*crusades=*/false);
 
     tak::sim::MatchConfig cfg;
-    cfg.tntPath = tnt;
-    cfg.dataRoot = dataRoot;
+    cfg.vfs = &vfs;
+    cfg.mapPath = mapPath;
     cfg.slots = {{true, 0, 0}, {true, 1, 1}};   // 2 players, FFA
     cfg.gods = false;
     cfg.startMana = 2800;

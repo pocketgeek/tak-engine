@@ -12,5 +12,7 @@ struct Image {
 };
 
 Image load(const std::filesystem::path& file);
+// Decode from an in-memory buffer (a VFS-resolved archive entry).
+Image load(const std::vector<uint8_t>& d);
 
 } // namespace tak::jpeg

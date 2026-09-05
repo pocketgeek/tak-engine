@@ -4,6 +4,8 @@
 
 #include <csetjmp>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 
 namespace tak::jpeg {
@@ -22,21 +24,25 @@ void onError(j_common_ptr cinfo) {
 } // namespace
 
 Image load(const std::filesystem::path& file) {
-    std::FILE* f = std::fopen(file.c_str(), "rb");
-    if (!f) throw std::runtime_error("cannot open " + file.string());
+    std::ifstream in(file, std::ios::binary);
+    if (!in) throw std::runtime_error("cannot open " + file.string());
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    return load(d);
+}
 
+Image load(const std::vector<uint8_t>& d) {
     jpeg_decompress_struct cinfo{};
     ErrorMgr err{};
     cinfo.err = jpeg_std_error(&err.pub);
     err.pub.error_exit = onError;
     if (setjmp(err.jump)) {
         jpeg_destroy_decompress(&cinfo);
-        std::fclose(f);
-        throw std::runtime_error("JPEG decode failed: " + file.string());
+        throw std::runtime_error("JPEG decode failed");
     }
 
     jpeg_create_decompress(&cinfo);
-    jpeg_stdio_src(&cinfo, f);
+    jpeg_mem_src(&cinfo, d.data(), static_cast<unsigned long>(d.size()));
     jpeg_read_header(&cinfo, TRUE);
     cinfo.out_color_space = JCS_RGB;
     jpeg_start_decompress(&cinfo);
@@ -61,7 +67,6 @@ Image load(const std::filesystem::path& file) {
     }
     jpeg_finish_decompress(&cinfo);
     jpeg_destroy_decompress(&cinfo);
-    std::fclose(f);
     return img;
 }
 

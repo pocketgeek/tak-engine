@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+namespace tak::hpi { class Vfs; }
+
 namespace tak::sim {
 
 // Cheat: when true, construction and production complete instantly and cost no
@@ -158,11 +160,12 @@ class TypeRegistry {
 public:
     // Parse gamedata/MOVEINFO.tdf (movement classes). Call BEFORE loadDir so
     // units can inherit their class's slope / water limits.
-    void loadMoveInfo(const std::filesystem::path& tdf);
-    // Parse every .fbi in a directory (extracted data/units).
-    void loadDir(const std::filesystem::path& unitsDir);
-    // Parse canbuild/<builder>/<buildable>.tdf into the build tree.
-    void loadBuildTree(const std::filesystem::path& canbuildDir);
+    void loadMoveInfo(const hpi::Vfs& vfs, const std::string& path);
+    // Parse every .fbi under `prefix` in the VFS (e.g. "units"). All source
+    // archives' units merge into one namespace, precedence already resolved.
+    void loadDir(const hpi::Vfs& vfs, const std::string& prefix);
+    // Parse <prefix>/<builder>/<buildable>.tdf into the build tree.
+    void loadBuildTree(const hpi::Vfs& vfs, const std::string& prefix);
     const UnitType* find(const std::string& id) const;
     const std::map<std::string, UnitType>& all() const { return types_; }
     const std::vector<std::string>& buildable(const std::string& builderId) const;

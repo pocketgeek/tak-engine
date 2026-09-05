@@ -9,6 +9,7 @@
 #include <map>
 #include <unordered_map>
 
+#include "hpi/hpi.h"
 #include "tdf/tdf.h"
 #include "tnt/tnt.h"
 
@@ -76,33 +77,29 @@ void applyEvent(World& world, const tak::net::Event& e) {
         if (u.alive() && u.player == p) world.stop(u.id);
 }
 
-std::string setupRegistry(TypeRegistry& reg, const std::string& dataRoot, bool crusades) {
-    reg.loadMoveInfo(dataRoot + "/gamedata/moveinfo.tdf");
-    // Crusades overlay first (first-definition-wins), then the base roster.
+void setupRegistry(TypeRegistry& reg, const hpi::Vfs& vfs, bool crusades) {
+    reg.loadMoveInfo(vfs, "gamedata/moveinfo.tdf");
+    // Crusades overlay first (first-definition-wins), then the base roster. The
+    // VFS already merges base + Iron Plague + community units into one namespace,
+    // resolved by retail newest-date precedence, so one loadDir("units") suffices.
     if (crusades) {
-        std::string ucb = dataRoot + "/unitscb", ccb = dataRoot + "/canbuildcb";
-        if (std::filesystem::is_directory(ucb)) reg.loadDir(ucb);
-        if (std::filesystem::is_directory(ccb)) reg.loadBuildTree(ccb);
+        reg.loadDir(vfs, "unitscb");
+        reg.loadBuildTree(vfs, "canbuildcb");
     }
-    reg.loadDir(dataRoot + "/units");
-    reg.loadBuildTree(dataRoot + "/canbuild");
-    std::string ipRoot = dataRoot + "/../IPData";
-    if (std::filesystem::exists(ipRoot + "/units")) {
-        reg.loadDir(ipRoot + "/units");
-        if (std::filesystem::exists(ipRoot + "/canbuild"))
-            reg.loadBuildTree(ipRoot + "/canbuild");
-        return ipRoot;
-    }
-    return {};
+    reg.loadDir(vfs, "units");
+    reg.loadBuildTree(vfs, "canbuild");
 }
 
-std::vector<std::pair<float, float>> parseStartPositions(const std::string& tntPath) {
+std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
+                                                         const std::string& mapPath) {
     std::vector<std::pair<float, float>> out;
-    std::filesystem::path ota = tntPath;
+    std::filesystem::path ota = mapPath;
     ota.replace_extension(".ota");
-    if (!std::filesystem::exists(ota)) return out;
+    std::string otaPath = ota.generic_string();
+    if (!vfs.has(otaPath)) return out;
     try {
-        auto root = tak::tdf::parse(ota);
+        auto b = vfs.read(otaPath);
+        auto root = tak::tdf::parseText(std::string(b.begin(), b.end()), otaPath);
         const auto* gh = root.child("globalheader");
         const auto* md = gh ? gh->child("map data") : nullptr;
         const auto* sp = md ? md->child("specials") : nullptr;
@@ -128,13 +125,14 @@ namespace {
 // footprint (for nav blocking). Loaded from the feature TDFs.
 struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx = 1, fz = 1; };
 
-std::unordered_map<std::string, FeatDef> loadFeatureDefs(const std::string& dataRoot) {
+std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
     std::unordered_map<std::string, FeatDef> defs;
     try {
-        for (const auto& e : std::filesystem::recursive_directory_iterator(dataRoot + "/features")) {
-            if (e.path().extension() != ".tdf") continue;
+        for (const std::string& path : vfs.list("features")) {
+            if (std::filesystem::path(path).extension() != ".tdf") continue;
             try {
-                auto root = tak::tdf::parse(e.path());
+                auto fb = vfs.read(path);
+                auto root = tak::tdf::parseText(std::string(fb.begin(), fb.end()), path);
                 for (const auto& n : root.childOrder) {
                     std::string k = n;
                     std::transform(k.begin(), k.end(), k.begin(), ::tolower);
@@ -160,12 +158,13 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const std::string& data
 
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
                                                 const MatchConfig& cfg) {
-    tak::tnt::Map map = tak::tnt::Map::load(cfg.tntPath);
+    const hpi::Vfs& vfs = *cfg.vfs;
+    tak::tnt::Map map = tak::tnt::Map::load(vfs.read(cfg.mapPath), cfg.mapPath);
     world.setTerrain(map.heights, map.width, map.height, map.seaLevel);
 
     // Features: block nav footprints, and gather mana-deposit positions. Iterate
     // in the same (row-major) order the client does so clustering is identical.
-    auto defs = loadFeatureDefs(cfg.dataRoot);
+    auto defs = loadFeatureDefs(vfs);
     std::vector<std::pair<float, float>> rawMana, rawAll;
     if (!map.featureNames.empty()) {
         for (int cz = 0; cz < map.height; ++cz)
@@ -228,7 +227,8 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     float godSec = 1e9f;   // 1e9 => never manifests (gods off)
     if (cfg.gods) {
         try {
-            auto g = tak::tdf::parse(cfg.dataRoot + "/gamedata/gods.tdf");
+            auto gb = vfs.read("gamedata/gods.tdf");
+            auto g = tak::tdf::parseText(std::string(gb.begin(), gb.end()), "gamedata/gods.tdf");
             if (const auto* tm = g.child("TIMING"))
                 godSec = float(tm->numberOr("AppearTimeMin", 30.0)) * 60.0f;
         } catch (const std::exception&) {}
@@ -238,7 +238,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // Assign the used slots to start positions (ring fallback if the map has too few).
     int used = 0;
     for (auto& s : cfg.slots) if (s.used) ++used;
-    auto starts = parseStartPositions(cfg.tntPath);
+    auto starts = parseStartPositions(vfs, cfg.mapPath);
     float cx = map.blocksX * 16.0f, cz = map.blocksY * 16.0f;
     std::vector<std::pair<float, float>> spots = starts;
     while (int(spots.size()) < used) {

@@ -25,6 +25,8 @@ struct File {
 };
 
 File load(const std::filesystem::path& path);
+// Parse from an in-memory buffer (a VFS-resolved archive entry).
+File load(const std::vector<uint8_t>& d, const std::string& origin = "<memory>");
 
 // Disassemble one script (by index) to text.
 std::string disassemble(const File& f, int script);

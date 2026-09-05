@@ -1,5 +1,6 @@
 #include "ai/ai.h"
 
+#include "hpi/hpi.h"
 #include "sim/detmath.h"
 #include <algorithm>
 #include <cmath>
@@ -9,6 +10,24 @@
 #include <vector>
 
 namespace tak::ai {
+
+Profile loadProfile(const tak::hpi::Vfs& vfs) {
+    Profile prof;
+    if (!vfs.has("ai/default.txt")) return prof;
+    auto b = vfs.read("ai/default.txt");
+    std::istringstream f(std::string(b.begin(), b.end()));
+    std::string kw, unit;
+    int v;
+    for (std::string line; std::getline(f, line);) {
+        if (line.size() < 2 || line[0] == '/') continue;
+        std::istringstream ss(line);
+        if (!(ss >> kw >> unit >> v)) continue;
+        std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
+        if (kw == "weight") prof.weight[unit] = v;
+        else if (kw == "limit") prof.limit[unit] = v;
+    }
+    return prof;
+}
 
 Profile loadProfile(const std::string& dataRoot, const std::string& ipRoot) {
     Profile prof;
