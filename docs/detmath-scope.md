@@ -1,9 +1,20 @@
 # Cross-build determinism: the `detmath` shim — scoping
 
-**Status:** scoping (no code yet). This is the last open item of the multiplayer
-plan (see `docs/multiplayer-design.md`). Everything else — lobby, referee sim,
-server AI, reconnect/forfeit, replays, spectators, chat, scoreboard, allied
-economy — is done and verified.
+**Status: IMPLEMENTED** (commit `ae54375`). `src/sim/detmath.{h,cpp}` ships the
+`sin`/`cos`/`atan2`/`len` described below; all ~10 sim call sites route through
+it; `tools/detmath_test` checks accuracy + emits a golden hash, and
+`tools/check-detmath.sh` guards against regressions. Verified: accuracy vs libm
+sin/cos ≤ 3e-8, atan2 ≤ 1.25e-7; golden hash identical across g++
+`-O0`/`-O2`/`-O3`; sim stays bit-identical (`--mpai` 1800 ticks × 2, 1v1).
+Resolved open questions: (1) `double` intermediates rounded once; (2) `sqrt`/
+`fmod` left as `std::` (already deterministic) — not wrapped; (3) clang and
+x86-vs-ARM CI legs left for when a target needs them. The rest of this doc is
+the original scoping, kept for the rationale.
+
+This was the last open item of the multiplayer plan (see
+`docs/multiplayer-design.md`). Everything else — lobby, referee sim, server AI,
+reconnect/forfeit, replays, spectators, chat, scoreboard, allied economy — is
+done and verified.
 
 **Goal:** make the simulation produce **bit-identical** state on peers built with
 *different* compilers, compiler versions, C libraries, or CPU architectures — not
