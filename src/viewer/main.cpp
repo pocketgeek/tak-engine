@@ -3278,6 +3278,21 @@ public:
             std::snprintf(nb, sizeof nb, "NET P%d  TICK %u", localPlayer_ + 1, netTick_);
             hudFont_.draw(ren_, nb, float(winW) - 200, float(winH) - 14, 1.4f,
                           {140, 200, 255, 255});
+            // "Behind by N s": how far this client's view lags the live game --
+            // the depth of received-but-unplayed bundles (30 Hz). The adaptive
+            // buffer keeps only a tiny intended reserve (~netDelay_ ticks, <0.2 s),
+            // so surface this only once the lag is clearly abnormal: the machine
+            // can't keep up, or a link stall is draining faster than it refills.
+            // Escalates amber -> red toward the ~10 s server reconnect threshold.
+            float behindSec = float(mp_->bufferedBundles()) / float(tak::net::kServerHz);
+            if (behindSec > 0.75f && outcome_ == 0 && !paused_) {
+                char bb[48];
+                std::snprintf(bb, sizeof bb, "BEHIND BY %.1fs", behindSec);
+                float tw = float(hudFont_.width(bb, 1.8f));
+                float t = std::min(1.0f, behindSec / 10.0f);
+                SDL_Color col{255, uint8_t(210 - int(150 * t)), uint8_t(90 - int(60 * t)), 255};
+                hudFont_.draw(ren_, bb, (float(winW) - tw) / 2, 78, 1.8f, col);
+            }
             if (!netError_.empty()) {
                 std::string msg = "NETWORK: " + netError_;
                 float tw = float(hudFont_.width(msg, 2.0f));
