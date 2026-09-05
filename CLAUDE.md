@@ -61,7 +61,8 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   server-run AI). `src/ai/` — the skirmish AI (emits commands).
 - Asset loaders: `src/{hpi,tnt,tdo,cob,gaf,tdf,terrain,crt}`. Full table in the
   README; deeper notes in `docs/` (`retail-engine.md`, `detmath-scope.md`,
-  `multiplayer-design.md`, `model-rendering-plan.md`, `sp-mp-equivalence.md`).
+  `multiplayer-design.md`, `model-rendering-plan.md`, `sp-mp-equivalence.md`,
+  `height-and-fog.md`).
 
 ## Recurring gotchas
 
