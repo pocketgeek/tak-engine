@@ -87,6 +87,7 @@ struct Room {
     // running state
     uint32_t tick = 0;                          // next tick to close
     std::vector<Command> pending;               // commands for the next tick
+    std::map<uint32_t, std::vector<Command>> pendingAt;  // server input-delay: cmds bucketed by future tick
     std::vector<Event> pendingEvents;           // sequenced events for the next tick
     uint64_t nextTickMs = 0;                    // wall deadline for the next tick
     // hash cross-check: tick -> (clientId -> hash)
@@ -613,11 +614,18 @@ void Server::gameMsg(Client& c, const Frame& f) {
             Reader rd(f.payload.data(), f.payload.size());
             uint32_t n = rd.u32();
             if (n > uint32_t(kCmdCapPerTick)) n = kCmdCapPerTick;   // drop the excess
+            // Server-side input delay (TAK_SRV_DELAY=K, default 0): bucket incoming
+            // commands K ticks into the future instead of the very next tick, so a
+            // command never "just misses" a tick boundary. Costs K ticks of latency.
+            static const int srvDelay = [] {
+                const char* e = std::getenv("TAK_SRV_DELAY"); return e ? std::max(0, std::atoi(e)) : 0;
+            }();
             for (uint32_t i = 0; i < n && rd.ok; ++i) {
                 Command cmd = rd.cmd();
                 if (!rd.ok) break;
                 cmd.player = uint8_t(c.slot);   // server stamps ownership
-                r->pending.push_back(cmd);
+                if (srvDelay > 0) r->pendingAt[r->tick + uint32_t(srvDelay)].push_back(cmd);
+                else r->pending.push_back(cmd);
             }
             break;
         }
@@ -700,6 +708,12 @@ void Server::closeTick(Room& r) {
         for (auto& ctl : r.ai)
             ctl.tick(*r.ref, r.tick, [&r](const Command& c) { r.pending.push_back(c); });
 
+    // Server input delay: client commands scheduled for THIS tick (received
+    // srvDelay ticks ago) join the bundle now.
+    if (auto it = r.pendingAt.find(r.tick); it != r.pendingAt.end()) {
+        for (auto& c : it->second) r.pending.push_back(c);
+        r.pendingAt.erase(it);
+    }
     Writer w;
     w.u32(r.tick);
     // Deterministic order: sort by player, stable within a player (arrival order).

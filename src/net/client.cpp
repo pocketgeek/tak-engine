@@ -1,6 +1,7 @@
 #include "net/client.h"
 
 #include <time.h>
+#include <cstdlib>
 
 namespace tak::net {
 
@@ -35,10 +36,26 @@ void MpClient::disconnect(const std::string& reason) {
 
 bool MpClient::poll() {
     if (state_ == State::Offline || state_ == State::Done) return false;
+    if (jitterMs_ < 0) {   // one-time init of the test jitter injector
+        const char* e = std::getenv("TAK_NET_JITTER_MS");
+        jitterMs_ = e ? std::max(0, std::atoi(e)) : 0;
+    }
     if (!conn_.recv()) { err_ = conn_.error(); state_ = State::Done; return false; }
     Frame f;
     while (conn_.poll(f)) { onFrame(f); if (!conn_.ok()) break; }
     uint64_t now = nowMs();
+    // Release any jitter-held bundles whose delay has elapsed.
+    if (!jitterHeld_.empty()) {
+        for (auto it = jitterHeld_.begin(); it != jitterHeld_.end();) {
+            if (it->releaseMs <= now) { bundles_[it->tick] = std::move(it->bd);
+                                        noteBundleArrival(now); it = jitterHeld_.erase(it); }
+            else ++it;
+        }
+    }
+    // Active RTT probe (only when a consumer enabled it): one ping/sec.
+    if (measureRtt_ && !pingSentMs_ && now - lastPingMs_ > 1000) {
+        send(Msg::Ping); lastPingMs_ = now; pingSentMs_ = now;
+    }
     if (now - lastRecvMs_ > kPingIdleMs && now - lastPingMs_ > kPingIdleMs) {
         send(Msg::Ping); lastPingMs_ = now;
     }
@@ -76,7 +93,13 @@ void MpClient::onFrame(const Frame& f) {
             state_ = State::Done;
             break;
         case Msg::Ping: send(Msg::Pong); break;
-        case Msg::Pong: break;
+        case Msg::Pong:
+            if (pingSentMs_) {
+                float sample = float(nowMs() - pingSentMs_);
+                rttMs_ = rttMs_ > 0 ? 0.7f * rttMs_ + 0.3f * sample : sample;
+                pingSentMs_ = 0;
+            }
+            break;
         case Msg::Bye: err_ = r.str(); state_ = State::Done; break;
         case Msg::GameList: {
             games_.clear();
@@ -141,7 +164,17 @@ void MpClient::onFrame(const Frame& f) {
                 Event e; e.kind = Event::Kind(r.u8()); e.player = r.u8();
                 bd.events.push_back(e);
             }
-            if (r.ok) { bundles_[tk] = std::move(bd); if (state_ == State::Starting) state_ = State::InGame; }
+            if (r.ok) {
+                if (jitterMs_ > 0) {   // hold, then release after a random delay
+                    rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;
+                    uint64_t delay = rng_ % uint32_t(jitterMs_ + 1);
+                    jitterHeld_.push_back({nowMs() + delay, tk, std::move(bd)});
+                } else {
+                    bundles_[tk] = std::move(bd);
+                    noteBundleArrival(nowMs());
+                }
+                if (state_ == State::Starting) state_ = State::InGame;
+            }
             break;
         }
         case Msg::Desynced: {

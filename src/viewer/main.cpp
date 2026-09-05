@@ -1829,11 +1829,23 @@ public:
         };
         if (netDelay_ == -2) {   // one-time init from the env
             const char* e = std::getenv("TAK_NET_DELAY");
-            netDelay_ = e ? std::max(0, std::atoi(e)) : 0;
+            if (e && std::string(e) == "auto") { netAuto_ = true; netDelay_ = 3; mp_->enableRttProbe(); }
+            else netDelay_ = e ? std::max(0, std::atoi(e)) : 0;
+        }
+        if (netAuto_) {
+            // Size the buffer to cover the measured bundle-arrival jitter, with an
+            // RTT-scaled floor, clamped. Recomputed each frame so it tracks the link.
+            int kJit = int(std::ceil(mp_->arrivalJitterMs() / (1000.0f / 30.0f)));
+            int kRtt = int(std::ceil(mp_->rttMs() / 60.0f));   // gentle RTT floor
+            netDelay_ = std::clamp(2 + std::max(kJit, kRtt), 2, 16);
         }
         if (netDelay_ <= 0) {
             // Default: drain to the newest delivered bundle every frame.
             while (outcome_ == 0 && drained < 512 && mp_->takeBundle(netTick_, bd)) simTick();
+            // Stall metric: 0 ticks played this frame while future bundles ARE
+            // buffered means the one we need is late (head-of-line block) -- a stall.
+            ++netBenchFrames_;
+            if (drained == 0 && mp_->bufferedBundles() > 0) ++netBenchStalls_;
         } else {
             // Jitter buffer: fill an initial reserve of netDelay_ bundles, then pace
             // the sim on the wall clock at ~30 Hz, staying that many bundles behind
@@ -1859,6 +1871,11 @@ public:
             if (buffered > netDelay_ + 60) budget = 512;
             budget = std::min(budget, 512);
             while (outcome_ == 0 && drained < budget && mp_->takeBundle(netTick_, bd)) simTick();
+            // Stall metric: the wall clock wanted more ticks than we could play
+            // because the next bundle isn't buffered yet (jitter exceeded the
+            // reserve). One count per starved frame.
+            ++netBenchFrames_;
+            if (drained < budget && !mp_->haveBundle(netTick_)) ++netBenchStalls_;
         }
         // "Machine too slow" guard: if the backlog stays deep for a sustained
         // stretch, this client can't process ticks as fast as they arrive and
@@ -4673,9 +4690,18 @@ private:
     // behind the newest received, so brief server->client jitter is covered from
     // the reserve instead of stalling. Costs ~K*33ms of fixed input latency.
     int netDelay_ = -2;          // -2 = read TAK_NET_DELAY once; then 0 = off, else depth
+    bool netAuto_ = false;       // TAK_NET_DELAY=auto: size the buffer to the link
     bool netBufReady_ = false;   // built the initial reserve
     float netAccum_ = 0;         // wall-clock tick accumulator (seconds)
     uint64_t netStepMs_ = 0;     // last mpStep wall time
+    long netBenchFrames_ = 0, netBenchStalls_ = 0;   // jitter-buffer stall metric
+public:
+    long netBenchFrames() const { return netBenchFrames_; }
+    long netBenchStalls() const { return netBenchStalls_; }
+    void netEnableRttProbe() { if (mp_) mp_->enableRttProbe(); }
+    float netRttMs() const { return mp_ ? mp_->rttMs() : 0.0f; }
+    int netDelay() const { return netDelay_; }
+private:
     bool replayMode_ = false;                     // playing a recorded .takrep
     std::vector<tak::net::Bundle> replayBundles_;
     size_t replayTick_ = 0;
@@ -7422,14 +7448,25 @@ int main(int argc, char** argv) {
     if (gameView && mp && mpHeadless) {
         std::string mapId = std::filesystem::path(args[0]).stem().string();
         int limitTicks = int((startTime > 0 ? startTime : 60) * 30);
+        // Jitter benchmark: run the client loop at a FIXED 60 fps (so the stall
+        // metric is frame-rate-consistent) and enable the RTT probe. Otherwise the
+        // usual tight poll loop.
+        bool bench = std::getenv("TAK_NETBENCH") != nullptr;
+        if (bench) gameView->netEnableRttProbe();
         while (gameView->mpAutoStep(mpHeadless, mapId, crusades)) {
             if (int(gameView->netTick()) >= limitTicks) break;
-            SDL_Delay(2);
+            SDL_Delay(bench ? 16 : 2);   // ~60 fps for the benchmark
         }
         std::fprintf(stderr, "mp-headless done: tick=%u hash=%016llx units=%zu err=%s\n",
                      gameView->netTick(), (unsigned long long)gameView->worldHashPublic(),
                      gameView->aliveUnits(),
                      gameView->netError().empty() ? "none" : gameView->netError().c_str());
+        if (bench) {
+            long f = gameView->netBenchFrames(), s = gameView->netBenchStalls();
+            std::fprintf(stderr, "NETBENCH delay=%d rtt=%.0fms frames=%ld stalls=%ld (%.1f%%)\n",
+                         gameView->netDelay(), gameView->netRttMs(), f, s,
+                         f ? 100.0 * double(s) / double(f) : 0.0);
+        }
         mp->disconnect();
         return gameView->netError().empty() ? 0 : 1;
     }
