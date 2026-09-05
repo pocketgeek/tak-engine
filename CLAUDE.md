@@ -41,6 +41,12 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
 - **Two build dirs coexist: `build/` (Release) and `build-dbg/` (Debug).** After
   editing code, rebuild **whichever binary you actually run** — a stale build
   silently shows old behaviour (this has caused confusion). Rebuild both if unsure.
+- **After a `src/sim`, `src/net`, or `src/ai` change, rebuild ALL targets:**
+  `cmake --build build` (no `--target`). Those live in the shared `tak-formats`
+  static lib, which is baked into each executable at link time — so `--target
+  takview` alone leaves a **stale `takserver`** (its referee sim then disagrees
+  with the freshly-built clients and trips the referee-suspect check). Building
+  all targets relinks `takview` AND `takserver` together.
 - Play: `./build/takview game <map.tnt> <terrain-dir> <data-root> [--side X --aiside Y]`
   (README lists all options).
 - Headless determinism / smoke test:
