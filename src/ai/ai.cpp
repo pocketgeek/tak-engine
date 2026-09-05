@@ -1,5 +1,6 @@
 #include "ai/ai.h"
 
+#include "sim/detmath.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -122,7 +123,7 @@ void Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
     } else if (p.type->isBuilder) {             // mobile builder conjures mobile
         for (float r = 40; r < 170; r += 20)
             for (float a = 0; a < 6.28f; a += 0.6f) {
-                float x = p.x + std::cos(a) * r, z = p.z + std::sin(a) * r;
+                float x = p.x + detmath::cos(a) * r, z = p.z + detmath::sin(a) * r;
                 if (world.canPlace(pick, x, z)) {
                     emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                     return;
@@ -149,7 +150,7 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     }
     for (float r = 70; r < 340; r += 30)
         for (float a = 0; a < 6.28f; a += 0.5f) {
-            float x = nx + std::cos(a) * r, z = nz + std::sin(a) * r;
+            float x = nx + detmath::cos(a) * r, z = nz + detmath::sin(a) * r;
             if (world.canPlace(t, x, z)) { outX = x; outZ = z; return true; }
         }
     return false;

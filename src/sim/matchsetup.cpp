@@ -1,5 +1,6 @@
 #include "sim/matchsetup.h"
 
+#include "sim/detmath.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -221,7 +222,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     std::vector<std::pair<float, float>> spots = starts;
     while (int(spots.size()) < used) {
         float a = float(spots.size()) / float(std::max(used, 1)) * 6.2831853f;
-        spots.push_back({cx + std::cos(a) * 300, cz + std::sin(a) * 300});
+        spots.push_back({cx + detmath::cos(a) * 300, cz + detmath::sin(a) * 300});
     }
     std::vector<std::pair<float, float>> assigned;
     int spot = 0;
