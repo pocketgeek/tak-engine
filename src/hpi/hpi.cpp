@@ -425,20 +425,21 @@ bool affectsGameplay(const std::string& path) {
     // Files our deterministic sim consumes: unit stats, weapon/side/game data,
     // build lists, map geometry + scenario data. Everything else (art, models,
     // animation scripts, sound, music, fonts, gui) is cosmetic.
+    // Build-tree markers (canbuild/canbuildcb/<builder>/<buildable>.tdf) define who
+    // builds what -- gameplay, and .tdf, so check them BEFORE the .tdf rule below.
+    if (k.find("canbuild") != std::string::npos) return true;
     if (ext(".fbi") || ext(".tnt") || ext(".ota") || ext(".crt")) return true;
     if (ext(".tdf")) {
         // Only the .tdf files our sim actually consumes are gameplay: weapon
-        // stats, movement classes, faction data, god timing, and build menus.
-        // Everything else in gamedata/ (explosions, soundclasses, download, ...)
-        // is read by the viewer/audio only -> cosmetic.
+        // stats, movement classes, faction data, god timing. Everything else in
+        // gamedata/ (explosions, soundclasses, download, ...) is read by the
+        // viewer/audio only -> cosmetic.
         if (k.find("weapons/") != std::string::npos) return true;
         if (k.find("moveinfo") != std::string::npos || k.find("sidedata") != std::string::npos ||
             k.find("gods") != std::string::npos)
             return true;
         return false;
     }
-    // canbuild / canbuildcb build-tree files carry no extension in a subdir.
-    if (k.find("canbuild") != std::string::npos) return true;
     return false;
 }
 
@@ -504,8 +505,17 @@ Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides)
     // terrain.hpi ride in here too (Maps/*.tnt, terrain/*.jpg).
     vfs.addLayer(MountSet(root, MountConfig{false, {".hpi"}}));
     // Single-map .kmp archives (each an HPI -> kmap/<name>.*) plus any loose maps.
-    if (fs::path maps = findSub("Maps"); !maps.empty())
-        vfs.addLayer(MountSet(maps, MountConfig{true, {".kmp", ".hpi", ".ufo"}}));
+    // A handful of community .kmp bundle MODDED gameplay data (their own canbuild/
+    // units/gamedata); retail reads a .kmp only for its map, so we expose just the
+    // map (kmap/... and cosmetic tiles the map ships) and drop any bundled gameplay
+    // data -- otherwise one modded map would rewrite every game's unit roster.
+    if (fs::path maps = findSub("Maps"); !maps.empty()) {
+        MountConfig cfg{true, {".kmp", ".hpi", ".ufo"}, {}};
+        cfg.keep = [](const std::string& p) {
+            return MountSet::key(p).rfind("kmap/", 0) == 0 || !affectsGameplay(p);
+        };
+        vfs.addLayer(MountSet(maps, std::move(cfg)));
+    }
     // Highest precedence: user overrides (loose files OR archives), filtered by
     // the multiplayer policy. Cosmetic drops any gameplay-affecting override so
     // it cannot diverge between peers; Full mounts everything.
