@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 5;        // bumped for the client-server protocol
+constexpr uint32_t kNetVersion = 6;        // bumped for the client-server protocol
 constexpr uint32_t kMaxFrame = 1u << 16;   // 64 KB frame cap (hardening)
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate

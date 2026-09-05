@@ -1616,7 +1616,8 @@ public:
                    placing_) {
             placing_ = nullptr;
             buildDrag_ = false;
-        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
+                   !spectating_) {   // a spectator watches only -- no unit selection
             dragging_ = true;
             dragX0_ = dragX1_ = float(e.button.x);
             dragY0_ = dragY1_ = float(e.button.y);
@@ -1894,7 +1895,10 @@ public:
         if (st == S::Done) { if (netError_.empty()) netError_ = mp_->error(); return false; }
         if (st == S::Lobby && (autoMode == 1 || autoMode == 4)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
-            mp_->createGame("headless", "", mapId, o, mpCapacity());
+            // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
+            // slot can be an AI -- an all-AI game to watch.
+            bool watch = autoMode == 1 && std::getenv("TAK_MP_WATCH");
+            mp_->createGame("headless", "", mapId, o, mpCapacity(), watch);
         } else if (st == S::Lobby && autoMode == 5) {
             // Rejoin: read the resume ticket the original session saved and
             // reconnect to the held slot.
@@ -1916,7 +1920,15 @@ public:
             if (!mpFirstListMs_) mpFirstListMs_ = SDL_GetTicks64();
         } else if (st == S::InRoom && autoMode && !mpReadied_) {
             const auto& r = mp_->room();
-            if (r.mySlot >= 0) {
+            // Host-spectator (TAK_MP_WATCH): seat AIs in the LOW slots (0..N-1) and
+            // don't seat self -- an all-AI game the host just watches.
+            if (autoMode == 1 && r.mySlot < 0 && std::getenv("TAK_MP_WATCH")) {
+                const char* ai = std::getenv("TAK_MP_AIS");
+                int nAi = std::clamp(ai ? std::atoi(ai) : 2, 2, int(tak::net::kMaxSlots));
+                for (int k = 0; k < nAi; ++k)
+                    mp_->setSlot(k, 2, uint8_t(k % 5), uint8_t(k), uint8_t(k), 1);
+                mpReadied_ = true;
+            } else if (r.mySlot >= 0) {
                 mp_->setSlot(r.mySlot, 1, uint8_t(r.mySlot % 5), uint8_t(r.mySlot),
                              uint8_t(r.mySlot), 1);
                 // autoMode 4 (AI-game host): also seat one AI opponent in slot 1.
@@ -1971,9 +1983,16 @@ public:
             mpStep();   // drain the replay this frame
         } else if (mp_->starting() && !mpSetupDone_) {
             startMpGame(mp_->startRoom(), mp_->startSeed());
-            mp_->reportLoaded();
+            if (mp_->isSpectator()) {
+                // Host-spectator (create-as-spectator): watch-only, no fog, no slot,
+                // no resume ticket, and nothing to report loaded.
+                spectating_ = true;
+                noFog_ = true;
+            } else {
+                mp_->reportLoaded();
+                writeResume(mp_->gameId(), mp_->resumeToken());   // reconnect ticket
+            }
             mpSetupDone_ = true;
-            writeResume(mp_->gameId(), mp_->resumeToken());   // ticket for reconnect
         } else if (st == S::InGame) {
             return mpStep();
         }
@@ -1989,7 +2008,7 @@ public:
     // One lockstep step: returns false while stalled waiting for the peer.
     uint32_t netTick() const { return netTick_; }
     tak::sim::World& worldRef() { return world_; }
-    void selectOnly(int id) { selection_.clear(); selection_.push_back(id); }
+    void selectOnly(int id) { if (spectating_) return; selection_.clear(); selection_.push_back(id); }
     size_t menuSize(const std::string& id) { return registry_.buildable(id).size(); }
     bool hasIP() const { return !ipRoot_.empty(); }
     const std::string& netError() const { return netError_; }
@@ -5779,7 +5798,7 @@ private:
         // CTRL+SHIFT appends the current selection. Digit 0 is group 10.
         int digit = -1;
         if (key >= SDLK_0 && key <= SDLK_9) digit = int(key - SDLK_0);
-        if (digit >= 0) {
+        if (digit >= 0 && !spectating_) {   // control groups: watch-only can't select
             int g = digit == 0 ? 10 : digit;
             if (ctrl && shift) {   // add selection to the group
                 auto& grp = groups_[g];
@@ -5854,6 +5873,7 @@ private:
     // Replace the selection with every owned, living unit matching `pred`.
     template <class Pred>
     void selectOwned(Pred pred) {
+        if (spectating_) return;   // watch-only
         selection_.clear();
         for (auto& u : world_.units())
             if (u.alive() && u.player == localPlayer_ && u.type && !u.underConstruction &&
@@ -5870,6 +5890,7 @@ private:
 
     // Cycle the selection to the next owned unit (single-select stepping).
     void cycleNextUnit() {
+        if (spectating_) return;   // watch-only
         std::vector<int> owned;
         for (auto& u : world_.units())
             if (u.alive() && u.player == localPlayer_ && u.type && u.type->canMove &&

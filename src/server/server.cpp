@@ -282,6 +282,12 @@ void Server::broadcastLobby(Room& r) {
         auto it = clients_.find(uint32_t(r.slotClient[i]));
         if (it != clients_.end()) it->second->conn.send(Msg::LobbyState, w);
     }
+    // Lobby spectators (e.g. a host who created the game to watch) see the room
+    // fill too -- and this is how they learn hostId, so they can start it.
+    for (uint32_t sid : r.spectators) {
+        auto it = clients_.find(sid);
+        if (it != clients_.end()) it->second->conn.send(Msg::LobbyState, w);
+    }
 }
 
 void Server::broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptClient) {
@@ -308,6 +314,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             std::string name = r.str(), pass = r.str(), mapId = r.str();
             GameOptions o; o.crusades = r.u8(); o.gods = r.u8(); o.forfeitSelfDestruct = r.u8();
             int cap = int(r.u8());
+            uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             if (!r.ok) return;
             if (cap < 2 || cap > kMaxSlots) cap = kMaxSlots;   // sane default
             Room& room = rooms_[nextRoomId_];
@@ -319,19 +326,29 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             room.cap = cap;
             room.hostId = c.id;
             room.createdMs = nowMs();
-            // Host takes slot 0 (human); slots up to the map capacity open, the
-            // rest closed (the map has no start position for them).
-            room.slots[0].type = 1; room.slots[0].faction = 0; room.slots[0].color = 0;
-            room.slots[0].team = 0; room.slots[0].name = c.name;
-            room.slotClient[0] = int(c.id);
-            for (int i = 1; i < kMaxSlots; ++i) {
-                room.slots[i].type = i < cap ? 0 : 3;   // open up to capacity, else closed
+            // Open slots up to the map capacity, close the rest (the map has no
+            // start position for them).
+            for (int i = 0; i < kMaxSlots; ++i) {
+                room.slots[i].type = i < cap ? 0 : 3;
                 room.slots[i].color = uint8_t(i);
                 room.slots[i].team = uint8_t(i);
             }
-            c.state = Client::InGame; c.roomId = room.id; c.slot = 0;
-            Writer jr; jr.u8(1); jr.u8(0); jr.str("");   // ok, slot 0
-            c.conn.send(Msg::JoinResult, jr);
+            if (spectate) {
+                // Host watches without a slot -- every capacity slot stays open (fill
+                // with AIs). The host still owns the room (add AIs, start).
+                room.spectators.push_back(c.id);
+                c.state = Client::InGame; c.roomId = room.id; c.slot = -1;
+                Writer jr; jr.u8(1); jr.u8(0xFF); jr.str("");   // ok, spectator
+                c.conn.send(Msg::JoinResult, jr);
+            } else {
+                // Host takes slot 0 (human).
+                room.slots[0].type = 1; room.slots[0].faction = 0; room.slots[0].color = 0;
+                room.slots[0].team = 0; room.slots[0].name = c.name;
+                room.slotClient[0] = int(c.id);
+                c.state = Client::InGame; c.roomId = room.id; c.slot = 0;
+                Writer jr; jr.u8(1); jr.u8(0); jr.str("");   // ok, slot 0
+                c.conn.send(Msg::JoinResult, jr);
+            }
             broadcastLobby(room);
             std::fprintf(stderr, "client %u created game %u '%s'\n", c.id, room.id, room.name.c_str());
             break;
@@ -529,6 +546,16 @@ void Server::tryStart(Client& c) {
         w.u64(r->slotToken[i]);           // resume token
         it->second->conn.send(Msg::GameStarting, w);
         it->second->loaded = false;
+    }
+    // Spectators (incl. a host who created the game to watch) get a slot-less
+    // GameStarting; they don't gate the first tick, so mark them loaded.
+    for (uint32_t sid : r->spectators) {
+        auto it = clients_.find(sid);
+        if (it == clients_.end()) continue;
+        Writer w; writeSlots(w, *r);
+        w.u8(0xFF); w.u32(0x7a6b0000u + r->id); w.u64(0);
+        it->second->conn.send(Msg::GameStarting, w);
+        it->second->loaded = true;
     }
     std::fprintf(stderr, "game %u starting with %d players\n", r->id, r->usedSlots());
 }
