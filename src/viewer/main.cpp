@@ -92,7 +92,9 @@ pid_t spawnLocalServer(const std::string& serverBin, const std::string& dataRoot
 namespace {
 
 float gTilt = 0.72f;
-constexpr int kWinW = 1280, kWinH = 800;
+// Default window: large enough that the 2x-rendered lobby (Room slot table + chat
+// panel) fits without the columns overlapping the chat.
+constexpr int kWinW = 1920, kWinH = 1080;
 
 void screenshot(SDL_Renderer* ren, int w, int h, const std::string& path) {
     std::vector<uint8_t> px(size_t(w) * h * 4);
@@ -2758,7 +2760,9 @@ public:
             if (!noFog_ && !vis.empty() && (cx < 0 || cz < 0 || cx >= vw ||
                                  vis[size_t(cz) * vw + cx] == 0))
                 continue;   // unexplored
-            float sx = (f.x - mapView_.offX()) * zm0, sy = (f.z - mapView_.offY()) * zm0;
+            // Cull on the LIFTED position (features lift onto the relief like units).
+            float sx = (f.x - mapView_.offX()) * zm0 - terrainLiftX(f.x, f.z) * zm0;
+            float sy = (f.z - mapView_.offY()) * zm0 - terrainLift(f.x, f.z) * zm0;
             if (sx < -200 || sy < -200 || sx > winW + 200 || sy > winH + 200) continue;
             // Mana deposit markers are flat ground decals a lodestone is built
             // on top of, so bias their sort key back to keep them painted
@@ -2779,7 +2783,10 @@ public:
             // the top edge can still show its lower body. Without this, every
             // fog-visible unit was drawn regardless of camera position, so the
             // frame rate didn't improve when the crowd scrolled off screen.
-            float sx = (u.x - mapView_.offX()) * zm0, sy = (u.z - mapView_.offY()) * zm0;
+            // Cull on the LIFTED anchor (where the unit is actually drawn), else a unit
+            // lifted onto the screen from just below the edge on high ground vanishes.
+            float sx = (u.x - mapView_.offX()) * zm0 - uLiftX(u) * zm0;
+            float sy = (u.z - mapView_.offY()) * zm0 - uLiftY(u) * zm0;
             if (sx < -160 || sx > mvw + 160 || sy < -260 || sy > winH + 120) continue;
             items.push_back({u.z, &u, nullptr});
         }
