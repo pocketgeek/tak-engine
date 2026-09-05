@@ -1480,29 +1480,37 @@ public:
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.y > winH - kBarH) {
             // bottom bar: build-icon clicks; everything else is swallowed
-            if (e.button.button == SDL_BUTTON_LEFT) {
+            bool lmb = e.button.button == SDL_BUTTON_LEFT;
+            bool rmb = e.button.button == SDL_BUTTON_RIGHT;
+            if (lmb || rmb) {
                 for (const auto& [r, bt] : iconRects_) {
                     if (e.button.x < r.x || e.button.x > r.x + r.w ||
                         e.button.y < r.y || e.button.y > r.y + r.h)
                         continue;
                     const auto* b = selectedBuilder();
                     if (!b || !bt) break;
-                    bool ctrl = (SDL_GetModState() & KMOD_CTRL) != 0;
+                    uint16_t mod = SDL_GetModState();
+                    bool ctrl = (mod & KMOD_CTRL) != 0, shift = (mod & KMOD_SHIFT) != 0;
                     // Placement (a manual click) is for STRUCTURES -- you place
                     // buildings/lodestones -- and for MOBILE builders conjuring units
-                    // (e.g. Zhon's beast handlers). A BUILDING conjuring a mobile unit
-                    // just TRAINS it: it exits to a rally point, no placement needed.
-                    bool place = isStructure(bt) || !isStructure(b->type);
-                    if (place && !ctrl) {
-                        placing_ = bt;
-                    } else {
-                        // Ctrl+click on a conjurer's icon toggles infinite build.
-                        tak::net::Command c;
-                        c.kind = ctrl ? tak::net::Cmd::RepeatTrain : tak::net::Cmd::Train;
-                        c.unitId = b->id;
-                        std::snprintf(c.type, sizeof c.type, "%s", bt->id.c_str());
-                        issue(c);
+                    // (e.g. Zhon's beast handlers): left-click arms placement, no queue.
+                    if (isStructure(bt) || !isStructure(b->type)) {
+                        if (lmb) placing_ = bt;
+                        break;
                     }
+                    // A BUILDING conjuring a mobile unit uses a build QUEUE: left adds,
+                    // right removes; 1 by default, 5 with Shift, 10 with Ctrl+Shift.
+                    // Ctrl+left (no Shift) toggles infinite production.
+                    tak::net::Command c;
+                    c.unitId = b->id;
+                    std::snprintf(c.type, sizeof c.type, "%s", bt->id.c_str());
+                    if (lmb && ctrl && !shift) {
+                        c.kind = tak::net::Cmd::RepeatTrain;
+                    } else {
+                        c.kind = lmb ? tak::net::Cmd::Train : tak::net::Cmd::Unqueue;
+                        c.targetId = (ctrl && shift) ? 10 : shift ? 5 : 1;
+                    }
+                    issue(c);
                     break;
                 }
             }
@@ -6383,6 +6391,16 @@ private:
                     SDL_FRect pb{r.x + (r.w - pw) / 2 - 3, r.y + 4, pw + 6, 22};
                     SDL_RenderFillRectF(ren_, &pb);
                     blockText("+++", r.x + (r.w - pw) / 2, r.y + 7, px, {120, 255, 130, 255});
+                }
+                // Queued-count badge (bottom-right of the icon): how many are queued.
+                if (int qc = world_.queuedCount(b->id, bt)) {
+                    char num[8];
+                    std::snprintf(num, sizeof num, "%d", qc);
+                    float px = 2.2f, nw = blockWidth(num, px);
+                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 205);
+                    SDL_FRect nb{r.x + r.w - nw - 7, r.y + r.h - 21, nw + 7, 20};
+                    SDL_RenderFillRectF(ren_, &nb);
+                    blockText(num, r.x + r.w - nw - 4, r.y + r.h - 18, px, {255, 235, 140, 255});
                 }
                 if (hot) {
                     char tip[80];
