@@ -28,6 +28,7 @@ add_library(tak-formats
   src/cob/cob.cpp
   src/cob/vm.cpp
   src/sim/sim.cpp
+  src/sim/detmath.cpp
   src/sim/matchsetup.cpp
   src/ai/ai.cpp
   src/crt/crt.cpp
@@ -56,6 +57,9 @@ endif()
 
 add_executable(hpitool tools/hpitool.cpp)
 target_link_libraries(hpitool PRIVATE tak-formats)
+
+add_executable(detmath_test tools/detmath_test.cpp)
+target_link_libraries(detmath_test PRIVATE tak-formats)
 
 add_executable(gaftool tools/gaftool.cpp)
 target_link_libraries(gaftool PRIVATE tak-formats)

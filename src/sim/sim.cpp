@@ -1,5 +1,6 @@
 #include "sim/sim.h"
 
+#include "sim/detmath.h"
 #include "tdf/tdf.h"
 
 #include <algorithm>
@@ -1130,7 +1131,7 @@ void World::tickCombat(Unit& u, float dt) {
     }
     // In range: stop and face the target.
     u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
-    float want = std::atan2(dx, dz);
+    float want = detmath::atan2(dx, dz);
     float diff = angleDiff(want, u.heading);
     float maxTurn = u.type->turnRate * dt;
     u.heading += std::clamp(diff, -maxTurn, maxTurn);
@@ -1708,14 +1709,14 @@ void World::tick(float dt) {
                 }
                 continue;
             }
-            float want = std::atan2(dx, dz);
+            float want = detmath::atan2(dx, dz);
             if (o.flow) {
                 // Steer along the shared flow field; near the goal (or in an
                 // unreachable pocket) the field goes flat and we home straight in.
                 const FlowField* ff = flowFor(u.type, o.x, o.z);
                 float fx = 0, fz = 0;
                 if (ff) ff->dirAt(u.x, u.z, fx, fz);
-                if (fx != 0 || fz != 0) want = std::atan2(fx, fz);
+                if (fx != 0 || fz != 0) want = detmath::atan2(fx, fz);
             }
             float diff = angleDiff(want, u.heading);
             float maxTurn = u.type->turnRate * dt;
@@ -1741,8 +1742,8 @@ void World::tick(float dt) {
             else
                 u.speed = std::max(u.speed - u.type->brake * dt, target);
 
-            float mx = std::sin(u.heading) * u.speed * dt;
-            float mz = std::cos(u.heading) * u.speed * dt;
+            float mx = detmath::sin(u.heading) * u.speed * dt;
+            float mz = detmath::cos(u.heading) * u.speed * dt;
             // Collide ground/water units with the nav grid so they can't walk
             // through walls and buildings (pathfinding routes around, but direct
             // steering in combat did not). Slide along a blocked axis.
@@ -1795,7 +1796,7 @@ void World::tick(float dt) {
             // repathed to break the deadlock. Half the units nudge each way so
             // a crowd splits around an obstacle instead of piling up.
             if (!u.type->canFly) {
-                float moved = std::hypot(u.x - u.stuckX, u.z - u.stuckZ);
+                float moved = detmath::len(u.x - u.stuckX, u.z - u.stuckZ);
                 if (moved > 11.0f) {
                     u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
                 } else {
@@ -1806,7 +1807,7 @@ void World::tick(float dt) {
                         auto free = [&](float nx, float nz) {
                             return g.empty() || g.walkable(int(nx) / 16, int(nz) / 16);
                         };
-                        float px = std::cos(u.heading), pz = -std::sin(u.heading);
+                        float px = detmath::cos(u.heading), pz = -detmath::sin(u.heading);
                         float s = (u.id & 1) ? 1.0f : -1.0f;
                         for (float d : {20.0f, 34.0f}) {
                             if (free(u.x + px * s * d, u.z + pz * s * d)) {
