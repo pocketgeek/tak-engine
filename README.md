@@ -3,194 +3,208 @@
 A modern, cross-platform engine recreation for **Total Annihilation: Kingdoms**
 (Cavedog Entertainment, 1999), in the spirit of OpenRA and Robot War Engine.
 
-This project contains **no game content**. You must own the original game
-(e.g. the GOG release of *Total Annihilation: Kingdoms + The Iron Plague*)
-and place its data files in `assets/` (gitignored) to use the engine.
+> **This project contains no game content.** You must own the original game
+> (e.g. the GOG release of *Total Annihilation: Kingdoms + The Iron Plague*) and
+> place its data files under `assets/` (gitignored) to run anything below.
+
+Much of the behaviour was cross-checked by disassembling the retail engine
+(`KINGDOMS.icd`); see `docs/retail-engine.md` for the findings (class model,
+config schema, and the veterancy/build formulas read out of the binary).
 
 ## Status
 
-1. ~~**Format tooling**~~ ✅ HPI v2, GAF/TAF, TNT, 3DO, COB, TDF/FBI/OTA,
-   GAF fonts, WAV — all retail files parse.
-2. ~~**Asset viewer**~~ ✅ `takview map` / `takview model` (textured,
-   COB-animated).
-3. ~~**Simulation**~~ ✅ movement, A* pathfinding, combat, mana economy,
+Every stage is complete:
+
+1. ~~**Format tooling**~~ — HPI v2, GAF/TAF, TNT, 3DO, COB, TDF/FBI/OTA, GAF
+   fonts, WAV all parse.
+2. ~~**Asset viewer**~~ — `takview map` / `takview model` (textured, COB-animated).
+3. ~~**Simulation**~~ — movement, A* pathfinding, combat, mana economy,
    production, per-unit COB VMs, sound.
-4. ~~**Game**~~ ✅ playable skirmish vs AI (`takview game`): fog of war,
-   minimap, building placement, production, player colors, faction select,
-   a classic HUD (build icons, order-button column, mana/stats),
-   `Keys.TDF` hotkeys, and per-faction soundtrack music.
-5. ~~**Campaign**~~ ✅ mission loading via `.ota`/`.cob` with the
-   `MAP_COMMAND` scripting API and `.crt` scenario/trigger parsing.
-6. ~~**Multiplayer**~~ ✅ client–server (a central `takserver` relays a
-   server-sequenced deterministic lockstep for up to 8 players/teams, with a
-   lobby GUI). With `--data` the server also runs a referee sim that hosts the
-   AI players and validates every client's state hash. A dropped player's slot
-   is held and can be reclaimed via a resume token (the client replays the
-   bundle log to catch up); if not, they forfeit deterministically. Finished
-   games are written as self-contained `.takrep` replays, running games can be
-   watched live, in-game chat and an 8-player scoreboard are in, and allies
-   share their economy (surplus mogrium flows to teammates with room). The sim's
-   trig is routed through a deterministic-math shim (`src/sim/detmath`) so
-   lockstep holds across compilers and CPUs, not just the same binary — see
-   `docs/multiplayer-design.md` and `docs/detmath-scope.md`.
-7. ~~**Combat & unit depth**~~ ✅ the FBI/weapon data is driven faithfully:
-   HP regen, veterancy (kills → +10%/level attack·armour·reload, gold sheen,
+4. ~~**Skirmish game**~~ — playable vs AI: fog of war, minimap, building
+   placement, production, player colours, faction select, a classic HUD, and
+   `Keys.TDF` hotkeys.
+5. ~~**Campaign**~~ — mission loading via `.ota`/`.cob` with the `MAP_COMMAND`
+   scripting API and `.crt` scenario/trigger parsing.
+6. ~~**Multiplayer**~~ — client–server deterministic lockstep for up to 8
+   players/teams, cross-build deterministic. See [Multiplayer](#multiplayer).
+7. ~~**Combat & unit depth**~~ — the FBI/weapon data is driven faithfully: HP
+   regen, veterancy (kills → +10 %/level attack·armour·reload, gold sheen,
    promoted `veteranmodel`), per-unit mana pools & mana-per-shot, area-of-effect
    splash + per-target-category damage, status weapons (freeze / petrify /
    paralyze / mind-control) with immunities, cloaking, reclaim / resurrect /
-   capture, `AdjustArmor`/`AdjustAttack` stat auras, terrain-class movement
+   capture, `AdjustArmor`/`AdjustAttack` auras, terrain-class movement
    (`MOVEINFO.tdf` slope/water limits + water/road speed), radar sight,
-   line-of-sight firing (no shooting through walls), flow-field group movement,
-   and a summonable-god economy.
-8. ~~**Effects & audio**~~ ✅ real GAF/TAF explosion, splash, shockwave-ring,
+   line-of-sight firing, flow-field group movement, and a summonable-god economy.
+8. ~~**Effects & audio**~~ — real GAF/TAF explosion, splash, shockwave-ring,
    ground-fire and muzzle-flash effects; material-specific impact sounds; unit
    shadows; camera shake; positional/surround audio.
-9. ~~**Rendering at scale**~~ ✅ thousands of units on screen, smoothly. The
-   per-unit model projection runs across a worker pool; units are frustum-culled
-   to the viewport; every unit texture is packed into a per-colour atlas so a
-   whole army collapses to a handful of draw calls; and each unit's walk/fly
-   cycle is baked to an **animated sprite sheet** (16 facings, real per-type
-   cycle timing, multi-page atlas) drawn as a single quad — the classic-RTS
-   technique — with the full 3D model kept for close-up and attack/death poses.
-   The sim side is O(n) (spatial-hash neighbour queries, staggered target
-   acquisition), so a thousand-unit battle is CPU-cheap too.
-
-Many of these were cross-checked by disassembling the retail engine
-(`KINGDOMS.icd`) — see `docs/retail-engine.md` for the findings (class model,
-config schema, and the veterancy/build formulas read out of the binary).
-
-## Quick start (after placing game data in assets/)
-
-```sh
-# extract one archive:
-./build/hpitool extract assets/game/<archive>.hpi assets/extracted/<name>
-# ...or merge a whole game directory the way the retail engine layers it
-# (all *.hpi/*.ufo, patch archives override the base — see below):
-./build/hpitool merge assets/game assets/extracted
-./build/takview game "assets/extracted/maps/Maps/King of the Hill.tnt" \
-    assets/extracted/terrain/terrain assets/extracted/data
-```
-
-**HPI precedence** — the retail game shipped each update as a new HPI/UFO that
-superseded older copies of a file. `hpitool merge` reproduces the exact rule
-(reverse-engineered from `KINGDOMS.icd`): a loose file on disk wins; otherwise,
-across all `*.hpi` then `*.ufo` in the directory, the copy whose archive entry
-has the **newest date** wins (ties keep the earlier-mounted, `*.hpi` before
-`*.ufo`). `hpitool where <dir> <path>` shows which archive a given file resolves
-to. So dropping newer patch archives (e.g. `V3Rocket.hpi`) into the game
-directory Just Works, as the original did.
-
-Controls (hotkeys follow the game's `Keys.TDF`): drag = box-select,
-right-click = move/attack (shift queues). Order keys arm a command you then
-click to place — **F** = fight-move (attack-move), **M** = move, **A** = attack,
-**P** = patrol, **G** = guard; **S** = stop (immediate), **N** = cycle to the next
-unit, Esc cancels an armed order. Selection: **Ctrl+A** = all your units,
-**Ctrl+Z** = all of the selected type, **Ctrl+U** = everything on screen.
-Control groups: **Ctrl+1–9/0** assign the selection, **1–9/0** recall it,
-**Ctrl+Shift+1–9/0** add to a group. **Pause** toggles pause. **+**/**−** step the
-game speed over −10…+10 (0 = normal; +10 = 10×, −10 = 0.1×).
-At a selected building that trains units, the build icons are a queue:
-left-click **+1**, **Shift**+left **+5**, **Ctrl+Shift**+left **+10**; right-click
-removes the same amounts; each icon shows how many are queued, and **Ctrl**+left
-toggles infinite production. A builder that places things (structures, or a mobile
-conjurer like a Zhon Beast Handler) instead arms placement — click to position it.
-arrows/middle-drag/**screen-edge** = scroll, wheel = zoom (toward cursor),
-minimap click/drag = move camera; right-click the minimap moves the selection.
-**Ctrl+D** destroys the selected unit(s). **F4** toggles a per-player status
-panel — live frame rate plus each player's unit count and enemy kills; in a
-net game or replay it becomes a full scoreboard listing every player by name,
-team, and defeat status;
-**F6** opens the player-colour picker (click a
-swatch to recolour your units, HUD and minimap). Units render as full 3D
-models by default; **F10** cycles sprite-sheet rendering **AUTO** (the default —
-it switches to the cheaper animated sprites only while the frame can't hold
-60 fps with a real crowd on screen, back to 3D once it clears) → **ON** →
-**OFF**. **F8** toggles the distance-impostor level-of-detail (on by default),
-which replaces a unit with a cached billboard only when it's really zoomed out
-and small on screen. Background music plays from the game soundtrack. Frame rate is capped at 60 fps (`--maxfps N`, or `--maxfps 0` for
-uncapped); `--novsync` disables vsync (the window title shows live FPS).
-
-Each side begins a skirmish with **only its Monarch**, dropped on the
-map's real start positions (read from the `.ota`). The Monarch generates
-a trickle of mogrium and builds the first lodestones and keep, which then
-train the army — the AI opponent bootstraps the same way. `--demo`
-instead stages a ready-army AI-vs-AI war; `--mission` loads a campaign
-mission's .ota/.cob; `--side ara|tar|ver|zon|cre` picks your faction and
-`--aiside` the enemy's (Zhon has no Keep — its Monarch and Beast Handlers
-summon creatures; Creon needs the Iron Plague data). `--color N` /
-`--aicolor N` (0–9) choose the player-colour variant your / the AI's units
-render in, independent of faction. `--cheat` makes all construction and
-production finish instantly and cost no mana. `--crusades` uses the **Crusades
-balance** — the alternate unit stats and build menus the final patch shipped
-for ranked "Darien Crusades" play (`unitscb`/`canbuildcb` in the data, layered
-over the base roster).
-
-In a god-enabled match, a faction whose priests (`attractsgods` units) have
-channelled enough mana favour manifests its **god** among its forces once the
-appear time passes — set `TAK_GODTIME=<seconds>` to shorten it for testing.
-
-Multiplayer is **client–server**: run the headless `takserver` (default port
-7677) somewhere reachable, and each player connects with
-`takview game <map> <terrain> <data> --server <host> [--serverport N] [--name X]`.
-The server hosts a lobby and relays a server-sequenced deterministic lockstep —
-up to 8 players on up to 8 teams (allies share vision and economy), each machine running the
-identical sim with only ~35-byte commands on the wire. Start the server with
-`takserver --port 7677 --data <extracted-data-dir>` and it also runs a **referee
-simulation** that hosts the AI players (so the host's machine isn't loaded by
-them) and holds the canonical state hash every client is checked against; without
-`--data` it is a pure relay and clients cross-check hashes among themselves. All
-players connect out to the one server, so no NAT or port-forwarding on the
-players' side. Everyone needs the same engine build and game data (the handshake
-gates protocol version). See
-`docs/multiplayer-design.md` for the full design and milestone plan. The
-in-client lobby has a game browser, a create-game dialog, and a room screen
-where each player picks their faction, colour, and team and readies up (the host
-opens/closes slots, kicks, and starts). A dropped player's slot is held so they
-can rejoin with a resume token (the client replays the bundle log to catch up);
-otherwise they forfeit deterministically. A running game can be **watched live**
-from the browser (the **WATCH** button) — a spectator replays the bundle log to
-the present, then follows along with no fog and no control. Start the server with
-`--replaydir <dir>` and it writes a self-contained `.takrep` for every finished
-game; play one back as a spectator with
-`takview replay <file.takrep> <terrain> <data>` (Pause and the **+**/**−** speed
-keys scrub it; a bar shows elapsed/total time). The old 2-player
-`--host`/`--join` peer mode is retired.
+9. ~~**Rendering at scale**~~ — thousands of units on screen, smoothly. The
+   per-unit model projection runs across a worker pool; units are frustum-culled;
+   each colour's textures are packed into one atlas so an army is a handful of
+   draw calls; and each unit's walk/fly cycle is baked to an **animated sprite
+   sheet** (16 facings, real cycle timing) drawn as a single quad — the classic
+   RTS trick — with the full 3D model kept for close-ups and attack/death poses.
+   The sim is O(n) (spatial-hash neighbour queries, staggered acquisition), so a
+   thousand-unit battle is CPU-cheap too.
 
 ## Building
 
-Requires CMake ≥ 3.24, a C++20 compiler, and Ninja. SDL2 is found on the
-system or fetched automatically.
+Requires CMake ≥ 3.24, a C++20 compiler, and Ninja. SDL2 is found on the system
+or fetched automatically.
 
 ```sh
 cmake -B build -G Ninja
 cmake --build build
 ```
 
+## Game data
+
+Point the engine at your own extracted game files. Either extract a single
+archive, or merge a whole game directory the way the retail engine layers it:
+
+```sh
+# one archive:
+./build/hpitool extract assets/game/<archive>.hpi assets/extracted/<name>
+
+# ...or merge every *.hpi / *.ufo in a directory (patches override the base):
+./build/hpitool merge assets/game assets/extracted
+```
+
+**HPI precedence.** The retail game shipped each update as a new HPI/UFO that
+superseded older copies of a file. `hpitool merge` reproduces the exact rule
+(reverse-engineered from `KINGDOMS.icd`): a loose file on disk wins; otherwise,
+across all `*.hpi` then `*.ufo`, the copy whose archive entry has the **newest
+date** wins (ties keep the earlier-mounted, `*.hpi` before `*.ufo`). So dropping
+a newer patch archive (e.g. `V3Rocket.hpi`) into the game directory Just Works,
+as the original did. `hpitool where <dir> <path>` shows which archive a file
+resolves to.
+
+## Playing
+
+`takview game` takes the map, the terrain directory, and the data root:
+
+```sh
+./build/takview game "assets/extracted/maps/Maps/King of the Hill.tnt" \
+    assets/extracted/terrain/terrain assets/extracted/data \
+    --side ara --aiside tar
+```
+
+Each side begins with **only its Monarch**, dropped on the map's real start
+positions (from the `.ota`). The Monarch trickles mogrium and builds the first
+lodestones and keep, which then train the army — the AI opponent bootstraps the
+same way.
+
+### Options
+
+| Flag | Effect |
+| --- | --- |
+| `--side ara\|tar\|ver\|zon\|cre` | your faction (Zhon has no Keep — its Monarch and Beast Handlers summon creatures; Creon needs the Iron Plague data) |
+| `--aiside <faction>` | the AI opponent's faction |
+| `--color N` / `--aicolor N` | player-colour variant (0–9), independent of faction |
+| `--crusades` | the **Crusades balance** — the alternate stats and build menus the final patch shipped for ranked "Darien Crusades" play (`unitscb`/`canbuildcb`, layered over the base roster) |
+| `--cheat` | all construction/production is instant and free |
+| `--demo` | stage a ready-army AI-vs-AI war instead |
+| `--mission <.ota>` | load a campaign mission (`.ota`/`.cob`) |
+| `--server <host>` … | join a multiplayer game — see [Multiplayer](#multiplayer) |
+| `--maxfps N` / `--novsync` | frame cap (`0` = uncapped) / disable vsync (title shows live FPS) |
+
+In a god-enabled match, a faction whose priests (`attractsgods` units) have
+channelled enough mana favour manifests its **god** once the appear time passes
+(`TAK_GODTIME=<seconds>` shortens it for testing).
+
+### Controls
+
+Hotkeys follow the game's `Keys.TDF`.
+
+| | |
+| --- | --- |
+| **Select** | drag = box-select · **Ctrl+A** all your units · **Ctrl+Z** all of that type · **Ctrl+U** everything on screen · **N** cycle to next unit |
+| **Order** | right-click = move/attack (**Shift** queues) · **F** fight-move · **M** move · **A** attack · **P** patrol · **G** guard · **S** stop · **Ctrl+D** destroy · **Esc** cancel an armed order |
+| **Groups** | **Ctrl+1–0** assign · **1–0** recall · **Ctrl+Shift+1–0** add to a group |
+| **Camera** | arrows / middle-drag / **screen-edge** scroll · wheel zoom (toward cursor) · minimap click/drag = move · right-click minimap = move the selection |
+| **Build queue** | at a training building: left-click **+1**, **Shift** **+5**, **Ctrl+Shift** **+10**; right-click removes the same; **Ctrl**+left toggles infinite production. Each icon shows its queued count. (A builder that *places* things — structures, or a mobile conjurer like a Beast Handler — arms placement instead: click to position.) |
+| **Game** | **Pause** · **+/−** game speed (−10…+10; 0 = normal, +10 = 10×) · **F4** status/scoreboard · **F6** player-colour picker |
+
+Rendering toggles (all default to the smart option): **F10** cycles sprite-sheet
+rendering **AUTO** → **ON** → **OFF** (AUTO drops to the cheaper animated sprites
+only while a real crowd can't hold 60 fps, then back to 3D); **F8** toggles the
+distance-impostor LOD (a cached billboard for units that are tiny on screen).
+Background music plays from the faction soundtrack.
+
+## Multiplayer
+
+Multiplayer is **client–server**: everyone connects out to one central
+`takserver`, so there's no NAT or port-forwarding on the players' side. The
+server relays a **server-sequenced deterministic lockstep** — up to 8 players on
+up to 8 teams (allies share vision and economy), every machine running the
+identical sim with only ~35-byte commands on the wire.
+
+```sh
+# somewhere reachable (default port 7677):
+./build/takserver --port 7677 --data <extracted-data-dir>
+
+# each player:
+./build/takview game <map> <terrain> <data> --server <host> [--serverport N] [--name X]
+```
+
+- **Referee sim.** With `--data`, the server also runs a referee simulation that
+  hosts the AI players (so no host machine is loaded by them) and holds the
+  canonical state hash every client is checked against. Without `--data` it's a
+  pure relay and clients cross-check hashes among themselves.
+- **Lobby.** The in-client lobby has a game browser, a create-game dialog
+  (name/password/map, crusades & gods toggles), and a room where each player
+  picks faction, colour, and team and readies up; the host opens/closes slots,
+  kicks, and starts.
+- **Cross-build determinism.** The sim's trig is routed through a
+  deterministic-math shim (`src/sim/detmath`), so lockstep holds across
+  compilers and CPUs, not just the same binary. Everyone still needs the same
+  engine build and game data (the handshake gates the protocol version).
+- **Reconnect & forfeit.** A dropped player's slot is held; they can rejoin with
+  a resume token (the client replays the bundle log to catch up). Otherwise they
+  forfeit deterministically.
+- **Spectate.** A running game can be **watched live** from the browser (the
+  **WATCH** button): the spectator replays the bundle log to the present, then
+  follows along with no fog and no control.
+
+See `docs/multiplayer-design.md` for the full design, and `docs/detmath-scope.md`
+for the determinism contract. (The old 2-player `--host`/`--join` peer mode is
+retired.)
+
+## Replays
+
+Start the server with `--replaydir <dir>` and it writes a self-contained
+`.takrep` for every finished game. Play one back as a spectator:
+
+```sh
+./build/takview replay <file.takrep> <terrain> <data>
+```
+
+**Pause** and the **+/−** speed keys scrub it; a bar shows elapsed / total time.
+
 ## Sound overrides
 
-`overrides/click.hpi` replaces the faction order-acknowledgement tones
-with a soft click (the game plays either that or the unit voice line).
-Drop your own `click.hpi` (an HPI archive of replacement `sounds/*.wav`)
-next to the game data to override it, exactly like the original game.
+`overrides/click.hpi` replaces the faction order-acknowledgement tones with a
+soft click (the game plays either that or the unit voice line). Drop your own
+`click.hpi` (an HPI archive of replacement `sounds/*.wav`) next to the game data
+to override it, exactly like the original game.
 
-## Layout
+## Project layout
 
-- `src/hpi/` — HPI archive reader (TAK uses a revised format vs. classic TA)
-- `src/gaf/` — GAF/TAF sprite, animation, and font decoding
-- `src/tnt/` — TNT map decoding
-- `src/tdo/` — 3DO model loading
-- `src/cob/` — COB script bytecode VM (unit animation/scripting)
-- `src/tdf/` — TDF/FBI/OTA text-config parsing
-- `src/crt/` — `.crt` scenario/trigger parsing
-- `src/sim/` — deterministic simulation (movement, A* pathing, combat, economy)
-- `src/net/` — multiplayer: command wire format, framed TCP connection,
-  client-server protocol, and the client handler
-- `src/server/` — `takserver`, the headless lobby + lockstep relay
-- `src/ai/` — the skirmish AI (server-portable; emits commands)
-- `src/terrain/` — terrain/palette handling
-- `src/util/` — shared helpers
-- `src/viewer/` — SDL2 application (`takview`: asset viewer + game)
-- `tools/` — command-line format tools (`hpitool`, `gaftool`, `tnttool`,
-  `modeltool`, `cobtool`, `tdftool`)
-- `docs/` — format notes and reverse-engineering findings
-  (`retail-engine.md` documents the `KINGDOMS.icd` disassembly)
+| Path | Contents |
+| --- | --- |
+| `src/hpi/` | HPI archive reader (TAK's revised format vs. classic TA) |
+| `src/gaf/` | GAF/TAF sprite, animation, and font decoding |
+| `src/tnt/` | TNT map decoding |
+| `src/tdo/` | 3DO model loading |
+| `src/cob/` | COB script bytecode VM (unit animation/scripting) |
+| `src/tdf/` | TDF/FBI/OTA text-config parsing |
+| `src/crt/` | `.crt` scenario/trigger parsing |
+| `src/sim/` | deterministic simulation (movement, A* pathing, combat, economy) |
+| `src/net/` | multiplayer wire format, framed TCP, client protocol |
+| `src/server/` | `takserver`, the headless lobby + lockstep relay |
+| `src/ai/` | the skirmish AI (server-portable; emits commands) |
+| `src/terrain/` | terrain / palette handling |
+| `src/util/` | shared helpers |
+| `src/viewer/` | the SDL2 app (`takview`: asset viewer + game) |
+| `tools/` | CLI format tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`) |
+| `docs/` | format notes + reverse-engineering findings (`retail-engine.md` = the `KINGDOMS.icd` disassembly) |
