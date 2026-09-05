@@ -123,7 +123,7 @@ std::vector<std::pair<float, float>> parseStartPositions(const std::string& tntP
 namespace {
 // Feature definition fields the sim cares about: is it a mana deposit, and its
 // footprint (for nav blocking). Loaded from the feature TDFs.
-struct FeatDef { bool mana = false; int fx = 1, fz = 1; };
+struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx = 1, fz = 1; };
 
 std::unordered_map<std::string, FeatDef> loadFeatureDefs(const std::string& dataRoot) {
     std::unordered_map<std::string, FeatDef> defs;
@@ -140,6 +140,10 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const std::string& data
                     std::string cat = node.valueOr("category", "");
                     std::transform(cat.begin(), cat.end(), cat.begin(), ::tolower);
                     d.mana = (cat == "mana");
+                    // The buildable deposit is the animated Sacred Stone centre;
+                    // the static Standing Stones (animating=0) around it are ruins.
+                    d.glowy = d.mana && node.numberOr("animating", 0) != 0;
+                    d.blocking = int(node.numberOr("blocking", 0));
                     d.fx = int(node.numberOr("footprintx", 1));
                     d.fz = int(node.numberOr("footprintz", 1));
                     defs[k] = d;
@@ -159,7 +163,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // Features: block nav footprints, and gather mana-deposit positions. Iterate
     // in the same (row-major) order the client does so clustering is identical.
     auto defs = loadFeatureDefs(cfg.dataRoot);
-    std::vector<std::pair<float, float>> rawMana;
+    std::vector<std::pair<float, float>> rawMana, rawAll;
     if (!map.featureNames.empty()) {
         for (int cz = 0; cz < map.height; ++cz)
             for (int cx = 0; cx < map.width; ++cx) {
@@ -170,13 +174,22 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 auto di = defs.find(key);
                 if (di == defs.end()) continue;
                 float x = float(cx) * 16 + 8, z = float(cz) * 16 + 8;
-                if (di->second.mana) rawMana.push_back({x, z});
-                else {
+                if (di->second.mana) {
+                    rawAll.push_back({x, z});
+                    if (di->second.glowy) rawMana.push_back({x, z});   // buildable centre
+                }
+                // Retail nav-blocking: obstacle features + static Standing Stones
+                // (blocking=1) block; only the glowy Sacred Stone centre stays clear.
+                if (!di->second.glowy && (!di->second.mana || di->second.blocking != 0)) {
                     int fx = di->second.fx, fz = di->second.fz;
                     world.nav().block(int(x) / 16 - fx / 2, int(z) / 16 - fz / 2, fx, fz, true);
                 }
             }
     }
+    // The buildable spot is the glowing Sacred Stone centre, not the ring of
+    // static Standing Stones (both are category=mana). Fallback: a deposit with
+    // no glowy centre in the data uses its category=mana features instead.
+    if (rawMana.empty()) rawMana = rawAll;
     // Cluster mana features (union-find, 60px link) -> one deposit per cluster.
     std::vector<int> par(rawMana.size());
     for (size_t i = 0; i < par.size(); ++i) par[i] = int(i);
@@ -199,6 +212,11 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     for (auto& [root, a] : acc)
         manaSpots.push_back({float(a.first.first / a.second), float(a.first.second / a.second)});
     world.setManaSpots(manaSpots);
+    // Standing Stones block nav, but a large one can reach the glowy centre; keep
+    // every deposit buildable by carving the 2x2 lodestone footprint clear at each
+    // spot (must match the viewer's loadFeatures so SP and MP agree).
+    for (const auto& [sx, sz] : manaSpots)
+        world.nav().block(int(sx) / 16 - 1, int(sz) / 16 - 1, 2, 2, false);
 
     // Players + teams.
     world.setPlayerCount(int(cfg.slots.size()));
