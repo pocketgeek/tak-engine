@@ -220,6 +220,26 @@ struct Xform {
     }
 };
 
+// COB piece rotations for Xform::then(), with the piece YAW negated to match the
+// retail engine. Retail composes every piece as Ry(-y)*Rx(+x)*Rz(+z): the y
+// negation is a literal `fchs` at 0x4eea98 in KINGDOMS.icd's piece-matrix call
+// site -- the SAME negation it applies to the root heading (0x4ee6a9), which we
+// already reproduce as facing = -u.heading and which is verified correct. Our
+// piece Ry and the root yaw reduce to the identical matrix, so pieces must carry
+// the same negation. Without it, every scripted y-axis TURN/SPIN played mirrored
+// (janky walks, garbled wing strokes). The negation lives HERE, at the
+// script->composer boundary, so then() stays a generic rotation utility and the
+// COB VM's script-space state (WAIT_TURN, shortest-path) is untouched.
+// See docs/model-rendering-plan.md.
+inline const float* scriptRot(const tak::cob::PieceState* ps, float (&tmp)[3]) {
+    static const float kZero[3] = {0, 0, 0};
+    if (!ps) return kZero;
+    tmp[0] = ps->rot[0];
+    tmp[1] = -ps->rot[1];   // retail fchs 0x4eea98: compose piece yaw as Ry(-y)
+    tmp[2] = ps->rot[2];
+    return tmp;
+};
+
 class ModelView {
 public:
     ModelView(SDL_Renderer* ren, const std::string& path, const std::string& texDir,
@@ -331,13 +351,13 @@ private:
     }
 
     void walk(const tak::tdo::Object& o, const Xform& parent) {
-        static const float kNoRot[3] = {0, 0, 0};
         const tak::cob::PieceState* ps = pieceFor(o.name);
         if (ps && !ps->visible) return;
+        float rr[3];
         Xform xf = parent.then(o.x + (ps ? ps->move[0] : 0),
                                o.y + (ps ? ps->move[1] : 0),
                                o.z + (ps ? ps->move[2] : 0),
-                               ps ? ps->rot : kNoRot);
+                               scriptRot(ps, rr));
         for (const auto& p : o.primitives) {
             if (p.indices.size() < 3) continue;
             SDL_Texture* tex = nullptr;
@@ -3406,7 +3426,11 @@ private:
             if (u.type && u.type->canFly) {
                 a.flying = true;   // starts grounded; the update loop flies her
                 a.flyGate = flyGateOf(*a.vm);
-                a.flyHalfTurn = flyHalfTurnOf(*a.vm);
+                // TAK_NO_HALFTURN=1: retail has no flyer facing branch (root
+                // matrix call 0x4ee620 is identical for every unit); Step-0
+                // experiment gate, see docs/model-rendering-plan.md.
+                static const bool kNoHalf = std::getenv("TAK_NO_HALFTURN") != nullptr;
+                a.flyHalfTurn = !kNoHalf && flyHalfTurnOf(*a.vm);
                 // Start in the folded landed pose, not the wings-spread rest
                 // pose, so a flyer that spawns idle and never takes off (e.g. the
                 // Monarch at game start) doesn't sit in a T-pose.
@@ -3985,7 +4009,8 @@ private:
         bool animated = canMove || canFly;
         // Match the live unit's facing convention: flyers face pi-heading only when
         // their fly script adds the 180 body turn (flyHalfTurnOf), else -heading.
-        bool halfTurn = canFly && flyHalfTurnOf(*tmp.vm);
+        static const bool kNoHalf = std::getenv("TAK_NO_HALFTURN") != nullptr;   // see plan doc
+        bool halfTurn = !kNoHalf && canFly && flyHalfTurnOf(*tmp.vm);
         // (Re)start the locomotion animation from the top -- used before each bake
         // attempt so a retry on a fresh page re-captures the same frames.
         auto initAnim = [&] {
@@ -4380,13 +4405,13 @@ private:
     void collect(std::vector<Tri>& out, SDL_Texture* atlas, const tak::tdo::Object& o,
                  const Xform& parent, const Anim* anim, float heading, int player,
                  bool mirror = false, bool isRoot = true) {
-        static const float kNoRot[3] = {0, 0, 0};
         const tak::cob::PieceState* ps = pieceFor(anim, o.name);
         if (ps && !ps->visible) return;
+        float rr[3];
         Xform xf = parent.then(o.x + (ps ? ps->move[0] : 0),
                                o.y + (ps ? ps->move[1] : 0),
                                o.z + (ps ? ps->move[2] : 0),
-                               ps ? ps->rot : kNoRot);
+                               scriptRot(ps, rr));
         // Hidden pieces: ground-reference plates and deactivated-state
         // duplicates (*off), which the game shows only via activation scripts
         // we don't run. The model ROOT is always the flat base plate (AraGP,

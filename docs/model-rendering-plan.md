@@ -1,7 +1,30 @@
 # Model rendering: root cause and correction plan
 
-Status: investigation complete (5-way evidence sweep + adversarial review); fix not yet applied.
+Status: **Defect A LANDED** (piece-yaw negation); Defects B (flyHalfTurn) and C (full-body walk)
+deferred pending cleaner evidence — see "Progress" below.
 Scope: `src/viewer/main.cpp` (render-only). Sim state, heading semantics, and the lockstep hash are untouched.
+
+## Progress (2026-09-04)
+
+- **Defect A — piece-yaw sign — FIXED.** `scriptRot()` negates the composed piece Y before `Xform::then()`,
+  matching retail's `fchs` at 0x4eea98. Confirmed decisively by the *consistency* argument (not eyeballing):
+  our root-heading yaw (main.cpp ~4570) and the piece `Ry` in `then()` reduce to the identical matrix
+  `[cy 0 sy; 0 1 0; -sy 0 cy]`; the root is `Ry(-u.heading)` (via `facing = -u.heading`) and is verified
+  correct (statics face right); retail applies the same `fchs` negation to root AND piece; so the piece must
+  carry it too. The model-viewer attack-swing montage corroborated (the fix produces a coherent overhead→down
+  arc vs the incoherent current one). Determinism unchanged (mpai `3eef6e0f`, render-only).
+- **Defect B — flyHalfTurn — DEFERRED, dev-gated.** `TAK_NO_HALFTURN=1` forces `flyHalfTurn=false` (default
+  off = current behavior), left in as a toggle. Not deleted: the in-game flyer-facing A/B was visually
+  ambiguous at readable zoom (zonhunt is a harpy with hair+wings+humanoid body; zondrake read backward under
+  BOTH settings, which the plan did not predict), and the adversarial review specifically required a numeric
+  measurement before deletion. The numeric front/back **origin** dump is not sensitive to the fix (a piece's
+  yaw rotates its children, not its own origin). Next: a probe that composes a *child* tip (beak/tail-tip)
+  world position relative to the movement vector at cruise, per flyer, before touching `flyHalfTurn`.
+- **Defect C — full-body walk — DEFERRED.** Unstarted; separate commit with its own A/B.
+
+---
+## Original plan
+
 
 This document supersedes the "axis reflection in the projection" working hypothesis and the memory notes
 `zhon-models-mirrored-facing` and `flyer-billboard-facing-coupling`, both of which rest on a misreading of
