@@ -2269,13 +2269,22 @@ public:
                            mapView_.offY() + sz * panPx * dt / zm);
     }
 
-    void update(float dt) {
+    // Real-time per-RENDER-frame work: camera and audio that must stay smooth
+    // regardless of the deterministic sim. In a net game the sim (update()) only
+    // advances when a server bundle arrives, so anything lag-sensitive that isn't
+    // "game state" belongs here, not in update() -- panning, zoom-follow, edge
+    // scroll, camera shake, and music keep running even while the sim is stalled
+    // waiting on the network. Called every frame in SP and net alike.
+    void cameraFrame(float dt) {
         sounds_.pollMusic();
-        float zm = std::max(mapView_.zoom(), 1e-3f);
-        edgeScroll(dt, zm);    // pan when the cursor rests near a screen edge (real time)
-        if (paused_) return;   // freeze the sim; input/render keep running
+        if (inLobbyPhase()) return;
+        edgeScroll(dt, std::max(mapView_.zoom(), 1e-3f));   // cursor-at-edge pan (real time)
+        if (trackSel_ && !centerOnSelection()) trackSel_ = false;   // follow selection
+        if (shakeTime_ > 0) shakeTime_ = std::max(0.0f, shakeTime_ - dt);   // shake decay
+    }
+    void update(float dt) {
+        if (paused_) return;   // freeze the sim; input/render/camera keep running
         // Game speed: scale game time (sim, effects, AI, animation all follow dt).
-        // edgeScroll above already ran on the real dt, so the camera stays real-time.
         dt *= speedMult();
         double _sim0 = double(SDL_GetPerformanceCounter());
         // Advance the sim in sub-steps capped at 1/30s so fast speeds (or a laggy
@@ -2333,7 +2342,6 @@ public:
         updateParticles(dt);
         updateEffects(dt);
         updateRings(dt);
-        if (shakeTime_ > 0) shakeTime_ = std::max(0.0f, shakeTime_ - dt);
         // God economy: once a player's favour fills after the appear time, its
         // faction's god manifests among its forces.
         if (world_.godsEnabled())
@@ -2507,8 +2515,8 @@ public:
                 if (!teamAlive) outcome_ = -1;
             }
         }
-        // T-tracking: keep the camera on the selection; drop out if it's all gone.
-        if (trackSel_ && !centerOnSelection()) trackSel_ = false;
+        // (T-tracking / edge-scroll / shake now run per-frame in cameraFrame, so
+        // the camera stays smooth when the net sim stalls.)
         if (follow_ && !world_.units().empty()) {
             // Track moving friendly units; fall back to everyone.
             float cx = 0, cz = 0;
@@ -7549,6 +7557,11 @@ int main(int argc, char** argv) {
         if (modelView) modelView->draw(w, h, dt);
         double t1 = prof ? pnow() : 0;
         if (gameView) {
+            // Real-time camera/audio every frame, BEFORE the sim step -- so pan,
+            // edge-scroll, follow, shake and music stay smooth even when a net
+            // game's sim is stalled waiting on a bundle (the deferred netAccum-style
+            // decoupling this comment used to promise).
+            gameView->cameraFrame(dt);
             if (gameView->replayMode()) {
                 gameView->replayStep(dt);   // play back a recorded .takrep
             } else if (gameView->isNet()) {
