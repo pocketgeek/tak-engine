@@ -2243,7 +2243,9 @@ public:
                                           !h.weapon->waterExplosionClass.empty())
                                              ? h.weapon->waterExplosionClass
                                              : h.weapon->explosionClass;
-                if (!spawnEffect(cls, h.x, h.z)) spawnImpact(*h.weapon, h.x, h.z);
+                // Lift the blast onto an airborne target (shooting down a flyer).
+                float tAlt = flyerAltAt(h.x, h.z) * 0.8f;
+                if (!spawnEffect(cls, h.x, h.z, tAlt)) spawnImpact(*h.weapon, h.x, h.z, tAlt);
             }
             // Weapon area-effect: expanding shockwave rings (radiusart, staggered
             // by ringdelay) and ground fire (firestarter) at the impact.
@@ -2510,13 +2512,14 @@ public:
                     const char* deathCls = foot >= 3 ? "large explosion"
                                          : foot == 2 ? "medium explosion"
                                                      : "small explosion";
-                    spawnEffect(deathCls, u.x, u.z);
+                    float dAlt = unitAltById(u.id) * 0.8f;   // a flyer explodes mid-air
+                    spawnEffect(deathCls, u.x, u.z, dAlt);
                     if (u.type->bodyType == "flesh") {
-                        spawnEffect("blood explosion", u.x, u.z);
+                        spawnEffect("blood explosion", u.x, u.z, dAlt);
                         spawnBurst(u.x, u.z, 14, u.type->blood[0], u.type->blood[1],
-                                   u.type->blood[2], 40, 2.2f, 0);
+                                   u.type->blood[2], 40, 2.2f, 0, dAlt);
                     } else
-                        spawnBurst(u.x, u.z, 10, 110, 100, 90, 30, 2.4f, 1);
+                        spawnBurst(u.x, u.z, 10, 110, 100, 90, 30, 2.4f, 1, dAlt);
                     if (missionVm_ && u.player == 0)
                         missionVm_->start("UnitDestroyed", {u.id});
                 }
@@ -2899,10 +2902,16 @@ public:
         for (const auto& p : world_.projectiles()) {
             if (!world_.cellVisible(p.x, p.z)) continue;
             float t = std::clamp(p.age / std::max(p.flight, 0.05f), 0.0f, 1.0f);
+            // Flyer shots: lift the whole trajectory by the altitude interpolated
+            // from the firing unit down to the target (0.8x, matching the sprite
+            // lift), so a drake's breath leaves its mouth and arcs to the ground.
+            float palt = (unitAltById(p.fromId) * (1 - t) + unitAltById(p.targetId) * t)
+                         * 0.8f * zm;
             if (p.fx == tak::sim::WeaponFx::Lightning) {
                 // Flat, fast, jagged blue-white bolt from source toward target.
                 float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
-                float sy = (p.z - mapView_.offY()) * zm - 12 * zm - terrainLift(p.x, p.z) * zm;
+                float sy = (p.z - mapView_.offY()) * zm - 12 * zm - terrainLift(p.x, p.z) * zm
+                           - palt;
                 float len = 22.0f;
                 float bx = -p.vx, bz = -p.vz;
                 float bl = std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
@@ -2929,8 +2938,9 @@ public:
                     float wob = ((s * 811 + int(p.age * 1000)) % 5 - 2) * 2.0f;
                     float fx = p.x + bx * back - bz * wob;
                     float fz = p.z + bz * back + bx * wob;
-                    float sx = (fx - mapView_.offX()) * zm;
-                    float sy = (fz - mapView_.offY()) * zm - 12 * zm;
+                    float sx = (fx - mapView_.offX()) * zm - terrainLiftX(fx, fz) * zm;
+                    float sy = (fz - mapView_.offY()) * zm - 12 * zm - terrainLift(fx, fz) * zm
+                               - palt;
                     float r = (4.0f - s * 0.6f) * zm;   // shrinks toward the tail
                     Uint8 aA = Uint8(200 - s * 30);
                     // outer orange
@@ -2953,7 +2963,8 @@ public:
                                  : std::min(18.0f, p.flight * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
                 float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
-                float sy = (p.z - mapView_.offY()) * zm - h * zm - terrainLift(p.x, p.z) * zm;
+                float sy = (p.z - mapView_.offY()) * zm - h * zm - terrainLift(p.x, p.z) * zm
+                           - palt;
                 SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
                 SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.035f * zm,
                                     sy - p.vz * 0.035f * zm + (t < 0.5f ? 2.5f : -2.5f) * zm);
@@ -4670,6 +4681,25 @@ private:
     static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= 0.0f; }
     float uLiftY(const tak::sim::Unit& u) { return isStructure(u.type) ? 0.0f : terrainLift(u.x, u.z); }
     float uLiftX(const tak::sim::Unit& u) { return isStructure(u.type) ? 0.0f : terrainLiftX(u.x, u.z); }
+
+    // A unit's current render altitude (flyers rise to cruiseAlt; 0 for ground
+    // units or units with no live anim). Used to lift a flyer's projectiles/effects
+    // so they leave/strike at the altitude the unit is drawn, not the ground.
+    float unitAltById(int id) const {
+        auto it = anims_.find(id);
+        return it != anims_.end() ? it->second.altitude : 0.0f;
+    }
+    // Render altitude of an airborne unit at ~this world point, else 0. Used to lift
+    // an impact blast onto a flyer (the hit record only carries the impact point).
+    float flyerAltAt(float x, float z) const {
+        float best = 24.0f * 24.0f, alt = 0.0f;
+        for (const auto& u : world_.units()) {
+            if (!u.alive() || !u.type || !u.type->canFly) continue;
+            float dx = u.x - x, dz = u.z - z, d = dx * dx + dz * dz;
+            if (d < best) { best = d; alt = unitAltById(u.id); }
+        }
+        return alt;
+    }
 
     // Screen position of a unit's drawn body centre, matching the render lift:
     // terrain relief (uLift*) plus, for a flyer, its cruise altitude (the sprite is
@@ -6736,6 +6766,7 @@ private:
         float delay = 0;   // seconds before it starts playing
         float dur = 0;     // seconds for one playthrough (0 => use kEffectFps)
         int loops = 1;     // how many times to repeat (ground fire loops)
+        float alt = 0;     // extra screen lift (impact on an airborne target)
     };
     std::vector<EffectInst> effects_;
     static constexpr float kEffectFps = 20.0f;
@@ -6745,10 +6776,11 @@ private:
         return e.dur > 0 ? e.dur : float(e.anim->frames.size()) / kEffectFps;
     }
     // Play a named effect anim at (x,z), optionally delayed / stretched / looped.
+    // `alt` lifts it on screen (impact on an airborne target).
     void spawnEffectAnim(const std::string& anim, float x, float z,
-                         float delay = 0, float dur = 0, int loops = 1) {
+                         float delay = 0, float dur = 0, int loops = 1, float alt = 0) {
         const EffectAnim* ea = effectFor(anim);
-        if (ea) effects_.push_back({ea, x, z, 0.0f, delay, dur, loops});
+        if (ea) effects_.push_back({ea, x, z, 0.0f, delay, dur, loops, alt});
     }
 
     void loadExplosionClasses() {
@@ -6809,7 +6841,7 @@ private:
     }
     // Play the named explosion class (a random variant) at (x,z). Returns false
     // if the class/art is unavailable (caller then falls back to particles).
-    bool spawnEffect(const std::string& cls, float x, float z) {
+    bool spawnEffect(const std::string& cls, float x, float z, float alt = 0) {
         if (cls.empty()) return false;
         loadExplosionClasses();
         auto it = explosionClasses_.find(cls);
@@ -6817,7 +6849,7 @@ private:
         const std::string& anim = it->second[salt_++ % it->second.size()];
         const EffectAnim* ea = effectFor(anim);
         if (!ea) return false;
-        effects_.push_back({ea, x, z, 0.0f});
+        effects_.push_back({ea, x, z, 0.0f, 0.0f, 0.0f, 1, alt});
         static const bool kLog = getenv("TAK_FXLOG") != nullptr;
         if (kLog) std::fprintf(stderr, "t=%.2f effect '%s' anim '%s' (%zu frames)\n",
                                animClock_, cls.c_str(), anim.c_str(), ea->frames.size());
@@ -6894,7 +6926,8 @@ private:
             int fi = std::clamp(int(within / per * float(nf)), 0, nf - 1);
             const EFrame& f = e.anim->frames[size_t(fi)];
             float sx = (e.x - mapView_.offX()) * zm - f.ax * zm - terrainLiftX(e.x, e.z) * zm;
-            float sy = (e.z - mapView_.offY()) * zm - f.ay * zm - terrainLift(e.x, e.z) * zm;
+            float sy = (e.z - mapView_.offY()) * zm - f.ay * zm - terrainLift(e.x, e.z) * zm
+                       - e.alt * zm;
             SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
             SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
         }
@@ -6910,7 +6943,7 @@ private:
     std::vector<Particle> particles_;
     // Spawn a burst of `n` particles at (x,z) with a colour and speed spread.
     void spawnBurst(float x, float z, int n, Uint8 r, Uint8 g, Uint8 b,
-                    float spread, float sizeMax, int kind) {
+                    float spread, float sizeMax, int kind, float baseAlt = 0) {
         for (int i = 0; i < n; ++i) {
             Particle p;
             p.x = x; p.z = z;
@@ -6918,7 +6951,7 @@ private:
             float sp = spread * (0.3f + float(salt_++ % 100) / 100.0f);
             p.vx = std::sin(ang) * sp;
             p.vz = std::cos(ang) * sp;
-            p.alt = 4;
+            p.alt = 4 + baseAlt;
             p.valt = kind == 1 ? 18.0f : (30.0f + float(salt_++ % 40));
             p.maxLife = p.life = 0.35f + float(salt_++ % 50) / 100.0f;
             p.size = 1.5f + float(salt_++ % 100) / 100.0f * sizeMax;
@@ -6927,18 +6960,18 @@ private:
         }
     }
     // An impact effect scaled to the weapon: fire/lightning tinted, aoe-sized.
-    void spawnImpact(const tak::sim::Weapon& w, float x, float z) {
+    void spawnImpact(const tak::sim::Weapon& w, float x, float z, float baseAlt = 0) {
         using Fx = tak::sim::WeaponFx;
         float sc = 1.0f + std::min(w.aoe, 200.0f) / 40.0f;
         int n = int(6 + std::min(w.aoe, 200.0f) / 6);
         if (w.fx == Fx::Fire) {
-            spawnBurst(x, z, n, 240, 130, 40, 34 * sc, 2.4f * sc, 0);
-            spawnBurst(x, z, n / 2, 90, 80, 80, 20 * sc, 3.0f * sc, 1);   // smoke
+            spawnBurst(x, z, n, 240, 130, 40, 34 * sc, 2.4f * sc, 0, baseAlt);
+            spawnBurst(x, z, n / 2, 90, 80, 80, 20 * sc, 3.0f * sc, 1, baseAlt);   // smoke
         } else if (w.fx == Fx::Lightning) {
-            spawnBurst(x, z, n, 200, 225, 255, 40 * sc, 2.0f * sc, 0);
+            spawnBurst(x, z, n, 200, 225, 255, 40 * sc, 2.0f * sc, 0, baseAlt);
         } else {
-            spawnBurst(x, z, n, 210, 200, 170, 26 * sc, 2.0f * sc, 0);   // dust
-            spawnBurst(x, z, n / 3, 110, 100, 90, 16 * sc, 2.6f * sc, 1);
+            spawnBurst(x, z, n, 210, 200, 170, 26 * sc, 2.0f * sc, 0, baseAlt);   // dust
+            spawnBurst(x, z, n / 3, 110, 100, 90, 16 * sc, 2.6f * sc, 1, baseAlt);
         }
     }
     void updateParticles(float dt) {
