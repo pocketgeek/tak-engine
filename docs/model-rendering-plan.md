@@ -20,7 +20,11 @@ Scope: `src/viewer/main.cpp` (render-only). Sim state, heading semantics, and th
   measurement before deletion. The numeric front/back **origin** dump is not sensitive to the fix (a piece's
   yaw rotates its children, not its own origin). Next: a probe that composes a *child* tip (beak/tail-tip)
   world position relative to the movement vector at cruise, per flyer, before touching `flyHalfTurn`.
-- **Defect C — full-body walk — DEFERRED.** Unstarted; separate commit with its own A/B.
+- **Defect C — full-body walk — FIXED.** The anim loop preferred legs-only `walk_legs` over the full-body
+  `walk` (hip/torso/head/arm sway); the `||` ordering was incidental. Now prefers `walk` (fallback
+  `walk_legs`), paired with full-body `restore_x` on stop, at both live and sprite-bake sites. Verified
+  coherent across arasword/araknigh/versword/zonorc/arapal in the model viewer; determinism unchanged. With
+  Defect A in place the sway reads correctly.
 
 ---
 ## Original plan
