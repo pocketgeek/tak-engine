@@ -1497,13 +1497,18 @@ void World::updateVisibility() {
         // (a negative visPlayer_ -- the headless referee -- reveals nothing).
         if (!u.alive() || !u.type || visPlayer_ < 0 || !allied(u.player, visPlayer_))
             continue;
-        // Reveal to the greater of sight and radar range (radardistance).
-        int r = int(std::max(u.type->sight, u.type->radar)) / 16 + 1;
+        // Reveal to the greater of sight and radar range (radardistance). Radar
+        // sees THROUGH terrain, so the line-of-sight test applies only to the sight
+        // area NOT already covered by radar (rRadar). Units with radar >= sight
+        // (e.g. flyers with a huge radardistance) therefore do zero LoS work -- this
+        // is what keeps a 500-unit army from grinding the fog pass to a halt.
+        int rSight = int(u.type->sight) / 16;
+        int rRadar = int(u.type->radar) / 16;
+        int r = std::max(rSight, rRadar) + 1;
+        int rRadar2 = rRadar * rRadar;
         int cx = int(u.x) / 16, cz = int(u.z) / 16;
-        // Eye height = the unit's ground height plus a small stature, so it sees
-        // over minor bumps but not over walls/hills/cliffs. Radar ignores terrain
-        // (it's not line-of-sight), so a radar-only reveal skips the LoS test.
-        bool losBlocks = !heights_.empty() && cx >= 0 && cz >= 0 && cx < hW_ && cz < hH_;
+        bool losBlocks = !heights_.empty() && cx >= 0 && cz >= 0 && cx < hW_ && cz < hH_ &&
+                         rSight > rRadar;   // only worth testing where sight exceeds radar
         // Eye above the unit's ground cell: sees over small bumps, not over real
         // walls/hills. Paired with the sight-line MARGIN in sightClear so small rock
         // clutter stops casting fog shadows. Live-tunable via TAK_FOG_EYE.
@@ -1513,10 +1518,13 @@ void World::updateVisibility() {
         float eyeH = losBlocks ? float(heights_[size_t(cz) * hW_ + cx]) + EYE : 0.0f;
         for (int dz = -r; dz <= r; ++dz)
             for (int dx = -r; dx <= r; ++dx) {
-                if (dx * dx + dz * dz > r * r) continue;
+                int dd = dx * dx + dz * dz;
+                if (dd > r * r) continue;
                 int x = cx + dx, z = cz + dz;
                 if (x < 0 || z < 0 || x >= visW_ || z >= visH_) continue;
-                if (losBlocks && !sightClear(cx, cz, eyeH, x, z)) continue;
+                // Inside radar range: revealed unconditionally (radar ignores
+                // terrain). Only beyond radar (the sight-only ring) does LoS gate it.
+                if (losBlocks && dd > rRadar2 && !sightClear(cx, cz, eyeH, x, z)) continue;
                 vis_[size_t(z) * visW_ + x] = 2;
             }
     }
