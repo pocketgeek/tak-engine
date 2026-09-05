@@ -131,6 +131,35 @@ private:
     bool desynced_ = false;
     std::string desyncReason_;
     uint64_t lastRecvMs_ = 0, lastPingMs_ = 0;
+
+    // Artificial receive jitter for testing (TAK_NET_JITTER_MS): hold each bundle
+    // then release it after a random 0..N ms delay, modelling uneven server->client
+    // delivery. Test-only; does not touch command/sim state.
+    struct HeldBundle { uint64_t releaseMs; uint32_t tick; Bundle bd; };
+    std::vector<HeldBundle> jitterHeld_;
+    int jitterMs_ = -1;                 // <0 = read env once; then 0 = off
+    uint32_t rng_ = 0x2545F491u;        // xorshift (non-sim, non-determinism OK)
+    // Round-trip time, measured with active pings when a consumer asks for it
+    // (the adaptive jitter buffer). Off by default -> no extra traffic.
+    bool measureRtt_ = false;
+    uint64_t pingSentMs_ = 0;           // outstanding RTT ping send time (0 = none)
+    float rttMs_ = 0;                   // smoothed round-trip time
+    // Bundle-arrival jitter: how much later than the 30 Hz schedule bundles land,
+    // as a slowly-decaying recent max. This is what the jitter buffer must cover.
+    uint64_t lastBundleMs_ = 0;
+    float arrivalJitterMs_ = 0;
+    void noteBundleArrival(uint64_t now) {
+        if (lastBundleMs_) {
+            float late = float(now - lastBundleMs_) - 1000.0f / 30.0f;
+            arrivalJitterMs_ = std::max(std::max(0.0f, late), arrivalJitterMs_ - 0.4f);
+        }
+        lastBundleMs_ = now;
+    }
+public:
+    float rttMs() const { return rttMs_; }
+    float arrivalJitterMs() const { return arrivalJitterMs_; }
+    void enableRttProbe() { measureRtt_ = true; }
+private:
 };
 
 }  // namespace tak::net
