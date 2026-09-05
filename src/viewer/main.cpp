@@ -1518,6 +1518,10 @@ public:
                    orderColumnClick(float(e.button.x), float(e.button.y), winW)) {
             // order button handled
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
+                   minimapArmedOrder(float(e.button.x), float(e.button.y), winW, winH)) {
+            // An armed order (F/M/A/P/G) + minimap click issues that order at the
+            // clicked location, instead of moving the camera there.
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    minimapClick(float(e.button.x), float(e.button.y), winW, winH)) {
             draggingMinimap_ = true;   // camera follows the drag until release
             trackSel_ = false;
@@ -1535,66 +1539,8 @@ public:
                    pendingCmd_) {
             float wx, wz;
             pickWorld(float(e.button.x), float(e.button.y), wx, wz);
-            bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
-            if (pendingCmd_ == 'g') {
-                // Guard: needs a friendly unit under the click.
-                int buddy = -1;
-                float best = 24 * 24;
-                for (auto& u : world_.units()) {
-                    if (!u.alive() || u.player != localPlayer_) continue;
-                    float dx = u.x - wx, dz = u.z - wz;
-                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; buddy = u.id; }
-                }
-                if (buddy >= 0) {
-                    for (int id : selection_) {
-                        if (id == buddy) continue;
-                        tak::net::Command c;
-                        c.kind = tak::net::Cmd::Guard;
-                        c.unitId = id;
-                        c.targetId = buddy;
-                        c.queue = queue;
-                        issue(c);
-                    }
-                    voice(selection_.front(), "guard");
-                }
-                pendingCmd_ = 0;
-                return;
-            }
-            // 'a' (attack) targets an enemy under the click if there is one,
-            // otherwise falls through to attack-move on the ground.
-            int enemy = -1;
-            if (pendingCmd_ == 'a') {
-                const auto* first = world_.unit(selection_.front());
-                float best = 20 * 20;
-                for (auto& u : world_.units()) {
-                    if (!u.alive() || u.embarked() || !first ||
-                        world_.allied(u.player, first->player))
-                        continue;
-                    float dx = u.x - wx, dz = u.z - wz;
-                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
-                }
-            }
-            for (int id : selection_) {
-                tak::net::Command c;
-                if (enemy >= 0) {
-                    c.kind = tak::net::Cmd::Attack;
-                    c.targetId = enemy;
-                } else {
-                    c.kind = (pendingCmd_ == 'f' || pendingCmd_ == 'a')
-                                 ? tak::net::Cmd::AttackMove
-                             : pendingCmd_ == 'p' ? tak::net::Cmd::Patrol
-                                                  : tak::net::Cmd::Move;
-                    c.x = wx;
-                    c.z = wz;
-                }
-                c.unitId = id;
-                c.queue = queue;
-                issue(c);
-            }
-            voice(selection_.front(),
-                  (pendingCmd_ == 'a' || pendingCmd_ == 'f') ? "attack"
-                  : pendingCmd_ == 'p'                       ? "patrol"
-                                                             : "move");
+            issueArmedOrder(pendingCmd_, wx, wz,
+                            (SDL_GetModState() & KMOD_SHIFT) != 0, /*precise=*/true);
             pendingCmd_ = 0;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    placing_) {
@@ -4908,6 +4854,79 @@ private:
         }
         if (const auto* u = world_.unit(selection_.front()); u && u->player == localPlayer_)
             voice(selection_.front(), "move");
+        return true;
+    }
+
+    // Issue the armed order (pendingCmd_) to the selection at world (wx,wz). On the
+    // main map (`precise`) 'a' targets an enemy under the cursor and 'g' the friendly
+    // under it; from the minimap (coarse) 'a' falls back to attack-move and 'g' to the
+    // nearest friendly. Shared by the map click and the minimap click.
+    void issueArmedOrder(char cmd, float wx, float wz, bool queue, bool precise) {
+        if (selection_.empty()) return;
+        if (cmd == 'g') {   // guard: needs a friendly unit
+            int buddy = -1;
+            float best = precise ? 24.0f : 96.0f;   // generous radius on the minimap
+            best *= best;
+            for (auto& u : world_.units()) {
+                if (!u.alive() || u.player != localPlayer_) continue;
+                float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
+                if (d < best) { best = d; buddy = u.id; }
+            }
+            if (buddy < 0) return;
+            for (int id : selection_) {
+                if (id == buddy) continue;
+                tak::net::Command c;
+                c.kind = tak::net::Cmd::Guard;
+                c.unitId = id;
+                c.targetId = buddy;
+                c.queue = queue ? 1 : 0;
+                issue(c);
+            }
+            voice(selection_.front(), "guard");
+            return;
+        }
+        // 'a' (attack) targets an enemy under a precise click; otherwise (and always
+        // on the minimap) it is an attack-move to the ground point.
+        int enemy = -1;
+        if (cmd == 'a' && precise) {
+            const auto* first = world_.unit(selection_.front());
+            float best = 20 * 20;
+            for (auto& u : world_.units()) {
+                if (!u.alive() || u.embarked() || !first ||
+                    world_.allied(u.player, first->player))
+                    continue;
+                float dx = u.x - wx, dz = u.z - wz;
+                if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
+            }
+        }
+        for (int id : selection_) {
+            tak::net::Command c;
+            if (enemy >= 0) {
+                c.kind = tak::net::Cmd::Attack;
+                c.targetId = enemy;
+            } else {
+                c.kind = (cmd == 'f' || cmd == 'a') ? tak::net::Cmd::AttackMove
+                         : cmd == 'p'               ? tak::net::Cmd::Patrol
+                                                    : tak::net::Cmd::Move;
+                c.x = wx;
+                c.z = wz;
+            }
+            c.unitId = id;
+            c.queue = queue ? 1 : 0;
+            issue(c);
+        }
+        voice(selection_.front(),
+              (cmd == 'a' || cmd == 'f') ? "attack" : cmd == 'p' ? "patrol" : "move");
+    }
+
+    // Left-click on the minimap while an order is armed (e.g. F): issue it at the
+    // minimap location (F + minimap = fight-move there). Returns true if handled.
+    bool minimapArmedOrder(float mx, float my, int winW, int winH) {
+        if (!pendingCmd_) return false;
+        float wx, wz;
+        if (!minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
+        issueArmedOrder(pendingCmd_, wx, wz, (SDL_GetModState() & KMOD_SHIFT) != 0, false);
+        pendingCmd_ = 0;
         return true;
     }
 
