@@ -143,9 +143,12 @@ public:
                 haveCb_ = true;
             }
             aiProfile_ = tak::ai::loadProfile(vfs_);
+            dataHash_ = tak::hpi::gameplayHash(vfs_);
             haveData_ = true;
-            std::fprintf(stderr, "takserver: loaded game data from %s (referee sim + AI enabled%s)\n",
-                         dataRoot_.c_str(), haveCb_ ? ", +Crusades" : "");
+            std::fprintf(stderr, "takserver: loaded game data from %s (referee sim + AI enabled%s), "
+                         "gameplay hash %016llx\n",
+                         dataRoot_.c_str(), haveCb_ ? ", +Crusades" : "",
+                         (unsigned long long)dataHash_);
         }
     }
     int run();
@@ -154,6 +157,9 @@ private:
     uint16_t port_;
     std::string dataRoot_;
     tak::hpi::Vfs vfs_;
+    uint64_t dataHash_ = 0;             // referee's gameplay-data fingerprint (--data)
+    uint64_t relayHash_ = 0;            // pure-relay: the first client's hash (peers must match)
+    bool relayHashSet_ = false;
     bool haveData_ = false, haveCb_ = false;
     tak::sim::TypeRegistry registry_, registryCb_;
     tak::ai::Profile aiProfile_;
@@ -242,6 +248,24 @@ void Server::handshake(Client& c, const Frame& f) {
         c.conn.fail("version");
         return;
     }
+    // Gameplay-data agreement: every peer must feed its sim byte-identical gameplay
+    // data (verifies the retail files are unmodified, and that Full-override players
+    // share the same overrides). With --data we hold the canonical referee hash;
+    // as a pure relay we adopt the first client's and hold the rest to it.
+    uint64_t want = haveData_ ? dataHash_ : (relayHashSet_ ? relayHash_ : dataHash);
+    if (dataHash != want) {
+        char msg[128];
+        std::snprintf(msg, sizeof msg,
+                      "game data mismatch (server %016llx, you %016llx) -- your retail "
+                      "data or overrides differ", (unsigned long long)want,
+                      (unsigned long long)dataHash);
+        sendReject(c, msg);
+        c.conn.fail("datahash");
+        std::fprintf(stderr, "client %u rejected: data hash %016llx != %016llx\n",
+                     c.id, (unsigned long long)dataHash, (unsigned long long)want);
+        return;
+    }
+    if (!haveData_ && !relayHashSet_) { relayHash_ = dataHash; relayHashSet_ = true; }
     c.name = name.empty() ? ("player" + std::to_string(c.id)) : name;
     c.state = Client::Lobby;
     Writer w; w.u32(c.id); w.str(c.name);

@@ -427,13 +427,53 @@ bool affectsGameplay(const std::string& path) {
     // animation scripts, sound, music, fonts, gui) is cosmetic.
     if (ext(".fbi") || ext(".tnt") || ext(".ota") || ext(".crt")) return true;
     if (ext(".tdf")) {
-        // soundclasses maps unit sound events -> cosmetic; all other .tdf
-        // (weapons, sidedata, moveinfo, gods, explosions, build menus) is sim data.
-        return k.find("soundclass") == std::string::npos;
+        // Only the .tdf files our sim actually consumes are gameplay: weapon
+        // stats, movement classes, faction data, god timing, and build menus.
+        // Everything else in gamedata/ (explosions, soundclasses, download, ...)
+        // is read by the viewer/audio only -> cosmetic.
+        if (k.find("weapons/") != std::string::npos) return true;
+        if (k.find("moveinfo") != std::string::npos || k.find("sidedata") != std::string::npos ||
+            k.find("gods") != std::string::npos)
+            return true;
+        return false;
     }
-    // canbuild build-tree files carry no extension in a subdir; key on the path.
+    // canbuild / canbuildcb build-tree files carry no extension in a subdir.
     if (k.find("canbuild") != std::string::npos) return true;
     return false;
+}
+
+uint64_t gameplayHash(const Vfs& vfs) {
+    // Every gameplay entry the sim consumes (see affectsGameplay), EXCEPT maps --
+    // those are per-game, checked separately. Two installs with identical retail
+    // gameplay files hash the same; a modified/overridden gameplay file changes it.
+    std::unordered_map<std::string, std::string> byKey;   // key -> winning path (deduped)
+    for (const char* pre : {"units", "unitscb", "canbuild", "canbuildcb", "features",
+                            "gamedata", "weapons"})
+        for (const std::string& p : vfs.list(pre)) {
+            if (!affectsGameplay(p)) continue;
+            std::string k = MountSet::key(p);
+            if (k.size() >= 4) {   // exclude any map files that live under these prefixes
+                std::string e = k.substr(k.size() - 4);
+                if (e == ".tnt" || e == ".ota" || e == ".crt") continue;
+            }
+            byKey.emplace(k, p);
+        }
+    std::vector<std::string> keys;
+    keys.reserve(byKey.size());
+    for (const auto& [k, p] : byKey) keys.push_back(k);
+    std::sort(keys.begin(), keys.end());
+    // FNV-1a over each entry's key then content -- order-independent-safe because
+    // the keys are sorted, and content-addressed so it's identical across machines.
+    uint64_t h = 1469598103934665603ULL;
+    auto mix = [&](const uint8_t* d, size_t n) {
+        for (size_t i = 0; i < n; ++i) { h ^= d[i]; h *= 1099511628211ULL; }
+    };
+    for (const std::string& k : keys) {
+        mix(reinterpret_cast<const uint8_t*>(k.data()), k.size());
+        uint8_t z = 0; mix(&z, 1);
+        try { auto b = vfs.read(byKey[k]); mix(b.data(), b.size()); } catch (const std::exception&) {}
+    }
+    return h;
 }
 
 Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides) {

@@ -7234,11 +7234,23 @@ int main(int argc, char** argv) {
     if (!shot.empty() || mpHeadless) SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
     (void)hostPort; (void)joinPort; (void)joinAddr;   // --host/--join retired (see --server)
 
+    // The runtime data set: a retail install directory (root *.hpi + Maps/ +
+    // Music/ + overrides/). This is the ONLY way the engine reads game files. It
+    // must outlive the views (GameView/MapView hold a reference), so it lives here
+    // at function scope for the whole render loop, and is built BEFORE connecting
+    // so the Hello can carry this install's gameplay-data fingerprint.
+    tak::hpi::OverridePolicy pol = tak::hpi::OverridePolicy::Full;
+    if (overridesArg == "none") pol = tak::hpi::OverridePolicy::None;
+    else if (overridesArg == "cosmetic") pol = tak::hpi::OverridePolicy::Cosmetic;
+    tak::hpi::Vfs vfs;
+    if (!dataRoot.empty()) vfs = tak::hpi::mountRetailRoot(dataRoot, pol);
+
     // Connect to the multiplayer server, if requested.
     std::unique_ptr<tak::net::MpClient> mp;
     if (!serverHost.empty()) {
         mp = std::make_unique<tak::net::MpClient>();
         if (playerName.empty()) playerName = "player";
+        if (!vfs.empty()) mp->setDataHash(tak::hpi::gameplayHash(vfs));
         if (!mp->connect(serverHost, uint16_t(serverPort), playerName)) {
             std::fprintf(stderr, "server: %s\n", mp->error().c_str());
             return 1;
@@ -7267,16 +7279,6 @@ int main(int argc, char** argv) {
     // moment a frame overruns one refresh even when there's headroom. --novsync
     // unlocks it (useful to see true throughput / for high-refresh displays).
     if (shot.empty()) SDL_RenderSetVSync(ren, noVsync ? 0 : 1);
-
-    // The runtime data set: a retail install directory (root *.hpi + Maps/ +
-    // Music/ + overrides/). This is the ONLY way the engine reads game files.
-    // It must outlive the views (GameView/MapView hold a reference), so it lives
-    // here at function scope for the whole render loop.
-    tak::hpi::OverridePolicy pol = tak::hpi::OverridePolicy::Full;
-    if (overridesArg == "none") pol = tak::hpi::OverridePolicy::None;
-    else if (overridesArg == "cosmetic") pol = tak::hpi::OverridePolicy::Cosmetic;
-    tak::hpi::Vfs vfs;
-    if (!dataRoot.empty()) vfs = tak::hpi::mountRetailRoot(dataRoot, pol);
 
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;
