@@ -4902,7 +4902,10 @@ private:
         int w = 0, h = 0, xoff = 0, yoff = 0;
         int sw = 0, sh = 0, sxoff = 0, syoff = 0;
         float x = 0, z = 0;
-        bool mana = false;   // a Sacred Stone mana deposit (lodestone spot)
+        bool mana = false;   // category=mana (deposit cluster: kept walkable/buildable)
+        bool glowy = false;  // the animated "Sacred Stone" centre -- the actual
+                             // buildable spot; category=mana + animating=1. The
+                             // static "Standing Stones" (animating=0) are decoration.
     };
     std::vector<FeatureInst> features_;
     std::vector<std::pair<float, float>> manaSpots_;   // Sacred Stone deposits
@@ -5076,8 +5079,16 @@ private:
         std::string cat = di->second.valueOr("category", "");
         std::transform(cat.begin(), cat.end(), cat.begin(), ::tolower);
         inst.mana = (cat == "mana");
+        // The buildable spot is the animated Sacred Stone centre; the static
+        // Standing Stones sharing the category are just ruins around it.
+        inst.glowy = inst.mana && di->second.numberOr("animating", 0) != 0;
         features_.push_back(inst);
-        if (blockNav && !inst.mana) {
+        // Retail nav-blocking: ordinary obstacle features AND the static Standing
+        // Stones (blocking=1) block; only the glowy Sacred Stone centre stays
+        // walkable, so a lodestone can build on it. (Standing Stones default to
+        // blocking; the centre has no blocking field, so it never blocks.)
+        bool blocks = !inst.glowy && (!inst.mana || di->second.numberOr("blocking", 0) != 0);
+        if (blockNav && blocks) {
             int fx = int(di->second.numberOr("footprintx", 1));
             int fz = int(di->second.numberOr("footprintz", 1));
             world_.nav().block(int(x) / 16 - fx / 2, int(z) / 16 - fz / 2, fx, fz, true);
@@ -5100,14 +5111,19 @@ private:
             }
         std::printf("features: %d placed\n", placed);
         // Register the Sacred Stone deposits so lodestones can only build on
-        // them (and the AI knows where to put them). One visual deposit often
-        // has several category=mana features (the rune circle plus a crystal and
-        // runed stones ~50px apart), so cluster them (union-find, 60px link) and
-        // keep ONE spot per cluster — otherwise several lodestones pile onto what
-        // reads as a single deposit.
+        // them (and the AI knows where to put them). The buildable spot is the
+        // GLOWING centre (animated Sacred Stone) -- NOT the ring of static
+        // Standing Stones around it, which share category=mana but are just
+        // ruins; including them pulled the spot off-centre. One deposit can have
+        // a couple of adjacent glowy stones, so still cluster (union-find, 60px
+        // link) and keep ONE spot per cluster. Fallback: a deposit with no glowy
+        // centre at all (odd data) uses its category=mana features instead.
         std::vector<std::pair<float, float>> raw;
         for (const auto& f : features_)
-            if (f.mana) raw.push_back({f.x, f.z});
+            if (f.glowy) raw.push_back({f.x, f.z});
+        if (raw.empty())
+            for (const auto& f : features_)
+                if (f.mana) raw.push_back({f.x, f.z});
         std::vector<int> par(raw.size());
         for (size_t i = 0; i < par.size(); ++i) par[i] = int(i);
         std::function<int(int)> find = [&](int a) {
@@ -5130,6 +5146,11 @@ private:
             manaSpots_.push_back({float(a.first.first / a.second),
                                   float(a.first.second / a.second)});
         world_.setManaSpots(manaSpots_);
+        // Standing Stones block nav, but a large one can reach the glowy centre;
+        // keep every deposit buildable by carving the 2x2 lodestone footprint
+        // clear at each spot (canPlace tests exactly these cells).
+        for (const auto& [sx, sz] : manaSpots_)
+            world_.nav().block(int(sx) / 16 - 1, int(sz) / 16 - 1, 2, 2, false);
         std::printf("mana deposits: %zu (from %zu features)\n",
                     manaSpots_.size(), raw.size());
     }
