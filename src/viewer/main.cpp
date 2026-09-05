@@ -1817,7 +1817,7 @@ public:
         // (rejoin replay) stays responsive rather than freezing for seconds.
         tak::net::Bundle bd;
         int drained = 0;
-        while (outcome_ == 0 && drained < 512 && mp_->takeBundle(netTick_, bd)) {
+        auto simTick = [&] {
             for (const auto& c : bd.cmds) apply(c);
             for (const auto& e : bd.events) applyEvent(e);
             update(1.0f / 30.0f);
@@ -1826,6 +1826,39 @@ public:
                 mp_->sendHash(netTick_, world_.stateHash());
             ++netTick_;
             ++drained;
+        };
+        if (netDelay_ == -2) {   // one-time init from the env
+            const char* e = std::getenv("TAK_NET_DELAY");
+            netDelay_ = e ? std::max(0, std::atoi(e)) : 0;
+        }
+        if (netDelay_ <= 0) {
+            // Default: drain to the newest delivered bundle every frame.
+            while (outcome_ == 0 && drained < 512 && mp_->takeBundle(netTick_, bd)) simTick();
+        } else {
+            // Jitter buffer: fill an initial reserve of netDelay_ bundles, then pace
+            // the sim on the wall clock at ~30 Hz, staying that many bundles behind
+            // the newest received. A late bundle is covered from the reserve; only a
+            // gap deeper than the reserve stalls. Same bundles, same order -> the sim
+            // and every hash are byte-identical, so this is a pure pacing change.
+            uint64_t now = SDL_GetTicks64();
+            float dt = netStepMs_ ? std::min(0.25f, float(now - netStepMs_) / 1000.0f) : 0.0f;
+            netStepMs_ = now;
+            int buffered = int(mp_->bufferedBundles());
+            if (!netBufReady_) {
+                if (buffered < netDelay_) return true;   // still filling the reserve
+                netBufReady_ = true; netAccum_ = 0;
+            }
+            netAccum_ += dt;
+            int budget = int(netAccum_ * 30.0f);
+            netAccum_ -= float(budget) / 30.0f;
+            // Gentle proportional drain back toward the target reserve so the buffer
+            // (hence the added latency) tracks netDelay_ instead of drifting deep.
+            budget += std::max(0, buffered - netDelay_) / 4;
+            // A deep backlog (rejoin replay, or the client fell behind) is NOT jitter
+            // -- fast-forward it back down to the target reserve instead of pacing.
+            if (buffered > netDelay_ + 60) budget = 512;
+            budget = std::min(budget, 512);
+            while (outcome_ == 0 && drained < budget && mp_->takeBundle(netTick_, bd)) simTick();
         }
         // "Machine too slow" guard: if the backlog stays deep for a sustained
         // stretch, this client can't process ticks as fast as they arrive and
@@ -4627,6 +4660,14 @@ private:
     std::vector<tak::net::Command> outbox_;   // local orders to send to the server
     uint64_t mpListMs_ = 0, mpFirstListMs_ = 0;   // auto-join: ListGames timing
     uint64_t mpSlowSinceMs_ = 0;                  // when the replay backlog went deep
+    // Client-side jitter/receive buffer (PROTOTYPE, TAK_NET_DELAY=K, default off).
+    // When on, the sim is paced on the wall clock at 30 Hz and kept K bundles
+    // behind the newest received, so brief server->client jitter is covered from
+    // the reserve instead of stalling. Costs ~K*33ms of fixed input latency.
+    int netDelay_ = -2;          // -2 = read TAK_NET_DELAY once; then 0 = off, else depth
+    bool netBufReady_ = false;   // built the initial reserve
+    float netAccum_ = 0;         // wall-clock tick accumulator (seconds)
+    uint64_t netStepMs_ = 0;     // last mpStep wall time
     bool replayMode_ = false;                     // playing a recorded .takrep
     std::vector<tak::net::Bundle> replayBundles_;
     size_t replayTick_ = 0;
