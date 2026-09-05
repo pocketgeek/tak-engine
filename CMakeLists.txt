@@ -30,7 +30,6 @@ add_library(tak-formats
   src/sim/sim.cpp
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
-  src/ai/ai.cpp
   src/crt/crt.cpp
   src/net/lockstep.cpp
   src/net/protocol.cpp
@@ -86,7 +85,9 @@ endif()
 
 # --- Multiplayer server (headless; no SDL) ------------------------------------
 
-add_executable(takserver src/server/server.cpp)
+# The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takview, so the
+# client cannot run AI locally. AIs run only on the server.
+add_executable(takserver src/server/server.cpp src/ai/ai.cpp)
 target_link_libraries(takserver PRIVATE tak-formats)
 
 add_executable(modeltool tools/modeltool.cpp)

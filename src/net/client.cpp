@@ -199,11 +199,12 @@ void MpClient::listGames() { send(Msg::ListGames); }
 
 void MpClient::createGame(const std::string& name, const std::string& password,
                           const std::string& mapId, const GameOptions& o, uint8_t capacity,
-                          bool spectate) {
+                          bool spectate, bool priv) {
     Writer w; w.str(name); w.str(password); w.str(mapId);
     w.u8(o.crusades); w.u8(o.gods); w.u8(o.forfeitSelfDestruct); w.u8(o.overridePolicy);
     w.u8(capacity);   // map's start-position count (the server has no map data)
     w.u8(spectate ? 1 : 0);   // host watches, taking no slot
+    w.u8(priv ? 1 : 0);       // private (single-player): not in the public game list
     send(Msg::CreateGame, w);
 }
 
