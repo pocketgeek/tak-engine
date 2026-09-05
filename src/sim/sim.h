@@ -570,6 +570,12 @@ private:
     int visPlayer_ = 0;
     int visW_ = 0, visH_ = 0;
     float visTimer_ = 0;
+    std::vector<uint8_t> heights_;   // raw TNT heightmap, for fog line-of-sight
+    int hW_ = 0, hH_ = 0;
+    // True if the ground at cell (tx,tz) is visible from a unit at cell (ux,uz):
+    // no intervening terrain rises above the eye->target sight line. Local display
+    // only (fog is not in stateHash), so plain float math is fine.
+    bool sightClear(int ux, int uz, float eyeH, int tx, int tz) const;
     std::vector<Unit> units_;
     std::vector<std::pair<float, float>> manaSpots_;
     std::vector<Projectile> projectiles_;

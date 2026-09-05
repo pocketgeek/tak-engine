@@ -376,6 +376,8 @@ Unit* World::unit(int id) {
 }
 
 void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel) {
+    heights_ = heights;   // keep raw heights for fog line-of-sight
+    hW_ = w; hH_ = h;
     // Ground: no cliffs, water at most ankle deep (moveinfo MaxWaterDepth ~20).
     nav_ = NavGrid(heights, w, h, 20);
     for (int z = 0; z < h; ++z)
@@ -1446,6 +1448,27 @@ void World::tickAbilities(float /*dt*/) {
     for (const auto& r : revives) spawn(r.type, r.x, r.z, 3.14159f, r.player);
 }
 
+bool World::sightClear(int ux, int uz, float eyeH, int tx, int tz) const {
+    if (heights_.empty()) return true;
+    auto H = [&](int x, int z) { return float(heights_[size_t(z) * hW_ + x]); };
+    float tH = H(tx, tz);
+    float dxf = float(tx - ux), dzf = float(tz - uz);
+    float D = std::sqrt(dxf * dxf + dzf * dzf);
+    if (D < 1.5f) return true;                    // adjacent cell: always visible
+    // Walk the cells between unit and target (integer DDA); a cell blocks the view
+    // if its ground rises above the straight eye->target sight line at that point.
+    int steps = int(D);
+    for (int i = 1; i < steps; ++i) {
+        float t = float(i) / D;
+        int x = int(std::lround(float(ux) + dxf * t));
+        int z = int(std::lround(float(uz) + dzf * t));
+        if (x < 0 || z < 0 || x >= hW_ || z >= hH_) continue;
+        float lineH = eyeH + (tH - eyeH) * t;
+        if (H(x, z) > lineH + 4.0f) return false;   // terrain pokes above the line
+    }
+    return true;
+}
+
 void World::updateVisibility() {
     if (nav_.empty()) return;
     if (visPlayer_ < 0) return;   // headless referee: nothing renders, no fog needed
@@ -1464,12 +1487,18 @@ void World::updateVisibility() {
         // Reveal to the greater of sight and radar range (radardistance).
         int r = int(std::max(u.type->sight, u.type->radar)) / 16 + 1;
         int cx = int(u.x) / 16, cz = int(u.z) / 16;
+        // Eye height = the unit's ground height plus a small stature, so it sees
+        // over minor bumps but not over walls/hills/cliffs. Radar ignores terrain
+        // (it's not line-of-sight), so a radar-only reveal skips the LoS test.
+        bool losBlocks = !heights_.empty() && cx >= 0 && cz >= 0 && cx < hW_ && cz < hH_;
+        float eyeH = losBlocks ? float(heights_[size_t(cz) * hW_ + cx]) + 24.0f : 0.0f;
         for (int dz = -r; dz <= r; ++dz)
             for (int dx = -r; dx <= r; ++dx) {
                 if (dx * dx + dz * dz > r * r) continue;
                 int x = cx + dx, z = cz + dz;
-                if (x >= 0 && z >= 0 && x < visW_ && z < visH_)
-                    vis_[size_t(z) * visW_ + x] = 2;
+                if (x < 0 || z < 0 || x >= visW_ || z >= visH_) continue;
+                if (losBlocks && !sightClear(cx, cz, eyeH, x, z)) continue;
+                vis_[size_t(z) * visW_ + x] = 2;
             }
     }
 }
