@@ -37,6 +37,11 @@ class MpClient {
 public:
     enum class State { Offline, Connecting, Lobby, InRoom, Starting, InGame, Done };
 
+    // Set the local gameplay-data fingerprint (hpi::gameplayHash) BEFORE connect;
+    // it goes in the Hello so the server can reject a peer whose retail gameplay
+    // data (or, under Full overrides, gameplay overrides) doesn't match.
+    void setDataHash(uint64_t h) { dataHash_ = h; }
+
     bool connect(const std::string& host, uint16_t port, const std::string& name);
     void disconnect(const std::string& reason = "bye");
 
@@ -120,6 +125,7 @@ private:
     std::vector<std::pair<std::string, std::string>> chat_;
     std::string joinErr_;
 
+    uint64_t dataHash_ = 0;      // local gameplay-data fingerprint (sent in Hello)
     uint32_t startSeed_ = 0;
     uint64_t resumeToken_ = 0;
     bool rejoin_ = false;

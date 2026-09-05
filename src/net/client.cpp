@@ -21,8 +21,8 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     state_ = State::Connecting;
     Writer w;
     w.u32(kNetVersion);
-    w.str("");          // build id (M3: version-gated only)
-    w.u64(0);           // data hash (M3: not enforced)
+    w.str("");          // build id (version-gated only)
+    w.u64(dataHash_);   // gameplay-data fingerprint (enforced by the server)
     w.str(name_);
     send(Msg::Hello, w);
     lastRecvMs_ = nowMs();

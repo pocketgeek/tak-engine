@@ -172,6 +172,13 @@ enum class OverridePolicy { None, Cosmetic, Full };
 // and is excluded from the "cosmetic" override tier. Everything else is cosmetic.
 bool affectsGameplay(const std::string& path);
 
+// A 64-bit fingerprint of the gameplay data the sim consumes (unit stats, weapon/
+// side/game data, build lists, features) as resolved from the VFS -- NOT maps
+// (per-game) and NOT cosmetic files. Multiplayer peers must agree on this: it
+// verifies the shipped gameplay files are unmodified, and (under the Full override
+// tier, where gameplay overrides are mounted) that every player has the same ones.
+uint64_t gameplayHash(const Vfs& vfs);
+
 // Build the runtime VFS for a retail install root (see the layer diagram above).
 Vfs mountRetailRoot(const std::filesystem::path& root,
                     OverridePolicy overrides = OverridePolicy::Full);
