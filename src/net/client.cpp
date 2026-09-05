@@ -92,8 +92,12 @@ void MpClient::onFrame(const Frame& f) {
         }
         case Msg::JoinResult: {
             uint8_t ok = r.u8(); uint8_t slot = r.u8(); std::string why = r.str();
-            if (ok) { room_.mySlot = slot; state_ = State::InRoom; }
-            else joinErr_ = why.empty() ? "join failed" : why;
+            if (ok) {
+                // 0xFF = the host created the game as a slot-less spectator.
+                room_.mySlot = (slot == 0xFF) ? -1 : int(slot);
+                spectator_ = (slot == 0xFF);
+                state_ = State::InRoom;
+            } else joinErr_ = why.empty() ? "join failed" : why;
             break;
         }
         case Msg::LobbyState: {
@@ -116,9 +120,10 @@ void MpClient::onFrame(const Frame& f) {
             resumeToken_ = r.u64();
             // 0xFF marks a spectator (no slot); map it to -1.
             room_.mySlot = !r.ok ? keep : (mySlot == 0xFF ? -1 : int(mySlot));
-            // A rejoin OR a spectate makes this GameStarting a replay response: the
-            // world must be rebuilt and the bundle log (arriving next) replayed.
-            spectator_ = expectingSpectate_;
+            // Any 0xFF start is a spectator (a create-as-spectator host, or spectate()).
+            spectator_ = expectingSpectate_ || (r.ok && mySlot == 0xFF);
+            // A rejoin OR a spectate of a RUNNING game replays the bundle log; a
+            // host-spectator whose game is just starting has no log to replay.
             rejoin_ = expectingRejoin_ || expectingSpectate_;
             expectingRejoin_ = expectingSpectate_ = false;
             state_ = State::Starting;
@@ -154,10 +159,12 @@ void MpClient::onFrame(const Frame& f) {
 void MpClient::listGames() { send(Msg::ListGames); }
 
 void MpClient::createGame(const std::string& name, const std::string& password,
-                          const std::string& mapId, const GameOptions& o, uint8_t capacity) {
+                          const std::string& mapId, const GameOptions& o, uint8_t capacity,
+                          bool spectate) {
     Writer w; w.str(name); w.str(password); w.str(mapId);
     w.u8(o.crusades); w.u8(o.gods); w.u8(o.forfeitSelfDestruct);
     w.u8(capacity);   // map's start-position count (the server has no map data)
+    w.u8(spectate ? 1 : 0);   // host watches, taking no slot
     send(Msg::CreateGame, w);
 }
 
