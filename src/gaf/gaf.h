@@ -24,6 +24,7 @@ namespace tak::gaf {
 struct Palette {
     uint8_t rgba[256][4];
     static Palette load(const std::filesystem::path& palFile);
+    static Palette fromBytes(const std::vector<uint8_t>& d, const std::string& origin = "<memory>");
 };
 
 struct Frame {
@@ -42,5 +43,8 @@ struct Sequence {
 // index fully transparent (render.tdf: transparentcolor=5 for 3DO textures).
 std::vector<Sequence> load(const std::filesystem::path& file, const Palette& pal,
                            int transparentIndex = -1);
+// Decode from an in-memory buffer (a VFS-resolved archive entry).
+std::vector<Sequence> load(const std::vector<uint8_t>& d, const Palette& pal,
+                           int transparentIndex = -1, const std::string& origin = "<memory>");
 
 } // namespace tak::gaf

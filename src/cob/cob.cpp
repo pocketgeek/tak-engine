@@ -36,10 +36,13 @@ File load(const std::filesystem::path& path) {
     if (!in) throw std::runtime_error("cannot open " + path.string());
     std::vector<uint8_t> d(std::filesystem::file_size(path));
     in.read(reinterpret_cast<char*>(d.data()), static_cast<std::streamsize>(d.size()));
+    return load(d, path.string());
+}
 
+File load(const std::vector<uint8_t>& d, const std::string& origin) {
     uint32_t version = u32(d, 0);
     if (version != 4 && version != 6)
-        throw std::runtime_error(path.string() + ": unsupported COB version " +
+        throw std::runtime_error(origin + ": unsupported COB version " +
                                  std::to_string(version));
     uint32_t numScripts = u32(d, 4);
     uint32_t numPieces = u32(d, 8);

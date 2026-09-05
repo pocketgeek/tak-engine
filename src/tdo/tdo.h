@@ -33,5 +33,7 @@ struct Model {
 };
 
 Model load(const std::filesystem::path& file);
+// Parse from an in-memory buffer (a VFS-resolved archive entry).
+Model load(const std::vector<uint8_t>& d);
 
 } // namespace tak::tdo

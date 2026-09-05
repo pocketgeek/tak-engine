@@ -21,6 +21,10 @@ std::vector<Placement> load(const std::filesystem::path& path) {
     if (!in) return {};
     std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)),
                            std::istreambuf_iterator<char>());
+    return load(d);
+}
+
+std::vector<Placement> load(const std::vector<uint8_t>& d) {
     if (d.size() < 16) return {};
 
     float version;
@@ -47,11 +51,15 @@ std::vector<Placement> load(const std::filesystem::path& path) {
 }
 
 Triggers loadTriggers(const std::filesystem::path& path) {
-    Triggers out;
     std::ifstream in(path, std::ios::binary);
-    if (!in) return out;
+    if (!in) return {};
     std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)),
                            std::istreambuf_iterator<char>());
+    return loadTriggers(d);
+}
+
+Triggers loadTriggers(const std::vector<uint8_t>& d) {
+    Triggers out;
     if (d.size() < 16) return out;
     float version;
     std::memcpy(&version, d.data(), 4);

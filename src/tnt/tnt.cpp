@@ -24,10 +24,13 @@ Map Map::load(const std::filesystem::path& file) {
     if (!in) throw std::runtime_error("cannot open " + file.string());
     std::vector<uint8_t> d(std::filesystem::file_size(file));
     in.read(reinterpret_cast<char*>(d.data()), static_cast<std::streamsize>(d.size()));
+    return load(d, file.string());
+}
 
+Map Map::load(const std::vector<uint8_t>& d, const std::string& origin) {
     need(d, 0, 52, "TNT header");
     if (u32(&d[0]) != 0x4000)
-        throw std::runtime_error(file.string() + ": not a TAK TNT (version != 0x4000)");
+        throw std::runtime_error(origin + ": not a TAK TNT (version != 0x4000)");
 
     Map m;
     m.width = int(u32(&d[4]));

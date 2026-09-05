@@ -1,5 +1,6 @@
 #include "sim/sim.h"
 
+#include "hpi/hpi.h"
 #include "sim/detmath.h"
 #include "tdf/tdf.h"
 
@@ -40,9 +41,10 @@ float angleDiff(float a, float b) {
 
 } // namespace
 
-void TypeRegistry::loadMoveInfo(const std::filesystem::path& tdf) {
+void TypeRegistry::loadMoveInfo(const hpi::Vfs& vfs, const std::string& path) {
     try {
-        auto root = tdf::parse(tdf);
+        auto b = vfs.read(path);
+        auto root = tdf::parseText(std::string(b.begin(), b.end()), path);
         for (const auto& cn : root.childOrder) {
             const tdf::Node& c = root.children.at(cn);
             std::string name = lower(c.valueOr("Name", ""));
@@ -56,15 +58,16 @@ void TypeRegistry::loadMoveInfo(const std::filesystem::path& tdf) {
     } catch (const std::exception&) {}   // no MOVEINFO -> units keep FBI defaults
 }
 
-void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
-    for (const auto& e : std::filesystem::directory_iterator(unitsDir)) {
-        if (lower(e.path().extension().string()) != ".fbi") continue;
+void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
+    for (const std::string& path : vfs.list(prefix)) {
+        if (lower(std::filesystem::path(path).extension().string()) != ".fbi") continue;
         try {
-            auto root = tdf::parse(e.path());
+            auto bytes = vfs.read(path);
+            auto root = tdf::parseText(std::string(bytes.begin(), bytes.end()), path);
             const auto* info = root.child("UNITINFO");
             if (!info) continue;
             UnitType t;
-            std::string stem = lower(e.path().stem().string());
+            std::string stem = lower(std::filesystem::path(path).stem().string());
             t.id = lower(info->valueOr("objectname", stem));
             // Two files can claim the same objectname (e.g. the Iron Plague campaign's
             // tarnecr2.fbi also declares objectname TARNECRO, but drops builder=1). The
@@ -299,23 +302,40 @@ void TypeRegistry::loadDir(const std::filesystem::path& unitsDir) {
     }
 }
 
-void TypeRegistry::loadBuildTree(const std::filesystem::path& canbuildDir) {
-    for (const auto& b : std::filesystem::directory_iterator(canbuildDir)) {
-        if (!b.is_directory()) continue;
-        std::string builder = lower(b.path().filename().string());
-        std::vector<std::pair<double, std::string>> entries;
-        for (const auto& e : std::filesystem::directory_iterator(b.path())) {
-            if (lower(e.path().extension().string()) != ".tdf") continue;
-            double prio = 99;
-            try {
-                auto root = tdf::parse(e.path());
-                if (const auto* m = root.child("Menu")) prio = m->numberOr("priority", 99);
-            } catch (const std::exception&) {}
-            entries.push_back({prio, lower(e.path().stem().string())});
+void TypeRegistry::loadBuildTree(const hpi::Vfs& vfs, const std::string& prefix) {
+    namespace fs = std::filesystem;
+    // The VFS enumerates <prefix>/<builder>/<buildable>.tdf recursively; group by
+    // the builder subdirectory (the path segment right after `prefix`).
+    std::string pre = lower(prefix);
+    while (!pre.empty() && (pre.back() == '/' || pre.back() == '\\')) pre.pop_back();
+    std::map<std::string, std::vector<std::pair<double, std::string>>> byBuilder;
+    std::vector<std::string> order;   // builders in first-seen order
+    for (const std::string& path : vfs.list(prefix)) {
+        if (lower(fs::path(path).extension().string()) != ".tdf") continue;
+        // Split into segments; require exactly <prefix>/<builder>/<file>.
+        std::vector<std::string> segs;
+        for (const auto& part : fs::path(path)) {
+            std::string s = part.string();
+            if (!s.empty() && s != "/") segs.push_back(s);
         }
+        size_t i = 0;
+        while (i < segs.size() && lower(segs[i]) != pre) ++i;
+        if (i + 3 != segs.size()) continue;   // require exactly <prefix>/<builder>/<file>
+        std::string builder = lower(segs[i + 1]);
+        double prio = 99;
+        try {
+            auto bytes = vfs.read(path);
+            auto root = tdf::parseText(std::string(bytes.begin(), bytes.end()), path);
+            if (const auto* m = root.child("Menu")) prio = m->numberOr("priority", 99);
+        } catch (const std::exception&) {}
+        if (!byBuilder.count(builder)) order.push_back(builder);
+        byBuilder[builder].push_back({prio, lower(fs::path(path).stem().string())});
+    }
+    for (const std::string& builder : order) {
+        auto entries = byBuilder[builder];
         std::sort(entries.begin(), entries.end());
         auto& list = buildTree_[builder];
-        // First dir to define a builder wins it whole -- so a Crusades-balance
+        // First source to define a builder wins it whole -- so a Crusades-balance
         // canbuildcb loaded before canbuild replaces that builder's menu rather
         // than merging with it. (No effect on the usual single load.)
         if (!list.empty()) continue;

@@ -1,8 +1,9 @@
 #include "terrain/terrain.h"
 
+#include "hpi/hpi.h"
+
 #include <algorithm>
-#include <cctype>
-#include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 
@@ -12,31 +13,18 @@ namespace {
 constexpr int kBlock = 32;
 }
 
-Compositor::Compositor(const std::filesystem::path& terrainDir) : dir_(terrainDir) {
-    // Index JPGs by their hex-key filename (case-insensitive).
-    for (const auto& e : std::filesystem::directory_iterator(dir_)) {
-        if (!e.is_regular_file()) continue;
-        std::string stem = e.path().stem().string();
-        if (stem.size() != 8) continue;
-        char* end = nullptr;
-        unsigned long key = std::strtoul(stem.c_str(), &end, 16);
-        if (end != stem.c_str() + 8) continue;
-        index_[uint32_t(key)] = e.path();
-    }
-    if (index_.empty())
-        throw std::runtime_error("no terrain JPGs found in " + dir_.string());
-}
+Compositor::Compositor(const hpi::Vfs& vfs) : vfs_(&vfs) {}
 
 const jpeg::Image& Compositor::section(uint32_t key) {
     auto it = cache_.find(key);
     if (it != cache_.end()) return it->second;
-    auto pi = index_.find(key);
-    if (pi == index_.end()) {
-        char buf[16];
-        std::snprintf(buf, sizeof buf, "%08x", key);
+    // Terrain tiles are content-addressed by the map's u32 tile key: terrain/<8hex>.jpg.
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "%08x", key);
+    std::string path = std::string("terrain/") + buf + ".jpg";
+    if (!vfs_->has(path))
         throw std::runtime_error(std::string("terrain JPG not found: ") + buf);
-    }
-    return cache_.emplace(key, jpeg::load(pi->second)).first->second;
+    return cache_.emplace(key, jpeg::load(vfs_->read(path))).first->second;
 }
 
 void Compositor::renderBlock(const tnt::Map& map, int bx, int by,

@@ -161,13 +161,17 @@ Palette Palette::load(const std::filesystem::path& palFile) {
     if (!in) throw std::runtime_error("cannot open " + palFile.string());
     std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)),
                            std::istreambuf_iterator<char>());
+    return fromBytes(d, palFile.string());
+}
+
+Palette Palette::fromBytes(const std::vector<uint8_t>& d, const std::string& origin) {
     Palette pal{};
 
     if (!d.empty() && d[0] == 0x0A) {
         // PCX: TAK ships palettes as 1x1 PCX files. The 256-color palette is
         // the last 768 bytes, preceded by a 0x0C marker byte.
         if (d.size() < 769 || d[d.size() - 769] != 0x0C)
-            throw std::runtime_error(palFile.string() + ": PCX without VGA palette");
+            throw std::runtime_error(origin + ": PCX without VGA palette");
         const uint8_t* p = d.data() + d.size() - 768;
         for (int i = 0; i < 256; ++i) {
             pal.rgba[i][0] = p[i * 3];
@@ -180,7 +184,7 @@ Palette Palette::load(const std::filesystem::path& palFile) {
 
     // Raw .pal: 256 x 4 bytes (R,G,B,x).
     if (d.size() < 1024)
-        throw std::runtime_error(palFile.string() + ": short palette");
+        throw std::runtime_error(origin + ": short palette");
     for (int i = 0; i < 256; ++i) {
         pal.rgba[i][0] = d[i * 4];
         pal.rgba[i][1] = d[i * 4 + 1];
@@ -196,10 +200,14 @@ std::vector<Sequence> load(const std::filesystem::path& file, const Palette& pal
     if (!in) throw std::runtime_error("cannot open " + file.string());
     std::vector<uint8_t> d(std::filesystem::file_size(file));
     in.read(reinterpret_cast<char*>(d.data()), static_cast<std::streamsize>(d.size()));
+    return load(d, pal, transparentIndex, file.string());
+}
 
+std::vector<Sequence> load(const std::vector<uint8_t>& d, const Palette& pal,
+                           int transparentIndex, const std::string& origin) {
     need(d, 0, 12, "GAF header");
     if (u32(&d[0]) != 0x00010100)
-        throw std::runtime_error(file.string() + ": not a GAF/TAF (bad version)");
+        throw std::runtime_error(origin + ": not a GAF/TAF (bad version)");
     uint32_t numEntries = u32(&d[4]);
     need(d, 12, uint64_t(numEntries) * 4, "entry pointers");
 

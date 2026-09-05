@@ -4,19 +4,21 @@
 #include "util/jpeg.h"
 
 #include <cstdint>
-#include <filesystem>
 #include <map>
+#include <string>
 #include <vector>
+
+namespace tak::hpi { class Vfs; }
 
 namespace tak::terrain {
 
-// Composites TNT map terrain from the content-addressed section JPGs in
-// an extracted terrain directory (terrain/<hexkey>.jpg). Each 32px map
-// block crops (col*32, row*32, 32, 32) out of its keyed JPG.
+// Composites TNT map terrain from the content-addressed section JPGs the VFS
+// resolves as terrain/<hexkey>.jpg (from terrain.hpi). Each 32px map block
+// crops (col*32, row*32, 32, 32) out of its keyed JPG.
 
 class Compositor {
 public:
-    explicit Compositor(const std::filesystem::path& terrainDir);
+    explicit Compositor(const hpi::Vfs& vfs);
 
     // Render the whole map at full resolution (width*16 x height*16 px).
     jpeg::Image renderMap(const tnt::Map& map);
@@ -28,9 +30,8 @@ public:
 private:
     const jpeg::Image& section(uint32_t key);
 
-    std::filesystem::path dir_;
-    std::map<uint32_t, jpeg::Image> cache_;
-    std::map<uint32_t, std::filesystem::path> index_;  // key -> jpg path
+    const hpi::Vfs* vfs_ = nullptr;
+    std::map<uint32_t, jpeg::Image> cache_;   // key -> decoded section (lazy)
 };
 
 } // namespace tak::terrain

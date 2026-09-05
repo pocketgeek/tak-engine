@@ -132,9 +132,14 @@ Archive::Archive(const std::filesystem::path& file) : file_(file) {
     walk(dirBlock, nameBlock, 0, "", entries_);
 }
 
+const std::vector<uint8_t>& Archive::bytes() const {
+    if (!loaded_) { fileData_ = readFile(file_); loaded_ = true; }
+    return fileData_;
+}
+
 std::vector<uint8_t> Archive::read(const Entry& entry) const {
     if (entry.isDirectory) throw std::runtime_error(entry.path + " is a directory");
-    auto data = readFile(file_);
+    const std::vector<uint8_t>& data = bytes();
 
     if (entry.compressedSize == 0) {
         if (uint64_t(entry.start) + entry.decompressedSize > data.size())
@@ -473,6 +478,49 @@ Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides)
         }
     }
     return vfs;
+}
+
+std::vector<std::pair<std::string, std::string>> listMaps(const Vfs& vfs) {
+    std::unordered_map<std::string, std::string> byName;   // lower(name) -> path
+    for (const char* ns : {"Maps", "kmap"})
+        for (const std::string& p : vfs.list(ns)) {
+            std::filesystem::path fp(p);
+            std::string ext = fp.extension().string();
+            for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (ext != ".tnt") continue;
+            std::string name = fp.stem().string();
+            std::string lname = name;
+            for (char& c : lname) c = char(std::tolower(static_cast<unsigned char>(c)));
+            byName.emplace(lname, p);   // first namespace (Maps) wins a name tie
+        }
+    std::vector<std::pair<std::string, std::string>> out;
+    out.reserve(byName.size());
+    for (const auto& [ln, path] : byName)
+        out.push_back({std::filesystem::path(path).stem().string(), path});
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+std::string findMap(const Vfs& vfs, const std::string& name) {
+    std::string want = name;
+    // Accept either a bare name or a name with a .tnt suffix.
+    if (want.size() > 4) {
+        std::string tail = want.substr(want.size() - 4);
+        for (char& c : tail) c = char(std::tolower(static_cast<unsigned char>(c)));
+        if (tail == ".tnt") want = want.substr(0, want.size() - 4);
+    }
+    for (char& c : want) c = char(std::tolower(static_cast<unsigned char>(c)));
+    for (const char* ns : {"Maps", "kmap"})
+        for (const std::string& p : vfs.list(ns)) {
+            std::filesystem::path fp(p);
+            std::string ext = fp.extension().string();
+            for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (ext != ".tnt") continue;
+            std::string stem = fp.stem().string();
+            for (char& c : stem) c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (stem == want) return p;
+        }
+    return {};
 }
 
 } // namespace tak::hpi

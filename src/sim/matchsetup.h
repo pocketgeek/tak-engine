@@ -32,8 +32,8 @@ struct MatchSlot {
 };
 
 struct MatchConfig {
-    std::string tntPath;     // the map (its .ota sibling holds start positions)
-    std::string dataRoot;    // extracted game data
+    const hpi::Vfs* vfs = nullptr;  // the retail-root read-path (shared by peers)
+    std::string mapPath;            // VFS path to the map .tnt (.ota sibling = start pos)
     std::vector<MatchSlot> slots;   // index = player; sized to the player count
     bool gods = false;
     float godAppearSec = 1800;      // when gods may manifest (if enabled)
@@ -43,13 +43,14 @@ struct MatchConfig {
 // The starting Monarch of each faction (index = faction id).
 extern const char* const kMonarchs[5];
 
-// Load the unit registry: MOVEINFO, units, canbuild -- with the Crusades overlay
-// loaded first (it wins) and the Iron Plague data if present. Deterministic.
-// Returns the IP data root used (empty if none).
-std::string setupRegistry(TypeRegistry& reg, const std::string& dataRoot, bool crusades);
+// Load the unit registry from the VFS: MOVEINFO, units, canbuild -- with the
+// Crusades overlay loaded first (it wins). Iron Plague and community units are
+// already merged into the "units"/"canbuild" namespaces by the VFS. Deterministic.
+void setupRegistry(TypeRegistry& reg, const hpi::Vfs& vfs, bool crusades);
 
 // Start positions from the map's .ota (world pixels), ordered by StartPos index.
-std::vector<std::pair<float, float>> parseStartPositions(const std::string& tntPath);
+std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
+                                                         const std::string& mapPath);
 
 // Build the world for a match. Idempotent w.r.t. terrain (setTerrain rebuilds the
 // nav grid), so it may run after a client has already loaded the map for render.

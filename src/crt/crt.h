@@ -21,6 +21,7 @@ struct Placement {
 
 // Returns placements; empty if the file is empty or an unsupported variant.
 std::vector<Placement> load(const std::filesystem::path& path);
+std::vector<Placement> load(const std::vector<uint8_t>& d);   // from a VFS buffer
 
 // Trigger section (after the placement records):
 //   header { i32 version(9), i32 numTriggers, ... } (16 bytes)
@@ -54,5 +55,6 @@ struct Triggers {
 };
 
 Triggers loadTriggers(const std::filesystem::path& path);
+Triggers loadTriggers(const std::vector<uint8_t>& d);   // from a VFS buffer
 
 } // namespace tak::crt
