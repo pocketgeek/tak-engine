@@ -96,13 +96,24 @@ public:
     // (small map, or a maximized window), center it instead of pinning it to
     // the top-left corner — pinning makes zoom-to-cursor appear to drift toward
     // (0,0).
+    // The smallest zoom at which the map still fills the window in one dimension
+    // (zooming out past this would run the view off the map edges).
+    float minZoom(int winW, int winH) const {
+        int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;
+        return (mapW > 0 && mapH > 0) ? std::max(float(winW) / mapW, float(winH) / mapH) : 0.05f;
+    }
+    // Apply just the min-zoom floor (no offset change). The zoom-to-cursor step
+    // must call this before recomputing the offset, else it recentres using a
+    // below-floor zoom and the next clampOffset snaps the view to the map corner.
+    void clampZoom(int winW, int winH) { zoom_ = std::max(zoom_, minZoom(winW, winH)); }
+
     void clampOffset(int winW, int winH) {
         int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;
         // Don't allow zooming out past the point where the map fills the
         // window in one dimension — otherwise the view runs off the map edges.
         if (mapW > 0 && mapH > 0) {
-            float minZoom = std::max(float(winW) / mapW, float(winH) / mapH);
-            if (zoom_ < minZoom) zoom_ = minZoom;
+            float mz = std::max(float(winW) / mapW, float(winH) / mapH);
+            if (zoom_ < mz) zoom_ = mz;
         }
         float maxX = mapW - winW / zoom_, maxY = mapH - winH / zoom_;
         offX_ = maxX <= 0 ? maxX / 2 : std::clamp(offX_, 0.0f, maxX);
@@ -1480,8 +1491,9 @@ public:
             // Zoom toward the cursor: keep the world point under the mouse fixed.
             float wx = mapView_.offX() + mouseX_ / mapView_.zoom();
             float wz = mapView_.offY() + mouseY_ / mapView_.zoom();
-            mapView_.input(e);   // applies the clamped zoom step
-            float nz = mapView_.zoom();
+            mapView_.input(e);                  // applies the zoom step
+            mapView_.clampZoom(winW, winH);     // ...then the map-fills-window floor,
+            float nz = mapView_.zoom();         // so the recentre below uses the real zoom
             mapView_.setOffset(wx - mouseX_ / nz, wz - mouseY_ / nz);
         } else if (e.type == SDL_KEYDOWN) {
             // Arrow-key panning takes the camera off the tracked selection.
