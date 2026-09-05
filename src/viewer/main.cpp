@@ -3604,8 +3604,12 @@ private:
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
-        float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
-        float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
+        // A building ghost sits on its footprint like the finished building -- never
+        // lift it onto the terrain relief (see uLiftY: a deposit's raised heightmap
+        // would float the ghost off its spot).
+        bool lift = type->canMove;
+        float ax = (x - mapView_.offX()) * zm - (lift ? terrainLiftX(x, z) : 0.0f) * zm;
+        float ay = (z - mapView_.offY()) * zm - (lift ? terrainLift(x, z) : 0.0f) * zm;
         // Batch by texture (flush on change), like a live unit.
         triBatch_.clear();
         SDL_Texture* cur = nullptr;
