@@ -3315,7 +3315,6 @@ private:
         bool airborne = false;   // true while the flight animation should run
         float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
         int flyGate = 8;         // static index that this unit's `fly` gates on
-        bool flyHalfTurn = true; // fly pose adds 180deg => face pi-heading, else -heading
     };
 
     // The `fly` script's first instruction is a PUSH_STATIC that gates the
@@ -3329,28 +3328,6 @@ private:
         if (e + 1 < f.code.size() && f.code[e] == 0x10021004)   // PUSH_STATIC
             return int(f.code[e + 1]);
         return 8;
-    }
-
-    // Zhon flyer models are mirrored (base facing -heading); some fly poses turn
-    // the body a further 180deg (=> pi-heading), others don't (zondrake, zongryp
-    // and zonflies fly backward with pi-heading). The discriminator is the `fly`
-    // setup's first hip (piece 0) vertical (axis 1) MOVE_NOW: only a NEGATIVE
-    // offset means +180 (pi-heading). Positive or absent => plain -heading.
-    static bool flyHalfTurnOf(const tak::cob::Vm& vm) {
-        const auto& f = vm.file();
-        int si = f.scriptIndex("fly");
-        if (si < 0) return false;
-        uint32_t e = f.scripts[size_t(si)].entry;
-        uint32_t end = size_t(si) + 1 < f.scripts.size()
-                           ? f.scripts[size_t(si) + 1].entry
-                           : uint32_t(f.code.size());
-        for (uint32_t i = e; i + 2 < end; ++i)
-            if (f.code[i] == 0x1000B000 && f.code[i + 1] == 0 && f.code[i + 2] == 1) {
-                if (i >= 2 && f.code[i - 2] == 0x10021001)   // preceding PUSH_CONST
-                    return int32_t(f.code[i - 1]) < 0;       // negative => +180 (pi-heading)
-                return false;
-            }
-        return false;   // no hip vertical move => plain -heading
     }
 
     // At max veterancy, a unit with a `veteranmodel` swaps its mesh for the
@@ -3426,11 +3403,6 @@ private:
             if (u.type && u.type->canFly) {
                 a.flying = true;   // starts grounded; the update loop flies her
                 a.flyGate = flyGateOf(*a.vm);
-                // TAK_NO_HALFTURN=1: retail has no flyer facing branch (root
-                // matrix call 0x4ee620 is identical for every unit); Step-0
-                // experiment gate, see docs/model-rendering-plan.md.
-                static const bool kNoHalf = std::getenv("TAK_NO_HALFTURN") != nullptr;
-                a.flyHalfTurn = !kNoHalf && flyHalfTurnOf(*a.vm);
                 // Start in the folded landed pose, not the wings-spread rest
                 // pose, so a flyer that spawns idle and never takes off (e.g. the
                 // Monarch at game start) doesn't sit in a T-pose.
@@ -4007,10 +3979,6 @@ private:
         tmp.vm = std::move(vm);
         tmp.flyGate = flyGateOf(*tmp.vm);
         bool animated = canMove || canFly;
-        // Match the live unit's facing convention: flyers face pi-heading only when
-        // their fly script adds the 180 body turn (flyHalfTurnOf), else -heading.
-        static const bool kNoHalf = std::getenv("TAK_NO_HALFTURN") != nullptr;   // see plan doc
-        bool halfTurn = !kNoHalf && canFly && flyHalfTurnOf(*tmp.vm);
         // (Re)start the locomotion animation from the top -- used before each bake
         // attempt so a retry on a fresh page re-captures the same frames.
         auto initAnim = [&] {
@@ -4085,8 +4053,11 @@ private:
         // Capture the current VM pose at facing fi into a packed cell of `target`.
         auto capture = [&](int fi, SDL_Rect& outR, SDL_FRect& outB) {
             float heading = float(fi) / kSprFacings * 2.0f * kPi;
-            float facing = canFly ? (halfTurn ? (kPi - heading) : -heading)
-                                  : (canMove ? -heading : 0.0f);
+            // Retail has no flyer facing branch (root matrix 0x4ee620 is identical
+            // for every unit): flyers face -heading exactly like ground movers.
+            // Model front is authored at -z for all units, flyers included, so
+            // -heading points the front (head/breast) along the movement vector.
+            float facing = (canFly || canMove) ? -heading : 0.0f;
             scratch.clear();
             collect(scratch, atlas, vt->second.model.root, Xform{}, &tmp, facing, 0, false);
             std::stable_sort(scratch.begin(), scratch.end(),
@@ -4237,10 +4208,10 @@ private:
         Xform base;
         if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
             base.t[1] = anim ? anim->altitude : u.type->cruiseAlt;
-        float facing = (u.type && u.type->canMove) ? -u.heading : 0.0f;
+        // Flyers face -heading exactly like ground movers (retail has no flyer
+        // facing branch; model front is authored at -z for all units).
+        float facing = (u.type && (u.type->canMove || u.type->canFly)) ? -u.heading : 0.0f;
         bool mirror = false;
-        if (u.type && u.type->canFly && anim && anim->flyHalfTurn)
-            facing = 3.14159265f - u.heading;
         SDL_Texture* atlas = (slot >= 0 && size_t(slot) < atlasTex_.size())
                                  ? atlasTex_[size_t(slot)] : nullptr;
         collect(scratch, atlas, vt->second.model.root, base, anim, facing, u.player, mirror);
