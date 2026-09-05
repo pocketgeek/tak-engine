@@ -369,8 +369,11 @@ public:
         return nav_;
     }
     // Queue production of `typeId` at a builder building.
-    void train(int builderId, const UnitType* type);
+    void train(int builderId, const UnitType* type, int count = 1);   // queue `count`
+    void dequeue(int builderId, const UnitType* type, int count);     // un-queue `count`
     void setRepeat(int builderId, const UnitType* type);   // toggle infinite build
+    // How many of `type` are queued at a builder (for the build-icon count).
+    int queuedCount(int builderId, const UnitType* type) const;
     // Mobile builder constructs a building at (x, z). Returns the new
     // building's id, or 0 if the site is invalid.
     int startBuild(int builderId, const UnitType* type, float x, float z);

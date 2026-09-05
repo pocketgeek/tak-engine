@@ -21,6 +21,8 @@ enum class Cmd : uint8_t {
     RepeatTrain,   // ctrl+click a conjure icon: toggle infinite production of `type`
     Destroy,       // self-destruct unitId (Ctrl+D) -- via the command path so
                    // networked sims stay in lockstep
+    Unqueue,       // remove `targetId` copies of `type` from unitId's build queue
+                   // (Train also carries a count in targetId; 0 => 1)
 };
 
 struct Command {

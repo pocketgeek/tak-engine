@@ -1325,10 +1325,40 @@ void World::tickConstruction(Unit& b, float dt) {
     }
 }
 
-void World::train(int builderId, const UnitType* type) {
+void World::train(int builderId, const UnitType* type, int count) {
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !type) return;
-    b->buildQueue.push_back(type);
+    for (int i = 0, n = std::max(1, count); i < n; ++i) b->buildQueue.push_back(type);
+}
+
+void World::dequeue(int builderId, const UnitType* type, int count) {
+    Unit* b = unit(builderId);
+    if (!b || !b->alive() || !type) return;
+    // Remove up to `count` copies of `type`, newest first (from the back), so
+    // subtracting cancels the most-recently-queued rather than the in-progress front.
+    for (int removed = 0; removed < count; ++removed) {
+        int idx = -1;
+        for (int i = int(b->buildQueue.size()) - 1; i >= 0; --i)
+            if (b->buildQueue[size_t(i)] == type) { idx = i; break; }
+        if (idx < 0) break;
+        if (idx == 0) b->buildProgress = 0;   // canceling the in-progress front
+        b->buildQueue.erase(b->buildQueue.begin() + idx);
+    }
+    // If the queue no longer holds a type set to infinite-repeat, stop repeating it
+    // so the count actually reaches zero instead of refilling next tick.
+    if (b->repeatType == type) {
+        bool any = false;
+        for (const auto* q : b->buildQueue) if (q == type) { any = true; break; }
+        if (!any) b->repeatType = nullptr;
+    }
+}
+
+int World::queuedCount(int builderId, const UnitType* type) const {
+    const Unit* b = unit(builderId);
+    if (!b || !type) return 0;
+    int n = 0;
+    for (const auto* q : b->buildQueue) if (q == type) ++n;
+    return n;
 }
 
 void World::setRepeat(int builderId, const UnitType* type) {

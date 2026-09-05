@@ -40,7 +40,10 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             if (owns(c.unitId)) { world.cancelBuilds(c.unitId); world.stop(c.unitId); }
             break;
         case Cmd::Train:
-            if (owns(c.unitId)) world.train(c.unitId, reg.find(c.type));
+            if (owns(c.unitId)) world.train(c.unitId, reg.find(c.type), c.targetId);
+            break;
+        case Cmd::Unqueue:
+            if (owns(c.unitId)) world.dequeue(c.unitId, reg.find(c.type), std::max(1, c.targetId));
             break;
         case Cmd::Build:
             if (owns(c.unitId)) world.queueBuild(c.unitId, reg.find(c.type), c.x, c.z, c.queue);
