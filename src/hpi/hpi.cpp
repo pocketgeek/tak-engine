@@ -215,19 +215,9 @@ std::string MountSet::key(std::string p) {
     return p;
 }
 
-MountSet::MountSet(const std::filesystem::path& dir) : dir_(dir) {
+MountSet::MountSet(const std::filesystem::path& dir, MountConfig cfg)
+    : dir_(dir), cfg_(std::move(cfg)) {
     namespace fs = std::filesystem;
-    // Collect *.hpi then *.ufo, each group alphabetical -- the order the retail
-    // FindFirstFile("*.HPI") / ("*.UFO") scan yields and mounts them in.
-    std::vector<fs::path> hpis, ufos;
-    if (fs::is_directory(dir_))
-        for (const auto& e : fs::directory_iterator(dir_)) {
-            if (!e.is_regular_file()) continue;
-            std::string ext = e.path().extension().string();
-            for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
-            if (ext == ".hpi") hpis.push_back(e.path());
-            else if (ext == ".ufo") ufos.push_back(e.path());
-        }
     // Case-insensitive filename sort, like the retail FindFirstFile scan (so a
     // tie in file date breaks the same way it did originally).
     auto ci = [](const fs::path& a, const fs::path& b) {
@@ -236,10 +226,21 @@ MountSet::MountSet(const std::filesystem::path& dir) : dir_(dir) {
         for (char& c : y) c = char(std::tolower(static_cast<unsigned char>(c)));
         return x < y;
     };
-    std::sort(hpis.begin(), hpis.end(), ci);
-    std::sort(ufos.begin(), ufos.end(), ci);
-    archiveFiles_ = hpis;
-    archiveFiles_.insert(archiveFiles_.end(), ufos.begin(), ufos.end());
+    // Collect archives one extension group at a time, each group alphabetical,
+    // groups concatenated in cfg order -- reproducing the retail
+    // FindFirstFile("*.HPI") then ("*.UFO") mount order for the default config.
+    for (const std::string& want : cfg_.archiveExts) {
+        std::vector<fs::path> group;
+        if (fs::is_directory(dir_))
+            for (const auto& e : fs::directory_iterator(dir_)) {
+                if (!e.is_regular_file()) continue;
+                std::string ext = e.path().extension().string();
+                for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+                if (ext == want) group.push_back(e.path());
+            }
+        std::sort(group.begin(), group.end(), ci);
+        archiveFiles_.insert(archiveFiles_.end(), group.begin(), group.end());
+    }
 
     // Mount each; resolve conflicts by newest entry date (a strict '>' keeps the
     // earlier mount on a tie, matching the retail 'jae' comparison).
@@ -252,6 +253,7 @@ MountSet::MountSet(const std::filesystem::path& dir) : dir_(dir) {
         }
         for (const auto& e : archives_.back().entries()) {
             if (e.isDirectory) continue;
+            if (cfg_.keep && !cfg_.keep(e.path)) continue;   // filtered (e.g. cosmetic tier)
             std::string k = key(e.path);
             auto it = map_.find(k);
             if (it == map_.end() || e.date > it->second.entry.date)
@@ -261,17 +263,20 @@ MountSet::MountSet(const std::filesystem::path& dir) : dir_(dir) {
 }
 
 bool MountSet::has(const std::string& path) const {
-    std::filesystem::path loose = dir_ / path;
-    if (std::filesystem::is_regular_file(loose)) return true;
+    if (cfg_.keep && !cfg_.keep(path)) return false;
+    if (cfg_.includeLoose && std::filesystem::is_regular_file(dir_ / path)) return true;
     return map_.count(key(path)) != 0;
 }
 
 std::vector<uint8_t> MountSet::read(const std::string& path) const {
+    if (cfg_.keep && !cfg_.keep(path)) throw std::runtime_error("filtered: " + path);
     // 1. A loose file on disk overrides archives (the engine fopen()s first).
-    std::filesystem::path loose = dir_ / path;
-    if (std::filesystem::is_regular_file(loose)) {
-        std::ifstream f(loose, std::ios::binary);
-        return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+    if (cfg_.includeLoose) {
+        std::filesystem::path loose = dir_ / path;
+        if (std::filesystem::is_regular_file(loose)) {
+            std::ifstream f(loose, std::ios::binary);
+            return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+        }
     }
     // 2. Otherwise the winning (newest) archive copy.
     auto it = map_.find(key(path));
@@ -287,13 +292,187 @@ std::vector<std::string> MountSet::paths() const {
     return out;
 }
 
+std::vector<std::string> MountSet::list(const std::string& prefix) const {
+    namespace fs = std::filesystem;
+    std::string kp = key(prefix);
+    if (!kp.empty() && kp.back() != '/') kp += '/';   // treat as a directory prefix
+    std::unordered_map<std::string, std::string> out;  // key -> winning original path
+    auto under = [&](const std::string& k) { return kp.empty() || k.compare(0, kp.size(), kp) == 0; };
+    // Archive winners first...
+    for (const auto& [k, w] : map_)
+        if (under(k)) out[k] = w.entry.path;
+    // ...then loose files override (same precedence as read()).
+    if (cfg_.includeLoose) {
+        fs::path base = kp.empty() ? dir_ : dir_ / prefix;
+        std::error_code ec;
+        if (fs::is_directory(base, ec))
+            for (auto it = fs::recursive_directory_iterator(base, ec);
+                 !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                if (!it->is_regular_file(ec)) continue;
+                std::string rel = fs::relative(it->path(), dir_, ec).generic_string();
+                if (rel.empty()) continue;
+                if (cfg_.keep && !cfg_.keep(rel)) continue;
+                out[key(rel)] = rel;
+            }
+    }
+    std::vector<std::string> paths;
+    paths.reserve(out.size());
+    for (const auto& [k, p] : out) paths.push_back(p);
+    std::sort(paths.begin(), paths.end());
+    return paths;
+}
+
 std::string MountSet::sourceOf(const std::string& path) const {
-    std::filesystem::path loose = dir_ / path;
-    if (std::filesystem::is_regular_file(loose)) return loose.string() + " (loose)";
+    if (cfg_.includeLoose) {
+        std::filesystem::path loose = dir_ / path;
+        if (std::filesystem::is_regular_file(loose)) return loose.string() + " (loose)";
+    }
     auto it = map_.find(key(path));
     if (it == map_.end()) return "<absent>";
     return archiveFiles_[size_t(it->second.archive)].filename().string() +
            "!" + it->second.entry.path;
+}
+
+// ---- Vfs: layered runtime read-path over a retail install root -------------
+
+void Vfs::addLayer(MountSet ms, const std::string& prefix) {
+    std::string p = MountSet::key(prefix);
+    if (!p.empty() && p.back() != '/') p += '/';
+    layers_.push_back({std::move(ms), std::move(p)});
+}
+
+// Try each layer highest-precedence-first; if the requested path is under a
+// layer's virtual prefix, strip the prefix and delegate to that MountSet.
+std::optional<std::vector<uint8_t>> Vfs::tryRead(const std::string& path) const {
+    std::string kp = MountSet::key(path);
+    for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
+        if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
+        std::string sub = path.substr(it->prefix.size());
+        if (it->ms.has(sub)) return it->ms.read(sub);
+    }
+    return std::nullopt;
+}
+
+std::vector<uint8_t> Vfs::read(const std::string& path) const {
+    if (auto b = tryRead(path)) return std::move(*b);
+    throw std::runtime_error("not in data set: " + path);
+}
+
+bool Vfs::has(const std::string& path) const {
+    std::string kp = MountSet::key(path);
+    for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
+        if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
+        if (it->ms.has(path.substr(it->prefix.size()))) return true;
+    }
+    return false;
+}
+
+std::vector<std::string> Vfs::list(const std::string& prefix) const {
+    std::string kp = MountSet::key(prefix);
+    std::unordered_map<std::string, std::string> out;   // key -> winning original path
+    // Lowest precedence first, so higher layers overwrite the reported source.
+    for (const auto& L : layers_) {
+        // The virtual prefix each of this layer's paths carries.
+        if (L.prefix.empty()) {
+            for (const auto& p : L.ms.list(prefix))
+                out[MountSet::key(p)] = p;
+        } else if (kp.size() <= L.prefix.size()) {
+            // Requested prefix is an ancestor of (or equals) the layer prefix:
+            // list the whole layer, re-prefix, keep those under the request.
+            if (L.prefix.compare(0, kp.size(), kp) != 0) continue;
+            for (const auto& p : L.ms.list("")) {
+                std::string full = L.prefix + p;
+                out[MountSet::key(full)] = full;
+            }
+        } else {
+            // Requested prefix reaches into the layer: strip the layer prefix.
+            if (kp.compare(0, L.prefix.size(), L.prefix) != 0) continue;
+            std::string sub = prefix.substr(L.prefix.size());
+            for (const auto& p : L.ms.list(sub))
+                out[MountSet::key(L.prefix + p)] = L.prefix + p;
+        }
+    }
+    std::vector<std::string> paths;
+    paths.reserve(out.size());
+    for (const auto& [k, p] : out) paths.push_back(p);
+    std::sort(paths.begin(), paths.end());
+    return paths;
+}
+
+std::string Vfs::sourceOf(const std::string& path) const {
+    std::string kp = MountSet::key(path);
+    for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
+        if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
+        std::string sub = path.substr(it->prefix.size());
+        if (it->ms.has(sub)) return it->ms.sourceOf(sub);
+    }
+    return "<absent>";
+}
+
+// ---- gameplay classification + retail-root mounting ------------------------
+
+bool affectsGameplay(const std::string& path) {
+    std::string k = MountSet::key(path);
+    auto ext = [&](const char* e) {
+        size_t n = std::strlen(e);
+        return k.size() >= n && k.compare(k.size() - n, n, e) == 0;
+    };
+    // Files our deterministic sim consumes: unit stats, weapon/side/game data,
+    // build lists, map geometry + scenario data. Everything else (art, models,
+    // animation scripts, sound, music, fonts, gui) is cosmetic.
+    if (ext(".fbi") || ext(".tnt") || ext(".ota") || ext(".crt")) return true;
+    if (ext(".tdf")) {
+        // soundclasses maps unit sound events -> cosmetic; all other .tdf
+        // (weapons, sidedata, moveinfo, gods, explosions, build menus) is sim data.
+        return k.find("soundclass") == std::string::npos;
+    }
+    // canbuild build-tree files carry no extension in a subdir; key on the path.
+    if (k.find("canbuild") != std::string::npos) return true;
+    return false;
+}
+
+Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides) {
+    namespace fs = std::filesystem;
+    Vfs vfs;
+    // Case-fold the retail subdir names (they ship capitalised: Maps/ Music/
+    // Movies/), so this resolves on a case-sensitive filesystem too.
+    auto findSub = [&](const char* want) -> fs::path {
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(root, ec)) {
+            if (ec) break;
+            if (!e.is_directory(ec)) continue;
+            std::string n = e.path().filename().string();
+            std::string l = n;
+            for (char& c : l) c = char(std::tolower(static_cast<unsigned char>(c)));
+            std::string w = want;
+            for (char& c : w) c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (l == w) return e.path();
+        }
+        return {};
+    };
+
+    // Lowest precedence: loose music tracks, mapped under music/.
+    if (fs::path music = findSub("Music"); !music.empty())
+        vfs.addLayer(MountSet(music, MountConfig{true, {}}), "music/");
+    // The base game + expansions: ONLY the *.hpi archives in the root (no loose
+    // files), layered by the retail newest-entry-date rule. maps.hpi and
+    // terrain.hpi ride in here too (Maps/*.tnt, terrain/*.jpg).
+    vfs.addLayer(MountSet(root, MountConfig{false, {".hpi"}}));
+    // Single-map .kmp archives (each an HPI -> kmap/<name>.*) plus any loose maps.
+    if (fs::path maps = findSub("Maps"); !maps.empty())
+        vfs.addLayer(MountSet(maps, MountConfig{true, {".kmp", ".hpi", ".ufo"}}));
+    // Highest precedence: user overrides (loose files OR archives), filtered by
+    // the multiplayer policy. Cosmetic drops any gameplay-affecting override so
+    // it cannot diverge between peers; Full mounts everything.
+    if (overrides != OverridePolicy::None) {
+        if (fs::path ov = findSub("overrides"); !ov.empty()) {
+            MountConfig cfg{true, {".hpi", ".ufo", ".kmp"}, {}};
+            if (overrides == OverridePolicy::Cosmetic)
+                cfg.keep = [](const std::string& p) { return !affectsGameplay(p); };
+            vfs.addLayer(MountSet(ov, std::move(cfg)), "");
+        }
+    }
+    return vfs;
 }
 
 } // namespace tak::hpi
