@@ -1860,12 +1860,15 @@ public:
                 if (buffered < netDelay_) return true;   // still filling the reserve
                 netBufReady_ = true; netAccum_ = 0;
             }
-            netAccum_ += dt;
-            int budget = int(netAccum_ * 30.0f);
-            netAccum_ -= float(budget) / 30.0f;
-            // Gentle proportional drain back toward the target reserve so the buffer
-            // (hence the added latency) tracks netDelay_ instead of drifting deep.
-            budget += std::max(0, buffered - netDelay_) / 4;
+            // Adaptive playout: run the sim clock slightly fast/slow to servo the
+            // buffer depth to the target (netDelay_). Too deep -> play a touch faster
+            // (drain toward target, shed latency); too shallow -> slower (rebuild the
+            // reserve). Holds the added latency tight at ~netDelay_ ticks.
+            float err = float(buffered - netDelay_);
+            float rate = 30.0f * std::clamp(1.0f + 0.06f * err, 0.7f, 1.3f);
+            netAccum_ += dt * rate;            // accumulates fractional TICKS now
+            int budget = int(netAccum_);
+            netAccum_ -= float(budget);
             // A deep backlog (rejoin replay, or the client fell behind) is NOT jitter
             // -- fast-forward it back down to the target reserve instead of pacing.
             if (buffered > netDelay_ + 60) budget = 512;

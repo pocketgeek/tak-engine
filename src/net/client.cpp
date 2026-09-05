@@ -1,6 +1,7 @@
 #include "net/client.h"
 
 #include <time.h>
+#include <algorithm>
 #include <cstdlib>
 
 namespace tak::net {
@@ -36,9 +37,13 @@ void MpClient::disconnect(const std::string& reason) {
 
 bool MpClient::poll() {
     if (state_ == State::Offline || state_ == State::Done) return false;
-    if (jitterMs_ < 0) {   // one-time init of the test jitter injector
-        const char* e = std::getenv("TAK_NET_JITTER_MS");
-        jitterMs_ = e ? std::max(0, std::atoi(e)) : 0;
+    if (jitterMs_ < 0) {   // one-time init of the test link model
+        const char* j = std::getenv("TAK_NET_JITTER_MS");
+        const char* b = std::getenv("TAK_NET_BASE_MS");
+        const char* l = std::getenv("TAK_NET_LOSS_PCT");
+        jitterMs_ = j ? std::max(0, std::atoi(j)) : 0;
+        baseMs_ = b ? std::max(0, std::atoi(b)) : 0;
+        lossPct_ = l ? std::clamp(std::atoi(l), 0, 100) : 0;
     }
     if (!conn_.recv()) { err_ = conn_.error(); state_ = State::Done; return false; }
     Frame f;
@@ -95,7 +100,8 @@ void MpClient::onFrame(const Frame& f) {
         case Msg::Ping: send(Msg::Pong); break;
         case Msg::Pong:
             if (pingSentMs_) {
-                float sample = float(nowMs() - pingSentMs_);
+                // Add the modelled return-path delay so RTT reflects the test link.
+                float sample = float(nowMs() - pingSentMs_) + float(receiveDelayMs());
                 rttMs_ = rttMs_ > 0 ? 0.7f * rttMs_ + 0.3f * sample : sample;
                 pingSentMs_ = 0;
             }
@@ -165,9 +171,8 @@ void MpClient::onFrame(const Frame& f) {
                 bd.events.push_back(e);
             }
             if (r.ok) {
-                if (jitterMs_ > 0) {   // hold, then release after a random delay
-                    rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;
-                    uint64_t delay = rng_ % uint32_t(jitterMs_ + 1);
+                uint64_t delay = receiveDelayMs();
+                if (delay > 0) {   // model the link: hold, then release later
                     jitterHeld_.push_back({nowMs() + delay, tk, std::move(bd)});
                 } else {
                     bundles_[tk] = std::move(bd);

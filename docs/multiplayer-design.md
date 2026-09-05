@@ -114,6 +114,40 @@ its own screen), so the client HUD shows a "behind by N s" indicator, and past
 a threshold (default ~10 s of unacknowledged ticks) the server drops it into
 the reconnect flow rather than let it play unplayably.
 
+**Client jitter buffer + adaptive playout.** Bundles are sequenced by the server
+but *arrive* unevenly (network jitter, TCP retransmits). Draining "play every
+bundle the instant it lands" turns each late bundle into a visible micro-stall.
+So the client keeps a small receive buffer and paces playout on its own wall
+clock, staying `netDelay_` bundles behind the newest received; a late bundle is
+covered from that reserve, and only a gap deeper than the reserve stalls. This
+is pure pacing — the same bundles play in the same order, so every sim and hash
+stays byte-identical (`mpStep()` in `src/viewer/main.cpp`).
+
+Two refinements make it self-tuning:
+- **Auto-sizing** (`TAK_NET_DELAY=auto`): an active RTT probe (one ping/sec) plus
+  a decaying-max of the measured bundle-arrival jitter size the reserve each
+  frame — `clamp(2 + max(kJit, kRtt), 2, 16)` bundles — so a clean LAN sits at 2
+  and a jittery WAN grows the cushion only as needed.
+- **Servo playout** holds the reserve *at* that target instead of drifting: the
+  sim clock runs slightly fast when the buffer is deep (shed latency) and slightly
+  slow when it is shallow (rebuild the reserve) — `rate = 30·clamp(1 + 0.06·(buffered
+  − target), 0.7, 1.3)` Hz. Equilibrium is exactly `buffered == target`, so added
+  latency stays tight rather than accreting. A backlog deeper than target+60 (a
+  rejoin replay, or a client that fell behind) is fast-forwarded, not paced.
+
+Only game ticks are gated by this buffer; camera, zoom, and edge-scroll run every
+render frame in `cameraFrame(dt)`, independent of the sim, so input feel is never
+coupled to link latency.
+
+*Test harness.* A synthetic link model injects receive delay on the client with
+no server needed: `TAK_NET_BASE_MS` (constant one-way), `TAK_NET_JITTER_MS`
+(uniform 0..N added), `TAK_NET_LOSS_PCT` (probability of a ~2·base retransmit
+spike). `TAK_NETBENCH=1` runs the headless client at a fixed 60 fps and reports
+`delay`, measured `rtt`, frames, and starved-frame `stalls`. Measured over 15 s
+of an `--mpai` game, the servo cuts stalls roughly 10–12× on lossy links
+(base60+jit60+loss5%: 28.2% → 2.3%; base80+jit120+loss10%: 61.2% → 6.0%) while
+holding delay at 4–5 bundles.
+
 ### Trust model
 
 The server stamps `Command.player` from the connection it arrived on and

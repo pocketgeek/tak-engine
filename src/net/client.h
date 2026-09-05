@@ -138,7 +138,19 @@ private:
     struct HeldBundle { uint64_t releaseMs; uint32_t tick; Bundle bd; };
     std::vector<HeldBundle> jitterHeld_;
     int jitterMs_ = -1;                 // <0 = read env once; then 0 = off
+    int baseMs_ = 0;                    // TAK_NET_BASE_MS: constant one-way delay
+    int lossPct_ = 0;                   // TAK_NET_LOSS_PCT: retransmit-spike probability
     uint32_t rng_ = 0x2545F491u;        // xorshift (non-sim, non-determinism OK)
+    uint32_t xorshift() { rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5; return rng_; }
+    // Modelled one-way receive delay for a message: base + uniform jitter, plus an
+    // occasional ~2*base retransmit spike (TCP loss). 0 when no model is configured.
+    uint64_t receiveDelayMs() {
+        if (baseMs_ <= 0 && jitterMs_ <= 0 && lossPct_ <= 0) return 0;
+        uint64_t d = uint64_t(baseMs_) + (jitterMs_ > 0 ? xorshift() % uint32_t(jitterMs_ + 1) : 0);
+        if (lossPct_ > 0 && int(xorshift() % 100) < lossPct_)
+            d += uint64_t(baseMs_) * 2 + uint64_t(jitterMs_);   // retransmit + head-of-line
+        return d;
+    }
     // Round-trip time, measured with active pings when a consumer asks for it
     // (the adaptive jitter buffer). Off by default -> no extra traffic.
     bool measureRtt_ = false;
