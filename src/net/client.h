@@ -30,7 +30,6 @@ struct RoomView {
     uint32_t hostId = 0;
     SlotInfo slots[kMaxSlots];
     int mySlot = -1;
-    bool valid = false;
 };
 
 class MpClient {
@@ -75,7 +74,6 @@ public:
     const RoomView& room() const { return room_; }
     // Drain chat lines received since the last call (sender, text).
     std::vector<std::pair<std::string, std::string>> takeChat() { auto c = std::move(chat_); chat_.clear(); return c; }
-    std::string joinError() { auto e = std::move(joinErr_); joinErr_.clear(); return e; }
 
     // ---- game start / play -------------------------------------------------
     // After GameStarting the viewer reads these, loads the map, then calls
@@ -85,7 +83,6 @@ public:
     uint32_t startSeed() const { return startSeed_; }
     uint32_t gameId() const { return room_.id; }
     uint64_t resumeToken() const { return resumeToken_; }
-    int myPlayer() const { return room_.mySlot; }
     // `dataHash` = this client's gameplay-data fingerprint at the ROOM's tier
     // (after adopting its override policy); the server rejects it if it doesn't
     // match the room's expected data, so a Full-tier override mismatch is caught
@@ -130,7 +127,6 @@ private:
     std::vector<GameInfo> games_;
     RoomView room_;
     std::vector<std::pair<std::string, std::string>> chat_;
-    std::string joinErr_;
 
     uint64_t dataHash_ = 0;      // local gameplay-data fingerprint (sent in Hello)
     uint32_t startSeed_ = 0;

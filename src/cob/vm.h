@@ -49,7 +49,6 @@ public:
 
     const std::vector<PieceState>& pieces() const { return pieces_; }
     const File& file() const { return file_; }
-    bool anyThreadAlive() const;
     size_t threadCount() const { return threads_.size(); }
     std::vector<uint32_t> threadPcs() const {
         std::vector<uint32_t> out;

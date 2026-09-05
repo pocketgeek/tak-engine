@@ -46,7 +46,6 @@ class Archive {
 public:
     explicit Archive(const std::filesystem::path& file);
 
-    const HeaderInfo& header() const { return header_; }
     const std::vector<Entry>& entries() const { return entries_; }
 
     // Extract one file entry's contents.
@@ -153,8 +152,6 @@ public:
     std::vector<uint8_t> read(const std::string& path) const;          // throws if absent
     std::optional<std::vector<uint8_t>> tryRead(const std::string& path) const;
     std::vector<std::string> list(const std::string& prefix) const;    // union, deduped
-    std::string sourceOf(const std::string& path) const;
-    bool empty() const { return layers_.empty(); }
 
 private:
     struct Layer { MountSet ms; std::string prefix; };   // prefix keyed, "" or trailing '/'

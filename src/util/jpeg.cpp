@@ -23,14 +23,6 @@ void onError(j_common_ptr cinfo) {
 
 } // namespace
 
-Image load(const std::filesystem::path& file) {
-    std::ifstream in(file, std::ios::binary);
-    if (!in) throw std::runtime_error("cannot open " + file.string());
-    std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)),
-                           std::istreambuf_iterator<char>());
-    return load(d);
-}
-
 Image load(const std::vector<uint8_t>& d) {
     jpeg_decompress_struct cinfo{};
     ErrorMgr err{};

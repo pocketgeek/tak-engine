@@ -113,13 +113,10 @@ struct UnitType {
     float healTime = 0;       // healtime: seconds per HP regenerated (0 = no regen)
     float leash = 0;          // maneuverleashlength: max auto-chase distance (0 = unlimited)
     float waterMult = 1;      // watermultiplier: speed factor in shallow water
-    float roadMult = 1;       // roadmultiplier (parsed; no road-tile data to apply it)
     float maxWaterDepth = 0;  // deepest water a ground unit may wade into
     float maxSlope = 255;     // steepest cell height-spread the unit may cross
     float minWaterDepth = 0;  // shallowest water a water unit needs (from MOVEINFO)
     float radar = 0;          // radardistance: fog-reveal radius (separate from sight)
-    int   xpValue = 0;        // experiencepoints: XP granted to whoever kills this unit,
-                              // and the per-veteran-level XP divisor for THIS unit
     bool  noVeteran = false;  // noveteran: this unit can never gain veterancy
     float maxMana = 0;        // per-unit mana pool (casters); 0 = uses no personal mana
     float manaRegen = 0;      // manarechargerate: personal mana regained per second
@@ -130,7 +127,6 @@ struct UnitType {
     float cloakCost = 0;          // cloakcost: mana/sec while cloaked and idle
     float cloakCostMove = 0;      // cloakcostmoving: mana/sec while cloaked and moving
     float minCloakDist = 0;       // mincloakdistance: an enemy this close forces uncloak
-    bool  hoverAttack = false;    // hoverattack: flyer stops to attack instead of strafing
     bool  attractsGods = false;   // attractsgods: priest channels god favour
     bool  onOffable = false;      // onoffable: can be toggled active/inactive
     bool  activateWhenBuilt = true;   // activatewhenbuilt (default on)
@@ -167,7 +163,6 @@ public:
     // Parse <prefix>/<builder>/<buildable>.tdf into the build tree.
     void loadBuildTree(const hpi::Vfs& vfs, const std::string& prefix);
     const UnitType* find(const std::string& id) const;
-    const std::map<std::string, UnitType>& all() const { return types_; }
     const std::vector<std::string>& buildable(const std::string& builderId) const;
     // Largest build menu of any builder (drives the minimum window width so the
     // whole icon row always fits at full size -- some Crusades menus reach 13).
@@ -209,7 +204,6 @@ struct Unit {
     float heading = 0;     // radians, 0 = +z
     float speed = 0;       // px/s
     float hp = 100;
-    float reloadLeft = 0;          // primary slot (kept for anim hooks)
     float reloads[3] = {0, 0, 0};  // per weapon slot
     int   weaponSlot = 0;          // active weapon (0=primary); player-selectable
     float repathLeft = 0;   // chase steering repath countdown
@@ -323,7 +317,6 @@ public:
     // the grid is empty or no walkable goal cell exists.
     bool build(const NavGrid& nav, float gx, float gz);
     bool ready() const { return w_ > 0; }
-    int goalCell() const { return goal_; }
     // Unit direction at world (x, z); (0,0) at/near the goal, off-grid, or in an
     // unreachable pocket (caller should then steer straight at the goal).
     void dirAt(float x, float z, float& dx, float& dz) const;
@@ -366,7 +359,6 @@ public:
     int spawn(const UnitType* type, float x, float z, float heading = 0, int player = 0);
     // Build per-domain nav grids from heights + sea level.
     void setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel);
-    void setNav(NavGrid grid) { nav_ = std::move(grid); }
     NavGrid& nav() { return nav_; }
     const NavGrid& navFor(const UnitType* t) const {
         if (t && t->domain == UnitType::Domain::Water) return navWater_;
@@ -399,8 +391,6 @@ public:
     }
     bool hasManaSpots() const { return !manaSpots_.empty(); }
     const std::vector<std::pair<float, float>>& manaSpots() const { return manaSpots_; }
-    uint32_t tickCount() const { return tickCounter_; }
-    bool onManaSpot(float x, float z) const;
     // True if (x,z) lies over water (for choosing the water impact effect).
     bool isWater(float x, float z) const {
         if (depth_.empty()) return false;
@@ -451,7 +441,6 @@ public:
     // fills after `appearSec` may manifest its god — the viewer polls godReady().
     void enableGods(float appearSec) { godsEnabled_ = true; godAppearTime_ = appearSec; }
     bool godsEnabled() const { return godsEnabled_; }
-    float clock() const { return clock_; }
     static constexpr float kGodFavorNeeded = 3000.0f;
     bool godReady(int t) const {
         return godsEnabled_ && !players_[size_t(t)].godSummoned &&
@@ -468,7 +457,6 @@ public:
 
     // Which player the fog-of-war grid tracks (default 0 = local player).
     void setVisPlayer(int t) { visPlayer_ = t; }
-    int visPlayer() const { return visPlayer_; }
     // Deterministic digest of sim state, for lockstep sync checking.
     uint64_t stateHash() const;
     // Fog of war for the local player over 16px cells: 0 hidden, 1 explored, 2 visible.
@@ -496,11 +484,6 @@ public:
     // Self-destruct a living unit (Ctrl+D via the command path; no kill credit).
     void destroy(int unitId);
     void setWeapon(int unitId, int slot);   // choose the active weapon (0=primary)
-    // Toggle an onoffable unit's active state (gates, sacred fire, etc.).
-    void setActive(int unitId, bool on) {
-        Unit* u = unit(unitId);
-        if (u && u->type && u->type->onOffable) u->active = on;
-    }
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);
     // Board a friendly transport / sail to (x,z) and disembark.

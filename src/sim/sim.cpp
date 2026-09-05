@@ -136,12 +136,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.leash = float(info->numberOr("maneuverleashlength", 0));
             t.waterMult = float(info->numberOr("watermultiplier",
                                 info->numberOr("watermultipliser", 1)));
-            t.roadMult = float(info->numberOr("roadmultiplier",
-                               info->numberOr("roadmultplier", 1)));
             t.maxWaterDepth = float(info->numberOr("maxwaterdepth", 0));
             t.maxSlope = float(info->numberOr("maxslope", 255));
             t.radar = float(info->numberOr("radardistance", 0));
-            t.xpValue = int(info->numberOr("experiencepoints", 0));
             t.noVeteran = info->numberOr("noveteran", 0) != 0;
             t.maxMana = float(info->numberOr("maxmana", 0));
             t.manaRegen = float(info->numberOr("manarechargerate", 0));
@@ -152,7 +149,6 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.cloakCost = float(info->numberOr("cloakcost", 0));
             t.cloakCostMove = float(info->numberOr("cloakcostmoving", t.cloakCost));
             t.minCloakDist = float(info->numberOr("mincloakdistance", 0));
-            t.hoverAttack = info->numberOr("hoverattack", 0) != 0;
             t.attractsGods = info->numberOr("attractsgods", 0) != 0;
             t.onOffable = info->numberOr("onoffable", 0) != 0;
             t.activateWhenBuilt = info->numberOr("activatewhenbuilt", 1) != 0;
@@ -1006,7 +1002,6 @@ void World::fire(Unit& u, Unit& target, int slot) {
     // Veterans reload faster (retail divides the cooldown by the veteran multiplier).
     float rl = w.reload / std::max(u.vetMul(), 0.01f);
     u.reloads[slot] = rl;
-    u.reloadLeft = rl;
     u.justFired = true;
     if (w.melee || w.projVel <= 0) {
         // Instant hit (melee swing / hitscan bolt): apply damage + splash now.
@@ -1033,7 +1028,6 @@ void World::fire(Unit& u, Unit& target, int slot) {
 }
 
 void World::tickCombat(Unit& u, float dt) {
-    if (u.reloadLeft > 0) u.reloadLeft -= dt;
     for (auto& r : u.reloads)
         if (r > 0) r -= dt;
     if (!u.active) return;   // onoffable unit powered down: no acquisition/fire
@@ -1209,14 +1203,6 @@ void World::rebuildGrid() {
         gNext_[i] = gHead_[size_t(c)];
         gHead_[size_t(c)] = int(i);
     }
-}
-
-bool World::onManaSpot(float x, float z) const {
-    for (const auto& [sx, sz] : manaSpots_) {
-        float dx = sx - x, dz = sz - z;
-        if (dx * dx + dz * dz < 20.0f * 20.0f) return true;
-    }
-    return false;
 }
 
 bool World::canPlace(const UnitType* type, float x, float z) const {
@@ -1635,7 +1621,7 @@ void World::tickProduction(Unit& u, float dt) {
 
 void World::tick(float dt) {
     ++tickCounter_;
-    std::chrono::steady_clock::time_point _tk0, _sep0; double g_tsep=0;
+    std::chrono::steady_clock::time_point _tk0, _sep0;
     if (g_phase) { _tk0 = std::chrono::steady_clock::now();
                    g_tcomb = g_flowMs = g_pathMs = 0; g_flowN = g_pathN = 0; }
     // Cap A* repaths per tick: a big group that jams while moving can trip the

@@ -88,10 +88,4 @@ Map Map::load(const std::vector<uint8_t>& d, const std::string& origin) {
     return m;
 }
 
-std::string Map::tileKeyHex(int bx, int by) const {
-    char buf[16];
-    std::snprintf(buf, sizeof buf, "%08x", tileKeys[size_t(by) * blocksX + bx]);
-    return buf;
-}
-
 } // namespace tak::tnt

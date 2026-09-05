@@ -113,16 +113,7 @@ struct Room {
     uint64_t pauseStartMs = 0;                  // when the current pause began
     uint64_t pauseBudgetMs[kMaxSlots] = {};     // remaining pause budget per player
     Room() { for (int i = 0; i < kMaxSlots; ++i) slotClient[i] = -1; }
-    bool anyDropped() const {
-        for (int i = 0; i < kMaxSlots; ++i) if (slotDropped[i]) return true;
-        return false;
-    }
     int capacity() const { return cap; }
-    int humanCount() const {
-        int n = 0;
-        for (int i = 0; i < kMaxSlots; ++i) if (slots[i].type == 1) ++n;
-        return n;
-    }
     int usedSlots() const {
         int n = 0;
         for (int i = 0; i < kMaxSlots; ++i) if (slots[i].type == 1 || slots[i].type == 2) ++n;
