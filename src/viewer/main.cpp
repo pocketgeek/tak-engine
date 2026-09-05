@@ -1828,9 +1828,13 @@ public:
             ++drained;
         };
         if (netDelay_ == -2) {   // one-time init from the env
+            // The adaptive jitter buffer is ON by default: it only ever reduces
+            // stalls and is pure pacing (byte-identical sim). TAK_NET_DELAY overrides
+            // -- "0" disables it (drain every bundle immediately), a positive integer
+            // pins a fixed reserve depth, "auto" (or unset) self-sizes to the link.
             const char* e = std::getenv("TAK_NET_DELAY");
-            if (e && std::string(e) == "auto") { netAuto_ = true; netDelay_ = 3; mp_->enableRttProbe(); }
-            else netDelay_ = e ? std::max(0, std::atoi(e)) : 0;
+            if (!e || std::string(e) == "auto") { netAuto_ = true; netDelay_ = 3; mp_->enableRttProbe(); }
+            else netDelay_ = std::max(0, std::atoi(e));
         }
         if (netAuto_) {
             // Size the buffer to cover the measured bundle-arrival jitter, with an
@@ -4688,12 +4692,13 @@ private:
     std::vector<tak::net::Command> outbox_;   // local orders to send to the server
     uint64_t mpListMs_ = 0, mpFirstListMs_ = 0;   // auto-join: ListGames timing
     uint64_t mpSlowSinceMs_ = 0;                  // when the replay backlog went deep
-    // Client-side jitter/receive buffer (PROTOTYPE, TAK_NET_DELAY=K, default off).
-    // When on, the sim is paced on the wall clock at 30 Hz and kept K bundles
-    // behind the newest received, so brief server->client jitter is covered from
-    // the reserve instead of stalling. Costs ~K*33ms of fixed input latency.
+    // Client-side jitter/receive buffer (ON by default; TAK_NET_DELAY overrides:
+    // 0 = off, K = fixed depth, auto/unset = self-sizing). The sim is paced on the
+    // wall clock at 30 Hz and kept ~netDelay_ bundles behind the newest received,
+    // so brief server->client jitter is covered from the reserve instead of
+    // stalling. Costs ~netDelay_*33ms of input latency (auto keeps that minimal).
     int netDelay_ = -2;          // -2 = read TAK_NET_DELAY once; then 0 = off, else depth
-    bool netAuto_ = false;       // TAK_NET_DELAY=auto: size the buffer to the link
+    bool netAuto_ = false;       // auto (default): size the buffer to the link
     bool netBufReady_ = false;   // built the initial reserve
     float netAccum_ = 0;         // wall-clock tick accumulator (seconds)
     uint64_t netStepMs_ = 0;     // last mpStep wall time

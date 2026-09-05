@@ -124,10 +124,11 @@ is pure pacing — the same bundles play in the same order, so every sim and has
 stays byte-identical (`mpStep()` in `src/viewer/main.cpp`).
 
 Two refinements make it self-tuning:
-- **Auto-sizing** (`TAK_NET_DELAY=auto`): an active RTT probe (one ping/sec) plus
-  a decaying-max of the measured bundle-arrival jitter size the reserve each
-  frame — `clamp(2 + max(kJit, kRtt), 2, 16)` bundles — so a clean LAN sits at 2
-  and a jittery WAN grows the cushion only as needed.
+- **Auto-sizing** (the default; `TAK_NET_DELAY` overrides — `0` disables the
+  buffer, a positive integer pins a fixed depth): an active RTT probe (one
+  ping/sec) plus a decaying-max of the measured bundle-arrival jitter size the
+  reserve each frame — `clamp(2 + max(kJit, kRtt), 2, 16)` bundles — so a clean
+  LAN sits at 2 and a jittery WAN grows the cushion only as needed.
 - **Servo playout** holds the reserve *at* that target instead of drifting: the
   sim clock runs slightly fast when the buffer is deep (shed latency) and slightly
   slow when it is shallow (rebuild the reserve) — `rate = 30·clamp(1 + 0.06·(buffered
