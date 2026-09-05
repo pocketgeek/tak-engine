@@ -83,7 +83,11 @@ public:
     uint32_t gameId() const { return room_.id; }
     uint64_t resumeToken() const { return resumeToken_; }
     int myPlayer() const { return room_.mySlot; }
-    void reportLoaded();
+    // `dataHash` = this client's gameplay-data fingerprint at the ROOM's tier
+    // (after adopting its override policy); the server rejects it if it doesn't
+    // match the room's expected data, so a Full-tier override mismatch is caught
+    // before the game starts, not as a mid-game desync.
+    void reportLoaded(uint64_t dataHash = 0);
     // Reconnect to a held slot: connect() first, then rejoin() with the game id
     // and the resume token saved from the original GameStarting.
     void rejoin(uint32_t gameId, uint64_t token);

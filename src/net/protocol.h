@@ -84,6 +84,11 @@ struct GameOptions {
     uint8_t crusades = 0;
     uint8_t gods = 0;
     uint8_t forfeitSelfDestruct = 0;   // 0=units go inert on forfeit, 1=self-destruct
+    // Override tier for this game (hpi::OverridePolicy): 0=none (pure retail),
+    // 1=cosmetic (art/sound overrides allowed, never affect the sim), 2=full
+    // (gameplay overrides allowed but every player must share the same ones).
+    // MP defaults to cosmetic. Every player mounts the room's tier at game start.
+    uint8_t overridePolicy = 1;
 };
 
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer
