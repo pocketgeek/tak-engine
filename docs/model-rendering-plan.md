@@ -1,8 +1,36 @@
 # Model rendering: root cause and correction plan
 
-Status: **Defects A, B and C all LANDED.** A = piece-yaw negation; B = flyHalfTurn deleted (all flyers
-face `−heading`); C = full-body walk. See "Progress" below.
+Status: **Defects A and C LANDED. Defect B: flyHalfTurn KEPT — its deletion was tried, shipped, found wrong
+against the running game, and REVERTED.** See the 2026-09-05 note below before ever touching flyHalfTurn again.
 Scope: `src/viewer/main.cpp` (render-only). Sim state, heading semantics, and the lockstep hash are untouched.
+
+## Correction (2026-09-05): flyHalfTurn was RIGHT; deleting it was WRONG
+
+Commit `c0ab21a` deleted `flyHalfTurn` (every flyer → `−heading`), justified by a rest-pose static oracle
+(`modeltool obj`: head/breast at −z, tail/hair at +z for all five Zhon flyers) plus a movement-geometry
+derivation. **Both were wrong for airborne flyers**, and the user immediately saw zonhunt (Thirsha) fly
+backward/feet-first in-game. Root of the error: the static oracle measures the REST pose, but the `fly`
+animation re-orients the body — the adversarial review flagged exactly this ("the fly pose applies ~569
+x-turns; the standing oracle is weakened"), and it was ignored.
+
+**The decisive method that finally worked** (after screenshots-by-eye repeatedly misled, because a valkyrie's
+head vs feet are unreadable at game zoom): render the flyer moving east with FRONT pieces tinted bright red
+and BACK/feet pieces tinted blue (`TAK_TINT` throwaway in `collect()`), then compute the red-centroid-x vs
+blue-centroid-x automatically. front_x > back_x ⇒ head leads the movement ⇒ forward. Measured per flyer,
+both facings:
+
+| flyer | −heading | π−heading | correct | flyHalfTurnOf says |
+|---|---|---|---|---|
+| zonhunt | BACKWARD | FORWARD | **π−h** | π (TRUE) ✓ |
+| zondrake | FORWARD | BACKWARD | **−h** | − (FALSE) ✓ |
+| zongod | BACKWARD | FORWARD | **π−h** | π (TRUE) ✓ |
+| zonharp | BACKWARD | FORWARD | **π−h** | π (TRUE) ✓ |
+| zonroc | (head occluded by cargo basket) | — | — | − (FALSE) |
+
+`flyHalfTurnOf` matched the empirical answer on all four measurable flyers. So it was reverted (`git revert
+c0ab21a`) and kept. **Lesson: for flyer facing, the rest-pose front/back is NOT the airborne front/back;
+validate against the actual `fly`-pose render (the red/blue centroid method), not static geometry, and never
+against a single by-eye screenshot.** The `TAK_NO_HALFTURN` dev gate remains (default off = flyHalfTurn on).
 
 ## Progress (2026-09-04)
 
@@ -13,21 +41,13 @@ Scope: `src/viewer/main.cpp` (render-only). Sim state, heading semantics, and th
   correct (statics face right); retail applies the same `fchs` negation to root AND piece; so the piece must
   carry it too. The model-viewer attack-swing montage corroborated (the fix produces a coherent overhead→down
   arc vs the incoherent current one). Determinism unchanged (mpai `3eef6e0f`, render-only).
-- **Defect B — flyHalfTurn — FIXED (deleted).** The `flyHalfTurn` field, the `flyHalfTurnOf()` classifier,
-  both `TAK_NO_HALFTURN` gates, both bake uses and the live branch are gone; every flyer now uses
-  `facing = −heading`, identical to ground movers. Settled by a **rest-pose static oracle**, not screenshots:
-  `modeltool obj` exports each model's rest-pose world vertices, and the head/neck/breast (front) centroid is
-  at −z while the tail/hair (back) is at +z for **all five** Zhon flyers (zondrake −22.5/+34, zonhunt
-  −3.2/+0.9..+10, zongod −1.5/+20..+51, zonharp head-forward-of-tail, zonroc −10.6/+37..+57), calibrated
-  against araking (cape → +z = back). So flyers are authored **front = −z** exactly like ground units, and
-  the airtight movement geometry (front(−z) yawed by −h points along the velocity vector; π−h points
-  backward) makes `−heading` correct and `π−heading` fly tail-first. This matches the ICD (root matrix
-  0x4ee620 identical for every unit — no flyer facing branch). The earlier "composed-z" reading that seemed
-  to say *only zonhunt* was misclassified was **confounded by the fly pose** (~569 x-turns pitch the body and
-  move posed z); the rest pose is the clean authored-front oracle. Visually confirmed in-game: zondrake flies
-  head-east when moving east; zonhunt (Thirsha) flies face/chest-toward-camera (hair trailing) when moving
-  south — both face-first. Determinism unchanged (mpai `bf3def52…`, byte-identical before/after via git-stash
-  A/B).
+- **Defect B — flyHalfTurn — DEFERRED, dev-gated.** `TAK_NO_HALFTURN=1` forces `flyHalfTurn=false` (default
+  off = current behavior), left in as a toggle. Not deleted: the in-game flyer-facing A/B was visually
+  ambiguous at readable zoom (zonhunt is a harpy with hair+wings+humanoid body; zondrake read backward under
+  BOTH settings, which the plan did not predict), and the adversarial review specifically required a numeric
+  measurement before deletion. The numeric front/back **origin** dump is not sensitive to the fix (a piece's
+  yaw rotates its children, not its own origin). Next: a probe that composes a *child* tip (beak/tail-tip)
+  world position relative to the movement vector at cruise, per flyer, before touching `flyHalfTurn`.
 - **Defect C — full-body walk — FIXED.** The anim loop preferred legs-only `walk_legs` over the full-body
   `walk` (hip/torso/head/arm sway); the `||` ordering was incidental. Now prefers `walk` (fallback
   `walk_legs`), paired with full-body `restore_x` on stop, at both live and sprite-bake sites. Verified
