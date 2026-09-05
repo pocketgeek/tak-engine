@@ -233,6 +233,8 @@ struct Unit {
     bool  justFired = false;   // set for one tick when the weapon fires
     bool underConstruction = false;
     bool buildBegun = false;   // construction site: true once the builder arrived
+    float conjureRate = 0;     // site: hp/sec the last builder added; drives decay
+    bool  beingBuilt = false;  // site: transient -- a builder worked it this tick
     int buildSiteId = 0;   // builder: id of the building it is constructing
     std::deque<BuildOrder> buildOrders;   // builder: queued (shift) builds
     int inTransport = 0;   // id of carrying transport, 0 = none
@@ -385,6 +387,10 @@ public:
     void queueBuild(int builderId, const UnitType* type, float x, float z, bool queue);
     // Abandon a builder's queued builds and drop any not-yet-started site.
     void cancelBuilds(int builderId);
+    // Latch a mobile builder onto an existing construction site to resume/assist
+    // conjuring it (e.g. reviving a decaying site). Resumes at THIS builder's
+    // rate from the site's current HP. The caller checks the build tree.
+    void assist(int builderId, int siteId);
     bool canPlace(const UnitType* type, float x, float z) const;
     // Mana deposit ("Sacred Stone") spots, in world px. Lodestones (onMana)
     // can only be built on one, but only when the map actually has any.
@@ -529,6 +535,9 @@ private:
     void tickProduction(Unit& u, float dt);
     void tickTransport(Unit& u, float dt);
     void tickConstruction(Unit& u, float dt);
+    // Orphaned conjure (no builder worked it this tick): bleed HP at its build
+    // rate, then vanish with no corpse.
+    void decayConstruction(Unit& u, float dt);
     void tickAbilities(float dt);   // reclaim / resurrect on nearby corpses
     void tickAuras(float dt);       // AdjustArmor/Attack stat auras
     void updateVisibility();

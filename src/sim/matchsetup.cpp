@@ -49,6 +49,21 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::Build:
             if (owns(c.unitId)) world.queueBuild(c.unitId, reg.find(c.type), c.x, c.z, c.queue);
             break;
+        case Cmd::Assist:
+            // Resume/assist an existing conjure: allowed only if the builder can
+            // actually build the site's type (authoritative check, same as the UI).
+            if (owns(c.unitId)) {
+                const Unit* b = world.unit(c.unitId);
+                const Unit* site = world.unit(c.targetId);
+                if (b && b->type && site && site->type) {
+                    const auto& menu = reg.buildable(b->type->id);
+                    if (std::find(menu.begin(), menu.end(), site->type->id) != menu.end()) {
+                        redirect();
+                        world.assist(c.unitId, c.targetId);
+                    }
+                }
+            }
+            break;
         case Cmd::Guard:
             if (owns(c.unitId)) world.guard(c.unitId, c.targetId, c.queue);
             break;

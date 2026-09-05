@@ -11,7 +11,7 @@ namespace tak::net {
 // at T + kInputDelay on both sides. A state hash is exchanged every
 // kHashInterval ticks to detect desync.
 
-constexpr uint32_t kProtocolVersion = 2;   // v2: Cmd::Destroy; hello is enforced
+constexpr uint32_t kProtocolVersion = 3;   // v3: Cmd::Assist (resume/assist conjure)
 constexpr uint32_t kInputDelay = 4;      // ticks
 constexpr uint32_t kHashInterval = 30;   // ticks
 
@@ -23,6 +23,8 @@ enum class Cmd : uint8_t {
                    // networked sims stay in lockstep
     Unqueue,       // remove `targetId` copies of `type` from unitId's build queue
                    // (Train also carries a count in targetId; 0 => 1)
+    Assist,        // unitId (a mobile builder) resumes/assists conjuring the
+                   // existing construction site targetId (revives a decaying one)
 };
 
 struct Command {
