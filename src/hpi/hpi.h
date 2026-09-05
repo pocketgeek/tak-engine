@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -74,9 +76,24 @@ std::string describe(const HeaderInfo& info);
 //
 // So dropping newer patch archives (or a loose override file) into a game
 // directory Just Works, same as the original.
+// How a MountSet scans one directory. The defaults reproduce the retail
+// behaviour (loose files override; *.hpi then *.ufo). The runtime data-root
+// model overrides these: the retail-install ROOT layer sets includeLoose=false
+// and archiveExts={".hpi"} (only the shipped archives are read from the root),
+// while a Maps/ layer adds ".kmp" (single-map HPIs) and an overrides/ layer
+// keeps loose+archive with the widest extension set.
+struct MountConfig {
+    bool includeLoose = true;                                   // loose file overrides archives
+    std::vector<std::string> archiveExts{".hpi", ".ufo"};       // scanned as ordered groups
+    // Optional path filter: an entry (archive or loose) is exposed only if keep()
+    // returns true. Empty = keep everything. Used for the cosmetic override tier,
+    // which excludes gameplay-affecting files so they can't diverge in MP.
+    std::function<bool(const std::string&)> keep;
+};
+
 class MountSet {
 public:
-    explicit MountSet(const std::filesystem::path& dir);
+    explicit MountSet(const std::filesystem::path& dir, MountConfig cfg = {});
 
     // Is `path` resolvable (loose file or in some archive)?
     bool has(const std::string& path) const;
@@ -86,19 +103,69 @@ public:
     // Every archive-provided path after conflict resolution (loose-only files
     // are not listed -- they're already on disk).
     std::vector<std::string> paths() const;
+    // Winning internal paths (original case) under `prefix` (a '/'-separated
+    // directory prefix; "" = all). Unions archive entries with loose files
+    // (when includeLoose), deduped by lowercased key. This is the directory
+    // enumerator the runtime loaders use in place of directory_iterator.
+    std::vector<std::string> list(const std::string& prefix) const;
     // Human-readable winning source of `path` (for tooling/debug).
     std::string sourceOf(const std::string& path) const;
 
     const std::vector<std::filesystem::path>& archiveFiles() const { return archiveFiles_; }
+    static std::string key(std::string p);       // lowercased, '/'-separated
 
 private:
     struct Win { int archive; Entry entry; };   // archive index into archives_
-    static std::string key(std::string p);       // lowercased, '/'-separated
 
     std::filesystem::path dir_;
+    MountConfig cfg_;
     std::vector<Archive> archives_;
     std::vector<std::filesystem::path> archiveFiles_;
     std::unordered_map<std::string, Win> map_;   // winning archive entry per path
 };
+
+// The engine's runtime read-path: an ordered stack of MountSets, each optionally
+// exposed under a virtual path prefix, resolved highest-precedence-first. This is
+// how a retail install directory is presented to the loaders as one namespace:
+//
+//   overrides/   (loose + *.hpi/*.ufo/*.kmp)         <- wins everything
+//   Maps/        (*.kmp single-map HPIs + loose)     -> kmap/<name>.*
+//   <root>/      (*.hpi only, no loose)              -> the base game + expansions
+//   Music/       (loose *.wav)                       -> music/<file>
+//
+// Build one with mountRetailRoot(). Every asset read in the engine goes through
+// Vfs::read / Vfs::list, so this is the ONLY way the engine touches game files.
+class Vfs {
+public:
+    // Push a layer on TOP (highest precedence). `prefix` (e.g. "music/") maps the
+    // layer's own namespace under that virtual directory; "" mounts it as-is.
+    void addLayer(MountSet ms, const std::string& prefix = "");
+
+    bool has(const std::string& path) const;
+    std::vector<uint8_t> read(const std::string& path) const;          // throws if absent
+    std::optional<std::vector<uint8_t>> tryRead(const std::string& path) const;
+    std::vector<std::string> list(const std::string& prefix) const;    // union, deduped
+    std::string sourceOf(const std::string& path) const;
+    bool empty() const { return layers_.empty(); }
+
+private:
+    struct Layer { MountSet ms; std::string prefix; };   // prefix keyed, "" or trailing '/'
+    std::vector<Layer> layers_;                          // back = highest precedence
+};
+
+// Which override files a game will mount (Phase 3 multiplayer policy). None: no
+// overrides. Cosmetic: only files that cannot affect the deterministic sim
+// (art/models/anim/sound/music/fonts/gui). Full: every override, including
+// gameplay data (*.fbi, weapon/side/game *.tdf, canbuild, features, maps).
+enum class OverridePolicy { None, Cosmetic, Full };
+
+// True if an internal path names a file our deterministic sim consumes -- so it
+// must be identical across multiplayer peers (folded into the agreed data hash)
+// and is excluded from the "cosmetic" override tier. Everything else is cosmetic.
+bool affectsGameplay(const std::string& path);
+
+// Build the runtime VFS for a retail install root (see the layer diagram above).
+Vfs mountRetailRoot(const std::filesystem::path& root,
+                    OverridePolicy overrides = OverridePolicy::Full);
 
 } // namespace tak::hpi
