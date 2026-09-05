@@ -1570,8 +1570,11 @@ public:
             pendingCmd_ = 0;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    placing_) {
-            float wx = mapView_.offX() + e.button.x / zm;
-            float wz = mapView_.offY() + e.button.y / zm;
+            // Height-aware placement: resolve the click to the cell drawn under the
+            // cursor (pickWorld inverts the terrain lift), so conjuring/building onto
+            // elevated ground drops the unit where clicked, not on the low cell behind.
+            float wx, wz;
+            pickWorld(float(e.button.x), float(e.button.y), wx, wz);
             if (SDL_GetModState() & KMOD_SHIFT) {
                 // Shift: begin a drag — a whole line of these gets queued on
                 // release (a single shift-click is just a zero-length line).
@@ -1591,8 +1594,9 @@ public:
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
                    buildDrag_) {
             buildDrag_ = false;
-            placeBuildLine(bdX0_, bdZ0_, mapView_.offX() + e.button.x / zm,
-                           mapView_.offY() + e.button.y / zm);
+            float ewx, ewz;
+            pickWorld(float(e.button.x), float(e.button.y), ewx, ewz);
+            placeBuildLine(bdX0_, bdZ0_, ewx, ewz);
             if (!(SDL_GetModState() & KMOD_SHIFT)) placing_ = nullptr;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
                    placing_) {
@@ -1611,23 +1615,25 @@ public:
             // the map. A release after an icon click or a build placement must
             // NOT clear the selection using stale drag coordinates.
             dragging_ = false;
-            float x0 = mapView_.offX() + std::min(dragX0_, dragX1_) / zm;
-            float x1 = mapView_.offX() + std::max(dragX0_, dragX1_) / zm;
-            float z0 = mapView_.offY() + std::min(dragY0_, dragY1_) / zm;
-            float z1 = mapView_.offY() + std::max(dragY0_, dragY1_) / zm;
-            bool isClick = (x1 - x0) < 6 && (z1 - z0) < 6;
+            // Screen-space marquee: a unit is boxed by where it's DRAWN (terrain lift
+            // + flyer altitude), not its flat ground cell -- else a lifted/airborne
+            // unit (e.g. the flying Monarch) escapes a box drawn around its sprite.
+            float sx0 = std::min(dragX0_, dragX1_), sx1 = std::max(dragX0_, dragX1_);
+            float sy0 = std::min(dragY0_, dragY1_), sy1 = std::max(dragY0_, dragY1_);
+            bool isClick = (sx1 - sx0) < 6 && (sy1 - sy0) < 6;
             selection_.clear();
             if (isClick) {
-                // Height-aware: resolve the click to the cell under the cursor so a
-                // unit standing on a lifted wall top can be selected where it's drawn.
-                float wx, wz;
-                pickWorld((dragX0_ + dragX1_) / 2, (dragY0_ + dragY1_) / 2, wx, wz);
+                // Pick the unit nearest the cursor in SCREEN space (matching the
+                // render lift + flyer altitude), so a unit on a lifted wall top or a
+                // Monarch cruising overhead is selected where it's drawn.
+                float ccx = (dragX0_ + dragX1_) / 2, ccy = (dragY0_ + dragY1_) / 2;
                 int hit = -1;
-                float best = 24 * 24;
+                float best = 30.0f * 30.0f;
                 for (auto& u : world_.units()) {
                     if (!u.alive()) continue;
-                    float dx = u.x - wx, dz = u.z - wz;
-                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; hit = u.id; }
+                    SDL_FPoint p = unitScreen(u);
+                    float dx = p.x - ccx, dy = p.y - ccy;
+                    if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; hit = u.id; }
                 }
                 if (hit >= 0) {
                     selection_.push_back(hit);
@@ -1635,9 +1641,11 @@ public:
                 }
             } else {
                 for (auto& u : world_.units())
-                    if (u.alive() && u.player == localPlayer_ && u.x >= x0 && u.x <= x1 &&
-                        u.z >= z0 && u.z <= z1)
-                        selection_.push_back(u.id);
+                    if (u.alive() && u.player == localPlayer_) {
+                        SDL_FPoint p = unitScreen(u);
+                        if (p.x >= sx0 && p.x <= sx1 && p.y >= sy0 && p.y <= sy1)
+                            selection_.push_back(u.id);
+                    }
             }
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.button == SDL_BUTTON_RIGHT && !selection_.empty()) {
@@ -2942,8 +2950,8 @@ public:
 
         drawFog();
         if (buildDrag_ && placing_) {
-            float mx = mapView_.offX() + mouseX_ / mapView_.zoom();
-            float mz = mapView_.offY() + mouseY_ / mapView_.zoom();
+            float mx, mz;
+            pickWorld(mouseX_, mouseY_, mx, mz);
             for (auto& [x, z] : buildLinePositions(bdX0_, bdZ0_, mx, mz))
                 drawGhostAt(placing_, x, z);
         } else if (placing_) {
@@ -4623,6 +4631,22 @@ private:
     static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= 0.0f; }
     float uLiftY(const tak::sim::Unit& u) { return isStructure(u.type) ? 0.0f : terrainLift(u.x, u.z); }
     float uLiftX(const tak::sim::Unit& u) { return isStructure(u.type) ? 0.0f : terrainLiftX(u.x, u.z); }
+
+    // Screen position of a unit's drawn body centre, matching the render lift:
+    // terrain relief (uLift*) plus, for a flyer, its cruise altitude (the sprite is
+    // raised by alt*0.8*zoom, same factor as drawUnit). Used for height-correct
+    // marquee/click selection so a lifted or airborne unit is picked where it's SEEN,
+    // not at its flat ground cell.
+    SDL_FPoint unitScreen(const tak::sim::Unit& u) {
+        float zm = mapView_.zoom();
+        float alt = 0.0f;
+        if (u.type && u.type->canFly) {
+            auto it = anims_.find(u.id);
+            alt = (it != anims_.end()) ? it->second.altitude : u.type->cruiseAlt;
+        }
+        return {(u.x - mapView_.offX()) * zm - uLiftX(u) * zm,
+                (u.z - mapView_.offY()) * zm - uLiftY(u) * zm - alt * 0.8f * zm - 12.0f * zm};
+    }
 
     // Height-aware picking: invert the render lift so a click on elevated terrain
     // (a wall/plateau top, drawn lifted UP on screen) resolves to the cell whose
@@ -6489,10 +6513,40 @@ private:
             SDL_UnlockTexture(fogTex_);
         }
         float zm = mapView_.zoom();
-        SDL_FRect dst{-mapView_.offX() * zm, -mapView_.offY() * zm,
-                      float(w) * 16 * zm, float(h) * 16 * zm};
-        SDL_RenderCopyF(ren_, fogTex_, nullptr, &dst);
+        // Lift the fog to sit on the terrain relief, exactly like units do, so the
+        // cleared area follows a unit up a hill instead of staying at ground level.
+        // Draw it as a grid of quads lifted per-cell (the terrain art itself is a
+        // flat mosaic, but units are drawn lifted onto it -- the fog must match).
+        heightAbove(0.0f, 0.0f);   // ensure heightRef_/scales are initialised
+        float maxLy = float(255 - std::max(heightRef_, 0)) * kHeightScale_;
+        float maxLx = float(255 - std::max(heightRef_, 0)) * kHeightScaleX_;
+        float ox = mapView_.offX(), oy = mapView_.offY();
+        int gx0 = std::clamp(int(ox / 16) - 1, 0, w);
+        int gx1 = std::clamp(int((ox + winW_ / zm + maxLx) / 16) + 2, 0, w);
+        int gz0 = std::clamp(int(oy / 16) - 1, 0, h);
+        int gz1 = std::clamp(int((oy + winH_ / zm + maxLy) / 16) + 2, 0, h);
+        auto vert = [&](int gx, int gz) {
+            float wx = float(gx) * 16.0f, wz = float(gz) * 16.0f;
+            SDL_Vertex v;
+            v.position = {(wx - ox) * zm - terrainLiftX(wx, wz) * zm,
+                          (wz - oy) * zm - terrainLift(wx, wz) * zm};
+            v.tex_coord = {float(gx) / float(w), float(gz) / float(h)};
+            v.color = {255, 255, 255, 255};
+            return v;
+        };
+        fogVerts_.clear();
+        for (int gz = gz0; gz < gz1; ++gz)
+            for (int gx = gx0; gx < gx1; ++gx) {
+                SDL_Vertex a = vert(gx, gz), b = vert(gx + 1, gz),
+                           c = vert(gx + 1, gz + 1), d = vert(gx, gz + 1);
+                fogVerts_.push_back(a); fogVerts_.push_back(b); fogVerts_.push_back(c);
+                fogVerts_.push_back(a); fogVerts_.push_back(c); fogVerts_.push_back(d);
+            }
+        if (!fogVerts_.empty())
+            SDL_RenderGeometry(ren_, fogTex_, fogVerts_.data(), int(fogVerts_.size()),
+                               nullptr, 0);
     }
+    std::vector<SDL_Vertex> fogVerts_;
 
     // Positions along a build-drag line, spaced by the building's footprint.
     std::vector<std::pair<float, float>> buildLinePositions(
@@ -6527,12 +6581,17 @@ private:
 
     void drawGhost() {
         float zm = mapView_.zoom();
-        float wx = mapView_.offX() + mouseX_ / zm;
-        float wz = mapView_.offY() + mouseY_ / zm;
+        // Match the height-aware placement: pick the cell drawn under the cursor and
+        // draw the footprint at its lifted screen position, so the preview sits where
+        // the unit will actually land on elevated ground.
+        float wx, wz;
+        pickWorld(mouseX_, mouseY_, wx, wz);
         bool ok = world_.canPlace(placing_, wx, wz);
+        bool lift = !isStructure(placing_);
         float hw = float(placing_->footX) * 8 * zm, hh = float(placing_->footZ) * 8 * zm;
-        SDL_FRect r{(wx - mapView_.offX()) * zm - hw, (wz - mapView_.offY()) * zm - hh,
-                    hw * 2, hh * 2};
+        float cxp = (wx - mapView_.offX()) * zm - (lift ? terrainLiftX(wx, wz) : 0.0f) * zm;
+        float czp = (wz - mapView_.offY()) * zm - (lift ? terrainLift(wx, wz) : 0.0f) * zm;
+        SDL_FRect r{cxp - hw, czp - hh, hw * 2, hh * 2};
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren_, ok ? 90 : 230, ok ? 220 : 60, 70, 90);
         SDL_RenderFillRectF(ren_, &r);
