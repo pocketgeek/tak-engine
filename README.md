@@ -21,7 +21,7 @@ and place its data files in `assets/` (gitignored) to use the engine.
    `Keys.TDF` hotkeys, and per-faction soundtrack music.
 5. ~~**Campaign**~~ ✅ mission loading via `.ota`/`.cob` with the
    `MAP_COMMAND` scripting API and `.crt` scenario/trigger parsing.
-6. **Multiplayer** 🚧 client–server (a central `takserver` relays a
+6. ~~**Multiplayer**~~ ✅ client–server (a central `takserver` relays a
    server-sequenced deterministic lockstep for up to 8 players/teams, with a
    lobby GUI). With `--data` the server also runs a referee sim that hosts the
    AI players and validates every client's state hash. A dropped player's slot
@@ -29,8 +29,10 @@ and place its data files in `assets/` (gitignored) to use the engine.
    bundle log to catch up); if not, they forfeit deterministically. Finished
    games are written as self-contained `.takrep` replays, running games can be
    watched live, in-game chat and an 8-player scoreboard are in, and allies
-   share their economy (surplus mogrium flows to teammates with room). Remaining
-   polish (cross-build determinism) — see `docs/multiplayer-design.md`.
+   share their economy (surplus mogrium flows to teammates with room). The sim's
+   trig is routed through a deterministic-math shim (`src/sim/detmath`) so
+   lockstep holds across compilers and CPUs, not just the same binary — see
+   `docs/multiplayer-design.md` and `docs/detmath-scope.md`.
 7. ~~**Combat & unit depth**~~ ✅ the FBI/weapon data is driven faithfully:
    HP regen, veterancy (kills → +10%/level attack·armour·reload, gold sheen,
    promoted `veteranmodel`), per-unit mana pools & mana-per-shot, area-of-effect
