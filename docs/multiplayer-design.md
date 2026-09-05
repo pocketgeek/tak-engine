@@ -159,6 +159,30 @@ canonical state hash for attribution — with one humility rule (§4, referee
 suspicion): when everyone disagrees with the referee but agrees with each
 other, the referee suspects *itself*.
 
+### Game-data agreement + override policy
+
+Every peer reads its game files through a VFS over a retail install directory
+(`hpi::mountRetailRoot`: root `*.hpi` + `Maps/*.kmp` + `Music/` + `overrides/`,
+resolved by the retail newest-date rule). Lockstep needs every sim to feed on
+byte-identical *gameplay* data, so that's fingerprinted and agreed:
+
+- **`hpi::gameplayHash(vfs)`** — a content hash over just the files the sim reads
+  (unit `.fbi`, weapon/side/game `.tdf`, build lists, features; **not** maps, which
+  are per-game, and **not** cosmetics — art, models, animation, sound, music, GUI).
+- Each game carries an **override tier** (`GameOptions.overridePolicy`): `none`
+  (pure retail), `cosmetic` (art/sound overrides allowed, never hashed, may differ
+  per player), or `full` (gameplay overrides allowed but everyone must have the
+  same ones). The host picks it; joiners **adopt** it, remounting their VFS to the
+  tier at game start so their registry matches the referee's.
+- Enforcement is two-stage. The **`Hello`** carries the client's *pure-retail*
+  gameplay hash (mounted with no overrides), so the base game files must match for
+  everyone regardless of tier — a modified retail file is rejected at connect. At
+  **`Loaded`** the client sends its gameplay hash *at the room's tier*, and the
+  referee (mounted at that tier) rejects a mismatch — so a `full`-tier player
+  lacking or differing on a gameplay override is caught before tick 0 rather than
+  as a mid-game desync. A pure relay (no `--data`) has no referee hash and falls
+  back to the live `StateHash` cross-check.
+
 ### Determinism contract (explicit)
 
 Lockstep at 8 players lives or dies on bit-identical simulation, so the
