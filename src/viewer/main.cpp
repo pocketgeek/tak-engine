@@ -1955,10 +1955,11 @@ public:
                     mp_->setSlot(k, 2, uint8_t(k % 5), uint8_t(k), uint8_t(k), 1);
                 mpReadied_ = true;
             } else if (autoMode == 7 && r.mySlot >= 0) {
-                // Single-player: seat self (ready) and hand off to the interactive
-                // Room, where the player adds one or more AI opponents and starts.
+                // Single-player: seat self UNREADY and hand off to the interactive
+                // Room, where the player adds one or more AI opponents, then readies
+                // up and starts.
                 mp_->setSlot(r.mySlot, 1, facIdx(side_), uint8_t(r.mySlot),
-                             uint8_t(r.mySlot), 1);
+                             uint8_t(r.mySlot), 0);
                 // Headless test hook: TAK_SP_AIS=N seats N AI opponents and starts
                 // immediately (the interactive path leaves this to the player).
                 if (const char* na = std::getenv("TAK_SP_AIS")) {
@@ -2267,7 +2268,7 @@ public:
     void edgeScroll(float dt, float zm) {
         if (winW_ <= 0 || winH_ <= 0) return;
         if (mouseX_ < 0 || mouseX_ > winW_ || mouseY_ < 0 || mouseY_ > winH_) return;
-        const float margin = 24.0f, panPx = 4000.0f;   // px/s at zoom 1
+        const float margin = 24.0f, panPx = 2000.0f;   // px/s at zoom 1
         // Trigger at the real window edges (incl. the far right, past the panel),
         // so the player pushes to the screen edge to scroll -- not to the map edge.
         float sx = 0, sz = 0;
