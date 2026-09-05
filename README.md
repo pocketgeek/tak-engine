@@ -4,8 +4,9 @@ A modern, cross-platform engine recreation for **Total Annihilation: Kingdoms**
 (Cavedog Entertainment, 1999), in the spirit of OpenRA and Robot War Engine.
 
 > **This project contains no game content.** You must own the original game
-> (e.g. the GOG release of *Total Annihilation: Kingdoms + The Iron Plague*) and
-> place its data files under `assets/` (gitignored) to run anything below.
+> (e.g. the GOG release of *Total Annihilation: Kingdoms + The Iron Plague*); the
+> engine reads its install directory directly (see **Game data**), and any local
+> copy of that content stays gitignored.
 
 Much of the behaviour was cross-checked by disassembling the retail engine
 (`KINGDOMS.icd`); see `docs/retail-engine.md` for the findings (class model,
@@ -59,35 +60,43 @@ cmake --build build
 
 ## Game data
 
-Point the engine at your own extracted game files. Either extract a single
-archive, or merge a whole game directory the way the retail engine layers it:
+Point the engine straight at a **retail install directory** with `--data` -- no
+extraction step. It reads the shipped archives and folders in place:
 
-```sh
-# one archive:
-./build/hpitool extract assets/game/<archive>.hpi assets/extracted/<name>
-
-# ...or merge every *.hpi / *.ufo in a directory (patches override the base):
-./build/hpitool merge assets/game assets/extracted
+```
+<install>/
+  *.hpi              the shipped archives (data, terrain, maps, sections,
+                     english, the IP* Iron Plague expansion, community packs…)
+  Maps/              downloadable maps as *.kmp (each an HPI) + loose maps
+  Music/             track*.wav soundtrack
+  overrides/         YOUR overrides -- loose files or *.hpi/*.kmp, highest priority
 ```
 
+Only the `*.hpi` in the install root are read (loose files there are ignored);
+maps come from `maps.hpi` and the `Maps/*.kmp`, music from `Music/`, and anything
+in `overrides/` wins over everything.
+
 **HPI precedence.** The retail game shipped each update as a new HPI/UFO that
-superseded older copies of a file. `hpitool merge` reproduces the exact rule
-(reverse-engineered from `KINGDOMS.icd`): a loose file on disk wins; otherwise,
-across all `*.hpi` then `*.ufo`, the copy whose archive entry has the **newest
-date** wins (ties keep the earlier-mounted, `*.hpi` before `*.ufo`). So dropping
-a newer patch archive (e.g. `V3Rocket.hpi`) into the game directory Just Works,
-as the original did. `hpitool where <dir> <path>` shows which archive a file
-resolves to.
+superseded older copies of a file, and the engine reproduces the exact rule
+(reverse-engineered from `KINGDOMS.icd`): a loose file wins; otherwise, across all
+`*.hpi` then `*.ufo`, the copy whose archive entry has the **newest date** wins
+(ties keep the earlier-mounted). So dropping a newer patch archive (e.g.
+`V3Rocket.hpi`) into the install Just Works. `hpitool where <dir> <path>` shows
+which archive a file resolves to; the offline `hpitool merge` still bakes a flat
+tree if you want one.
 
 ## Playing
 
-`takview game` takes the map, the terrain directory, and the data root:
+`takview game` takes a **map name** and the install directory:
 
 ```sh
-./build/takview game "assets/extracted/maps/Maps/King of the Hill.tnt" \
-    assets/extracted/terrain/terrain assets/extracted/data \
+./build/takview game "King of the Hill" --data /path/to/tak_install \
     --side ara --aiside tar
 ```
+
+`--overrides {none,cosmetic,full}` chooses which of your `overrides/` are mounted
+(default `full`): `none` = pure retail, `cosmetic` = only art/sound/music (never
+affects a multiplayer game), `full` = everything including gameplay data.
 
 Each side begins with **only its Monarch**, dropped on the map's real start
 positions (from the `.ota`). The Monarch trickles mogrium and builds the first
@@ -142,16 +151,24 @@ identical sim with only ~35-byte commands on the wire.
 
 ```sh
 # somewhere reachable (default port 7677):
-./build/takserver --port 7677 --data <extracted-data-dir>
+./build/takserver --port 7677 --data /path/to/tak_install
 
 # each player:
-./build/takview game <map> <terrain> <data> --server <host> [--serverport N] [--name X]
+./build/takview game "<map name>" --data /path/to/tak_install \
+    --server <host> [--serverport N] [--name X] [--overrides none|cosmetic|full]
 ```
 
 - **Referee sim.** With `--data`, the server also runs a referee simulation that
   hosts the AI players (so no host machine is loaded by them) and holds the
   canonical state hash every client is checked against. Without `--data` it's a
   pure relay and clients cross-check hashes among themselves.
+- **Game-data agreement.** Every peer fingerprints the gameplay data its sim will
+  read (`hpi::gameplayHash`: unit/weapon/side/build/feature files, never maps or
+  cosmetics) and sends it in the handshake. The server rejects anyone whose
+  fingerprint differs from the referee's -- so a modified retail file, or a
+  `full`-tier gameplay override not shared by everyone, is caught at join instead
+  of desyncing mid-game. Cosmetic (`cosmetic`-tier) overrides don't change the
+  fingerprint, so players can keep their own art and sound.
 - **Lobby.** The in-client lobby has a game browser, a create-game dialog
   (name/password/map, crusades & gods toggles), and a room where each player
   picks faction, colour, and team and readies up; the host opens/closes slots,
@@ -177,17 +194,22 @@ Start the server with `--replaydir <dir>` and it writes a self-contained
 `.takrep` for every finished game. Play one back as a spectator:
 
 ```sh
-./build/takview replay <file.takrep> <terrain> <data>
+./build/takview replay <file.takrep> --data /path/to/tak_install
 ```
 
 **Pause** and the **+/−** speed keys scrub it; a bar shows elapsed / total time.
 
-## Sound overrides
+## Overrides
 
-`overrides/click.hpi` replaces the faction order-acknowledgement tones with a
-soft click (the game plays either that or the unit voice line). Drop your own
-`click.hpi` (an HPI archive of replacement `sounds/*.wav`) next to the game data
-to override it, exactly like the original game.
+Anything in the install's `overrides/` folder -- loose files or `*.hpi`/`*.kmp`
+archives -- overrides the shipped data, exactly like the original game. For
+example a `overrides/click.hpi` holding `sounds/*.wav` replaces the faction
+order-acknowledgement tones. Overrides are classified as **cosmetic** (art,
+models, animation, sound, music, fonts, GUI) or **gameplay** (unit/weapon/side/
+build/feature data, maps); `--overrides cosmetic` mounts only the former.
+Cosmetic overrides never affect a multiplayer game and can differ between
+players; gameplay overrides (mounted only under `--overrides full`) change the
+data fingerprint, so under `full` every player must share the same ones.
 
 ## Project layout
 

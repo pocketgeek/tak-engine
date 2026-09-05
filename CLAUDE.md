@@ -47,11 +47,16 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   takview` alone leaves a **stale `takserver`** (its referee sim then disagrees
   with the freshly-built clients and trips the referee-suspect check). Building
   all targets relinks `takview` AND `takserver` together.
-- Play: `./build/takview game <map.tnt> <terrain-dir> <data-root> [--side X --aiside Y]`
-  (README lists all options).
-- Headless determinism / smoke test:
-  `./build/takserver --data <data> &` then
-  `TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy ./build/takview game <map> <ter> <data> --server 127.0.0.1 --mpai --time 60` —
+- Play: `./build/takview game "<map name>" --data <retail-install-dir> [--side X --aiside Y]`
+  — the engine reads a retail install directly (root `*.hpi` + `Maps/` + `Music/`
+  + `overrides/`); maps are referenced by NAME, resolved via the VFS. `--overrides
+  none|cosmetic|full` picks which of `overrides/` are mounted. README lists all options.
+- Headless determinism / smoke test (server needs `--data` to run the referee + AI;
+  it also enforces a gameplay-data hash, so client and server must point at the same
+  install). The server takes a couple seconds to mount + load, so wait for its
+  "listening" line before starting the client:
+  `./build/takserver --port 7677 --data <install> &` then
+  `TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy ./build/takview game "<map>" --data <install> --server 127.0.0.1 --serverport 7677 --mpai --time 60` —
   prints a state `hash=`.
 - Asset-inspection CLIs (in `tools/`, built into `build/`): `cobtool`,
   `modeltool`, `gaftool`, `tnttool`, `tdftool`, `hpitool`. Handy for verifying
