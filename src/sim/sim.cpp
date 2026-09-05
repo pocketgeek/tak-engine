@@ -1457,6 +1457,13 @@ bool World::sightClear(int ux, int uz, float eyeH, int tx, int tz) const {
     if (D < 1.5f) return true;                    // adjacent cell: always visible
     // Walk the cells between unit and target (integer DDA); a cell blocks the view
     // if its ground rises above the straight eye->target sight line at that point.
+    // Terrain must rise this far ABOVE the sight line to block it. Tuned (with the
+    // eye height below) so walls/hills/cliffs cast shadows but small rock clutter
+    // does not -- on athri cay real walls are height 60-220, so an obstacle must
+    // clear ~eye+margin ~= 56 to block. Live-tunable via TAK_FOG_MARGIN.
+    static float MARGIN = [] {
+        const char* e = std::getenv("TAK_FOG_MARGIN"); return e ? float(std::atof(e)) : 16.0f;
+    }();
     int steps = int(D);
     for (int i = 1; i < steps; ++i) {
         float t = float(i) / D;
@@ -1464,7 +1471,7 @@ bool World::sightClear(int ux, int uz, float eyeH, int tx, int tz) const {
         int z = int(std::lround(float(uz) + dzf * t));
         if (x < 0 || z < 0 || x >= hW_ || z >= hH_) continue;
         float lineH = eyeH + (tH - eyeH) * t;
-        if (H(x, z) > lineH + 4.0f) return false;   // terrain pokes above the line
+        if (H(x, z) > lineH + MARGIN) return false;   // terrain pokes above the line
     }
     return true;
 }
@@ -1491,7 +1498,13 @@ void World::updateVisibility() {
         // over minor bumps but not over walls/hills/cliffs. Radar ignores terrain
         // (it's not line-of-sight), so a radar-only reveal skips the LoS test.
         bool losBlocks = !heights_.empty() && cx >= 0 && cz >= 0 && cx < hW_ && cz < hH_;
-        float eyeH = losBlocks ? float(heights_[size_t(cz) * hW_ + cx]) + 24.0f : 0.0f;
+        // Eye above the unit's ground cell: sees over small bumps, not over real
+        // walls/hills. Paired with the sight-line MARGIN in sightClear so small rock
+        // clutter stops casting fog shadows. Live-tunable via TAK_FOG_EYE.
+        static float EYE = [] {
+            const char* e = std::getenv("TAK_FOG_EYE"); return e ? float(std::atof(e)) : 40.0f;
+        }();
+        float eyeH = losBlocks ? float(heights_[size_t(cz) * hW_ + cx]) + EYE : 0.0f;
         for (int dz = -r; dz <= r; ++dz)
             for (int dx = -r; dx <= r; ++dx) {
                 if (dx * dx + dz * dz > r * r) continue;
