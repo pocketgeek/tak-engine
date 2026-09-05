@@ -1467,10 +1467,12 @@ public:
             return;
         }
         float zm = mapView_.zoom();
-        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE &&
-            (placing_ || pendingCmd_)) {
-            placing_ = nullptr;
-            pendingCmd_ = 0;
+        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+            // Escape cancels the pending placement/order, else clears the current
+            // selection. It does NOT quit the game (the main loop no longer treats
+            // Escape as quit while a game is running).
+            if (placing_ || pendingCmd_) { placing_ = nullptr; pendingCmd_ = 0; }
+            else selection_.clear();
         } else if (e.type == SDL_KEYDOWN && handleKey(e.key.keysym.sym,
                                                        SDL_GetModState())) {
             // handled by the hotkey dispatcher
@@ -1630,7 +1632,7 @@ public:
                 int hit = -1;
                 float best = 30.0f * 30.0f;
                 for (auto& u : world_.units()) {
-                    if (!u.alive()) continue;
+                    if (!u.alive() || u.underConstruction) continue;  // not-yet-built: unselectable
                     SDL_FPoint p = unitScreen(u);
                     float dx = p.x - ccx, dy = p.y - ccy;
                     if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; hit = u.id; }
@@ -1641,7 +1643,7 @@ public:
                 }
             } else {
                 for (auto& u : world_.units())
-                    if (u.alive() && u.player == localPlayer_) {
+                    if (u.alive() && u.player == localPlayer_ && !u.underConstruction) {
                         SDL_FPoint p = unitScreen(u);
                         if (p.x >= sx0 && p.x <= sx1 && p.y >= sy0 && p.y <= sy1)
                             selection_.push_back(u.id);
@@ -2993,6 +2995,31 @@ public:
                     }
                 for (const auto& o : u.orders)   // move-order rings (few)
                     if (o.targetId == 0) drawRing(o.x, o.z, 4);
+            }
+            // Attack-target indicator: RED brackets on any enemy a selected unit is
+            // ordered to attack, so you can see what you've told them to hit.
+            const SDL_Color red{245, 70, 60, 255};
+            std::unordered_set<int> targets;
+            for (int sid : selection_)
+                if (const auto* su = world_.unit(sid))
+                    for (const auto& o : su->orders)
+                        if (o.targetId > 0) targets.insert(o.targetId);
+            for (int tid : targets) {
+                const auto* t = world_.unit(tid);
+                if (!t || !t->alive()) continue;
+                SDL_FPoint p = unitScreen(*t);   // includes flyer altitude
+                float cx = p.x, cy = p.y + 12.0f * zms;   // undo unitScreen's body bias
+                if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
+                float rr = 11.0f, rx = rr * zms, ry = rr * 0.65f * zms;
+                float L = std::max(3.0f, rr * 0.45f * zms), th = std::max(1.0f, 1.2f * zms);
+                for (int sx = -1; sx <= 1; sx += 2)
+                    for (int sy = -1; sy <= 1; sy += 2) {
+                        float px = cx + sx * rx, py = cy + sy * ry;
+                        pushQuad(shadowBatch_, std::min(px, px - sx * L), py - th * 0.5f,
+                                 L, th, red);
+                        pushQuad(shadowBatch_, px - th * 0.5f,
+                                 std::min(py, py - sy * L * 0.65f), th, L * 0.65f, red);
+                    }
             }
             if (!shadowBatch_.empty()) {
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
@@ -5767,7 +5794,8 @@ private:
     void selectOwned(Pred pred) {
         selection_.clear();
         for (auto& u : world_.units())
-            if (u.alive() && u.player == localPlayer_ && u.type && pred(u))
+            if (u.alive() && u.player == localPlayer_ && u.type && !u.underConstruction &&
+                pred(u))
                 selection_.push_back(u.id);
         if (!selection_.empty()) voice(selection_.front(), "select");
     }
@@ -5782,7 +5810,8 @@ private:
     void cycleNextUnit() {
         std::vector<int> owned;
         for (auto& u : world_.units())
-            if (u.alive() && u.player == localPlayer_ && u.type && u.type->canMove)
+            if (u.alive() && u.player == localPlayer_ && u.type && u.type->canMove &&
+                !u.underConstruction)
                 owned.push_back(u.id);
         if (owned.empty()) return;
         int cur = selection_.empty() ? -1 : selection_.front();
@@ -7274,8 +7303,10 @@ int main(int argc, char** argv) {
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            // Escape quits the asset viewers, but in a running game it deselects
+            // (handled by GameView::input) rather than exiting.
             if (e.type == SDL_QUIT ||
-                (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE))
+                (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !gameView))
                 running = false;
             // The GPU lost every render-target texture's contents (device/driver
             // reset). Rebuild the baked atlases so sprites don't blink out.

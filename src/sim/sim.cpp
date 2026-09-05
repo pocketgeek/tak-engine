@@ -1301,6 +1301,12 @@ void World::tickConstruction(Unit& b, float dt) {
     site->buildBegun = true;   // in range: the site starts materialising now
     b.orders.clear();
     b.speed = 0;
+    // Face what we're building/conjuring: turn toward the site at the unit's turn
+    // rate (a building has turnRate 0, so it simply doesn't rotate).
+    float want = detmath::atan2(dx, dz);
+    float turn = std::clamp(angleDiff(want, b.heading), -b.type->turnRate * dt,
+                            b.type->turnRate * dt);
+    b.heading += turn;
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
     Player& tm = players_[size_t(b.player)];
     if (gInstantBuild) {
