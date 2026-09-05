@@ -1657,6 +1657,58 @@ public:
                 }
                 return;
             }
+            // Right-clicking a friendly unit is contextual, never a move:
+            //  - a conjure-in-progress: selected builders that can build that type
+            //    resume/assist it (revives a decaying site); other units do nothing.
+            //  - any other friendly unit: selected units that can attack guard it;
+            //    the rest do nothing.
+            // Either case consumes the click (no move fallthrough).
+            {
+                int siteId = -1;   float bestSite = 1e18f;
+                int allyId = -1;   float bestAlly = 22.0f * 22.0f;
+                for (auto& u : world_.units()) {
+                    if (!u.alive() || u.embarked() || !u.type || !first ||
+                        !world_.allied(u.player, first->player)) continue;
+                    float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
+                    if (u.underConstruction) {
+                        if (u.player != first->player) continue;   // resume only your own
+                        float r = 20.0f + 8.0f * float(std::max(u.type->footX, u.type->footZ));
+                        if (d < r * r && d < bestSite) { bestSite = d; siteId = u.id; }
+                    } else if (d < bestAlly) { bestAlly = d; allyId = u.id; }
+                }
+                if (siteId >= 0) {
+                    const auto* st = world_.unit(siteId);
+                    bool any = false;
+                    for (int id : selection_) {
+                        const auto* bu = world_.unit(id);
+                        if (!bu || !bu->type || !bu->type->isBuilder) continue;
+                        const auto& menu = registry_.buildable(bu->type->id);
+                        if (std::find(menu.begin(), menu.end(), st->type->id) == menu.end())
+                            continue;
+                        tak::net::Command c;
+                        c.kind = tak::net::Cmd::Assist;
+                        c.unitId = id; c.targetId = siteId; c.queue = queue;
+                        issue(c);
+                        any = true;
+                    }
+                    if (any) voice(selection_.front(), "move");
+                    return;   // non-builders / can't-build-it: nothing happens
+                }
+                if (allyId >= 0) {
+                    bool any = false;
+                    for (int id : selection_) {
+                        const auto* gu = world_.unit(id);
+                        if (!gu || !gu->type || gu->type->weapon.damage <= 0) continue;
+                        tak::net::Command c;
+                        c.kind = tak::net::Cmd::Guard;
+                        c.unitId = id; c.targetId = allyId; c.queue = queue;
+                        issue(c);
+                        any = true;
+                    }
+                    if (any) voice(selection_.front(), "move");
+                    return;   // non-attackers: nothing happens
+                }
+            }
             // Clicking near an enemy = attack; else formation move. (Allies are
             // not enemies -- clicking one falls through to a move, not an attack.)
             int enemy = -1;

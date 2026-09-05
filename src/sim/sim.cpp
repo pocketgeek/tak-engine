@@ -1267,6 +1267,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     int id = spawn(type, x, z, 3.14159f, b->player);
     Unit* site = unit(id);
     site->underConstruction = true;
+    site->beingBuilt = true;   // its builder owns it this tick (no instant decay)
     site->hp = type->maxHp * 0.05f;
     if (!type->canMove) { blockFootprint(nav_, *type, x, z, true); flowCache_.clear(); }
     b = unit(builderId);   // spawn may have reallocated units_
@@ -1305,12 +1306,27 @@ void World::cancelBuilds(int builderId) {
     }
 }
 
+void World::assist(int builderId, int siteId) {
+    Unit* b = unit(builderId);
+    Unit* site = unit(siteId);
+    if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove)
+        return;
+    if (!site || !site->alive() || !site->underConstruction ||
+        site->player != b->player)
+        return;
+    // Latch onto the existing site; tickConstruction walks there and resumes at
+    // this builder's rate (buildTime / workerTime) from the site's current HP.
+    b->buildSiteId = siteId;
+    order(builderId, site->x, site->z + float(site->type->footZ) * 8 + 24, false);
+}
+
 void World::tickConstruction(Unit& b, float dt) {
     Unit* site = unit(b.buildSiteId);
     if (!site || !site->alive() || !site->underConstruction) {
         b.buildSiteId = 0;
         return;
     }
+    site->beingBuilt = true;   // a builder is assigned (walking or working): no decay
     float dx = site->x - b.x, dz = site->z - b.z;
     float half = 16.0f * float(std::max(site->type->footX, site->type->footZ)) / 2;
     // Reach = the builder's FBI builddistance (to the site edge) when it has one,
@@ -1328,6 +1344,8 @@ void World::tickConstruction(Unit& b, float dt) {
                             b.type->turnRate * dt);
     b.heading += turn;
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
+    // Record the current build rate so an interrupted conjure decays at this speed.
+    site->conjureRate = site->type->maxHp * 0.95f / std::max(total, 0.01f);
     Player& tm = players_[size_t(b.player)];
     if (gInstantBuild) {
         site->hp = site->type->maxHp;   // finishes this tick, free
@@ -1351,6 +1369,22 @@ void World::tickConstruction(Unit& b, float dt) {
             if (startBuild(bid, o.type, o.x, o.z) != 0) break;
         }
     }
+}
+
+void World::decayConstruction(Unit& u, float dt) {
+    // No builder worked this conjure this tick: it "un-conjures", losing HP at the
+    // rate it was last built, and vanishes at zero (no corpse -- it was never
+    // finished). A site that never materialised falls back to its nominal rate.
+    float rate = u.conjureRate > 0 ? u.conjureRate
+                 : u.type->maxHp * 0.95f / std::max(u.type->buildTime, 0.01f);
+    u.hp -= rate * dt;
+    if (u.hp > 0) return;
+    if (!u.type->canMove) {
+        blockFootprint(nav_, *u.type, u.x, u.z, false);
+        flowCache_.clear();
+    }
+    u.underConstruction = false;
+    u.deadFor = 1000.0f;   // fully gone (painter skips deadFor>=4), no death anim
 }
 
 void World::train(int builderId, const UnitType* type, int count) {
@@ -1664,10 +1698,18 @@ void World::tick(float dt) {
         Unit& u = units_[i];
         if (u.alive() && u.type) tickProduction(u, dt);
     }
+    // Construction: clear the per-tick "worked" flag, let builders add HP (which
+    // re-sets it on the sites they walk to / work), then bleed any orphaned conjure
+    // that no builder touched this tick until it dies and vanishes.
+    for (auto& u : units_)
+        if (u.alive() && u.underConstruction) u.beingBuilt = false;
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& u = units_[i];
         if (u.alive() && u.type && u.buildSiteId) tickConstruction(u, dt);
     }
+    for (auto& u : units_)
+        if (u.alive() && u.type && u.underConstruction && !u.beingBuilt)
+            decayConstruction(u, dt);
 
     visTimer_ -= dt;
     if (visTimer_ <= 0) {
