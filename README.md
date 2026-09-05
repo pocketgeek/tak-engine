@@ -89,7 +89,11 @@ unit, Esc cancels an armed order. Selection: **Ctrl+A** = all your units,
 Control groups: **Ctrl+1–9/0** assign the selection, **1–9/0** recall it,
 **Ctrl+Shift+1–9/0** add to a group. **Pause** toggles pause. **+**/**−** step the
 game speed over −10…+10 (0 = normal; +10 = 10×, −10 = 0.1×).
-Click the build icons at a selected builder/keep to train or place,
+At a selected building that trains units, the build icons are a queue:
+left-click **+1**, **Shift**+left **+5**, **Ctrl+Shift**+left **+10**; right-click
+removes the same amounts; each icon shows how many are queued, and **Ctrl**+left
+toggles infinite production. A builder that places things (structures, or a mobile
+conjurer like a Zhon Beast Handler) instead arms placement — click to position it.
 arrows/middle-drag/**screen-edge** = scroll, wheel = zoom (toward cursor),
 minimap click/drag = move camera; right-click the minimap moves the selection.
 **Ctrl+D** destroys the selected unit(s). **F4** toggles a per-player status
