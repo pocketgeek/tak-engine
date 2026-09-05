@@ -87,12 +87,22 @@ tree if you want one.
 
 ## Playing
 
+The engine is **client-server only** — every game runs on a `takserver`, and the
+AI runs *only* on the server. Single-player is just a private game on a server the
+client starts for you.
+
 `takview game` takes a **map name** and the install directory:
 
 ```sh
 ./build/takview game "King of the Hill" --data /path/to/tak_install \
     --side ara --aiside tar
 ```
+
+With no `--server`, this **auto-launches a private local server** in the
+background, connects to it, and starts a single-player game vs a server-run AI
+(`--side` / `--aiside` pick the factions). The local server is torn down when you
+quit, and the game is never visible to other players. Add `--server <host>` (see
+below) to play on a shared server instead.
 
 `--overrides {none,cosmetic,full}` chooses which of your `overrides/` are mounted
 (default `full`): `none` = pure retail, `cosmetic` = only art/sound/music (never
