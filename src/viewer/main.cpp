@@ -1538,11 +1538,12 @@ public:
             pendingCmd_ = 0;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    placing_) {
-            // Height-aware placement: resolve the click to the cell drawn under the
-            // cursor (pickWorld inverts the terrain lift), so conjuring/building onto
-            // elevated ground drops the unit where clicked, not on the low cell behind.
+            // Placement pick: a building takes the flat cell under the cursor (so the
+            // green/red square sits under the mouse and the flat-rendered building
+            // lands there); a conjured unit uses the height-aware pick so it drops on
+            // the elevated cell drawn under the cursor, not the low cell behind.
             float wx, wz;
-            pickWorld(float(e.button.x), float(e.button.y), wx, wz);
+            pickPlace(float(e.button.x), float(e.button.y), placing_, wx, wz);
             if (SDL_GetModState() & KMOD_SHIFT) {
                 // Shift: begin a drag — a whole line of these gets queued on
                 // release (a single shift-click is just a zero-length line).
@@ -1563,7 +1564,7 @@ public:
                    buildDrag_) {
             buildDrag_ = false;
             float ewx, ewz;
-            pickWorld(float(e.button.x), float(e.button.y), ewx, ewz);
+            pickPlace(float(e.button.x), float(e.button.y), placing_, ewx, ewz);
             placeBuildLine(bdX0_, bdZ0_, ewx, ewz);
             if (!(SDL_GetModState() & KMOD_SHIFT)) placing_ = nullptr;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
@@ -3062,7 +3063,7 @@ public:
         drawFog();
         if (buildDrag_ && placing_) {
             float mx, mz;
-            pickWorld(mouseX_, mouseY_, mx, mz);
+            pickPlace(mouseX_, mouseY_, placing_, mx, mz);
             for (auto& [x, z] : buildLinePositions(bdX0_, bdZ0_, mx, mz))
                 drawGhostAt(placing_, x, z);
         } else if (placing_) {
@@ -4823,6 +4824,24 @@ private:
     // *lifted* position is under the cursor, not the flat cell the raw screen->world
     // map would give (which lands on the low ground behind the wall). Returns the
     // FRONT-MOST surface (largest z) that projects to the click, like a depth pick.
+    // Screen->world for PLACING `type`. A building is NOT lifted onto the terrain
+    // relief (uLiftY: a structure renders flat on its footprint), so its ghost and
+    // green/red square project flat too; picking the lifted surface cell (pickWorld)
+    // would leave that flat square offset from the cursor on elevated ground. So a
+    // structure picks the flat cell under the cursor (square stays under the mouse
+    // and matches where the flat-rendered building lands); a liftable/conjured unit
+    // keeps the height-aware pick.
+    void pickPlace(float sx, float sy, const tak::sim::UnitType* type, float& wx, float& wz) {
+        if (type && isStructure(type)) {
+            float zm = mapView_.zoom();
+            const auto& m = mapView_.map();
+            wx = std::clamp(mapView_.offX() + sx / zm, 0.0f, float(std::max(1, m.width * 16 - 1)));
+            wz = std::clamp(mapView_.offY() + sy / zm, 0.0f, float(std::max(1, m.height * 16 - 1)));
+        } else {
+            pickWorld(sx, sy, wx, wz);
+        }
+    }
+
     void pickWorld(float sx, float sy, float& wx, float& wz) {
         float zm = mapView_.zoom();
         // Flat (no-lift) world position of the click.
@@ -6754,11 +6773,11 @@ private:
 
     void drawGhost() {
         float zm = mapView_.zoom();
-        // Match the height-aware placement: pick the cell drawn under the cursor and
-        // draw the footprint at its lifted screen position, so the preview sits where
-        // the unit will actually land on elevated ground.
+        // Pick the placement cell the same way the click handler does (flat for a
+        // building so the square stays under the cursor; height-aware for a unit),
+        // then draw the footprint at the matching screen position.
         float wx, wz;
-        pickWorld(mouseX_, mouseY_, wx, wz);
+        pickPlace(mouseX_, mouseY_, placing_, wx, wz);
         bool ok = world_.canPlace(placing_, wx, wz);
         bool lift = !isStructure(placing_);
         float hw = float(placing_->footX) * 8 * zm, hh = float(placing_->footZ) * 8 * zm;
