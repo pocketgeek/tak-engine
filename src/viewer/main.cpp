@@ -1922,6 +1922,17 @@ public:
                 // autoMode 4 (AI-game host): also seat one AI opponent in slot 1.
                 if (autoMode == 4 && r.mySlot == 0)
                     mp_->setSlot(1, 2, 1, 1, 1, 1);   // AI, tar, colour 1, team 1
+                // Host stress harness: TAK_MP_AIS=N seats N server AIs in the TOP
+                // slots, leaving the low slots for human joiners.
+                if (autoMode == 1 && r.mySlot == 0)
+                    if (const char* ai = std::getenv("TAK_MP_AIS")) {
+                        int nAi = std::clamp(std::atoi(ai), 0, tak::net::kMaxSlots - 1);
+                        for (int k = 0; k < nAi; ++k) {
+                            int slot = tak::net::kMaxSlots - 1 - k;
+                            mp_->setSlot(slot, 2, uint8_t(slot % 5), uint8_t(slot),
+                                         uint8_t(slot), 1);   // AI, distinct colour/team
+                        }
+                    }
                 mpReadied_ = true;
             }
         } else if (st == S::InRoom && (autoMode == 1 || autoMode == 3 || autoMode == 4) &&
@@ -1932,7 +1943,11 @@ public:
                 const auto& s = mp_->room().slots[i];
                 if ((s.type == 1 && s.ready) || s.type == 2) ++ready;   // human-ready or AI
             }
-            if (ready >= 2) { mp_->startGame(); mpStarted_ = true; }
+            // Default: start with any 2 ready. TAK_MP_WAIT=N holds for a full lobby.
+            static const int wantReady = [] {
+                const char* w = std::getenv("TAK_MP_WAIT"); return w ? std::atoi(w) : 2;
+            }();
+            if (ready >= wantReady) { mp_->startGame(); mpStarted_ = true; }
         } else if (mp_->isRejoin()) {
             // Rejoin OR spectate (checked BEFORE the state branches -- the replayed
             // bundles may already have flipped the state to InGame): reset the sim
@@ -2204,11 +2219,7 @@ public:
 
     void update(float dt) {
         sounds_.pollMusic();
-        // Listener = the camera view, so positional sounds pan by screen position.
         float zm = std::max(mapView_.zoom(), 1e-3f);
-        float halfW = (winW_ / 2.0f) / zm, halfH = (winH_ / 2.0f) / zm;
-        sounds_.setListener(mapView_.offX() + halfW, mapView_.offY() + halfH,
-                            halfW, halfH);
         edgeScroll(dt, zm);    // pan when the cursor rests near a screen edge (real time)
         if (paused_) return;   // freeze the sim; input/render keep running
         // Game speed: scale game time (sim, effects, AI, animation all follow dt).
@@ -2611,6 +2622,13 @@ public:
     void prepare(int winW, int winH) {
         mapView_.ensureChunks(mapViewW(winW), winH);
         if (!miniTex_) buildMinimap();
+        // Listener = the camera view (the map viewport), so positional sounds pan by
+        // where the source sits on SCREEN, not by its absolute map position. This
+        // runs every frame for SP, net, AND spectator -- update() is skipped on the
+        // net/spectator path, so the listener can't live there.
+        float zm = std::max(mapView_.zoom(), 1e-3f);
+        float halfW = (mapViewW(winW) / 2.0f) / zm, halfH = (winH / 2.0f) / zm;
+        sounds_.setListener(mapView_.offX() + halfW, mapView_.offY() + halfH, halfW, halfH);
     }
 
     // Fetch and reset the per-draw sub-phase timers (for TAK_PROF).
@@ -3236,16 +3254,18 @@ public:
             SDL_RenderDrawRectF(ren_, &r);
         }
 
-        // Spectator badge: a live watcher can pan/zoom but issues no orders.
-        if (spectating_ && hudFont_.ok()) {
+        // Spectator badge: a live watcher can pan/zoom but issues no orders. Use the
+        // crisp 5x7 block font (the scaled GAF hudFont smeared/overlapped here).
+        if (spectating_) {
             const char* m = "SPECTATING";
-            float tw = float(hudFont_.width(m, 2.2f));
-            float bx = (winW - tw) / 2, by = 20;
+            float px = 3.0f;
+            float tw = blockWidth(m, px), th = 7 * px;
+            float bx = (winW - tw) / 2, by = 24;
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-            SDL_FRect bg{bx - 12, by - 6, tw + 24, 30};
+            SDL_FRect bg{bx - 14, by - 8, tw + 28, th + 16};
             SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
             SDL_RenderFillRectF(ren_, &bg);
-            hudFont_.draw(ren_, m, bx, by, 2.2f, {235, 175, 110, 255});
+            blockText(m, bx, by, px, {235, 175, 110, 255});
         }
 
         // Replay scrubber: elapsed/total time and a progress bar above the HUD.
