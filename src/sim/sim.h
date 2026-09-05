@@ -349,6 +349,11 @@ struct Player {
     // enter stateHash (see docs/multiplayer-design.md).
     int   team = 0;
     bool  defeated = false;   // no living units; set by the sim's win check
+    // Cosmetic "disco" emote (Shift+D): seconds this player's monarchs keep
+    // dancing. Set by a lockstep Cmd::Disco so every peer agrees on the timing,
+    // but it drives client-side eye-candy only and is NOT folded into stateHash
+    // (like vis_).
+    float discoLeft = 0;
 };
 
 // Max simultaneous players/teams (the retail map ceiling is 8 start positions).
@@ -383,6 +388,10 @@ public:
     // conjuring it (e.g. reviving a decaying site). Resumes at THIS builder's
     // rate from the site's current HP. The caller checks the build tree.
     void assist(int builderId, int siteId);
+    // Cosmetic emote: make `player`'s monarchs dance for 10s (Cmd::Disco). Not
+    // hashed -- purely for the viewer. discoActive() gates the client animation.
+    void startDisco(int player);
+    bool discoActive(int player) const;
     bool canPlace(const UnitType* type, float x, float z) const;
     // Mana deposit ("Sacred Stone") spots, in world px. Lodestones (onMana)
     // can only be built on one, but only when the map actually has any.

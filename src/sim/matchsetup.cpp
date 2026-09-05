@@ -82,6 +82,9 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::Destroy:
             if (owns(c.unitId)) world.destroy(c.unitId);
             break;
+        case Cmd::Disco:
+            world.startDisco(int(c.player));   // cosmetic; no ownership needed
+            break;
     }
 }
 
