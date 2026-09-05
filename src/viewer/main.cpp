@@ -2978,8 +2978,8 @@ public:
             float zms = mapView_.zoom();
             for (const auto& u : world_.units()) {
                 if (!u.alive() || !selSet_.count(u.id)) continue;
-                float cx = (u.x - mapView_.offX()) * zms - terrainLiftX(u.x, u.z) * zms;
-                float cy = (u.z - mapView_.offY()) * zms - terrainLift(u.x, u.z) * zms;
+                float cx = (u.x - mapView_.offX()) * zms - uLiftX(u) * zms;
+                float cy = (u.z - mapView_.offY()) * zms - uLiftY(u) * zms;
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
                 float rr = 11.0f, rx = rr * zms, ry = rr * 0.65f * zms;
                 if (rx < 9.0f) {
@@ -3021,8 +3021,8 @@ public:
             // selected or not.
             if (frac >= 1.0f) continue;
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
-            float bx = (u.x - mapView_.offX()) * zm - bw / 2 - terrainLiftX(u.x, u.z) * zm;
-            float by = (u.z - mapView_.offY()) * zm - 30 * zm - terrainLift(u.x, u.z) * zm;
+            float bx = (u.x - mapView_.offX()) * zm - bw / 2 - uLiftX(u) * zm;
+            float by = (u.z - mapView_.offY()) * zm - 30 * zm - uLiftY(u) * zm;
             if (bx < -40 || bx > mvw + 40 || by < -40 || by > winH + 40) continue;
             pushQuad(shadowBatch_, bx - 1, by - 1, bw + 2, bh + 2,
                      SDL_Color{10, 10, 10, 220});
@@ -3044,9 +3044,9 @@ public:
                           std::max(u.type->workerTime, 0.01f);
             float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
             float bw = 40 * zm, bh = std::max(3.0f, 4 * zm);
-            float bx = (u.x - mapView_.offX()) * zm - bw / 2 - terrainLiftX(u.x, u.z) * zm;
+            float bx = (u.x - mapView_.offX()) * zm - bw / 2 - uLiftX(u) * zm;
             float by = (u.z - mapView_.offY()) * zm - float(u.type->footZ) * 8 * zm - 14 * zm
-                       - terrainLift(u.x, u.z) * zm;
+                       - uLiftY(u) * zm;
             SDL_FRect bg{bx - 1, by - 1, bw + 2, bh + 2};
             SDL_SetRenderDrawColor(ren_, 10, 10, 10, 220);
             SDL_RenderFillRectF(ren_, &bg);
@@ -4177,8 +4177,8 @@ private:
 
         float zm = mapView_.zoom();
         int slot = colorSlot_[u.player & 7];
-        float ax = (u.x - mapView_.offX()) * zm - terrainLiftX(u.x, u.z) * zm;
-        float ay = (u.z - mapView_.offY()) * zm - terrainLift(u.x, u.z) * zm;
+        float ax = (u.x - mapView_.offX()) * zm - uLiftX(u) * zm;
+        float ay = (u.z - mapView_.offY()) * zm - uLiftY(u) * zm;
         // Sprite sheet: draw a moving/idle unit as one animated quad from the baked
         // locomotion cycle. Attack/death poses keep the full 3D model (rare).
         if (spritesEnabled_) {
@@ -4649,6 +4649,17 @@ private:
     // baked into the tile art by the tilted 2.5D view: up (Y) AND sideways (X).
     float terrainLift(float wx, float wz) { return heightAbove(wx, wz) * kHeightScale_; }
     float terrainLiftX(float wx, float wz) { return heightAbove(wx, wz) * kHeightScaleX_; }
+    // The terrain-relief lift is for MOBILE units standing on painted slopes. A
+    // building sits flat on its footprint, so it must never lift -- otherwise a
+    // structure on a cell with a raised heightmap (e.g. a mana deposit, whose
+    // heightmap runs 60-200 while the sand around it is 0) floats far off its
+    // base decal (which, being a feature, is drawn unlifted).
+    float uLiftY(const tak::sim::Unit& u) {
+        return (u.type && !u.type->canMove) ? 0.0f : terrainLift(u.x, u.z);
+    }
+    float uLiftX(const tak::sim::Unit& u) {
+        return (u.type && !u.type->canMove) ? 0.0f : terrainLiftX(u.x, u.z);
+    }
 
     // Height-aware picking: invert the render lift so a click on elevated terrain
     // (a wall/plateau top, drawn lifted UP on screen) resolves to the cell whose
