@@ -56,12 +56,6 @@ void Vm::setStatic(size_t i, int32_t v) {
     statics_[i] = v;
 }
 
-bool Vm::anyThreadAlive() const {
-    for (const auto& t : threads_)
-        if (!t.dead) return true;
-    return false;
-}
-
 int32_t Vm::pop(Thread& t) {
     if (t.stack.empty()) return 0;
     int32_t v = t.stack.back();

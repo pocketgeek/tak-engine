@@ -1048,7 +1048,6 @@ public:
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "mission load: %s\n", e.what());
             }
-            aiEnabled_ = false;   // no wave AI; guards fight via auto-acquire
             loadFeatures();
             // Mission scripts: run the authentic COB event handlers.
             try {
@@ -1133,7 +1132,6 @@ public:
             }
             if (n) mapView_.setOffset(cx / float(n) - 640 / 0.9f,
                                       cz / float(n) - 400 / 0.9f);
-            aiEnabled_ = false;   // placements only; auto-acquire still fights
             loadFeatures();
 
             // Skirmish victory rule from the map's trigger section: a scoring
@@ -1309,7 +1307,6 @@ public:
                 world_.player(i).mana = 2800;
             }
             ffaPlayers_ = n;
-            demoAi_ = true;   // (harness) all players AI-driven
             for (auto& u : world_.units()) {
                 if (!u.type || u.type->canMove) continue;
                 tak::sim::blockFootprint(world_.nav(), *u.type, u.x, u.z, true);
@@ -1319,10 +1316,6 @@ public:
         if (!bare) {
         const FactionKit& pk = kit(side);
         const FactionKit& ak = kit(aiSide);
-        aiCycle_ = {ak.squad[0], ak.squad[1], ak.squad[2], ak.squad[3]};
-        aiKeepType_ = ak.keep;
-        aiLodeType_ = ak.lode;
-        aiBuilderType_ = ak.builder;
         // Monarchs face one another.
         float pFace = std::atan2(ax - px, az - pz);
         float aFace = std::atan2(px - ax, pz - az);
@@ -1354,7 +1347,6 @@ public:
                 for (size_t k = 0; k < playerB.size(); ++k)
                     world_.attack(playerB[k], playerA[k % playerA.size()], false);
             }
-            demoAi_ = true;
         }
         }
 
@@ -1755,7 +1747,6 @@ public:
     // server's GameStarting (startMpGame), not from the constructor.
     void setMpClient(tak::net::MpClient* mp) {
         mp_ = mp;
-        aiEnabled_ = false;   // the server owns any AI; clients are all human
     }
     bool isNet() const { return mp_ != nullptr; }
 
@@ -2108,14 +2099,11 @@ public:
     uint32_t netTick() const { return netTick_; }
     tak::sim::World& worldRef() { return world_; }
     void selectOnly(int id) { if (spectating_) return; selection_.clear(); selection_.push_back(id); }
-    size_t menuSize(const std::string& id) { return registry_.buildable(id).size(); }
-    bool hasIP() const { return vfs_.has("units/cresage.fbi"); }
     const std::string& netError() const { return netError_; }
 
     void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }
 
     void amphibDemo() {
-        aiEnabled_ = false;
         amphib_ = true;
         const auto* shipType = registry_.find("vertrans");
         const auto& ground = world_.nav();
@@ -2171,7 +2159,6 @@ public:
     }
 
     void navyDemo() {
-        aiEnabled_ = false;
         struct S { const char* t; float x, z; int player; };
         const S fleet[] = {
             {"verflag", 1150, 1250, 0}, {"verman", 1080, 1150, 0},
@@ -2205,7 +2192,6 @@ public:
     }
 
     void creonDemo() {
-        aiEnabled_ = false;
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         const char* squad[] = {"cregod",  "creiron", "creauto", "creauto",
                                "crebeas", "cregatl", "creshoc", "credrag"};
@@ -2227,7 +2213,6 @@ public:
     }
 
     void testBuild() {
-        aiEnabled_ = false;
         const auto* keep = world_.unit(keepId_);
         if (!keep) return;
         const auto* lode = registry_.find("aralode");
@@ -2251,13 +2236,11 @@ public:
 
     std::string lodeUnit;
     void soundTest() {
-        aiEnabled_ = false;
         int id = spawn("araarch", 900, 1000, 0, 0);
         selection_ = {id};
         for (int i = 0; i < 8; i++) voice(id, "move");
     }
     void faceTest() {
-        aiEnabled_ = false;
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         // araarch (correct, +h) vs zonhand, both walking east, arrows on.
         float ddx[4]={0,400,0,-400}, ddz[4]={-400,0,400,0};
@@ -2268,7 +2251,6 @@ public:
         mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
     }
     void fireTest() {
-        aiEnabled_ = false;
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         int a = spawn("araarch", cx - 40, cz, 1.57f, 0);
         int e = spawn("tararch", cx + 200, cz, -1.57f, 1);
@@ -2276,7 +2258,6 @@ public:
         mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
     }
     void lodeTest() {
-        aiEnabled_ = false;
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         spawn(lodeUnit.empty()?"zonlode":lodeUnit, cx, cz, 3.14159f, 0);
         mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
@@ -4774,7 +4755,7 @@ private:
     float replayAccum_ = 0;
     bool mpReadied_ = false, mpStarted_ = false, mpSetupDone_ = false;
     // interactive lobby UI state
-    enum class LobbyScreen { Browser, Create, Room } lobbyScreen_ = LobbyScreen::Browser;
+    enum class LobbyScreen { Browser, Create } lobbyScreen_ = LobbyScreen::Browser;
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
@@ -4993,11 +4974,6 @@ private:
     float scenTime_ = 0, scenClock_ = 0, scenClock2_ = 0;
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
     int playerMonarchId_ = -1, aiMonarchId_ = -1;
-    std::string aiKeepType_;    // production building the AI Monarch builds
-    std::string aiLodeType_;    // AI lodestone type (economy)
-    std::string aiBuilderType_; // keepless (Zhon) AI: the Handler the Monarch builds
-    int aiLodes_ = 0;           // lodestones the AI has queued so far
-    std::vector<int> aiKeeps_;  // all the AI's keeps (it builds several + expands)
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = -1, mouseY_ = -1;   // -1 until the first real mouse motion, so
                                         // edge-scroll can't fire from a (0,0) default
@@ -5011,8 +4987,6 @@ private:
     std::map<std::string, SDL_Texture*> icons_;
     std::map<std::pair<std::string, int>, SDL_Texture*> modelIcons_;  // model-rendered fallback icons
     std::vector<std::pair<SDL_FRect, const tak::sim::UnitType*>> iconRects_;
-    int aiTrained_ = 0;
-    std::array<std::string, 4> aiCycle_ = {"tararch", "tartb", "tararch", "tarbeak"};
     static constexpr int kMiniSize = 180;
     // Right-side UI strip (minimap + order/weapon buttons). The map view is kept
     // to the left of it so the panel never draws over the world.
@@ -6396,27 +6370,6 @@ private:
         }
     }
 
-    // HUD text with a full dark outline so it reads over any panel.
-    void hudText(const std::string& s, float x, float y, float scale, SDL_Color c) {
-        static const int o[8][2] = {{-1, -1}, {0, -1}, {1, -1}, {-1, 0},
-                                    {1, 0},   {-1, 1}, {0, 1},  {1, 1}};
-        for (auto& d : o)
-            hudFont_.draw(ren_, s, x + d[0] * 1.3f, y + d[1] * 1.3f, scale,
-                          {0, 0, 0, 220});
-        hudFont_.draw(ren_, s, x, y, scale, c);
-    }
-
-    static SDL_Color sideColor(const std::string& side) {
-        std::string l = side;
-        std::transform(l.begin(), l.end(), l.begin(), ::tolower);
-        if (l == "ara") return {70, 130, 240, 255};
-        if (l == "tar") return {205, 65, 60, 255};
-        if (l == "ver") return {70, 185, 90, 255};
-        if (l == "zon") return {235, 205, 55, 255};
-        if (l == "cre") return {230, 145, 50, 255};
-        return {210, 210, 210, 255};
-    }
-
     // F4: per-faction live unit counts, top-left.
     // F7 diagnostic: tint elevated cells, and for each unit show its cell height,
     // computed lift, its RAW (unlifted) foot position (magenta dot) vs its LIFTED
@@ -7197,8 +7150,6 @@ private:
     uint32_t salt_ = 0;
     int outcome_ = 0;   // 0 = playing, 1 = victory, -1 = defeat
     bool sawTeam_[tak::sim::kMaxPlayers] = {};   // teams that have ever fielded a unit
-    bool demoAi_ = false;
-    bool aiEnabled_ = true;
     // Dev-only N-player free-for-all / teams harness (TAK_FFA=N[,teams]); the
     // real lobby (multiplayer M3) replaces it. When >0, an AI Controller drives
     // every player, not just player 1.
@@ -7220,7 +7171,6 @@ private:
     float briefTimer_ = 0;
     std::string notice_;
     float noticeTimer_ = 0;
-    std::set<std::pair<int, int>> inside_;
     std::set<int> corpsed_;
     float animClock_ = 0;
     float trigTimer_ = 0;
@@ -7727,7 +7677,7 @@ int main(int argc, char** argv) {
         // wall-clock goes, once a second, so a stall can be localised on real
         // hardware that the headless software renderer can't show.
         static const bool prof = getenv("TAK_PROF") != nullptr;
-        static double pTer = 0, pUpd = 0, pDraw = 0, pPres = 0, pAcc = 0;
+        static double pUpd = 0, pDraw = 0, pPres = 0, pAcc = 0;
         static int pFrames = 0;
         auto pnow = [] { return double(SDL_GetPerformanceCounter()) /
                          double(SDL_GetPerformanceFrequency()) * 1000.0; };
@@ -7759,7 +7709,7 @@ int main(int argc, char** argv) {
             double t2 = prof ? pnow() : 0;
             gameView->draw(w, h);
             double t3 = prof ? pnow() : 0;
-            if (prof) { pTer += t1 - t0; pUpd += t2 - t1; pDraw += t3 - t2; }
+            if (prof) { pUpd += t2 - t1; pDraw += t3 - t2; }
             // Feed the whole real frame time (dt = last frame's total incl. present)
             // to the sprite auto-tuner, so a GPU-bound full-model crowd triggers it.
             gameView->autoTuneSprites(dt * 1000.0f);
@@ -7781,7 +7731,7 @@ int main(int argc, char** argv) {
                             (pDraw - proj - submit) / pFrames, pPres / pFrames,
                             lod / std::max(1, pFrames), full / std::max(1, pFrames));
                 std::fflush(stdout);
-                pTer = pUpd = pDraw = pPres = pAcc = 0; pFrames = 0;
+                pUpd = pDraw = pPres = pAcc = 0; pFrames = 0;
             }
         }
 

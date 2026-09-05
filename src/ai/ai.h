@@ -22,11 +22,9 @@ struct Profile {
     std::unordered_map<std::string, int> weight, limit;
 };
 
-// Parse ai/default.txt from the data root (falling back to the IP data root).
-// One file covers every faction. Never throws; a missing file yields an empty
-// profile (the AI then builds nothing).
-Profile loadProfile(const std::string& dataRoot, const std::string& ipRoot = "");
-// Same, reading ai/default.txt from the runtime VFS (base + IP merged).
+// Parse ai/default.txt from the runtime VFS (base + IP merged). One file covers
+// every faction. Never throws; a missing file yields an empty profile (the AI
+// then builds nothing).
 Profile loadProfile(const tak::hpi::Vfs& vfs);
 
 // Sink for the commands a Controller decides to issue this tick. Offline this
@@ -44,8 +42,6 @@ public:
     // Evaluate the AI for sim tick `simTick`. Does nothing off its ~1 Hz cadence.
     // Reads `world` (never mutates it) and emits any orders through `sink`.
     void tick(const tak::sim::World& world, uint32_t simTick, const CommandSink& sink);
-
-    int player() const { return player_; }
 
 private:
     // --- deterministic RNG (retail-style LCG) --------------------------------

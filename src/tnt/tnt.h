@@ -40,9 +40,6 @@ struct Map {
     // Parse from an in-memory buffer (a VFS-resolved archive entry). `origin`
     // names the source in error messages.
     static Map load(const std::vector<uint8_t>& d, const std::string& origin = "<memory>");
-
-    // "deadbeef" style lowercase hex name for a block's terrain JPG.
-    std::string tileKeyHex(int bx, int by) const;
 };
 
 } // namespace tak::tnt

@@ -404,16 +404,6 @@ std::vector<std::string> Vfs::list(const std::string& prefix) const {
     return paths;
 }
 
-std::string Vfs::sourceOf(const std::string& path) const {
-    std::string kp = MountSet::key(path);
-    for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
-        if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
-        std::string sub = path.substr(it->prefix.size());
-        if (it->ms.has(sub)) return it->ms.sourceOf(sub);
-    }
-    return "<absent>";
-}
-
 // ---- gameplay classification + retail-root mounting ------------------------
 
 bool affectsGameplay(const std::string& path) {

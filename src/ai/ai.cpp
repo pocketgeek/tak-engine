@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <fstream>
 #include <sstream>
 #include <vector>
 
@@ -25,28 +24,6 @@ Profile loadProfile(const tak::hpi::Vfs& vfs) {
         std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
         if (kw == "weight") prof.weight[unit] = v;
         else if (kw == "limit") prof.limit[unit] = v;
-    }
-    return prof;
-}
-
-Profile loadProfile(const std::string& dataRoot, const std::string& ipRoot) {
-    Profile prof;
-    for (std::string path : {dataRoot + "/ai/default.txt",
-                             ipRoot.empty() ? std::string() : ipRoot + "/ai/default.txt"}) {
-        if (path.empty()) continue;
-        std::ifstream f(path);
-        if (!f) continue;
-        std::string kw, unit;
-        int v;
-        for (std::string line; std::getline(f, line);) {
-            if (line.size() < 2 || line[0] == '/') continue;
-            std::istringstream ss(line);
-            if (!(ss >> kw >> unit >> v)) continue;
-            std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
-            if (kw == "weight") prof.weight[unit] = v;
-            else if (kw == "limit") prof.limit[unit] = v;
-        }
-        break;
     }
     return prof;
 }

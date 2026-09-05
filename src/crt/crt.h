@@ -20,7 +20,6 @@ struct Placement {
 };
 
 // Returns placements; empty if the file is empty or an unsupported variant.
-std::vector<Placement> load(const std::filesystem::path& path);
 std::vector<Placement> load(const std::vector<uint8_t>& d);   // from a VFS buffer
 
 // Trigger section (after the placement records):
@@ -47,14 +46,10 @@ struct TrigRecord {
 };
 
 struct Triggers {
-    int numTriggers = 0;
     std::vector<TrigRecord> records;
-    std::vector<std::string> strings;   // slot strings in stream order
-    std::vector<int32_t> ints;          // int params in stream order
     std::vector<Region> regions;
 };
 
-Triggers loadTriggers(const std::filesystem::path& path);
 Triggers loadTriggers(const std::vector<uint8_t>& d);   // from a VFS buffer
 
 } // namespace tak::crt

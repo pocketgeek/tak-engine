@@ -82,7 +82,6 @@ static void readSlots(Reader& r, RoomView& v) {
         s.type = r.u8(); s.faction = r.u8(); s.color = r.u8(); s.team = r.u8();
         s.ready = r.u8(); s.isHost = r.u8(); s.name = r.str();
     }
-    v.valid = r.ok;
 }
 
 void MpClient::onFrame(const Frame& f) {
@@ -121,13 +120,13 @@ void MpClient::onFrame(const Frame& f) {
             break;
         }
         case Msg::JoinResult: {
-            uint8_t ok = r.u8(); uint8_t slot = r.u8(); std::string why = r.str();
+            uint8_t ok = r.u8(); uint8_t slot = r.u8(); r.str();
             if (ok) {
                 // 0xFF = the host created the game as a slot-less spectator.
                 room_.mySlot = (slot == 0xFF) ? -1 : int(slot);
                 spectator_ = (slot == 0xFF);
                 state_ = State::InRoom;
-            } else joinErr_ = why.empty() ? "join failed" : why;
+            }
             break;
         }
         case Msg::LobbyState: {

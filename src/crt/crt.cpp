@@ -16,14 +16,6 @@ uint16_t u16(const std::vector<uint8_t>& d, size_t off) {
 }
 } // namespace
 
-std::vector<Placement> load(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return {};
-    std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)),
-                           std::istreambuf_iterator<char>());
-    return load(d);
-}
-
 std::vector<Placement> load(const std::vector<uint8_t>& d) {
     if (d.size() < 16) return {};
 
@@ -50,14 +42,6 @@ std::vector<Placement> load(const std::vector<uint8_t>& d) {
     return out;
 }
 
-Triggers loadTriggers(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return {};
-    std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)),
-                           std::istreambuf_iterator<char>());
-    return loadTriggers(d);
-}
-
 Triggers loadTriggers(const std::vector<uint8_t>& d) {
     Triggers out;
     if (d.size() < 16) return out;
@@ -69,7 +53,6 @@ Triggers loadTriggers(const std::vector<uint8_t>& d) {
     size_t t = 12 + size_t(count) * 568;
     if (t + 16 > d.size()) return out;
     if (u32(d, t) != 9) return out;   // trigger-format version
-    out.numTriggers = int(u32(d, t + 4));
 
     // Trailer: numDefs + 272-byte defs, anchored at file end.
     size_t defsEnd = d.size();
@@ -134,9 +117,6 @@ Triggers loadTriggers(const std::vector<uint8_t>& d) {
                 while (!sv.empty() && sv.back() == ' ') sv.pop_back();
                 if (!sv.empty()) rec.slots.push_back(sv);
             }
-            for (auto& sv : rec.slots) out.strings.push_back(sv);
-            for (auto v : rec.ints)
-                if (v) out.ints.push_back(v);
             out.records.push_back(std::move(rec));
             pos = base + 320;
             hit = true;
