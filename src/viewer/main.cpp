@@ -2006,6 +2006,10 @@ public:
                 // Headless test hook: TAK_SP_AIS=N seats N AI opponents and starts
                 // immediately (the interactive path leaves this to the player).
                 if (const char* na = std::getenv("TAK_SP_AIS")) {
+                    // The auto-start hook must ready-up the host (interactive SP now
+                    // seats unready, which would otherwise block startGame()).
+                    mp_->setSlot(r.mySlot, 1, facIdx(side_), uint8_t(r.mySlot),
+                                 uint8_t(r.mySlot), 1);
                     int n = std::clamp(std::atoi(na), 1, int(tak::net::kMaxSlots) - 1);
                     for (int k = 0; k < n && k + 1 < int(tak::net::kMaxSlots); ++k) {
                         int slot = k + 1;
@@ -2891,7 +2895,7 @@ public:
         auto special = [&](const tak::sim::Unit& u, const UnitGeom& g) {
             bool occluded = !g.canFly && g.occY < g.ay - 2.0f;
             bool conjuring = u.underConstruction && u.type;
-            return occluded || conjuring;
+            return occluded || conjuring || dancing(u);   // dancers draw their glow
         };
 
         // Pass 1: every normal unit's ground shadows, batched. Soft blobs go into
@@ -4287,6 +4291,26 @@ private:
     // No SDL calls and only reads shared state (models/textures/heightmap/anim), so
     // it is safe to run for many units at once on the worker pool. drawUnit() then
     // just submits g.runs. `scratch` is a reusable per-thread triangle buffer.
+    // A monarch (the five hero units) -- the only thing that disco-dances.
+    static bool isMonarchType(const tak::sim::UnitType* t) {
+        if (!t) return false;
+        for (int i = 0; i < 5; ++i) if (t->id == tak::sim::kMonarchs[i]) return true;
+        return false;
+    }
+    // Fully-saturated hue wheel -> RGB, hue in [0,1). Drives the disco tint & floor.
+    static SDL_Color discoHue(float h) {
+        h = h - std::floor(h);
+        float r = std::fabs(h * 6.0f - 3.0f) - 1.0f;
+        float g = 2.0f - std::fabs(h * 6.0f - 2.0f);
+        float b = 2.0f - std::fabs(h * 6.0f - 4.0f);
+        auto cl = [](float v) { return Uint8(std::clamp(v, 0.0f, 1.0f) * 255.0f); };
+        return SDL_Color{cl(r), cl(g), cl(b), 255};
+    }
+    // Is this unit currently disco-dancing (a monarch whose player hit Shift+D)?
+    bool dancing(const tak::sim::Unit& u) const {
+        return isMonarchType(u.type) && world_.discoActive(u.player);
+    }
+
     void buildUnitGeom(const tak::sim::Unit& u, UnitGeom& g, std::vector<Tri>& scratch) {
         g.verts.clear();
         g.runs.clear();
@@ -4376,6 +4400,19 @@ private:
             base.t[1] = anim ? anim->altitude : u.type->cruiseAlt;
         // Flyers face -heading exactly like ground movers (no flyer facing branch).
         float facing = (u.type && (u.type->canMove || u.type->canFly)) ? -u.heading : 0.0f;
+        // Disco emote: a dancing monarch spins, bobs and hue-cycles. Local wall-time
+        // (animClock_) drives the smooth motion; world_.discoActive() (a synced sim
+        // timer) gates it. Pure client-side eye-candy -- nothing here is hashed.
+        bool disco = dancing(u);
+        float discoBob = 0.0f, discoMix = 0.0f;
+        SDL_Color discoCol{};
+        if (disco) {
+            float t = animClock_;
+            facing += t * 6.2831853f;                                // ~1 rev/sec
+            discoBob = std::fabs(std::sin(t * 8.0f)) * 11.0f * zm;    // bounce, px
+            discoCol = discoHue(t * 0.8f);                           // body tint hue
+            discoMix = 0.5f;
+        }
         bool mirror = false;
         SDL_Texture* atlas = (slot >= 0 && size_t(slot) < atlasTex_.size())
                                  ? atlasTex_[size_t(slot)] : nullptr;
@@ -4402,7 +4439,7 @@ private:
             for (int i = 0; i < 3; ++i) {
                 SDL_Vertex v = t.v[i];
                 v.position.x = v.position.x * zm + ax;
-                v.position.y = v.position.y * zm + ay;
+                v.position.y = v.position.y * zm + ay - discoBob;   // disco bounce (0 otherwise)
                 if (vetGold > 0) {
                     v.color.r = Uint8(v.color.r + (255 - v.color.r) * vetGold);
                     v.color.g = Uint8(v.color.g + (200 - v.color.g) * vetGold * 0.85f);
@@ -4415,6 +4452,11 @@ private:
                     v.color.a = alpha;
                     v.color.r = Uint8(v.color.r * (1.0f - 0.75f * glow));
                     v.color.g = Uint8(v.color.g * (1.0f - 0.25f * glow));
+                }
+                if (disco) {   // blend the body toward the cycling disco hue
+                    v.color.r = Uint8(int(v.color.r) + int((int(discoCol.r) - int(v.color.r)) * discoMix));
+                    v.color.g = Uint8(int(v.color.g) + int((int(discoCol.g) - int(v.color.g)) * discoMix));
+                    v.color.b = Uint8(int(v.color.b) + int((int(discoCol.b) - int(v.color.b)) * discoMix));
                 }
                 g.verts.push_back(v);
             }
@@ -4472,6 +4514,31 @@ private:
                               sh->w * zm, sh->h * zm};
                 SDL_RenderCopyF(ren_, sh->tex, nullptr, &dst);
             }
+        }
+        // Disco dance floor: a pulsing, hue-cycling glow disc under a dancing monarch.
+        if (dancing(u)) {
+            float t = animClock_;
+            SDL_Color dc = discoHue(t * 0.8f + 0.5f);   // offset from the body tint
+            float rad = (float(std::max(u.type->footX, u.type->footZ)) * 12.0f + 22.0f)
+                        * (0.85f + 0.15f * std::sin(t * 8.0f)) * zm;   // pulse with the bob
+            const int N = 24;
+            std::vector<SDL_Vertex> fan;
+            fan.reserve(N * 3);
+            SDL_Vertex ctr{{ax, ay}, {dc.r, dc.g, dc.b, 150}, {0, 0}};
+            auto rim = [&](float a) {
+                return SDL_Vertex{{ax + std::cos(a) * rad, ay + std::sin(a) * rad * 0.5f},
+                                  {dc.r, dc.g, dc.b, 0}, {0, 0}};
+            };
+            for (int i = 0; i < N; ++i) {
+                fan.push_back(ctr);
+                fan.push_back(rim(float(i) / N * 6.2831853f));
+                fan.push_back(rim(float(i + 1) / N * 6.2831853f));
+            }
+            SDL_BlendMode pbm;
+            SDL_GetRenderDrawBlendMode(ren_, &pbm);
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
+            SDL_RenderGeometry(ren_, nullptr, fan.data(), int(fan.size()), nullptr, 0);
+            SDL_SetRenderDrawBlendMode(ren_, pbm);
         }
         // Submit the pre-built, depth-sorted vertex runs -- one SDL_RenderGeometry
         // per texture (usually 1 per unit). The veterancy/conjure colour tint was
@@ -5839,6 +5906,16 @@ private:
                         ++n;
                     }
             notice_ = "DESTRUCT " + std::to_string(n);
+            noticeTimer_ = 2;
+            return true;
+        }
+        if (key == SDLK_d && shift) {             // DISCO! your monarchs boogie 10s
+            // Purely cosmetic, but routed through the lockstep command path so every
+            // peer sees your monarchs dance (the sim just runs a per-player timer).
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Disco;
+            issue(c);                             // issue() stamps c.player = localPlayer_
+            notice_ = "DISCO TIME";
             noticeTimer_ = 2;
             return true;
         }

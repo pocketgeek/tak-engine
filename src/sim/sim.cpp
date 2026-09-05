@@ -1306,6 +1306,16 @@ void World::assist(int builderId, int siteId) {
     order(builderId, site->x, site->z + float(site->type->footZ) * 8 + 24, false);
 }
 
+void World::startDisco(int player) {
+    if (player >= 0 && player < int(players_.size()))
+        players_[size_t(player)].discoLeft = 10.0f;
+}
+
+bool World::discoActive(int player) const {
+    return player >= 0 && player < int(players_.size()) &&
+           players_[size_t(player)].discoLeft > 0;
+}
+
 void World::tickConstruction(Unit& b, float dt) {
     Unit* site = unit(b.buildSiteId);
     if (!site || !site->alive() || !site->underConstruction) {
@@ -1632,6 +1642,10 @@ void World::tick(float dt) {
     for (auto& u : units_) { u.justFired = false; u.justBuilt = 0; }
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
     clock_ += dt;    // wall-clock since the match started (for god timing)
+    // Cosmetic disco emote countdown (Shift+D). Deterministic across peers but not
+    // hashed -- drives client-side monarch dancing only.
+    for (auto& tm : players_)
+        if (tm.discoLeft > 0) tm.discoLeft = std::max(0.0f, tm.discoLeft - dt);
 
     // Economy: recompute income/storage, apply income.
     for (auto& tm : players_) { tm.income = 0; tm.storage = 0; }
