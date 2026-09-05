@@ -28,9 +28,9 @@ and place its data files in `assets/` (gitignored) to use the engine.
    is held and can be reclaimed via a resume token (the client replays the
    bundle log to catch up); if not, they forfeit deterministically. Finished
    games are written as self-contained `.takrep` replays, running games can be
-   watched live, in-game chat and an 8-player scoreboard are in. Remaining
-   polish (optional alliance economy, cross-build determinism) — see
-   `docs/multiplayer-design.md`.
+   watched live, in-game chat and an 8-player scoreboard are in, and allies
+   share their economy (surplus mogrium flows to teammates with room). Remaining
+   polish (cross-build determinism) — see `docs/multiplayer-design.md`.
 7. ~~**Combat & unit depth**~~ ✅ the FBI/weapon data is driven faithfully:
    HP regen, veterancy (kills → +10%/level attack·armour·reload, gold sheen,
    promoted `veteranmodel`), per-unit mana pools & mana-per-shot, area-of-effect
@@ -127,7 +127,7 @@ Multiplayer is **client–server**: run the headless `takserver` (default port
 7677) somewhere reachable, and each player connects with
 `takview game <map> <terrain> <data> --server <host> [--serverport N] [--name X]`.
 The server hosts a lobby and relays a server-sequenced deterministic lockstep —
-up to 8 players on up to 8 teams (allies share vision), each machine running the
+up to 8 players on up to 8 teams (allies share vision and economy), each machine running the
 identical sim with only ~35-byte commands on the wire. Start the server with
 `takserver --port 7677 --data <extracted-data-dir>` and it also runs a **referee
 simulation** that hosts the AI players (so the host's machine isn't loaded by

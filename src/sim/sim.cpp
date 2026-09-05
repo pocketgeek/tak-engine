@@ -1516,8 +1516,33 @@ void World::tick(float dt) {
         tm.storage += u.type->storage;
         if (u.type->attractsGods && !u.underConstruction) godPriests[size_t(u.player)]++;
     }
-    for (auto& tm : players_)
-        tm.mana = std::min(tm.mana + tm.income * dt, std::max(tm.storage, 100.0f));
+    // Apply income, then share the economy across allies: mana that would
+    // overflow a player's storage flows to teammates that still have headroom,
+    // so a maxed-out ally feeds the team instead of wasting mogrium. It is truly
+    // wasted only when the whole team is capped. Deterministic -- collected and
+    // handed out in player-index order. A solo/FFA player (a team of one) has no
+    // teammate to receive the surplus, so this reduces exactly to the old clamp.
+    for (auto& tm : players_) tm.mana += tm.income * dt;
+    const int np = int(players_.size());
+    auto cap = [&](int i) { return std::max(players_[size_t(i)].storage, 100.0f); };
+    bool teamDone[kMaxPlayers] = {};
+    for (int lead = 0; lead < np; ++lead) {
+        int team = players_[size_t(lead)].team;
+        if (team < 0 || team >= kMaxPlayers || teamDone[team]) continue;
+        teamDone[team] = true;
+        float pool = 0;   // surplus above caps, gathered from the whole team
+        for (int i = 0; i < np; ++i)
+            if (players_[size_t(i)].team == team && players_[size_t(i)].mana > cap(i)) {
+                pool += players_[size_t(i)].mana - cap(i);
+                players_[size_t(i)].mana = cap(i);
+            }
+        for (int i = 0; i < np && pool > 0; ++i)
+            if (players_[size_t(i)].team == team) {
+                float give = std::min(cap(i) - players_[size_t(i)].mana, pool);
+                if (give > 0) { players_[size_t(i)].mana += give; pool -= give; }
+            }
+        // Any pool left (every member capped) is wasted, as before.
+    }
     // God favour: a player's priests channel its mana income into favour while any
     // is present; it fills toward kGodFavorNeeded, then godReady() lets the god come.
     if (godsEnabled_)
