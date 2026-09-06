@@ -561,6 +561,13 @@ public:
         playWorld("disco", x, z);
     }
 
+    // Likewise for the Shift+H headbang: a synthesised 10s heavy-metal track (distorted
+    // power-chord chugs, double-bass kick, snare + crash), played positionally.
+    void metalAt(float x, float z) {
+        if (!cache_.count("metal")) buildMetal();
+        playWorld("metal", x, z);
+    }
+
     // Move the world source of any currently-playing copies of `name` (e.g. keep the
     // disco pinned to a monarch that walks off). setListener re-pans from the new point.
     void repositionWorld(const std::string& name, float x, float z) {
@@ -661,6 +668,75 @@ public:
             pcm[size_t(i)] = int16_t(std::clamp(std::tanh(buf[size_t(i)] * g) * 0.9f, -1.0f, 1.0f) * 32767);
         cache_["disco"] = std::move(pcm);
         index_["disco"] = "disco";
+    }
+
+    void buildMetal() {
+        constexpr float PI = 3.14159265358979f;
+        const int SR = 11025;
+        const float BPM = 152.0f, beat = 60.0f / BPM, six = beat / 4;
+        const int N = int(SR * 10.0f);
+        std::vector<float> buf(size_t(N) + size_t(SR), 0.0f);
+        std::mt19937 rng(99887766u);
+        auto rnd = [&] { return float(rng()) / float(std::mt19937::max()) * 2.0f - 1.0f; };
+        auto place = [&](const std::vector<float>& s, float start) {
+            size_t i = size_t(start * SR);
+            for (size_t k = 0; k < s.size() && i + k < buf.size(); ++k) buf[i + k] += s[k];
+        };
+        auto sawv = [](float f, float t) { float p = f * t; return 2.0f * (p - std::floor(0.5f + p)); };
+        auto n2f = [](float semi) { return 110.0f * std::pow(2.0f, semi / 12.0f); };
+        // Distorted power chord (root + fifth + octave), palm-muted or ringing.
+        auto chug = [&](float root, float L, bool mute) {
+            int n = int(SR * L); std::vector<float> s(size_t(n), 0.0f);
+            float f5 = root * std::pow(2.0f, 7.0f / 12.0f), f8 = root * 2.0f, lp = 0.0f;
+            for (int i = 0; i < n; ++i) { float t = i / float(SR);
+                float x = sawv(root, t) + sawv(f5, t) + 0.7f * sawv(f8, t);
+                x = std::tanh(x * 7.0f);                              // heavy distortion
+                lp += 0.5f * (x - lp);                                // tame the fizz
+                float amp = mute ? std::exp(-t * 26.0f)
+                                 : std::min(1.0f, t * 400.0f) * std::exp(-t * 2.5f);
+                s[size_t(i)] = 0.42f * lp * amp; }
+            return s; };
+        auto kick = [&] {
+            int n = int(SR * 0.12f); std::vector<float> s(size_t(n), 0.0f); double ph = 0;
+            for (int i = 0; i < n; ++i) { float t = i / float(SR);
+                ph += 2.0 * PI * (150.0f * std::exp(-t * 55.0f) + 50.0f) / SR;
+                float click = t < 0.004f ? (1.0f - t / 0.004f) : 0.0f;
+                s[size_t(i)] = float(std::sin(ph)) * std::exp(-t * 22.0f) + 0.5f * click; }
+            return s; };
+        auto snare = [&] {
+            int n = int(SR * 0.18f); std::vector<float> s(size_t(n), 0.0f); double ph = 0;
+            for (int i = 0; i < n; ++i) { float t = i / float(SR);
+                ph += 2.0 * PI * 180.0f / SR;
+                s[size_t(i)] = (0.7f * rnd() + 0.4f * float(std::sin(ph))) * std::exp(-t * 26.0f); }
+            return s; };
+        auto crash = [&] {
+            int n = int(SR * 0.7f); std::vector<float> s(size_t(n), 0.0f);
+            for (int i = 0; i < n; ++i) { float t = i / float(SR);
+                s[size_t(i)] = 0.3f * (rnd() - 0.5f * rnd()) * std::exp(-t * 4.0f); }
+            return s; };
+        // Riff: root per bar (E-heavy with movement), galloping chugs + gallop kick.
+        float roots[6] = {n2f(-5), n2f(-5), n2f(-2), n2f(0), n2f(-5), n2f(3)};   // E E G A E C
+        for (int b = 0; b < 6; ++b) {
+            float b0 = float(b) * 4 * beat;
+            place(crash(), b0);
+            for (int bt = 0; bt < 4; ++bt) {
+                float t0 = b0 + bt * beat;
+                for (float off : {0.0f, 2 * six, 3 * six}) {   // dum da-da gallop
+                    place(chug(roots[b], (off == 0.0f ? beat * 0.5f : six * 0.9f), true), t0 + off);
+                    place(kick(), t0 + off);
+                }
+            }
+            place(snare(), b0 + beat);
+            place(snare(), b0 + 3 * beat);
+        }
+        float mx = 1e-6f;
+        for (int i = 0; i < N; ++i) mx = std::max(mx, std::fabs(buf[size_t(i)]));
+        float g = 1.5f / mx;
+        std::vector<int16_t> pcm(size_t(N), 0);
+        for (int i = 0; i < N; ++i)
+            pcm[size_t(i)] = int16_t(std::clamp(std::tanh(buf[size_t(i)] * g) * 0.92f, -1.0f, 1.0f) * 32767);
+        cache_["metal"] = std::move(pcm);
+        index_["metal"] = "metal";
     }
 
   public:
@@ -1516,7 +1592,8 @@ public:
     // faction playlist once the match starts. Called every frame; only (re)starts the
     // playlist on a state change so it doesn't restart the current track.
     int musicMode_ = 0;   // 0 = none yet, 1 = lobby, 2 = in-game
-    bool discoWas_[8] = {};   // per-player disco state, to fire the track once on start
+    bool discoWas_[8] = {};       // per-player disco state, to fire the track once on start
+    bool headbangWas_[8] = {};    // ...and the headbang state
 
     // On the rising edge of a player's disco (Shift+D), play the 10s disco loop as a
     // positional SFX from each of that player's dancing monarchs (enemies only if in
@@ -1539,6 +1616,27 @@ public:
                 }
             }
             discoWas_[p] = on;
+        }
+    }
+
+    // Same as discoSound but for the Shift+H headbang -> the heavy-metal track.
+    void headbangSound() {
+        for (int p = 0; p < 8 && p < world_.numPlayers(); ++p) {
+            bool on = world_.headbangActive(p);
+            if (on) {
+                float cx = 0, cz = 0; int n = 0;
+                for (const auto& u : world_.units()) {
+                    if (u.player != p || !u.alive() || !isMonarchType(u.type)) continue;
+                    if (!alliedToLocal(p) && !noFog_ && !world_.cellVisible(u.x, u.z)) continue;
+                    cx += u.x; cz += u.z; ++n;
+                }
+                if (n) {
+                    cx /= n; cz /= n;
+                    if (!headbangWas_[p]) sounds_.metalAt(cx, cz);
+                    else sounds_.repositionWorld("metal", cx, cz);
+                }
+            }
+            headbangWas_[p] = on;
         }
     }
 
@@ -3028,7 +3126,8 @@ public:
 
     void draw(int winW, int winH) {
         manageMusic();
-        discoSound();   // fire the disco track from a monarch when its player starts dancing
+        discoSound();     // fire the disco track from a monarch when its player starts dancing
+        headbangSound();  // ...and the metal track on headbang
         if (inLobbyPhase()) {
             // Render the whole lobby at 2x so its text/controls are large and legible;
             // it lays out in the halved logical space, and lbHot/lobbyInput divide the
@@ -3186,7 +3285,7 @@ public:
         auto special = [&](const tak::sim::Unit& u, const UnitGeom& g) {
             bool occluded = !g.canFly && g.occY < g.ay - 2.0f;
             bool conjuring = u.underConstruction && u.type;
-            return occluded || conjuring || dancing(u);   // dancers draw their glow
+            return occluded || conjuring || dancing(u) || headbanging(u);   // draw their glow
         };
 
         // Pass 1: every normal unit's ground shadows, batched. Soft blobs go into
@@ -4773,6 +4872,10 @@ private:
     bool dancing(const tak::sim::Unit& u) const {
         return isMonarchType(u.type) && world_.discoActive(u.player);
     }
+    // ...or headbanging to heavy metal (a monarch whose player hit Shift+H)?
+    bool headbanging(const tak::sim::Unit& u) const {
+        return isMonarchType(u.type) && world_.headbangActive(u.player);
+    }
 
     void buildUnitGeom(const tak::sim::Unit& u, UnitGeom& g, std::vector<Tri>& scratch) {
         g.verts.clear();
@@ -4875,6 +4978,17 @@ private:
             discoBob = std::fabs(std::sin(t * 8.0f)) * 11.0f * zm;    // bounce, px
             discoCol = discoHue(t * 0.8f);                           // body tint hue
             discoMix = 0.5f;
+        }
+        // Headbang emote (Shift+H): no spin -- a sharp downward nod synced to the metal
+        // beat (~152 BPM), the body whipping side to side and flashing red on each bang.
+        if (headbanging(u)) {
+            float ph = animClock_ * 2.533f * 6.2831853f;             // ~152 bangs/min
+            float bang = std::pow(std::max(0.0f, std::sin(ph)), 2.0f);
+            discoBob = -bang * 16.0f * zm;                           // dip DOWN (nod)
+            facing += std::sin(ph) * 0.55f;                          // hair-whip
+            discoCol = SDL_Color{210, 40, 40, 255};                 // deep metal red
+            discoMix = bang * 0.5f;                                  // flash on the bang
+            disco = true;                                            // reuse the tint path
         }
         bool mirror = false;
         SDL_Texture* atlas = (slot >= 0 && size_t(slot) < atlasTex_.size())
@@ -4988,6 +5102,32 @@ private:
             std::vector<SDL_Vertex> fan;
             fan.reserve(N * 3);
             SDL_Vertex ctr{{ax, ay}, {dc.r, dc.g, dc.b, 150}, {0, 0}};
+            auto rim = [&](float a) {
+                return SDL_Vertex{{ax + std::cos(a) * rad, ay + std::sin(a) * rad * 0.5f},
+                                  {dc.r, dc.g, dc.b, 0}, {0, 0}};
+            };
+            for (int i = 0; i < N; ++i) {
+                fan.push_back(ctr);
+                fan.push_back(rim(float(i) / N * 6.2831853f));
+                fan.push_back(rim(float(i + 1) / N * 6.2831853f));
+            }
+            SDL_BlendMode pbm;
+            SDL_GetRenderDrawBlendMode(ren_, &pbm);
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
+            SDL_RenderGeometry(ren_, nullptr, fan.data(), int(fan.size()), nullptr, 0);
+            SDL_SetRenderDrawBlendMode(ren_, pbm);
+        }
+        // Headbang: a red mosh-pit glow that flares on each downbeat.
+        if (headbanging(u)) {
+            float ph = animClock_ * 2.533f * 6.2831853f;
+            float bang = std::pow(std::max(0.0f, std::sin(ph)), 2.0f);
+            SDL_Color dc{Uint8(150 + 90 * bang), Uint8(20 + 20 * bang), 20, 255};
+            float rad = (float(std::max(u.type->footX, u.type->footZ)) * 12.0f + 22.0f)
+                        * (0.75f + 0.45f * bang) * zm;
+            const int N = 24;
+            std::vector<SDL_Vertex> fan;
+            fan.reserve(N * 3);
+            SDL_Vertex ctr{{ax, ay}, {dc.r, dc.g, dc.b, Uint8(120 + 100 * bang)}, {0, 0}};
             auto rim = [&](float a) {
                 return SDL_Vertex{{ax + std::cos(a) * rad, ay + std::sin(a) * rad * 0.5f},
                                   {dc.r, dc.g, dc.b, 0}, {0, 0}};
@@ -7112,6 +7252,14 @@ private:
             c.kind = tak::net::Cmd::Disco;
             issue(c);                             // issue() stamps c.player = localPlayer_
             notice_ = "DISCO TIME";
+            noticeTimer_ = 2;
+            return true;
+        }
+        if (key == SDLK_h && shift) {             // HEADBANG! your monarchs mosh 10s
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Headbang;
+            issue(c);
+            notice_ = "HEADBANG!!";
             noticeTimer_ = 2;
             return true;
         }

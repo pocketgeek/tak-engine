@@ -29,6 +29,7 @@ enum class Cmd : uint8_t {
     SetActive,     // onOffable unitId: targetId != 0 powers on, 0 powers down
     Repair,        // mobile builder unitId repairs damaged friendly targetId (restores
                    // HP at its build rate, draining mana)
+    Headbang,      // cosmetic emote: player's monarchs headbang to metal 10s (Shift+H)
 };
 
 struct Command {

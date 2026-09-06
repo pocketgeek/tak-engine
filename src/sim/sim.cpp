@@ -1461,6 +1461,16 @@ bool World::discoActive(int player) const {
            players_[size_t(player)].discoLeft > 0;
 }
 
+void World::startHeadbang(int player) {
+    if (player >= 0 && player < int(players_.size()))
+        players_[size_t(player)].headbangLeft = 10.0f;
+}
+
+bool World::headbangActive(int player) const {
+    return player >= 0 && player < int(players_.size()) &&
+           players_[size_t(player)].headbangLeft > 0;
+}
+
 void World::tickConstruction(Unit& b, float dt) {
     Unit* site = unit(b.buildSiteId);
     if (!site || !site->alive() || !site->underConstruction) {
@@ -1789,8 +1799,10 @@ void World::tick(float dt) {
     clock_ += dt;    // wall-clock since the match started (for god timing)
     // Cosmetic disco emote countdown (Shift+D). Deterministic across peers but not
     // hashed -- drives client-side monarch dancing only.
-    for (auto& tm : players_)
+    for (auto& tm : players_) {
         if (tm.discoLeft > 0) tm.discoLeft = std::max(0.0f, tm.discoLeft - dt);
+        if (tm.headbangLeft > 0) tm.headbangLeft = std::max(0.0f, tm.headbangLeft - dt);
+    }
 
     // Economy: recompute income/storage, apply income.
     for (auto& tm : players_) { tm.income = 0; tm.storage = 0; }
