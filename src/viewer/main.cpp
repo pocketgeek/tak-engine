@@ -1480,42 +1480,14 @@ public:
                    colorPickerClick(float(e.button.x), float(e.button.y))) {
             // colour picker swatch handled
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                   buildIconClick(float(e.button.x), float(e.button.y),
+                                  e.button.button == SDL_BUTTON_LEFT,
+                                  e.button.button == SDL_BUTTON_RIGHT)) {
+            // conjure/build icon (bottom-left, above the bar) handled
+        } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.y > winH - kBarH) {
-            // bottom bar: build-icon clicks; everything else is swallowed
-            bool lmb = e.button.button == SDL_BUTTON_LEFT;
-            bool rmb = e.button.button == SDL_BUTTON_RIGHT;
-            if (lmb || rmb) {
-                for (const auto& [r, bt] : iconRects_) {
-                    if (e.button.x < r.x || e.button.x > r.x + r.w ||
-                        e.button.y < r.y || e.button.y > r.y + r.h)
-                        continue;
-                    const auto* b = selectedBuilder();
-                    if (!b || !bt) break;
-                    uint16_t mod = SDL_GetModState();
-                    bool ctrl = (mod & KMOD_CTRL) != 0, shift = (mod & KMOD_SHIFT) != 0;
-                    // Placement (a manual click) is for STRUCTURES -- you place
-                    // buildings/lodestones -- and for MOBILE builders conjuring units
-                    // (e.g. Zhon's beast handlers): left-click arms placement, no queue.
-                    if (isStructure(bt) || !isStructure(b->type)) {
-                        if (lmb) placing_ = bt;
-                        break;
-                    }
-                    // A BUILDING conjuring a mobile unit uses a build QUEUE: left adds,
-                    // right removes; 1 by default, 5 with Shift, 10 with Ctrl+Shift.
-                    // Ctrl+left (no Shift) toggles infinite production.
-                    tak::net::Command c;
-                    c.unitId = b->id;
-                    std::snprintf(c.type, sizeof c.type, "%s", bt->id.c_str());
-                    if (lmb && ctrl && !shift) {
-                        c.kind = tak::net::Cmd::RepeatTrain;
-                    } else {
-                        c.kind = lmb ? tak::net::Cmd::Train : tak::net::Cmd::Unqueue;
-                        c.targetId = (ctrl && shift) ? 10 : shift ? 5 : 1;
-                    }
-                    issue(c);
-                    break;
-                }
-            }
+            // bottom bar: build icons already handled above; swallow the rest so a stray
+            // click on the bar chrome doesn't deselect / order into the world
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    (gui_.gadgets.empty()
                         ? orderColumnClick(float(e.button.x), float(e.button.y), winW)
@@ -6483,6 +6455,37 @@ private:
             } else {
                 pendingCmd_ = cmd;
             }
+            return true;
+        }
+        return false;
+    }
+
+    // Returns true if a click hit (and was handled by) a conjure/build icon. The icons
+    // sit above the info bar (not inside it), so this is hit-tested independently of the
+    // bottom-bar region -- placement arms for structures/mobile conjurers, else it
+    // trains/unqueues at a building (Ctrl toggles infinite, Shift/Ctrl+Shift = 5/10).
+    bool buildIconClick(float mx, float my, bool lmb, bool rmb) {
+        if (!lmb && !rmb) return false;
+        for (const auto& [r, bt] : iconRects_) {
+            if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+            const auto* b = selectedBuilder();
+            if (!b || !bt) return true;   // consume the click even if it can't act
+            uint16_t mod = SDL_GetModState();
+            bool ctrl = (mod & KMOD_CTRL) != 0, shift = (mod & KMOD_SHIFT) != 0;
+            if (isStructure(bt) || !isStructure(b->type)) {
+                if (lmb) placing_ = bt;   // manual placement (buildings / mobile conjurers)
+                return true;
+            }
+            tak::net::Command c;
+            c.unitId = b->id;
+            std::snprintf(c.type, sizeof c.type, "%s", bt->id.c_str());
+            if (lmb && ctrl && !shift) {
+                c.kind = tak::net::Cmd::RepeatTrain;
+            } else {
+                c.kind = lmb ? tak::net::Cmd::Train : tak::net::Cmd::Unqueue;
+                c.targetId = (ctrl && shift) ? 10 : shift ? 5 : 1;
+            }
+            issue(c);
             return true;
         }
         return false;
