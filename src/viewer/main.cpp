@@ -9003,8 +9003,56 @@ int main(int argc, char** argv) {
                    soundtest || misstest || creon || testbuild ||
                    (std::getenv("TAK_FFA") != nullptr);
 #endif
-    // main-loop lobby driver: 0 = UI-driven (public MP), 7 = single-player.
+    // Create the window + renderer up front so the front-end menu can drive the
+    // single-player / multiplayer setup that follows it.
+    if (shot.empty()) SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+        return 1;
+    }
+    std::string winTitle = std::string("takview ") + tak::kVersion;
+    SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
+                                       SDL_WINDOWPOS_CENTERED, winW, winH,
+                                       SDL_WINDOW_RESIZABLE);
+    Uint32 renFlags = SDL_RENDERER_SOFTWARE;
+    if (shot.empty()) renFlags = noVsync ? SDL_RENDERER_ACCELERATED
+                                         : SDL_RENDERER_PRESENTVSYNC;
+    SDL_Renderer* ren = SDL_CreateRenderer(win, -1, renFlags);
+    if (!ren) {
+        std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
+        return 1;
+    }
+    if (shot.empty()) SDL_RenderSetVSync(ren, noVsync ? 0 : 1);
+
+    // main-loop lobby driver: 0 = UI-driven lobby (browse/join/host), 7 = auto SP.
     int mpAutoMode = 0;
+    bool menuInteractive = false;   // menu single-player -> interactive lobby, not auto-play
+
+    // Front-end: the retail three-door main menu. Its choice drives the setup below
+    // (single-player -> local server + lobby; multiplayer -> connect + browser).
+    if (mode == "menu") {
+        if (dataRoot.empty()) { std::fprintf(stderr, "menu: needs --data <retail-install-dir>\n"); return 1; }
+        std::string menuServer;
+        tak::MainMenu::Choice choice;
+        {
+            tak::MainMenu menu(ren, vfs, dataRoot);
+            choice = menu.run(shot, &menuServer);
+        }
+        if (!shot.empty()) { SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
+        if (choice != tak::MainMenu::Choice::SinglePlayer &&
+            choice != tak::MainMenu::Choice::Multiplayer) {
+            SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0;  // exit/campaign/options
+        }
+        mode = "game";
+        if (args.empty()) args.push_back("athri cay");   // TODO: map picker (SP battle menu)
+        if (choice == tak::MainMenu::Choice::Multiplayer) {
+            serverHost = menuServer.empty() ? std::string("127.0.0.1") : menuServer;
+            if (serverPort == 7677 && menuServer.empty()) serverPort = 7677;
+        } else {
+            menuInteractive = true;   // single-player: local server, but stop in the lobby
+        }
+    }
+
     if (mode == "game" && serverHost.empty() && !mpHeadless && !localHarness) {
         // Single-player: auto-launch a private local server and play a 1-v-AI game
         // on it (the AI runs server-side). Not visible to other players.
@@ -9017,8 +9065,10 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::atexit(killLocalServer);
-        serverHost = "127.0.0.1"; serverPort = p; mpAutoMode = 7;
-        std::fprintf(stderr, "single-player: local server on port %d\n", p);
+        serverHost = "127.0.0.1"; serverPort = p;
+        mpAutoMode = menuInteractive ? 0 : 7;   // menu SP stops in the lobby; CLI SP auto-plays
+        std::fprintf(stderr, "single-player: local server on port %d%s\n", p,
+                     menuInteractive ? " (lobby)" : "");
     }
 
     // Connect to the multiplayer server, if requested.
@@ -9047,45 +9097,6 @@ int main(int argc, char** argv) {
         std::printf("connected to %s:%d as '%s'\n", serverHost.c_str(), serverPort, playerName.c_str());
     }
 
-
-    if (shot.empty()) SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-        std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-        return 1;
-    }
-    std::string winTitle = std::string("takview ") + tak::kVersion;
-    SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
-                                       SDL_WINDOWPOS_CENTERED, winW, winH,
-                                       SDL_WINDOW_RESIZABLE);
-    Uint32 renFlags = SDL_RENDERER_SOFTWARE;
-    if (shot.empty()) renFlags = noVsync ? SDL_RENDERER_ACCELERATED
-                                         : SDL_RENDERER_PRESENTVSYNC;
-    SDL_Renderer* ren = SDL_CreateRenderer(win, -1, renFlags);
-    if (!ren) {
-        std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
-        return 1;
-    }
-    // Vsync avoids tearing but, with double buffering, halves the frame rate the
-    // moment a frame overruns one refresh even when there's headroom. --novsync
-    // unlocks it (useful to see true throughput / for high-refresh displays).
-    if (shot.empty()) SDL_RenderSetVSync(ren, noVsync ? 0 : 1);
-
-    // Front-end: the retail three-door main menu (single-player / campaign /
-    // multiplayer). Data-driven from guis/mainmenu.gui with Bink door videos.
-    if (mode == "menu") {
-        if (dataRoot.empty()) { std::fprintf(stderr, "menu: needs --data <retail-install-dir>\n"); return 1; }
-        tak::MainMenu menu(ren, vfs, dataRoot);
-        tak::MainMenu::Choice choice = menu.run(shot);
-        if (shot.empty()) {
-            const char* names[] = {"none", "single-player", "campaign", "multiplayer", "options", "exit"};
-            std::fprintf(stderr, "menu: choice = %s\n", names[int(choice)]);
-            // TODO(next): dispatch single-player -> SP lobby, multiplayer -> server select.
-        }
-        SDL_DestroyRenderer(ren);
-        SDL_DestroyWindow(win);
-        SDL_Quit();
-        return 0;
-    }
 
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;

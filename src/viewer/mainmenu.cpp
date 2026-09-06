@@ -292,7 +292,8 @@ MainMenu::MainMenu(SDL_Renderer* ren, const hpi::Vfs& vfs, std::string install)
     : d_(new Impl(ren, vfs, std::move(install))) { d_->load(); }
 MainMenu::~MainMenu() { delete d_; }
 
-MainMenu::Choice MainMenu::run(const std::string& shotPath) {
+MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut) {
+    (void)serverOut;   // server-select screen: follow-up; MP defaults to localhost for now
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(d_->ren, &w, &h);
 

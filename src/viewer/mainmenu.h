@@ -28,8 +28,9 @@ public:
 
     // Run the front-end loop until the user picks a door/button or closes the
     // window. If shotPath is non-empty, render a single frame there and return None
-    // (headless screenshot for tests).
-    Choice run(const std::string& shotPath = "");
+    // (headless screenshot for tests). On a Multiplayer choice, *serverOut (if given)
+    // receives the chosen server address (empty = default/localhost).
+    Choice run(const std::string& shotPath = "", std::string* serverOut = nullptr);
 
 private:
     struct Impl;
