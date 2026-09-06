@@ -281,6 +281,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         } catch (const std::exception&) {}
     }
     world.enableGods(godSec);
+    world.setUnitCap(cfg.unitCap);
 
     // Assign the used slots to start positions (ring fallback if the map has too few).
     int used = 0;

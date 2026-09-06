@@ -58,6 +58,33 @@ cmake -B build -G Ninja
 cmake --build build
 ```
 
+### Cross-platform builds
+
+The engine builds for **Linux**, **Windows 11 (x64)**, and **macOS (Apple
+Silicon / ARM64)** from one source tree — the net layer abstracts POSIX sockets
+vs Winsock in `src/net/netcompat.h`, and process launch is the only other
+platform split (`fork`/`exec` vs `CreateProcess`, in `src/viewer/main.cpp`).
+
+- **Windows, cross-compiled from Fedora** with MinGW-w64:
+
+  ```sh
+  sudo dnf install mingw64-gcc-c++ mingw64-SDL2 mingw64-zlib mingw64-libjpeg-turbo
+  mingw64-cmake -B build-win -G Ninja -DBUILD_SHARED_LIBS=OFF
+  cmake --build build-win
+  ```
+
+  The GCC/C++ runtime is static-linked, so a Windows box needs only the exes plus
+  `SDL2.dll`, `libjpeg-62.dll`, and `zlib1.dll` (from the mingw sysroot `bin/`)
+  in the same folder.
+
+- **macOS ARM64** (on a Mac): `brew install ninja sdl2 jpeg-turbo`, then
+  `cmake -B build -G Ninja` and `cmake --build build`.
+
+CI builds both in `.github/workflows/`: `windows.yml` (MSYS2/MinGW on a Windows
+runner) and `macos.yml` (native `macos-14` Apple-silicon runner) each upload a
+binary artifact and run the determinism gates. `determinism.yml` guards
+cross-build lockstep for the sim.
+
 ## Game data
 
 Point the engine straight at a **retail install directory** with `--data` -- no
@@ -144,7 +171,7 @@ Hotkeys follow the game's `Keys.TDF`.
 | **Minimap orders** | with an order armed (**F**/**M**/**A**/**P**/**G**), click the minimap to issue it at that spot — e.g. **F** then a minimap click = fight-move across the map |
 | **Build queue** | at a training building: left-click **+1**, **Shift** **+5**, **Ctrl+Shift** **+10**; right-click removes the same; **Ctrl**+left toggles infinite production. Each icon shows its queued count. (A builder that *places* things — structures, or a mobile conjurer like a Beast Handler — arms placement instead: click to position.) |
 | **Reclaim** | with a mobile builder (any unit with `canreclaim`, monarchs included) selected, **right-click-drag** a box to clear it — the builder roams the area reclaiming trees, rocks, and buildings for mana (nearest first). Sacred Stones and Standing Stones are left alone. **Shift** appends the sweep to its orders. |
-| **Game** | **Pause** · **+/−** game speed (−10…+10; 0 = normal, +10 = 10×) · **F4** status/scoreboard · **F6** player-colour picker |
+| **Game** | **Pause** · **+/−** game speed (single-player: −10…+10, 0 = normal, +10 = 10×; in a net game only the **host** can change it, and only if the lobby's *in-game speed* is unlocked) · **F4** status/scoreboard · **F6** player-colour picker |
 | **Disco** 🪩 | **Shift+D** — your monarchs spin, bob, hue-cycle, and glow on a little dance floor for 10s, to a synthesised disco track that plays positionally from the monarch. Purely cosmetic, but synced over the lockstep so every player sees it. |
 | **Headbang** 🤘 | **Shift+H** — your monarchs headbang to a synthesised heavy-metal track (positional, from the monarch), nodding and flashing red on a mosh-pit glow for 10s. Also cosmetic and lockstep-synced. |
 
@@ -185,7 +212,12 @@ identical sim with only ~35-byte commands on the wire.
 - **Lobby.** The in-client lobby has a game browser, a create-game dialog
   (name/password/map, crusades & gods toggles), and a room where each player
   picks faction, colour, and team and readies up; the host opens/closes slots,
-  kicks, and starts.
+  kicks, and starts. The host also sets the **unit cap** — the per-player live-unit
+  limit (250 / 500 / 1000 / 2000 / 5000, default 2000; production and new builds
+  stall a player once they reach it) — and can **allow in-game speed changes** so
+  the host's **+/−** keys re-cadence the match live (0.5×–4×). Speed only changes
+  how fast ticks happen in wall-clock — the per-tick `dt` is fixed — so the sim
+  stays bit-identical and deterministic.
 - **Cross-build determinism.** The sim's trig is routed through a
   deterministic-math shim (`src/sim/detmath`), so lockstep holds across
   compilers and CPUs, not just the same binary. Everyone still needs the same

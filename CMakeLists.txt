@@ -42,6 +42,15 @@ add_library(tak-formats
 target_include_directories(tak-formats PUBLIC src)
 target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG)
 
+# Windows sockets: src/net (in tak-formats) uses Winsock2 -- link ws2_32 so it
+# propagates to takview and takserver. No-op on POSIX.
+if(WIN32)
+  target_link_libraries(tak-formats PUBLIC ws2_32)
+  # Fold the GCC/C++ runtime into each .exe so a Windows box needs no MinGW DLLs
+  # (only SDL2/jpeg/zlib remain, shipped alongside). -static also pulls winpthread.
+  add_link_options(-static-libgcc -static-libstdc++ -static)
+endif()
+
 # Determinism: the simulation (src/sim) must produce bit-identical results across
 # machines running the same binary for lockstep multiplayer. Disable floating-
 # point contraction (FMA fuses a*b+c differently on different CPUs) and never

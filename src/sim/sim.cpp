@@ -362,6 +362,7 @@ int World::spawn(const UnitType* type, float x, float z, float heading, int play
                      player, int(players_.size()));
         player = 0;
     }
+    players_[size_t(player)].unitCount++;   // keep the cap count exact within a tick
     u.player = player;
     u.type = type;
     u.x = x;
@@ -1270,6 +1271,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove)
         return 0;
+    if (atUnitCap(b->player)) return 0;   // at the unit cap: can't start a new build
     if (!canPlace(type, x, z)) return 0;
     int id = spawn(type, x, z, 3.14159f, b->player);
     Unit* site = unit(id);
@@ -1757,6 +1759,9 @@ void World::tickProduction(Unit& u, float dt) {
         }
         if (u.buildProgress < total) return;   // not done yet
     }
+    // At the per-player unit cap: hold the finished unit inside the building (no mana
+    // spent) until a slot frees, rather than popping the queue and spawning it.
+    if (atUnitCap(u.player)) return;
     // Finished: the conjured unit emerges just south of the footprint and walks to
     // a rally point. Hold it until that tile is clear so a repeat/queued build
     // doesn't stack units on top of each other -- but never wait forever (2.5s cap)
@@ -2313,8 +2318,10 @@ int World::updateOutcome() {
         if (u.alive() && u.type &&
             u.player >= 0 && u.player < int(players_.size()))
             ++aliveByPlayer[size_t(u.player)];
-    for (int p = 0; p < int(players_.size()); ++p)
+    for (int p = 0; p < int(players_.size()); ++p) {
         players_[size_t(p)].defeated = (aliveByPlayer[size_t(p)] == 0);
+        players_[size_t(p)].unitCount = aliveByPlayer[size_t(p)];   // re-sync the cap count
+    }
 
     // Count DISTINCT teams that still have a living unit (robust to any team id,
     // not just 0..n-1): a surviving player counts its team once -- the first time

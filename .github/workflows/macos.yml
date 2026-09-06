@@ -1,0 +1,54 @@
+name: macos
+
+# Native macOS ARM64 (Apple Silicon) build on GitHub's macos-14 runners. The
+# source is Unix-clean (BSD sockets, fork/exec, clock_gettime), so this is a plain
+# native build with Homebrew SDL2/jpeg. Also runs the two determinism gates to
+# confirm cross-platform lockstep parity with the Linux/Windows builds.
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tools/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/macos.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tools/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/macos.yml'
+  workflow_dispatch:
+
+jobs:
+  arm64:
+    runs-on: macos-14   # Apple Silicon (ARM64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install ninja sdl2 jpeg-turbo
+
+      - name: Configure
+        # jpeg-turbo (and zlib) are keg-only, so point CMake at the Homebrew prefixes.
+        run: >-
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="$(brew --prefix sdl2);$(brew --prefix jpeg-turbo);$(brew --prefix zlib)"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package
+        run: |
+          mkdir -p dist-macos
+          cp build/takview build/takserver dist-macos/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: takview-macos-arm64
+          path: dist-macos/
+
+      - name: Determinism gates (cross-platform parity)
+        run: |
+          ./build/detmath_test
+          ./build/sim_driver_equiv_test

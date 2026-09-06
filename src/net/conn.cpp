@@ -1,14 +1,7 @@
 #include "net/conn.h"
 
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "net/netcompat.h"
 
-#include <cerrno>
 #include <cstring>
 #include <utility>
 
@@ -16,9 +9,11 @@ namespace tak::net {
 
 void setupSocket(int fd) {
     int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
-    int fl = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof one);
+#ifdef __APPLE__
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, reinterpret_cast<const char*>(&one), sizeof one);
+#endif
+    sockSetNonBlock(fd);
 }
 
 Conn::~Conn() { closeNow(); }
@@ -35,10 +30,11 @@ Conn& Conn::operator=(Conn&& o) noexcept {
 }
 
 void Conn::closeNow() {
-    if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+    if (fd_ >= 0) { sockClose(fd_); fd_ = -1; }
 }
 
 bool Conn::connect(const std::string& host, uint16_t port, int timeoutMs) {
+    netStartup();
     addrinfo hints{}, *res = nullptr;
     hints.ai_family = AF_UNSPEC;       // IPv4 or IPv6
     hints.ai_socktype = SOCK_STREAM;
@@ -49,22 +45,22 @@ bool Conn::connect(const std::string& host, uint16_t port, int timeoutMs) {
     }
     bool connected = false;
     for (addrinfo* a = res; a && !connected; a = a->ai_next) {
-        int fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+        int fd = int(socket(a->ai_family, a->ai_socktype, a->ai_protocol));
         if (fd < 0) continue;
         // Blocking connect with a timeout via a temporary non-block + poll.
-        int fl = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, fl | O_NONBLOCK);
-        int r = ::connect(fd, a->ai_addr, a->ai_addrlen);
+        sockSetNonBlock(fd);
+        int r = ::connect(fd, a->ai_addr, socklen_t(a->ai_addrlen));
         if (r == 0) { connected = true; fd_ = fd; }
-        else if (errno == EINPROGRESS) {
-            pollfd pf{fd, POLLOUT, 0};
-            if (::poll(&pf, 1, timeoutMs) > 0 && (pf.revents & POLLOUT)) {
+        else if (sockInProgress(sockErr())) {
+            pollfd pf{};
+            pf.fd = fd; pf.events = POLLOUT;
+            if (TAK_POLL(&pf, 1, timeoutMs) > 0 && (pf.revents & POLLOUT)) {
                 int se = 0; socklen_t sl = sizeof se;
-                getsockopt(fd, SOL_SOCKET, SO_ERROR, &se, &sl);
+                getsockopt(fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&se), &sl);
                 if (se == 0) { connected = true; fd_ = fd; }
             }
         }
-        if (!connected) ::close(fd);
+        if (!connected) sockClose(fd);
     }
     freeaddrinfo(res);
     if (!connected) { err_ = "connect failed to " + host; return false; }
@@ -82,9 +78,10 @@ void Conn::send(Msg kind, const std::vector<uint8_t>& payload) {
 
 bool Conn::flushWrite() {
     while (txOff_ < txBuf_.size()) {
-        ssize_t n = ::send(fd_, txBuf_.data() + txOff_, txBuf_.size() - txOff_, MSG_NOSIGNAL);
+        long long n = ::send(fd_, reinterpret_cast<const char*>(txBuf_.data() + txOff_),
+                             int(txBuf_.size() - txOff_), MSG_NOSIGNAL);
         if (n > 0) { txOff_ += size_t(n); continue; }
-        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;   // socket full
+        if (n < 0 && sockWouldBlock(sockErr())) break;   // socket full
         err_ = "send failed";
         return false;
     }
@@ -93,13 +90,14 @@ bool Conn::flushWrite() {
 }
 
 bool Conn::recv() {
-    uint8_t buf[16384];
+    char buf[16384];
     for (;;) {
-        ssize_t n = ::recv(fd_, buf, sizeof buf, 0);
+        long long n = ::recv(fd_, buf, sizeof buf, 0);
         if (n > 0) { rxBuf_.insert(rxBuf_.end(), buf, buf + n); continue; }
         if (n == 0) { err_ = "peer closed"; return false; }
-        if (errno == EAGAIN || errno == EWOULDBLOCK) break;   // drained
-        if (errno == EINTR) continue;
+        int e = sockErr();
+        if (sockWouldBlock(e)) break;      // drained
+        if (sockInterrupted(e)) continue;
         err_ = "recv failed";
         return false;
     }
@@ -128,30 +126,30 @@ bool Conn::poll(Frame& out) {
 }
 
 int listenOn(uint16_t port, std::string& err) {
-    int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    netStartup();
+    int fd = int(socket(AF_INET6, SOCK_STREAM, 0));
     bool v6 = fd >= 0;
-    if (!v6) fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (!v6) fd = int(socket(AF_INET, SOCK_STREAM, 0));
     if (fd < 0) { err = "socket failed"; return -1; }
     int one = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&one), sizeof one);
     if (v6) {
         int off = 0;   // dual-stack: accept IPv4-mapped too
-        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof off);
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&off), sizeof off);
         sockaddr_in6 a{};
         a.sin6_family = AF_INET6; a.sin6_addr = in6addr_any; a.sin6_port = htons(port);
         if (bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
-            err = "bind failed"; ::close(fd); return -1;
+            err = "bind failed"; sockClose(fd); return -1;
         }
     } else {
         sockaddr_in a{};
         a.sin_family = AF_INET; a.sin_addr.s_addr = INADDR_ANY; a.sin_port = htons(port);
         if (bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
-            err = "bind failed"; ::close(fd); return -1;
+            err = "bind failed"; sockClose(fd); return -1;
         }
     }
-    if (listen(fd, 64) != 0) { err = "listen failed"; ::close(fd); return -1; }
-    int fl = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    if (listen(fd, 64) != 0) { err = "listen failed"; sockClose(fd); return -1; }
+    sockSetNonBlock(fd);
     return fd;
 }
 

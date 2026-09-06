@@ -69,6 +69,11 @@ public:
     void kick(int slot);
     void chat(const std::string& text);
     void startGame();
+    // Host: change room options. In the lobby the server rebroadcasts them; in-game
+    // only `speed` takes effect (re-cadences the sim), if speedUnlock was set.
+    void setGameOptions(const GameOptions& opts);
+    // Current game speed in tenths (10 = 1.0x), tracking in-game SpeedUpdate broadcasts.
+    uint8_t gameSpeed() const { return gameSpeed_; }
 
     const std::vector<GameInfo>& games() const { return games_; }
     const RoomView& room() const { return room_; }
@@ -126,6 +131,7 @@ private:
 
     std::vector<GameInfo> games_;
     RoomView room_;
+    uint8_t gameSpeed_ = 10;   // live game speed (from opts + in-game SpeedUpdate)
     std::vector<std::pair<std::string, std::string>> chat_;
 
     uint64_t dataHash_ = 0;      // local gameplay-data fingerprint (sent in Hello)

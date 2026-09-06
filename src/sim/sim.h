@@ -366,6 +366,10 @@ struct Player {
     float godFavor = 0;
     bool  godSummoned = false;
     int   kills = 0;     // enemy units this player has destroyed (F4 overlay)
+    // Live unit count, refreshed every tick by updateOutcome (and bumped by spawn
+    // within a tick). Derived from units_, so it is deterministic but NOT hashed;
+    // drives the unit-cap check and could feed the F4 overlay.
+    int   unitCount = 0;
     // Alliance layer above ownership: players sharing a team fight together and
     // share vision. Default (set at game setup) = the player's own index, i.e.
     // a free-for-all where everyone is on their own team. Immutable in v1 --
@@ -496,6 +500,16 @@ public:
     // fills after `appearSec` may manifest its god — the viewer polls godReady().
     void enableGods(float appearSec) { godsEnabled_ = true; godAppearTime_ = appearSec; }
     bool godsEnabled() const { return godsEnabled_; }
+
+    // Per-player unit limit: production and new builds stall a player once it has
+    // this many live units (0 = unlimited). Set at match start (from the lobby).
+    // The count it tests (Player::unitCount) is deterministic, so all peers agree.
+    void setUnitCap(int c) { unitCap_ = c; }
+    int unitCap() const { return unitCap_; }
+    bool atUnitCap(int player) const {
+        return unitCap_ > 0 && player >= 0 && player < int(players_.size()) &&
+               players_[size_t(player)].unitCount >= unitCap_;
+    }
     static constexpr float kGodFavorNeeded = 3000.0f;
     bool godReady(int t) const {
         return godsEnabled_ && !players_[size_t(t)].godSummoned &&
@@ -645,6 +659,7 @@ private:
     }();
     int winningTeam_ = -1;
     bool godsEnabled_ = false;
+    int unitCap_ = 0;                 // per-player live-unit limit (0 = unlimited)
     float godAppearTime_ = 1e9f, clock_ = 0;
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
     int pathBudget_ = 0;         // A* repaths still allowed this tick (crowd throttle)

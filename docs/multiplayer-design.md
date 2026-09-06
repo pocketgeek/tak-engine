@@ -305,10 +305,11 @@ silently skipped.)
 | `Hello` / `Welcome` | proto ver, build id, data hash / assigned session id | version + data gate |
 | `SetName` | display name | no accounts in v1 |
 | `ListGames` / `GameList` | — / entries: id, name, map, players/capacity, state (lobby/running), passworded, uptime | running games listed but unjoinable |
-| `CreateGame` | name, password?, map id, options (crusades, gods, speed, forfeit rule) | creator becomes host |
+| `CreateGame` | name, password?, map id, options (crusades, gods, speed, unit cap, forfeit rule) | creator becomes host |
 | `JoinGame` / `JoinResult` | game id, password? / slot or error | error: full, bad password, running |
 | `SlotUpdate` | slot #, {human/AI/closed}, faction, color, team, ready | players set their own; host sets any (host resolves conflicts, assigns AIs) |
 | `LobbyState` | full slot table + settings | broadcast on every change |
+| `SetGameOptions` | full `GameOptions` | host only; in the lobby the server adopts them and rebroadcasts `LobbyState`; in-game only `speed` takes effect (if `speedUnlock`), pushed via `SpeedUpdate` |
 | `Chat` | text | lobby and in-game |
 | `Kick` | slot # | host only |
 | `StartGame` | — | host only; server validates: every human ready, colors unique, players ≤ map start positions |
@@ -323,6 +324,7 @@ silently skipped.)
 | `StateHash` | tick u32, hash u64 | client → server, every 30 ticks |
 | `Desynced` | tick, reason | server → one client; client auto-reconnects |
 | `Pause` / `Resume` | cause (host / drop-grace), pausing player | server stops closing ticks; budgets in §4 |
+| `SpeedUpdate` | speed (tenths, 10 = 1×) | server → all; host changed speed mid-game (needs `speedUnlock`); re-cadences tick pacing, not the per-tick `dt`, so the sim stays deterministic |
 | `PlayerStatus` | slot, {connected, dropped, left} + ping | informational only — never sim-affecting (sim-affecting lifecycle is an Event in the bundle) |
 | `Rejoin` | game id, resume token | then `LogChunk`* (compressed) → live bundles |
 | `Bye` | reason | clean shutdown both ways |
