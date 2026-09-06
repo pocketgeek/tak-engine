@@ -55,6 +55,16 @@ jobs:
           path: dist-macos/
 
       - name: Determinism gates (cross-platform parity)
+        # Assert the detmath golden matches the baseline -- the hard cross-platform
+        # lockstep gate, here on real Apple-silicon ARM64. Update `expected` only if
+        # src/sim/detmath.cpp deliberately changes it (then also the Linux golden).
         run: |
-          ./build/detmath_test
+          expected=ab1ef54ae324bd0e
+          ./build/detmath_test    # accuracy vs libm (fails on tolerance)
+          got=$(./build/detmath_test --hash | grep -oE '[0-9a-f]{16}')
+          echo "detmath golden: $got (expected $expected)"
+          if [ "$got" != "$expected" ]; then
+            echo "::error::detmath golden mismatch -- cross-platform lockstep broken"
+            exit 1
+          fi
           ./build/sim_driver_equiv_test

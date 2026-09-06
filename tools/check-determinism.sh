@@ -9,9 +9,10 @@
 #      assert every build emits the SAME golden hash.
 #
 # A leg is SKIPPED (not failed) when its toolchain is absent, so this runs
-# anywhere. In CI, install clang + g++-aarch64-linux-gnu + qemu-user-static so
-# all three legs (second compiler, cross-arch) actually run. Exits non-zero if
-# the guard trips or any two builds disagree.
+# anywhere. CI installs clang for the gcc-vs-clang leg; the aarch64/qemu leg runs
+# only where that toolchain is present locally (real ARM64 lockstep parity is
+# covered natively by the Apple-silicon macos CI). Exits non-zero if the guard
+# trips or any two builds disagree.
 
 set -eu
 cd "$(dirname "$0")/.."
