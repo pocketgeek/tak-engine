@@ -131,8 +131,8 @@ if(UNIX AND NOT APPLE)
   set(CPACK_PACKAGE_CONTACT "Curtis Edge <pocket_geek@pgnet.us>")
   set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 
-  # No LICENSE file yet -- set this (and add a LICENSE) once the project declares one.
-  set(CPACK_RPM_PACKAGE_LICENSE "Unspecified")
+  set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-or-later")   # SPDX identifier
+  set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 
   # Stable, version-less asset names so the README's releases/latest/download links
   # stay valid across versions (the package's internal version is ${PROJECT_VERSION}).
