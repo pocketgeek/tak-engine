@@ -1732,9 +1732,10 @@ public:
     }
     void setMpMapId(const std::string& id) { mpMapId_ = id; }
     void setResumePath(const std::string& p) { mpResumePath_ = p; }
-    // Single-player from the menu: open the lobby on the Create screen (a private
-    // game's browser is empty by design), where the map picker + AI slots live.
-    void setLobbyStartCreate() { lobbyScreen_ = LobbyScreen::Create; }
+    // Single-player from the menu: it's a private local game, so open the lobby on
+    // the Create screen (the browser is empty by design) and mark it single-player
+    // (labels change, no password / no game browser).
+    void setSinglePlayer() { lobbyScreen_ = LobbyScreen::Create; singlePlayer_ = true; }
     // Return-to-menu request: a lobby/in-game action sets this; main()'s outer loop
     // tears the session down and re-shows the front-end menu.
     void requestMenu() { menuRequested_ = true; }
@@ -5558,6 +5559,7 @@ private:
     // interactive lobby UI state
     enum class LobbyScreen { Browser, Create } lobbyScreen_ = LobbyScreen::Browser;
     bool menuRequested_ = false;   // set by a MAIN MENU action -> main() returns to the front-end
+    bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
@@ -7716,8 +7718,8 @@ private:
         SDL_RenderClear(ren_);
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         float cx = winW / 2.0f;
-        blockText("TA:KINGDOMS  MULTIPLAYER", cx - blockWidth("TA:KINGDOMS  MULTIPLAYER", 2.6f) / 2,
-                  24, 2.6f, {210, 200, 150, 255});
+        const char* title = singlePlayer_ ? "SINGLE PLAYER VS AI" : "TA:KINGDOMS  MULTIPLAYER";
+        blockText(title, cx - blockWidth(title, 2.6f) / 2, 24, 2.6f, {210, 200, 150, 255});
         if (!mp_) return;
         auto st = mp_->state();
         if (st == tak::net::MpClient::State::Connecting) {
@@ -7781,9 +7783,10 @@ private:
     void drawCreate(int winW, int winH) {
         (void)winW; (void)winH;
         float x = 80, y = 90;
-        blockText("CREATE GAME", x, y, 2.2f, {200, 205, 220, 255}); y += 40;
+        blockText(singlePlayer_ ? "SINGLE PLAYER VS AI" : "CREATE GAME", x, y, 2.2f,
+                  {200, 205, 220, 255}); y += 40;
         lbField(x, y, 260, "GAME NAME", createName_, 1); y += 46;
-        lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 46;
+        if (!singlePlayer_) { lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 46; }
         blockText(std::string("MAP: ") + mpMapId_, x, y, 1.8f, {180, 185, 195, 255}); y += 30;
         lbBtn(x, y, 150, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
               [this] { createCrusades_ = !createCrusades_; }); y += 34;
@@ -7802,7 +7805,8 @@ private:
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity());
             lobbyScreen_ = LobbyScreen::Browser;
         });
-        lbBtn(x + 132, y, 110, 30, "BROWSER", true, [this] { lobbyScreen_ = LobbyScreen::Browser; });
+        if (!singlePlayer_)   // a private single-player game has no browser to go back to
+            lbBtn(x + 132, y, 110, 30, "BROWSER", true, [this] { lobbyScreen_ = LobbyScreen::Browser; });
         lbBtn(x, y + 40, 242, 26, "MAIN MENU", true, [this] { menuRequested_ = true; });
 
         // Map picker (right column): a paged, clickable list of playable maps.
@@ -9200,7 +9204,7 @@ int main(int argc, char** argv) {
             if (mp) {
                 gameView->setMpClient(mp.get());
                 gameView->setMpMapId(args[0]);
-                if (menuInteractive) gameView->setLobbyStartCreate();   // menu SP: open on Create
+                if (menuInteractive) gameView->setSinglePlayer();   // menu SP: SP-flavoured lobby, Create-first
                 if (const char* rp = std::getenv("TAK_RESUME")) gameView->setResumePath(rp);
             }
             // Never let the window shrink below what the widest build-icon row

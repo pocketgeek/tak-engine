@@ -67,6 +67,7 @@ struct MainMenu::Impl {
     Impl(SDL_Renderer* r, const hpi::Vfs& v, std::string in)
         : ren(r), vfs(v), install(std::move(in)) {}
     ~Impl() {
+        if (musicDev) { SDL_CloseAudioDevice(musicDev); }
         if (bg) SDL_DestroyTexture(bg);
         for (auto& d : doors) { if (d.gaf) SDL_DestroyTexture(d.gaf);
                                 if (d.vtex) SDL_DestroyTexture(d.vtex); }
@@ -228,6 +229,8 @@ struct MainMenu::Impl {
                 bt.tex[i] = gafTex(g->imgs[size_t(i)].gaf, g->imgs[size_t(i)].seq, g->imgs[size_t(i)].frame);
             buttons.push_back(std::move(bt));
         }
+
+        startMusic(15);   // menu / front-end background track
     }
 
     // ---- render ---------------------------------------------------------------
@@ -262,6 +265,34 @@ struct MainMenu::Impl {
             SDL_FRect r = toScreen(nat, s, ox, oy);
             SDL_RenderCopyF(ren, t, nullptr, &r);
         }
+    }
+
+    // ---- menu background music ------------------------------------------------
+    SDL_AudioDeviceID musicDev = 0;
+    std::vector<uint8_t> musicPcm;   // one looping track, in the device's format
+
+    // Stream music/track<n>.wav on a loop. Independent of GameView's SoundBank (the
+    // menu and the game never run at once), so it opens/closes its own audio device.
+    void startMusic(int track) {
+        if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
+        std::vector<uint8_t> raw;
+        try { raw = vfs.read("music/track" + std::to_string(track) + ".wav"); } catch (...) { return; }
+        SDL_RWops* rw = raw.empty() ? nullptr : SDL_RWFromConstMem(raw.data(), int(raw.size()));
+        SDL_AudioSpec wav{}; Uint8* buf = nullptr; Uint32 len = 0;
+        if (!rw || !SDL_LoadWAV_RW(rw, 1, &wav, &buf, &len)) return;
+        musicPcm.assign(buf, buf + len);
+        SDL_FreeWAV(buf);
+        SDL_AudioSpec want = wav, have{};   // play the wav in its own format (queued)
+        want.callback = nullptr;
+        musicDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+        if (!musicDev) { musicPcm.clear(); return; }
+        SDL_QueueAudio(musicDev, musicPcm.data(), Uint32(musicPcm.size()));
+        SDL_PauseAudioDevice(musicDev, 0);
+    }
+    void pollMusic() {   // re-queue before it drains so the track loops seamlessly
+        if (musicDev && !musicPcm.empty() &&
+            SDL_GetQueuedAudioSize(musicDev) < Uint32(musicPcm.size() / 2))
+            SDL_QueueAudio(musicDev, musicPcm.data(), Uint32(musicPcm.size()));
     }
 
     // ---- minimal block font + multiplayer server-select overlay ---------------
@@ -415,6 +446,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         double dt = double(now - prev) / freq;
         prev = now;
         for (auto& dr : d_->doors) d_->updateDoor(dr, dt);
+        d_->pollMusic();
         d_->render(w, h);
         if (d_->serverSelect) d_->renderServerSelect(w, h);
         SDL_RenderPresent(d_->ren);
