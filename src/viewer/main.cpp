@@ -1897,9 +1897,10 @@ public:
             cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team};
             colorSlot_[i & 7] = s.color % 10;
             playerAi_[i & 7] = (s.type == 2);
-            playerName_[i & 7] = s.type == 2 ? ("AI " + std::to_string(i + 1))
-                                 : s.name.empty() ? ("Player " + std::to_string(i + 1))
-                                                  : s.name;
+            playerName_[i & 7] = !s.name.empty()
+                                     ? s.name   // human name, or the AI's random name
+                                     : s.type == 2 ? ("AI " + std::to_string(i + 1))
+                                                   : ("Player " + std::to_string(i + 1));
         }
         auto spots = tak::sim::setupMatch(world_, registry_, cfg);
         // client-only presentation
@@ -7384,7 +7385,9 @@ private:
                     mp_->setSlot(i, nt, s2.faction, s2.color, s2.team, 0); }});
             }
             if (s.type == 1) blockText(s.name, x + 100, y + 8, 1.8f, {225, 228, 236, 255});
-            else if (s.type == 2) blockText("Computer", x + 100, y + 8, 1.8f, {210, 200, 150, 255});
+            else if (s.type == 2)
+                blockText(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.8f,
+                          {210, 200, 150, 255});
             // faction / color / team edit: your own row, or (host) any AI row.
             bool canEdit = mine || (host && s.type == 2);
             blockText(factionName(s.faction), x + 260, y + 8, 1.6f, {200, 205, 215, 255});
