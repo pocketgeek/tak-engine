@@ -97,6 +97,9 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::SetActive:
             if (owns(c.unitId)) world.setActive(c.unitId, c.targetId != 0);
             break;
+        case Cmd::Repair:
+            if (owns(c.unitId)) { redirect(); world.repair(c.unitId, c.targetId, c.queue); }
+            break;
     }
 }
 

@@ -1299,6 +1299,7 @@ void World::cancelBuilds(int builderId) {
     b->buildOrders.clear();
     b->reclaimId = 0;            // a fresh move/attack/stop drops any reclaim job
     b->reclaimQueue.clear();
+    b->repairId = 0;             // ...and any repair job
     if (b->buildSiteId) {
         Unit* site = unit(b->buildSiteId);
         // A site that never actually started building is just a ghost — remove
@@ -1403,6 +1404,51 @@ void World::tickReclaim(Unit& b, float dt) {
         }
         advance();
     }
+}
+
+void World::repair(int builderId, int targetId, bool queue) {
+    (void)queue;
+    Unit* b = unit(builderId);
+    Unit* t = unit(targetId);
+    if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove) return;
+    if (!t || !t->alive() || !t->type || t->id == b->id || t->underConstruction ||
+        !allied(t->player, b->player) || t->hp >= t->type->maxHp)
+        return;
+    b->repairId = targetId;
+    order(builderId, t->x, t->z, false);   // walk to it; tickRepair takes over
+}
+
+// A builder repairs a damaged friendly: restores HP at the same rate it would build
+// the unit (buildTime / workerTime), draining the owner's mana proportional to the
+// HP restored -- pauses if the mana runs out.
+void World::tickRepair(Unit& b, float dt) {
+    Unit* t = unit(b.repairId);
+    if (!b.type) { b.repairId = 0; return; }
+    if (!t || !t->alive() || !t->type || t->underConstruction || t->embarked() ||
+        !allied(t->player, b.player) || t->hp >= t->type->maxHp) {
+        b.repairId = 0;
+        return;
+    }
+    float dx = t->x - b.x, dz = t->z - b.z;
+    float half = 16.0f * float(std::max(t->type->footX, t->type->footZ)) / 2;
+    float reach = std::max(half + 40.0f,
+                           b.type->buildDist > 0 ? b.type->buildDist + half : 0.0f);
+    if (dx * dx + dz * dz > reach * reach) {
+        if (b.orders.empty()) order(b.id, t->x, t->z, false);   // (re)walk toward it
+        return;
+    }
+    b.orders.clear();
+    b.speed = 0;
+    float want = detmath::atan2(dx, dz);
+    b.heading += std::clamp(angleDiff(want, b.heading), -b.type->turnRate * dt,
+                            b.type->turnRate * dt);
+    float total = t->type->buildTime / std::max(b.type->workerTime, 0.01f);
+    Player& tm = players_[size_t(b.player)];
+    float cost = t->type->buildCost * dt / std::max(total, 0.01f);
+    if (tm.mana < cost) return;   // can't afford: pause the repair
+    tm.mana -= cost;
+    t->hp = std::min(t->type->maxHp, t->hp + t->type->maxHp * dt / std::max(total, 0.01f));
+    if (t->hp >= t->type->maxHp) b.repairId = 0;
 }
 
 void World::startDisco(int player) {
@@ -1806,6 +1852,7 @@ void World::tick(float dt) {
         Unit& u = units_[i];
         if (u.alive() && u.type && u.buildSiteId) tickConstruction(u, dt);
         else if (u.alive() && u.type && u.reclaimId) tickReclaim(u, dt);
+        else if (u.alive() && u.type && u.repairId) tickRepair(u, dt);
     }
     for (auto& u : units_)
         if (u.alive() && u.type && u.underConstruction && !u.beingBuilt)
@@ -2210,6 +2257,7 @@ uint64_t World::stateHash() const {
         // divergence in them must fault directly rather than diffusing into positions.
         mix(uint64_t(uint32_t(u.stance)));
         mix(uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
+        mix(uint64_t(uint32_t(u.repairId)));   // build-power target -> HP/mana divergence
     }
     // Projectiles: count alone hides same-count divergence, so fold owner and
     // position of each in flight (mixf hashes the exact bits -- deterministic

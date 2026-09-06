@@ -27,6 +27,8 @@ enum class Cmd : uint8_t {
                    // 2=passive) -- gates auto-acquire and chase leash
     Cloak,         // canCloak unitId: targetId != 0 enables cloaking, 0 disables
     SetActive,     // onOffable unitId: targetId != 0 powers on, 0 powers down
+    Repair,        // mobile builder unitId repairs damaged friendly targetId (restores
+                   // HP at its build rate, draining mana)
 };
 
 struct Command {

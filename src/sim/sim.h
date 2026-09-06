@@ -238,6 +238,7 @@ struct Unit {
     std::deque<BuildOrder> buildOrders;   // builder: queued (shift) builds
     int reclaimId = 0;                 // builder: feature being reclaimed (0 = none)
     std::deque<int> reclaimQueue;      // builder: queued area-reclaim feature ids
+    int repairId = 0;                  // builder: damaged friendly being repaired (0 = none)
     int inTransport = 0;   // id of carrying transport, 0 = none
     std::vector<int> cargo;
     std::deque<Order> orders;
@@ -433,6 +434,10 @@ public:
     // Order a mobile builder to reclaim feature `featureId` (queue = append to its
     // reclaim queue, for an area drag). Grants the feature's mana as it consumes it.
     void reclaim(int builderId, int featureId, bool queue);
+    // Order a mobile builder to repair damaged friendly `targetId` (restores HP at
+    // the builder's work rate, draining mana proportionally). tickRepair runs it.
+    void repair(int builderId, int targetId, bool queue);
+    void tickRepair(Unit& b, float dt);
     // True if (x,z) lies over water (for choosing the water impact effect).
     bool isWater(float x, float z) const {
         if (depth_.empty()) return false;
