@@ -507,8 +507,9 @@ public:
         dev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &spec_,
                                    SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
         chan_ = dev_ ? (spec_.channels ? spec_.channels : 2) : 1;
-        std::fprintf(stderr, "audio: %d output channels%s\n", chan_,
-                     chan_ >= 4 ? " (surround: front/rear enabled)" : "");
+        std::fprintf(stderr, "audio: %d output channels%s%s\n", chan_,
+                     chan_ >= 4 ? " (surround: front/rear enabled)" : "",
+                     (chan_ == 6 || chan_ == 8) ? ", LFE subwoofer driven" : "");
         if (dev_) SDL_PauseAudioDevice(dev_, 0);
     }
 
@@ -636,16 +637,21 @@ private:
         std::memset(out, 0, size_t(n) * 2);
         int ch = std::max(chan_, 1);
         int frames = n / ch;
+        int lfe = (ch == 6 || ch == 8) ? 3 : -1;   // 5.1/7.1 LFE (subwoofer) channel
+        if (lfe >= 0) lfeMono_.assign(size_t(frames), 0);   // full-range mono for the sub
         auto add = [&](int f, int ci, int v) {
             int idx = f * ch + ci;
             out[idx] = int16_t(std::clamp(out[idx] + v, -32768, 32767));
         };
-        // Background music bed (quieter than SFX), spread across all speakers.
+        // Background music bed (quieter than SFX), spread across the main speakers --
+        // NOT the LFE, which gets the low-passed sub feed instead.
         for (int f = 0; f < frames; ++f) {
             if (musicPos_ >= music_.size()) { musicDone_ = true; break; }
             int m = (music_[musicPos_++] * musicVol_) / 256;
             int mc = m / (ch > 2 ? 2 : 1);   // don't get louder with more speakers
-            for (int ci = 0; ci < ch; ++ci) add(f, ci, mc);
+            for (int ci = 0; ci < ch; ++ci)
+                if (ci != lfe) add(f, ci, mc);
+            if (lfe >= 0) lfeMono_[size_t(f)] += m;
         }
         // Positional SFX: pan each into the speaker layout.
         float g[8];
@@ -656,6 +662,17 @@ private:
                 int s = (*c.data)[c.pos] / 2;
                 for (int ci = 0; ci < ch; ++ci)
                     if (g[ci] != 0.0f) add(f, ci, int(s * g[ci]));
+                if (lfe >= 0) lfeMono_[size_t(f)] += s;
+            }
+        }
+        // Subwoofer: one-pole low-pass of the mono mix (~110 Hz cutoff at 11025 Hz),
+        // fed into the LFE channel so a 5.1/7.1 rig drives the sub directly.
+        if (lfe >= 0) {
+            constexpr float kAlpha = 0.06f;   // 1/(1 + fs/(2*pi*fc)), fc ~= 110 Hz
+            constexpr float kGain = 0.7f;     // sub level (headroom for stacked bass)
+            for (int f = 0; f < frames; ++f) {
+                lpfState_ += kAlpha * (float(lfeMono_[size_t(f)]) - lpfState_);
+                add(f, lfe, int(lpfState_ * kGain));
             }
         }
     }
@@ -744,6 +761,10 @@ private:
     SDL_AudioSpec spec_{};
     int chan_ = 1;              // output channel count (2=stereo, 4/6/8=surround)
     bool verbose_ = false;
+    // Subwoofer (LFE) feed: a one-pole low-pass of the full mono mix, driven into the
+    // 5.1/7.1 LFE channel. lpfState_ persists across callbacks (the filter's memory).
+    float lpfState_ = 0;
+    std::vector<int> lfeMono_;   // per-callback mono accumulator (reused, no hot alloc)
 };
 
 // Sound classes: gamedata/soundclasses/*.tdf map a class to event ->
