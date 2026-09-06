@@ -7597,6 +7597,7 @@ private:
             if (mp_ && !playerName_[t & 7].empty()) {
                 s = playerName_[t & 7];
                 if (s.size() > 12) s = s.substr(0, 12);
+                if (playerAi_[t & 7]) s = "AI - " + s;   // computer opponents: "AI - <name>"
             } else {
                 s = sd[t].empty() ? std::string("--") : sd[t];
                 std::transform(s.begin(), s.end(), s.begin(), ::toupper);
