@@ -6255,7 +6255,8 @@ private:
 
     // (gadget index, command char) for each command button to show for the current
     // selection. cmd: 'm'/'a'/'p'/'g' arm pendingCmd_; 's' = Stop (immediate);
-    // '1'/'2'/'3' = weapon slot 0/1/2.
+    // '1'/'2'/'3' = weapon slot; 'O'/'D'/'H' = stance offensive/defensive/passive;
+    // 'K'/'k' = cloak on/off; 'N'/'F' = active on/off (all immediate toggles).
     std::vector<std::pair<int, char>> guiActiveButtons() const {
         std::vector<std::pair<int, char>> out;
         if (gui_.gadgets.empty() || selection_.empty()) return out;
@@ -6283,6 +6284,21 @@ private:
         if (front->type->canTransport) {
             if (int(front->cargo.size()) < front->type->transportCap) add("LOAD", 'l');
             if (!front->cargo.empty()) add("UNLOAD", 'u');
+        }
+        // Combat stance radio (any mobile armed unit): offensive/defensive/passive.
+        if (mobile && armed) {
+            add("Offensive", 'O');
+            add("Defensive", 'D');
+            add("Passive", 'H');
+        }
+        // Cloak toggle (cloakers) OR power on/off (onOffable) -- they share the 303
+        // row, and a unit has at most one of the two capabilities.
+        if (front->type->canCloak) {
+            add("Uncloaked", 'k');
+            add("Cloaked", 'K');
+        } else if (front->type->onOffable) {
+            add("Inactive", 'F');
+            add("Active", 'N');
         }
         int nw = int(front->type->weapons.size());
         if (nw > 1) {
@@ -6322,18 +6338,30 @@ private:
             bool active = false;
             if (cmd >= '1' && cmd <= '3')
                 active = front && front->weaponSlot == (cmd - '1');
+            else if (cmd == 'O') active = front && front->stance == 0;
+            else if (cmd == 'D') active = front && front->stance == 1;
+            else if (cmd == 'H') active = front && front->stance == 2;
+            else if (cmd == 'K') active = front && front->cloakOn;
+            else if (cmd == 'k') active = front && !front->cloakOn;
+            else if (cmd == 'N') active = front && front->active;
+            else if (cmd == 'F') active = front && !front->active;
             else if (cmd != 's')
                 active = pendingCmd_ == cmd;
-            // The command-button GAFs store frame 0 = empty recessed slot, frame 1 =
-            // glyph (normal), frame 2 = glyph (hilite/pressed). imgs[] mirrors those,
-            // so the available button is imgs[1] and hover/armed is imgs[2].
-            SDL_Texture* normal = tex.size() > 1 && tex[1] ? tex[1]
-                                  : !tex.empty()          ? tex[0]
-                                                          : nullptr;
-            SDL_Texture* hi = tex.size() > 2 && tex[2] ? tex[2] : normal;
-            SDL_Texture* t = (active || hot) ? hi : normal;
+            // Frame semantics differ by button family (both list imgs = frames 0,1,2):
+            //  - order buttons: 0 = empty, 1 = glyph normal, 2 = glyph hilite;
+            //  - radio/toggle buttons (stance/cloak/active): 1 = SELECTED (gold),
+            //    2 = normal (dim). So the lit face swaps between the two.
+            bool toggle = cmd == 'O' || cmd == 'D' || cmd == 'H' || cmd == 'K' ||
+                          cmd == 'k' || cmd == 'N' || cmd == 'F';
+            auto tx = [&](int i) -> SDL_Texture* {
+                return i >= 0 && i < int(tex.size()) ? tex[size_t(i)] : nullptr;
+            };
+            SDL_Texture* lit = toggle ? (tx(1) ? tx(1) : tx(2)) : (tx(2) ? tx(2) : tx(1));
+            SDL_Texture* dim = toggle ? (tx(2) ? tx(2) : tx(1))
+                                      : (tx(1) ? tx(1) : tx(0));
+            SDL_Texture* t = (active || hot) ? lit : dim;
             if (t) SDL_RenderCopyF(ren_, t, nullptr, &r);
-            if (active && (!t || t == normal)) {   // emphasise the armed order
+            if (active && (!t || t == dim)) {   // emphasise when there's no lit face
                 SDL_SetRenderDrawColor(ren_, 255, 220, 90, 255);
                 SDL_RenderDrawRectF(ren_, &r);
             }
@@ -6397,12 +6425,32 @@ private:
                 }
             } else if (cmd >= '1' && cmd <= '3') {
                 selectWeapon(cmd - '1');
+            } else if (cmd == 'O' || cmd == 'D' || cmd == 'H') {
+                int st = cmd == 'O' ? 0 : cmd == 'D' ? 1 : 2;
+                issuePerUnit(tak::net::Cmd::Stance, st);
+            } else if (cmd == 'K' || cmd == 'k') {
+                issuePerUnit(tak::net::Cmd::Cloak, cmd == 'K' ? 1 : 0);
+            } else if (cmd == 'N' || cmd == 'F') {
+                issuePerUnit(tak::net::Cmd::SetActive, cmd == 'N' ? 1 : 0);
             } else {
                 pendingCmd_ = cmd;
             }
             return true;
         }
         return false;
+    }
+
+    // Issue a per-unit toggle command (targetId = value) to every selected own unit.
+    void issuePerUnit(tak::net::Cmd kind, int value) {
+        for (int id : selection_) {
+            const auto* u = world_.unit(id);
+            if (!u || u->player != localPlayer_) continue;
+            tak::net::Command c;
+            c.kind = kind;
+            c.unitId = id;
+            c.targetId = value;
+            issue(c);
+        }
     }
 
     // Draw a thin fill gauge (HP/mana) at a bar gadget's .gui position.

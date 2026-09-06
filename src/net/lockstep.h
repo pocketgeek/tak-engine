@@ -23,6 +23,10 @@ enum class Cmd : uint8_t {
                    // Synced via lockstep so all peers see it; affects no sim state.
     Reclaim,       // mobile builder unitId reclaims feature targetId for mana
                    // (right-click-drag issues one per feature in the box, queue=1)
+    Stance,        // set unitId's combat stance to targetId (0=offensive/1=defensive/
+                   // 2=passive) -- gates auto-acquire and chase leash
+    Cloak,         // canCloak unitId: targetId != 0 enables cloaking, 0 disables
+    SetActive,     // onOffable unitId: targetId != 0 powers on, 0 powers down
 };
 
 struct Command {

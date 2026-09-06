@@ -221,7 +221,11 @@ struct Unit {
     float stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
     float paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
     bool  cloaked = false; // currently invisible to enemies
+    bool  cloakOn = true;  // canCloak units: player wants to cloak (gates auto-cloak)
     bool  active = true;   // onoffable units: false = powered down
+    int   stance = 1;      // combat stance: 0=offensive (chase freely), 1=defensive
+                           // (leashed, the default/legacy behaviour), 2=passive
+                           // (hold fire: no auto-acquire, only fights when ordered)
     int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
     float captureProg = 0; // canCapture units: seconds spent charming the current target
     float homeX = 0, homeZ = 0;   // leash anchor (idle position) for auto-chase
@@ -524,6 +528,9 @@ public:
     // Self-destruct a living unit (Ctrl+D via the command path; no kill credit).
     void destroy(int unitId);
     void setWeapon(int unitId, int slot);   // choose the active weapon (0=primary)
+    void setStance(int unitId, int stance); // combat stance 0=offensive/1=defensive/2=passive
+    void setCloak(int unitId, bool on);     // canCloak unit: enable/disable cloaking
+    void setActive(int unitId, bool on);    // onOffable unit: power on/off
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);
     // Board a friendly transport / sail to (x,z) and disembark.

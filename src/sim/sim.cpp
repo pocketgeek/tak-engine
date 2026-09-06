@@ -922,6 +922,24 @@ void World::setWeapon(int unitId, int slot) {
     if (n > 0) u->weaponSlot = std::clamp(slot, 0, n - 1);
 }
 
+void World::setStance(int unitId, int stance) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive()) return;
+    u->stance = std::clamp(stance, 0, 2);
+}
+
+void World::setCloak(int unitId, bool on) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type || !u->type->canCloak) return;
+    u->cloakOn = on;
+}
+
+void World::setActive(int unitId, bool on) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type || !u->type->onOffable) return;
+    u->active = on;
+}
+
 void World::attack(int unitId, int targetId, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || u->type->weapon.damage <= 0) return;
@@ -1033,11 +1051,13 @@ void World::tickCombat(Unit& u, float dt) {
     if (!u.active) return;   // onoffable unit powered down: no acquisition/fire
 
     // Auto-acquire: idle armed units engage the nearest enemy in reach;
-    // attack-movers and patrollers interrupt their route to fight.
-    bool acquiring = u.orders.empty() ||
-                     (u.orders.front().targetId == 0 &&
-                      (u.orders.front().attackMove || u.orders.front().patrol)) ||
-                     u.orders.front().guard;
+    // attack-movers and patrollers interrupt their route to fight. A PASSIVE unit
+    // (stance 2, hold fire) never auto-acquires -- it only fights when ordered.
+    bool acquiring = u.stance != 2 &&
+                     (u.orders.empty() ||
+                      (u.orders.front().targetId == 0 &&
+                       (u.orders.front().attackMove || u.orders.front().patrol)) ||
+                      u.orders.front().guard);
     // Can any of this unit's weapons engage enemy `e`? (noairweapon gates flyers.)
     auto canTarget = [&](const Unit& e) {
         if (e.cloaked) return false;   // cloaked units are invisible to auto-acquire
@@ -1060,7 +1080,8 @@ void World::tickCombat(Unit& u, float dt) {
         // post. It must NOT apply while attack-moving/patrolling — those orders
         // mean "advance and engage everything en route", so an army that has
         // travelled far from its spawn still acquires (incl. just-conjured foes).
-        float leash2 = (u.orders.empty() && u.type->leash > 0)
+        // An OFFENSIVE unit (stance 0) ignores its leash entirely and chases freely.
+        float leash2 = (u.stance != 0 && u.orders.empty() && u.type->leash > 0)
                            ? u.type->leash * u.type->leash : 1e30f;
         // A ranged unit only auto-acquires enemies it can actually see, so it
         // doesn't charge a target hidden behind a wall (which caused pile-ups at
@@ -1869,7 +1890,7 @@ void World::tick(float dt) {
 
         // Cloaking: drains player mana; an enemy within mincloakdistance forces a
         // decloak, and so does running dry of mana.
-        if (u.type->canCloak) {
+        if (u.type->canCloak && u.cloakOn) {
             bool enemyNear = false;
             float md = std::max(u.type->minCloakDist, 1.0f);
             forEachNear(u.x, u.z, md, [&](int idx) {
@@ -1883,6 +1904,8 @@ void World::tick(float dt) {
             Player& tm = players_[size_t(u.player)];
             if (!enemyNear && tm.mana >= cost) { tm.mana -= cost; u.cloaked = true; }
             else u.cloaked = false;
+        } else if (u.cloaked) {
+            u.cloaked = false;   // toggled off (or no longer a cloaker): decloak now
         }
 
         if (u.underConstruction) continue;   // silent until finished
@@ -2183,6 +2206,10 @@ uint64_t World::stateHash() const {
         mix(uint64_t(u.alive() ? 1 : 0));
         mix(uint64_t(u.veteran));
         mixf(u.reloads[0]);
+        // Stance / cloak-intent / active gate auto-acquire, cloaking and firing, so a
+        // divergence in them must fault directly rather than diffusing into positions.
+        mix(uint64_t(uint32_t(u.stance)));
+        mix(uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
     }
     // Projectiles: count alone hides same-count divergence, so fold owner and
     // position of each in flight (mixf hashes the exact bits -- deterministic
