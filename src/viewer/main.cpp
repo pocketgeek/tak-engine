@@ -3523,6 +3523,9 @@ public:
                               : pendingCmd_ == 'f' ? "FIGHT-MOVE: CLICK DESTINATION"
                               : pendingCmd_ == 'p' ? "PATROL: CLICK WAYPOINT"
                               : pendingCmd_ == 'g' ? "GUARD: CLICK FRIENDLY UNIT"
+                              : pendingCmd_ == 'c' ? "RECLAIM: CLICK FEATURE"
+                              : pendingCmd_ == 'l' ? "LOAD: CLICK UNIT TO CARRY"
+                              : pendingCmd_ == 'u' ? "UNLOAD: CLICK DESTINATION"
                                                    : "MOVE: CLICK DESTINATION";
             hudFont_.draw(ren_, msg, 12, 100, 1.6f, {255, 200, 120, 255});
         }
@@ -5515,6 +5518,67 @@ private:
     // nearest friendly. Shared by the map click and the minimap click.
     void issueArmedOrder(char cmd, float wx, float wz, bool queue, bool precise) {
         if (selection_.empty()) return;
+        if (cmd == 'c') {   // clear/reclaim: reclaim the feature under the cursor
+            if (!haveReclaimer()) return;
+            int fid = -1; float bestF = 1e18f;
+            for (const auto& f : world_.features()) {
+                if (!f.alive) continue;
+                float dx = f.x - wx, dz = f.z - wz, d = dx * dx + dz * dz;
+                float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
+                if (d < r * r && d < bestF) { bestF = d; fid = f.id; }
+            }
+            if (fid < 0) return;
+            int builderId = firstReclaimer();
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Reclaim;
+            c.unitId = builderId;
+            c.targetId = fid;
+            c.queue = queue ? 1 : 0;
+            issue(c);
+            voice(builderId, "move");
+            return;
+        }
+        if (cmd == 'u') {   // unload: selected transport(s) sail to (wx,wz), disembark
+            bool any = false;
+            for (int id : selection_) {
+                const auto* u = world_.unit(id);
+                if (!u || !u->type || !u->type->canTransport || u->cargo.empty()) continue;
+                tak::net::Command c;
+                c.kind = tak::net::Cmd::Unload;
+                c.unitId = id;
+                c.x = wx;
+                c.z = wz;
+                issue(c);
+                any = true;
+            }
+            if (any) voice(selection_.front(), "move");
+            return;
+        }
+        if (cmd == 'l') {   // load: the friendly unit under the cursor boards a transport
+            int transportId = -1;
+            for (int id : selection_) {
+                const auto* u = world_.unit(id);
+                if (u && u->type && u->type->canTransport &&
+                    int(u->cargo.size()) < u->type->transportCap) { transportId = id; break; }
+            }
+            const auto* t = transportId >= 0 ? world_.unit(transportId) : nullptr;
+            if (!t) return;
+            int pid = -1; float best = 24.0f * 24.0f;
+            for (auto& u : world_.units()) {
+                if (!u.alive() || u.embarked() || u.id == transportId || !u.type) continue;
+                if (u.player != t->player || u.type->canTransport) continue;
+                float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
+                if (d < best) { best = d; pid = u.id; }
+            }
+            if (pid < 0) return;
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Load;
+            c.unitId = pid;
+            c.targetId = transportId;
+            issue(c);
+            voice(transportId, "move");
+            return;
+        }
         if (cmd == 'g') {   // guard: needs a friendly unit
             int buddy = -1;
             float best = precise ? 24.0f : 96.0f;   // generous radius on the minimap
@@ -6206,6 +6270,20 @@ private:
         if (mobile) { add("MOVE", 'm'); add("PATROL", 'p'); add("GUARD", 'g'); }
         if (armed) add("ATTACK", 'a');
         add("STOP", 's');
+        // Context orders: reclaim (a mobile reclaiming builder), and transport
+        // load/unload. CLEAR and UNLOAD share a .gui slot (599,213) but a unit is
+        // never both a reclaimer and a transport, so only one shows.
+        bool reclaimer = false;
+        for (int id : selection_) {
+            const auto* u = world_.unit(id);
+            if (u && u->alive() && u->type && u->type->isBuilder && u->type->canMove &&
+                u->type->canReclaim && u->player == localPlayer_) { reclaimer = true; break; }
+        }
+        if (reclaimer) add("CLEAR", 'c');
+        if (front->type->canTransport) {
+            if (int(front->cargo.size()) < front->type->transportCap) add("LOAD", 'l');
+            if (!front->cargo.empty()) add("UNLOAD", 'u');
+        }
         int nw = int(front->type->weapons.size());
         if (nw > 1) {
             add("PrimaryWeapon", '1');
