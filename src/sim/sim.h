@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <deque>
+#include <unordered_map>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -231,6 +232,8 @@ struct Unit {
     bool  beingBuilt = false;  // site: transient -- a builder worked it this tick
     int buildSiteId = 0;   // builder: id of the building it is constructing
     std::deque<BuildOrder> buildOrders;   // builder: queued (shift) builds
+    int reclaimId = 0;                 // builder: feature being reclaimed (0 = none)
+    std::deque<int> reclaimQueue;      // builder: queued area-reclaim feature ids
     int inTransport = 0;   // id of carrying transport, 0 = none
     std::vector<int> cargo;
     std::deque<Order> orders;
@@ -252,6 +255,22 @@ struct Unit {
     // Actually translating (for the walk animation), vs standing with an
     // attack/queued order.
     bool walking() const { return alive() && speed > 3.0f; }
+};
+
+// A reclaimable map feature (tree, rock, house, wreckage, …). Positions and stats
+// are derived deterministically in setupMatch -- the same row-major walk runs on
+// every peer -- so reclaim stays in lockstep. Not a Unit: no orders or combat,
+// just reclaim "work" a builder chips away for mana. A `blocks` feature also
+// occupies the nav grid, freed when it is reclaimed.
+struct Feature {
+    int   id = 0;          // cz*terrainWidth + cx: position-derived, peer-identical
+    float x = 0, z = 0;
+    int   fx = 1, fz = 1;  // footprint cells (for the nav unblock on removal)
+    float manaYield = 0;   // total mana granted over a full reclaim (FBI `energy`)
+    float work = 0;        // remaining reclaim work; consumed to 0
+    float workFull = 1;    // initial work (for the proportional mana drip)
+    bool  blocks = false;  // occupied the nav grid
+    bool  alive = true;    // false once fully reclaimed (decal disappears)
 };
 
 struct Projectile {
@@ -400,6 +419,16 @@ public:
     }
     bool hasManaSpots() const { return !manaSpots_.empty(); }
     const std::vector<std::pair<float, float>>& manaSpots() const { return manaSpots_; }
+    // Reclaimable features (trees/rocks/houses). Populated only by setupMatch (the
+    // one deterministic per-peer walk); never from the viewer. See struct Feature.
+    void addFeature(int id, float x, float z, float manaYield, float work,
+                    int fx, int fz, bool blocks);
+    const std::vector<Feature>& features() const { return features_; }
+    const Feature* feature(int id) const;                 // by id, nullptr if none
+    bool featureAliveAt(float x, float z) const;          // viewer decal sync
+    // Order a mobile builder to reclaim feature `featureId` (queue = append to its
+    // reclaim queue, for an area drag). Grants the feature's mana as it consumes it.
+    void reclaim(int builderId, int featureId, bool queue);
     // True if (x,z) lies over water (for choosing the water impact effect).
     bool isWater(float x, float z) const {
         if (depth_.empty()) return false;
@@ -419,6 +448,8 @@ public:
         projectiles_.clear();
         hits_.clear();
         flowCache_.clear();
+        features_.clear();
+        featureIdx_.clear();
         nextId_ = 1;
         tickCounter_ = 0;
         clock_ = 0;
@@ -530,6 +561,9 @@ private:
     // Orphaned conjure (no builder worked it this tick): bleed HP at its build
     // rate, then vanish with no corpse.
     void decayConstruction(Unit& u, float dt);
+    // A builder chips reclaim work off its target feature, drips mana, then removes
+    // the feature and advances its reclaim queue.
+    void tickReclaim(Unit& b, float dt);
     void tickAbilities(float dt);   // reclaim / resurrect on nearby corpses
     void tickAuras(float dt);       // AdjustArmor/Attack stat auras
     void updateVisibility();
@@ -582,6 +616,8 @@ private:
     bool sightClear(int ux, int uz, float eyeH, int tx, int tz) const;
     std::vector<Unit> units_;
     std::vector<std::pair<float, float>> manaSpots_;
+    std::vector<Feature> features_;             // reclaimable map features
+    std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
     std::vector<Projectile> projectiles_;
     std::vector<HitFx> hits_;
     std::vector<Player> players_ = []{

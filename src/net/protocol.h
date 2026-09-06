@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 9;        // 9: Cmd::Disco (cosmetic monarch-dance emote)
+constexpr uint32_t kNetVersion = 10;       // 10: reclaimable features in sim + Cmd::Reclaim (area-clear)
 constexpr uint32_t kMaxFrame = 1u << 16;   // 64 KB frame cap (hardening)
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate

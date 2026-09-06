@@ -21,6 +21,8 @@ enum class Cmd : uint8_t {
                    // existing construction site targetId (revives a decaying one)
     Disco,         // cosmetic emote: player's monarchs dance for 10s (Shift+D).
                    // Synced via lockstep so all peers see it; affects no sim state.
+    Reclaim,       // mobile builder unitId reclaims feature targetId for mana
+                   // (right-click-drag issues one per feature in the box, queue=1)
 };
 
 struct Command {

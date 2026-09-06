@@ -1562,6 +1562,17 @@ public:
             pickWorld(float(e.button.x), float(e.button.y), ewx, ewz);
             placeBuildLine(bdX0_, bdZ0_, ewx, ewz);
             if (!(SDL_GetModState() & KMOD_SHIFT)) placing_ = nullptr;
+        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT &&
+                   reclaimDrag_) {
+            reclaimDrag_ = false;
+            bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+            float ex = float(e.button.x), ey = float(e.button.y), ewx, ewz;
+            pickWorld(ex, ey, ewx, ewz);
+            // A tiny drag was really a click -> the ordinary contextual order.
+            if (std::fabs(ex - rdSx0_) < 6.0f && std::fabs(ey - rdSy0_) < 6.0f)
+                rightClickOrder(ewx, ewz, queue);
+            else
+                issueReclaimBox(rdX0_, rdZ0_, ewx, ewz, queue);
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
                    placing_) {
             placing_ = nullptr;
@@ -1616,9 +1627,25 @@ public:
                    e.button.button == SDL_BUTTON_RIGHT && !selection_.empty()) {
             float wx, wz;
             pickWorld(float(e.button.x), float(e.button.y), wx, wz);
-            bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
-            const auto* first = world_.unit(selection_.front());
-            // Selected transport with cargo: right-click = sail + disembark.
+            // A mobile reclaimer selected: arm a right-drag "clear this area" box and
+            // defer the normal order to button-up, so a plain click still works.
+            if (haveReclaimer()) {
+                reclaimDrag_ = true;
+                rdX0_ = wx; rdZ0_ = wz;
+                rdSx0_ = float(e.button.x); rdSy0_ = float(e.button.y);
+                return;
+            }
+            rightClickOrder(wx, wz, (SDL_GetModState() & KMOD_SHIFT) != 0);
+            return;
+        }
+    }
+
+    // Contextual right-click order, extracted so the reclaim right-drag can defer to
+    // it on a plain click: transport unload/load, assist/guard, attack, or move.
+    void rightClickOrder(float wx, float wz, bool queue) {
+        if (selection_.empty()) return;
+        const auto* first = world_.unit(selection_.front());
+        // Selected transport with cargo: right-click = sail + disembark.
             if (first && first->type && first->type->canTransport &&
                 !first->cargo.empty()) {
                 tak::net::Command c;
@@ -1740,6 +1767,54 @@ public:
                     issue(c);
                 }
             }
+        }
+
+    // A mobile, reclaim-capable builder of ours is selected (drives the right-drag).
+    bool haveReclaimer() {
+        for (int id : selection_)
+            if (const auto* u = world_.unit(id))
+                if (u->alive() && u->type && u->type->isBuilder && u->type->canMove &&
+                    u->type->canReclaim && u->player == localPlayer_)
+                    return true;
+        return false;
+    }
+    int firstReclaimer() {
+        for (int id : selection_)
+            if (const auto* u = world_.unit(id))
+                if (u->alive() && u->type && u->type->isBuilder && u->type->canMove &&
+                    u->type->canReclaim && u->player == localPlayer_)
+                    return id;
+        return 0;
+    }
+    // Right-drag "clear this area": order the builder to reclaim every reclaimable
+    // feature in the box, nearest-first (approximating retail's greedy re-scan).
+    void issueReclaimBox(float x0, float z0, float x1, float z1, bool queue) {
+        int builderId = firstReclaimer();
+        const auto* b = world_.unit(builderId);
+        if (!b) return;
+        float minx = std::min(x0, x1), maxx = std::max(x0, x1);
+        float minz = std::min(z0, z1), maxz = std::max(z0, z1);
+        std::vector<std::pair<float, int>> targets;
+        for (const auto& f : world_.features()) {
+            if (!f.alive || f.x < minx || f.x > maxx || f.z < minz || f.z > maxz) continue;
+            float dx = f.x - b->x, dz = f.z - b->z;
+            targets.push_back({dx * dx + dz * dz, f.id});
+        }
+        std::sort(targets.begin(), targets.end());
+        bool first = true;
+        for (auto& [d, fid] : targets) {
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Reclaim;
+            c.unitId = builderId;
+            c.targetId = fid;
+            c.queue = uint8_t((first && !queue) ? 0 : 1);   // first clears, rest append
+            issue(c);
+            first = false;
+        }
+        if (!targets.empty()) {
+            notice_ = "RECLAIM " + std::to_string(targets.size());
+            noticeTimer_ = 2;
+            voice(builderId, "move");
         }
     }
 
@@ -2795,6 +2870,7 @@ public:
         const auto& vis = world_.visibility();
         int vw = world_.visW();
         for (const auto& f : features_) {
+            if (!world_.featureAliveAt(f.x, f.z)) continue;   // reclaimed away by a builder
             int cx = int(f.x) / 16, cz = int(f.z) / 16;
             if (!noFog_ && !vis.empty() && (cx < 0 || cz < 0 || cx >= vw ||
                                  vis[size_t(cz) * vw + cx] == 0))
@@ -3126,6 +3202,31 @@ public:
                 drawGhostAt(placing_, x, z, !world_.canPlace(placing_, x, z));
         } else if (placing_) {
             drawGhost();
+        }
+        if (reclaimDrag_) {
+            // Screen-space "clear this area" box, with a marker on every reclaimable
+            // feature it currently catches.
+            float zm = mapView_.zoom();
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            float x0 = std::min(rdSx0_, mouseX_), y0 = std::min(rdSy0_, mouseY_);
+            float x1 = std::max(rdSx0_, mouseX_), y1 = std::max(rdSy0_, mouseY_);
+            SDL_FRect box{x0, y0, x1 - x0, y1 - y0};
+            SDL_SetRenderDrawColor(ren_, 255, 170, 40, 40);
+            SDL_RenderFillRectF(ren_, &box);
+            SDL_SetRenderDrawColor(ren_, 255, 190, 70, 220);
+            SDL_RenderDrawRectF(ren_, &box);
+            float mx, mz;
+            pickWorld(mouseX_, mouseY_, mx, mz);
+            float minx = std::min(rdX0_, mx), maxx = std::max(rdX0_, mx);
+            float minz = std::min(rdZ0_, mz), maxz = std::max(rdZ0_, mz);
+            SDL_SetRenderDrawColor(ren_, 255, 210, 90, 230);
+            for (const auto& f : world_.features()) {
+                if (!f.alive || f.x < minx || f.x > maxx || f.z < minz || f.z > maxz) continue;
+                float fsx = (f.x - mapView_.offX()) * zm - terrainLiftX(f.x, f.z) * zm;
+                float fsy = (f.z - mapView_.offY()) * zm - terrainLift(f.x, f.z) * zm;
+                SDL_FRect m{fsx - 4, fsy - 4, 8, 8};
+                SDL_RenderDrawRectF(ren_, &m);
+            }
         }
 
         // Selection membership as a hash set: the old code did world_.unit(id) (a
@@ -4772,6 +4873,9 @@ private:
     bool dragging_ = false;
     bool buildDrag_ = false;          // shift-drag placing a line of buildings
     float bdX0_ = 0, bdZ0_ = 0;       // build-drag start (world)
+    bool reclaimDrag_ = false;        // right-drag box: a builder clears the area
+    float rdX0_ = 0, rdZ0_ = 0;       // reclaim-drag start (world)
+    float rdSx0_ = 0, rdSy0_ = 0;     // reclaim-drag start (screen; click-vs-drag test)
     bool draggingMinimap_ = false;
     float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
     char pendingCmd_ = 0;   // armed order awaiting a click: 'f' fight-move,

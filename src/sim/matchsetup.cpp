@@ -85,6 +85,9 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::Disco:
             world.startDisco(int(c.player));   // cosmetic; no ownership needed
             break;
+        case Cmd::Reclaim:
+            if (owns(c.unitId)) { redirect(); world.reclaim(c.unitId, c.targetId, c.queue); }
+            break;
     }
 }
 
@@ -141,7 +144,8 @@ std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
 namespace {
 // Feature definition fields the sim cares about: is it a mana deposit, and its
 // footprint (for nav blocking). Loaded from the feature TDFs.
-struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx = 1, fz = 1; };
+struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx = 1, fz = 1;
+                 int reclaimable = 0; float energy = 0; };
 
 std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
     std::unordered_map<std::string, FeatDef> defs;
@@ -165,6 +169,8 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     d.blocking = int(node.numberOr("blocking", 0));
                     d.fx = int(node.numberOr("footprintx", 1));
                     d.fz = int(node.numberOr("footprintz", 1));
+                    d.reclaimable = int(node.numberOr("reclaimable", 0));
+                    d.energy = float(node.numberOr("energy", 0));   // reclaim mana yield
                     defs[k] = d;
                 }
             } catch (const std::exception&) {}
@@ -203,6 +209,14 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 if (!di->second.glowy && (!di->second.mana || di->second.blocking != 0)) {
                     int fx = di->second.fx, fz = di->second.fz;
                     world.nav().block(int(x) / 16 - fx / 2, int(z) / 16 - fz / 2, fx, fz, true);
+                }
+                // Reclaimable obstacle features (trees/rocks/houses) enter the sim so
+                // a mobile builder can clear them for mana. The id is derived from the
+                // cell, so every peer records the identical feature (lockstep-safe).
+                if (di->second.reclaimable && !di->second.mana) {
+                    float work = std::max(di->second.energy, 60.0f);   // rocks (energy 0) still take a beat
+                    world.addFeature(cz * map.width + cx, x, z, di->second.energy, work,
+                                     di->second.fx, di->second.fz, di->second.blocking != 0);
                 }
             }
     }
