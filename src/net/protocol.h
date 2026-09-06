@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 13;       // 13: under-construction units contribute no income/storage (economy fix)
+constexpr uint32_t kNetVersion = 14;       // 14: Cmd::Headbang (Shift+H emote)
+                                           // 13: under-construction units contribute no income/storage (economy fix)
                                            // 12: builder repair (Cmd::Repair + Unit::repairId)
                                            // 11: unit stance/cloak/active in sim + Cmd::Stance/Cloak/SetActive
                                            // 10: reclaimable features in sim + Cmd::Reclaim (area-clear)

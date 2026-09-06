@@ -378,6 +378,9 @@ struct Player {
     // but it drives client-side eye-candy only and is NOT folded into stateHash
     // (like vis_).
     float discoLeft = 0;
+    // Cosmetic "headbang" emote (Shift+H): seconds this player's monarchs headbang to
+    // heavy metal. Same deal as discoLeft -- synced by Cmd::Headbang, not hashed.
+    float headbangLeft = 0;
 };
 
 // Max simultaneous players/teams (the retail map ceiling is 8 start positions).
@@ -416,6 +419,9 @@ public:
     // hashed -- purely for the viewer. discoActive() gates the client animation.
     void startDisco(int player);
     bool discoActive(int player) const;
+    // Cosmetic emote: make `player`'s monarchs headbang for 10s (Cmd::Headbang).
+    void startHeadbang(int player);
+    bool headbangActive(int player) const;
     bool canPlace(const UnitType* type, float x, float z) const;
     // Mana deposit ("Sacred Stone") spots, in world px. Lodestones (onMana)
     // can only be built on one, but only when the map actually has any.

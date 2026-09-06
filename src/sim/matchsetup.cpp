@@ -85,6 +85,9 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::Disco:
             world.startDisco(int(c.player));   // cosmetic; no ownership needed
             break;
+        case Cmd::Headbang:
+            world.startHeadbang(int(c.player));   // cosmetic; no ownership needed
+            break;
         case Cmd::Reclaim:
             if (owns(c.unitId)) { redirect(); world.reclaim(c.unitId, c.targetId, c.queue); }
             break;
