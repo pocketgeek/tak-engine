@@ -24,7 +24,7 @@ jobs:
   arm64:
     runs-on: macos-14   # Apple Silicon (ARM64)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: brew install ninja sdl2 jpeg-turbo
@@ -49,7 +49,7 @@ jobs:
           mkdir -p dist-macos
           cp build/takview build/takserver dist-macos/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: takview-macos-arm64
           path: dist-macos/
