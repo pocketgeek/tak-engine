@@ -1002,8 +1002,7 @@ public:
         loadOrderButtons();
         loadBuildFx();
         sounds_.init(vfs_);
-        sounds_.startMusic(vfs_, factionMusicTracks(side_));
-        soundClasses_.load(vfs_);
+        soundClasses_.load(vfs_);   // music is started per-state by manageMusic()
         loadPanel(side_);
 
         if (mission) {
@@ -1357,6 +1356,18 @@ public:
     }
 
     // True while the multiplayer lobby is showing (before the game world exists).
+    // Play the menu theme (track15) while in the lobby / not yet in a game, and the
+    // faction playlist once the match starts. Called every frame; only (re)starts the
+    // playlist on a state change so it doesn't restart the current track.
+    int musicMode_ = 0;   // 0 = none yet, 1 = lobby, 2 = in-game
+    void manageMusic() {
+        int want = inLobbyPhase() ? 1 : 2;
+        if (want == musicMode_) return;
+        musicMode_ = want;
+        if (want == 1) sounds_.startMusic(vfs_, {15});
+        else sounds_.startMusic(vfs_, factionMusicTracks(side_));
+    }
+
     bool inLobbyPhase() const {
         if (!mp_ || mpSetupDone_) return false;
         auto s = mp_->state();
@@ -2857,6 +2868,7 @@ public:
     }
 
     void draw(int winW, int winH) {
+        manageMusic();
         if (inLobbyPhase()) {
             // Render the whole lobby at 2x so its text/controls are large and legible;
             // it lays out in the halved logical space, and lbHot/lobbyInput divide the
@@ -2954,8 +2966,17 @@ public:
         if (geomPool_.size() < visUnits_.size()) geomPool_.resize(visUnits_.size());
         // Build the texture atlas for every colour slot in view (main thread; the
         // parallel pass below only reads the finished atlas pointers).
-        for (const auto* u : visUnits_) atlasFor(colorSlot_[u->player & 7]);
-        animateGlowTextures();   // cycle lodestone/mana/fire crystal frames over time
+        bool builtGlow = false;
+        for (const auto* u : visUnits_) {
+            atlasFor(colorSlot_[u->player & 7]);
+            if (!u->underConstruction)
+                if (auto it = anims_.find(u->id);
+                    it != anims_.end() && it->second.usesGlow)
+                    builtGlow = true;
+        }
+        // Cycle lodestone/mana/fire crystal frames -- but only once a built glow-unit
+        // is on screen, so a still-conjuring lodestone stays dark until it's finished.
+        animateGlowTextures(builtGlow);
         // Ensure an impostor sprite exists for every visible model when zoomed out
         // enough that LOD may kick in (main thread; the parallel pass only reads it).
         // Budgeted: a few NEW bakes per frame, so a first zoom-out over a mixed army
@@ -3649,6 +3670,7 @@ private:
         const EffectAnim* smokeFx = nullptr;
         float fireT = 1e9f, smokeT = 1e9f;
         float fireLift = 0, smokeLift = 0;   // screen lift of the emitting piece
+        bool usesGlow = false;               // model has an animated glow texture
     };
 
     // Turn a COB emit-sfx (piece, packed type) into a one-shot world-space effect at
@@ -3793,6 +3815,14 @@ private:
                 a.vm->start("Create");
             }
         } catch (const std::exception&) { /* unit stays unanimated */ }
+        // Flag units whose model uses an animated glow texture (lodestone/mana/crystal)
+        // so the glow only cycles once built -- held static while still conjuring.
+        if (auto vt = visuals_.find(typeId); vt != visuals_.end())
+            for (const auto& tn : vt->second.model.textures()) {
+                std::string t = tn;
+                std::transform(t.begin(), t.end(), t.begin(), ::tolower);
+                if (animatedTex_.count(t)) { a.usesGlow = true; break; }
+            }
         if (a.vm) {
             Anim& st = anims_[u.id] = std::move(a);
             // The VM is ticked on the worker pool, so emit-sfx only stashes into this
@@ -3862,11 +3892,12 @@ private:
                     // Keep all 10 for both; classify by hue spread so the glow cycles
                     // over time (animatedTex_) while insignia stay picked-by-player.
                     size_t n = seq.frames.size() == 10 ? 10 : 1;
-                    if (n == 10) {
-                        // The animated glows (lodestone/mana/sacred-fire/crystal) are
-                        // the mana/lodestone/crystal-named textures (verified against
-                        // the retail rendering); the other 10-frame textures are
-                        // per-player insignia (picked by slot) or OTA leftovers.
+                    // The animated glows (lodestone/mana/sacred-fire/crystal crystals)
+                    // are the mana/lodestone/crystal-named textures whose 10 frames
+                    // pulse ONE hue over time. The "*logo*" textures (incl. the
+                    // lodestone side-panel logos) are per-PLAYER-colour -- their 10
+                    // frames are the 10 player colours, picked by slot, NOT animated.
+                    if (n == 10 && name.find("logo") == std::string::npos) {
                         for (const char* g :
                              {"lode", "mana", "sacred", "crystal", "lightning", "stone"})
                             if (name.find(g) != std::string::npos) {
@@ -4023,10 +4054,12 @@ private:
 
     // Re-render the current frame of each animated glow texture (lodestone/mana/
     // sacred-fire crystal) into its rect in every built atlas, so the glow cycles
-    // over time instead of showing a single frame baked at atlas-build time. ~8 fps.
-    void animateGlowTextures() {
+    // over time instead of showing a single frame baked at atlas-build time. `live`
+    // (a built glow-unit is on screen) advances it; otherwise it holds frame 0 so a
+    // still-conjuring lodestone doesn't glow until it's finished.
+    void animateGlowTextures(bool live) {
         if (animatedTex_.empty()) return;
-        int frame = int(animClock_ * 8.0f);
+        int frame = live ? int(animClock_ * 4.0f) : 0;   // ~4 fps
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
         bool onAny = false;
         for (SDL_Texture* atlas : atlasTex_) {
