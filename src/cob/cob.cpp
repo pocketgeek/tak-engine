@@ -93,11 +93,13 @@ const OpInfo kOps[] = {
     {0x10006000, "HIDE", 1},
     {0x10007000, "CACHE", 1},
     {0x10008000, "DONT_CACHE", 1},
+    {0x10009000, "RENDER_ON", 1},     // 1-arg cosmetic piece render flags (ignored)
+    {0x1000A000, "RENDER_OFF", 1},
     {0x1000B000, "MOVE_NOW", 2},
     {0x1000C000, "TURN_NOW", 2},
-    {0x1000E000, "SHADE", 1},
-    {0x1000F000, "DONT_SHADE", 1},
-    {0x10010000, "EMIT_SFX", 1},
+    {0x1000D000, "SHADE", 1},
+    {0x1000E000, "DONT_SHADE", 1},
+    {0x1000F000, "EMIT_SFX", 1},      // pops the packed sfx-type code
     {0x10011000, "WAIT_TURN", 2},
     {0x10012000, "WAIT_MOVE", 2},
     {0x10013000, "SLEEP", 0},
@@ -112,14 +114,18 @@ const OpInfo kOps[] = {
     {0x10032000, "SUB", 0},
     {0x10033000, "MUL", 0},
     {0x10034000, "DIV", 0},
-    {0x10035000, "MOD", 0},
-    {0x10039000, "BIT_AND", 0},
-    {0x1003A000, "BIT_OR", 0},
-    {0x1003B000, "BIT_XOR", 0},
-    {0x1003C000, "BIT_NOT", 0},
+    {0x10035000, "AND", 0},           // TAK numbering (retail KINGDOMS.icd @0x56c966):
+    {0x10036000, "OR", 0},            // 5=AND 6=OR 7=XOR 8=NOT 9=SHL A=SHR B=MOD
+    {0x10037000, "XOR", 0},
+    {0x10038000, "NOT", 0},           // unary
+    {0x10039000, "SHL", 0},
+    {0x1003A000, "SHR", 0},
+    {0x1003B000, "MOD", 0},
     {0x10041000, "RAND", 0},
     {0x10042000, "GET_UNIT_VALUE", 0},
     {0x10043000, "GET", 0},
+    {0x10044000, "GET_Q1", 0},        // engine queries (pop1/push1, pop0/push1)
+    {0x10045000, "GET_Q0", 0},
     {0x10051000, "LESS", 0},
     {0x10052000, "LESS_EQ", 0},
     {0x10053000, "GREATER", 0},
@@ -132,6 +138,7 @@ const OpInfo kOps[] = {
     {0x1005A000, "NOT", 0},
     {0x10061000, "START_SCRIPT", 2},  // script, paramCount
     {0x10062000, "CALL_SCRIPT", 2},
+    {0x10063000, "START_CALL_V", 2},  // start/call variant (absent from TAK data)
     {0x10064000, "JUMP", 1},
     {0x10065000, "RETURN", 0},
     {0x10066000, "JUMP_IF_FALSE", 1},
@@ -140,6 +147,8 @@ const OpInfo kOps[] = {
     {0x10071000, "EXPLODE", 1},
     {0x10072000, "PLAY_SOUND", 1},
     {0x10073000, "MAP_COMMAND", 2},
+    {0x10074000, "ENGINE_CMD2", 2},   // engine cmds (stack-neutral)
+    {0x10075000, "ENGINE_CMD1", 1},
     {0x10082000, "SET_UNIT_VALUE", 0},
     {0x10083000, "ATTACH_UNIT", 0},
     {0x10084000, "DROP_UNIT", 0},

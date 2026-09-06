@@ -140,11 +140,20 @@ void Vm::run(Thread& t) {
             case 0x10032000: { auto b = pop(t), a = pop(t); push(t, a - b); t.pc += 1; break; }
             case 0x10033000: { auto b = pop(t), a = pop(t); push(t, a * b); t.pc += 1; break; }
             case 0x10034000: { auto b = pop(t), a = pop(t); push(t, b ? a / b : 0); t.pc += 1; break; }
-            case 0x10035000: { auto b = pop(t), a = pop(t); push(t, b ? a % b : 0); t.pc += 1; break; }
-            case 0x10039000: { auto b = pop(t), a = pop(t); push(t, a & b); t.pc += 1; break; }
-            case 0x1003A000: { auto b = pop(t), a = pop(t); push(t, a | b); t.pc += 1; break; }
-            case 0x1003B000: { auto b = pop(t), a = pop(t); push(t, a ^ b); t.pc += 1; break; }
-            case 0x1003C000: push(t, ~pop(t)); t.pc += 1; break;
+            // TAK's opcode numbering here differs from "classic TA" -- verified
+            // against the retail COB interpreter (KINGDOMS.icd, dispatch @0x56c966):
+            // sub-ops 5..B are AND OR XOR NOT(unary) SHL SHR(arith) MOD. We had these
+            // wrong, and OR/XOR/NOT were absent -- hitting a missing one killed the
+            // thread, which is why buildings (whose scripts OR-pack emit-sfx codes)
+            // never animated. There is no 0x1003C000.
+            case 0x10035000: { auto b = pop(t), a = pop(t); push(t, a & b); t.pc += 1; break; }   // AND
+            case 0x10036000: { auto b = pop(t), a = pop(t); push(t, a | b); t.pc += 1; break; }   // OR
+            case 0x10037000: case 0x10059000:                                                     // XOR
+                { auto b = pop(t), a = pop(t); push(t, a ^ b); t.pc += 1; break; }
+            case 0x10038000: push(t, ~pop(t)); t.pc += 1; break;                                  // NOT (unary)
+            case 0x10039000: { auto b = pop(t), a = pop(t); push(t, a << b); t.pc += 1; break; }  // SHL
+            case 0x1003A000: { auto b = pop(t), a = pop(t); push(t, a >> b); t.pc += 1; break; }  // SHR (arithmetic)
+            case 0x1003B000: { auto b = pop(t), a = pop(t); push(t, b ? a % b : 0); t.pc += 1; break; }  // MOD
 
             case 0x10041000: {                                                // RAND
                 int32_t hi = pop(t), lo = pop(t);
@@ -163,6 +172,12 @@ void Vm::run(Thread& t) {
                 push(t, onGet ? onGet(valId, {p1, p2, p3, p4}) : 0);
                 t.pc += 1; break;
             }
+            case 0x10044000: {                                                // engine query (pop1/push1)
+                int32_t id = pop(t);
+                push(t, onGet ? onGet(id, {}) : 0);
+                t.pc += 1; break;
+            }
+            case 0x10045000: push(t, 0); t.pc += 1; break;                    // engine query (pop0/push1)
 
             case 0x10051000: { auto b = pop(t), a = pop(t); push(t, a < b); t.pc += 1; break; }
             case 0x10052000: { auto b = pop(t), a = pop(t); push(t, a <= b); t.pc += 1; break; }
@@ -204,6 +219,11 @@ void Vm::run(Thread& t) {
                     t.pc = file_.scripts[size_t(script)].entry;
                 else { t.dead = true; return; }
                 break;
+            }
+            case 0x10063000: {                                                // start/call variant (absent from TAK data; stack-safe)
+                int32_t nparams = arg(1);
+                for (int i = 0; i < nparams; ++i) pop(t);
+                t.pc += 3; break;
             }
             case 0x10064000: t.pc = uint32_t(arg(0)); break;                  // JUMP
             case 0x10065000:                                                  // RETURN
@@ -292,11 +312,19 @@ void Vm::run(Thread& t) {
                 if (size_t(arg(0)) < pieces_.size()) pieces_[size_t(arg(0))].visible = false;
                 t.pc += 2; break;
 
-            case 0x10007000: case 0x10008000: case 0x1000E000: case 0x1000F000:
-                t.pc += 2; break;                                             // CACHE/SHADE
-            case 0x10010000: pop(t); t.pc += 2; break;                        // EMIT_SFX
+            case 0x10007000: case 0x10008000: case 0x10009000: case 0x1000A000:
+            case 0x1000D000: case 0x1000E000: case 0x10075000:
+                // CACHE / DONT_CACHE / SHADE / DONT_SHADE + the render-flag pair
+                // (0x9/0xA) and 0x10075000: 1-arg cosmetic render flags our flat
+                // renderer ignores. 0x1000A000 in particular is used by building Create
+                // scripts *before* they START_SCRIPT their ambient loops (flags,
+                // smoke) -- treating it as unknown killed the Create thread there, so
+                // buildings never started animating.
+                t.pc += 2; break;
+            case 0x1000F000: pop(t); t.pc += 2; break;                        // EMIT_SFX (pops the packed sfx-type code)
             case 0x10071000: pop(t); t.pc += 2; break;                        // EXPLODE
-            case 0x10072000: t.pc += 2; break;                                // PLAY_SOUND
+            case 0x10072000: pop(t); push(t, 0); t.pc += 2; break;            // PLAY_SOUND (pop1/push1)
+            case 0x10074000: t.pc += 3; break;                                // engine cmd (3-word, stack-neutral)
             case 0x10073000: {                                                // MAP_COMMAND
                 int sub = arg(0), argc = arg(1);
                 std::vector<int32_t> params(size_t(std::max(argc, 0)));

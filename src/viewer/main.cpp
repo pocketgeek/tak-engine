@@ -3706,10 +3706,12 @@ private:
                 // pose, so a flyer that spawns idle and never takes off (e.g. the
                 // Monarch at game start) doesn't sit in a T-pose.
                 a.vm->start("land");
-            } else if (u.type && !u.type->canMove) {
-                // Buildings: run the COB constructor so ambient loops start
-                // (e.g. the Sacred Fire's Create kicks off its FireControl
-                // flicker). Harmless for buildings without one.
+            } else if (isStructure(u.type)) {
+                // Buildings: run the COB constructor so ambient loops start (e.g. the
+                // Keep's Create kicks off its flag/smoke scripts, the Sacred Fire's
+                // its FireControl flicker). Detect via isStructure (maxVel<=0), NOT
+                // !canMove -- the Keep and friends set canmove=1 with no velocity, so
+                // the old !canMove test skipped them and they never animated.
                 a.vm->start("Create");
             }
         } catch (const std::exception&) { /* unit stays unanimated */ }
