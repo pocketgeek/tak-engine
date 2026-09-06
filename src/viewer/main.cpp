@@ -1735,6 +1735,10 @@ public:
     // Single-player from the menu: open the lobby on the Create screen (a private
     // game's browser is empty by design), where the map picker + AI slots live.
     void setLobbyStartCreate() { lobbyScreen_ = LobbyScreen::Create; }
+    // Return-to-menu request: a lobby/in-game action sets this; main()'s outer loop
+    // tears the session down and re-shows the front-end menu.
+    void requestMenu() { menuRequested_ = true; }
+    bool menuRequested() const { return menuRequested_; }
     // Persist / read the resume ticket (gameId + rotating token) so a killed
     // client can rejoin its held slot on restart.
     void writeResume(uint32_t gid, uint64_t tok) const {
@@ -1797,9 +1801,9 @@ public:
         float zm = mapView_.zoom();
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
             // Escape cancels the pending placement/order, else clears the current
-            // selection. It does NOT quit the game (the main loop no longer treats
-            // Escape as quit while a game is running).
-            if (placing_ || pendingCmd_) { placing_ = nullptr; pendingCmd_ = 0; }
+            // selection. Once the game is over it returns to the front-end menu.
+            if (outcome_ != 0) { menuRequested_ = true; }
+            else if (placing_ || pendingCmd_) { placing_ = nullptr; pendingCmd_ = 0; }
             else selection_.clear();
         } else if (e.type == SDL_KEYDOWN && handleKey(e.key.keysym.sym,
                                                        SDL_GetModState())) {
@@ -3916,6 +3920,9 @@ public:
             SDL_RenderFillRectF(ren_, &shade);
             float tw = float(bigFont_.width(msg, 1.5f));
             bigFont_.draw(ren_, msg, (winW - tw) / 2, float(winH) / 2 + 24, 1.5f, col);
+            const char* hint = "PRESS ESC FOR MENU";
+            blockText(hint, (winW - blockWidth(hint, 2.0f)) / 2, float(winH) / 2 + 74, 2.0f,
+                      {220, 220, 230, 255});
         }
 
         if (dragging_) {
@@ -5550,6 +5557,7 @@ private:
     bool mpReadied_ = false, mpStarted_ = false, mpSetupDone_ = false;
     // interactive lobby UI state
     enum class LobbyScreen { Browser, Create } lobbyScreen_ = LobbyScreen::Browser;
+    bool menuRequested_ = false;   // set by a MAIN MENU action -> main() returns to the front-end
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
@@ -7767,7 +7775,7 @@ private:
         }
         // password entry for locked games
         lbField(x, winH - 70.0f, 200, "PASSWORD (for locked games)", joinPass_, 3);
-        lbBtn(winW - 120.0f, winH - 44.0f, 100, 28, "QUIT", true, [this] { mp_->disconnect(); });
+        lbBtn(winW - 140.0f, winH - 44.0f, 120, 28, "MAIN MENU", true, [this] { menuRequested_ = true; });
     }
 
     void drawCreate(int winW, int winH) {
@@ -7794,7 +7802,8 @@ private:
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity());
             lobbyScreen_ = LobbyScreen::Browser;
         });
-        lbBtn(x + 132, y, 120, 30, "CANCEL", true, [this] { lobbyScreen_ = LobbyScreen::Browser; });
+        lbBtn(x + 132, y, 110, 30, "BROWSER", true, [this] { lobbyScreen_ = LobbyScreen::Browser; });
+        lbBtn(x, y + 40, 242, 26, "MAIN MENU", true, [this] { menuRequested_ = true; });
 
         // Map picker (right column): a paged, clickable list of playable maps.
         // Selecting sets both the wire id (mpMapId_ = bare .tnt stem) and mapPath_,
@@ -9053,6 +9062,21 @@ int main(int argc, char** argv) {
     }
     if (shot.empty()) SDL_RenderSetVSync(ren, noVsync ? 0 : 1);
 
+    // ---- outer session loop: menu -> game -> menu (menu launches only) ----------
+    // After a menu-launched session ends (a MAIN MENU button or post-game Escape),
+    // loop back to the front-end and let the player pick again. Non-menu launches
+    // (direct game/map/replay, headless) run one pass and break. The window/renderer
+    // and the menu's vfs outlive each session.
+    const bool fromMenu = (mode == "menu");
+    const std::string launchMode = mode;
+    const std::string launchServerHost = serverHost;
+    const int launchServerPort = serverPort;
+    const std::vector<std::string> launchArgs = args;
+    bool quitApp = false;
+    for (;;) {
+    if (fromMenu) { mode = launchMode; serverHost = launchServerHost;
+                    serverPort = launchServerPort; args = launchArgs; }
+
     // main-loop lobby driver: 0 = UI-driven lobby (browse/join/host), 7 = auto SP.
     int mpAutoMode = 0;
     bool menuInteractive = false;   // menu single-player -> interactive lobby, not auto-play
@@ -9070,7 +9094,7 @@ int main(int argc, char** argv) {
         if (!shot.empty()) { SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
         if (choice != tak::MainMenu::Choice::SinglePlayer &&
             choice != tak::MainMenu::Choice::Multiplayer) {
-            SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0;  // exit/campaign/options
+            quitApp = true; break;   // exit / campaign / options -> leave the app
         }
         mode = "game";
         if (args.empty()) args.push_back("athri cay");   // TODO: map picker (SP battle menu)
@@ -9099,7 +9123,8 @@ int main(int argc, char** argv) {
                          serverBin.c_str());
             return 1;
         }
-        std::atexit(killLocalServer);
+        static bool atexitOnce = [] { std::atexit(killLocalServer); return true; }();
+        (void)atexitOnce;   // register the safety-net teardown once (the loop kills it per session)
         serverHost = "127.0.0.1"; serverPort = p;
         mpAutoMode = menuInteractive ? 0 : 7;   // menu SP stops in the lobby; CLI SP auto-plays
         std::fprintf(stderr, "single-player: local server on port %d%s\n", p,
@@ -9164,7 +9189,11 @@ int main(int argc, char** argv) {
             if (mapPath.empty()) { std::fprintf(stderr, "map '%s' not found in %s\n", args[0].c_str(), dataRoot.c_str()); return 1; }
             // A multiplayer client builds the world from the server's GameStarting
             // later, so it constructs "bare" (no single-player 2-monarch spawn).
-            gameView = std::make_unique<GameView>(ren, std::move(vfs), mapPath, dataRoot, pol, demo,
+            // When looping back to the menu, keep this function's vfs alive for the
+            // next session (+ its findMap); hand the game its own fresh mount.
+            gameView = std::make_unique<GameView>(ren,
+                                                  fromMenu ? tak::hpi::mountRetailRoot(dataRoot, pol) : std::move(vfs),
+                                                  mapPath, dataRoot, pol, demo,
                                                   scenario, missionFlag,
                                                   navy || amphib || firetest || facetest || mp,
                                                   side, aiSide, crusades);
@@ -9276,8 +9305,9 @@ int main(int argc, char** argv) {
             // Escape quits the asset viewers, but in a running game it deselects
             // (handled by GameView::input) rather than exiting.
             if (e.type == SDL_QUIT ||
-                (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !gameView))
-                running = false;
+                (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !gameView)) {
+                running = false; quitApp = true;   // window close / viewer Esc -> quit the app
+            }
             // The GPU lost every render-target texture's contents (device/driver
             // reset). Rebuild the baked atlases so sprites don't blink out.
             if ((e.type == SDL_RENDER_TARGETS_RESET ||
@@ -9464,6 +9494,10 @@ int main(int argc, char** argv) {
             prevPresent = SDL_GetPerformanceCounter();
         }
 
+        // A MAIN MENU button or post-game Escape ends the session; the outer loop
+        // then tears it down and re-shows the menu (quitApp stays false).
+        if (gameView && gameView->menuRequested()) running = false;
+
         if (!shot.empty()) {
             // Render a few frames so lazy content settles, then capture. For content
             // that settles asynchronously (a network spectator building its world),
@@ -9479,6 +9513,15 @@ int main(int argc, char** argv) {
             }
         }
     }
+    // Session ended: tear down any single-player local server, then either loop back
+    // to the menu or exit the app.
+    killLocalServer();
+    mp.reset();
+    if (quitApp || !fromMenu) break;
+    }  // ---- end outer session loop ----
+
+    SDL_DestroyRenderer(ren);
+    SDL_DestroyWindow(win);
     SDL_Quit();
     return 0;
 }
