@@ -530,17 +530,27 @@ public:
     void setListener(float cx, float cz, float halfW, float halfH) {
         listenX_ = cx; listenZ_ = cz;
         listenHW_ = std::max(halfW, 1.0f); listenHH_ = std::max(halfH, 1.0f);
+        // Re-pan every still-playing positional sound so it tracks its world source as
+        // the camera pans/zooms (matters for anything longer than a blip).
+        if (dev_) {
+            SDL_LockAudioDevice(dev_);
+            for (auto& c : channels_)
+                if (c.positional && c.data && c.pos < c.data->size()) repan(c);
+            SDL_UnlockAudioDevice(dev_);
+        }
     }
 
     // Non-positional (UI, music-adjacent) — centred across all speakers.
     void play(const std::string& name) { playAt(name, 0.0f, 0.0f); }
 
     // Positional: pan by the source's world position relative to the listener.
-    // Left/right from x; front(up)/rear(down) from z on surround setups.
+    // Left/right from x; front(up)/rear(down) from z on surround setups. The sound is
+    // tagged positional, so setListener re-pans it every frame as the camera moves --
+    // it tracks its world source for its whole duration, not just at trigger time.
     void playWorld(const std::string& name, float x, float z) {
         float pan = std::clamp((x - listenX_) / listenHW_, -1.0f, 1.0f);
         float depth = std::clamp((z - listenZ_) / listenHH_, -1.0f, 1.0f);
-        playAt(name, pan, depth);
+        playAt(name, pan, depth, true, x, z);
     }
 
     // Play the synthesised 10-second disco loop as a positional SFX from (x,z) -- the
@@ -551,9 +561,8 @@ public:
         playWorld("disco", x, z);
     }
 
-    // Re-pan any currently-playing copies of `name` to a new world position. A normal
-    // SFX fixes its pan at trigger time; this keeps a long positional loop (the disco)
-    // tracking its source as the camera pans, so it stays genuinely directional.
+    // Move the world source of any currently-playing copies of `name` (e.g. keep the
+    // disco pinned to a monarch that walks off). setListener re-pans from the new point.
     void repositionWorld(const std::string& name, float x, float z) {
         if (!dev_) return;
         std::string n = name;
@@ -561,11 +570,9 @@ public:
         auto it = cache_.find(n);
         if (it == cache_.end()) return;
         const std::vector<int16_t>* data = &it->second;
-        float pan = std::clamp((x - listenX_) / listenHW_, -1.0f, 1.0f);
-        float depth = std::clamp((z - listenZ_) / listenHH_, -1.0f, 1.0f);
         SDL_LockAudioDevice(dev_);
         for (auto& c : channels_)
-            if (c.data == data) { c.pan = pan; c.depth = depth; }
+            if (c.data == data) { c.wx = x; c.wz = z; repan(c); }
         SDL_UnlockAudioDevice(dev_);
     }
 
@@ -658,7 +665,8 @@ public:
 
   public:
 
-    void playAt(const std::string& name, float pan, float depth) {
+    void playAt(const std::string& name, float pan, float depth,
+                bool positional = false, float wx = 0, float wz = 0) {
         std::string n = name;
         std::transform(n.begin(), n.end(), n.begin(), ::tolower);
         auto it = index_.find(n);
@@ -673,6 +681,9 @@ public:
                 c.pos = 0;
                 c.pan = pan;
                 c.depth = depth;
+                c.positional = positional;
+                c.wx = wx;
+                c.wz = wz;
                 break;
             }
         SDL_UnlockAudioDevice(dev_);
@@ -683,7 +694,14 @@ private:
         const std::vector<int16_t>* data = nullptr;
         size_t pos = 0;
         float pan = 0, depth = 0;   // -1..+1 : left..right, front..rear
+        float wx = 0, wz = 0;       // world emission point (for positional re-panning)
+        bool positional = false;    // true = re-pan every frame from (wx,wz)
     };
+    // Recompute a channel's pan/depth from its world point and the current listener.
+    void repan(Channel& c) {
+        c.pan = std::clamp((c.wx - listenX_) / listenHW_, -1.0f, 1.0f);
+        c.depth = std::clamp((c.wz - listenZ_) / listenHH_, -1.0f, 1.0f);
+    }
 
     // Per-output-channel gains for a source at (pan, depth). Equal-power pan
     // left/right; on surround layouts also crossfade front/rear by depth.
