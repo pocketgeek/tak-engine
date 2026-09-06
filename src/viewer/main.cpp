@@ -9631,7 +9631,20 @@ int main(int argc, char** argv) {
         // (VRAM pressure) we just fall back to no AA this frame. Baking runs at 1x
         // BEFORE the scale is set (the lazy atlas/impostor bakes reset the scale
         // themselves too, see their SetRenderTarget sites).
-        float aaS = (settings.antiAlias == 4) ? 2.0f : (settings.antiAlias == 2) ? 1.4142f : 1.0f;
+        float aaS = (settings.antiAlias == 8) ? 2.8284f : (settings.antiAlias == 4) ? 2.0f
+                  : (settings.antiAlias == 2) ? 1.4142f : 1.0f;
+        // Don't exceed the renderer's max texture size (8X at 4K wants ~21.7k px, past
+        // many GPUs' 16384 limit) -- cap the scale so a big level degrades gracefully
+        // to the largest that fits rather than failing to allocate.
+        static int maxTexW = 0, maxTexH = 0;
+        if (maxTexW == 0) {
+            SDL_RendererInfo ri;
+            if (SDL_GetRendererInfo(ren, &ri) == 0) { maxTexW = ri.max_texture_width; maxTexH = ri.max_texture_height; }
+            if (maxTexW <= 0) maxTexW = 16384;
+            if (maxTexH <= 0) maxTexH = 16384;
+        }
+        if (aaS > 1.0f && w > 0 && h > 0)
+            aaS = std::min(aaS, std::min(float(maxTexW) / w, float(maxTexH) / h));
         bool aaOn = false;
         if (gameView && aaS > 1.0f && !gameView->inLobbyPhase()) {
             int tw = int(w * aaS), th = int(h * aaS);
