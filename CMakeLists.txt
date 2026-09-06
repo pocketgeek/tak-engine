@@ -31,6 +31,7 @@ add_library(tak-formats
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
   src/crt/crt.cpp
+  src/gui/gui.cpp
   src/net/protocol.cpp
   src/net/conn.cpp
   src/net/client.cpp
