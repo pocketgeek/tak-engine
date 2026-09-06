@@ -13,6 +13,7 @@
 #include "cob/vm.h"
 #include "crt/crt.h"
 #include "gaf/gaf.h"
+#include "gui/gui.h"
 #include "hpi/hpi.h"
 #include "net/client.h"
 #include "net/lockstep.h"
@@ -1004,6 +1005,7 @@ public:
         sounds_.init(vfs_);
         soundClasses_.load(vfs_);   // music is started per-state by manageMusic()
         loadPanel(side_);
+        loadGui(side_);
 
         if (mission) {
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
@@ -1515,8 +1517,10 @@ public:
                 }
             }
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
-                   orderColumnClick(float(e.button.x), float(e.button.y), winW)) {
-            // order button handled
+                   (gui_.gadgets.empty()
+                        ? orderColumnClick(float(e.button.x), float(e.button.y), winW)
+                        : guiClick(float(e.button.x), float(e.button.y)))) {
+            // command-panel button handled
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    minimapArmedOrder(float(e.button.x), float(e.button.y), winW, winH)) {
             // An armed order (F/M/A/P/G) + minimap click issues that order at the
@@ -1913,6 +1917,7 @@ public:
         const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
         side_ = sides[room.slots[localPlayer_].faction % 5];
         loadPanel(side_);
+        loadGui(side_);
         if (!spots.empty())
             mapView_.setOffset(spots[0].first - 640 / 0.9f, spots[0].second - 400 / 0.9f);
     }
@@ -2027,6 +2032,7 @@ public:
         world_.setVisPlayer(0);
         side_ = "ara";
         loadPanel(side_);
+        loadGui(side_);
         if (!spots.empty())
             mapView_.setOffset(spots[0].first - 640 / 0.9f, spots[0].second - 400 / 0.9f);
     }
@@ -3453,7 +3459,7 @@ public:
         SDL_FRect panelStrip{float(mvw), 0, float(winW - mvw), float(winH) - kBarH};
         SDL_RenderFillRectF(ren_, &panelStrip);
         drawMinimap(winW, winH);
-        drawOrderColumn(winW, winH);
+        renderGui(winW, winH);
 
         drawPanel(winW, winH);
         if (showCounts_) drawUnitCounts(winW);
@@ -5353,14 +5359,41 @@ private:
     int panelW_ = 0, panelH_ = 0;
     SDL_Texture* botTex_ = nullptr;
     int botW_ = 0, botH_ = 0;
+    // Retail GUI-driven HUD: the parsed .gui and, parallel to gui_.gadgets, the
+    // loaded state-art textures for each gadget (imgs[0]=normal,1=hover,2=grayed).
+    tak::gui::Gui gui_;
+    std::vector<std::vector<SDL_Texture*>> guiTex_;
     std::map<std::string, SDL_Texture*> icons_;
     std::map<std::pair<std::string, int>, SDL_Texture*> modelIcons_;  // model-rendered fallback icons
     std::vector<std::pair<SDL_FRect, const tak::sim::UnitType*>> iconRects_;
     static constexpr int kMiniSize = 180;
-    // Right-side UI strip (minimap + order/weapon buttons). The map view is kept
-    // to the left of it so the panel never draws over the world.
-    static constexpr int kPanelW = kMiniSize + 20;
-    int mapViewW(int winW) const { return std::max(64, winW - kPanelW); }
+    // Right-side UI strip (minimap + command panel). The map view is kept to the
+    // left of it so the panel never draws over the world.
+    static constexpr int kPanelW = kMiniSize + 20;   // fallback width (no GUI loaded)
+
+    // Scale from the retail 640x480 GUI space to screen pixels. Authored at 640x480;
+    // we scale by height so the panel art keeps its aspect (winH/480 is true retail
+    // scale -- the /700 divisor keeps the HUD from dominating high-res displays while
+    // holding retail proportions and button alignment).
+    float guiS() const { return (winH_ > 0 ? winH_ : 480) / 700.0f; }
+    // Width of the right-hand command-panel strip (the retail UnitMenu is 128 wide in
+    // 640-space); never narrower than the minimap.
+    int cmdPanelW() const {
+        if (gui_.gadgets.empty()) return kPanelW;
+        return std::max(kMiniSize + 12, int(128 * guiS()) + 8);
+    }
+    int mapViewW(int winW) const { return std::max(64, winW - cmdPanelW()); }
+
+    // Screen rect for a command-panel gadget (x >= 512 in 640-space): the whole
+    // command panel is anchored to the bottom-right corner, so the ButtonPanel art
+    // and its buttons share one transform and stay aligned at any scale.
+    SDL_FRect guiCmdRect(const tak::gui::Gadget& g) const {
+        float s = guiS();
+        // 640-space y=480 (screen bottom in retail) maps just above our info bar so
+        // the command panel and the existing bottom bar don't overlap.
+        float baseY = winH_ - kBarH;
+        return {winW_ - (640 - g.x) * s, baseY - (480 - g.y) * s, g.w * s, g.h * s};
+    }
 
     SDL_FRect minimapRect(int winW, int winH) const {
         (void)winH;
@@ -5854,6 +5887,83 @@ private:
         } catch (const std::exception&) {}
     }
 
+    // Palette for a GUI GAF: the sibling anims/<gaf>.pcx if it exists (per-faction
+    // panels ship one), else the global palettes/guipal.pal used by gui.gaf.
+    tak::gaf::Palette guiPalette(const std::string& gaf) {
+        std::string pp = "anims/" + gaf + ".pcx";
+        try {
+            return tak::gaf::Palette::fromBytes(vread(pp), pp);
+        } catch (const std::exception&) {}
+        try {
+            return tak::gaf::Palette::fromBytes(vread("palettes/guipal.pal"),
+                                                "palettes/guipal.pal");
+        } catch (const std::exception&) {}
+        return {};
+    }
+
+    // Load one GAF sequence frame (anims/<gaf>, sequence seq, frame idx) to a texture.
+    SDL_Texture* loadGuiFrame(const std::string& gaf, const std::string& seq, int frame) {
+        if (gaf.empty() || seq.empty()) return nullptr;
+        std::string gp = "anims/" + gaf;
+        if (gp.size() < 4 || gp.substr(gp.size() - 4) != ".gaf") gp += ".gaf";
+        try {
+            auto pal = guiPalette(gaf.size() >= 4 && gaf.substr(gaf.size() - 4) == ".gaf"
+                                      ? gaf.substr(0, gaf.size() - 4)
+                                      : gaf);
+            for (auto& sq : tak::gaf::load(vread(gp), pal, -1, gp)) {
+                if (sq.name != seq) continue;
+                if (frame < 0 || size_t(frame) >= sq.frames.size()) frame = 0;
+                if (sq.frames.empty()) return nullptr;
+                auto& f = sq.frames[size_t(frame)];
+                if (f.width == 0 || f.height == 0) return nullptr;
+                SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                   SDL_TEXTUREACCESS_STATIC, f.width,
+                                                   f.height);
+                SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
+                SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+                return t;
+            }
+        } catch (const std::exception&) {}
+        return nullptr;
+    }
+
+    // Parse the faction in-game .gui and load every gadget's state art. side is the
+    // 3-letter faction ("ara"/"tar"/"ver"/"zon"/"cre"); the file is guis/<side>ingame.gui.
+    void loadGui(const std::string& side) {
+        for (auto& v : guiTex_)
+            for (auto* t : v)
+                if (t) SDL_DestroyTexture(t);
+        guiTex_.clear();
+        gui_ = {};
+        std::string path = "guis/" + side + "ingame.gui";
+        try {
+            gui_ = tak::gui::parse(vread(path), path);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "loadGui: %s: %s\n", path.c_str(), e.what());
+            return;
+        }
+        guiTex_.resize(gui_.gadgets.size());
+        for (size_t i = 0; i < gui_.gadgets.size(); ++i) {
+            const auto& g = gui_.gadgets[i];
+            for (const auto& im : g.imgs)
+                guiTex_[i].push_back(loadGuiFrame(im.gaf, im.seq, im.frame));
+        }
+        if (std::getenv("TAK_GUIDEBUG")) {
+            std::fprintf(stderr, "== %s: %zu gadgets ==\n", path.c_str(),
+                         gui_.gadgets.size());
+            for (size_t i = 0; i < gui_.gadgets.size(); ++i) {
+                const auto& g = gui_.gadgets[i];
+                std::fprintf(stderr, "  [%2zu] t%-2d %-18s (%3d,%3d %3dx%3d)", i, g.type,
+                             g.name.c_str(), g.x, g.y, g.w, g.h);
+                for (size_t k = 0; k < g.imgs.size(); ++k)
+                    std::fprintf(stderr, " %s:%s#%d%s", g.imgs[k].gaf.c_str(),
+                                 g.imgs[k].seq.c_str(), g.imgs[k].frame,
+                                 guiTex_[i][k] ? "" : "(!)");
+                std::fprintf(stderr, "\n");
+            }
+        }
+    }
+
     static constexpr int kBarH = 72;
 
     struct OrderBtn {
@@ -6041,6 +6151,141 @@ private:
             const auto& r = weaponRects_[i];
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
             selectWeapon(int(i));
+            return true;
+        }
+        return false;
+    }
+
+    // ---- Retail GUI-driven HUD ----------------------------------------------
+    // The command panel (right strip) and its order buttons are laid out from the
+    // faction .gui (see loadGui). Rects are anchored bottom-right and share the
+    // guiCmdRect transform so the ButtonPanel art and its buttons stay aligned.
+
+    int guiIdx(const char* name) const {
+        for (size_t i = 0; i < gui_.gadgets.size(); ++i)
+            if (gui_.gadgets[i].name == name) return int(i);
+        return -1;
+    }
+
+    // (gadget index, command char) for each command button to show for the current
+    // selection. cmd: 'm'/'a'/'p'/'g' arm pendingCmd_; 's' = Stop (immediate);
+    // '1'/'2'/'3' = weapon slot 0/1/2.
+    std::vector<std::pair<int, char>> guiActiveButtons() const {
+        std::vector<std::pair<int, char>> out;
+        if (gui_.gadgets.empty() || selection_.empty()) return out;
+        const tak::sim::Unit* front = world_.unit(selection_.front());
+        if (!front || !front->type) return out;
+        auto add = [&](const char* nm, char c) {
+            int i = guiIdx(nm);
+            if (i >= 0) out.push_back({i, c});
+        };
+        bool mobile = front->type->maxVel > 0;        // inverse of isStructure()
+        bool armed = !front->type->weapons.empty();
+        if (mobile) { add("MOVE", 'm'); add("PATROL", 'p'); add("GUARD", 'g'); }
+        if (armed) add("ATTACK", 'a');
+        add("STOP", 's');
+        int nw = int(front->type->weapons.size());
+        if (nw > 1) {
+            add("PrimaryWeapon", '1');
+            add("SecondaryWeapon", '2');
+            if (nw > 2) add("SpecialWeapon", '3');
+        }
+        return out;
+    }
+
+    std::vector<std::pair<SDL_FRect, char>> guiBtnRects_;   // hit list, filled by renderGui
+
+    // Draw the command panel chrome + buttons + idle crystal ball. Falls back to the
+    // old vertical order column if no .gui loaded.
+    void renderGui(int winW, int winH) {
+        if (gui_.gadgets.empty()) { drawOrderColumn(winW, winH); return; }
+        guiBtnRects_.clear();
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+
+        // Command panel background -- the stone frame is always present (retail keeps
+        // it up with the scrying orb even when nothing is selected).
+        int mi = guiIdx("UnitMenu");
+        if (mi >= 0 && !guiTex_[mi].empty() && guiTex_[mi][0]) {
+            SDL_FRect r = guiCmdRect(gui_.gadgets[mi]);
+            SDL_RenderCopyF(ren_, guiTex_[mi][0], nullptr, &r);
+        }
+
+        const tak::sim::Unit* front =
+            !selection_.empty() ? world_.unit(selection_.front()) : nullptr;
+        for (auto [idx, cmd] : guiActiveButtons()) {
+            const auto& g = gui_.gadgets[idx];
+            auto& tex = guiTex_[idx];
+            SDL_FRect r = guiCmdRect(g);
+            guiBtnRects_.push_back({r, cmd});
+            bool hot = mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y &&
+                       mouseY_ <= r.y + r.h;
+            bool active = false;
+            if (cmd >= '1' && cmd <= '3')
+                active = front && front->weaponSlot == (cmd - '1');
+            else if (cmd != 's')
+                active = pendingCmd_ == cmd;
+            // The command-button GAFs store frame 0 = empty recessed slot, frame 1 =
+            // glyph (normal), frame 2 = glyph (hilite/pressed). imgs[] mirrors those,
+            // so the available button is imgs[1] and hover/armed is imgs[2].
+            SDL_Texture* normal = tex.size() > 1 && tex[1] ? tex[1]
+                                  : !tex.empty()          ? tex[0]
+                                                          : nullptr;
+            SDL_Texture* hi = tex.size() > 2 && tex[2] ? tex[2] : normal;
+            SDL_Texture* t = (active || hot) ? hi : normal;
+            if (t) SDL_RenderCopyF(ren_, t, nullptr, &r);
+            if (active && (!t || t == normal)) {   // emphasise the armed order
+                SDL_SetRenderDrawColor(ren_, 255, 220, 90, 255);
+                SDL_RenderDrawRectF(ren_, &r);
+            }
+            // Weapon-slot GAFs are empty recesses (the engine composites the weapon
+            // icon); label them with the slot number so the picker is legible.
+            if (cmd >= '1' && cmd <= '3') {
+                char n[2] = {cmd, 0};
+                float px = std::max(1.4f, r.h / 18.0f);
+                float tw = blockWidth(n, px);
+                blockText(n, r.x + (r.w - tw) * 0.5f, r.y + r.h * 0.28f, px,
+                          active ? SDL_Color{255, 240, 170, 255}
+                                 : SDL_Color{200, 190, 160, 255});
+            }
+            if (hot && !g.cmd.empty()) {
+                float px = 1.6f, tw = blockWidth(g.cmd.c_str(), px);
+                SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
+                SDL_FRect tb{r.x - tw - 14, r.y + r.h * 0.3f, tw + 10, 20};
+                SDL_RenderFillRectF(ren_, &tb);
+                blockText(g.cmd.c_str(), r.x - tw - 9, r.y + r.h * 0.3f + 3, px,
+                          {235, 225, 180, 255});
+            }
+        }
+
+        // Idle crystal ball -- the animated scrying orb at the panel's foot.
+        int cb = guiIdx("CrystalBall");
+        if (cb >= 0 && !guiTex_[cb].empty()) {
+            int nf = int(guiTex_[cb].size());
+            int fr = nf > 0 ? int(animClock_ * 12.0f) % nf : 0;
+            SDL_Texture* t = guiTex_[cb][size_t(fr)];
+            if (t) {
+                SDL_FRect r = guiCmdRect(gui_.gadgets[cb]);
+                SDL_RenderCopyF(ren_, t, nullptr, &r);
+            }
+        }
+    }
+
+    // Returns true if the click hit (and was handled by) a command-panel button.
+    bool guiClick(float mx, float my) {
+        for (auto& [r, cmd] : guiBtnRects_) {
+            if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+            if (cmd == 's') {
+                for (int id : selection_) {
+                    tak::net::Command c;
+                    c.kind = tak::net::Cmd::Stop;
+                    c.unitId = id;
+                    issue(c);
+                }
+            } else if (cmd >= '1' && cmd <= '3') {
+                selectWeapon(cmd - '1');
+            } else {
+                pendingCmd_ = cmd;
+            }
             return true;
         }
         return false;
@@ -8060,12 +8305,23 @@ int main(int argc, char** argv) {
             };
             if (ktPhase == 0 && ktClock > 0.3f) {
                 {
-                    int pick = -1;
-                    for (auto& u : gameView->worldRef().units())
-                        if (u.alive() && u.player == 0 && u.type && u.type->isBuilder)
-                            pick = u.id;
-                    if (pick >= 0) gameView->selectOnly(pick);
-                    ktPhase = keytestSelectOnly ? 4 : 1;
+                    int pick = -1, any = -1;
+                    for (auto& u : gameView->worldRef().units()) {
+                        if (!u.alive() || u.player != 0 || !u.type) continue;
+                        any = u.id;
+                        if (u.type->isBuilder) pick = u.id;
+                    }
+                    if (pick < 0) pick = any;   // fall back to any own unit
+                    if (pick >= 0) {
+                        gameView->selectOnly(pick);
+                        std::fprintf(stderr, "KEYTEST select unit %d (of %zu units)\n",
+                                     pick, gameView->worldRef().units().size());
+                        // --selonly: hold this selection for the shot (no map clicks,
+                        // which would deselect). Otherwise continue the order test.
+                        if (keytestSelectOnly) { std::printf("KEYTEST done\n"); ktPhase = -1; }
+                        else ktPhase = 1;
+                    }
+                    // else: units not synced yet -- retry next frame (stay in phase 0)
                 }
             }
 
