@@ -2820,8 +2820,7 @@ public:
         vmTick_.clear();
         for (auto& [id, a] : anims_) {
             if (a.vm) vmTick_.push_back(a.vm.get());
-            if (a.fireCd > 0) a.fireCd -= dt;
-            if (a.smokeCd > 0) a.smokeCd -= dt;
+            a.fireT += dt; a.smokeT += dt;   // age since last emit (fire fades if it stops)
         }
         pool_.parallelFor(vmTick_.size(), [&](size_t b, size_t e) {
             for (size_t i = b; i < e; ++i) vmTick_[i]->tick(dt);
@@ -3227,6 +3226,7 @@ public:
         }
         drawParticles();
         drawEffects();
+        drawUnitFx();
 
         drawFog();
         if (buildDrag_ && placing_) {
@@ -3626,6 +3626,7 @@ private:
     struct Visual {
         tak::tdo::Model model;
     };
+    struct EffectAnim;   // defined below; Anim only needs the pointer type
     struct Anim {
         std::unique_ptr<tak::cob::Vm> vm;
         std::vector<std::string> pieceNames;
@@ -3640,7 +3641,13 @@ private:
         // emit-sfx (piece, sfxType) captured off the worker thread; drained on the
         // main thread after the parallel VM tick (SDL/effects_ are main-thread only).
         std::vector<std::pair<int, int32_t>> pendingSfx;
-        float fireCd = 0, smokeCd = 0;   // per-unit emit-sfx spawn cooldowns
+        // Continuous ambient fire/smoke: retail runs one persistent emitter per unit,
+        // so we draw ONE looping flame/smoke, kept alive while the emit-loop re-fires
+        // (fireT/smokeT = seconds since the last emit of each). Smooth, not per-emit.
+        const EffectAnim* fireFx = nullptr;
+        const EffectAnim* smokeFx = nullptr;
+        float fireT = 1e9f, smokeT = 1e9f;
+        float fireLift = 0, smokeLift = 0;   // screen lift of the emitting piece
     };
 
     // Turn a COB emit-sfx (piece, packed type) into a one-shot world-space effect at
@@ -3650,14 +3657,12 @@ private:
     void emitSfx(const tak::sim::Unit& u, Anim& a, int piece, int32_t sfx) {
         const char* anim = sfxAnimFor(sfx);
         if (!anim) return;
-        // Retail keeps ONE persistent particle emitter per fire; the script just
-        // re-feeds it. We approximate with one short looping puff refreshed on a
-        // cooldown -- a single flame column, not a stack of overlapping sprites.
-        bool smoke = anim[0] == 's';
-        float& cd = smoke ? a.smokeCd : a.fireCd;
-        if (cd > 0) return;
-        cd = smoke ? 0.6f : 0.4f;
-        spawnEffectAnim(anim, u.x, u.z, 0.0f, 0.0f, 1, pieceLift(u, a, piece));
+        const EffectAnim* ea = effectFor(anim);
+        if (!ea || ea->frames.empty()) return;
+        // Refresh this unit's persistent flame/smoke; drawUnitFx cycles it smoothly.
+        float lift = pieceLift(u, a, piece);
+        if (anim[0] == 's') { a.smokeFx = ea; a.smokeT = 0; a.smokeLift = lift; }
+        else                { a.fireFx = ea;  a.fireT = 0;  a.fireLift = lift; }
     }
     // Map a packed COB sfx code to the retail effect GAF sequence. (KINGDOMS.icd
     // emitSfx @0x50da20: the 0x100 bit flags the extended emitter family, low bits
@@ -7357,6 +7362,35 @@ private:
                        - e.alt * zm;
             SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
             SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
+        }
+    }
+
+    // Persistent per-unit ambient fire/smoke (emit-sfx). One looping flame/smoke per
+    // unit, cycled off the continuous animClock so it flows smoothly (no restart/gaps
+    // like re-spawned one-shots), kept alive while the unit's emit-loop keeps firing.
+    void drawUnitFx() {
+        float zm = mapView_.zoom();
+        const float kLinger = 0.8f;   // seconds after the last emit to keep drawing
+        for (auto& [id, a] : anims_) {
+            bool fire = a.fireFx && a.fireT < kLinger;
+            bool smk = a.smokeFx && a.smokeT < kLinger;
+            if (!fire && !smk) continue;
+            const auto* u = world_.unit(id);
+            if (!u || !u->type) continue;
+            if (!noFog_ && !world_.cellVisible(u->x, u->z)) continue;
+            auto draw = [&](const EffectAnim* ea, float lift, float fps) {
+                int nf = int(ea->frames.size());
+                int fi = int(animClock_ * fps + float(id) * 0.37f) % nf;
+                if (fi < 0) fi += nf;
+                const EFrame& f = ea->frames[size_t(fi)];
+                float sx = (u->x - mapView_.offX()) * zm - f.ax * zm - terrainLiftX(u->x, u->z) * zm;
+                float sy = (u->z - mapView_.offY()) * zm - f.ay * zm - terrainLift(u->x, u->z) * zm
+                           - lift * zm;
+                SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
+                SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
+            };
+            if (smk) draw(a.smokeFx, a.smokeLift, 12.0f);
+            if (fire) draw(a.fireFx, a.fireLift, 18.0f);   // flame over its smoke
         }
     }
 
