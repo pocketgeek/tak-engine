@@ -3,6 +3,7 @@
 #include "gaf/gaf.h"
 #include "gui/gui.h"
 #include "util/png.h"
+#include "version.h"
 #include "video/bink.h"
 #include "viewer/menumusic.h"
 
@@ -32,6 +33,7 @@ struct Door {
     SDL_Rect rect{};                  // 640x480 layout space
     std::string vbase;                // video basename: "machine"/"girl"/"knight"
     std::string sound;                // click sound (gui states, e.g. "skirmish.wav")
+    std::string tip;                  // help caption (gui cmd, e.g. "Play the Machine")
     MainMenu::Choice action = MainMenu::Choice::None;
 
     SDL_Texture* gaf = nullptr;       // static fallback (GAF state-0 art)
@@ -50,6 +52,7 @@ struct Button {
     SDL_Rect rect{};
     SDL_Texture* tex[3] = {nullptr, nullptr, nullptr};   // normal / hover / pressed
     std::string sound;                                   // click sound (gui states)
+    std::string tip;                                     // help caption (gui cmd)
     MainMenu::Choice action = MainMenu::Choice::None;
     bool hover = false;
 };
@@ -289,6 +292,7 @@ struct MainMenu::Impl {
             d.vbase = s.vbase;
             d.action = s.act;
             d.sound = clickSound(*g);
+            d.tip = g->cmd;   // gui cmd doubles as the hover help caption
             loadSfx(d.sound);
             if (!g->imgs.empty()) d.gaf = gafTex(g->imgs[0].gaf, g->imgs[0].seq, g->imgs[0].frame);
             doors.push_back(std::move(d));
@@ -306,6 +310,7 @@ struct MainMenu::Impl {
             bt.rect = {g->x, g->y, g->w, g->h};
             bt.action = b.act;
             bt.sound = clickSound(*g);
+            bt.tip = g->cmd;   // gui cmd doubles as the hover help caption
             loadSfx(bt.sound);
             for (int i = 0; i < 3 && i < int(g->imgs.size()); ++i)
                 bt.tex[i] = gafTex(g->imgs[size_t(i)].gaf, g->imgs[size_t(i)].seq, g->imgs[size_t(i)].frame);
@@ -345,6 +350,22 @@ struct MainMenu::Impl {
             SDL_FRect r = toScreen(nat, s, ox, oy);
             SDL_RenderCopyF(ren, t, nullptr, &r);
         }
+
+        // Bottom-centre placards, in the retail gui's 640x480 coordinates:
+        // the "Version" static (174,408,295,14) shows the build version, and its
+        // "HelpText" sibling (172,441,296,31) shows the hovered gadget's caption --
+        // a fixed help/status line, the retail convention, not a floating tooltip.
+        // (blockText covers A-Z/0-9/.:- ; spaces render as a gap.)
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        auto placard = [&](const std::string& text, int dx, int dw, int dy, float dpx, SDL_Color c) {
+            float tw = float(text.size()) * 6 * dpx;                        // design-space width
+            shadowText(text, ox + (dx + (dw - tw) / 2) * s, oy + dy * s, dpx * s, c);
+        };
+        placard(std::string("VERSION ") + tak::kVersion, 174, 295, 409, 2.0f, {185, 180, 160, 220});
+        const std::string* tip = nullptr;
+        for (auto& d : doors) if (d.hover && !d.tip.empty()) { tip = &d.tip; break; }
+        if (!tip) for (auto& b : buttons) if (b.hover && !b.tip.empty()) { tip = &b.tip; break; }
+        if (tip) placard(*tip, 172, 296, 448, 2.5f, {240, 238, 245, 235});
     }
 
     // ---- minimal block font + multiplayer server-select overlay ---------------
@@ -391,6 +412,12 @@ struct MainMenu::Impl {
                     }
             cx += 6 * px;
         }
+    }
+    // Block text with a 1px dark drop-shadow so it stays legible over any menu art.
+    void shadowText(const std::string& s, float x, float y, float px, SDL_Color c) {
+        float o = std::max(1.0f, px * 0.4f);
+        blockText(s, x + o, y + o, px, {0, 0, 0, 170});
+        blockText(s, x, y, px, c);
     }
 
     void renderServerSelect(int winW, int winH) {
