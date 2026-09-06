@@ -11,10 +11,22 @@ namespace tak {
 namespace {
 
 int detectChannels() {
+    // Match SoundBank::init exactly: GetDefaultAudioInfo only advises the REQUEST
+    // (it often says 2 even on a 5.1/7.1 rig); the real layout is the count the
+    // opened device negotiates. Probe-open one (queue-driven, no callback) and read
+    // it back, so the menu shows the same speaker sliders SoundBank actually feeds.
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return 2;
+    int req = 2;
     SDL_AudioSpec def{};
     if (SDL_GetDefaultAudioInfo(nullptr, &def, 0) == 0 && def.channels >= 2)
-        return std::min<int>(def.channels, 8);
-    return 2;
+        req = std::min<int>(def.channels, 8);
+    SDL_AudioSpec want{}, got{};
+    want.freq = 11025; want.format = AUDIO_S16SYS; want.channels = Uint8(req);
+    want.samples = 1024; want.callback = nullptr;
+    SDL_AudioDeviceID d = SDL_OpenAudioDevice(nullptr, 0, &want, &got, SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
+    int ch = (d && got.channels) ? got.channels : req;
+    if (d) SDL_CloseAudioDevice(d);
+    return std::clamp(ch, 1, 8);
 }
 
 // Speaker label per channel count (mirrors SoundBank::channelRole / channelGains).
