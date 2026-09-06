@@ -1,0 +1,46 @@
+#pragma once
+
+// User-adjustable Options, persisted to a per-user config file. These are ALL
+// local display / input / audio preferences -- none of them feed the deterministic
+// sim (World::stateHash) or the net GameOptions, so they may differ per client and
+// change live. Keep it that way: never include this from src/sim, src/net, or
+// src/server. (Net-synced, hashed choices -- game speed, unit cap, crusades, FFA --
+// live in GameOptions/MatchConfig, not here.)
+
+#include <string>
+
+namespace tak {
+
+struct Settings {
+    // ---- display / window ----
+    bool  fullscreen = false;      // borderless-desktop fullscreen
+    bool  vsync      = true;
+    int   maxFps     = 60;         // frame cap when vsync is off; clamp 30..480
+    float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)
+    bool  antiAlias  = false;      // scene supersampling (wiring is a follow-up)
+
+    // ---- audio (0..256, matching SoundBank's internal scale) ----
+    int   masterVol  = 256;        // global gain over everything
+    int   bgmVol      = 90;        // background music (SoundBank music + MenuMusic)
+    int   sfxVol      = 256;       // unit / world / UI sound effects
+    float chanGain[8] = {1, 1, 1, 1, 1, 1, 1, 1};   // per-output-speaker trim, 0..1
+
+    // ---- camera / input ----
+    float mouseZoomSpeed  = 1.0f;  // wheel-zoom sensitivity; 0.25..4.0
+    float edgeScrollSpeed = 1.0f;  // edge-scroll rate;       0.25..4.0
+    bool  edgeScroll      = true;  // pan when the cursor is at a screen edge
+
+    // ---- misc ----
+    std::string playerName;        // default name for multiplayer
+};
+
+// The config file path (SDL_GetPrefPath based). Empty only if SDL can't provide one.
+std::string settingsPath();
+
+// Read the config file; returns defaults for anything missing/corrupt (never throws).
+Settings loadSettings();
+
+// Atomically write the config file. Returns false on I/O failure.
+bool saveSettings(const Settings&);
+
+}  // namespace tak

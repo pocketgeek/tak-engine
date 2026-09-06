@@ -29,6 +29,7 @@
 #include "tnt/tnt.h"
 #include "util/png.h"
 #include "version.h"
+#include "viewer/settings.h"
 #include "viewer/mainmenu.h"
 #include "viewer/menumusic.h"
 
@@ -166,7 +167,9 @@ public:
             offY_ -= e.motion.yrel / zoom_;
         } else if (e.type == SDL_MOUSEWHEEL) {
             // Half the old per-notch step (1.25/0.8): 1.25^0.5 in, its reciprocal out.
-            zoom_ = std::clamp(zoom_ * (e.wheel.y > 0 ? 1.118f : 0.894f), 0.05f, 4.0f);
+            // zoomSpeed_ is an exponent so in/out stay reciprocal and 1.0 == the base.
+            float f = std::pow(e.wheel.y > 0 ? 1.118f : 0.894f, zoomSpeed_);
+            zoom_ = std::clamp(zoom_ * f, 0.05f, 4.0f);
         } else if (e.type == SDL_KEYDOWN) {
             float step = 200 / zoom_;
             switch (e.key.keysym.sym) {
@@ -245,6 +248,7 @@ public:
     tak::terrain::Compositor& compositor() { return comp_; }
     void setZoom(float z) { zoom_ = z; }
     void setOffset(float x, float y) { offX_ = x; offY_ = y; }
+    void setZoomSpeed(float m) { zoomSpeed_ = std::clamp(m, 0.25f, 4.0f); }
     const tak::tnt::Map& map() const { return map_; }
 
 private:
@@ -277,6 +281,7 @@ private:
     tak::terrain::Compositor comp_;
     std::map<std::pair<int, int>, SDL_Texture*> chunks_;
     float offX_ = 0, offY_ = 0, zoom_ = 0.35f;
+    float zoomSpeed_ = 1.0f;   // wheel-zoom sensitivity exponent (Options)
 };
 
 // -------------------------------------------------------------- model mode
@@ -955,7 +960,7 @@ private:
             if (!c.data) continue;
             channelGains(c.pan, c.depth, g);
             for (int f = 0; f < frames && c.pos < c.data->size(); ++f, ++c.pos) {
-                int s = (*c.data)[c.pos] / 2;
+                int s = (*c.data)[c.pos] / 2 * sfxVol_ / 256;
                 for (int ci = 0; ci < ch; ++ci)
                     if (g[ci] != 0.0f) add(f, ci, int(s * g[ci]));
                 if (lfe >= 0) lfeMono_[size_t(f)] += s;
@@ -971,6 +976,16 @@ private:
                 add(f, lfe, int(lpfState_ * kGain));
             }
         }
+        // Final trim: master volume, then each output channel's own gain (LFE
+        // included) -- applied after everything is summed so one control scales the
+        // whole mix. Both default to unity (masterVol_=256, chanGain_=1), so this is
+        // an exact no-op at default settings.
+        for (int f = 0; f < frames; ++f)
+            for (int ci = 0; ci < ch; ++ci) {
+                int idx = f * ch + ci;
+                int v = int(out[idx] * masterVol_ / 256 * chanGain_[ci]);
+                out[idx] = int16_t(std::clamp(v, -32768, 32767));
+            }
     }
 
 public:
@@ -1004,6 +1019,22 @@ public:
     }
 
     void setMusicVolume(int v) { musicVol_ = std::clamp(v, 0, 256); }
+    void setMasterVolume(int v) { masterVol_ = std::clamp(v, 0, 256); }
+    void setSfxVolume(int v) { sfxVol_ = std::clamp(v, 0, 256); }
+    void setChannelGain(int i, float g) { if (i >= 0 && i < 8) chanGain_[i] = std::clamp(g, 0.0f, 1.0f); }
+
+    // For the Options screen: how many output channels the device gave us, and a
+    // human label for each (matching channelGains()'s per-count speaker layout).
+    int channelCount() const { return std::clamp(chan_, 1, 8); }
+    const char* channelRole(int i) const {
+        switch (chan_) {
+            case 2: { static const char* r[] = {"LEFT", "RIGHT"}; return i < 2 ? r[i] : ""; }
+            case 4: { static const char* r[] = {"FRONT L", "FRONT R", "REAR L", "REAR R"}; return i < 4 ? r[i] : ""; }
+            case 6: { static const char* r[] = {"FRONT L", "FRONT R", "CENTER", "SUB", "REAR L", "REAR R"}; return i < 6 ? r[i] : ""; }
+            case 8: { static const char* r[] = {"FRONT L", "FRONT R", "CENTER", "SUB", "REAR L", "REAR R", "SIDE L", "SIDE R"}; return i < 8 ? r[i] : ""; }
+            default: return "MONO";
+        }
+    }
 
 private:
     void loadTrack(size_t idx) {
@@ -1051,7 +1082,10 @@ private:
     std::vector<std::string> playlist_;
     std::vector<int16_t> music_;
     size_t musicPos_ = 0, musicTrack_ = 0;
-    int musicVol_ = 90;   // out of 256
+    int musicVol_ = 90;   // out of 256 (BGM)
+    int masterVol_ = 256; // out of 256, global gain over the whole mix
+    int sfxVol_ = 256;    // out of 256, sound effects
+    float chanGain_[8] = {1, 1, 1, 1, 1, 1, 1, 1};   // per-output-channel trim 0..1
     bool musicDone_ = false;
     SDL_AudioDeviceID dev_ = 0;
     SDL_AudioSpec spec_{};
@@ -1761,6 +1795,19 @@ public:
     // Menu-launched sessions can return to the front-end, so the in-game menu
     // offers MAIN MENU; a direct CLI game only offers RESUME/QUIT.
     void setCanReturnToMenu() { canReturnToMenu_ = true; }
+
+    // Apply local Options (audio / camera / UI scale) live -- at startup and
+    // whenever the in-game Options screen changes a value. Never touches the sim.
+    void applySettings(const tak::Settings& s) {
+        sounds_.setMasterVolume(s.masterVol);
+        sounds_.setMusicVolume(s.bgmVol);
+        sounds_.setSfxVolume(s.sfxVol);
+        for (int i = 0; i < sounds_.channelCount(); ++i) sounds_.setChannelGain(i, s.chanGain[i]);
+        mapView_.setZoomSpeed(s.mouseZoomSpeed);
+        edgeScrollSpeed_ = s.edgeScrollSpeed;
+        edgeScrollOn_ = s.edgeScroll;
+        uiScale_ = s.uiScale;
+    }
     // Persist / read the resume ticket (gameId + rotating token) so a killed
     // client can rejoin its held slot on restart.
     void writeResume(uint32_t gid, uint64_t tok) const {
@@ -2794,9 +2841,9 @@ public:
     // at a window edge — including the very bottom of the screen (the HUD panel
     // never sits at the extreme edge, so this doesn't fight the build icons).
     void edgeScroll(float dt, float zm) {
-        if (winW_ <= 0 || winH_ <= 0) return;
+        if (winW_ <= 0 || winH_ <= 0 || !edgeScrollOn_) return;
         if (mouseX_ < 0 || mouseX_ > winW_ || mouseY_ < 0 || mouseY_ > winH_) return;
-        const float margin = 24.0f, panPx = 2000.0f;   // px/s at zoom 1
+        const float margin = 24.0f, panPx = 2000.0f * edgeScrollSpeed_;   // px/s at zoom 1
         // Trigger at the real window edges (incl. the far right, past the panel),
         // so the player pushes to the screen edge to scroll -- not to the map edge.
         float sx = 0, sz = 0;
@@ -5601,6 +5648,10 @@ private:
     bool exitMenu_ = false;          // in-game exit overlay (Esc) is open
     bool canReturnToMenu_ = false;   // launched from the front-end -> offer MAIN MENU
     std::vector<std::pair<SDL_FRect, std::function<void()>>> exitHots_;   // overlay hit-rects (screen space)
+    // ---- Options (local display/input; see viewer/settings.h) ----
+    float edgeScrollSpeed_ = 1.0f;
+    bool  edgeScrollOn_ = true;
+    float uiScale_ = 1.0f;
     int gameSpeed_ = 0;         // -10..+10 game-speed level (+/- keys); 0 = normal
     // 10^(level/10): +10 = 10x, 0 = 1x, -10 = 0.1x.
     // Game-speed multiplier. Forced to 1x in a networked game: the peers advance
@@ -9141,10 +9192,17 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
+    // Persisted Options (audio/camera/display prefs). CLI flags still win where they
+    // apply; the file is the source of truth for anything not passed on the CLI.
+    tak::Settings settings = tak::loadSettings();
+    if (maxFps == 60) maxFps = settings.maxFps;          // --maxfps (if given) wins
+    bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
     std::string winTitle = std::string("takview ") + tak::kVersion;
     SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, winW, winH,
                                        SDL_WINDOW_RESIZABLE);
+    if (win && settings.fullscreen)
+        SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
     Uint32 renFlags = SDL_RENDERER_SOFTWARE;
     if (shot.empty()) renFlags = noVsync ? SDL_RENDERER_ACCELERATED
                                          : SDL_RENDERER_PRESENTVSYNC;
@@ -9153,7 +9211,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
         return 1;
     }
-    if (shot.empty()) SDL_RenderSetVSync(ren, noVsync ? 0 : 1);
+    if (shot.empty()) SDL_RenderSetVSync(ren, vsyncOn ? 1 : 0);
 
     // ---- outer session loop: menu -> game -> menu (menu launches only) ----------
     // After a menu-launched session ends (a MAIN MENU button or post-game Escape),
@@ -9167,6 +9225,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> launchArgs = args;
     bool quitApp = false;
     tak::MenuMusic menuMusic;   // persists across menu -> lobby so the track doesn't restart
+    menuMusic.setVolume(settings.masterVol, settings.bgmVol);
     for (;;) {
     if (fromMenu) { mode = launchMode; serverHost = launchServerHost;
                     serverPort = launchServerPort; args = launchArgs;
@@ -9230,6 +9289,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<tak::net::MpClient> mp;
     if (!serverHost.empty()) {
         mp = std::make_unique<tak::net::MpClient>();
+        if (playerName.empty()) playerName = settings.playerName;
         if (playerName.empty()) playerName = "player";
         // Hello carries the PURE-RETAIL gameplay fingerprint (no overrides), so the
         // base game files are checked regardless of anyone's tier; the room's tier
@@ -9292,6 +9352,7 @@ int main(int argc, char** argv) {
                                                   scenario, missionFlag,
                                                   navy || amphib || firetest || facetest || mp,
                                                   side, aiSide, crusades);
+            gameView->applySettings(settings);   // audio / camera / UI-scale prefs
             if (mp) {
                 gameView->setMpClient(mp.get());
                 gameView->setMpMapId(args[0]);

@@ -31,18 +31,23 @@ public:
         SDL_RWops* rw = raw.empty() ? nullptr : SDL_RWFromConstMem(raw.data(), int(raw.size()));
         SDL_AudioSpec wav{}; Uint8* buf = nullptr; Uint32 len = 0;
         if (!rw || !SDL_LoadWAV_RW(rw, 1, &wav, &buf, &len)) return;
-        // Pre-scale to the game's music level (SDL_MIX_MAXVOLUME=128; ~45/128 ≈ 90/256,
-        // GameView's SoundBank musicVol_) so the menu isn't louder than the game.
-        pcm_.assign(len, 0);
-        SDL_MixAudioFormat(pcm_.data(), buf, wav.format, len, 45);
+        // Keep the unscaled source so the BGM/master volume can be re-applied live.
+        src_.assign(buf, buf + len);
+        fmt_ = wav.format;
         SDL_FreeWAV(buf);
         SDL_AudioSpec want = wav, have{};
         want.callback = nullptr;   // queue-driven
         dev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
-        if (!dev_) { pcm_.clear(); return; }
+        if (!dev_) { src_.clear(); return; }
         track_ = track;
-        SDL_QueueAudio(dev_, pcm_.data(), Uint32(pcm_.size()));
+        rescale();                 // build pcm_ at the current volume + queue it
         SDL_PauseAudioDevice(dev_, 0);
+    }
+
+    // BGM + master volume on the SoundBank 0..256 scale; applies live if playing.
+    void setVolume(int master, int bgm) {
+        master_ = master; bgm_ = bgm;
+        if (dev_) { SDL_ClearQueuedAudio(dev_); rescale(); }
     }
 
     // Re-queue before the buffer drains so the track loops seamlessly. Call/frame.
@@ -54,14 +59,27 @@ public:
     void stop() {
         if (dev_) { SDL_CloseAudioDevice(dev_); dev_ = 0; }
         pcm_.clear();
+        src_.clear();
         track_ = -1;
     }
 
     bool playing() const { return dev_ != 0; }
 
 private:
+    // Rebuild the volume-scaled loop buffer from the retained source and queue it.
+    void rescale() {
+        if (!dev_ || src_.empty()) return;
+        int vol = 128 * bgm_ / 256 * master_ / 256;   // SDL_MIX_MAXVOLUME=128; 90/256 -> 45
+        pcm_.assign(src_.size(), 0);
+        SDL_MixAudioFormat(pcm_.data(), src_.data(), fmt_, Uint32(src_.size()), vol);
+        SDL_QueueAudio(dev_, pcm_.data(), Uint32(pcm_.size()));
+    }
+
     SDL_AudioDeviceID dev_ = 0;
-    std::vector<uint8_t> pcm_;
+    std::vector<uint8_t> pcm_;    // volume-scaled loop buffer (re-queued each poll)
+    std::vector<uint8_t> src_;    // unscaled source, kept so volume can re-apply live
+    SDL_AudioFormat fmt_ = 0;
+    int master_ = 256, bgm_ = 90;
     int track_ = -1;
 };
 
