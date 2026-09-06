@@ -29,6 +29,7 @@
 #include "tnt/tnt.h"
 #include "util/png.h"
 #include "version.h"
+#include "viewer/mainmenu.h"
 
 // Keep our own main() on every platform (don't let SDL redefine it to SDL_main /
 // pull in SDL2main + a WinMain); we call SDL_SetMainReady() in main() instead. This
@@ -9068,6 +9069,23 @@ int main(int argc, char** argv) {
     // moment a frame overruns one refresh even when there's headroom. --novsync
     // unlocks it (useful to see true throughput / for high-refresh displays).
     if (shot.empty()) SDL_RenderSetVSync(ren, noVsync ? 0 : 1);
+
+    // Front-end: the retail three-door main menu (single-player / campaign /
+    // multiplayer). Data-driven from guis/mainmenu.gui with Bink door videos.
+    if (mode == "menu") {
+        if (dataRoot.empty()) { std::fprintf(stderr, "menu: needs --data <retail-install-dir>\n"); return 1; }
+        tak::MainMenu menu(ren, vfs, dataRoot);
+        tak::MainMenu::Choice choice = menu.run(shot);
+        if (shot.empty()) {
+            const char* names[] = {"none", "single-player", "campaign", "multiplayer", "options", "exit"};
+            std::fprintf(stderr, "menu: choice = %s\n", names[int(choice)]);
+            // TODO(next): dispatch single-player -> SP lobby, multiplayer -> server select.
+        }
+        SDL_DestroyRenderer(ren);
+        SDL_DestroyWindow(win);
+        SDL_Quit();
+        return 0;
+    }
 
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;
