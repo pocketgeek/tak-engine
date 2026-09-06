@@ -1954,7 +1954,7 @@ public:
                                   e.button.button == SDL_BUTTON_RIGHT)) {
             // conjure/build icon (bottom-left, above the bar) handled
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
-                   e.button.y > winH - kBarH) {
+                   e.button.y > winH - barH()) {
             // bottom bar: build icons already handled above; swallow the rest so a stray
             // click on the bar chrome doesn't deselect / order into the world
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
@@ -1971,7 +1971,7 @@ public:
             draggingMinimap_ = true;   // camera follows the drag until release
             trackSel_ = false;
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
-                   e.button.x > mapViewW(winW) && e.button.y < winH - kBarH) {
+                   e.button.x > mapViewW(winW) && e.button.y < winH - barH()) {
             // Right-hand panel press. A right-click on the minimap orders the
             // selection to that world point; every other panel press is swallowed
             // so it can't start a box-select or drop an order on the map. (Only the
@@ -3927,7 +3927,7 @@ public:
         // its minimap + order column on a solid strip (never over the map).
         SDL_RenderSetClipRect(ren_, nullptr);
         SDL_SetRenderDrawColor(ren_, 16, 14, 12, 255);
-        SDL_FRect panelStrip{float(mvw), 0, float(winW - mvw), float(winH) - kBarH};
+        SDL_FRect panelStrip{float(mvw), 0, float(winW - mvw), float(winH) - barH()};
         SDL_RenderFillRectF(ren_, &panelStrip);
         drawMinimap(winW, winH);
         renderGui(winW, winH);
@@ -3957,7 +3957,7 @@ public:
             if (kNetDebug) {
                 char nb[64];
                 std::snprintf(nb, sizeof nb, "NET P%d  TICK %u", localPlayer_ + 1, netTick_);
-                hudFont_.draw(ren_, nb, 12, float(winH) - kBarH - 16, 1.4f,
+                hudFont_.draw(ren_, nb, 12, float(winH) - barH() - 16, 1.4f,
                               {140, 200, 255, 255});
             }
             // "Behind by N s": how far this client's view lags the live game --
@@ -4092,7 +4092,7 @@ public:
                 lines.push_back({it->who + ": " + it->text, {225, 228, 236, 255}});
                 ++shown;
             }
-            float x = 14, y = float(winH) - kBarH - 14;
+            float x = 14, y = float(winH) - barH() - 14;
             float wMax = 0;
             for (auto& l : lines) wMax = std::max(wMax, float(hudFont_.width(l.first, 1.7f)));
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
@@ -4179,7 +4179,7 @@ public:
     int minWindowWidth() const {
         int n = int(registry_.maxBuildMenu());
         int rowW = n > 0 ? (n - 1) * 66 + 60 : 0;
-        return rowW + 24 + kPanelW;
+        return rowW + 24 + panelW();
     }
 
 private:
@@ -5965,21 +5965,22 @@ private:
     std::map<std::string, SDL_Texture*> icons_;
     std::map<std::pair<std::string, int>, SDL_Texture*> modelIcons_;  // model-rendered fallback icons
     std::vector<std::pair<SDL_FRect, const tak::sim::UnitType*>> iconRects_;
-    static constexpr int kMiniSize = 180;
+    static constexpr int kMiniSizeBase = 180;
+    int miniSize() const { return int(kMiniSizeBase * uiScale_); }   // UI-scale (Options)
     // Right-side UI strip (minimap + command panel). The map view is kept to the
     // left of it so the panel never draws over the world.
-    static constexpr int kPanelW = kMiniSize + 20;   // fallback width (no GUI loaded)
+    int panelW() const { return miniSize() + int(20 * uiScale_); }   // fallback width (no GUI loaded)
 
     // Scale from the retail 640x480 GUI space to screen pixels. Authored at 640x480;
     // we scale by height so the panel art keeps its aspect (winH/480 is true retail
     // scale -- the /700 divisor keeps the HUD from dominating high-res displays while
     // holding retail proportions and button alignment).
-    float guiS() const { return (winH_ > 0 ? winH_ : 480) / 700.0f; }
+    float guiS() const { return uiScale_ * (winH_ > 0 ? winH_ : 480) / 700.0f; }
     // Width of the right-hand command-panel strip (the retail UnitMenu is 128 wide in
     // 640-space); never narrower than the minimap.
     int cmdPanelW() const {
-        if (gui_.gadgets.empty()) return kPanelW;
-        return std::max(kMiniSize + 12, int(128 * guiS()) + 8);
+        if (gui_.gadgets.empty()) return panelW();
+        return std::max(miniSize() + 12, int(128 * guiS()) + 8);
     }
     int mapViewW(int winW) const { return std::max(64, winW - cmdPanelW()); }
 
@@ -5990,24 +5991,24 @@ private:
         float s = guiS();
         // 640-space y=480 (screen bottom in retail) maps just above our info bar so
         // the command panel and the existing bottom bar don't overlap.
-        float baseY = winH_ - kBarH;
+        float baseY = winH_ - barH();
         return {winW_ - (640 - g.x) * s, baseY - (480 - g.y) * s, g.w * s, g.h * s};
     }
 
     // Screen rect for a bottom-bar gadget (the retail InfoPanel occupies 640-space
-    // y 431..480). The whole bar layout is scaled uniformly to our kBarH-tall bar and
+    // y 431..480). The whole bar layout is scaled uniformly to our barH()-tall bar and
     // anchored bottom-left, so the unit-info block clusters at the left while the bar
     // chrome stretches to fill the width.
     SDL_FRect guiBarRect(const tak::gui::Gadget& g) const {
-        float vs = float(kBarH) / 49.0f;   // 49-tall retail bar -> kBarH px
-        float barTop = winH_ - kBarH;
+        float vs = float(barH()) / 49.0f;   // 49-tall retail bar -> barH() px
+        float barTop = winH_ - barH();
         return {g.x * vs, barTop + (g.y - 431) * vs, g.w * vs, g.h * vs};
     }
 
     SDL_FRect minimapRect(int winW, int winH) const {
         (void)winH;
         float aspect = float(mapView_.map().blocksY) / float(mapView_.map().blocksX);
-        return {float(winW) - kMiniSize - 10, 10, kMiniSize, kMiniSize * aspect};
+        return {float(winW) - miniSize() - 10, 10, float(miniSize()), float(miniSize()) * aspect};
     }
 
     void buildMinimap() {
@@ -6064,7 +6065,7 @@ private:
         float zm = mapView_.zoom();
         SDL_FPoint a = toMini(mapView_.offX(), mapView_.offY());
         SDL_FRect view{a.x, a.y, winW / zm / mapW * r.w,
-                       (winH - kBarH) / zm / mapH * r.h};
+                       (winH - barH()) / zm / mapH * r.h};
         SDL_SetRenderDrawColor(ren_, 240, 240, 240, 200);
         SDL_RenderDrawRectF(ren_, &view);
     }
@@ -6084,7 +6085,7 @@ private:
         if (!minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
         float zm = mapView_.zoom();   // centre the clicked point in the map viewport
         mapView_.setOffset(wx - mapViewW(winW) / zm / 2,
-                           wz - (winH - int(kBarH)) / zm / 2);
+                           wz - (winH - int(barH())) / zm / 2);
         return true;
     }
 
@@ -6660,7 +6661,8 @@ private:
         }
     }
 
-    static constexpr int kBarH = 72;
+    static constexpr int kBarHBase = 72;
+    int barH() const { return int(kBarHBase * uiScale_); }   // UI-scale (Options)
 
     struct OrderBtn {
         SDL_Texture* frames[3] = {nullptr, nullptr, nullptr};   // normal/hover/armed
@@ -6798,7 +6800,7 @@ private:
         // A row just above the HUD bar, right-aligned to the order column's right
         // edge (the row can be wider than the 56px column, so don't centre it or it
         // runs off the screen edge).
-        float y = float(winH) - kBarH - bw - 8;
+        float y = float(winH) - barH() - bw - 8;
         float row = n * bw + (n - 1) * gap;
         float x0 = float(winW) - 4 - row;
         for (int i = 0; i < n; ++i) {
@@ -7193,15 +7195,15 @@ private:
     bool drawGuiInfoBar(int winW, int winH) {
         if (gui_.gadgets.empty()) return false;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        float barTop = float(winH - kBarH);
+        float barTop = float(winH - barH());
         // Chrome: InfoPanel stretched across the width, EndCap at the left.
         int bi = guiIdx("BottomBar");
         if (bi >= 0 && !guiTex_[bi].empty() && guiTex_[bi][0]) {
-            SDL_FRect r{0, barTop, float(winW), float(kBarH)};
+            SDL_FRect r{0, barTop, float(winW), float(barH())};
             SDL_RenderCopyF(ren_, guiTex_[bi][0], nullptr, &r);
         } else {
             SDL_SetRenderDrawColor(ren_, 42, 38, 34, 255);
-            SDL_FRect bar{0, barTop, float(winW), float(kBarH)};
+            SDL_FRect bar{0, barTop, float(winW), float(barH())};
             SDL_RenderFillRectF(ren_, &bar);
         }
         int ei = guiIdx("BottomEnd");
@@ -7214,7 +7216,7 @@ private:
         // (status), and UnitInfo2 (the conjured target: name + progress bar). Both info
         // blocks always render -- empty bars when absent -- so the layout never shifts.
         {
-            float vs = float(kBarH) / 49.0f;
+            float vs = float(barH()) / 49.0f;
             float groupW = (512.0f - 59.0f) * vs;   // UnitInfo1.x .. UnitInfo2 right edge
             float off = (float(winW) - groupW) * 0.5f - 59.0f * vs;
             auto place = [&](int gi) {
@@ -7231,7 +7233,7 @@ private:
             const tak::sim::Unit* u =
                 selection_.empty() ? nullptr : world_.unit(selection_.front());
             if (u && (!u->alive() || !u->type)) u = nullptr;
-            float tpx = std::max(2.0f, float(kBarH) / 24.0f);
+            float tpx = std::max(2.0f, float(barH()) / 24.0f);
 
             // The conjured target (site under construction, or the head of a build queue).
             std::string tName; float tProg = 0;
@@ -7724,7 +7726,7 @@ private:
     bool onScreen(const tak::sim::Unit& u) const {
         float sx = (u.x - mapView_.offX()) * mapView_.zoom();
         float sy = (u.z - mapView_.offY()) * mapView_.zoom();
-        return sx >= 0 && sy >= 0 && sx <= float(winW_) && sy <= float(winH_) - kBarH;
+        return sx >= 0 && sy >= 0 && sx <= float(winW_) && sy <= float(winH_) - barH();
     }
 
     // Cycle the selection to the next owned unit (single-select stepping).
@@ -8297,7 +8299,7 @@ private:
         const float sw = 30, gap = 6, pad = 10;
         float rowW = 10 * sw + 9 * gap;
         float x0 = (winW - rowW) / 2.0f;
-        float y0 = float(winH) - kBarH - 52;
+        float y0 = float(winH) - barH() - 52;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 190);
         SDL_FRect bg{x0 - pad, y0 - 22, rowW + 2 * pad, sw + 34};
@@ -8335,17 +8337,17 @@ private:
         // Bottom bar: the retail InfoPanel chrome + unit info when a .gui is loaded,
         // else our own stone strip. The build menu + mana readout below draw on top.
         bool guiBar = drawGuiInfoBar(winW, winH);
-        SDL_FRect bar{0, float(winH - kBarH), float(winW), float(kBarH)};
+        SDL_FRect bar{0, float(winH - barH()), float(winW), float(barH())};
         if (!guiBar) {
             if (botTex_) {
                 for (int x = 0; x < winW; x += botW_) {
-                    SDL_Rect dst{x, winH - kBarH, botW_, kBarH};
+                    SDL_Rect dst{x, winH - barH(), botW_, barH()};
                     SDL_RenderCopy(ren_, botTex_, nullptr, &dst);
                 }
             } else if (panelTex_) {
                 for (int x = 0; x < winW; x += panelW_) {
-                    SDL_Rect src{0, 40, panelW_, kBarH};
-                    SDL_Rect dst{x, winH - kBarH, panelW_, kBarH};
+                    SDL_Rect src{0, 40, panelW_, barH()};
+                    SDL_Rect dst{x, winH - barH(), panelW_, barH()};
                     SDL_RenderCopy(ren_, panelTex_, &src, &dst);
                 }
             } else {
@@ -8364,7 +8366,7 @@ private:
         SDL_Color fc = factionColor();
         // A solid faction-coloured panel with a dark frame — black text on top.
         auto shade = [&](float x, float w) {
-            SDL_FRect z{x, bar.y + 4, w, kBarH - 8.0f};
+            SDL_FRect z{x, bar.y + 4, w, barH() - 8.0f};
             SDL_SetRenderDrawColor(ren_, fc.r, fc.g, fc.b, 255);
             SDL_RenderFillRectF(ren_, &z);
             SDL_SetRenderDrawColor(ren_, 20, 18, 16, 255);
@@ -8380,7 +8382,7 @@ private:
                 shade(px, 288);
                 SDL_Texture* ic = iconFor(u->type->id);
                 if (ic) {
-                    SDL_FRect pr{px + 4, bar.y + 8, 56, kBarH - 20.0f};
+                    SDL_FRect pr{px + 4, bar.y + 8, 56, barH() - 20.0f};
                     SDL_RenderCopyF(ren_, ic, nullptr, &pr);
                     SDL_SetRenderDrawColor(ren_, 20, 18, 16, 255);
                     SDL_RenderDrawRectF(ren_, &pr);
@@ -8407,7 +8409,7 @@ private:
         if (b) {
             const auto& menu = registry_.buildable(b->type->id);
             int n = int(menu.size());
-            float iconSz = float(kBarH) - 10.0f;
+            float iconSz = float(barH()) - 10.0f;
             float gap = 6.0f;
             float rowW = n > 0 ? (n - 1) * (iconSz + gap) + iconSz : 0;
             float x0 = 10;                          // left-aligned
