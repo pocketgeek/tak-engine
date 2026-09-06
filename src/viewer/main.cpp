@@ -1758,6 +1758,9 @@ public:
     bool menuRequested() const { return menuRequested_; }
     // Menu-launched sessions: the front-end owns the lobby BGM (see manageMusic).
     void setExternalLobbyMusic() { externalLobbyMusic_ = true; }
+    // Menu-launched sessions can return to the front-end, so the in-game menu
+    // offers MAIN MENU; a direct CLI game only offers RESUME/QUIT.
+    void setCanReturnToMenu() { canReturnToMenu_ = true; }
     // Persist / read the resume ticket (gameId + rotating token) so a killed
     // client can rejoin its held slot on restart.
     void writeResume(uint32_t gid, uint64_t tok) const {
@@ -1788,6 +1791,21 @@ public:
         winW_ = winW;
         winH_ = winH;
         if (inLobbyPhase()) { lobbyInput(e, winW, winH); return; }
+        // In-game exit menu (opened with Esc). While it's up, all game input is
+        // swallowed and only its own buttons / Esc respond. The sim keeps running
+        // underneath -- a true pause isn't possible in the lockstep MP model (even
+        // local single-player runs on a private server). Buttons fire on release;
+        // hit-rects come from the last draw (see the overlay in draw()).
+        if (exitMenu_) {
+            if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
+            else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) exitMenu_ = false;
+            else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                float mx = float(e.button.x), my = float(e.button.y);
+                for (auto& [r, action] : exitHots_)
+                    if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) { action(); break; }
+            }
+            return;
+        }
         // In-game chat capture. While composing, keyboard goes to the draft;
         // mouse events still fall through so the camera stays usable.
         if (chatTyping_) {
@@ -1819,11 +1837,13 @@ public:
         }
         float zm = mapView_.zoom();
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
-            // Escape cancels the pending placement/order, else clears the current
-            // selection. Once the game is over it returns to the front-end menu.
+            // Escape cancels a pending placement/order first; a stray selection is
+            // cleared; otherwise it opens the in-game menu. Once the game is over it
+            // returns to the front-end menu directly.
             if (outcome_ != 0) { menuRequested_ = true; }
             else if (placing_ || pendingCmd_) { placing_ = nullptr; pendingCmd_ = 0; }
-            else selection_.clear();
+            else if (!selection_.empty()) selection_.clear();
+            else exitMenu_ = true;
         } else if (e.type == SDL_KEYDOWN && handleKey(e.key.keysym.sym,
                                                        SDL_GetModState())) {
             // handled by the hotkey dispatcher
@@ -4015,6 +4035,53 @@ public:
                 y -= 21;
             }
         }
+
+        // In-game exit menu overlay -- drawn last so it sits above the HUD. Screen
+        // space (like the game-over banner); hit-rects are rebuilt here each frame
+        // and consumed by input() (see the exitMenu_ branch).
+        if (exitMenu_) {
+            exitHots_.clear();
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_FRect dim{0, 0, float(winW), float(winH)};
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
+            SDL_RenderFillRectF(ren_, &dim);
+
+            const float bw = 280, bh = 50, gap = 14, pad = 32, titlePx = 3.0f;
+            const int nBtn = canReturnToMenu_ ? 3 : 2;
+            const float titleH = 7 * titlePx + 24;
+            const float pw = bw + pad * 2;
+            const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap;
+            const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
+
+            SDL_FRect panel{px0, py0, pw, ph};
+            SDL_SetRenderDrawColor(ren_, 26, 28, 36, 240);
+            SDL_RenderFillRectF(ren_, &panel);
+            SDL_SetRenderDrawColor(ren_, 120, 130, 160, 255);
+            SDL_RenderDrawRectF(ren_, &panel);
+
+            const char* title = "GAME MENU";
+            blockText(title, px0 + (pw - blockWidth(title, titlePx)) / 2, py0 + pad, titlePx,
+                      {235, 225, 180, 255});
+
+            float bx = px0 + pad, by = py0 + pad + titleH;
+            auto btn = [&](const std::string& label, std::function<void()> action) {
+                SDL_FRect r{bx, by, bw, bh};
+                bool hot = mouseX_ >= r.x && mouseX_ <= r.x + r.w &&
+                           mouseY_ >= r.y && mouseY_ <= r.y + r.h;
+                SDL_SetRenderDrawColor(ren_, hot ? 90 : 60, hot ? 110 : 66, hot ? 150 : 86, 255);
+                SDL_RenderFillRectF(ren_, &r);
+                SDL_SetRenderDrawColor(ren_, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
+                SDL_RenderDrawRectF(ren_, &r);
+                float tpx = 2.5f, tw = blockWidth(label, tpx);
+                blockText(label, bx + (bw - tw) / 2, by + (bh - 7 * tpx) / 2, tpx,
+                          {228, 232, 242, 255});
+                exitHots_.push_back({r, std::move(action)});
+                by += bh + gap;
+            };
+            btn("RESUME", [this] { exitMenu_ = false; });
+            if (canReturnToMenu_) btn("MAIN MENU", [this] { menuRequested_ = true; });
+            btn("QUIT", [this] { SDL_Event q{}; q.type = SDL_QUIT; SDL_PushEvent(&q); });
+        }
     }
 
     void advance(float seconds) {
@@ -5531,6 +5598,9 @@ private:
                             // 'm' move, 'a' attack, 'p' patrol, 'g' guard
     std::map<int, std::vector<int>> groups_;   // control groups 0-9
     bool paused_ = false;
+    bool exitMenu_ = false;          // in-game exit overlay (Esc) is open
+    bool canReturnToMenu_ = false;   // launched from the front-end -> offer MAIN MENU
+    std::vector<std::pair<SDL_FRect, std::function<void()>>> exitHots_;   // overlay hit-rects (screen space)
     int gameSpeed_ = 0;         // -10..+10 game-speed level (+/- keys); 0 = normal
     // 10^(level/10): +10 = 10x, 0 = 1x, -10 = 0.1x.
     // Game-speed multiplier. Forced to 1x in a networked game: the peers advance
@@ -9225,7 +9295,8 @@ int main(int argc, char** argv) {
             if (mp) {
                 gameView->setMpClient(mp.get());
                 gameView->setMpMapId(args[0]);
-                if (fromMenu) gameView->setExternalLobbyMusic();    // front-end owns the lobby BGM
+                if (fromMenu) { gameView->setExternalLobbyMusic();  // front-end owns the lobby BGM
+                                gameView->setCanReturnToMenu(); }   // in-game menu can return to it
                 if (menuInteractive) gameView->setSinglePlayer();   // menu SP: SP-flavoured lobby, Create-first
                 if (const char* rp = std::getenv("TAK_RESUME")) gameView->setResumePath(rp);
             }
