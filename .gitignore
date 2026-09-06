@@ -3,6 +3,8 @@ assets/
 
 # Build output (build/, build-dbg/, build-asan/, …)
 build*/
+# Packaged binary bundles (dist-win/, dist-macos/) — never commit binaries
+dist*/
 .cache/
 compile_commands.json
 

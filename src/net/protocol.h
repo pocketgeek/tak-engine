@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 14;       // 14: Cmd::Headbang (Shift+H emote)
+constexpr uint32_t kNetVersion = 16;       // 16: GameOptions.unitCap (lobby unit-limit)
+                                           // 15: GameOptions.speed/speedUnlock + Set/SpeedUpdate msgs
+                                           // 14: Cmd::Headbang (Shift+H emote)
                                            // 13: under-construction units contribute no income/storage (economy fix)
                                            // 12: builder repair (Cmd::Repair + Unit::repairId)
                                            // 11: unit stance/cloak/active in sim + Cmd::Stance/Cloak/SetActive
@@ -59,6 +61,8 @@ enum class Msg : uint8_t {
     Pause,              // S->C: cause, player (game paused; ticks stop)
     Resume,             // S->C: cause, player (game resumes)
     Spectate,           // C->S: gameId, password -> GameStarting (slot 0xFF) + log
+    SetGameOptions,     // C->S (host): full GameOptions (lobby: rebroadcast; in-game: speed)
+    SpeedUpdate,        // S->C: game speed changed in-game (speed byte) -> client re-paces
 };
 
 // A slot in a game's setup. type: 0=open, 1=human, 2=ai, 3=closed.
@@ -92,6 +96,14 @@ struct GameOptions {
     // (gameplay overrides allowed but every player must share the same ones).
     // MP defaults to cosmetic. Every player mounts the room's tier at game start.
     uint8_t overridePolicy = 1;
+    // Game speed in tenths (10 = 1.0x). Changes the server's tick CADENCE (and the
+    // client's playout rate); the per-tick dt stays 1/kServerHz so the sim math is
+    // identical -- only how fast ticks happen in wall-clock changes. Deterministic.
+    uint8_t speed = 10;
+    uint8_t speedUnlock = 0;   // 1 = the host may change speed in-game with -/+
+    // Per-player unit limit (production/build halts a player at this many live units).
+    // One of 250/500/1000/2000/5000; 2000 default. Serialised as u32.
+    uint16_t unitCap = 2000;
 };
 
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer

@@ -1,16 +1,15 @@
 #include "net/client.h"
 
-#include <time.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 
 namespace tak::net {
 
 namespace {
-uint64_t nowMs() {
-    timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return uint64_t(ts.tv_sec) * 1000 + uint64_t(ts.tv_nsec) / 1000000;
+uint64_t nowMs() {   // monotonic wall-clock (pacing/keepalive only; never hashed)
+    using namespace std::chrono;
+    return uint64_t(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 constexpr uint64_t kPingIdleMs = 5000, kTimeoutMs = 15000;
 }  // namespace
@@ -76,6 +75,8 @@ static void readSlots(Reader& r, RoomView& v) {
     v.mapId = r.str();
     v.opts.crusades = r.u8(); v.opts.gods = r.u8(); v.opts.forfeitSelfDestruct = r.u8();
     v.opts.overridePolicy = r.u8();
+    v.opts.speed = r.u8(); v.opts.speedUnlock = r.u8();
+    v.opts.unitCap = uint16_t(r.u32());
     v.hostId = r.u32();
     for (int i = 0; i < kMaxSlots; ++i) {
         SlotInfo& s = v.slots[i];
@@ -133,9 +134,11 @@ void MpClient::onFrame(const Frame& f) {
             int keep = room_.mySlot;
             readSlots(r, room_);
             room_.mySlot = keep;
+            gameSpeed_ = room_.opts.speed;
             if (state_ == State::Lobby) state_ = State::InRoom;
             break;
         }
+        case Msg::SpeedUpdate: { uint8_t s = r.u8(); if (r.ok) { gameSpeed_ = s; room_.opts.speed = s; } break; }
         case Msg::Chat: {
             std::string who = r.str(), text = r.str();
             if (r.ok) chat_.push_back({who, text});
@@ -144,6 +147,7 @@ void MpClient::onFrame(const Frame& f) {
         case Msg::GameStarting: {
             int keep = room_.mySlot;
             readSlots(r, room_);
+            gameSpeed_ = room_.opts.speed;
             uint8_t mySlot = r.u8();
             startSeed_ = r.u32();
             resumeToken_ = r.u64();
@@ -201,6 +205,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
                           bool spectate, bool priv) {
     Writer w; w.str(name); w.str(password); w.str(mapId);
     w.u8(o.crusades); w.u8(o.gods); w.u8(o.forfeitSelfDestruct); w.u8(o.overridePolicy);
+    w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap);
     w.u8(capacity);   // map's start-position count (the server has no map data)
     w.u8(spectate ? 1 : 0);   // host watches, taking no slot
     w.u8(priv ? 1 : 0);       // private (single-player): not in the public game list
@@ -222,6 +227,12 @@ void MpClient::setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
                        uint8_t team, uint8_t ready) {
     Writer w; w.u8(uint8_t(slot)); w.u8(type); w.u8(faction); w.u8(color); w.u8(team); w.u8(ready);
     send(Msg::SlotUpdate, w);
+}
+
+void MpClient::setGameOptions(const GameOptions& o) {
+    Writer w; w.u8(o.crusades); w.u8(o.gods); w.u8(o.forfeitSelfDestruct);
+    w.u8(o.overridePolicy); w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap);
+    send(Msg::SetGameOptions, w);
 }
 
 void MpClient::kick(int slot) { Writer w; w.u8(uint8_t(slot)); send(Msg::Kick, w); }

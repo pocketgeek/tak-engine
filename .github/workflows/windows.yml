@@ -1,0 +1,68 @@
+name: windows
+
+# Native Windows x64 build via MSYS2/MinGW-w64 (the same GCC family the code is
+# cross-built with on Linux). Produces a self-contained bundle (exes + the SDL2/
+# jpeg/zlib DLLs; the GCC/C++ runtime is static-linked) and runs the two
+# determinism gates to confirm cross-platform lockstep parity.
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tools/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tools/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+jobs:
+  mingw64:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-libjpeg-turbo
+            mingw-w64-x86_64-zlib
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Bundle (exes + required DLLs)
+        run: |
+          mkdir -p dist-win
+          cp build/takview.exe build/takserver.exe dist-win/
+          # Copy every non-system DLL the exes actually import (SDL2/jpeg/zlib).
+          ldd build/takview.exe build/takserver.exe \
+            | awk '/mingw64\/bin/ {print $3}' | sort -u \
+            | while read -r dll; do cp "$dll" dist-win/; done
+          ls -l dist-win
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: takview-windows-x64
+          path: dist-win/
+
+      - name: Determinism gates (cross-platform parity)
+        run: |
+          ./build/detmath_test.exe
+          ./build/sim_driver_equiv_test.exe

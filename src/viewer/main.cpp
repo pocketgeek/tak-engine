@@ -10,6 +10,10 @@
 // Textures dir = extracted data/textures; palette = faction palette PCX
 // (e.g. palettes/ara_textures.pcx from sidedata.tdf).
 
+// Must precede SDL.h: on Windows this pulls in winsock2 (with WIN32_LEAN_AND_MEAN)
+// before SDL's <windows.h> would otherwise pull the incompatible winsock v1.
+#include "net/netcompat.h"
+
 #include "cob/vm.h"
 #include "crt/crt.h"
 #include "gaf/gaf.h"
@@ -25,11 +29,16 @@
 #include "tnt/tnt.h"
 #include "util/png.h"
 
+// Keep our own main() on every platform (don't let SDL redefine it to SDL_main /
+// pull in SDL2main + a WinMain); we call SDL_SetMainReady() in main() instead. This
+// also keeps takview usable as a console/headless tool on Windows.
+#define SDL_MAIN_HANDLED
 #include <SDL.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -51,21 +60,42 @@
 #include <vector>
 
 // Single-player auto-launches a local takserver (AIs run only on the server).
-#include <csignal>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/wait.h>
-#include <unistd.h>
+// Sockets come from net/netcompat.h (included first, before SDL). Process control
+// is the one genuinely platform-specific bit: fork/exec on POSIX, CreateProcess on
+// Windows.
+#ifdef _WIN32
+  #include <windows.h>
+#else
+  #include <csignal>
+  #include <sys/wait.h>
+  #include <unistd.h>
+#endif
 
 namespace {
 // A local takserver spawned for single-player; killed when the client exits.
-pid_t gLocalServer = 0;
+bool gLocalServerUp = false;
+#ifdef _WIN32
+PROCESS_INFORMATION gLocalProc{};
 void killLocalServer() {
-    if (gLocalServer > 0) { kill(gLocalServer, SIGTERM); waitpid(gLocalServer, nullptr, 0); gLocalServer = 0; }
+    if (gLocalServerUp) {
+        TerminateProcess(gLocalProc.hProcess, 0);
+        CloseHandle(gLocalProc.hProcess);
+        CloseHandle(gLocalProc.hThread);
+        gLocalServerUp = false;
+    }
 }
+#else
+pid_t gLocalPid = 0;
+void killLocalServer() {
+    if (gLocalPid > 0) { kill(gLocalPid, SIGTERM); waitpid(gLocalPid, nullptr, 0); gLocalPid = 0; }
+    gLocalServerUp = false;
+}
+#endif
+
 // Pick a free loopback TCP port by binding to 0 and reading the assignment.
 int pickFreePort() {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    tak::net::netStartup();
+    int fd = int(socket(AF_INET, SOCK_STREAM, 0));
     if (fd < 0) return 0;
     sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     int port = 0;
@@ -73,20 +103,35 @@ int pickFreePort() {
         socklen_t len = sizeof a;
         if (getsockname(fd, reinterpret_cast<sockaddr*>(&a), &len) == 0) port = ntohs(a.sin_port);
     }
-    ::close(fd);
+    tak::net::sockClose(fd);
     return port;
 }
-// fork+exec a takserver for a private single-player game. Returns its pid (0 fail).
-pid_t spawnLocalServer(const std::string& serverBin, const std::string& dataRoot, int port) {
+
+// Launch a takserver for a private single-player game. Returns true on success.
+bool spawnLocalServer(const std::string& serverBin, const std::string& dataRoot, int port) {
+#ifdef _WIN32
+    std::string cmd = "\"" + serverBin + ".exe\" --port " + std::to_string(port) +
+                      " --data \"" + dataRoot + "\"";
+    STARTUPINFOA si{}; si.cb = sizeof si;
+    std::vector<char> mut(cmd.begin(), cmd.end()); mut.push_back('\0');
+    if (!CreateProcessA(nullptr, mut.data(), nullptr, nullptr, FALSE, 0,
+                        nullptr, nullptr, &si, &gLocalProc))
+        return false;
+    gLocalServerUp = true;
+    return true;
+#else
     pid_t pid = fork();
-    if (pid < 0) return 0;
+    if (pid < 0) return false;
     if (pid == 0) {
         std::string ps = std::to_string(port);
         execl(serverBin.c_str(), serverBin.c_str(), "--port", ps.c_str(),
               "--data", dataRoot.c_str(), static_cast<char*>(nullptr));
         _exit(127);   // exec failed
     }
-    return pid;
+    gLocalPid = pid;
+    gLocalServerUp = true;
+    return true;
+#endif
 }
 }  // namespace
 
@@ -2174,6 +2219,7 @@ public:
         cfg.vfs = &vfs_;
         cfg.mapPath = mapPath_;
         cfg.gods = room.opts.gods != 0;
+        cfg.unitCap = room.opts.unitCap;
         cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
             const auto& s = room.slots[i];
@@ -2262,7 +2308,9 @@ public:
             // (drain toward target, shed latency); too shallow -> slower (rebuild the
             // reserve). Holds the added latency tight at ~netDelay_ ticks.
             float err = float(buffered - netDelay_);
-            float rate = 30.0f * std::clamp(1.0f + 0.06f * err, 0.7f, 1.3f);
+            // Base playout tracks the game speed (server ticks that much faster/slower).
+            float sp = std::max(1, int(mp_->gameSpeed())) / 10.0f;
+            float rate = 30.0f * sp * std::clamp(1.0f + 0.06f * err, 0.7f, 1.3f);
             netAccum_ += dt * rate;            // accumulates fractional TICKS now
             int budget = int(netAccum_);
             netAccum_ -= float(budget);
@@ -2350,6 +2398,9 @@ public:
         if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
+            // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
+            // tests -- re-cadences the server without touching the (deterministic) sim.
+            if (const char* sp = std::getenv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, 40));
             // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
             // slot can be an AI -- an all-AI game to watch.
             bool watch = autoMode == 1 && std::getenv("TAK_MP_WATCH");
@@ -2806,6 +2857,17 @@ public:
         }
         for (auto& u : world_.units())
             if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
+        // Kick off the summon fade-in/shimmer for anything just conjured from a
+        // building (the producer flags justBuilt for that one tick); then age the
+        // active effects and drop finished or dead ones. Cosmetic, viewer-only.
+        for (auto& u : world_.units())
+            if (u.justBuilt && !birthFx_.count(u.justBuilt)) birthFx_[u.justBuilt] = 0.0f;
+        for (auto it = birthFx_.begin(); it != birthFx_.end();) {
+            const tak::sim::Unit* bu = world_.unit(it->first);
+            it->second += dt;
+            if (it->second >= kBirthFxDur || !bu || !bu->alive()) it = birthFx_.erase(it);
+            else ++it;
+        }
         if (briefTimer_ > 0) briefTimer_ -= dt;
         animClock_ += dt;
         if (!spawnRules_.empty() || !messages_.empty()) scenClock2_ += dt;
@@ -3586,7 +3648,12 @@ public:
                 float cx = (u.x - mapView_.offX()) * zms - uLiftX(u) * zms;
                 float cy = (u.z - mapView_.offY()) * zms - uLiftY(u) * zms;
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
-                float rr = 11.0f, rx = rr * zms, ry = rr * 0.65f * zms;
+                // Size the brackets to the unit's footprint (world half-extent =
+                // foot cells * 8) so a building is boxed at its real size, not a single
+                // cell; a small floor keeps mobile units at the old marker size.
+                float halfX = std::max(std::max(u.type->footX, 1) * 8.0f, 11.0f);
+                float halfZ = std::max(std::max(u.type->footZ, 1) * 8.0f, 8.0f);
+                float rx = halfX * zms, ry = halfZ * zms;
                 if (rx < 9.0f) {
                     // Tiny on screen (a whole army zoomed out): one small marker
                     // quad instead of eight bracket segments -- 8x less geometry.
@@ -3594,14 +3661,15 @@ public:
                     pushQuad(shadowBatch_, cx - s, cy - s * 0.65f, 2 * s, 2 * s * 0.65f, grn);
                     continue;
                 }
-                float L = rr * 0.45f * zms, th = std::max(1.0f, 1.2f * zms);
+                float Lx = std::max(3.0f, rx * 0.4f), Ly = std::max(3.0f, ry * 0.4f);
+                float th = std::max(1.0f, 1.2f * zms);
                 for (int sx = -1; sx <= 1; sx += 2)
                     for (int sy = -1; sy <= 1; sy += 2) {
                         float px = cx + sx * rx, py = cy + sy * ry;
-                        pushQuad(shadowBatch_, std::min(px, px - sx * L), py - th * 0.5f,
-                                 L, th, grn);
+                        pushQuad(shadowBatch_, std::min(px, px - sx * Lx), py - th * 0.5f,
+                                 Lx, th, grn);
                         pushQuad(shadowBatch_, px - th * 0.5f,
-                                 std::min(py, py - sy * L * 0.65f), th, L * 0.65f, grn);
+                                 std::min(py, py - sy * Ly), th, Ly, grn);
                     }
                 for (const auto& o : u.orders)   // move-order rings (few)
                     if (o.targetId == 0) drawRing(o.x, o.z, 4);
@@ -3616,19 +3684,23 @@ public:
                         if (o.targetId > 0) targets.insert(o.targetId);
             for (int tid : targets) {
                 const auto* t = world_.unit(tid);
-                if (!t || !t->alive()) continue;
+                if (!t || !t->alive() || !t->type) continue;
                 SDL_FPoint p = unitScreen(*t);   // includes flyer altitude
                 float cx = p.x, cy = p.y + 12.0f * zms;   // undo unitScreen's body bias
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
-                float rr = 11.0f, rx = rr * zms, ry = rr * 0.65f * zms;
-                float L = std::max(3.0f, rr * 0.45f * zms), th = std::max(1.0f, 1.2f * zms);
+                // Match the green selection brackets: sized to the target's footprint.
+                float halfX = std::max(std::max(t->type->footX, 1) * 8.0f, 11.0f);
+                float halfZ = std::max(std::max(t->type->footZ, 1) * 8.0f, 8.0f);
+                float rx = halfX * zms, ry = halfZ * zms;
+                float Lx = std::max(3.0f, rx * 0.4f), Ly = std::max(3.0f, ry * 0.4f);
+                float th = std::max(1.0f, 1.2f * zms);
                 for (int sx = -1; sx <= 1; sx += 2)
                     for (int sy = -1; sy <= 1; sy += 2) {
                         float px = cx + sx * rx, py = cy + sy * ry;
-                        pushQuad(shadowBatch_, std::min(px, px - sx * L), py - th * 0.5f,
-                                 L, th, red);
+                        pushQuad(shadowBatch_, std::min(px, px - sx * Lx), py - th * 0.5f,
+                                 Lx, th, red);
                         pushQuad(shadowBatch_, px - th * 0.5f,
-                                 std::min(py, py - sy * L * 0.65f), th, L * 0.65f, red);
+                                 std::min(py, py - sy * Ly), th, Ly, red);
                     }
             }
             if (!shadowBatch_.empty()) {
@@ -5025,8 +5097,14 @@ private:
         g.ax = ax; g.ay = ay;
         g.alt = anim ? anim->altitude : 0.0f;
         g.occY = wallOcclusionY(u.x, u.z);
-        bool conjuring = u.underConstruction && u.type;
-        float p = conjuring ? std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f) : 1.0f;
+        // "Materialising" = the summon fade-in/shimmer: either a site still conjuring
+        // (progress = HP fraction) or a unit just summoned from a building (progress =
+        // its viewer-only birth ramp). Both fade alpha in and glow while p < 1.
+        float birthP = birthProgress(u.id);
+        bool conjuring = u.type && (u.underConstruction || birthP < 1.0f);
+        float p = !u.type ? 1.0f
+                  : u.underConstruction ? std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f)
+                                        : birthP;
         Uint8 alpha = Uint8(p * 255.0f);
         float vetGold = (!conjuring && u.veteran >= 4)
                             ? float(std::min(u.veteran, 10) - 3) / 7.0f * 0.5f : 0.0f;
@@ -5172,7 +5250,7 @@ private:
         // Submit the pre-built, depth-sorted vertex runs -- one SDL_RenderGeometry
         // per texture (usually 1 per unit). The veterancy/conjure colour tint was
         // already baked into the vertices on the worker pool.
-        bool conjuring = u.underConstruction && u.type;
+        bool conjuring = u.type && (u.underConstruction || birthProgress(u.id) < 1.0f);
         int off = 0;
         for (const auto& r : g.runs) {
             SDL_RenderGeometry(ren_, r.first, g.verts.data() + off, r.second, nullptr, 0);
@@ -5180,8 +5258,8 @@ private:
         }
 
         // Conjure effect: sprinkle the faction's build/summon sparkle over the
-        // footprint while the unit materialises, each staggered so they twinkle
-        // out of sync.
+        // footprint while the unit materialises (a conjuring site, or a unit freshly
+        // summoned from a building), each staggered so they twinkle out of sync.
         if (conjuring) {
             std::string side = u.type->side;
             std::transform(side.begin(), side.end(), side.begin(), ::tolower);
@@ -5391,6 +5469,17 @@ private:
     std::unordered_map<std::string, Visual> visuals_;
     std::unordered_map<int, std::string> unitType_;
     std::unordered_map<int, Anim> anims_;
+    // Summon fade-in: unit id -> age (s) since it was conjured from a building. Purely
+    // cosmetic and viewer-only (driven by the sim's non-hashed justBuilt hook); it
+    // fades the unit in and sprinkles the faction shimmer for kBirthFxDur. Updated on
+    // the main thread each frame, then read-only during the parallel geometry build.
+    std::unordered_map<int, float> birthFx_;
+    static constexpr float kBirthFxDur = 0.9f;
+    float birthProgress(int id) const {
+        auto it = birthFx_.find(id);
+        return it == birthFx_.end() ? 1.0f
+                                    : std::clamp(it->second / kBirthFxDur, 0.0f, 1.0f);
+    }
     std::map<std::string, std::vector<SDL_Texture*>> textures_;
     std::vector<Tri> tris_;
     std::vector<SDL_Vertex> triBatch_;   // reused per-unit vertex batch
@@ -7221,9 +7310,20 @@ private:
         if (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS ||
             key == SDLK_MINUS || key == SDLK_KP_MINUS) {
             bool up = (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS);
-            if (mp_) {   // lockstep peers must share one clock
-                notice_ = "GAME SPEED LOCKED IN NET GAMES";
-                noticeTimer_ = 2;
+            if (mp_) {   // lockstep: only the host may re-cadence, and only if unlocked
+                if (!mp_->room().opts.speedUnlock) {
+                    notice_ = "SPEED LOCKED (host can unlock in the lobby)";
+                    noticeTimer_ = 2; return true;
+                }
+                if (mp_->room().hostId != mp_->myClientId()) {
+                    notice_ = "ONLY THE HOST CAN CHANGE SPEED";
+                    noticeTimer_ = 2; return true;
+                }
+                auto o = mp_->room().opts;
+                int ns = std::clamp(int(mp_->gameSpeed()) + (up ? 5 : -5), 5, 40);
+                if (ns != o.speed) { o.speed = uint8_t(ns); mp_->setGameOptions(o); }
+                char nb[24]; std::snprintf(nb, sizeof nb, "GAME SPEED %.1fx", ns / 10.0f);
+                notice_ = nb; noticeTimer_ = 2;
                 return true;
             }
             gameSpeed_ = std::clamp(gameSpeed_ + (up ? 1 : -1), -10, 10);
@@ -7766,6 +7866,27 @@ private:
         lbBtn(x + 284, y, 120, 30, "LEAVE", true, [this] {
             mp_->leaveGame(); lobbyScreen_ = LobbyScreen::Browser;
             mpReadied_ = false; mpStarted_ = false; });
+        // The game starts at normal speed; the host can allow it to be changed
+        // in-game, and the host's -/+ keys then re-cadence the match live.
+        y += 40;
+        if (host) {
+            std::string ub = std::string("ALLOW SPEED CHANGE IN-GAME: ") + (room.opts.speedUnlock ? "ON" : "OFF");
+            lbBtn(x, y, 420, 26, ub, true, [this] {
+                auto o = mpRoom().opts; o.speedUnlock = o.speedUnlock ? 0 : 1;
+                mp_->setGameOptions(o); });
+        }
+        // Per-player unit cap (host cycles 250/500/1000/2000/5000; everyone sees it).
+        y += 34;
+        char cb[40]; std::snprintf(cb, sizeof cb, "UNIT CAP  %d", int(room.opts.unitCap));
+        blockText(cb, x, y + 6, 2.0f, {205, 210, 225, 255});
+        if (host) {
+            lbBtn(x + 220, y, 90, 26, "CHANGE", true, [this] {
+                static const uint16_t seq[] = {250, 500, 1000, 2000, 5000};
+                auto o = mpRoom().opts; int idx = 3;   // default 2000
+                for (int k = 0; k < 5; ++k) if (seq[k] == o.unitCap) idx = k;
+                o.unitCap = seq[(idx + 1) % 5];
+                mp_->setGameOptions(o); });
+        }
         // chat panel on the right
         float chx = winW - 300.0f, chy = 78, chw = 280;
         SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
@@ -8707,6 +8828,8 @@ static bool loadReplayFile(const std::string& path, ReplayFile& out) {
     out.mapId = r.str();
     uint8_t crusades = r.u8(); uint8_t gods = r.u8(); r.u8();
     if (fmt >= 2) out.overridePolicy = r.u8();   // override tier the game ran under
+    out.cfg.unitCap = 0;                          // fmt<3 replays ran without a unit cap
+    if (fmt >= 3) out.cfg.unitCap = uint16_t(r.u32());
     r.u32();                       // seed (setupMatch derives its own timing)
     uint8_t nslots = r.u8();
     out.crusades = crusades != 0;
@@ -8745,6 +8868,7 @@ static bool loadReplayFile(const std::string& path, ReplayFile& out) {
 } // namespace
 
 int main(int argc, char** argv) {
+    SDL_SetMainReady();   // we defined SDL_MAIN_HANDLED; tell SDL our main is ready
     if (argc < 3) {
         std::fprintf(stderr,
                      "usage: takview game <map name> --data <retail-install-dir> "
@@ -8874,15 +8998,14 @@ int main(int argc, char** argv) {
         int p = pickFreePort();
         std::string serverBin =
             (std::filesystem::path(argv[0]).parent_path() / "takserver").string();
-        if (p <= 0 || (gLocalServer = spawnLocalServer(serverBin, dataRoot, p)) <= 0) {
+        if (p <= 0 || !spawnLocalServer(serverBin, dataRoot, p)) {
             std::fprintf(stderr, "single-player: could not launch a local server (%s)\n",
                          serverBin.c_str());
             return 1;
         }
         std::atexit(killLocalServer);
         serverHost = "127.0.0.1"; serverPort = p; mpAutoMode = 7;
-        std::fprintf(stderr, "single-player: local server pid %d on port %d\n",
-                     int(gLocalServer), p);
+        std::fprintf(stderr, "single-player: local server on port %d\n", p);
     }
 
     // Connect to the multiplayer server, if requested.
@@ -8899,9 +9022,9 @@ int main(int argc, char** argv) {
         // A freshly-spawned local server takes a couple seconds to mount + load, so
         // retry the connect while it comes up.
         bool ok = false;
-        for (int attempt = 0; attempt < (gLocalServer ? 60 : 1) && !ok; ++attempt) {
+        for (int attempt = 0; attempt < (gLocalServerUp ? 60 : 1) && !ok; ++attempt) {
             ok = mp->connect(serverHost, uint16_t(serverPort), playerName);
-            if (!ok && gLocalServer) usleep(250000);
+            if (!ok && gLocalServerUp) std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
         if (!ok) {
             std::fprintf(stderr, "server: %s\n", mp->error().c_str());

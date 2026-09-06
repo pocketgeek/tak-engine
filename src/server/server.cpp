@@ -12,12 +12,10 @@
 // that blames the referee if every client agrees against it). Without --data the
 // server is a pure relay and clients cross-check hashes among themselves (M3).
 
-#include <poll.h>
-#include <sys/socket.h>
-#include <time.h>
-#include <unistd.h>
+#include "net/netcompat.h"
 
 #include <algorithm>
+#include <chrono>
 #include <random>
 #include <set>
 #include <cerrno>
@@ -44,10 +42,9 @@ using namespace tak::net;
 
 namespace {
 
-uint64_t nowMs() {
-    timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return uint64_t(ts.tv_sec) * 1000 + uint64_t(ts.tv_nsec) / 1000000;
+uint64_t nowMs() {   // monotonic wall-clock (tick pacing / timeouts; never hashed)
+    using namespace std::chrono;
+    return uint64_t(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
 constexpr uint64_t kPingIdleMs = 5000;    // ping a quiet client after this
@@ -56,12 +53,13 @@ constexpr int kCmdCapPerTick = 64;        // per-client command cap per tick
 uint64_t kGraceMs = 300000;     // hold a dropped slot this long (5 min)
 uint64_t kPauseBudgetMs = 120000;  // total auto-pause a player may cause
 
-// A resume token (real entropy; not sim state so no determinism concern).
+// A resume token (unguessable per session; not sim state, so no determinism or
+// cross-platform concern). std::random_device is entropy where available; mix in
+// the clock so a deterministic random_device (some libstdc++ builds) still varies.
 uint64_t randToken() {
-    uint64_t v = 0;
-    FILE* f = std::fopen("/dev/urandom", "rb");
-    if (f) { if (std::fread(&v, sizeof v, 1, f) != 1) v = 0; std::fclose(f); }
-    if (v == 0) v = nowMs() * 6364136223846793005ULL + 1442695040888963407ULL;
+    std::random_device rd;
+    std::mt19937_64 g((uint64_t(rd()) << 32) ^ rd() ^ nowMs());
+    uint64_t v = g();
     return v ? v : 1;
 }
 
@@ -252,11 +250,12 @@ void Server::writeReplay(Room& r) {
     // seed) + every tick bundle. A viewer can rebuild the world and play it back.
     Writer w;
     for (char ch : {'T', 'A', 'K', 'R'}) w.u8(uint8_t(ch));
-    w.u32(2);                 // replay format version (2: + overridePolicy byte)
+    w.u32(3);                 // replay format version (3: + unitCap u32; 2: + overridePolicy)
     w.u32(kNetVersion);
     w.str(r.mapId);
     w.u8(r.opts.crusades); w.u8(r.opts.gods); w.u8(r.opts.forfeitSelfDestruct);
     w.u8(r.opts.overridePolicy);
+    w.u32(r.opts.unitCap);
     w.u32(0x7a6b0000u + r.id);
     w.u8(uint8_t(kMaxSlots));
     for (int i = 0; i < kMaxSlots; ++i) {
@@ -345,12 +344,20 @@ void Server::sendGameList(Client& c) {
     c.conn.send(Msg::GameList, w);
 }
 
+// Snap an incoming unit-cap value to the allowed lobby set (defensive against a
+// malformed client); anything unexpected falls back to the 2000 default.
+static uint16_t clampUnitCap(uint16_t v) {
+    for (uint16_t a : {250, 500, 1000, 2000, 5000}) if (v == a) return v;
+    return 2000;
+}
+
 void Server::writeSlots(Writer& w, Room& r) {
     w.u32(r.id);
     w.str(r.name);
     w.str(r.mapId);
     w.u8(r.opts.crusades); w.u8(r.opts.gods); w.u8(r.opts.forfeitSelfDestruct);
     w.u8(r.opts.overridePolicy);
+    w.u8(r.opts.speed); w.u8(r.opts.speedUnlock); w.u32(r.opts.unitCap);
     w.u32(r.hostId);
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = r.slots[i];
@@ -398,6 +405,9 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             std::string name = r.str(), pass = r.str(), mapId = r.str();
             GameOptions o; o.crusades = r.u8(); o.gods = r.u8(); o.forfeitSelfDestruct = r.u8();
             o.overridePolicy = r.u8();
+            o.speed = r.u8(); o.speedUnlock = r.u8();
+            if (o.speed < 1) o.speed = 10;
+            o.unitCap = clampUnitCap(uint16_t(r.u32()));
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
@@ -613,6 +623,7 @@ void Server::tryStart(Client& c) {
         cfg.vfs = &ds->vfs;
         cfg.mapPath = mapPath;
         cfg.gods = r->opts.gods != 0;
+        cfg.unitCap = r->opts.unitCap;
         cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
             const auto& s = r->slots[i];
@@ -694,6 +705,28 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (cid >= 0 && uint32_t(cid) != c.id) {
                 auto it = clients_.find(uint32_t(cid));
                 if (it != clients_.end()) { leaveRoom(*it->second, "kicked"); it->second->conn.send(Msg::Bye, Writer{}); }
+            }
+            break;
+        }
+        case Msg::SetGameOptions: {
+            if (r->hostId != c.id) return;   // host only
+            Reader rd(f.payload.data(), f.payload.size());
+            GameOptions o; o.crusades = rd.u8(); o.gods = rd.u8(); o.forfeitSelfDestruct = rd.u8();
+            o.overridePolicy = rd.u8(); o.speed = rd.u8(); o.speedUnlock = rd.u8();
+            o.unitCap = clampUnitCap(uint16_t(rd.u32()));
+            if (!rd.ok) return;
+            if (o.speed < 1) o.speed = 1;
+            if (o.speed > 40) o.speed = 40;   // clamp 0.1x .. 4.0x
+            if (!r->running) {
+                // Lobby: adopt the whole option set and rebroadcast the slot table.
+                r->opts = o;
+                broadcastLobby(*r);
+            } else if (r->opts.speedUnlock && r->opts.speed != o.speed) {
+                // In-game: only speed can change (re-cadences the sim), and only if the
+                // game was created with speed-unlock. Tell every peer to re-pace.
+                r->opts.speed = o.speed;
+                Writer w; w.u8(o.speed);
+                broadcastRoom(*r, Msg::SpeedUpdate, w);
             }
             break;
         }
@@ -863,7 +896,8 @@ void Server::closeTick(Room& r) {
     r.pending.clear();
     r.pendingEvents.clear();
     r.tick++;
-    r.nextTickMs += 1000 / kServerHz;
+    // Cadence scales with game speed (dt per tick stays 1/kServerHz): 10 = 1.0x.
+    r.nextTickMs += uint64_t(10000 / (kServerHz * std::max<int>(1, int(r.opts.speed))));
 }
 
 void Server::dropClient(uint32_t id, const char* reason) {
@@ -918,12 +952,14 @@ int Server::run() {
         // Build the pollfd set: listen + every client (POLLOUT when it has pending writes).
         std::vector<pollfd> pfds;
         std::vector<uint32_t> ids;
-        pfds.push_back({listenFd_, POLLIN, 0});
+        // Field-wise (not brace) init: a socket fd is `int` here but `SOCKET`
+        // (unsigned) in a Windows pollfd, which brace-init would reject as narrowing.
+        pollfd lp{}; lp.fd = listenFd_; lp.events = POLLIN; pfds.push_back(lp);
         ids.push_back(0);
         for (auto& [id, c] : clients_) {
             short ev = POLLIN;
             if (c->conn.wantWrite()) ev |= POLLOUT;
-            pfds.push_back({c->conn.fd(), ev, 0});
+            pollfd cp{}; cp.fd = c->conn.fd(); cp.events = ev; pfds.push_back(cp);
             ids.push_back(id);
         }
         // Timeout = time until the soonest running room's next tick (or 1s idle).
@@ -933,13 +969,13 @@ int Server::run() {
             if (r.running && r.nextTickMs < soonest) soonest = r.nextTickMs;
         int timeout = int(soonest > now ? soonest - now : 0);
 
-        int n = ::poll(pfds.data(), pfds.size(), timeout);
-        if (n < 0) { if (errno == EINTR) continue; break; }
+        int n = TAK_POLL(pfds.data(), (unsigned)pfds.size(), timeout);
+        if (n < 0) { if (sockInterrupted(sockErr())) continue; break; }
 
         // Accept new connections.
         if (pfds[0].revents & POLLIN) {
             for (;;) {
-                int fd = accept(listenFd_, nullptr, nullptr);
+                int fd = int(accept(listenFd_, nullptr, nullptr));
                 if (fd < 0) break;
                 setupSocket(fd);
                 auto c = std::make_unique<Client>();
