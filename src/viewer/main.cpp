@@ -9710,6 +9710,7 @@ int main(int argc, char** argv) {
         if (aaOn) {   // downscale the supersampled frame onto the window
             SDL_RenderSetScale(ren, 1.0f, 1.0f);
             SDL_SetRenderTarget(ren, nullptr);
+            SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear);   // ensure a smooth downscale
             SDL_RenderCopy(ren, aaTex, nullptr, nullptr);
         }
         SDL_RenderPresent(ren);
