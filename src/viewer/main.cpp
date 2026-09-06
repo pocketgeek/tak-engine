@@ -6422,34 +6422,58 @@ private:
             }
         }
 
-        // Unit status in the HelpText recess (black inset below the weapon slots).
-        int hi = guiIdx("HelpText");
-        if (hi >= 0 && front) {
-            const char* s = unitStatusText(front);
-            if (s && *s) {
-                SDL_FRect r = guiCmdRect(gui_.gadgets[hi]);
-                float px = std::max(1.4f, r.h / 20.0f);
-                float tw = blockWidth(s, px);
-                while (tw > r.w - 6 && px > 1.0f) { px -= 0.2f; tw = blockWidth(s, px); }
-                blockText(s, r.x + (r.w - tw) * 0.5f, r.y + (r.h - 7 * px) * 0.5f, px,
-                          {170, 205, 255, 255});
-            }
-        }
-
-        // The orb at the panel foot is a MANA BULB: its 24 frames are liquid-fill
-        // levels, so pick the frame by the player's mana fraction (not a time loop).
+        // Mana panel at the command-panel foot: the orb is a MANA BULB (its 24 frames
+        // are liquid-fill levels, picked by mana fraction); "MANA X/Y" sits in a box
+        // above it, with +income to the orb's left and -expenditure to its right.
         int cb = guiIdx("CrystalBall");
-        if (cb >= 0 && !guiTex_[cb].empty()) {
-            int nf = int(guiTex_[cb].size());
+        if (cb >= 0) {
             const auto& tm = world_.player(localPlayer_);
-            float cap = std::max(tm.storage, 1.0f);
-            float frac = std::clamp(tm.mana / cap, 0.0f, 1.0f);
-            int fr = nf > 0 ? std::clamp(int(frac * float(nf - 1) + 0.5f), 0, nf - 1) : 0;
-            SDL_Texture* t = guiTex_[cb][size_t(fr)];
-            if (t) {
-                SDL_FRect r = guiCmdRect(gui_.gadgets[cb]);
-                SDL_RenderCopyF(ren_, t, nullptr, &r);
+            float cap = std::max(tm.storage, 100.0f);
+            SDL_FRect orb = guiCmdRect(gui_.gadgets[cb]);
+            if (!guiTex_[cb].empty()) {
+                int nf = int(guiTex_[cb].size());
+                float frac = std::clamp(tm.mana / cap, 0.0f, 1.0f);
+                int fr = std::clamp(int(frac * float(nf - 1) + 0.5f), 0, nf - 1);
+                if (guiTex_[cb][size_t(fr)])
+                    SDL_RenderCopyF(ren_, guiTex_[cb][size_t(fr)], nullptr, &orb);
             }
+            // "MANA X/Y" box above the orb, spanning the command panel width.
+            int pmi = guiIdx("UnitMenu");
+            SDL_FRect panel = pmi >= 0 ? guiCmdRect(gui_.gadgets[pmi]) : orb;
+            float px = std::max(1.6f, orb.h / 22.0f);
+            SDL_FRect mbox{panel.x + 6, orb.y - 7 * px - 14, panel.w - 12, 7 * px + 10};
+            SDL_SetRenderDrawColor(ren_, 8, 8, 8, 235);
+            SDL_RenderFillRectF(ren_, &mbox);
+            SDL_SetRenderDrawColor(ren_, 70, 62, 44, 255);
+            SDL_RenderDrawRectF(ren_, &mbox);
+            char buf[48];
+            std::snprintf(buf, sizeof buf, "MANA %d/%d", int(tm.mana), int(cap));
+            float mw = blockWidth(buf, px);
+            blockText(buf, mbox.x + (mbox.w - mw) * 0.5f, mbox.y + 5, px, {200, 215, 255, 255});
+            // +income / -expenditure (conjure + repair drain, computed here) flanking orb.
+            float expend = 0;
+            for (const auto& un : world_.units()) {
+                if (un.player != localPlayer_ || !un.alive() || !un.type) continue;
+                if (un.buildSiteId)
+                    if (const auto* st = world_.unit(un.buildSiteId);
+                        st && st->type && st->underConstruction) {
+                        float total = st->type->buildTime / std::max(un.type->workerTime, 0.01f);
+                        expend += st->type->buildCost / std::max(total, 0.01f);
+                    }
+                if (un.repairId)
+                    if (const auto* t2 = world_.unit(un.repairId);
+                        t2 && t2->type && t2->hp < t2->type->maxHp) {
+                        float total = t2->type->buildTime / std::max(un.type->workerTime, 0.01f);
+                        expend += t2->type->buildCost / std::max(total, 0.01f);
+                    }
+            }
+            float ipx = std::max(1.5f, orb.h / 24.0f);
+            char inb[16], outb[16];
+            std::snprintf(inb, sizeof inb, "+%d", int(tm.income + 0.5f));
+            std::snprintf(outb, sizeof outb, "-%d", int(expend + 0.5f));
+            float iy = orb.y + orb.h * 0.5f - 3.5f * ipx;
+            blockText(inb, orb.x - blockWidth(inb, ipx) - 5, iy, ipx, {150, 225, 150, 255});
+            blockText(outb, orb.x + orb.w + 5, iy, ipx, {230, 160, 150, 255});
         }
     }
 
@@ -6564,48 +6588,63 @@ private:
             SDL_FRect r = guiBarRect(gui_.gadgets[ei]);
             SDL_RenderCopyF(ren_, guiTex_[ei][0], nullptr, &r);
         }
-        // Selected-unit info block (left of the bar).
+        // Selected-unit info, CENTRED in the bar (like retail): portrait, then name
+        // over HP/mana bars, then the status ("CONJURING") and the target being
+        // conjured ("LODESTONE").
         if (!selection_.empty()) {
             const auto* u = world_.unit(selection_.front());
             if (u && u->alive() && u->type) {
-                int ii = guiIdx("UnitImage");
-                if (ii >= 0) {
-                    SDL_FRect pr = guiBarRect(gui_.gadgets[ii]);
-                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
-                    SDL_RenderFillRectF(ren_, &pr);
-                    SDL_Texture* ic = iconFor(u->type->id);
-                    if (!ic) ic = modelIconTex(u->type->id, colorSlot_[localPlayer_ & 7],
-                                               u->type->maxVel > 0);
-                    if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &pr);
-                    SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
-                    SDL_RenderDrawRectF(ren_, &pr);
-                }
-                int ti = guiIdxLeft("UnitText");
-                SDL_FRect nr = ti >= 0 ? guiBarRect(gui_.gadgets[ti])
-                                       : SDL_FRect{0, barTop, 0, float(kBarH)};
-                float px = std::max(1.8f, nr.h / 9.0f);
-                blockText(u->type->name, nr.x, nr.y, px, {236, 226, 192, 255});
+                float sc = float(kBarH) / 49.0f;
+                float portH = std::min(float(kBarH) - 8, 40 * sc), portW = portH * 4.0f / 3.0f;
+                float tpx = std::max(2.0f, float(kBarH) / 24.0f);
+                float barW = 108 * sc, barH = std::max(4.0f, 3.5f * sc);
+                std::string name = u->type->name;
+                std::string s1 = unitStatusText(u), s2 = conjureTargetName(u);
+                std::transform(s2.begin(), s2.end(), s2.begin(), ::toupper);
                 if (selection_.size() > 1) {
-                    char m[24];
-                    std::snprintf(m, sizeof m, "+%zu MORE", selection_.size() - 1);
-                    blockText(m, nr.x, nr.y + nr.h * 0.6f, px * 0.72f, {206, 198, 168, 255});
+                    s1 = "+" + std::to_string(selection_.size() - 1) + " MORE";
+                    s2.clear();
                 }
-                drawGauge("HealthBar", u->hp / std::max(1.0f, u->type->maxHp),
-                          {210, 70, 60, 255});   // retail HP bar is red
-                if (u->type->maxMana > 0)
-                    drawGauge("ManaBar", u->mana / std::max(1.0f, u->type->maxMana),
-                              {90, 150, 255, 255});
-                // Veterancy crest (3 tiers: bronze/silver/gold) once the unit ranks up.
+                float col1W = std::max(barW, blockWidth(name.c_str(), tpx));
+                float w1 = s1.empty() ? 0 : blockWidth(s1.c_str(), tpx);
+                float w2 = s2.empty() ? 0 : blockWidth(s2.c_str(), tpx);
+                float gap = 30 * sc;
+                float total = portW + 10 * sc + col1W + (w1 ? gap + w1 : 0) + (w2 ? gap + w2 : 0);
+                float x = (float(winW) - total) * 0.5f;
+                // Portrait
+                SDL_FRect pr{x, barTop + (float(kBarH) - portH) * 0.5f, portW, portH};
+                SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
+                SDL_RenderFillRectF(ren_, &pr);
+                SDL_Texture* ic = iconFor(u->type->id);
+                if (!ic) ic = modelIconTex(u->type->id, colorSlot_[localPlayer_ & 7],
+                                           u->type->maxVel > 0);
+                if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &pr);
+                SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
+                SDL_RenderDrawRectF(ren_, &pr);
+                // Veterancy crest, tucked at the portrait's bottom-left.
                 if (u->veteran > 0) {
                     int xi = guiIdxLeft("Experience");
-                    if (xi >= 0 && !guiTex_[xi].empty()) {
-                        int tier = u->veteran >= 7 ? 2 : u->veteran >= 4 ? 1 : 0;
-                        if (tier < int(guiTex_[xi].size()) && guiTex_[xi][size_t(tier)]) {
-                            SDL_FRect r = guiBarRect(gui_.gadgets[xi]);
-                            SDL_RenderCopyF(ren_, guiTex_[xi][size_t(tier)], nullptr, &r);
-                        }
+                    int tier = u->veteran >= 7 ? 2 : u->veteran >= 4 ? 1 : 0;
+                    if (xi >= 0 && tier < int(guiTex_[xi].size()) && guiTex_[xi][size_t(tier)]) {
+                        float cw = 11 * sc, chh = 22 * sc;
+                        SDL_FRect cr{pr.x + 1, pr.y + pr.h - chh - 1, cw, chh};
+                        SDL_RenderCopyF(ren_, guiTex_[xi][size_t(tier)], nullptr, &cr);
                     }
                 }
+                x += portW + 10 * sc;
+                // Name over HP/mana bars.
+                float nameY = barTop + float(kBarH) * 0.14f;
+                blockText(name, x, nameY, tpx, {236, 226, 192, 255});
+                float by = nameY + 7 * tpx + 5;
+                drawBar(x, by, barW, barH, u->hp / std::max(1.0f, u->type->maxHp),
+                        {210, 70, 60, 255});
+                if (u->type->maxMana > 0)
+                    drawBar(x, by + barH + 3, barW, barH,
+                            u->mana / std::max(1.0f, u->type->maxMana), {90, 150, 255, 255});
+                x += col1W;
+                float midY = barTop + (float(kBarH) - 7 * tpx) * 0.5f;
+                if (w1) { x += gap; blockText(s1, x, midY, tpx, {170, 205, 255, 255}); x += w1; }
+                if (w2) { x += gap; blockText(s2, x, midY, tpx, {236, 226, 192, 255}); }
             }
         }
         return true;
@@ -6620,9 +6659,9 @@ private:
         if (u->paralyzedFor > 0) return "PARALYZED";
         if (u->underConstruction) return "UNDER CONSTRUCTION";
         if (!u->active) return "INACTIVE";
+        if (u->repairId != 0) return "REPAIRING";
         if (u->reclaimId != 0 || !u->reclaimQueue.empty()) return "RECLAIMING";
-        if (u->buildSiteId != 0) return "BUILDING";
-        if (!u->buildQueue.empty()) return "CONJURING";
+        if (u->buildSiteId != 0 || !u->buildQueue.empty()) return "CONJURING";
         if (!u->orders.empty()) {
             const auto& o = u->orders.front();
             if (o.guard) return "GUARDING";
@@ -6635,6 +6674,30 @@ private:
         }
         if (u->cloaked) return "CLOAKED";
         return "STANDBY";   // retail's idle label
+    }
+
+    // What a builder is currently conjuring/building, for the info bar (else "").
+    std::string conjureTargetName(const tak::sim::Unit* u) const {
+        if (!u || !u->type) return {};
+        if (u->buildSiteId != 0)
+            if (const auto* site = world_.unit(u->buildSiteId); site && site->type)
+                return site->type->name;
+        if (!u->buildQueue.empty() && u->buildQueue.front())
+            return u->buildQueue.front()->name;
+        return {};
+    }
+
+    // A simple filled bar (HP/mana) at explicit pixel coords.
+    void drawBar(float x, float y, float w, float h, float frac, SDL_Color c) {
+        frac = std::clamp(frac, 0.0f, 1.0f);
+        SDL_FRect r{x, y, w, h};
+        SDL_SetRenderDrawColor(ren_, 8, 8, 8, 235);
+        SDL_RenderFillRectF(ren_, &r);
+        SDL_FRect f{x, y, w * frac, h};
+        SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
+        SDL_RenderFillRectF(ren_, &f);
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 200);
+        SDL_RenderDrawRectF(ren_, &r);
     }
 
     // Returns true if the click hit (and was handled by) the order column.
@@ -7693,23 +7756,13 @@ private:
             }
         }
 
-        // Bottom-RIGHT: mana. On the stone InfoPanel bar use a dark inset + light
-        // text; on our own bar keep the solid faction panel with black text.
-        {
+        // Bottom-RIGHT: mana -- only on our own bar. The retail GUI bar draws the mana
+        // readout at the command-panel foot around the orb (renderGui) instead.
+        if (!guiBar) {
             auto& tm = world_.player(localPlayer_);
             float manaX = float(winW) - 192;
-            SDL_Color txt;
-            if (guiBar) {
-                SDL_FRect z{manaX - 12, bar.y + 5, 196, kBarH - 10.0f};
-                SDL_SetRenderDrawColor(ren_, 12, 11, 9, 220);
-                SDL_RenderFillRectF(ren_, &z);
-                SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
-                SDL_RenderDrawRectF(ren_, &z);
-                txt = {236, 226, 192, 255};
-            } else {
-                shade(manaX - 8, 200);
-                txt = {0, 0, 0, 255};
-            }
+            shade(manaX - 8, 200);
+            SDL_Color txt{0, 0, 0, 255};
             blockText("MANA", manaX, bar.y + 9, 2.0f, txt);
             std::snprintf(buf, sizeof buf, "%d/%d", int(tm.mana),
                           int(std::max(tm.storage, 100.0f)));
