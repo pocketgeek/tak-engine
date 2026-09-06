@@ -6,6 +6,10 @@
 #include "version.h"
 #include "video/bink.h"
 #include "viewer/menumusic.h"
+#include "viewer/options.h"
+#include "viewer/settings.h"
+
+#include <memory>
 
 #include <algorithm>
 #include <array>
@@ -87,6 +91,9 @@ struct MainMenu::Impl {
     // separate from the shared MenuMusic device so a click mixes over the music.
     SDL_AudioDeviceID sfxDev_ = 0;
     std::unordered_map<std::string, std::vector<uint8_t>> sfxPcm_;
+
+    // The Options overlay, opened from the Options button (see run()).
+    std::unique_ptr<OptionsScreen> options_;
 
     Impl(SDL_Renderer* r, const hpi::Vfs& v, std::string in)
         : ren(r), vfs(v), install(std::move(in)) {}
@@ -475,7 +482,8 @@ MainMenu::MainMenu(SDL_Renderer* ren, const hpi::Vfs& vfs, std::string install)
     : d_(new Impl(ren, vfs, std::move(install))) { d_->load(); }
 MainMenu::~MainMenu() { delete d_; }
 
-MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut, MenuMusic* music) {
+MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut,
+                               MenuMusic* music, Settings* settings) {
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(d_->ren, &w, &h);
 
@@ -522,6 +530,14 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 continue;   // swallow everything else while typing
             }
 
+            if (d_->options_) {   // Options overlay is up: route everything to it
+                if (d_->options_->input(e, w, h)) {   // BACK / Esc
+                    if (settings) saveSettings(*settings);
+                    d_->options_.reset();
+                }
+                continue;
+            }
+
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) return Choice::Exit;
             if (e.type == SDL_MOUSEMOTION)
                 d_->updateHover(e.motion.x, e.motion.y, w, h);
@@ -536,6 +552,17 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 Choice c = d_->clicked();
                 if (c != Choice::None) d_->playHoveredSound();
                 if (c == Choice::Multiplayer) { d_->serverSelect = true; SDL_StartTextInput(); }
+                else if (c == Choice::Options && settings) {
+                    // Open the Options overlay in place (rather than exiting). Its
+                    // onChange applies audio + window live; settings save on BACK.
+                    SDL_Renderer* ren = d_->ren;
+                    d_->options_ = std::make_unique<OptionsScreen>(ren, *settings, [ren, music, settings] {
+                        if (music) music->setVolume(settings->masterVol, settings->bgmVol);
+                        if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
+                            SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                        SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
+                    });
+                }
                 else if (c != Choice::None && c != Choice::Campaign) {
                     d_->flushSfx(w, h);   // let the click sound finish before we tear down
                     return c;
@@ -550,6 +577,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (music) music->poll();
         d_->render(w, h);
         if (d_->serverSelect) d_->renderServerSelect(w, h);
+        if (d_->options_) d_->options_->render(w, h);
         SDL_RenderPresent(d_->ren);
         SDL_Delay(1);
     }

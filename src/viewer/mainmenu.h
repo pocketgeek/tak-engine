@@ -15,6 +15,7 @@
 namespace tak {
 
 class MenuMusic;
+struct Settings;
 
 class MainMenu {
 public:
@@ -34,7 +35,7 @@ public:
     // receives the chosen server address (empty = default/localhost). `music` (if
     // given) is polled each frame so the shared background track keeps looping.
     Choice run(const std::string& shotPath = "", std::string* serverOut = nullptr,
-               MenuMusic* music = nullptr);
+               MenuMusic* music = nullptr, Settings* settings = nullptr);
 
 private:
     struct Impl;

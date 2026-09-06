@@ -29,6 +29,7 @@
 #include "tnt/tnt.h"
 #include "util/png.h"
 #include "version.h"
+#include "viewer/options.h"
 #include "viewer/settings.h"
 #include "viewer/mainmenu.h"
 #include "viewer/menumusic.h"
@@ -1808,6 +1809,21 @@ public:
         edgeScrollOn_ = s.edgeScroll;
         uiScale_ = s.uiScale;
     }
+
+    // main()'s live settings, so the in-game Options screen can edit + persist them.
+    void setSettings(tak::Settings* s) { settings_ = s; }
+
+    // Open the in-game Options overlay (from the Esc menu). onChange applies audio,
+    // camera, UI scale and window state live; the host saves on close.
+    void openOptions() {
+        if (!settings_) return;
+        options_ = std::make_unique<tak::OptionsScreen>(ren_, *settings_, [this] {
+            applySettings(*settings_);
+            if (SDL_Window* w = SDL_RenderGetWindow(ren_))
+                SDL_SetWindowFullscreen(w, settings_->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+            SDL_RenderSetVSync(ren_, settings_->vsync ? 1 : 0);
+        }, sounds_.channelCount());
+    }
     // Persist / read the resume ticket (gameId + rotating token) so a killed
     // client can rejoin its held slot on restart.
     void writeResume(uint32_t gid, uint64_t tok) const {
@@ -1838,6 +1854,14 @@ public:
         winW_ = winW;
         winH_ = winH;
         if (inLobbyPhase()) { lobbyInput(e, winW, winH); return; }
+        // Options overlay (opened from the Esc menu) takes all input while up.
+        if (options_) {
+            if (options_->input(e, winW, winH)) {   // BACK / Esc
+                if (settings_) saveSettings(*settings_);
+                options_.reset();
+            }
+            return;
+        }
         // In-game exit menu (opened with Esc). While it's up, all game input is
         // swallowed and only its own buttons / Esc respond. The sim keeps running
         // underneath -- a true pause isn't possible in the lockstep MP model (even
@@ -4094,7 +4118,7 @@ public:
             SDL_RenderFillRectF(ren_, &dim);
 
             const float bw = 280, bh = 50, gap = 14, pad = 32, titlePx = 3.0f;
-            const int nBtn = canReturnToMenu_ ? 3 : 2;
+            const int nBtn = canReturnToMenu_ ? 4 : 3;
             const float titleH = 7 * titlePx + 24;
             const float pw = bw + pad * 2;
             const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap;
@@ -4126,9 +4150,11 @@ public:
                 by += bh + gap;
             };
             btn("RESUME", [this] { exitMenu_ = false; });
+            btn("OPTIONS", [this] { exitMenu_ = false; openOptions(); });
             if (canReturnToMenu_) btn("MAIN MENU", [this] { menuRequested_ = true; });
             btn("QUIT", [this] { SDL_Event q{}; q.type = SDL_QUIT; SDL_PushEvent(&q); });
         }
+        if (options_) options_->render(winW, winH);   // topmost of all
     }
 
     void advance(float seconds) {
@@ -5652,6 +5678,8 @@ private:
     float edgeScrollSpeed_ = 1.0f;
     bool  edgeScrollOn_ = true;
     float uiScale_ = 1.0f;
+    tak::Settings* settings_ = nullptr;               // main()'s settings (for the in-game Options)
+    std::unique_ptr<tak::OptionsScreen> options_;     // in-game Options overlay
     int gameSpeed_ = 0;         // -10..+10 game-speed level (+/- keys); 0 = normal
     // 10^(level/10): +10 = 10x, 0 = 1x, -10 = 0.1x.
     // Game-speed multiplier. Forced to 1x in a networked game: the peers advance
@@ -9195,7 +9223,7 @@ int main(int argc, char** argv) {
     // Persisted Options (audio/camera/display prefs). CLI flags still win where they
     // apply; the file is the source of truth for anything not passed on the CLI.
     tak::Settings settings = tak::loadSettings();
-    if (maxFps == 60) maxFps = settings.maxFps;          // --maxfps (if given) wins
+    if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
     std::string winTitle = std::string("takview ") + tak::kVersion;
     SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
@@ -9243,7 +9271,7 @@ int main(int argc, char** argv) {
         tak::MainMenu::Choice choice;
         {
             tak::MainMenu menu(ren, vfs, dataRoot);
-            choice = menu.run(shot, &menuServer, &menuMusic);
+            choice = menu.run(shot, &menuServer, &menuMusic, &settings);
         }
         if (!shot.empty()) { SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
         if (choice != tak::MainMenu::Choice::SinglePlayer &&
@@ -9353,6 +9381,7 @@ int main(int argc, char** argv) {
                                                   navy || amphib || firetest || facetest || mp,
                                                   side, aiSide, crusades);
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
+            gameView->setSettings(&settings);     // in-game Options edits + persists these
             if (mp) {
                 gameView->setMpClient(mp.get());
                 gameView->setMpMapId(args[0]);
@@ -9640,10 +9669,10 @@ int main(int argc, char** argv) {
             }
         }
 
-        if (maxFps > 0) {
+        if (settings.maxFps > 0) {
             static uint64_t prevPresent = 0;
             uint64_t nowp = SDL_GetPerformanceCounter();
-            double target = 1.0 / maxFps;
+            double target = 1.0 / settings.maxFps;   // live via the Options slider
             double elapsed = prevPresent ? double(nowp - prevPresent) /
                                                double(SDL_GetPerformanceFrequency())
                                          : target;
