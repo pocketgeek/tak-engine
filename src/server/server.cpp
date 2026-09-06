@@ -18,6 +18,8 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <random>
+#include <set>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +34,7 @@
 
 #include "ai/ai.h"
 #include "hpi/hpi.h"
+#include "tdf/tdf.h"
 #include "net/conn.h"
 #include "net/protocol.h"
 #include "sim/matchsetup.h"
@@ -132,6 +135,7 @@ public:
             // the first time a Full game starts.
             buildDataSet(retail_, tak::hpi::OverridePolicy::None);
             aiProfile_ = tak::ai::loadProfile(retail_.vfs);
+            aiNames_ = loadAiNames(retail_.vfs);
             haveCb_ = retail_.haveCb;
             haveData_ = true;
             std::fprintf(stderr, "takserver: loaded game data from %s (referee sim + AI enabled%s), "
@@ -159,6 +163,35 @@ private:
     bool relayHashSet_ = false;
     bool haveData_ = false, haveCb_ = false;
     tak::ai::Profile aiProfile_;
+    std::vector<std::string> aiNames_;   // retail's gamedata/ainames.tdf pool
+
+    static std::vector<std::string> loadAiNames(const tak::hpi::Vfs& vfs) {
+        std::vector<std::string> out;
+        try {
+            auto b = vfs.read("gamedata/ainames.tdf");
+            auto root = tak::tdf::parseText(std::string(b.begin(), b.end()), "ainames.tdf");
+            if (const auto* sec = root.child("AI_NAMES"))
+                for (const auto& [k, v] : sec->values)
+                    if (!v.empty()) out.push_back(v);
+        } catch (const std::exception&) {}
+        return out;
+    }
+    // Give an AI slot a random name from the pool, avoiding names already taken by
+    // other AI slots in the room. Display-only (broadcast in the slot), so a plain RNG.
+    void assignAiName(Room& r, int slot) {
+        if (aiNames_.empty()) return;
+        std::set<std::string> used;
+        for (int i = 0; i < kMaxSlots; ++i)
+            if (i != slot && r.slots[i].type == 2 && !r.slots[i].name.empty())
+                used.insert(r.slots[i].name);
+        std::vector<const std::string*> avail;
+        for (const auto& n : aiNames_)
+            if (!used.count(n)) avail.push_back(&n);
+        if (avail.empty())
+            for (const auto& n : aiNames_) avail.push_back(&n);
+        static std::mt19937 rng{std::random_device{}()};
+        r.slots[slot].name = *avail[rng() % avail.size()];
+    }
     void buildDataSet(DataSet& ds, tak::hpi::OverridePolicy pol) {
         ds.vfs = tak::hpi::mountRetailRoot(dataRoot_, pol);
         tak::sim::setupRegistry(ds.reg, ds.vfs, false);
@@ -637,7 +670,14 @@ void Server::gameMsg(Client& c, const Frame& f) {
             SlotInfo& s = r->slots[slot];
             // Non-host can only touch faction/color/team/ready on their own slot.
             // Slots past the map capacity stay closed (no start position for them).
-            if (isHost) { if (type <= 3 && !(slot >= r->cap && type != 3)) s.type = type; }
+            if (isHost) {
+                if (type <= 3 && !(slot >= r->cap && type != 3)) {
+                    uint8_t old = s.type;
+                    s.type = type;
+                    if (type == 2 && old != 2) assignAiName(*r, slot);  // new AI: random name
+                    else if (type != 2 && old == 2) s.name.clear();     // no longer AI
+                }
+            }
             s.faction = faction % 5;
             s.color = color % 10;
             s.team = uint8_t(team % kMaxSlots);
