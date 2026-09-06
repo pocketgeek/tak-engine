@@ -582,7 +582,7 @@ void Server::leaveRoom(Client& c, const char* reason) {
         if (next >= 0) r->hostId = uint32_t(next);
         else { rooms_.erase(rid); std::fprintf(stderr, "game %u dissolved\n", rid); return; }
     }
-    if (r->slotClient) broadcastLobby(*r);
+    broadcastLobby(*r);   // reachable only when the room still exists (not dissolved)
     std::fprintf(stderr, "client %u left game %u (%s)\n", c.id, rid, reason);
 }
 
@@ -813,7 +813,7 @@ void Server::checkHashes(Room& r, uint32_t tick) {
     // The canonical hash: the referee's for this tick if we ran a referee sim,
     // else the clients' majority (relay-only mode).
     bool haveRef = r.ref && r.refHash.count(tick);
-    uint64_t canon;
+    uint64_t canon = 0;   // set from the referee hash or the client majority below
     if (haveRef) {
         canon = r.refHash[tick];
         // Referee suspicion needs a client CONSENSUS to appeal against the server

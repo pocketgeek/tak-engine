@@ -655,7 +655,8 @@ public:
                 for (float off : {0.0f, 0.010f, 0.020f}) { int so = int(off * SR);
                     if (i >= so) amp += std::exp(-((i - so) / float(SR)) * 90.0f); }
                 s[size_t(i)] = rnd() * amp; mx = std::max(mx, std::fabs(s[size_t(i)])); }
-            for (auto& v : s) v *= 0.5f / mx; return s; };
+            for (auto& v : s) v *= 0.5f / mx;
+            return s; };
         auto hat = [&](bool open) {
             int n = int(SR * (open ? 0.28f : 0.045f)); std::vector<float> s(size_t(n), 0.0f), nz(size_t(n), 0.0f);
             for (auto& v : nz) v = rnd();
@@ -1270,7 +1271,7 @@ public:
         //  mapView_ in the member list so the Compositor can borrow it)
         : ren_(ren), vfs_(std::move(vfs)), mapView_(ren, vfs_, mapPath),
           installRoot_(installRoot), policy_(policy),
-          side_(side), aiSide_(aiSide), mapPath_(mapPath), crusades_(crusades) {
+          mapPath_(mapPath), crusades_(crusades), side_(side), aiSide_(aiSide) {
         // Unit registry: MOVEINFO + units + canbuild (+ Crusades overlay first).
         // The VFS merges base + Iron Plague + community data into one namespace,
         // precedence resolved by the retail newest-date rule.
@@ -6629,7 +6630,7 @@ private:
                                    active ? 220 : (hot ? 180 : 105),
                                    active ? 90 : 80, 255);
             SDL_RenderDrawRectF(ren_, &r);
-            char lbl[4];
+            char lbl[16];
             std::snprintf(lbl, sizeof lbl, "%d", i + 1);
             blockText(lbl, r.x + 8, r.y + 6, 2.0f,
                       active ? SDL_Color{255, 240, 180, 255} : SDL_Color{205, 195, 165, 255});
@@ -7764,7 +7765,7 @@ private:
     }
 
     void drawCreate(int winW, int winH) {
-        (void)winH;
+        (void)winW; (void)winH;
         float x = 80, y = 90;
         blockText("CREATE GAME", x, y, 2.2f, {200, 205, 220, 255}); y += 40;
         lbField(x, y, 260, "GAME NAME", createName_, 1); y += 46;
@@ -8894,14 +8895,20 @@ int main(int argc, char** argv) {
     int serverPort = 7677, mpHeadless = 0;
     int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 60;
     int playerColor = -1, aiColor = -1;   // --color / --aicolor slot overrides
-    float startTime = 0, followZoom = 0, marchX = 0, marchZ = 0;
-    bool demo = false, doMarch = false, trace = false, testbuild = false,
+    float startTime = 0, followZoom = 0;
+    bool demo = false, trace = false,
          scenario = false, navy = false, amphib = false, missionFlag = false,
-         misstest = false, nofog = false, doLook = false, creon = false,
-         hilltest = false, keytest = false, guardtest = false, selonly = false,
-         lodetest = false;
+         nofog = false, doLook = false,
+         keytest = false, selonly = false;
     std::string lodeUnitName;
-    bool firetest = false, facetest = false, soundtest = false, noVsync = false;
+    bool firetest = false, facetest = false, noVsync = false;
+    // Debug/test harness flags (--march, --testbuild, --soundtest, ...): set from
+    // argv but read only inside the #ifndef NDEBUG blocks below, so they are unused
+    // in release builds.
+    [[maybe_unused]] float marchX = 0, marchZ = 0;
+    [[maybe_unused]] bool doMarch = false, testbuild = false, misstest = false,
+        creon = false, hilltest = false, guardtest = false, lodetest = false,
+        soundtest = false;
     bool crusades = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;

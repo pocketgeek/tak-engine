@@ -489,11 +489,11 @@ Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides)
 
     // Lowest precedence: loose music tracks, mapped under music/.
     if (fs::path music = findSub("Music"); !music.empty())
-        vfs.addLayer(MountSet(music, MountConfig{true, {}}), "music/");
+        vfs.addLayer(MountSet(music, MountConfig{.includeLoose = true, .archiveExts = {}, .keep = {}}), "music/");
     // The base game + expansions: ONLY the *.hpi archives in the root (no loose
     // files), layered by the retail newest-entry-date rule. maps.hpi and
     // terrain.hpi ride in here too (Maps/*.tnt, terrain/*.jpg).
-    vfs.addLayer(MountSet(root, MountConfig{false, {".hpi"}}));
+    vfs.addLayer(MountSet(root, MountConfig{.includeLoose = false, .archiveExts = {".hpi"}, .keep = {}}));
     // Single-map .kmp archives (each an HPI -> kmap/<name>.*) plus any loose maps.
     // A handful of community .kmp bundle MODDED gameplay data (their own canbuild/
     // units/gamedata); retail reads a .kmp only for its map, so we expose just the

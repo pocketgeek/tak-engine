@@ -136,10 +136,18 @@ struct Reader {
     Reader(const uint8_t* d, size_t n) : p(d), end(d + n) {}
     bool avail(size_t n) const { return size_t(end - p) >= n; }
     uint8_t u8() { if (!avail(1)) { ok = false; return 0; } return *p++; }
-    uint32_t u32() { if (!avail(4)) { ok = false; return 0; } uint32_t v = 0;
-        for (int i = 0; i < 4; ++i) v |= uint32_t(*p++) << (8 * i); return v; }
-    uint64_t u64() { if (!avail(8)) { ok = false; return 0; } uint64_t v = 0;
-        for (int i = 0; i < 8; ++i) v |= uint64_t(*p++) << (8 * i); return v; }
+    uint32_t u32() {
+        if (!avail(4)) { ok = false; return 0; }
+        uint32_t v = 0;
+        for (int i = 0; i < 4; ++i) v |= uint32_t(*p++) << (8 * i);
+        return v;
+    }
+    uint64_t u64() {
+        if (!avail(8)) { ok = false; return 0; }
+        uint64_t v = 0;
+        for (int i = 0; i < 8; ++i) v |= uint64_t(*p++) << (8 * i);
+        return v;
+    }
     float f32() { uint32_t x = u32(); float v; std::memcpy(&v, &x, 4); return v; }
     std::string str() {
         if (!avail(2)) { ok = false; return {}; }
