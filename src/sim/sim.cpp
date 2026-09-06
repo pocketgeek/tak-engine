@@ -1452,8 +1452,11 @@ void World::tickRepair(Unit& b, float dt) {
 }
 
 void World::startDisco(int player) {
-    if (player >= 0 && player < int(players_.size()))
-        players_[size_t(player)].discoLeft = 10.0f;
+    if (player < 0 || player >= int(players_.size())) return;
+    auto& p = players_[size_t(player)];
+    // One emote at a time: ignore if this player is already dancing OR headbanging
+    // (so you can't stack or restart them). Deterministic across peers.
+    if (p.discoLeft <= 0 && p.headbangLeft <= 0) p.discoLeft = 10.0f;
 }
 
 bool World::discoActive(int player) const {
@@ -1462,8 +1465,9 @@ bool World::discoActive(int player) const {
 }
 
 void World::startHeadbang(int player) {
-    if (player >= 0 && player < int(players_.size()))
-        players_[size_t(player)].headbangLeft = 10.0f;
+    if (player < 0 || player >= int(players_.size())) return;
+    auto& p = players_[size_t(player)];
+    if (p.discoLeft <= 0 && p.headbangLeft <= 0) p.headbangLeft = 10.0f;
 }
 
 bool World::headbangActive(int player) const {
