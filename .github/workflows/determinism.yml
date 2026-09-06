@@ -1,15 +1,17 @@
-name: determinism
+name: Determinism (sim)
+run-name: Determinism (sim) · ${{ github.ref_name }}
 
-# Cross-build determinism gate for the simulation's math shim (src/sim/detmath).
-# Lockstep multiplayer needs bit-identical sim state across DIFFERENT builds, so
-# this builds the shim with a second compiler (gcc vs clang) across opt levels and
-# asserts one identical golden hash, plus the guard that keeps libm transcendentals
-# out of the sim path. Real cross-ARCHITECTURE parity (Apple-silicon ARM64) is now
-# covered natively by the macos workflow, so the old aarch64/qemu leg is gone.
-# See docs/detmath-scope.md.
+# The per-commit gate: cross-build determinism for the simulation's math shim
+# (src/sim/detmath). Lockstep multiplayer needs bit-identical sim state across
+# DIFFERENT builds, so this builds the shim with a second compiler (gcc vs clang)
+# across opt levels and asserts one identical golden hash, plus the guard that keeps
+# libm transcendentals out of the sim path. Real cross-ARCHITECTURE parity (Apple-
+# silicon ARM64) is covered natively by the macOS build workflow, so the old
+# aarch64/qemu leg is gone. See docs/detmath-scope.md.
 
 on:
   push:
+    branches: [main]
     paths:
       - 'src/sim/**'
       - 'src/ai/**'

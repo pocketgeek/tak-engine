@@ -1,27 +1,23 @@
-name: linux
+name: Linux packages
+run-name: Linux packages · ${{ github.ref_name }}
 
-# Native Linux packages via CPack: a .deb built on Ubuntu (Debian/Ubuntu family)
-# and a .rpm built inside a Fedora container (Fedora/RHEL family). Each family's
-# package is built in its own environment so the auto-detected runtime deps
-# (SDL2/jpeg/zlib sonames) match that family and apt/dnf can satisfy them.
+# Builds native Linux packages via CPack only on a version-bump tag (v*), or on
+# manual dispatch: a .deb on Ubuntu (Debian/Ubuntu family) and a .rpm in a Fedora
+# container (Fedora/RHEL family), each in its own environment so the auto-detected
+# runtime deps (SDL2/jpeg/zlib sonames) match that family. Each job uploads a CI
+# artifact; on a tag it also attaches the package to the GitHub Release.
 
 on:
   push:
-    paths:
-      - 'src/**'
-      - 'tools/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/linux.yml'
-  pull_request:
-    paths:
-      - 'src/**'
-      - 'tools/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/linux.yml'
+    tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   deb:
+    name: Debian/Ubuntu (.deb)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -36,12 +32,22 @@ jobs:
           cmake --build build
           (cd build && cpack -G DEB)
           dpkg-deb -I build/tak-engine-amd64.deb   # show control + auto deps
-      - uses: actions/upload-artifact@v7
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v7
         with:
           name: tak-engine-deb
           path: build/tak-engine-amd64.deb
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
+          gh release upload "$GITHUB_REF_NAME" build/tak-engine-amd64.deb --repo "$GITHUB_REPOSITORY" --clobber
 
   rpm:
+    name: Fedora/RHEL (.rpm)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -54,7 +60,16 @@ jobs:
             cmake --build build-rpm &&
             (cd build-rpm && cpack -G RPM) &&
             rpm -qp --requires build-rpm/tak-engine-x86_64.rpm'
-      - uses: actions/upload-artifact@v7
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v7
         with:
           name: tak-engine-rpm
           path: build-rpm/tak-engine-x86_64.rpm
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
+          gh release upload "$GITHUB_REF_NAME" build-rpm/tak-engine-x86_64.rpm --repo "$GITHUB_REPOSITORY" --clobber

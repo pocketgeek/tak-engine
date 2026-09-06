@@ -1,27 +1,21 @@
-name: macos
+name: macOS build
+run-name: macOS build · ${{ github.ref_name }}
 
-# Native macOS ARM64 (Apple Silicon) build on GitHub's macos-14 runners. The
-# source is Unix-clean (BSD sockets, fork/exec, clock_gettime), so this is a plain
-# native build with Homebrew SDL2/jpeg. Also runs the two determinism gates to
-# confirm cross-platform lockstep parity with the Linux/Windows builds.
+# Builds native macOS ARM64 (Apple Silicon) only on a version-bump tag (v*), or on
+# manual dispatch. Uploads a CI artifact + runs the determinism gate; on a tag it
+# also attaches the zipped bundle to the GitHub Release.
 
 on:
   push:
-    paths:
-      - 'src/**'
-      - 'tools/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/macos.yml'
-  pull_request:
-    paths:
-      - 'src/**'
-      - 'tools/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/macos.yml'
+    tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  arm64:
+  build:
+    name: macOS ARM64
     runs-on: macos-14   # Apple Silicon (ARM64)
     steps:
       - uses: actions/checkout@v7
@@ -29,39 +23,31 @@ jobs:
       - name: Install dependencies
         run: brew install ninja sdl2 jpeg-turbo
 
-      - name: Configure
-        # Point CMake at Homebrew SDL2, and pin jpeg-turbo explicitly: FindJPEG
-        # otherwise resolves to Mono.framework's ancient libjpeg (whose jpeg_mem_src
-        # lacks the const 2nd arg and fails to compile). CMAKE_FIND_FRAMEWORK=LAST
-        # deprioritises frameworks generally.
-        run: >-
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_FIND_FRAMEWORK=LAST
-          -DCMAKE_PREFIX_PATH="$(brew --prefix sdl2)"
-          -DJPEG_INCLUDE_DIR="$(brew --prefix jpeg-turbo)/include"
-          -DJPEG_LIBRARY="$(brew --prefix jpeg-turbo)/lib/libjpeg.dylib"
+      - name: Configure + build
+        # Pin jpeg-turbo explicitly: FindJPEG otherwise resolves to Mono.framework's
+        # ancient libjpeg (whose jpeg_mem_src lacks the const 2nd arg). FIND_FRAMEWORK
+        # LAST deprioritises frameworks generally.
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_FIND_FRAMEWORK=LAST \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix sdl2)" \
+            -DJPEG_INCLUDE_DIR="$(brew --prefix jpeg-turbo)/include" \
+            -DJPEG_LIBRARY="$(brew --prefix jpeg-turbo)/lib/libjpeg.dylib"
+          cmake --build build
 
-      - name: Build
-        run: cmake --build build
-
-      - name: Package
+      - name: Bundle + zip
         run: |
           mkdir -p dist-macos
           cp build/takview build/takserver dist-macos/
+          (cd dist-macos && zip -r ../takview-macos-arm64.zip .)
 
-      - name: Read version
-        id: ver
-        run: echo "v=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/upload-artifact@v7
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: takview-${{ steps.ver.outputs.v }}-macos-arm64
+          name: takview-macos-arm64
           path: dist-macos/
 
-      - name: Determinism gates (cross-platform parity)
-        # Assert the detmath golden matches the baseline -- the hard cross-platform
-        # lockstep gate, here on real Apple-silicon ARM64. Update `expected` only if
-        # src/sim/detmath.cpp deliberately changes it (then also the Linux golden).
+      - name: Determinism gate (cross-platform parity)
         run: |
           expected=ab1ef54ae324bd0e
           ./build/detmath_test    # accuracy vs libm (fails on tolerance)
@@ -72,3 +58,12 @@ jobs:
             exit 1
           fi
           ./build/sim_driver_equiv_test
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
+          gh release upload "$GITHUB_REF_NAME" takview-macos-arm64.zip --repo "$GITHUB_REPOSITORY" --clobber
