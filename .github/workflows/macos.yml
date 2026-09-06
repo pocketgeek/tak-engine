@@ -49,9 +49,13 @@ jobs:
           mkdir -p dist-macos
           cp build/takview build/takserver dist-macos/
 
+      - name: Read version
+        id: ver
+        run: echo "v=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@v7
         with:
-          name: takview-macos-arm64
+          name: takview-${{ steps.ver.outputs.v }}-macos-arm64
           path: dist-macos/
 
       - name: Determinism gates (cross-platform parity)

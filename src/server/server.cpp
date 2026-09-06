@@ -37,6 +37,7 @@
 #include "net/protocol.h"
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
+#include "version.h"
 
 using namespace tak::net;
 
@@ -946,7 +947,8 @@ int Server::run() {
     std::string err;
     listenFd_ = listenOn(port_, err);
     if (listenFd_ < 0) { std::fprintf(stderr, "takserver: %s on port %u\n", err.c_str(), port_); return 1; }
-    std::fprintf(stderr, "takserver listening on port %u (protocol v%u)\n", port_, kNetVersion);
+    std::fprintf(stderr, "takserver %s listening on port %u (protocol v%u)\n",
+                 tak::kVersion, port_, kNetVersion);
 
     for (;;) {
         // Build the pollfd set: listen + every client (POLLOUT when it has pending writes).
@@ -1076,6 +1078,10 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--port") && i + 1 < argc) port = uint16_t(std::atoi(argv[++i]));
         else if (!std::strcmp(argv[i], "--data") && i + 1 < argc) dataRoot = argv[++i];
         else if (!std::strcmp(argv[i], "--replaydir") && i + 1 < argc) replayDir = argv[++i];
+        else if (!std::strcmp(argv[i], "--version") || !std::strcmp(argv[i], "-v")) {
+            std::printf("takserver (TAK engine) %s\n", tak::kVersion);
+            return 0;
+        }
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: takserver [--port N] [--data <retail-install-dir>] "
                         "[--replaydir <dir>]\n"

@@ -28,6 +28,7 @@
 #include "terrain/terrain.h"
 #include "tnt/tnt.h"
 #include "util/png.h"
+#include "version.h"
 
 // Keep our own main() on every platform (don't let SDL redefine it to SDL_main /
 // pull in SDL2main + a WinMain); we call SDL_SetMainReady() in main() instead. This
@@ -8869,6 +8870,10 @@ static bool loadReplayFile(const std::string& path, ReplayFile& out) {
 
 int main(int argc, char** argv) {
     SDL_SetMainReady();   // we defined SDL_MAIN_HANDLED; tell SDL our main is ready
+    if (argc >= 2 && (!std::strcmp(argv[1], "--version") || !std::strcmp(argv[1], "-v"))) {
+        std::printf("takview (TAK engine) %s\n", tak::kVersion);
+        return 0;
+    }
     if (argc < 3) {
         std::fprintf(stderr,
                      "usage: takview game <map name> --data <retail-install-dir> "
@@ -9040,7 +9045,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
-    SDL_Window* win = SDL_CreateWindow("takview", SDL_WINDOWPOS_CENTERED,
+    std::string winTitle = std::string("takview ") + tak::kVersion;
+    SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, winW, winH,
                                        SDL_WINDOW_RESIZABLE);
     Uint32 renFlags = SDL_RENDERER_SOFTWARE;
@@ -9240,8 +9246,8 @@ int main(int argc, char** argv) {
             fpsAcc += dt; ++fpsFrames;
             if (fpsAcc >= 0.25f) {
                 char title[64];
-                std::snprintf(title, sizeof title, "takview  |  %.0f fps",
-                              float(fpsFrames) / fpsAcc);
+                std::snprintf(title, sizeof title, "takview %s  |  %.0f fps",
+                              tak::kVersion, float(fpsFrames) / fpsAcc);
                 SDL_SetWindowTitle(win, title);
                 fpsAcc = 0; fpsFrames = 0;
             }

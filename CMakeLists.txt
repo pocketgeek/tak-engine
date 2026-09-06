@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(tak-engine CXX)
+project(tak-engine VERSION 0.0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,6 +41,10 @@ add_library(tak-formats
 )
 target_include_directories(tak-formats PUBLIC src)
 target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG)
+
+# Inject the project version (src/version.h) into every target that links
+# tak-formats -- one source of truth, set by project(... VERSION ...) above.
+target_compile_definitions(tak-formats PUBLIC TAK_VERSION="${PROJECT_VERSION}")
 
 # Windows sockets: src/net (in tak-formats) uses Winsock2 -- link ws2_32 so it
 # propagates to takview and takserver. No-op on POSIX.
