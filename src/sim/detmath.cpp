@@ -4,7 +4,9 @@
 // regardless of the build flags, so the op sequence below is exactly what runs.
 // (tak-formats also builds with -ffp-contract=off; this makes the guarantee
 // local to the file that most depends on it.)
-#if defined(__GNUC__) || defined(__clang__)
+// Clang honours this pragma; GCC doesn't implement it (and warns), but the whole
+// library is compiled -ffp-contract=off, so GCC already has the guarantee.
+#if defined(__clang__)
 #pragma STDC FP_CONTRACT OFF
 #endif
 
