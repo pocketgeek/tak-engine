@@ -114,7 +114,10 @@ struct MainMenu::Impl {
             SDL_InitSubSystem(SDL_INIT_AUDIO);
             SDL_AudioSpec want = spec, have{};
             want.callback = nullptr;   // queue-driven
-            want.samples = 512;
+            // Small buffer so a queued click plays with minimal latency. The whole
+            // click is queued at once (never a partial fill), so a short device
+            // period can't underrun it. ~128/11025 ~= 12ms vs ~46ms at 512.
+            want.samples = 128;
             sfxDev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
             if (sfxDev_) SDL_PauseAudioDevice(sfxDev_, 0);
         }
@@ -311,6 +314,7 @@ struct MainMenu::Impl {
             bt.action = b.act;
             bt.sound = clickSound(*g);
             bt.tip = g->cmd;   // gui cmd doubles as the hover help caption
+            if (b.act == Choice::Exit) bt.tip = "Exit";   // retail's cmd is "Exit to Windows"
             loadSfx(bt.sound);
             for (int i = 0; i < 3 && i < int(g->imgs.size()); ++i)
                 bt.tex[i] = gafTex(g->imgs[size_t(i)].gaf, g->imgs[size_t(i)].seq, g->imgs[size_t(i)].frame);
