@@ -15,10 +15,14 @@ data — see **Game data**):
 
 - **Windows x64** — [takview-windows-x64.zip](https://github.com/pocketgeek/tak-engine/releases/latest/download/takview-windows-x64.zip)
 - **macOS (Apple Silicon)** — [takview-macos-arm64.zip](https://github.com/pocketgeek/tak-engine/releases/latest/download/takview-macos-arm64.zip)
+- **Debian / Ubuntu** — [tak-engine-amd64.deb](https://github.com/pocketgeek/tak-engine/releases/latest/download/tak-engine-amd64.deb) — `sudo apt install ./tak-engine-amd64.deb`
+- **Fedora / RHEL** — [tak-engine-x86_64.rpm](https://github.com/pocketgeek/tak-engine/releases/latest/download/tak-engine-x86_64.rpm) — `sudo dnf install ./tak-engine-x86_64.rpm`
 - [**All releases**](https://github.com/pocketgeek/tak-engine/releases) · or build from source below.
 
-These always resolve to the newest [release](https://github.com/pocketgeek/tak-engine/releases);
-they appear once the first tagged release finishes building. Linux users build from source.
+All of these resolve to the newest [release](https://github.com/pocketgeek/tak-engine/releases);
+the `.deb`/`.rpm` packages install `takview` + `takserver` to `/usr/bin` and pull
+their SDL2/jpeg/zlib runtime deps automatically. They appear once the first tagged
+release finishes building.
 
 > **This project contains no game content.** You must own the original game
 > (e.g. the GOG release of *Total Annihilation: Kingdoms + The Iron Plague*); the
