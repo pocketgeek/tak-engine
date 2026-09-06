@@ -523,6 +523,18 @@ class SoundBank {
 public:
     const tak::hpi::Vfs* vfs_ = nullptr;   // runtime read-path (owned by main)
 
+    SoundBank() = default;
+    // Owns an SDL audio device + the buffers its callback reads; never copy it.
+    SoundBank(const SoundBank&) = delete;
+    SoundBank& operator=(const SoundBank&) = delete;
+    ~SoundBank() {
+        // Stop SDL's audio callback thread BEFORE our buffers (music_/voices_) are
+        // destroyed. SDL_CloseAudioDevice blocks until the callback returns and
+        // won't call it again, so mixThunk can't fire on freed state -- this is the
+        // return-to-menu teardown crash (GameView, and thus SoundBank, is freed).
+        if (dev_) { SDL_CloseAudioDevice(dev_); dev_ = 0; }
+    }
+
     void init(const tak::hpi::Vfs& vfs) {
         vfs_ = &vfs;
         // Index the sounds/ namespace by stem (user overrides already win via the
