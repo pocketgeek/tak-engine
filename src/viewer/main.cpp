@@ -2818,8 +2818,11 @@ public:
         // safe. The state transitions above (sounds, script starts) stayed
         // serial. Flyer VMs still advance at 1x real time.
         vmTick_.clear();
-        for (auto& [id, a] : anims_)
+        for (auto& [id, a] : anims_) {
             if (a.vm) vmTick_.push_back(a.vm.get());
+            if (a.fireCd > 0) a.fireCd -= dt;
+            if (a.smokeCd > 0) a.smokeCd -= dt;
+        }
         pool_.parallelFor(vmTick_.size(), [&](size_t b, size_t e) {
             for (size_t i = b; i < e; ++i) vmTick_[i]->tick(dt);
         });
@@ -3637,29 +3640,39 @@ private:
         // emit-sfx (piece, sfxType) captured off the worker thread; drained on the
         // main thread after the parallel VM tick (SDL/effects_ are main-thread only).
         std::vector<std::pair<int, int32_t>> pendingSfx;
+        float fireCd = 0, smokeCd = 0;   // per-unit emit-sfx spawn cooldowns
     };
 
     // Turn a COB emit-sfx (piece, packed type) into a one-shot world-space effect at
     // the unit. The Sacred Fire's FireControl loop re-emits every ~0.5s, so the short
     // flame/smoke puffs stack into a continuous flicker (as retail's persistent
     // particle emitter does). Cosmetic; not hashed.
-    void emitSfx(const tak::sim::Unit& u, const Anim& a, int piece, int32_t sfx) {
+    void emitSfx(const tak::sim::Unit& u, Anim& a, int piece, int32_t sfx) {
         const char* anim = sfxAnimFor(sfx);
         if (!anim) return;
-        float alt = pieceLift(u, a, piece);   // lift the effect onto the emitting piece
-        spawnEffectAnim(anim, u.x, u.z, 0.0f, 0.0f, 1, alt);
+        // Retail keeps ONE persistent particle emitter per fire; the script just
+        // re-feeds it. We approximate with one short looping puff refreshed on a
+        // cooldown -- a single flame column, not a stack of overlapping sprites.
+        bool smoke = anim[0] == 's';
+        float& cd = smoke ? a.smokeCd : a.fireCd;
+        if (cd > 0) return;
+        cd = smoke ? 0.6f : 0.4f;
+        spawnEffectAnim(anim, u.x, u.z, 0.0f, 0.0f, 1, pieceLift(u, a, piece));
     }
-    // Map a packed COB sfx code to one of our effect anims. Retail (KINGDOMS.icd
-    // emitSfx @0x50da20): the 0x100 bit flags the extended emitter family, low bits
-    // pick the effect -- 4/5/6 = damage-flame small/med/large, 1/2/3 = smoke/steam.
+    // Map a packed COB sfx code to the retail effect GAF sequence. (KINGDOMS.icd
+    // emitSfx @0x50da20: the 0x100 bit flags the extended emitter family, low bits
+    // pick the effect -- 4/5/6 = damage-flame small/med/large from anims/flames.gaf,
+    // 1/2/3 = smoke/steam from anims/smoke.gaf.)
     static const char* sfxAnimFor(int32_t sfx) {
         int low = sfx & 0xFF;
         if (sfx & 0x100) {
-            if (low >= 4 && low <= 6) return "flame";
-            if (low >= 1 && low <= 3) return "smoke";
+            if (low == 6) return "flames:flame large";
+            if (low == 5) return "flames:flame medium";
+            if (low == 4) return "flames:flame small";
+            if (low >= 1 && low <= 3) return "smoke:smoke01";
             return nullptr;
         }
-        return (low == 0 || low == 1) ? "flame" : nullptr;   // low family: thrust/flame
+        return (low == 0 || low == 1) ? "flames:flame large" : nullptr;
     }
     // Accumulated model-Y (height above the unit's ground origin) of a named piece,
     // for lifting the effect onto it. Ground-level pieces (the Sacred Fire's root)
@@ -3746,9 +3759,12 @@ private:
                         int32_t z = int32_t(su->z) & 0xFFFF;
                         return (x << 16) | z;
                     }
-                    case 16: return su->underConstruction              // BUILD_PCT_LEFT
-                                 ? int32_t(100 - su->hp / su->type->maxHp * 100)
-                                 : 0;
+                    case 16:                                           // BUILD_PERCENT_LEFT
+                    case 17: return su->underConstruction              // (scripts push 17; the
+                                 ? int32_t(100 - su->hp / su->type->maxHp * 100)  // Create wait-
+                                 : 0;                                  // loops on it, so ambient
+                                                                       // anims/emit-sfx hold off
+                                                                       // until the building is up)
                     default: return 0;
                 }
             };
@@ -7214,10 +7230,17 @@ private:
             return it->second.frames.empty() ? nullptr : &it->second;
         EffectAnim ea;
         const auto* pal = featurePalette("aramon");   // ignored for truecolor TAF
+        // "file:sequence" targets a specific GAF sequence (e.g. "flames:flame large");
+        // a bare name uses the file of that name and its like-named (or first) sequence.
+        std::string file = animName, seqWant = animName;
+        if (auto c = animName.find(':'); c != std::string::npos) {
+            file = animName.substr(0, c);
+            seqWant = animName.substr(c + 1);
+        }
         for (const std::string suf : {"_4444.taf", "_1555.taf", ".taf", ".gaf"}) {
             if (!ea.frames.empty()) break;
             try {
-                std::string ap = "anims/" + animName + suf;
+                std::string ap = "anims/" + file + suf;
                 auto seqs = tak::gaf::load(vread(ap), pal ? *pal : tak::gaf::Palette{}, -1, ap);
                 const tak::gaf::Sequence* seq = nullptr;
                 for (auto& s : seqs) {
@@ -7225,7 +7248,7 @@ private:
                     if (!seq) seq = &s;
                     std::string sn = s.name;
                     std::transform(sn.begin(), sn.end(), sn.begin(), ::tolower);
-                    if (sn == animName) { seq = &s; break; }
+                    if (sn == seqWant) { seq = &s; break; }
                 }
                 if (!seq) continue;
                 for (auto& fr : seq->frames) {
