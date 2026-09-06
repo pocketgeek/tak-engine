@@ -2,8 +2,10 @@ name: determinism
 
 # Cross-build determinism gate for the simulation's math shim (src/sim/detmath).
 # Lockstep multiplayer needs bit-identical sim state across DIFFERENT builds, so
-# this runs three legs -- a second compiler and a second CPU architecture --
-# plus the guard that keeps libm transcendentals out of the sim path.
+# this builds the shim with a second compiler (gcc vs clang) across opt levels and
+# asserts one identical golden hash, plus the guard that keeps libm transcendentals
+# out of the sim path. Real cross-ARCHITECTURE parity (Apple-silicon ARM64) is now
+# covered natively by the macos workflow, so the old aarch64/qemu leg is gone.
 # See docs/detmath-scope.md.
 
 on:
@@ -31,19 +33,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # g++ (default) + clang (second compiler, same arch);
-      # g++-aarch64-linux-gnu is hosted on Ubuntu (ships the target libstdc++),
-      # and qemu-user-static both provides qemu-aarch64-static and registers the
-      # binfmt handler, so the ARM64 build runs under emulation.
+      # g++ (default) + clang: the same-arch second-compiler leg. Cross-arch parity
+      # runs on real hardware in the macos workflow, so no aarch64/qemu toolchain
+      # is installed here.
       - name: Install toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            g++ clang g++-aarch64-linux-gnu qemu-user-static
+          sudo apt-get install -y --no-install-recommends g++ clang
 
-      # Runs the guard + builds the shim with every compiler x opt level and
-      # under aarch64/qemu, asserting one identical golden hash. Fails the job
-      # if the guard trips or any two builds disagree.
+      # Runs the guard + builds the shim with every compiler x opt level, asserting
+      # one identical golden hash. Fails if the guard trips or any two builds
+      # disagree. (check-determinism.sh's aarch64/qemu leg auto-skips when, as here,
+      # its toolchain is absent.)
       - name: Cross-build determinism check
         run: sh tools/check-determinism.sh
 
