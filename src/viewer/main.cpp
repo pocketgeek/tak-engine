@@ -9644,6 +9644,20 @@ int main(int argc, char** argv) {
             }
             if (aaTex) aaOn = true;
         }
+        // One-line diagnostic whenever the AA level changes, so it's clear on real
+        // hardware whether supersampling actually engaged (or fell back on alloc).
+        static int aaLoggedLevel = -99;
+        if (gameView && !gameView->inLobbyPhase() && settings.antiAlias != aaLoggedLevel) {
+            aaLoggedLevel = settings.antiAlias;
+            if (settings.antiAlias == 0)
+                std::fprintf(stderr, "AA: off\n");
+            else if (aaOn)
+                std::fprintf(stderr, "AA: %dX active -- %dx%d supersample target\n",
+                             settings.antiAlias, int(w * aaS), int(h * aaS));
+            else
+                std::fprintf(stderr, "AA: %dX requested but INACTIVE (alloc failed?): %s\n",
+                             settings.antiAlias, SDL_GetError());
+        }
         // Create textures before the render pass (mid-pass creation glitches
         // the whole frame on some backends). Prepare/bake at 1x, then set the scale.
         if (mapView) mapView->ensureChunks(w, h);
