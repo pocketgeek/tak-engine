@@ -86,14 +86,36 @@ target_link_libraries(tnttool PRIVATE tak-formats)
 
 option(TAK_BUILD_VIEWER "Build the SDL2 asset viewer" ON)
 
+# Optional FFmpeg for decoding the retail Bink (.bik) menu videos. When present,
+# the main menu plays the door hover videos; when absent, it falls back to the GAF
+# door art. libavcodec carries a clean-room Bink decoder (GPL-compatible).
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(FFMPEG IMPORTED_TARGET libavcodec libavformat libavutil libswscale)
+endif()
+
 if(TAK_BUILD_VIEWER)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takview src/viewer/main.cpp)
+    add_executable(takview src/viewer/main.cpp src/video/bink.cpp)
     target_link_libraries(takview PRIVATE tak-formats SDL2::SDL2)
+    if(FFMPEG_FOUND)
+      target_link_libraries(takview PRIVATE PkgConfig::FFMPEG)
+      target_compile_definitions(takview PRIVATE TAK_HAVE_FFMPEG)
+      message(STATUS "FFmpeg found — Bink (.bik) menu videos enabled.")
+    else()
+      message(STATUS "FFmpeg not found — menu .bik videos disabled (GAF door art fallback).")
+    endif()
   else()
     message(WARNING "SDL2 not found — skipping takview. Install SDL2-devel.")
   endif()
+endif()
+
+# biktool: standalone Bink -> frame-dump debug tool (only when FFmpeg is present).
+if(FFMPEG_FOUND)
+  add_executable(biktool tools/biktool.cpp src/video/bink.cpp)
+  target_link_libraries(biktool PRIVATE tak-formats PkgConfig::FFMPEG)
+  target_compile_definitions(biktool PRIVATE TAK_HAVE_FFMPEG)
 endif()
 
 # --- Multiplayer server (headless; no SDL) ------------------------------------
