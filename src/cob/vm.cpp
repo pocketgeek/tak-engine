@@ -321,7 +321,12 @@ void Vm::run(Thread& t) {
                 // smoke) -- treating it as unknown killed the Create thread there, so
                 // buildings never started animating.
                 t.pc += 2; break;
-            case 0x1000F000: pop(t); t.pc += 2; break;                        // EMIT_SFX (pops the packed sfx-type code)
+            case 0x1000F000: {                                                // EMIT_SFX
+                int piece = arg(0);
+                int32_t sfx = pop(t);           // packed sfx-type code
+                if (onEmitSfx) onEmitSfx(piece, sfx);
+                t.pc += 2; break;
+            }
             case 0x10071000: pop(t); t.pc += 2; break;                        // EXPLODE
             case 0x10072000: pop(t); push(t, 0); t.pc += 2; break;            // PLAY_SOUND (pop1/push1)
             case 0x10074000: t.pc += 3; break;                                // engine cmd (3-word, stack-neutral)

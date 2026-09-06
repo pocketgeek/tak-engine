@@ -41,6 +41,9 @@ public:
     std::function<int32_t(int sub, const std::vector<int32_t>&)> onMapCommand;
     std::function<int32_t(int32_t valId, const std::vector<int32_t>&)> onGet;
     std::function<void(int32_t valId, int32_t value)> onSetUnitValue;
+    // emit-sfx (0x1000F000): spawn a visual effect (fire/smoke/...) at `piece`.
+    // sfxType is the packed COB code (e.g. 256|6 = large flame, 256|1 = smoke).
+    std::function<void(int piece, int32_t sfxType)> onEmitSfx;
     void setStatic(size_t i, int32_t v);
     void reset() { threads_.clear(); }   // stop all threads, keep piece poses
 

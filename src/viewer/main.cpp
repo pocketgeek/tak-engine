@@ -2823,6 +2823,15 @@ public:
         pool_.parallelFor(vmTick_.size(), [&](size_t b, size_t e) {
             for (size_t i = b; i < e; ++i) vmTick_[i]->tick(dt);
         });
+        // Drain emit-sfx the VMs stashed (fire/smoke from FireControl-style loops),
+        // now serially on the main thread, into the world-space effect system.
+        for (auto& [id, a] : anims_) {
+            if (a.pendingSfx.empty()) continue;
+            const auto* u = world_.unit(id);
+            if (u && u->type && (noFog_ || world_.cellVisible(u->x, u->z)))
+                for (auto& [piece, sfx] : a.pendingSfx) emitSfx(*u, a, piece, sfx);
+            a.pendingSfx.clear();
+        }
     }
 
     // Create textures (terrain chunks, minimap) before the render pass.
@@ -3625,7 +3634,54 @@ private:
         bool airborne = false;   // true while the flight animation should run
         float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
         int flyGate = 8;         // static index that this unit's `fly` gates on
+        // emit-sfx (piece, sfxType) captured off the worker thread; drained on the
+        // main thread after the parallel VM tick (SDL/effects_ are main-thread only).
+        std::vector<std::pair<int, int32_t>> pendingSfx;
     };
+
+    // Turn a COB emit-sfx (piece, packed type) into a one-shot world-space effect at
+    // the unit. The Sacred Fire's FireControl loop re-emits every ~0.5s, so the short
+    // flame/smoke puffs stack into a continuous flicker (as retail's persistent
+    // particle emitter does). Cosmetic; not hashed.
+    void emitSfx(const tak::sim::Unit& u, const Anim& a, int piece, int32_t sfx) {
+        const char* anim = sfxAnimFor(sfx);
+        if (!anim) return;
+        float alt = pieceLift(u, a, piece);   // lift the effect onto the emitting piece
+        spawnEffectAnim(anim, u.x, u.z, 0.0f, 0.0f, 1, alt);
+    }
+    // Map a packed COB sfx code to one of our effect anims. Retail (KINGDOMS.icd
+    // emitSfx @0x50da20): the 0x100 bit flags the extended emitter family, low bits
+    // pick the effect -- 4/5/6 = damage-flame small/med/large, 1/2/3 = smoke/steam.
+    static const char* sfxAnimFor(int32_t sfx) {
+        int low = sfx & 0xFF;
+        if (sfx & 0x100) {
+            if (low >= 4 && low <= 6) return "flame";
+            if (low >= 1 && low <= 3) return "smoke";
+            return nullptr;
+        }
+        return (low == 0 || low == 1) ? "flame" : nullptr;   // low family: thrust/flame
+    }
+    // Accumulated model-Y (height above the unit's ground origin) of a named piece,
+    // for lifting the effect onto it. Ground-level pieces (the Sacred Fire's root)
+    // give 0; a smokestack piece gives its height.
+    static bool findPieceY(const tak::tdo::Object& o, const std::string& name,
+                           float acc, float& out) {
+        float y = acc + o.y;
+        std::string on = o.name;
+        std::transform(on.begin(), on.end(), on.begin(), ::tolower);
+        if (on == name) { out = y; return true; }
+        for (const auto& c : o.children)
+            if (findPieceY(c, name, y, out)) return true;
+        return false;
+    }
+    float pieceLift(const tak::sim::Unit& u, const Anim& a, int piece) {
+        if (piece < 0 || size_t(piece) >= a.pieceNames.size() || !u.type) return 0.0f;
+        auto vt = visuals_.find(u.type->id);
+        if (vt == visuals_.end()) return 0.0f;
+        float out = 0.0f;
+        findPieceY(vt->second.model.root, a.pieceNames[size_t(piece)], 0.0f, out);
+        return std::max(0.0f, out);
+    }
 
     // The `fly` script's first instruction is a PUSH_STATIC that gates the
     // whole animation; different flyers use different indices (zonhunt=8,
@@ -3715,7 +3771,15 @@ private:
                 a.vm->start("Create");
             }
         } catch (const std::exception&) { /* unit stays unanimated */ }
-        if (a.vm) anims_[u.id] = std::move(a);
+        if (a.vm) {
+            Anim& st = anims_[u.id] = std::move(a);
+            // The VM is ticked on the worker pool, so emit-sfx only stashes into this
+            // unit's own buffer (std::map nodes are pointer-stable); the main thread
+            // drains it into effects_ after the parallel tick.
+            st.vm->onEmitSfx = [buf = &st.pendingSfx](int piece, int32_t sfx) {
+                buf->push_back({piece, sfx});
+            };
+        }
         unitType_[u.id] = typeId;
     }
 
