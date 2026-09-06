@@ -31,6 +31,7 @@ struct Door {
     std::string name;                 // gui gadget id
     SDL_Rect rect{};                  // 640x480 layout space
     std::string vbase;                // video basename: "machine"/"girl"/"knight"
+    std::string sound;                // click sound (gui states, e.g. "skirmish.wav")
     MainMenu::Choice action = MainMenu::Choice::None;
 
     SDL_Texture* gaf = nullptr;       // static fallback (GAF state-0 art)
@@ -48,9 +49,22 @@ struct Button {
     std::string name;
     SDL_Rect rect{};
     SDL_Texture* tex[3] = {nullptr, nullptr, nullptr};   // normal / hover / pressed
+    std::string sound;                                   // click sound (gui states)
     MainMenu::Choice action = MainMenu::Choice::None;
     bool hover = false;
 };
+
+// A menu gadget's click sound is the first ".wav" entry in its gui state strings
+// (the others are "Default" or empty). Case-insensitive on the extension.
+inline std::string clickSound(const gui::Gadget& g) {
+    for (const auto& s : g.states) {
+        if (s.size() < 4) continue;
+        std::string ext = s.substr(s.size() - 4);
+        for (char& c : ext) c = char(std::tolower((unsigned char)c));
+        if (ext == ".wav") return s;
+    }
+    return {};
+}
 
 }  // namespace
 
@@ -65,6 +79,12 @@ struct MainMenu::Impl {
     std::vector<Button> buttons;
     std::unordered_map<std::string, std::string> bikByLower;   // lowercased name -> path
 
+    // Click SFX: one queue-driven device (all menu click WAVs share a format,
+    // u8/11025/mono), and each sound's volume-scaled PCM keyed by filename. This is
+    // separate from the shared MenuMusic device so a click mixes over the music.
+    SDL_AudioDeviceID sfxDev_ = 0;
+    std::unordered_map<std::string, std::vector<uint8_t>> sfxPcm_;
+
     Impl(SDL_Renderer* r, const hpi::Vfs& v, std::string in)
         : ren(r), vfs(v), install(std::move(in)) {}
     ~Impl() {
@@ -72,6 +92,64 @@ struct MainMenu::Impl {
         for (auto& d : doors) { if (d.gaf) SDL_DestroyTexture(d.gaf);
                                 if (d.vtex) SDL_DestroyTexture(d.vtex); }
         for (auto& b : buttons) for (auto* t : b.tex) if (t) SDL_DestroyTexture(t);
+        if (sfxDev_) SDL_CloseAudioDevice(sfxDev_);
+    }
+
+    // ---- click SFX ------------------------------------------------------------
+
+    // Load one click WAV from sounds/ and cache its PCM. Opens the shared SFX
+    // device from the first WAV (all four share u8/11025/mono, so no conversion).
+    void loadSfx(const std::string& name) {
+        if (name.empty() || sfxPcm_.count(name)) return;
+        std::vector<uint8_t> raw;
+        try { raw = vfs.read("sounds/" + name); } catch (...) { return; }
+        if (raw.empty()) return;
+        SDL_RWops* rw = SDL_RWFromConstMem(raw.data(), int(raw.size()));
+        SDL_AudioSpec spec{}; Uint8* buf = nullptr; Uint32 len = 0;
+        if (!rw || !SDL_LoadWAV_RW(rw, 1, &spec, &buf, &len)) return;
+        if (!sfxDev_) {
+            SDL_InitSubSystem(SDL_INIT_AUDIO);
+            SDL_AudioSpec want = spec, have{};
+            want.callback = nullptr;   // queue-driven
+            want.samples = 512;
+            sfxDev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+            if (sfxDev_) SDL_PauseAudioDevice(sfxDev_, 0);
+        }
+        // Scale to a UI level that sits above the (soft, ~45/128) menu music.
+        // These WAVs are unsigned 8-bit (silence == 128), so scale around 128.
+        std::vector<uint8_t> pcm(len);
+        for (Uint32 i = 0; i < len; ++i) {
+            int s = 128 + (int(buf[i]) - 128) * 100 / 128;
+            pcm[i] = uint8_t(s < 0 ? 0 : s > 255 ? 255 : s);
+        }
+        SDL_FreeWAV(buf);
+        sfxPcm_[name] = std::move(pcm);
+    }
+
+    void playSfx(const std::string& name) {
+        if (!sfxDev_ || name.empty()) return;
+        auto it = sfxPcm_.find(name);
+        if (it == sfxPcm_.end()) return;
+        SDL_ClearQueuedAudio(sfxDev_);   // retrigger cleanly on rapid clicks
+        SDL_QueueAudio(sfxDev_, it->second.data(), Uint32(it->second.size()));
+    }
+
+    // Play the click sound of whatever door/button is currently hovered.
+    void playHoveredSound() {
+        for (auto& d : doors) if (d.hover) { playSfx(d.sound); return; }
+        for (auto& b : buttons) if (b.hover) { playSfx(b.sound); return; }
+    }
+
+    // A click that transitions away destroys this MainMenu (closing the SFX
+    // device), so let the short click finish first -- keep rendering so the menu
+    // doesn't freeze. Bounded well above the longest click (~140ms).
+    void flushSfx(int winW, int winH) {
+        if (!sfxDev_) return;
+        for (int i = 0; i < 30 && SDL_GetQueuedAudioSize(sfxDev_) > 0; ++i) {
+            render(winW, winH);
+            SDL_RenderPresent(ren);
+            SDL_Delay(10);
+        }
     }
 
     // ---- asset loading --------------------------------------------------------
@@ -210,6 +288,8 @@ struct MainMenu::Impl {
             d.rect = {g->x, g->y, g->w, g->h};
             d.vbase = s.vbase;
             d.action = s.act;
+            d.sound = clickSound(*g);
+            loadSfx(d.sound);
             if (!g->imgs.empty()) d.gaf = gafTex(g->imgs[0].gaf, g->imgs[0].seq, g->imgs[0].frame);
             doors.push_back(std::move(d));
         }
@@ -225,6 +305,8 @@ struct MainMenu::Impl {
             bt.name = b.gadget;
             bt.rect = {g->x, g->y, g->w, g->h};
             bt.action = b.act;
+            bt.sound = clickSound(*g);
+            loadSfx(bt.sound);
             for (int i = 0; i < 3 && i < int(g->imgs.size()); ++i)
                 bt.tex[i] = gafTex(g->imgs[size_t(i)].gaf, g->imgs[size_t(i)].seq, g->imgs[size_t(i)].frame);
             buttons.push_back(std::move(bt));
@@ -407,8 +489,12 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 d_->updateHover(e.button.x, e.button.y, w, h);
                 Choice c = d_->clicked();
+                if (c != Choice::None) d_->playHoveredSound();
                 if (c == Choice::Multiplayer) { d_->serverSelect = true; SDL_StartTextInput(); }
-                else if (c != Choice::None && c != Choice::Campaign) return c;
+                else if (c != Choice::None && c != Choice::Campaign) {
+                    d_->flushSfx(w, h);   // let the click sound finish before we tear down
+                    return c;
+                }
             }
         }
         SDL_GetRendererOutputSize(d_->ren, &w, &h);
