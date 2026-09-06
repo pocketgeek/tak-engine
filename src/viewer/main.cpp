@@ -551,6 +551,24 @@ public:
         playWorld("disco", x, z);
     }
 
+    // Re-pan any currently-playing copies of `name` to a new world position. A normal
+    // SFX fixes its pan at trigger time; this keeps a long positional loop (the disco)
+    // tracking its source as the camera pans, so it stays genuinely directional.
+    void repositionWorld(const std::string& name, float x, float z) {
+        if (!dev_) return;
+        std::string n = name;
+        std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+        auto it = cache_.find(n);
+        if (it == cache_.end()) return;
+        const std::vector<int16_t>* data = &it->second;
+        float pan = std::clamp((x - listenX_) / listenHW_, -1.0f, 1.0f);
+        float depth = std::clamp((z - listenZ_) / listenHH_, -1.0f, 1.0f);
+        SDL_LockAudioDevice(dev_);
+        for (auto& c : channels_)
+            if (c.data == data) { c.pan = pan; c.depth = depth; }
+        SDL_UnlockAudioDevice(dev_);
+    }
+
   private:
     void buildDisco() {
         constexpr float PI = 3.14159265358979f;
@@ -1488,11 +1506,18 @@ public:
     void discoSound() {
         for (int p = 0; p < 8 && p < world_.numPlayers(); ++p) {
             bool on = world_.discoActive(p);
-            if (on && !discoWas_[p]) {
+            if (on) {
+                // Centroid of this player's (visible) dancing monarchs.
+                float cx = 0, cz = 0; int n = 0;
                 for (const auto& u : world_.units()) {
                     if (u.player != p || !u.alive() || !isMonarchType(u.type)) continue;
                     if (!alliedToLocal(p) && !noFog_ && !world_.cellVisible(u.x, u.z)) continue;
-                    sounds_.discoAt(u.x, u.z);
+                    cx += u.x; cz += u.z; ++n;
+                }
+                if (n) {
+                    cx /= n; cz /= n;
+                    if (!discoWas_[p]) sounds_.discoAt(cx, cz);               // start the track
+                    else sounds_.repositionWorld("disco", cx, cz);           // keep it panned
                 }
             }
             discoWas_[p] = on;
