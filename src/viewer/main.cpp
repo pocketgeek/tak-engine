@@ -5395,6 +5395,16 @@ private:
         return {winW_ - (640 - g.x) * s, baseY - (480 - g.y) * s, g.w * s, g.h * s};
     }
 
+    // Screen rect for a bottom-bar gadget (the retail InfoPanel occupies 640-space
+    // y 431..480). The whole bar layout is scaled uniformly to our kBarH-tall bar and
+    // anchored bottom-left, so the unit-info block clusters at the left while the bar
+    // chrome stretches to fill the width.
+    SDL_FRect guiBarRect(const tak::gui::Gadget& g) const {
+        float vs = float(kBarH) / 49.0f;   // 49-tall retail bar -> kBarH px
+        float barTop = winH_ - kBarH;
+        return {g.x * vs, barTop + (g.y - 431) * vs, g.w * vs, g.h * vs};
+    }
+
     SDL_FRect minimapRect(int winW, int winH) const {
         (void)winH;
         float aspect = float(mapView_.map().blocksY) / float(mapView_.map().blocksX);
@@ -6167,6 +6177,18 @@ private:
         return -1;
     }
 
+    // Leftmost gadget with this name. Several bar gadgets appear twice -- the primary
+    // single-unit group (UnitInfo1, x~114) and the second-unit group (UnitInfo2,
+    // x~386); the primary is always the left one.
+    int guiIdxLeft(const char* name) const {
+        int best = -1;
+        for (size_t i = 0; i < gui_.gadgets.size(); ++i)
+            if (gui_.gadgets[i].name == name &&
+                (best < 0 || gui_.gadgets[i].x < gui_.gadgets[size_t(best)].x))
+                best = int(i);
+        return best;
+    }
+
     // (gadget index, command char) for each command button to show for the current
     // selection. cmd: 'm'/'a'/'p'/'g' arm pendingCmd_; 's' = Stop (immediate);
     // '1'/'2'/'3' = weapon slot 0/1/2.
@@ -6289,6 +6311,81 @@ private:
             return true;
         }
         return false;
+    }
+
+    // Draw a thin fill gauge (HP/mana) at a bar gadget's .gui position.
+    void drawGauge(const char* name, float frac, SDL_Color c) {
+        int gi = guiIdxLeft(name);
+        if (gi < 0) return;
+        SDL_FRect r = guiBarRect(gui_.gadgets[gi]);
+        if (r.h < 5) { r.y -= (5 - r.h); r.h = 5; }   // the retail gauge is 2px -- lift for legibility
+        frac = std::clamp(frac, 0.0f, 1.0f);
+        SDL_SetRenderDrawColor(ren_, 8, 8, 8, 230);
+        SDL_RenderFillRectF(ren_, &r);
+        SDL_FRect f{r.x, r.y, r.w * frac, r.h};
+        SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
+        SDL_RenderFillRectF(ren_, &f);
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 200);
+        SDL_RenderDrawRectF(ren_, &r);
+    }
+
+    // Retail bottom InfoPanel bar: chrome (InfoPanel + EndCap) plus the selected
+    // unit's portrait/name/HP/mana at the .gui positions. Returns false (so drawPanel
+    // keeps its own chrome) when no .gui is loaded. The build menu + mana readout stay
+    // in drawPanel and draw on top.
+    bool drawGuiInfoBar(int winW, int winH) {
+        if (gui_.gadgets.empty()) return false;
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        float barTop = float(winH - kBarH);
+        // Chrome: InfoPanel stretched across the width, EndCap at the left.
+        int bi = guiIdx("BottomBar");
+        if (bi >= 0 && !guiTex_[bi].empty() && guiTex_[bi][0]) {
+            SDL_FRect r{0, barTop, float(winW), float(kBarH)};
+            SDL_RenderCopyF(ren_, guiTex_[bi][0], nullptr, &r);
+        } else {
+            SDL_SetRenderDrawColor(ren_, 42, 38, 34, 255);
+            SDL_FRect bar{0, barTop, float(winW), float(kBarH)};
+            SDL_RenderFillRectF(ren_, &bar);
+        }
+        int ei = guiIdx("BottomEnd");
+        if (ei >= 0 && !guiTex_[ei].empty() && guiTex_[ei][0]) {
+            SDL_FRect r = guiBarRect(gui_.gadgets[ei]);
+            SDL_RenderCopyF(ren_, guiTex_[ei][0], nullptr, &r);
+        }
+        // Selected-unit info block (left of the bar).
+        if (!selection_.empty()) {
+            const auto* u = world_.unit(selection_.front());
+            if (u && u->alive() && u->type) {
+                int ii = guiIdx("UnitImage");
+                if (ii >= 0) {
+                    SDL_FRect pr = guiBarRect(gui_.gadgets[ii]);
+                    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
+                    SDL_RenderFillRectF(ren_, &pr);
+                    SDL_Texture* ic = iconFor(u->type->id);
+                    if (!ic) ic = modelIconTex(u->type->id, colorSlot_[localPlayer_ & 7],
+                                               u->type->maxVel > 0);
+                    if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &pr);
+                    SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
+                    SDL_RenderDrawRectF(ren_, &pr);
+                }
+                int ti = guiIdxLeft("UnitText");
+                SDL_FRect nr = ti >= 0 ? guiBarRect(gui_.gadgets[ti])
+                                       : SDL_FRect{0, barTop, 0, float(kBarH)};
+                float px = std::max(1.8f, nr.h / 9.0f);
+                blockText(u->type->name, nr.x, nr.y, px, {236, 226, 192, 255});
+                if (selection_.size() > 1) {
+                    char m[24];
+                    std::snprintf(m, sizeof m, "+%zu MORE", selection_.size() - 1);
+                    blockText(m, nr.x, nr.y + nr.h * 0.6f, px * 0.72f, {206, 198, 168, 255});
+                }
+                drawGauge("HealthBar", u->hp / std::max(1.0f, u->type->maxHp),
+                          {70, 210, 90, 255});
+                if (u->type->maxMana > 0)
+                    drawGauge("ManaBar", u->mana / std::max(1.0f, u->type->maxMana),
+                              {90, 150, 255, 255});
+            }
+        }
+        return true;
     }
 
     // Returns true if the click hit (and was handled by) the order column.
@@ -7165,28 +7262,33 @@ private:
     }
 
     void drawPanel(int winW, int winH) {
-        // Bottom bar: stone strip across the full width.
+        // Bottom bar: the retail InfoPanel chrome + unit info when a .gui is loaded,
+        // else our own stone strip. The build menu + mana readout below draw on top.
+        bool guiBar = drawGuiInfoBar(winW, winH);
         SDL_FRect bar{0, float(winH - kBarH), float(winW), float(kBarH)};
-        if (botTex_) {
-            for (int x = 0; x < winW; x += botW_) {
-                SDL_Rect dst{x, winH - kBarH, botW_, kBarH};
-                SDL_RenderCopy(ren_, botTex_, nullptr, &dst);
+        if (!guiBar) {
+            if (botTex_) {
+                for (int x = 0; x < winW; x += botW_) {
+                    SDL_Rect dst{x, winH - kBarH, botW_, kBarH};
+                    SDL_RenderCopy(ren_, botTex_, nullptr, &dst);
+                }
+            } else if (panelTex_) {
+                for (int x = 0; x < winW; x += panelW_) {
+                    SDL_Rect src{0, 40, panelW_, kBarH};
+                    SDL_Rect dst{x, winH - kBarH, panelW_, kBarH};
+                    SDL_RenderCopy(ren_, panelTex_, &src, &dst);
+                }
+            } else {
+                SDL_SetRenderDrawColor(ren_, 42, 38, 34, 255);
+                SDL_RenderFillRectF(ren_, &bar);
             }
-        } else if (panelTex_) {
-            for (int x = 0; x < winW; x += panelW_) {
-                SDL_Rect src{0, 40, panelW_, kBarH};
-                SDL_Rect dst{x, winH - kBarH, panelW_, kBarH};
-                SDL_RenderCopy(ren_, panelTex_, &src, &dst);
-            }
-        } else {
-            SDL_SetRenderDrawColor(ren_, 42, 38, 34, 255);
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 90);
             SDL_RenderFillRectF(ren_, &bar);
+            SDL_SetRenderDrawColor(ren_, 120, 105, 80, 255);
+            SDL_RenderDrawLineF(ren_, 0, bar.y, float(winW), bar.y);
         }
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 90);
-        SDL_RenderFillRectF(ren_, &bar);
-        SDL_SetRenderDrawColor(ren_, 120, 105, 80, 255);
-        SDL_RenderDrawLineF(ren_, 0, bar.y, float(winW), bar.y);
 
         char buf[96];
         SDL_Color fc = factionColor();
@@ -7199,8 +7301,9 @@ private:
             SDL_RenderDrawRectF(ren_, &z);
         };
 
-        // Bottom-LEFT: portrait + stats for the selected unit.
-        if (!selection_.empty() && statFont_.ok()) {
+        // Bottom-LEFT: portrait + stats for the selected unit. Skipped when the retail
+        // InfoPanel bar already drew the unit info (drawGuiInfoBar).
+        if (!guiBar && !selection_.empty() && statFont_.ok()) {
             const auto* u = world_.unit(selection_.front());
             if (u && u->alive() && u->type) {
                 float px = 8;
@@ -7306,18 +7409,29 @@ private:
             }
         }
 
-        // Bottom-RIGHT: mana.
+        // Bottom-RIGHT: mana. On the stone InfoPanel bar use a dark inset + light
+        // text; on our own bar keep the solid faction panel with black text.
         {
             auto& tm = world_.player(localPlayer_);
             float manaX = float(winW) - 192;
-            shade(manaX - 8, 200);
-            SDL_Color blk{0, 0, 0, 255};
-            blockText("MANA", manaX, bar.y + 9, 2.0f, blk);
+            SDL_Color txt;
+            if (guiBar) {
+                SDL_FRect z{manaX - 12, bar.y + 5, 196, kBarH - 10.0f};
+                SDL_SetRenderDrawColor(ren_, 12, 11, 9, 220);
+                SDL_RenderFillRectF(ren_, &z);
+                SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
+                SDL_RenderDrawRectF(ren_, &z);
+                txt = {236, 226, 192, 255};
+            } else {
+                shade(manaX - 8, 200);
+                txt = {0, 0, 0, 255};
+            }
+            blockText("MANA", manaX, bar.y + 9, 2.0f, txt);
             std::snprintf(buf, sizeof buf, "%d/%d", int(tm.mana),
                           int(std::max(tm.storage, 100.0f)));
-            blockText(buf, manaX, bar.y + 30, 2.3f, blk);
+            blockText(buf, manaX, bar.y + 30, 2.3f, txt);
             std::snprintf(buf, sizeof buf, "+%d/SEC", int(tm.income));
-            blockText(buf, manaX, bar.y + 52, 1.8f, blk);
+            blockText(buf, manaX, bar.y + 52, 1.8f, txt);
         }
     }
 
