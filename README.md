@@ -300,3 +300,14 @@ data fingerprint, so under `full` every player must share the same ones.
 | `src/viewer/` | the SDL2 app (`takview`: asset viewer + game) |
 | `tools/` | CLI format tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`) |
 | `docs/` | format notes + reverse-engineering findings (`retail-engine.md` = the `KINGDOMS.icd` disassembly) |
+
+## License
+
+TAK Engine is free software, licensed under the **GNU General Public License,
+version 3 or later** (`GPL-3.0-or-later`) — see [`LICENSE`](LICENSE) for the full
+text. Copyright © 2026 the TAK Engine authors.
+
+This covers the engine's own source code only. It grants no rights to *Total
+Annihilation: Kingdoms* itself: Cavedog's game code, data, and art remain their
+owners' property; this project ships none of them and reads them only from a copy
+you already own (see **Game data**).
