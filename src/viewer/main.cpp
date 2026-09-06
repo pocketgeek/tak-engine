@@ -3524,6 +3524,7 @@ public:
                               : pendingCmd_ == 'p' ? "PATROL: CLICK WAYPOINT"
                               : pendingCmd_ == 'g' ? "GUARD: CLICK FRIENDLY UNIT"
                               : pendingCmd_ == 'c' ? "RECLAIM: CLICK FEATURE"
+                              : pendingCmd_ == 'r' ? "REPAIR: CLICK DAMAGED UNIT"
                               : pendingCmd_ == 'l' ? "LOAD: CLICK UNIT TO CARRY"
                               : pendingCmd_ == 'u' ? "UNLOAD: CLICK DESTINATION"
                                                    : "MOVE: CLICK DESTINATION";
@@ -5538,6 +5539,32 @@ private:
             voice(builderId, "move");
             return;
         }
+        if (cmd == 'r') {   // repair: heal the damaged friendly under the cursor
+            int builderId = -1;
+            for (int id : selection_) {
+                const auto* u = world_.unit(id);
+                if (u && u->type && u->type->isBuilder && u->type->canMove &&
+                    u->player == localPlayer_) { builderId = id; break; }
+            }
+            if (builderId < 0) return;
+            int tid = -1; float best = 28.0f * 28.0f;
+            for (auto& u : world_.units()) {
+                if (!u.alive() || u.embarked() || u.id == builderId || !u.type) continue;
+                if (!world_.allied(u.player, localPlayer_)) continue;
+                if (u.underConstruction || u.hp >= u.type->maxHp) continue;   // only damaged
+                float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
+                if (d < best) { best = d; tid = u.id; }
+            }
+            if (tid < 0) return;
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Repair;
+            c.unitId = builderId;
+            c.targetId = tid;
+            c.queue = queue ? 1 : 0;
+            issue(c);
+            voice(builderId, "move");
+            return;
+        }
         if (cmd == 'u') {   // unload: selected transport(s) sail to (wx,wz), disembark
             bool any = false;
             for (int id : selection_) {
@@ -6274,12 +6301,16 @@ private:
         // Context orders: reclaim (a mobile reclaiming builder), and transport
         // load/unload. CLEAR and UNLOAD share a .gui slot (599,213) but a unit is
         // never both a reclaimer and a transport, so only one shows.
-        bool reclaimer = false;
+        bool builder = false, reclaimer = false;
         for (int id : selection_) {
             const auto* u = world_.unit(id);
-            if (u && u->alive() && u->type && u->type->isBuilder && u->type->canMove &&
-                u->type->canReclaim && u->player == localPlayer_) { reclaimer = true; break; }
+            if (!u || !u->alive() || !u->type || !u->type->isBuilder ||
+                !u->type->canMove || u->player != localPlayer_)
+                continue;
+            builder = true;
+            if (u->type->canReclaim) reclaimer = true;
         }
+        if (builder) add("HEAL", 'r');       // repair a damaged friendly
         if (reclaimer) add("CLEAR", 'c');
         if (front->type->canTransport) {
             if (int(front->cargo.size()) < front->type->transportCap) add("LOAD", 'l');
@@ -6362,24 +6393,31 @@ private:
             auto tx = [&](int i) -> SDL_Texture* {
                 return i >= 0 && i < int(tex.size()) ? tex[size_t(i)] : nullptr;
             };
-            SDL_Texture* lit = toggle ? (tx(1) ? tx(1) : tx(2)) : (tx(2) ? tx(2) : tx(1));
-            SDL_Texture* dim = toggle ? (tx(2) ? tx(2) : tx(1))
-                                      : (tx(1) ? tx(1) : tx(0));
-            SDL_Texture* t = (active || hot) ? lit : dim;
-            if (t) SDL_RenderCopyF(ren_, t, nullptr, &r);
-            if (active && (!t || t == dim)) {   // emphasise when there's no lit face
-                SDL_SetRenderDrawColor(ren_, 255, 220, 90, 255);
-                SDL_RenderDrawRectF(ren_, &r);
-            }
-            // Weapon-slot GAFs are empty recesses (the engine composites the weapon
-            // icon); label them with the slot number so the picker is legible.
-            if (cmd >= '1' && cmd <= '3') {
-                char n[2] = {cmd, 0};
-                float px = std::max(1.4f, r.h / 18.0f);
-                float tw = blockWidth(n, px);
-                blockText(n, r.x + (r.w - tw) * 0.5f, r.y + r.h * 0.28f, px,
-                          active ? SDL_Color{255, 240, 170, 255}
-                                 : SDL_Color{200, 190, 160, 255});
+            // Weapon slots composite the weapon's own icon (anims/weaponpic) -- the
+            // WPrimaryButton GAF is just an empty recess. The pic already includes the
+            // frame, so it replaces the slot art.
+            if (cmd >= '1' && cmd <= '3' && front) {
+                int slot = cmd - '1';
+                SDL_Texture* wt = slot < int(front->type->weapons.size())
+                    ? weaponIcon(front->type->weapons[size_t(slot)].name, active || hot)
+                    : nullptr;
+                if (wt) SDL_RenderCopyF(ren_, wt, nullptr, &r);
+                else {
+                    char n[2] = {cmd, 0};
+                    float px = std::max(1.4f, r.h / 18.0f), tw = blockWidth(n, px);
+                    blockText(n, r.x + (r.w - tw) * 0.5f, r.y + r.h * 0.28f, px,
+                              {200, 190, 160, 255});
+                }
+            } else {
+                SDL_Texture* lit = toggle ? (tx(1) ? tx(1) : tx(2)) : (tx(2) ? tx(2) : tx(1));
+                SDL_Texture* dim = toggle ? (tx(2) ? tx(2) : tx(1))
+                                          : (tx(1) ? tx(1) : tx(0));
+                SDL_Texture* t = (active || hot) ? lit : dim;
+                if (t) SDL_RenderCopyF(ren_, t, nullptr, &r);
+                if (active && (!t || t == dim)) {   // emphasise when there's no lit face
+                    SDL_SetRenderDrawColor(ren_, 255, 220, 90, 255);
+                    SDL_RenderDrawRectF(ren_, &r);
+                }
             }
             if (hot && !g.cmd.empty()) {
                 float px = 1.6f, tw = blockWidth(g.cmd.c_str(), px);
@@ -6596,6 +6634,36 @@ private:
             return true;
         }
         return false;
+    }
+
+    std::map<std::string, SDL_Texture*> weaponIcons_;
+    // Weapon-slot icon: anims/weaponpic/<name>{sb,sbh}.jpg (name lowercased, spaces
+    // stripped; sb = normal, sbh = selected/gold), falling back to the default_* pics
+    // for weapons that ship no icon. These 32x32 JPGs are the full button (icon +
+    // recessed frame), so they replace the empty WPrimaryButton recess.
+    SDL_Texture* weaponIcon(const std::string& wname, bool selected) {
+        std::string base;
+        for (char c : wname)
+            if (c != ' ') base += char(std::tolower((unsigned char)c));
+        std::string key = base + (selected ? "#s" : "#n");
+        if (auto it = weaponIcons_.find(key); it != weaponIcons_.end()) return it->second;
+        SDL_Texture* tex = nullptr;
+        const char* suf = selected ? "sbh" : "sb";
+        std::string paths[2] = {"anims/weaponpic/" + base + suf + ".jpg",
+                                selected ? "anims/weaponpic/default_selected.jpg"
+                                         : "anims/weaponpic/default_up.jpg"};
+        for (const auto& path : paths) {
+            try {
+                auto img = tak::jpeg::load(vread(path));
+                tex = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                        SDL_TEXTUREACCESS_STATIC, img.width, img.height);
+                SDL_UpdateTexture(tex, nullptr, img.rgba.data(), img.width * 4);
+                SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+                break;
+            } catch (const std::exception&) {}
+        }
+        weaponIcons_[key] = tex;
+        return tex;
     }
 
     SDL_Texture* iconFor(const std::string& typeId) {
