@@ -59,9 +59,11 @@ jobs:
             | while read -r dll; do cp "$dll" dist-win/; done
           (cd dist-win && zip -r ../takview-windows-x64.zip .)
       - name: Attach to release
+        # gh lives on the Windows PATH (PowerShell), not inside the msys2 shell.
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" takview-windows-x64.zip --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release upload "$env:GITHUB_REF_NAME" takview-windows-x64.zip --repo "$env:GITHUB_REPOSITORY" --clobber
 
   macos:
     needs: create-release
