@@ -1796,11 +1796,13 @@ void World::tick(float dt) {
     for (auto& tm : players_) { tm.income = 0; tm.storage = 0; }
     std::vector<int> godPriests(players_.size(), 0);
     for (auto& u : units_) {
-        if (!u.alive() || !u.type) continue;
+        // A unit under construction contributes no economy until it finishes -- a
+        // half-built lodestone must not add its mana income or storage capacity yet.
+        if (!u.alive() || !u.type || u.underConstruction) continue;
         auto& tm = players_[size_t(u.player)];
         tm.income += u.type->income;
         tm.storage += u.type->storage;
-        if (u.type->attractsGods && !u.underConstruction) godPriests[size_t(u.player)]++;
+        if (u.type->attractsGods) godPriests[size_t(u.player)]++;
     }
     // Apply income, then share the economy across allies: mana that would
     // overflow a player's storage flows to teammates that still have headroom,
