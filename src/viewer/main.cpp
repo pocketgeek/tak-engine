@@ -2955,6 +2955,7 @@ public:
         // Build the texture atlas for every colour slot in view (main thread; the
         // parallel pass below only reads the finished atlas pointers).
         for (const auto* u : visUnits_) atlasFor(colorSlot_[u->player & 7]);
+        animateGlowTextures();   // cycle lodestone/mana/fire crystal frames over time
         // Ensure an impostor sprite exists for every visible model when zoomed out
         // enough that LOD may kick in (main thread; the parallel pass only reads it).
         // Budgeted: a few NEW bakes per frame, so a first zoom-out over a mixed army
@@ -3855,12 +3856,28 @@ private:
                     std::string name = seq.name;
                     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                     if (textures_.count(name)) continue;
-                    // 10-frame sequences are per-player colours.
+                    // 10-frame sequences are EITHER per-player colours (insignia --
+                    // frames span distinct hues) OR an animated glow (lodestone/mana/
+                    // sacred-fire crystal -- frames share a hue, a moving sparkle).
+                    // Keep all 10 for both; classify by hue spread so the glow cycles
+                    // over time (animatedTex_) while insignia stay picked-by-player.
                     size_t n = seq.frames.size() == 10 ? 10 : 1;
+                    if (n == 10) {
+                        // The animated glows (lodestone/mana/sacred-fire/crystal) are
+                        // the mana/lodestone/crystal-named textures (verified against
+                        // the retail rendering); the other 10-frame textures are
+                        // per-player insignia (picked by slot) or OTA leftovers.
+                        for (const char* g :
+                             {"lode", "mana", "sacred", "crystal", "lightning", "stone"})
+                            if (name.find(g) != std::string::npos) {
+                                animatedTex_.insert(name);
+                                break;
+                            }
+                    }
                     // Sample the actual 10 player-colour RGBs once, from a logo/
                     // insignia texture (mostly pure player colour), so the HUD and
                     // minimap can match whatever colour a player renders in.
-                    if (!sampledColors_ && n == 10 &&
+                    if (!sampledColors_ && n == 10 && !animatedTex_.count(name) &&
                         name.find("logo") != std::string::npos) {
                         for (size_t i = 0; i < 10; ++i) {
                             const auto& f = seq.frames[i];
@@ -4002,6 +4019,40 @@ private:
     int atlasW_ = 0, atlasH_ = 0;
     std::vector<SDL_Texture*> atlasTex_;   // per colour slot; nullptr until built
     bool atlasLaidOut_ = false;
+    std::set<std::string> animatedTex_;    // multi-frame glow textures (cycle over time)
+
+    // Re-render the current frame of each animated glow texture (lodestone/mana/
+    // sacred-fire crystal) into its rect in every built atlas, so the glow cycles
+    // over time instead of showing a single frame baked at atlas-build time. ~8 fps.
+    void animateGlowTextures() {
+        if (animatedTex_.empty()) return;
+        int frame = int(animClock_ * 8.0f);
+        SDL_Texture* prev = SDL_GetRenderTarget(ren_);
+        bool onAny = false;
+        for (SDL_Texture* atlas : atlasTex_) {
+            if (!atlas) continue;
+            SDL_SetRenderTarget(ren_, atlas);
+            onAny = true;
+            for (const auto& name : animatedTex_) {
+                auto rit = atlasRect_.find(name);
+                auto tit = textures_.find(name);
+                if (rit == atlasRect_.end() || tit == textures_.end() ||
+                    tit->second.size() < 2)
+                    continue;
+                SDL_Texture* f = tit->second[size_t(frame) % tit->second.size()];
+                SDL_Rect r = rit->second;
+                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
+                SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
+                SDL_RenderFillRect(ren_, &r);          // clear the region (transparent)
+                SDL_BlendMode fb;
+                SDL_GetTextureBlendMode(f, &fb);
+                SDL_SetTextureBlendMode(f, SDL_BLENDMODE_NONE);
+                SDL_RenderCopy(ren_, f, nullptr, &r);  // overwrite with this frame's RGBA
+                SDL_SetTextureBlendMode(f, fb);
+            }
+        }
+        if (onAny) SDL_SetRenderTarget(ren_, prev);
+    }
 
     // Level of detail: a unit smaller than kLodPx on screen is drawn as a single
     // billboard quad sampling a pre-rendered impostor sprite (8 facings, cached
