@@ -455,8 +455,16 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         return Choice::None;
     }
 
+    // Drop any mouse events queued by the previous screen. Returning here from the
+    // lobby's MAIN MENU button (which fires on mouse-DOWN) leaves its matching
+    // mouse-UP in the queue; without this it would land as a phantom click on a
+    // door and snap straight back into the game.
+    SDL_PumpEvents();
+    SDL_FlushEvents(SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP);
+
     Uint64 prev = SDL_GetPerformanceCounter();
     const double freq = double(SDL_GetPerformanceFrequency());
+    bool armed = false;   // a click only counts as press-then-release within the menu
     for (;;) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -486,7 +494,13 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) return Choice::Exit;
             if (e.type == SDL_MOUSEMOTION)
                 d_->updateHover(e.motion.x, e.motion.y, w, h);
+            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                d_->updateHover(e.button.x, e.button.y, w, h);
+                armed = true;
+            }
             if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                if (!armed) continue;   // stray release (e.g. leaked from the lobby)
+                armed = false;
                 d_->updateHover(e.button.x, e.button.y, w, h);
                 Choice c = d_->clicked();
                 if (c != Choice::None) d_->playHoveredSound();
