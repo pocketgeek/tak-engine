@@ -14,6 +14,8 @@
 
 namespace tak {
 
+class MenuMusic;
+
 class MainMenu {
 public:
     enum class Choice { None, SinglePlayer, Campaign, Multiplayer, Options, Exit };
@@ -29,8 +31,10 @@ public:
     // Run the front-end loop until the user picks a door/button or closes the
     // window. If shotPath is non-empty, render a single frame there and return None
     // (headless screenshot for tests). On a Multiplayer choice, *serverOut (if given)
-    // receives the chosen server address (empty = default/localhost).
-    Choice run(const std::string& shotPath = "", std::string* serverOut = nullptr);
+    // receives the chosen server address (empty = default/localhost). `music` (if
+    // given) is polled each frame so the shared background track keeps looping.
+    Choice run(const std::string& shotPath = "", std::string* serverOut = nullptr,
+               MenuMusic* music = nullptr);
 
 private:
     struct Impl;

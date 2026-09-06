@@ -30,6 +30,7 @@
 #include "util/png.h"
 #include "version.h"
 #include "viewer/mainmenu.h"
+#include "viewer/menumusic.h"
 
 // Keep our own main() on every platform (don't let SDL redefine it to SDL_main /
 // pull in SDL2main + a WinMain); we call SDL_SetMainReady() in main() instead. This
@@ -1718,7 +1719,10 @@ public:
         int want = inLobbyPhase() ? 1 : 2;
         if (want == musicMode_) return;
         musicMode_ = want;
-        if (want == 1) sounds_.startMusic(vfs_, {15});
+        // The menu-launched front-end owns the lobby BGM (so it plays continuously
+        // from the menu into the lobby); suppress ours there, but still switch to
+        // faction music once the game proper begins.
+        if (want == 1) { if (!externalLobbyMusic_) sounds_.startMusic(vfs_, {15}); }
         else sounds_.startMusic(vfs_, factionMusicTracks(side_));
     }
 
@@ -1740,6 +1744,8 @@ public:
     // tears the session down and re-shows the front-end menu.
     void requestMenu() { menuRequested_ = true; }
     bool menuRequested() const { return menuRequested_; }
+    // Menu-launched sessions: the front-end owns the lobby BGM (see manageMusic).
+    void setExternalLobbyMusic() { externalLobbyMusic_ = true; }
     // Persist / read the resume ticket (gameId + rotating token) so a killed
     // client can rejoin its held slot on restart.
     void writeResume(uint32_t gid, uint64_t tok) const {
@@ -5560,6 +5566,7 @@ private:
     enum class LobbyScreen { Browser, Create } lobbyScreen_ = LobbyScreen::Browser;
     bool menuRequested_ = false;   // set by a MAIN MENU action -> main() returns to the front-end
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)
+    bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
@@ -9077,9 +9084,11 @@ int main(int argc, char** argv) {
     const int launchServerPort = serverPort;
     const std::vector<std::string> launchArgs = args;
     bool quitApp = false;
+    tak::MenuMusic menuMusic;   // persists across menu -> lobby so the track doesn't restart
     for (;;) {
     if (fromMenu) { mode = launchMode; serverHost = launchServerHost;
-                    serverPort = launchServerPort; args = launchArgs; }
+                    serverPort = launchServerPort; args = launchArgs;
+                    menuMusic.start(vfs, 15); }   // front-end BGM (idempotent; loops into the lobby)
 
     // main-loop lobby driver: 0 = UI-driven lobby (browse/join/host), 7 = auto SP.
     int mpAutoMode = 0;
@@ -9093,7 +9102,7 @@ int main(int argc, char** argv) {
         tak::MainMenu::Choice choice;
         {
             tak::MainMenu menu(ren, vfs, dataRoot);
-            choice = menu.run(shot, &menuServer);
+            choice = menu.run(shot, &menuServer, &menuMusic);
         }
         if (!shot.empty()) { SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
         if (choice != tak::MainMenu::Choice::SinglePlayer &&
@@ -9204,6 +9213,7 @@ int main(int argc, char** argv) {
             if (mp) {
                 gameView->setMpClient(mp.get());
                 gameView->setMpMapId(args[0]);
+                if (fromMenu) gameView->setExternalLobbyMusic();    // front-end owns the lobby BGM
                 if (menuInteractive) gameView->setSinglePlayer();   // menu SP: SP-flavoured lobby, Create-first
                 if (const char* rp = std::getenv("TAK_RESUME")) gameView->setResumePath(rp);
             }
@@ -9498,6 +9508,12 @@ int main(int argc, char** argv) {
             prevPresent = SDL_GetPerformanceCounter();
         }
 
+        // Front-end BGM continues through the lobby (same track, no restart), then
+        // stops once the game proper starts so GameView's faction music takes over.
+        if (fromMenu) {
+            if (gameView && !gameView->inLobbyPhase()) menuMusic.stop();
+            else menuMusic.poll();
+        }
         // A MAIN MENU button or post-game Escape ends the session; the outer loop
         // then tears it down and re-shows the menu (quitApp stays false).
         if (gameView && gameView->menuRequested()) running = false;
