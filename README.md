@@ -3,6 +3,23 @@
 A modern, cross-platform engine recreation for **Total Annihilation: Kingdoms**
 (Cavedog Entertainment, 1999), in the spirit of OpenRA and Robot War Engine.
 
+**Version 0.0.1** — reported by `takview --version` and `takserver --version`
+(and shown in the window title / server banner). The release version is set in
+one place, `project(... VERSION ...)` in `CMakeLists.txt`, and is separate from
+the multiplayer wire protocol version, which is gated independently at connect.
+
+### Download
+
+Latest pre-built binaries (self-contained; you still supply your own retail game
+data — see **Game data**):
+
+- **Windows x64** — [takview-windows-x64.zip](https://github.com/pocketgeek/tak-engine/releases/latest/download/takview-windows-x64.zip)
+- **macOS (Apple Silicon)** — [takview-macos-arm64.zip](https://github.com/pocketgeek/tak-engine/releases/latest/download/takview-macos-arm64.zip)
+- [**All releases**](https://github.com/pocketgeek/tak-engine/releases) · or build from source below.
+
+These always resolve to the newest [release](https://github.com/pocketgeek/tak-engine/releases);
+they appear once the first tagged release finishes building. Linux users build from source.
+
 > **This project contains no game content.** You must own the original game
 > (e.g. the GOG release of *Total Annihilation: Kingdoms + The Iron Plague*); the
 > engine reads its install directory directly (see **Game data**), and any local
