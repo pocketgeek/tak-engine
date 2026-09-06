@@ -1738,6 +1738,28 @@ public:
                 float dx = u.x - wx, dz = u.z - wz;
                 if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
             }
+            // A reclaimer clicking directly on a reclaimable feature (with no enemy
+            // there) reclaims just that one -- retail's single Reclaim.
+            if (enemy < 0 && haveReclaimer()) {
+                int fid = -1; float bestF = 1e18f;
+                for (const auto& f : world_.features()) {
+                    if (!f.alive) continue;
+                    float dx = f.x - wx, dz = f.z - wz, d = dx * dx + dz * dz;
+                    float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
+                    if (d < r * r && d < bestF) { bestF = d; fid = f.id; }
+                }
+                if (fid >= 0) {
+                    int builderId = firstReclaimer();
+                    tak::net::Command c;
+                    c.kind = tak::net::Cmd::Reclaim;
+                    c.unitId = builderId;
+                    c.targetId = fid;
+                    c.queue = uint8_t(queue ? 1 : 0);
+                    issue(c);
+                    voice(builderId, "move");
+                    return;
+                }
+            }
             if (enemy >= 0) {
                 for (int id : selection_) {
                     tak::net::Command c;
