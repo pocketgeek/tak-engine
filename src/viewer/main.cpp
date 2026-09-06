@@ -6357,6 +6357,20 @@ private:
             }
         }
 
+        // Unit status in the HelpText recess (black inset below the weapon slots).
+        int hi = guiIdx("HelpText");
+        if (hi >= 0 && front) {
+            const char* s = unitStatusText(front);
+            if (s && *s) {
+                SDL_FRect r = guiCmdRect(gui_.gadgets[hi]);
+                float px = std::max(1.4f, r.h / 20.0f);
+                float tw = blockWidth(s, px);
+                while (tw > r.w - 6 && px > 1.0f) { px -= 0.2f; tw = blockWidth(s, px); }
+                blockText(s, r.x + (r.w - tw) * 0.5f, r.y + (r.h - 7 * px) * 0.5f, px,
+                          {170, 205, 255, 255});
+            }
+        }
+
         // Idle crystal ball -- the animated scrying orb at the panel's foot.
         int cb = guiIdx("CrystalBall");
         if (cb >= 0 && !guiTex_[cb].empty()) {
@@ -6461,9 +6475,46 @@ private:
                 if (u->type->maxMana > 0)
                     drawGauge("ManaBar", u->mana / std::max(1.0f, u->type->maxMana),
                               {90, 150, 255, 255});
+                // Veterancy crest (3 tiers: bronze/silver/gold) once the unit ranks up.
+                if (u->veteran > 0) {
+                    int xi = guiIdxLeft("Experience");
+                    if (xi >= 0 && !guiTex_[xi].empty()) {
+                        int tier = u->veteran >= 7 ? 2 : u->veteran >= 4 ? 1 : 0;
+                        if (tier < int(guiTex_[xi].size()) && guiTex_[xi][size_t(tier)]) {
+                            SDL_FRect r = guiBarRect(gui_.gadgets[xi]);
+                            SDL_RenderCopyF(ren_, guiTex_[xi][size_t(tier)], nullptr, &r);
+                        }
+                    }
+                }
             }
         }
         return true;
+    }
+
+    // A one-word description of what the selected unit is doing, for the command
+    // panel's HelpText recess.
+    const char* unitStatusText(const tak::sim::Unit* u) const {
+        if (!u || !u->type) return "";
+        if (u->stonedFor > 0) return "PETRIFIED";
+        if (u->frozenFor > 0) return "FROZEN";
+        if (u->paralyzedFor > 0) return "PARALYZED";
+        if (u->underConstruction) return "UNDER CONSTRUCTION";
+        if (!u->active) return "INACTIVE";
+        if (u->reclaimId != 0 || !u->reclaimQueue.empty()) return "RECLAIMING";
+        if (u->buildSiteId != 0) return "BUILDING";
+        if (!u->buildQueue.empty()) return "CONJURING";
+        if (!u->orders.empty()) {
+            const auto& o = u->orders.front();
+            if (o.guard) return "GUARDING";
+            if (o.patrol) return "PATROLLING";
+            if (o.load) return "BOARDING";
+            if (o.unload) return "UNLOADING";
+            if (o.targetId != 0) return "ATTACKING";
+            if (o.attackMove) return "ADVANCING";
+            return "MOVING";
+        }
+        if (u->cloaked) return "CLOAKED";
+        return "IDLE";
     }
 
     // Returns true if the click hit (and was handled by) the order column.
