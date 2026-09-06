@@ -6,6 +6,8 @@
 #include "video/bink.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <cctype>
 #include <cmath>
 #include <filesystem>
@@ -260,7 +262,74 @@ struct MainMenu::Impl {
             SDL_FRect r = toScreen(nat, s, ox, oy);
             SDL_RenderCopyF(ren, t, nullptr, &r);
         }
-        SDL_RenderPresent(ren);
+    }
+
+    // ---- minimal block font + multiplayer server-select overlay ---------------
+    bool serverSelect = false;
+    std::string serverText = "127.0.0.1";
+
+    static const uint8_t* glyph5x7(char c) {
+        static const std::unordered_map<char, std::array<uint8_t, 5>> F = {
+            {'0',{0x3E,0x51,0x49,0x45,0x3E}},{'1',{0x00,0x42,0x7F,0x40,0x00}},
+            {'2',{0x42,0x61,0x51,0x49,0x46}},{'3',{0x21,0x41,0x45,0x4B,0x31}},
+            {'4',{0x18,0x14,0x12,0x7F,0x10}},{'5',{0x27,0x45,0x45,0x45,0x39}},
+            {'6',{0x3C,0x4A,0x49,0x49,0x30}},{'7',{0x01,0x71,0x09,0x05,0x03}},
+            {'8',{0x36,0x49,0x49,0x49,0x36}},{'9',{0x06,0x49,0x49,0x29,0x1E}},
+            {'A',{0x7E,0x11,0x11,0x11,0x7E}},{'B',{0x7F,0x49,0x49,0x49,0x36}},
+            {'C',{0x3E,0x41,0x41,0x41,0x22}},{'D',{0x7F,0x41,0x41,0x22,0x1C}},
+            {'E',{0x7F,0x49,0x49,0x49,0x41}},{'F',{0x7F,0x09,0x09,0x09,0x01}},
+            {'G',{0x3E,0x41,0x49,0x49,0x7A}},{'H',{0x7F,0x08,0x08,0x08,0x7F}},
+            {'I',{0x00,0x41,0x7F,0x41,0x00}},{'J',{0x20,0x40,0x41,0x3F,0x01}},
+            {'K',{0x7F,0x08,0x14,0x22,0x41}},{'L',{0x7F,0x40,0x40,0x40,0x40}},
+            {'M',{0x7F,0x02,0x0C,0x02,0x7F}},{'N',{0x7F,0x04,0x08,0x10,0x7F}},
+            {'O',{0x3E,0x41,0x41,0x41,0x3E}},{'P',{0x7F,0x09,0x09,0x09,0x06}},
+            {'Q',{0x3E,0x41,0x51,0x21,0x5E}},{'R',{0x7F,0x09,0x19,0x29,0x46}},
+            {'S',{0x46,0x49,0x49,0x49,0x31}},{'T',{0x01,0x01,0x7F,0x01,0x01}},
+            {'U',{0x3F,0x40,0x40,0x40,0x3F}},{'V',{0x1F,0x20,0x40,0x20,0x1F}},
+            {'W',{0x7F,0x20,0x18,0x20,0x7F}},{'X',{0x63,0x14,0x08,0x14,0x63}},
+            {'Y',{0x07,0x08,0x70,0x08,0x07}},{'Z',{0x61,0x51,0x49,0x45,0x43}},
+            {'.',{0x00,0x60,0x60,0x00,0x00}},{':',{0x00,0x36,0x36,0x00,0x00}},
+            {'-',{0x08,0x08,0x08,0x08,0x08}},
+        };
+        auto it = F.find(c);
+        return it == F.end() ? nullptr : it->second.data();
+    }
+    void blockText(const std::string& str, float x, float y, float px, SDL_Color c) {
+        SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
+        float cx = x;
+        for (char ch : str) {
+            const uint8_t* cols = glyph5x7(char(std::toupper((unsigned char)ch)));
+            if (!cols) { cx += 4 * px; continue; }
+            for (int col = 0; col < 5; ++col)
+                for (int row = 0; row < 7; ++row)
+                    if (cols[col] & (1 << row)) {
+                        SDL_FRect r{cx + col * px, y + row * px, px, px};
+                        SDL_RenderFillRectF(ren, &r);
+                    }
+            cx += 6 * px;
+        }
+    }
+
+    void renderServerSelect(int winW, int winH) {
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 160);
+        SDL_FRect dim{0, 0, float(winW), float(winH)}; SDL_RenderFillRectF(ren, &dim);
+        float pw = 560, ph = 210, x0 = (winW - pw) / 2, y0 = (winH - ph) / 2;
+        SDL_SetRenderDrawColor(ren, 28, 30, 40, 245);
+        SDL_FRect panel{x0, y0, pw, ph}; SDL_RenderFillRectF(ren, &panel);
+        SDL_SetRenderDrawColor(ren, 150, 150, 175, 255); SDL_RenderDrawRectF(ren, &panel);
+        blockText("CONNECT TO SERVER", x0 + 30, y0 + 24, 3.0f, {210, 205, 160, 255});
+        SDL_SetRenderDrawColor(ren, 16, 18, 26, 255);
+        SDL_FRect box{x0 + 30, y0 + 78, pw - 60, 46}; SDL_RenderFillRectF(ren, &box);
+        SDL_SetRenderDrawColor(ren, 120, 140, 180, 255); SDL_RenderDrawRectF(ren, &box);
+        blockText(serverText, box.x + 12, box.y + 14, 3.0f, {230, 235, 245, 255});
+        // blinking caret
+        if ((SDL_GetTicks() / 500) % 2 == 0) {
+            float cx = box.x + 12 + float(serverText.size()) * 6 * 3.0f;
+            SDL_SetRenderDrawColor(ren, 230, 235, 245, 255);
+            SDL_FRect car{cx, box.y + 12, 3, 22}; SDL_RenderFillRectF(ren, &car);
+        }
+        blockText("ENTER - CONNECT     ESC - BACK", x0 + 30, y0 + 156, 2.0f, {150, 155, 175, 255});
     }
 
     void screenshot(int winW, int winH, const std::string& path) {
@@ -293,7 +362,6 @@ MainMenu::MainMenu(SDL_Renderer* ren, const hpi::Vfs& vfs, std::string install)
 MainMenu::~MainMenu() { delete d_; }
 
 MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut) {
-    (void)serverOut;   // server-select screen: follow-up; MP defaults to localhost for now
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(d_->ren, &w, &h);
 
@@ -310,13 +378,36 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) return Choice::Exit;
+
+            if (d_->serverSelect) {   // multiplayer: typing a server address
+                if (e.type == SDL_TEXTINPUT) {
+                    for (const char* p = e.text.text; *p; ++p) {
+                        unsigned char ch = (unsigned char)*p;
+                        if (d_->serverText.size() < 64 &&
+                            (std::isalnum(ch) || ch == '.' || ch == ':' || ch == '-'))
+                            d_->serverText += char(ch);
+                    }
+                } else if (e.type == SDL_KEYDOWN) {
+                    SDL_Keycode k = e.key.keysym.sym;
+                    if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+                        SDL_StopTextInput();
+                        if (serverOut) *serverOut = d_->serverText;
+                        return Choice::Multiplayer;
+                    }
+                    if (k == SDLK_ESCAPE) { d_->serverSelect = false; SDL_StopTextInput(); }
+                    if (k == SDLK_BACKSPACE && !d_->serverText.empty()) d_->serverText.pop_back();
+                }
+                continue;   // swallow everything else while typing
+            }
+
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) return Choice::Exit;
             if (e.type == SDL_MOUSEMOTION)
                 d_->updateHover(e.motion.x, e.motion.y, w, h);
             if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 d_->updateHover(e.button.x, e.button.y, w, h);
                 Choice c = d_->clicked();
-                if (c != Choice::None && c != Choice::Campaign) return c;   // campaign: no-op for now
+                if (c == Choice::Multiplayer) { d_->serverSelect = true; SDL_StartTextInput(); }
+                else if (c != Choice::None && c != Choice::Campaign) return c;
             }
         }
         SDL_GetRendererOutputSize(d_->ren, &w, &h);
@@ -325,6 +416,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         prev = now;
         for (auto& dr : d_->doors) d_->updateDoor(dr, dt);
         d_->render(w, h);
+        if (d_->serverSelect) d_->renderServerSelect(w, h);
+        SDL_RenderPresent(d_->ren);
         SDL_Delay(1);
     }
 }

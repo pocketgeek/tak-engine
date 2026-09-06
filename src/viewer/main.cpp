@@ -9046,8 +9046,14 @@ int main(int argc, char** argv) {
         mode = "game";
         if (args.empty()) args.push_back("athri cay");   // TODO: map picker (SP battle menu)
         if (choice == tak::MainMenu::Choice::Multiplayer) {
-            serverHost = menuServer.empty() ? std::string("127.0.0.1") : menuServer;
-            if (serverPort == 7677 && menuServer.empty()) serverPort = 7677;
+            std::string sv = menuServer.empty() ? std::string("127.0.0.1") : menuServer;
+            auto colon = sv.find(':');   // accept host:port
+            if (colon != std::string::npos) {
+                int p = std::atoi(sv.substr(colon + 1).c_str());
+                if (p > 0) serverPort = p;
+                sv = sv.substr(0, colon);
+            }
+            serverHost = sv.empty() ? std::string("127.0.0.1") : sv;
         } else {
             menuInteractive = true;   // single-player: local server, but stop in the lobby
         }
