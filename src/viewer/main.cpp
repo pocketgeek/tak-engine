@@ -1276,6 +1276,18 @@ private:
 
 // --------------------------------------------------------------- game mode
 
+// RAII: force the render scale to 1:1 for an off-screen bake, restoring it on exit.
+// The whole-frame AA path (main) leaves SDL_RenderSetScale at Sx during draw(); any
+// atlas/impostor/icon bake must render at 1:1 or its contents come out scaled.
+struct AaScaleReset {
+    SDL_Renderer* r; float sx, sy;
+    explicit AaScaleReset(SDL_Renderer* rr) : r(rr) {
+        SDL_RenderGetScale(r, &sx, &sy);
+        SDL_RenderSetScale(r, 1.0f, 1.0f);
+    }
+    ~AaScaleReset() { SDL_RenderSetScale(r, sx, sy); }
+};
+
 // Units simulated on a real map: left-click select, right-click move order
 // (shift queues waypoints), arrows scroll, wheel zoom.
 class GameView {
@@ -4596,6 +4608,7 @@ private:
     // (a built glow-unit is on screen) advances it; otherwise it holds frame 0 so a
     // still-conjuring lodestone doesn't glow until it's finished.
     void animateGlowTextures(bool live) {
+        AaScaleReset _sr(ren_);   // bakes render at 1:1 even when whole-frame AA is on
         if (animatedTex_.empty()) return;
         int frame = live ? int(animClock_ * 4.0f) : 0;   // ~4 fps
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
@@ -4717,6 +4730,7 @@ private:
 
     // Allocate a fresh cleared sprite-atlas page. Returns false if it can't.
     bool newSprPage() {
+        AaScaleReset _sr(ren_);
         if (gpuAllocBlocked()) return false;   // don't retry a failed 64MB alloc per frame
         SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                            SDL_TEXTUREACCESS_TARGET, sprAtlasDim_, sprAtlasDim_);
@@ -4830,6 +4844,7 @@ private:
     // each texture's slot variant into its packed rect. Main thread only (render
     // target), so it must run before the parallel geometry pass.
     SDL_Texture* atlasFor(int slot) {
+        AaScaleReset _sr(ren_);
         if (slot < 0) slot = 0;
         if (!atlasLaidOut_) buildAtlasLayout();
         if (atlasW_ <= 0) return nullptr;
@@ -4862,6 +4877,7 @@ private:
     // + per-facing bounding box. Main thread only (render target); must run before
     // the parallel geometry pass reads it.
     void ensureImpostor(const std::string& modelKey, int slot, bool canMove) {
+        AaScaleReset _sr(ren_);
         auto key = std::make_pair(modelKey, slot);
         if (impostors_.count(key)) return;
         auto vt = visuals_.find(modelKey);
@@ -4966,6 +4982,7 @@ private:
     // per model+colour. A reserved not-ready entry is left if there's no COB so we
     // don't retry every frame (that unit just keeps using its full model).
     void bakeSprites(const std::string& typeId, int slot, bool canMove, bool canFly) {
+        AaScaleReset _sr(ren_);
         auto key = std::make_pair(typeId, slot);
         if (sprites_.count(key)) return;
         // During an allocation backoff, don't reserve the key yet -- so the bake
@@ -7425,6 +7442,7 @@ private:
     // the Zhon trapdoor spider (zonspide) -- a base-game creature the Crusades
     // balance made buildable -- so without this its slot would be an empty box.
     SDL_Texture* modelIconTex(const std::string& id, int slot, bool canMove) {
+        AaScaleReset _sr(ren_);
         auto keyp = std::make_pair(id, slot);
         if (auto it = modelIcons_.find(keyp); it != modelIcons_.end()) return it->second;
         if (gpuAllocBlocked()) return nullptr;   // retry after the alloc backoff lapses
@@ -9254,6 +9272,8 @@ int main(int argc, char** argv) {
     const int launchServerPort = serverPort;
     const std::vector<std::string> launchArgs = args;
     bool quitApp = false;
+    SDL_Texture* aaTex = nullptr;   // whole-frame supersampling target (Options AA); reused
+    int aaW = 0, aaH = 0;
     tak::MenuMusic menuMusic;   // persists across menu -> lobby so the track doesn't restart
     menuMusic.setVolume(settings.masterVol, settings.bgmVol);
     for (;;) {
@@ -9603,10 +9623,32 @@ int main(int argc, char** argv) {
         if (gameView && dt > 0) gameView->setFps(1.0f / dt);
         int w, h;
         SDL_GetRendererOutputSize(ren, &w, &h);
+        // Whole-frame supersampling AA (Options): render the game to an oversized
+        // target with SDL_RenderSetScale, then downscale it onto the window with
+        // linear filtering. The scale only affects OUTPUT pixels -- framing, fixed-px
+        // HUD and input all stay in 1x logical space, so nothing else has to change.
+        // VRAM-safe: the target is allocated once and reused; if it can't be created
+        // (VRAM pressure) we just fall back to no AA this frame. Baking runs at 1x
+        // BEFORE the scale is set (the lazy atlas/impostor bakes reset the scale
+        // themselves too, see their SetRenderTarget sites).
+        float aaS = (settings.antiAlias == 4) ? 2.0f : (settings.antiAlias == 2) ? 1.4142f : 1.0f;
+        bool aaOn = false;
+        if (gameView && aaS > 1.0f && !gameView->inLobbyPhase()) {
+            int tw = int(w * aaS), th = int(h * aaS);
+            if (!aaTex || aaW != tw || aaH != th) {
+                if (aaTex) SDL_DestroyTexture(aaTex);
+                aaTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
+                                          SDL_TEXTUREACCESS_TARGET, tw, th);
+                if (aaTex) { SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear); aaW = tw; aaH = th; }
+                else { aaW = aaH = 0; std::fprintf(stderr, "AA: %dx%d target alloc failed; AA off\n", tw, th); }
+            }
+            if (aaTex) aaOn = true;
+        }
         // Create textures before the render pass (mid-pass creation glitches
-        // the whole frame on some backends).
+        // the whole frame on some backends). Prepare/bake at 1x, then set the scale.
         if (mapView) mapView->ensureChunks(w, h);
         if (gameView) gameView->prepare(w, h);
+        if (aaOn) { SDL_SetRenderTarget(ren, aaTex); SDL_RenderSetScale(ren, aaS, aaS); }
         SDL_SetRenderDrawColor(ren, 18, 18, 26, 255);
         SDL_RenderClear(ren);
         // Optional per-phase profiler (TAK_PROF=1): prints where each frame's
@@ -9651,6 +9693,11 @@ int main(int argc, char** argv) {
             gameView->autoTuneSprites(dt * 1000.0f);
         }
         double t4 = prof ? pnow() : 0;
+        if (aaOn) {   // downscale the supersampled frame onto the window
+            SDL_RenderSetScale(ren, 1.0f, 1.0f);
+            SDL_SetRenderTarget(ren, nullptr);
+            SDL_RenderCopy(ren, aaTex, nullptr, nullptr);
+        }
         SDL_RenderPresent(ren);
         if (prof) {
             double t5 = pnow();
@@ -9715,6 +9762,7 @@ int main(int argc, char** argv) {
     if (quitApp || !fromMenu) break;
     }  // ---- end outer session loop ----
 
+    if (aaTex) SDL_DestroyTexture(aaTex);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();

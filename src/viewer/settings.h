@@ -17,7 +17,7 @@ struct Settings {
     bool  vsync      = true;
     int   maxFps     = 60;         // frame cap when vsync is off; clamp 30..480
     float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)
-    bool  antiAlias  = false;      // scene supersampling (wiring is a follow-up)
+    int   antiAlias  = 0;          // scene supersampling samples: 0=off, 2, or 4
 
     // ---- audio (0..256, matching SoundBank's internal scale) ----
     int   masterVol  = 256;        // global gain over everything
