@@ -6318,12 +6318,18 @@ private:
         guiBtnRects_.clear();
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
 
-        // Command panel background -- the stone frame is always present (retail keeps
-        // it up with the scrying orb even when nothing is selected).
+        // Command panel background. ButtonPanel frame 0 is the idle dragon medallion;
+        // frame 1 is the button-slot panel shown while a unit is selected (retail swaps
+        // the medallion out for the order grid).
         int mi = guiIdx("UnitMenu");
-        if (mi >= 0 && !guiTex_[mi].empty() && guiTex_[mi][0]) {
-            SDL_FRect r = guiCmdRect(gui_.gadgets[mi]);
-            SDL_RenderCopyF(ren_, guiTex_[mi][0], nullptr, &r);
+        if (mi >= 0 && !guiTex_[mi].empty()) {
+            int pf = !selection_.empty() && guiTex_[mi].size() > 1 && guiTex_[mi][1] ? 1 : 0;
+            SDL_Texture* pt = guiTex_[mi][size_t(pf)] ? guiTex_[mi][size_t(pf)]
+                                                      : guiTex_[mi][0];
+            if (pt) {
+                SDL_FRect r = guiCmdRect(gui_.gadgets[mi]);
+                SDL_RenderCopyF(ren_, pt, nullptr, &r);
+            }
         }
 
         const tak::sim::Unit* front =
@@ -6399,11 +6405,15 @@ private:
             }
         }
 
-        // Idle crystal ball -- the animated scrying orb at the panel's foot.
+        // The orb at the panel foot is a MANA BULB: its 24 frames are liquid-fill
+        // levels, so pick the frame by the player's mana fraction (not a time loop).
         int cb = guiIdx("CrystalBall");
         if (cb >= 0 && !guiTex_[cb].empty()) {
             int nf = int(guiTex_[cb].size());
-            int fr = nf > 0 ? int(animClock_ * 12.0f) % nf : 0;
+            const auto& tm = world_.player(localPlayer_);
+            float cap = std::max(tm.storage, 1.0f);
+            float frac = std::clamp(tm.mana / cap, 0.0f, 1.0f);
+            int fr = nf > 0 ? std::clamp(int(frac * float(nf - 1) + 0.5f), 0, nf - 1) : 0;
             SDL_Texture* t = guiTex_[cb][size_t(fr)];
             if (t) {
                 SDL_FRect r = guiCmdRect(gui_.gadgets[cb]);
@@ -6519,7 +6529,7 @@ private:
                     blockText(m, nr.x, nr.y + nr.h * 0.6f, px * 0.72f, {206, 198, 168, 255});
                 }
                 drawGauge("HealthBar", u->hp / std::max(1.0f, u->type->maxHp),
-                          {70, 210, 90, 255});
+                          {210, 70, 60, 255});   // retail HP bar is red
                 if (u->type->maxMana > 0)
                     drawGauge("ManaBar", u->mana / std::max(1.0f, u->type->maxMana),
                               {90, 150, 255, 255});
@@ -6562,7 +6572,7 @@ private:
             return "MOVING";
         }
         if (u->cloaked) return "CLOAKED";
-        return "IDLE";
+        return "STANDBY";   // retail's idle label
     }
 
     // Returns true if the click hit (and was handled by) the order column.
@@ -7506,27 +7516,25 @@ private:
             }
         }
 
-        // Bottom-CENTER: clickable build icons for the selected builder.
+        // Bottom-LEFT conjure menu: clickable build icons for the selected builder,
+        // in a horizontal row just above the info bar's left end -- where retail draws
+        // it (not the old centred strip over the map).
         iconRects_.clear();
         const auto* b = selectedBuilder();
         if (b) {
             const auto& menu = registry_.buildable(b->type->id);
-            // Show the WHOLE menu at full size -- never truncate, never shrink.
-            // Some builders (the Zhon Beast Tamer under the Crusades balance) list
-            // 13 buildables, and the higher-tier builder sorts last, so a fixed cap
-            // would hide it and make that tier unreachable. The window has a minimum
-            // width (from registry_.maxBuildMenu(), set in main) so the full-size row
-            // always fits the map viewport -- centred here over the map, clear of
-            // the right-hand panel.
             int n = int(menu.size());
-            float rowW = n > 0 ? (n - 1) * 66.0f + 60.0f : 0;
-            float x = (float(mapViewW(winW)) - rowW) * 0.5f;
+            float iconSz = float(kBarH) - 10.0f;
+            float gap = 6.0f;
+            float rowW = n > 0 ? (n - 1) * (iconSz + gap) + iconSz : 0;
+            float x0 = 10;                          // left-aligned
+            float iconY = bar.y - iconSz - 5;       // sit just above the bar
+            float x = x0;
             // A recessed container behind the row so the conjure menu reads as one HUD
-            // strip (matching the InfoPanel bar's dark inset + bronze frame), not loose
-            // icons floating on the stone.
+            // strip (matching the InfoPanel bar's dark inset + bronze frame).
             if (n > 0 && guiBar) {
-                SDL_FRect box{x - 9, bar.y + 2, rowW + 18, kBarH - 6.0f};
-                SDL_SetRenderDrawColor(ren_, 14, 12, 10, 210);
+                SDL_FRect box{x0 - 5, iconY - 5, rowW + 10, iconSz + 10};
+                SDL_SetRenderDrawColor(ren_, 14, 12, 10, 225);
                 SDL_RenderFillRectF(ren_, &box);
                 SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
                 SDL_RenderDrawRectF(ren_, &box);
@@ -7534,7 +7542,7 @@ private:
             for (int i = 0; i < n; ++i) {
                 const auto* bt = registry_.find(menu[size_t(i)]);
                 if (!bt) continue;
-                SDL_FRect r{x, bar.y + 6, 60, kBarH - 16.0f};
+                SDL_FRect r{x, iconY, iconSz, iconSz};
                 SDL_SetRenderDrawColor(ren_, 20, 18, 14, 235);
                 SDL_FRect rb{r.x - 1, r.y - 1, r.w + 2, r.h + 2};
                 SDL_RenderFillRectF(ren_, &rb);
@@ -7575,24 +7583,21 @@ private:
                                   int(bt->buildCost));
                     float px = 2.0f;
                     float tw = blockWidth(tip, px);
-                    float tipx = std::clamp(r.x + 30 - tw / 2, 6.0f, winW - tw - 6);
+                    float tipx = std::clamp(r.x + iconSz / 2 - tw / 2, 6.0f, winW - tw - 6);
                     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
-                    SDL_FRect tb{tipx - 6, bar.y - 34, tw + 12, 26};
+                    SDL_FRect tb{tipx - 6, iconY - 28, tw + 12, 26};
                     SDL_RenderFillRectF(ren_, &tb);
-                    blockText(tip, tipx, bar.y - 30, px, {255, 240, 190, 255});
+                    blockText(tip, tipx, iconY - 24, px, {255, 240, 190, 255});
                 }
                 iconRects_.push_back({r, bt});
-                x += 66;
+                x += iconSz + gap;
             }
             if (!b->buildQueue.empty()) {
                 char q[64];
                 std::snprintf(q, sizeof q, "TRAINING %s (%zu)",
                               b->buildQueue.front()->name.c_str(),
                               b->buildQueue.size());
-                float px = 1.8f;
-                float qw = blockWidth(q, px);
-                blockText(q, (float(winW) - qw) * 0.5f, bar.y - 30, px,
-                          {160, 210, 255, 255});
+                blockText(q, x0, iconY - 24, 1.8f, {160, 210, 255, 255});
             }
         }
 
