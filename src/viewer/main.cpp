@@ -1732,6 +1732,9 @@ public:
     }
     void setMpMapId(const std::string& id) { mpMapId_ = id; }
     void setResumePath(const std::string& p) { mpResumePath_ = p; }
+    // Single-player from the menu: open the lobby on the Create screen (a private
+    // game's browser is empty by design), where the map picker + AI slots live.
+    void setLobbyStartCreate() { lobbyScreen_ = LobbyScreen::Create; }
     // Persist / read the resume ticket (gameId + rotating token) so a killed
     // client can rejoin its held slot on restart.
     void writeResume(uint32_t gid, uint64_t tok) const {
@@ -5550,6 +5553,8 @@ private:
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
+    std::vector<std::pair<std::string, std::string>> mapList_;  // {name, tnt path}, cached
+    int mapPage_ = 0;                                           // Create screen map-list page
     uint8_t createOverride_ = 1;   // create-dialog override tier (default cosmetic)
     std::string mpMapId_;   // set from the launched map basename
     std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
@@ -7790,6 +7795,30 @@ private:
             lobbyScreen_ = LobbyScreen::Browser;
         });
         lbBtn(x + 132, y, 120, 30, "CANCEL", true, [this] { lobbyScreen_ = LobbyScreen::Browser; });
+
+        // Map picker (right column): a paged, clickable list of playable maps.
+        // Selecting sets both the wire id (mpMapId_ = bare .tnt stem) and mapPath_,
+        // so mpCapacity() recomputes the chosen map's start-position count.
+        if (mapList_.empty()) mapList_ = tak::hpi::listMaps(vfs_);
+        float lx = 380, ly = 90;
+        const int perPage = 12; const float rowH = 22;
+        blockText("SELECT MAP", lx, ly, 1.8f, {200, 205, 220, 255}); ly += 26;
+        int pages = std::max(1, (int(mapList_.size()) + perPage - 1) / perPage);
+        mapPage_ = std::clamp(mapPage_, 0, pages - 1);
+        for (int i = mapPage_ * perPage; i < (mapPage_ + 1) * perPage && i < int(mapList_.size()); ++i) {
+            const std::string nm = mapList_[size_t(i)].first;
+            const std::string pth = mapList_[size_t(i)].second;
+            bool sel = (nm == mpMapId_);
+            lbBtn(lx, ly, 250, rowH, nm.size() > 30 ? nm.substr(0, 30) : nm, true,
+                  [this, nm, pth] { mpMapId_ = nm; mapPath_ = pth; },
+                  sel ? SDL_Color{60, 92, 60, 255} : SDL_Color{50, 54, 68, 255});
+            ly += rowH + 2;
+        }
+        ly += 6;
+        lbBtn(lx, ly, 70, 24, "PREV", mapPage_ > 0, [this] { --mapPage_; });
+        lbBtn(lx + 88, ly, 70, 24, "NEXT", mapPage_ < pages - 1, [this] { ++mapPage_; });
+        blockText("PAGE " + std::to_string(mapPage_ + 1) + "/" + std::to_string(pages),
+                  lx + 172, ly + 8, 1.4f, {150, 155, 170, 255});
     }
 
     void drawRoom(int winW, int winH) {
@@ -9142,6 +9171,7 @@ int main(int argc, char** argv) {
             if (mp) {
                 gameView->setMpClient(mp.get());
                 gameView->setMpMapId(args[0]);
+                if (menuInteractive) gameView->setLobbyStartCreate();   // menu SP: open on Create
                 if (const char* rp = std::getenv("TAK_RESUME")) gameView->setResumePath(rp);
             }
             // Never let the window shrink below what the widest build-icon row
