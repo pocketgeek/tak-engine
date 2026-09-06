@@ -6437,19 +6437,30 @@ private:
                 if (guiTex_[cb][size_t(fr)])
                     SDL_RenderCopyF(ren_, guiTex_[cb][size_t(fr)], nullptr, &orb);
             }
-            // "MANA X/Y" box above the orb, spanning the command panel width.
-            int pmi = guiIdx("UnitMenu");
+            // "MANA" over "X/Y", both centred (H and V) in the panel's black HelpText
+            // recess above the orb.
+            int pmi = guiIdx("UnitMenu"), hti = guiIdx("HelpText");
             SDL_FRect panel = pmi >= 0 ? guiCmdRect(gui_.gadgets[pmi]) : orb;
-            float px = std::max(1.6f, orb.h / 22.0f);
-            SDL_FRect mbox{panel.x + 6, orb.y - 7 * px - 14, panel.w - 12, 7 * px + 10};
+            SDL_FRect mbox = hti >= 0 ? guiCmdRect(gui_.gadgets[hti])
+                                      : SDL_FRect{panel.x + 6, orb.y - 60, panel.w - 12, 52};
             SDL_SetRenderDrawColor(ren_, 8, 8, 8, 235);
             SDL_RenderFillRectF(ren_, &mbox);
             SDL_SetRenderDrawColor(ren_, 70, 62, 44, 255);
             SDL_RenderDrawRectF(ren_, &mbox);
-            char buf[48];
-            std::snprintf(buf, sizeof buf, "MANA %d/%d", int(tm.mana), int(cap));
-            float mw = blockWidth(buf, px);
-            blockText(buf, mbox.x + (mbox.w - mw) * 0.5f, mbox.y + 5, px, {200, 215, 255, 255});
+            char nums[32];
+            std::snprintf(nums, sizeof nums, "%d/%d", int(tm.mana), int(cap));
+            float px = std::max(1.4f, mbox.h / 20.0f);
+            float gap = 3, lineH = 7 * px;
+            // Shrink to fit both lines within the recess (H and V).
+            while (px > 1.0f && (2 * lineH + gap > mbox.h - 4 ||
+                                 blockWidth(nums, px) > mbox.w - 6)) {
+                px -= 0.1f; lineH = 7 * px;
+            }
+            float y0 = mbox.y + (mbox.h - (2 * lineH + gap)) * 0.5f;
+            SDL_Color mc{200, 215, 255, 255};
+            float w1 = blockWidth("MANA", px), w2 = blockWidth(nums, px);
+            blockText("MANA", mbox.x + (mbox.w - w1) * 0.5f, y0, px, mc);
+            blockText(nums, mbox.x + (mbox.w - w2) * 0.5f, y0 + lineH + gap, px, mc);
             // +income / -expenditure (conjure + repair drain, computed here) flanking orb.
             float expend = 0;
             for (const auto& un : world_.units()) {
