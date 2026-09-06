@@ -689,8 +689,10 @@ public:
             int n = int(SR * L); std::vector<float> s(size_t(n), 0.0f);
             float f5 = root * std::pow(2.0f, 7.0f / 12.0f), f8 = root * 2.0f, lp = 0.0f;
             for (int i = 0; i < n; ++i) { float t = i / float(SR);
-                float x = sawv(root, t) + sawv(f5, t) + 0.7f * sawv(f8, t);
-                x = std::tanh(x * 7.0f);                              // heavy distortion
+                // Detuned double-tracked rhythm guitars = a fatter wall of chug.
+                float x = sawv(root, t) + sawv(root + 0.35f, t)
+                        + sawv(f5, t) + sawv(f5 + 0.35f, t) + 0.7f * sawv(f8, t);
+                x = std::tanh(x * 5.5f);                              // heavy distortion
                 lp += 0.5f * (x - lp);                                // tame the fizz
                 float amp = mute ? std::exp(-t * 26.0f)
                                  : std::min(1.0f, t * 400.0f) * std::exp(-t * 2.5f);
@@ -714,8 +716,30 @@ public:
             for (int i = 0; i < n; ++i) { float t = i / float(SR);
                 s[size_t(i)] = 0.3f * (rnd() - 0.5f * rnd()) * std::exp(-t * 4.0f); }
             return s; };
+        // Distorted twin-lead guitar (detuned, with vibrato) -- the soaring melody line.
+        auto lead = [&](float freq, float L) {
+            int n = int(SR * L); std::vector<float> s(size_t(n), 0.0f);
+            for (int i = 0; i < n; ++i) { float t = i / float(SR);
+                float vib = 1.0f + 0.012f * std::sin(2 * PI * 5.5f * t);
+                float x = sawv(freq * vib, t) + sawv(freq * vib * 1.006f, t);
+                x = std::tanh(x * 4.0f);
+                float amp = std::min(1.0f, t * 90.0f) * std::min(1.0f, (L - t) * 45.0f);
+                s[size_t(i)] = 0.20f * x * amp; }
+            return s; };
+        // E natural minor scale (E F# G A B C D), semitones from A2 (E2 = -5); deg 0 = E.
+        auto scale = [&](int deg) {
+            static const int st[7] = {-5, -3, -2, 0, 2, 3, 5};
+            int o = 0; while (deg < 0) { deg += 7; --o; } while (deg >= 7) { deg -= 7; ++o; }
+            return n2f(float(st[deg]) + 12.0f * o);
+        };
+        auto twin = [&](int deg, float start, float L) {   // melody + a diatonic 3rd above
+            place(lead(scale(deg), L), start);
+            place(lead(scale(deg + 2), L), start);
+        };
         // Riff: root per bar (E-heavy with movement), galloping chugs + gallop kick.
         float roots[6] = {n2f(-5), n2f(-5), n2f(-2), n2f(0), n2f(-5), n2f(3)};   // E E G A E C
+        // Twin-lead melody (upper octave, deg 7 = E4), two half-notes per bar.
+        int melody[6][2] = {{7, 9}, {11, 10}, {13, 11}, {14, 12}, {11, 9}, {7, 9}};
         for (int b = 0; b < 6; ++b) {
             float b0 = float(b) * 4 * beat;
             place(crash(), b0);
@@ -728,6 +752,8 @@ public:
             }
             place(snare(), b0 + beat);
             place(snare(), b0 + 3 * beat);
+            twin(melody[b][0], b0, beat * 2 * 0.92f);              // soaring lead over the riff
+            twin(melody[b][1], b0 + 2 * beat, beat * 2 * 0.92f);
         }
         float mx = 1e-6f;
         for (int i = 0; i < N; ++i) mx = std::max(mx, std::fabs(buf[size_t(i)]));
