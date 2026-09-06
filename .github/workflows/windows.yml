@@ -1,27 +1,22 @@
-name: windows
+name: Windows build
+run-name: Windows build · ${{ github.ref_name }}
 
-# Native Windows x64 build via MSYS2/MinGW-w64 (the same GCC family the code is
-# cross-built with on Linux). Produces a self-contained bundle (exes + the SDL2/
-# jpeg/zlib DLLs; the GCC/C++ runtime is static-linked) and runs the two
-# determinism gates to confirm cross-platform lockstep parity.
+# Builds native Windows x64 (MSYS2/MinGW-w64) only on a version-bump tag (v*), or
+# on manual dispatch. Uploads a CI artifact + runs the determinism gate; on a tag
+# it also attaches the zipped bundle to the GitHub Release. (Per-commit sim checks
+# live in determinism.yml; the heavy platform builds run only when we cut a release.)
 
 on:
   push:
-    paths:
-      - 'src/**'
-      - 'tools/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/windows.yml'
-  pull_request:
-    paths:
-      - 'src/**'
-      - 'tools/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/windows.yml'
+    tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: write   # attach assets to the release (tag builds)
+
 jobs:
-  mingw64:
+  build:
+    name: Windows x64 (MinGW)
     runs-on: windows-latest
     defaults:
       run:
@@ -40,14 +35,14 @@ jobs:
             mingw-w64-x86_64-SDL2
             mingw-w64-x86_64-libjpeg-turbo
             mingw-w64-x86_64-zlib
+            zip
 
-      - name: Configure
-        run: cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+      - name: Configure + build
+        run: |
+          cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
 
-      - name: Build
-        run: cmake --build build
-
-      - name: Bundle (exes + required DLLs)
+      - name: Bundle (exes + required DLLs) + zip
         run: |
           mkdir -p dist-win
           cp build/takview.exe build/takserver.exe dist-win/
@@ -55,21 +50,15 @@ jobs:
           ldd build/takview.exe build/takserver.exe \
             | awk '/mingw64\/bin/ {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" dist-win/; done
-          ls -l dist-win
+          (cd dist-win && zip -r ../takview-windows-x64.zip .)
 
-      - name: Read version
-        id: ver
-        run: echo "v=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/upload-artifact@v7
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: takview-${{ steps.ver.outputs.v }}-windows-x64
+          name: takview-windows-x64
           path: dist-win/
 
-      - name: Determinism gates (cross-platform parity)
-        # Assert the detmath golden matches the baseline -- the hard cross-platform
-        # lockstep gate, here on native Windows x64 (MinGW). Update `expected` only
-        # if src/sim/detmath.cpp deliberately changes it (then also the Linux golden).
+      - name: Determinism gate (cross-platform parity)
         run: |
           expected=ab1ef54ae324bd0e
           ./build/detmath_test.exe    # accuracy vs libm (fails on tolerance)
@@ -80,3 +69,13 @@ jobs:
             exit 1
           fi
           ./build/sim_driver_equiv_test.exe
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh   # gh is on the Windows PATH, not inside msys2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY `
+            --title "TAK Engine $env:GITHUB_REF_NAME" --generate-notes --verify-tag 2>$null
+          gh release upload $env:GITHUB_REF_NAME takview-windows-x64.zip --repo $env:GITHUB_REPOSITORY --clobber

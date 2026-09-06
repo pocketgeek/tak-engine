@@ -101,10 +101,13 @@ platform split (`fork`/`exec` vs `CreateProcess`, in `src/viewer/main.cpp`).
 - **macOS ARM64** (on a Mac): `brew install ninja sdl2 jpeg-turbo`, then
   `cmake -B build -G Ninja` and `cmake --build build`.
 
-CI builds both in `.github/workflows/`: `windows.yml` (MSYS2/MinGW on a Windows
-runner) and `macos.yml` (native `macos-14` Apple-silicon runner) each upload a
-binary artifact and run the determinism gates. `determinism.yml` guards
-cross-build lockstep for the sim.
+CI (`.github/workflows/`) splits per-commit checks from release builds.
+`determinism.yml` runs on every `main` push (sim changes) as the fast lockstep
+gate. The platform builds — `windows.yml` (MSYS2/MinGW), `macos.yml` (native
+`macos-14`), and `linux.yml` (`.deb` on Ubuntu, `.rpm` in a Fedora container) —
+run **only on a version-bump tag** (`v*`): each builds, runs the determinism gate,
+and attaches its artifact to the GitHub Release. Cutting a release is just
+`git tag vX.Y.Z && git push origin vX.Y.Z` (bump `project(... VERSION ...)` first).
 
 ## Game data
 
