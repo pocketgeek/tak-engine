@@ -3474,10 +3474,15 @@ public:
             }
         }
         if (mp_ && hudFont_.ok()) {
-            char nb[64];
-            std::snprintf(nb, sizeof nb, "NET P%d  TICK %u", localPlayer_ + 1, netTick_);
-            hudFont_.draw(ren_, nb, float(winW) - 200, float(winH) - 14, 1.4f,
-                          {140, 200, 255, 255});
+            // Dev net-status readout (TAK_NETDEBUG): off by default -- it sat over the
+            // bottom-right mana panel. The BEHIND-BY lag warning below always shows.
+            static const bool kNetDebug = std::getenv("TAK_NETDEBUG") != nullptr;
+            if (kNetDebug) {
+                char nb[64];
+                std::snprintf(nb, sizeof nb, "NET P%d  TICK %u", localPlayer_ + 1, netTick_);
+                hudFont_.draw(ren_, nb, 12, float(winH) - kBarH - 16, 1.4f,
+                              {140, 200, 255, 255});
+            }
             // "Behind by N s": how far this client's view lags the live game --
             // the depth of received-but-unplayed bundles (30 Hz). The adaptive
             // buffer keeps only a tiny intended reserve (~netDelay_ ticks, <0.2 s),
