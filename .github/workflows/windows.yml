@@ -27,7 +27,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -57,7 +57,7 @@ jobs:
             | while read -r dll; do cp "$dll" dist-win/; done
           ls -l dist-win
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: takview-windows-x64
           path: dist-win/

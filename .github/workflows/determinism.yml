@@ -29,7 +29,7 @@ jobs:
   detmath:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # g++ (default) + clang (second compiler, same arch);
       # g++-aarch64-linux-gnu is hosted on Ubuntu (ships the target libstdc++),
@@ -57,7 +57,7 @@ jobs:
   sim-equiv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install build deps
         run: |
           sudo apt-get update
