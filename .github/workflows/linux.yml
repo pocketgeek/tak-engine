@@ -1,0 +1,60 @@
+name: linux
+
+# Native Linux packages via CPack: a .deb built on Ubuntu (Debian/Ubuntu family)
+# and a .rpm built inside a Fedora container (Fedora/RHEL family). Each family's
+# package is built in its own environment so the auto-detected runtime deps
+# (SDL2/jpeg/zlib sonames) match that family and apt/dnf can satisfy them.
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tools/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/linux.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tools/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/linux.yml'
+  workflow_dispatch:
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ libsdl2-dev zlib1g-dev libjpeg-dev dpkg-dev
+      - name: Build + package (.deb)
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          (cd build && cpack -G DEB)
+          dpkg-deb -I build/tak-engine-amd64.deb   # show control + auto deps
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tak-engine-deb
+          path: build/tak-engine-amd64.deb
+
+  rpm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build + package (.rpm) in a Fedora container
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src fedora:latest bash -c '
+            dnf -y install cmake ninja-build gcc-c++ SDL2-devel zlib-devel \
+                           libjpeg-turbo-devel rpm-build &&
+            cmake -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release &&
+            cmake --build build-rpm &&
+            (cd build-rpm && cpack -G RPM) &&
+            rpm -qp --requires build-rpm/tak-engine-x86_64.rpm'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tak-engine-rpm
+          path: build-rpm/tak-engine-x86_64.rpm

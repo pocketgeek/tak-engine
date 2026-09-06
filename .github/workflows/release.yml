@@ -89,3 +89,41 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" takview-macos-arm64.zip --repo "$GITHUB_REPOSITORY" --clobber
+
+  deb:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ libsdl2-dev zlib1g-dev libjpeg-dev dpkg-dev
+      - name: Build + package (.deb)
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          (cd build && cpack -G DEB)
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" build/tak-engine-amd64.deb --repo "$GITHUB_REPOSITORY" --clobber
+
+  rpm:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build + package (.rpm) in a Fedora container
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src fedora:latest bash -c '
+            dnf -y install cmake ninja-build gcc-c++ SDL2-devel zlib-devel \
+                           libjpeg-turbo-devel rpm-build &&
+            cmake -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release &&
+            cmake --build build-rpm &&
+            (cd build-rpm && cpack -G RPM)'
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" build-rpm/tak-engine-x86_64.rpm --repo "$GITHUB_REPOSITORY" --clobber

@@ -111,3 +111,39 @@ target_link_libraries(tdftool PRIVATE tak-formats)
 
 add_executable(cobtool tools/cobtool.cpp)
 target_link_libraries(cobtool PRIVATE tak-formats)
+
+# --- Packaging: native .deb + .rpm via CPack (Linux) --------------------------
+# One source of truth for both package families. Build, then from the build dir:
+#   cpack -G DEB   -> tak-engine-amd64.deb    (sudo apt install ./tak-engine-amd64.deb)
+#   cpack -G RPM   -> tak-engine-x86_64.rpm   (sudo dnf install ./tak-engine-x86_64.rpm)
+# The runtime deps (SDL2/jpeg/zlib) are auto-detected so apt/dnf pull them in.
+if(UNIX AND NOT APPLE)
+  install(TARGETS takserver RUNTIME DESTINATION bin)
+  if(TARGET takview)
+    install(TARGETS takview RUNTIME DESTINATION bin)
+  endif()
+
+  set(CPACK_PACKAGE_NAME "tak-engine")
+  set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+      "Clean-room engine recreation of Total Annihilation: Kingdoms")
+  set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/pocketgeek/tak-engine")
+  set(CPACK_PACKAGE_CONTACT "Curtis Edge <pocket_geek@pgnet.us>")
+  set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+
+  # No LICENSE file yet -- set this (and add a LICENSE) once the project declares one.
+  set(CPACK_RPM_PACKAGE_LICENSE "Unspecified")
+
+  # Stable, version-less asset names so the README's releases/latest/download links
+  # stay valid across versions (the package's internal version is ${PROJECT_VERSION}).
+  set(CPACK_DEBIAN_FILE_NAME "tak-engine-amd64.deb")
+  set(CPACK_RPM_FILE_NAME "tak-engine-x86_64.rpm")
+
+  # Auto-detect the shared-library dependencies for each family.
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+  set(CPACK_DEBIAN_PACKAGE_SECTION "games")
+  set(CPACK_RPM_PACKAGE_AUTOREQ ON)
+  set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
+
+  include(CPack)
+endif()
