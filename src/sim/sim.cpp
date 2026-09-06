@@ -1276,6 +1276,8 @@ void World::cancelBuilds(int builderId) {
     Unit* b = unit(builderId);
     if (!b) return;
     b->buildOrders.clear();
+    b->reclaimId = 0;            // a fresh move/attack/stop drops any reclaim job
+    b->reclaimQueue.clear();
     if (b->buildSiteId) {
         Unit* site = unit(b->buildSiteId);
         // A site that never actually started building is just a ghost — remove
@@ -1304,6 +1306,82 @@ void World::assist(int builderId, int siteId) {
     // this builder's rate (buildTime / workerTime) from the site's current HP.
     b->buildSiteId = siteId;
     order(builderId, site->x, site->z + float(site->type->footZ) * 8 + 24, false);
+}
+
+void World::addFeature(int id, float x, float z, float manaYield, float work,
+                       int fx, int fz, bool blocks) {
+    featureIdx_[id] = features_.size();
+    features_.push_back(Feature{id, x, z, fx, fz, manaYield,
+                                std::max(work, 1.0f), std::max(work, 1.0f), blocks, true});
+}
+
+const Feature* World::feature(int id) const {
+    auto it = featureIdx_.find(id);
+    return it == featureIdx_.end() ? nullptr : &features_[it->second];
+}
+
+bool World::featureAliveAt(float x, float z) const {
+    if (terW_ <= 0) return true;
+    int cx = int(x) / 16, cz = int(z) / 16;
+    const Feature* f = feature(cz * terW_ + cx);
+    return !f || f->alive;   // decorative (untracked) cells are always "alive"
+}
+
+// Reclaim rate: work is consumed at a flat rate (retail ties reclaim duration to
+// the feature's `energy`, not the builder's worktime). ~2s for a 250-value tree.
+static constexpr float kReclaimRate = 120.0f;   // work units per second
+
+void World::reclaim(int builderId, int featureId, bool queue) {
+    Unit* b = unit(builderId);
+    if (!b || !b->alive() || !b->type || !b->type->isBuilder ||
+        !b->type->canMove || !b->type->canReclaim)
+        return;
+    const Feature* f = feature(featureId);
+    if (!f || !f->alive) return;
+    if (b->reclaimId == 0 && b->reclaimQueue.empty() && !queue) {
+        b->reclaimId = featureId;
+        order(builderId, f->x, f->z, false);   // walk to it; tickReclaim takes over
+    } else {
+        b->reclaimQueue.push_back(featureId);
+    }
+}
+
+void World::tickReclaim(Unit& b, float dt) {
+    auto it = featureIdx_.find(b.reclaimId);
+    auto advance = [&] {
+        // Pull the next still-alive target off the queue, or go idle.
+        b.reclaimId = 0;
+        while (!b.reclaimQueue.empty()) {
+            int nid = b.reclaimQueue.front();
+            b.reclaimQueue.pop_front();
+            const Feature* nf = feature(nid);
+            if (nf && nf->alive) { b.reclaimId = nid; order(b.id, nf->x, nf->z, false); break; }
+        }
+    };
+    if (it == featureIdx_.end()) { advance(); return; }
+    Feature& f = features_[it->second];
+    if (!f.alive) { advance(); return; }   // someone else got it (RECLAIMFAILED)
+    float dx = f.x - b.x, dz = f.z - b.z;
+    float reach = 24.0f + 8.0f * float(std::max(f.fx, f.fz)) +
+                  (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
+    if (dx * dx + dz * dz > reach * reach) return;   // still walking there
+    b.orders.clear();
+    b.speed = 0;
+    float want = detmath::atan2(dx, dz);   // face the feature (deterministic)
+    float turn = std::clamp(angleDiff(want, b.heading), -b.type->turnRate * dt,
+                            b.type->turnRate * dt);
+    b.heading += turn;
+    float d = std::min(f.work, kReclaimRate * dt);
+    f.work -= d;
+    players_[size_t(b.player)].mana += f.manaYield * (d / f.workFull);   // drip
+    if (f.work <= 0) {
+        f.alive = false;
+        if (f.blocks) {   // free the ground cells it occupied (setupMatch blocked nav_)
+            nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2, f.fx, f.fz, false);
+            flowCache_.clear();
+        }
+        advance();
+    }
 }
 
 void World::startDisco(int player) {
@@ -1706,6 +1784,7 @@ void World::tick(float dt) {
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& u = units_[i];
         if (u.alive() && u.type && u.buildSiteId) tickConstruction(u, dt);
+        else if (u.alive() && u.type && u.reclaimId) tickReclaim(u, dt);
     }
     for (auto& u : units_)
         if (u.alive() && u.type && u.underConstruction && !u.beingBuilt)
@@ -2122,6 +2201,13 @@ uint64_t World::stateHash() const {
         // as a desync instead of diverging mysteriously.
         mix(uint64_t(uint32_t(t.team)));
     }
+    // Reclaimable features: fold a cheap signature so a reclaim divergence faults as
+    // a desync directly (mana/nav already reflect it indirectly). Order-independent.
+    uint64_t fAlive = 0, fWork = 0;
+    for (const auto& f : features_)
+        if (f.alive) { ++fAlive; uint32_t w; std::memcpy(&w, &f.work, 4); fWork ^= (uint64_t(w) << 1) ^ uint64_t(uint32_t(f.id)); }
+    mix(fAlive);
+    mix(fWork);
     return h;
 }
 
