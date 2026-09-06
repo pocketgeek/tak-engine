@@ -7271,7 +7271,11 @@ private:
             noticeTimer_ = 2;
             return true;
         }
+        // One emote at a time -- don't even send the command while a disco or headbang
+        // is already running (the sim enforces this too, deterministically).
+        bool emoting = world_.discoActive(localPlayer_) || world_.headbangActive(localPlayer_);
         if (key == SDLK_d && shift) {             // DISCO! your monarchs boogie 10s
+            if (emoting) { notice_ = "ALREADY GROOVING"; noticeTimer_ = 2; return true; }
             // Purely cosmetic, but routed through the lockstep command path so every
             // peer sees your monarchs dance (the sim just runs a per-player timer).
             tak::net::Command c;
@@ -7282,6 +7286,7 @@ private:
             return true;
         }
         if (key == SDLK_h && shift) {             // HEADBANG! your monarchs mosh 10s
+            if (emoting) { notice_ = "ALREADY ROCKING"; noticeTimer_ = 2; return true; }
             tak::net::Command c;
             c.kind = tak::net::Cmd::Headbang;
             issue(c);
