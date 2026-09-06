@@ -7521,6 +7521,16 @@ private:
             int n = int(menu.size());
             float rowW = n > 0 ? (n - 1) * 66.0f + 60.0f : 0;
             float x = (float(mapViewW(winW)) - rowW) * 0.5f;
+            // A recessed container behind the row so the conjure menu reads as one HUD
+            // strip (matching the InfoPanel bar's dark inset + bronze frame), not loose
+            // icons floating on the stone.
+            if (n > 0 && guiBar) {
+                SDL_FRect box{x - 9, bar.y + 2, rowW + 18, kBarH - 6.0f};
+                SDL_SetRenderDrawColor(ren_, 14, 12, 10, 210);
+                SDL_RenderFillRectF(ren_, &box);
+                SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
+                SDL_RenderDrawRectF(ren_, &box);
+            }
             for (int i = 0; i < n; ++i) {
                 const auto* bt = registry_.find(menu[size_t(i)]);
                 if (!bt) continue;
