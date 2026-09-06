@@ -6263,12 +6263,20 @@ private:
 
     // Leftmost gadget with this name. Several bar gadgets appear twice -- the primary
     // single-unit group (UnitInfo1, x~114) and the second-unit group (UnitInfo2,
-    // x~386); the primary is always the left one.
+    // x~386); the primary is always the left one, the conjure-target the right one.
     int guiIdxLeft(const char* name) const {
         int best = -1;
         for (size_t i = 0; i < gui_.gadgets.size(); ++i)
             if (gui_.gadgets[i].name == name &&
                 (best < 0 || gui_.gadgets[i].x < gui_.gadgets[size_t(best)].x))
+                best = int(i);
+        return best;
+    }
+    int guiIdxRight(const char* name) const {
+        int best = -1;
+        for (size_t i = 0; i < gui_.gadgets.size(); ++i)
+            if (gui_.gadgets[i].name == name &&
+                (best < 0 || gui_.gadgets[i].x > gui_.gadgets[size_t(best)].x))
                 best = int(i);
         return best;
     }
@@ -6599,64 +6607,94 @@ private:
             SDL_FRect r = guiBarRect(gui_.gadgets[ei]);
             SDL_RenderCopyF(ren_, guiTex_[ei][0], nullptr, &r);
         }
-        // Selected-unit info, CENTRED in the bar (like retail): portrait, then name
-        // over HP/mana bars, then the status ("CONJURING") and the target being
-        // conjured ("LODESTONE").
-        if (!selection_.empty()) {
-            const auto* u = world_.unit(selection_.front());
-            if (u && u->alive() && u->type) {
-                float sc = float(kBarH) / 49.0f;
-                float portH = std::min(float(kBarH) - 8, 40 * sc), portW = portH * 4.0f / 3.0f;
-                float tpx = std::max(2.0f, float(kBarH) / 24.0f);
-                float barW = 108 * sc, barH = std::max(4.0f, 3.5f * sc);
-                std::string name = u->type->name;
-                std::string s1 = unitStatusText(u), s2 = conjureTargetName(u);
-                std::transform(s2.begin(), s2.end(), s2.begin(), ::toupper);
-                if (selection_.size() > 1) {
-                    s1 = "+" + std::to_string(selection_.size() - 1) + " MORE";
-                    s2.clear();
+        // Unit info as a FIXED, always-present group centred in the bar (like retail):
+        // UnitInfo1 (selected unit: portrait + name + HP/mana bars), ActionText
+        // (status), and UnitInfo2 (the conjured target: name + progress bar). Both info
+        // blocks always render -- empty bars when absent -- so the layout never shifts.
+        {
+            float vs = float(kBarH) / 49.0f;
+            float groupW = (512.0f - 59.0f) * vs;   // UnitInfo1.x .. UnitInfo2 right edge
+            float off = (float(winW) - groupW) * 0.5f - 59.0f * vs;
+            auto place = [&](int gi) {
+                SDL_FRect r = guiBarRect(gui_.gadgets[gi]);
+                r.x += off;
+                return r;
+            };
+            auto bar = [&](int gi, float frac, SDL_Color c) {
+                if (gi < 0) return;
+                SDL_FRect r = place(gi);
+                if (r.h < 5) { r.y -= (5 - r.h) * 0.5f; r.h = 5; }
+                drawBar(r.x, r.y, r.w, r.h, frac, c);
+            };
+            const tak::sim::Unit* u =
+                selection_.empty() ? nullptr : world_.unit(selection_.front());
+            if (u && (!u->alive() || !u->type)) u = nullptr;
+            float tpx = std::max(2.0f, float(kBarH) / 24.0f);
+
+            // The conjured target (site under construction, or the head of a build queue).
+            std::string tName; float tProg = 0;
+            if (u) {
+                if (u->buildSiteId) {
+                    if (const auto* s = world_.unit(u->buildSiteId); s && s->type) {
+                        tName = s->type->name;
+                        tProg = s->hp / std::max(1.0f, s->type->maxHp);
+                    }
+                } else if (!u->buildQueue.empty() && u->buildQueue.front()) {
+                    tName = u->buildQueue.front()->name;
+                    tProg = u->buildProgress / std::max(0.01f, u->buildQueue.front()->buildTime);
                 }
-                float col1W = std::max(barW, blockWidth(name.c_str(), tpx));
-                float w1 = s1.empty() ? 0 : blockWidth(s1.c_str(), tpx);
-                float w2 = s2.empty() ? 0 : blockWidth(s2.c_str(), tpx);
-                float gap = 30 * sc;
-                float total = portW + 10 * sc + col1W + (w1 ? gap + w1 : 0) + (w2 ? gap + w2 : 0);
-                float x = (float(winW) - total) * 0.5f;
-                // Portrait
-                SDL_FRect pr{x, barTop + (float(kBarH) - portH) * 0.5f, portW, portH};
+            }
+
+            // --- UnitInfo1: selected unit ---
+            int ii = guiIdx("UnitImage");
+            if (ii >= 0) {
+                SDL_FRect pr = place(ii);
                 SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
                 SDL_RenderFillRectF(ren_, &pr);
-                SDL_Texture* ic = iconFor(u->type->id);
-                if (!ic) ic = modelIconTex(u->type->id, colorSlot_[localPlayer_ & 7],
-                                           u->type->maxVel > 0);
-                if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &pr);
+                if (u) {
+                    SDL_Texture* ic = iconFor(u->type->id);
+                    if (!ic) ic = modelIconTex(u->type->id, colorSlot_[localPlayer_ & 7],
+                                               u->type->maxVel > 0);
+                    if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &pr);
+                }
                 SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
                 SDL_RenderDrawRectF(ren_, &pr);
-                // Veterancy crest, tucked at the portrait's bottom-left.
-                if (u->veteran > 0) {
+                if (u && u->veteran > 0) {
                     int xi = guiIdxLeft("Experience");
                     int tier = u->veteran >= 7 ? 2 : u->veteran >= 4 ? 1 : 0;
                     if (xi >= 0 && tier < int(guiTex_[xi].size()) && guiTex_[xi][size_t(tier)]) {
-                        float cw = 11 * sc, chh = 22 * sc;
-                        SDL_FRect cr{pr.x + 1, pr.y + pr.h - chh - 1, cw, chh};
+                        SDL_FRect cr{pr.x + 1, pr.y + pr.h - 22 * vs - 1, 11 * vs, 22 * vs};
                         SDL_RenderCopyF(ren_, guiTex_[xi][size_t(tier)], nullptr, &cr);
                     }
                 }
-                x += portW + 10 * sc;
-                // Name over HP/mana bars.
-                float nameY = barTop + float(kBarH) * 0.14f;
-                blockText(name, x, nameY, tpx, {236, 226, 192, 255});
-                float by = nameY + 7 * tpx + 5;
-                drawBar(x, by, barW, barH, u->hp / std::max(1.0f, u->type->maxHp),
-                        {210, 70, 60, 255});
-                if (u->type->maxMana > 0)
-                    drawBar(x, by + barH + 3, barW, barH,
-                            u->mana / std::max(1.0f, u->type->maxMana), {90, 150, 255, 255});
-                x += col1W;
-                float midY = barTop + (float(kBarH) - 7 * tpx) * 0.5f;
-                if (w1) { x += gap; blockText(s1, x, midY, tpx, {170, 205, 255, 255}); x += w1; }
-                if (w2) { x += gap; blockText(s2, x, midY, tpx, {236, 226, 192, 255}); }
             }
+            if (int t1 = guiIdxLeft("UnitText"); u && t1 >= 0) {
+                SDL_FRect nr = place(t1);
+                blockText(u->type->name, nr.x, nr.y, tpx, {236, 226, 192, 255});
+            }
+            bar(guiIdxLeft("HealthBar"), u ? u->hp / std::max(1.0f, u->type->maxHp) : 0.0f,
+                {210, 70, 60, 255});
+            bar(guiIdxLeft("ManaBar"),
+                (u && u->type->maxMana > 0) ? u->mana / u->type->maxMana : 0.0f,
+                {90, 150, 255, 255});
+
+            // --- ActionText: status (or +N MORE for a multi-selection) ---
+            if (int ai = guiIdx("ActionText"); u && ai >= 0) {
+                SDL_FRect ar = place(ai);
+                std::string st = selection_.size() > 1
+                    ? "+" + std::to_string(selection_.size() - 1) + " MORE"
+                    : std::string(unitStatusText(u));
+                blockText(st, ar.x, ar.y, tpx, {170, 205, 255, 255});
+            }
+
+            // --- UnitInfo2: the conjured target ---
+            if (int t2 = guiIdxRight("UnitText"); !tName.empty() && t2 >= 0) {
+                SDL_FRect nr = place(t2);
+                std::transform(tName.begin(), tName.end(), tName.begin(), ::toupper);
+                blockText(tName, nr.x, nr.y, tpx, {236, 226, 192, 255});
+            }
+            bar(guiIdxRight("HealthBar"), std::clamp(tProg, 0.0f, 1.0f), {210, 70, 60, 255});
+            bar(guiIdxRight("ManaBar"), 0.0f, {90, 150, 255, 255});
         }
         return true;
     }
