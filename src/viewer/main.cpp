@@ -543,6 +543,103 @@ public:
         playAt(name, pan, depth);
     }
 
+    // Play the synthesised 10-second disco loop as a positional SFX from (x,z) -- the
+    // Shift+D dance-floor track. Generated in code (no shipped asset) at the mixer's
+    // 11025 Hz mono and cached under "disco", so it pans/fades like any unit sound.
+    void discoAt(float x, float z) {
+        if (!cache_.count("disco")) buildDisco();
+        playWorld("disco", x, z);
+    }
+
+  private:
+    void buildDisco() {
+        constexpr float PI = 3.14159265358979f;
+        const int SR = 11025;
+        const float BPM = 120.0f, beat = 60.0f / BPM, eighth = beat * 0.5f;
+        const int N = int(SR * 10.0f);
+        std::vector<float> buf(size_t(N) + size_t(SR), 0.0f);
+        std::mt19937 rng(1234567u);
+        auto rnd = [&] { return float(rng()) / float(std::mt19937::max()) * 2.0f - 1.0f; };
+        auto place = [&](const std::vector<float>& s, float start) {
+            size_t i = size_t(start * SR);
+            for (size_t k = 0; k < s.size() && i + k < buf.size(); ++k) buf[i + k] += s[k];
+        };
+        auto sawv = [](float f, float t) { float p = f * t; return 2.0f * (p - std::floor(0.5f + p)); };
+        auto n2f = [](float semi) { return 110.0f * std::pow(2.0f, semi / 12.0f); };
+        auto kick = [&] {
+            int n = int(SR * 0.20f); std::vector<float> s(size_t(n), 0.0f); double ph = 0;
+            for (int i = 0; i < n; ++i) { float t = i / float(SR);
+                ph += 2.0 * PI * (110.0f * std::exp(-t * 42.0f) + 46.0f) / SR;
+                s[size_t(i)] = float(std::sin(ph)) * std::exp(-t * 16.0f); } return s; };
+        auto clap = [&] {
+            int n = int(SR * 0.22f); std::vector<float> s(size_t(n), 0.0f); float mx = 1e-6f;
+            for (int i = 0; i < n; ++i) { float t = i / float(SR); float amp = 0.6f * std::exp(-t * 22.0f);
+                for (float off : {0.0f, 0.010f, 0.020f}) { int so = int(off * SR);
+                    if (i >= so) amp += std::exp(-((i - so) / float(SR)) * 90.0f); }
+                s[size_t(i)] = rnd() * amp; mx = std::max(mx, std::fabs(s[size_t(i)])); }
+            for (auto& v : s) v *= 0.5f / mx; return s; };
+        auto hat = [&](bool open) {
+            int n = int(SR * (open ? 0.28f : 0.045f)); std::vector<float> s(size_t(n), 0.0f), nz(size_t(n), 0.0f);
+            for (auto& v : nz) v = rnd();
+            for (int i = 0; i < n; ++i) { float t = i / float(SR); float sm = 0; int c = 0;
+                for (int k = -3; k <= 2; ++k) { int j = i + k; if (j >= 0 && j < n) { sm += nz[size_t(j)]; ++c; } }
+                sm /= std::max(1, c);
+                s[size_t(i)] = (open ? 0.22f : 0.28f) * (nz[size_t(i)] - sm) * std::exp(-t * (open ? 11.0f : 70.0f)); }
+            return s; };
+        auto bass = [&](float f, float L) {
+            int n = int(SR * L); std::vector<float> s(size_t(n), 0.0f); float acc = 0;
+            for (int i = 0; i < n; ++i) { float t = i / float(SR); float x = sawv(f, t) + 0.5f * sawv(f * 0.5f, t);
+                acc += (0.06f + 0.25f * std::exp(-t * 12.0f)) * (x - acc);
+                s[size_t(i)] = 0.55f * acc * std::min(1.0f, t * 200.0f) * std::exp(-t * 3.0f); } return s; };
+        auto stab = [&](const std::vector<float>& fr, float L) {
+            int n = int(SR * L); std::vector<float> s(size_t(n), 0.0f), o(size_t(n), 0.0f);
+            for (int i = 0; i < n; ++i) { float t = i / float(SR); float v = 0;
+                for (float f : fr) v += sawv(f - 0.6f, t) + sawv(f + 0.6f, t);
+                s[size_t(i)] = v / float(fr.size() * 2); }
+            for (int i = 0; i < n; ++i) { float t = i / float(SR); float sm = 0; int c = 0;
+                for (int k = -1; k <= 1; ++k) { int j = i + k; if (j >= 0 && j < n) { sm += s[size_t(j)]; ++c; } }
+                sm /= std::max(1, c);
+                o[size_t(i)] = (0.7f * s[size_t(i)] + 0.3f * (s[size_t(i)] - sm)) * 0.5f * std::exp(-t * 9.0f); }
+            return o; };
+        auto lead = [&](float f, float L) {
+            int n = int(SR * L); std::vector<float> s(size_t(n), 0.0f); double ph = 0;
+            for (int i = 0; i < n; ++i) { float t = i / float(SR);
+                ph += 2.0 * PI * f * (1.0f + 0.006f * std::sin(2 * PI * 6 * t)) / SR;
+                s[size_t(i)] = 0.28f * (float(std::sin(ph)) + 0.3f * float(std::sin(2 * ph))) *
+                               std::min(1.0f, t * 40.0f) * std::min(1.0f, (L - t) * 30.0f); } return s; };
+
+        struct Bar { const char* name; float root; std::vector<float> tones, melo; };
+        auto n = [&](float s) { return n2f(s + 12); };
+        std::vector<Bar> prog = {
+            {"Am", 0, {n(0), n(3), n(7)},   {n(0), n(3), n(7)}},
+            {"F", -4, {n(-4), n(0), n(3)},  {n(-4), n(0), n(3)}},
+            {"C",  3, {n(3), n(7), n(10)},  {n(3), n(7), n(10)}},
+            {"G", -2, {n(-2), n(2), n(5)},  {n(-2), n(2), n(5)}},
+            {"Am", 0, {n(0), n(3), n(7)},   {n(0), n(3), n(7)}},
+        };
+        for (size_t b = 0; b < prog.size(); ++b) {
+            float b0 = float(b) * 4 * beat;
+            for (int k = 0; k < 4; ++k) place(kick(), b0 + k * beat);
+            place(clap(), b0 + beat); place(clap(), b0 + 3 * beat);
+            for (int k = 0; k < 8; ++k) place(hat(k == 7), b0 + k * eighth);
+            float r = n2f(prog[b].root);
+            for (int k = 0; k < 8; ++k) place(bass((k % 2) ? r * 2 : r, eighth * 0.95f), b0 + k * eighth);
+            for (int k : {1, 3, 5, 7}) place(stab(prog[b].tones, eighth * 1.2f), b0 + k * eighth);
+            for (size_t j = 0; j < prog[b].melo.size(); ++j)
+                place(lead(prog[b].melo[j], beat * 0.9f), b0 + (2 + float(j) * 0.66f) * beat);
+        }
+        float mx = 1e-6f;
+        for (int i = 0; i < N; ++i) mx = std::max(mx, std::fabs(buf[size_t(i)]));
+        float g = 1.4f / mx;
+        std::vector<int16_t> pcm(size_t(N), 0);
+        for (int i = 0; i < N; ++i)
+            pcm[size_t(i)] = int16_t(std::clamp(std::tanh(buf[size_t(i)] * g) * 0.9f, -1.0f, 1.0f) * 32767);
+        cache_["disco"] = std::move(pcm);
+        index_["disco"] = "disco";
+    }
+
+  public:
+
     void playAt(const std::string& name, float pan, float depth) {
         std::string n = name;
         std::transform(n.begin(), n.end(), n.begin(), ::tolower);
@@ -1383,6 +1480,25 @@ public:
     // faction playlist once the match starts. Called every frame; only (re)starts the
     // playlist on a state change so it doesn't restart the current track.
     int musicMode_ = 0;   // 0 = none yet, 1 = lobby, 2 = in-game
+    bool discoWas_[8] = {};   // per-player disco state, to fire the track once on start
+
+    // On the rising edge of a player's disco (Shift+D), play the 10s disco loop as a
+    // positional SFX from each of that player's dancing monarchs (enemies only if in
+    // view). It runs alongside the faction music -- a dance-floor track from the unit.
+    void discoSound() {
+        for (int p = 0; p < 8 && p < world_.numPlayers(); ++p) {
+            bool on = world_.discoActive(p);
+            if (on && !discoWas_[p]) {
+                for (const auto& u : world_.units()) {
+                    if (u.player != p || !u.alive() || !isMonarchType(u.type)) continue;
+                    if (!alliedToLocal(p) && !noFog_ && !world_.cellVisible(u.x, u.z)) continue;
+                    sounds_.discoAt(u.x, u.z);
+                }
+            }
+            discoWas_[p] = on;
+        }
+    }
+
     void manageMusic() {
         int want = inLobbyPhase() ? 1 : 2;
         if (want == musicMode_) return;
@@ -2869,6 +2985,7 @@ public:
 
     void draw(int winW, int winH) {
         manageMusic();
+        discoSound();   // fire the disco track from a monarch when its player starts dancing
         if (inLobbyPhase()) {
             // Render the whole lobby at 2x so its text/controls are large and legible;
             // it lays out in the halved logical space, and lbHot/lobbyInput divide the
