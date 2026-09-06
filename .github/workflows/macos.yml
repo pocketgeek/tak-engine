@@ -30,10 +30,16 @@ jobs:
         run: brew install ninja sdl2 jpeg-turbo
 
       - name: Configure
-        # jpeg-turbo (and zlib) are keg-only, so point CMake at the Homebrew prefixes.
+        # Point CMake at Homebrew SDL2, and pin jpeg-turbo explicitly: FindJPEG
+        # otherwise resolves to Mono.framework's ancient libjpeg (whose jpeg_mem_src
+        # lacks the const 2nd arg and fails to compile). CMAKE_FIND_FRAMEWORK=LAST
+        # deprioritises frameworks generally.
         run: >-
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_PREFIX_PATH="$(brew --prefix sdl2);$(brew --prefix jpeg-turbo);$(brew --prefix zlib)"
+          -DCMAKE_FIND_FRAMEWORK=LAST
+          -DCMAKE_PREFIX_PATH="$(brew --prefix sdl2)"
+          -DJPEG_INCLUDE_DIR="$(brew --prefix jpeg-turbo)/include"
+          -DJPEG_LIBRARY="$(brew --prefix jpeg-turbo)/lib/libjpeg.dylib"
 
       - name: Build
         run: cmake --build build
