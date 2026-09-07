@@ -3348,11 +3348,34 @@ public:
         discoSound();     // fire the disco track from a monarch when its player starts dancing
         headbangSound();  // ...and the metal track on headbang
         if (inLobbyPhase()) {
-            // Render the whole lobby at 2x so its text/controls are large and legible;
-            // it lays out in the halved logical space, and lbHot/lobbyInput divide the
-            // mouse by the same scale so clicks still land.
+            // Render the lobby at 2x so its text/controls are large and legible. It
+            // lays out at a fixed design size (kLobbyW x kLobbyH logical) and is
+            // *centred* in the window via a render viewport -- otherwise, on a big
+            // screen, its top-left-anchored layout clusters in the corner with the
+            // chat flung to the far edge. lbHot/lobbyInput undo the scale + offset.
+            float lw = winW / kUiScale, lh = winH / kUiScale;
+            float dw = std::min(lw, kLobbyW), dh = std::min(lh, kLobbyH);
+            lobbyOffX_ = std::floor((lw - dw) * 0.5f);
+            lobbyOffY_ = std::floor((lh - dh) * 0.5f);
+            // Darker surround + a thin frame so the centred lobby reads as a panel.
+            // (SDL_RenderClear ignores the viewport, so the ground-clear lives here,
+            // not in drawLobby.) Drawn in pixel space (scale 1, no viewport).
+            SDL_SetRenderDrawColor(ren_, 8, 9, 13, 255);
+            SDL_RenderClear(ren_);
+            float px = lobbyOffX_ * kUiScale, py = lobbyOffY_ * kUiScale;
+            float pw = dw * kUiScale, ph = dh * kUiScale;
+            SDL_FRect panelBg{px, py, pw, ph};
+            SDL_SetRenderDrawColor(ren_, 16, 18, 26, 255);
+            SDL_RenderFillRectF(ren_, &panelBg);
+            SDL_FRect frame{px - 2, py - 2, pw + 4, ph + 4};
+            SDL_SetRenderDrawColor(ren_, 60, 66, 90, 255);
+            SDL_RenderDrawRectF(ren_, &frame);
+            // Content: scaled + viewport-offset so it draws inside the centred panel.
+            SDL_Rect vp{int(lobbyOffX_), int(lobbyOffY_), int(dw), int(dh)};
             SDL_RenderSetScale(ren_, kUiScale, kUiScale);
-            drawLobby(int(winW / kUiScale), int(winH / kUiScale));
+            SDL_RenderSetViewport(ren_, &vp);
+            drawLobby(int(dw), int(dh));
+            SDL_RenderSetViewport(ren_, nullptr);
             SDL_RenderSetScale(ren_, 1.0f, 1.0f);
             return;
         }
@@ -5746,6 +5769,7 @@ private:
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)
     bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
+    float lobbyOffX_ = 0, lobbyOffY_ = 0;   // lobby centre offset (logical units; set in render)
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
     std::vector<std::pair<std::string, std::string>> mapList_;  // {name, tnt path}, cached
@@ -7851,10 +7875,16 @@ private:
         static const char* n[5] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
         return n[f % 5];
     }
-    // The lobby renders at kUiScale, so hit-test in the same logical space.
+    // The lobby renders at kUiScale, so hit-test in the same logical space. It also
+    // lays out at a fixed design size and is centred (lobbyOffX_/Y_), so undo that
+    // offset too.
     static constexpr float kUiScale = 2.0f;
+    // Lobby design size (logical): the default 1920x1080 window at 2x. On a bigger
+    // window the lobby is centred within this box rather than stretched edge-to-edge.
+    static constexpr float kLobbyW = kWinW / kUiScale;   // 960
+    static constexpr float kLobbyH = kWinH / kUiScale;   // 540
     bool lbHot(const SDL_FRect& r) const {
-        float mx = mouseX_ / kUiScale, my = mouseY_ / kUiScale;
+        float mx = mouseX_ / kUiScale - lobbyOffX_, my = mouseY_ / kUiScale - lobbyOffY_;
         return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
     }
     // A clickable button: panel + centered label; registers its action.
@@ -7901,9 +7931,8 @@ private:
         lobbyHots_.clear();
         // absorb any new chat
         if (mp_) for (auto& m : mp_->takeChat()) chatLog_.push_back(m);
-        // ground
-        SDL_SetRenderDrawColor(ren_, 16, 18, 26, 255);
-        SDL_RenderClear(ren_);
+        // The ground + centred panel frame are painted by the caller (the viewport is
+        // already offset to this panel); RenderClear would ignore the viewport.
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         float cx = winW / 2.0f;
         const char* title = singlePlayer_ ? "SINGLE PLAYER VS AI" : "TA:KINGDOMS  MULTIPLAYER";
@@ -8156,7 +8185,8 @@ private:
         else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
             lbField_ = 0; SDL_StopTextInput();
-            float mx = mouseX_ / kUiScale, my = mouseY_ / kUiScale;   // lobby renders at kUiScale
+            // Undo the lobby's 2x scale AND its centre offset (see the render path).
+            float mx = mouseX_ / kUiScale - lobbyOffX_, my = mouseY_ / kUiScale - lobbyOffY_;
             for (auto& [r, action] : lobbyHots_)
                 if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
                     action(); break;
