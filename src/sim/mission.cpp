@@ -40,8 +40,9 @@ std::pair<std::string, std::string> splitVerb(const std::string& cmd) {
 }  // namespace
 
 MissionScript::MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node& header,
-                             const TypeRegistry& reg, int humanPlayer, std::string origin)
-    : reg_(reg), human_(humanPlayer), origin_(std::move(origin)) {
+                             const TypeRegistry& reg, int humanPlayer, std::string origin,
+                             std::vector<int> playerMap)
+    : reg_(reg), human_(humanPlayer), origin_(std::move(origin)), playerMap_(std::move(playerMap)) {
     try {
         cob_ = cob::load(cobBytes, origin_);
     } catch (const std::exception& e) {
@@ -137,8 +138,13 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
     if (!t) { std::fprintf(stderr, "mission %s: create unknown type '%s'\n", origin_.c_str(), type.c_str()); return 0; }
     int player, cx, cy;
     if (a.size() >= 3)      { player = a[0]; cx = a[1]; cy = a[2]; }   // (player, x, y), player 0-based
-    else if (a.size() >= 2) { player = 0;    cx = a[0]; cy = a[1]; }   // default player (TODO: from header)
+    else if (a.size() >= 2) { player = 0;    cx = a[0]; cy = a[1]; }   // default -> the human
     else return 0;
+    // The script's 0-based player is a .ota id (0 == Player1); map it to the World slot
+    // the placements used, so scripted units land on the right side.
+    int otaN = player + 1;
+    if (otaN >= 1 && otaN < int(playerMap_.size()) && playerMap_[size_t(otaN)] >= 0)
+        player = playerMap_[size_t(otaN)];
     player = std::clamp(player, 0, w.numPlayers() - 1);
     int id = w.spawn(t, cellToWorld(float(cx)), cellToWorld(float(cy)), 0.0f, player);
     if (id >= 0) getUnitContext_ = id;

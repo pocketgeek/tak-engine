@@ -32,8 +32,11 @@ public:
     // cobBytes: the mission `.cob`. header: the parsed `.ota [GlobalHeader]` node (for the
     // win/lose conditions + the default script player). reg: type registry (name lookup).
     // humanPlayer: the campaign player's slot (0-based). origin: for diagnostics.
+    // playerMap: .ota player id (1-based) -> World slot, so the script's Create player
+    // refs (0-based .ota) land in the same compacted slots as the placed units.
     MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node& header,
-                  const TypeRegistry& reg, int humanPlayer, std::string origin);
+                  const TypeRegistry& reg, int humanPlayer, std::string origin,
+                  std::vector<int> playerMap = {});
 
     bool ok() const { return vm_ != nullptr; }
 
@@ -90,6 +93,7 @@ private:
     World* world_ = nullptr;   // set on each entry (start/step/unit*) for the VM callbacks
     int human_;
     std::string origin_;
+    std::vector<int> playerMap_;   // .ota player (1-based) -> World slot (empty = identity)
 
     std::array<Region, 16> regions_{};
     std::array<std::unordered_set<int>, 16> inside_{};   // edge-triggered: units currently in region

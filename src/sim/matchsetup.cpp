@@ -330,25 +330,37 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     const tdf::Node* gh = root.child("globalheader");
     if (!gh) { std::fprintf(stderr, "setupMission: %s no [GlobalHeader]\n", stem.c_str()); return false; }
 
-    // Players from Player<N> defs (1-based .ota slots -> 0-based World players). First-pass
-    // diplomacy: human + allies + neutrals on team 0, explicit opponents on team 1, so the
-    // human only auto-fights opponents. Human = the first interactive (non-AI) slot.
+    // Map the .ota's sparse, 1-based Player<N> ids to compact 0-based World slots in
+    // ascending N order, so gaps (e.g. Player1,2,9,10) don't collide when clamped into
+    // kMaxPlayers slots. The SAME map applies to the placed units and to the script's
+    // Create player refs (passed to MissionScript). Diplomacy from each player's role:
+    // opponents fight the human (team 1); the human, allies and neutrals share team 0,
+    // so the human never auto-attacks them. Human = the first interactive (non-AI) slot.
+    std::vector<int> otaToWorld(17, -1);   // [.ota player 1..16] -> world slot
+    std::vector<MatchSlot> slots;
     int human = 0;
-    std::vector<MatchSlot> slots(kMaxPlayers);
-    const char* kingdoms[5] = {"aramon", "taros", "veruna", "zhon", "creon"};
     bool foundHuman = false;
-    for (int n = 1; n <= kMaxPlayers; ++n) {
+    const char* kingdoms[5] = {"aramon", "taros", "veruna", "zhon", "creon"};
+    for (int n = 1; n <= 16 && int(slots.size()) < kMaxPlayers; ++n) {
         const std::string* v = gh->value("player" + std::to_string(n));
         if (!v) continue;
         std::string def = *v;
         std::transform(def.begin(), def.end(), def.begin(), ::tolower);
-        bool ai = def.find("strategic") != std::string::npos || def.find("passive") != std::string::npos;
-        MatchSlot& s = slots[size_t(n - 1)];
+        int slot = int(slots.size());
+        otaToWorld[n] = slot;
+        MatchSlot s;
         s.used = false;   // no monarch spawn -- units come from [Map Data][units]
         s.team = def.find("opponent") != std::string::npos ? 1 : 0;
         for (int f = 0; f < 5; ++f) if (def.find(kingdoms[f]) != std::string::npos) s.faction = f;
-        if (!ai && !foundHuman) { human = n - 1; foundHuman = true; }
+        slots.push_back(s);
+        bool ai = def.find("strategic") != std::string::npos || def.find("passive") != std::string::npos;
+        if (!ai && !foundHuman) { human = slot; foundHuman = true; }
     }
+    if (slots.empty()) { slots.push_back(MatchSlot{}); otaToWorld[1] = 0; }   // at least the human
+    auto mapPlayer = [&](int otaP) {
+        if (otaP >= 1 && otaP <= 16 && otaToWorld[size_t(otaP)] >= 0) return otaToWorld[size_t(otaP)];
+        return std::clamp(otaP - 1, 0, int(slots.size()) - 1);
+    };
 
     MatchConfig cfg;
     cfg.vfs = &vfs;
@@ -370,7 +382,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                 if (!t) continue;
                 float x = float(u.numberOr("xpos", 0)) * 16 + 8;
                 float z = float(u.numberOr("zpos", 0)) * 16 + 8;
-                int player = std::clamp(int(u.numberOr("player", 1)) - 1, 0, kMaxPlayers - 1);
+                int player = mapPlayer(int(u.numberOr("player", 1)));
                 float ang = float(u.numberOr("angle", 0)) * (3.14159265f / 180.0f);
                 int id = world.spawn(t, x, z, ang, player);
                 if (id >= 0) {
@@ -381,7 +393,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
             }
 
     // Attach + start the in-sim "god" script (its spawns/triggers run from World::tick).
-    world.setMission(std::make_unique<MissionScript>(vfs.read(base + ".cob"), *gh, reg, human, stem));
+    world.setMission(std::make_unique<MissionScript>(vfs.read(base + ".cob"), *gh, reg, human, stem, otaToWorld));
     humanOut = human;
     std::fprintf(stderr, "setupMission: %s -- %d placed units, human=player%d\n",
                  stem.c_str(), spawned, human);
