@@ -11,3 +11,23 @@ compile_commands.json
 # Game-derived HPI archives dropped at the repo root (never commit)
 /*.hpi
 /*.HPI
+
+# Extracted retail data — hpitool/gaftool/etc. dump into the working dir, and
+# accidental extraction outdirs have been committed before (see CLAUDE.md). Ignore
+# the known offenders plus retail asset formats anywhere so they can't slip back in.
+# (overrides/click.hpi is an intentional, project-authored override and stays tracked.)
+/guis/
+/anims/
+/Cay.tnt/
+/Keys.TDF
+/sdlaudio.raw
+*.gaf
+*.taf
+*.tnt
+*.cob
+*.tdo
+*.3do
+*.icd
+*.gp3
+*.ufo
+!overrides/click.hpi
