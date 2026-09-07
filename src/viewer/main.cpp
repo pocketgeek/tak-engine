@@ -15,6 +15,7 @@
 #include "net/netcompat.h"
 
 #include "campaign/campaign.h"
+#include "viewer/briefingscreen.h"
 #include "cob/vm.h"
 #include "crt/crt.h"
 #include "gaf/gaf.h"
@@ -9909,6 +9910,26 @@ int main(int argc, char** argv) {
             serverHost = sv.empty() ? std::string("127.0.0.1") : sv;
         } else {
             menuInteractive = true;   // single-player: local server, but stop in the lobby
+        }
+    }
+
+    // Campaign mission: play the intro movie, then the briefing, before spinning up
+    // the server and world. A BACK from the briefing skips the launch -- back to the
+    // front-end for a menu pick, or exit for a --campaign launch.
+    if (!campaignStem.empty() && !mpHeadless) {
+        std::string title = "MISSION";
+        for (const auto& c : tak::loadCampaigns(vfs))
+            if (c.id == campaignId)
+                for (int i = 0; i < c.count(); ++i)
+                    if (c.missions[size_t(i)].stem == campaignStem)
+                        title = "MISSION " + std::to_string(i + 1);
+        menuMusic.setVolume(0, 0);   // hush the front-end track under the movie's own audio
+        tak::MainMenu::playIntro(ren, dataRoot, (campaignStem + ".bik").c_str());
+        menuMusic.setVolume(settings.masterVol, settings.bgmVol);
+        if (!tak::BriefingScreen::run(ren, vfs, campaignStem, title, &settings, &menuMusic)) {
+            campaignStem.clear(); campaignId.clear();
+            if (fromMenu) continue;   // back to the front-end picker
+            quitApp = true; break;    // a --campaign launch has nowhere to go back to
         }
     }
 

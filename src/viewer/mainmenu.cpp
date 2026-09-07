@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <cstring>
 #include <cctype>
 #include <cmath>
 #include <filesystem>
@@ -654,6 +655,9 @@ const std::string& MainMenu::chosenCampaign() const { return d_->chosenCampaign_
 
 void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const char* nameLower) {
     if (!video::BinkVideo::available() || install.empty() || !ren) return;
+    // Headless / dummy video: no display to play to (and no input to skip it), so a
+    // movie would just block for its full length. Skip it.
+    if (const char* drv = SDL_GetCurrentVideoDriver(); drv && !std::strcmp(drv, "dummy")) return;
     // Locate <install>/Movies/<name> case-insensitively (retail ships LOGO.BIK etc.).
     std::string path;
     std::error_code ec;

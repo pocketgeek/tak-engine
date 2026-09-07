@@ -1,0 +1,181 @@
+#include "viewer/briefingscreen.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <string>
+#include <vector>
+
+#include "util/png.h"
+#include "viewer/blockfont.h"
+#include "viewer/cursors.h"
+#include "viewer/menumusic.h"
+#include "viewer/settings.h"
+
+namespace tak {
+
+namespace {
+
+// Split the objectives .txt into lines, dropping the leading bullet glyph (retail
+// prefixes each with CP1252 0x95) and surrounding whitespace. Blank lines are dropped.
+std::vector<std::string> loadObjectives(const hpi::Vfs& vfs, const std::string& stem) {
+    std::vector<std::string> out;
+    std::string path = "missions/" + stem + ".txt";
+    if (!vfs.has(path)) return out;
+    std::vector<uint8_t> bytes = vfs.read(path);
+    std::string cur;
+    auto flush = [&] {
+        size_t a = cur.find_first_not_of(" \t");
+        // skip the bullet + spaces: drop any leading non-alphanumeric bytes
+        while (a != std::string::npos && a < cur.size() &&
+               !std::isalnum((unsigned char)cur[a]) && cur[a] != '"')
+            ++a;
+        size_t b = cur.find_last_not_of(" \t\r");
+        if (a != std::string::npos && b != std::string::npos && b >= a)
+            out.push_back(cur.substr(a, b - a + 1));
+        cur.clear();
+    };
+    for (uint8_t c : bytes) {
+        if (c == '\n') flush();
+        else if (c != '\r') cur += char(c);
+    }
+    flush();
+    return out;
+}
+
+// Greedy word-wrap `s` to at most `maxChars` per line (block font is fixed-width).
+std::vector<std::string> wrap(const std::string& s, int maxChars) {
+    std::vector<std::string> lines;
+    std::string line, word;
+    auto push = [&] {
+        if (word.empty()) return;
+        if (line.empty()) line = word;
+        else if (int(line.size() + 1 + word.size()) <= maxChars) line += " " + word;
+        else { lines.push_back(line); line = word; }
+        word.clear();
+    };
+    for (char c : s) { if (c == ' ') push(); else word += c; }
+    push();
+    if (!line.empty()) lines.push_back(line);
+    if (lines.empty()) lines.push_back("");
+    return lines;
+}
+
+bool inRect(const SDL_FRect& r, float x, float y) {
+    return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+}  // namespace
+
+bool BriefingScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, const std::string& stem,
+                         const std::string& title, Settings* settings, MenuMusic* music) {
+    std::vector<std::string> objectives = loadObjectives(vfs, stem);
+
+    CursorSet cursors;
+    cursors.load(ren, vfs);
+    SDL_ShowCursor(cursors.ok() ? SDL_DISABLE : SDL_ENABLE);
+
+    // Drop any click queued by the screen we came from (movie / picker fires on DOWN).
+    SDL_PumpEvents();
+    SDL_FlushEvents(SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP);
+
+    for (;;) {
+        int w = 0, h = 0;
+        SDL_GetRendererOutputSize(ren, &w, &h);
+        float u = std::clamp(std::min(w / 1280.0f, h / 720.0f), 1.0f, 3.0f);
+
+        float panelW = std::min(900 * u, w * 0.86f);
+        float panelH = std::min(620 * u, h * 0.9f);
+        SDL_FRect panel{(w - panelW) / 2, (h - panelH) / 2, panelW, panelH};
+        float bw = 210 * u, bh = 38 * u, gap = 30 * u;
+        float by = panel.y + panel.h - 62 * u;
+        SDL_FRect beginRect{panel.x + panel.w / 2 + gap / 2, by, bw, bh};
+        SDL_FRect backRect{panel.x + panel.w / 2 - gap / 2 - bw, by, bw, bh};
+
+        // ---- events ----
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) continue;   // ignore the WM close button
+            if (e.type == SDL_KEYDOWN) {
+                SDL_Keycode k = e.key.keysym.sym;
+                if (k == SDLK_ESCAPE) return false;
+                if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) return true;
+            }
+            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                float mx = float(e.button.x), my = float(e.button.y);
+                if (inRect(beginRect, mx, my)) return true;
+                if (inRect(backRect, mx, my)) return false;
+            }
+        }
+        if (music) music->poll();
+
+        // ---- draw ----
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ren, 14, 15, 20, 255);
+        SDL_RenderClear(ren);
+        SDL_SetRenderDrawColor(ren, 26, 28, 36, 255);
+        SDL_RenderFillRectF(ren, &panel);
+        SDL_SetRenderDrawColor(ren, 96, 106, 138, 255);
+        SDL_RenderDrawRectF(ren, &panel);
+
+        float tpx = 3.2f * u;
+        drawBlockText(ren, title, panel.x + (panel.w - blockTextWidth(title, tpx)) / 2,
+                      panel.y + 26 * u, tpx, {236, 226, 190, 255});
+        // divider
+        SDL_FRect rule{panel.x + 40 * u, panel.y + 26 * u + 7 * tpx + 16 * u, panel.w - 80 * u, 2 * u};
+        SDL_SetRenderDrawColor(ren, 120, 100, 60, 255);
+        SDL_RenderFillRectF(ren, &rule);
+
+        float opx = 1.6f * u;
+        const char* head = "OBJECTIVES";
+        float y = rule.y + 22 * u;
+        drawBlockText(ren, head, panel.x + 44 * u, y, opx, {200, 170, 110, 255});
+        y += 7 * opx + 20 * u;
+
+        float bpx = 1.7f * u;
+        int maxChars = int((panel.w - 110 * u) / (6 * bpx));
+        if (objectives.empty()) {
+            drawBlockText(ren, "(No briefing text.)", panel.x + 60 * u, y, bpx, {150, 154, 168, 255});
+        }
+        for (const std::string& obj : objectives) {
+            // bullet
+            SDL_FRect dot{panel.x + 52 * u, y + 2 * u, 5 * u, 5 * u};
+            SDL_SetRenderDrawColor(ren, 210, 180, 90, 255);
+            SDL_RenderFillRectF(ren, &dot);
+            for (const std::string& ln : wrap(obj, maxChars)) {
+                drawBlockText(ren, ln, panel.x + 70 * u, y, bpx, {214, 220, 235, 255});
+                y += 7 * bpx + 8 * u;
+            }
+            y += 6 * u;
+        }
+
+        // buttons
+        auto button = [&](const SDL_FRect& r, const char* label, bool accent) {
+            SDL_SetRenderDrawColor(ren, accent ? 70 : 52, accent ? 104 : 56, accent ? 70 : 70, 255);
+            SDL_RenderFillRectF(ren, &r);
+            SDL_SetRenderDrawColor(ren, accent ? 130 : 116, accent ? 180 : 124, accent ? 130 : 150, 255);
+            SDL_RenderDrawRectF(ren, &r);
+            float px = 1.8f * u;
+            drawBlockText(ren, label, r.x + (r.w - blockTextWidth(label, px)) / 2,
+                          r.y + (r.h - 7 * px) / 2, px, {224, 230, 242, 255});
+        };
+        button(backRect, "BACK", false);
+        button(beginRect, "BEGIN MISSION", true);
+
+        if (cursors.ok()) {
+            int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
+            cursors.draw(ren, CursorId::Normal, mx, my, settings ? settings->cursorScale : 4);
+        }
+        // Debug: TAK_SHOT_BRIEFING captures one frame for tests, then begins.
+        if (const char* sp = std::getenv("TAK_SHOT_BRIEFING")) {
+            std::vector<uint8_t> px(size_t(w) * size_t(h) * 4);
+            if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), w * 4) == 0)
+                png::write(sp, w, h, px);
+            return true;
+        }
+        SDL_RenderPresent(ren);
+        SDL_Delay(8);
+    }
+}
+
+}  // namespace tak
