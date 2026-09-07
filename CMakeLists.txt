@@ -30,6 +30,7 @@ add_library(tak-formats
   src/sim/sim.cpp
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
+  src/sim/mission.cpp
   src/crt/crt.cpp
   src/gui/gui.cpp
   src/net/protocol.cpp
@@ -81,6 +82,9 @@ target_link_libraries(gaftool PRIVATE tak-formats)
 
 add_executable(tnttool tools/tnttool.cpp)
 target_link_libraries(tnttool PRIVATE tak-formats)
+
+add_executable(missiontool tools/missiontool.cpp)
+target_link_libraries(missiontool PRIVATE tak-formats)
 
 # --- Viewer (needs SDL2; skipped with a warning if unavailable) ---------------
 

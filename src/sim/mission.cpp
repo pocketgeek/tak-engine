@@ -1,0 +1,340 @@
+#include "sim/mission.h"
+
+#include "sim/sim.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdio>
+
+namespace tak::sim {
+
+namespace {
+
+std::string lower(std::string s) {
+    for (char& c : s) c = char(std::tolower((unsigned char)c));
+    return s;
+}
+bool ieq(const std::string& a, const char* b) {
+    size_t n = 0;
+    for (; a.size() > n && b[n]; ++n)
+        if (std::tolower((unsigned char)a[n]) != std::tolower((unsigned char)b[n])) return false;
+    return n == a.size() && b[n] == '\0';
+}
+// Deterministic per-type numeric id for GetUtype / GET_UNIT_VALUE(7) comparisons
+// (FNV-1a of the lowercased type id, so both peers agree without an assignment order).
+int32_t typeHash(const UnitType* t) {
+    if (!t) return 0;
+    uint32_t h = 2166136261u;
+    for (unsigned char c : t->id) { h ^= std::tolower(c); h *= 16777619u; }
+    return int32_t(h & 0x7fffffff) | 1;   // never 0
+}
+// Split "Verb rest of the string" into the leading verb and the remainder.
+std::pair<std::string, std::string> splitVerb(const std::string& cmd) {
+    size_t sp = cmd.find(' ');
+    if (sp == std::string::npos) return {cmd, {}};
+    return {cmd.substr(0, sp), cmd.substr(sp + 1)};
+}
+
+}  // namespace
+
+MissionScript::MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node& header,
+                             const TypeRegistry& reg, int humanPlayer, std::string origin)
+    : reg_(reg), human_(humanPlayer), origin_(std::move(origin)) {
+    try {
+        cob_ = cob::load(cobBytes, origin_);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "mission: cob load failed (%s): %s\n", origin_.c_str(), e.what());
+        return;
+    }
+    vm_ = std::make_unique<cob::Vm>(cob_);
+    vm_->onMapCommand = [this](int nameIdx, const std::vector<int32_t>& a) {
+        return mapCommand(*world_, nameIdx, a);
+    };
+    vm_->onGet = [this](int32_t valId, const std::vector<int32_t>& a) {
+        return getValue(*world_, valId, a);
+    };
+    vm_->onSetUnitValue = [this](int32_t valId, int32_t v) { setUnitValue(valId, v); };
+    parseConditions(header);
+}
+
+const UnitType* MissionScript::findType(const std::string& name) const {
+    return reg_.find(lower(name));
+}
+
+// ---- lifecycle -------------------------------------------------------------
+
+void MissionScript::start(World& w) {
+    if (!vm_ || started_) return;
+    started_ = true;
+    world_ = &w;
+    vm_->start("Start");
+}
+
+void MissionScript::step(World& w, float dt) {
+    if (!vm_) return;
+    world_ = &w;
+    vm_->tick(dt);
+    clock_ += dt;
+    sweepTriggers(w);
+    if (outcome_ == 0) evalConditions(w, dt);
+}
+
+void MissionScript::unitBuilt(World& w, int id) {
+    if (!vm_ || cob_.scriptIndex("UnitCreated") < 0) return;
+    world_ = &w; getUnitContext_ = id;
+    vm_->start("UnitCreated", {id, 0});
+}
+
+void MissionScript::unitDied(World& w, int id) {
+    if (!vm_ || cob_.scriptIndex("UnitDestroyed") < 0) return;
+    world_ = &w; getUnitContext_ = id;
+    vm_->start("UnitDestroyed", {id});
+}
+
+// ---- MAP_COMMAND dispatch (on the resolved verb string) --------------------
+
+int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32_t>& a) {
+    auto [verb, rest] = splitVerb(cob_.name(uint32_t(nameIdx)));
+    if (ieq(verb, "create"))        return doCreate(w, rest, a);
+    if (ieq(verb, "setmission"))  { if (!a.empty()) applyOrders(w, a[0], rest); return 0; }
+    if (ieq(verb, "settrigger")) {
+        if (!a.empty() && a[0] >= 0 && a[0] < 16) {
+            Region& r = regions_[size_t(a[0])];
+            r.armed = true;
+            if (a.size() >= 5) { r.rect = true;  r.x = cellToWorld(float(a[1])); r.z = cellToWorld(float(a[2]));
+                                                 r.x2 = cellToWorld(float(a[3])); r.z2 = cellToWorld(float(a[4])); }
+            else if (a.size() >= 4) { r.rect = false; r.x = cellToWorld(float(a[1])); r.z = cellToWorld(float(a[2]));
+                                                       r.r = float(a[3]) * 16.0f; }
+            inside_[size_t(a[0])].clear();
+        }
+        return 0;
+    }
+    if (ieq(verb, "removetrigger")) { if (!a.empty() && a[0] >= 0 && a[0] < 16) regions_[size_t(a[0])].armed = false; return 0; }
+    if (ieq(verb, "getutype"))      return typeHash(findType(rest));
+    if (ieq(verb, "setattribute")) { if (a.size() >= 2) doSetAttribute(w, rest, a[0], a[1]); return 0; }
+    if (ieq(verb, "writevalue"))   { if (!a.empty()) vars_[lower(rest)] = a[0]; return 0; }
+    if (ieq(verb, "readvalue"))    { auto it = vars_.find(lower(rest)); return it != vars_.end() ? it->second : 0; }
+    if (ieq(verb, "capture"))      { if (!a.empty()) if (Unit* u = w.unit(a[0])) u->player = a.size() >= 2 ? a[1] : human_; return 0; }
+    if (ieq(verb, "kill"))         { if (!a.empty()) if (Unit* u = w.unit(a[0])) u->hp = 0; return 0; }
+    if (ieq(verb, "screenshake"))  return 0;   // cosmetic (TODO: viewer hook)
+    return 0;
+}
+
+int32_t MissionScript::doCreate(World& w, const std::string& type, const std::vector<int32_t>& a) {
+    const UnitType* t = findType(type);
+    if (!t) { std::fprintf(stderr, "mission %s: create unknown type '%s'\n", origin_.c_str(), type.c_str()); return 0; }
+    int player, cx, cy;
+    if (a.size() >= 3)      { player = a[0]; cx = a[1]; cy = a[2]; }   // (player, x, y), player 0-based
+    else if (a.size() >= 2) { player = 0;    cx = a[0]; cy = a[1]; }   // default player (TODO: from header)
+    else return 0;
+    player = std::clamp(player, 0, w.numPlayers() - 1);
+    int id = w.spawn(t, cellToWorld(float(cx)), cellToWorld(float(cy)), 0.0f, player);
+    if (id >= 0) getUnitContext_ = id;
+    return id >= 0 ? id : 0;
+}
+
+// SetMission order-queue mini-language (see docs/campaign-design.md). Implements the
+// common tokens; the rarer ones (b/v/c/g/i/u/r) and inter-order WAIT pacing are TODO.
+void MissionScript::applyOrders(World& w, int unitId, const std::string& orders) {
+    Unit* u = w.unit(unitId);
+    if (!u) return;
+    bool queue = false;
+    size_t i = 0;
+    auto skipsp = [&] { while (i < orders.size() && (orders[i] == ' ' || orders[i] == ',')) ++i; };
+    auto num = [&]() -> float {
+        skipsp(); size_t j = i;
+        while (i < orders.size() && orders[i] != ' ' && orders[i] != ',') ++i;
+        return orders.size() > j ? std::strtof(orders.substr(j, i - j).c_str(), nullptr) : 0.0f;
+    };
+    auto word = [&]() -> std::string {
+        skipsp(); size_t j = i;
+        while (i < orders.size() && orders[i] != ' ' && orders[i] != ',') ++i;
+        return orders.substr(j, i - j);
+    };
+    while (i < orders.size()) {
+        skipsp();
+        if (i >= orders.size()) break;
+        char c = char(std::tolower((unsigned char)orders[i]));
+        char c2 = i + 1 < orders.size() ? char(std::tolower((unsigned char)orders[i + 1])) : 0;
+        ++i;
+        if (c == 'm') {                                   // m X Y  (move) / ma X Y (move-attack)
+            bool atk = (c2 == 'a'); if (atk) ++i;
+            float x = num(), y = num();
+            if (atk) w.attackMove(unitId, cellToWorld(x), cellToWorld(y), queue);
+            else     w.order(unitId, cellToWorld(x), cellToWorld(y), queue);
+            queue = true;
+        } else if (c == 'a') {                            // a TYPE (attack type) / a X Y (attack ground)
+            skipsp();
+            if (i < orders.size() && (std::isalpha((unsigned char)orders[i]) || orders[i] == '_')) {
+                std::string ty = word();
+                if (const UnitType* t = findType(ty)) {   // nearest enemy of that type
+                    int best = -1; float bd = 1e18f;
+                    for (const auto& e : w.units())
+                        if (e.alive() && e.type == t && !w.allied(e.player, u->player)) {
+                            float dx = e.x - u->x, dz = e.z - u->z, d = dx * dx + dz * dz;
+                            if (d < bd) { bd = d; best = e.id; }
+                        }
+                    if (best >= 0) { w.attack(unitId, best, queue); queue = true; }
+                }
+            } else {
+                float x = num(), y = num();
+                w.attackMove(unitId, cellToWorld(x), cellToWorld(y), queue);
+                queue = true;
+            }
+        } else if (c == 'p') {                            // p X Y [Z] (patrol/path)
+            float x = num(), y = num();
+            w.order(unitId, cellToWorld(x), cellToWorld(y), queue); queue = true;
+        } else if (c == 's') {                            // hand the unit to the human player
+            u->player = human_;
+        } else if (c == 'd') {                            // self-destruct / remove
+            u->hp = 0;
+        } else if (c == 'w') {                            // w N / wa: TODO inter-order wait pacing
+            if (c2 == 'a') ++i; else num();
+        } else if (c == 'o' || c == 'v') {                // stance / scalar: TODO
+            num(); if (c == 'o') { skipsp(); if (i < orders.size() && std::isdigit((unsigned char)orders[i])) num(); }
+        } else {
+            word();                                       // skip unrecognised token's operands
+        }
+    }
+}
+
+void MissionScript::doSetAttribute(World& w, const std::string& sub, int unitId, int pct) {
+    Unit* u = w.unit(unitId);
+    if (!u || !u->type) return;
+    float f = float(pct) / 100.0f;
+    if (ieq(sub, "healthpercentage"))     u->hp = u->type->maxHp * f;
+    else if (ieq(sub, "manapercentage"))  u->mana = u->type->maxMana * f;
+    else if (ieq(sub, "armorpercentage")) u->armBuff = f;      // live armour multiplier
+    else if (ieq(sub, "attackpercentage")) u->atkBuff = f;
+}
+
+// ---- GET / SET -------------------------------------------------------------
+
+int32_t MissionScript::getValue(World& w, int32_t valId, const std::vector<int32_t>&) {
+    if (valId == 7) {   // the context unit's type id
+        if (Unit* u = w.unit(getUnitContext_)) return typeHash(u->type);
+        return 0;
+    }
+    return 0;   // valId 30 (roster index) etc. -> TODO
+}
+
+void MissionScript::setUnitValue(int32_t valId, int32_t value) {
+    if (valId == 2) outcome_ = value ? 1 : -1;   // scripted force victory / defeat
+}
+
+// ---- triggers --------------------------------------------------------------
+
+void MissionScript::sweepTriggers(World& w) {
+    if (cob_.scriptIndex("TriggerHit") < 0) return;
+    for (size_t rid = 0; rid < regions_.size(); ++rid) {
+        const Region& r = regions_[rid];
+        if (!r.armed) continue;
+        auto& occ = inside_[rid];
+        std::unordered_set<int> now;
+        for (const auto& u : w.units()) {
+            if (!u.alive() || u.embarked()) continue;
+            bool in = r.rect ? (u.x >= std::min(r.x, r.x2) && u.x <= std::max(r.x, r.x2) &&
+                                u.z >= std::min(r.z, r.z2) && u.z <= std::max(r.z, r.z2))
+                             : ((u.x - r.x) * (u.x - r.x) + (u.z - r.z) * (u.z - r.z) <= r.r * r.r);
+            if (!in) continue;
+            now.insert(u.id);
+            if (!occ.count(u.id)) {   // edge: newly entered -> fire the script once
+                getUnitContext_ = u.id;
+                vm_->start("TriggerHit", {int32_t(rid), u.id, u.player});
+                if (outcome_ != 0) return;
+            }
+        }
+        occ = std::move(now);
+    }
+}
+
+// ---- data-driven win/lose conditions --------------------------------------
+
+void MissionScript::parseConditions(const tak::tdf::Node& h) {
+    auto add = [&](Cond::Kind k, bool vic, const UnitType* t, float a, float b, float c, float d) {
+        conds_.push_back({k, t, a, b, c, d, vic});
+    };
+    // Each key appears at most once per header; parse the ones we model.
+    auto has = [&](const char* key) { return h.value(key) != nullptr; };
+    auto str = [&](const char* key) { return h.valueOr(key, ""); };
+    // Comma-separated arg list "TYPE, x, z, r": the (optional) name token -> `type`,
+    // the numbers packed into out[0..] in order (independent of the type's position).
+    auto args = [&](const std::string& v, std::string& type, float out[4]) {
+        std::string cur; int ni = 0; type.clear();
+        auto flush = [&] {
+            size_t a = cur.find_first_not_of(" \t"), b = cur.find_last_not_of(" \t");
+            std::string t = a == std::string::npos ? "" : cur.substr(a, b - a + 1);
+            cur.clear();
+            if (t.empty()) return;
+            if (!std::isdigit((unsigned char)t[0]) && t[0] != '-') type = t;
+            else if (ni < 4) out[ni++] = std::strtof(t.c_str(), nullptr);
+        };
+        for (char ch : v) { if (ch == ',') flush(); else cur += ch; }
+        flush();
+    };
+    float a[4] = {0, 0, 0, 0};
+    std::string ty;
+    if (has("MoveUnitToRadius")) { args(str("MoveUnitToRadius"), ty, a); add(Cond::MoveUnitToRadius, true, findType(ty), a[0], a[1], a[2], 0); }
+    if (has("KillEnemyCommander")) add(Cond::KillEnemyCommander, true, nullptr, 0, 0, 0, 0);
+    if (has("DestroyAllUnits"))    add(Cond::DestroyAllUnits, true, nullptr, 0, 0, 0, 0);
+    if (has("KillAllMobileUnits")) add(Cond::KillAllMobileUnits, true, nullptr, 0, 0, 0, 0);
+    if (has("KillAllOfType"))      add(Cond::KillAllOfType, true, findType(str("KillAllOfType")), 0, 0, 0, 0);
+    if (has("KillUnitType"))       { args(str("KillUnitType"), ty, a); add(Cond::KillUnitType, true, findType(ty), a[0], 0, 0, 0); }
+    if (has("VictoryTimerRunsOut")) add(Cond::VictoryTimerRunsOut, true, nullptr, std::strtof(str("VictoryTimerRunsOut").c_str(), nullptr), 0, 0, 0);
+    if (has("CommanderKilled"))    add(Cond::CommanderKilled, false, nullptr, 0, 0, 0, 0);
+    if (has("AllUnitsKilled"))     add(Cond::AllUnitsKilled, false, nullptr, 0, 0, 0, 0);
+    if (has("DeathTimerRunsOut"))  add(Cond::DeathTimerRunsOut, false, nullptr, std::strtof(str("DeathTimerRunsOut").c_str(), nullptr), 0, 0, 0);
+}
+
+void MissionScript::evalConditions(World& w, float) {
+    auto enemyAliveMobile = [&](bool mobileOnly) {
+        for (const auto& u : w.units())
+            if (u.alive() && !w.allied(u.player, human_) && (!mobileOnly || (u.type && u.type->canMove)))
+                return true;
+        return false;
+    };
+    auto humanHasAnyMobile = [&] {
+        for (const auto& u : w.units())
+            if (u.alive() && u.player == human_ && u.type && u.type->canMove) return true;
+        return false;
+    };
+    for (const Cond& c : conds_) {
+        bool met = false;
+        switch (c.kind) {
+            case Cond::MoveUnitToRadius: {   // a human-owned unit of c.type within c.c cells of (c.a,c.b)
+                float cx = cellToWorld(c.a), cz = cellToWorld(c.b), rr = c.c * 16.0f;
+                for (const auto& u : w.units())
+                    if (u.alive() && u.type == c.type &&
+                        (u.x - cx) * (u.x - cx) + (u.z - cz) * (u.z - cz) <= rr * rr) { met = true; break; }
+                break;
+            }
+            case Cond::DestroyAllUnits:    met = !enemyAliveMobile(false); break;
+            case Cond::KillAllMobileUnits: met = !enemyAliveMobile(true);  break;
+            case Cond::KillAllOfType: {
+                met = true;
+                for (const auto& u : w.units())
+                    if (u.alive() && u.type == c.type && !w.allied(u.player, human_)) { met = false; break; }
+                break;
+            }
+            case Cond::VictoryTimerRunsOut: met = clock_ >= c.a; break;
+            case Cond::CommanderKilled:
+            case Cond::AllUnitsKilled:      met = !humanHasAnyMobile(); break;   // TODO commander-specific
+            case Cond::DeathTimerRunsOut:   met = clock_ >= c.a; break;
+            default: break;   // KillEnemyCommander / passes-X etc. -> TODO
+        }
+        if (met) { outcome_ = c.victory ? 1 : -1; return; }
+    }
+}
+
+// ---- lockstep hash ---------------------------------------------------------
+
+void MissionScript::foldHash(uint64_t& h) const {
+    auto mix = [&](uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
+    mix(uint64_t(int64_t(outcome_)));
+    for (const Region& r : regions_) mix(r.armed ? 1u : 0u);
+    if (vm_) for (size_t i = 0; i < cob_.numStatics; ++i) mix(uint64_t(uint32_t(vm_->getStatic(i))));
+    for (const auto& [k, v] : vars_) { for (char ch : k) mix(uint64_t((unsigned char)ch)); mix(uint64_t(uint32_t(v))); }
+}
+
+}  // namespace tak::sim
