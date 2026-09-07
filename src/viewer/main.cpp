@@ -8039,26 +8039,31 @@ private:
     }
 
     // The map's "kingdom" (from its sibling .ota [GlobalHeader] kingdom=...), which
-    // names the preview palette. Simple text scan -- the .ota is small TDF text.
-    std::string mapKingdom(const std::string& tntPath) const {
+    // names the preview palette. The .ota carries the preview info too:
+    // kingdom=<side>, size=<W x H>, numplayers=<N>, memory=<...>.
+    std::string readOta(const std::string& tntPath) const {
         std::filesystem::path ota = tntPath; ota.replace_extension(".ota");
-        std::vector<uint8_t> d;
-        try { d = vfs_.read(ota.generic_string()); } catch (...) { return {}; }
-        std::string s(d.begin(), d.end());
-        std::string low = s;
+        try { auto d = vfs_.read(ota.generic_string()); return std::string(d.begin(), d.end()); }
+        catch (...) { return {}; }
+    }
+    // Value of `key`=... in an .ota (up to ';' or EOL, trimmed). Keeps internal spaces
+    // (so "size=9 x 7" -> "9 x 7"); matches only a whole-word key before its '='.
+    static std::string otaField(const std::string& ota, const char* keyLower) {
+        std::string low = ota;
         for (char& c : low) c = char(std::tolower((unsigned char)c));
-        size_t k = low.find("kingdom");
-        if (k == std::string::npos) return {};
-        size_t eq = s.find('=', k);
-        if (eq == std::string::npos) return {};
-        size_t a = eq + 1;
-        while (a < s.size() && std::isspace((unsigned char)s[a])) ++a;
-        size_t b = a;
-        while (b < s.size() && s[b] != ';' && s[b] != '\n' && s[b] != '\r'
-               && !std::isspace((unsigned char)s[b])) ++b;
-        std::string king = s.substr(a, b - a);
-        for (char& c : king) c = char(std::tolower((unsigned char)c));
-        return king;
+        std::string k = keyLower;
+        for (size_t pos = 0; (pos = low.find(k, pos)) != std::string::npos; pos += k.size()) {
+            if (pos > 0 && (std::isalnum((unsigned char)low[pos - 1]) || low[pos - 1] == '_')) continue;
+            size_t e = pos + k.size();
+            while (e < low.size() && (low[e] == ' ' || low[e] == '\t')) ++e;
+            if (e >= low.size() || low[e] != '=') continue;
+            size_t a = e + 1, end = ota.find_first_of(";\r\n", a);
+            if (end == std::string::npos) end = ota.size();
+            std::string v = ota.substr(a, end - a);
+            size_t s = v.find_first_not_of(" \t"), t = v.find_last_not_of(" \t");
+            return s == std::string::npos ? std::string() : v.substr(s, t - s + 1);
+        }
+        return {};
     }
 
     // The 256-colour RGBA palette for a kingdom (palettes/<kingdom>.pcx), cached.
@@ -8096,8 +8101,8 @@ private:
         if (d.size() < 52) return;
         int w = 0, h = 0; const uint8_t* idx = nullptr;
         if (!tntIndexedImage(d, 12, w, h, idx) && !tntIndexedImage(d, 11, w, h, idx)) return;
-        std::string king = mapKingdom(tntPath);
-        const std::vector<uint8_t>* pal = kingdomPalette(king);
+        std::string ota = readOta(tntPath);
+        const std::vector<uint8_t>* pal = kingdomPalette(otaField(ota, "kingdom"));
         if (!pal) pal = kingdomPalette("aramon");   // maps without a kingdom get a default
         if (!pal) return;
         std::vector<uint8_t> rgba(size_t(w) * h * 4);
@@ -8113,9 +8118,19 @@ private:
         SDL_UpdateTexture(mapPreviewTex_, nullptr, rgba.data(), w * 4);
         SDL_SetTextureScaleMode(mapPreviewTex_, SDL_ScaleModeLinear);
         mapPreviewW_ = w; mapPreviewH_ = h;
+        // Info line under the preview, retail-style: "<size>  <N> PLAYER" (memory
+        // dropped). The .ota supplies size ("9 x 7", already in 32-cell units) and
+        // numplayers; derive them from the tnt / start positions if the .ota omits them.
         auto u32 = [&](size_t o) { return uint32_t(d[o]) | (uint32_t(d[o + 1]) << 8)
                  | (uint32_t(d[o + 2]) << 16) | (uint32_t(d[o + 3]) << 24); };
-        mapPreviewDims_ = std::to_string(u32(4)) + " X " + std::to_string(u32(8));   // W x H cells
+        std::string size = otaField(ota, "size");
+        if (size.empty()) size = std::to_string(u32(4) / 32) + " x " + std::to_string(u32(8) / 32);
+        std::string players = otaField(ota, "numplayers");
+        if (players.empty()) {
+            int n = int(tak::sim::parseStartPositions(vfs_, tntPath).size());
+            if (n > 0) players = std::to_string(n);
+        }
+        mapPreviewDims_ = size + (players.empty() ? "" : "   " + players + " PLAYER");
     }
 
     void drawCreate(int winW, int winH) {
