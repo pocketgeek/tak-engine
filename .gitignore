@@ -18,6 +18,9 @@ compile_commands.json
 # (overrides/click.hpi is an intentional, project-authored override and stays tracked.)
 /guis/
 /anims/
+/camps/
+/missions/
+/Movies/
 /Cay.tnt/
 /Keys.TDF
 /sdlaudio.raw
