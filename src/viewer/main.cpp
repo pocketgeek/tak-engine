@@ -1804,6 +1804,7 @@ public:
                s == tak::net::MpClient::State::Done;
     }
     void setMpMapId(const std::string& id) { mpMapId_ = id; }
+    void setMissionStem(const std::string& s) { missionStem_ = s; }
     void setResumePath(const std::string& p) { mpResumePath_ = p; }
     // Single-player from the menu: it's a private local game, so open the lobby on
     // the Create screen (the browser is empty by design) and mark it single-player
@@ -2358,6 +2359,33 @@ public:
             registry_ = tak::sim::TypeRegistry{};
             tak::sim::setupRegistry(registry_, vfs_, crusades_);
         }
+        // Campaign mission: build the SAME world the referee did. setupMission is
+        // deterministic (terrain + placed units + the in-sim god script), so our sim,
+        // the referee, and every peer stay byte-identical -- the mission runs in
+        // lockstep with no relayed actions. See docs/campaign-design.md.
+        if (!room.mission.empty()) {
+            mapPath_ = "missions/" + room.mission + ".tnt";
+            mapView_.reload(vfs_, mapPath_);
+            int human = 0;
+            tak::sim::setupMission(world_, registry_, vfs_, room.mission, human);
+            loadFeatures();
+            // The player commands the mission's human player; for the common case its
+            // index equals our room slot (TODO: seat the client at `human` otherwise).
+            localPlayer_ = human;
+            world_.setVisPlayer(localPlayer_);
+            for (auto& u : world_.units())
+                if (u.player == localPlayer_ && u.type) { playerMonarchId_ = u.id; builderId_ = u.id; break; }
+            const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
+            if (room.mySlot >= 0) side_ = sides[room.slots[room.mySlot].faction % 5];
+            loadPanel(side_);
+            loadGui(side_);
+            for (auto& u : world_.units())
+                if (u.player == localPlayer_ && u.type) {
+                    mapView_.setOffset(u.x - 640 / 0.9f, u.z - 400 / 0.9f);
+                    break;
+                }
+            return;
+        }
         // Adopt the ROOM's map (the host's / lobby selection), which may differ from
         // this session's launch map. Point mapPath_ at it AND reload the render terrain
         // (mapView_), so the rendered map, the local sim, and the referee all agree.
@@ -2540,6 +2568,7 @@ public:
     size_t replayLength() const { return replayBundles_.size(); }
 
     uint64_t worldHashPublic() const { return world_.stateHash(); }
+    int missionOutcomePublic() const { return world_.missionOutcome(); }
     size_t aliveUnits() const {
         size_t n = 0; for (auto& u : world_.units()) if (u.alive() && u.type) ++n; return n;
     }
@@ -2553,7 +2582,7 @@ public:
         if (!mp_->poll()) { netError_ = mp_->error(); return false; }
         S st = mp_->state();
         if (st == S::Done) { if (netError_.empty()) netError_ = mp_->error(); return false; }
-        if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7)) {
+        if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7 || autoMode == 8)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
@@ -2564,9 +2593,13 @@ public:
             bool watch = autoMode == 1 && std::getenv("TAK_MP_WATCH");
             // Mode 7 is interactive SINGLE-PLAYER: a private game (hidden from the
             // browser) with one server-run AI opponent.
-            bool priv = autoMode == 7;
+            // Mode 8 is a single-player CAMPAIGN mission: a private game whose world is
+            // built from the mission bundle (server + every peer run setupMission).
+            bool priv = autoMode == 7 || autoMode == 8;
+            std::string mission = autoMode == 8 ? missionStem_ : std::string();
+            uint8_t cap = autoMode == 8 ? tak::net::kMaxSlots : mpCapacity();
             mp_->createGame(priv ? "Single Player" : "headless", "", mapId, o,
-                            mpCapacity(), watch, priv);
+                            cap, watch, priv, mission);
         } else if (st == S::Lobby && autoMode == 5) {
             // Rejoin: read the resume ticket the original session saved and
             // reconnect to the held slot.
@@ -2596,6 +2629,14 @@ public:
                 int nAi = std::clamp(ai ? std::atoi(ai) : 2, 2, int(tak::net::kMaxSlots));
                 for (int k = 0; k < nAi; ++k)
                     mp_->setSlot(k, 2, uint8_t(k % 5), uint8_t(k), uint8_t(k), 1);
+                mpReadied_ = true;
+            } else if (autoMode == 8 && r.mySlot >= 0) {
+                // Campaign mission: seat the human ready and start; the mission's own
+                // script drives the enemies (no skirmish AI slots).
+                mp_->setSlot(r.mySlot, 1, facIdx(side_), uint8_t(r.mySlot),
+                             uint8_t(r.mySlot), 1);
+                mp_->startGame();
+                mpStarted_ = true;
                 mpReadied_ = true;
             } else if (autoMode == 7 && r.mySlot >= 0) {
                 // Single-player: seat self UNREADY and hand off to the interactive
@@ -6018,6 +6059,7 @@ private:
     std::map<std::string, std::vector<uint8_t>> kingdomPals_;  // kingdom -> RGBA palette (256*4)
     uint8_t createOverride_ = 1;   // create-dialog override tier (default cosmetic)
     std::string mpMapId_;   // set from the launched map basename
+    std::string missionStem_;   // campaign mission to host (headless --mpmission)
     std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
     std::vector<std::pair<std::string, std::string>> chatLog_;
     // In-game chat: press Enter to compose, lines fade after a while. Kept apart
@@ -9643,6 +9685,7 @@ int main(int argc, char** argv) {
     std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
     std::string serverHost, playerName, dataRoot, overridesArg;
     int serverPort = 7677, mpHeadless = 0;
+    std::string missionStem;   // --mpmission <stem>: headless campaign-mission host
     int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 60;
     int playerColor = -1, aiColor = -1;   // --color / --aicolor slot overrides
     float startTime = 0, followZoom = 0;
@@ -9713,6 +9756,7 @@ int main(int argc, char** argv) {
         else if (a == "--mpai") mpHeadless = 4;     // host vs one server-run AI
         else if (a == "--mprejoin") mpHeadless = 5; // rejoin a held slot (resume ticket)
         else if (a == "--mpspectate") mpHeadless = 6; // watch the first running game
+        else if (a == "--mpmission" && i + 1 < argc) { mpHeadless = 8; missionStem = argv[++i]; }  // host a campaign mission
         else if (a == "--nofog") nofog = true;
         else if (a == "--cheat") tak::sim::gInstantBuild = true;
         else if (a == "--look" && i + 2 < argc) {
@@ -10007,6 +10051,7 @@ int main(int argc, char** argv) {
     }
     if (gameView && mp && mpHeadless) {
         std::string mapId = std::filesystem::path(args[0]).stem().string();
+        if (mpHeadless == 8) gameView->setMissionStem(missionStem);
         int limitTicks = int((startTime > 0 ? startTime : 60) * 30);
         // Jitter benchmark: run the client loop at a FIXED 60 fps (so the stall
         // metric is frame-rate-consistent) and enable the RTT probe. Otherwise the
@@ -10021,6 +10066,11 @@ int main(int argc, char** argv) {
                      gameView->netTick(), (unsigned long long)gameView->worldHashPublic(),
                      gameView->aliveUnits(),
                      gameView->netError().empty() ? "none" : gameView->netError().c_str());
+        if (mpHeadless == 8)
+            std::fprintf(stderr, "mission %s outcome=%d (%s)\n", missionStem.c_str(),
+                         gameView->missionOutcomePublic(),
+                         gameView->missionOutcomePublic() > 0 ? "VICTORY"
+                             : gameView->missionOutcomePublic() < 0 ? "DEFEAT" : "running");
         if (bench) {
             long f = gameView->netBenchFrames(), s = gameView->netBenchStalls();
             std::fprintf(stderr, "NETBENCH delay=%d rtt=%.0fms frames=%ld stalls=%ld (%.1f%%)\n",

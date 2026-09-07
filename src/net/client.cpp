@@ -73,6 +73,7 @@ static void readSlots(Reader& r, RoomView& v) {
     v.id = r.u32();
     v.name = r.str();
     v.mapId = r.str();
+    v.mission = r.str();
     v.opts.crusades = r.u8(); v.opts.gods = r.u8(); v.opts.forfeitSelfDestruct = r.u8();
     v.opts.overridePolicy = r.u8();
     v.opts.speed = r.u8(); v.opts.speedUnlock = r.u8();
@@ -139,6 +140,7 @@ void MpClient::onFrame(const Frame& f) {
             break;
         }
         case Msg::SpeedUpdate: { uint8_t s = r.u8(); if (r.ok) { gameSpeed_ = s; room_.opts.speed = s; } break; }
+        case Msg::MissionOutcome: { int8_t o = int8_t(r.u8()); if (r.ok) missionOutcome_ = o; break; }
         case Msg::Chat: {
             std::string who = r.str(), text = r.str();
             if (r.ok) chat_.push_back({who, text});
@@ -148,6 +150,8 @@ void MpClient::onFrame(const Frame& f) {
             int keep = room_.mySlot;
             readSlots(r, room_);
             gameSpeed_ = room_.opts.speed;
+            missionOutcome_ = 0;   // fresh game/replay
+
             uint8_t mySlot = r.u8();
             startSeed_ = r.u32();
             resumeToken_ = r.u64();
@@ -202,8 +206,8 @@ void MpClient::listGames() { send(Msg::ListGames); }
 
 void MpClient::createGame(const std::string& name, const std::string& password,
                           const std::string& mapId, const GameOptions& o, uint8_t capacity,
-                          bool spectate, bool priv) {
-    Writer w; w.str(name); w.str(password); w.str(mapId);
+                          bool spectate, bool priv, const std::string& mission) {
+    Writer w; w.str(name); w.str(password); w.str(mapId); w.str(mission);
     w.u8(o.crusades); w.u8(o.gods); w.u8(o.forfeitSelfDestruct); w.u8(o.overridePolicy);
     w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap);
     w.u8(capacity);   // map's start-position count (the server has no map data)

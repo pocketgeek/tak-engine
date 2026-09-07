@@ -79,6 +79,7 @@ struct Client {
 struct Room {
     uint32_t id = 0;
     std::string name, password, mapId;
+    std::string mission;           // campaign mission stem (empty = ordinary skirmish/MP)
     GameOptions opts;
     uint32_t hostId = 0;
     SlotInfo slots[kMaxSlots];
@@ -103,6 +104,7 @@ struct Room {
     std::vector<tak::ai::Controller> ai;        // one per AI slot
     std::map<uint32_t, uint64_t> refHash;       // tick -> referee hash (bounded ring)
     bool refSuspect = false;                    // referee itself suspected desynced
+    int8_t missionOutcomeSent = 0;              // campaign result already broadcast (0 = none)
     // durability (M5): the full bundle log for reconnect/replay, per-slot resume
     // tokens, and drop-hold / auto-pause state.
     std::vector<std::vector<uint8_t>> log;      // serialized TickBundle payload per tick
@@ -356,6 +358,7 @@ void Server::writeSlots(Writer& w, Room& r) {
     w.u32(r.id);
     w.str(r.name);
     w.str(r.mapId);
+    w.str(r.mission);
     w.u8(r.opts.crusades); w.u8(r.opts.gods); w.u8(r.opts.forfeitSelfDestruct);
     w.u8(r.opts.overridePolicy);
     w.u8(r.opts.speed); w.u8(r.opts.speedUnlock); w.u32(r.opts.unitCap);
@@ -403,7 +406,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
         case Msg::ListGames: sendGameList(c); break;
         case Msg::CreateGame: {
             Reader r(f.payload.data(), f.payload.size());
-            std::string name = r.str(), pass = r.str(), mapId = r.str();
+            std::string name = r.str(), pass = r.str(), mapId = r.str(), mission = r.str();
             GameOptions o; o.crusades = r.u8(); o.gods = r.u8(); o.forfeitSelfDestruct = r.u8();
             o.overridePolicy = r.u8();
             o.speed = r.u8(); o.speedUnlock = r.u8();
@@ -419,6 +422,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             room.name = name.empty() ? ("game" + std::to_string(room.id)) : name;
             room.password = pass;
             room.mapId = mapId;
+            room.mission = mission;
             room.opts = o;
             room.priv = priv != 0;
             room.cap = cap;
@@ -590,7 +594,9 @@ void Server::tryStart(Client& c) {
     Room* r = roomOf(c);
     if (!r || r->hostId != c.id || r->running) return;
     // Validate: >=2 used slots, every human ready, unique colors among used slots.
-    if (r->usedSlots() < 2) return;
+    // A campaign mission is exempt from the 2-player minimum: its opponents are the
+    // mission script's units, not lobby slots, so one seated human is enough.
+    if (r->mission.empty() && r->usedSlots() < 2) return;
     bool usedColor[10] = {};
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = r->slots[i];
@@ -612,32 +618,47 @@ void Server::tryStart(Client& c) {
     // tier (retail for none/cosmetic, full for full), so the referee's sim matches
     // the clients that adopted the same tier.
     DataSet* ds = haveData_ ? &dataFor(r->opts.overridePolicy) : nullptr;
-    std::string mapPath = ds ? tak::hpi::findMap(ds->vfs, r->mapId) : std::string();
-    if (haveData_ && mapPath.empty())
+    const bool isMission = !r->mission.empty();
+    // A campaign mission builds its own world (placements + the in-sim god script) and
+    // needs no map id; a skirmish resolves its map by name.
+    std::string mapPath = (ds && !isMission) ? tak::hpi::findMap(ds->vfs, r->mapId) : std::string();
+    if (haveData_ && !isMission && mapPath.empty())
         std::fprintf(stderr, "takserver: map '%s' not found in data; no referee sim\n",
                      r->mapId.c_str());
-    if (ds && !mapPath.empty()) {
-        int maxSlot = 0;
-        for (int i = 0; i < kMaxSlots; ++i)
-            if (r->slots[i].type == 1 || r->slots[i].type == 2) maxSlot = i;
-        tak::sim::MatchConfig cfg;
-        cfg.vfs = &ds->vfs;
-        cfg.mapPath = mapPath;
-        cfg.gods = r->opts.gods != 0;
-        cfg.unitCap = r->opts.unitCap;
-        cfg.slots.resize(size_t(maxSlot + 1));
-        for (int i = 0; i <= maxSlot; ++i) {
-            const auto& s = r->slots[i];
-            cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team};
-        }
+    if (ds && (isMission || !mapPath.empty())) {
         r->reg = &registryFor(r->opts.crusades != 0, r->opts.overridePolicy);
         r->ref = std::make_unique<tak::sim::World>();
         r->ref->setVisPlayer(-1);   // headless referee: no fog pass
-        tak::sim::setupMatch(*r->ref, *r->reg, cfg);
-        r->ai.reserve(size_t(maxSlot + 1));
-        for (int i = 0; i <= maxSlot; ++i)
-            if (r->slots[i].type == 2)
-                r->ai.emplace_back(i, *r->reg, aiProfile_, 0x7a6b0000u + r->id);
+        if (isMission) {
+            // Mission enemies are script-driven, so no skirmish AI controllers here.
+            // The client builds the SAME world (setupMission is deterministic), so the
+            // referee and every peer stay in lockstep.
+            int human = 0;
+            if (!tak::sim::setupMission(*r->ref, *r->reg, ds->vfs, r->mission, human)) {
+                std::fprintf(stderr, "takserver: mission '%s' not found; no referee sim\n",
+                             r->mission.c_str());
+                r->ref.reset();
+            }
+        } else {
+            int maxSlot = 0;
+            for (int i = 0; i < kMaxSlots; ++i)
+                if (r->slots[i].type == 1 || r->slots[i].type == 2) maxSlot = i;
+            tak::sim::MatchConfig cfg;
+            cfg.vfs = &ds->vfs;
+            cfg.mapPath = mapPath;
+            cfg.gods = r->opts.gods != 0;
+            cfg.unitCap = r->opts.unitCap;
+            cfg.slots.resize(size_t(maxSlot + 1));
+            for (int i = 0; i <= maxSlot; ++i) {
+                const auto& s = r->slots[i];
+                cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team};
+            }
+            tak::sim::setupMatch(*r->ref, *r->reg, cfg);
+            r->ai.reserve(size_t(maxSlot + 1));
+            for (int i = 0; i <= maxSlot; ++i)
+                if (r->slots[i].type == 2)
+                    r->ai.emplace_back(i, *r->reg, aiProfile_, 0x7a6b0000u + r->id);
+        }
     }
     // GameStarting: final slot table + options + seed + a per-slot resume token
     // (used to rejoin the held slot after a disconnect).
@@ -893,6 +914,18 @@ void Server::closeTick(Room& r) {
         r.refHash[r.tick] = r.ref->stateHash();
         // bound the ring
         while (r.refHash.size() > 300) r.refHash.erase(r.refHash.begin());
+        // Campaign win/lose: the referee's mission runner is authoritative -- announce
+        // the result once (the clients reach the same outcome in their own sims, but
+        // this drives the end-of-mission UI and covers all-spectator missions).
+        if (!r.missionOutcomeSent) {
+            if (int oc = r.ref->missionOutcome()) {
+                r.missionOutcomeSent = int8_t(oc);
+                Writer mw; mw.u8(uint8_t(int8_t(oc)));
+                broadcastRoom(r, Msg::MissionOutcome, mw);
+                std::fprintf(stderr, "game %u mission %s: %s\n", r.id, r.mission.c_str(),
+                             oc > 0 ? "VICTORY" : "DEFEAT");
+            }
+        }
     }
     r.pending.clear();
     r.pendingEvents.clear();

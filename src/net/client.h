@@ -26,6 +26,7 @@ struct Bundle {
 struct RoomView {
     uint32_t id = 0;
     std::string name, mapId;
+    std::string mission;   // campaign mission stem (empty = ordinary skirmish/MP)
     GameOptions opts;
     uint32_t hostId = 0;
     SlotInfo slots[kMaxSlots];
@@ -59,9 +60,12 @@ public:
     // priv=true: a private (single-player) game -- omitted from the public game
     // list so other players don't see it. Still hosted on the server (AIs run
     // there); the host just doesn't advertise it.
+    // mission: a campaign mission stem (e.g. "takmission01_mt"). When set, the server
+    // builds the world from the mission (placements + in-sim god script) instead of a
+    // skirmish, and reports MissionOutcome; see docs/campaign-design.md.
     void createGame(const std::string& name, const std::string& password,
                     const std::string& mapId, const GameOptions& opts, uint8_t capacity,
-                    bool spectate = false, bool priv = false);
+                    bool spectate = false, bool priv = false, const std::string& mission = "");
     void joinGame(uint32_t id, const std::string& password);
     void leaveGame();
     void setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
@@ -74,6 +78,8 @@ public:
     void setGameOptions(const GameOptions& opts);
     // Current game speed in tenths (10 = 1.0x), tracking in-game SpeedUpdate broadcasts.
     uint8_t gameSpeed() const { return gameSpeed_; }
+    // Campaign mission result the server reported: 0 = running, +1 = victory, -1 = defeat.
+    int missionOutcome() const { return missionOutcome_; }
 
     const std::vector<GameInfo>& games() const { return games_; }
     const RoomView& room() const { return room_; }
@@ -132,6 +138,7 @@ private:
     std::vector<GameInfo> games_;
     RoomView room_;
     uint8_t gameSpeed_ = 10;   // live game speed (from opts + in-game SpeedUpdate)
+    int missionOutcome_ = 0;   // campaign mission result (0 running / +1 win / -1 loss)
     std::vector<std::pair<std::string, std::string>> chat_;
 
     uint64_t dataHash_ = 0;      // local gameplay-data fingerprint (sent in Hello)

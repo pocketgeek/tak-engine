@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 16;       // 16: GameOptions.unitCap (lobby unit-limit)
+constexpr uint32_t kNetVersion = 17;       // 17: campaign missions (room mission stem + MissionOutcome)
                                            // 15: GameOptions.speed/speedUnlock + Set/SpeedUpdate msgs
                                            // 14: Cmd::Headbang (Shift+H emote)
                                            // 13: under-construction units contribute no income/storage (economy fix)
@@ -63,6 +63,7 @@ enum class Msg : uint8_t {
     Spectate,           // C->S: gameId, password -> GameStarting (slot 0xFF) + log
     SetGameOptions,     // C->S (host): full GameOptions (lobby: rebroadcast; in-game: speed)
     SpeedUpdate,        // S->C: game speed changed in-game (speed byte) -> client re-paces
+    MissionOutcome,     // S->C: campaign mission won/lost (int8: +1 victory, -1 defeat)
 };
 
 // A slot in a game's setup. type: 0=open, 1=human, 2=ai, 3=closed.
