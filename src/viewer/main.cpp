@@ -5789,7 +5789,7 @@ private:
     std::string mapPreviewFor_;        // mapPath_ the current preview was built for
     int mapPreviewW_ = 0, mapPreviewH_ = 0;
     std::string mapPreviewDims_;       // "W x H" cell size, shown under the preview
-    std::vector<uint8_t> mapPalRgba_;  // palettes/palette.pal, cached (256*4)
+    std::map<std::string, std::vector<uint8_t>> kingdomPals_;  // kingdom -> RGBA palette (256*4)
     uint8_t createOverride_ = 1;   // create-dialog override tier (default cosmetic)
     std::string mpMapId_;   // set from the launched map basename
     std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
@@ -8018,36 +8018,104 @@ private:
         lbBtn(winW - 140.0f, winH - 40.0f, 120, 30, "BACK", true, [this] { menuRequested_ = true; });
     }
 
-    // Build the selected map's preview texture from the .tnt's embedded minimap
-    // (8-bit indexed -> RGBA via palettes/palette.pal). Rebuilt only when the
-    // selection changes; a bad/missing tnt just leaves no preview.
+    // Locate an 8-bit-indexed {u32 w, u32 h, w*h bytes} image at TNT header field
+    // `field` (little-endian u32 pointers). Returns false (with bounds checks) if the
+    // field is absent or malformed. Field 12 = the hi-res overview, 11 = the minimap.
+    static bool tntIndexedImage(const std::vector<uint8_t>& d, int field,
+                                int& w, int& h, const uint8_t*& data) {
+        auto u32 = [&](size_t o) -> uint32_t {
+            return uint32_t(d[o]) | (uint32_t(d[o + 1]) << 8) | (uint32_t(d[o + 2]) << 16)
+                 | (uint32_t(d[o + 3]) << 24);
+        };
+        size_t hoff = size_t(field) * 4;
+        if (hoff + 4 > d.size()) return false;
+        size_t p = u32(hoff);
+        if (p == 0 || p + 8 > d.size()) return false;
+        uint32_t iw = u32(p), ih = u32(p + 4);
+        if (iw == 0 || ih == 0 || iw > 4096 || ih > 4096) return false;
+        if (p + 8 + size_t(iw) * ih > d.size()) return false;
+        w = int(iw); h = int(ih); data = &d[p + 8];
+        return true;
+    }
+
+    // The map's "kingdom" (from its sibling .ota [GlobalHeader] kingdom=...), which
+    // names the preview palette. Simple text scan -- the .ota is small TDF text.
+    std::string mapKingdom(const std::string& tntPath) const {
+        std::filesystem::path ota = tntPath; ota.replace_extension(".ota");
+        std::vector<uint8_t> d;
+        try { d = vfs_.read(ota.generic_string()); } catch (...) { return {}; }
+        std::string s(d.begin(), d.end());
+        std::string low = s;
+        for (char& c : low) c = char(std::tolower((unsigned char)c));
+        size_t k = low.find("kingdom");
+        if (k == std::string::npos) return {};
+        size_t eq = s.find('=', k);
+        if (eq == std::string::npos) return {};
+        size_t a = eq + 1;
+        while (a < s.size() && std::isspace((unsigned char)s[a])) ++a;
+        size_t b = a;
+        while (b < s.size() && s[b] != ';' && s[b] != '\n' && s[b] != '\r'
+               && !std::isspace((unsigned char)s[b])) ++b;
+        std::string king = s.substr(a, b - a);
+        for (char& c : king) c = char(std::tolower((unsigned char)c));
+        return king;
+    }
+
+    // The 256-colour RGBA palette for a kingdom (palettes/<kingdom>.pcx), cached.
+    // Returns nullptr if the kingdom is unknown / its .pcx is missing.
+    const std::vector<uint8_t>* kingdomPalette(const std::string& kingdom) {
+        if (kingdom.empty()) return nullptr;
+        auto it = kingdomPals_.find(kingdom);
+        if (it == kingdomPals_.end()) {
+            std::vector<uint8_t> rgba;
+            try {
+                auto pal = tak::gaf::Palette::fromBytes(vfs_.read("palettes/" + kingdom + ".pcx"),
+                                                        kingdom + ".pcx");
+                rgba.assign(&pal.rgba[0][0], &pal.rgba[0][0] + 256 * 4);
+            } catch (...) { rgba.clear(); }
+            it = kingdomPals_.emplace(kingdom, std::move(rgba)).first;
+        }
+        return it->second.empty() ? nullptr : &it->second;
+    }
+
+    // Build the selected map's preview texture. Retail (KINGDOMS.icd, MapView gadget
+    // at 0x4ae4f0) draws the .tnt's embedded RADARPIC through the map's KINGDOM palette
+    // (palettes/<kingdom>.pcx named by the .ota [GlobalHeader] kingdom=) -- that's the
+    // pale-parchment/pink-path look, not the terrain palette.pal. We colour the higher-
+    // res BIGRADARPIC (overview, field 12; minimap field 11 is the fallback) through
+    // that same kingdom palette, so it matches retail's style but crisper. Index 9 is
+    // retail's transparent index. Rebuilt only on selection change.
     void buildMapPreview(const std::string& tntPath) {
         if (mapPreviewTex_) { SDL_DestroyTexture(mapPreviewTex_); mapPreviewTex_ = nullptr; }
         mapPreviewFor_ = tntPath;
         mapPreviewW_ = mapPreviewH_ = 0;
         mapPreviewDims_.clear();
         if (tntPath.empty()) return;
-        tak::tnt::Map m;
-        try { m = tak::tnt::Map::load(vfs_.read(tntPath), tntPath); } catch (...) { return; }
-        if (m.minimap.empty() || m.minimapW <= 0 || m.minimapH <= 0) return;
-        if (mapPalRgba_.empty()) {   // cache the standard game palette once
-            try {
-                auto pal = tak::gaf::Palette::fromBytes(vfs_.read("palettes/palette.pal"), "palette.pal");
-                mapPalRgba_.assign(&pal.rgba[0][0], &pal.rgba[0][0] + 256 * 4);
-            } catch (...) { return; }
-        }
-        int w = m.minimapW, h = m.minimapH;
+        std::vector<uint8_t> d;
+        try { d = vfs_.read(tntPath); } catch (...) { return; }
+        if (d.size() < 52) return;
+        int w = 0, h = 0; const uint8_t* idx = nullptr;
+        if (!tntIndexedImage(d, 12, w, h, idx) && !tntIndexedImage(d, 11, w, h, idx)) return;
+        std::string king = mapKingdom(tntPath);
+        const std::vector<uint8_t>* pal = kingdomPalette(king);
+        if (!pal) pal = kingdomPalette("aramon");   // maps without a kingdom get a default
+        if (!pal) return;
         std::vector<uint8_t> rgba(size_t(w) * h * 4);
         for (size_t i = 0; i < size_t(w) * h; ++i) {
-            const uint8_t* c = &mapPalRgba_[size_t(m.minimap[i]) * 4];
+            uint8_t p = idx[i];
+            if (p == 9) { rgba[i * 4 + 3] = 0; continue; }   // retail's transparent index
+            const uint8_t* c = &(*pal)[size_t(p) * 4];
             rgba[i * 4 + 0] = c[0]; rgba[i * 4 + 1] = c[1]; rgba[i * 4 + 2] = c[2]; rgba[i * 4 + 3] = 255;
         }
         mapPreviewTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
         if (!mapPreviewTex_) return;
+        SDL_SetTextureBlendMode(mapPreviewTex_, SDL_BLENDMODE_BLEND);
         SDL_UpdateTexture(mapPreviewTex_, nullptr, rgba.data(), w * 4);
         SDL_SetTextureScaleMode(mapPreviewTex_, SDL_ScaleModeLinear);
         mapPreviewW_ = w; mapPreviewH_ = h;
-        mapPreviewDims_ = std::to_string(m.width) + " X " + std::to_string(m.height);
+        auto u32 = [&](size_t o) { return uint32_t(d[o]) | (uint32_t(d[o + 1]) << 8)
+                 | (uint32_t(d[o + 2]) << 16) | (uint32_t(d[o + 3]) << 24); };
+        mapPreviewDims_ = std::to_string(u32(4)) + " X " + std::to_string(u32(8));   // W x H cells
     }
 
     void drawCreate(int winW, int winH) {
