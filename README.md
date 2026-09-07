@@ -142,7 +142,16 @@ The engine is **client-server only** — every game runs on a `takserver`, and t
 AI runs *only* on the server. Single-player is just a private game on a server the
 client starts for you.
 
-`takview game` takes a **map name** and the install directory:
+The simplest way in is the **front-end menu** — run `takview` with no mode (a mode
+keyword is optional) and pick single-player, multiplayer, or options from the three
+doors:
+
+```sh
+./build/takview --data /path/to/tak_install
+```
+
+Or launch straight into a game from the command line. `takview game` takes a **map
+name** and the install directory:
 
 ```sh
 ./build/takview game "King of the Hill" --data /path/to/tak_install \

@@ -9104,21 +9104,29 @@ int main(int argc, char** argv) {
         std::printf("takview (TAK engine) %s\n", tak::kVersion);
         return 0;
     }
-    if (argc < 3) {
-        std::fprintf(stderr,
-                     "usage: takview game <map name> --data <retail-install-dir> "
-                     "[--side X --aiside Y] [--overrides none|cosmetic|full] [--shot out.png]\n"
-                     "         single-player: no --server -> auto-hosts a private game vs a\n"
-                     "         server-run AI on a local takserver (AIs run only on the server).\n"
-                     "         multiplayer:   add --server host [--serverport N] [--name X].\n"
-                     "       takview map  <map name> --data <retail-install-dir> [--shot out.png]\n"
-                     "       takview replay <file.takrep> --data <retail-install-dir>\n"
-                     "       takview model <file.3do> [textures-dir palette.pcx] "
-                     "[--cob f.cob --anim script] [--shot out.png]\n"
-                     "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ overrides/.\n");
-        return 2;
+    if (argc >= 2 && (!std::strcmp(argv[1], "--help") || !std::strcmp(argv[1], "-h"))) {
+        std::printf(
+            "usage: takview [mode] --data <retail-install-dir> [options]\n"
+            "  With no mode (or only flags), launches the front-end MENU.\n"
+            "  modes: menu | game <map> | map <map> | replay <file.takrep> | model <file.3do>\n"
+            "    game single-player: no --server -> auto-hosts a private game vs a server AI.\n"
+            "    game multiplayer:   add --server host [--serverport N] [--name X].\n"
+            "  common: [--side X --aiside Y] [--overrides none|cosmetic|full] [--shot out.png]\n"
+            "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ overrides/.\n");
+        return 0;
     }
-    std::string mode = argv[1];
+    // The first positional arg is the launch mode only if it's a known keyword;
+    // otherwise the default is the front-end menu, so `takview --data <dir>` (or even
+    // bare `takview`) just opens it -- no need to type "menu".
+    std::string mode = "menu";
+    int argStart = 1;
+    if (argc >= 2) {
+        std::string a1 = argv[1];
+        if (a1 == "menu" || a1 == "game" || a1 == "map" || a1 == "replay" || a1 == "model") {
+            mode = a1;
+            argStart = 2;
+        }
+    }
     std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
     std::string serverHost, playerName, dataRoot, overridesArg;
     int serverPort = 7677, mpHeadless = 0;
@@ -9141,7 +9149,7 @@ int main(int argc, char** argv) {
     bool crusades = false;
     float lookX = 0, lookZ = 0;
     std::vector<std::string> args;
-    for (int i = 2; i < argc; ++i) {
+    for (int i = argStart; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--shot" && i + 1 < argc) shot = argv[++i];
         else if (a == "--cob" && i + 1 < argc) cobPath = argv[++i];
