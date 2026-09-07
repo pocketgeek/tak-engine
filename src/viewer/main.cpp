@@ -9677,21 +9677,21 @@ int main(int argc, char** argv) {
         // (VRAM pressure) we just fall back to no AA this frame. Baking runs at 1x
         // BEFORE the scale is set (the lazy atlas/impostor bakes reset the scale
         // themselves too, see their SetRenderTarget sites).
-        float aaS = (settings.antiAlias == 8) ? 2.8284f : (settings.antiAlias == 4) ? 2.0f
-                  : (settings.antiAlias == 2) ? 1.4142f : 1.0f;
-        // Cap the supersample target at the largest the GPU can actually RENDER to.
-        // GPUs cap render targets/viewports BELOW their texture-sampling limit (which
-        // is what SDL_RendererInfo reports, e.g. 32768), and past the render limit the
-        // FBO fills only part of the target while the whole oversized texture is
-        // stretched to the window -- squeezing everything leftward (the AA pointer
-        // drift). SDL can't report the real render limit, so self-calibrate: start at
-        // 16384 and, when a fresh target fails a far-corner render test, shrink + retry.
+        float aaS = (settings.antiAlias == 4) ? 2.0f : (settings.antiAlias == 2) ? 1.4142f : 1.0f;
+        // Cap the supersample target a safe margin below the GPU's texture/render
+        // limit. A render target AT the max texture size misbehaves (renders/samples
+        // short, then gets stretched to the window -- squeezing everything leftward,
+        // the AA pointer drift). SDL can't report the true render limit and a readback
+        // probe proved unreliable, so just stay 1/8 below the reported/assumed max. At
+        // the very widest windows this trims 4X's supersample a touch -- imperceptible.
         static int aaMaxDim = 0;
         if (aaMaxDim == 0) {
             SDL_RendererInfo ri;
             int mx = (SDL_GetRendererInfo(ren, &ri) == 0)
                          ? std::min(ri.max_texture_width, ri.max_texture_height) : 0;
-            aaMaxDim = (mx > 0 && mx < 16384) ? mx : 16384;
+            if (mx <= 0 || mx > 16384) mx = 16384;
+            aaMaxDim = mx - mx / 8;
+            std::fprintf(stderr, "AA: max supersample dim %d (GPU reports %d)\n", aaMaxDim, mx);
         }
         if (aaS > 1.0f && w > 0 && h > 0)
             aaS = std::min(aaS, std::min(float(aaMaxDim) / w, float(aaMaxDim) / h));
@@ -9702,27 +9702,8 @@ int main(int argc, char** argv) {
                 if (aaTex) SDL_DestroyTexture(aaTex);
                 aaTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
                                           SDL_TEXTUREACCESS_TARGET, tw, th);
-                if (aaTex) {
-                    SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear); aaW = tw; aaH = th;
-                    // Verify the far corner actually renders. Clear black, fill the
-                    // corner white via a rect (rects respect the render viewport, so a
-                    // too-large target leaves it black), read it back. If it isn't
-                    // white, shrink aaMaxDim and drop the target -- next frame retries
-                    // smaller until it renders fully.
-                    SDL_SetRenderTarget(ren, aaTex);
-                    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren);
-                    SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
-                    SDL_Rect corner{tw - 3, th - 3, 3, 3}; SDL_RenderFillRect(ren, &corner);
-                    Uint32 got = 0; SDL_Rect one{tw - 2, th - 2, 1, 1};
-                    SDL_RenderReadPixels(ren, &one, SDL_PIXELFORMAT_ARGB8888, &got, 4);
-                    SDL_SetRenderTarget(ren, nullptr);
-                    if ((got & 0x00FFFFFFu) != 0x00FFFFFFu) {   // corner not white -> rendered short
-                        int bad = std::max(tw, th);
-                        aaMaxDim = std::max(2048, bad - std::max(256, bad / 16));
-                        std::fprintf(stderr, "AA: %dx%d renders short; capping render size to %d\n", tw, th, aaMaxDim);
-                        SDL_DestroyTexture(aaTex); aaTex = nullptr; aaW = aaH = 0;
-                    }
-                } else { aaW = aaH = 0; std::fprintf(stderr, "AA: %dx%d target alloc failed; AA off\n", tw, th); }
+                if (aaTex) { SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear); aaW = tw; aaH = th; }
+                else { aaW = aaH = 0; std::fprintf(stderr, "AA: %dx%d target alloc failed; AA off\n", tw, th); }
             }
             if (aaTex) aaOn = true;
         }

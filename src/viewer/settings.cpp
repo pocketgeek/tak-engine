@@ -58,7 +58,7 @@ Settings loadSettings() {
         else if (key == "vsync")           s.vsync = asBool();
         else if (key == "maxFps")          s.maxFps = asInt(30, 480);
         else if (key == "uiScale")         s.uiScale = asFloat(0.75f, 2.0f);
-        else if (key == "antiAlias")       { int a = asInt(0, 8); s.antiAlias = (a >= 8) ? 8 : (a >= 4) ? 4 : (a >= 2) ? 2 : 0; }
+        else if (key == "antiAlias")       { int a = asInt(0, 4); s.antiAlias = (a >= 4) ? 4 : (a >= 2) ? 2 : 0; }
         else if (key == "masterVol")       s.masterVol = asInt(0, 256);
         else if (key == "bgmVol")          s.bgmVol = asInt(0, 256);
         else if (key == "sfxVol")          s.sfxVol = asInt(0, 256);
