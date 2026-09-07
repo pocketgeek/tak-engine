@@ -552,14 +552,14 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 d_->updateHover(e.motion.x, e.motion.y, w, h);
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                 d_->updateHover(e.button.x, e.button.y, w, h);
+                d_->playHoveredSound();   // click feedback on press, not release
                 armed = true;
             }
             if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 if (!armed) continue;   // stray release (e.g. leaked from the lobby)
                 armed = false;
                 d_->updateHover(e.button.x, e.button.y, w, h);
-                Choice c = d_->clicked();
-                if (c != Choice::None) d_->playHoveredSound();
+                Choice c = d_->clicked();   // the sound already played on press
                 if (c == Choice::Multiplayer) { d_->serverSelect = true; SDL_StartTextInput(); }
                 else if (c == Choice::Options && settings) {
                     // Open the Options overlay in place (rather than exiting). onChange
