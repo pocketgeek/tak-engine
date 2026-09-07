@@ -6,6 +6,7 @@
 #include "version.h"
 #include "video/bink.h"
 #include "viewer/campaignscreen.h"
+#include "viewer/resultscreen.h"
 #include "viewer/cursors.h"
 #include "viewer/menumusic.h"
 #include "viewer/options.h"
@@ -524,6 +525,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             cs.render(w, h);
         }
         d_->screenshot(w, h, shotPath);
+        // Debug: TAK_SHOT_RESULT captures the victory result screen (saves to its path).
+        if (settings && std::getenv("TAK_SHOT_RESULT"))
+            ResultScreen::run(d_->ren, d_->vfs, true, "MISSION 1", true, settings, nullptr);
         return Choice::None;
     }
 

@@ -16,6 +16,7 @@
 
 #include "campaign/campaign.h"
 #include "viewer/briefingscreen.h"
+#include "viewer/resultscreen.h"
 #include "cob/vm.h"
 #include "crt/crt.h"
 #include "gaf/gaf.h"
@@ -9845,6 +9846,9 @@ int main(int argc, char** argv) {
     const int launchServerPort = serverPort;
     const std::vector<std::string> launchArgs = args;
     bool quitApp = false;
+    // Campaign chaining: a Next/Retry from the result screen re-enters the game
+    // directly (skipping the menu) with this mission, movie + briefing and all.
+    std::string pendingCampaign, pendingCampaignId;
     SDL_Texture* aaTex = nullptr;   // whole-frame supersampling target (Options AA); reused
     int aaW = 0, aaH = 0;
     tak::MenuMusic menuMusic;   // persists across menu -> lobby so the track doesn't restart
@@ -9855,9 +9859,11 @@ int main(int argc, char** argv) {
     if (fromMenu && shot.empty())
         tak::MainMenu::playIntro(ren, dataRoot);
     for (;;) {
-    if (fromMenu) { mode = launchMode; serverHost = launchServerHost;
+    if (fromMenu) { serverHost = launchServerHost;
                     serverPort = launchServerPort; args = launchArgs;
-                    menuMusic.start(vfs, 15); }   // front-end BGM (idempotent; loops into the lobby)
+                    menuMusic.start(vfs, 15);   // front-end BGM (idempotent; loops into the lobby)
+                    // A pending Next/Retry re-enters the game directly, skipping the menu.
+                    mode = pendingCampaign.empty() ? launchMode : std::string("game"); }
 
     // main-loop lobby driver: 0 = UI-driven lobby (browse/join/host), 7 = auto SP,
     // 8 = auto campaign mission (create the mission room, seat, start, then play).
@@ -9865,6 +9871,12 @@ int main(int argc, char** argv) {
     bool menuInteractive = false;   // menu single-player -> interactive lobby, not auto-play
     std::string campaignStem;       // menu campaign pick -> host this mission (autoMode 8)
     std::string campaignId;         // ...its campaign id (for progress persistence)
+    // Next/Retry chosen on the previous mission's result screen: re-enter directly.
+    if (!pendingCampaign.empty()) {
+        campaignStem = pendingCampaign; campaignId = pendingCampaignId;
+        pendingCampaign.clear(); pendingCampaignId.clear();
+        if (args.empty()) args.push_back("athri cay");
+    }
     // Direct launch into a mission (`--campaign <stem>`): same host path as a menu
     // pick, resolving the campaign id so a win still advances persisted progress.
     if (!cliCampaign.empty()) {
@@ -10430,19 +10442,32 @@ int main(int argc, char** argv) {
             }
         }
     }
-    // Campaign progress: on a mission victory, unlock the next mission and persist.
-    if (!campaignStem.empty() && !campaignId.empty() && gameView &&
-        gameView->missionOutcomePublic() > 0) {
+    // Campaign mission ended (and resolved -- not a mid-mission quit): advance
+    // persisted progress on a win, then show the result screen and act on the choice.
+    if (!campaignStem.empty() && !campaignId.empty() && gameView && !quitApp &&
+        gameView->missionOutcomePublic() != 0) {
+        int oc = gameView->missionOutcomePublic();
+        std::string title = "MISSION", nextStem;
         for (const auto& c : tak::loadCampaigns(vfs)) {
             if (c.id != campaignId) continue;
             for (int i = 0; i < c.count(); ++i)
                 if (c.missions[size_t(i)].stem == campaignStem) {
-                    int& done = settings.campaignDone[campaignId];
-                    if (i + 1 > done) { done = i + 1; saveSettings(settings); }
+                    title = "MISSION " + std::to_string(i + 1);
+                    if (oc > 0) {   // victory: unlock + reveal the next mission
+                        int& done = settings.campaignDone[campaignId];
+                        if (i + 1 > done) { done = i + 1; saveSettings(settings); }
+                        if (i + 1 < c.count()) nextStem = c.missions[size_t(i + 1)].stem;
+                    }
                     break;
                 }
             break;
         }
+        killLocalServer(); mp.reset(); gameView.reset();   // free the mission before the modal
+        tak::ResultChoice rc = tak::ResultScreen::run(ren, vfs, oc > 0, title,
+                                                      oc > 0 && !nextStem.empty(), &settings, &menuMusic);
+        if (rc == tak::ResultChoice::Next)       { pendingCampaign = nextStem;     pendingCampaignId = campaignId; }
+        else if (rc == tak::ResultChoice::Retry) { pendingCampaign = campaignStem; pendingCampaignId = campaignId; }
+        // Menu -> pendingCampaign stays empty -> the outer loop re-shows the front-end.
     }
     // Session ended: tear down any single-player local server, then either loop back
     // to the menu or exit the app.
