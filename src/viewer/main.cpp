@@ -9265,13 +9265,9 @@ int main(int argc, char** argv) {
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
     std::string winTitle = std::string("takview ") + tak::kVersion;
-    // ALLOW_HIGHDPI: on scaled displays (esp. Wayland fractional scaling) this makes
-    // SDL report the true drawable size distinct from the window size, so the
-    // window->drawable mouse rescale below actually engages -- without it SDL reports
-    // window==drawable and picking drifts on a wide, scaled window.
     SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, winW, winH,
-                                       SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+                                       SDL_WINDOW_RESIZABLE);
     if (win && settings.fullscreen)
         SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
     Uint32 renFlags = SDL_RENDERER_SOFTWARE;
@@ -9774,7 +9770,14 @@ int main(int argc, char** argv) {
             SDL_RenderSetScale(ren, 1.0f, 1.0f);
             SDL_SetRenderTarget(ren, nullptr);
             SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear);   // ensure a smooth downscale
-            SDL_RenderCopy(ren, aaTex, nullptr, nullptr);
+            // Blit to an EXPLICIT full-drawable rect. A nullptr dst resolves to the
+            // renderer's logical size, which on some backends (Wayland) is smaller
+            // than the real drawable -- squeezing the frame leftward so the cursor
+            // drifts. Use the actual output size so it fills the whole window.
+            int bw = 0, bh = 0;
+            SDL_GetRendererOutputSize(ren, &bw, &bh);
+            SDL_Rect dst{0, 0, bw, bh};
+            SDL_RenderCopy(ren, aaTex, nullptr, &dst);
         }
         SDL_RenderPresent(ren);
         if (prof) {
