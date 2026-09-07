@@ -196,12 +196,11 @@ server", keeps a single sim path, and gets AI for free; the COB VM move is the m
 
 ## 7. Phased plan
 
-Status (2026-09-07): phases 1–3, 5, and 6 are **done and verified**; a campaign
-mission runs over the real takserver/takview in lockstep (`err=none`, reproducible
-hash), and the full front-end loop — pick → intro movie → briefing → play →
-victory/defeat → next/retry — works from the main menu (or `takview game
---campaign <stem>`). Remaining: phase 4 (per-mission unit restriction) and phase 7
-polish.
+Status (2026-09-07): phases 1–6 are **done and verified**. A campaign mission runs
+over the real takserver/takview in lockstep (`err=none`, reproducible hash); the
+full front-end loop — pick → intro movie → briefing → play → victory/defeat →
+next/retry — works from the main menu (or `takview game --campaign <stem>`); and
+the conjure menu is restricted per mission. Only phase 7 polish remains.
 
 1. **Scripting core (no campaign yet).** ✅ COB name table (`src/cob`);
    verb-string `MAP_COMMAND` dispatch (Create/SetMission/SetTrigger/GetUtype/
@@ -222,8 +221,12 @@ polish.
    `MissionOutcome` (kNetVersion 17). Headless driver: `takview … --mpmission <stem>`.
    First-pass diplomacy (opponents team 1, everyone else allied); proper
    neutral/ally roles and non-zero human slots are TODO.
-4. **Per-mission unit restriction.** Filter the conjure/build menu to the `.tdf` set.
-   (Not started.)
+4. **Per-mission unit restriction.** ✅ `missions/<stem>.tdf` (a list of allowed unit
+   ids) is loaded into `missionAllowed_` on launch; `GameView::conjureMenu` intersects
+   `registry_.buildable(builder)` with it, so a builder only offers permitted units
+   (the click handler reads the same filtered `iconRects_`). UI-only; empty/absent =
+   unrestricted. Verified: mission 1 = 10 allowed types; a real conjuror's 9-unit menu
+   drops to 8 where a unit isn't permitted (takmission43_ph/47_ph).
 5. **Campaign spine.** ✅ `camps/*.tdf` loader (`src/campaign/campaign.{h,cpp}`,
    `loadCampaigns` — Book of Darien 48, The Iron Plague 25, ipalt 25); progress
    persisted in `tak::Settings` (`campaignDone`, `campaign.<id>=n`); win→advance
