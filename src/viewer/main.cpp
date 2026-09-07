@@ -9679,15 +9679,19 @@ int main(int argc, char** argv) {
         // themselves too, see their SetRenderTarget sites).
         float aaS = (settings.antiAlias == 8) ? 2.8284f : (settings.antiAlias == 4) ? 2.0f
                   : (settings.antiAlias == 2) ? 1.4142f : 1.0f;
-        // Don't exceed the renderer's max texture size (8X at 4K wants ~21.7k px, past
-        // many GPUs' 16384 limit) -- cap the scale so a big level degrades gracefully
-        // to the largest that fits rather than failing to allocate.
+        // Don't exceed the max RENDER-TARGET size. 8X at 4K wants ~21.7k px; GPUs cap
+        // render targets/viewports at 16384 even when their TEXTURE-sampling limit
+        // (what SDL_RendererInfo reports) is higher (e.g. 32768). Past that the FBO
+        // only fills the left 16384 but the whole oversized texture is stretched to
+        // the window -- squeezing everything leftward (this was the 8X pointer drift).
+        // So cap to min(reported, 16384), and cap the scale so a big level degrades to
+        // the largest that fits rather than mis-rendering.
         static int maxTexW = 0, maxTexH = 0;
         if (maxTexW == 0) {
             SDL_RendererInfo ri;
             if (SDL_GetRendererInfo(ren, &ri) == 0) { maxTexW = ri.max_texture_width; maxTexH = ri.max_texture_height; }
-            if (maxTexW <= 0) maxTexW = 16384;
-            if (maxTexH <= 0) maxTexH = 16384;
+            if (maxTexW <= 0 || maxTexW > 16384) maxTexW = 16384;
+            if (maxTexH <= 0 || maxTexH > 16384) maxTexH = 16384;
         }
         if (aaS > 1.0f && w > 0 && h > 0)
             aaS = std::min(aaS, std::min(float(maxTexW) / w, float(maxTexH) / h));
