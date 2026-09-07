@@ -28,17 +28,31 @@ Profile loadProfile(const tak::hpi::Vfs& vfs) {
     return prof;
 }
 
+DiffParams paramsFor(Difficulty d) {
+    switch (d) {
+        // Sluggish: reacts slowly, builds up slowly, and only commits once it has
+        // gathered a sizeable group -- so it's passive and beatable.
+        case Difficulty::Easy:   return {60, 6, 1, 1, 70,  false};
+        // Fast, army-heavy, and aggressive: reacts often, attacks with small groups,
+        // and pushes bigger unit limits.
+        case Difficulty::Hard:   return {20, 2, 3, 8, 150, true};
+        case Difficulty::Normal:
+        default:                 return {30, 3, 2, 3, 100, true};
+    }
+}
+
 Controller::Controller(int player, const tak::sim::TypeRegistry& registry,
-                       const Profile& profile, uint32_t seed)
+                       const Profile& profile, uint32_t seed, Difficulty difficulty,
+                       std::vector<std::pair<float, float>> enemyStarts)
     : player_(player), registry_(registry), profile_(profile),
-      // The seed is taken as-is: the CALLER is responsible for handing distinct
-      // seeds to distinct players when it wants them to diverge from tick one
-      // (the multiplayer lobby will, per game + player). Same-seed controllers
-      // still diverge in practice within a few ticks anyway, because every RNG
-      // draw is gated on that player's own unit counts / income / producers, which
-      // differ by map position. Keeping it un-mangled means a single AI opponent
-      // reproduces the pre-extraction behaviour exactly under the same seed.
-      rng_(seed) {}
+      // The seed is taken as-is: the CALLER hands distinct seeds to distinct players
+      // when it wants them to diverge from tick one (the lobby does, per game+player).
+      // Same-seed controllers still diverge within a few ticks, because every RNG draw
+      // is gated on that player's own unit counts / income / producers, which differ
+      // by map position. The AI runs server-side only, so this RNG exists just to make
+      // a --mpai run repeatable, not for lockstep.
+      rng_(seed), diff_(difficulty), dp_(paramsFor(difficulty)),
+      enemyStarts_(std::move(enemyStarts)) {}
 
 void Controller::emit(const CommandSink& sink, tak::net::Cmd kind, int unitId,
                       const std::string& type, float x, float z) const {
@@ -83,7 +97,8 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         if (w <= 0) continue;
         auto li = profile_.limit.find(id);
         int lim = li == profile_.limit.end() ? -1 : li->second;
-        if (lim >= 0 && countOf(world, id) >= lim) continue;
+        // Difficulty scales the hard caps: Hard fields bigger armies, Easy smaller.
+        if (lim >= 0 && countOf(world, id) >= std::max(1, lim * dp_.limitScale / 100)) continue;
         bool economy = ut->income > 0 || ut->onMana;
         bool structure = !ut->canMove;
         // Don't start a non-economy building the economy can't yet drive: its
@@ -152,23 +167,38 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     return false;
 }
 
-// Nearest enemy of an un-allied player the group at (cx,cz) can actually REACH
-// (flow connectivity), scanning closest-first. Picking merely the straight-line
-// nearest foe on a maze sends the army at a walled-off target it can't get to.
-bool Controller::nearestReachableEnemy(const tak::sim::World& world, float cx, float cz,
-                                       const tak::sim::UnitType* atype,
-                                       float& tx, float& tz) const {
-    std::vector<std::pair<float, std::pair<float, float>>> es;
+// Nearest enemy the group at (cx,cz) can SEE (some AI unit within sight/radar of it)
+// AND can actually REACH (flow connectivity), scanning closest-first. Fog: the AI
+// never targets a unit it hasn't spotted; reachability keeps it off walled-in foes.
+bool Controller::nearestVisibleEnemy(const tak::sim::World& world, float cx, float cz,
+                                     const tak::sim::UnitType* atype,
+                                     float& tx, float& tz) const {
+    // My eyes: each own unit reveals a radius of max(sight, radar) around itself.
+    struct Eye { float x, z, r2; };
+    std::vector<Eye> eyes;
+    for (auto& u : world.units())
+        if (u.alive() && u.player == player_ && u.type && !u.embarked()) {
+            float s = std::max(u.type->sight, u.type->radar);
+            eyes.push_back({u.x, u.z, s * s});
+        }
+    if (eyes.empty()) return false;
+    std::vector<std::pair<float, std::pair<float, float>>> vis;
     for (auto& e : world.units()) {
         if (!e.alive() || e.embarked() || world.allied(e.player, player_) || !e.type)
             continue;
+        bool seen = false;
+        for (const Eye& eye : eyes) {
+            float dx = e.x - eye.x, dz = e.z - eye.z;
+            if (dx * dx + dz * dz <= eye.r2) { seen = true; break; }
+        }
+        if (!seen) continue;   // fogged: we haven't spotted this one
         float dx = e.x - cx, dz = e.z - cz;
-        es.push_back({dx * dx + dz * dz, {e.x, e.z}});
+        vis.push_back({dx * dx + dz * dz, {e.x, e.z}});
     }
-    if (es.empty()) return false;
-    std::sort(es.begin(), es.end());
+    if (vis.empty()) return false;
+    std::sort(vis.begin(), vis.end());
     int checked = 0;
-    for (auto& e : es) {
+    for (auto& e : vis) {
         if (++checked > 16) break;   // bound the reachability probes (flow builds)
         if (!atype || world.pathExists(atype, e.second.first, e.second.second, cx, cz)) {
             tx = e.second.first; tz = e.second.second;
@@ -178,8 +208,22 @@ bool Controller::nearestReachableEnemy(const tak::sim::World& world, float cx, f
     return false;
 }
 
-// Pool idle (non-builder) fighters and, once a strike force has gathered,
-// attack-move the whole group at one reachable enemy so they share a flow field.
+// The nearest KNOWN enemy start position -- where the AI marches when fog hides the
+// enemy, so the army pushes into a base (and spots its defenders) instead of idling.
+bool Controller::nearestEnemyStart(float cx, float cz, float& tx, float& tz) const {
+    float best = 1e18f;
+    bool found = false;
+    for (const auto& [x, z] : enemyStarts_) {
+        float dx = x - cx, dz = z - cz, d = dx * dx + dz * dz;
+        if (d < best) { best = d; tx = x; tz = z; found = true; }
+    }
+    return found;
+}
+
+// Pool idle (non-builder) fighters; once a strike force has gathered (waveSize, per
+// difficulty), attack-move the whole group at one target so they share a flow field:
+// the nearest enemy it can SEE, else the nearest enemy start (marching on the base).
+// Also sends one early scout so the AI reveals + commits rather than turtling forever.
 void Controller::sendWaves(const tak::sim::World& world, const CommandSink& sink) {
     std::vector<int> idle;
     double sx = 0, sz = 0;
@@ -191,26 +235,45 @@ void Controller::sendWaves(const tak::sim::World& world, const CommandSink& sink
             sx += u.x; sz += u.z;
             if (!atype && !u.type->canFly) atype = u.type;
         }
-    if (idle.size() < 4) return;
+    if (idle.empty()) return;
     float cx = float(sx / idle.size()), cz = float(sz / idle.size());
+
+    // Objective: the nearest enemy we can actually SEE, else march on the nearest
+    // known enemy base (which draws us forward and into its defenders).
     float tx = 0, tz = 0;
-    if (!nearestReachableEnemy(world, cx, cz, atype, tx, tz)) return;
+    if (!nearestVisibleEnemy(world, cx, cz, atype, tx, tz) &&
+        !nearestEnemyStart(cx, cz, tx, tz))
+        return;   // nothing seen and no known base to march on -> hold
+
+    // Commit the whole force once it's big enough, once we've already committed (keep
+    // the pressure on / reinforce), OR once the economy is tapped out -- so a mana-poor
+    // position attacks with what it has instead of turtling forever.
+    const auto& me = world.player(player_);
+    bool tapped = me.mana < 200.0f && me.income < 40.0f;
+    bool commit = int(idle.size()) >= dp_.waveSize || committed_ || tapped;
+    if (!commit) {
+        if (dp_.scout && !scouted_) {   // send one early scout to reveal + draw forward
+            emit(sink, tak::net::Cmd::AttackMove, idle.front(), "", tx, tz);
+            scouted_ = true;
+        }
+        return;
+    }
+    committed_ = true;
     for (int id : idle) emit(sink, tak::net::Cmd::AttackMove, id, "", tx, tz);
 }
 
 void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                       const CommandSink& sink) {
-    // ~1 Hz (every 30 sim ticks), staggered by player so eight AIs don't all
-    // think on the same tick. Sim-tick driven (not wall clock) so the decision
-    // cadence is deterministic and replay-safe. The offset is the player index:
-    // player 1 fires on ticks 1,31,61..., matching the pre-extraction AI exactly
-    // (it fired once mana... aiTimer reset each ~30 ticks starting from tick 1).
-    if ((simTick % 30) != uint32_t(player_ % 30)) return;
+    // Think cadence (per difficulty), staggered by player so several AIs don't all
+    // fire on the same tick. Sim-tick driven so a --mpai run is repeatable. Hard
+    // reacts more often (thinkPeriod=20) than Easy (60).
+    if ((simTick % uint32_t(dp_.thinkPeriod)) != uint32_t(player_ % dp_.thinkPeriod)) return;
     if (world.player(player_).defeated) return;
 
-    int econFactor = manaRatio(world) >= 0.5f ? 2 : 1;
-    // Snapshot producer ids first. (We only read the world here, but keeping the
-    // same two-pass shape as before preserves the exact RNG call order.)
+    int econFactor = manaRatio(world) >= 0.5f ? dp_.econRich : 1;
+    // Snapshot the idle producers, then act on up to producersPerThink of them -- the
+    // per-think cap is what paces the economy across difficulties (Easy builds one
+    // thing per think, Hard many).
     std::vector<int> producers;
     for (auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type) continue;
@@ -221,11 +284,15 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                  !registry_.buildable(u.type->id).empty())
             producers.push_back(u.id);                        // idle factory
     }
+    int acted = 0;
     for (int pid : producers) {
+        if (acted >= dp_.producersPerThink) break;
         const auto* p = world.unit(pid);
         if (!p || !p->alive()) continue;
-        if (const auto* pick = weightedPick(world, *p, econFactor))
+        if (const auto* pick = weightedPick(world, *p, econFactor)) {
             produce(world, *p, pick, sink);
+            ++acted;
+        }
     }
     sendWaves(world, sink);
 }

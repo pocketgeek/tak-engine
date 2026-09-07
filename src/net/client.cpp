@@ -82,7 +82,7 @@ static void readSlots(Reader& r, RoomView& v) {
     for (int i = 0; i < kMaxSlots; ++i) {
         SlotInfo& s = v.slots[i];
         s.type = r.u8(); s.faction = r.u8(); s.color = r.u8(); s.team = r.u8();
-        s.ready = r.u8(); s.name = r.str();
+        s.ready = r.u8(); s.aiLevel = r.u8(); s.name = r.str();
     }
 }
 
@@ -228,8 +228,9 @@ void MpClient::leaveGame() {
 }
 
 void MpClient::setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
-                       uint8_t team, uint8_t ready) {
+                       uint8_t team, uint8_t ready, uint8_t aiLevel) {
     Writer w; w.u8(uint8_t(slot)); w.u8(type); w.u8(faction); w.u8(color); w.u8(team); w.u8(ready);
+    w.u8(aiLevel);
     send(Msg::SlotUpdate, w);
 }
 

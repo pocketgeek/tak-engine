@@ -87,6 +87,10 @@ target_link_libraries(tnttool PRIVATE tak-formats)
 add_executable(missiontool tools/missiontool.cpp)
 target_link_libraries(missiontool PRIVATE tak-formats)
 
+# aitool bundles the AI (src/ai, otherwise server-only) so we can tune it headless.
+add_executable(aitool tools/aitool.cpp src/ai/ai.cpp)
+target_link_libraries(aitool PRIVATE tak-formats)
+
 # --- Viewer (needs SDL2; skipped with a warning if unavailable) ---------------
 
 option(TAK_BUILD_VIEWER "Build the SDL2 asset viewer" ON)

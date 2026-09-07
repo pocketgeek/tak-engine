@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 17;       // 17: campaign missions (room mission stem + MissionOutcome)
+constexpr uint32_t kNetVersion = 18;       // 18: per-AI-slot difficulty (SlotInfo.aiLevel)
                                            // 15: GameOptions.speed/speedUnlock + Set/SpeedUpdate msgs
                                            // 14: Cmd::Headbang (Shift+H emote)
                                            // 13: under-construction units contribute no income/storage (economy fix)
@@ -73,6 +73,7 @@ struct SlotInfo {
     uint8_t color = 0;     // 0..9 palette slot
     uint8_t team = 0;      // 0..kMaxSlots-1
     uint8_t ready = 0;
+    uint8_t aiLevel = 1;   // AI difficulty for an AI slot: 0=easy 1=normal 2=hard
     std::string name;      // player display name ("" for open/ai)
 };
 

@@ -69,7 +69,7 @@ public:
     void joinGame(uint32_t id, const std::string& password);
     void leaveGame();
     void setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
-                 uint8_t team, uint8_t ready);
+                 uint8_t team, uint8_t ready, uint8_t aiLevel = 1);
     void kick(int slot);
     void chat(const std::string& text);
     void startGame();

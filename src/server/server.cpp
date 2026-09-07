@@ -366,6 +366,7 @@ void Server::writeSlots(Writer& w, Room& r) {
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = r.slots[i];
         w.u8(s.type); w.u8(s.faction); w.u8(s.color); w.u8(s.team); w.u8(s.ready);
+        w.u8(s.aiLevel);
         w.str(s.name);
     }
 }
@@ -653,11 +654,30 @@ void Server::tryStart(Client& c) {
                 const auto& s = r->slots[i];
                 cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team};
             }
-            tak::sim::setupMatch(*r->ref, *r->reg, cfg);
+            auto spots = tak::sim::setupMatch(*r->ref, *r->reg, cfg);
+            // setupMatch returns start positions in USED-slot order; remap to slot index.
+            std::vector<std::pair<float, float>> slotPos(size_t(maxSlot + 1), {0.f, 0.f});
+            for (int i = 0, k = 0; i <= maxSlot; ++i)
+                if (r->slots[i].type == 1 || r->slots[i].type == 2) {
+                    if (k < int(spots.size())) slotPos[size_t(i)] = spots[size_t(k)];
+                    ++k;
+                }
             r->ai.reserve(size_t(maxSlot + 1));
             for (int i = 0; i <= maxSlot; ++i)
-                if (r->slots[i].type == 2)
-                    r->ai.emplace_back(i, *r->reg, aiProfile_, 0x7a6b0000u + r->id);
+                if (r->slots[i].type == 2) {
+                    // The enemy start positions this AI marches on before it has spotted
+                    // any units (fog): every used, non-allied slot's start.
+                    std::vector<std::pair<float, float>> enemyStarts;
+                    for (int j = 0; j <= maxSlot; ++j) {
+                        if (j == i || (r->slots[j].type != 1 && r->slots[j].type != 2)) continue;
+                        if (r->ref->allied(i, j)) continue;
+                        enemyStarts.push_back(slotPos[size_t(j)]);
+                    }
+                    auto diff = static_cast<tak::ai::Difficulty>(
+                        r->slots[i].aiLevel <= 2 ? r->slots[i].aiLevel : 1);
+                    r->ai.emplace_back(i, *r->reg, aiProfile_, 0x7a6b0000u + r->id,
+                                       diff, std::move(enemyStarts));
+                }
         }
     }
     // GameStarting: final slot table + options + seed + a per-slot resume token
@@ -696,6 +716,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             Reader rd(f.payload.data(), f.payload.size());
             int slot = int(rd.u8());
             uint8_t type = rd.u8(), faction = rd.u8(), color = rd.u8(), team = rd.u8(), ready = rd.u8();
+            uint8_t aiLevel = rd.u8();
             if (!rd.ok || slot < 0 || slot >= kMaxSlots || r->running) return;
             bool isHost = (r->hostId == c.id);
             // A player edits only their own slot; the host may edit any.
@@ -715,6 +736,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             s.color = color % 10;
             s.team = uint8_t(team % kMaxSlots);
             s.ready = ready ? 1 : 0;
+            s.aiLevel = aiLevel > 2 ? 1 : aiLevel;   // 0=easy 1=normal 2=hard
             broadcastLobby(*r);
             break;
         }
