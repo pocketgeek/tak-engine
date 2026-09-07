@@ -18,10 +18,20 @@ struct Script {
 struct File {
     std::vector<Script> scripts;
     std::vector<std::string> pieces;   // index = piece number
+    // Per-cob string/name table (COB v6 header 0x2c/0x30). PLAY_SOUND and the mission
+    // MAP_COMMAND opcode index into this: for unit cobs it holds sound names, for
+    // mission "god" cobs it holds the command strings ("create NPCEMEN", "SetTrigger",
+    // "SetMission m 133 68", "<mission>.wav", ...). See docs/campaign-design.md.
+    std::vector<std::string> names;
     std::vector<uint32_t> code;        // 32-bit word stream
     uint32_t numStatics = 0;
 
     int scriptIndex(const std::string& name) const;   // -1 if absent
+    // Resolve a name-table index (PLAY_SOUND / MAP_COMMAND operand); "" if out of range.
+    const std::string& name(uint32_t idx) const {
+        static const std::string empty;
+        return idx < names.size() ? names[idx] : empty;
+    }
 };
 
 File load(const std::filesystem::path& path);

@@ -24,6 +24,11 @@ int main(int argc, char** argv) {
             std::cout << "\npieces:";
             for (const auto& p : f.pieces) std::cout << " " << p;
             std::cout << "\n";
+            if (!f.names.empty()) {   // PLAY_SOUND / mission MAP_COMMAND string table
+                std::cout << "names (" << f.names.size() << "):\n";
+                for (size_t i = 0; i < f.names.size(); ++i)
+                    std::cout << "  [" << i << "] " << f.names[i] << "\n";
+            }
         } else if (cmd == "disasm" && argc >= 4) {
             int idx = f.scriptIndex(argv[3]);
             if (idx < 0) { std::cerr << "no script " << argv[3] << "\n"; return 1; }

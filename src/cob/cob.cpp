@@ -66,6 +66,18 @@ File load(const std::vector<uint8_t>& d, const std::string& origin) {
     }
     for (uint32_t i = 0; i < numPieces; ++i)
         f.pieces.push_back(cstr(d, u32(d, offPieceNames + i * 4)));
+
+    // COB v6 name/string table (two extra header words past offCode): 0x2c = offset to
+    // the name-offset array, 0x30 = its count. Indexed by PLAY_SOUND and the mission
+    // MAP_COMMAND opcode. Bounds-guarded (absent/garbage on older/odd cobs -> empty).
+    uint32_t offNames = u32(d, 0x2c);
+    uint32_t numNames = u32(d, 0x30);
+    if (numNames <= 4096 && offNames > 0 &&
+        size_t(offNames) + size_t(numNames) * 4 <= d.size()) {
+        f.names.reserve(numNames);
+        for (uint32_t i = 0; i < numNames; ++i)
+            f.names.push_back(cstr(d, u32(d, offNames + i * 4)));
+    }
     return f;
 }
 
@@ -185,6 +197,13 @@ std::string disassemble(const File& f, int script) {
         out << info->name;
         for (int a = 0; a < info->args && pc + 1 + a < f.code.size(); ++a)
             out << " " << int32_t(f.code[pc + 1 + a]);
+        // Annotate the name-table operand of the string-indexed opcodes so a mission
+        // "god" cob reads as its command strings, not bare indices.
+        if ((op == 0x10073000 /*MAP_COMMAND*/ || op == 0x10072000 /*PLAY_SOUND*/) &&
+            pc + 1 < f.code.size()) {
+            const std::string& nm = f.name(f.code[pc + 1]);
+            if (!nm.empty()) out << "   ; \"" << nm << "\"";
+        }
         out << "\n";
         pc += 1 + uint32_t(info->args);
     }
