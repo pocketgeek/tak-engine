@@ -4166,17 +4166,6 @@ public:
             btn("QUIT", [this] { quitRequested_ = true; });
         }
         if (options_) options_->render(winW, winH);   // topmost of all
-
-        // Debug (TAK_PICKLOG): draw the game's idea of the cursor (mouseX_/mouseY_)
-        // as a magenta crosshair. If it drifts from the real OS cursor -- especially
-        // toward the right of a very wide window -- the mouse coords SDL hands us
-        // don't match the render space (a Wayland/compositor coordinate mismatch).
-        static const bool pickDbg = std::getenv("TAK_PICKLOG") != nullptr;
-        if (pickDbg) {
-            SDL_SetRenderDrawColor(ren_, 255, 0, 255, 255);
-            SDL_FRect v{mouseX_ - 1, mouseY_ - 16, 2, 32}, h{mouseX_ - 16, mouseY_ - 1, 32, 2};
-            SDL_RenderFillRectF(ren_, &v); SDL_RenderFillRectF(ren_, &h);
-        }
     }
 
     void advance(float seconds) {
@@ -9528,22 +9517,6 @@ int main(int argc, char** argv) {
 
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
-        // Diagnostic: report the window size vs the drawable (render) size whenever
-        // either changes. If they differ, the compositor/HiDPI is scaling and mouse
-        // picking must rescale (it does, below); if they're EQUAL yet picking is off
-        // on a wide window, the mismatch is elsewhere. Helps pin down "mouse in the
-        // wrong spot when the window is very wide".
-        {
-            static int lastWw = -1, lastDw = -1;
-            int dw = 0, dh = 0, ww2 = 0, wh2 = 0;
-            SDL_GetRendererOutputSize(ren, &dw, &dh);
-            SDL_GetWindowSize(win, &ww2, &wh2);
-            if (ww2 != lastWw || dw != lastDw) {
-                lastWw = ww2; lastDw = dw;
-                std::fprintf(stderr, "video: window %dx%d, drawable %dx%d%s\n", ww2, wh2, dw, dh,
-                             (dw != ww2 || dh != wh2) ? "  <- SCALED (mouse rescaled)" : "");
-            }
-        }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             // The window-manager close button (title-bar X) fires SDL_QUIT; we
@@ -9581,14 +9554,6 @@ int main(int argc, char** argv) {
                 float lx, ly;
                 SDL_RenderWindowToLogical(ren, e.button.x, e.button.y, &lx, &ly);
                 e.button.x = int(lx); e.button.y = int(ly);
-            }
-            if (std::getenv("TAK_PICKLOG") &&
-                (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP)) {
-                int pxw = 0, pxh = 0, lgw = 0, lgh = 0;
-                SDL_GetWindowSizeInPixels(win, &pxw, &pxh);
-                SDL_GetWindowSize(win, &lgw, &lgh);
-                std::fprintf(stderr, "click: mapped (%d,%d) | drawable %dx%d pixels %dx%d logical %dx%d\n",
-                             e.button.x, e.button.y, ww, wh, pxw, pxh, lgw, lgh);
             }
             if (mapView) mapView->input(e);
             if (modelView) modelView->input(e);
