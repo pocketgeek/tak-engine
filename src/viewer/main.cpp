@@ -9265,9 +9265,13 @@ int main(int argc, char** argv) {
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
     std::string winTitle = std::string("takview ") + tak::kVersion;
+    // ALLOW_HIGHDPI: on scaled displays (esp. Wayland fractional scaling) this makes
+    // SDL report the true drawable size distinct from the window size, so the
+    // window->drawable mouse rescale below actually engages -- without it SDL reports
+    // window==drawable and picking drifts on a wide, scaled window.
     SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, winW, winH,
-                                       SDL_WINDOW_RESIZABLE);
+                                       SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (win && settings.fullscreen)
         SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
     Uint32 renFlags = SDL_RENDERER_SOFTWARE;
