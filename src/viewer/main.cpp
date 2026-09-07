@@ -4302,8 +4302,13 @@ private:
             float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
             return world_.canPlace(placing_, wx, wz) ? tak::CursorId::Green : tak::CursorId::Red;
         }
-        if (reclaimDrag_) return tak::CursorId::Reclaim;   // right-drag "clear this area"
-        if (dragging_)    return tak::CursorId::Normal;    // box-select drag
+        // Right-drag "clear this area": show the broom only once the pointer has moved
+        // enough to actually be a box (the same 6px threshold that tells a right-CLICK
+        // from a box on release). Before that, keep the ordinary hover cursor.
+        if (reclaimDrag_ &&
+            (std::fabs(mouseX_ - rdSx0_) >= 6.0f || std::fabs(mouseY_ - rdSy0_) >= 6.0f))
+            return tak::CursorId::Reclaim;
+        if (dragging_) return tak::CursorId::Normal;       // box-select drag
         if (pendingCmd_)  { fightTint = (pendingCmd_ == 'f'); return cursorForCmd(pendingCmd_); }
         if (mouseX_ < 0)  return tak::CursorId::Normal;
         float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
@@ -4374,10 +4379,8 @@ private:
                 }
             }
 
-            // Empty ground with a mobile unit selected -> move.
-            for (int id : selection_)
-                if (const auto* u = world_.unit(id))
-                    if (u->type && u->type->canMove) return tak::CursorId::Move;
+            // Empty ground: plain arrow. The Move cursor shows ONLY when the move order
+            // is armed (Move button / hotkey), not merely from having a unit selected.
             return tak::CursorId::Normal;
         }
 
