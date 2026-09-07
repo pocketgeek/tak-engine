@@ -5784,6 +5784,12 @@ private:
     SDL_FRect mapListRect_{};          // the list box (rows area) -- wheel target
     SDL_FRect mapThumbRect_{};         // the scrollbar thumb -- drag grab
     int mapVisRows_ = 0, mapTotalRows_ = 0;   // for clamping + thumb drag math
+    // Selected-map preview (the .tnt's embedded minimap), rebuilt on selection.
+    SDL_Texture* mapPreviewTex_ = nullptr;
+    std::string mapPreviewFor_;        // mapPath_ the current preview was built for
+    int mapPreviewW_ = 0, mapPreviewH_ = 0;
+    std::string mapPreviewDims_;       // "W x H" cell size, shown under the preview
+    std::vector<uint8_t> mapPalRgba_;  // palettes/palette.pal, cached (256*4)
     uint8_t createOverride_ = 1;   // create-dialog override tier (default cosmetic)
     std::string mpMapId_;   // set from the launched map basename
     std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
@@ -8012,6 +8018,38 @@ private:
         lbBtn(winW - 140.0f, winH - 40.0f, 120, 30, "BACK", true, [this] { menuRequested_ = true; });
     }
 
+    // Build the selected map's preview texture from the .tnt's embedded minimap
+    // (8-bit indexed -> RGBA via palettes/palette.pal). Rebuilt only when the
+    // selection changes; a bad/missing tnt just leaves no preview.
+    void buildMapPreview(const std::string& tntPath) {
+        if (mapPreviewTex_) { SDL_DestroyTexture(mapPreviewTex_); mapPreviewTex_ = nullptr; }
+        mapPreviewFor_ = tntPath;
+        mapPreviewW_ = mapPreviewH_ = 0;
+        mapPreviewDims_.clear();
+        if (tntPath.empty()) return;
+        tak::tnt::Map m;
+        try { m = tak::tnt::Map::load(vfs_.read(tntPath), tntPath); } catch (...) { return; }
+        if (m.minimap.empty() || m.minimapW <= 0 || m.minimapH <= 0) return;
+        if (mapPalRgba_.empty()) {   // cache the standard game palette once
+            try {
+                auto pal = tak::gaf::Palette::fromBytes(vfs_.read("palettes/palette.pal"), "palette.pal");
+                mapPalRgba_.assign(&pal.rgba[0][0], &pal.rgba[0][0] + 256 * 4);
+            } catch (...) { return; }
+        }
+        int w = m.minimapW, h = m.minimapH;
+        std::vector<uint8_t> rgba(size_t(w) * h * 4);
+        for (size_t i = 0; i < size_t(w) * h; ++i) {
+            const uint8_t* c = &mapPalRgba_[size_t(m.minimap[i]) * 4];
+            rgba[i * 4 + 0] = c[0]; rgba[i * 4 + 1] = c[1]; rgba[i * 4 + 2] = c[2]; rgba[i * 4 + 3] = 255;
+        }
+        mapPreviewTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
+        if (!mapPreviewTex_) return;
+        SDL_UpdateTexture(mapPreviewTex_, nullptr, rgba.data(), w * 4);
+        SDL_SetTextureScaleMode(mapPreviewTex_, SDL_ScaleModeLinear);
+        mapPreviewW_ = w; mapPreviewH_ = h;
+        mapPreviewDims_ = std::to_string(m.width) + " X " + std::to_string(m.height);
+    }
+
     void drawCreate(int winW, int winH) {
         (void)winW; (void)winH;
         float x = 80, y = 90;
@@ -8107,6 +8145,24 @@ private:
         } else {
             mapThumbRect_ = {0, 0, 0, 0};
         }
+
+        // Preview of the selected map (its embedded minimap), right of the list.
+        if (mapPreviewFor_ != mapPath_) buildMapPreview(mapPath_);
+        const float pvx = boxX + boxW + 12, pvy = boxY, pvW = 192, pvH = 192;
+        blockText("PREVIEW", pvx, hy, 1.8f, {200, 205, 220, 255});
+        SDL_FRect pbox{pvx, pvy, pvW, pvH};
+        SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &pbox);
+        if (mapPreviewTex_ && mapPreviewW_ > 0) {
+            float sc = std::min(pvW / float(mapPreviewW_), pvH / float(mapPreviewH_));
+            float iw = mapPreviewW_ * sc, ih = mapPreviewH_ * sc;
+            SDL_FRect dst{pvx + (pvW - iw) / 2, pvy + (pvH - ih) / 2, iw, ih};
+            SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
+        } else {
+            blockText("NO PREVIEW", pvx + 34, pvy + pvH / 2 - 7, 1.6f, {120, 125, 140, 255});
+        }
+        SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
+        if (!mapPreviewDims_.empty())
+            blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
     }
 
     void drawRoom(int winW, int winH) {
