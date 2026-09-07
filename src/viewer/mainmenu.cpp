@@ -227,11 +227,8 @@ struct MainMenu::Impl {
         if (!d.vtex) {
             d.vtex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888,
                                        SDL_TEXTUREACCESS_STREAMING, d.vw, d.vh);
-            // Bink frames are opaque, but the decoder's alpha can come out < 255;
-            // BLENDMODE_BLEND then blends the clip DARKER over the background (a visible
-            // colour shift where the snort video overlays the static "K"). Ignore the
-            // alpha (opaque) so the clip renders at its true decoded colour. Linear
-            // filtering smooths these low-res clips (~124px) when scaled to the window.
+            // Bink frames are opaque -- ignore any decoder alpha. Linear filtering
+            // smooths the low-res door clips (~150-220px) when scaled to the window.
             SDL_SetTextureBlendMode(d.vtex, SDL_BLENDMODE_NONE);
             SDL_SetTextureScaleMode(d.vtex, SDL_ScaleModeLinear);
         }
@@ -290,14 +287,7 @@ struct MainMenu::Impl {
             bg = gafTex(im.gaf, im.seq, im.frame);
             // The background is the opaque base layer -- ignore any palette-index-0
             // "transparency" in the map art so it doesn't punch through to black.
-            if (bg) {
-                SDL_SetTextureBlendMode(bg, SDL_BLENDMODE_NONE);
-                // Match the background to the Bink clips it sits behind: they render a
-                // touch darker (mostly green), so the palette-bright bg would otherwise
-                // seam against the video (the dragon in the "K"). Measured video/bg
-                // per-channel scale, pixel-aligned.
-                SDL_SetTextureColorMod(bg, 249, 243, 248);
-            }
+            if (bg) SDL_SetTextureBlendMode(bg, SDL_BLENDMODE_NONE);
         }
 
         struct DoorSpec { const char* gadget; const char* vbase; Choice act; };
@@ -305,8 +295,6 @@ struct MainMenu::Impl {
             {"PlayComputer", "machine", Choice::SinglePlayer},
             {"PlayStory",    "girl",    Choice::Campaign},
             {"PlayPlayer",   "knight",  Choice::Multiplayer},
-            // The dragon in the title's "K": hover snorts (snort4-7), no click action.
-            {"Credits",      "snort",   Choice::None},
         };
         for (auto& s : specs) {
             const gui::Gadget* g = gui.find(s.gadget);
@@ -316,7 +304,7 @@ struct MainMenu::Impl {
             d.rect = {g->x, g->y, g->w, g->h};
             d.vbase = s.vbase;
             d.action = s.act;
-            d.sound = s.act == Choice::None ? "" : clickSound(*g);   // hover-only: no click sound
+            d.sound = clickSound(*g);
             d.tip = g->cmd;   // gui cmd doubles as the hover help caption
             loadSfx(d.sound);
             if (!g->imgs.empty()) d.gaf = gafTex(g->imgs[0].gaf, g->imgs[0].seq, g->imgs[0].frame);
@@ -362,13 +350,7 @@ struct MainMenu::Impl {
         float s, ox, oy; layout(winW, winH, s, ox, oy);
         if (bg) { SDL_FRect r{ox, oy, 640 * s, 480 * s}; SDL_RenderCopyF(ren, bg, nullptr, &r); }
         for (auto& d : doors) {
-            // The dragon (Choice::None) is part of the static background art, so when
-            // it's idle just let the background show through (a perfect match); overlay
-            // its snort video only while it's actually snorting (hover). The clip itself
-            // is colour-matched to the bg (see setDoorTex) so the transition is seamless
-            // and the fire hides any residual. Doors always play (they fill a bg hole).
-            bool idleDragon = d.action == MainMenu::Choice::None && d.state == DoorState::Idle;
-            if (d.videoOk && d.vtex && !idleDragon) {
+            if (d.videoOk && d.vtex) {
                 // Like the buttons, the door video is authored bigger than its gui
                 // hotspot and anchored at the gadget origin -- draw it at native size,
                 // NOT stretched to the (smaller) hotspot. Stretching squished it badly:
@@ -377,7 +359,7 @@ struct MainMenu::Impl {
                 SDL_Rect nat{d.rect.x, d.rect.y, d.vw, d.vh};
                 SDL_FRect r = toScreen(nat, s, ox, oy);
                 SDL_RenderCopyF(ren, d.vtex, nullptr, &r);
-            } else if (d.gaf && !idleDragon) {
+            } else if (d.gaf) {
                 SDL_FRect r = toScreen(d.rect, s, ox, oy);
                 SDL_RenderCopyF(ren, d.gaf, nullptr, &r);
             }
