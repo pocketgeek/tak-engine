@@ -23,6 +23,10 @@ struct Campaign {
     std::string title;      // "Book of Darien" (display)
     std::string side;       // [HEADER] campaignside (vestigial in retail)
     std::vector<CampaignMission> missions;
+    // An alternate final mission (branch), e.g. Iron Plague's ipalt ending. It shares
+    // the campaign's earlier missions and is offered alongside the normal finale once
+    // the campaign is at its last mission. Empty when there is no branch.
+    std::string altFinal;
     bool empty() const { return missions.empty(); }
     int count() const { return int(missions.size()); }
 };

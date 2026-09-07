@@ -51,7 +51,8 @@ int main(int argc, char** argv) {
     // --campaigns: list the campaign spine (camps/*.tdf) and exit.
     if (stem == "--campaigns") {
         for (const auto& c : tak::loadCampaigns(vfs)) {
-            std::printf("%-28s (%s)  %d missions\n", c.title.c_str(), c.id.c_str(), c.count());
+            std::printf("%-28s (%s)  %d missions%s%s\n", c.title.c_str(), c.id.c_str(), c.count(),
+                        c.altFinal.empty() ? "" : "  +alt ending: ", c.altFinal.c_str());
             for (int i = 0; i < c.count(); ++i)
                 std::printf("    %2d. %s\n", i + 1, c.missions[size_t(i)].stem.c_str());
         }

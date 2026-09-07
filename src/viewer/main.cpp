@@ -10015,10 +10015,12 @@ int main(int argc, char** argv) {
     if (!campaignStem.empty() && !mpHeadless) {
         std::string title = "MISSION";
         for (const auto& c : tak::loadCampaigns(vfs))
-            if (c.id == campaignId)
+            if (c.id == campaignId) {
+                if (campaignStem == c.altFinal) title = "ALT ENDING";
                 for (int i = 0; i < c.count(); ++i)
                     if (c.missions[size_t(i)].stem == campaignStem)
                         title = "MISSION " + std::to_string(i + 1);
+            }
         menuMusic.setVolume(0, 0);   // hush the front-end track under the movie's own audio
         tak::MainMenu::playIntro(ren, dataRoot, (campaignStem + ".bik").c_str());
         menuMusic.setVolume(settings.masterVol, settings.bgmVol);
@@ -10534,6 +10536,7 @@ int main(int argc, char** argv) {
         std::string title = "MISSION", nextStem;
         for (const auto& c : tak::loadCampaigns(vfs)) {
             if (c.id != campaignId) continue;
+            if (campaignStem == c.altFinal) title = "ALT ENDING";   // terminal branch, no next
             for (int i = 0; i < c.count(); ++i)
                 if (c.missions[size_t(i)].stem == campaignStem) {
                     title = "MISSION " + std::to_string(i + 1);

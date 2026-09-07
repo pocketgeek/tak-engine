@@ -117,6 +117,16 @@ std::vector<Campaign> loadCampaigns(const hpi::Vfs& vfs) {
         int ra = rankOf(a.id), rb = rankOf(b.id);
         return ra != rb ? ra < rb : a.id < b.id;
     });
+    // Fold the alt-ending branch (ipalt) into its parent campaign: it shares every
+    // mission but the last, so instead of listing it as a redundant standalone
+    // campaign, record its finale as the parent's altFinal and drop it.
+    auto idIs = [](const Campaign& c, const char* s) { return c.id == s; };
+    auto ipalt = std::find_if(camps.begin(), camps.end(), [&](const Campaign& c) { return idIs(c, "ipalt"); });
+    auto ip = std::find_if(camps.begin(), camps.end(), [&](const Campaign& c) { return idIs(c, "the iron plague"); });
+    if (ipalt != camps.end() && ip != camps.end() && !ipalt->missions.empty()) {
+        ip->altFinal = ipalt->missions.back().stem;
+        camps.erase(ipalt);
+    }
     return camps;
 }
 

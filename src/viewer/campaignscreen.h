@@ -24,7 +24,8 @@ class CampaignScreen {
 public:
     // ren: the app renderer. vfs: the mounted retail root (to load camps/*.tdf).
     // settings: read for per-campaign progress (not mutated here).
-    CampaignScreen(SDL_Renderer* ren, const hpi::Vfs& vfs, const Settings& settings);
+    CampaignScreen(SDL_Renderer* ren, const hpi::Vfs& vfs, const Settings& settings,
+                   int initialTab = 0);
 
     // Feed one SDL event. Returns true when the overlay should close (BACK / Esc, or a
     // mission was picked). After it returns true the host checks picked().

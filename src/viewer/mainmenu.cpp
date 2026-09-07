@@ -520,8 +520,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         for (auto& dr : d_->doors) d_->updateDoor(dr, 0.0);
         d_->render(w, h);
         // Debug: TAK_SHOT_CAMPAIGN captures the campaign picker overlay for tests.
-        if (settings && std::getenv("TAK_SHOT_CAMPAIGN")) {
-            CampaignScreen cs(d_->ren, d_->vfs, *settings);
+        if (const char* sc = settings ? std::getenv("TAK_SHOT_CAMPAIGN") : nullptr) {
+            int tab = std::atoi(sc);   // TAK_SHOT_CAMPAIGN=1 -> Iron Plague tab
+            Settings tmp = *settings;
+            if (tab == 1) tmp.campaignDone["the iron plague"] = 24;   // reveal finale + alt ending
+            CampaignScreen cs(d_->ren, d_->vfs, tmp, tab);
             cs.render(w, h);
         }
         d_->screenshot(w, h, shotPath);

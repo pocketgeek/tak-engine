@@ -19,8 +19,9 @@ void fill(SDL_Renderer* r, const SDL_FRect& q, Uint8 cr, Uint8 cg, Uint8 cb, Uin
 }
 }  // namespace
 
-CampaignScreen::CampaignScreen(SDL_Renderer* ren, const hpi::Vfs& vfs, const Settings& s)
-    : ren_(ren), settings_(s) {
+CampaignScreen::CampaignScreen(SDL_Renderer* ren, const hpi::Vfs& vfs, const Settings& s,
+                               int initialTab)
+    : ren_(ren), settings_(s), tab_(initialTab) {
     camps_ = loadCampaigns(vfs);
 }
 
@@ -52,8 +53,13 @@ void CampaignScreen::layout(int winW, int winH) {
     rows_.clear();
     float rowH = 34 * u_;
     int done = 0, count = 0;
-    if (nt > 0) { count = camps_[size_t(tab_)].count(); done = settings_.campaignProgress(camps_[size_t(tab_)].id); }
-    contentH_ = count * rowH;
+    bool hasAlt = false;
+    if (nt > 0) {
+        count = camps_[size_t(tab_)].count();
+        done = settings_.campaignProgress(camps_[size_t(tab_)].id);
+        hasAlt = !camps_[size_t(tab_)].altFinal.empty();
+    }
+    contentH_ = (count + (hasAlt ? 1 : 0)) * rowH;
     float maxScroll = std::max(0.0f, contentH_ - listClip_.h);
     scroll_ = std::clamp(scroll_, 0.0f, maxScroll);
     float y = listClip_.y - scroll_;
@@ -61,6 +67,14 @@ void CampaignScreen::layout(int winW, int winH) {
         Row r;
         r.mission = i;
         r.playable = i <= done;   // completed or the next-up mission
+        r.rect = {listClip_.x, y, listClip_.w, rowH - 4 * u_};
+        rows_.push_back(r);
+        y += rowH;
+    }
+    if (hasAlt) {   // the alt ending branches at the last mission, so it unlocks with it
+        Row r;
+        r.mission = -2;
+        r.playable = done >= count - 1;
         r.rect = {listClip_.x, y, listClip_.w, rowH - 4 * u_};
         rows_.push_back(r);
         y += rowH;
@@ -83,7 +97,7 @@ bool CampaignScreen::input(const SDL_Event& e, int winW, int winH) {
         for (const Row& r : rows_) {
             if (!inRect(r.rect, mx, my) || !r.playable) continue;
             const Campaign& c = camps_[size_t(tab_)];
-            pickedStem_ = c.missions[size_t(r.mission)].stem;
+            pickedStem_ = (r.mission == -2) ? c.altFinal : c.missions[size_t(r.mission)].stem;
             pickedCampaign_ = c.id;
             picked_ = true;
             return true;
@@ -134,24 +148,28 @@ void CampaignScreen::render(int winW, int winH) {
     int done = camps_.empty() ? 0 : settings_.campaignProgress(camps_[size_t(tab_)].id);
     for (const Row& r : rows_) {
         if (r.rect.y + r.rect.h < listClip_.y || r.rect.y > listClip_.y + listClip_.h) continue;
-        bool completed = r.mission < done;
-        bool current = r.mission == done;
-        Uint8 br = completed ? 30 : current ? 46 : 30;
-        Uint8 bg = completed ? 44 : current ? 54 : 32;
-        Uint8 bb = completed ? 38 : current ? 40 : 36;
+        bool alt = r.mission == -2;
+        bool completed = !alt && r.mission < done;
+        bool current = alt ? r.playable : r.mission == done;
+        Uint8 br = alt ? (r.playable ? 46 : 30) : completed ? 30 : current ? 46 : 30;
+        Uint8 bg = alt ? (r.playable ? 40 : 32) : completed ? 44 : current ? 54 : 32;
+        Uint8 bb = alt ? (r.playable ? 60 : 40) : completed ? 38 : current ? 40 : 36;
         fill(ren_, r.rect, br, bg, bb, 255);
-        if (current) {   // highlight the next-up mission
-            SDL_SetRenderDrawColor(ren_, 210, 180, 90, 255);
+        if (current) {   // highlight a playable row
+            SDL_SetRenderDrawColor(ren_, alt ? 180 : 210, alt ? 130 : 180, alt ? 210 : 90, 255);
             SDL_RenderDrawRectF(ren_, &r.rect);
         }
         char label[32];
-        std::snprintf(label, sizeof label, "MISSION %d", r.mission + 1);
-        SDL_Color col = completed ? SDL_Color{140, 200, 150, 255}
+        if (alt) std::snprintf(label, sizeof label, "ALT ENDING");
+        else std::snprintf(label, sizeof label, "MISSION %d", r.mission + 1);
+        SDL_Color col = alt ? (r.playable ? SDL_Color{215, 180, 235, 255} : SDL_Color{110, 100, 120, 255})
+                        : completed ? SDL_Color{140, 200, 150, 255}
                         : current  ? SDL_Color{240, 225, 170, 255}
                                    : SDL_Color{110, 114, 128, 255};
         float px = 1.5f * u_;
         drawBlockText(ren_, label, r.rect.x + 14 * u_, r.rect.y + (r.rect.h - 7 * px) / 2, px, col);
-        const char* tag = completed ? "DONE" : current ? "PLAY" : "LOCKED";
+        const char* tag = alt ? (r.playable ? "PLAY" : "LOCKED")
+                        : completed ? "DONE" : current ? "PLAY" : "LOCKED";
         drawBlockText(ren_, tag, r.rect.x + r.rect.w - blockTextWidth(tag, px) - 14 * u_,
                       r.rect.y + (r.rect.h - 7 * px) / 2, px, col);
     }
