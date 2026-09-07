@@ -196,16 +196,19 @@ server", keeps a single sim path, and gets AI for free; the COB VM move is the m
 
 ## 7. Phased plan
 
-Status (2026-09-07): phases 1–3 and the §6 architecture are **done and verified**;
+Status (2026-09-07): phases 1–3 + 5 and most of 6 are **done and verified**;
 `takmission01_mt` runs over the real takserver/takview in lockstep (`err=none`,
-reproducible hash) with win/lose wired. Phases 4–7 remain.
+reproducible hash) with win/lose wired, and is playable from the main-menu
+campaign picker (or `takview game --campaign <stem>`). Remaining: phase 4, the
+briefing/movie/victory-screen polish of 6, and phase 7.
 
 1. **Scripting core (no campaign yet).** ✅ COB name table (`src/cob`);
    verb-string `MAP_COMMAND` dispatch (Create/SetMission/SetTrigger/GetUtype/
    WriteValue-ReadValue/SetAttribute/Capture/ScreenShake); `SetMission` order
-   mini-language (m/ma/a/p/s/d; **w/wa wait-pacing, patrol looping, o/v stance,
-   b reinforce still TODO** — why an unattended escort idles at its first waypoint).
-   `MissionScript` in `src/sim/mission.{h,cpp}`, exercised by `tools/missiontool`.
+   mini-language — m/ma/a/p(patrol-loop)/s/d/**w(timed wait)**/o(stance)/v done;
+   **wa (wait-for-attack) and b (timed reinforcement) still TODO**. `MissionScript`
+   in `src/sim/mission.{h,cpp}`; `Order.wait` + `World::orderWait`/`patrolTo` back the
+   pacing. Exercised by `tools/missiontool` (WIN/LOSE/TRIGGER-march all pass).
 2. **Data-driven win/lose.** ✅ `.ota` `VictoryCondition_*`/`DefeatCondition_*` →
    evaluator ticked in the sim; scripted `SET_UNIT_VALUE(2,0/1)` honoured. Win and
    lose paths pass in `missiontool`. (Condition *guards* — don't win before the
@@ -219,12 +222,20 @@ reproducible hash) with win/lose wired. Phases 4–7 remain.
    First-pass diplomacy (opponents team 1, everyone else allied); proper
    neutral/ally roles and non-zero human slots are TODO.
 4. **Per-mission unit restriction.** Filter the conjure/build menu to the `.tdf` set.
-5. **Campaign spine.** `camps/*.tdf` loader; a campaign controller (current index,
-   win→next / lose→retry); profile+campaign persistence via `tak::Settings`.
-6. **Front-end flow.** Wire `Choice::Campaign`: campaign/profile picker → intro movie
-   → briefing screen → play → victory/defeat screens → next/retry. Reuse `playIntro`,
-   the `.gui` parser, and the retail `Briefing`/`victory<kingdom>`/`Defeat` guis.
-7. **Polish.** Finish the `SetMission` verbs; in-mission objectives panel,
+   (Not started.)
+5. **Campaign spine.** ✅ `camps/*.tdf` loader (`src/campaign/campaign.{h,cpp}`,
+   `loadCampaigns` — Book of Darien 48, The Iron Plague 25, ipalt 25); progress
+   persisted in `tak::Settings` (`campaignDone`, `campaign.<id>=n`); win→advance
+   handled in `main()`.
+6. **Front-end flow.** ◑ `Choice::Campaign` wired: the girl door opens `CampaignScreen`
+   (`src/viewer/campaignscreen.{h,cpp}`) — campaign tabs + completed/current(PLAY)/
+   LOCKED mission rows; a pick launches through the autoMode-8 mission host and plays
+   in lockstep; on victory `world_.missionOutcome()` drives the banner and bumps
+   persisted progress. **Still TODO: intro movie (generalize `playIntro`), a
+   briefing screen (retail `Briefing`/`victory<kingdom>`/`Defeat` `.gui`), and
+   next/retry buttons on a dedicated result screen** (today it uses the skirmish
+   VICTORY/DEFEAT banner + Esc-to-menu).
+7. **Polish.** Finish the `SetMission` verbs (wa/b); in-mission objectives panel,
    `posttakmission24`/`PostTakCredits` cinematics, Iron Plague dialogue widget,
    briefing VO, `ipalt` branch.
 
