@@ -9517,6 +9517,22 @@ int main(int argc, char** argv) {
 
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
+        // Diagnostic: report the window size vs the drawable (render) size whenever
+        // either changes. If they differ, the compositor/HiDPI is scaling and mouse
+        // picking must rescale (it does, below); if they're EQUAL yet picking is off
+        // on a wide window, the mismatch is elsewhere. Helps pin down "mouse in the
+        // wrong spot when the window is very wide".
+        {
+            static int lastWw = -1, lastDw = -1;
+            int dw = 0, dh = 0, ww2 = 0, wh2 = 0;
+            SDL_GetRendererOutputSize(ren, &dw, &dh);
+            SDL_GetWindowSize(win, &ww2, &wh2);
+            if (ww2 != lastWw || dw != lastDw) {
+                lastWw = ww2; lastDw = dw;
+                std::fprintf(stderr, "video: window %dx%d, drawable %dx%d%s\n", ww2, wh2, dw, dh,
+                             (dw != ww2 || dh != wh2) ? "  <- SCALED (mouse rescaled)" : "");
+            }
+        }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             // The window-manager close button (title-bar X) fires SDL_QUIT; we
@@ -9552,6 +9568,11 @@ int main(int argc, char** argv) {
                 } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
                     e.button.x = int(e.button.x * sx); e.button.y = int(e.button.y * sy);
                 }
+            }
+            if (std::getenv("TAK_PICKLOG") &&
+                (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP)) {
+                std::fprintf(stderr, "click: rescaled (%d,%d) | drawable %dx%d window %dx%d\n",
+                             e.button.x, e.button.y, ww, wh, wpw, wph);
             }
             if (mapView) mapView->input(e);
             if (modelView) modelView->input(e);
