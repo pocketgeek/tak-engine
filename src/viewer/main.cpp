@@ -8155,18 +8155,20 @@ private:
         static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
         lbBtn(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
               [this] { createOverride_ = uint8_t((createOverride_ + 1) % 3); }); y += 44;
-        // CREATE at the bottom-right (BACK is bottom-left); BROWSER (MP only) beside it.
-        lbBtn(kLobbyW - 140, kLobbyH - 40, 120, 30, "CREATE", !createName_.empty(), [this] {
+        // Footer buttons, symmetric: BACK at the bottom-left and CREATE at the
+        // bottom-right, both inset by `x` from their side and at the same height.
+        // BROWSER (MP only) sits just left of CREATE.
+        const float by = kLobbyH - 40, bw = 120;
+        lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0; o.gods = createGods_ ? 1 : 0;
             o.overridePolicy = createOverride_;
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity());
             lobbyScreen_ = LobbyScreen::Browser;
         });
         if (!singlePlayer_)   // a private single-player game has no browser to go back to
-            lbBtn(kLobbyW - 262, kLobbyH - 40, 110, 30, "BROWSER", true,
+            lbBtn(kLobbyW - x - bw - 122, by, 110, 30, "BROWSER", true,
                   [this] { lobbyScreen_ = LobbyScreen::Browser; });
-        // Back button at the bottom-left, where back buttons live.
-        lbBtn(x, kLobbyH - 40, 120, 30, "BACK", true, [this] { menuRequested_ = true; });
+        lbBtn(x, by, bw, 30, "BACK", true, [this] { menuRequested_ = true; });
 
         // Map picker (right column): a scrollable list box. Selecting sets both the
         // wire id (mpMapId_ = bare .tnt stem) and mapPath_, so mpCapacity() recomputes
