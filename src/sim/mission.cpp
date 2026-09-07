@@ -134,8 +134,10 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
     return id >= 0 ? id : 0;
 }
 
-// SetMission order-queue mini-language (see docs/campaign-design.md). Implements the
-// common tokens; the rarer ones (b/v/c/g/i/u/r) and inter-order WAIT pacing are TODO.
+// SetMission order-queue mini-language (see docs/campaign-design.md). Implements
+// m/ma/a/p/s/d/w/o/v (move, move-attack, attack, patrol-loop, give, destroy, timed
+// wait, stance, scalar); the timed reinforcement drop (b) and wait-for-attack (wa)
+// event hold are still TODO.
 void MissionScript::applyOrders(World& w, int unitId, const std::string& orders) {
     Unit* u = w.unit(unitId);
     if (!u) return;
@@ -182,17 +184,29 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders)
                 w.attackMove(unitId, cellToWorld(x), cellToWorld(y), queue);
                 queue = true;
             }
-        } else if (c == 'p') {                            // p X Y [Z] (patrol/path)
+        } else if (c == 'p') {                            // p X Y (patrol waypoint: loops)
             float x = num(), y = num();
-            w.order(unitId, cellToWorld(x), cellToWorld(y), queue); queue = true;
+            w.patrolTo(unitId, cellToWorld(x), cellToWorld(y), queue); queue = true;
         } else if (c == 's') {                            // hand the unit to the human player
             u->player = human_;
         } else if (c == 'd') {                            // self-destruct / remove
             u->hp = 0;
-        } else if (c == 'w') {                            // w N / wa: TODO inter-order wait pacing
-            if (c2 == 'a') ++i; else num();
-        } else if (c == 'o' || c == 'v') {                // stance / scalar: TODO
-            num(); if (c == 'o') { skipsp(); if (i < orders.size() && std::isdigit((unsigned char)orders[i])) num(); }
+        } else if (c == 'w') {                            // w N (wait N s) / wa (wait-for-attack)
+            if (c2 == 'a') {
+                ++i;                                      // wa: event-driven hold not yet modelled -> proceed
+            } else {
+                float n = num();
+                skipsp();
+                if (i < orders.size() && std::isdigit((unsigned char)orders[i])) num();  // optional 2nd arg
+                w.orderWait(unitId, n, queue); queue = true;
+            }
+        } else if (c == 'o') {                            // o A [B]: combat stance
+            float a = num();
+            skipsp();
+            if (i < orders.size() && std::isdigit((unsigned char)orders[i])) num();
+            w.setStance(unitId, int(a));
+        } else if (c == 'v') {                            // v F: movement scalar (not modelled)
+            num();
         } else {
             word();                                       // skip unrecognised token's operands
         }

@@ -190,6 +190,7 @@ struct Order {
     bool patrol = false;       // loop: completed orders re-queue at the back
     bool guard = false;        // follow friendly `targetId`, engage threats
     bool flow = false;         // steer by the shared flow field toward (x,z)
+    float wait = 0;            // >0: hold position, counting down (SetMission "w N")
 };
 
 // A queued construction: build `type` at (x, z) when the builder gets to it.
@@ -559,6 +560,12 @@ public:
     // merely nearest in a straight line but walled off (army would stall/pile).
     bool pathExists(const UnitType* type, float gx, float gz, float fx, float fz) const;
     void patrol(int unitId, float x, float z);
+    // Queue a patrol waypoint (SetMission "p X Y"): like a move but the completed
+    // order re-queues at the back, so a chain of these loops the unit through them.
+    void patrolTo(int unitId, float x, float z, bool queue);
+    // Queue a timed hold (SetMission "w N"): the unit stands still for `seconds`
+    // before the next queued order runs.
+    void orderWait(int unitId, float seconds, bool queue);
     void guard(int unitId, int targetId, bool queue);
     void stop(int unitId);
     // Self-destruct a living unit (Ctrl+D via the command path; no kill credit).

@@ -884,6 +884,30 @@ void World::patrol(int unitId, float x, float z) {
     u->orders.push_back(a);
 }
 
+void World::patrolTo(int unitId, float x, float z, bool queue) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type || !u->type->canMove) return;
+    size_t before = queue ? u->orders.size() : 0;
+    order(unitId, x, z, queue);
+    // Mark every waypoint of this move as a looping, engage-en-route patrol leg; a
+    // chain of patrolTo calls then cycles the unit through all of them.
+    for (size_t i = before; i < u->orders.size(); ++i) {
+        u->orders[i].patrol = true;
+        u->orders[i].attackMove = true;
+    }
+}
+
+void World::orderWait(int unitId, float seconds, bool queue) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type) return;
+    if (!queue) u->orders.clear();
+    Order o;
+    o.x = u->x;
+    o.z = u->z;
+    o.wait = seconds > 0 ? seconds : 0.0f;
+    u->orders.push_back(o);
+}
+
 void World::guard(int unitId, int targetId, bool queue) {
     Unit* u = unit(unitId);
     Unit* t = unit(targetId);
@@ -2015,6 +2039,11 @@ void World::tick(float dt) {
 
         if (u.orders.empty()) {
             u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
+        } else if (u.orders.front().wait > 0.0f) {
+            // SetMission "w N": hold position while the scripted wait counts down.
+            u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
+            u.orders.front().wait -= dt;
+            if (u.orders.front().wait <= 0.0f) u.orders.pop_front();
         } else {
             const Order& o = u.orders.front();
             float dx = o.x - u.x, dz = o.z - u.z;
