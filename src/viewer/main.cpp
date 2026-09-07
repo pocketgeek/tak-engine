@@ -9569,25 +9569,30 @@ int main(int argc, char** argv) {
             int ww, wh;
             SDL_GetRendererOutputSize(ren, &ww, &wh);
             // Mouse events arrive in window points; the renderer (and all our
-            // world<->screen math) works in output pixels. When those differ
-            // — e.g. a maximized window on a scaled display — rescale so
-            // zoom-to-cursor and clicks land where the pointer actually is.
-            int wpw = 0, wph = 0;
-            SDL_GetWindowSize(win, &wpw, &wph);
-            if (wpw > 0 && wph > 0 && (wpw != ww || wph != wh)) {
-                double sx = double(ww) / wpw, sy = double(wh) / wph;
-                if (e.type == SDL_MOUSEMOTION) {
-                    e.motion.x = int(e.motion.x * sx); e.motion.y = int(e.motion.y * sy);
-                    e.motion.xrel = int(e.motion.xrel * sx);
-                    e.motion.yrel = int(e.motion.yrel * sy);
-                } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
-                    e.button.x = int(e.button.x * sx); e.button.y = int(e.button.y * sy);
-                }
+            // world<->screen math) works in output pixels. Map between them with
+            // SDL_RenderWindowToLogical, which uses SDL's INTERNAL window<->drawable
+            // mapping -- reliable even on Wayland fractional scaling, where the size
+            // getters report window==drawable yet pointer events are in a smaller
+            // logical space (SDL_GetWindowSize-based rescaling was a no-op there).
+            if (e.type == SDL_MOUSEMOTION) {
+                float lx, ly, lx0, ly0;
+                SDL_RenderWindowToLogical(ren, e.motion.x, e.motion.y, &lx, &ly);
+                SDL_RenderWindowToLogical(ren, e.motion.x - e.motion.xrel,
+                                          e.motion.y - e.motion.yrel, &lx0, &ly0);
+                e.motion.x = int(lx); e.motion.y = int(ly);
+                e.motion.xrel = int(lx - lx0); e.motion.yrel = int(ly - ly0);
+            } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                float lx, ly;
+                SDL_RenderWindowToLogical(ren, e.button.x, e.button.y, &lx, &ly);
+                e.button.x = int(lx); e.button.y = int(ly);
             }
             if (std::getenv("TAK_PICKLOG") &&
                 (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP)) {
-                std::fprintf(stderr, "click: rescaled (%d,%d) | drawable %dx%d window %dx%d\n",
-                             e.button.x, e.button.y, ww, wh, wpw, wph);
+                int pxw = 0, pxh = 0, lgw = 0, lgh = 0;
+                SDL_GetWindowSizeInPixels(win, &pxw, &pxh);
+                SDL_GetWindowSize(win, &lgw, &lgh);
+                std::fprintf(stderr, "click: mapped (%d,%d) | drawable %dx%d pixels %dx%d logical %dx%d\n",
+                             e.button.x, e.button.y, ww, wh, pxw, pxh, lgw, lgh);
             }
             if (mapView) mapView->input(e);
             if (modelView) modelView->input(e);
