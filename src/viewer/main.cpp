@@ -10534,12 +10534,14 @@ int main(int argc, char** argv) {
         gameView->missionOutcomePublic() != 0) {
         int oc = gameView->missionOutcomePublic();
         std::string title = "MISSION", nextStem;
+        bool finalMission = false;
         for (const auto& c : tak::loadCampaigns(vfs)) {
             if (c.id != campaignId) continue;
-            if (campaignStem == c.altFinal) title = "ALT ENDING";   // terminal branch, no next
+            if (campaignStem == c.altFinal) { title = "ALT ENDING"; finalMission = true; }  // terminal branch
             for (int i = 0; i < c.count(); ++i)
                 if (c.missions[size_t(i)].stem == campaignStem) {
                     title = "MISSION " + std::to_string(i + 1);
+                    if (i + 1 >= c.count()) finalMission = true;
                     if (oc > 0) {   // victory: unlock + reveal the next mission
                         int& done = settings.campaignDone[campaignId];
                         if (i + 1 > done) { done = i + 1; saveSettings(settings); }
@@ -10549,7 +10551,18 @@ int main(int argc, char** argv) {
                 }
             break;
         }
-        killLocalServer(); mp.reset(); gameView.reset();   // free the mission before the modal
+        killLocalServer(); mp.reset(); gameView.reset();   // free the mission before the movie/modal
+        if (oc > 0) {
+            // Cinematics on victory: a per-mission "post<stem>" cutscene (retail ships
+            // one after Book of Darien mission 24), then the campaign's ending credits
+            // after its final mission. Each is a no-op if the movie isn't present.
+            menuMusic.setVolume(0, 0);
+            tak::MainMenu::playIntro(ren, dataRoot, ("post" + campaignStem + ".bik").c_str());
+            if (finalMission)
+                tak::MainMenu::playIntro(ren, dataRoot,
+                                         campaignId == "book of darien" ? "posttakcredits.bik" : "credits.bik");
+            menuMusic.setVolume(settings.masterVol, settings.bgmVol);
+        }
         tak::ResultChoice rc = tak::ResultScreen::run(ren, vfs, oc > 0, title,
                                                       oc > 0 && !nextStem.empty(), &settings, &menuMusic);
         if (rc == tak::ResultChoice::Next)       { pendingCampaign = nextStem;     pendingCampaignId = campaignId; }
