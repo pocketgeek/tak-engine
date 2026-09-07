@@ -6,6 +6,7 @@
 //
 // A dev harness; not shipped in a game.
 
+#include "campaign/campaign.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
@@ -46,6 +47,17 @@ int main(int argc, char** argv) {
     std::string stem = argc >= 3 ? argv[2] : "takmission01_mt";
 
     hpi::Vfs vfs = hpi::mountRetailRoot(dataRoot);
+
+    // --campaigns: list the campaign spine (camps/*.tdf) and exit.
+    if (stem == "--campaigns") {
+        for (const auto& c : tak::loadCampaigns(vfs)) {
+            std::printf("%-28s (%s)  %d missions\n", c.title.c_str(), c.id.c_str(), c.count());
+            for (int i = 0; i < c.count(); ++i)
+                std::printf("    %2d. %s\n", i + 1, c.missions[size_t(i)].stem.c_str());
+        }
+        return 0;
+    }
+
     sim::TypeRegistry reg;
     sim::setupRegistry(reg, vfs, /*crusades=*/false);
 
