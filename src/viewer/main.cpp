@@ -2372,12 +2372,23 @@ public:
             int human = 0;
             tak::sim::setupMission(world_, registry_, vfs_, room.mission, human);
             loadFeatures();
+            // Per-mission unit restriction: missions/<stem>.tdf lists the unit ids this
+            // mission allows; the human's conjure menu is filtered to it (UI only).
+            missionAllowed_.clear();
+            if (std::string tdfp = "missions/" + room.mission + ".tdf"; vfs_.has(tdfp)) {
+                std::vector<uint8_t> tb = vfs_.read(tdfp);
+                tak::tdf::Node root = tak::tdf::parseText(std::string(tb.begin(), tb.end()), tdfp);
+                for (const auto& [name, node] : root.children) { (void)node; missionAllowed_.push_back(name); }
+            }
             // The player commands the mission's human player; for the common case its
             // index equals our room slot (TODO: seat the client at `human` otherwise).
             localPlayer_ = human;
             world_.setVisPlayer(localPlayer_);
             for (auto& u : world_.units())
                 if (u.player == localPlayer_ && u.type) { playerMonarchId_ = u.id; builderId_ = u.id; break; }
+            if (!missionAllowed_.empty())
+                std::fprintf(stderr, "mission %s: conjure menu restricted to %zu allowed unit types\n",
+                             room.mission.c_str(), missionAllowed_.size());
             const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
             if (room.mySlot >= 0) side_ = sides[room.slots[room.mySlot].faction % 5];
             loadPanel(side_);
@@ -4016,7 +4027,7 @@ public:
                                       int(u->hp), int(u->type->maxHp));
                         hudFont_.draw(ren_, buf, 12, 40, 1.5f, {220, 220, 190, 255});
                         if (u->type->isBuilder) {
-                            const auto& menu = registry_.buildable(u->type->id);
+                            const auto menu = conjureMenu(u->type->id);   // mission-filtered
                             std::string m;
                             for (size_t i = 0; i < menu.size() && i < 6; ++i) {
                                 const auto* bt = registry_.find(menu[i]);
@@ -6068,6 +6079,9 @@ private:
     uint8_t createOverride_ = 1;   // create-dialog override tier (default cosmetic)
     std::string mpMapId_;   // set from the launched map basename
     std::string missionStem_;   // campaign mission to host (headless --mpmission)
+    // Per-mission unit whitelist from missions/<stem>.tdf (lowercased ids). When set,
+    // the human's conjure menu is filtered to it (a UI restriction; empty = anything).
+    std::vector<std::string> missionAllowed_;
     std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
     std::vector<std::pair<std::string, std::string>> chatLog_;
     // In-game chat: press Enter to compose, lines fade after a while. Kept apart
@@ -7472,6 +7486,19 @@ private:
             return true;
         }
         return false;
+    }
+
+    // The conjure/build menu for a builder type, filtered by the active mission's unit
+    // whitelist (missions/<stem>.tdf) when one is loaded -- so a campaign mission only
+    // offers the units it allows. An empty whitelist means no restriction.
+    std::vector<std::string> conjureMenu(const std::string& builderType) const {
+        const auto& all = registry_.buildable(builderType);
+        if (missionAllowed_.empty()) return all;
+        std::vector<std::string> out;
+        for (const auto& id : all)
+            if (std::find(missionAllowed_.begin(), missionAllowed_.end(), id) != missionAllowed_.end())
+                out.push_back(id);
+        return out;
     }
 
     // Returns true if a click hit (and was handled by) a conjure/build icon. The icons
@@ -8986,7 +9013,7 @@ private:
         iconRects_.clear();
         const auto* b = selectedBuilder();
         if (b) {
-            const auto& menu = registry_.buildable(b->type->id);
+            const auto menu = conjureMenu(b->type->id);   // mission-filtered
             int n = int(menu.size());
             float iconSz = float(barH()) - 10.0f;
             float gap = 6.0f;
