@@ -34,15 +34,16 @@ public:
 
     // Load anims/cursors.gaf + its palette through the VFS and bake per-frame textures.
     // Returns false if the assets are missing/unreadable (the caller keeps the OS arrow).
-    bool load(SDL_Renderer* ren, hpi::Vfs& vfs);
+    bool load(SDL_Renderer* ren, const hpi::Vfs& vfs);
     bool ok() const { return ok_; }
 
     // Draw `c` with its hotspot on the pixel (mouseX,mouseY) in renderer-output space.
-    // Multi-frame cursors animate from wall-clock time; switching cursor restarts it.
-    // `tint` colour-mods the sprite (default white = untinted); fight-move reuses the
-    // Attack glyph with a tint so it reads apart from a real attack order.
+    // `scale` (1..4) integer-magnifies the sprite AND its hotspot (nearest-neighbour, so
+    // the pixel art stays crisp). Multi-frame cursors animate from wall-clock time;
+    // switching cursor restarts it. `tint` colour-mods the sprite (default white =
+    // untinted); fight-move reuses the Attack glyph with a tint to read apart from attack.
     void draw(SDL_Renderer* ren, CursorId c, int mouseX, int mouseY,
-              SDL_Color tint = SDL_Color{255, 255, 255, 255});
+              int scale = 1, SDL_Color tint = SDL_Color{255, 255, 255, 255});
 
 private:
     struct Frame { SDL_Texture* tex = nullptr; int w = 0, h = 0, hx = 0, hy = 0; };

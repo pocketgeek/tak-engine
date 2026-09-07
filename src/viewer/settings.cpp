@@ -65,6 +65,7 @@ Settings loadSettings() {
         else if (key == "mouseZoomSpeed")  s.mouseZoomSpeed = asFloat(0.25f, 4.0f);
         else if (key == "edgeScrollSpeed") s.edgeScrollSpeed = asFloat(0.25f, 4.0f);
         else if (key == "edgeScroll")      s.edgeScroll = asBool();
+        else if (key == "cursorScale")     s.cursorScale = asInt(1, 4);
         else if (key == "playerName")      s.playerName = val;
         else if (key == "lastMap")         s.lastMap = val;
         else if (key.rfind("chanGain", 0) == 0 && key.size() == 9) {  // chanGain0..7
@@ -93,6 +94,7 @@ bool saveSettings(const Settings& s) {
     o << "mouseZoomSpeed = " << s.mouseZoomSpeed << "\n";
     o << "edgeScrollSpeed = " << s.edgeScrollSpeed << "\n";
     o << "edgeScroll = " << (s.edgeScroll ? 1 : 0) << "\n";
+    o << "cursorScale = " << s.cursorScale << "\n";
     o << "playerName = " << s.playerName << "\n";
     o << "lastMap = " << s.lastMap << "\n";
 

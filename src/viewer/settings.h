@@ -29,6 +29,7 @@ struct Settings {
     float mouseZoomSpeed  = 1.0f;  // wheel-zoom sensitivity; 0.25..4.0
     float edgeScrollSpeed = 1.0f;  // edge-scroll rate;       0.25..4.0
     bool  edgeScroll      = true;  // pan when the cursor is at a screen edge
+    int   cursorScale     = 2;     // custom mouse-cursor size multiplier; 1..4 (2 = default)
 
     // ---- misc ----
     std::string playerName;        // default name for multiplayer
@@ -40,8 +41,8 @@ struct Settings {
             && a.uiScale == b.uiScale && a.antiAlias == b.antiAlias
             && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
-            && a.edgeScroll == b.edgeScroll && a.playerName == b.playerName
-            && a.lastMap == b.lastMap;
+            && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
+            && a.playerName == b.playerName && a.lastMap == b.lastMap;
     }
     friend bool operator!=(const Settings& a, const Settings& b) { return !(a == b); }
 };

@@ -5,6 +5,7 @@
 #include "util/png.h"
 #include "version.h"
 #include "video/bink.h"
+#include "viewer/cursors.h"
 #include "viewer/menumusic.h"
 #include "viewer/options.h"
 #include "viewer/settings.h"
@@ -95,9 +96,16 @@ struct MainMenu::Impl {
     // The Options overlay, opened from the Options button (see run()).
     std::unique_ptr<OptionsScreen> options_;
 
+    // The retail mouse cursor on the front-end, same art as in-game. Loaded once on the
+    // first run(); when it takes over, the OS arrow is hidden (restored in the dtor).
+    CursorSet cursors_;
+    bool cursorsInit_ = false;
+    bool cursorsHidden_ = false;
+
     Impl(SDL_Renderer* r, const hpi::Vfs& v, std::string in)
         : ren(r), vfs(v), install(std::move(in)) {}
     ~Impl() {
+        if (cursorsHidden_) SDL_ShowCursor(SDL_ENABLE);
         if (bg) SDL_DestroyTexture(bg);
         for (auto& d : doors) { if (d.gaf) SDL_DestroyTexture(d.gaf);
                                 if (d.vtex) SDL_DestroyTexture(d.vtex); }
@@ -515,6 +523,13 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     SDL_PumpEvents();
     SDL_FlushEvents(SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP);
 
+    // Front-end mouse cursor: the same retail art as in-game. Load once, then hide the
+    // OS arrow while the menu owns the pointer (restored in ~Impl; on the way into a
+    // game, GameView manages its own cursor). Re-hiding on each run() re-entry covers
+    // GameView having restored the OS arrow when the last game ended.
+    if (!d_->cursorsInit_) { d_->cursorsInit_ = true; d_->cursors_.load(d_->ren, d_->vfs); }
+    if (d_->cursors_.ok()) { SDL_ShowCursor(SDL_DISABLE); d_->cursorsHidden_ = true; }
+
     Uint64 prev = SDL_GetPerformanceCounter();
     const double freq = double(SDL_GetPerformanceFrequency());
     for (;;) {
@@ -594,6 +609,12 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         d_->render(w, h);
         if (d_->serverSelect) d_->renderServerSelect(w, h);
         if (d_->options_) d_->options_->render(w, h);
+        // Draw the cursor last so it sits above the doors and the Options overlay.
+        if (d_->cursors_.ok()) {
+            int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
+            d_->cursors_.draw(d_->ren, CursorId::Normal, mx, my,
+                              settings ? settings->cursorScale : 2);
+        }
         SDL_RenderPresent(d_->ren);
         SDL_Delay(1);
     }
