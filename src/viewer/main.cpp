@@ -2600,6 +2600,14 @@ public:
     // auto-drive the lobby (a real UI will), 1 = auto-host (create + start at 2+
     // ready), 2 = auto-join the first game. Returns false when the session ends.
     // (M3 uses the auto modes; the interactive lobby UI is follow-on work.)
+    // AI difficulty for the headless / auto seat paths: TAK_AI_LEVEL (0/1/2), default
+    // Normal. The interactive lobby sets it per-slot via the Room UI instead.
+    static uint8_t aiLevelEnv() {
+        const char* e = std::getenv("TAK_AI_LEVEL");
+        int v = e ? std::atoi(e) : 1;
+        return uint8_t(v < 0 ? 0 : v > 2 ? 2 : v);
+    }
+
     bool mpAutoStep(int autoMode, const std::string& mapId, bool crusades) {
         using S = tak::net::MpClient::State;
         if (!mp_->poll()) { netError_ = mp_->error(); return false; }
@@ -2651,7 +2659,7 @@ public:
                 const char* ai = std::getenv("TAK_MP_AIS");
                 int nAi = std::clamp(ai ? std::atoi(ai) : 2, 2, int(tak::net::kMaxSlots));
                 for (int k = 0; k < nAi; ++k)
-                    mp_->setSlot(k, 2, uint8_t(k % 5), uint8_t(k), uint8_t(k), 1);
+                    mp_->setSlot(k, 2, uint8_t(k % 5), uint8_t(k), uint8_t(k), 1, aiLevelEnv());
                 mpReadied_ = true;
             } else if (autoMode == 8 && r.mySlot >= 0) {
                 // Campaign mission: seat the human ready and start; the mission's own
@@ -2678,7 +2686,7 @@ public:
                     for (int k = 0; k < n && k + 1 < int(tak::net::kMaxSlots); ++k) {
                         int slot = k + 1;
                         mp_->setSlot(slot, 2, uint8_t((facIdx(aiSide_) + k) % 5),
-                                     uint8_t(slot), uint8_t(slot), 1);
+                                     uint8_t(slot), uint8_t(slot), 1, aiLevelEnv());
                     }
                     mp_->startGame();
                     mpStarted_ = true;
@@ -2689,7 +2697,7 @@ public:
                              uint8_t(r.mySlot), 1);
                 // autoMode 4 (AI-game host): also seat one AI opponent in slot 1.
                 if (autoMode == 4 && r.mySlot == 0)
-                    mp_->setSlot(1, 2, 1, 1, 1, 1);   // AI, tar, colour 1, team 1
+                    mp_->setSlot(1, 2, 1, 1, 1, 1, aiLevelEnv());   // AI, tar, colour 1, team 1
                 // Host stress harness: TAK_MP_AIS=N seats N server AIs in the TOP
                 // slots, leaving the low slots for human joiners.
                 if (autoMode == 1 && r.mySlot == 0)
@@ -2698,7 +2706,7 @@ public:
                         for (int k = 0; k < nAi; ++k) {
                             int slot = tak::net::kMaxSlots - 1 - k;
                             mp_->setSlot(slot, 2, uint8_t(slot % 5), uint8_t(slot),
-                                         uint8_t(slot), 1);   // AI, distinct colour/team
+                                         uint8_t(slot), 1, aiLevelEnv());   // AI, distinct colour/team
                         }
                     }
                 mpReadied_ = true;
@@ -8614,26 +8622,37 @@ private:
                 lobbyHots_.push_back({tb, [this, i, t = s.type] {
                     uint8_t nt = t == 0 ? 2 : (t == 2 ? 3 : 0);
                     const auto& s2 = mpRoom().slots[i];
-                    mp_->setSlot(i, nt, s2.faction, s2.color, s2.team, 0); }});
+                    mp_->setSlot(i, nt, s2.faction, s2.color, s2.team, 0, s2.aiLevel); }});
             }
             if (s.type == 1) blockText(s.name, x + 100, y + 8, 1.8f, {225, 228, 236, 255});
-            else if (s.type == 2)
-                blockText(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.8f,
+            else if (s.type == 2) {
+                blockText(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f,
                           {210, 200, 150, 255});
+                // AI difficulty (host cycles EASY -> NORMAL -> HARD).
+                static const char* diffName[3] = {"EASY", "NORMAL", "HARD"};
+                SDL_Color dcol = s.aiLevel == 0 ? SDL_Color{150, 200, 150, 255}
+                               : s.aiLevel == 2 ? SDL_Color{225, 150, 140, 255}
+                                                : SDL_Color{210, 200, 150, 255};
+                blockText(diffName[s.aiLevel % 3], x + 178, y + 9, 1.4f, dcol);
+                if (host) { SDL_FRect db{x + 176, y + 6, 78, 18};
+                    lobbyHots_.push_back({db, [this, i] { const auto& s2 = mpRoom().slots[i];
+                        mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
+                                     uint8_t((s2.aiLevel + 1) % 3)); }}); }
+            }
             // faction / color / team edit: your own row, or (host) any AI row.
             bool canEdit = mine || (host && s.type == 2);
             blockText(factionName(s.faction), x + 260, y + 8, 1.6f, {200, 205, 215, 255});
             if (canEdit) { SDL_FRect fb{x + 260, y + 6, 90, 18};
                 lobbyHots_.push_back({fb, [this, i] { const auto& s2 = mpRoom().slots[i];
-                    mp_->setSlot(i, s2.type, (s2.faction + 1) % 5, s2.color, s2.team, s2.ready); }}); }
+                    mp_->setSlot(i, s2.type, (s2.faction + 1) % 5, s2.color, s2.team, s2.ready, s2.aiLevel); }}); }
             colorSwatch(x + 360, y + 5, 20, s.color, canEdit ? std::function<void()>([this, i] {
                 const auto& s2 = mpRoom().slots[i];
-                mp_->setSlot(i, s2.type, s2.faction, (s2.color + 1) % 10, s2.team, s2.ready); }) : nullptr);
+                mp_->setSlot(i, s2.type, s2.faction, (s2.color + 1) % 10, s2.team, s2.ready, s2.aiLevel); }) : nullptr);
             char tm[8]; std::snprintf(tm, sizeof tm, "T%d", s.team + 1);
             blockText(tm, x + 392, y + 8, 1.8f, {200, 205, 215, 255});
             if (canEdit) { SDL_FRect teb{x + 392, y + 6, 34, 18};
                 lobbyHots_.push_back({teb, [this, i] { const auto& s2 = mpRoom().slots[i];
-                    mp_->setSlot(i, s2.type, s2.faction, s2.color, uint8_t((s2.team + 1) % tak::net::kMaxSlots), s2.ready); }}); }
+                    mp_->setSlot(i, s2.type, s2.faction, s2.color, uint8_t((s2.team + 1) % tak::net::kMaxSlots), s2.ready, s2.aiLevel); }}); }
             if (s.type == 1 && !singlePlayer_) {   // SP: the player is always ready, no column
                 SDL_Color rc = s.ready ? SDL_Color{130, 230, 140, 255} : SDL_Color{120, 125, 135, 255};
                 blockText(s.ready ? "READY" : "NOT READY", x + 440, y + 8, 1.6f, rc);
@@ -8652,13 +8671,13 @@ private:
             // ready (once, self-limiting) so the host's START enables.
             if (room.mySlot >= 0 && !room.slots[room.mySlot].ready) {
                 const auto& s = room.slots[room.mySlot];
-                mp_->setSlot(room.mySlot, 1, s.faction, s.color, s.team, 1);
+                mp_->setSlot(room.mySlot, 1, s.faction, s.color, s.team, 1, s.aiLevel);
             }
         } else {
             bool iAmReady = room.mySlot >= 0 && room.slots[room.mySlot].ready;
             lbBtn(x, y, 130, 30, iAmReady ? "UNREADY" : "READY", room.mySlot >= 0, [this, iAmReady] {
                 const auto& s = mpRoom().slots[mpRoom().mySlot];
-                mp_->setSlot(mpRoom().mySlot, 1, s.faction, s.color, s.team, iAmReady ? 0 : 1); });
+                mp_->setSlot(mpRoom().mySlot, 1, s.faction, s.color, s.team, iAmReady ? 0 : 1, s.aiLevel); });
             bx = x + 142;
         }
         // start (host): enabled when >=2 used slots and all humans ready and colors unique
