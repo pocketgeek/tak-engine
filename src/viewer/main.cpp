@@ -5522,6 +5522,38 @@ private:
             }
         }
 
+        // Reclaim: the same nano sparkle as building/summoning, but sprinkled over the
+        // feature a builder is chewing on -- retail shows reclaim with the build FX.
+        if (u.reclaimId != 0 && u.type) {
+            const auto* feat = world_.feature(u.reclaimId);
+            if (feat && feat->alive) {
+                std::string side = u.type->side;
+                std::transform(side.begin(), side.end(), side.begin(), ::tolower);
+                auto fit = buildFx_.find(side);
+                if (fit != buildFx_.end() && !fit->second.empty()) {
+                    auto& frames = fit->second;
+                    int fw, fh; SDL_QueryTexture(frames[0], nullptr, nullptr, &fw, &fh);
+                    float tw = float(fw) * zm, th = float(fh) * zm;
+                    // Feature screen position, lifted onto the relief like its sprite.
+                    float fsx = (feat->x - mapView_.offX()) * zm - terrainLiftX(feat->x, feat->z) * zm;
+                    float fsy = (feat->z - mapView_.offY()) * zm - terrainLift(feat->x, feat->z) * zm;
+                    float fpw = std::max(feat->fx, 1) * 16.0f * zm;
+                    float fph = std::max(feat->fz, 1) * 16.0f * zm;
+                    int nx = std::clamp(int(fpw / tw + 0.5f), 1, 5);
+                    int nz = std::clamp(int(fph / th + 0.5f), 1, 5);
+                    float x0 = fsx - fpw * 0.5f, y0 = fsy - fph * 0.6f;
+                    int base = int(animClock_ * 12);
+                    for (int gz = 0; gz < nz; ++gz)
+                        for (int gx = 0; gx < nx; ++gx) {
+                            SDL_Texture* fxt = frames[size_t(base + gx * 3 + gz * 5) % frames.size()];
+                            SDL_FRect d{x0 + (gx + 0.5f) * fpw / nx - tw * 0.5f,
+                                        y0 + (gz + 0.5f) * fph / nz - th * 0.5f, tw, th};
+                            SDL_RenderCopyF(ren_, fxt, nullptr, &d);
+                        }
+                }
+            }
+        }
+
         // Occluded: re-draw the hidden lower part as a faint, flat player-coloured
         // silhouette through the wall, so a unit behind cover is never fully lost.
         if (occluded) {
