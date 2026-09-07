@@ -60,6 +60,10 @@ private:
         const UnitType* type = nullptr;
         float a = 0, b = 0, c = 0, d = 0;
         bool victory = false;
+        // "Destroy all X" rules only arm once such a unit has actually existed, so a
+        // mission can't win/lose at t=0 before the target has spawned (many scripts
+        // create their enemies in Start / a trigger).
+        bool armed = false;
     };
 
     // ---- VM callback plumbing ----
@@ -93,6 +97,12 @@ private:
     int getUnitContext_ = 0;                             // unit id for GET_UNIT_VALUE(7)
 
     std::vector<Cond> conds_;
+
+    // A SetMission "b TYPE H X Y" timed reinforcement: spawn `type` for `player` at
+    // (x,z) once the mission clock reaches `at`.
+    struct PendingSpawn { const UnitType* type = nullptr; int player = 0; float x = 0, z = 0, at = 0; };
+    std::vector<PendingSpawn> pendingSpawns_;
+
     float clock_ = 0;         // mission time (s), for timer conditions
     int outcome_ = 0;         // 0 / +1 / -1
     bool started_ = false;

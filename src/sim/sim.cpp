@@ -908,6 +908,17 @@ void World::orderWait(int unitId, float seconds, bool queue) {
     u->orders.push_back(o);
 }
 
+void World::orderWaitAttack(int unitId, bool queue) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type) return;
+    if (!queue) u->orders.clear();
+    Order o;
+    o.x = u->x;
+    o.z = u->z;
+    o.waitAttack = true;
+    u->orders.push_back(o);
+}
+
 void World::guard(int unitId, int targetId, bool queue) {
     Unit* u = unit(unitId);
     Unit* t = unit(targetId);
@@ -2044,6 +2055,18 @@ void World::tick(float dt) {
             u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
             u.orders.front().wait -= dt;
             if (u.orders.front().wait <= 0.0f) u.orders.pop_front();
+        } else if (u.orders.front().waitAttack) {
+            // SetMission "wa": ambush -- hold until a non-allied unit is within sight,
+            // then release to the next order (usually an attack).
+            u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
+            float sight = u.type->sight > 0 ? u.type->sight : 200.0f;
+            bool threat = false;
+            for (const auto& e : units_)
+                if (e.alive() && !e.embarked() && e.type && !allied(e.player, u.player)) {
+                    float dx = e.x - u.x, dz = e.z - u.z;
+                    if (dx * dx + dz * dz <= sight * sight) { threat = true; break; }
+                }
+            if (threat) u.orders.pop_front();
         } else {
             const Order& o = u.orders.front();
             float dx = o.x - u.x, dz = o.z - u.z;

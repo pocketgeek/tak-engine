@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace tak::sim {
 
@@ -76,6 +77,16 @@ void MissionScript::step(World& w, float dt) {
     world_ = &w;
     vm_->tick(dt);
     clock_ += dt;
+    // Timed reinforcements (SetMission "b TYPE H X Y") that have come due.
+    for (size_t k = 0; k < pendingSpawns_.size();) {
+        if (clock_ >= pendingSpawns_[k].at) {
+            const PendingSpawn& s = pendingSpawns_[k];
+            if (s.type) w.spawn(s.type, s.x, s.z, 0.0f, s.player);
+            pendingSpawns_.erase(pendingSpawns_.begin() + std::ptrdiff_t(k));
+        } else {
+            ++k;
+        }
+    }
     sweepTriggers(w);
     if (outcome_ == 0) evalConditions(w, dt);
 }
@@ -193,13 +204,19 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders)
             u->hp = 0;
         } else if (c == 'w') {                            // w N (wait N s) / wa (wait-for-attack)
             if (c2 == 'a') {
-                ++i;                                      // wa: event-driven hold not yet modelled -> proceed
+                ++i;
+                w.orderWaitAttack(unitId, queue); queue = true;   // ambush: hold until threatened
             } else {
                 float n = num();
                 skipsp();
                 if (i < orders.size() && std::isdigit((unsigned char)orders[i])) num();  // optional 2nd arg
                 w.orderWait(unitId, n, queue); queue = true;
             }
+        } else if (c == 'b') {                            // b TYPE H X Y: timed reinforcement drop
+            std::string ty = word();
+            float hh = num(), bx = num(), by = num();
+            if (const UnitType* t = findType(ty))
+                pendingSpawns_.push_back({t, u->player, cellToWorld(bx), cellToWorld(by), clock_ + hh});
         } else if (c == 'o') {                            // o A [B]: combat stance
             float a = num();
             skipsp();
@@ -313,7 +330,12 @@ void MissionScript::evalConditions(World& w, float) {
             if (u.alive() && u.player == human_ && u.type && u.type->canMove) return true;
         return false;
     };
-    for (const Cond& c : conds_) {
+    auto enemyOfTypeAlive = [&](const UnitType* t) {
+        for (const auto& u : w.units())
+            if (u.alive() && u.type == t && !w.allied(u.player, human_)) return true;
+        return false;
+    };
+    for (Cond& c : conds_) {
         bool met = false;
         switch (c.kind) {
             case Cond::MoveUnitToRadius: {   // a human-owned unit of c.type within c.c cells of (c.a,c.b)
@@ -323,17 +345,26 @@ void MissionScript::evalConditions(World& w, float) {
                         (u.x - cx) * (u.x - cx) + (u.z - cz) * (u.z - cz) <= rr * rr) { met = true; break; }
                 break;
             }
-            case Cond::DestroyAllUnits:    met = !enemyAliveMobile(false); break;
-            case Cond::KillAllMobileUnits: met = !enemyAliveMobile(true);  break;
-            case Cond::KillAllOfType: {
-                met = true;
-                for (const auto& u : w.units())
-                    if (u.alive() && u.type == c.type && !w.allied(u.player, human_)) { met = false; break; }
+            // "Destroy all" rules arm once the target exists, then fire when it's gone --
+            // never at t=0 before the enemy/human force has been placed or spawned.
+            case Cond::DestroyAllUnits:
+                if (enemyAliveMobile(false)) c.armed = true;
+                met = c.armed && !enemyAliveMobile(false);
                 break;
-            }
+            case Cond::KillAllMobileUnits:
+                if (enemyAliveMobile(true)) c.armed = true;
+                met = c.armed && !enemyAliveMobile(true);
+                break;
+            case Cond::KillAllOfType:
+                if (enemyOfTypeAlive(c.type)) c.armed = true;
+                met = c.armed && !enemyOfTypeAlive(c.type);
+                break;
             case Cond::VictoryTimerRunsOut: met = clock_ >= c.a; break;
             case Cond::CommanderKilled:
-            case Cond::AllUnitsKilled:      met = !humanHasAnyMobile(); break;   // TODO commander-specific
+            case Cond::AllUnitsKilled:
+                if (humanHasAnyMobile()) c.armed = true;
+                met = c.armed && !humanHasAnyMobile();   // TODO commander-specific
+                break;
             case Cond::DeathTimerRunsOut:   met = clock_ >= c.a; break;
             default: break;   // KillEnemyCommander / passes-X etc. -> TODO
         }
@@ -347,6 +378,12 @@ void MissionScript::foldHash(uint64_t& h) const {
     auto mix = [&](uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
     mix(uint64_t(int64_t(outcome_)));
     for (const Region& r : regions_) mix(r.armed ? 1u : 0u);
+    for (const Cond& c : conds_) mix(c.armed ? 1u : 0u);
+    mix(uint64_t(pendingSpawns_.size()));   // timed reinforcements still pending
+    for (const auto& s : pendingSpawns_) {
+        uint32_t at; std::memcpy(&at, &s.at, 4); mix(at);
+        mix(uint64_t(uint32_t(s.player)));
+    }
     if (vm_) for (size_t i = 0; i < cob_.numStatics; ++i) mix(uint64_t(uint32_t(vm_->getStatic(i))));
     for (const auto& [k, v] : vars_) { for (char ch : k) mix(uint64_t((unsigned char)ch)); mix(uint64_t(uint32_t(v))); }
 }

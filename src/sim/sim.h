@@ -191,6 +191,7 @@ struct Order {
     bool guard = false;        // follow friendly `targetId`, engage threats
     bool flow = false;         // steer by the shared flow field toward (x,z)
     float wait = 0;            // >0: hold position, counting down (SetMission "w N")
+    bool waitAttack = false;   // hold until an enemy is in sight, then release (SetMission "wa")
 };
 
 // A queued construction: build `type` at (x, z) when the builder gets to it.
@@ -566,6 +567,9 @@ public:
     // Queue a timed hold (SetMission "w N"): the unit stands still for `seconds`
     // before the next queued order runs.
     void orderWait(int unitId, float seconds, bool queue);
+    // Queue an ambush hold (SetMission "wa"): the unit stands still until a non-allied
+    // unit comes within its sight, then the next queued order runs.
+    void orderWaitAttack(int unitId, bool queue);
     void guard(int unitId, int targetId, bool queue);
     void stop(int unitId);
     // Self-destruct a living unit (Ctrl+D via the command path; no kill credit).
