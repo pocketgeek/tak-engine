@@ -349,7 +349,13 @@ struct MainMenu::Impl {
         float s, ox, oy; layout(winW, winH, s, ox, oy);
         if (bg) { SDL_FRect r{ox, oy, 640 * s, 480 * s}; SDL_RenderCopyF(ren, bg, nullptr, &r); }
         for (auto& d : doors) {
-            if (d.videoOk && d.vtex) {
+            // The dragon (Choice::None) is part of the static background art, so its
+            // idle clip's slightly-different codec colour would sit visibly beside the
+            // matching bg. Only overlay its video while it's actually snorting (hover
+            // in/loop/out); when idle, let the background art show through untouched.
+            // The doors are always video (they fill a hole in the bg).
+            bool idleDragon = d.action == MainMenu::Choice::None && d.state == DoorState::Idle;
+            if (d.videoOk && d.vtex && !idleDragon) {
                 // Like the buttons, the door video is authored bigger than its gui
                 // hotspot and anchored at the gadget origin -- draw it at native size,
                 // NOT stretched to the (smaller) hotspot. Stretching squished it badly:
@@ -358,7 +364,7 @@ struct MainMenu::Impl {
                 SDL_Rect nat{d.rect.x, d.rect.y, d.vw, d.vh};
                 SDL_FRect r = toScreen(nat, s, ox, oy);
                 SDL_RenderCopyF(ren, d.vtex, nullptr, &r);
-            } else if (d.gaf) {
+            } else if (d.gaf && !idleDragon) {
                 SDL_FRect r = toScreen(d.rect, s, ox, oy);
                 SDL_RenderCopyF(ren, d.gaf, nullptr, &r);
             }
