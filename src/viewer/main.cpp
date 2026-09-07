@@ -4166,6 +4166,17 @@ public:
             btn("QUIT", [this] { quitRequested_ = true; });
         }
         if (options_) options_->render(winW, winH);   // topmost of all
+
+        // Debug (TAK_PICKLOG): draw the game's idea of the cursor (mouseX_/mouseY_)
+        // as a magenta crosshair. If it drifts from the real OS cursor -- especially
+        // toward the right of a very wide window -- the mouse coords SDL hands us
+        // don't match the render space (a Wayland/compositor coordinate mismatch).
+        static const bool pickDbg = std::getenv("TAK_PICKLOG") != nullptr;
+        if (pickDbg) {
+            SDL_SetRenderDrawColor(ren_, 255, 0, 255, 255);
+            SDL_FRect v{mouseX_ - 1, mouseY_ - 16, 2, 32}, h{mouseX_ - 16, mouseY_ - 1, 32, 2};
+            SDL_RenderFillRectF(ren_, &v); SDL_RenderFillRectF(ren_, &h);
+        }
     }
 
     void advance(float seconds) {
