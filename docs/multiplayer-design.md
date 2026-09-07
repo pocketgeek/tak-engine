@@ -53,9 +53,9 @@ the stress keys are disabled in networked games.
 ## 3. Architecture overview
 
 ```
-   takview (client)  ─┐
-   takview (client)  ─┼─ TCP ──►  takserver ── per-game: GameRoom
-   takview (client)  ─┘             │  ├─ command sequencer (tick authority)
+   takclient (client)  ─┐
+   takclient (client)  ─┼─ TCP ──►  takserver ── per-game: GameRoom
+   takclient (client)  ─┘             │  ├─ command sequencer (tick authority)
                                     │  ├─ headless World (referee + AI host)
                                     │  ├─ ai::Controller per AI slot
                                     │  └─ bundle log (reconnect + replay)
@@ -439,7 +439,7 @@ Single-player keeps working identically: `GameView` instantiates local
 Controllers feeding `apply()` — same behavior, and it proves the sink
 interface before the server exists.
 
-## 8. Client changes (`takview`)
+## 8. Client changes (`takclient`)
 
 - **Server browser** (new screen or `--server <addr>` entry): game list with
   name, map, players/capacity, lobby/running state, lock icon; create-game
@@ -533,7 +533,7 @@ Each lands independently, keeps single-player green, and is verifiable.
 
 ## 12. Testing strategy
 
-- **Headless client mode** (`takview --headless-net`) so CI can run N scripted
+- **Headless client mode** (`takclient --headless-net`) so CI can run N scripted
   clients + server on one machine and assert every hash matches to game end.
 - **Replay determinism:** every CI game's log re-run must reproduce the final
   hash — this also guards single-player AI determinism.

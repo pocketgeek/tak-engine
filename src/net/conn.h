@@ -1,7 +1,7 @@
 #pragma once
 
 // A non-blocking, buffered TCP connection with the protocol's length-prefix
-// framing. Shared by takserver and the takview client. One Conn per socket.
+// framing. Shared by takserver and the takclient client. One Conn per socket.
 
 #include <cstdint>
 #include <string>

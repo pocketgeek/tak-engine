@@ -1,8 +1,8 @@
-// takview — interactive TAK asset viewer.
+// takclient — interactive TAK asset viewer.
 //
-//   takview map <map.tnt> <terrain-dir>       scrollable terrain (drag/arrows,
+//   takclient map <map.tnt> <terrain-dir>       scrollable terrain (drag/arrows,
 //                                             +/- zoom, S = screenshot)
-//   takview model <file.3do> [textures-dir palette.pcx]
+//   takclient model <file.3do> [textures-dir palette.pcx]
 //                                             rotating textured model
 //                                             (drag to rotate, wheel zoom)
 //   ... --shot <out.png>                      render one frame headless
@@ -40,7 +40,7 @@
 
 // Keep our own main() on every platform (don't let SDL redefine it to SDL_main /
 // pull in SDL2main + a WinMain); we call SDL_SetMainReady() in main() instead. This
-// also keeps takview usable as a console/headless tool on Windows.
+// also keeps takclient usable as a console/headless tool on Windows.
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 
@@ -9748,12 +9748,12 @@ static bool loadReplayFile(const std::string& path, ReplayFile& out) {
 int main(int argc, char** argv) {
     SDL_SetMainReady();   // we defined SDL_MAIN_HANDLED; tell SDL our main is ready
     if (argc >= 2 && (!std::strcmp(argv[1], "--version") || !std::strcmp(argv[1], "-v"))) {
-        std::printf("takview (TAK engine) %s\n", tak::kVersion);
+        std::printf("takclient (TAK engine) %s\n", tak::kVersion);
         return 0;
     }
     if (argc >= 2 && (!std::strcmp(argv[1], "--help") || !std::strcmp(argv[1], "-h"))) {
         std::printf(
-            "usage: takview [mode] --data <retail-install-dir> [options]\n"
+            "usage: takclient [mode] --data <retail-install-dir> [options]\n"
             "  With no mode (or only flags), launches the front-end MENU.\n"
             "  modes: menu | game <map> | map <map> | replay <file.takrep> | model <file.3do>\n"
             "    game single-player: no --server -> auto-hosts a private game vs a server AI.\n"
@@ -9764,8 +9764,8 @@ int main(int argc, char** argv) {
         return 0;
     }
     // The first positional arg is the launch mode only if it's a known keyword;
-    // otherwise the default is the front-end menu, so `takview --data <dir>` (or even
-    // bare `takview`) just opens it -- no need to type "menu".
+    // otherwise the default is the front-end menu, so `takclient --data <dir>` (or even
+    // bare `takclient`) just opens it -- no need to type "menu".
     std::string mode = "menu";
     int argStart = 1;
     if (argc >= 2) {
@@ -9903,7 +9903,7 @@ int main(int argc, char** argv) {
     tak::Settings settings = tak::loadSettings();
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
-    std::string winTitle = std::string("takview ") + tak::kVersion;
+    std::string winTitle = std::string("takclient ") + tak::kVersion;
     SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, winW, winH,
                                        SDL_WINDOW_RESIZABLE);
@@ -10085,7 +10085,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<GameView> gameView;
     try {
         if (mode == "replay" && !args.empty() && !dataRoot.empty()) {
-            // takview replay <file.takrep> --data <retail-root>
+            // takclient replay <file.takrep> --data <retail-root>
             ReplayFile rf;
             if (!loadReplayFile(args[0], rf)) {
                 std::fprintf(stderr, "replay: cannot read %s\n", args[0].c_str());
@@ -10251,7 +10251,7 @@ int main(int argc, char** argv) {
             // 'S' grabs a screenshot in the asset viewers; in game it is the
             // Stop hotkey (Keys.TDF LOWER_S), handled by GameView::input.
             if (!gameView && e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_s)
-                screenshot(ren, kWinW, kWinH, "takview_shot.png");
+                screenshot(ren, kWinW, kWinH, "takclient_shot.png");
             int ww, wh;
             SDL_GetRendererOutputSize(ren, &ww, &wh);
             // Mouse events arrive in window points; the renderer (and all our
@@ -10285,7 +10285,7 @@ int main(int argc, char** argv) {
             fpsAcc += dt; ++fpsFrames;
             if (fpsAcc >= 0.25f) {
                 char title[64];
-                std::snprintf(title, sizeof title, "takview %s  |  %.0f fps",
+                std::snprintf(title, sizeof title, "takclient %s  |  %.0f fps",
                               tak::kVersion, float(fpsFrames) / fpsAcc);
                 SDL_SetWindowTitle(win, title);
                 fpsAcc = 0; fpsFrames = 0;

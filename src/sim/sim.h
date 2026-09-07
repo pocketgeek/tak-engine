@@ -16,7 +16,7 @@ namespace tak::hpi { class Vfs; }
 namespace tak::sim {
 
 // Cheat: when true, construction and production complete instantly and cost no
-// mana (set via the takview `--cheat` flag).
+// mana (set via the takclient `--cheat` flag).
 extern bool gInstantBuild;
 
 // Unit stats loaded from .fbi files. Velocities are in map pixels per

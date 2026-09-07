@@ -1,6 +1,6 @@
 #pragma once
 
-// SDL-free match setup shared by the takview client and the takserver referee
+// SDL-free match setup shared by the takclient client and the takserver referee
 // sim (docs/multiplayer-design.md, M4). Both must build a BIT-IDENTICAL initial
 // world -- same terrain, feature nav-blocking, mana deposits, players, teams,
 // and monarch spawns -- so their state hashes agree in lockstep.

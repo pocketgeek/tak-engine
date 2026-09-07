@@ -44,10 +44,10 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
 - **After a `src/sim`, `src/net`, or `src/ai` change, rebuild ALL targets:**
   `cmake --build build` (no `--target`). Those live in the shared `tak-formats`
   static lib, which is baked into each executable at link time — so `--target
-  takview` alone leaves a **stale `takserver`** (its referee sim then disagrees
+  takclient` alone leaves a **stale `takserver`** (its referee sim then disagrees
   with the freshly-built clients and trips the referee-suspect check). Building
-  all targets relinks `takview` AND `takserver` together.
-- Play: `./build/takview game "<map name>" --data <retail-install-dir> [--side X --aiside Y]`
+  all targets relinks `takclient` AND `takserver` together.
+- Play: `./build/takclient game "<map name>" --data <retail-install-dir> [--side X --aiside Y]`
   — the engine reads a retail install directly (root `*.hpi` + `Maps/` + `Music/`
   + `overrides/`); maps are referenced by NAME, resolved via the VFS. `--overrides
   none|cosmetic|full` picks which of `overrides/` are mounted. README lists all options.
@@ -56,7 +56,7 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   install). The server takes a couple seconds to mount + load, so wait for its
   "listening" line before starting the client:
   `./build/takserver --port 7677 --data <install> &` then
-  `TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy ./build/takview game "<map>" --data <install> --server 127.0.0.1 --serverport 7677 --mpai --time 60` —
+  `TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy ./build/takclient game "<map>" --data <install> --server 127.0.0.1 --serverport 7677 --mpai --time 60` —
   prints a state `hash=`.
 - Asset-inspection CLIs (in `tools/`, built into `build/`): `cobtool`,
   `modeltool`, `gaftool`, `tnttool`, `tdftool`, `hpitool`. Handy for verifying
@@ -66,7 +66,7 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
 
 - `src/sim/` — deterministic sim (movement, A* nav, combat, economy). The
   authority for gameplay state; guard determinism carefully here.
-- `src/viewer/main.cpp` — the SDL2 app (`takview`): rendering + input, and the
+- `src/viewer/main.cpp` — the SDL2 app (`takclient`): rendering + input, and the
   **COB animation VM runs here**, so animation never affects the sim hash.
 - `src/net/` + `src/server/` — client-server MP (lockstep relay, referee,
   server-run AI). `src/ai/` — the skirmish AI (emits commands).

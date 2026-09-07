@@ -45,17 +45,17 @@ jobs:
       - name: Bundle (exes + required DLLs) + zip
         run: |
           mkdir -p dist-win
-          cp build/takview.exe build/takserver.exe dist-win/
+          cp build/takclient.exe build/takserver.exe dist-win/
           # Copy every non-system DLL the exes actually import (SDL2/jpeg/zlib).
-          ldd build/takview.exe build/takserver.exe \
+          ldd build/takclient.exe build/takserver.exe \
             | awk '/mingw64\/bin/ {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" dist-win/; done
-          (cd dist-win && zip -r ../takview-windows-x64.zip .)
+          (cd dist-win && zip -r ../takclient-windows-x64.zip .)
 
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
         with:
-          name: takview-windows-x64
+          name: takclient-windows-x64
           path: dist-win/
 
       - name: Determinism gate (cross-platform parity)
@@ -78,4 +78,4 @@ jobs:
         run: |
           gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY `
             --title "TAK Engine $env:GITHUB_REF_NAME" --generate-notes --verify-tag 2>$null
-          gh release upload $env:GITHUB_REF_NAME takview-windows-x64.zip --repo $env:GITHUB_REPOSITORY --clobber
+          gh release upload $env:GITHUB_REF_NAME takclient-windows-x64.zip --repo $env:GITHUB_REPOSITORY --clobber

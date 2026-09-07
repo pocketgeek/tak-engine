@@ -197,10 +197,10 @@ server", keeps a single sim path, and gets AI for free; the COB VM move is the m
 ## 7. Phased plan
 
 Status (2026-09-07): phases 1–7 are **done and verified** (bar one data-absent
-item). A campaign mission runs over the real takserver/takview in lockstep
+item). A campaign mission runs over the real takserver/takclient in lockstep
 (`err=none`, reproducible hash); the full front-end loop — pick → intro movie →
 briefing (+ VO) → play (objectives panel) → post-mission cutscene → victory/defeat
-→ next/retry, with end-of-campaign credits — works from the main menu (or `takview
+→ next/retry, with end-of-campaign credits — works from the main menu (or `takclient
 game --campaign <stem>`); the conjure menu is restricted per mission; and the
 mission-runner sim has condition guards, the full `SetMission` verb set, and proper
 compacted-slot diplomacy. The Iron Plague dialogue widget is the sole open item and
@@ -222,7 +222,7 @@ is **not implementable against this install** (see phase 7 below).
    AI). Server hosts a mission referee (`server.cpp`), client builds the same
    deterministic world (`startMpGame`), and both run the in-sim god script in
    lockstep — the mission is authoritative on the server, which broadcasts
-   `MissionOutcome` (kNetVersion 17). Headless driver: `takview … --mpmission <stem>`.
+   `MissionOutcome` (kNetVersion 17). Headless driver: `takclient … --mpmission <stem>`.
    First-pass diplomacy (opponents team 1, everyone else allied); proper
    neutral/ally roles and non-zero human slots are TODO.
 4. **Per-mission unit restriction.** ✅ `missions/<stem>.tdf` (a list of allowed unit

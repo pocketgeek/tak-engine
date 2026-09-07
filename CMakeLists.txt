@@ -49,7 +49,7 @@ target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG)
 target_compile_definitions(tak-formats PUBLIC TAK_VERSION="${PROJECT_VERSION}")
 
 # Windows sockets: src/net (in tak-formats) uses Winsock2 -- link ws2_32 so it
-# propagates to takview and takserver. No-op on POSIX.
+# propagates to takclient and takserver. No-op on POSIX.
 if(WIN32)
   target_link_libraries(tak-formats PUBLIC ws2_32)
   # Fold the GCC/C++ runtime into each .exe so a Windows box needs no MinGW DLLs
@@ -102,17 +102,17 @@ endif()
 if(TAK_BUILD_VIEWER)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takview src/viewer/main.cpp src/viewer/mainmenu.cpp src/viewer/settings.cpp src/viewer/options.cpp src/viewer/campaignscreen.cpp src/viewer/briefingscreen.cpp src/viewer/resultscreen.cpp src/viewer/cursors.cpp src/video/bink.cpp)
-    target_link_libraries(takview PRIVATE tak-formats SDL2::SDL2)
+    add_executable(takclient src/viewer/main.cpp src/viewer/mainmenu.cpp src/viewer/settings.cpp src/viewer/options.cpp src/viewer/campaignscreen.cpp src/viewer/briefingscreen.cpp src/viewer/resultscreen.cpp src/viewer/cursors.cpp src/video/bink.cpp)
+    target_link_libraries(takclient PRIVATE tak-formats SDL2::SDL2)
     if(FFMPEG_FOUND)
-      target_link_libraries(takview PRIVATE PkgConfig::FFMPEG)
-      target_compile_definitions(takview PRIVATE TAK_HAVE_FFMPEG)
+      target_link_libraries(takclient PRIVATE PkgConfig::FFMPEG)
+      target_compile_definitions(takclient PRIVATE TAK_HAVE_FFMPEG)
       message(STATUS "FFmpeg found — Bink (.bik) menu videos enabled.")
     else()
       message(STATUS "FFmpeg not found — menu .bik videos disabled (GAF door art fallback).")
     endif()
   else()
-    message(WARNING "SDL2 not found — skipping takview. Install SDL2-devel.")
+    message(WARNING "SDL2 not found — skipping takclient. Install SDL2-devel.")
   endif()
 endif()
 
@@ -125,7 +125,7 @@ endif()
 
 # --- Multiplayer server (headless; no SDL) ------------------------------------
 
-# The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takview, so the
+# The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.
 add_executable(takserver src/server/server.cpp src/ai/ai.cpp)
 target_link_libraries(takserver PRIVATE tak-formats)
@@ -146,8 +146,8 @@ target_link_libraries(cobtool PRIVATE tak-formats)
 # The runtime deps (SDL2/jpeg/zlib) are auto-detected so apt/dnf pull them in.
 if(UNIX AND NOT APPLE)
   install(TARGETS takserver RUNTIME DESTINATION bin)
-  if(TARGET takview)
-    install(TARGETS takview RUNTIME DESTINATION bin)
+  if(TARGET takclient)
+    install(TARGETS takclient RUNTIME DESTINATION bin)
   endif()
 
   set(CPACK_PACKAGE_NAME "tak-engine")

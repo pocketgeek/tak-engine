@@ -38,13 +38,13 @@ jobs:
       - name: Bundle + zip
         run: |
           mkdir -p dist-macos
-          cp build/takview build/takserver dist-macos/
-          (cd dist-macos && zip -r ../takview-macos-arm64.zip .)
+          cp build/takclient build/takserver dist-macos/
+          (cd dist-macos && zip -r ../takclient-macos-arm64.zip .)
 
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
         with:
-          name: takview-macos-arm64
+          name: takclient-macos-arm64
           path: dist-macos/
 
       - name: Determinism gate (cross-platform parity)
@@ -66,4 +66,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
-          gh release upload "$GITHUB_REF_NAME" takview-macos-arm64.zip --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$GITHUB_REF_NAME" takclient-macos-arm64.zip --repo "$GITHUB_REPOSITORY" --clobber

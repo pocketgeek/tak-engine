@@ -38,7 +38,7 @@ _Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit
 A modern, cross-platform engine recreation for **Total Annihilation: Kingdoms**
 (Cavedog Entertainment, 1999), in the spirit of OpenRA and Robot War Engine.
 
-**Version 0.1.0** — reported by `takview --version` and `takserver --version`
+**Version 0.1.0** — reported by `takclient --version` and `takserver --version`
 (and shown in the window title / server banner). The release version is set in
 one place, `project(... VERSION ...)` in `CMakeLists.txt`, and is separate from
 the multiplayer wire protocol version, which is gated independently at connect.
@@ -48,14 +48,14 @@ the multiplayer wire protocol version, which is gated independently at connect.
 Latest pre-built binaries (self-contained; you still supply your own retail game
 data — see **Game data**):
 
-- **Windows x64** — [takview-windows-x64.zip](https://github.com/pocketgeek/tak-engine/releases/latest/download/takview-windows-x64.zip)
-- **macOS (Apple Silicon)** — [takview-macos-arm64.zip](https://github.com/pocketgeek/tak-engine/releases/latest/download/takview-macos-arm64.zip)
+- **Windows x64** — [takclient-windows-x64.zip](https://github.com/pocketgeek/tak-engine/releases/latest/download/takclient-windows-x64.zip)
+- **macOS (Apple Silicon)** — [takclient-macos-arm64.zip](https://github.com/pocketgeek/tak-engine/releases/latest/download/takclient-macos-arm64.zip)
 - **Debian / Ubuntu** — [tak-engine-amd64.deb](https://github.com/pocketgeek/tak-engine/releases/latest/download/tak-engine-amd64.deb) — `sudo apt install ./tak-engine-amd64.deb`
 - **Fedora / RHEL** — [tak-engine-x86_64.rpm](https://github.com/pocketgeek/tak-engine/releases/latest/download/tak-engine-x86_64.rpm) — `sudo dnf install ./tak-engine-x86_64.rpm`
 - [**All releases**](https://github.com/pocketgeek/tak-engine/releases) · or build from source below.
 
 All of these resolve to the newest [release](https://github.com/pocketgeek/tak-engine/releases);
-the `.deb`/`.rpm` packages install `takview` + `takserver` to `/usr/bin` and pull
+the `.deb`/`.rpm` packages install `takclient` + `takserver` to `/usr/bin` and pull
 their SDL2/jpeg/zlib runtime deps automatically. They appear once the first tagged
 release finishes building.
 
@@ -74,7 +74,7 @@ Every stage is complete:
 
 1. ~~**Format tooling**~~ — HPI v2, GAF/TAF, TNT, 3DO, COB, TDF/FBI/OTA, GAF
    fonts, WAV all parse.
-2. ~~**Asset viewer**~~ — `takview map` / `takview model` (textured, COB-animated).
+2. ~~**Asset viewer**~~ — `takclient map` / `takclient model` (textured, COB-animated).
 3. ~~**Simulation**~~ — movement, A* pathfinding, combat, mana economy,
    production, per-unit COB VMs, sound.
 4. ~~**Skirmish game**~~ — playable vs AI: fog of war, minimap, building
@@ -177,19 +177,19 @@ The engine is **client-server only** — every game runs on a `takserver`, and t
 AI runs *only* on the server. Single-player is just a private game on a server the
 client starts for you.
 
-The simplest way in is the **front-end menu** — run `takview` with no mode (a mode
+The simplest way in is the **front-end menu** — run `takclient` with no mode (a mode
 keyword is optional) and pick single-player, multiplayer, or options from the three
 doors:
 
 ```sh
-./build/takview --data /path/to/tak_install
+./build/takclient --data /path/to/tak_install
 ```
 
-Or launch straight into a game from the command line. `takview game` takes a **map
+Or launch straight into a game from the command line. `takclient game` takes a **map
 name** and the install directory:
 
 ```sh
-./build/takview game "King of the Hill" --data /path/to/tak_install \
+./build/takclient game "King of the Hill" --data /path/to/tak_install \
     --side ara --aiside tar
 ```
 
@@ -262,7 +262,7 @@ identical sim with only ~35-byte commands on the wire.
 ./build/takserver --port 7677 --data /path/to/tak_install
 
 # each player:
-./build/takview game "<map name>" --data /path/to/tak_install \
+./build/takclient game "<map name>" --data /path/to/tak_install \
     --server <host> [--serverport N] [--name X] [--overrides none|cosmetic|full]
 ```
 
@@ -307,7 +307,7 @@ Start the server with `--replaydir <dir>` and it writes a self-contained
 `.takrep` for every finished game. Play one back as a spectator:
 
 ```sh
-./build/takview replay <file.takrep> --data /path/to/tak_install
+./build/takclient replay <file.takrep> --data /path/to/tak_install
 ```
 
 **Pause** and the **+/−** speed keys scrub it; a bar shows elapsed / total time.
@@ -341,7 +341,7 @@ data fingerprint, so under `full` every player must share the same ones.
 | `src/ai/` | the skirmish AI (server-portable; emits commands) |
 | `src/terrain/` | terrain / palette handling |
 | `src/util/` | shared helpers |
-| `src/viewer/` | the SDL2 app (`takview`: asset viewer + game) |
+| `src/viewer/` | the SDL2 app (`takclient`: asset viewer + game) |
 | `tools/` | CLI format tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`) |
 | `docs/` | format notes + reverse-engineering findings (`retail-engine.md` = the `KINGDOMS.icd` disassembly) |
 
