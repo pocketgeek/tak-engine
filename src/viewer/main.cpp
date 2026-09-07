@@ -2381,6 +2381,14 @@ public:
                                                    : ("Player " + std::to_string(i + 1));
         }
         auto spots = tak::sim::setupMatch(world_, registry_, cfg);
+        // Rebuild the rendered feature sprites (features_) from the map we actually
+        // loaded -- they were built once in the ctor from the launch map, so on a
+        // different chosen map the trees/houses you SEE would be the launch map's,
+        // while the reclaimable features in the sim (world_.features()) are this map's.
+        // That mismatch made right-drag reclaim miss (the box covered the wrong stuff).
+        // setupMatch is authoritative for the sim; loadFeatures only re-adds the same
+        // map's mana/nav idempotently (setTerrain already rebuilt the nav).
+        loadFeatures();
         // client-only presentation
         localPlayer_ = room.mySlot < 0 ? 0 : room.mySlot;
         world_.setVisPlayer(localPlayer_);
@@ -6546,6 +6554,7 @@ private:
     }
 
     void loadFeatures() {
+        features_.clear();   // full rebuild -- safe to call again on a map change
         const auto& names = mapView_.map().featureNames;
         if (names.empty()) return;
         loadFeatureDefs();
