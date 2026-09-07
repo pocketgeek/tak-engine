@@ -13,7 +13,7 @@ namespace tak {
 
 struct Settings {
     // ---- display / window ----
-    bool  fullscreen = false;      // borderless-desktop fullscreen
+    bool  fullscreen = true;       // borderless-desktop fullscreen (default on)
     bool  vsync      = true;
     int   maxFps     = 60;         // frame cap when vsync is off; clamp 30..480
     float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)

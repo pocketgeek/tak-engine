@@ -143,10 +143,11 @@ bool spawnLocalServer(const std::string& serverBin, const std::string& dataRoot,
 namespace {
 
 float gTilt = 0.72f;
-// Default window: the title menu's 4:3 aspect (2x its 640x480 art), so the menu
-// fills the window with no letterbox bars. The lobby scales to fit + centres itself
-// (kLobbyW/kLobbyH), so it stays fully visible at this or any other size.
-constexpr int kWinW = 1280, kWinH = 960;
+// Default windowed size (used when not fullscreen -- the default IS fullscreen; see
+// Settings::fullscreen). 1920x1080 for modern displays. The 4:3 title menu
+// letterboxes within it; the lobby scales to fit + centres itself (kLobbyW/kLobbyH),
+// so both stay fully visible at this or any other size/aspect.
+constexpr int kWinW = 1920, kWinH = 1080;
 
 void screenshot(SDL_Renderer* ren, int w, int h, const std::string& path) {
     std::vector<uint8_t> px(size_t(w) * h * 4);
