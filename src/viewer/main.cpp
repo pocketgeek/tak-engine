@@ -164,6 +164,15 @@ public:
     MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& mapPath)
         : ren_(ren), map_(tak::tnt::Map::load(vfs.read(mapPath), mapPath)), comp_(vfs) {}
 
+    // Swap in a different map (discarding cached chunk textures). The compositor's
+    // decoded-tile cache is content-addressed by tile key, so it stays valid. Used at
+    // game start so the render terrain matches the map the sim actually loaded.
+    void reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
+        for (auto& [k, t] : chunks_) if (t) SDL_DestroyTexture(t);
+        chunks_.clear();
+        map_ = tak::tnt::Map::load(vfs.read(mapPath), mapPath);
+    }
+
     void input(const SDL_Event& e) {
         if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK)) {
             offX_ -= e.motion.xrel / zoom_;
@@ -2348,6 +2357,13 @@ public:
             registry_ = tak::sim::TypeRegistry{};
             tak::sim::setupRegistry(registry_, vfs_, crusades_);
         }
+        // Adopt the ROOM's map (the host's / lobby selection), which may differ from
+        // this session's launch map. Point mapPath_ at it AND reload the render terrain
+        // (mapView_), so the rendered map, the local sim, and the referee all agree.
+        // Without this, picking a non-default map drew the launch map's terrain under a
+        // different map's sim -- phantom water, a monarch out in it, and misaligned fog.
+        if (std::string rp = tak::hpi::findMap(vfs_, room.mapId); !rp.empty()) mapPath_ = rp;
+        mapView_.reload(vfs_, mapPath_);
         tak::sim::MatchConfig cfg;
         cfg.vfs = &vfs_;
         cfg.mapPath = mapPath_;
