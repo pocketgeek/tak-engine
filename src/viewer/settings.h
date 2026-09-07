@@ -33,6 +33,17 @@ struct Settings {
     // ---- misc ----
     std::string playerName;        // default name for multiplayer
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
+
+    friend bool operator==(const Settings& a, const Settings& b) {
+        for (int i = 0; i < 8; ++i) if (a.chanGain[i] != b.chanGain[i]) return false;
+        return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
+            && a.uiScale == b.uiScale && a.antiAlias == b.antiAlias
+            && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
+            && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
+            && a.edgeScroll == b.edgeScroll && a.playerName == b.playerName
+            && a.lastMap == b.lastMap;
+    }
+    friend bool operator!=(const Settings& a, const Settings& b) { return !(a == b); }
 };
 
 // The config file path (SDL_GetPrefPath based). Empty only if SDL can't provide one.

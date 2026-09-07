@@ -169,9 +169,12 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             return false;
         }
         if (in(defaultsRect_, mx, my)) {                            // reset to defaults
-            std::string keepName = s_.playerName;   // not shown here -> preserve it
+            if (atDefaults()) return false;         // already default -> disabled, ignore
+            std::string keepName = s_.playerName;   // not shown here -> preserve these
+            std::string keepMap = s_.lastMap;
             s_ = Settings{};
             s_.playerName = keepName;
+            s_.lastMap = keepMap;
             dirty_ = true;
             if (onChange_) onChange_();
             return false;
@@ -268,8 +271,9 @@ void OptionsScreen::render(int winW, int winH) {
         SDL_FRect bar{panel_.x + panel_.w - 5 * u_, ty, 3 * u_, th}; SDL_RenderFillRectF(ren_, &bar);
     }
 
-    // Footer buttons. DEFAULTS and BACK are always active; SAVE only when there are
-    // unsaved changes (dirty_), so it's obvious whether the current state is saved.
+    // Footer buttons. BACK is always active; SAVE only when there are unsaved changes
+    // (dirty_), and DEFAULTS only when the settings aren't already at their defaults --
+    // so each button's enabled state shows whether it would do anything.
     auto button = [&](const SDL_FRect& r, const char* label, bool on) {
         SDL_SetRenderDrawColor(ren_, on ? 60 : 34, on ? 66 : 38, on ? 86 : 46, 255);
         SDL_RenderFillRectF(ren_, &r);
@@ -280,7 +284,7 @@ void OptionsScreen::render(int winW, int winH) {
                       r.y + (r.h - 7 * bpx) / 2, bpx,
                       on ? SDL_Color{228, 232, 242, 255} : SDL_Color{110, 115, 125, 255});
     };
-    button(defaultsRect_, "DEFAULTS", true);
+    button(defaultsRect_, "DEFAULTS", !atDefaults());   // disabled when already default
     button(saveRect_, "SAVE", dirty_);
     button(backRect_, "BACK", true);
 }

@@ -52,6 +52,15 @@ private:
     void layout(int winW, int winH);
     void commit(Control& c, float mx);            // set a slider from a mouse x
 
+    // True when every setting DEFAULTS would reset already equals its default value
+    // (playerName / lastMap are preserved by DEFAULTS, so they're excluded).
+    bool atDefaults() const {
+        Settings d;
+        d.playerName = s_.playerName;
+        d.lastMap = s_.lastMap;
+        return s_ == d;
+    }
+
     SDL_Renderer* ren_;
     Settings& s_;
     std::function<void()> onChange_;
