@@ -8322,7 +8322,7 @@ private:
             if (canEdit) { SDL_FRect teb{x + 392, y + 6, 34, 18};
                 lobbyHots_.push_back({teb, [this, i] { const auto& s2 = mpRoom().slots[i];
                     mp_->setSlot(i, s2.type, s2.faction, s2.color, uint8_t((s2.team + 1) % tak::net::kMaxSlots), s2.ready); }}); }
-            if (s.type == 1) {
+            if (s.type == 1 && !singlePlayer_) {   // SP: the player is always ready, no column
                 SDL_Color rc = s.ready ? SDL_Color{130, 230, 140, 255} : SDL_Color{120, 125, 135, 255};
                 blockText(s.ready ? "READY" : "NOT READY", x + 440, y + 8, 1.6f, rc);
             }
@@ -8334,15 +8334,26 @@ private:
         }
         y += 10;
         // controls
-        bool iAmReady = room.mySlot >= 0 && room.slots[room.mySlot].ready;
-        lbBtn(x, y, 130, 30, iAmReady ? "UNREADY" : "READY", room.mySlot >= 0, [this, iAmReady] {
-            const auto& s = mpRoom().slots[mpRoom().mySlot];
-            mp_->setSlot(mpRoom().mySlot, 1, s.faction, s.color, s.team, iAmReady ? 0 : 1); });
+        float bx = x;
+        if (singlePlayer_) {
+            // SP: no READY button -- the player is always ready. Keep the slot marked
+            // ready (once, self-limiting) so the host's START enables.
+            if (room.mySlot >= 0 && !room.slots[room.mySlot].ready) {
+                const auto& s = room.slots[room.mySlot];
+                mp_->setSlot(room.mySlot, 1, s.faction, s.color, s.team, 1);
+            }
+        } else {
+            bool iAmReady = room.mySlot >= 0 && room.slots[room.mySlot].ready;
+            lbBtn(x, y, 130, 30, iAmReady ? "UNREADY" : "READY", room.mySlot >= 0, [this, iAmReady] {
+                const auto& s = mpRoom().slots[mpRoom().mySlot];
+                mp_->setSlot(mpRoom().mySlot, 1, s.faction, s.color, s.team, iAmReady ? 0 : 1); });
+            bx = x + 142;
+        }
         // start (host): enabled when >=2 used slots and all humans ready and colors unique
         bool canStart = host && startValid(room);
-        lbBtn(x + 142, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
+        lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
               {70, 110, 70, 255});
-        lbBtn(x + 284, y, 120, 30, "LEAVE", true, [this] {
+        lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
             mp_->leaveGame(); lobbyScreen_ = LobbyScreen::Browser;
             mpReadied_ = false; mpStarted_ = false; });
         // The game starts at normal speed; the host can allow it to be changed
@@ -8366,21 +8377,23 @@ private:
                 o.unitCap = seq[(idx + 1) % 5];
                 mp_->setGameOptions(o); });
         }
-        // chat panel on the right
-        float chx = winW - 300.0f, chy = 78, chw = 280;
-        SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
-        SDL_FRect cp{chx, chy, chw, winH - 150.0f}; SDL_RenderFillRectF(ren_, &cp);
-        blockText("CHAT", chx + 8, chy + 6, 1.8f, {160, 165, 180, 255});
-        float ly = chy + cp.h - 20;
-        for (auto it = chatLog_.rbegin(); it != chatLog_.rend() && ly > chy + 26; ++it) {
-            std::string line = it->first + ": " + it->second;
-            if (line.size() > 40) line = line.substr(0, 40);
-            blockText(line, chx + 8, ly, 1.4f, {200, 205, 215, 255});
-            ly -= 16;
+        // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
+        if (!singlePlayer_) {
+            float chx = winW - 300.0f, chy = 78, chw = 280;
+            SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
+            SDL_FRect cp{chx, chy, chw, winH - 150.0f}; SDL_RenderFillRectF(ren_, &cp);
+            blockText("CHAT", chx + 8, chy + 6, 1.8f, {160, 165, 180, 255});
+            float ly = chy + cp.h - 20;
+            for (auto it = chatLog_.rbegin(); it != chatLog_.rend() && ly > chy + 26; ++it) {
+                std::string line = it->first + ": " + it->second;
+                if (line.size() > 40) line = line.substr(0, 40);
+                blockText(line, chx + 8, ly, 1.4f, {200, 205, 215, 255});
+                ly -= 16;
+            }
+            lbField(chx, winH - 66.0f, chw - 70, "SAY", chatDraft_, 4);
+            lbBtn(chx + chw - 62, winH - 52.0f, 56, 24, "SEND", !chatDraft_.empty(), [this] {
+                mp_->chat(chatDraft_); chatDraft_.clear(); });
         }
-        lbField(chx, winH - 66.0f, chw - 70, "SAY", chatDraft_, 4);
-        lbBtn(chx + chw - 62, winH - 52.0f, 56, 24, "SEND", !chatDraft_.empty(), [this] {
-            mp_->chat(chatDraft_); chatDraft_.clear(); });
     }
 
     static bool startValid(const tak::net::RoomView& room) {
