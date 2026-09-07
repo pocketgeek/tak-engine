@@ -60,4 +60,11 @@ std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
                                                 const MatchConfig& cfg);
 
+// Build the world for a campaign mission: terrain + features (reusing setupMatch), the
+// placed units and player slots from the mission `.ota`, and the in-sim MissionScript
+// (attached + started). Returns false if the mission bundle isn't found; sets humanOut
+// to the human player index. See docs/campaign-design.md.
+bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
+                  const std::string& stem, int& humanOut);
+
 }  // namespace tak::sim

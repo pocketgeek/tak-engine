@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -390,6 +391,8 @@ struct Player {
 // Max simultaneous players/teams (the retail map ceiling is 8 start positions).
 constexpr int kMaxPlayers = 8;
 
+class MissionScript;   // src/sim/mission.h -- optional campaign "god" script + win/lose
+
 class World {
 public:
     int spawn(const UnitType* type, float x, float z, float heading = 0, int player = 0);
@@ -528,6 +531,14 @@ public:
     void setVisPlayer(int t) { visPlayer_ = t; }
     // Deterministic digest of sim state, for lockstep sync checking.
     uint64_t stateHash() const;
+
+    // Campaign mission: an optional in-sim "god" script + win/lose rules
+    // (src/sim/mission.h). Ticked inside tick(), and folded into stateHash().
+    World();                                                    // out-of-line (mission_ member)
+    ~World();                                                   // out-of-line (mission_ dtor)
+    void setMission(std::unique_ptr<MissionScript> m);
+    MissionScript* mission() { return mission_.get(); }
+    int missionOutcome() const;   // 0 none/running / +1 victory / -1 defeat
     // Fog of war for the local player over 16px cells: 0 hidden, 1 explored, 2 visible.
     const std::vector<uint8_t>& visibility() const { return vis_; }
     int visW() const { return visW_; }
@@ -647,6 +658,8 @@ private:
     // only (fog is not in stateHash), so plain float math is fine.
     bool sightClear(int ux, int uz, float eyeH, int tx, int tz) const;
     std::vector<Unit> units_;
+    std::unique_ptr<MissionScript> mission_;   // optional campaign mission runner
+    std::vector<int> justDied_;                // unit ids that died this tick (mission hook)
     std::vector<std::pair<float, float>> manaSpots_;
     std::vector<Feature> features_;             // reclaimable map features
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_

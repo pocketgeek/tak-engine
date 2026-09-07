@@ -2,6 +2,7 @@
 
 #include "hpi/hpi.h"
 #include "sim/detmath.h"
+#include "sim/mission.h"
 #include "tdf/tdf.h"
 
 #include <algorithm>
@@ -1804,6 +1805,7 @@ void World::tick(float dt) {
     // unit-index order), so lockstep peers stay in sync.
     pathBudget_ = 24;
     for (auto& u : units_) { u.justFired = false; u.justBuilt = 0; }
+    if (mission_) justDied_.clear();   // deaths this tick, fed to the mission runner below
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
     clock_ += dt;    // wall-clock since the match started (for god timing)
     // Cosmetic disco emote countdown (Shift+D). Deterministic across peers but not
@@ -1945,6 +1947,7 @@ void World::tick(float dt) {
                     k->veteran = std::min(10, k->xp);
                 }
             }
+            if (mission_) justDied_.push_back(u.id);
             u.deadFor = 0; u.orders.clear(); u.speed = 0; continue;
         }
 
@@ -1982,7 +1985,7 @@ void World::tick(float dt) {
         if (u.embarked()) {                  // riding a transport
             Unit* t = unit(u.inTransport);
             if (t && t->alive()) { u.x = t->x; u.z = t->z; }
-            else u.deadFor = 0;              // transport lost with all hands
+            else { if (mission_) justDied_.push_back(u.id); u.deadFor = 0; }  // transport lost with all hands
             continue;
         }
         // Frozen / petrified / paralyzed: the unit is inert this tick.
@@ -2237,6 +2240,16 @@ void World::tick(float dt) {
                          ttot - g_tcomb - tsep - g_flowMs - g_pathMs, alive);
         }
     }
+    // Campaign mission runner: feed this tick's build/death events into the "god"
+    // script, then advance it (VM + triggers + win/lose). Runs on every peer (build
+    // & death events queue VM threads; the spawns/orders happen in step()), so the
+    // mission stays in lockstep with no relayed actions.
+    if (mission_) {
+        for (auto& u : units_)
+            if (u.justBuilt) mission_->unitBuilt(*this, u.justBuilt);
+        for (int id : justDied_) mission_->unitDied(*this, id);
+        mission_->step(*this, dt);
+    }
 }
 
 uint64_t World::stateHash() const {
@@ -2306,8 +2319,19 @@ uint64_t World::stateHash() const {
         if (f.alive) { ++fAlive; uint32_t w; std::memcpy(&w, &f.work, 4); fWork ^= (uint64_t(w) << 1) ^ uint64_t(uint32_t(f.id)); }
     mix(fAlive);
     mix(fWork);
+    if (mission_) mission_->foldHash(h);   // mission triggers/vars/outcome are lockstep state
     return h;
 }
+
+// Mission runner ownership -- ctor/dtor defined here where MissionScript is a complete
+// type, so no other TU instantiates the unique_ptr<MissionScript> deleter.
+World::World() = default;
+World::~World() = default;
+void World::setMission(std::unique_ptr<MissionScript> m) {
+    mission_ = std::move(m);
+    if (mission_) mission_->start(*this);   // queue the Start script (runs on the first tick)
+}
+int World::missionOutcome() const { return mission_ ? mission_->outcome() : 0; }
 
 int World::updateOutcome() {
     // A player is defeated when it has no living units. Compute per-player

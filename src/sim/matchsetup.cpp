@@ -10,6 +10,11 @@
 #include <unordered_map>
 
 #include "hpi/hpi.h"
+#include "sim/mission.h"
+#include "tdf/tdf.h"
+
+#include <cstdio>
+#include <memory>
 #include "tdf/tdf.h"
 #include "tnt/tnt.h"
 
@@ -311,6 +316,76 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         blockFootprint(world.nav(), *u.type, u.x, u.z, true);
     }
     return assigned;
+}
+
+bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
+                  const std::string& stem, int& humanOut) {
+    const std::string base = "missions/" + stem;
+    if (!vfs.has(base + ".tnt") || !vfs.has(base + ".ota") || !vfs.has(base + ".cob")) {
+        std::fprintf(stderr, "setupMission: '%s' not found\n", stem.c_str());
+        return false;
+    }
+    auto otaBytes = vfs.read(base + ".ota");
+    tdf::Node root = tdf::parseText(std::string(otaBytes.begin(), otaBytes.end()), base + ".ota");
+    const tdf::Node* gh = root.child("globalheader");
+    if (!gh) { std::fprintf(stderr, "setupMission: %s no [GlobalHeader]\n", stem.c_str()); return false; }
+
+    // Players from Player<N> defs (1-based .ota slots -> 0-based World players). First-pass
+    // diplomacy: human + allies + neutrals on team 0, explicit opponents on team 1, so the
+    // human only auto-fights opponents. Human = the first interactive (non-AI) slot.
+    int human = 0;
+    std::vector<MatchSlot> slots(kMaxPlayers);
+    const char* kingdoms[5] = {"aramon", "taros", "veruna", "zhon", "creon"};
+    bool foundHuman = false;
+    for (int n = 1; n <= kMaxPlayers; ++n) {
+        const std::string* v = gh->value("player" + std::to_string(n));
+        if (!v) continue;
+        std::string def = *v;
+        std::transform(def.begin(), def.end(), def.begin(), ::tolower);
+        bool ai = def.find("strategic") != std::string::npos || def.find("passive") != std::string::npos;
+        MatchSlot& s = slots[size_t(n - 1)];
+        s.used = false;   // no monarch spawn -- units come from [Map Data][units]
+        s.team = def.find("opponent") != std::string::npos ? 1 : 0;
+        for (int f = 0; f < 5; ++f) if (def.find(kingdoms[f]) != std::string::npos) s.faction = f;
+        if (!ai && !foundHuman) { human = n - 1; foundHuman = true; }
+    }
+
+    MatchConfig cfg;
+    cfg.vfs = &vfs;
+    cfg.mapPath = base + ".tnt";
+    cfg.slots = slots;                 // no used slots -> setupMatch spawns no monarchs
+    cfg.gods = false;
+    cfg.unitCap = int(gh->numberOr("maxunits", 500));
+    setupMatch(world, reg, cfg);       // terrain + features + player teams
+
+    // Placed units from [Map Data][units].
+    int spawned = 0;
+    if (const tdf::Node* md = gh->child("map data"))
+        if (const tdf::Node* units = md->child("units"))
+            for (const auto& key : units->childOrder) {
+                const tdf::Node& u = units->children.at(key);
+                std::string name = u.valueOr("unitname", "");
+                std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+                const UnitType* t = reg.find(name);
+                if (!t) continue;
+                float x = float(u.numberOr("xpos", 0)) * 16 + 8;
+                float z = float(u.numberOr("zpos", 0)) * 16 + 8;
+                int player = std::clamp(int(u.numberOr("player", 1)) - 1, 0, kMaxPlayers - 1);
+                float ang = float(u.numberOr("angle", 0)) * (3.14159265f / 180.0f);
+                int id = world.spawn(t, x, z, ang, player);
+                if (id >= 0) {
+                    ++spawned;
+                    if (auto* su = world.unit(id))
+                        su->hp = su->type->maxHp * float(u.numberOr("healthpercentage", 100)) / 100.0f;
+                }
+            }
+
+    // Attach + start the in-sim "god" script (its spawns/triggers run from World::tick).
+    world.setMission(std::make_unique<MissionScript>(vfs.read(base + ".cob"), *gh, reg, human, stem));
+    humanOut = human;
+    std::fprintf(stderr, "setupMission: %s -- %d placed units, human=player%d\n",
+                 stem.c_str(), spawned, human);
+    return true;
 }
 
 }  // namespace tak::sim
