@@ -29,6 +29,7 @@
 #include "tnt/tnt.h"
 #include "util/png.h"
 #include "version.h"
+#include "viewer/cursors.h"
 #include "viewer/options.h"
 #include "viewer/settings.h"
 #include "viewer/mainmenu.h"
@@ -4241,7 +4242,153 @@ public:
         return rowW + 24 + panelW();
     }
 
+    // ---- Animated mouse cursor (retail anims/cursors.gaf) --------------------------
+    // Restore the OS arrow when the game view is torn down (return to menu / quit).
+    ~GameView() { if (cursorsHidden_) SDL_ShowCursor(SDL_ENABLE); }
+
+    // Draw the retail cursor on top of everything at native resolution. main() calls
+    // this after the (optional) AA downscale, right before present, so it is crisp and
+    // unambiguously topmost. Lazily loads the cursor art and hides the OS arrow once.
+    void drawCursorOverlay() {
+        if (!cursorsInit_) {
+            cursorsInit_ = true;
+            if (cursors_.load(ren_, vfs_)) { cursorsHidden_ = true; SDL_ShowCursor(SDL_DISABLE); }
+        }
+        if (!cursors_.ok()) return;   // no cursor art -> keep the OS arrow
+        // Pointer position in renderer-output pixels (the space mouse events are mapped
+        // into). Before the first motion, sample the OS position and map it the same way.
+        int mx, my;
+        if (mouseX_ >= 0) { mx = int(mouseX_); my = int(mouseY_); }
+        else {
+            int wx, wy; SDL_GetMouseState(&wx, &wy);
+            float lx, ly; SDL_RenderWindowToLogical(ren_, wx, wy, &lx, &ly);
+            mx = int(lx); my = int(ly);
+        }
+        bool fightTint = false;
+        tak::CursorId c = desiredCursor(fightTint);
+        cursors_.draw(ren_, c, mx, my, fightTint ? kFightMoveTint : SDL_Color{255, 255, 255, 255});
+    }
+
 private:
+    // The armed-order (command button / hotkey) -> its cursor. Fight-move reuses the
+    // Attack glyph, matching retail (KINGDOMS.icd).
+    static tak::CursorId cursorForCmd(char cmd) {
+        switch (cmd) {
+            case 'm': return tak::CursorId::Move;
+            case 'f': return tak::CursorId::Attack;    // fight-move = tinted attack
+            case 'a': return tak::CursorId::Attack;
+            case 'p': return tak::CursorId::Patrol;
+            case 'g': return tak::CursorId::Defend;    // guard
+            case 'c': return tak::CursorId::Reclaim;
+            case 'r': return tak::CursorId::Repair;
+            case 'l': return tak::CursorId::Load;
+            case 'u': return tak::CursorId::Unload;
+            default:  return tak::CursorId::Normal;
+        }
+    }
+
+    // Which cursor to show this frame, from the current UI/order state and what is under
+    // the pointer -- the retail two-level scheme (an armed order beats plain hover).
+    // `fightTint` is set when the cursor is the fight-move ('f') Attack glyph, which the
+    // caller draws tinted so it reads apart from a real attack order.
+    tak::CursorId desiredCursor(bool& fightTint) {
+        fightTint = false;
+        // Overlays / lobby: a plain arrow for clicking UI.
+        if (inLobbyPhase() || exitMenu_ || options_ || showColorPicker_)
+            return tak::CursorId::Normal;
+        // Build/conjure placement: green when it fits, red when blocked (matches the ghost).
+        if (placing_ && mouseX_ >= 0) {
+            float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
+            return world_.canPlace(placing_, wx, wz) ? tak::CursorId::Green : tak::CursorId::Red;
+        }
+        if (reclaimDrag_) return tak::CursorId::Reclaim;   // right-drag "clear this area"
+        if (dragging_)    return tak::CursorId::Normal;    // box-select drag
+        if (pendingCmd_)  { fightTint = (pendingCmd_ == 'f'); return cursorForCmd(pendingCmd_); }
+        if (mouseX_ < 0)  return tak::CursorId::Normal;
+        float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
+        return hoverCursor(wx, wz);
+    }
+
+    // Plain-hover cursor: classify what is under the world point, mirroring the priority
+    // in rightClickOrder() so the pointer previews the order a right-click would issue.
+    tak::CursorId hoverCursor(float wx, float wz) {
+        const auto* first = selection_.empty() ? nullptr : world_.unit(selection_.front());
+
+        // Selected transport carrying cargo -> unload cursor anywhere.
+        if (first && first->type && first->type->canTransport && !first->cargo.empty())
+            return tak::CursorId::Unload;
+
+        if (first) {
+            // A friendly transport under the pointer -> board/load.
+            {
+                float best = 24.0f * 24.0f; bool found = false;
+                for (auto& u : world_.units()) {
+                    if (!u.alive() || !u.type || !u.type->canTransport || u.player != first->player)
+                        continue;
+                    float dx = u.x - wx, dz = u.z - wz;
+                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; found = true; }
+                }
+                if (found) return tak::CursorId::Load;
+            }
+            // Allied conjure site (assist) / your own unit (select) / a teammate's (green).
+            int siteId = -1, ownId = -1, allyId = -1;
+            float bSite = 1e18f, bOwn = 22.0f * 22.0f, bAlly = 22.0f * 22.0f;
+            for (auto& u : world_.units()) {
+                if (!u.alive() || u.embarked() || !u.type ||
+                    !world_.allied(u.player, first->player)) continue;
+                float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
+                if (u.underConstruction) {
+                    float r = 20.0f + 8.0f * float(std::max(u.type->footX, u.type->footZ));
+                    if (d < r * r && d < bSite) { bSite = d; siteId = u.id; }
+                } else if (u.player == localPlayer_) {
+                    if (d < bOwn) { bOwn = d; ownId = u.id; }
+                } else if (d < bAlly) { bAlly = d; allyId = u.id; }
+            }
+            if (siteId >= 0) return tak::CursorId::Repair;   // assist a build/revive
+            if (ownId  >= 0) return tak::CursorId::Select;
+            if (allyId >= 0) return tak::CursorId::Green;
+
+            // An enemy under the pointer -> attack if we have a weapon, else the red target.
+            int enemy = -1; float best2 = 20.0f * 20.0f;
+            for (auto& u : world_.units()) {
+                if (!u.alive() || u.embarked() || world_.allied(u.player, first->player)) continue;
+                float dx = u.x - wx, dz = u.z - wz;
+                if (dx * dx + dz * dz < best2) { best2 = dx * dx + dz * dz; enemy = u.id; }
+            }
+            if (enemy >= 0) {
+                bool canAtk = false;
+                for (int id : selection_)
+                    if (const auto* a = world_.unit(id))
+                        if (a->type && a->type->weapon.damage > 0) { canAtk = true; break; }
+                return canAtk ? tak::CursorId::Attack : tak::CursorId::Red;
+            }
+
+            // A reclaimable feature under the pointer (reclaimer selected) -> broom.
+            if (haveReclaimer()) {
+                for (const auto& f : world_.features()) {
+                    if (!f.alive) continue;
+                    float dx = f.x - wx, dz = f.z - wz;
+                    float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
+                    if (dx * dx + dz * dz < r * r) return tak::CursorId::Reclaim;
+                }
+            }
+
+            // Empty ground with a mobile unit selected -> move.
+            for (int id : selection_)
+                if (const auto* u = world_.unit(id))
+                    if (u->type && u->type->canMove) return tak::CursorId::Move;
+            return tak::CursorId::Normal;
+        }
+
+        // Nothing selected: highlight your own unit under the pointer, else the arrow.
+        for (auto& u : world_.units()) {
+            if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_) continue;
+            float dx = u.x - wx, dz = u.z - wz;
+            if (dx * dx + dz * dz < 22.0f * 22.0f) return tak::CursorId::Select;
+        }
+        return tak::CursorId::Normal;
+    }
+
     struct Visual {
         tak::tdo::Model model;
     };
@@ -6065,6 +6212,14 @@ private:
     float mouseX_ = -1, mouseY_ = -1;   // -1 until the first real mouse motion, so
                                         // edge-scroll can't fire from a (0,0) default
                                         // cursor on launch (before the mouse moves)
+    // Retail animated mouse cursors (anims/cursors.gaf). Lazily loaded on the first
+    // overlay draw; when it takes over, the OS arrow is hidden (restored in the dtor).
+    tak::CursorSet cursors_;
+    bool cursorsInit_ = false;          // attempted the one-time load yet?
+    bool cursorsHidden_ = false;        // did we SDL_ShowCursor(DISABLE) the OS arrow?
+    // Fight-move ('f') reuses the Attack glyph tinted this red-orange, so it reads apart
+    // from a real attack order -- for both the order-column button and the mouse cursor.
+    static constexpr SDL_Color kFightMoveTint{255, 90, 80, 255};
     SDL_Texture* fogTex_ = nullptr;
     SDL_Texture* miniTex_ = nullptr;
     SDL_Texture* panelTex_ = nullptr;
@@ -6877,7 +7032,12 @@ private:
             SDL_Texture* t = armed && b.frames[2] ? b.frames[2]
                              : hot && b.frames[1] ? b.frames[1]
                                                   : b.frames[0];
+            // Fight-move reuses the Attack glyph -- tint it so it reads apart from Attack
+            // (matches the fight-move mouse cursor). Reset after, as the glyph may be shared.
+            if (b.cmd == 'f')
+                SDL_SetTextureColorMod(t, kFightMoveTint.r, kFightMoveTint.g, kFightMoveTint.b);
             SDL_RenderCopyF(ren_, t, nullptr, &r);
+            if (b.cmd == 'f') SDL_SetTextureColorMod(t, 255, 255, 255);
             if (armed) {
                 SDL_SetRenderDrawColor(ren_, 255, 220, 90, 255);
                 SDL_RenderDrawRectF(ren_, &r);
@@ -10082,6 +10242,10 @@ int main(int argc, char** argv) {
             SDL_Rect dst{0, 0, bw, bh};
             SDL_RenderCopy(ren, aaTex, nullptr, &dst);
         }
+        // Custom animated mouse cursor, drawn last so it sits above the HUD (and above
+        // the AA-resolved scene) at native resolution. Only in-game; the asset viewers
+        // keep the OS arrow.
+        if (gameView) gameView->drawCursorOverlay();
         SDL_RenderPresent(ren);
         if (prof) {
             double t5 = pnow();
