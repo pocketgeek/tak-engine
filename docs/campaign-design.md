@@ -196,11 +196,12 @@ server", keeps a single sim path, and gets AI for free; the COB VM move is the m
 
 ## 7. Phased plan
 
-Status (2026-09-07): phases 1–3 + 5 and most of 6 are **done and verified**;
-`takmission01_mt` runs over the real takserver/takview in lockstep (`err=none`,
-reproducible hash) with win/lose wired, and is playable from the main-menu
-campaign picker (or `takview game --campaign <stem>`). Remaining: phase 4, the
-briefing/movie/victory-screen polish of 6, and phase 7.
+Status (2026-09-07): phases 1–3, 5, and 6 are **done and verified**; a campaign
+mission runs over the real takserver/takview in lockstep (`err=none`, reproducible
+hash), and the full front-end loop — pick → intro movie → briefing → play →
+victory/defeat → next/retry — works from the main menu (or `takview game
+--campaign <stem>`). Remaining: phase 4 (per-mission unit restriction) and phase 7
+polish.
 
 1. **Scripting core (no campaign yet).** ✅ COB name table (`src/cob`);
    verb-string `MAP_COMMAND` dispatch (Create/SetMission/SetTrigger/GetUtype/
@@ -227,15 +228,17 @@ briefing/movie/victory-screen polish of 6, and phase 7.
    `loadCampaigns` — Book of Darien 48, The Iron Plague 25, ipalt 25); progress
    persisted in `tak::Settings` (`campaignDone`, `campaign.<id>=n`); win→advance
    handled in `main()`.
-6. **Front-end flow.** ◑ `Choice::Campaign` wired: the girl door opens `CampaignScreen`
-   (`src/viewer/campaignscreen.{h,cpp}`) — campaign tabs + completed/current(PLAY)/
-   LOCKED mission rows; a pick launches through the autoMode-8 mission host and plays
-   in lockstep; on victory `world_.missionOutcome()` drives the banner and bumps
-   persisted progress. **Still TODO: intro movie (generalize `playIntro`), a
-   briefing screen (retail `Briefing`/`victory<kingdom>`/`Defeat` `.gui`), and
-   next/retry buttons on a dedicated result screen** (today it uses the skirmish
-   VICTORY/DEFEAT banner + Esc-to-menu).
-7. **Polish.** Finish the `SetMission` verbs (wa/b); in-mission objectives panel,
+6. **Front-end flow.** ✅ `Choice::Campaign` → `CampaignScreen`
+   (`src/viewer/campaignscreen.{h,cpp}`): campaign tabs + completed/current(PLAY)/
+   LOCKED rows. A pick runs the full sequence: intro movie (`MainMenu::playIntro` on
+   `Movies/<stem>.bik`) → `BriefingScreen` (objectives from `missions/<stem>.txt`) →
+   the autoMode-8 lockstep mission → `ResultScreen` (VICTORY/DEFEAT → next/retry/menu,
+   chaining via `pendingCampaign` without bouncing through the menu). On victory
+   `world_.missionOutcome()` drives the banner and bumps persisted progress. Our own
+   block-font screens rather than the retail `Briefing`/`victory<kingdom>` `.gui`
+   (deferred to polish). Modals auto-proceed under the dummy video driver (headless).
+7. **Polish.** Finish the `SetMission` verbs (wa/b); retail `.gui` briefing/victory
+   screens + briefing VO; in-mission objectives panel,
    `posttakmission24`/`PostTakCredits` cinematics, Iron Plague dialogue widget,
    briefing VO, `ipalt` branch.
 
