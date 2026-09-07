@@ -85,6 +85,7 @@ struct MainMenu::Impl {
     std::vector<Door> doors;
     std::vector<Button> buttons;
     std::unordered_map<std::string, std::string> bikByLower;   // lowercased name -> path
+    std::vector<uint8_t> gainBuf_;   // scratch for the dragon video's colour-match gain
 
     // Click SFX: one queue-driven device (all menu click WAVs share a format,
     // u8/11025/mono), and each sound's volume-scaled PCM keyed by filename. This is
@@ -229,6 +230,22 @@ struct MainMenu::Impl {
                                        SDL_TEXTUREACCESS_STREAMING, d.vw, d.vh);
             SDL_SetTextureBlendMode(d.vtex, SDL_BLENDMODE_BLEND);
         }
+        // The dragon's video sits INSIDE the palette-rendered "K"; the Bink codec
+        // reproduces it a touch darker (mostly green) than the GAF art beside it, so a
+        // visible seam appears around the clip. Lift it by the measured per-channel gain
+        // (a pure linear scale, gamma ~1: R x1.02, G x1.04, B x1.01) so it matches the
+        // background. Done on a scratch buffer so re-updating a held frame can't
+        // compound. The doors fill a hole in the bg, so they need no correction.
+        if (d.vbase == "snort") {
+            gainBuf_.assign(d.rgba.begin(), d.rgba.end());
+            for (size_t i = 0; i + 3 < gainBuf_.size(); i += 4) {
+                gainBuf_[i + 0] = uint8_t(std::min(255, gainBuf_[i + 0] * 262 / 256));
+                gainBuf_[i + 1] = uint8_t(std::min(255, gainBuf_[i + 1] * 266 / 256));
+                gainBuf_[i + 2] = uint8_t(std::min(255, gainBuf_[i + 2] * 258 / 256));
+            }
+            SDL_UpdateTexture(d.vtex, nullptr, gainBuf_.data(), d.vw * 4);
+            return;
+        }
         SDL_UpdateTexture(d.vtex, nullptr, d.rgba.data(), d.vw * 4);
     }
 
@@ -349,11 +366,11 @@ struct MainMenu::Impl {
         float s, ox, oy; layout(winW, winH, s, ox, oy);
         if (bg) { SDL_FRect r{ox, oy, 640 * s, 480 * s}; SDL_RenderCopyF(ren, bg, nullptr, &r); }
         for (auto& d : doors) {
-            // The dragon (Choice::None) is part of the static background art, so its
-            // idle clip's slightly-different codec colour would sit visibly beside the
-            // matching bg. Only overlay its video while it's actually snorting (hover
-            // in/loop/out); when idle, let the background art show through untouched.
-            // The doors are always video (they fill a hole in the bg).
+            // The dragon (Choice::None) is part of the static background art, so when
+            // it's idle just let the background show through (a perfect match); overlay
+            // its snort video only while it's actually snorting (hover). The clip itself
+            // is colour-matched to the bg (see setDoorTex) so the transition is seamless
+            // and the fire hides any residual. Doors always play (they fill a bg hole).
             bool idleDragon = d.action == MainMenu::Choice::None && d.state == DoorState::Idle;
             if (d.videoOk && d.vtex && !idleDragon) {
                 // Like the buttons, the door video is authored bigger than its gui
