@@ -3557,10 +3557,11 @@ public:
         auto special = [&](const tak::sim::Unit& u, const UnitGeom& g) {
             bool occluded = !g.canFly && g.occY < g.ay - 2.0f;
             bool conjuring = u.underConstruction && u.type;
-            // Reclaimers route through drawUnit too, so the reclaim build-FX (which is
-            // drawn there) shows the same nano-sparkle as building for ANY reclaimer.
-            bool reclaiming = u.type && u.reclaimId != 0;
-            return occluded || conjuring || reclaiming || dancing(u) || headbanging(u);
+            // A worker (conjuring a site or reclaiming) routes through drawUnit too, so
+            // the build/reclaim nano-sparkle -- drawn there over BOTH the worker and its
+            // target -- shows for any builder/reclaimer, not just occluded/dancing ones.
+            bool working = u.type && (u.buildSiteId != 0 || u.reclaimId != 0);
+            return occluded || conjuring || working || dancing(u) || headbanging(u);
         };
 
         // Pass 1: every normal unit's ground shadows, batched. Soft blobs go into
@@ -5542,6 +5543,34 @@ private:
             g.runs.push_back({cur, int(g.verts.size()) - runStart});
     }
 
+    // Sprinkle the faction build/summon nano-sparkle over a screen footprint centred at
+    // (cx,cy), fpw x fph screen px. Retail draws this over BOTH the worker unit and its
+    // build/reclaim target; kBuildFxScale enlarges the little sprites so the effect reads,
+    // and the cloud spreads a little past the footprint like the retail effect.
+    void sprinkleBuildFx(const std::string& sideLower, float cx, float cy, float fpw, float fph) {
+        auto fit = buildFx_.find(sideLower);
+        if (fit == buildFx_.end() || fit->second.empty()) return;
+        auto& frames = fit->second;
+        int fw, fh;
+        SDL_QueryTexture(frames[0], nullptr, nullptr, &fw, &fh);
+        const float zm = mapView_.zoom();
+        constexpr float kBuildFxScale = 2.0f;   // bigger than 1:1 so the sparkle reads
+        float tw = float(fw) * zm * kBuildFxScale, th = float(fh) * zm * kBuildFxScale;
+        fpw = std::max(fpw * 1.35f, tw);         // overflow the footprint; >=1 sparkle
+        fph = std::max(fph * 1.35f, th);
+        int nx = std::clamp(int(fpw / tw + 0.5f), 1, 5);
+        int nz = std::clamp(int(fph / th + 0.5f), 1, 5);
+        float x0 = cx - fpw * 0.5f, y0 = cy - fph * 0.6f;
+        int base = int(animClock_ * 12);
+        for (int gz = 0; gz < nz; ++gz)
+            for (int gx = 0; gx < nx; ++gx) {
+                SDL_Texture* fxt = frames[size_t(base + gx * 3 + gz * 5) % frames.size()];
+                SDL_FRect d{x0 + (gx + 0.5f) * fpw / nx - tw * 0.5f,
+                            y0 + (gz + 0.5f) * fph / nz - th * 0.5f, tw, th};
+                SDL_RenderCopyF(ren_, fxt, nullptr, &d);
+            }
+    }
+
     void drawUnit(const tak::sim::Unit& u) {
         // A placed-but-not-yet-started site shows as a faint ghost until the
         // builder arrives and it begins conjuring for real.
@@ -5653,63 +5682,44 @@ private:
             off += r.second;
         }
 
-        // Conjure effect: sprinkle the faction's build/summon sparkle over the
-        // footprint while the unit materialises (a conjuring site, or a unit freshly
-        // summoned from a building), each staggered so they twinkle out of sync.
-        if (conjuring) {
-            std::string side = u.type->side;
-            std::transform(side.begin(), side.end(), side.begin(), ::tolower);
-            auto fit = buildFx_.find(side);
-            if (fit != buildFx_.end() && !fit->second.empty()) {
-                auto& frames = fit->second;
-                int fw, fh;
-                SDL_QueryTexture(frames[0], nullptr, nullptr, &fw, &fh);
-                float tw = float(fw) * zm, th = float(fh) * zm;
-                float fpw = std::max(u.type->footX, 1) * 16.0f * zm;
-                float fph = std::max(u.type->footZ, 1) * 16.0f * zm;
-                int nx = std::clamp(int(fpw / tw + 0.5f), 1, 5);
-                int nz = std::clamp(int(fph / th + 0.5f), 1, 5);
-                float x0 = ax - fpw * 0.5f, y0 = ay - fph * 0.6f;
-                int base = int(animClock_ * 12);
-                for (int gz = 0; gz < nz; ++gz)
-                    for (int gx = 0; gx < nx; ++gx) {
-                        SDL_Texture* fx = frames[size_t(base + gx * 3 + gz * 5) %
-                                                 frames.size()];
-                        SDL_FRect d{x0 + (gx + 0.5f) * fpw / nx - tw * 0.5f,
-                                    y0 + (gz + 0.5f) * fph / nz - th * 0.5f, tw, th};
-                        SDL_RenderCopyF(ren_, fx, nullptr, &d);
-                    }
-            }
+        // Build/reclaim nano-sparkle. Retail sparkles BOTH ends -- the worker unit AND
+        // its target -- but only once the job has really STARTED: a placed site shows as
+        // a ghost until buildBegun (above), and a reclaim sparkles only once the builder
+        // is in range (not while it walks/flies over).
+        auto sideLower = [&] {
+            std::string s = u.type ? u.type->side : std::string();
+            std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+            return s;
+        };
+        auto uFootW = [&] { return std::max(u.type->footX, 1) * 16.0f * zm; };
+        auto uFootH = [&] { return std::max(u.type->footZ, 1) * 16.0f * zm; };
+
+        // A conjuring/summoning SITE (this unit) sparkles over itself.
+        if (conjuring)
+            sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());
+
+        // A builder actively conjuring a site sparkles over ITSELF too (the worker end).
+        if (u.type && u.buildSiteId != 0) {
+            const auto* site = world_.unit(u.buildSiteId);
+            if (site && site->buildBegun)
+                sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());
         }
 
-        // Reclaim: the same nano sparkle as building/summoning, but sprinkled over the
-        // feature a builder is chewing on -- retail shows reclaim with the build FX.
-        if (u.reclaimId != 0 && u.type) {
+        // A reclaimer IN RANGE (the reclaim has really started -- range test mirrors
+        // World::tickReclaim): sparkle the reclaimer AND the feature it is chewing on.
+        if (u.type && u.reclaimId != 0) {
             const auto* feat = world_.feature(u.reclaimId);
             if (feat && feat->alive) {
-                std::string side = u.type->side;
-                std::transform(side.begin(), side.end(), side.begin(), ::tolower);
-                auto fit = buildFx_.find(side);
-                if (fit != buildFx_.end() && !fit->second.empty()) {
-                    auto& frames = fit->second;
-                    int fw, fh; SDL_QueryTexture(frames[0], nullptr, nullptr, &fw, &fh);
-                    float tw = float(fw) * zm, th = float(fh) * zm;
-                    // Feature screen position, lifted onto the relief like its sprite.
+                float dxr = feat->x - u.x, dzr = feat->z - u.z;
+                float reach = 24.0f + 8.0f * float(std::max(feat->fx, feat->fz)) +
+                              (u.type->buildDist > 0 ? u.type->buildDist : 0.0f);
+                if (dxr * dxr + dzr * dzr <= reach * reach) {
+                    sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());   // the reclaimer
                     float fsx = (feat->x - mapView_.offX()) * zm - terrainLiftX(feat->x, feat->z) * zm;
                     float fsy = (feat->z - mapView_.offY()) * zm - terrainLift(feat->x, feat->z) * zm;
-                    float fpw = std::max(feat->fx, 1) * 16.0f * zm;
-                    float fph = std::max(feat->fz, 1) * 16.0f * zm;
-                    int nx = std::clamp(int(fpw / tw + 0.5f), 1, 5);
-                    int nz = std::clamp(int(fph / th + 0.5f), 1, 5);
-                    float x0 = fsx - fpw * 0.5f, y0 = fsy - fph * 0.6f;
-                    int base = int(animClock_ * 12);
-                    for (int gz = 0; gz < nz; ++gz)
-                        for (int gx = 0; gx < nx; ++gx) {
-                            SDL_Texture* fxt = frames[size_t(base + gx * 3 + gz * 5) % frames.size()];
-                            SDL_FRect d{x0 + (gx + 0.5f) * fpw / nx - tw * 0.5f,
-                                        y0 + (gz + 0.5f) * fph / nz - th * 0.5f, tw, th};
-                            SDL_RenderCopyF(ren_, fxt, nullptr, &d);
-                        }
+                    sprinkleBuildFx(sideLower(), fsx, fsy,
+                                    std::max(feat->fx, 1) * 16.0f * zm,
+                                    std::max(feat->fz, 1) * 16.0f * zm);         // the feature
                 }
             }
         }
