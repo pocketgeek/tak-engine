@@ -646,6 +646,24 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
     std::vector<uint8_t> rgba, apcm;
     const Uint64 start = SDL_GetTicks64();
     long queuedTotal = 0;   // total audio bytes ever queued (for the audio clock)
+    // Trailing-black trim: the retail LOGO.BIK fades out ~3s before its stream ends,
+    // then just holds pure black. Cut to the menu once a few frames in a row are pure
+    // black instead of sitting on the dead tail. The fade's last visible frames decode
+    // to ~8/255, so a low threshold trims only the black hold, not the fade; and the
+    // lone black fade-in frame at the start can't reach the run length.
+    auto meanBrightness = [](const std::vector<uint8_t>& px, int w, int h) {
+        if (int(px.size()) < w * h * 4) return 255;
+        long sum = 0; int cnt = 0;
+        for (int y = 0; y < h; y += 16)
+            for (int x = 0; x < w; x += 16) {
+                const uint8_t* p = &px[(size_t(y) * w + x) * 4];
+                sum += p[0] + p[1] + p[2]; cnt += 3;
+            }
+        return cnt ? int(sum / cnt) : 255;
+    };
+    constexpr int kBlackLevel = 2;      // per-channel mean at/below this counts as black
+    constexpr int kBlackEndFrames = 4;  // this many black frames in a row => end the clip
+    int blackRun = 0;
     int frame = 0;
     bool skip = false;
     for (;;) {
@@ -665,7 +683,15 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
             t = double(SDL_GetTicks64() - start) / 1000.0;
         const int want = int(t * fps);
         bool ended = false;
-        while (frame <= want) { if (!vid.nextFrame(rgba)) { ended = true; break; } ++frame; }
+        while (frame <= want) {
+            if (!vid.nextFrame(rgba)) { ended = true; break; }
+            ++frame;
+            if (meanBrightness(rgba, vw, vh) <= kBlackLevel) {
+                if (++blackRun >= kBlackEndFrames) { ended = true; break; }   // trailing black -> done
+            } else {
+                blackRun = 0;
+            }
+        }
         // Keep the audio device fed with whatever this iteration decoded.
         apcm.clear();
         vid.drainAudio(apcm);
