@@ -7,6 +7,7 @@
 // src/server. (Net-synced, hashed choices -- game speed, unit cap, crusades, FFA --
 // live in GameOptions/MatchConfig, not here.)
 
+#include <map>
 #include <string>
 
 namespace tak {
@@ -35,6 +36,16 @@ struct Settings {
     std::string playerName;        // default name for multiplayer
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
 
+    // ---- campaign progress ----
+    // Per-campaign count of missions COMPLETED (campaign id -> n). Mission n is the
+    // next one to play / the highest unlocked; a fresh campaign is absent (== 0).
+    // Keyed by Campaign::id (the lowercased camps/*.tdf stem). See src/campaign.
+    std::map<std::string, int> campaignDone;
+    int campaignProgress(const std::string& id) const {
+        auto it = campaignDone.find(id);
+        return it == campaignDone.end() ? 0 : it->second;
+    }
+
     friend bool operator==(const Settings& a, const Settings& b) {
         for (int i = 0; i < 8; ++i) if (a.chanGain[i] != b.chanGain[i]) return false;
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
@@ -42,7 +53,8 @@ struct Settings {
             && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
-            && a.playerName == b.playerName && a.lastMap == b.lastMap;
+            && a.playerName == b.playerName && a.lastMap == b.lastMap
+            && a.campaignDone == b.campaignDone;
     }
     friend bool operator!=(const Settings& a, const Settings& b) { return !(a == b); }
 };

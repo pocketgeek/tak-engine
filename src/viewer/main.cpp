@@ -14,6 +14,7 @@
 // before SDL's <windows.h> would otherwise pull the incompatible winsock v1.
 #include "net/netcompat.h"
 
+#include "campaign/campaign.h"
 #include "cob/vm.h"
 #include "crt/crt.h"
 #include "gaf/gaf.h"
@@ -3195,7 +3196,12 @@ public:
         // per-player defeated flags each tick (deterministic across peers); the
         // viewer just maps that to this player's win/lose banner. Only armed once
         // at least two teams have fielded units (staged demos may field one).
-        if (outcome_ == 0) {
+        if (outcome_ == 0 && !missionStem_.empty()) {
+            // Campaign mission: the in-sim god script + the .ota victory/defeat
+            // conditions decide the result (last-team-standing doesn't apply -- the
+            // objective may be an escort, a timer, a kill-target, etc.).
+            outcome_ = world_.missionOutcome();
+        } else if (outcome_ == 0) {
             int teamsSeen = 0;
             for (int t = 0; t < world_.numPlayers(); ++t) {
                 bool any = false;
@@ -9849,9 +9855,12 @@ int main(int argc, char** argv) {
                     serverPort = launchServerPort; args = launchArgs;
                     menuMusic.start(vfs, 15); }   // front-end BGM (idempotent; loops into the lobby)
 
-    // main-loop lobby driver: 0 = UI-driven lobby (browse/join/host), 7 = auto SP.
+    // main-loop lobby driver: 0 = UI-driven lobby (browse/join/host), 7 = auto SP,
+    // 8 = auto campaign mission (create the mission room, seat, start, then play).
     int mpAutoMode = 0;
     bool menuInteractive = false;   // menu single-player -> interactive lobby, not auto-play
+    std::string campaignStem;       // menu campaign pick -> host this mission (autoMode 8)
+    std::string campaignId;         // ...its campaign id (for progress persistence)
 
     // Front-end: the retail three-door main menu. Its choice drives the setup below
     // (single-player -> local server + lobby; multiplayer -> connect + browser).
@@ -9862,11 +9871,16 @@ int main(int argc, char** argv) {
         {
             tak::MainMenu menu(ren, vfs, dataRoot);
             choice = menu.run(shot, &menuServer, &menuMusic, &settings);
+            if (choice == tak::MainMenu::Choice::Campaign) {
+                campaignStem = menu.chosenMission();
+                campaignId = menu.chosenCampaign();
+            }
         }
         if (!shot.empty()) { SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
         if (choice != tak::MainMenu::Choice::SinglePlayer &&
-            choice != tak::MainMenu::Choice::Multiplayer) {
-            quitApp = true; break;   // exit / campaign / options -> leave the app
+            choice != tak::MainMenu::Choice::Multiplayer &&
+            !(choice == tak::MainMenu::Choice::Campaign && !campaignStem.empty())) {
+            quitApp = true; break;   // exit / options (or campaign with no pick) -> leave the app
         }
         mode = "game";
         if (args.empty()) args.push_back("athri cay");   // TODO: map picker (SP battle menu)
@@ -9898,9 +9912,11 @@ int main(int argc, char** argv) {
         static bool atexitOnce = [] { std::atexit(killLocalServer); return true; }();
         (void)atexitOnce;   // register the safety-net teardown once (the loop kills it per session)
         serverHost = "127.0.0.1"; serverPort = p;
-        mpAutoMode = menuInteractive ? 0 : 7;   // menu SP stops in the lobby; CLI SP auto-plays
+        // Campaign mission -> auto-host it (mode 8); menu skirmish stops in the lobby
+        // (mode 0); CLI single-player auto-plays vs an AI (mode 7).
+        mpAutoMode = !campaignStem.empty() ? 8 : (menuInteractive ? 0 : 7);
         std::fprintf(stderr, "single-player: local server on port %d%s\n", p,
-                     menuInteractive ? " (lobby)" : "");
+                     !campaignStem.empty() ? " (campaign)" : menuInteractive ? " (lobby)" : "");
     }
 
     // Connect to the multiplayer server, if requested.
@@ -9977,7 +9993,9 @@ int main(int argc, char** argv) {
                 gameView->setMpMapId(args[0]);
                 if (fromMenu) { gameView->setExternalLobbyMusic();  // front-end owns the lobby BGM
                                 gameView->setCanReturnToMenu(); }   // in-game menu can return to it
-                if (menuInteractive) gameView->setSinglePlayer();   // menu SP: SP-flavoured lobby, Create-first
+                if (!campaignStem.empty())
+                    gameView->setMissionStem(campaignStem);         // autoMode 8 hosts this mission
+                else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
                 if (const char* rp = std::getenv("TAK_RESUME")) gameView->setResumePath(rp);
             }
             // Never let the window shrink below what the widest build-icon row
@@ -10375,6 +10393,20 @@ int main(int argc, char** argv) {
                 screenshot(ren, w, h, shot);
                 running = false;
             }
+        }
+    }
+    // Campaign progress: on a mission victory, unlock the next mission and persist.
+    if (!campaignStem.empty() && !campaignId.empty() && gameView &&
+        gameView->missionOutcomePublic() > 0) {
+        for (const auto& c : tak::loadCampaigns(vfs)) {
+            if (c.id != campaignId) continue;
+            for (int i = 0; i < c.count(); ++i)
+                if (c.missions[size_t(i)].stem == campaignStem) {
+                    int& done = settings.campaignDone[campaignId];
+                    if (i + 1 > done) { done = i + 1; saveSettings(settings); }
+                    break;
+                }
+            break;
         }
     }
     // Session ended: tear down any single-player local server, then either loop back

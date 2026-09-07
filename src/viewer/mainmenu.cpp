@@ -5,6 +5,7 @@
 #include "util/png.h"
 #include "version.h"
 #include "video/bink.h"
+#include "viewer/campaignscreen.h"
 #include "viewer/cursors.h"
 #include "viewer/menumusic.h"
 #include "viewer/options.h"
@@ -95,6 +96,12 @@ struct MainMenu::Impl {
 
     // The Options overlay, opened from the Options button (see run()).
     std::unique_ptr<OptionsScreen> options_;
+
+    // The campaign / mission picker, opened from the PlayStory door (see run()). When
+    // the player picks a mission it closes and chosenMission_ names the bundle stem.
+    std::unique_ptr<CampaignScreen> campaign_;
+    std::string chosenMission_;    // set when a campaign mission is picked (bundle stem)
+    std::string chosenCampaign_;   // ...and which campaign it belongs to (id)
 
     // The retail mouse cursor on the front-end, same art as in-game. Loaded once on the
     // first run(). We never restore the OS arrow on teardown (see run()).
@@ -510,6 +517,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     if (!shotPath.empty()) {
         for (auto& dr : d_->doors) d_->updateDoor(dr, 0.0);
         d_->render(w, h);
+        // Debug: TAK_SHOT_CAMPAIGN captures the campaign picker overlay for tests.
+        if (settings && std::getenv("TAK_SHOT_CAMPAIGN")) {
+            CampaignScreen cs(d_->ren, d_->vfs, *settings);
+            cs.render(w, h);
+        }
         d_->screenshot(w, h, shotPath);
         return Choice::None;
     }
@@ -563,6 +575,17 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 continue;
             }
 
+            if (d_->campaign_) {   // campaign picker is up: route everything to it
+                if (d_->campaign_->input(e, w, h)) {
+                    bool picked = d_->campaign_->picked();
+                    if (picked) { d_->chosenMission_ = d_->campaign_->pickedStem();
+                                  d_->chosenCampaign_ = d_->campaign_->pickedCampaign(); }
+                    d_->campaign_.reset();
+                    if (picked) { d_->flushSfx(w, h); return Choice::Campaign; }
+                }
+                continue;
+            }
+
             // Esc does nothing at the title screen -- quitting is only via the Exit
             // door (the WM close button is ignored too). Esc never exits the game.
             if (e.type == SDL_MOUSEMOTION)
@@ -594,6 +617,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         },
                         [settings] { saveSettings(*settings); });
                 }
+                else if (c == Choice::Campaign && settings) {
+                    // Open the campaign / mission picker in place; a picked mission
+                    // returns Choice::Campaign (handled by the campaign_ router above).
+                    d_->campaign_ = std::make_unique<CampaignScreen>(d_->ren, d_->vfs, *settings);
+                }
                 else if (c != Choice::None && c != Choice::Campaign) {
                     d_->flushSfx(w, h);   // let the click sound finish before we tear down
                     return c;
@@ -609,7 +637,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         d_->render(w, h);
         if (d_->serverSelect) d_->renderServerSelect(w, h);
         if (d_->options_) d_->options_->render(w, h);
-        // Draw the cursor last so it sits above the doors and the Options overlay.
+        if (d_->campaign_) d_->campaign_->render(w, h);
+        // Draw the cursor last so it sits above the doors and the overlays.
         if (d_->cursors_.ok()) {
             int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
             d_->cursors_.draw(d_->ren, CursorId::Normal, mx, my,
@@ -619,6 +648,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         SDL_Delay(1);
     }
 }
+
+const std::string& MainMenu::chosenMission() const { return d_->chosenMission_; }
+const std::string& MainMenu::chosenCampaign() const { return d_->chosenCampaign_; }
 
 void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const char* nameLower) {
     if (!video::BinkVideo::available() || install.empty() || !ren) return;

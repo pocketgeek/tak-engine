@@ -72,6 +72,11 @@ Settings loadSettings() {
             int i = key[8] - '0';
             if (i >= 0 && i < 8) s.chanGain[i] = asFloat(0.0f, 1.0f);
         }
+        else if (key.rfind("campaign.", 0) == 0 && key.size() > 9) {   // campaign.<id> = done
+            std::string id = key.substr(9);
+            int n = std::atoi(val.c_str());
+            if (n > 0) s.campaignDone[id] = n;
+        }
     }
     return s;
 }
@@ -97,6 +102,8 @@ bool saveSettings(const Settings& s) {
     o << "cursorScale = " << s.cursorScale << "\n";
     o << "playerName = " << s.playerName << "\n";
     o << "lastMap = " << s.lastMap << "\n";
+    for (const auto& [id, done] : s.campaignDone)
+        if (done > 0) o << "campaign." << id << " = " << done << "\n";
 
     // Atomic write: temp file + rename, so a crash mid-write can't corrupt the file.
     std::string tmp = path + ".tmp";
