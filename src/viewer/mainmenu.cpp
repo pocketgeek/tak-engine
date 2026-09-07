@@ -599,4 +599,64 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     }
 }
 
+void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const char* nameLower) {
+    if (!video::BinkVideo::available() || install.empty() || !ren) return;
+    // Locate <install>/Movies/<name> case-insensitively (retail ships LOGO.BIK etc.).
+    std::string path;
+    std::error_code ec;
+    for (auto& e : fs::directory_iterator(fs::path(install) / "Movies", ec)) {
+        if (!e.is_regular_file()) continue;
+        std::string low = e.path().filename().string();
+        std::transform(low.begin(), low.end(), low.begin(),
+                       [](unsigned char c) { return char(std::tolower(c)); });
+        if (low == nameLower) { path = e.path().string(); break; }
+    }
+    if (path.empty()) return;
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return;
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)),
+                               std::istreambuf_iterator<char>());
+    video::BinkVideo vid;
+    if (!vid.open(std::move(bytes))) return;
+    const int vw = vid.width(), vh = vid.height();
+    if (vw <= 0 || vh <= 0) return;
+    SDL_Texture* tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888,
+                                         SDL_TEXTUREACCESS_STREAMING, vw, vh);
+    if (!tex) return;
+    SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);   // smooth when scaled to the window
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+    const double fps = vid.fps() > 1.0 ? vid.fps() : 30.0;
+    std::vector<uint8_t> rgba;
+    const Uint64 start = SDL_GetTicks64();
+    int frame = 0;
+    bool skip = false;
+    for (;;) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e))
+            if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_QUIT)
+                skip = true;   // any key / click / close skips straight to the menu
+        if (skip) break;
+        // Decode up to the frame for the current wall-clock time (drop frames if behind);
+        // ending the loop when the clip runs out.
+        const int want = int(double(SDL_GetTicks64() - start) / 1000.0 * fps);
+        bool ended = false;
+        while (frame <= want) { if (!vid.nextFrame(rgba)) { ended = true; break; } ++frame; }
+        if (ended || rgba.empty()) break;
+        SDL_UpdateTexture(tex, nullptr, rgba.data(), vw * 4);
+        int ww = 0, wh = 0;
+        SDL_GetRendererOutputSize(ren, &ww, &wh);
+        const float sc = std::min(float(ww) / vw, float(wh) / vh);   // fit + letterbox, no distortion
+        SDL_FRect dst{(ww - vw * sc) * 0.5f, (wh - vh * sc) * 0.5f, vw * sc, vh * sc};
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderClear(ren);
+        SDL_RenderCopyF(ren, tex, nullptr, &dst);
+        SDL_RenderPresent(ren);
+        SDL_Delay(4);
+    }
+    SDL_DestroyTexture(tex);
+    // Drop the skip key/click so it doesn't leak as a phantom press into the menu.
+    SDL_PumpEvents();
+    SDL_FlushEvents(SDL_KEYDOWN, SDL_MOUSEBUTTONUP);
+}
+
 }  // namespace tak

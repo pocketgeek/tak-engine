@@ -9613,6 +9613,11 @@ int main(int argc, char** argv) {
     int aaW = 0, aaH = 0;
     tak::MenuMusic menuMusic;   // persists across menu -> lobby so the track doesn't restart
     menuMusic.setVolume(settings.masterVol, settings.bgmVol);
+    // Retail intro: play the logo movie once at startup (scaled to the window), then
+    // fall through to the front-end. Any key / click / window-close skips it. Menu
+    // launches only, and never for a headless screenshot run.
+    if (fromMenu && shot.empty())
+        tak::MainMenu::playIntro(ren, dataRoot);
     for (;;) {
     if (fromMenu) { mode = launchMode; serverHost = launchServerHost;
                     serverPort = launchServerPort; args = launchArgs;

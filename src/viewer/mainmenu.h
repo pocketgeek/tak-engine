@@ -37,6 +37,13 @@ public:
     Choice run(const std::string& shotPath = "", std::string* serverOut = nullptr,
                MenuMusic* music = nullptr, Settings* settings = nullptr);
 
+    // Play a fullscreen intro clip (Movies/<nameLower>, e.g. "logo.bik") once, scaled
+    // to fill the window (letterboxed, linear-filtered). Returns when the clip ends or
+    // the user presses any key / clicks / closes the window. No-op if the clip or
+    // FFmpeg is missing. Video only -- the clip's audio track is not played.
+    static void playIntro(SDL_Renderer* ren, const std::string& install,
+                          const char* nameLower = "logo.bik");
+
 private:
     struct Impl;
     Impl* d_;
