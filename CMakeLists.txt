@@ -104,6 +104,11 @@ if(TAK_BUILD_VIEWER)
   if(SDL2_FOUND)
     add_executable(takclient src/viewer/main.cpp src/viewer/mainmenu.cpp src/viewer/settings.cpp src/viewer/options.cpp src/viewer/campaignscreen.cpp src/viewer/briefingscreen.cpp src/viewer/resultscreen.cpp src/viewer/cursors.cpp src/video/bink.cpp)
     target_link_libraries(takclient PRIVATE tak-formats SDL2::SDL2)
+    # We provide our own main() and call SDL_SetMainReady(). Define SDL_MAIN_HANDLED for
+    # the WHOLE target (not just main.cpp) so it applies before ANY header pulls in
+    # <SDL.h> -- otherwise, on Windows, SDL_main.h renames our main to SDL_main via a
+    # transitive include and the MinGW link fails with "undefined reference to WinMain".
+    target_compile_definitions(takclient PRIVATE SDL_MAIN_HANDLED)
     if(FFMPEG_FOUND)
       target_link_libraries(takclient PRIVATE PkgConfig::FFMPEG)
       target_compile_definitions(takclient PRIVATE TAK_HAVE_FFMPEG)

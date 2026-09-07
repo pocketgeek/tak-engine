@@ -40,8 +40,12 @@
 
 // Keep our own main() on every platform (don't let SDL redefine it to SDL_main /
 // pull in SDL2main + a WinMain); we call SDL_SetMainReady() in main() instead. This
-// also keeps takclient usable as a console/headless tool on Windows.
+// also keeps takclient usable as a console/headless tool on Windows. The build also
+// defines this target-wide (CMake) so it holds even when a header pulls in <SDL.h>
+// before this point; the guard avoids a redefinition warning.
+#ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
+#endif
 #include <SDL.h>
 
 #include <algorithm>
