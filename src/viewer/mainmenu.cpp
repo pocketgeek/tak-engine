@@ -347,8 +347,19 @@ struct MainMenu::Impl {
         float s, ox, oy; layout(winW, winH, s, ox, oy);
         if (bg) { SDL_FRect r{ox, oy, 640 * s, 480 * s}; SDL_RenderCopyF(ren, bg, nullptr, &r); }
         for (auto& d : doors) {
-            SDL_Texture* t = (d.videoOk && d.vtex) ? d.vtex : d.gaf;
-            if (t) { SDL_FRect r = toScreen(d.rect, s, ox, oy); SDL_RenderCopyF(ren, t, nullptr, &r); }
+            if (d.videoOk && d.vtex) {
+                // Like the buttons, the door video is authored bigger than its gui
+                // hotspot and anchored at the gadget origin -- draw it at native size,
+                // NOT stretched to the (smaller) hotspot. Stretching squished it badly:
+                // knight is 221x250 vs a 161-wide hotspot, and its 221px width is
+                // authored to run from x=419 to the 640px screen edge.
+                SDL_Rect nat{d.rect.x, d.rect.y, d.vw, d.vh};
+                SDL_FRect r = toScreen(nat, s, ox, oy);
+                SDL_RenderCopyF(ren, d.vtex, nullptr, &r);
+            } else if (d.gaf) {
+                SDL_FRect r = toScreen(d.rect, s, ox, oy);
+                SDL_RenderCopyF(ren, d.gaf, nullptr, &r);
+            }
         }
         for (auto& b : buttons) {
             SDL_Texture* t = b.hover && b.tex[1] ? b.tex[1] : b.tex[0];
@@ -535,7 +546,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 continue;
             }
 
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) return Choice::Exit;
+            // Esc does nothing at the title screen -- quitting is only via the Exit
+            // door (the WM close button is ignored too). Esc never exits the game.
             if (e.type == SDL_MOUSEMOTION)
                 d_->updateHover(e.motion.x, e.motion.y, w, h);
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
