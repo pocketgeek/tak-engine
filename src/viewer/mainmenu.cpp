@@ -514,7 +514,6 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
 
     Uint64 prev = SDL_GetPerformanceCounter();
     const double freq = double(SDL_GetPerformanceFrequency());
-    bool armed = false;   // a click only counts as press-then-release within the menu
     for (;;) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -551,15 +550,18 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             if (e.type == SDL_MOUSEMOTION)
                 d_->updateHover(e.motion.x, e.motion.y, w, h);
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                // Doors/buttons act on the PRESS: the sound and the action both fire
+                // here, so the menu feels immediate.
                 d_->updateHover(e.button.x, e.button.y, w, h);
-                d_->playHoveredSound();   // click feedback on press, not release
-                armed = true;
-            }
-            if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
-                if (!armed) continue;   // stray release (e.g. leaked from the lobby)
-                armed = false;
-                d_->updateHover(e.button.x, e.button.y, w, h);
-                Choice c = d_->clicked();   // the sound already played on press
+                d_->playHoveredSound();
+                Choice c = d_->clicked();
+                if (c != Choice::None) {
+                    // We acted on the press -- drop this click's matching release so
+                    // it can't land as a phantom click on the overlay/lobby/game we're
+                    // about to switch to (the mirror of the entry flush above).
+                    SDL_PumpEvents();
+                    SDL_FlushEvents(SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP);
+                }
                 if (c == Choice::Multiplayer) { d_->serverSelect = true; SDL_StartTextInput(); }
                 else if (c == Choice::Options && settings) {
                     // Open the Options overlay in place (rather than exiting). onChange
