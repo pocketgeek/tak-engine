@@ -531,10 +531,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             }
 
             if (d_->options_) {   // Options overlay is up: route everything to it
-                if (d_->options_->input(e, w, h)) {   // BACK / Esc
-                    if (settings) saveSettings(*settings);
-                    d_->options_.reset();
-                }
+                if (d_->options_->input(e, w, h)) d_->options_.reset();   // BACK / Esc (SAVE is explicit)
                 continue;
             }
 
@@ -553,15 +550,17 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 if (c != Choice::None) d_->playHoveredSound();
                 if (c == Choice::Multiplayer) { d_->serverSelect = true; SDL_StartTextInput(); }
                 else if (c == Choice::Options && settings) {
-                    // Open the Options overlay in place (rather than exiting). Its
-                    // onChange applies audio + window live; settings save on BACK.
+                    // Open the Options overlay in place (rather than exiting). onChange
+                    // applies audio + window live; SAVE persists (BACK does not).
                     SDL_Renderer* ren = d_->ren;
-                    d_->options_ = std::make_unique<OptionsScreen>(ren, *settings, [ren, music, settings] {
-                        if (music) music->setVolume(settings->masterVol, settings->bgmVol);
-                        if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
-                            SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-                        SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
-                    });
+                    d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
+                        [ren, music, settings] {
+                            if (music) music->setVolume(settings->masterVol, settings->bgmVol);
+                            if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
+                                SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                            SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
+                        },
+                        [settings] { saveSettings(*settings); });
                 }
                 else if (c != Choice::None && c != Choice::Campaign) {
                     d_->flushSfx(w, h);   // let the click sound finish before we tear down

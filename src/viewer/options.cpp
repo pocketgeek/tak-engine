@@ -62,8 +62,8 @@ int detectOutputChannels() {
 }
 
 OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
-                             int audioChannels)
-    : ren_(ren), s_(s), onChange_(std::move(onChange)) {
+                             std::function<void()> onSave, int audioChannels)
+    : ren_(ren), s_(s), onChange_(std::move(onChange)), onSave_(std::move(onSave)) {
     build(audioChannels > 0 ? audioChannels : detectOutputChannels());
 }
 
@@ -111,23 +111,19 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.edgeScroll = v > 0.5f; });
     slider("EDGE SCROLL SPEED", 0.25f, 4.0f, [&] { return s_.edgeScrollSpeed; },
            [&](float v) { s_.edgeScrollSpeed = v; }, [](float v) { return timesFmt(v); });
-
-    ctls_.push_back({Control::Back, "BACK", 0, 0, {}, {}, {}, {}});
+    // SAVE / BACK are drawn as a fixed footer (see layout()/render()), not list rows.
 }
 
 void OptionsScreen::layout(int winW, int winH) {
     u_ = std::clamp(std::min(winW / 1280.0f, winH / 720.0f), 1.0f, 3.0f);
-    auto rowH = [&](Control::Kind k) {
-        if (k == Control::Section) return 30 * u_;
-        if (k == Control::Back) return 46 * u_;
-        return 36 * u_;
-    };
+    auto rowH = [&](Control::Kind k) { return (k == Control::Section) ? 30 * u_ : 36 * u_; };
     float panelW = std::min(660 * u_, winW * 0.72f);
     float titleH = 3.4f * 7 * u_ + 26 * u_;
+    float footerH = 52 * u_;    // SAVE / BACK buttons, fixed at the panel bottom
     contentH_ = 0;
     for (auto& c : ctls_) contentH_ += rowH(c.kind);
-    float viewH = std::min(contentH_, winH * 0.92f - titleH);
-    float panelH = titleH + viewH;
+    float viewH = std::min(contentH_, winH * 0.92f - titleH - footerH);
+    float panelH = titleH + viewH + footerH;
     panel_ = {(winW - panelW) / 2, (winH - panelH) / 2, panelW, panelH};
 
     float maxScroll = std::max(0.0f, contentH_ - viewH);
@@ -140,12 +136,20 @@ void OptionsScreen::layout(int winW, int winH) {
         c.row = {panel_.x + 26 * u_, y, panelW - 52 * u_, h};
         y += h;
     }
+    float bw = 150 * u_, bh = 32 * u_, gap = 18 * u_;
+    float total = 3 * bw + 2 * gap;
+    float x0 = panel_.x + (panel_.w - total) / 2;
+    float by = panel_.y + panel_.h - footerH + (footerH - bh) / 2;
+    defaultsRect_ = {x0, by, bw, bh};
+    saveRect_ = {x0 + bw + gap, by, bw, bh};
+    backRect_ = {x0 + 2 * (bw + gap), by, bw, bh};
 }
 
 void OptionsScreen::commit(Control& c, float mx) {
     float frac = std::clamp((mx - c.row.x) / std::max(1.0f, c.row.w), 0.0f, 1.0f);
     float v = c.lo + frac * (c.hi - c.lo);
     if (c.set) c.set(v);
+    dirty_ = true;
     if (onChange_) onChange_();
 }
 
@@ -154,14 +158,32 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
     if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) return true;
     if (e.type == SDL_MOUSEWHEEL) { scroll_ -= e.wheel.y * 42 * u_; return false; }
 
+    auto in = [](const SDL_FRect& r, float mx, float my) {
+        return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+    };
     if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
         float mx = float(e.button.x), my = float(e.button.y);
+        if (in(backRect_, mx, my)) return true;                     // close, no save
+        if (in(saveRect_, mx, my)) {                                // persist (if dirty)
+            if (dirty_ && onSave_) { onSave_(); dirty_ = false; }
+            return false;
+        }
+        if (in(defaultsRect_, mx, my)) {                            // reset to defaults
+            std::string keepName = s_.playerName;   // not shown here -> preserve it
+            s_ = Settings{};
+            s_.playerName = keepName;
+            dirty_ = true;
+            if (onChange_) onChange_();
+            return false;
+        }
+        float titleH = 3.4f * 7 * u_ + 26 * u_, footerH = 52 * u_;  // scrollable viewport
+        if (my < panel_.y + titleH || my > panel_.y + panel_.h - footerH) return false;
         for (size_t i = 0; i < ctls_.size(); ++i) {
             Control& c = ctls_[i];
-            if (mx < c.row.x || mx > c.row.x + c.row.w || my < c.row.y || my > c.row.y + c.row.h) continue;
-            if (my < panel_.y || my > panel_.y + panel_.h) continue;   // clipped-out row
-            if (c.kind == Control::Back) return true;
-            if (c.kind == Control::Toggle) { c.set(c.get() > 0.5f ? 0.0f : 1.0f); if (onChange_) onChange_(); return false; }
+            if (!in(c.row, mx, my)) continue;
+            if (c.kind == Control::Toggle) {
+                c.set(c.get() > 0.5f ? 0.0f : 1.0f); dirty_ = true; if (onChange_) onChange_(); return false;
+            }
             if (c.kind == Control::Slider) { drag_ = int(i); commit(c, mx); return false; }
         }
         return false;
@@ -190,9 +212,11 @@ void OptionsScreen::render(int winW, int winH) {
     drawBlockText(ren_, title, panel_.x + (panel_.w - blockTextWidth(title, tpx)) / 2,
                   panel_.y + 13 * u_, tpx, {235, 225, 180, 255});
 
-    // Clip the scrollable region so rows don't spill past the panel.
-    float titleH = 3.4f * 7 * u_ + 26 * u_;
-    SDL_Rect clip{int(panel_.x), int(panel_.y + titleH), int(panel_.w), int(panel_.h - titleH)};
+    // Clip the scrollable region to between the title and the footer so rows don't
+    // spill onto the footer buttons.
+    float titleH = 3.4f * 7 * u_ + 26 * u_, footerH = 52 * u_;
+    SDL_Rect clip{int(panel_.x), int(panel_.y + titleH), int(panel_.w),
+                  int(panel_.h - titleH - footerH)};
     SDL_RenderSetClipRect(ren_, &clip);
 
     float fpx = 2.0f * u_;
@@ -203,13 +227,6 @@ void OptionsScreen::render(int winW, int winH) {
             SDL_SetRenderDrawColor(ren_, 70, 78, 96, 255);
             SDL_FRect ln{c.row.x, c.row.y + c.row.h - 3 * u_, c.row.w, 1.5f * u_};
             SDL_RenderFillRectF(ren_, &ln);
-        } else if (c.kind == Control::Back) {
-            SDL_FRect b{c.row.x + c.row.w / 2 - 70 * u_, c.row.y + 6 * u_, 140 * u_, 30 * u_};
-            bool hot = false;   // (hover omitted; the button is obvious)
-            SDL_SetRenderDrawColor(ren_, hot ? 90 : 60, 66, 86, 255); SDL_RenderFillRectF(ren_, &b);
-            SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &b);
-            drawBlockText(ren_, "BACK", b.x + (b.w - blockTextWidth("BACK", 2.4f * u_)) / 2,
-                          b.y + (b.h - 7 * 2.4f * u_) / 2, 2.4f * u_, {228, 232, 242, 255});
         } else if (c.kind == Control::Toggle) {
             bool on = c.get() > 0.5f;
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
@@ -242,14 +259,30 @@ void OptionsScreen::render(int winW, int winH) {
     }
     SDL_RenderSetClipRect(ren_, nullptr);
 
-    // Scrollbar hint.
-    float viewH = panel_.h - titleH;
+    // Scrollbar hint (viewport is the panel minus the title and the footer).
+    float viewH = panel_.h - titleH - footerH;
     if (contentH_ > viewH) {
         float th = viewH * viewH / contentH_;
         float ty = panel_.y + titleH + (scroll_ / (contentH_ - viewH)) * (viewH - th);
         SDL_SetRenderDrawColor(ren_, 110, 120, 150, 220);
         SDL_FRect bar{panel_.x + panel_.w - 5 * u_, ty, 3 * u_, th}; SDL_RenderFillRectF(ren_, &bar);
     }
+
+    // Footer buttons. DEFAULTS and BACK are always active; SAVE only when there are
+    // unsaved changes (dirty_), so it's obvious whether the current state is saved.
+    auto button = [&](const SDL_FRect& r, const char* label, bool on) {
+        SDL_SetRenderDrawColor(ren_, on ? 60 : 34, on ? 66 : 38, on ? 86 : 46, 255);
+        SDL_RenderFillRectF(ren_, &r);
+        SDL_SetRenderDrawColor(ren_, on ? 130 : 70, on ? 140 : 76, on ? 170 : 92, 255);
+        SDL_RenderDrawRectF(ren_, &r);
+        float bpx = 2.2f * u_;
+        drawBlockText(ren_, label, r.x + (r.w - blockTextWidth(label, bpx)) / 2,
+                      r.y + (r.h - 7 * bpx) / 2, bpx,
+                      on ? SDL_Color{228, 232, 242, 255} : SDL_Color{110, 115, 125, 255});
+    };
+    button(defaultsRect_, "DEFAULTS", true);
+    button(saveRect_, "SAVE", dirty_);
+    button(backRect_, "BACK", true);
 }
 
 }  // namespace tak

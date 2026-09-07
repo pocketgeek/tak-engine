@@ -1828,12 +1828,15 @@ public:
     // camera, UI scale and window state live; the host saves on close.
     void openOptions() {
         if (!settings_) return;
-        options_ = std::make_unique<tak::OptionsScreen>(ren_, *settings_, [this] {
-            applySettings(*settings_);
-            if (SDL_Window* w = SDL_RenderGetWindow(ren_))
-                SDL_SetWindowFullscreen(w, settings_->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-            SDL_RenderSetVSync(ren_, settings_->vsync ? 1 : 0);
-        }, sounds_.channelCount());
+        options_ = std::make_unique<tak::OptionsScreen>(ren_, *settings_,
+            [this] {
+                applySettings(*settings_);
+                if (SDL_Window* w = SDL_RenderGetWindow(ren_))
+                    SDL_SetWindowFullscreen(w, settings_->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                SDL_RenderSetVSync(ren_, settings_->vsync ? 1 : 0);
+            },
+            [this] { saveSettings(*settings_); },
+            sounds_.channelCount());
     }
     // Persist / read the resume ticket (gameId + rotating token) so a killed
     // client can rejoin its held slot on restart.
@@ -1867,10 +1870,7 @@ public:
         if (inLobbyPhase()) { lobbyInput(e, winW, winH); return; }
         // Options overlay (opened from the Esc menu) takes all input while up.
         if (options_) {
-            if (options_->input(e, winW, winH)) {   // BACK / Esc
-                if (settings_) saveSettings(*settings_);
-                options_.reset();
-            }
+            if (options_->input(e, winW, winH)) options_.reset();   // BACK / Esc (SAVE is explicit)
             return;
         }
         // In-game exit menu (opened with Esc). While it's up, all game input is
