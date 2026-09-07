@@ -42,9 +42,42 @@ bool inRect(const SDL_FRect& r, float x, float y) {
 
 }  // namespace
 
+// Briefing voice-over (Sounds/<stem>.wav): loaded, played, and torn down via RAII so
+// the screen's several early-return paths all release the audio device.
+struct BriefingVo {
+    SDL_AudioDeviceID dev = 0;
+    Uint8* buf = nullptr;
+    ~BriefingVo() {
+        if (dev) SDL_CloseAudioDevice(dev);
+        if (buf) SDL_FreeWAV(buf);
+    }
+};
+
 bool BriefingScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, const std::string& stem,
                          const std::string& title, Settings* settings, MenuMusic* music) {
     std::vector<std::string> objectives = tak::loadObjectives(vfs, stem);
+
+    // Play the mission's briefing VO if the install ships one (only some missions do).
+    BriefingVo vo;
+    if (std::string wavPath = "sounds/" + stem + ".wav"; vfs.has(wavPath)) {
+        std::vector<uint8_t> wav = vfs.read(wavPath);
+        SDL_AudioSpec spec{};
+        Uint32 len = 0;
+        if (SDL_LoadWAV_RW(SDL_RWFromConstMem(wav.data(), int(wav.size())), 1, &spec, &vo.buf, &len)) {
+            vo.dev = SDL_OpenAudioDevice(nullptr, 0, &spec, nullptr, 0);
+            int gain = settings ? std::clamp(settings->masterVol * settings->sfxVol * 128 / (256 * 256), 0, 128) : 128;
+            if (vo.dev && gain > 0) {
+                if (gain < 128) {   // scale to the user's volume
+                    std::vector<Uint8> scaled(len, 0);
+                    SDL_MixAudioFormat(scaled.data(), vo.buf, spec.format, len, gain);
+                    SDL_QueueAudio(vo.dev, scaled.data(), len);
+                } else {
+                    SDL_QueueAudio(vo.dev, vo.buf, len);
+                }
+                SDL_PauseAudioDevice(vo.dev, 0);
+            }
+        }
+    }
 
     CursorSet cursors;
     cursors.load(ren, vfs);
