@@ -111,6 +111,13 @@ if(TAK_BUILD_VIEWER)
     else()
       message(STATUS "FFmpeg not found — menu .bik videos disabled (GAF door art fallback).")
     endif()
+    if(WIN32)
+      # SDL2::SDL2 drags in -mwindows (the GUI subsystem, whose CRT startup expects
+      # WinMain). We deliberately keep our own console main() (SDL_MAIN_HANDLED, so no
+      # SDL_main/WinMain), so force the console subsystem back on -- otherwise the
+      # MinGW link fails with "undefined reference to WinMain".
+      target_link_options(takclient PRIVATE -mconsole)
+    endif()
   else()
     message(WARNING "SDL2 not found — skipping takclient. Install SDL2-devel.")
   endif()
