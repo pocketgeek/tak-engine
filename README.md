@@ -1,4 +1,39 @@
-# TAK Engine
+<div align="center">
+
+# ⚔️ TAK Engine
+
+**A modern, cross-platform re-creation of _Total Annihilation: Kingdoms_**
+
+_Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit of OpenRA and the Robot War Engine._
+
+[![version](https://img.shields.io/badge/version-0.1.0-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-00599c?style=flat-square&logo=cplusplus&logoColor=white)](CMakeLists.txt)
+[![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
+[![multiplayer](https://img.shields.io/badge/multiplayer-deterministic%20lockstep-b03a2e?style=flat-square)](#multiplayer)
+[![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
+
+<br>
+
+<img src="docs/img/title.jpg" width="82%" alt="TAK Engine — the retail three-door front-end, rebuilt from scratch">
+
+<br><br>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/ingame.jpg" alt="In-game view: a full battle map with the retail HUD, minimap and fog-free spectator camera"></td>
+    <td width="50%"><img src="docs/img/lobby.jpg" alt="The multiplayer / single-player lobby: 8 slots, teams, colours, factions, unit cap and speed options"></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/img/disco.jpg" height="280" alt="A monarch dancing on a glowing disco floor"><br><em>Monarchs can disco… <code>Shift+D</code></em></td>
+    <td align="center"><img src="docs/img/headbang.jpg" height="280" alt="A monarch headbanging in a red mosh-pit glow"><br><em>…and headbang to synth-metal. <code>Shift+H</code></em></td>
+  </tr>
+</table>
+
+<sub>Thousands of units on screen · deterministic lockstep MP · animated 3D-model sprites · a full retail-style HUD · and, yes, dancing kings.</sub>
+
+</div>
+
+---
 
 A modern, cross-platform engine recreation for **Total Annihilation: Kingdoms**
 (Cavedog Entertainment, 1999), in the spirit of OpenRA and Robot War Engine.
