@@ -78,6 +78,31 @@ bool loadCampaign(const hpi::Vfs& vfs, const std::string& file, Campaign& out) {
     return !out.missions.empty();
 }
 
+std::vector<std::string> loadObjectives(const hpi::Vfs& vfs, const std::string& stem) {
+    std::vector<std::string> out;
+    std::string path = "missions/" + stem + ".txt";
+    if (!vfs.has(path)) return out;
+    std::vector<uint8_t> bytes = vfs.read(path);
+    std::string cur;
+    auto flush = [&] {
+        size_t a = cur.find_first_not_of(" \t");
+        // drop the leading bullet + spaces (retail prefixes each line with CP1252 0x95)
+        while (a != std::string::npos && a < cur.size() &&
+               !std::isalnum((unsigned char)cur[a]) && cur[a] != '"')
+            ++a;
+        size_t b = cur.find_last_not_of(" \t\r");
+        if (a != std::string::npos && b != std::string::npos && b >= a)
+            out.push_back(cur.substr(a, b - a + 1));
+        cur.clear();
+    };
+    for (uint8_t c : bytes) {
+        if (c == '\n') flush();
+        else if (c != '\r') cur += char(c);
+    }
+    flush();
+    return out;
+}
+
 std::vector<Campaign> loadCampaigns(const hpi::Vfs& vfs) {
     std::vector<Campaign> camps;
     for (const std::string& p : vfs.list("camps/")) {

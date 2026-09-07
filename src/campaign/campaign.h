@@ -34,4 +34,9 @@ bool loadCampaign(const hpi::Vfs& vfs, const std::string& file, Campaign& out);
 // Plague, then the alt-ending branch, then any others alphabetically.
 std::vector<Campaign> loadCampaigns(const hpi::Vfs& vfs);
 
+// A mission's objective lines from `missions/<stem>.txt`: one per line, with the retail
+// bullet glyph and surrounding whitespace stripped, blank lines dropped. Empty if the
+// file is absent. Shared by the briefing screen and the in-game objectives panel.
+std::vector<std::string> loadObjectives(const hpi::Vfs& vfs, const std::string& stem);
+
 }  // namespace tak

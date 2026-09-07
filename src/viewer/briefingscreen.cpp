@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "campaign/campaign.h"
 #include "util/png.h"
 #include "viewer/blockfont.h"
 #include "viewer/cursors.h"
@@ -16,33 +17,6 @@
 namespace tak {
 
 namespace {
-
-// Split the objectives .txt into lines, dropping the leading bullet glyph (retail
-// prefixes each with CP1252 0x95) and surrounding whitespace. Blank lines are dropped.
-std::vector<std::string> loadObjectives(const hpi::Vfs& vfs, const std::string& stem) {
-    std::vector<std::string> out;
-    std::string path = "missions/" + stem + ".txt";
-    if (!vfs.has(path)) return out;
-    std::vector<uint8_t> bytes = vfs.read(path);
-    std::string cur;
-    auto flush = [&] {
-        size_t a = cur.find_first_not_of(" \t");
-        // skip the bullet + spaces: drop any leading non-alphanumeric bytes
-        while (a != std::string::npos && a < cur.size() &&
-               !std::isalnum((unsigned char)cur[a]) && cur[a] != '"')
-            ++a;
-        size_t b = cur.find_last_not_of(" \t\r");
-        if (a != std::string::npos && b != std::string::npos && b >= a)
-            out.push_back(cur.substr(a, b - a + 1));
-        cur.clear();
-    };
-    for (uint8_t c : bytes) {
-        if (c == '\n') flush();
-        else if (c != '\r') cur += char(c);
-    }
-    flush();
-    return out;
-}
 
 // Greedy word-wrap `s` to at most `maxChars` per line (block font is fixed-width).
 std::vector<std::string> wrap(const std::string& s, int maxChars) {
@@ -70,7 +44,7 @@ bool inRect(const SDL_FRect& r, float x, float y) {
 
 bool BriefingScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, const std::string& stem,
                          const std::string& title, Settings* settings, MenuMusic* music) {
-    std::vector<std::string> objectives = loadObjectives(vfs, stem);
+    std::vector<std::string> objectives = tak::loadObjectives(vfs, stem);
 
     CursorSet cursors;
     cursors.load(ren, vfs);

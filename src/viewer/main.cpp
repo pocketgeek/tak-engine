@@ -1958,6 +1958,9 @@ public:
             switch (e.key.keysym.sym) {
                 case SDLK_LEFT: case SDLK_RIGHT: case SDLK_UP: case SDLK_DOWN:
                     trackSel_ = false; break;
+                case SDLK_o:   // toggle the in-mission objectives panel
+                    if (!missionObjectives_.empty()) showObjectives_ = !showObjectives_;
+                    break;
                 default: break;
             }
             mapView_.input(e);
@@ -2380,6 +2383,8 @@ public:
                 tak::tdf::Node root = tak::tdf::parseText(std::string(tb.begin(), tb.end()), tdfp);
                 for (const auto& [name, node] : root.children) { (void)node; missionAllowed_.push_back(name); }
             }
+            missionObjectives_ = tak::loadObjectives(vfs_, room.mission);   // in-game panel
+            showObjectives_ = true;
             // The player commands the mission's human player; for the common case its
             // index equals our room slot (TODO: seat the client at `human` otherwise).
             localPlayer_ = human;
@@ -4061,6 +4066,7 @@ public:
         renderGui(winW, winH);
 
         drawPanel(winW, winH);
+        drawObjectivesPanel(winW, winH);
         if (showCounts_) drawUnitCounts(winW);
         if (showHDebug_) drawHDebug();
         if (showColorPicker_) drawColorPicker(winW, winH);
@@ -6082,6 +6088,8 @@ private:
     // Per-mission unit whitelist from missions/<stem>.tdf (lowercased ids). When set,
     // the human's conjure menu is filtered to it (a UI restriction; empty = anything).
     std::vector<std::string> missionAllowed_;
+    std::vector<std::string> missionObjectives_;   // in-game objectives panel lines
+    bool showObjectives_ = true;                   // panel visible (toggle with O)
     std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
     std::vector<std::pair<std::string, std::string>> chatLog_;
     // In-game chat: press Enter to compose, lines fade after a while. Kept apart
@@ -8937,6 +8945,55 @@ private:
                 return true;
             }
         return false;
+    }
+
+    // The in-mission objectives panel (top-left): the mission's objectives, toggled
+    // with the O key. Only shown for campaign missions (missionObjectives_ non-empty).
+    void drawObjectivesPanel(int winW, int /*winH*/) {
+        if (missionObjectives_.empty()) return;
+        const float x0 = 12, top = 92;
+        if (!showObjectives_) {
+            hudFont_.draw(ren_, "[O] OBJECTIVES", x0, top, 1.2f, {160, 168, 186, 210});
+            return;
+        }
+        const float s = 1.4f, lh = 15 * s;
+        const float maxW = std::min(360.0f, winW * 0.32f);
+        // Word-wrap each objective to the panel width (proportional font -> measure).
+        std::vector<std::pair<std::string, bool>> lines;   // (text, isFirstOfObjective)
+        for (const std::string& obj : missionObjectives_) {
+            std::string line, word;
+            bool first = true;
+            auto push = [&] {
+                if (word.empty()) return;
+                std::string cand = line.empty() ? word : line + " " + word;
+                if (hudFont_.width(cand, s) <= maxW) line = cand;
+                else { lines.push_back({line, first}); first = false; line = word; }
+                word.clear();
+            };
+            for (char c : obj) { if (c == ' ') push(); else word += c; }
+            push();
+            if (!line.empty()) lines.push_back({line, first});
+        }
+        float panelW = maxW + 34, panelH = 26 + float(lines.size()) * lh + 22;
+        SDL_FRect bg{x0 - 6, top - 6, panelW, panelH};
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ren_, 14, 13, 18, 205);
+        SDL_RenderFillRectF(ren_, &bg);
+        SDL_SetRenderDrawColor(ren_, 96, 84, 60, 235);
+        SDL_RenderDrawRectF(ren_, &bg);
+        float y = top;
+        hudFont_.draw(ren_, "OBJECTIVES", x0, y, 1.35f, {224, 196, 120, 255});
+        y += 20;
+        for (const auto& [text, isFirst] : lines) {
+            if (isFirst) {
+                SDL_FRect dot{x0 + 2, y + 4, 4, 4};
+                SDL_SetRenderDrawColor(ren_, 210, 180, 90, 255);
+                SDL_RenderFillRectF(ren_, &dot);
+            }
+            hudFont_.draw(ren_, text, x0 + 14, y, s, {206, 212, 228, 255});
+            y += lh;
+        }
+        hudFont_.draw(ren_, "[O] hide", x0, y + 4, 1.1f, {140, 146, 162, 200});
     }
 
     void drawPanel(int winW, int winH) {
