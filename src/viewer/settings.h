@@ -32,6 +32,7 @@ struct Settings {
 
     // ---- misc ----
     std::string playerName;        // default name for multiplayer
+    std::string lastMap;           // last map picked in the create/SP lobby (remembered)
 };
 
 // The config file path (SDL_GetPrefPath based). Empty only if SDL can't provide one.

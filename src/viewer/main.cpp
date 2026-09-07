@@ -143,9 +143,10 @@ bool spawnLocalServer(const std::string& serverBin, const std::string& dataRoot,
 namespace {
 
 float gTilt = 0.72f;
-// Default window: large enough that the 2x-rendered lobby (Room slot table + chat
-// panel) fits without the columns overlapping the chat.
-constexpr int kWinW = 1920, kWinH = 1080;
+// Default window: the title menu's 4:3 aspect (2x its 640x480 art), so the menu
+// fills the window with no letterbox bars. The lobby scales to fit + centres itself
+// (kLobbyW/kLobbyH), so it stays fully visible at this or any other size.
+constexpr int kWinW = 1280, kWinH = 960;
 
 void screenshot(SDL_Renderer* ren, int w, int h, const std::string& path) {
     std::vector<uint8_t> px(size_t(w) * h * 4);
@@ -3348,22 +3349,21 @@ public:
         discoSound();     // fire the disco track from a monarch when its player starts dancing
         headbangSound();  // ...and the metal track on headbang
         if (inLobbyPhase()) {
-            // Render the lobby at 2x so its text/controls are large and legible. It
-            // lays out at a fixed design size (kLobbyW x kLobbyH logical) and is
-            // *centred* in the window via a render viewport -- otherwise, on a big
-            // screen, its top-left-anchored layout clusters in the corner with the
-            // chat flung to the far edge. lbHot/lobbyInput undo the scale + offset.
-            float lw = winW / kUiScale, lh = winH / kUiScale;
-            float dw = std::min(lw, kLobbyW), dh = std::min(lh, kLobbyH);
-            lobbyOffX_ = std::floor((lw - dw) * 0.5f);
-            lobbyOffY_ = std::floor((lh - dh) * 0.5f);
+            // The lobby always lays out at its design size (kLobbyW x kLobbyH logical)
+            // and is scaled to fit + centred in the window -- so it shows fully at any
+            // window size or aspect (never clustered top-left, never clipped). Renders
+            // large for legible text; lbHot/lobbyInput undo the scale + centre offset.
+            lobbyScale_ = std::min(winW / kLobbyW, winH / kLobbyH);
+            float lw = winW / lobbyScale_, lh = winH / lobbyScale_;   // logical window
+            lobbyOffX_ = std::floor((lw - kLobbyW) * 0.5f);
+            lobbyOffY_ = std::floor((lh - kLobbyH) * 0.5f);
             // Darker surround + a thin frame so the centred lobby reads as a panel.
             // (SDL_RenderClear ignores the viewport, so the ground-clear lives here,
             // not in drawLobby.) Drawn in pixel space (scale 1, no viewport).
             SDL_SetRenderDrawColor(ren_, 8, 9, 13, 255);
             SDL_RenderClear(ren_);
-            float px = lobbyOffX_ * kUiScale, py = lobbyOffY_ * kUiScale;
-            float pw = dw * kUiScale, ph = dh * kUiScale;
+            float px = lobbyOffX_ * lobbyScale_, py = lobbyOffY_ * lobbyScale_;
+            float pw = kLobbyW * lobbyScale_, ph = kLobbyH * lobbyScale_;
             SDL_FRect panelBg{px, py, pw, ph};
             SDL_SetRenderDrawColor(ren_, 16, 18, 26, 255);
             SDL_RenderFillRectF(ren_, &panelBg);
@@ -3371,10 +3371,10 @@ public:
             SDL_SetRenderDrawColor(ren_, 60, 66, 90, 255);
             SDL_RenderDrawRectF(ren_, &frame);
             // Content: scaled + viewport-offset so it draws inside the centred panel.
-            SDL_Rect vp{int(lobbyOffX_), int(lobbyOffY_), int(dw), int(dh)};
-            SDL_RenderSetScale(ren_, kUiScale, kUiScale);
+            SDL_Rect vp{int(lobbyOffX_), int(lobbyOffY_), int(kLobbyW), int(kLobbyH)};
+            SDL_RenderSetScale(ren_, lobbyScale_, lobbyScale_);
             SDL_RenderSetViewport(ren_, &vp);
-            drawLobby(int(dw), int(dh));
+            drawLobby(int(kLobbyW), int(kLobbyH));
             SDL_RenderSetViewport(ren_, nullptr);
             SDL_RenderSetScale(ren_, 1.0f, 1.0f);
             return;
@@ -5769,11 +5769,20 @@ private:
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)
     bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
+    float lobbyScale_ = 2.0f;               // lobby fit scale (set in render)
     float lobbyOffX_ = 0, lobbyOffY_ = 0;   // lobby centre offset (logical units; set in render)
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
     std::vector<std::pair<std::string, std::string>> mapList_;  // {name, tnt path}, cached
-    int mapPage_ = 0;                                           // Create screen map-list page
+    // Create-screen map picker: a scrollable list box. mapScroll_ is the index of the
+    // first visible row; the rest is geometry cached each frame for wheel + scrollbar
+    // drag handling in lobbyInput (all in panel-local logical coords).
+    int mapScroll_ = 0;
+    bool mapPrefApplied_ = false;      // adopted settings_->lastMap once this session
+    bool mapDrag_ = false;             // dragging the scrollbar thumb
+    SDL_FRect mapListRect_{};          // the list box (rows area) -- wheel target
+    SDL_FRect mapThumbRect_{};         // the scrollbar thumb -- drag grab
+    int mapVisRows_ = 0, mapTotalRows_ = 0;   // for clamping + thumb drag math
     uint8_t createOverride_ = 1;   // create-dialog override tier (default cosmetic)
     std::string mpMapId_;   // set from the launched map basename
     std::string mpResumePath_;   // where the resume ticket is saved (for reconnect)
@@ -7875,16 +7884,13 @@ private:
         static const char* n[5] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
         return n[f % 5];
     }
-    // The lobby renders at kUiScale, so hit-test in the same logical space. It also
-    // lays out at a fixed design size and is centred (lobbyOffX_/Y_), so undo that
-    // offset too.
-    static constexpr float kUiScale = 2.0f;
-    // Lobby design size (logical): the default 1920x1080 window at 2x. On a bigger
-    // window the lobby is centred within this box rather than stretched edge-to-edge.
-    static constexpr float kLobbyW = kWinW / kUiScale;   // 960
-    static constexpr float kLobbyH = kWinH / kUiScale;   // 540
+    // Lobby design size (logical). The lobby always lays out at exactly this size and
+    // is scaled to fit + centred in the window (lobbyScale_ / lobbyOffX_/Y_), so it
+    // shows fully at any window size or aspect. Hit-tests undo the same transform.
+    static constexpr float kLobbyW = 960.0f;
+    static constexpr float kLobbyH = 540.0f;
     bool lbHot(const SDL_FRect& r) const {
-        float mx = mouseX_ / kUiScale - lobbyOffX_, my = mouseY_ / kUiScale - lobbyOffY_;
+        float mx = mouseX_ / lobbyScale_ - lobbyOffX_, my = mouseY_ / lobbyScale_ - lobbyOffY_;
         return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
     }
     // A clickable button: panel + centered label; registers its action.
@@ -7898,7 +7904,12 @@ private:
         SDL_RenderFillRectF(ren_, &r);
         SDL_SetRenderDrawColor(ren_, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
         SDL_RenderDrawRectF(ren_, &r);
-        float px = 2.0f, tw = blockWidth(label, px);
+        // Shrink the label if it would overflow the button (keeps long captions like
+        // "OVERRIDES: COSMETIC" inside their box). 8px total horizontal padding.
+        float px = 2.0f;
+        float fit = (w - 8.0f) / std::max<size_t>(1, label.size()) / 6.0f;
+        if (fit < px) px = std::max(fit, 1.0f);
+        float tw = blockWidth(label, px);
         blockText(label, x + (w - tw) / 2, y + (h - 7 * px) / 2, px,
                   enabled ? SDL_Color{225, 230, 240, 255} : SDL_Color{110, 115, 125, 255});
         if (enabled && action) lobbyHots_.push_back({r, std::move(action)});
@@ -7929,6 +7940,9 @@ private:
 
     void drawLobby(int winW, int winH) {
         lobbyHots_.clear();
+        // Map-picker geometry is only live while the create screen is shown; clear it
+        // so a stale thumb/list rect can't grab clicks or wheel on the other screens.
+        mapListRect_ = mapThumbRect_ = SDL_FRect{0, 0, 0, 0};
         // absorb any new chat
         if (mp_) for (auto& m : mp_->takeChat()) chatLog_.push_back(m);
         // The ground + centred panel frame are painted by the caller (the viewport is
@@ -7994,7 +8008,7 @@ private:
         }
         // password entry for locked games
         lbField(x, winH - 70.0f, 200, "PASSWORD (for locked games)", joinPass_, 3);
-        lbBtn(winW - 140.0f, winH - 44.0f, 120, 28, "MAIN MENU", true, [this] { menuRequested_ = true; });
+        lbBtn(winW - 140.0f, winH - 40.0f, 120, 30, "BACK", true, [this] { menuRequested_ = true; });
     }
 
     void drawCreate(int winW, int winH) {
@@ -8002,19 +8016,22 @@ private:
         float x = 80, y = 90;
         blockText(singlePlayer_ ? "SINGLE PLAYER VS AI" : "CREATE GAME", x, y, 2.2f,
                   {200, 205, 220, 255}); y += 40;
-        lbField(x, y, 260, "GAME NAME", createName_, 1); y += 46;
-        if (!singlePlayer_) { lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 46; }
+        // A private single-player game needs no name or password.
+        if (!singlePlayer_) {
+            lbField(x, y, 260, "GAME NAME", createName_, 1); y += 46;
+            lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 46;
+        }
         blockText(std::string("MAP: ") + mpMapId_, x, y, 1.8f, {180, 185, 195, 255}); y += 30;
-        lbBtn(x, y, 150, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
+        lbBtn(x, y, 170, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
               [this] { createCrusades_ = !createCrusades_; }); y += 34;
-        lbBtn(x, y, 150, 26, createGods_ ? "GODS: ON" : "GODS: OFF", true,
+        lbBtn(x, y, 170, 26, createGods_ ? "GODS: ON" : "GODS: OFF", true,
               [this] { createGods_ = !createGods_; }); y += 34;
         // Override tier for the game: NONE (pure retail) / COSMETIC (art & sound
         // may differ) / FULL (gameplay overrides allowed but every player must
         // have the same ones). The host's own launch tier caps it (you can't offer
         // FULL if you didn't mount your gameplay overrides).
         static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
-        lbBtn(x, y, 210, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
+        lbBtn(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
               [this] { createOverride_ = uint8_t((createOverride_ + 1) % 3); }); y += 44;
         lbBtn(x, y, 120, 30, "CREATE", !createName_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0; o.gods = createGods_ ? 1 : 0;
@@ -8024,31 +8041,71 @@ private:
         });
         if (!singlePlayer_)   // a private single-player game has no browser to go back to
             lbBtn(x + 132, y, 110, 30, "BROWSER", true, [this] { lobbyScreen_ = LobbyScreen::Browser; });
-        lbBtn(x, y + 40, 242, 26, "MAIN MENU", true, [this] { menuRequested_ = true; });
+        // Back button at the bottom-left, where back buttons live.
+        lbBtn(x, kLobbyH - 40, 120, 30, "BACK", true, [this] { menuRequested_ = true; });
 
-        // Map picker (right column): a paged, clickable list of playable maps.
-        // Selecting sets both the wire id (mpMapId_ = bare .tnt stem) and mapPath_,
-        // so mpCapacity() recomputes the chosen map's start-position count.
+        // Map picker (right column): a scrollable list box. Selecting sets both the
+        // wire id (mpMapId_ = bare .tnt stem) and mapPath_, so mpCapacity() recomputes
+        // the chosen map's start-position count.
         if (mapList_.empty()) mapList_ = tak::hpi::listMaps(vfs_);
-        float lx = 380, ly = 90;
-        const int perPage = 12; const float rowH = 22;
-        blockText("SELECT MAP", lx, ly, 1.8f, {200, 205, 220, 255}); ly += 26;
-        int pages = std::max(1, (int(mapList_.size()) + perPage - 1) / perPage);
-        mapPage_ = std::clamp(mapPage_, 0, pages - 1);
-        for (int i = mapPage_ * perPage; i < (mapPage_ + 1) * perPage && i < int(mapList_.size()); ++i) {
-            const std::string nm = mapList_[size_t(i)].first;
-            const std::string pth = mapList_[size_t(i)].second;
-            bool sel = (nm == mpMapId_);
-            lbBtn(lx, ly, 250, rowH, nm.size() > 30 ? nm.substr(0, 30) : nm, true,
-                  [this, nm, pth] { mpMapId_ = nm; mapPath_ = pth; },
-                  sel ? SDL_Color{60, 92, 60, 255} : SDL_Color{50, 54, 68, 255});
-            ly += rowH + 2;
+        // Adopt the remembered map once (persisted across launches), and scroll to it.
+        if (!mapPrefApplied_ && settings_ && !settings_->lastMap.empty()) {
+            for (int i = 0; i < int(mapList_.size()); ++i)
+                if (mapList_[size_t(i)].first == settings_->lastMap) {
+                    mpMapId_ = mapList_[size_t(i)].first;
+                    mapPath_ = mapList_[size_t(i)].second;
+                    mapScroll_ = std::max(0, i - 3);
+                    break;
+                }
+            mapPrefApplied_ = true;
         }
-        ly += 6;
-        lbBtn(lx, ly, 70, 24, "PREV", mapPage_ > 0, [this] { --mapPage_; });
-        lbBtn(lx + 88, ly, 70, 24, "NEXT", mapPage_ < pages - 1, [this] { ++mapPage_; });
-        blockText("PAGE " + std::to_string(mapPage_ + 1) + "/" + std::to_string(pages),
-                  lx + 172, ly + 8, 1.4f, {150, 155, 170, 255});
+        float lx = 400, hy = 90;
+        blockText("SELECT MAP", lx, hy, 1.8f, {200, 205, 220, 255});
+        const float boxX = lx, boxY = hy + 24, boxW = 340, boxH = 366, rowH = 24, sbW = 12;
+        const int total = int(mapList_.size());
+        mapVisRows_ = int(boxH / rowH);
+        mapTotalRows_ = total;
+        clampMapScroll();
+        mapListRect_ = {boxX, boxY, boxW, boxH};
+        // box background + border
+        SDL_FRect box{boxX, boxY, boxW, boxH};
+        SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &box);
+        SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
+        const float rowW = boxW - sbW - 4;
+        const int maxCh = int((rowW - 12) / 12);   // chars that fit at px 2.0
+        for (int r = 0; r < mapVisRows_; ++r) {
+            int i = mapScroll_ + r;
+            if (i >= total) break;
+            const std::string& nm = mapList_[size_t(i)].first;
+            const std::string& pth = mapList_[size_t(i)].second;
+            bool sel = (nm == mpMapId_);
+            SDL_FRect row{boxX + 2, boxY + r * rowH, rowW, rowH};
+            bool hot = lbHot(row);
+            SDL_Color rc = sel ? SDL_Color{44, 78, 44, 255}
+                         : hot ? SDL_Color{40, 46, 62, 255} : SDL_Color{24, 26, 34, 255};
+            SDL_SetRenderDrawColor(ren_, rc.r, rc.g, rc.b, 255); SDL_RenderFillRectF(ren_, &row);
+            blockText(nm.size() > size_t(maxCh) ? nm.substr(0, size_t(maxCh)) : nm,
+                      boxX + 8, row.y + (rowH - 14) / 2, 2.0f,
+                      sel ? SDL_Color{200, 240, 200, 255} : SDL_Color{220, 225, 235, 255});
+            lobbyHots_.push_back({row, [this, nm, pth] {
+                mpMapId_ = nm; mapPath_ = pth;
+                if (settings_) { settings_->lastMap = nm; saveSettings(*settings_); }  // remember it
+            }});
+        }
+        // Scrollbar: track + a proportional, draggable thumb (also wheel-scrollable).
+        if (total > mapVisRows_) {
+            float trackX = boxX + boxW - sbW;
+            SDL_FRect track{trackX, boxY, sbW, boxH};
+            SDL_SetRenderDrawColor(ren_, 30, 32, 42, 255); SDL_RenderFillRectF(ren_, &track);
+            float thumbH = std::max(24.0f, boxH * mapVisRows_ / total);
+            float thumbY = boxY + (boxH - thumbH) * mapScroll_ / float(total - mapVisRows_);
+            mapThumbRect_ = {trackX, thumbY, sbW, thumbH};
+            SDL_SetRenderDrawColor(ren_, mapDrag_ ? 130 : 90, mapDrag_ ? 150 : 100,
+                                   mapDrag_ ? 190 : 130, 255);
+            SDL_RenderFillRectF(ren_, &mapThumbRect_);
+        } else {
+            mapThumbRect_ = {0, 0, 0, 0};
+        }
     }
 
     void drawRoom(int winW, int winH) {
@@ -8179,18 +8236,46 @@ private:
     }
     const tak::net::RoomView& mpRoom() const { return mp_->room(); }
 
+    // A panel-local logical point, undoing the lobby's fit-scale + centre offset.
+    void lobbyMouse(float& mx, float& my) const {
+        mx = mouseX_ / lobbyScale_ - lobbyOffX_;
+        my = mouseY_ / lobbyScale_ - lobbyOffY_;
+    }
+    static bool ptIn(const SDL_FRect& r, float x, float y) {
+        return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+    }
+    void clampMapScroll() {
+        mapScroll_ = std::clamp(mapScroll_, 0, std::max(0, mapTotalRows_ - mapVisRows_));
+    }
+    // Set the map scroll from the current thumb-drag mouse position: map the cursor's
+    // y within the list box to a first-visible-row index.
+    void setMapScrollFromThumb() {
+        if (mapListRect_.h <= 0 || mapTotalRows_ <= mapVisRows_) return;
+        float mx, my; lobbyMouse(mx, my);
+        float frac = (my - mapListRect_.y) / mapListRect_.h;   // 0..1 down the box
+        mapScroll_ = int(std::lround(frac * mapTotalRows_ - mapVisRows_ * 0.5f));
+        clampMapScroll();
+    }
     void lobbyInput(const SDL_Event& e, int winW, int winH) {
         (void)winW; (void)winH;
-        if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
-        else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+        if (e.type == SDL_MOUSEMOTION) {
+            mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y);
+            if (mapDrag_) setMapScrollFromThumb();   // dragging the map scrollbar
+        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+            mapDrag_ = false;
+        } else if (e.type == SDL_MOUSEWHEEL) {
+            float mx, my; lobbyMouse(mx, my);
+            if (ptIn(mapListRect_, mx, my)) {   // scroll the map list under the cursor
+                mapScroll_ -= e.wheel.y;
+                clampMapScroll();
+            }
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
             lbField_ = 0; SDL_StopTextInput();
-            // Undo the lobby's 2x scale AND its centre offset (see the render path).
-            float mx = mouseX_ / kUiScale - lobbyOffX_, my = mouseY_ / kUiScale - lobbyOffY_;
+            float mx, my; lobbyMouse(mx, my);
+            if (ptIn(mapThumbRect_, mx, my)) { mapDrag_ = true; return; }   // grab the thumb
             for (auto& [r, action] : lobbyHots_)
-                if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
-                    action(); break;
-                }
+                if (ptIn(r, mx, my)) { action(); break; }
         } else if (e.type == SDL_TEXTINPUT && lbField_) {
             std::string* f = lbFieldBuf();
             if (f && f->size() < 24) *f += e.text.text;
