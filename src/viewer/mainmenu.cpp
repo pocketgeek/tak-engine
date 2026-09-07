@@ -625,9 +625,27 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
     if (!tex) return;
     SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);   // smooth when scaled to the window
     SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+    // Play the clip's soundtrack (if it has one) on a queue-driven device -- the video
+    // decode buffers its audio, and we keep it fed each frame. The video is paced by
+    // wall clock (below), and the audio is decoded to the same timestamps, so they
+    // stay in sync without an explicit audio clock.
+    SDL_AudioDeviceID adev = 0;
+    if (vid.audioChannels() > 0 && vid.audioRate() > 0) {
+        SDL_InitSubSystem(SDL_INIT_AUDIO);
+        SDL_AudioSpec want{}, have{};
+        want.freq = vid.audioRate();
+        want.format = AUDIO_S16SYS;
+        want.channels = uint8_t(vid.audioChannels());
+        want.samples = 1024;
+        want.callback = nullptr;   // queue-driven
+        adev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+        if (adev) SDL_PauseAudioDevice(adev, 0);
+    }
     const double fps = vid.fps() > 1.0 ? vid.fps() : 30.0;
-    std::vector<uint8_t> rgba;
+    const double aBytesPerSec = adev ? double(vid.audioRate()) * vid.audioChannels() * 2.0 : 0.0;
+    std::vector<uint8_t> rgba, apcm;
     const Uint64 start = SDL_GetTicks64();
+    long queuedTotal = 0;   // total audio bytes ever queued (for the audio clock)
     int frame = 0;
     bool skip = false;
     for (;;) {
@@ -636,11 +654,23 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
             if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_QUIT)
                 skip = true;   // any key / click / close skips straight to the menu
         if (skip) break;
-        // Decode up to the frame for the current wall-clock time (drop frames if behind);
-        // ending the loop when the clip runs out.
-        const int want = int(double(SDL_GetTicks64() - start) / 1000.0 * fps);
+        // Pace the video off the AUDIO clock when there's sound (how much has actually
+        // played), else off the wall clock. Bink front-loads audio packets, so the
+        // decoded audio runs ahead of the video -- following the playback position
+        // keeps them in sync. Decode up to that frame (dropping frames if behind).
+        double t;
+        if (adev && aBytesPerSec > 0.0)
+            t = double(queuedTotal - long(SDL_GetQueuedAudioSize(adev))) / aBytesPerSec;
+        else
+            t = double(SDL_GetTicks64() - start) / 1000.0;
+        const int want = int(t * fps);
         bool ended = false;
         while (frame <= want) { if (!vid.nextFrame(rgba)) { ended = true; break; } ++frame; }
+        // Keep the audio device fed with whatever this iteration decoded.
+        apcm.clear();
+        vid.drainAudio(apcm);
+        if (adev && !apcm.empty()) { SDL_QueueAudio(adev, apcm.data(), Uint32(apcm.size()));
+                                     queuedTotal += long(apcm.size()); }
         if (ended || rgba.empty()) break;
         SDL_UpdateTexture(tex, nullptr, rgba.data(), vw * 4);
         int ww = 0, wh = 0;
@@ -653,6 +683,7 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
         SDL_RenderPresent(ren);
         SDL_Delay(4);
     }
+    if (adev) SDL_CloseAudioDevice(adev);
     SDL_DestroyTexture(tex);
     // Drop the skip key/click so it doesn't leak as a phantom press into the menu.
     SDL_PumpEvents();

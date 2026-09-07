@@ -91,7 +91,7 @@ option(TAK_BUILD_VIEWER "Build the SDL2 asset viewer" ON)
 # door art. libavcodec carries a clean-room Bink decoder (GPL-compatible).
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
-  pkg_check_modules(FFMPEG IMPORTED_TARGET libavcodec libavformat libavutil libswscale)
+  pkg_check_modules(FFMPEG IMPORTED_TARGET libavcodec libavformat libavutil libswscale libswresample)
 endif()
 
 if(TAK_BUILD_VIEWER)

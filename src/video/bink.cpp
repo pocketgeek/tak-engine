@@ -7,7 +7,10 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/opt.h>
+#include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
 #endif
@@ -31,6 +34,14 @@ struct BinkVideo::Impl {
     double fps = 30.0;
     bool eofSent = false;
 
+    // ---- audio (optional) -----------------------------------------------------
+    AVCodecContext* actx = nullptr;
+    SwrContext* swr = nullptr;
+    AVFrame* aframe = nullptr;
+    int aStream = -1;
+    int aRate = 0, aCh = 0;
+    std::vector<uint8_t> aBuf;   // decoded interleaved S16 PCM, drained by the caller
+
     // ---- custom in-memory AVIO ------------------------------------------------
     static int readPacket(void* opaque, uint8_t* buf, int bufSize) {
         auto* s = static_cast<Impl*>(opaque);
@@ -52,14 +63,44 @@ struct BinkVideo::Impl {
         return p;
     }
 
+    // Decode an audio packet (nullptr flushes at EOF): resample every frame it yields
+    // to interleaved S16 and append to aBuf for the caller to play.
+    void decodeAudio(AVPacket* p) {
+        if (aStream < 0 || !actx || !swr || !aframe) return;
+        if (avcodec_send_packet(actx, p) < 0) return;
+        while (avcodec_receive_frame(actx, aframe) == 0) {
+            int maxOut = int(av_rescale_rnd(swr_get_delay(swr, actx->sample_rate) + aframe->nb_samples,
+                                            aRate, actx->sample_rate, AV_ROUND_UP));
+            if (maxOut > 0) {
+                size_t prev = aBuf.size(), cap = size_t(maxOut) * size_t(aCh) * 2;
+                aBuf.resize(prev + cap);
+                uint8_t* out[1] = {aBuf.data() + prev};
+                int got = swr_convert(swr, out, maxOut,
+                                      const_cast<const uint8_t**>(aframe->extended_data),
+                                      aframe->nb_samples);
+                aBuf.resize(prev + (got > 0 ? size_t(got) * size_t(aCh) * 2 : 0));
+            }
+            av_frame_unref(aframe);
+        }
+        // Bound the buffer if the caller never drains it (a silent-to-them looping
+        // clip): keep at most ~12s so a long hover-loop can't grow it without limit.
+        // A caller that plays the audio (the intro) drains every frame, well under this.
+        constexpr size_t kCap = size_t(1) << 21;   // 2 MiB
+        if (aBuf.size() > kCap) aBuf.erase(aBuf.begin(), aBuf.end() - kCap);
+    }
+
     void teardown() {
         if (sws) { sws_freeContext(sws); sws = nullptr; }
+        if (swr) { swr_free(&swr); }
         if (frame) av_frame_free(&frame);
+        if (aframe) av_frame_free(&aframe);
         if (pkt) av_packet_free(&pkt);
         if (ctx) avcodec_free_context(&ctx);
+        if (actx) avcodec_free_context(&actx);
         if (fmt) avformat_close_input(&fmt);   // does NOT free custom pb
         if (avio) { av_freep(&avio->buffer); avio_context_free(&avio); }
-        stream = -1; w = h = 0; pos = 0; eofSent = false;
+        stream = aStream = -1; w = h = 0; pos = 0; eofSent = false;
+        aRate = aCh = 0; aBuf.clear();
     }
     ~Impl() { teardown(); }
 };
@@ -117,6 +158,42 @@ bool BinkVideo::open(std::vector<uint8_t> data) {
     d_->frame = av_frame_alloc();
     d_->pkt = av_packet_alloc();
     if (!d_->frame || !d_->pkt || d_->w <= 0 || d_->h <= 0) { close(); return false; }
+
+    // Optional audio: open its decoder + a resampler to interleaved S16 at the source
+    // rate. Any failure just disables audio (aStream = -1) -- the video still plays.
+    for (unsigned i = 0; i < d_->fmt->nb_streams; ++i)
+        if (d_->fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            d_->aStream = int(i); break;
+        }
+    if (d_->aStream >= 0) {
+        AVStream* as = d_->fmt->streams[d_->aStream];
+        const AVCodec* adec = avcodec_find_decoder(as->codecpar->codec_id);
+        bool ok = adec != nullptr;
+        if (ok) d_->actx = avcodec_alloc_context3(adec);
+        if (!d_->actx || avcodec_parameters_to_context(d_->actx, as->codecpar) < 0
+            || avcodec_open2(d_->actx, adec, nullptr) < 0)
+            ok = false;
+        if (ok) {
+            d_->aRate = d_->actx->sample_rate;
+            d_->aCh = d_->actx->ch_layout.nb_channels > 0 ? d_->actx->ch_layout.nb_channels : 1;
+            d_->aframe = av_frame_alloc();
+            AVChannelLayout out;
+            av_channel_layout_default(&out, d_->aCh);
+            if (!d_->aframe
+                || swr_alloc_set_opts2(&d_->swr, &out, AV_SAMPLE_FMT_S16, d_->aRate,
+                                       &d_->actx->ch_layout, d_->actx->sample_fmt,
+                                       d_->actx->sample_rate, 0, nullptr) < 0
+                || swr_init(d_->swr) < 0)
+                ok = false;
+            av_channel_layout_uninit(&out);
+        }
+        if (!ok) {
+            if (d_->swr) swr_free(&d_->swr);
+            if (d_->aframe) av_frame_free(&d_->aframe);
+            if (d_->actx) avcodec_free_context(&d_->actx);
+            d_->aStream = -1; d_->aRate = d_->aCh = 0;
+        }
+    }
     return true;
 }
 
@@ -125,6 +202,13 @@ void BinkVideo::close() { d_->teardown(); d_->data.clear(); }
 int BinkVideo::width() const { return d_->w; }
 int BinkVideo::height() const { return d_->h; }
 double BinkVideo::fps() const { return d_->fps; }
+int BinkVideo::audioRate() const { return d_->aRate; }
+int BinkVideo::audioChannels() const { return d_->aCh; }
+void BinkVideo::drainAudio(std::vector<uint8_t>& pcm) {
+    if (d_->aBuf.empty()) return;
+    pcm.insert(pcm.end(), d_->aBuf.begin(), d_->aBuf.end());
+    d_->aBuf.clear();
+}
 
 bool BinkVideo::nextFrame(std::vector<uint8_t>& rgba) {
     if (!isOpen()) return false;
@@ -160,12 +244,18 @@ bool BinkVideo::nextFrame(std::vector<uint8_t>& rgba) {
         // Need more input: pull the next video packet (or flush at EOF).
         int rr = d_->eofSent ? AVERROR_EOF : av_read_frame(d_->fmt, d_->pkt);
         if (rr == AVERROR_EOF || d_->eofSent) {
-            if (!d_->eofSent) { d_->eofSent = true; avcodec_send_packet(d_->ctx, nullptr); }
+            if (!d_->eofSent) {
+                d_->eofSent = true;
+                avcodec_send_packet(d_->ctx, nullptr);
+                d_->decodeAudio(nullptr);   // flush the audio decoder too
+            }
             continue;   // drain remaining frames, then receive_frame yields EOF
         }
         if (rr < 0) return false;
         if (d_->pkt->stream_index == d_->stream)
             avcodec_send_packet(d_->ctx, d_->pkt);
+        else if (d_->pkt->stream_index == d_->aStream)
+            d_->decodeAudio(d_->pkt);
         av_packet_unref(d_->pkt);
     }
 }
@@ -191,6 +281,9 @@ void BinkVideo::close() {}
 int BinkVideo::width() const { return 0; }
 int BinkVideo::height() const { return 0; }
 double BinkVideo::fps() const { return 0.0; }
+int BinkVideo::audioRate() const { return 0; }
+int BinkVideo::audioChannels() const { return 0; }
+void BinkVideo::drainAudio(std::vector<uint8_t>&) {}
 bool BinkVideo::nextFrame(std::vector<uint8_t>&) { return false; }
 void BinkVideo::rewind() {}
 
