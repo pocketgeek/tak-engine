@@ -9672,6 +9672,7 @@ int main(int argc, char** argv) {
             "  modes: menu | game <map> | map <map> | replay <file.takrep> | model <file.3do>\n"
             "    game single-player: no --server -> auto-hosts a private game vs a server AI.\n"
             "    game multiplayer:   add --server host [--serverport N] [--name X].\n"
+            "    game --campaign <stem>: play a campaign mission (e.g. takmission01_mt).\n"
             "  common: [--side X --aiside Y] [--overrides none|cosmetic|full] [--shot out.png]\n"
             "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ overrides/.\n");
         return 0;
@@ -9692,6 +9693,7 @@ int main(int argc, char** argv) {
     std::string serverHost, playerName, dataRoot, overridesArg;
     int serverPort = 7677, mpHeadless = 0;
     std::string missionStem;   // --mpmission <stem>: headless campaign-mission host
+    std::string cliCampaign;   // --campaign <stem>: launch straight into a mission (interactive)
     int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 60;
     int playerColor = -1, aiColor = -1;   // --color / --aicolor slot overrides
     float startTime = 0, followZoom = 0;
@@ -9763,6 +9765,7 @@ int main(int argc, char** argv) {
         else if (a == "--mprejoin") mpHeadless = 5; // rejoin a held slot (resume ticket)
         else if (a == "--mpspectate") mpHeadless = 6; // watch the first running game
         else if (a == "--mpmission" && i + 1 < argc) { mpHeadless = 8; missionStem = argv[++i]; }  // host a campaign mission
+        else if (a == "--campaign" && i + 1 < argc) { cliCampaign = argv[++i]; mode = "game"; }    // play a mission interactively
         else if (a == "--nofog") nofog = true;
         else if (a == "--cheat") tak::sim::gInstantBuild = true;
         else if (a == "--look" && i + 2 < argc) {
@@ -9861,6 +9864,17 @@ int main(int argc, char** argv) {
     bool menuInteractive = false;   // menu single-player -> interactive lobby, not auto-play
     std::string campaignStem;       // menu campaign pick -> host this mission (autoMode 8)
     std::string campaignId;         // ...its campaign id (for progress persistence)
+    // Direct launch into a mission (`--campaign <stem>`): same host path as a menu
+    // pick, resolving the campaign id so a win still advances persisted progress.
+    if (!cliCampaign.empty()) {
+        campaignStem = cliCampaign;
+        if (args.empty()) args.push_back("athri cay");   // GameView needs a map; the mission overrides it
+        for (const auto& c : tak::loadCampaigns(vfs)) {
+            for (const auto& m : c.missions)
+                if (m.stem == campaignStem) { campaignId = c.id; break; }
+            if (!campaignId.empty()) break;
+        }
+    }
 
     // Front-end: the retail three-door main menu. Its choice drives the setup below
     // (single-player -> local server + lobby; multiplayer -> connect + browser).
