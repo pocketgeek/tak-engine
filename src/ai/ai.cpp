@@ -99,17 +99,13 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         int lim = li == profile_.limit.end() ? -1 : li->second;
         // Difficulty scales the hard caps: Hard fields bigger armies, Easy smaller.
         if (lim >= 0 && countOf(world, id) >= std::max(1, lim * dp_.limitScale / 100)) continue;
-        bool economy = ut->income > 0 || ut->onMana;
-        bool structure = !ut->canMove;
-        // Don't start a non-economy building the economy can't yet drive: its
-        // mogrium draw is buildCost*workerTime/buildTime (as the sim charges it).
-        // This economy-first gate stands in for the tech progression our engine
-        // lacks a formal tree for (lodestones raise income, unlocking keeps, then
-        // the pricier castle).
-        if (structure && !economy && ut->buildTime > 0) {
-            float wt = std::max(producer.type->workerTime, 1.0f);
-            float drain = ut->buildCost * wt / ut->buildTime;
-            if (income < drain) continue;
+        // "Can I finish this?" -- the classic AI bankruptcy is blowing the opening
+        // treasury on one expensive unit before any economy, or starting a build the
+        // mana runs dry mid-site so the builder stalls there FOREVER. A build is
+        // affordable when savings + income over its build time cover the cost.
+        if (ut->buildTime > 0) {
+            float secs = ut->buildTime / std::max(producer.type->workerTime, 1.0f);
+            if (world.player(player_).mana + income * secs < ut->buildCost) continue;
         }
         if (ut->canMove && !ut->isBuilder) w *= econFactor;   // army: economy tweak
         total += w;
