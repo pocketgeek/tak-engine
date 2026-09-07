@@ -9679,22 +9679,22 @@ int main(int argc, char** argv) {
         // themselves too, see their SetRenderTarget sites).
         float aaS = (settings.antiAlias == 8) ? 2.8284f : (settings.antiAlias == 4) ? 2.0f
                   : (settings.antiAlias == 2) ? 1.4142f : 1.0f;
-        // Don't exceed the max RENDER-TARGET size. 8X at 4K wants ~21.7k px; GPUs cap
-        // render targets/viewports at 16384 even when their TEXTURE-sampling limit
-        // (what SDL_RendererInfo reports) is higher (e.g. 32768). Past that the FBO
-        // only fills the left 16384 but the whole oversized texture is stretched to
-        // the window -- squeezing everything leftward (this was the 8X pointer drift).
-        // So cap to min(reported, 16384), and cap the scale so a big level degrades to
-        // the largest that fits rather than mis-rendering.
-        static int maxTexW = 0, maxTexH = 0;
-        if (maxTexW == 0) {
+        // Cap the supersample target at the largest the GPU can actually RENDER to.
+        // GPUs cap render targets/viewports BELOW their texture-sampling limit (which
+        // is what SDL_RendererInfo reports, e.g. 32768), and past the render limit the
+        // FBO fills only part of the target while the whole oversized texture is
+        // stretched to the window -- squeezing everything leftward (the AA pointer
+        // drift). SDL can't report the real render limit, so self-calibrate: start at
+        // 16384 and, when a fresh target fails a far-corner render test, shrink + retry.
+        static int aaMaxDim = 0;
+        if (aaMaxDim == 0) {
             SDL_RendererInfo ri;
-            if (SDL_GetRendererInfo(ren, &ri) == 0) { maxTexW = ri.max_texture_width; maxTexH = ri.max_texture_height; }
-            if (maxTexW <= 0 || maxTexW > 16384) maxTexW = 16384;
-            if (maxTexH <= 0 || maxTexH > 16384) maxTexH = 16384;
+            int mx = (SDL_GetRendererInfo(ren, &ri) == 0)
+                         ? std::min(ri.max_texture_width, ri.max_texture_height) : 0;
+            aaMaxDim = (mx > 0 && mx < 16384) ? mx : 16384;
         }
         if (aaS > 1.0f && w > 0 && h > 0)
-            aaS = std::min(aaS, std::min(float(maxTexW) / w, float(maxTexH) / h));
+            aaS = std::min(aaS, std::min(float(aaMaxDim) / w, float(aaMaxDim) / h));
         bool aaOn = false;
         if (gameView && aaS > 1.0f && !gameView->inLobbyPhase()) {
             int tw = int(w * aaS), th = int(h * aaS);
@@ -9702,8 +9702,27 @@ int main(int argc, char** argv) {
                 if (aaTex) SDL_DestroyTexture(aaTex);
                 aaTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
                                           SDL_TEXTUREACCESS_TARGET, tw, th);
-                if (aaTex) { SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear); aaW = tw; aaH = th; }
-                else { aaW = aaH = 0; std::fprintf(stderr, "AA: %dx%d target alloc failed; AA off\n", tw, th); }
+                if (aaTex) {
+                    SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear); aaW = tw; aaH = th;
+                    // Verify the far corner actually renders. Clear black, fill the
+                    // corner white via a rect (rects respect the render viewport, so a
+                    // too-large target leaves it black), read it back. If it isn't
+                    // white, shrink aaMaxDim and drop the target -- next frame retries
+                    // smaller until it renders fully.
+                    SDL_SetRenderTarget(ren, aaTex);
+                    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren);
+                    SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+                    SDL_Rect corner{tw - 3, th - 3, 3, 3}; SDL_RenderFillRect(ren, &corner);
+                    Uint32 got = 0; SDL_Rect one{tw - 2, th - 2, 1, 1};
+                    SDL_RenderReadPixels(ren, &one, SDL_PIXELFORMAT_ARGB8888, &got, 4);
+                    SDL_SetRenderTarget(ren, nullptr);
+                    if ((got & 0x00FFFFFFu) != 0x00FFFFFFu) {   // corner not white -> rendered short
+                        int bad = std::max(tw, th);
+                        aaMaxDim = std::max(2048, bad - std::max(256, bad / 16));
+                        std::fprintf(stderr, "AA: %dx%d renders short; capping render size to %d\n", tw, th, aaMaxDim);
+                        SDL_DestroyTexture(aaTex); aaTex = nullptr; aaW = aaH = 0;
+                    }
+                } else { aaW = aaH = 0; std::fprintf(stderr, "AA: %dx%d target alloc failed; AA off\n", tw, th); }
             }
             if (aaTex) aaOn = true;
         }
