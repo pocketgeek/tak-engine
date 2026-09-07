@@ -196,11 +196,15 @@ server", keeps a single sim path, and gets AI for free; the COB VM move is the m
 
 ## 7. Phased plan
 
-Status (2026-09-07): phases 1–6 are **done and verified**. A campaign mission runs
-over the real takserver/takview in lockstep (`err=none`, reproducible hash); the
-full front-end loop — pick → intro movie → briefing → play → victory/defeat →
-next/retry — works from the main menu (or `takview game --campaign <stem>`); and
-the conjure menu is restricted per mission. Only phase 7 polish remains.
+Status (2026-09-07): phases 1–7 are **done and verified** (bar one data-absent
+item). A campaign mission runs over the real takserver/takview in lockstep
+(`err=none`, reproducible hash); the full front-end loop — pick → intro movie →
+briefing (+ VO) → play (objectives panel) → post-mission cutscene → victory/defeat
+→ next/retry, with end-of-campaign credits — works from the main menu (or `takview
+game --campaign <stem>`); the conjure menu is restricted per mission; and the
+mission-runner sim has condition guards, the full `SetMission` verb set, and proper
+compacted-slot diplomacy. The Iron Plague dialogue widget is the sole open item and
+is **not implementable against this install** (see phase 7 below).
 
 1. **Scripting core (no campaign yet).** ✅ COB name table (`src/cob`);
    verb-string `MAP_COMMAND` dispatch (Create/SetMission/SetTrigger/GetUtype/
@@ -240,10 +244,24 @@ the conjure menu is restricted per mission. Only phase 7 polish remains.
    `world_.missionOutcome()` drives the banner and bumps persisted progress. Our own
    block-font screens rather than the retail `Briefing`/`victory<kingdom>` `.gui`
    (deferred to polish). Modals auto-proceed under the dummy video driver (headless).
-7. **Polish.** Finish the `SetMission` verbs (wa/b); retail `.gui` briefing/victory
-   screens + briefing VO; in-mission objectives panel,
-   `posttakmission24`/`PostTakCredits` cinematics, Iron Plague dialogue widget,
-   briefing VO, `ipalt` branch.
+7. **Polish.** ✅ mostly done:
+   - `SetMission` `wa` (ambush hold, `Order.waitAttack`) + `b` (timed reinforcement,
+     `MissionScript::pendingSpawns_`) verbs.
+   - Condition guards (`Cond::armed`) so a mission can't resolve before its target
+     exists; compacted-slot diplomacy (opponents team 1, human/allies/neutrals team 0),
+     shared by placements and the script's Create refs.
+   - In-mission objectives panel (`GameView::drawObjectivesPanel`, O to toggle);
+     briefing VO (`Sounds/<stem>.wav`); `posttakmission24`-style post-mission cutscenes
+     (`post<stem>.bik`) + end-of-campaign credits (`PostTakCredits.bik`/`CREDITS.BIK`);
+     `ipalt` folded into Iron Plague as an alt-ending branch row.
+   - **Iron Plague dialogue widget — NOT implementable against this install.** Mission
+     cobs contain no `PLAY_SOUND`, there are no `Sounds/takx*.wav`, the `.ota` has no
+     message/dialogue fields, and there is no message MAP_COMMAND (§2). In-mission
+     character dialogue has no script/data hook here; mission narrative is carried by
+     the briefing VO where a `Sounds/<stem>.wav` ships. Left for a future asset set.
+   - Still deferred: retail `.gui` briefing/victory art (our block-font screens stand
+     in); commander-specific CommanderKilled; server-side enforcement of the unit
+     restriction (today UI-only); non-zero human room slot.
 
 Each phase is independently testable and lands behind the existing `--mission` /
 `--mpmission` / menu paths before the front-end goes live.
