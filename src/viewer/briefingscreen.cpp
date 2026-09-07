@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -173,6 +174,9 @@ bool BriefingScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, const std::stri
                 png::write(sp, w, h, px);
             return true;
         }
+        // Headless (dummy video): no input to click BEGIN, so proceed to the mission.
+        if (const char* drv = SDL_GetCurrentVideoDriver(); drv && !std::strcmp(drv, "dummy"))
+            return true;
         SDL_RenderPresent(ren);
         SDL_Delay(8);
     }

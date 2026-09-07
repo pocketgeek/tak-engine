@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #include "util/png.h"
@@ -113,6 +114,9 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
                 png::write(sp, w, h, px);
             return ResultChoice::Menu;
         }
+        // Headless (dummy video): no input, so end at the result rather than spin.
+        if (const char* drv = SDL_GetCurrentVideoDriver(); drv && !std::strcmp(drv, "dummy"))
+            return ResultChoice::Menu;
         SDL_RenderPresent(ren);
         SDL_Delay(8);
     }
