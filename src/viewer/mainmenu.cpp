@@ -97,15 +97,13 @@ struct MainMenu::Impl {
     std::unique_ptr<OptionsScreen> options_;
 
     // The retail mouse cursor on the front-end, same art as in-game. Loaded once on the
-    // first run(); when it takes over, the OS arrow is hidden (restored in the dtor).
+    // first run(). We never restore the OS arrow on teardown (see run()).
     CursorSet cursors_;
     bool cursorsInit_ = false;
-    bool cursorsHidden_ = false;
 
     Impl(SDL_Renderer* r, const hpi::Vfs& v, std::string in)
         : ren(r), vfs(v), install(std::move(in)) {}
     ~Impl() {
-        if (cursorsHidden_) SDL_ShowCursor(SDL_ENABLE);
         if (bg) SDL_DestroyTexture(bg);
         for (auto& d : doors) { if (d.gaf) SDL_DestroyTexture(d.gaf);
                                 if (d.vtex) SDL_DestroyTexture(d.vtex); }
@@ -523,12 +521,14 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     SDL_PumpEvents();
     SDL_FlushEvents(SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP);
 
-    // Front-end mouse cursor: the same retail art as in-game. Load once, then hide the
-    // OS arrow while the menu owns the pointer (restored in ~Impl; on the way into a
-    // game, GameView manages its own cursor). Re-hiding on each run() re-entry covers
-    // GameView having restored the OS arrow when the last game ended.
+    // Front-end mouse cursor: the same retail art as in-game. Load once, then hide the OS
+    // arrow while the menu draws its own; if the art is missing, show the OS arrow as a
+    // fallback (a prior screen may have hidden it). We deliberately never restore the OS
+    // arrow on teardown -- both the menu and the game keep it hidden and draw a custom
+    // cursor, so restoring on a transition only flashes the arrow during the next
+    // screen's load; window destruction returns the desktop cursor at app exit.
     if (!d_->cursorsInit_) { d_->cursorsInit_ = true; d_->cursors_.load(d_->ren, d_->vfs); }
-    if (d_->cursors_.ok()) { SDL_ShowCursor(SDL_DISABLE); d_->cursorsHidden_ = true; }
+    SDL_ShowCursor(d_->cursors_.ok() ? SDL_DISABLE : SDL_ENABLE);
 
     Uint64 prev = SDL_GetPerformanceCounter();
     const double freq = double(SDL_GetPerformanceFrequency());
@@ -736,7 +736,8 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
     }
     if (adev) SDL_CloseAudioDevice(adev);
     SDL_DestroyTexture(tex);
-    SDL_ShowCursor(SDL_ENABLE);   // restore; the menu re-hides it for the custom cursor
+    // Leave the OS arrow hidden -- the menu that follows keeps its cursor hidden and draws
+    // the custom one, so restoring here would only flash the arrow before the menu appears.
     // Drop the skip key/click so it doesn't leak as a phantom press into the menu.
     SDL_PumpEvents();
     SDL_FlushEvents(SDL_KEYDOWN, SDL_MOUSEBUTTONUP);

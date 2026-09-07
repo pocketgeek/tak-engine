@@ -3264,8 +3264,12 @@ public:
                 // conjure — and touch down when idle, playing the `land` script
                 // for a proper folded-wing landed pose (not the wings-spread
                 // rest "T-pose").
+                // Also stay airborne for any builder work -- reclaiming/clearing and
+                // repairing, not just conjuring -- so a flyer hovers over the job (and
+                // touches down only when truly idle) exactly as it does while building.
                 bool busy = u.walking() || !u.orders.empty() ||
-                            u.buildSiteId != 0 || !u.buildOrders.empty();
+                            u.buildSiteId != 0 || !u.buildOrders.empty() ||
+                            u.reclaimId != 0 || !u.reclaimQueue.empty() || u.repairId != 0;
                 float target = busy ? cruise : 0.0f;
                 float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise
                 a.altitude += std::clamp(target - a.altitude, -step, step);
@@ -3553,7 +3557,10 @@ public:
         auto special = [&](const tak::sim::Unit& u, const UnitGeom& g) {
             bool occluded = !g.canFly && g.occY < g.ay - 2.0f;
             bool conjuring = u.underConstruction && u.type;
-            return occluded || conjuring || dancing(u) || headbanging(u);   // draw their glow
+            // Reclaimers route through drawUnit too, so the reclaim build-FX (which is
+            // drawn there) shows the same nano-sparkle as building for ANY reclaimer.
+            bool reclaiming = u.type && u.reclaimId != 0;
+            return occluded || conjuring || reclaiming || dancing(u) || headbanging(u);
         };
 
         // Pass 1: every normal unit's ground shadows, batched. Soft blobs go into
@@ -4243,16 +4250,18 @@ public:
     }
 
     // ---- Animated mouse cursor (retail anims/cursors.gaf) --------------------------
-    // Restore the OS arrow when the game view is torn down (return to menu / quit).
-    ~GameView() { if (cursorsHidden_) SDL_ShowCursor(SDL_ENABLE); }
-
     // Draw the retail cursor on top of everything at native resolution. main() calls
     // this after the (optional) AA downscale, right before present, so it is crisp and
     // unambiguously topmost. Lazily loads the cursor art and hides the OS arrow once.
+    // We never restore the OS arrow on teardown: the menu and the game both hide it and
+    // draw their own, so restoring it only makes the arrow flash during the next screen's
+    // (slow) load; the desktop cursor returns on its own when the window is destroyed.
     void drawCursorOverlay() {
         if (!cursorsInit_) {
             cursorsInit_ = true;
-            if (cursors_.load(ren_, vfs_)) { cursorsHidden_ = true; SDL_ShowCursor(SDL_DISABLE); }
+            // Hide the OS arrow for our cursor; if the art is missing, ensure it is shown
+            // (a prior screen -- the menu -- may already have hidden it).
+            SDL_ShowCursor(cursors_.load(ren_, vfs_) ? SDL_DISABLE : SDL_ENABLE);
         }
         if (!cursors_.ok()) return;   // no cursor art -> keep the OS arrow
         // Pointer position in renderer-output pixels (the space mouse events are mapped
@@ -6220,7 +6229,6 @@ private:
     // overlay draw; when it takes over, the OS arrow is hidden (restored in the dtor).
     tak::CursorSet cursors_;
     bool cursorsInit_ = false;          // attempted the one-time load yet?
-    bool cursorsHidden_ = false;        // did we SDL_ShowCursor(DISABLE) the OS arrow?
     // Fight-move ('f') reuses the Attack glyph tinted this red-orange, so it reads apart
     // from a real attack order -- for both the order-column button and the mouse cursor.
     static constexpr SDL_Color kFightMoveTint{255, 90, 80, 255};
