@@ -557,12 +557,10 @@ public:
         }
 
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
-        // Auto-detect the device's channel layout so positional audio can pan
-        // across stereo (L/R) or surround (adds front/rear) speakers.
-        int chans = 2;
-        SDL_AudioSpec def{};
-        if (SDL_GetDefaultAudioInfo(nullptr, &def, 0) == 0 && def.channels >= 2)
-            chans = std::min<int>(def.channels, 8);
+        // The process-wide detected layout (see tak::detectOutputChannels) -- shared
+        // with the Options per-speaker sliders so they always match what we mix into,
+        // and it reveals surround even when the default sink advertises stereo.
+        int chans = tak::detectOutputChannels();
         SDL_AudioSpec want{};
         want.freq = 11025;
         want.format = AUDIO_S16SYS;

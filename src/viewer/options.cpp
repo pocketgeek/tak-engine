@@ -10,23 +10,17 @@ namespace tak {
 
 namespace {
 
-int detectChannels() {
-    // Match SoundBank::init exactly: GetDefaultAudioInfo only advises the REQUEST
-    // (it often says 2 even on a 5.1/7.1 rig); the real layout is the count the
-    // opened device negotiates. Probe-open one (queue-driven, no callback) and read
-    // it back, so the menu shows the same speaker sliders SoundBank actually feeds.
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return 2;
-    int req = 2;
-    SDL_AudioSpec def{};
-    if (SDL_GetDefaultAudioInfo(nullptr, &def, 0) == 0 && def.channels >= 2)
-        req = std::min<int>(def.channels, 8);
+void SDLCALL probeSilence(void*, Uint8* s, int len) { SDL_memset(s, 0, size_t(len)); }
+
+// Open a probe device requesting `req` channels and return what it negotiates.
+int probeChannels(int req) {
     SDL_AudioSpec want{}, got{};
     want.freq = 11025; want.format = AUDIO_S16SYS; want.channels = Uint8(req);
-    want.samples = 1024; want.callback = nullptr;
+    want.samples = 1024; want.callback = probeSilence;   // callback-based, like SoundBank
     SDL_AudioDeviceID d = SDL_OpenAudioDevice(nullptr, 0, &want, &got, SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
-    int ch = (d && got.channels) ? got.channels : req;
+    int ch = (d && got.channels) ? got.channels : 0;
     if (d) SDL_CloseAudioDevice(d);
-    return std::clamp(ch, 1, 8);
+    return ch;
 }
 
 // Speaker label per channel count (mirrors SoundBank::channelRole / channelGains).
@@ -45,13 +39,36 @@ std::string timesFmt(float v) { char b[16]; std::snprintf(b, sizeof b, "%.2fX", 
 
 }  // namespace
 
+// The one true output-channel count for this process, so SoundBank (which mixes
+// into it) and the Options sliders always agree. GetDefaultAudioInfo only advises
+// the REQUEST (often 2 even on a 5.1/7.1 rig); the real layout is what the OPENED
+// device negotiates. Probe once (callback-based, like SoundBank) and, if that's
+// stereo, probe again asking for 5.1 -- many setups (PipeWire) advertise a 2ch
+// default but open surround when asked. Cached: computed once, identical everywhere.
+int detectOutputChannels() {
+    static int cached = -1;
+    if (cached >= 0) return cached;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return (cached = 2);
+    int req = 2;
+    SDL_AudioSpec def{};
+    if (SDL_GetDefaultAudioInfo(nullptr, &def, 0) == 0 && def.channels >= 2)
+        req = std::min<int>(def.channels, 8);
+    int ch = probeChannels(req);
+    if (ch <= 2) { int hi = probeChannels(6); if (hi > ch) ch = hi; }
+    if (ch <= 0) ch = 2;
+    cached = std::clamp(ch, 1, 8);
+    std::fprintf(stderr, "audio: detected %d output channels (default advised %d)\n", cached, req);
+    return cached;
+}
+
 OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                              int audioChannels)
     : ren_(ren), s_(s), onChange_(std::move(onChange)) {
-    build(audioChannels > 0 ? audioChannels : detectChannels());
+    build(audioChannels > 0 ? audioChannels : detectOutputChannels());
 }
 
 void OptionsScreen::build(int channels) {
+    std::fprintf(stderr, "Options: %d speaker sliders\n", channels);
     auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}}); };
     auto slider = [&](const char* label, float lo, float hi, std::function<float()> get,
                       std::function<void(float)> set, std::function<std::string(float)> fmt) {

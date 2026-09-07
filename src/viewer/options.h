@@ -15,6 +15,11 @@
 
 namespace tak {
 
+// The process-wide output-channel count (1/2/4/6/8), probed once and cached. Shared
+// by SoundBank (which requests it) and the Options per-speaker sliders, so they
+// always agree even when PipeWire's default advises stereo on a surround rig.
+int detectOutputChannels();
+
 class OptionsScreen {
 public:
     // ren: the app renderer. s: the settings to edit (mutated in place). onChange:
