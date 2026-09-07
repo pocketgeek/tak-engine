@@ -3,7 +3,7 @@
 A modern, cross-platform engine recreation for **Total Annihilation: Kingdoms**
 (Cavedog Entertainment, 1999), in the spirit of OpenRA and Robot War Engine.
 
-**Version 0.0.1** — reported by `takview --version` and `takserver --version`
+**Version 0.1.0** — reported by `takview --version` and `takserver --version`
 (and shown in the window title / server banner). The release version is set in
 one place, `project(... VERSION ...)` in `CMakeLists.txt`, and is separate from
 the multiplayer wire protocol version, which is gated independently at connect.
