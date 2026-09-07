@@ -507,7 +507,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     for (;;) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) return Choice::Exit;
+            if (e.type == SDL_QUIT) continue;   // ignore the WM close button; use the Exit door
 
             if (d_->serverSelect) {   // multiplayer: typing a server address
                 if (e.type == SDL_TEXTINPUT) {

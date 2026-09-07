@@ -1801,6 +1801,7 @@ public:
     // tears the session down and re-shows the front-end menu.
     void requestMenu() { menuRequested_ = true; }
     bool menuRequested() const { return menuRequested_; }
+    bool quitRequested() const { return quitRequested_; }   // in-game QUIT -> exit app
     // Menu-launched sessions: the front-end owns the lobby BGM (see manageMusic).
     void setExternalLobbyMusic() { externalLobbyMusic_ = true; }
     // Menu-launched sessions can return to the front-end, so the in-game menu
@@ -4162,7 +4163,7 @@ public:
             btn("RESUME", [this] { exitMenu_ = false; });
             btn("OPTIONS", [this] { exitMenu_ = false; openOptions(); });
             if (canReturnToMenu_) btn("MAIN MENU", [this] { menuRequested_ = true; });
-            btn("QUIT", [this] { SDL_Event q{}; q.type = SDL_QUIT; SDL_PushEvent(&q); });
+            btn("QUIT", [this] { quitRequested_ = true; });
         }
         if (options_) options_->render(winW, winH);   // topmost of all
     }
@@ -5741,6 +5742,7 @@ private:
     // interactive lobby UI state
     enum class LobbyScreen { Browser, Create } lobbyScreen_ = LobbyScreen::Browser;
     bool menuRequested_ = false;   // set by a MAIN MENU action -> main() returns to the front-end
+    bool quitRequested_ = false;   // set by the in-game QUIT button -> main() exits the app
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)
     bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
@@ -9517,11 +9519,12 @@ int main(int argc, char** argv) {
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            // Escape quits the asset viewers, but in a running game it deselects
-            // (handled by GameView::input) rather than exiting.
-            if (e.type == SDL_QUIT ||
-                (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !gameView)) {
-                running = false; quitApp = true;   // window close / viewer Esc -> quit the app
+            // The window-manager close button (title-bar X) fires SDL_QUIT; we
+            // deliberately IGNORE it so it can't yank the player out of a game. Quit
+            // only through real paths: the menu's Exit door, the in-game QUIT button
+            // (quitRequested_ below), or Escape in the asset viewers.
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !gameView) {
+                running = false; quitApp = true;   // asset-viewer Esc -> quit the app
             }
             // The GPU lost every render-target texture's contents (device/driver
             // reset). Rebuild the baked atlases so sprites don't blink out.
@@ -9773,6 +9776,8 @@ int main(int argc, char** argv) {
         // A MAIN MENU button or post-game Escape ends the session; the outer loop
         // then tears it down and re-shows the menu (quitApp stays false).
         if (gameView && gameView->menuRequested()) running = false;
+        // The in-game QUIT button exits the whole app.
+        if (gameView && gameView->quitRequested()) { running = false; quitApp = true; }
 
         if (!shot.empty()) {
             // Render a few frames so lazy content settles, then capture. For content
