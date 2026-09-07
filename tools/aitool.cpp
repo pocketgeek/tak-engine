@@ -84,6 +84,12 @@ int main(int argc, char** argv) {
     }
 
     ai::Controller ctl(1, reg, profile, 0x1234, diff, enemyStarts);
+    // TAK_2AI: put a second AI on player 0 (instead of an idle opponent) so we can see
+    // whether two active AIs actually fight -- the realistic case.
+    std::vector<std::pair<float, float>> starts0;
+    if (!spots.empty()) starts0.push_back(spots[1]);   // AI-1's base is AI-0's enemy
+    bool twoAi = std::getenv("TAK_2AI") != nullptr;
+    ai::Controller ctl0(0, reg, profile, 0x5678, diff, starts0);
     std::map<int, int> cmdCount;   // Cmd kind -> count
     auto sink = [&](const net::Command& c) {
         cmdCount[int(c.kind)]++;
@@ -125,8 +131,16 @@ int main(int argc, char** argv) {
     std::printf("=== AI %s on '%s' (enemy start %.0f,%.0f) ===\n", dstr.c_str(), map.c_str(), ex, ez);
     for (int t = 0; t < totalTicks; ++t) {
         ctl.tick(w, uint32_t(t), sink);
+        if (twoAi) ctl0.tick(w, uint32_t(t), sink);
         w.tick(dt);
-        if (t % (30 * 30) == 0) report(t / 30);   // every 30s
+        if (t % (30 * 30) == 0) {
+            report(t / 30);
+            if (twoAi)
+                std::printf("      [2AI] player0 kills=%d units=%d | player1 kills=%d\n",
+                            w.player(0).kills,
+                            [&]{ int n=0; for (const auto& u : w.units()) if (u.alive() && u.player==0) ++n; return n; }(),
+                            w.player(1).kills);
+        }
     }
     report(seconds);
     std::printf("commands issued:");
