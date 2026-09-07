@@ -94,13 +94,12 @@ private:
     bool nearestEnemyStart(float cx, float cz, float& tx, float& tz) const;
     void sendWaves(const tak::sim::World&, const CommandSink&);
 
-    // A fighter is free to (re)command when it isn't already locked onto a specific
-    // attack target (targetId != 0). This deliberately INCLUDES units already
-    // fight-moving toward a point (targetId == 0), so the AI re-issues their fight-move
-    // each think -- which re-paths anything that stalled against its own base buildings
-    // instead of leaving it wedged with a stale order.
+    // A fighter is free to be committed to a wave when it's idle or only doing a plain
+    // move -- NOT while it's already fight-moving or attacking (so re-commanding it each
+    // think doesn't reset its march and thrash it in place).
     static bool waveFree(const tak::sim::Unit& u) {
-        return u.orders.empty() || u.orders.front().targetId == 0;
+        return u.orders.empty() ||
+               (u.orders.front().targetId == 0 && !u.orders.front().attackMove);
     }
     void emit(const CommandSink& sink, tak::net::Cmd kind, int unitId,
               const std::string& type, float x, float z) const;
