@@ -85,7 +85,6 @@ struct MainMenu::Impl {
     std::vector<Door> doors;
     std::vector<Button> buttons;
     std::unordered_map<std::string, std::string> bikByLower;   // lowercased name -> path
-    std::vector<uint8_t> gainBuf_;   // scratch for the dragon video's colour-match gain
 
     // Click SFX: one queue-driven device (all menu click WAVs share a format,
     // u8/11025/mono), and each sound's volume-scaled PCM keyed by filename. This is
@@ -228,23 +227,13 @@ struct MainMenu::Impl {
         if (!d.vtex) {
             d.vtex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888,
                                        SDL_TEXTUREACCESS_STREAMING, d.vw, d.vh);
-            SDL_SetTextureBlendMode(d.vtex, SDL_BLENDMODE_BLEND);
-        }
-        // The dragon's video sits INSIDE the palette-rendered "K"; the Bink codec
-        // reproduces it a touch darker (mostly green) than the GAF art beside it, so a
-        // visible seam appears around the clip. Lift it by the measured per-channel gain
-        // (a pure linear scale, gamma ~1: R x1.02, G x1.04, B x1.01) so it matches the
-        // background. Done on a scratch buffer so re-updating a held frame can't
-        // compound. The doors fill a hole in the bg, so they need no correction.
-        if (d.vbase == "snort") {
-            gainBuf_.assign(d.rgba.begin(), d.rgba.end());
-            for (size_t i = 0; i + 3 < gainBuf_.size(); i += 4) {
-                gainBuf_[i + 0] = uint8_t(std::min(255, gainBuf_[i + 0] * 262 / 256));
-                gainBuf_[i + 1] = uint8_t(std::min(255, gainBuf_[i + 1] * 266 / 256));
-                gainBuf_[i + 2] = uint8_t(std::min(255, gainBuf_[i + 2] * 258 / 256));
-            }
-            SDL_UpdateTexture(d.vtex, nullptr, gainBuf_.data(), d.vw * 4);
-            return;
+            // Bink frames are opaque, but the decoder's alpha can come out < 255;
+            // BLENDMODE_BLEND then blends the clip DARKER over the background (a visible
+            // colour shift where the snort video overlays the static "K"). Ignore the
+            // alpha (opaque) so the clip renders at its true decoded colour. Linear
+            // filtering smooths these low-res clips (~124px) when scaled to the window.
+            SDL_SetTextureBlendMode(d.vtex, SDL_BLENDMODE_NONE);
+            SDL_SetTextureScaleMode(d.vtex, SDL_ScaleModeLinear);
         }
         SDL_UpdateTexture(d.vtex, nullptr, d.rgba.data(), d.vw * 4);
     }
@@ -301,7 +290,14 @@ struct MainMenu::Impl {
             bg = gafTex(im.gaf, im.seq, im.frame);
             // The background is the opaque base layer -- ignore any palette-index-0
             // "transparency" in the map art so it doesn't punch through to black.
-            if (bg) SDL_SetTextureBlendMode(bg, SDL_BLENDMODE_NONE);
+            if (bg) {
+                SDL_SetTextureBlendMode(bg, SDL_BLENDMODE_NONE);
+                // Match the background to the Bink clips it sits behind: they render a
+                // touch darker (mostly green), so the palette-bright bg would otherwise
+                // seam against the video (the dragon in the "K"). Measured video/bg
+                // per-channel scale, pixel-aligned.
+                SDL_SetTextureColorMod(bg, 249, 243, 248);
+            }
         }
 
         struct DoorSpec { const char* gadget; const char* vbase; Choice act; };
