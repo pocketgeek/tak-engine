@@ -29,7 +29,7 @@ struct Settings {
     float mouseZoomSpeed  = 1.0f;  // wheel-zoom sensitivity; 0.25..4.0
     float edgeScrollSpeed = 1.0f;  // edge-scroll rate;       0.25..4.0
     bool  edgeScroll      = true;  // pan when the cursor is at a screen edge
-    int   cursorScale     = 2;     // custom mouse-cursor size multiplier; 1..4 (2 = default)
+    int   cursorScale     = 4;     // custom mouse-cursor size multiplier; 1..8 (4 = default)
 
     // ---- misc ----
     std::string playerName;        // default name for multiplayer

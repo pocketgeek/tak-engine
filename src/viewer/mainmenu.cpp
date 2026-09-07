@@ -613,7 +613,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (d_->cursors_.ok()) {
             int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
             d_->cursors_.draw(d_->ren, CursorId::Normal, mx, my,
-                              settings ? settings->cursorScale : 2);
+                              settings ? settings->cursorScale : 4);
         }
         SDL_RenderPresent(d_->ren);
         SDL_Delay(1);
@@ -665,6 +665,10 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
     const double fps = vid.fps() > 1.0 ? vid.fps() : 30.0;
     const double aBytesPerSec = adev ? double(vid.audioRate()) * vid.audioChannels() * 2.0 : 0.0;
     std::vector<uint8_t> rgba, apcm;
+    // Hide the OS arrow for the fullscreen movie (restored below; the menu then hides
+    // it again for its own cursor). Only around real playback -- the early returns above
+    // for "no video" never touch the cursor state.
+    SDL_ShowCursor(SDL_DISABLE);
     const Uint64 start = SDL_GetTicks64();
     long queuedTotal = 0;   // total audio bytes ever queued (for the audio clock)
     // Trailing-black trim: the retail LOGO.BIK fades out ~3s before its stream ends,
@@ -732,6 +736,7 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
     }
     if (adev) SDL_CloseAudioDevice(adev);
     SDL_DestroyTexture(tex);
+    SDL_ShowCursor(SDL_ENABLE);   // restore; the menu re-hides it for the custom cursor
     // Drop the skip key/click so it doesn't leak as a phantom press into the menu.
     SDL_PumpEvents();
     SDL_FlushEvents(SDL_KEYDOWN, SDL_MOUSEBUTTONUP);

@@ -111,8 +111,8 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.edgeScroll = v > 0.5f; });
     slider("EDGE SCROLL SPEED", 0.25f, 4.0f, [&] { return s_.edgeScrollSpeed; },
            [&](float v) { s_.edgeScrollSpeed = v; }, [](float v) { return timesFmt(v); });
-    // Mouse-cursor size as a 4-stop slider: 1X..4X.
-    slider("CURSOR SIZE", 1, 4, [&] { return float(s_.cursorScale); },
+    // Mouse-cursor size as an 8-stop slider: 1X..8X.
+    slider("CURSOR SIZE", 1, 8, [&] { return float(s_.cursorScale); },
            [&](float v) { s_.cursorScale = int(v + 0.5f); },
            [](float v) { return std::to_string(int(v + 0.5f)) + "X"; });
     // SAVE / BACK are drawn as a fixed footer (see layout()/render()), not list rows.

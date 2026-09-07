@@ -4266,7 +4266,7 @@ public:
         }
         bool fightTint = false;
         tak::CursorId c = desiredCursor(fightTint);
-        int sc = settings_ ? settings_->cursorScale : 2;
+        int sc = settings_ ? settings_->cursorScale : 4;
         cursors_.draw(ren_, c, mx, my, sc, fightTint ? kFightMoveTint : SDL_Color{255, 255, 255, 255});
     }
 

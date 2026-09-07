@@ -65,7 +65,7 @@ Settings loadSettings() {
         else if (key == "mouseZoomSpeed")  s.mouseZoomSpeed = asFloat(0.25f, 4.0f);
         else if (key == "edgeScrollSpeed") s.edgeScrollSpeed = asFloat(0.25f, 4.0f);
         else if (key == "edgeScroll")      s.edgeScroll = asBool();
-        else if (key == "cursorScale")     s.cursorScale = asInt(1, 4);
+        else if (key == "cursorScale")     s.cursorScale = asInt(1, 8);
         else if (key == "playerName")      s.playerName = val;
         else if (key == "lastMap")         s.lastMap = val;
         else if (key.rfind("chanGain", 0) == 0 && key.size() == 9) {  // chanGain0..7
