@@ -196,24 +196,37 @@ server", keeps a single sim path, and gets AI for free; the COB VM move is the m
 
 ## 7. Phased plan
 
-1. **Scripting core (no campaign yet).** Parse the COB name table (`src/cob`);
-   rewrite `MAP_COMMAND` to verb-string dispatch (Create/SetMission/SetTrigger/
-   GetUtype/WriteValue-ReadValue/SetAttribute/Capture/ScreenShake); implement the
-   `SetMission` order mini-language; wire `PLAY_SOUND`. Verify against several mission
-   cobs. *(Self-contained; testable with the existing `--mission` debug path.)*
-2. **Data-driven win/lose.** Parse `.ota` `VictoryCondition_*`/`DefeatCondition_*`
-   keys into an evaluator ticked in the sim; honour scripted `SET_UNIT_VALUE(2,0/1)`.
-3. **Mission players + AI (the §6 decision).** Parse `PlayerN` slots
-   (control/role/logo/kingdom) into the match setup; make mission enemies AI-driven
-   per the chosen architecture. Parse header triggers (`MoveUnitToRadius`, message lines).
+Status (2026-09-07): phases 1–3 and the §6 architecture are **done and verified**;
+`takmission01_mt` runs over the real takserver/takview in lockstep (`err=none`,
+reproducible hash) with win/lose wired. Phases 4–7 remain.
+
+1. **Scripting core (no campaign yet).** ✅ COB name table (`src/cob`);
+   verb-string `MAP_COMMAND` dispatch (Create/SetMission/SetTrigger/GetUtype/
+   WriteValue-ReadValue/SetAttribute/Capture/ScreenShake); `SetMission` order
+   mini-language (m/ma/a/p/s/d; **w/wa wait-pacing, patrol looping, o/v stance,
+   b reinforce still TODO** — why an unattended escort idles at its first waypoint).
+   `MissionScript` in `src/sim/mission.{h,cpp}`, exercised by `tools/missiontool`.
+2. **Data-driven win/lose.** ✅ `.ota` `VictoryCondition_*`/`DefeatCondition_*` →
+   evaluator ticked in the sim; scripted `SET_UNIT_VALUE(2,0/1)` honoured. Win and
+   lose paths pass in `missiontool`. (Condition *guards* — don't win before the
+   target existed — still TODO.)
+3. **Mission players + AI (the §6 decision).** ✅ `PlayerN` slots parsed into
+   `setupMission` (`src/sim/matchsetup.cpp`); enemies are script-driven (no skirmish
+   AI). Server hosts a mission referee (`server.cpp`), client builds the same
+   deterministic world (`startMpGame`), and both run the in-sim god script in
+   lockstep — the mission is authoritative on the server, which broadcasts
+   `MissionOutcome` (kNetVersion 17). Headless driver: `takview … --mpmission <stem>`.
+   First-pass diplomacy (opponents team 1, everyone else allied); proper
+   neutral/ally roles and non-zero human slots are TODO.
 4. **Per-mission unit restriction.** Filter the conjure/build menu to the `.tdf` set.
 5. **Campaign spine.** `camps/*.tdf` loader; a campaign controller (current index,
    win→next / lose→retry); profile+campaign persistence via `tak::Settings`.
 6. **Front-end flow.** Wire `Choice::Campaign`: campaign/profile picker → intro movie
    → briefing screen → play → victory/defeat screens → next/retry. Reuse `playIntro`,
    the `.gui` parser, and the retail `Briefing`/`victory<kingdom>`/`Defeat` guis.
-7. **Polish.** In-mission objectives panel, `posttakmission24`/`PostTakCredits`
-   cinematics, Iron Plague dialogue widget, briefing VO, `ipalt` branch.
+7. **Polish.** Finish the `SetMission` verbs; in-mission objectives panel,
+   `posttakmission24`/`PostTakCredits` cinematics, Iron Plague dialogue widget,
+   briefing VO, `ipalt` branch.
 
 Each phase is independently testable and lands behind the existing `--mission` /
-menu paths before the front-end goes live.
+`--mpmission` / menu paths before the front-end goes live.
