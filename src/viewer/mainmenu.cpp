@@ -292,6 +292,8 @@ struct MainMenu::Impl {
             {"PlayComputer", "machine", Choice::SinglePlayer},
             {"PlayStory",    "girl",    Choice::Campaign},
             {"PlayPlayer",   "knight",  Choice::Multiplayer},
+            // The dragon in the title's "K": hover snorts (snort4-7), no click action.
+            {"Credits",      "snort",   Choice::None},
         };
         for (auto& s : specs) {
             const gui::Gadget* g = gui.find(s.gadget);
@@ -301,7 +303,7 @@ struct MainMenu::Impl {
             d.rect = {g->x, g->y, g->w, g->h};
             d.vbase = s.vbase;
             d.action = s.act;
-            d.sound = clickSound(*g);
+            d.sound = s.act == Choice::None ? "" : clickSound(*g);   // hover-only: no click sound
             d.tip = g->cmd;   // gui cmd doubles as the hover help caption
             loadSfx(d.sound);
             if (!g->imgs.empty()) d.gaf = gafTex(g->imgs[0].gaf, g->imgs[0].seq, g->imgs[0].frame);
