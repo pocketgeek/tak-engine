@@ -2586,7 +2586,14 @@ void World::tick(float dt) {
                                 u.x -= px * s * d * 0.5f; u.z -= pz * s * d * 0.5f; break;
                             }
                         }
-                        if (!g.empty() && u.orders.front().targetId == 0) {
+                        // Guard emptiness: the fully-blocked branch above may have
+                        // just u.orders.clear()'d this unit (gave up an unreachable
+                        // goal), and back()/front() on an empty deque is undefined --
+                        // it computes a wild pointer that segfaults on some heap
+                        // layouts (the release referee sim) while reading harmless
+                        // garbage on others, which is exactly how this surfaced as an
+                        // 8-AI server crash. A unit with no order has nothing to repath.
+                        if (!g.empty() && !u.orders.empty() && u.orders.front().targetId == 0) {
                             float tx = u.orders.back().x, tz = u.orders.back().z;
                             const FlowField* ff = flowFor(u.type, tx, tz);
                             bool onWalkable = g.walkable(int(u.x) / 16, int(u.z) / 16);
