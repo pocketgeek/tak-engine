@@ -1968,6 +1968,7 @@ public:
         // from the menu into the lobby); suppress ours there, but still switch to
         // faction music once the game proper begins.
         if (want == 1) { if (!externalLobbyMusic_) sounds_.startMusic(vfs_, {15}); }
+        else if (mp_ && mp_->isSpectator()) sounds_.startMusic(vfs_, allFactionMusicTracks());
         else sounds_.startMusic(vfs_, factionMusicTracks(side_));
     }
 
@@ -7490,6 +7491,23 @@ private:
             }
         } catch (const std::exception&) {}
         return out;
+    }
+
+    // Every faction's music tracks (deduped), for a SPECTATOR -- who has no side of their
+    // own, so their in-game music draws from all factions' playlists (startMusic shuffles).
+    std::vector<int> allFactionMusicTracks() {
+        std::vector<int> out;
+        try {
+            auto sd = vtdf("gamedata/sidedata.tdf");
+            for (const auto& key : sd.childOrder) {
+                std::istringstream ts(sd.children.at(key).valueOr("musictracks", ""));
+                int t;
+                while (ts >> t) out.push_back(t);
+            }
+        } catch (const std::exception&) {}
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+        return out;   // empty -> startMusic falls back to all 20
     }
 
     void loadPanel(const std::string& side) {
