@@ -2622,8 +2622,13 @@ public:
             // catch-up replays lockstep state without replaying 512 ticks of
             // sounds, effects and VM dispatch per frame.
             simStep(1.0f / 30.0f);
-            // Spectators observe only -- they seat no player and report no hash.
-            if (netTick_ % uint32_t(tak::net::kHashPeriod) == 0 && !mp_->isSpectator())
+            // Report our processed tick every kHashPeriod. A seated player sends its
+            // state hash (desync check + flow-control ack); a spectator sends one too
+            // -- purely as a progress ACK so the server can pace an all-AI watch game
+            // to what the spectator can sustain (its hash is never desync-checked, since
+            // an all-AI room has no seated players to form a consensus). Without it the
+            // server floods a lagging spectator until the connection breaks.
+            if (netTick_ % uint32_t(tak::net::kHashPeriod) == 0)
                 mp_->sendHash(netTick_, world_.stateHash());
             ++netTick_;
             ++drained;
@@ -9384,40 +9389,50 @@ private:
         { int tc[tak::sim::kMaxPlayers] = {};
           for (int t = 0; t < np; ++t) tc[world_.player(t).team % tak::sim::kMaxPlayers]++;
           for (int t = 0; t < tak::sim::kMaxPlayers; ++t) if (tc[t] > 1) teams = true; }
-        int rows = 0;
-        for (int t = 0; t < np; ++t) if (board || cnt[t] > 0) ++rows;
-        const float px = 2.4f, lh = 7 * px + 9, x = 12;
-        float y = 12;
-        const float nameX = x + (teams ? 40 : 0);
-        // A spectator sees the full economy: an extra MANA column (income) per faction,
-        // so a widened panel with the columns pushed left to make room.
+        int rows = 0, totalUnits = 0;
+        for (int t = 0; t < np; ++t) { if (board || cnt[t] > 0) ++rows; totalUnits += cnt[t]; }
+        // A spectator sees the full economy: an extra MANA column (income) per faction.
         const bool showMana = spectating_;
-        const float panelW = (showMana ? 440.0f : (board || teams) ? 340.0f : 270.0f);
-        const float colMana = x + panelW - 168;
-        const float colUnits = x + panelW - (showMana ? 96 : 128),
-                    colKills = x + panelW - 40;
+        const float px = 2.6f, hx = 1.9f;          // row / header font scales (bigger)
+        const float lh = 7 * px + 12, x = 14;
+        float y = 14;
+        const float nameX = x + (teams ? 46 : 0);
+        // Wider panel with generous, non-overlapping columns (the old one crammed the
+        // speed readout into the MANA header and the names into the numbers). Right-
+        // align MANA / UNITS / KILLS; leave the name column plenty of room.
+        const float panelW = showMana ? 640.0f : (board || teams) ? 400.0f : 300.0f;
+        const float colKills = x + panelW - 70;
+        const float colUnits = colKills - 104;
+        const float colMana  = colUnits - 176;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 175);
-        SDL_FRect bg{x - 7, y - 7, panelW, (rows + 1) * lh + 8};
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
+        // Two header lines (a meta line + the column labels) above the player rows.
+        SDL_FRect bg{x - 8, y - 8, panelW, (rows + 2) * lh + 12};
         SDL_RenderFillRectF(ren_, &bg);
-        char buf[64];
-        // FPS on the left; MANA (spectator only) / UNITS / KILLS column headers.
+        char buf[80];
+        // --- meta line: FPS, game speed, and (spectating) the global unit count ---
         std::snprintf(buf, sizeof buf, "FPS %d", int(fps_ + 0.5f));
-        blockText(buf, x, y, px, SDL_Color{190, 190, 195, 255});
-        // Net games: requested game speed and the ACTUAL speed our sim achieves
-        // (they diverge when a client -- or the server, pacing to the slowest --
-        // can't sustain the requested rate).
+        blockText(buf, x, y, px, SDL_Color{195, 195, 200, 255});
         if (mp_) {
+            // requested game speed vs the ACTUAL speed the sim achieves (they diverge
+            // when a client -- or the server, pacing to the slowest -- can't sustain it).
             float req = std::max(1, int(mp_->gameSpeed())) / 10.0f;
             char sb[48];
             std::snprintf(sb, sizeof sb, "SPEED %.1fx  ACTUAL %.1fx", req, actualSpeed_);
             SDL_Color scol = actualSpeed_ < req - 0.3f ? SDL_Color{240, 200, 110, 255}
                                                        : SDL_Color{150, 195, 160, 255};
-            blockText(sb, x + 96, y + 3, 1.6f, scol);
+            blockText(sb, x + blockWidth(buf, px) + 24, y + 4, hx, scol);
         }
-        if (showMana) blockText("MANA", colMana, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
-        blockText("UNITS", colUnits, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
-        blockText("KILLS", colKills, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
+        if (showMana) {   // global unit count across every faction, right-aligned
+            std::snprintf(buf, sizeof buf, "TOTAL %d", totalUnits);
+            blockText(buf, x + panelW - blockWidth(buf, hx) - 4, y + 4, hx,
+                      SDL_Color{210, 215, 225, 255});
+        }
+        y += lh;
+        // --- column-header line ---
+        if (showMana) blockText("MANA", colMana, y + 3, hx, SDL_Color{150, 150, 155, 255});
+        blockText("UNITS", colUnits, y + 3, hx, SDL_Color{150, 150, 155, 255});
+        blockText("KILLS", colKills, y + 3, hx, SDL_Color{150, 150, 155, 255});
         y += lh;
         for (int t = 0; t < np; ++t) {
             if (!board && cnt[t] == 0) continue;
@@ -9445,7 +9460,7 @@ private:
             if (showMana) {   // current mana + income, e.g. "1234 +18"
                 const auto& pl = world_.player(t);
                 std::snprintf(buf, sizeof buf, "%d +%d", int(pl.mana), int(pl.income));
-                blockText(buf, colMana, y, 1.8f, c);
+                blockText(buf, colMana, y, hx, c);
             }
             std::snprintf(buf, sizeof buf, "%d", cnt[t]);
             blockText(buf, colUnits, y, px, c);

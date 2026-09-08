@@ -917,10 +917,14 @@ void Server::checkHashes(Room& r, uint32_t tick) {
 }
 
 bool Server::canAdvance(const Room& r) const {
-    // Slow to the slowest seated HUMAN player: the server may not run more than
-    // kMaxLeadTicks past the least-advanced player's acked tick. AIs are server-run
-    // (always current) and spectators are excluded (they lag on their own, never
-    // holding the match up). No seated humans -> no constraint (all-AI watch game).
+    // Slow to the slowest CONSUMER so nobody is flooded past what they can process:
+    // the server may not run more than kMaxLeadTicks past the least-advanced acked
+    // tick. Seated humans are the primary constraint (AIs are server-run and always
+    // current). When a game has NO seated humans -- an all-AI game watched by
+    // spectators -- pace to the slowest spectator instead, otherwise the server
+    // outruns a spectator that can't sustain the speed and floods it until the
+    // connection breaks. (A spectator NEVER holds up a real match: if any human is
+    // seated, spectators lag on their own.)
     uint32_t slowest = r.tick;
     bool anyHuman = false;
     for (int i = 0; i < kMaxSlots; ++i) {
@@ -930,8 +934,16 @@ bool Server::canAdvance(const Room& r) const {
         anyHuman = true;
         slowest = std::min(slowest, it->second->ackTick);
     }
-    if (!anyHuman) return true;
-    return r.tick <= slowest + kMaxLeadTicks;
+    if (anyHuman) return r.tick <= slowest + kMaxLeadTicks;
+    bool anySpec = false;
+    for (uint32_t sid : r.spectators) {
+        auto it = clients_.find(sid);
+        if (it == clients_.end()) continue;
+        anySpec = true;
+        slowest = std::min(slowest, it->second->ackTick);
+    }
+    if (anySpec) return r.tick <= slowest + kMaxLeadTicks;
+    return true;   // no live consumers at all
 }
 
 void Server::closeTick(Room& r) {
