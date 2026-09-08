@@ -1533,9 +1533,34 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
     // and land units require land, rather than always testing the ground grid.
     const NavGrid& grid = navFor(type);
     int cx = int(x) / 16 - type->footX / 2, cz = int(z) / 16 - type->footZ / 2;
-    for (int j = 0; j < type->footZ; ++j)
-        for (int i = 0; i < type->footX; ++i)
-            if (!grid.walkable(cx + i, cz + j)) return false;
+    // Water structures (Veruna's Sea Fort / Floating Tower) encode a shoreline
+    // footprint in their yardmap: 'w' cells are the slipway that MUST sit over water
+    // (where the ships launch), solid cells ('o'/'c'/'C') the land-side base, '.' is
+    // off-footprint. Honouring that stops a naval building from being placed on dry
+    // land (all its 'w' cells would fail the water test) AND lets it sit correctly on
+    // a coast (which the old whole-footprint-on-land check wrongly rejected). Only
+    // yardmaps that actually contain 'w' take this path, so every land building keeps
+    // its exact previous placement rule (and hash).
+    bool waterYard = false;
+    if (!type->yardMap.empty())
+        for (char c : type->yardMap) if (c == 'w' || c == 'W') { waterYard = true; break; }
+    if (waterYard) {
+        for (int j = 0; j < type->footZ; ++j)
+            for (int i = 0; i < type->footX; ++i) {
+                char c = type->yardMap[size_t(j) * type->footX + i];
+                if (c == 'w' || c == 'W') {
+                    if (!navWater_.walkable(cx + i, cz + j)) return false;   // slipway needs water
+                } else if (c == '.' || c == ' ') {
+                    continue;                                                // not part of the footprint
+                } else if (!nav_.walkable(cx + i, cz + j)) {
+                    return false;                                           // land base needs land
+                }
+            }
+    } else {
+        for (int j = 0; j < type->footZ; ++j)
+            for (int i = 0; i < type->footX; ++i)
+                if (!grid.walkable(cx + i, cz + j)) return false;
+    }
     for (const auto& u : units_) {
         if (!u.alive()) continue;
         float dx = u.x - x, dz = u.z - z;
