@@ -115,6 +115,10 @@ bool BinkVideo::available() { return true; }
 
 bool BinkVideo::open(std::vector<uint8_t> data) {
     close();
+    // Silence FFmpeg's own chatter (e.g. libswscale's per-frame "No accelerated colorspace
+    // conversion found from yuv420p to rgba" -- our static build has no asm scaler, and the
+    // C path is fine for these tiny door clips). Keep genuine errors.
+    av_log_set_level(AV_LOG_ERROR);
     d_->data = std::move(data);
     d_->pos = 0;
     if (d_->data.empty()) return false;
