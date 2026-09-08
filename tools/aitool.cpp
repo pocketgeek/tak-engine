@@ -4,6 +4,7 @@
 //
 //   aitool <retail-install-dir> [map] [passive|easy|normal|hard|absurd] [seconds]
 
+#include <cstdlib>
 #include "ai/ai.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
@@ -43,8 +44,12 @@ int main(int argc, char** argv) {
     if (cfg.mapPath.empty()) { std::fprintf(stderr, "aitool: map '%s' not found\n", map.c_str()); return 1; }
     // Slot 0 = opponent (idle, or a 2nd AI under TAK_2AI), slot 1 = the AI under test.
     // Both carry the difficulty's income multiplier so an Absurd test is fair either way.
+    // TAK_FACTION=0..4 (ara/tar/ver/zon/cre) sets the AI-under-test's faction (default
+    // 1 = Taros) so each faction's AI can be exercised.
     float mm = ai::incomeMultFor(diff);
-    cfg.slots = {{true, 0, 0, mm}, {true, 1, 1, mm}};
+    int fac = 1;
+    if (const char* fe = std::getenv("TAK_FACTION")) fac = std::clamp(std::atoi(fe), 0, 4);
+    cfg.slots = {{true, 0, 0, mm}, {true, fac, 1, mm}};
     auto spots = sim::setupMatch(w, reg, cfg);
     std::vector<std::pair<float, float>> enemyStarts;
     if (!spots.empty()) enemyStarts.push_back(spots[0]);   // the human's start

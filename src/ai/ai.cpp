@@ -73,9 +73,11 @@ void Controller::emit(const CommandSink& sink, tak::net::Cmd kind, int unitId,
 
 // What is this unit FOR? Derived purely from its stats, so it works for every faction:
 //   Economy  - a structure that makes/holds mana (lodestone, mana storage)
-//   Factory  - a structure that trains units (keep, castle, hell)
+//   Factory  - a structure that trains units (keep, castle, hell), OR a mobile
+//              production creature (Zhon's Beast Handlers/Tamers/Lords -- Zhon has
+//              NO static factories, its creatures ARE the production line)
 //   Defense  - any other structure (towers, walls)
-//   Builder  - a mobile unit that builds (Monarch, Dark Mason, priest)
+//   Builder  - a mobile unit that builds/expands (Monarch, mason, priest, arabuild)
 //   Army     - any other mobile unit (the combatants)
 BuildCat Controller::categoryOf(const tak::sim::UnitType* t) const {
     if (t->isStructure()) {
@@ -83,7 +85,26 @@ BuildCat Controller::categoryOf(const tak::sim::UnitType* t) const {
         if (t->income > 0 || t->storage > 0) return BuildCat::Economy;
         return BuildCat::Defense;
     }
-    return t->isBuilder ? BuildCat::Builder : BuildCat::Army;
+    if (t->isBuilder) {
+        // A mobile builder whose menu is DOMINATED by mobile combat units is really a
+        // factory (Zhon's tamers train armies), not an economy/expansion builder. A
+        // mobile CONSTRUCTOR (arabuild: mostly buildings) or a Monarch (the base
+        // builder) stays a Builder. Without this, every Zhon producer landed in the
+        // builder bucket -- capped at 2-3 -- so the Zhon AI built one Beast Handler
+        // and then stalled with nothing left it wanted to make.
+        if (!t->commander) {
+            int combat = 0, structs = 0;
+            for (const auto& id : registry_.buildable(t->id)) {
+                const auto* b = registry_.find(id);
+                if (!b) continue;
+                if (b->isStructure()) ++structs;
+                else if (!b->isBuilder) ++combat;
+            }
+            if (combat > structs && combat > 0) return BuildCat::Factory;
+        }
+        return BuildCat::Builder;
+    }
+    return BuildCat::Army;
 }
 
 // Count the empire by category and set the targets the planner steers toward.
