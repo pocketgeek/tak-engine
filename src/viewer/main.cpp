@@ -36,6 +36,7 @@
 #include "viewer/cursors.h"
 #include "viewer/options.h"
 #include "viewer/settings.h"
+#include "viewer/dev.h"
 #include "viewer/mainmenu.h"
 #include "viewer/menumusic.h"
 
@@ -1364,7 +1365,7 @@ public:
             auto g = vtdf("gamedata/gods.tdf");
             if (const auto* tm = g.child("TIMING")) {
                 float appear = float(tm->numberOr("AppearTimeMin", 30.0)) * 60.0f;
-                if (const char* e = getenv("TAK_GODTIME")) appear = std::stof(e);
+                if (const char* e = tak::devEnv("TAK_GODTIME")) appear = std::stof(e);
                 world_.enableGods(appear);
             }
         } catch (const std::exception&) {}
@@ -1654,7 +1655,7 @@ public:
         // a small army per player at N start positions, all AI-driven. Verifies
         // the 8-player / team / shared-vision / win-condition paths before the
         // real lobby exists. (multiplayer M1)
-        if (const char* ff = std::getenv("TAK_FFA")) {
+        if (const char* ff = tak::devEnv("TAK_FFA")) {
             int n = std::atoi(ff);
             n = std::clamp(n, 2, tak::sim::kMaxPlayers);
             std::vector<int> teams(size_t(n), 0);
@@ -2484,7 +2485,7 @@ public:
             // stalls and is pure pacing (byte-identical sim). TAK_NET_DELAY overrides
             // -- "0" disables it (drain every bundle immediately), a positive integer
             // pins a fixed reserve depth, "auto" (or unset) self-sizes to the link.
-            const char* e = std::getenv("TAK_NET_DELAY");
+            const char* e = tak::devEnv("TAK_NET_DELAY");
             if (!e || std::string(e) == "auto") { netAuto_ = true; netDelay_ = 3; mp_->enableRttProbe(); }
             else netDelay_ = std::max(0, std::atoi(e));
         }
@@ -2607,7 +2608,7 @@ public:
     // AI difficulty for the headless / auto seat paths: TAK_AI_LEVEL (0/1/2), default
     // Normal. The interactive lobby sets it per-slot via the Room UI instead.
     static uint8_t aiLevelEnv() {
-        const char* e = std::getenv("TAK_AI_LEVEL");
+        const char* e = tak::devEnv("TAK_AI_LEVEL");
         int v = e ? std::atoi(e) : 2;   // default normal (0=passive..4=absurd)
         return uint8_t(v < 0 ? 0 : v > 4 ? 4 : v);
     }
@@ -2622,10 +2623,10 @@ public:
             o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
             // tests -- re-cadences the server without touching the (deterministic) sim.
-            if (const char* sp = std::getenv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, 40));
+            if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, 40));
             // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
             // slot can be an AI -- an all-AI game to watch.
-            bool watch = autoMode == 1 && std::getenv("TAK_MP_WATCH");
+            bool watch = autoMode == 1 && tak::devEnv("TAK_MP_WATCH");
             // Mode 7 is interactive SINGLE-PLAYER: a private game (hidden from the
             // browser) with one server-run AI opponent.
             // Mode 8 is a single-player CAMPAIGN mission: a private game whose world is
@@ -2659,8 +2660,8 @@ public:
             const auto& r = mp_->room();
             // Host-spectator (TAK_MP_WATCH): seat AIs in the LOW slots (0..N-1) and
             // don't seat self -- an all-AI game the host just watches.
-            if (autoMode == 1 && r.mySlot < 0 && std::getenv("TAK_MP_WATCH")) {
-                const char* ai = std::getenv("TAK_MP_AIS");
+            if (autoMode == 1 && r.mySlot < 0 && tak::devEnv("TAK_MP_WATCH")) {
+                const char* ai = tak::devEnv("TAK_MP_AIS");
                 int nAi = std::clamp(ai ? std::atoi(ai) : 2, 2, int(tak::net::kMaxSlots));
                 for (int k = 0; k < nAi; ++k)
                     mp_->setSlot(k, 2, uint8_t(k % 5), uint8_t(k), uint8_t(k), 1, aiLevelEnv());
@@ -2681,7 +2682,7 @@ public:
                              uint8_t(r.mySlot), 0);
                 // Headless test hook: TAK_SP_AIS=N seats N AI opponents and starts
                 // immediately (the interactive path leaves this to the player).
-                if (const char* na = std::getenv("TAK_SP_AIS")) {
+                if (const char* na = tak::devEnv("TAK_SP_AIS")) {
                     // The auto-start hook must ready-up the host (interactive SP now
                     // seats unready, which would otherwise block startGame()).
                     mp_->setSlot(r.mySlot, 1, facIdx(side_), uint8_t(r.mySlot),
@@ -2705,7 +2706,7 @@ public:
                 // Host stress harness: TAK_MP_AIS=N seats N server AIs in the TOP
                 // slots, leaving the low slots for human joiners.
                 if (autoMode == 1 && r.mySlot == 0)
-                    if (const char* ai = std::getenv("TAK_MP_AIS")) {
+                    if (const char* ai = tak::devEnv("TAK_MP_AIS")) {
                         int nAi = std::clamp(std::atoi(ai), 0, tak::net::kMaxSlots - 1);
                         for (int k = 0; k < nAi; ++k) {
                             int slot = tak::net::kMaxSlots - 1 - k;
@@ -2727,7 +2728,7 @@ public:
             }
             // Default: start with any 2 ready. TAK_MP_WAIT=N holds for a full lobby.
             static const int wantReady = [] {
-                const char* w = std::getenv("TAK_MP_WAIT"); return w ? std::atoi(w) : 2;
+                const char* w = tak::devEnv("TAK_MP_WAIT"); return w ? std::atoi(w) : 2;
             }();
             if (ready >= wantReady) { mp_->startGame(); mpStarted_ = true; }
         } else if (mp_->isRejoin()) {
@@ -3073,7 +3074,7 @@ public:
         if (world_.godsEnabled())
             for (int t = 0; t < world_.numPlayers(); ++t)
                 if (world_.godReady(t)) summonGod(t);
-        if (getenv("TAK_STUCKSTAT")) {   // crowd-jam diagnostic
+        if (tak::devEnv("TAK_STUCKSTAT")) {   // crowd-jam diagnostic
             static float acc = 0; acc += dt;
             if (acc >= 2.0f) {
                 acc = 0;
@@ -4102,7 +4103,7 @@ public:
         if (mp_ && hudFont_.ok()) {
             // Dev net-status readout (TAK_NETDEBUG): off by default -- it sat over the
             // bottom-right mana panel. The BEHIND-BY lag warning below always shows.
-            static const bool kNetDebug = std::getenv("TAK_NETDEBUG") != nullptr;
+            static const bool kNetDebug = tak::devEnv("TAK_NETDEBUG") != nullptr;
             if (kNetDebug) {
                 char nb[64];
                 std::snprintf(nb, sizeof nb, "NET P%d  TICK %u", localPlayer_ + 1, netTick_);
@@ -6155,9 +6156,9 @@ private:
             int best = 0;
             for (int i = 1; i < 256; ++i) if (hist[i] > hist[best]) best = i;
             heightRef_ = best;
-            if (const char* e = getenv("TAK_HSCALE")) kHeightScale_ = std::stof(e);
-            if (const char* e = getenv("TAK_HSCALEX")) kHeightScaleX_ = std::stof(e);
-            if (getenv("TAK_HDEBUG")) showHDebug_ = true;
+            if (const char* e = tak::devEnv("TAK_HSCALE")) kHeightScale_ = std::stof(e);
+            if (const char* e = tak::devEnv("TAK_HSCALEX")) kHeightScaleX_ = std::stof(e);
+            if (tak::devEnv("TAK_HDEBUG")) showHDebug_ = true;
         }
         float gx = (wx - 8.0f) / 16.0f, gz = (wz - 8.0f) / 16.0f;
         int x0 = std::clamp(int(std::floor(gx)), 0, m.width - 1);
@@ -7021,7 +7022,7 @@ private:
             for (const auto& im : g.imgs)
                 guiTex_[i].push_back(loadGuiFrame(im.gaf, im.seq, im.frame));
         }
-        if (std::getenv("TAK_GUIDEBUG")) {
+        if (tak::devEnv("TAK_GUIDEBUG")) {
             std::fprintf(stderr, "== %s: %zu gadgets ==\n", path.c_str(),
                          gui_.gadgets.size());
             for (size_t i = 0; i < gui_.gadgets.size(); ++i) {
@@ -9388,7 +9389,7 @@ private:
         const EffectAnim* ea = effectFor(anim);
         if (!ea) return false;
         effects_.push_back({ea, x, z, 0.0f, 0.0f, 0.0f, 1, alt});
-        static const bool kLog = getenv("TAK_FXLOG") != nullptr;
+        static const bool kLog = tak::devEnv("TAK_FXLOG") != nullptr;
         if (kLog) std::fprintf(stderr, "t=%.2f effect '%s' anim '%s' (%zu frames)\n",
                                animClock_, cls.c_str(), anim.c_str(), ea->frames.size());
         return true;
@@ -9542,7 +9543,7 @@ private:
         }
     }
     void updateParticles(float dt) {
-        static const bool kLog = getenv("TAK_FXLOG") != nullptr;
+        static const bool kLog = tak::devEnv("TAK_FXLOG") != nullptr;
         if (kLog && !particles_.empty()) {
             static size_t peak = 0;
             if (particles_.size() > peak) {
@@ -9681,6 +9682,12 @@ int main(int argc, char** argv) {
     }
     if (argc >= 2 && (!std::strcmp(argv[1], "--help") || !std::strcmp(argv[1], "-h"))) {
         std::printf(
+#ifdef NDEBUG
+            "usage: takclient --data <retail-install-dir>\n"
+            "  Launches the game and its front-end menu.\n"
+            "  --version, -v   print version and exit\n"
+            "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ overrides/.\n");
+#else
             "usage: takclient [mode] --data <retail-install-dir> [options]\n"
             "  With no mode (or only flags), launches the front-end MENU.\n"
             "  modes: menu | game <map> | map <map> | replay <file.takrep> | model <file.3do>\n"
@@ -9688,9 +9695,25 @@ int main(int argc, char** argv) {
             "    game multiplayer:   add --server host [--serverport N] [--name X].\n"
             "    game --campaign <stem>: play a campaign mission (e.g. takmission01_mt).\n"
             "  common: [--side X --aiside Y] [--overrides none|cosmetic|full] [--shot out.png]\n"
+            "  (debug build: all dev/test flags below are available.)\n"
             "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ overrides/.\n");
+#endif
         return 0;
     }
+#ifdef NDEBUG
+    // Hardened release CLI: only --data (plus the meta --version/--help) is honoured.
+    // Every gameplay/dev/test flag and every TAK_* env var is debug-only, so a shipped
+    // build has no hidden switches -- the game is configured through the menu + Options.
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--version" || a == "-v") { std::printf("takclient (TAK engine) %s\n", tak::kVersion); return 0; }
+        if (a == "--help" || a == "-h") { std::printf("usage: takclient --data <retail-install-dir>\n"); return 0; }
+        if (a == "--data") { ++i; continue; }   // its value is consumed by the parser below
+        std::fprintf(stderr,
+            "takclient: unknown option '%s' -- release builds accept only --data and --version.\n", a.c_str());
+        return 2;
+    }
+#endif
     // The first positional arg is the launch mode only if it's a known keyword;
     // otherwise the default is the front-end menu, so `takclient --data <dir>` (or even
     // bare `takclient`) just opens it -- no need to type "menu".
@@ -9817,7 +9840,7 @@ int main(int argc, char** argv) {
     localHarness = demo || scenario || missionFlag || navy || amphib || firetest ||
                    facetest || hilltest || guardtest || lodetest || keytest ||
                    soundtest || misstest || creon || testbuild ||
-                   (std::getenv("TAK_FFA") != nullptr);
+                   (tak::devEnv("TAK_FFA") != nullptr);
 #endif
     // Create the window + renderer up front so the front-end menu can drive the
     // single-player / multiplayer setup that follows it.
@@ -10057,7 +10080,7 @@ int main(int argc, char** argv) {
                 if (!campaignStem.empty())
                     gameView->setMissionStem(campaignStem);         // autoMode 8 hosts this mission
                 else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
-                if (const char* rp = std::getenv("TAK_RESUME")) gameView->setResumePath(rp);
+                if (const char* rp = tak::devEnv("TAK_RESUME")) gameView->setResumePath(rp);
             }
             // Never let the window shrink below what the widest build-icon row
             // needs (full-size icons), and grow it now if it opened smaller.
@@ -10120,7 +10143,7 @@ int main(int argc, char** argv) {
     // takserver and print periodic hashes. Proves the server-sequenced lockstep
     // end to end without any SDL UI. (--mphost creates+starts, --mpjoin joins.)
     // Headless replay verify: play the whole recording and print the final hash.
-    if (gameView && gameView->replayMode() && std::getenv("TAK_REPLAY_VERIFY")) {
+    if (gameView && gameView->replayMode() && tak::devEnv("TAK_REPLAY_VERIFY")) {
         while (gameView->replayTick() < gameView->replayLength())
             gameView->replayStep(10.0f);   // guard caps to 64 ticks/call
         std::fprintf(stderr, "replay done: tick=%zu hash=%016llx units=%zu\n",
@@ -10135,7 +10158,7 @@ int main(int argc, char** argv) {
         // Jitter benchmark: run the client loop at a FIXED 60 fps (so the stall
         // metric is frame-rate-consistent) and enable the RTT probe. Otherwise the
         // usual tight poll loop.
-        bool bench = std::getenv("TAK_NETBENCH") != nullptr;
+        bool bench = tak::devEnv("TAK_NETBENCH") != nullptr;
         if (bench) gameView->netEnableRttProbe();
         while (gameView->mpAutoStep(mpHeadless, mapId, crusades)) {
             if (int(gameView->netTick()) >= limitTicks) break;
@@ -10341,7 +10364,7 @@ int main(int argc, char** argv) {
         // Optional per-phase profiler (TAK_PROF=1): prints where each frame's
         // wall-clock goes, once a second, so a stall can be localised on real
         // hardware that the headless software renderer can't show.
-        static const bool prof = getenv("TAK_PROF") != nullptr;
+        static const bool prof = tak::devEnv("TAK_PROF") != nullptr;
         static double pUpd = 0, pDraw = 0, pPres = 0, pAcc = 0;
         static int pFrames = 0;
         auto pnow = [] { return double(SDL_GetPerformanceCounter()) /
@@ -10365,8 +10388,8 @@ int main(int argc, char** argv) {
                 (void)netAccum;
                 // TAK_MPAUTO=N overrides the lobby driver (0 = UI-driven, the
                 // default; 1 = auto-host; 2 = auto-join) -- handy for screenshots.
-                static int autoOv = std::getenv("TAK_MPAUTO")
-                                        ? std::atoi(std::getenv("TAK_MPAUTO")) : mpAutoMode;
+                static int autoOv = tak::devEnv("TAK_MPAUTO")
+                                        ? std::atoi(tak::devEnv("TAK_MPAUTO")) : mpAutoMode;
                 gameView->mpAutoStep(autoOv, serverMapId, crusades);
             } else {
                 gameView->update(dt);
@@ -10445,7 +10468,7 @@ int main(int argc, char** argv) {
             // Render a few frames so lazy content settles, then capture. For content
             // that settles asynchronously (a network spectator building its world),
             // TAK_SHOT_MS waits that many wall-clock ms before capturing instead.
-            static const char* shotMsEnv = std::getenv("TAK_SHOT_MS");
+            static const char* shotMsEnv = tak::devEnv("TAK_SHOT_MS");
             static uint64_t shotT0 = SDL_GetTicks64();
             static int frames = 0;
             bool ready = shotMsEnv ? (SDL_GetTicks64() - shotT0 >= uint64_t(std::atoi(shotMsEnv)))

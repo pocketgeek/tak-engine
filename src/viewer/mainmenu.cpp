@@ -11,6 +11,7 @@
 #include "viewer/menumusic.h"
 #include "viewer/options.h"
 #include "viewer/settings.h"
+#include "viewer/dev.h"
 
 #include <memory>
 
@@ -520,7 +521,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         for (auto& dr : d_->doors) d_->updateDoor(dr, 0.0);
         d_->render(w, h);
         // Debug: TAK_SHOT_CAMPAIGN captures the campaign picker overlay for tests.
-        if (const char* sc = settings ? std::getenv("TAK_SHOT_CAMPAIGN") : nullptr) {
+        if (const char* sc = settings ? tak::devEnv("TAK_SHOT_CAMPAIGN") : nullptr) {
             int tab = std::atoi(sc);   // TAK_SHOT_CAMPAIGN=1 -> Iron Plague tab
             Settings tmp = *settings;
             if (tab == 1) tmp.campaignDone["the iron plague"] = 24;   // reveal finale + alt ending
@@ -529,7 +530,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         }
         d_->screenshot(w, h, shotPath);
         // Debug: TAK_SHOT_RESULT captures the victory result screen (saves to its path).
-        if (settings && std::getenv("TAK_SHOT_RESULT"))
+        if (settings && tak::devEnv("TAK_SHOT_RESULT"))
             ResultScreen::run(d_->ren, d_->vfs, true, "MISSION 1", true, settings, nullptr);
         return Choice::None;
     }

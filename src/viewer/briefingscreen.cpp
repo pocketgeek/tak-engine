@@ -13,6 +13,7 @@
 #include "viewer/cursors.h"
 #include "viewer/menumusic.h"
 #include "viewer/settings.h"
+#include "viewer/dev.h"
 
 namespace tak {
 
@@ -175,7 +176,7 @@ bool BriefingScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, const std::stri
             cursors.draw(ren, CursorId::Normal, mx, my, settings ? settings->cursorScale : 4);
         }
         // Debug: TAK_SHOT_BRIEFING captures one frame for tests, then begins.
-        if (const char* sp = std::getenv("TAK_SHOT_BRIEFING")) {
+        if (const char* sp = tak::devEnv("TAK_SHOT_BRIEFING")) {
             std::vector<uint8_t> px(size_t(w) * size_t(h) * 4);
             if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), w * 4) == 0)
                 png::write(sp, w, h, px);

@@ -10,6 +10,7 @@
 #include "viewer/cursors.h"
 #include "viewer/menumusic.h"
 #include "viewer/settings.h"
+#include "viewer/dev.h"
 
 namespace tak {
 
@@ -108,7 +109,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
             cursors.draw(ren, CursorId::Normal, mx, my, settings ? settings->cursorScale : 4);
         }
-        if (const char* sp = std::getenv("TAK_SHOT_RESULT")) {
+        if (const char* sp = tak::devEnv("TAK_SHOT_RESULT")) {
             std::vector<uint8_t> px(size_t(w) * size_t(h) * 4);
             if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), w * 4) == 0)
                 png::write(sp, w, h, px);
