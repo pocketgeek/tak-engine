@@ -1474,7 +1474,8 @@ void World::tickReclaim(Unit& b, float dt) {
     b.heading += turn;
     float d = std::min(f.work, kReclaimRate * dt);
     f.work -= d;
-    players_[size_t(b.player)].mana += f.manaYield * (d / f.workFull);   // drip
+    players_[size_t(b.player)].mana +=
+        f.manaYield * (d / f.workFull) * players_[size_t(b.player)].manaMult;   // drip (income-cheat scaled)
     if (f.work <= 0) {
         f.alive = false;
         if (f.blocks) {   // free the ground cells it occupied (setupMatch blocked nav_)
@@ -1903,6 +1904,10 @@ void World::tick(float dt) {
         tm.storage += u.type->storage;
         if (u.type->attractsGods) godPriests[size_t(u.player)]++;
     }
+    // Difficulty income cheat: scale the summed income so the boost flows through the
+    // mana accrual below, allied surplus sharing, and god-favour alike. manaMult is 1
+    // for everyone but an Absurd AI, so this is an exact no-op (x1.0) otherwise.
+    for (auto& tm : players_) tm.income *= tm.manaMult;
     // Apply income, then share the economy across allies: mana that would
     // overflow a player's storage flows to teammates that still have headroom,
     // so a maxed-out ally feeds the team instead of wasting mogrium. It is truly

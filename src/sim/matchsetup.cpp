@@ -274,7 +274,10 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
 
     // Players + teams.
     world.setPlayerCount(int(cfg.slots.size()));
-    for (int i = 0; i < int(cfg.slots.size()); ++i) world.setTeam(i, cfg.slots[i].team);
+    for (int i = 0; i < int(cfg.slots.size()); ++i) {
+        world.setTeam(i, cfg.slots[i].team);
+        world.player(i).manaMult = cfg.slots[i].manaMult;   // Absurd AI = 2x income
+    }
     // Gods: read the appear time from gods.tdf so every peer derives it the same.
     float godSec = 1e9f;   // 1e9 => never manifests (gods off)
     if (cfg.gods) {

@@ -30,14 +30,19 @@ Profile loadProfile(const tak::hpi::Vfs& vfs) {
 
 DiffParams paramsFor(Difficulty d) {
     switch (d) {
+        // Turtle: Easy's build-up, but never sends an attack wave -- it only defends
+        // (idle units still auto-fire on anything that walks into range).
+        case Difficulty::Passive: return {60, 4, 1, 1, 70,  false, false};
         // Sluggish: reacts slowly, builds up slowly, and only commits once it has
         // gathered a sizeable group -- so it's passive and beatable.
-        case Difficulty::Easy:   return {60, 4, 1, 1, 70,  false};
+        case Difficulty::Easy:   return {60, 4, 1, 1, 70,  false, true};
         // Fast, army-heavy, and aggressive: reacts often, attacks with small groups,
         // and pushes bigger unit limits.
-        case Difficulty::Hard:   return {20, 2, 3, 8, 150, true};
+        case Difficulty::Hard:   return {20, 2, 3, 8, 150, true,  true};
+        // Hard's behaviour, plus a 2x income cheat applied to the sim (incomeMultFor).
+        case Difficulty::Absurd: return {20, 2, 3, 8, 150, true,  true};
         case Difficulty::Normal:
-        default:                 return {30, 3, 2, 3, 100, true};
+        default:                 return {30, 3, 2, 3, 100, true,  true};
     }
 }
 
@@ -88,7 +93,12 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     const auto& menu = registry_.buildable(producer.type->id);
     const tak::sim::UnitType* chosen = nullptr;
     int total = 0;
-    float income = world.player(player_).income;
+    // Plan against BASE income, not an Absurd AI's cheated 2x: the affordability gate
+    // should reason like Hard does, so the cheat shows up as builds finishing faster
+    // and never stalling -- not as the richer treasury luring the weighted pick onto
+    // pricey early buildings (which starved the army in testing).
+    const auto& me = world.player(player_);
+    float income = me.income / std::max(me.manaMult, 1.0f);
     for (const auto& id : menu) {
         const auto* ut = registry_.find(id);
         if (!ut) continue;
@@ -221,6 +231,7 @@ bool Controller::nearestEnemyStart(float cx, float cz, float& tx, float& tz) con
 // the nearest enemy it can SEE, else the nearest enemy start (marching on the base).
 // Also sends one early scout so the AI reveals + commits rather than turtling forever.
 void Controller::sendWaves(const tak::sim::World& world, const CommandSink& sink) {
+    if (!dp_.attack) return;   // Passive: never marches out; units defend in place.
     std::vector<int> idle;
     double sx = 0, sz = 0;
     const tak::sim::UnitType* atype = nullptr;

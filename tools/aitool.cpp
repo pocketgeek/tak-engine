@@ -2,7 +2,7 @@
 // how its economy + army develop and whether it marches on the enemy. A dev harness
 // for tuning the AI -- not shipped in a game.
 //
-//   aitool <retail-install-dir> [map] [easy|normal|hard] [seconds]
+//   aitool <retail-install-dir> [map] [passive|easy|normal|hard|absurd] [seconds]
 
 #include "ai/ai.h"
 #include "hpi/hpi.h"
@@ -18,13 +18,16 @@
 using namespace tak;
 
 int main(int argc, char** argv) {
-    if (argc < 2) { std::fprintf(stderr, "usage: aitool <install> [map] [easy|normal|hard] [seconds]\n"); return 2; }
+    if (argc < 2) { std::fprintf(stderr, "usage: aitool <install> [map] [passive|easy|normal|hard|absurd] [seconds]\n"); return 2; }
     std::string dataRoot = argv[1];
     std::string map = argc >= 3 ? argv[2] : "Inner Circle";
     std::string dstr = argc >= 4 ? argv[3] : "normal";
     int seconds = argc >= 5 ? std::atoi(argv[4]) : 180;
-    ai::Difficulty diff = dstr == "easy" ? ai::Difficulty::Easy
-                        : dstr == "hard" ? ai::Difficulty::Hard : ai::Difficulty::Normal;
+    ai::Difficulty diff = dstr == "passive" ? ai::Difficulty::Passive
+                        : dstr == "easy"    ? ai::Difficulty::Easy
+                        : dstr == "hard"    ? ai::Difficulty::Hard
+                        : dstr == "absurd"  ? ai::Difficulty::Absurd
+                                            : ai::Difficulty::Normal;
 
     hpi::Vfs vfs = hpi::mountRetailRoot(dataRoot);
     sim::TypeRegistry reg;
@@ -38,7 +41,10 @@ int main(int argc, char** argv) {
     cfg.vfs = &vfs;
     cfg.mapPath = hpi::findMap(vfs, map);
     if (cfg.mapPath.empty()) { std::fprintf(stderr, "aitool: map '%s' not found\n", map.c_str()); return 1; }
-    cfg.slots = {{true, 0, 0}, {true, 1, 1}};
+    // Slot 0 = opponent (idle, or a 2nd AI under TAK_2AI), slot 1 = the AI under test.
+    // Both carry the difficulty's income multiplier so an Absurd test is fair either way.
+    float mm = ai::incomeMultFor(diff);
+    cfg.slots = {{true, 0, 0, mm}, {true, 1, 1, mm}};
     auto spots = sim::setupMatch(w, reg, cfg);
     std::vector<std::pair<float, float>> enemyStarts;
     if (!spots.empty()) enemyStarts.push_back(spots[0]);   // the human's start

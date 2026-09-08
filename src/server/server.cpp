@@ -652,7 +652,11 @@ void Server::tryStart(Client& c) {
             cfg.slots.resize(size_t(maxSlot + 1));
             for (int i = 0; i <= maxSlot; ++i) {
                 const auto& s = r->slots[i];
-                cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team};
+                // Absurd AI slots earn double income (incomeMultFor); derived from the
+                // shared aiLevel so the client mirror sets the same factor (lockstep).
+                float mm = s.type == 2
+                    ? tak::ai::incomeMultFor(tak::ai::difficultyFromLevel(s.aiLevel)) : 1.0f;
+                cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm};
             }
             auto spots = tak::sim::setupMatch(*r->ref, *r->reg, cfg);
             // setupMatch returns start positions in USED-slot order; remap to slot index.
@@ -673,8 +677,7 @@ void Server::tryStart(Client& c) {
                         if (r->ref->allied(i, j)) continue;
                         enemyStarts.push_back(slotPos[size_t(j)]);
                     }
-                    auto diff = static_cast<tak::ai::Difficulty>(
-                        r->slots[i].aiLevel <= 2 ? r->slots[i].aiLevel : 1);
+                    auto diff = tak::ai::difficultyFromLevel(r->slots[i].aiLevel);
                     r->ai.emplace_back(i, *r->reg, aiProfile_, 0x7a6b0000u + r->id,
                                        diff, std::move(enemyStarts));
                 }
@@ -736,7 +739,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             s.color = color % 10;
             s.team = uint8_t(team % kMaxSlots);
             s.ready = ready ? 1 : 0;
-            s.aiLevel = aiLevel > 2 ? 1 : aiLevel;   // 0=easy 1=normal 2=hard
+            s.aiLevel = aiLevel > 4 ? 2 : aiLevel;   // 0=passive 1=easy 2=normal 3=hard 4=absurd
             broadcastLobby(*r);
             break;
         }

@@ -39,7 +39,25 @@ Profile loadProfile(const tak::hpi::Vfs& vfs);
 // AI plays (economy pace, army size before it commits, aggression, reaction rate)
 // rather than cheating its economy -- so all three respect the same rules the human
 // does. See paramsFor().
-enum class Difficulty : uint8_t { Easy = 0, Normal = 1, Hard = 2 };
+// Ordered weakest -> strongest; the value is the wire aiLevel (SlotInfo.aiLevel).
+// Passive = Easy that never attacks (defends only). Absurd = Hard with a mana-income
+// cheat (see incomeMultFor). Renumbering is versioned by kNetVersion.
+enum class Difficulty : uint8_t {
+    Passive = 0, Easy = 1, Normal = 2, Hard = 3, Absurd = 4
+};
+
+// Map a wire aiLevel to a Difficulty, clamping anything out of range to Normal.
+inline Difficulty difficultyFromLevel(uint8_t lvl) {
+    return lvl <= uint8_t(Difficulty::Absurd) ? Difficulty(lvl) : Difficulty::Normal;
+}
+
+// Per-player mana-income multiplier for a difficulty. This is the ONE economy cheat:
+// Absurd earns double from every income source. It scales HASHED sim state (mana), so
+// every peer must apply the same factor to the same player -- it is derived from the
+// broadcast aiLevel and set on the sim player at match setup, never AI-local.
+inline constexpr float incomeMultFor(Difficulty d) {
+    return d == Difficulty::Absurd ? 2.0f : 1.0f;
+}
 
 // Behaviour knobs derived from Difficulty (paramsFor).
 struct DiffParams {
@@ -49,6 +67,7 @@ struct DiffParams {
     int  producersPerThink;// how many idle producers act each think (economy/APM pace)
     int  limitScale;       // percent applied to the profile's unit limits (100 = as shipped)
     bool scout;            // send an early lone scout toward an enemy start
+    bool attack;           // commit attack waves at all (Passive never does -- defends only)
 };
 DiffParams paramsFor(Difficulty d);
 

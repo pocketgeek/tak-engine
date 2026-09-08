@@ -24,6 +24,7 @@
 #include "hpi/hpi.h"
 #include "net/client.h"
 #include "net/lockstep.h"
+#include "ai/ai.h"          // Difficulty <-> aiLevel + incomeMultFor (header-only helpers)
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
@@ -2424,7 +2425,11 @@ public:
         cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
             const auto& s = room.slots[i];
-            cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team};
+            // Mirror the referee's per-slot income multiplier (Absurd AI = 2x) from the
+            // shared aiLevel, so hashed mana stays identical to the server (lockstep).
+            float mm = s.type == 2
+                ? tak::ai::incomeMultFor(tak::ai::difficultyFromLevel(s.aiLevel)) : 1.0f;
+            cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm};
             colorSlot_[i & 7] = s.color % 10;
             playerAi_[i & 7] = (s.type == 2);
             playerName_[i & 7] = !s.name.empty()
@@ -2604,8 +2609,8 @@ public:
     // Normal. The interactive lobby sets it per-slot via the Room UI instead.
     static uint8_t aiLevelEnv() {
         const char* e = std::getenv("TAK_AI_LEVEL");
-        int v = e ? std::atoi(e) : 1;
-        return uint8_t(v < 0 ? 0 : v > 2 ? 2 : v);
+        int v = e ? std::atoi(e) : 2;   // default normal (0=passive..4=absurd)
+        return uint8_t(v < 0 ? 0 : v > 4 ? 4 : v);
     }
 
     bool mpAutoStep(int autoMode, const std::string& mapId, bool crusades) {
@@ -8628,16 +8633,20 @@ private:
             else if (s.type == 2) {
                 blockText(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f,
                           {210, 200, 150, 255});
-                // AI difficulty (host cycles EASY -> NORMAL -> HARD).
-                static const char* diffName[3] = {"EASY", "NORMAL", "HARD"};
-                SDL_Color dcol = s.aiLevel == 0 ? SDL_Color{150, 200, 150, 255}
-                               : s.aiLevel == 2 ? SDL_Color{225, 150, 140, 255}
-                                                : SDL_Color{210, 200, 150, 255};
-                blockText(diffName[s.aiLevel % 3], x + 178, y + 9, 1.4f, dcol);
-                if (host) { SDL_FRect db{x + 176, y + 6, 78, 18};
+                // AI difficulty (host cycles PASSIVE -> EASY -> NORMAL -> HARD -> ABSURD).
+                static const char* diffName[5] = {"PASSIVE", "EASY", "NORMAL", "HARD", "ABSURD"};
+                static const SDL_Color diffCol[5] = {
+                    {150, 180, 210, 255},   // passive  (calm blue)
+                    {150, 200, 150, 255},   // easy     (green)
+                    {210, 200, 150, 255},   // normal   (neutral gold)
+                    {225, 150, 140, 255},   // hard     (red)
+                    {230, 120, 220, 255}};  // absurd   (magenta)
+                uint8_t lvl = s.aiLevel % 5;
+                blockText(diffName[lvl], x + 178, y + 9, 1.4f, diffCol[lvl]);
+                if (host) { SDL_FRect db{x + 176, y + 6, 92, 18};
                     lobbyHots_.push_back({db, [this, i] { const auto& s2 = mpRoom().slots[i];
                         mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
-                                     uint8_t((s2.aiLevel + 1) % 3)); }}); }
+                                     uint8_t((s2.aiLevel + 1) % 5)); }}); }
             }
             // faction / color / team edit: your own row, or (host) any AI row.
             bool canEdit = mine || (host && s.type == 2);

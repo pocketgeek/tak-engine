@@ -382,6 +382,11 @@ struct Player {
     float mana = 500;
     float storage = 0;   // recomputed each tick from alive units
     float income = 0;
+    // Income multiplier (1.0 = normal). Only ever != 1 for an Absurd-difficulty AI,
+    // set once at match setup and applied to every mana source. Constant per game and
+    // its effect lands in `mana` (which IS hashed), so it need not be hashed itself,
+    // but every peer must set it identically or their mana diverges.
+    float manaMult = 1.0f;
     // God economy: priests (attractsgods) channel mana into favour; once it fills
     // after the gods' appear time, the faction's god can manifest (once).
     float godFavor = 0;
