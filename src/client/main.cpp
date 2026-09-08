@@ -2696,6 +2696,20 @@ public:
         }
         // Cosmetics once per frame, covering the game time actually played.
         if (drained > 0) cosmeticStep(float(drained) / 30.0f);
+        // Measure the ACTUAL game speed: how fast our sim really advances (ticks/sec
+        // over a ~0.5s window, /30 = a speed multiplier). At the requested speed this
+        // tracks it; when a client can't keep up (or the server paces to the slowest)
+        // it reads lower. Shown on the F4 board next to the requested speed.
+        {
+            uint64_t na = SDL_GetTicks64();
+            if (actualSpeedT0_ == 0) { actualSpeedT0_ = na; actualSpeedTick0_ = netTick_; }
+            else if (na - actualSpeedT0_ >= 500) {
+                float ips = float(int64_t(netTick_) - int64_t(actualSpeedTick0_)) * 1000.0f
+                            / float(na - actualSpeedT0_);
+                actualSpeed_ = ips / 30.0f;
+                actualSpeedT0_ = na; actualSpeedTick0_ = netTick_;
+            }
+        }
         // "Machine too slow" guard: if the backlog stays deep for a sustained
         // stretch, this client can't process ticks as fast as they arrive and
         // will never catch up -- fail clearly instead of falling ever further
@@ -6644,6 +6658,9 @@ private:
     }
     uint32_t netTick_ = 0;
     std::string netError_;
+    // Actual-vs-requested game-speed meter (F4): measured from our own tick advance.
+    uint64_t actualSpeedT0_ = 0, actualSpeedTick0_ = 0;
+    float actualSpeed_ = 0.0f;
     bool follow_ = false;
     bool trackSel_ = false;   // T: keep the camera centred on the selection
     bool trace_ = false;
@@ -9387,6 +9404,17 @@ private:
         // FPS on the left; MANA (spectator only) / UNITS / KILLS column headers.
         std::snprintf(buf, sizeof buf, "FPS %d", int(fps_ + 0.5f));
         blockText(buf, x, y, px, SDL_Color{190, 190, 195, 255});
+        // Net games: requested game speed and the ACTUAL speed our sim achieves
+        // (they diverge when a client -- or the server, pacing to the slowest --
+        // can't sustain the requested rate).
+        if (mp_) {
+            float req = std::max(1, int(mp_->gameSpeed())) / 10.0f;
+            char sb[48];
+            std::snprintf(sb, sizeof sb, "SPEED %.1fx  ACTUAL %.1fx", req, actualSpeed_);
+            SDL_Color scol = actualSpeed_ < req - 0.3f ? SDL_Color{240, 200, 110, 255}
+                                                       : SDL_Color{150, 195, 160, 255};
+            blockText(sb, x + 96, y + 3, 1.6f, scol);
+        }
         if (showMana) blockText("MANA", colMana, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
         blockText("UNITS", colUnits, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
         blockText("KILLS", colKills, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});

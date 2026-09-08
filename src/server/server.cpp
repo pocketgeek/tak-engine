@@ -51,6 +51,12 @@ uint64_t nowMs() {   // monotonic wall-clock (tick pacing / timeouts; never hash
 constexpr uint64_t kPingIdleMs = 5000;    // ping a quiet client after this
 constexpr uint64_t kTimeoutMs = 15000;    // drop a silent client after this
 constexpr int kCmdCapPerTick = 64;        // per-client command cap per tick
+// The server never runs more than this many ticks ahead of the slowest seated human
+// player: a player whose machine can't sustain the game speed gracefully SLOWS the
+// whole match to what it can handle (the actual speed drops below the requested one)
+// instead of desyncing or being dropped. Generous enough not to throttle normal play
+// (hashes are reported every kHashPeriod ticks, plus the client's jitter buffer).
+constexpr uint32_t kMaxLeadTicks = 120;
 uint64_t kGraceMs = 300000;     // hold a dropped slot this long (5 min)
 uint64_t kPauseBudgetMs = 120000;  // total auto-pause a player may cause
 
@@ -74,6 +80,7 @@ struct Client {
     uint64_t lastRecvMs = 0;
     uint64_t lastPingMs = 0;
     bool loaded = false;
+    uint32_t ackTick = 0;   // latest tick this client reported a hash for (flow control)
 };
 
 struct Room {
@@ -233,6 +240,7 @@ private:
     void leaveRoom(Client& c, const char* reason);
     void tryStart(Client& c);
     void closeTick(Room& r);
+    bool canAdvance(const Room& r) const;   // false = wait for a lagging player (flow control)
     void checkHashes(Room& r, uint32_t tick);
     void dropClient(uint32_t id, const char* reason);
     void writeSlots(Writer& w, Room& r);
@@ -849,6 +857,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             uint32_t tk = rd.u32(); uint64_t h = rd.u64();
             if (!rd.ok) return;
             r->hashes[tk][c.id] = h;
+            if (tk > c.ackTick) c.ackTick = tk;   // flow control: this client is up to `tk`
             checkHashes(*r, tk);
             break;
         }
@@ -905,6 +914,24 @@ void Server::checkHashes(Room& r, uint32_t tick) {
         }
     }
     r.hashes.erase(r.hashes.begin(), std::next(it));   // drop this and older
+}
+
+bool Server::canAdvance(const Room& r) const {
+    // Slow to the slowest seated HUMAN player: the server may not run more than
+    // kMaxLeadTicks past the least-advanced player's acked tick. AIs are server-run
+    // (always current) and spectators are excluded (they lag on their own, never
+    // holding the match up). No seated humans -> no constraint (all-AI watch game).
+    uint32_t slowest = r.tick;
+    bool anyHuman = false;
+    for (int i = 0; i < kMaxSlots; ++i) {
+        if (r.slots[i].type != 1 || r.slotClient[i] < 0) continue;
+        auto it = clients_.find(uint32_t(r.slotClient[i]));
+        if (it == clients_.end() || !it->second->loaded) continue;
+        anyHuman = true;
+        slowest = std::min(slowest, it->second->ackTick);
+    }
+    if (!anyHuman) return true;
+    return r.tick <= slowest + kMaxLeadTicks;
 }
 
 void Server::closeTick(Room& r) {
@@ -1123,10 +1150,17 @@ int Server::run() {
             std::fprintf(stderr, "game %u ended (all players gone)\n", rid);
             rooms_.erase(rid);
         }
-        // Close ticks for running, unpaused rooms whose deadline passed.
+        // Close ticks for running, unpaused rooms whose deadline passed -- but never
+        // get more than kMaxLeadTicks ahead of the slowest seated player (flow control):
+        // if one is behind, hold and rebase the clock so we resume without a burst.
         now = nowMs();
-        for (auto& [rid, r] : rooms_)
-            while (r.running && !r.paused && r.nextTickMs <= now) closeTick(r);
+        for (auto& [rid, r] : rooms_) {
+            if (!r.running || r.paused) continue;
+            while (r.nextTickMs <= now) {
+                if (!canAdvance(r)) { r.nextTickMs = now; break; }   // pace to the slowest
+                closeTick(r);
+            }
+        }
         // Flush all pending writes (bundles just queued) + keepalive + timeouts.
         now = nowMs();
         for (auto& [id, c] : clients_) {
