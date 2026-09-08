@@ -8,6 +8,7 @@
 
 #include <SDL.h>
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -35,41 +36,37 @@ public:
         src_.assign(buf, buf + len);
         fmt_ = wav.format;
         SDL_FreeWAV(buf);
+        // Callback-driven, NOT queue-driven: the audio thread pulls chunks itself, so a
+        // long synchronous load on the main thread (map + sprite atlases when a game
+        // starts) can't starve the queue and stutter the BGM the way a per-frame poll()
+        // did. Matches SoundBank's model.
         SDL_AudioSpec want = wav, have{};
-        want.callback = nullptr;   // queue-driven
-        dev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+        want.samples = 2048;             // ~46ms device buffer at 44.1kHz
+        want.callback = &MenuMusic::mixThunk;
+        want.userdata = this;
+        pos_ = 0;                        // set before the device unpauses (callback reads it)
+        dev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);   // flags 0 => have == want
         if (!dev_) { src_.clear(); return; }
-        int frame = have.channels * (SDL_AUDIO_BITSIZE(have.format) / 8);
-        if (frame <= 0) frame = 1;
-        frameSize_ = frame;
-        bytesPerSec_ = have.freq * frame;
-        pos_ = 0;
+        silence_ = have.silence;
         track_ = track;
-        poll();                    // prime the queue at the current volume
-        SDL_PauseAudioDevice(dev_, 0);
+        SDL_PauseAudioDevice(dev_, 0);   // the callback starts pulling
     }
 
     // BGM + master volume on the SoundBank 0..256 scale. Applies live WITHOUT
-    // restarting: the new gain simply takes effect on the chunks queued from here on
-    // (see poll), so dragging a volume slider doesn't clear the queue or jump the
-    // track back to its start. A no-op when the volume hasn't actually changed.
+    // restarting: the callback simply reads the new gain, so dragging a volume slider
+    // doesn't jump the track back to its start.
     void setVolume(int master, int bgm) {
-        master_ = master; bgm_ = bgm;
+        master_.store(master, std::memory_order_relaxed);
+        bgm_.store(bgm, std::memory_order_relaxed);
     }
 
-    // Keep the device fed by streaming small volume-scaled chunks from a play cursor,
-    // looping seamlessly at the end of the source. Called once per frame.
-    void poll() {
-        if (!dev_ || src_.empty()) return;
-        Uint32 low = Uint32(bytesPerSec_ / 4);        // keep ~0.25s buffered
-        size_t chunk = size_t(bytesPerSec_ / 20);     // ~50ms per queued chunk
-        chunk -= chunk % size_t(frameSize_);          // frame-align
-        if (chunk == 0) chunk = size_t(frameSize_);
-        for (int guard = 0; guard < 64 && SDL_GetQueuedAudioSize(dev_) < low; ++guard)
-            queueChunk(chunk);
-    }
+    // Callback-driven now, so there is nothing to pump each frame. Kept so the existing
+    // per-frame call sites stay valid.
+    void poll() {}
 
     void stop() {
+        // CloseAudioDevice stops + joins the callback thread, so it's safe to clear the
+        // source it reads only after this returns.
         if (dev_) { SDL_CloseAudioDevice(dev_); dev_ = 0; }
         src_.clear();
         pos_ = 0;
@@ -79,34 +76,37 @@ public:
     bool playing() const { return dev_ != 0; }
 
 private:
-    // Mix one volume-scaled chunk from the source at pos_ (wrapping at the end for a
-    // seamless loop) and queue it. All offsets stay frame-aligned because the source
-    // length and chunk size are.
-    void queueChunk(size_t chunk) {
-        int vol = 128 * bgm_ / 256 * master_ / 256;   // SDL_MIX_MAXVOLUME=128; 90/256 -> 45
-        std::vector<uint8_t> out;
-        out.reserve(chunk);
-        size_t need = chunk;
+    static void SDLCALL mixThunk(void* userdata, Uint8* stream, int len) {
+        static_cast<MenuMusic*>(userdata)->fill(stream, len);
+    }
+
+    // Fill one device buffer by mixing the volume-scaled source at pos_, wrapping at the
+    // end for a seamless loop. Runs on the AUDIO thread. Offsets stay frame-aligned
+    // because the source length and every mix step are.
+    void fill(Uint8* stream, int len) {
+        if (src_.empty()) { SDL_memset(stream, silence_, size_t(len)); return; }
+        int vol = 128 * bgm_.load(std::memory_order_relaxed) / 256
+                      * master_.load(std::memory_order_relaxed) / 256;   // SDL_MIX_MAXVOLUME=128
+        SDL_memset(stream, silence_, size_t(len));   // silence -> MixAudioFormat scales onto it
+        size_t need = size_t(len);
+        Uint8* out = stream;
         while (need > 0) {
             size_t avail = src_.size() - pos_;
             size_t take = std::min(need, avail);
-            size_t base = out.size();
-            out.resize(base + take, 0);                // silence -> MixAudioFormat scales into it
-            SDL_MixAudioFormat(out.data() + base, src_.data() + pos_, fmt_, Uint32(take), vol);
+            SDL_MixAudioFormat(out, src_.data() + pos_, fmt_, Uint32(take), vol);
             pos_ += take;
-            if (pos_ >= src_.size()) pos_ = 0;         // loop
+            if (pos_ >= src_.size()) pos_ = 0;       // loop
+            out += take;
             need -= take;
         }
-        SDL_QueueAudio(dev_, out.data(), Uint32(out.size()));
     }
 
     SDL_AudioDeviceID dev_ = 0;
     std::vector<uint8_t> src_;    // unscaled source, kept so volume can re-apply live
     SDL_AudioFormat fmt_ = 0;
-    size_t pos_ = 0;              // play cursor into src_ (bytes, frame-aligned)
-    int frameSize_ = 1;          // bytes per sample frame (channels * bytes/sample)
-    int bytesPerSec_ = 44100;    // for buffering thresholds
-    int master_ = 256, bgm_ = 90;
+    Uint8 silence_ = 0;          // device silence byte (have.silence)
+    size_t pos_ = 0;             // play cursor into src_ (bytes, frame-aligned); audio thread only
+    std::atomic<int> master_{256}, bgm_{90};   // read by the audio thread, set from the main thread
     int track_ = -1;
 };
 
