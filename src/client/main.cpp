@@ -6403,7 +6403,17 @@ private:
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
     bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
-    std::vector<std::pair<std::string, std::string>> mapList_;  // {name, tnt path}, cached
+    // One selectable map plus the attributes the picker can sort by, read once from
+    // the map's .ota GlobalHeader (a tiny text file -- no need to decompress the TNT).
+    struct MapInfo {
+        std::string name, path;
+        int players = 0;            // numplayers (else the StartPos count)
+        int sizeW = 0, sizeH = 0;   // "size = W x H" (0 if the .ota omits it)
+        int area() const { return sizeW * sizeH; }
+    };
+    std::vector<MapInfo> mapList_;      // cached, sorted per mapSort_
+    int mapSort_ = 0;                  // 0 = name, 1 = players, 2 = size
+    int mapSortDir_ = 1;              // 1 = ascending, -1 = descending
     // Create-screen map picker: a scrollable list box. mapScroll_ is the index of the
     // first visible row; the rest is geometry cached each frame for wheel + scrollbar
     // drag handling in lobbyInput (all in panel-local logical coords).
@@ -8775,6 +8785,55 @@ private:
     // res BIGRADARPIC (overview, field 12; minimap field 11 is the fallback) through
     // that same kingdom palette, so it matches retail's style but crisper. Index 9 is
     // retail's transparent index. Rebuilt only on selection change.
+    // Build the picker's map list once: names + paths from the VFS, enriched with
+    // each map's player count and size read from its .ota GlobalHeader (a small text
+    // file -- numplayers + "size = W x H" -- so no TNT decompression per map).
+    void buildMapList() {
+        mapList_.clear();
+        for (auto& [name, path] : tak::hpi::listMaps(vfs_)) {
+            MapInfo mi; mi.name = name; mi.path = path;
+            std::filesystem::path op = path; op.replace_extension(".ota");
+            std::string otaPath = op.generic_string();
+            if (vfs_.has(otaPath)) {
+                try {
+                    auto b = vfs_.read(otaPath);
+                    auto root = tak::tdf::parseText(std::string(b.begin(), b.end()), otaPath);
+                    if (const auto* gh = root.child("globalheader")) {
+                        mi.players = int(gh->numberOr("numplayers", 0));
+                        std::string sz = gh->valueOr("size", "");   // e.g. "16 x 16"
+                        int a = 0, c = 0;
+                        if (std::sscanf(sz.c_str(), "%d x %d", &a, &c) == 2) { mi.sizeW = a; mi.sizeH = c; }
+                    }
+                } catch (const std::exception&) {}
+            }
+            if (mi.players == 0)   // .ota had no numplayers: count the start positions
+                mi.players = int(tak::sim::parseStartPositions(vfs_, path).size());
+            mapList_.push_back(std::move(mi));
+        }
+        sortMapList();
+    }
+
+    // Sort the map list by the active key (name / players / size), tie-broken by name,
+    // in the chosen direction.
+    void sortMapList() {
+        int dir = mapSortDir_, key = mapSort_;
+        auto lname = [](const std::string& s) {
+            std::string t = s; std::transform(t.begin(), t.end(), t.begin(), ::tolower); return t;
+        };
+        std::stable_sort(mapList_.begin(), mapList_.end(),
+                         [&](const MapInfo& a, const MapInfo& b) {
+            long long c = 0;
+            if (key == 1) c = a.players - b.players;
+            else if (key == 2) c = a.area() - b.area();
+            if (c == 0) {   // tiebreak (and the whole order for NAME) by name A->Z
+                std::string na = lname(a.name), nb = lname(b.name);
+                if (na != nb) return dir > 0 ? na < nb : na > nb;
+                return false;
+            }
+            return dir > 0 ? c < 0 : c > 0;
+        });
+    }
+
     void buildMapPreview(const std::string& tntPath) {
         if (mapPreviewTex_) { SDL_DestroyTexture(mapPreviewTex_); mapPreviewTex_ = nullptr; }
         mapPreviewFor_ = tntPath;
@@ -8874,13 +8933,13 @@ private:
         // Map picker (right column): a scrollable list box. Selecting sets both the
         // wire id (mpMapId_ = bare .tnt stem) and mapPath_, so mpCapacity() recomputes
         // the chosen map's start-position count.
-        if (mapList_.empty()) mapList_ = tak::hpi::listMaps(vfs_);
+        if (mapList_.empty()) buildMapList();
         // Adopt the remembered map once (persisted across launches), and scroll to it.
         if (!mapPrefApplied_ && settings_ && !settings_->lastMap.empty()) {
             for (int i = 0; i < int(mapList_.size()); ++i)
-                if (mapList_[size_t(i)].first == settings_->lastMap) {
-                    mpMapId_ = mapList_[size_t(i)].first;
-                    mapPath_ = mapList_[size_t(i)].second;
+                if (mapList_[size_t(i)].name == settings_->lastMap) {
+                    mpMapId_ = mapList_[size_t(i)].name;
+                    mapPath_ = mapList_[size_t(i)].path;
                     mapScroll_ = std::max(0, i - 3);
                     break;
                 }
@@ -8888,7 +8947,31 @@ private:
         }
         float lx = 400, hy = 90;
         blockText("SELECT MAP", lx, hy, 1.8f, {200, 205, 220, 255});
-        const float boxX = lx, boxY = hy + 24, boxW = 340, boxH = 366, rowH = 24, sbW = 12;
+        // Sort buttons: NAME / PLAYERS / SIZE. Clicking sets the sort key; clicking the
+        // active one flips ascending/descending. The active key shows an up/down arrow.
+        {
+            const char* keys[3] = {"NAME", "PLAYERS", "SIZE"};
+            const float bw = 86, bh = 20, sy = hy + 20;
+            for (int k = 0; k < 3; ++k) {
+                float bx = lx + k * (bw + 6);
+                SDL_FRect b{bx, sy, bw, bh};
+                bool active = mapSort_ == k;
+                SDL_SetRenderDrawColor(ren_, active ? 56 : 34, active ? 74 : 38, active ? 96 : 50, 255);
+                SDL_RenderFillRectF(ren_, &b);
+                SDL_SetRenderDrawColor(ren_, 90, 100, 130, 255); SDL_RenderDrawRectF(ren_, &b);
+                std::string lbl = keys[k];
+                if (active) lbl += mapSortDir_ > 0 ? " ^" : " v";
+                blockText(lbl, bx + 6, sy + 5, 1.5f,
+                          active ? SDL_Color{215, 230, 245, 255} : SDL_Color{170, 178, 195, 255});
+                lobbyHots_.push_back({b, [this, k] {
+                    if (mapSort_ == k) mapSortDir_ = -mapSortDir_;   // toggle direction
+                    else { mapSort_ = k; mapSortDir_ = 1; }
+                    sortMapList();
+                    mapScroll_ = 0;
+                }});
+            }
+        }
+        const float boxX = lx, boxY = hy + 46, boxW = 340, boxH = 344, rowH = 24, sbW = 12;
         const int total = int(mapList_.size());
         mapVisRows_ = int(boxH / rowH);
         mapTotalRows_ = total;
@@ -8899,12 +8982,14 @@ private:
         SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &box);
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
         const float rowW = boxW - sbW - 4;
-        const int maxCh = int((rowW - 12) / 12);   // chars that fit at px 2.0
+        const float infoW = 96;                     // right-side "2P 8x8" column
+        const int maxCh = int((rowW - infoW - 12) / 12);   // name chars that fit at px 2.0
         for (int r = 0; r < mapVisRows_; ++r) {
             int i = mapScroll_ + r;
             if (i >= total) break;
-            const std::string& nm = mapList_[size_t(i)].first;
-            const std::string& pth = mapList_[size_t(i)].second;
+            const MapInfo& m = mapList_[size_t(i)];
+            const std::string& nm = m.name;
+            const std::string& pth = m.path;
             bool sel = (nm == mpMapId_);
             SDL_FRect row{boxX + 2, boxY + r * rowH, rowW, rowH};
             bool hot = lbHot(row);
@@ -8914,6 +8999,12 @@ private:
             blockText(nm.size() > size_t(maxCh) ? nm.substr(0, size_t(maxCh)) : nm,
                       boxX + 8, row.y + (rowH - 14) / 2, 2.0f,
                       sel ? SDL_Color{200, 240, 200, 255} : SDL_Color{220, 225, 235, 255});
+            // Right-aligned player count + size, e.g. "4P 16x16".
+            char info[24];
+            if (m.sizeW > 0) std::snprintf(info, sizeof info, "%dP %dx%d", m.players, m.sizeW, m.sizeH);
+            else std::snprintf(info, sizeof info, "%dP", m.players);
+            blockText(info, boxX + rowW - blockWidth(info, 1.5f) - 6, row.y + (rowH - 11) / 2, 1.5f,
+                      sel ? SDL_Color{170, 210, 170, 255} : SDL_Color{150, 160, 178, 255});
             lobbyHots_.push_back({row, [this, nm, pth] {
                 mpMapId_ = nm; mapPath_ = pth;
                 if (settings_) { settings_->lastMap = nm; saveSettings(*settings_); }  // remember it
