@@ -108,6 +108,9 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::Repair:
             if (owns(c.unitId)) { redirect(); world.repair(c.unitId, c.targetId, c.queue); }
             break;
+        case Cmd::SetSquad:
+            if (owns(c.unitId)) world.setSquad(c.unitId, c.targetId);
+            break;
     }
 }
 

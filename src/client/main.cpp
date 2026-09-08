@@ -1944,10 +1944,11 @@ public:
         }
         float zm = mapView_.zoom();
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
-            // Escape cancels a pending placement/order first; a stray selection is
-            // cleared; otherwise it opens the in-game menu. Once the game is over it
-            // returns to the front-end menu directly.
-            if (outcome_ != 0) { menuRequested_ = true; }
+            // Ctrl+Esc removes the selection from its squad; plain Escape cancels a
+            // pending placement/order first, then a stray selection, else the in-game
+            // menu. Once the game is over it returns to the front-end menu directly.
+            if (SDL_GetModState() & KMOD_CTRL) clearSquad();
+            else if (outcome_ != 0) { menuRequested_ = true; }
             else if (placing_ || pendingCmd_) { placing_ = nullptr; pendingCmd_ = 0; }
             else if (!selection_.empty()) selection_.clear();
             else exitMenu_ = true;
@@ -4009,6 +4010,29 @@ public:
                                int(shadowBatch_.size()), nullptr, 0);
         }
 
+        // Control-squad marker under each of YOUR units: a plain number for a group,
+        // "<N>F" for a formation. The number is the recall key (squad 10 shows as "0").
+        // Skipped when zoomed far out so it doesn't clutter the field.
+        if (hudFont_.ok() && zm > 0.55f)
+            for (const auto& u : world_.units()) {
+                if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_ ||
+                    u.squad == 0)
+                    continue;
+                if (u.underConstruction && !u.buildBegun) continue;
+                int num = std::abs(int(u.squad));
+                char key = (num == 10) ? '0' : char('0' + num);
+                std::string lbl(1, key);
+                if (u.squad < 0) lbl += 'F';   // formation
+                float cx = (u.x - mapView_.offX()) * zm - uLiftX(u) * zm;
+                float cy = (u.z - mapView_.offY()) * zm - uLiftY(u) * zm;
+                if (cx < -20 || cx > mvw + 20 || cy < -20 || cy > winH + 20) continue;
+                float sc = std::clamp(1.0f * zm, 0.8f, 1.5f);
+                float tw = float(hudFont_.width(lbl, sc));
+                hudFont_.draw(ren_, lbl, cx - tw / 2, cy + 3 * zm, sc,
+                              u.squad < 0 ? SDL_Color{150, 210, 255, 255}
+                                          : SDL_Color{240, 224, 120, 255});
+            }
+
         // Production progress above busy buildings.
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
@@ -6018,7 +6042,6 @@ private:
     float dragX0_ = 0, dragY0_ = 0, dragX1_ = 0, dragY1_ = 0;
     char pendingCmd_ = 0;   // armed order awaiting a click: 'f' fight-move,
                             // 'm' move, 'a' attack, 'p' patrol, 'g' guard
-    std::map<int, std::vector<int>> groups_;   // control groups 0-9
     bool paused_ = false;
     bool exitMenu_ = false;          // in-game exit overlay (Esc) is open
     bool canReturnToMenu_ = false;   // launched from the front-end -> offer MAIN MENU
@@ -7888,6 +7911,7 @@ private:
     bool handleKey(SDL_Keycode key, uint16_t mod) {
         bool ctrl = (mod & KMOD_CTRL) != 0;
         bool shift = (mod & KMOD_SHIFT) != 0;
+        bool alt = (mod & KMOD_ALT) != 0;
 
         // Pause toggle works without a selection.
         if (key == SDLK_PAUSE) { paused_ = !paused_; return true; }
@@ -7972,29 +7996,16 @@ private:
             return true;
         }
 
-        // Control groups on the number row: plain digit recalls, CTRL assigns,
-        // CTRL+SHIFT appends the current selection. Digit 0 is group 10.
+        // The number row 1-9,0 addresses control squads (0 = squad 10). CTRL+N assigns a
+        // GROUP, ALT+N a FORMATION; SHIFT appends instead of replacing. A plain digit
+        // recalls squad N. Squads are lockstep sim state (Cmd::SetSquad); a unit is in one
+        // squad at a time, and a number is a group XOR a formation (assigning replaces).
         int digit = -1;
         if (key >= SDLK_0 && key <= SDLK_9) digit = int(key - SDLK_0);
-        if (digit >= 0 && !spectating_) {   // control groups: watch-only can't select
-            int g = digit == 0 ? 10 : digit;
-            if (ctrl && shift) {   // add selection to the group
-                auto& grp = groups_[g];
-                for (int id : selection_)
-                    if (std::find(grp.begin(), grp.end(), id) == grp.end())
-                        grp.push_back(id);
-            } else if (ctrl) {     // (re)assign the group
-                groups_[g] = selection_;
-            } else {               // recall, dropping dead members
-                selection_.clear();
-                for (int id : groups_[g])
-                    if (const auto* u = world_.unit(id); u && u->alive())
-                        selection_.push_back(id);
-                if (!selection_.empty()) {
-                    centerOn(selection_.front());
-                    voice(selection_.front(), "select");
-                }
-            }
+        if (digit >= 0 && !spectating_) {
+            int num = digit == 0 ? 10 : digit;
+            if (ctrl || alt) assignSquad(num, alt ? -1 : +1, shift);
+            else             recallSquad(num);
             return true;
         }
 
@@ -8058,6 +8069,55 @@ private:
                 pred(u))
                 selection_.push_back(u.id);
         if (!selection_.empty()) voice(selection_.front(), "select");
+    }
+
+    // --- control squads (groups / formations); backed by lockstep Cmd::SetSquad -------
+    void issueSquad(int unitId, int val) {   // val: 0 none, +N group N, -N formation N
+        tak::net::Command c;
+        c.kind = tak::net::Cmd::SetSquad;
+        c.unitId = unitId;
+        c.targetId = val;
+        issue(c);
+    }
+
+    // Assign the current selection to squad `num` as a group (sign +1) or formation
+    // (sign -1). Assign REPLACES the squad (old members not selected are dropped); SHIFT
+    // appends (keeps them, converting the whole number to this type). A unit is in one
+    // squad -- setting it here removes it from any other -- and a number is a group XOR a
+    // formation, so re-typing a number moves every member onto the new type.
+    void assignSquad(int num, int sign, bool append) {
+        if (spectating_ || num < 1 || num > 10 || selection_.empty()) return;
+        int want = sign * num;
+        std::unordered_set<int> sel(selection_.begin(), selection_.end());
+        for (auto& u : world_.units())
+            if (u.alive() && u.player == localPlayer_ && std::abs(int(u.squad)) == num &&
+                sel.find(u.id) == sel.end())
+                issueSquad(u.id, append ? want : 0);   // append: retype it; else evict it
+        for (int id : selection_)
+            if (const auto* u = world_.unit(id); u && u->alive() && u->player == localPlayer_)
+                issueSquad(id, want);
+    }
+
+    // Recall squad `num` (group or formation): select its members, but NOT any builders in
+    // it -- a builder rides in a squad only to feed its products in, not to be commanded
+    // with the fighters.
+    void recallSquad(int num) {
+        if (spectating_) return;
+        selection_.clear();
+        for (auto& u : world_.units())
+            if (u.alive() && u.player == localPlayer_ && u.type &&
+                std::abs(int(u.squad)) == num && !u.type->isBuilder)
+                selection_.push_back(u.id);
+        if (!selection_.empty()) { centerOn(selection_.front()); voice(selection_.front(), "select"); }
+    }
+
+    // Ctrl+Esc: drop the selected units from whatever squad each is in.
+    void clearSquad() {
+        if (spectating_) return;
+        for (int id : selection_)
+            if (const auto* u = world_.unit(id);
+                u && u->alive() && u->player == localPlayer_ && u->squad)
+                issueSquad(id, 0);
     }
 
     bool onScreen(const tak::sim::Unit& u) const {

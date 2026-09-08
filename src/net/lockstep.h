@@ -30,6 +30,9 @@ enum class Cmd : uint8_t {
     Repair,        // mobile builder unitId repairs damaged friendly targetId (restores
                    // HP at its build rate, draining mana)
     Headbang,      // cosmetic emote: player's monarchs headbang to metal 10s (Shift+H)
+    SetSquad,      // assign unitId to a control squad: targetId = 0 none, +N group N,
+                   // -N formation N (N=1..10). A unit is in exactly one squad; formations
+                   // move at their slowest member's speed and their stragglers rejoin.
 };
 
 struct Command {

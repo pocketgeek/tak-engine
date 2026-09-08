@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 19;       // 19: +Passive/Absurd AI (aiLevel 0-4, renumbered)
+constexpr uint32_t kNetVersion = 20;       // 20: +control squads/formations (Cmd::SetSquad)
                                            // 15: GameOptions.speed/speedUnlock + Set/SpeedUpdate msgs
                                            // 14: Cmd::Headbang (Shift+H emote)
                                            // 13: under-construction units contribute no income/storage (economy fix)

@@ -235,6 +235,10 @@ struct Unit {
     int   stance = 1;      // combat stance: 0=offensive (chase freely), 1=defensive
                            // (leashed, the default/legacy behaviour), 2=passive
                            // (hold fire: no auto-acquire, only fights when ordered)
+    int8_t squad = 0;      // control squad: 0=none, +N=group N, -N=formation N (N=1..10,
+                           // the digit 0 key = 10). A unit is in exactly one squad. A
+                           // formation (squad<0) moves at its slowest member's speed and
+                           // its stragglers rejoin. Set via Cmd::SetSquad; folded in the hash.
     int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
     float captureProg = 0; // canCapture units: seconds spent charming the current target
     float homeX = 0, homeZ = 0;   // leash anchor (idle position) for auto-chase
@@ -601,6 +605,7 @@ public:
     void setStance(int unitId, int stance); // combat stance 0=offensive/1=defensive/2=passive
     void setCloak(int unitId, bool on);     // canCloak unit: enable/disable cloaking
     void setActive(int unitId, bool on);    // onOffable unit: power on/off
+    void setSquad(int unitId, int squad);   // control squad: 0 none, +N group N, -N formation N
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);
     // Board a friendly transport / sail to (x,z) and disembark.

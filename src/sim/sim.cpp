@@ -1014,6 +1014,12 @@ void World::setActive(int unitId, bool on) {
     u->active = on;
 }
 
+void World::setSquad(int unitId, int squad) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive()) return;
+    u->squad = int8_t(std::clamp(squad, -10, 10));   // 0 none, +N group N, -N formation N
+}
+
 void World::attack(int unitId, int targetId, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || u->type->weapon.damage <= 0) return;
@@ -1349,11 +1355,14 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
         return 0;
     if (atUnitCap(b->player)) return 0;   // at the unit cap: can't start a new build
     if (!canPlace(type, x, z)) return 0;
+    int8_t bsquad = b->squad;   // capture before spawn may realloc units_
     int id = spawn(type, x, z, 3.14159f, b->player);
     Unit* site = unit(id);
     site->underConstruction = true;
     site->beingBuilt = true;   // its builder owns it this tick (no instant decay)
     site->hp = type->maxHp * 0.05f;
+    // Auto-join: a conjured MOBILE unit inherits the builder's squad (a building never does).
+    if (bsquad && !type->isStructure()) site->squad = bsquad;
     if (!type->canMove) { blockFootprint(nav_, *type, x, z, true); flowCache_.clear(); }
     b = unit(builderId);   // spawn may have reallocated units_
     b->buildSiteId = id;
@@ -1865,6 +1874,9 @@ void World::tickProduction(Unit& u, float dt) {
     order(id, sx + float((id % 5) - 2) * 22, sz + 60, false);
     if (Unit* pu = unit(producerId)) {
         pu->justBuilt = id;
+        // Auto-join: a squad-member producer's new MOBILE unit joins its squad.
+        if (pu->squad && t && !t->isStructure())
+            if (Unit* nu = unit(id)) nu->squad = pu->squad;
         // Infinite build: re-queue so the next one starts once this one clears.
         if (pu->buildQueue.empty() && pu->repeatType)
             pu->buildQueue.push_back(pu->repeatType);
@@ -2002,6 +2014,34 @@ void World::tick(float dt) {
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
     rebuildGrid();   // spatial hash for this tick (combat acquire + separation)
+
+    // Formations (Unit::squad < 0): each tick, compute the group's centre + slowest
+    // member speed, then walk idle stragglers back toward the centre so they congregate.
+    // The mover below paces grouped members to `slowest`; members behind the centre
+    // (relative to the goal) keep their own speed to catch up. Deterministic: the sums
+    // accumulate in unit-index order and use only basic arithmetic + detmath::len.
+    constexpr float kFormBehind = 48.0f;   // sprint if this far behind the group (goal-relative)
+    constexpr float kFormRejoin = 140.0f;  // an idle member this far from the centre rejoins
+    struct FormAgg { double sx = 0, sz = 0; int n = 0; float slowest = 1e9f; };
+    FormAgg forms[kMaxPlayers][11] = {};   // [player][1..10]; slot 0 unused
+    auto formOf = [&](const Unit& u) -> FormAgg* {
+        if (u.squad >= 0 || u.player < 0 || u.player >= kMaxPlayers) return nullptr;
+        return &forms[u.player][-u.squad];
+    };
+    for (const auto& u : units_)
+        if (u.alive() && u.type && u.squad < 0)
+            if (FormAgg* f = formOf(u)) {
+                f->sx += u.x; f->sz += u.z; ++f->n;
+                f->slowest = std::min(f->slowest, u.type->maxVel);
+            }
+    for (auto& u : units_) {
+        if (!u.alive() || !u.type || u.squad >= 0 || !u.orders.empty()) continue;
+        if (u.type->isStructure() || u.underConstruction) continue;   // buildings don't rejoin
+        FormAgg* f = formOf(u);
+        if (!f || f->n <= 1) continue;
+        float cx = float(f->sx / f->n), cz = float(f->sz / f->n);
+        if (detmath::len(u.x - cx, u.z - cz) > kFormRejoin) order(u.id, cx, cz, false);
+    }
 
     for (auto& u : units_) {
         if (!u.type) continue;
@@ -2145,6 +2185,18 @@ void World::tick(float dt) {
 
             // Brake into the waypoint if it's the last one; slow for big turns.
             float target = u.type->maxVel;
+            // Formation pacing: a pure-move member keeps to the group's slowest speed,
+            // UNLESS it's behind the centre relative to the goal (a straggler), in which
+            // case it sprints at its own speed to catch up (see the FormAgg pass above).
+            if (u.squad < 0 && o.targetId == 0) {
+                if (FormAgg* f = formOf(u); f && f->n > 1) {
+                    float cx = float(f->sx / f->n), cz = float(f->sz / f->n);
+                    float gx = u.orders.back().x, gz = u.orders.back().z;
+                    float uToGoal = detmath::len(u.x - gx, u.z - gz);
+                    float cToGoal = detmath::len(cx - gx, cz - gz);
+                    if (uToGoal <= cToGoal + kFormBehind) target = std::min(target, f->slowest);
+                }
+            }
             // watermultiplier: a ground unit wading shallow water moves slower.
             if (!u.type->canFly && u.type->waterMult != 1.0f && !depth_.empty()) {
                 int cx = int(u.x) / 16, cz = int(u.z) / 16;
@@ -2428,6 +2480,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(u.stance)));
         mix(uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
         mix(uint64_t(uint32_t(u.repairId)));   // build-power target -> HP/mana divergence
+        mix(uint64_t(uint32_t(int32_t(u.squad))));   // control squad: formation<0 drives movement
     }
     // Projectiles: count alone hides same-count divergence, so fold owner and
     // position of each in flight (mixf hashes the exact bits -- deterministic
