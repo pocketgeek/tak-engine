@@ -21,6 +21,11 @@ namespace tak {
 // the Options per-speaker sliders, so they always agree.
 int detectOutputChannels();
 
+// Snapshot the output devices' honest channel layouts. MUST be called once at startup,
+// BEFORE any audio stream (menu music, door video, SoundBank) opens -- see main() -- so
+// the 5.1 default sink isn't already collapsed to stereo when we read it. Idempotent.
+void initAudioCaps();
+
 // --- Output device selection -------------------------------------------------------
 // Names of the current output devices (for the Options picker); [] entry is implicitly
 // "System Default".

@@ -7,31 +7,28 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 
 namespace tak {
 
 namespace {
-
-void SDLCALL probeSilence(void*, Uint8* s, int len) { SDL_memset(s, 0, size_t(len)); }
 
 // The user-chosen output device NAME ("" = system default). Set once at startup from
 // Settings::audioDevice (validated), and cleared back to system default if a chosen
 // device turns out to be missing or fails to open. Process-global so SoundBank and the
 // menu/briefing audio all open the same device.
 std::string g_audioDevice;
-int g_channelCache = -1;   // detectOutputChannels() memo; -1 = re-probe
+int g_channelCache = -1;   // detectOutputChannels() memo; -1 = recompute
 
-// Open a probe on `dev` (nullptr = system default) requesting `req` channels and return
-// what it negotiates.
-int probeChannels(const char* dev, int req) {
-    SDL_AudioSpec want{}, got{};
-    want.freq = 11025; want.format = AUDIO_S16SYS; want.channels = Uint8(req);
-    want.samples = 1024; want.callback = probeSilence;   // callback-based, like SoundBank
-    SDL_AudioDeviceID d = SDL_OpenAudioDevice(dev, 0, &want, &got, SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
-    int ch = (d && got.channels) ? got.channels : 0;
-    if (d) SDL_CloseAudioDevice(d);
-    return ch;
-}
+// HONEST channel-layout snapshot, captured ONCE at startup before ANY audio stream opens
+// (see initAudioCaps). We cannot query this live: PipeWire/PulseAudio collapse a 5.1
+// sink's ADVERTISED layout to stereo while a stereo stream (e.g. the menu music) is
+// playing on it, so SDL_GetDefaultAudioInfo/SDL_GetAudioDeviceSpec report 2 mid-menu even
+// for a real 5.1 device. The startup snapshot (no streams yet) is the only moment they
+// tell the truth, so detectOutputChannels reads from here, not from a live query.
+std::map<std::string, int> g_devCaps;   // device name -> advertised channels (1..8)
+int g_defaultCaps = 0;                  // system-default advertised channels (0 = unknown)
+bool g_capsReady = false;
 
 // Index of an output device by name (-1 if absent), for SDL_GetAudioDeviceSpec.
 int deviceIndex(const char* name) {
@@ -58,34 +55,52 @@ std::string timesFmt(float v) { char b[16]; std::snprintf(b, sizeof b, "%.2fX", 
 
 }  // namespace
 
+// Snapshot every output device's HONEST channel layout, ONCE, before any stream opens.
+// MUST be called at startup (see main()) ahead of the menu music / door videos -- once a
+// stereo stream is live on the default 5.1 sink, PipeWire reports it as 2-channel and the
+// snapshot would be wrong. Idempotent.
+void initAudioCaps() {
+    if (g_capsReady) return;
+    g_capsReady = true;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
+    SDL_AudioSpec spec{};
+    if (SDL_GetDefaultAudioInfo(nullptr, &spec, 0) == 0 && spec.channels >= 1)
+        g_defaultCaps = std::clamp(int(spec.channels), 1, 8);
+    int n = SDL_GetNumAudioDevices(0);
+    for (int i = 0; i < n; ++i)
+        if (const char* dn = SDL_GetAudioDeviceName(i, 0)) {
+            SDL_AudioSpec ds{};
+            if (SDL_GetAudioDeviceSpec(i, 0, &ds) == 0 && ds.channels >= 1)
+                g_devCaps[dn] = std::clamp(int(ds.channels), 1, 8);
+        }
+    std::fprintf(stderr, "audio: capability snapshot -- default=%d, %d device(s)\n",
+                 g_defaultCaps, int(g_devCaps.size()));
+}
+
 // The one true output-channel count for this process (of the chosen device, or the
 // system default), so SoundBank and the Options per-speaker sliders always agree.
-// Computed once and cached; re-probed after a device change.
+// Computed once and cached; recomputed after a device change. Reads the startup snapshot
+// (g_devCaps / g_defaultCaps) rather than a live query, which under-reports surround
+// while the menu music holds the sink in stereo.
 int detectOutputChannels() {
     if (g_channelCache >= 0) return g_channelCache;
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return (g_channelCache = 2);
-    const char* dev = g_audioDevice.empty() ? nullptr : g_audioDevice.c_str();
-    // The device's ADVERTISED layout is the truth: SDL_GetDefaultAudioInfo reports the
-    // configured default sink (2 on a stereo box, 6 on a real 5.1 sink), and
-    // GetAudioDeviceSpec does the same for a named device. We do NOT speculatively
-    // probe for 6 -- PipeWire/PulseAudio will happily open a 6-channel VIRTUAL stream
-    // that downmixes to two physical speakers, which is exactly why a 2-channel box was
-    // being reported as 5.1. Request the advertised count and cap the result to it.
-    int adv = 2;
-    SDL_AudioSpec spec{};
-    if (!dev) {
-        if (SDL_GetDefaultAudioInfo(nullptr, &spec, 0) == 0 && spec.channels >= 1)
+    initAudioCaps();   // no-op if already snapshotted at startup (the normal path)
+    int adv = 0;
+    if (g_audioDevice.empty()) {
+        adv = g_defaultCaps;
+    } else if (auto it = g_devCaps.find(g_audioDevice); it != g_devCaps.end()) {
+        adv = it->second;
+    } else if (int idx = deviceIndex(g_audioDevice.c_str()); idx >= 0) {
+        // Chosen device wasn't in the startup snapshot (hot-plugged since) -- best-effort
+        // live spec; may read low if a stereo stream is currently on it.
+        SDL_AudioSpec spec{};
+        if (SDL_GetAudioDeviceSpec(idx, 0, &spec) == 0 && spec.channels >= 1)
             adv = std::clamp(int(spec.channels), 1, 8);
-    } else if (int idx = deviceIndex(dev); idx >= 0 &&
-               SDL_GetAudioDeviceSpec(idx, 0, &spec) == 0 && spec.channels >= 1) {
-        adv = std::clamp(int(spec.channels), 1, 8);
     }
-    int ch = probeChannels(dev, adv);
-    if (ch <= 0 && dev) ch = probeChannels(nullptr, adv);   // chosen device unusable -> system
-    if (ch <= 0) ch = 2;
-    g_channelCache = std::clamp(std::min(ch, adv), 1, 8);
+    if (adv <= 0) adv = 2;   // unknown -> safe stereo (never fabricate surround)
+    g_channelCache = std::clamp(adv, 1, 8);
     std::fprintf(stderr, "audio: %d output channels on %s\n", g_channelCache,
-                 dev ? dev : "system default");
+                 g_audioDevice.empty() ? "system default" : g_audioDevice.c_str());
     return g_channelCache;
 }
 
