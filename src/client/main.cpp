@@ -1557,7 +1557,8 @@ public:
                     if (n == "verat" || n == "araat" || n == "tarat" || n == "zonat")
                         missionTowerIdx_ = int(missionRoster_.size()) - 1;
                 }
-                missionVm_ = std::make_unique<tak::cob::Vm>(tak::cob::load(vread(cobPath), cobPath));
+                missionVm_ = std::make_unique<tak::cob::Vm>(tak::cob::load(vread(cobPath), cobPath),
+                                                            /*deterministicRand=*/true);
                 missionVm_->onMapCommand = [this](int sub, const std::vector<int32_t>& a)
                     -> int32_t { return mapCommand(sub, a); };
                 missionVm_->onGet = [this](int32_t valId, const std::vector<int32_t>& a)
@@ -3856,16 +3857,21 @@ public:
         // finished geometry, one texture-batched draw call per unit. Without this
         // the whole frame is single-threaded and pegs one core at large unit counts.
         visUnits_.clear();
-        geomIndex_.clear();
+        geomIndex_.assign(world_.units().size() + 1, -1);   // id -> slot; -1 = not in view
         for (const auto& it : items)
-            if (it.u) { geomIndex_[it.u->id] = int(visUnits_.size());
-                        visUnits_.push_back(it.u); }
+            if (it.u && it.u->id >= 0 && size_t(it.u->id) < geomIndex_.size()) {
+                geomIndex_[size_t(it.u->id)] = int(visUnits_.size());
+                visUnits_.push_back(it.u);
+            }
         if (geomPool_.size() < visUnits_.size()) geomPool_.resize(visUnits_.size());
         // Build the texture atlas for every colour slot in view (main thread; the
         // parallel pass below only reads the finished atlas pointers).
         bool builtGlow = false;
+        uint32_t atlasSeen = 0;   // build each in-view colour slot's atlas ONCE, not per unit
         for (const auto* u : visUnits_) {
-            atlasFor(colorSlot_[u->player & 7]);
+            int slot = colorSlot_[u->player & 7];
+            uint32_t bit = (slot >= 0 && slot < 32) ? (1u << slot) : 0u;
+            if (!bit || !(atlasSeen & bit)) { atlasFor(slot); atlasSeen |= bit; }
             if (!u->underConstruction)
                 if (auto it = anims_.find(u->id);
                     it != anims_.end() && it->second.usesGlow)
@@ -3964,9 +3970,9 @@ public:
             for (const auto& it : items) {
                 if (!it.u) continue;
                 const auto& u = *it.u;
-                auto git = geomIndex_.find(u.id);
-                if (git == geomIndex_.end()) continue;
-                const UnitGeom& g = geomPool_[size_t(git->second)];
+                int gslot = geomSlot(u.id);
+                if (gslot < 0) continue;
+                const UnitGeom& g = geomPool_[size_t(gslot)];
                 if (special(u, g) || !u.type || u.underConstruction) continue;
                 // Impostor-sized units are too small for a ground shadow to read.
                 if (impAtlas_ && !g.runs.empty() && g.runs[0].first == impAtlas_) continue;
@@ -4012,9 +4018,9 @@ public:
                 drawOps_.push_back({nullptr, it.f, nullptr, 0, 0});
             } else {
                 const auto& u = *it.u;
-                auto git = geomIndex_.find(u.id);
-                if (git == geomIndex_.end()) continue;
-                const UnitGeom& g = geomPool_[size_t(git->second)];
+                int gslot = geomSlot(u.id);
+                if (gslot < 0) continue;
+                const UnitGeom& g = geomPool_[size_t(gslot)];
                 if (special(u, g)) {
                     closeSeg();
                     drawOps_.push_back({&u, nullptr, nullptr, 0, 0});
@@ -4023,7 +4029,7 @@ public:
                 int src = 0;
                 for (const auto& r : g.runs) {
                     if (r.first != segTex) { closeSeg(); segTex = r.first; segStart = destOff; }
-                    copyTasks_.push_back({git->second, src, r.second, destOff});
+                    copyTasks_.push_back({gslot, src, r.second, destOff});
                     destOff += r.second; segCount += r.second; src += r.second;
                 }
             }
@@ -4197,8 +4203,12 @@ public:
         if (!selSet_.empty()) {
             const SDL_Color grn{70, 240, 90, 255};
             float zms = mapView_.zoom();
-            for (const auto& u : world_.units()) {
-                if (!u.alive() || !selSet_.count(u.id)) continue;
+            // Iterate the (few) selected ids, not the whole world -- world_.unit(id)
+            // is O(1). (A duplicate id would just redraw the same brackets in place.)
+            for (int selId : selection_) {
+                const tak::sim::Unit* up = world_.unit(selId);
+                if (!up || !up->alive() || !up->type) continue;
+                const tak::sim::Unit& u = *up;
                 float cx = (u.x - mapView_.offX()) * zms - uLiftX(u) * zms;
                 float cy = (u.z - mapView_.offY()) * zms - uLiftY(u) * zms;
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
@@ -4808,7 +4818,9 @@ private:
     struct EffectAnim;   // defined below; Anim only needs the pointer type
     struct Anim {
         std::unique_ptr<tak::cob::Vm> vm;
-        std::vector<std::string> pieceNames;
+        // Points at the shared per-TYPE CobCache.pieceNames (node-stable in cobCache_,
+        // which outlives every Anim), not a per-unit copy -- ~25 MB saved at 38k units.
+        const std::vector<std::string>* pieceNames = nullptr;
         bool walking = false;
         bool dying = false;
         bool producing = false;
@@ -4878,11 +4890,11 @@ private:
         return false;
     }
     float pieceLift(const tak::sim::Unit& u, const Anim& a, int piece) {
-        if (piece < 0 || size_t(piece) >= a.pieceNames.size() || !u.type) return 0.0f;
+        if (!a.pieceNames || piece < 0 || size_t(piece) >= a.pieceNames->size() || !u.type) return 0.0f;
         auto vt = visuals_.find(u.type->id);
         if (vt == visuals_.end()) return 0.0f;
         float out = 0.0f;
-        findPieceY(vt->second.model.root, a.pieceNames[size_t(piece)], 0.0f, out);
+        findPieceY(vt->second.model.root, (*a.pieceNames)[size_t(piece)], 0.0f, out);
         return std::max(0.0f, out);
     }
 
@@ -4964,7 +4976,7 @@ private:
                 cc.moveGate = walkGateOf(*cc.file);
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
-            a.pieceNames = ci->second.pieceNames;
+            a.pieceNames = &ci->second.pieceNames;
             a.cobSounds = ci->second.hasSounds;
             a.moveGate = ci->second.moveGate;
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
@@ -5152,11 +5164,11 @@ private:
     }
 
     const tak::cob::PieceState* pieceFor(const Anim* a, const std::string& objName) const {
-        if (!a || !a->vm) return nullptr;
+        if (!a || !a->vm || !a->pieceNames) return nullptr;
         std::string n = objName;
         std::transform(n.begin(), n.end(), n.begin(), ::tolower);
-        for (size_t i = 0; i < a->pieceNames.size(); ++i)
-            if (a->pieceNames[i] == n) return &a->vm->pieces()[i];
+        for (size_t i = 0; i < a->pieceNames->size(); ++i)
+            if ((*a->pieceNames)[i] == n) return &a->vm->pieces()[i];
         return nullptr;
     }
 
@@ -5659,7 +5671,7 @@ private:
         auto vm = loadTypeVm(typeId, names);
         if (!vm) return;
         Anim tmp;
-        tmp.pieceNames = names;
+        tmp.pieceNames = &names;   // local to this bake; read-only while tmp is alive
         tmp.vm = std::move(vm);
         tmp.flyGate = flyGateOf(*tmp.vm);
         tmp.moveGate = walkGateOf(tmp.vm->file());
@@ -6045,9 +6057,9 @@ private:
         // The model projection (collect + sort + screen transform + colour) was
         // done for every visible unit in parallel on the worker pool this frame;
         // here we just look up the result and submit its draw calls.
-        auto git = geomIndex_.find(u.id);
-        if (git == geomIndex_.end()) return;
-        UnitGeom& g = geomPool_[size_t(git->second)];
+        int gslot = geomSlot(u.id);
+        if (gslot < 0) return;
+        UnitGeom& g = geomPool_[size_t(gslot)];
         float zm = mapView_.zoom();
         float ax = g.ax, ay = g.ay;
         // Terrain occlusion: if a wall between the unit and the camera projects its
@@ -6380,7 +6392,13 @@ private:
     std::vector<Tri> tris_;
     std::vector<SDL_Vertex> triBatch_;   // reused per-unit vertex batch
     std::vector<UnitGeom> geomPool_;              // reused across frames (keeps capacity)
-    std::unordered_map<int, int> geomIndex_;     // unit id -> slot in geomPool_
+    // unit id -> slot in geomPool_, rebuilt each frame. A flat vector (ids are dense:
+    // id == index+1) instead of an unordered_map, so no per-visible-unit node alloc
+    // and the three later passes index in O(1) instead of hashing. -1 = not in view.
+    std::vector<int> geomIndex_;
+    int geomSlot(int id) const {
+        return (id >= 0 && size_t(id) < geomIndex_.size()) ? geomIndex_[size_t(id)] : -1;
+    }
     std::vector<int> selection_;
     std::unordered_set<int> selSet_;   // rebuilt each draw for O(1) membership
     bool dragging_ = false;
@@ -6541,6 +6559,11 @@ private:
     float heightAbove(float wx, float wz) {
         const auto& m = mapView_.map();
         if (m.heights.empty() || m.width <= 0) return 0.0f;
+        // 1-entry memo: nearly every render pass asks for terrainLiftX(x,z) and
+        // terrainLift(x,z) back-to-back for the SAME point, so the second call reuses
+        // this 4-sample bilinear instead of redoing it. Keyed on the map identity so a
+        // map change can't return a stale height.
+        if (&m == hMemoMap_ && wx == hMemoX_ && wz == hMemoZ_) return hMemoV_;
         if (heightRef_ < 0) {
             long hist[256] = {0};
             for (uint8_t v : m.heights) hist[v]++;
@@ -6560,8 +6583,12 @@ private:
         auto H = [&](int x, int z) { return float(m.heights[size_t(z) * m.width + x]); };
         float h = H(x0, z0) * (1 - fx) * (1 - fz) + H(x1, z0) * fx * (1 - fz) +
                   H(x0, z1) * (1 - fx) * fz + H(x1, z1) * fx * fz;
-        return std::max(0.0f, h - float(heightRef_));
+        float v = std::max(0.0f, h - float(heightRef_));
+        hMemoMap_ = &m; hMemoX_ = wx; hMemoZ_ = wz; hMemoV_ = v;
+        return v;
     }
+    const void* hMemoMap_ = nullptr;   // heightAbove 1-entry memo (see above)
+    float hMemoX_ = 0, hMemoZ_ = 0, hMemoV_ = 0;
     // Screen-space displacement of a world point's surface from its flat grid cell,
     // baked into the tile art by the tilted 2.5D view: up (Y) AND sideways (X).
     float terrainLift(float wx, float wz) { return heightAbove(wx, wz) * kHeightScale_; }
