@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 20;       // 20: +control squads/formations (Cmd::SetSquad)
+constexpr uint32_t kNetVersion = 21;       // 21: colour slot 10 (the plaid) is valid
                                            // 15: GameOptions.speed/speedUnlock + Set/SpeedUpdate msgs
                                            // 14: Cmd::Headbang (Shift+H emote)
                                            // 13: under-construction units contribute no income/storage (economy fix)
@@ -72,7 +72,7 @@ enum class Msg : uint8_t {
 struct SlotInfo {
     uint8_t type = 0;
     uint8_t faction = 0;   // 0=ara 1=tar 2=ver 3=zon 4=cre
-    uint8_t color = 0;     // 0..9 palette slot
+    uint8_t color = 0;     // 0..10 palette slot (10 = the synthesized plaid)
     uint8_t team = 0;      // 0..kMaxSlots-1
     uint8_t ready = 0;
     uint8_t aiLevel = 2;   // AI difficulty: 0=passive 1=easy 2=normal 3=hard 4=absurd

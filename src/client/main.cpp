@@ -2555,7 +2555,7 @@ public:
             float mm = s.type == 2
                 ? tak::ai::incomeMultFor(tak::ai::difficultyFromLevel(s.aiLevel)) : 1.0f;
             cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm};
-            colorSlot_[i & 7] = s.color % 10;
+            colorSlot_[i & 7] = s.color % 11;
             playerAi_[i & 7] = (s.type == 2);
             playerName_[i & 7] = !s.name.empty()
                                      ? s.name   // human name, or the AI's random name
@@ -5043,6 +5043,44 @@ private:
                         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
                         frames.push_back(t);
                     }
+                    // Colour slot 10, "the plaid": the art ships exactly ten team-colour
+                    // variants, so the eleventh is SYNTHESIZED. Pixels that differ
+                    // between two shipped variants are the team-colour region (the rest
+                    // of a texture is identical across colours); repaint them with an
+                    // orange/blue/green tartan, keeping each pixel's shading from the
+                    // orange variant so the weave sits in the model's own lighting.
+                    if (n == 10 && frames.size() == 10 &&
+                        seq.frames[1].rgba.size() == seq.frames[0].rgba.size() &&
+                        seq.frames[7].rgba.size() == seq.frames[0].rgba.size()) {
+                        const auto& f0 = seq.frames[0];
+                        const auto& f1 = seq.frames[1];
+                        const auto& fo = seq.frames[7];   // orange variant: shading source
+                        std::vector<uint8_t> px = fo.rgba;
+                        static const uint8_t P[3][3] = {
+                            {230, 145, 50}, {70, 130, 240}, {70, 185, 90}};
+                        auto band = [](int t) { t %= 12; return t < 5 ? 0 : t < 8 ? 1 : 2; };
+                        for (int y = 0; y < fo.height; ++y)
+                            for (int x = 0; x < fo.width; ++x) {
+                                size_t k = (size_t(y) * fo.width + x) * 4;
+                                int d = std::abs(int(f0.rgba[k]) - int(f1.rgba[k])) +
+                                        std::abs(int(f0.rgba[k + 1]) - int(f1.rgba[k + 1])) +
+                                        std::abs(int(f0.rgba[k + 2]) - int(f1.rgba[k + 2]));
+                                if (d < 24) continue;   // not a team-colour pixel
+                                const uint8_t* wa = P[band(x)];
+                                const uint8_t* wb = P[band(y)];
+                                float shade = float(std::max({px[k], px[k + 1], px[k + 2]})) / 230.0f;
+                                if (x % 12 == 6 || y % 12 == 6) shade *= 0.72f;   // twill line
+                                for (int c = 0; c < 3; ++c)
+                                    px[k + c] = uint8_t(std::min(255.0f,
+                                        (float(wa[c]) + float(wb[c])) * 0.5f * shade));
+                            }
+                        SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                                           SDL_TEXTUREACCESS_STATIC,
+                                                           fo.width, fo.height);
+                        SDL_UpdateTexture(t, nullptr, px.data(), fo.width * 4);
+                        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+                        frames.push_back(t);
+                    }
                     if (!frames.empty()) textures_[name] = std::move(frames);
                 }
             } catch (const std::exception&) {}
@@ -6391,17 +6429,20 @@ private:
     // The 10 player-colour RGBs (sampled from a player-coloured logo texture at
     // load; the fallback below is a sensible distinct palette). Used so the HUD
     // and minimap match whatever slot a player renders in.
-    SDL_Color playerColors_[10] = {
+    // Slots 0-9 are the shipped team colours; slot 10 is "the plaid" (synthesized
+    // orange/blue/green tartan) -- its flat representative here is a tartan khaki
+    // for the minimap/HUD spots that need a single colour.
+    SDL_Color playerColors_[11] = {
         {70, 130, 240, 255}, {215, 60, 55, 255}, {70, 185, 90, 255},
         {235, 205, 55, 255}, {225, 225, 225, 255}, {80, 200, 205, 255},
         {160, 95, 205, 255}, {230, 145, 50, 255}, {230, 120, 180, 255},
-        {120, 120, 130, 255}};
+        {120, 120, 130, 255}, {165, 140, 80, 255}};
     bool sampledColors_ = false;
     // RGB a player's units render in (its slot's player colour). The argument is
     // the sim ownership index (Unit::player) -- one player per slot in skirmish.
     SDL_Color playerColor(int player) const {
         int s = (player >= 0 && player < 8) ? colorSlot_[player] : 0;
-        return playerColors_[(s >= 0 && s < 10) ? s : 0];
+        return playerColors_[(s >= 0 && s < 11) ? s : 0];
     }
 
     // Height-aware 2.5D: the world-pixel lift for a point, from the terrain height
@@ -8571,9 +8612,24 @@ private:
     }
     void colorSwatch(float x, float y, float s, int color, std::function<void()> action) {
         SDL_FRect r{x, y, s, s};
-        SDL_Color c = playerColors_[color % 10];
-        SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
-        SDL_RenderFillRectF(ren_, &r);
+        if (color % 11 == 10) {
+            // The plaid slot: draw the actual weave, not a flat colour.
+            static const SDL_Color P[3] = {
+                {230, 145, 50, 255}, {70, 130, 240, 255}, {70, 185, 90, 255}};
+            float cell = s / 3.0f;
+            for (int j = 0; j < 3; ++j)
+                for (int i2 = 0; i2 < 3; ++i2) {
+                    SDL_Color a = P[i2], b = P[j];
+                    SDL_SetRenderDrawColor(ren_, Uint8((a.r + b.r) / 2),
+                                           Uint8((a.g + b.g) / 2), Uint8((a.b + b.b) / 2), 255);
+                    SDL_FRect cr{x + i2 * cell, y + j * cell, cell + 1, cell + 1};
+                    SDL_RenderFillRectF(ren_, &cr);
+                }
+        } else {
+            SDL_Color c = playerColors_[color % 11];
+            SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
+            SDL_RenderFillRectF(ren_, &r);
+        }
         SDL_SetRenderDrawColor(ren_, lbHot(r) ? 255 : 30, lbHot(r) ? 255 : 30, 30, 255);
         SDL_RenderDrawRectF(ren_, &r);
         if (action) lobbyHots_.push_back({r, std::move(action)});
@@ -8953,8 +9009,8 @@ private:
                 const auto& r2 = mpRoom();
                 const auto& s2 = r2.slots[i];
                 uint8_t next = s2.color;
-                for (int step = 1; step <= 10; ++step) {
-                    uint8_t cand = uint8_t((s2.color + step) % 10);
+                for (int step = 1; step <= 11; ++step) {
+                    uint8_t cand = uint8_t((s2.color + step) % 11);
                     bool taken = false;
                     for (int k = 0; k < tak::net::kMaxSlots; ++k)
                         if (k != i && (r2.slots[k].type == 1 || r2.slots[k].type == 2) &&
@@ -9042,13 +9098,13 @@ private:
     }
 
     static bool startValid(const tak::net::RoomView& room) {
-        int used = 0; bool color[10] = {};
+        int used = 0; bool color[11] = {};
         for (int i = 0; i < tak::net::kMaxSlots; ++i) {
             const auto& s = room.slots[i];
             if (s.type != 1 && s.type != 2) continue;
             ++used;
             if (s.type == 1 && !s.ready) return false;
-            if (s.color < 10) { if (color[s.color]) return false; color[s.color] = true; }
+            if (s.color < 11) { if (color[s.color]) return false; color[s.color] = true; }
         }
         return used >= 2;
     }
