@@ -7,6 +7,7 @@
 
 #include <SDL.h>
 
+#include <algorithm>
 #include <functional>
 #include <string>
 #include <vector>
@@ -77,6 +78,13 @@ private:
     // detection on every SDL_GetNumAudioDevices() and can return a different order/count
     // each call, so scanning live made the open list churn ("keep re-sorting").
     void refreshDevices();
+
+    // Width of dropdown `c`'s chip + pop-up list: as wide as the row allows (minus a
+    // label column), clamped, so long device names aren't truncated. One source of truth
+    // shared by the closed chip, the open list, and hit-testing so they line up.
+    float dropWidth(const Control& c) const {
+        return std::clamp(c.row.w - 150.0f * u_, 220.0f * u_, 560.0f * u_);
+    }
 
     // Geometry of the open dropdown `c`'s scrollable option list: its top `y0`, per-item
     // height `itemH`, and visible viewport height `viewH` (capped to the panel so a long

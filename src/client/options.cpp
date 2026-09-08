@@ -348,7 +348,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             ctls_[size_t(openDrop_)].kind == Control::Dropdown) {
             Control& c = ctls_[size_t(openDrop_)];
             auto opts = c.options ? c.options() : std::vector<std::string>{};
-            float cw = 300 * u_, y0, itemH, viewH;
+            float cw = dropWidth(c), y0, itemH, viewH;
             dropViewport(c, int(opts.size()), y0, itemH, viewH);
             float x = c.row.x + c.row.w - cw;
             // Only clicks inside the scrolled viewport count (items scroll under a clip).
@@ -460,7 +460,7 @@ void OptionsScreen::render(int winW, int winH) {
             // downward arrow on the right. The open pop-up list is drawn in a second
             // pass below (un-clipped, on top of everything).
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
-            float cw = 300 * u_;
+            float cw = dropWidth(c);
             SDL_FRect chip{c.row.x + c.row.w - cw, c.row.y + 5 * u_, cw, 24 * u_};
             SDL_SetRenderDrawColor(ren_, 52, 60, 82, 255); SDL_RenderFillRectF(ren_, &chip);
             SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &chip);
@@ -472,8 +472,15 @@ void OptionsScreen::render(int winW, int winH) {
             if (int(t.size()) > maxCh && maxCh > 0) t = t.substr(0, size_t(maxCh));
             drawBlockText(ren_, t, chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2, dpx,
                           {215, 225, 245, 255});
-            drawBlockText(ren_, "V", chip.x + chip.w - 14 * u_, chip.y + (chip.h - 7 * dpx) / 2, dpx,
-                          {170, 180, 210, 255});
+            // Down-caret: a filled triangle at the chip's right edge (a real glyph, not "V").
+            float aw = 9 * u_, ah = 5 * u_;
+            float cx = chip.x + chip.w - 13 * u_, ty = chip.y + (chip.h - ah) / 2;
+            SDL_SetRenderDrawColor(ren_, 170, 180, 210, 255);
+            for (float r = 0; r < ah; r += 1) {
+                float half = (aw / 2) * (1 - r / ah);
+                SDL_FRect span{cx - half, ty + r, 2 * half, 1};
+                SDL_RenderFillRectF(ren_, &span);
+            }
         } else if (c.kind == Control::Slider) {
             float val = c.get();
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 4 * u_, fpx, {225, 230, 240, 255});
@@ -527,7 +534,7 @@ void OptionsScreen::render(int winW, int winH) {
         const Control& c = ctls_[size_t(openDrop_)];
         auto opts = c.options ? c.options() : std::vector<std::string>{};
         int sel = int(c.get ? c.get() : 0.0f);
-        float cw = 300 * u_, dpx = 1.6f * u_, y0, itemH, viewH;
+        float cw = dropWidth(c), dpx = 1.6f * u_, y0, itemH, viewH;
         dropViewport(c, int(opts.size()), y0, itemH, viewH);
         float x = c.row.x + c.row.w - cw;
         SDL_FRect bg{x, y0, cw, viewH};
