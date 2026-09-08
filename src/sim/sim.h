@@ -578,6 +578,7 @@ public:
     int missionOutcome() const;   // 0 none/running / +1 victory / -1 defeat
     // Fog of war for the local player over 16px cells: 0 hidden, 1 explored, 2 visible.
     const std::vector<uint8_t>& visibility() const { return vis_; }
+    uint32_t visGeneration() const { return visGen_; }   // bumps on each fog recompute
     int visW() const { return visW_; }
     int visH() const { return visH_; }
     bool cellVisible(float x, float z) const {
@@ -697,6 +698,16 @@ private:
     std::vector<uint8_t> vis_;
     int visPlayer_ = 0;
     int visW_ = 0, visH_ = 0;
+    // Client-local fog acceleration: the LoS-tested cell set for a (sight, radar,
+    // cell) combination is a pure function of the IMMUTABLE heightmap, so it is
+    // computed once and re-stamped while a unit stands on that cell -- the O(r^3)
+    // ray-march that used to recompute every 0.25s made 300-600-unit armies cost
+    // 11-66ms per fog pass. Display-only: never hashed, and the headless referee
+    // (visPlayer_ < 0) skips the fog pass entirely.
+    std::unordered_map<uint64_t, std::vector<uint32_t>> visMaskCache_;
+    // Bumped after every fog recompute so the renderer can skip re-uploading an
+    // unchanged fog texture (vis_ changes at 4Hz; frames render far faster).
+    uint32_t visGen_ = 0;
     float visTimer_ = 0;
     std::vector<uint8_t> heights_;   // raw TNT heightmap, for fog line-of-sight
     int hW_ = 0, hH_ = 0;

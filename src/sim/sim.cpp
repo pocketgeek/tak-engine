@@ -1835,6 +1835,12 @@ void World::updateVisibility() {
     }
     for (auto& v : vis_)
         if (v == 2) v = 1;
+    // Eye above the unit's ground cell: sees over small bumps, not over real
+    // walls/hills. Paired with the sight-line MARGIN in sightClear so small rock
+    // clutter stops casting fog shadows. Live-tunable via TAK_FOG_EYE.
+    static float EYE = [] {
+        const char* e = std::getenv("TAK_FOG_EYE"); return e ? float(std::atof(e)) : 40.0f;
+    }();
     for (const auto& u : units_) {
         // Shared team vision: every unit on the viewing player's team reveals fog
         // (a negative visPlayer_ -- the headless referee -- reveals nothing).
@@ -1843,8 +1849,7 @@ void World::updateVisibility() {
         // Reveal to the greater of sight and radar range (radardistance). Radar
         // sees THROUGH terrain, so the line-of-sight test applies only to the sight
         // area NOT already covered by radar (rRadar). Units with radar >= sight
-        // (e.g. flyers with a huge radardistance) therefore do zero LoS work -- this
-        // is what keeps a 500-unit army from grinding the fog pass to a halt.
+        // (e.g. flyers with a huge radardistance) do zero LoS work.
         int rSight = int(u.type->sight) / 16;
         int rRadar = int(u.type->radar) / 16;
         int r = std::max(rSight, rRadar) + 1;
@@ -1852,25 +1857,48 @@ void World::updateVisibility() {
         int cx = int(u.x) / 16, cz = int(u.z) / 16;
         bool losBlocks = !heights_.empty() && cx >= 0 && cz >= 0 && cx < hW_ && cz < hH_ &&
                          rSight > rRadar;   // only worth testing where sight exceeds radar
-        // Eye above the unit's ground cell: sees over small bumps, not over real
-        // walls/hills. Paired with the sight-line MARGIN in sightClear so small rock
-        // clutter stops casting fog shadows. Live-tunable via TAK_FOG_EYE.
-        static float EYE = [] {
-            const char* e = std::getenv("TAK_FOG_EYE"); return e ? float(std::atof(e)) : 40.0f;
-        }();
-        float eyeH = losBlocks ? float(heights_[size_t(cz) * hW_ + cx]) + EYE : 0.0f;
-        for (int dz = -r; dz <= r; ++dz)
-            for (int dx = -r; dx <= r; ++dx) {
-                int dd = dx * dx + dz * dz;
-                if (dd > r * r) continue;
-                int x = cx + dx, z = cz + dz;
-                if (x < 0 || z < 0 || x >= visW_ || z >= visH_) continue;
-                // Inside radar range: revealed unconditionally (radar ignores
-                // terrain). Only beyond radar (the sight-only ring) does LoS gate it.
-                if (losBlocks && dd > rRadar2 && !sightClear(cx, cz, eyeH, x, z)) continue;
-                vis_[size_t(z) * visW_ + x] = 2;
-            }
+        if (!losBlocks) {
+            // Pure circle fill -- already cheap, no caching needed.
+            for (int dz = -r; dz <= r; ++dz)
+                for (int dx = -r; dx <= r; ++dx) {
+                    if (dx * dx + dz * dz > r * r) continue;
+                    int x = cx + dx, z = cz + dz;
+                    if (x < 0 || z < 0 || x >= visW_ || z >= visH_) continue;
+                    vis_[size_t(z) * visW_ + x] = 2;
+                }
+            continue;
+        }
+        // LoS path: the visible-cell set for (sight, radar, cell) is a pure function
+        // of the immutable heightmap, so compute it ONCE (the O(r^3) ray-march) and
+        // re-stamp the cached mask for as long as a unit of this class stands on the
+        // cell. Buildings and standing armies -- the common case -- become a plain
+        // index stamp; a moving unit pays the ray-march once per cell it enters
+        // instead of every 0.25s pass.
+        uint64_t key = (uint64_t(uint32_t(rSight)) << 52) |
+                       (uint64_t(uint32_t(rRadar)) << 40) |
+                       (uint64_t(uint32_t(cx)) << 20) | uint32_t(cz);
+        auto mi = visMaskCache_.find(key);
+        if (mi == visMaskCache_.end()) {
+            // Bound the cache; clearing it all is fine -- masks rebuild on demand.
+            if (visMaskCache_.size() >= 8192) visMaskCache_.clear();
+            std::vector<uint32_t>& mask = visMaskCache_[key];
+            float eyeH = float(heights_[size_t(cz) * hW_ + cx]) + EYE;
+            for (int dz = -r; dz <= r; ++dz)
+                for (int dx = -r; dx <= r; ++dx) {
+                    int dd = dx * dx + dz * dz;
+                    if (dd > r * r) continue;
+                    int x = cx + dx, z = cz + dz;
+                    if (x < 0 || z < 0 || x >= visW_ || z >= visH_) continue;
+                    // Inside radar range: revealed unconditionally (radar ignores
+                    // terrain). Beyond it, the sight-only ring is LoS-gated.
+                    if (dd > rRadar2 && !sightClear(cx, cz, eyeH, x, z)) continue;
+                    mask.push_back(uint32_t(size_t(z) * visW_ + x));
+                }
+            mi = visMaskCache_.find(key);
+        }
+        for (uint32_t i : mi->second) vis_[i] = 2;
     }
+    ++visGen_;   // renderer: fog content may have changed; re-upload once
 }
 
 void World::tickProduction(Unit& u, float dt) {

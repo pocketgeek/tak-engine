@@ -9166,19 +9166,25 @@ private:
             SDL_SetTextureBlendMode(fogTex_, SDL_BLENDMODE_BLEND);
             SDL_SetTextureScaleMode(fogTex_, SDL_ScaleModeLinear);
         }
-        void* px = nullptr;
-        int pitch = 0;
-        if (SDL_LockTexture(fogTex_, nullptr, &px, &pitch) == 0) {
-            for (int z = 0; z < h; ++z) {
-                uint32_t* row = reinterpret_cast<uint32_t*>(
-                    static_cast<uint8_t*>(px) + size_t(z) * size_t(pitch));
-                for (int x = 0; x < w; ++x) {
-                    uint8_t v = vis[size_t(z) * w + x];
-                    uint8_t a = v == 2 ? 0 : (v == 1 ? 110 : 235);
-                    row[x] = uint32_t(a) << 24;   // black with alpha (RGBA32 LE)
+        // The fog CONTENT only changes when the sim recomputes visibility (4Hz);
+        // frames render far more often (up to 240Hz), so rewrite + re-upload the
+        // streaming texture only when the vis generation actually advanced.
+        if (fogTexGen_ != world_.visGeneration()) {
+            fogTexGen_ = world_.visGeneration();
+            void* px = nullptr;
+            int pitch = 0;
+            if (SDL_LockTexture(fogTex_, nullptr, &px, &pitch) == 0) {
+                for (int z = 0; z < h; ++z) {
+                    uint32_t* row = reinterpret_cast<uint32_t*>(
+                        static_cast<uint8_t*>(px) + size_t(z) * size_t(pitch));
+                    for (int x = 0; x < w; ++x) {
+                        uint8_t v = vis[size_t(z) * w + x];
+                        uint8_t a = v == 2 ? 0 : (v == 1 ? 110 : 235);
+                        row[x] = uint32_t(a) << 24;   // black with alpha (RGBA32 LE)
+                    }
                 }
+                SDL_UnlockTexture(fogTex_);
             }
-            SDL_UnlockTexture(fogTex_);
         }
         float zm = mapView_.zoom();
         // Lift the fog to sit on the terrain relief, exactly like units do, so the
@@ -9193,18 +9199,43 @@ private:
         int gx1 = std::clamp(int((ox + winW_ / zm + maxLx) / 16) + 2, 0, w);
         int gz0 = std::clamp(int(oy / 16) - 1, 0, h);
         int gz1 = std::clamp(int((oy + winH_ / zm + maxLy) / 16) + 2, 0, h);
+        // One height sample per grid CORNER, shared by all four adjacent quads.
+        // vert() used to pay two independent bilinear samples per corner PER QUAD
+        // (terrainLift + terrainLiftX each re-sampling), 8 samples per cell -- at a
+        // 7680-wide window that alone measured ~2ms/frame; the shared corner grid
+        // is ~8x fewer samples, each yielding both lifts.
+        int cw = std::max(0, gx1 - gx0 + 1), ch = std::max(0, gz1 - gz0 + 1);
+        fogLift_.assign(size_t(cw) * size_t(ch), 0.0f);
+        for (int gz = gz0; gz <= gz1 && ch > 0; ++gz)
+            for (int gx = gx0; gx <= gx1; ++gx)
+                fogLift_[size_t(gz - gz0) * cw + size_t(gx - gx0)] =
+                    heightAbove(float(gx) * 16.0f, float(gz) * 16.0f);
         auto vert = [&](int gx, int gz) {
             float wx = float(gx) * 16.0f, wz = float(gz) * 16.0f;
+            float ha = fogLift_[size_t(gz - gz0) * cw + size_t(gx - gx0)];
             SDL_Vertex v;
-            v.position = {(wx - ox) * zm - terrainLiftX(wx, wz) * zm,
-                          (wz - oy) * zm - terrainLift(wx, wz) * zm};
+            v.position = {(wx - ox) * zm - ha * kHeightScaleX_ * zm,
+                          (wz - oy) * zm - ha * kHeightScale_ * zm};
             v.tex_coord = {float(gx) / float(w), float(gz) / float(h)};
             v.color = {255, 255, 255, 255};
             return v;
         };
+        // Skip cells whose whole 3x3 neighbourhood is fully visible: their quad is
+        // invisible (alpha 0) and, because the texture is linear-filtered, only a
+        // fogged NEIGHBOUR can bleed alpha across the edge. Late-game this culls
+        // most of the vertex stream.
+        auto fogged = [&](int x, int z) {
+            if (x < 0 || z < 0 || x >= w || z >= h) return true;   // map edge: keep
+            return vis[size_t(z) * w + x] != 2;
+        };
         fogVerts_.clear();
         for (int gz = gz0; gz < gz1; ++gz)
             for (int gx = gx0; gx < gx1; ++gx) {
+                bool any = false;
+                for (int dz = -1; dz <= 1 && !any; ++dz)
+                    for (int dx = -1; dx <= 1 && !any; ++dx)
+                        any = fogged(gx + dx, gz + dz);
+                if (!any) continue;
                 SDL_Vertex a = vert(gx, gz), b = vert(gx + 1, gz),
                            c = vert(gx + 1, gz + 1), d = vert(gx, gz + 1);
                 fogVerts_.push_back(a); fogVerts_.push_back(b); fogVerts_.push_back(c);
@@ -9215,6 +9246,8 @@ private:
                                nullptr, 0);
     }
     std::vector<SDL_Vertex> fogVerts_;
+    std::vector<float> fogLift_;      // per-corner heightAbove scratch (see drawFog)
+    uint32_t fogTexGen_ = ~0u;        // vis generation last uploaded to fogTex_
 
     // Positions along a build-drag line, spaced by the building's footprint.
     std::vector<std::pair<float, float>> buildLinePositions(
