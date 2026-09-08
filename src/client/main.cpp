@@ -1200,7 +1200,7 @@ private:
     std::vector<std::string> playlist_;
     std::vector<int16_t> music_;
     size_t musicPos_ = 0, musicTrack_ = 0;
-    int musicVol_ = 90;   // out of 256 (BGM)
+    int musicVol_ = 192;  // out of 256 (BGM); 75% default
     int masterVol_ = 256; // out of 256, global gain over the whole mix
     int sfxVol_ = 256;    // out of 256, sound effects
     float chanGain_[8] = {1, 1, 1, 1, 1, 1, 1, 1};   // per-output-channel trim 0..1
@@ -1953,6 +1953,7 @@ public:
         // NEAREST regardless (linear sampling would bleed neighbouring sprites),
         // and fog/minimap/impostors are always linear by design.
         bilinear_ = s.bilinear;
+        healthBars_ = std::clamp(s.healthBars, 0, 2);
         mapView_.setBilinear(s.bilinear);
         SDL_ScaleMode fm = s.bilinear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
         for (auto& [id, a] : featureArt_) {
@@ -3555,6 +3556,19 @@ public:
                     // Single-pass pose scripts: re-invoke each cycle, like walk.
                     a.vm->start("startbuild") || a.vm->start("StartBuilding");
                 }
+                // The conjure sound: retail plays the magical summon shimmer while a
+                // builder works; loop the shipped SUMMON2 (3.1s) at the unit while
+                // it is visible.
+                if (working) {
+                    a.buildSndT -= dt;
+                    if (a.buildSndT <= 0.0f) {
+                        a.buildSndT = 3.0f;
+                        if ((noFog_ || world_.cellVisible(u.x, u.z)) && sounds_.has("summon2"))
+                            sounds_.playWorld("summon2", u.x, u.z);
+                    }
+                } else {
+                    a.buildSndT = 0;   // next work session starts its sound at once
+                }
             }
             // Buildings: yard/production anims. Detect via isStructure (maxVel<=0),
             // NOT !canMove -- the Keep/Castle/Hell carry canmove=1 in their FBI, so
@@ -4166,9 +4180,10 @@ public:
             if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
             if (!alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
-            // Only damaged units show a health bar -- a unit at full HP never does,
-            // selected or not.
-            if (frac >= 1.0f) continue;
+            // Options "HEALTH BARS": 0 = never, 1 = only damaged units (default,
+            // the retail behaviour), 2 = every unit, full HP included.
+            if (healthBars_ == 0) break;
+            if (healthBars_ == 1 && frac >= 1.0f) continue;
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
             float bx = (u.x - mapView_.offX()) * zm - bw / 2 - uLiftX(u) * zm;
             float by = (u.z - mapView_.offY()) * zm - 30 * zm - uLiftY(u) * zm;
@@ -4185,9 +4200,10 @@ public:
                                int(shadowBatch_.size()), nullptr, 0);
         }
 
-        // Control-squad marker under each of YOUR units: a plain number for a group,
-        // "<N>F" for a formation. The number is the recall key (squad 10 shows as "0").
-        // Skipped when zoomed far out so it doesn't clutter the field.
+        // Control-squad marker: retail-style bright-green number centred BELOW the
+        // unit (under where the selection ring/bar sits), "<N>F" for a formation.
+        // The number is the recall key (squad 10 shows as "0"). Skipped when zoomed
+        // far out so it doesn't clutter the field.
         if (hudFont_.ok() && zm > 0.55f)
             for (const auto& u : world_.units()) {
                 if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_ ||
@@ -4199,13 +4215,13 @@ public:
                 std::string lbl(1, key);
                 if (u.squad < 0) lbl += 'F';   // formation
                 float cx = (u.x - mapView_.offX()) * zm - uLiftX(u) * zm;
-                float cy = (u.z - mapView_.offY()) * zm - uLiftY(u) * zm;
-                if (cx < -20 || cx > mvw + 20 || cy < -20 || cy > winH + 20) continue;
-                float sc = std::clamp(1.0f * zm, 0.8f, 1.5f);
+                float cy = (u.z - mapView_.offY()) * zm - uLiftY(u) * zm
+                           + (float(std::max(u.type->footZ, 1)) * 8.0f + 7.0f) * zm;
+                if (cx < -20 || cx > mvw + 20 || cy < -30 || cy > winH + 30) continue;
+                float sc = std::clamp(1.1f * zm, 0.9f, 1.7f);
                 float tw = float(hudFont_.width(lbl, sc));
-                hudFont_.draw(ren_, lbl, cx - tw / 2, cy + 3 * zm, sc,
-                              u.squad < 0 ? SDL_Color{150, 210, 255, 255}
-                                          : SDL_Color{240, 224, 120, 255});
+                hudFont_.draw(ren_, lbl, cx - tw / 2, cy, sc,
+                              SDL_Color{70, 240, 90, 255});   // the selection-UI green
             }
 
         // Production progress above busy buildings -- viewport-culled and batched
@@ -4704,6 +4720,7 @@ private:
         bool dying = false;
         bool producing = false;
         bool building = false;   // mobile builder actively working a site (conjure anim)
+        float buildSndT = 0;     // countdown to the next conjure-sound retrigger
         bool firing = false;
         bool flying = false;
         bool airborne = false;   // true while the flight animation should run
@@ -5300,6 +5317,7 @@ private:
     bool lodEnabled_ = true;    // distant impostors on by default; Options toggles
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
     bool bilinear_ = false;     // smooth terrain/feature scaling (Options)
+    int healthBars_ = 1;        // 0=off 1=damaged-only 2=always (Options)
     float lodPx_ = 64.0f;                        // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 0.5f;  // LOD only when really zoomed out
                                                  // (zoom below this); full 3D otherwise
