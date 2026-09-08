@@ -32,17 +32,17 @@ DiffParams paramsFor(Difficulty d) {
     switch (d) {
         // Turtle: Easy's build-up, but never sends an attack wave -- it only defends
         // (idle units still auto-fire on anything that walks into range).
-        case Difficulty::Passive: return {60, 4, 1, 70,  false, false};
+        case Difficulty::Passive: return {60, 4, 1, 70,  false, false, 0};
         // Sluggish: reacts slowly, builds up slowly, and only commits once it has
-        // gathered a sizeable group -- so it's passive and beatable.
-        case Difficulty::Easy:   return {60, 4, 1, 70,  false, true};
-        // Fast, army-heavy, and aggressive: reacts often, attacks with small groups,
-        // and pushes bigger unit limits.
-        case Difficulty::Hard:   return {20, 2, 8, 150, true,  true};
+        // gathered a sizeable group -- so it's passive and beatable. No raiding.
+        case Difficulty::Easy:   return {60, 4, 1, 70,  false, true,  0};
+        // Fast, army-heavy, and aggressive: reacts often, musters a large army before
+        // the big push, harasses with raids meanwhile, and pushes bigger unit limits.
+        case Difficulty::Hard:   return {20, 6, 8, 150, true,  true,  4};
         // Hard's behaviour, plus a 2x income cheat applied to the sim (incomeMultFor).
-        case Difficulty::Absurd: return {20, 2, 8, 150, true,  true};
+        case Difficulty::Absurd: return {20, 6, 8, 150, true,  true,  4};
         case Difficulty::Normal:
-        default:                 return {30, 3, 3, 100, true,  true};
+        default:                 return {30, 5, 3, 100, true,  true,  3};
     }
 }
 
@@ -333,7 +333,8 @@ std::pair<float, float> Controller::homeOf(const tak::sim::World& world) const {
     return {0.0f, 0.0f};
 }
 
-void Controller::sendWaves(const tak::sim::World& world, const CommandSink& sink) {
+void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
+                           const CommandSink& sink) {
     if (!dp_.attack) return;   // Passive: never marches out; units defend in place.
     std::vector<int> idle;
     double sx = 0, sz = 0;
@@ -355,21 +356,39 @@ void Controller::sendWaves(const tak::sim::World& world, const CommandSink& sink
         !nearestEnemyStart(cx, cz, tx, tz))
         return;   // nothing seen and no known base to march on -> hold
 
-    // Commit the whole force once it's big enough, once we've already committed (keep
-    // the pressure on / reinforce), OR once the economy is tapped out -- so a mana-poor
-    // position attacks with what it has instead of turtling forever.
+    // The "big push" army scales with mana INCOME: a rich economy masses a large army
+    // before it commits, a lean one strikes with less. So a strong AI stops trickling
+    // its units into the enemy and instead builds an overwhelming force. A tapped-out
+    // economy (little mana, little income) attacks with what it has rather than turtle.
     const auto& me = world.player(player_);
+    float income = me.income / std::max(me.manaMult, 1.0f);   // ignore an Absurd cheat
+    int bigPush = std::clamp(dp_.waveSize + int(income * 0.25f), dp_.waveSize, 60);
     bool tapped = me.mana < 200.0f && me.income < 40.0f;
-    bool commit = int(idle.size()) >= dp_.waveSize || committed_ || tapped;
-    if (!commit) {
-        if (dp_.scout && !scouted_) {   // send one early scout to reveal + draw forward
-            emit(sink, tak::net::Cmd::AttackMove, idle.front(), "", tx, tz);
-            scouted_ = true;
-        }
+
+    if (int(idle.size()) >= bigPush || tapped) {
+        for (int id : idle) emit(sink, tak::net::Cmd::AttackMove, id, "", tx, tz);
+        lastRaidTick_ = simTick;      // let the freshly-built stragglers regroup, don't raid next
+        scouted_ = true;
         return;
     }
-    committed_ = true;
-    for (int id : idle) emit(sink, tak::net::Cmd::AttackMove, id, "", tx, tz);
+
+    // Still mustering the big army -- but keep HARASSING so the enemy is pressured and
+    // revealed instead of the AI turtling behind a wall. Peel off a small raiding party
+    // (leaving a home core to keep growing toward the big push), rate-limited so the
+    // army isn't bled away piecemeal. The very first raid doubles as the early scout.
+    constexpr uint32_t kRaidCooldown = 25 * 30;   // ~25s between raids
+    int homeCore = std::max(dp_.waveSize, bigPush / 3);   // never raid below this reserve
+    bool firstProbe = dp_.scout && !scouted_ && int(idle.size()) >= 1;
+    bool canRaid = dp_.raidSize > 0 &&
+                   int(idle.size()) >= homeCore + dp_.raidSize &&
+                   simTick - lastRaidTick_ >= kRaidCooldown;
+    if (firstProbe || canRaid) {
+        int party = firstProbe && !canRaid ? 1 : dp_.raidSize;   // opening scout is a lone unit
+        for (int i = 0; i < party && i < int(idle.size()); ++i)
+            emit(sink, tak::net::Cmd::AttackMove, idle[size_t(i)], "", tx, tz);
+        scouted_ = true;
+        lastRaidTick_ = simTick;
+    }
 }
 
 void Controller::tick(const tak::sim::World& world, uint32_t simTick,
@@ -444,7 +463,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
             emit(sink, tak::net::Cmd::Move, u.id, "", h.first, h.second);
         break;
     }
-    sendWaves(world, sink);
+    sendWaves(world, simTick, sink);
 }
 
 }  // namespace tak::ai

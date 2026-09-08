@@ -62,11 +62,15 @@ inline constexpr float incomeMultFor(Difficulty d) {
 // Behaviour knobs derived from Difficulty (paramsFor).
 struct DiffParams {
     int  thinkPeriod;      // sim ticks between decisions (30 = 1 Hz); lower = faster reactions
-    int  waveSize;         // idle fighters gathered before an attack wave commits
+    int  waveSize;         // base army size to gather before an attack; the actual "big
+                           // push" threshold scales UP with mana income (a rich AI masses
+                           // a larger army, a poor one strikes with what it has)
     int  producersPerThink;// how many idle producers act each think (economy/APM pace)
     int  limitScale;       // percent applied to the profile's unit limits (100 = as shipped)
     bool scout;            // send an early lone scout toward an enemy start
     bool attack;           // commit attack waves at all (Passive never does -- defends only)
+    int  raidSize;         // fighters peeled off for a small harassing raid while the main
+                           // army musters (0 = no raiding; gated on `scout` difficulties)
 };
 DiffParams paramsFor(Difficulty d);
 
@@ -135,7 +139,7 @@ private:
     bool nearestVisibleEnemy(const tak::sim::World&, float cx, float cz,
                              const tak::sim::UnitType* atype, float& tx, float& tz) const;
     bool nearestEnemyStart(float cx, float cz, float& tx, float& tz) const;
-    void sendWaves(const tak::sim::World&, const CommandSink&);
+    void sendWaves(const tak::sim::World&, uint32_t simTick, const CommandSink&);
     // The AI's home: the centroid of its own buildings (its base). Used to keep the
     // Monarch anchored near home for safety instead of wandering to distant builds.
     std::pair<float, float> homeOf(const tak::sim::World&) const;
@@ -157,8 +161,8 @@ private:
     Difficulty diff_;
     DiffParams dp_;
     std::vector<std::pair<float, float>> enemyStarts_;
-    bool scouted_ = false;    // one-shot early scout sent
-    bool committed_ = false;  // has launched its first wave -> keep the pressure on
+    bool scouted_ = false;        // one-shot early scout sent
+    uint32_t lastRaidTick_ = 0;   // last tick a harassing raid was sent (raid cooldown)
 };
 
 }  // namespace tak::ai
