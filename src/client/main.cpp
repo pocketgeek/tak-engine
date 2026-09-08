@@ -1988,6 +1988,10 @@ public:
         if (inLobbyPhase()) { lobbyInput(e, winW, winH); return; }
         // Options overlay (opened from the Esc menu) takes all input while up.
         if (options_) {
+            // Keep the drawn cursor tracking the mouse (same as the exitMenu_ branch
+            // below): the custom cursor renders from mouseX_/mouseY_, so swallowing
+            // motion events here froze it for as long as Options was open.
+            if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
             if (options_->input(e, winW, winH)) options_.reset();   // BACK / Esc (SAVE is explicit)
             return;
         }
