@@ -595,6 +595,13 @@ public:
     // Monarch-expendable rule (net GameOptions): when FALSE, losing your Monarch
     // (a commander unit) loses you the game even if other units survive.
     void setMonarchExpendable(bool e) { monarchExpendable_ = e; }
+    // Run flow-field prefetch on the calling thread only (no worker pool). The server
+    // sets this on a referee World when it ticks several games IN PARALLEL: the
+    // parallelism is already at the game level, so a per-game nested flow pool would
+    // just oversubscribe. A lone game (SP, or the client's own sim) leaves it off and
+    // keeps the intra-tick flow parallelism. Never affects results -- purely how the
+    // (identical) flow builds are scheduled.
+    void setSerialFlow(bool s) { serialFlow_ = s; }
     // Deterministic digest of sim state, for lockstep sync checking.
     uint64_t stateHash() const;
 
@@ -796,6 +803,7 @@ private:
     }();
     int winningTeam_ = -1;
     bool monarchExpendable_ = true;      // default: Monarch is just a unit (net option overrides)
+    bool serialFlow_ = false;            // true = flow prefetch stays on this thread (server parallel-games mode)
     std::vector<uint8_t> hadMonarch_;   // per-player: ever fielded a Monarch (for the loss rule)
     bool godsEnabled_ = false;
     int unitCap_ = 0;                 // per-player live-unit limit (0 = unlimited)

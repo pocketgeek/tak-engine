@@ -15,9 +15,14 @@
 #include "net/netcompat.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <functional>
+#include <mutex>
 #include <random>
 #include <set>
+#include <thread>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -140,6 +145,68 @@ struct Room {
     }
 };
 
+// A tiny persistent worker pool: `run(count, fn)` invokes fn(0..count-1) across the
+// workers PLUS the calling thread, and blocks until all have finished. Used to tick
+// several independent games in parallel (each fn(i) drives one room's referee sim).
+// Persistent so the frequent per-tick dispatch never pays thread-creation churn.
+class WorkerPool {
+public:
+    explicit WorkerPool(unsigned workers) {
+        for (unsigned i = 0; i < workers; ++i)
+            threads_.emplace_back([this] { workerLoop(); });
+    }
+    ~WorkerPool() {
+        { std::lock_guard<std::mutex> lk(m_); stop_ = true; ++gen_; }
+        cvStart_.notify_all();
+        for (auto& t : threads_) t.join();
+    }
+    void run(size_t count, const std::function<void(size_t)>& fn) {
+        if (count == 0) return;
+        if (threads_.empty()) { for (size_t i = 0; i < count; ++i) fn(i); return; }
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            fn_ = &fn; count_ = count; cursor_.store(0); finished_ = 0; ++gen_;
+        }
+        cvStart_.notify_all();
+        drain();                                   // the caller participates too
+        // Wait until every WORKER has left drain() (not merely until the last item
+        // finished): only then is it safe for the next run() to reset the cursor.
+        std::unique_lock<std::mutex> lk(m_);
+        cvDone_.wait(lk, [this] { return finished_ == threads_.size(); });
+        fn_ = nullptr;
+    }
+private:
+    void drain() {
+        for (;;) {
+            size_t i = cursor_.fetch_add(1, std::memory_order_relaxed);
+            if (i >= count_) break;
+            (*fn_)(i);
+        }
+    }
+    void workerLoop() {
+        uint64_t seen = 0;
+        for (;;) {
+            std::unique_lock<std::mutex> lk(m_);
+            cvStart_.wait(lk, [this, seen] { return stop_ || gen_ != seen; });
+            if (stop_) return;
+            seen = gen_;
+            lk.unlock();
+            drain();
+            std::lock_guard<std::mutex> lk2(m_);
+            if (++finished_ == threads_.size()) cvDone_.notify_all();
+        }
+    }
+    std::vector<std::thread> threads_;
+    std::mutex m_;
+    std::condition_variable cvStart_, cvDone_;
+    const std::function<void(size_t)>* fn_ = nullptr;
+    size_t count_ = 0;
+    std::atomic<size_t> cursor_{0};
+    size_t finished_ = 0;
+    uint64_t gen_ = 0;
+    bool stop_ = false;
+};
+
 class Server {
 public:
     void setReplayDir(const std::string& d) { replayDir_ = d; }
@@ -234,6 +301,12 @@ private:
     uint32_t nextClientId_ = 1, nextRoomId_ = 1;
     std::unordered_map<uint32_t, std::unique_ptr<Client>> clients_;
     std::map<uint32_t, Room> rooms_;
+    // Worker pool for ticking several concurrent games in parallel (one referee sim
+    // per thread). Sized a little under the core count; idle when only one game runs.
+    WorkerPool tickPool_{[] {
+        unsigned h = std::thread::hardware_concurrency();
+        return std::min(h > 1 ? h - 1 : 1u, 7u);
+    }()};
 
     void onFrame(Client& c, const Frame& f);
     void handshake(Client& c, const Frame& f);
@@ -1177,14 +1250,31 @@ int Server::run() {
         // Close ticks for running, unpaused rooms whose deadline passed -- but never
         // get more than kMaxLeadTicks ahead of the slowest seated player (flow control):
         // if one is behind, hold and rebase the clock so we resume without a burst.
+        //
+        // Games are INDEPENDENT: each closeTick touches only its own Room + referee
+        // World (per-room nav/flow/AI) and broadcasts to its own clients (a client is
+        // in exactly one room, so the client sets are disjoint). clients_/rooms_ are
+        // only READ here (the main thread mutates them before/after, never during),
+        // so several games can tick in parallel. The referee reads the shared registry
+        // read-only. With >=2 games due we hand one per worker; flow prefetch then
+        // stays on-thread (the parallelism is already at the game level). A lone game
+        // ticks inline and keeps its intra-tick flow pool. Byte-identical either way.
         now = nowMs();
-        for (auto& [rid, r] : rooms_) {
-            if (!r.running || r.paused) continue;
+        std::vector<Room*> due;
+        for (auto& [rid, r] : rooms_)
+            if (r.running && !r.paused && r.nextTickMs <= now) due.push_back(&r);
+        auto tickRoom = [&](Room& r) {
             while (r.nextTickMs <= now) {
                 if (!canAdvance(r)) { r.nextTickMs = now; break; }   // pace to the slowest
                 closeTick(r);
             }
-        }
+        };
+        bool parallel = due.size() >= 2;
+        for (Room* rp : due) if (rp->ref) rp->ref->setSerialFlow(parallel);
+        if (parallel)
+            tickPool_.run(due.size(), [&](size_t i) { tickRoom(*due[i]); });
+        else
+            for (Room* rp : due) tickRoom(*rp);
         // Flush all pending writes (bundles just queued) + keepalive + timeouts.
         now = nowMs();
         for (auto& [id, c] : clients_) {

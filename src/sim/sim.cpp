@@ -20,10 +20,13 @@ namespace tak::sim {
 
 bool gInstantBuild = false;
 
-// TAK_PHASE sim profiler globals (zero cost when unset).
+// TAK_PHASE sim profiler globals (zero cost when unset). The accumulators are
+// thread_local: the server may tick several games in parallel, one World::tick per
+// thread, so each thread accumulates (and prints) its own room's timing -- both
+// race-free and correctly attributed.
 static const bool g_phase = getenv("TAK_PHASE") != nullptr;
-static double g_tcomb = 0, g_flowMs = 0, g_pathMs = 0;
-static long g_flowN = 0, g_pathN = 0;
+static thread_local double g_tcomb = 0, g_flowMs = 0, g_pathMs = 0;
+static thread_local long g_flowN = 0, g_pathN = 0;
 
 namespace {
 
@@ -937,7 +940,7 @@ void World::prefetchFlows() {
     // EVERY tick and the creation/oversubscription cost dwarfed the (cheap) Dijkstras.
     // Each field is an independent pure function, so the result is identical regardless
     // of how the work is split; insertion below stays serial in miss order.
-    unsigned hw = std::thread::hardware_concurrency();
+    unsigned hw = serialFlow_ ? 1u : std::thread::hardware_concurrency();
     unsigned nth = std::min<unsigned>(hw ? hw : 1u, unsigned(misses.size()));
     std::atomic<size_t> cursor{0};
     auto worker = [&] {
