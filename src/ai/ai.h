@@ -136,6 +136,9 @@ private:
                              const tak::sim::UnitType* atype, float& tx, float& tz) const;
     bool nearestEnemyStart(float cx, float cz, float& tx, float& tz) const;
     void sendWaves(const tak::sim::World&, const CommandSink&);
+    // The AI's home: the centroid of its own buildings (its base). Used to keep the
+    // Monarch anchored near home for safety instead of wandering to distant builds.
+    std::pair<float, float> homeOf(const tak::sim::World&) const;
 
     // A fighter is free to be committed to a wave when it's idle or only doing a plain
     // move -- NOT while it's already fight-moving or attacking (so re-commanding it each

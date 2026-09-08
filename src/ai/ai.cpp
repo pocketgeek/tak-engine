@@ -213,8 +213,15 @@ void Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
                          const tak::sim::UnitType* pick, const CommandSink& sink) {
     if (pick->isStructure()) {                  // structure
         if (!p.type->isStructure() && p.type->isBuilder) {
+            // The Monarch builds relative to HOME, not wherever it has drifted -- so a
+            // lodestone goes on the nearest deposit to the BASE and other structures
+            // ring the base, keeping the Monarch near home instead of trekking across
+            // the map (where losing it can lose the game). Other builders build where
+            // they stand.
+            float ox = p.x, oz = p.z;
+            if (p.type->commander) { auto h = homeOf(world); ox = h.first; oz = h.second; }
             float x, z;
-            if (placeSite(world, pick, p.x, p.z, x, z))
+            if (placeSite(world, pick, ox, oz, x, z))
                 emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
         }
     } else if (p.type->isStructure()) {         // factory trains mobile
@@ -313,6 +320,19 @@ bool Controller::nearestEnemyStart(float cx, float cz, float& tx, float& tz) con
 // difficulty), attack-move the whole group at one target so they share a flow field:
 // the nearest enemy it can SEE, else the nearest enemy start (marching on the base).
 // Also sends one early scout so the AI reveals + commits rather than turtling forever.
+std::pair<float, float> Controller::homeOf(const tak::sim::World& world) const {
+    double sx = 0, sz = 0; int n = 0;
+    float kx = 0, kz = 0; bool haveKing = false;
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player != player_ || !u.type) continue;
+        if (u.type->isStructure()) { sx += u.x; sz += u.z; ++n; }
+        if (u.type->commander && !haveKing) { kx = u.x; kz = u.z; haveKing = true; }
+    }
+    if (n) return {float(sx / n), float(sz / n)};   // centroid of my buildings
+    if (haveKing) return {kx, kz};                  // no buildings yet: anchor on the Monarch
+    return {0.0f, 0.0f};
+}
+
 void Controller::sendWaves(const tak::sim::World& world, const CommandSink& sink) {
     if (!dp_.attack) return;   // Passive: never marches out; units defend in place.
     std::vector<int> idle;
@@ -397,6 +417,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         for (const auto& u : world.units())
             if (u.player == player_ && u.alive() && u.underConstruction) { throttle = true; break; }
     int acted = 0;
+    bool commanderActed = false;
     if (!throttle)
         for (int pid : producers) {
             if (acted >= dp_.producersPerThink) break;
@@ -404,9 +425,25 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
             if (!p || !p->alive()) continue;
             if (const auto* pick = weightedPick(world, *p, needs)) {
                 produce(world, *p, pick, sink);
+                if (p->type && p->type->commander) commanderActed = true;
                 ++acted;
             }
         }
+    // Keep the Monarch safe: when it's idle (no build this think, no order, no site)
+    // and has strayed beyond a leash of home, walk it back to the base. Losing the
+    // Monarch can lose the game (Monarch Expendable), so it must not sit exposed out
+    // in the field. A plain Move (not AttackMove) -- it retreats, it doesn't hunt.
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player != player_ || !u.type || !u.type->commander) continue;
+        if (commanderActed || !u.orders.empty() || u.buildSiteId != 0 || u.underConstruction)
+            break;
+        auto h = homeOf(world);
+        float dx = u.x - h.first, dz = u.z - h.second;
+        constexpr float kHomeLeash = 520.0f;   // ~a third of a small map's span
+        if (dx * dx + dz * dz > kHomeLeash * kHomeLeash)
+            emit(sink, tak::net::Cmd::Move, u.id, "", h.first, h.second);
+        break;
+    }
     sendWaves(world, sink);
 }
 
