@@ -773,6 +773,8 @@ private:
     int unitCap_ = 0;                 // per-player live-unit limit (0 = unlimited)
     float godAppearTime_ = 1e9f, clock_ = 0;
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
+    uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
+                                 // (deterministic: derived from the live-unit count)
     int pathBudget_ = 0;         // A* repaths still allowed this tick (crowd throttle)
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.

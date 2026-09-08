@@ -1333,9 +1333,10 @@ void World::tickCombat(Unit& u, float dt) {
     // rescans for a target every kAcqStride ticks (~0.13s at 30Hz), not every
     // tick. That turns the dense-crowd O(n^2) neighbour scan into O(n^2/stride)
     // -- the dominant sim cost when thousands of idle armed units pile together.
-    // Deterministic (id+tick, identical on every lockstep peer), so no desync.
-    constexpr uint32_t kAcqStride = 4;
-    bool acqTurn = (uint32_t(u.id) + tickCounter_) % kAcqStride == 0;
+    // Deterministic (id+tick, identical on every lockstep peer), so no desync. The
+    // stride widens with the crowd (acqStride_, set at tick start) so massive battles
+    // rescan less often -- the acquisition cost scales sub-linearly instead of O(n).
+    bool acqTurn = (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
     if (acquiring && u.type->weapon.damage > 0 && acqTurn) {
         float ar = u.type->maxRange() + 90;
         int best = 0;
@@ -2276,6 +2277,18 @@ void World::tick(float dt) {
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
     rebuildGrid();   // spatial hash for this tick (combat acquire + separation)
+
+    // Auto-acquire re-scan period, widened with the crowd: target acquisition is the
+    // dominant sim cost in a huge battle (each idle armed unit scans its neighbourhood
+    // every acqStride_ ticks), so as unit counts climb we rescan LESS often -- a 0.5s
+    // re-acquire delay is imperceptible in a 5000-unit melee but roughly halves the
+    // acquisition cost there. Deterministic: derived from the live-unit count, which is
+    // identical on every lockstep peer.
+    {
+        uint32_t live = 0;
+        for (const auto& u : units_) if (u.alive() && u.type) ++live;
+        acqStride_ = std::clamp<uint32_t>(4 + live / 700, 4, 16);
+    }
 
     prefetchFlows();   // batch-build this tick's missing flow fields on threads
 
