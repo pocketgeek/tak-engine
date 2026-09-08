@@ -8948,8 +8948,20 @@ private:
                 lobbyHots_.push_back({fb, [this, i] { const auto& s2 = mpRoom().slots[i];
                     mp_->setSlot(i, s2.type, (s2.faction + 1) % 5, s2.color, s2.team, s2.ready, s2.aiLevel); }}); }
             colorSwatch(x + 360, y + 5, 20, s.color, canEdit ? std::function<void()>([this, i] {
-                const auto& s2 = mpRoom().slots[i];
-                mp_->setSlot(i, s2.type, s2.faction, (s2.color + 1) % 10, s2.team, s2.ready, s2.aiLevel); }) : nullptr);
+                // Cycle to the next colour NOT already held by another used slot --
+                // landing on a taken colour just blocked READY, which was a trap.
+                const auto& r2 = mpRoom();
+                const auto& s2 = r2.slots[i];
+                uint8_t next = s2.color;
+                for (int step = 1; step <= 10; ++step) {
+                    uint8_t cand = uint8_t((s2.color + step) % 10);
+                    bool taken = false;
+                    for (int k = 0; k < tak::net::kMaxSlots; ++k)
+                        if (k != i && (r2.slots[k].type == 1 || r2.slots[k].type == 2) &&
+                            r2.slots[k].color == cand) { taken = true; break; }
+                    if (!taken) { next = cand; break; }
+                }
+                mp_->setSlot(i, s2.type, s2.faction, next, s2.team, s2.ready, s2.aiLevel); }) : nullptr);
             char tm[8]; std::snprintf(tm, sizeof tm, "T%d", s.team + 1);
             blockText(tm, x + 392, y + 8, 1.8f, {200, 205, 215, 255});
             if (canEdit) { SDL_FRect teb{x + 392, y + 6, 34, 18};
