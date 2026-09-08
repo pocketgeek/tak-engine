@@ -18,7 +18,9 @@ struct Settings {
     bool  vsync      = true;
     int   maxFps     = 60;         // frame cap when vsync is off; clamp 30..480
     float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)
-    int   antiAlias  = 0;          // scene supersampling samples: 0=off, 2, or 4
+    int   antiAlias  = 0;          // scene supersampling: 0=off, 2=on (2x)
+    bool  lod        = true;       // distant-unit impostors (perf); on by default
+    int   spriteMode = 0;          // unit sprites: 0=auto, 1=on, 2=off
 
     // ---- audio (0..256, matching SoundBank's internal scale) ----
     int   masterVol  = 256;        // global gain over everything
@@ -50,6 +52,7 @@ struct Settings {
         for (int i = 0; i < 8; ++i) if (a.chanGain[i] != b.chanGain[i]) return false;
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
             && a.uiScale == b.uiScale && a.antiAlias == b.antiAlias
+            && a.lod == b.lod && a.spriteMode == b.spriteMode
             && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale

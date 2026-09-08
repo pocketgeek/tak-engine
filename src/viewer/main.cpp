@@ -1840,6 +1840,8 @@ public:
         edgeScrollSpeed_ = s.edgeScrollSpeed;
         edgeScrollOn_ = s.edgeScroll;
         uiScale_ = s.uiScale;
+        lodEnabled_ = s.lod;                              // Options: distant impostors
+        spriteMode_ = std::clamp(s.spriteMode, 0, 2);     // Options: unit sprite mode
     }
 
     // main()'s live settings, so the in-game Options screen can edit + persist them.
@@ -1980,9 +1982,6 @@ public:
                                    mapView_.offY() - e.motion.yrel / zm);
             }
             if (dragging_) { dragX1_ = float(e.motion.x); dragY1_ = float(e.motion.y); }
-        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
-                   colorPickerClick(float(e.button.x), float(e.button.y))) {
-            // colour picker swatch handled
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    buildIconClick(float(e.button.x), float(e.button.y),
                                   e.button.button == SDL_BUTTON_LEFT,
@@ -4086,7 +4085,6 @@ public:
         drawObjectivesPanel(winW, winH);
         if (showCounts_) drawUnitCounts(winW);
         if (showHDebug_) drawHDebug();
-        if (showColorPicker_) drawColorPicker(winW, winH);
 
         // Mission briefing (first 30s) and event notices.
         if (briefTimer_ > 0 && hudFont_.ok()) {
@@ -4388,7 +4386,7 @@ private:
     tak::CursorId desiredCursor(bool& fightTint) {
         fightTint = false;
         // Overlays / lobby: a plain arrow for clicking UI.
-        if (inLobbyPhase() || exitMenu_ || options_ || showColorPicker_)
+        if (inLobbyPhase() || exitMenu_ || options_)
             return tak::CursorId::Normal;
         // Build/conjure placement: green when it fits, red when blocked (matches the ghost).
         if (placing_ && mouseX_ >= 0) {
@@ -4985,8 +4983,8 @@ private:
     int sprCurX_ = 0, sprCurY_ = 0, sprShelfH_ = 0;
     // Sprite mode: AUTO (default) turns sprite sheets on only while the frame can't
     // hold 60fps, off again once the crowd clears -- so units keep full 3D detail
-    // until the scene actually needs the cheaper representation. F10 cycles
-    // AUTO -> ON -> OFF. spritesEnabled_ is the effective state auto-tune sets.
+    // until the scene actually needs the cheaper representation. The Options menu
+    // picks AUTO/ON/OFF. spritesEnabled_ is the effective state auto-tune sets.
     enum SpriteMode { SPR_AUTO, SPR_ON, SPR_OFF };
     int spriteMode_ = SPR_AUTO;
     bool spritesEnabled_ = false;  // effective state (managed by autoTuneSprites)
@@ -5072,7 +5070,7 @@ private:
     }
 public:
 private:
-    bool lodEnabled_ = true;    // distant impostors on by default; F8 toggles
+    bool lodEnabled_ = true;    // distant impostors on by default; Options toggles
     float lodPx_ = 64.0f;                        // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 0.5f;  // LOD only when really zoomed out
                                                  // (zoom below this); full 3D otherwise
@@ -6040,9 +6038,7 @@ private:
     bool spectating_ = false;   // watching a live net game (no control, no fog)
     std::string playerName_[8];   // net games: display name per player (from lobby)
     bool playerAi_[8] = {};       // net games: which players are server-run AI
-    bool showColorPicker_ = false;   // F6: pick the player colour
-    bool showHDebug_ = false;   // F7: terrain-height / lift diagnostic overlay
-    std::vector<std::pair<SDL_FRect, int>> colorRects_;   // picker swatch hit boxes
+    bool showHDebug_ = false;   // terrain-height / lift diagnostic overlay (TAK_HDEBUG env)
     float fps_ = 0;             // smoothed render FPS, shown on the F4 overlay
     int winW_ = 0, winH_ = 0;   // last-known window size (for centering/culling)
     tak::net::MpClient* mp_ = nullptr;
@@ -7920,27 +7916,8 @@ private:
             return true;
         }
         if (key == SDLK_F4) { showCounts_ = !showCounts_; return true; }
-        if (key == SDLK_F6) { showColorPicker_ = !showColorPicker_; return true; }
-        if (key == SDLK_F7) { showHDebug_ = !showHDebug_; return true; }
-        if (key == SDLK_F8) {                     // toggle LOD impostors (A/B perf)
-            lodEnabled_ = !lodEnabled_;
-            notice_ = lodEnabled_ ? "LOD ON" : "LOD OFF";
-            noticeTimer_ = 2;
-            return true;
-        }
-        if (key == SDLK_F10 && shift) {           // force-rebuild the baked atlases
-            invalidateRenderTargets();            // (recovers a GPU render-target reset)
-            notice_ = "REBUILT SPRITE ATLASES";
-            noticeTimer_ = 2;
-            return true;
-        }
-        if (key == SDLK_F10) {                    // cycle sprite mode AUTO->ON->OFF
-            spriteMode_ = (spriteMode_ + 1) % 3;
-            notice_ = spriteMode_ == SPR_AUTO ? "SPRITES AUTO"
-                    : spriteMode_ == SPR_ON   ? "SPRITES ON" : "SPRITES OFF";
-            noticeTimer_ = 2;
-            return true;
-        }
+        // LOD impostors (F8) and sprite mode (F10) are now Options-menu settings; the
+        // player colour is chosen in the lobby, not in-game. Height debug is env-only.
         if (key == SDLK_d && ctrl) {              // self-destruct the selected unit(s)
             // Through the command path (Cmd::Destroy), not a direct hp write --
             // a local mutation would silently desync a networked game.
@@ -7990,47 +7967,6 @@ private:
                                 16.0f, 400.0f);
             notice_ = "LOD THRESHOLD " + std::to_string(int(lodPx_)) + "px";
             noticeTimer_ = 2;
-            return true;
-        }
-        // F9/F11 stress spawns mutate the world outside the command path, so
-        // they are dev-only: in a networked game they would instantly desync.
-        if ((key == SDLK_F9 || key == SDLK_F11) && mp_) {
-            notice_ = "STRESS SPAWN DISABLED IN NET GAMES";
-            noticeTimer_ = 2;
-            return true;
-        }
-        // F9: stress test -- spawn 500 Zhon drakes across the current view.
-        if (key == SDLK_F9) {
-            float zm = std::max(mapView_.zoom(), 1e-3f);
-            float cx = mapView_.offX() + (winW_ / 2.0f) / zm;
-            float cz = mapView_.offY() + (winH_ / 2.0f) / zm;
-            const int nx = 25, nz = 20;   // 25 * 20 = 500
-            int made = 0;
-            for (int j = 0; j < nz; ++j)
-                for (int i = 0; i < nx; ++i) {
-                    float x = cx + (i - (nx - 1) * 0.5f) * 24.0f;
-                    float z = cz + (j - (nz - 1) * 0.5f) * 22.0f;
-                    if (spawn("zondrake", x, z, 0.0f, localPlayer_) >= 0) ++made;
-                }
-            notice_ = "SPAWNED " + std::to_string(made) + " DRAKES";
-            noticeTimer_ = 3;
-            return true;
-        }
-        // F11: stress test -- spawn 500 Zhon trolls across the current view.
-        if (key == SDLK_F11) {
-            float zm = std::max(mapView_.zoom(), 1e-3f);
-            float cx = mapView_.offX() + (winW_ / 2.0f) / zm;
-            float cz = mapView_.offY() + (winH_ / 2.0f) / zm;
-            const int nx = 25, nz = 20;
-            int made = 0;
-            for (int j = 0; j < nz; ++j)
-                for (int i = 0; i < nx; ++i) {
-                    float x = cx + (i - (nx - 1) * 0.5f) * 20.0f;
-                    float z = cz + (j - (nz - 1) * 0.5f) * 18.0f;
-                    if (spawn("zontroll", x, z, 0.0f, localPlayer_) >= 0) ++made;
-                }
-            notice_ = "SPAWNED " + std::to_string(made) + " TROLLS";
-            noticeTimer_ = 3;
             return true;
         }
 
@@ -8938,46 +8874,6 @@ private:
         (void)winW;
     }
 
-    // In-game player-colour picker (F6): a row of swatches; click one to recolour
-    // your units, HUD and minimap. Swatch rects are cached for click hit-testing.
-    void drawColorPicker(int winW, int winH) {
-        colorRects_.clear();
-        const float sw = 30, gap = 6, pad = 10;
-        float rowW = 10 * sw + 9 * gap;
-        float x0 = (winW - rowW) / 2.0f;
-        float y0 = float(winH) - barH() - 52;
-        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 190);
-        SDL_FRect bg{x0 - pad, y0 - 22, rowW + 2 * pad, sw + 34};
-        SDL_RenderFillRectF(ren_, &bg);
-        blockText("PLAYER COLOR", x0, y0 - 18, 1.8f, SDL_Color{210, 210, 215, 255});
-        for (int i = 0; i < 10; ++i) {
-            SDL_FRect r{x0 + i * (sw + gap), y0, sw, sw};
-            SDL_Color c = playerColors_[i];
-            SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
-            SDL_RenderFillRectF(ren_, &r);
-            // Frame; the current selection gets a bright, thick border.
-            bool cur = colorSlot_[localPlayer_] == i;
-            SDL_SetRenderDrawColor(ren_, cur ? 255 : 20, cur ? 255 : 18,
-                                   cur ? 255 : 16, 255);
-            SDL_RenderDrawRectF(ren_, &r);
-            if (cur) {
-                SDL_FRect r2{r.x - 2, r.y - 2, r.w + 4, r.h + 4};
-                SDL_RenderDrawRectF(ren_, &r2);
-            }
-            colorRects_.push_back({r, i});
-        }
-    }
-    // Handle a click on the colour picker; returns true if it consumed the click.
-    bool colorPickerClick(float mx, float my) {
-        if (!showColorPicker_) return false;
-        for (const auto& [r, slot] : colorRects_)
-            if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
-                colorSlot_[localPlayer_] = slot;
-                return true;
-            }
-        return false;
-    }
 
     // The in-mission objectives panel (top-left): the mission's objectives, toggled
     // with the O key. Only shown for campaign missions (missionObjectives_ non-empty).

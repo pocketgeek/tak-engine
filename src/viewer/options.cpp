@@ -99,10 +99,15 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.maxFps = int(v + 0.5f); }, [](float v) { return std::to_string(int(v + 0.5f)); });
     slider("UI SCALE", 0.75f, 2.0f, [&] { return s_.uiScale; },
            [&](float v) { s_.uiScale = v; }, [](float v) { return pctOf(v, 1); });
-    // Supersampling AA as a 3-stop slider: OFF / 2X / 4X (level 0/1/2 <-> 0/2/4).
-    slider("ANTI-ALIASING", 0, 2, [&] { return s_.antiAlias == 4 ? 2.0f : s_.antiAlias == 2 ? 1.0f : 0.0f; },
-           [&](float v) { int l = int(v + 0.5f); s_.antiAlias = l >= 2 ? 4 : l >= 1 ? 2 : 0; },
-           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "4X" : l >= 1 ? "2X" : "OFF"); });
+    // Supersampling AA as a simple on/off; ON is 2x.
+    toggle("ANTI-ALIASING", [&] { return s_.antiAlias >= 2 ? 1.0f : 0.0f; },
+           [&](float v) { s_.antiAlias = v > 0.5f ? 2 : 0; });
+    // Distant-unit impostors (perf) and the unit-sprite mode -- were F8 / F10 in-game.
+    toggle("DISTANT IMPOSTORS", [&] { return s_.lod ? 1.0f : 0.0f; },
+           [&](float v) { s_.lod = v > 0.5f; });
+    slider("UNIT SPRITES", 0, 2, [&] { return float(s_.spriteMode); },
+           [&](float v) { s_.spriteMode = std::clamp(int(v + 0.5f), 0, 2); },
+           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "OFF" : l >= 1 ? "ON" : "AUTO"); });
 
     section("CAMERA");
     slider("MOUSE ZOOM SPEED", 0.25f, 4.0f, [&] { return s_.mouseZoomSpeed; },
