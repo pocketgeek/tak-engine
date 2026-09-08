@@ -3744,11 +3744,21 @@ public:
             // (The VM itself is advanced in the parallel pass below.)
         }
 
-        // Advance every unit's animation VM in parallel. Each VM is independent:
-        // it only reads sim state through onGet (no writes) and its EMIT_SFX/
-        // PLAY_SOUND opcodes are no-ops here, so ticking off the main thread is
-        // safe. The state transitions above (sounds, script starts) stayed
-        // serial. Flyer VMs still advance at 1x real time.
+        // (The per-unit animation VMs are advanced in animFrame(), once per RENDER frame
+        // rather than per sim tick, so the heavy parallel pass doesn't clump onto the
+        // 1-in-8 net frame that also runs the sim tick, and animation runs at display rate.
+        // The STATE transitions above -- which script/gait, script starts, sounds -- stay
+        // here on the sim tick.)
+    }
+
+    // Advance every unit's animation VM ONCE PER RENDER FRAME (decoupled from the 30Hz sim
+    // tick). Each VM is independent: it only reads sim state through onGet (no writes), so
+    // ticking it off the main thread is safe; the EMIT_SFX/PLAY_SOUND it stashes is drained
+    // here serially. Viewer-only -- never touches the sim hash. `realDt` is the wall-clock
+    // frame time, scaled to the game's apparent speed so the walk cycle matches movement.
+    void animFrame(float realDt) {
+        if (paused_) return;
+        float dt = realDt * animSpeed();
         vmTick_.clear();
         for (auto& [id, a] : anims_) {
             if (a.vm) vmTick_.push_back(a.vm.get());
@@ -3776,6 +3786,13 @@ public:
             a.pendingSfx.clear();
             a.pendingSnd.clear();
         }
+    }
+
+    // How fast the world appears to advance (so the animation walk cycle stays in step
+    // with movement): the server-set game speed in a net game, else the local multiplier.
+    float animSpeed() const {
+        if (isNet() && mp_) return std::max(1, int(mp_->gameSpeed())) / 10.0f;
+        return speedMult();
     }
 
     void update(float dt) {
@@ -11278,6 +11295,10 @@ int main(int argc, char** argv) {
             } else {
                 gameView->update(dt);
             }
+            // Advance unit animation every render frame (decoupled from the 30Hz sim tick),
+            // so the walk cycle is smooth at display rate and the heavy parallel VM pass no
+            // longer piles onto the 1-in-8 net frame that runs the sim tick.
+            gameView->animFrame(dt);
             double t2 = prof ? pnow() : 0;
             gameView->draw(w, h);
             double t3 = prof ? pnow() : 0;
@@ -11324,15 +11345,22 @@ int main(int argc, char** argv) {
             }
         }
 
-        if (settings.maxFps > 0) {
+        // Frame cap ONLY when vsync is off -- with vsync on, the swap already paces us, so
+        // an extra SDL_Delay just double-paces and adds ±1ms wobble (a jitter source). When
+        // it does apply, coarse-sleep the bulk then spin the last ~1ms: SDL_Delay alone
+        // rounds to whole milliseconds and wobbles the frame time.
+        if (settings.maxFps > 0 && !settings.vsync) {
             static uint64_t prevPresent = 0;
-            uint64_t nowp = SDL_GetPerformanceCounter();
-            double target = 1.0 / settings.maxFps;   // live via the Options slider
-            double elapsed = prevPresent ? double(nowp - prevPresent) /
-                                               double(SDL_GetPerformanceFrequency())
-                                         : target;
-            if (elapsed < target)
-                SDL_Delay(uint32_t((target - elapsed) * 1000.0));
+            const double freq = double(SDL_GetPerformanceFrequency());
+            const double target = 1.0 / settings.maxFps;   // live via the Options slider
+            if (prevPresent) {
+                for (;;) {
+                    double elapsed = double(SDL_GetPerformanceCounter() - prevPresent) / freq;
+                    double remain = target - elapsed;
+                    if (remain <= 0.0) break;
+                    if (remain > 0.002) SDL_Delay(uint32_t((remain - 0.001) * 1000.0));
+                }
+            }
             prevPresent = SDL_GetPerformanceCounter();
         }
 
