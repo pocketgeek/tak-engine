@@ -6,7 +6,7 @@
 
 _Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit of OpenRA and the Robot War Engine._
 
-[![version](https://img.shields.io/badge/version-0.2.1-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.3.0-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599c?style=flat-square&logo=cplusplus&logoColor=white)](CMakeLists.txt)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![multiplayer](https://img.shields.io/badge/multiplayer-deterministic%20lockstep-b03a2e?style=flat-square)](#multiplayer)
@@ -38,7 +38,7 @@ _Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit
 A modern, cross-platform engine recreation for **Total Annihilation: Kingdoms**
 (Cavedog Entertainment, 1999), in the spirit of OpenRA and Robot War Engine.
 
-**Version 0.2.1** — reported by `takclient --version` and `takserver --version`
+**Version 0.3.0** — reported by `takclient --version` and `takserver --version`
 (and shown in the window title / server banner). The release version is set in
 one place, `project(... VERSION ...)` in `CMakeLists.txt`, and is separate from
 the multiplayer wire protocol version, which is gated independently at connect.
@@ -206,9 +206,10 @@ needs-based build plan (economy → a factory → army). In a god-enabled match,
 whose priests (`attractsgods` units) have channelled enough mana favour manifests its
 **god** once the appear time passes.
 
-Audio, display, camera, and rendering preferences — including anti-aliasing, the
-distance-impostor **LOD**, and the **unit-sprite** mode — are set in the in-game
-**Options** screen (Esc → Options) and persisted per user.
+Audio, display, camera, and rendering preferences — anti-aliasing, **bilinear
+filtering** (retail's smooth-scaling video option), the distance-impostor **LOD**,
+the **unit-sprite** mode, and the **build-menu alignment** (left / center / right) —
+are set in the in-game **Options** screen (Esc → Options) and persisted per user.
 
 ### Command line
 
