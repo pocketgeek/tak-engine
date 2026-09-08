@@ -698,11 +698,19 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (d_->options_) d_->options_->render(w, h);
         if (d_->hotkeys_) d_->hotkeys_->render(w, h);   // above Options
         if (d_->campaign_) d_->campaign_->render(w, h);
-        // Draw the cursor last so it sits above the doors and the overlays.
+        // Draw the cursor last so it sits above the doors and the overlays. With the
+        // hardware-cursor option the OS tracks the pointer (smooth under load); otherwise
+        // hide the OS arrow and draw our own into the frame.
         if (d_->cursors_.ok()) {
-            int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
-            d_->cursors_.draw(d_->ren, CursorId::Normal, mx, my,
-                              settings ? settings->cursorScale : 4);
+            int sc = settings ? settings->cursorScale : 4;
+            if (settings && settings->hardwareCursor &&
+                d_->cursors_.applyHardware(CursorId::Normal, sc)) {
+                SDL_ShowCursor(SDL_ENABLE);
+            } else {
+                SDL_ShowCursor(SDL_DISABLE);
+                int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
+                d_->cursors_.draw(d_->ren, CursorId::Normal, mx, my, sc);
+            }
         }
         SDL_RenderPresent(d_->ren);
         SDL_Delay(1);

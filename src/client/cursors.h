@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 namespace tak {
@@ -45,12 +46,39 @@ public:
     void draw(SDL_Renderer* ren, CursorId c, int mouseX, int mouseY,
               int scale = 1, SDL_Color tint = SDL_Color{255, 255, 255, 255});
 
+    // HARDWARE-cursor mode: instead of drawing into the frame, point the OS cursor at
+    // `c`'s current animation frame (scaled + colour-modded like draw()). The OS tracks
+    // the pointer position independently of our render loop, so it stays smooth when the
+    // game hitches. Call once per frame IN PLACE OF draw(), and make sure the OS cursor is
+    // shown (SDL_ShowCursor(SDL_ENABLE)). SDL_Cursors are built + cached lazily per
+    // (cursor,tint) at `scale`; a scale change rebuilds. Returns false if the art is
+    // missing or the platform rejected the cursor (e.g. size cap) -- the caller should
+    // then fall back to draw() and hide the OS arrow.
+    bool applyHardware(CursorId c, int scale, SDL_Color tint = SDL_Color{255, 255, 255, 255});
+
+    // Free the cached SDL_Cursors and restore the default OS arrow. Call when turning
+    // hardware mode off (so the software path can hide the arrow and draw its own).
+    void releaseHardware();
+
 private:
-    struct Frame { SDL_Texture* tex = nullptr; int w = 0, h = 0, hx = 0, hy = 0; };
+    struct Frame {
+        SDL_Texture* tex = nullptr;
+        int w = 0, h = 0, hx = 0, hy = 0;
+        std::vector<uint8_t> rgba;   // kept (RGBA32) so hardware SDL_Cursors can be baked
+    };
     std::array<std::vector<Frame>, size_t(CursorId::Count)> anims_;
     bool ok_ = false;
     CursorId cur_ = CursorId::Count;   // != any real id, so the first draw seeds the clock
     uint64_t animStartMs_ = 0;
+
+    // Hardware-cursor cache: (CursorId << 32 | packed-RGBA-tint) -> one SDL_Cursor per
+    // frame, built for hwScale_. hwSet_ is the currently-applied cursor (skip redundant
+    // SDL_SetCursor); hwCur_/hwStartMs_ drive the animation clock in hardware mode.
+    std::unordered_map<uint64_t, std::vector<SDL_Cursor*>> hw_;
+    int hwScale_ = 0;                  // scale the cache was built for (0 = empty)
+    SDL_Cursor* hwSet_ = nullptr;
+    CursorId hwCur_ = CursorId::Count;
+    uint64_t hwStartMs_ = 0;
 
     static constexpr int kFps = 15;    // retail cursor cadence (KINGDOMS.icd frame delta)
 };

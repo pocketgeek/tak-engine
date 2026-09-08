@@ -273,6 +273,10 @@ void OptionsScreen::build(int channels) {
     slider("CURSOR SIZE", 1, 8, [&] { return float(s_.cursorScale); },
            [&](float v) { s_.cursorScale = int(v + 0.5f); },
            [](float v) { return std::to_string(int(v + 0.5f)) + "X"; });
+    // OS-tracked cursor: the pointer keeps moving smoothly even when a heavy frame
+    // stalls the render loop (the retail Direct3D "hardware cursor" option).
+    toggle("HARDWARE CURSOR", [&] { return s_.hardwareCursor ? 1.0f : 0.0f; },
+           [&](float v) { s_.hardwareCursor = v > 0.5f; });
 
     // CONTROLS: opens the separate hotkey-rebinding screen (host-owned).
     if (onHotkeys_) {

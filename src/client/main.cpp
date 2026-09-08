@@ -4721,13 +4721,27 @@ public:
     // draw their own, so restoring it only makes the arrow flash during the next screen's
     // (slow) load; the desktop cursor returns on its own when the window is destroyed.
     void drawCursorOverlay() {
-        if (!cursorsInit_) {
-            cursorsInit_ = true;
-            // Hide the OS arrow for our cursor; if the art is missing, ensure it is shown
-            // (a prior screen -- the menu -- may already have hidden it).
-            SDL_ShowCursor(cursors_.load(ren_, vfs_) ? SDL_DISABLE : SDL_ENABLE);
+        if (!cursorsInit_) { cursorsInit_ = true; cursors_.load(ren_, vfs_); }
+        if (!cursors_.ok()) {   // no cursor art -> just keep the OS arrow
+            if (cursorMode_ != 1) { SDL_ShowCursor(SDL_ENABLE); cursorMode_ = 1; }
+            return;
         }
-        if (!cursors_.ok()) return;   // no cursor art -> keep the OS arrow
+        bool fightTint = false;
+        tak::CursorId c = desiredCursor(fightTint);
+        int sc = settings_ ? settings_->cursorScale : 4;
+        SDL_Color tint = fightTint ? kFightMoveTint : SDL_Color{255, 255, 255, 255};
+
+        // HARDWARE cursor: hand the sprite to the OS, which tracks the pointer position
+        // itself -- so it stays smooth even when a heavy frame stalls our render loop.
+        if (settings_ && settings_->hardwareCursor && !hwCursorFailed_) {
+            if (cursorMode_ != 1) { SDL_ShowCursor(SDL_ENABLE); cursorMode_ = 1; }
+            if (cursors_.applyHardware(c, sc, tint)) return;
+            hwCursorFailed_ = true;   // platform rejected it (size cap?) -> software from here on
+            std::fprintf(stderr, "cursor: hardware cursor unavailable -- using software\n");
+        }
+
+        // SOFTWARE cursor: hide the OS arrow and draw our own into the frame.
+        if (cursorMode_ != 0) { cursors_.releaseHardware(); SDL_ShowCursor(SDL_DISABLE); cursorMode_ = 0; }
         // Pointer position in renderer-output pixels (the space mouse events are mapped
         // into). Before the first motion, sample the OS position and map it the same way.
         int mx, my;
@@ -4737,10 +4751,7 @@ public:
             float lx, ly; SDL_RenderWindowToLogical(ren_, wx, wy, &lx, &ly);
             mx = int(lx); my = int(ly);
         }
-        bool fightTint = false;
-        tak::CursorId c = desiredCursor(fightTint);
-        int sc = settings_ ? settings_->cursorScale : 4;
-        cursors_.draw(ren_, c, mx, my, sc, fightTint ? kFightMoveTint : SDL_Color{255, 255, 255, 255});
+        cursors_.draw(ren_, c, mx, my, sc, tint);
     }
 
 private:
@@ -6802,6 +6813,8 @@ private:
     // overlay draw; when it takes over, the OS arrow is hidden (restored in the dtor).
     tak::CursorSet cursors_;
     bool cursorsInit_ = false;          // attempted the one-time load yet?
+    int  cursorMode_ = -1;              // -1 uninit, 0 software (drawn), 1 hardware (OS-tracked)
+    bool hwCursorFailed_ = false;       // hardware cursor rejected once -> stay on software
     // Fight-move ('f') reuses the Attack glyph tinted this red-orange, so it reads apart
     // from a real attack order -- for both the order-column button and the mouse cursor.
     static constexpr SDL_Color kFightMoveTint{255, 90, 80, 255};

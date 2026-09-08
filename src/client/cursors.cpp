@@ -44,6 +44,7 @@ const char* seqName(CursorId c) {
 }  // namespace
 
 CursorSet::~CursorSet() {
+    releaseHardware();
     for (auto& frames : anims_)
         for (auto& f : frames)
             if (f.tex) SDL_DestroyTexture(f.tex);
@@ -80,7 +81,7 @@ bool CursorSet::load(SDL_Renderer* ren, const hpi::Vfs& vfs) {
             SDL_UpdateTexture(t, nullptr, fr.rgba.data(), fr.width * 4);
             SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
             SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);   // crisp 1:1 pixel cursor
-            anims_[i].push_back({t, fr.width, fr.height, fr.xoff, fr.yoff});
+            anims_[i].push_back({t, fr.width, fr.height, fr.xoff, fr.yoff, fr.rgba});
         }
     }
     // Need at least the normal pointer to justify taking over from the OS cursor.
@@ -109,6 +110,83 @@ void CursorSet::draw(SDL_Renderer* ren, CursorId c, int mouseX, int mouseY, int 
     // Magnify sprite AND hotspot by `scale` so the anchor stays on the pointer.
     SDL_Rect dst{ mouseX - f.hx * scale, mouseY - f.hy * scale, f.w * scale, f.h * scale };
     SDL_RenderCopy(ren, f.tex, nullptr, &dst);
+}
+
+namespace {
+
+// Bake one frame's RGBA into a scaled, tinted SDL_Cursor (nearest-neighbour, so the pixel
+// art stays crisp). Hotspot is scaled to match. Returns nullptr on failure.
+SDL_Cursor* bakeCursor(const std::vector<uint8_t>& rgba, int w, int h, int hx, int hy,
+                       int scale, SDL_Color tint) {
+    if (rgba.size() < size_t(w) * size_t(h) * 4 || w <= 0 || h <= 0) return nullptr;
+    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, w * scale, h * scale, 32,
+                                                    SDL_PIXELFORMAT_RGBA32);
+    if (!s) return nullptr;
+    for (int y = 0; y < h * scale; ++y) {
+        auto* dst = static_cast<uint8_t*>(s->pixels) + size_t(y) * s->pitch;
+        const uint8_t* srcRow = rgba.data() + size_t(y / scale) * w * 4;
+        for (int x = 0; x < w * scale; ++x) {
+            const uint8_t* p = srcRow + size_t(x / scale) * 4;   // RGBA32 = R,G,B,A in memory
+            dst[0] = uint8_t(p[0] * tint.r / 255);
+            dst[1] = uint8_t(p[1] * tint.g / 255);
+            dst[2] = uint8_t(p[2] * tint.b / 255);
+            dst[3] = uint8_t(p[3] * tint.a / 255);
+            dst += 4;
+        }
+    }
+    SDL_Cursor* cur = SDL_CreateColorCursor(s, hx * scale, hy * scale);
+    SDL_FreeSurface(s);
+    return cur;
+}
+
+}  // namespace
+
+bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
+    if (!ok_) return false;
+    if (size_t(c) >= anims_.size() || anims_[size_t(c)].empty()) c = CursorId::Normal;
+    const auto& frames = anims_[size_t(c)];
+    if (frames.empty()) return false;
+    if (scale < 1) scale = 1;
+
+    if (scale != hwScale_) { releaseHardware(); hwScale_ = scale; }   // rebuild on scale change
+
+    const uint32_t packed = (uint32_t(tint.r) << 24) | (uint32_t(tint.g) << 16) |
+                            (uint32_t(tint.b) << 8) | uint32_t(tint.a);
+    const uint64_t key = (uint64_t(c) << 32) | packed;
+    auto it = hw_.find(key);
+    if (it == hw_.end()) {                       // lazily bake this (cursor,tint) set
+        std::vector<SDL_Cursor*> built;
+        built.reserve(frames.size());
+        for (const auto& f : frames) {
+            SDL_Cursor* cur = bakeCursor(f.rgba, f.w, f.h, f.hx, f.hy, scale, tint);
+            if (!cur) {                          // platform rejected it -> unwind, fall back
+                for (SDL_Cursor* b : built) SDL_FreeCursor(b);
+                return false;
+            }
+            built.push_back(cur);
+        }
+        it = hw_.emplace(key, std::move(built)).first;
+    }
+    const auto& curs = it->second;
+    if (curs.empty()) return false;
+
+    const uint64_t now = SDL_GetTicks64();
+    if (c != hwCur_) { hwCur_ = c; hwStartMs_ = now; }   // restart animation on a change
+    size_t idx = curs.size() > 1 ? size_t((now - hwStartMs_) * kFps / 1000) % curs.size() : 0;
+
+    if (curs[idx] != hwSet_) { hwSet_ = curs[idx]; SDL_SetCursor(hwSet_); }
+    return true;
+}
+
+void CursorSet::releaseHardware() {
+    for (auto& kv : hw_)
+        for (SDL_Cursor* c : kv.second)
+            if (c) SDL_FreeCursor(c);
+    hw_.clear();
+    hwScale_ = 0;
+    hwSet_ = nullptr;
+    hwCur_ = CursorId::Count;
+    SDL_SetCursor(SDL_GetDefaultCursor());   // don't leave a freed cursor active
 }
 
 }  // namespace tak
