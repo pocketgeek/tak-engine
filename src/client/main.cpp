@@ -6365,6 +6365,7 @@ private:
     bool menuRequested_ = false;   // set by a MAIN MENU action -> main() returns to the front-end
     bool quitRequested_ = false;   // set by the in-game QUIT button -> main() exits the app
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)
+    bool spSpectate_ = false;      // SP: watch the AIs (host takes no slot)
     bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
     float lobbyScale_ = 2.0f;               // lobby fit scale (set in render)
@@ -8799,6 +8800,13 @@ private:
               [this] { createCrusades_ = !createCrusades_; }); y += 34;
         lbBtn(x, y, 170, 26, createGods_ ? "GODS: ON" : "GODS: OFF", true,
               [this] { createGods_ = !createGods_; }); y += 34;
+        // SP only: spectate mode -- you take no slot and just watch the AIs fight.
+        // Seat AIs in the slots below, then START.
+        if (singlePlayer_) {
+            lbBtn(x, y, 240, 26, spSpectate_ ? "SPECTATE (WATCH AIS): ON"
+                                             : "SPECTATE (WATCH AIS): OFF", true,
+                  [this] { spSpectate_ = !spSpectate_; }); y += 34;
+        }
         // Override tier for the game: NONE (pure retail) / COSMETIC (art & sound
         // may differ) / FULL (gameplay overrides allowed but every player must
         // have the same ones). The host's own launch tier caps it (you can't offer
@@ -8813,7 +8821,10 @@ private:
         lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0; o.gods = createGods_ ? 1 : 0;
             o.overridePolicy = createOverride_;
-            mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity());
+            // SP spectate: create as a spectator (no slot) so every slot can be an AI;
+            // the game-start path flags spectating_ + noFog_ from mp_->isSpectator().
+            mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(),
+                            singlePlayer_ && spSpectate_, singlePlayer_);
             lobbyScreen_ = LobbyScreen::Browser;
         });
         if (!singlePlayer_)   // a private single-player game has no browser to go back to

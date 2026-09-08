@@ -239,12 +239,19 @@ private:
     void writeReplay(Room& r);
 };
 
-// A running game is abandoned once no human slot has a live or held (dropped-
-// within-grace) client -- then it can be torn down and its replay written.
+// A running game is abandoned once nobody is left to watch it. Normally that means
+// no human slot has a live or held (dropped-within-grace) client. A game created by
+// a SPECTATOR host to watch the AIs fight (single-player spectate / TAK_MP_WATCH) has
+// NO human slots at all, so it also stays alive while a spectator is connected and at
+// least one AI is still playing -- otherwise the server would tear it down the instant
+// it started.
 static bool roomActive(const Room& r) {
-    for (int i = 0; i < kMaxSlots; ++i)
+    bool aiPresent = false;
+    for (int i = 0; i < kMaxSlots; ++i) {
         if (r.slots[i].type == 1 && (r.slotClient[i] >= 0 || r.slotDropped[i])) return true;
-    return false;
+        if (r.slots[i].type == 2) aiPresent = true;
+    }
+    return aiPresent && !r.spectators.empty();
 }
 
 void Server::writeReplay(Room& r) {

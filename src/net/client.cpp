@@ -159,9 +159,13 @@ void MpClient::onFrame(const Frame& f) {
             room_.mySlot = !r.ok ? keep : (mySlot == 0xFF ? -1 : int(mySlot));
             // Any 0xFF start is a spectator (a create-as-spectator host, or spectate()).
             spectator_ = expectingSpectate_ || (r.ok && mySlot == 0xFF);
-            // A rejoin OR a spectate of a RUNNING game replays the bundle log; a
-            // host-spectator whose game is just starting has no log to replay.
-            rejoin_ = expectingRejoin_ || expectingSpectate_;
+            // Route EVERY spectator through the "set up before the state branches" path
+            // (isRejoin): a spectator never reports Loaded, so the server starts sending
+            // TickBundles immediately and the client's state can flip Starting->InGame
+            // before the normal starting-branch runs -- which would skip world setup and
+            // leave the spectator watching an empty sim. A host-spectator whose game is
+            // just starting simply has an empty backlog to "replay".
+            rejoin_ = expectingRejoin_ || expectingSpectate_ || spectator_;
             expectingRejoin_ = expectingSpectate_ = false;
             state_ = State::Starting;
             break;
