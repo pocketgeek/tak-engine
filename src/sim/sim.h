@@ -319,6 +319,11 @@ public:
     // Backed by a lazily-built clearance grid, so O(1). Footprint-aware pathing and
     // steering use this so a 4x4 unit never routes through a 1-cell gap and wedges.
     bool fits(int cx, int cz, int foot) const;
+    // Force the lazy clearance grid up to date NOW. The parallel flow-field
+    // prefetch calls this before handing the grid to worker threads, so they
+    // only ever READ it (fits() would otherwise rebuild the mutable cache
+    // concurrently from several threads).
+    void ensureClearance() const { if (clearDirty_) rebuildClearance(); }
     bool empty() const { return cells_.empty(); }
     int width() const { return w_; }
     int height() const { return h_; }
@@ -684,6 +689,12 @@ private:
     // cache is therefore mutable and this is a logical-const query. Single-threaded
     // per world (not safe to call off the sim thread). See docs/multiplayer-design.md.
     const FlowField* flowFor(const UnitType* type, float gx, float gz) const;
+    // The flow memo's cache key + build inputs, shared by flowFor and the tick-top
+    // parallel prefetch so both derive the identical pure function of
+    // (domain, foot, quantized goal block). False if the domain grid is empty.
+    struct FlowKey { long long key; const NavGrid* grid; float bx, bz; int foot; };
+    bool flowKeyFor(const UnitType* type, float gx, float gz, FlowKey& out) const;
+    void prefetchFlows();   // batch-build this tick's missing fields on threads
     // Targeted flow invalidation after a GROUND nav edit in the cell rect
     // (cx, cz, w, h): water/hover grids never change post-setup so their fields
     // always survive, and a ground field survives when the rect -- padded by its

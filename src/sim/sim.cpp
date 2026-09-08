@@ -12,7 +12,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <queue>
+#include <array>
+#include <thread>
 
 namespace tak::sim {
 
@@ -516,35 +517,47 @@ bool FlowField::build(const NavGrid& nav, float gx, float gz, int foot) {
 
     const size_t n = size_t(w_) * h_;
     // Integration field in "centi-cells": orthogonal step 10, diagonal 14, so a
-    // uint16 covers paths up to ~6500 cells. Dijkstra out from the goal.
+    // uint16 covers paths up to ~6500 cells. Dijkstra out from the goal, using
+    // Dial's algorithm: with a max step of 14 a circular array of 15 cost buckets
+    // replaces the binary heap (no log-n push/pop, pure integer work, ~2-3x
+    // faster). The result is bit-identical to the heap version -- Dijkstra's
+    // final distances are unique, and superseded entries are skipped on pop.
     dist_.assign(n, 0xFFFF);
-    struct Node { int cost, idx; };
-    struct Cmp { bool operator()(const Node& a, const Node& b) const { return a.cost > b.cost; } };
-    std::priority_queue<Node, std::vector<Node>, Cmp> pq;
+    constexpr int kMaxStep = 14;
+    std::array<std::vector<int>, kMaxStep + 1> buckets;
     dist_[size_t(goal_)] = 0;
-    pq.push({0, goal_});
+    buckets[0].push_back(goal_);
+    size_t remaining = 1;
     static const int dcx[8] = {1, -1, 0, 0, 1, 1, -1, -1};
     static const int dcz[8] = {0, 0, 1, -1, 1, -1, 1, -1};
     static const int dcost[8] = {10, 10, 10, 10, 14, 14, 14, 14};
-    while (!pq.empty()) {
-        Node cur = pq.top();
-        pq.pop();
-        if (cur.cost > dist_[size_t(cur.idx)]) continue;
-        int cx = cur.idx % w_, cz = cur.idx / w_;
-        for (int k = 0; k < 8; ++k) {
-            int nx = cx + dcx[k], nz = cz + dcz[k];
-            if (!nav.fits(nx, nz, foot)) continue;
-            // No diagonal corner-cutting past a cell the unit can't fit through.
-            if (k >= 4 && (!nav.fits(cx + dcx[k], cz, foot) ||
-                           !nav.fits(cx, cz + dcz[k], foot)))
-                continue;
-            int nd = cur.cost + dcost[k];
-            size_t ni = size_t(nz) * w_ + nx;
-            if (nd < dist_[ni] && nd < 0xFFFF) {
-                dist_[ni] = uint16_t(nd);
-                pq.push({nd, int(ni)});
+    for (int cost = 0; remaining > 0 && cost < 0xFFFF; ++cost) {
+        // Every entry in this slot has logical cost == `cost`: pushes made while
+        // processing it land at cost+10/cost+14 (< cost+15, so never back here),
+        // and the slot was cleared before the ring could wrap around to it.
+        auto& b = buckets[size_t(cost % (kMaxStep + 1))];
+        for (size_t bi = 0; bi < b.size(); ++bi) {
+            int idx = b[bi];
+            if (int(dist_[size_t(idx)]) != cost) continue;   // superseded entry
+            int cx = idx % w_, cz = idx / w_;
+            for (int k = 0; k < 8; ++k) {
+                int nx = cx + dcx[k], nz = cz + dcz[k];
+                if (!nav.fits(nx, nz, foot)) continue;
+                // No diagonal corner-cutting past a cell the unit can't fit through.
+                if (k >= 4 && (!nav.fits(cx + dcx[k], cz, foot) ||
+                               !nav.fits(cx, cz + dcz[k], foot)))
+                    continue;
+                int nd = cost + dcost[k];
+                size_t ni = size_t(nz) * w_ + nx;
+                if (nd < dist_[ni] && nd < 0xFFFF) {
+                    dist_[ni] = uint16_t(nd);
+                    buckets[size_t(nd % (kMaxStep + 1))].push_back(int(ni));
+                    ++remaining;
+                }
             }
         }
+        remaining -= b.size();
+        b.clear();
     }
 
     // Flow field: each walkable cell stores the reachable neighbour index (0-7)
@@ -807,9 +820,25 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1,
     return out;
 }
 
-const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const {
+// Cache cap: evict the least-recently-used field(s) when full, rather than wiping
+// all of them (clear-all rebuilt every live field EVERY tick once goals outnumbered
+// the cap and stalled the sim to single-digit fps). Fields are ~3 bytes/cell, so a
+// generous cap holds every live goal block; the linear LRU scan is microseconds
+// against a multi-ms build.
+static constexpr size_t kFlowCap = 512;
+
+static void evictFlowLru(std::map<long long, FlowField>& cache) {
+    while (cache.size() >= kFlowCap) {
+        auto oldest = cache.begin();
+        for (auto i = std::next(cache.begin()); i != cache.end(); ++i)
+            if (i->second.used < oldest->second.used) oldest = i;
+        cache.erase(oldest);
+    }
+}
+
+bool World::flowKeyFor(const UnitType* type, float gx, float gz, FlowKey& out) const {
     const NavGrid& grid = navFor(type);
-    if (grid.empty()) return nullptr;
+    if (grid.empty()) return false;
     int cx = std::clamp(int(gx) / 16, 0, grid.width() - 1);
     int cz = std::clamp(int(gz) / 16, 0, grid.height() - 1);
     int domain = type ? int(type->domain) : 0;
@@ -824,34 +853,85 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const 
     // live goals exceeded it. The memo stays a pure function of (domain, foot,
     // block), identical on every peer.
     int qcx = cx & ~1, qcz = cz & ~1;
-    float bx = float(qcx + 1) * 16.0f, bz = float(qcz + 1) * 16.0f;   // block centre
-    long long key = (domain * 16LL + foot) * 100000000LL +
-                    (long long)(qcz * grid.width() + qcx);
-    auto it = flowCache_.find(key);
+    out.key = (domain * 16LL + foot) * 100000000LL +
+              (long long)(qcz * grid.width() + qcx);
+    out.grid = &grid;
+    out.bx = float(qcx + 1) * 16.0f;   // block centre
+    out.bz = float(qcz + 1) * 16.0f;
+    out.foot = foot;
+    return true;
+}
+
+const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const {
+    FlowKey k;
+    if (!flowKeyFor(type, gx, gz, k)) return nullptr;
+    auto it = flowCache_.find(k.key);
     if (it != flowCache_.end()) {
         it->second.used = tickCounter_;
         return it->second.ready() ? &it->second : nullptr;
     }
-    // Evict the least-recently-used field(s) when the cache is full, rather than
-    // wiping ALL of them (clear-all rebuilt every live field EVERY tick once goals
-    // outnumbered the cap and stalled the sim to single-digit fps). Fields are
-    // ~3 bytes/cell, so a generous cap holds every live goal block without
-    // thrashing; the linear LRU scan is microseconds against a multi-ms build.
-    constexpr size_t kFlowCap = 512;
-    while (flowCache_.size() >= kFlowCap) {
-        auto oldest = flowCache_.begin();
-        for (auto i = std::next(flowCache_.begin()); i != flowCache_.end(); ++i)
-            if (i->second.used < oldest->second.used) oldest = i;
-        flowCache_.erase(oldest);
-    }
+    evictFlowLru(flowCache_);
     FlowField ff;
-    if (g_phase) { auto _b0=std::chrono::steady_clock::now(); ff.build(grid, bx, bz, foot);
+    if (g_phase) { auto _b0=std::chrono::steady_clock::now(); ff.build(*k.grid, k.bx, k.bz, k.foot);
         g_flowMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_b0).count(); ++g_flowN; }
-    else ff.build(grid, bx, bz, foot);
+    else ff.build(*k.grid, k.bx, k.bz, k.foot);
     ff.used = tickCounter_;
-    auto& stored = flowCache_[key];
+    auto& stored = flowCache_[k.key];
     stored = std::move(ff);
     return stored.ready() ? &stored : nullptr;
+}
+
+// Batch-build the flow fields this tick's movers/chasers are about to request and
+// that miss the cache, in PARALLEL, before the mover loop runs. The trigger case: a
+// building placement invalidates K fields, and next tick K movers re-request them --
+// serially that was K full-map Dijkstras in one tick. Lockstep-safe because a field
+// is a pure function of (grid, goal block, foot): workers write only their own
+// FlowField, the grids' lazy clearance is forced up to date on this thread first so
+// workers only read, the join happens before any consumer runs, and cache insertion
+// is serial in unit-index (miss-discovery) order. Fields that fail to build are
+// cached too (same not-ready semantics as flowFor). A single miss just builds
+// synchronously here -- no thread is worth one build.
+void World::prefetchFlows() {
+    std::vector<FlowKey> misses;
+    auto want = [&](const UnitType* t, float gx, float gz) {
+        FlowKey k;
+        if (!flowKeyFor(t, gx, gz, k)) return;
+        if (flowCache_.count(k.key)) return;
+        for (const auto& m : misses)
+            if (m.key == k.key) return;
+        misses.push_back(k);
+    };
+    for (const auto& u : units_) {
+        if (!u.alive() || !u.type || u.type->canFly || u.orders.empty()) continue;
+        const Order& o = u.orders.front();
+        if (o.flow && o.targetId == 0) want(u.type, o.x, o.z);
+        // Chasers periodically ask for their target's field (reachability gate).
+        else if (o.targetId > 0)
+            if (const Unit* t = unit(o.targetId); t && t->alive())
+                want(u.type, t->x, t->z);
+    }
+    if (misses.size() < 2) return;   // 0/1: the inline flowFor path handles it
+    auto _b0 = std::chrono::steady_clock::now();
+    for (const auto& m : misses) m.grid->ensureClearance();   // workers must only read
+    std::vector<FlowField> built(misses.size());
+    std::vector<std::thread> th;
+    th.reserve(misses.size() - 1);
+    for (size_t i = 1; i < misses.size(); ++i)
+        th.emplace_back([&, i] {
+            built[i].build(*misses[i].grid, misses[i].bx, misses[i].bz, misses[i].foot);
+        });
+    built[0].build(*misses[0].grid, misses[0].bx, misses[0].bz, misses[0].foot);
+    for (auto& t : th) t.join();
+    for (size_t i = 0; i < misses.size(); ++i) {
+        evictFlowLru(flowCache_);
+        built[i].used = tickCounter_;
+        flowCache_[misses[i].key] = std::move(built[i]);
+    }
+    if (g_phase) {
+        g_flowMs += std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - _b0).count();
+        g_flowN += int(misses.size());
+    }
 }
 
 void World::invalidateFlows(int cx, int cz, int w, int h) {
@@ -2168,6 +2248,8 @@ void World::tick(float dt) {
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
     rebuildGrid();   // spatial hash for this tick (combat acquire + separation)
+
+    prefetchFlows();   // batch-build this tick's missing flow fields on threads
 
     // Formations (Unit::squad < 0): each tick, compute the group's centre + slowest
     // member speed, then walk idle stragglers back toward the centre so they congregate.
