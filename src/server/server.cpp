@@ -49,7 +49,15 @@ uint64_t nowMs() {   // monotonic wall-clock (tick pacing / timeouts; never hash
 }
 
 constexpr uint64_t kPingIdleMs = 5000;    // ping a quiet client after this
-constexpr uint64_t kTimeoutMs = 15000;    // drop a silent client after this
+constexpr uint64_t kTimeoutMs = 15000;    // drop a silent seated player after this
+// A SPECTATOR is display-only and non-authoritative: it holds up nobody (canAdvance
+// paces to it only in an all-AI game, and even then a stale ack just slows the sim,
+// never desyncs it). A busy client render loop -- e.g. a VRAM-starved frame that
+// freezes for several seconds at a big supersampled resolution -- stops pumping the
+// socket for that whole frame, so a 15s player timeout evicts a spectator that is
+// merely hitching. Give spectators a much longer grace so a transient stall doesn't
+// tear the connection down (the client's own self-timeout below is widened to match).
+constexpr uint64_t kSpectatorTimeoutMs = 120000;
 constexpr int kCmdCapPerTick = 64;        // per-client command cap per tick
 // The server never runs more than this many ticks ahead of the slowest seated human
 // player: a player whose machine can't sustain the game speed gracefully SLOWS the
@@ -1181,7 +1189,10 @@ int Server::run() {
                 now - c->lastPingMs > kPingIdleMs) {
                 c->conn.send(Msg::Ping); c->lastPingMs = now; c->conn.flushWrite();
             }
-            if (now - c->lastRecvMs > kTimeoutMs) dead.push_back(id);
+            // Spectators (in a game, no seat) get a far longer grace than seated players.
+            bool spectator = c->state == Client::InGame && c->slot < 0;
+            if (now - c->lastRecvMs > (spectator ? kSpectatorTimeoutMs : kTimeoutMs))
+                dead.push_back(id);
         }
         for (uint32_t id : dead) dropClient(id, "disconnected");
     }

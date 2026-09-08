@@ -12,6 +12,7 @@ uint64_t nowMs() {   // monotonic wall-clock (pacing/keepalive only; never hashe
     return uint64_t(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 constexpr uint64_t kPingIdleMs = 5000, kTimeoutMs = 15000;
+constexpr uint64_t kSpectatorTimeoutMs = 120000;   // matches the server's spectator grace
 }  // namespace
 
 bool MpClient::connect(const std::string& host, uint16_t port, const std::string& name) {
@@ -63,7 +64,12 @@ bool MpClient::poll() {
     if (now - lastRecvMs_ > kPingIdleMs && now - lastPingMs_ > kPingIdleMs) {
         send(Msg::Ping); lastPingMs_ = now;
     }
-    if (now - lastRecvMs_ > kTimeoutMs) { err_ = "server timeout"; state_ = State::Done; }
+    // A spectator's render loop can freeze for several seconds on a heavy frame
+    // (big supersampled resolution under VRAM pressure) without pumping the socket;
+    // give it the same long grace the server extends to spectators so a transient
+    // stall doesn't self-terminate a display-only connection.
+    uint64_t timeoutMs = spectator_ ? kSpectatorTimeoutMs : kTimeoutMs;
+    if (now - lastRecvMs_ > timeoutMs) { err_ = "server timeout"; state_ = State::Done; }
     if (!conn_.flushWrite()) { err_ = conn_.error(); state_ = State::Done; }
     if (!conn_.ok() && err_.empty()) { err_ = conn_.error(); state_ = State::Done; }
     return state_ != State::Done;

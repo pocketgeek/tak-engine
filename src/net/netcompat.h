@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstring>
+#include <string>
+
 // Cross-platform socket shim: POSIX BSD sockets (Linux/macOS) vs Windows Winsock2.
 // Sockets are stored as plain `int` throughout the codebase; on Win64 a SOCKET is a
 // 64-bit handle, but the values are small kernel-table indices that fit an int in
@@ -88,6 +91,24 @@ inline bool sockInterrupted(int e) {
     return e == WSAEINTR;
 #else
     return e == EINTR;
+#endif
+}
+
+// Human-readable name for a socket error code, for diagnostics ("recv failed:
+// Connection reset by peer" tells RST from a graceful FIN from a timeout).
+inline std::string sockErrStr(int e) {
+#ifdef _WIN32
+    switch (e) {
+        case WSAECONNRESET:   return "connection reset by peer";
+        case WSAECONNABORTED: return "connection aborted";
+        case WSAETIMEDOUT:    return "connection timed out";
+        case WSAENETRESET:    return "network reset";
+        case WSAENOBUFS:      return "no buffer space";
+        case WSAESHUTDOWN:    return "socket shut down";
+        default: return "winsock error " + std::to_string(e);
+    }
+#else
+    return std::strerror(e);
 #endif
 }
 

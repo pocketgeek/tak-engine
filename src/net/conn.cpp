@@ -82,7 +82,7 @@ bool Conn::flushWrite() {
                              int(txBuf_.size() - txOff_), MSG_NOSIGNAL);
         if (n > 0) { txOff_ += size_t(n); continue; }
         if (n < 0 && sockWouldBlock(sockErr())) break;   // socket full
-        err_ = "send failed";
+        err_ = "send failed: " + sockErrStr(sockErr());
         return false;
     }
     if (txOff_ == txBuf_.size()) { txBuf_.clear(); txOff_ = 0; }
@@ -98,7 +98,7 @@ bool Conn::recv() {
         int e = sockErr();
         if (sockWouldBlock(e)) break;      // drained
         if (sockInterrupted(e)) continue;
-        err_ = "recv failed";
+        err_ = "recv failed: " + sockErrStr(e);
         return false;
     }
     return true;
