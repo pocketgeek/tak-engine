@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace tak::hpi {
@@ -54,16 +55,48 @@ public:
     const Entry* find(const std::string& path) const;
 
 private:
-    // Whole-archive bytes, loaded once on the first read() and kept, so extracting
-    // many small entries doesn't re-slurp the (up to 100+ MB) file each time. Not
-    // populated at mount, so the map-browser's many .kmp archives (dir-parsed only)
-    // cost nothing until one is actually read.
-    const std::vector<uint8_t>& bytes() const;
+    // Read-only memory-mapping of one file (POSIX mmap / Win32 file mapping).
+    // Move-only RAII; data() is null until open() succeeds.
+    class Mapping {
+    public:
+        Mapping() = default;
+        ~Mapping() { close(); }
+        Mapping(Mapping&& o) noexcept { *this = std::move(o); }
+        Mapping& operator=(Mapping&& o) noexcept {
+            if (this != &o) {
+                close();
+                data_ = o.data_; size_ = o.size_; handle_ = o.handle_;
+                o.data_ = nullptr; o.size_ = 0; o.handle_ = nullptr;
+            }
+            return *this;
+        }
+        Mapping(const Mapping&) = delete;
+        Mapping& operator=(const Mapping&) = delete;
+        bool open(const std::filesystem::path& p);   // false on failure (caller falls back)
+        void close();
+        const uint8_t* data() const { return data_; }
+        size_t size() const { return size_; }
+    private:
+        const uint8_t* data_ = nullptr;
+        size_t size_ = 0;
+        void* handle_ = nullptr;   // win32 mapping handle; unused on POSIX
+    };
+
+    // View of the whole archive, established on the first read(): a demand-paged
+    // memory map, so pages are faulted in per accessed chunk, shared with the OS
+    // page cache (and with any other process mapping the same file) instead of
+    // slurped + pinned per Vfs instance (~300MB of RSS per mount before). Falls
+    // back to an eager read into fileData_ if mapping fails. Not touched at
+    // mount, so the map-browser's many .kmp archives (dir-parsed only) cost
+    // nothing until one is actually read.
+    struct View { const uint8_t* data; size_t size; };
+    View bytes() const;
 
     std::filesystem::path file_;
     HeaderInfo header_;
     std::vector<Entry> entries_;
-    mutable std::vector<uint8_t> fileData_;
+    mutable Mapping map_;
+    mutable std::vector<uint8_t> fileData_;   // fallback only (mapping failed)
     mutable bool loaded_ = false;
 };
 

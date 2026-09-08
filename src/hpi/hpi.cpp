@@ -2,6 +2,16 @@
 
 #include <zlib.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -31,19 +41,20 @@ std::vector<uint8_t> readFile(const std::filesystem::path& path) {
 constexpr size_t kChunkHeaderSize = 19;
 
 // Decompress one SQSH chunk at `off`; returns decompressed payload and
-// advances `off` past the chunk.
-std::vector<uint8_t> readChunk(const std::vector<uint8_t>& data, size_t& off) {
-    if (off + kChunkHeaderSize > data.size() || std::memcmp(&data[off], "SQSH", 4) != 0)
+// advances `off` past the chunk. Operates on a raw view so it works over both a
+// memory-mapped archive and an in-memory buffer.
+std::vector<uint8_t> readChunk(const uint8_t* data, size_t size, size_t& off) {
+    if (off + kChunkHeaderSize > size || std::memcmp(data + off, "SQSH", 4) != 0)
         throw std::runtime_error("expected SQSH chunk at offset " + std::to_string(off));
     uint8_t method = data[off + 5];
     uint8_t encrypted = data[off + 6];
-    uint32_t compSize = u32(&data[off + 7]);
-    uint32_t decompSize = u32(&data[off + 11]);
+    uint32_t compSize = u32(data + off + 7);
+    uint32_t decompSize = u32(data + off + 11);
     off += kChunkHeaderSize;
-    if (off + compSize > data.size())
+    if (off + compSize > size)
         throw std::runtime_error("SQSH chunk overruns archive");
 
-    std::vector<uint8_t> payload(data.begin() + off, data.begin() + off + compSize);
+    std::vector<uint8_t> payload(data + off, data + off + compSize);
     off += compSize;
     if (encrypted) {
         for (uint32_t i = 0; i < compSize; ++i)
@@ -83,7 +94,7 @@ std::vector<uint8_t> readBlockAt(std::ifstream& in, uint32_t off, uint32_t size)
                 std::streamsize(compSize));
         if (!in) throw std::runtime_error("short read on SQSH block payload");
         size_t pos = 0;
-        return readChunk(data, pos);
+        return readChunk(data.data(), data.size(), pos);
     }
     in.clear();               // not SQSH (or too short): stored raw
     in.seekg(off);
@@ -153,27 +164,76 @@ Archive::Archive(const std::filesystem::path& file) : file_(file) {
     walk(dirBlock, nameBlock, 0, "", entries_);
 }
 
-const std::vector<uint8_t>& Archive::bytes() const {
-    if (!loaded_) { fileData_ = readFile(file_); loaded_ = true; }
-    return fileData_;
+bool Archive::Mapping::open(const std::filesystem::path& p) {
+#ifdef _WIN32
+    HANDLE f = CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER sz{};
+    if (!GetFileSizeEx(f, &sz) || sz.QuadPart <= 0) { CloseHandle(f); return false; }
+    HANDLE m = CreateFileMappingW(f, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    CloseHandle(f);   // the mapping keeps the file alive
+    if (!m) return false;
+    void* v = MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0);
+    if (!v) { CloseHandle(m); return false; }
+    data_ = static_cast<const uint8_t*>(v);
+    size_ = size_t(sz.QuadPart);
+    handle_ = m;
+    return true;
+#else
+    int fd = ::open(p.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    struct stat st{};
+    if (fstat(fd, &st) != 0 || st.st_size <= 0) { ::close(fd); return false; }
+    void* v = mmap(nullptr, size_t(st.st_size), PROT_READ, MAP_PRIVATE, fd, 0);
+    ::close(fd);   // the mapping keeps the pages alive
+    if (v == MAP_FAILED) return false;
+    data_ = static_cast<const uint8_t*>(v);
+    size_ = size_t(st.st_size);
+    return true;
+#endif
+}
+
+void Archive::Mapping::close() {
+    if (!data_) return;
+#ifdef _WIN32
+    UnmapViewOfFile(data_);
+    if (handle_) CloseHandle(static_cast<HANDLE>(handle_));
+#else
+    munmap(const_cast<uint8_t*>(data_), size_);
+#endif
+    data_ = nullptr;
+    size_ = 0;
+    handle_ = nullptr;
+}
+
+Archive::View Archive::bytes() const {
+    if (!loaded_) {
+        // Map the archive read-only; fall back to an eager read if mapping fails
+        // (exotic filesystems). Either way the view is stable for our lifetime.
+        if (!map_.open(file_)) fileData_ = readFile(file_);
+        loaded_ = true;
+    }
+    if (map_.data()) return {map_.data(), map_.size()};
+    return {fileData_.data(), fileData_.size()};
 }
 
 std::vector<uint8_t> Archive::read(const Entry& entry) const {
     if (entry.isDirectory) throw std::runtime_error(entry.path + " is a directory");
-    const std::vector<uint8_t>& data = bytes();
+    View data = bytes();
 
     if (entry.compressedSize == 0) {
-        if (uint64_t(entry.start) + entry.decompressedSize > data.size())
+        if (uint64_t(entry.start) + entry.decompressedSize > data.size)
             throw std::runtime_error(entry.path + ": raw data overruns archive");
-        return {data.begin() + entry.start,
-                data.begin() + entry.start + entry.decompressedSize};
+        return {data.data + entry.start,
+                data.data + entry.start + entry.decompressedSize};
     }
 
     std::vector<uint8_t> out;
     out.reserve(entry.decompressedSize);
     size_t pos = entry.start;
     while (out.size() < entry.decompressedSize) {
-        auto chunk = readChunk(data, pos);
+        auto chunk = readChunk(data.data, data.size, pos);
         out.insert(out.end(), chunk.begin(), chunk.end());
     }
     if (out.size() != entry.decompressedSize)
