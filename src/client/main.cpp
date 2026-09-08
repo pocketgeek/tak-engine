@@ -3548,22 +3548,26 @@ public:
             // StopBuilding clears it. Flyers are excluded: their hover loop owns the
             // VM (they already animate while conjuring mid-air).
             if (u.type->isBuilder && !isStructure(u.type) && !a.flying) {
-                bool working = !u.walking() &&
-                               (u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0);
-                if (working != a.building) {
+                // One-shot per JOB, not a loop: the retail build scripts are a single
+                // pose performance (zonhand's whip swing + PLAY_SOUND crack, ~4s of
+                // keyframes, then RETURN) after which the builder HOLDS the final
+                // working stance until StopBuilding. Re-invoking on thread death
+                // (the walk pattern) replayed the whole performance -- and its sound
+                // -- endlessly. Retrigger only for a NEW job (a queued neighbouring
+                // site started without walking in between).
+                int workId = u.buildSiteId ? u.buildSiteId
+                           : u.repairId    ? u.repairId
+                           : u.reclaimId   ? u.reclaimId : 0;
+                bool working = !u.walking() && workId != 0;
+                if (working != a.building || (working && workId != a.workId)) {
                     a.building = working;
+                    a.workId = working ? workId : 0;
                     if (working) {
-                        // The conjure sound comes from the script itself: build
-                        // scripts PLAY_SOUND their own per-unit audio (the Beast
-                        // Handler's whip crack, etc.) now that the opcode is real.
                         a.vm->start("StartBuilding") || a.vm->start("startbuild");
                     } else {
                         a.vm->start("StopBuilding");
                         a.vm->start("restore_x") || a.vm->start("RestoreAfterDelay");
                     }
-                } else if (working && a.vm->threadCount() == 0) {
-                    // Single-pass pose scripts: re-invoke each cycle, like walk.
-                    a.vm->start("startbuild") || a.vm->start("StartBuilding");
                 }
             }
             // Buildings: yard/production anims. Detect via isStructure (maxVel<=0),
@@ -4736,6 +4740,7 @@ private:
         std::vector<std::pair<int, int32_t>> pendingSfx;
         std::vector<int32_t> pendingSnd;   // COB PLAY_SOUND name indices, drained on main
         bool cobSounds = false;   // script plays its own audio: skip the generic stand-ins
+        int workId = 0;           // site/target the build anim last fired for (one-shot per job)
         // Continuous ambient fire/smoke: retail runs one persistent emitter per unit,
         // so we draw ONE looping flame/smoke, kept alive while the emit-loop re-fires
         // (fireT/smokeT = seconds since the last emit of each). Smooth, not per-emit.
