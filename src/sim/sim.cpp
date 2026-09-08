@@ -675,18 +675,34 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1,
     // full A* since a clear centre-line can still clip a gap its body won't pass.
     if (foot <= 1 && lineClear(sx, sz, tx, tz)) return {{wx1, wz1, 0}};
 
-    // A* over cells, octile heuristic.
+    // A* over cells, octile heuristic. g/from live in generation-stamped scratch
+    // members (see sim.h): a cell is initialized iff its stamp equals this call's
+    // generation, so per-call setup is one counter bump instead of a ~1.1MB fill.
     struct Node { float f; int idx; };
     auto cmp = [](const Node& a, const Node& b) { return a.f > b.f; };
     std::vector<Node> open;
-    std::vector<float> g(size_t(w_) * h_, 1e30f);
-    std::vector<int> from(size_t(w_) * h_, -1);
+    const size_t n_ = size_t(w_) * h_;
+    if (pathStamp_.size() != n_) {
+        pathG_.assign(n_, 1e30f);
+        pathFrom_.assign(n_, -1);
+        pathStamp_.assign(n_, 0);
+        pathGen_ = 0;
+    }
+    if (++pathGen_ == 0) { pathStamp_.assign(n_, 0); pathGen_ = 1; }   // u32 wrap
+    auto gAt = [&](size_t i) -> float {
+        return pathStamp_[i] == pathGen_ ? pathG_[i] : 1e30f;
+    };
+    auto touch = [&](size_t i, float gv, int fromIdx) {
+        pathG_[i] = gv;
+        pathFrom_[i] = fromIdx;
+        pathStamp_[i] = pathGen_;
+    };
     auto hcost = [&](int x, int z) {
         float ax = float(std::abs(x - tx)), az = float(std::abs(z - tz));
         return std::max(ax, az) + 0.41421f * std::min(ax, az);
     };
     int start = sz * w_ + sx, goal = tz * w_ + tx;
-    g[size_t(start)] = 0;
+    touch(size_t(start), 0, -1);
     open.push_back({hcost(sx, sz), start});
     static const int DX[8] = {1, -1, 0, 0, 1, 1, -1, -1};
     static const int DZ[8] = {0, 0, 1, -1, 1, -1, 1, -1};
@@ -697,26 +713,30 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1,
         open.pop_back();
         if (n.idx == goal) break;
         int cx = n.idx % w_, cz = n.idx / w_;
+        // Skip entries superseded by a later, cheaper push (their re-expansion is a
+        // pure no-op that only burns the expansion cap): recompute this node's best
+        // possible f from the CURRENT g -- the same float ops as at push time, so a
+        // non-stale entry compares exactly equal, never greater.
+        if (n.f > gAt(size_t(n.idx)) + hcost(cx, cz)) continue;
         for (int d = 0; d < 8; ++d) {
             int nx = cx + DX[d], nz = cz + DZ[d];
             if (!fits(nx, nz, foot)) continue;
             if (d >= 4 && (!fits(cx + DX[d], cz, foot) || !fits(cx, cz + DZ[d], foot)))
                 continue;   // no diagonal corner cutting
             float step = d >= 4 ? 1.41421f : 1.0f;
-            float ng = g[size_t(n.idx)] + step;
+            float ng = gAt(size_t(n.idx)) + step;
             int ni = nz * w_ + nx;
-            if (ng < g[size_t(ni)]) {
-                g[size_t(ni)] = ng;
-                from[size_t(ni)] = n.idx;
+            if (ng < gAt(size_t(ni))) {
+                touch(size_t(ni), ng, n.idx);
                 open.push_back({ng + hcost(nx, nz), ni});
                 std::push_heap(open.begin(), open.end(), cmp);
             }
         }
     }
-    if (from[size_t(goal)] < 0) return {};
+    if (pathStamp_[size_t(goal)] != pathGen_ || pathFrom_[size_t(goal)] < 0) return {};
 
     std::vector<std::pair<int, int>> cells;
-    for (int i = goal; i >= 0; i = from[size_t(i)]) {
+    for (int i = goal; i >= 0; i = pathFrom_[size_t(i)]) {
         cells.push_back({i % w_, i / w_});
         if (i == start) break;
     }
@@ -745,19 +765,28 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const 
     // Footprint-class the field: a 4x4 unit and a 1x1 unit want different fields
     // (the big one can't cross the same 1-cell gaps), but all units of a size share.
     int foot = type ? std::clamp(std::max(type->footX, type->footZ), 1, 15) : 1;
-    long long key = (domain * 16LL + foot) * 100000000LL + (long long)(cz * grid.width() + cx);
+    // Quantize the goal to a 2x2-cell block and build toward the block centre: the
+    // field goes flat near the goal and movers home straight in on their order's
+    // exact (x,z), so nearby goals can share one field. Without this, per-unit
+    // scatter/chase goals each claimed their own 16px cell and blew the cache cap
+    // -- measured ~300x slower ticks (full-map Dijkstras rebuilt every tick) once
+    // live goals exceeded it. The memo stays a pure function of (domain, foot,
+    // block), identical on every peer.
+    int qcx = cx & ~1, qcz = cz & ~1;
+    float bx = float(qcx + 1) * 16.0f, bz = float(qcz + 1) * 16.0f;   // block centre
+    long long key = (domain * 16LL + foot) * 100000000LL +
+                    (long long)(qcz * grid.width() + qcx);
     auto it = flowCache_.find(key);
     if (it != flowCache_.end()) {
         it->second.used = tickCounter_;
         return it->second.ready() ? &it->second : nullptr;
     }
     // Evict the least-recently-used field(s) when the cache is full, rather than
-    // wiping ALL of them. The old clear-all meant a game with more concurrently
-    // live goals than the cap (e.g. a big move order + a busy AI army) rebuilt
-    // every field EVERY tick -- a full-map Dijkstra x N -- and stalled the sim to
-    // single-digit fps. Fields are ~0.3MB each (1-byte dir index), so a generous
-    // cap holds every live goal without thrashing.
-    constexpr size_t kFlowCap = 128;
+    // wiping ALL of them (clear-all rebuilt every live field EVERY tick once goals
+    // outnumbered the cap and stalled the sim to single-digit fps). Fields are
+    // ~3 bytes/cell, so a generous cap holds every live goal block without
+    // thrashing; the linear LRU scan is microseconds against a multi-ms build.
+    constexpr size_t kFlowCap = 512;
     while (flowCache_.size() >= kFlowCap) {
         auto oldest = flowCache_.begin();
         for (auto i = std::next(flowCache_.begin()); i != flowCache_.end(); ++i)
@@ -765,9 +794,9 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const 
         flowCache_.erase(oldest);
     }
     FlowField ff;
-    if (g_phase) { auto _b0=std::chrono::steady_clock::now(); ff.build(grid, gx, gz, foot);
+    if (g_phase) { auto _b0=std::chrono::steady_clock::now(); ff.build(grid, bx, bz, foot);
         g_flowMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_b0).count(); ++g_flowN; }
-    else ff.build(grid, gx, gz, foot);
+    else ff.build(grid, bx, bz, foot);
     ff.used = tickCounter_;
     auto& stored = flowCache_[key];
     stored = std::move(ff);
@@ -1238,11 +1267,27 @@ void World::tickCombat(Unit& u, float dt) {
         const NavGrid& grid = navFor(u.type);
         if (!u.type->canFly && !grid.empty() && u.repathLeft <= 0) {
             u.repathLeft = 0.7f;
-            auto path = grid.findPath(u.x, u.z, target->x, target->z, footCells(u.type));
-            if (!path.empty()) {
-                o.x = path.front().x;
-                o.z = path.front().z;
-            }
+            // Same guards as the movement repath sites: charge the shared per-tick
+            // pathBudget_ (a chasing crowd otherwise aligns dozens of full A*s in
+            // one tick -- this was the last unguarded full-grid pathfinder), and
+            // give up early on a flow-unreachable target (an unreachable goal makes
+            // A* flood the unit's ENTIRE reachable region every 0.7s). Both checks
+            // are deterministic: fixed budget in unit-index order, and the flow
+            // memo is a pure function shared by every peer.
+            const FlowField* ff = flowFor(u.type, target->x, target->z);
+            bool hopeless = ff && grid.walkable(int(u.x) / 16, int(u.z) / 16) &&
+                            !ff->reachable(u.x, u.z);
+            if (!hopeless && pathBudget_ > 0) {
+                --pathBudget_;
+                auto _p0 = std::chrono::steady_clock::now();
+                auto path = grid.findPath(u.x, u.z, target->x, target->z, footCells(u.type));
+                if (g_phase) { g_pathMs += std::chrono::duration<double, std::milli>(
+                                   std::chrono::steady_clock::now() - _p0).count(); ++g_pathN; }
+                if (!path.empty()) {
+                    o.x = path.front().x;
+                    o.z = path.front().z;
+                }
+            }   // over budget or hopeless: keep steering at the target directly
         }
         return;   // movement handled by the normal move logic
     }

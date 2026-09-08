@@ -341,6 +341,14 @@ private:
     void rebuildClearance() const;
 
     std::vector<uint8_t> cells_;
+    // findPath scratch, reused across calls (a big map otherwise allocates + fills
+    // ~1.1MB per search). A cell's g/from are valid only when its stamp matches
+    // pathGen_, so "reset" is one counter bump. mutable like clear_ -- findPath is a
+    // logical-const query and the sim is single-threaded per world.
+    mutable std::vector<float> pathG_;
+    mutable std::vector<int> pathFrom_;
+    mutable std::vector<uint32_t> pathStamp_;
+    mutable uint32_t pathGen_ = 0;
     // clear_[c] = side of the largest all-walkable square whose min corner is c.
     // Lazily rebuilt (dirtied by block()); a foot-cell unit fits at corner c iff
     // clear_[c] >= foot. mutable so fits()/pathfinding can build it on demand.
