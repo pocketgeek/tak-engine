@@ -280,16 +280,26 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                  !registry_.buildable(u.type->id).empty())
             producers.push_back(u.id);                        // idle factory
     }
+    // Over-commit throttle: while broke with construction already in progress, don't
+    // start ANOTHER build. Concurrent builds share the one mana pool, so piling on more
+    // while the treasury is empty starves them all and leaves half-built units that
+    // never finish -- the "produces units then gets stuck" failure. Let the in-flight
+    // ones finish (income flows into them) before starting the next.
+    bool throttle = false;
+    if (world.player(player_).mana < 50.0f)
+        for (const auto& u : world.units())
+            if (u.player == player_ && u.alive() && u.underConstruction) { throttle = true; break; }
     int acted = 0;
-    for (int pid : producers) {
-        if (acted >= dp_.producersPerThink) break;
-        const auto* p = world.unit(pid);
-        if (!p || !p->alive()) continue;
-        if (const auto* pick = weightedPick(world, *p, econFactor)) {
-            produce(world, *p, pick, sink);
-            ++acted;
+    if (!throttle)
+        for (int pid : producers) {
+            if (acted >= dp_.producersPerThink) break;
+            const auto* p = world.unit(pid);
+            if (!p || !p->alive()) continue;
+            if (const auto* pick = weightedPick(world, *p, econFactor)) {
+                produce(world, *p, pick, sink);
+                ++acted;
+            }
         }
-    }
     sendWaves(world, sink);
 }
 

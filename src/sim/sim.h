@@ -213,6 +213,8 @@ struct Unit {
     float repathLeft = 0;   // chase steering repath countdown
     float stuckFor = 0;     // seconds wanting to move but making no progress
     float stuckX = 0, stuckZ = 0;   // position when the stuck timer last reset
+    float goalStuckT = 0;           // seconds a point-destination move has not gotten closer
+    float goalStuckD = 1e30f;       // best (closest) squared distance to that goal so far
     float deadFor = -1;    // >= 0 once dead; counts up for death animation
     // --- extended runtime state --------------------------------------------
     float mana = 0;        // personal mana pool (casters), capped at type->maxMana
@@ -305,15 +307,20 @@ public:
     bool walkable(int cx, int cz) const {
         return cx >= 0 && cz >= 0 && cx < w_ && cz < h_ && cells_[size_t(cz) * w_ + cx];
     }
+    // Does a `foot`-cell-across unit fit CENTRED on (cx,cz)? (foot<=1 == walkable.)
+    // Backed by a lazily-built clearance grid, so O(1). Footprint-aware pathing and
+    // steering use this so a 4x4 unit never routes through a 1-cell gap and wedges.
+    bool fits(int cx, int cz, int foot) const;
     bool empty() const { return cells_.empty(); }
     int width() const { return w_; }
     int height() const { return h_; }
     // Mark a rectangle of cells blocked (building footprint) or clear.
     void block(int cx, int cz, int w, int h, bool blocked);
 
-    // A* in cell space (16px cells), with waypoint simplification.
-    // Returns world-space waypoints; empty if unreachable.
-    std::vector<Order> findPath(float x0, float z0, float x1, float z1) const;
+    // A* in cell space (16px cells), with waypoint simplification. `foot` = the unit's
+    // footprint size in cells (1 = point). Returns world-space waypoints; empty if
+    // unreachable for a unit that size.
+    std::vector<Order> findPath(float x0, float z0, float x1, float z1, int foot = 1) const;
 
     // Line of sight: no blocked cell between the two world points, ignoring cells
     // within `skip0`/`skip1` cells of each endpoint — so a shooter or target's own
@@ -323,8 +330,14 @@ public:
 
 private:
     bool lineClear(int x0, int z0, int x1, int z1) const;
+    void rebuildClearance() const;
 
     std::vector<uint8_t> cells_;
+    // clear_[c] = side of the largest all-walkable square whose min corner is c.
+    // Lazily rebuilt (dirtied by block()); a foot-cell unit fits at corner c iff
+    // clear_[c] >= foot. mutable so fits()/pathfinding can build it on demand.
+    mutable std::vector<uint16_t> clear_;
+    mutable bool clearDirty_ = true;
     int w_ = 0, h_ = 0;
 };
 
@@ -339,10 +352,11 @@ void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool bloc
 // as the NavGrid it is built from.
 class FlowField {
 public:
-    // Build the field over `nav` toward the goal at world (gx, gz). If that cell
-    // is blocked, the goal snaps to the nearest walkable cell. Returns false if
-    // the grid is empty or no walkable goal cell exists.
-    bool build(const NavGrid& nav, float gx, float gz);
+    // Build the field over `nav` toward the goal at world (gx, gz), for a unit whose
+    // footprint is `foot` cells across (so the wavefront only crosses cells the unit
+    // fits in). If the goal cell is blocked it snaps to the nearest fitting cell.
+    // Returns false if the grid is empty or no fitting goal cell exists.
+    bool build(const NavGrid& nav, float gx, float gz, int foot = 1);
     bool ready() const { return w_ > 0; }
     // Unit direction at world (x, z); (0,0) at/near the goal, off-grid, or in an
     // unreachable pocket (caller should then steer straight at the goal).

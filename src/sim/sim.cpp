@@ -478,21 +478,21 @@ void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool bloc
         }
 }
 
-bool FlowField::build(const NavGrid& nav, float gx, float gz) {
+bool FlowField::build(const NavGrid& nav, float gx, float gz, int foot) {
     w_ = nav.width();
     h_ = nav.height();
     if (nav.empty() || w_ <= 0 || h_ <= 0) { w_ = h_ = 0; return false; }
     int gcx = std::clamp(int(gx) / 16, 0, w_ - 1);
     int gcz = std::clamp(int(gz) / 16, 0, h_ - 1);
-    // Snap a blocked goal (a click on a wall/building) to the nearest walkable
-    // cell, spiralling out, so the wavefront has somewhere to start.
-    if (!nav.walkable(gcx, gcz)) {
+    // Snap a goal the unit can't fit at (a click on a wall/building, or a spot too
+    // tight for its footprint) to the nearest fitting cell, spiralling out.
+    if (!nav.fits(gcx, gcz, foot)) {
         bool found = false;
         for (int r = 1; r < 24 && !found; ++r)
             for (int j = -r; j <= r && !found; ++j)
                 for (int i = -r; i <= r && !found; ++i) {
                     if (std::max(std::abs(i), std::abs(j)) != r) continue;
-                    if (nav.walkable(gcx + i, gcz + j)) {
+                    if (nav.fits(gcx + i, gcz + j, foot)) {
                         gcx += i; gcz += j; found = true;
                     }
                 }
@@ -519,10 +519,10 @@ bool FlowField::build(const NavGrid& nav, float gx, float gz) {
         int cx = cur.idx % w_, cz = cur.idx / w_;
         for (int k = 0; k < 8; ++k) {
             int nx = cx + dcx[k], nz = cz + dcz[k];
-            if (!nav.walkable(nx, nz)) continue;
-            // No diagonal corner-cutting past a blocked orthogonal neighbour.
-            if (k >= 4 && (!nav.walkable(cx + dcx[k], cz) ||
-                           !nav.walkable(cx, cz + dcz[k])))
+            if (!nav.fits(nx, nz, foot)) continue;
+            // No diagonal corner-cutting past a cell the unit can't fit through.
+            if (k >= 4 && (!nav.fits(cx + dcx[k], cz, foot) ||
+                           !nav.fits(cx, cz + dcz[k], foot)))
                 continue;
             int nd = cur.cost + dcost[k];
             size_t ni = size_t(nz) * w_ + nx;
@@ -581,6 +581,31 @@ void NavGrid::block(int cx, int cz, int w, int h, bool blocked) {
         for (int x = cx; x < cx + w; ++x)
             if (x >= 0 && z >= 0 && x < w_ && z < h_)
                 cells_[size_t(z) * w_ + x] = blocked ? 0 : 1;
+    clearDirty_ = true;   // footprint clearance depends on the walkability grid
+}
+
+// Largest all-walkable square with each cell as its min (bottom-left) corner, by the
+// classic DP from the far corner inward. Deterministic (pure function of cells_).
+void NavGrid::rebuildClearance() const {
+    clear_.assign(size_t(w_) * size_t(h_), 0);
+    for (int z = h_ - 1; z >= 0; --z)
+        for (int x = w_ - 1; x >= 0; --x) {
+            if (!cells_[size_t(z) * w_ + x]) continue;   // blocked -> 0
+            uint16_t r  = (x + 1 < w_)               ? clear_[size_t(z) * w_ + x + 1]     : 0;
+            uint16_t u  = (z + 1 < h_)               ? clear_[size_t(z + 1) * w_ + x]     : 0;
+            uint16_t ru = (x + 1 < w_ && z + 1 < h_) ? clear_[size_t(z + 1) * w_ + x + 1] : 0;
+            clear_[size_t(z) * w_ + x] = uint16_t(1 + std::min({r, u, ru}));
+        }
+    clearDirty_ = false;
+}
+
+bool NavGrid::fits(int cx, int cz, int foot) const {
+    if (foot <= 1) return walkable(cx, cz);
+    if (clearDirty_) rebuildClearance();
+    int off = foot / 2;
+    int bx = cx - off, bz = cz - off;   // min corner of the foot x foot block
+    if (bx < 0 || bz < 0 || bx + foot > w_ || bz + foot > h_) return false;
+    return clear_[size_t(bz) * w_ + size_t(bx)] >= foot;
 }
 
 NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int cliff)
@@ -639,12 +664,16 @@ bool NavGrid::losBetween(float wx0, float wz0, float wx1, float wz1,
     }
 }
 
-std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1) const {
+std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1, int foot) const {
     constexpr int kCell = 16;
     int sx = int(wx0) / kCell, sz = int(wz0) / kCell;
     int tx = int(wx1) / kCell, tz = int(wz1) / kCell;
-    if (!walkable(tx, tz) || !walkable(sx, sz)) return {};
-    if (lineClear(sx, sz, tx, tz)) return {{wx1, wz1, 0}};
+    // Goal must fit the unit; the START only needs to be walkable (the unit is already
+    // there -- it may be momentarily in a spot too tight for a fresh placement).
+    if (!fits(tx, tz, foot) || !walkable(sx, sz)) return {};
+    // Straight-shot shortcut for point-size units only; a footprint unit needs the
+    // full A* since a clear centre-line can still clip a gap its body won't pass.
+    if (foot <= 1 && lineClear(sx, sz, tx, tz)) return {{wx1, wz1, 0}};
 
     // A* over cells, octile heuristic.
     struct Node { float f; int idx; };
@@ -670,8 +699,8 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1)
         int cx = n.idx % w_, cz = n.idx / w_;
         for (int d = 0; d < 8; ++d) {
             int nx = cx + DX[d], nz = cz + DZ[d];
-            if (!walkable(nx, nz)) continue;
-            if (d >= 4 && (!walkable(cx + DX[d], cz) || !walkable(cx, cz + DZ[d])))
+            if (!fits(nx, nz, foot)) continue;
+            if (d >= 4 && (!fits(cx + DX[d], cz, foot) || !fits(cx, cz + DZ[d], foot)))
                 continue;   // no diagonal corner cutting
             float step = d >= 4 ? 1.41421f : 1.0f;
             float ng = g[size_t(n.idx)] + step;
@@ -713,7 +742,10 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const 
     int cx = std::clamp(int(gx) / 16, 0, grid.width() - 1);
     int cz = std::clamp(int(gz) / 16, 0, grid.height() - 1);
     int domain = type ? int(type->domain) : 0;
-    long long key = domain * 100000000LL + (long long)(cz * grid.width() + cx);
+    // Footprint-class the field: a 4x4 unit and a 1x1 unit want different fields
+    // (the big one can't cross the same 1-cell gaps), but all units of a size share.
+    int foot = type ? std::clamp(std::max(type->footX, type->footZ), 1, 15) : 1;
+    long long key = (domain * 16LL + foot) * 100000000LL + (long long)(cz * grid.width() + cx);
     auto it = flowCache_.find(key);
     if (it != flowCache_.end()) {
         it->second.used = tickCounter_;
@@ -733,13 +765,18 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const 
         flowCache_.erase(oldest);
     }
     FlowField ff;
-    if (g_phase) { auto _b0=std::chrono::steady_clock::now(); ff.build(grid, gx, gz);
+    if (g_phase) { auto _b0=std::chrono::steady_clock::now(); ff.build(grid, gx, gz, foot);
         g_flowMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_b0).count(); ++g_flowN; }
-    else ff.build(grid, gx, gz);
+    else ff.build(grid, gx, gz, foot);
     ff.used = tickCounter_;
     auto& stored = flowCache_[key];
     stored = std::move(ff);
     return stored.ready() ? &stored : nullptr;
+}
+
+// A unit's footprint size in cells (square approximation) for footprint-aware nav.
+static int footCells(const UnitType* t) {
+    return t ? std::clamp(std::max(t->footX, t->footZ), 1, 15) : 1;
 }
 
 void World::order(int unitId, float x, float z, bool queue) {
@@ -767,7 +804,7 @@ void World::order(int unitId, float x, float z, bool queue) {
     }
     const NavGrid& grid = navFor(u->type);
     if (!grid.empty()) {
-        auto path = grid.findPath(u->x, u->z, x, z);
+        auto path = grid.findPath(u->x, u->z, x, z, footCells(u->type));
         if (!path.empty()) {
             for (const auto& o : path) u->orders.push_back(o);
             return;
@@ -808,7 +845,7 @@ void World::unloadAt(int transportId, float x, float z) {
     // Sail there through the transport's own domain, then disembark.
     const NavGrid& grid = navFor(t->type);
     if (!grid.empty()) {
-        auto path = grid.findPath(t->x, t->z, x, z);
+        auto path = grid.findPath(t->x, t->z, x, z, footCells(t->type));
         for (size_t i = 0; i + 1 < path.size(); ++i) t->orders.push_back(path[i]);
     }
     Order o;
@@ -1195,7 +1232,7 @@ void World::tickCombat(Unit& u, float dt) {
         const NavGrid& grid = navFor(u.type);
         if (!u.type->canFly && !grid.empty() && u.repathLeft <= 0) {
             u.repathLeft = 0.7f;
-            auto path = grid.findPath(u.x, u.z, target->x, target->z);
+            auto path = grid.findPath(u.x, u.z, target->x, target->z, footCells(u.type));
             if (!path.empty()) {
                 o.x = path.front().x;
                 o.z = path.front().z;
@@ -2127,10 +2164,9 @@ void World::tick(float dt) {
             } else {
                 const NavGrid& g = navFor(u.type);
                 auto free = [&](float nx, float nz) {
-                    // Use the SAME grid the pathfinder used, so a unit never
-                    // stalls on a cell its own path routed it through. (The
-                    // per-unit slope/water limits still gate placement/pathing.)
-                    return g.empty() || g.walkable(int(nx) / 16, int(nz) / 16);
+                    // Footprint-aware, and the SAME grid the pathfinder used, so a unit
+                    // never stalls on a cell its own path routed it through.
+                    return g.empty() || g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type));
                 };
                 if (free(u.x + mx, u.z + mz)) { u.x += mx; u.z += mz; }
                 else if (free(u.x + mx, u.z)) { u.x += mx; }
@@ -2156,7 +2192,7 @@ void World::tick(float dt) {
                             u.orders.clear();
                         } else if (pathBudget_ > 0) {
                             --pathBudget_;
-                            auto _p0=std::chrono::steady_clock::now(); auto path = g.findPath(u.x, u.z, tx, tz); if(g_phase){ g_pathMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_p0).count(); ++g_pathN; }
+                            auto _p0=std::chrono::steady_clock::now(); auto path = g.findPath(u.x, u.z, tx, tz, footCells(u.type)); if(g_phase){ g_pathMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_p0).count(); ++g_pathN; }
                             if (!path.empty()) {
                                 u.orders.clear();
                                 for (const auto& wp : path) u.orders.push_back(wp);
@@ -2180,7 +2216,7 @@ void World::tick(float dt) {
                         u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
                         const NavGrid& g = navFor(u.type);
                         auto free = [&](float nx, float nz) {
-                            return g.empty() || g.walkable(int(nx) / 16, int(nz) / 16);
+                            return g.empty() || g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type));
                         };
                         float px = detmath::cos(u.heading), pz = -detmath::sin(u.heading);
                         float s = (u.id & 1) ? 1.0f : -1.0f;
@@ -2200,7 +2236,7 @@ void World::tick(float dt) {
                                 u.orders.clear();   // unreachable -> give up, no A*
                             } else if (pathBudget_ > 0) {
                                 --pathBudget_;
-                                auto _p0=std::chrono::steady_clock::now(); auto path = g.findPath(u.x, u.z, tx, tz); if(g_phase){ g_pathMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_p0).count(); ++g_pathN; }
+                                auto _p0=std::chrono::steady_clock::now(); auto path = g.findPath(u.x, u.z, tx, tz, footCells(u.type)); if(g_phase){ g_pathMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_p0).count(); ++g_pathN; }
                                 if (!path.empty()) {
                                     u.orders.clear();
                                     for (const auto& wp : path) u.orders.push_back(wp);
@@ -2210,6 +2246,43 @@ void World::tick(float dt) {
                     }
                 }
             }
+        }
+
+        // Progress-based unstick: a ground unit heading to a POINT (move / fight-move,
+        // targetId == 0) that hasn't gotten meaningfully closer to it for ~2s is
+        // force-repathed with A* -- flow steering can dead-end at a terrain chokepoint
+        // or in the unit's own base without ever tripping the fully-blocked path, so a
+        // lone scout could sit forever. The A* route (which we know exists when the
+        // goal is reachable) replaces the order and steers it around. Fliers and
+        // target-locked (attack) orders are exempt; idle units reset the tracker.
+        if (!u.type->canFly && !u.orders.empty()) {
+            const Order& fo = u.orders.front();
+            bool pointMove = fo.targetId == 0 && !fo.load && !fo.unload &&
+                             fo.wait <= 0.0f && !fo.waitAttack;
+            if (pointMove) {
+                float gx = u.orders.back().x, gz = u.orders.back().z;
+                float gd = (u.x - gx) * (u.x - gx) + (u.z - gz) * (u.z - gz);
+                if (gd < u.goalStuckD - 400.0f) {        // >20px closer -> real progress
+                    u.goalStuckD = gd; u.goalStuckT = 0;
+                } else {
+                    u.goalStuckT += dt;
+                    if (u.goalStuckT > 2.0f && pathBudget_ > 0) {
+                        u.goalStuckT = 0; u.goalStuckD = gd; --pathBudget_;
+                        const NavGrid& g = navFor(u.type);
+                        if (!g.empty()) {
+                            auto path = g.findPath(u.x, u.z, gx, gz, footCells(u.type));
+                            if (!path.empty()) {
+                                u.orders.clear();
+                                for (const auto& wp : path) u.orders.push_back(wp);
+                            }
+                        }
+                    }
+                }
+            } else {
+                u.goalStuckD = 1e30f; u.goalStuckT = 0;
+            }
+        } else if (u.orders.empty()) {
+            u.goalStuckD = 1e30f; u.goalStuckT = 0;
         }
     }
 
