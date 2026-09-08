@@ -2574,7 +2574,11 @@ public:
         auto simTick = [&] {
             for (const auto& c : bd.cmds) apply(c);
             for (const auto& e : bd.events) applyEvent(e);
-            update(1.0f / 30.0f);
+            // Only the SIM half per bundle (speedMult() is 1 in net games): the
+            // cosmetic half runs once after the drain, so a rejoin/spectate
+            // catch-up replays lockstep state without replaying 512 ticks of
+            // sounds, effects and VM dispatch per frame.
+            simStep(1.0f / 30.0f);
             // Spectators observe only -- they seat no player and report no hash.
             if (netTick_ % uint32_t(tak::net::kHashPeriod) == 0 && !mp_->isSpectator())
                 mp_->sendHash(netTick_, world_.stateHash());
@@ -2640,6 +2644,8 @@ public:
             ++netBenchFrames_;
             if (drained < budget && !mp_->haveBundle(netTick_)) ++netBenchStalls_;
         }
+        // Cosmetics once per frame, covering the game time actually played.
+        if (drained > 0) cosmeticStep(float(drained) / 30.0f);
         // "Machine too slow" guard: if the backlog stays deep for a sustained
         // stretch, this client can't process ticks as fast as they arrive and
         // will never catch up -- fail clearly instead of falling ever further
@@ -3111,10 +3117,12 @@ public:
         if (trackSel_ && !centerOnSelection()) trackSel_ = false;   // follow selection
         if (shakeTime_ > 0) shakeTime_ = std::max(0.0f, shakeTime_ - dt);   // shake decay
     }
-    void update(float dt) {
-        if (paused_) return;   // freeze the sim; input/render/camera keep running
-        // Game speed: scale game time (sim, effects, AI, animation all follow dt).
-        dt *= speedMult();
+    // The SIM-MUTATING half of a game step: the world tick plus every block that
+    // writes world or outcome state (god summons, scenario spawns, the legacy
+    // mission VM, dev harnesses, the victory check). In multiplayer catch-up this
+    // runs for EVERY drained bundle -- it is what lockstep requires -- while the
+    // cosmetic half below runs ONCE per frame afterwards.
+    void simStep(float dt) {
         double _sim0 = double(SDL_GetPerformanceCounter());
         // Advance the sim in sub-steps capped at 1/30s so fast speeds (or a laggy
         // frame) can't move a unit far enough to tunnel a wall; effects/AI below use
@@ -3126,86 +3134,11 @@ public:
         }
         profSimMs_ += (double(SDL_GetPerformanceCounter()) - _sim0)
                       / (double(SDL_GetPerformanceFrequency()) / 1000.0);
-        // Weapon impacts this tick: play each weapon's soundhitclass, picking the
-        // material-specific variant from the struck unit's bodytype (flesh/armor/..).
-        for (const auto& h : world_.hits()) {
-            if (h.weapon && !h.weapon->soundHit.empty()) {
-                const std::string& body = h.target ? h.target->bodyType : std::string("default");
-                const std::string* wav = soundClasses_.pick(h.weapon->soundHit, body, salt_++);
-                if (!wav) wav = soundClasses_.pick(h.weapon->soundHit, "default", salt_++);
-                if (wav) sounds_.playWorld(*wav, h.x, h.z);
-            }
-            // Impact visual: play the weapon's real GAF/TAF explosion effect
-            // (water variant over water); fall back to procedural particles when
-            // the class or its art is unavailable.
-            if (h.weapon) {
-                const std::string& cls = (world_.isWater(h.x, h.z) &&
-                                          !h.weapon->waterExplosionClass.empty())
-                                             ? h.weapon->waterExplosionClass
-                                             : h.weapon->explosionClass;
-                // Lift the blast onto an airborne target (shooting down a flyer).
-                float tAlt = flyerAltAt(h.x, h.z) * 0.8f;
-                if (!spawnEffect(cls, h.x, h.z, tAlt)) spawnImpact(*h.weapon, h.x, h.z, tAlt);
-            }
-            // Weapon area-effect: expanding shockwave rings (radiusart, staggered
-            // by ringdelay) and ground fire (firestarter) at the impact.
-            if (h.weapon) {
-                float maxR = std::max(h.weapon->aoe * 0.5f, 48.0f);
-                for (int i = 0; i < h.weapon->ringCount && i < 3; ++i)
-                    if (!h.weapon->radiusArt[i].empty())
-                        spawnRing(h.weapon->radiusArt[i], h.x, h.z,
-                                  float(i) * h.weapon->ringDelay, h.weapon->ringDur,
-                                  h.weapon->spriteCount, maxR);
-                if (h.weapon->fireStarter && !world_.isWater(h.x, h.z))
-                    spawnEffectAnim("flame", h.x, h.z, 0.0f, 0.0f, 5);   // fire lingers
-                // Camera shake for heavy impacts you can actually see.
-                if (h.weapon->shakeMag > 0 && world_.cellVisible(h.x, h.z))
-                    triggerShake(h.weapon->shakeMag, h.weapon->shakeDur);
-            }
-            if (h.target && h.target->bodyType == "flesh")
-                spawnBurst(h.x, h.z, 5, h.target->blood[0], h.target->blood[1],
-                           h.target->blood[2], 26, 1.8f, 0);
-        }
-        world_.clearHits();
-        updateParticles(dt);
-        updateEffects(dt);
-        updateRings(dt);
         // God economy: once a player's favour fills after the appear time, its
         // faction's god manifests among its forces.
         if (world_.godsEnabled())
             for (int t = 0; t < world_.numPlayers(); ++t)
                 if (world_.godReady(t)) summonGod(t);
-        if (tak::devEnv("TAK_STUCKSTAT")) {   // crowd-jam diagnostic
-            static float acc = 0; acc += dt;
-            if (acc >= 2.0f) {
-                acc = 0;
-                int moving = 0, stalled = 0, ordered = 0;
-                for (auto& u : world_.units()) {
-                    if (!u.alive() || !u.type || !u.type->canMove || u.type->canFly ||
-                        u.orders.empty() || u.orders.front().targetId != 0) continue;
-                    ordered++;
-                    if (u.speed > 3.0f) moving++; else stalled++;
-                }
-                std::printf("stuckstat t=%.0f ordered=%d moving=%d stalled=%d\n",
-                            animClock_, ordered, moving, stalled);
-                std::fflush(stdout);
-            }
-        }
-        for (auto& u : world_.units())
-            if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
-        // Kick off the summon fade-in/shimmer for anything just conjured from a
-        // building (the producer flags justBuilt for that one tick); then age the
-        // active effects and drop finished or dead ones. Cosmetic, viewer-only.
-        for (auto& u : world_.units())
-            if (u.justBuilt && !birthFx_.count(u.justBuilt)) birthFx_[u.justBuilt] = 0.0f;
-        for (auto it = birthFx_.begin(); it != birthFx_.end();) {
-            const tak::sim::Unit* bu = world_.unit(it->first);
-            it->second += dt;
-            if (it->second >= kBirthFxDur || !bu || !bu->alive()) it = birthFx_.erase(it);
-            else ++it;
-        }
-        if (briefTimer_ > 0) briefTimer_ -= dt;
-        animClock_ += dt;
         if (!spawnRules_.empty() || !messages_.empty()) scenClock2_ += dt;
         for (auto& sr : spawnRules_) {
             if (sr.atTime >= 0) {
@@ -3259,13 +3192,6 @@ public:
                 outcome_ = (!tie && best == localPlayer_) ? 1 : -1;
             }
         }
-        for (auto& u : world_.units()) {
-            if (u.alive() || u.deadFor < 4.0f || corpsed_.count(u.id)) continue;
-            corpsed_.insert(u.id);
-            if (u.type && !u.type->corpse.empty())
-                addFeature(u.type->corpse, u.x, u.z, false);
-        }
-        if (noticeTimer_ > 0) noticeTimer_ -= dt;
         if (missionVm_) {
             missionVm_->tick(dt);
             // Engine sweep: armed regions fire TriggerHit per player unit
@@ -3327,7 +3253,6 @@ public:
                 }
             }
         }
-
         // Victory check: last team standing. The sim computes winningTeam() and
         // per-player defeated flags each tick (deterministic across peers); the
         // viewer just maps that to this player's win/lose banner. Only armed once
@@ -3359,6 +3284,97 @@ public:
                 if (!teamAlive) outcome_ = -1;
             }
         }
+    }
+
+    // The DISPLAY half: impact sounds/effects, particles, animation state and the
+    // COB VMs, timers, camera-follow. Runs once per rendered frame with the game
+    // time actually covered -- during a rejoin/spectate catch-up this used to run
+    // its full body up to 512x per frame (~18ms of pure pool dispatch alone).
+    void cosmeticStep(float dt) {
+        // Weapon impacts this tick: play each weapon's soundhitclass, picking the
+        // material-specific variant from the struck unit's bodytype (flesh/armor/..).
+        for (const auto& h : world_.hits()) {
+            if (h.weapon && !h.weapon->soundHit.empty()) {
+                const std::string& body = h.target ? h.target->bodyType : std::string("default");
+                const std::string* wav = soundClasses_.pick(h.weapon->soundHit, body, salt_++);
+                if (!wav) wav = soundClasses_.pick(h.weapon->soundHit, "default", salt_++);
+                if (wav) sounds_.playWorld(*wav, h.x, h.z);
+            }
+            // Impact visual: play the weapon's real GAF/TAF explosion effect
+            // (water variant over water); fall back to procedural particles when
+            // the class or its art is unavailable.
+            if (h.weapon) {
+                const std::string& cls = (world_.isWater(h.x, h.z) &&
+                                          !h.weapon->waterExplosionClass.empty())
+                                             ? h.weapon->waterExplosionClass
+                                             : h.weapon->explosionClass;
+                // Lift the blast onto an airborne target (shooting down a flyer).
+                float tAlt = flyerAltAt(h.x, h.z) * 0.8f;
+                if (!spawnEffect(cls, h.x, h.z, tAlt)) spawnImpact(*h.weapon, h.x, h.z, tAlt);
+            }
+            // Weapon area-effect: expanding shockwave rings (radiusart, staggered
+            // by ringdelay) and ground fire (firestarter) at the impact.
+            if (h.weapon) {
+                float maxR = std::max(h.weapon->aoe * 0.5f, 48.0f);
+                for (int i = 0; i < h.weapon->ringCount && i < 3; ++i)
+                    if (!h.weapon->radiusArt[i].empty())
+                        spawnRing(h.weapon->radiusArt[i], h.x, h.z,
+                                  float(i) * h.weapon->ringDelay, h.weapon->ringDur,
+                                  h.weapon->spriteCount, maxR);
+                if (h.weapon->fireStarter && !world_.isWater(h.x, h.z))
+                    spawnEffectAnim("flame", h.x, h.z, 0.0f, 0.0f, 5);   // fire lingers
+                // Camera shake for heavy impacts you can actually see.
+                if (h.weapon->shakeMag > 0 && world_.cellVisible(h.x, h.z))
+                    triggerShake(h.weapon->shakeMag, h.weapon->shakeDur);
+            }
+            if (h.target && h.target->bodyType == "flesh")
+                spawnBurst(h.x, h.z, 5, h.target->blood[0], h.target->blood[1],
+                           h.target->blood[2], 26, 1.8f, 0);
+        }
+        world_.clearHits();
+        updateParticles(dt);
+        updateEffects(dt);
+        updateRings(dt);
+        if (tak::devEnv("TAK_STUCKSTAT")) {   // crowd-jam diagnostic
+            static float acc = 0; acc += dt;
+            if (acc >= 2.0f) {
+                acc = 0;
+                int moving = 0, stalled = 0, ordered = 0;
+                for (auto& u : world_.units()) {
+                    if (!u.alive() || !u.type || !u.type->canMove || u.type->canFly ||
+                        u.orders.empty() || u.orders.front().targetId != 0) continue;
+                    ordered++;
+                    if (u.speed > 3.0f) moving++; else stalled++;
+                }
+                std::printf("stuckstat t=%.0f ordered=%d moving=%d stalled=%d\n",
+                            animClock_, ordered, moving, stalled);
+                std::fflush(stdout);
+            }
+        }
+        for (auto& u : world_.units())
+            if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
+        // Kick off the summon fade-in/shimmer for anything just conjured from a
+        // building (the producer flags justBuilt for that one tick); then age the
+        // active effects and drop finished or dead ones. Cosmetic, viewer-only.
+        for (auto& u : world_.units())
+            if (u.justBuilt && !birthFx_.count(u.justBuilt)) birthFx_[u.justBuilt] = 0.0f;
+        for (auto it = birthFx_.begin(); it != birthFx_.end();) {
+            const tak::sim::Unit* bu = world_.unit(it->first);
+            it->second += dt;
+            if (it->second >= kBirthFxDur || !bu || !bu->alive()) it = birthFx_.erase(it);
+            else ++it;
+        }
+        if (briefTimer_ > 0) briefTimer_ -= dt;
+        animClock_ += dt;
+
+        for (auto& u : world_.units()) {
+            if (u.alive() || u.deadFor < 4.0f || corpsed_.count(u.id)) continue;
+            corpsed_.insert(u.id);
+            if (u.type && !u.type->corpse.empty())
+                addFeature(u.type->corpse, u.x, u.z, false);
+        }
+        if (noticeTimer_ > 0) noticeTimer_ -= dt;
+
         // (T-tracking / edge-scroll / shake now run per-frame in cameraFrame, so
         // the camera stays smooth when the net sim stalls.)
         if (follow_ && !world_.units().empty()) {
@@ -3535,6 +3551,14 @@ public:
                 for (auto& [piece, sfx] : a.pendingSfx) emitSfx(*u, a, piece, sfx);
             a.pendingSfx.clear();
         }
+    }
+
+    void update(float dt) {
+        if (paused_) return;   // freeze the sim; input/render/camera keep running
+        // Game speed: scale game time (sim, effects, AI, animation all follow dt).
+        dt *= speedMult();
+        simStep(dt);
+        cosmeticStep(dt);
     }
 
     // Create textures (terrain chunks, minimap) before the render pass.
