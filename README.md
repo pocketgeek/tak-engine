@@ -123,7 +123,7 @@ cmake --build build
 The engine builds for **Linux**, **Windows 11 (x64)**, and **macOS (Apple
 Silicon / ARM64)** from one source tree — the net layer abstracts POSIX sockets
 vs Winsock in `src/net/netcompat.h`, and process launch is the only other
-platform split (`fork`/`exec` vs `CreateProcess`, in `src/viewer/main.cpp`).
+platform split (`fork`/`exec` vs `CreateProcess`, in `src/client/main.cpp`).
 
 - **Windows, cross-compiled from Fedora** with MinGW-w64:
 
@@ -351,7 +351,7 @@ fingerprint, so under `full` every player must share the same ones.
 | `src/ai/` | the skirmish AI (server-portable; emits commands) |
 | `src/terrain/` | terrain / palette handling |
 | `src/util/` | shared helpers |
-| `src/viewer/` | the SDL2 app (`takclient`: asset viewer + game) |
+| `src/client/` | the SDL2 app (`takclient`: asset viewer + game) |
 | `tools/` | CLI format tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`) |
 | `docs/` | format notes + reverse-engineering findings (`retail-engine.md` = the `KINGDOMS.icd` disassembly) |
 

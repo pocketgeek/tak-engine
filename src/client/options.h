@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "viewer/settings.h"
+#include "client/settings.h"
 
 namespace tak {
 

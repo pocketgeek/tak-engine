@@ -1,11 +1,11 @@
-#include "viewer/campaignscreen.h"
+#include "client/campaignscreen.h"
 
 #include <algorithm>
 #include <cstdio>
 
 #include "hpi/hpi.h"
-#include "viewer/blockfont.h"
-#include "viewer/settings.h"
+#include "client/blockfont.h"
+#include "client/settings.h"
 
 namespace tak {
 

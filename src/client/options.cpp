@@ -1,6 +1,6 @@
-#include "viewer/options.h"
+#include "client/options.h"
 
-#include "viewer/blockfont.h"
+#include "client/blockfont.h"
 
 #include <algorithm>
 #include <cmath>

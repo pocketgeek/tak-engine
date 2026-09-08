@@ -1,18 +1,18 @@
-#include "viewer/mainmenu.h"
+#include "client/mainmenu.h"
 
 #include "gaf/gaf.h"
 #include "gui/gui.h"
 #include "util/png.h"
 #include "version.h"
 #include "video/bink.h"
-#include "viewer/campaignscreen.h"
-#include "viewer/resultscreen.h"
-#include "viewer/cursors.h"
-#include "viewer/menumusic.h"
-#include "viewer/options.h"
-#include "viewer/settings.h"
-#include "viewer/dev.h"
-#include "viewer/appquit.h"
+#include "client/campaignscreen.h"
+#include "client/resultscreen.h"
+#include "client/cursors.h"
+#include "client/menumusic.h"
+#include "client/options.h"
+#include "client/settings.h"
+#include "client/dev.h"
+#include "client/appquit.h"
 
 #include <memory>
 

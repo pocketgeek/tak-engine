@@ -2,7 +2,7 @@
 
 Status: **RESOLVED (2026-09-05, commit 7d9d71e).** Final fix = negate BOTH piece X and Y rotations in
 `scriptRot`, and all flyers face `−heading` (flyHalfTurn deleted). Defect C (full-body walk) also landed.
-Scope: `src/viewer/main.cpp` (render-only). Sim state, heading semantics, and the lockstep hash are untouched.
+Scope: `src/client/main.cpp` (render-only). Sim state, heading semantics, and the lockstep hash are untouched.
 
 ## FINAL resolution (2026-09-05, 7d9d71e) — read this first
 

@@ -236,7 +236,7 @@ is **not implementable against this install** (see phase 7 below).
    persisted in `tak::Settings` (`campaignDone`, `campaign.<id>=n`); win→advance
    handled in `main()`.
 6. **Front-end flow.** ✅ `Choice::Campaign` → `CampaignScreen`
-   (`src/viewer/campaignscreen.{h,cpp}`): campaign tabs + completed/current(PLAY)/
+   (`src/client/campaignscreen.{h,cpp}`): campaign tabs + completed/current(PLAY)/
    LOCKED rows. A pick runs the full sequence: intro movie (`MainMenu::playIntro` on
    `Movies/<stem>.bik`) → `BriefingScreen` (objectives from `missions/<stem>.txt`) →
    the autoMode-8 lockstep mission → `ResultScreen` (VICTORY/DEFEAT → next/retry/menu,

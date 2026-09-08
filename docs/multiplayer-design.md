@@ -121,7 +121,7 @@ So the client keeps a small receive buffer and paces playout on its own wall
 clock, staying `netDelay_` bundles behind the newest received; a late bundle is
 covered from that reserve, and only a gap deeper than the reserve stalls. This
 is pure pacing — the same bundles play in the same order, so every sim and hash
-stays byte-identical (`mpStep()` in `src/viewer/main.cpp`).
+stays byte-identical (`mpStep()` in `src/client/main.cpp`).
 
 Two refinements make it self-tuning:
 - **Auto-sizing** (the default; `TAK_NET_DELAY` overrides — `0` disables the

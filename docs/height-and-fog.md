@@ -4,7 +4,7 @@ TA:Kingdoms terrain is a **flat tile mosaic** — cliff/slope relief is painted
 into the 32px tile art, and the heightmap drives gameplay (nav) plus a **per-unit
 screen lift**, *not* geometric terrain displacement. This matches the retail
 engine (KINGDOMS.icd: flat-tile software renderer + vertical unit lift, no
-terrain skew). Everything below lives in `src/viewer/main.cpp` unless noted.
+terrain skew). Everything below lives in `src/client/main.cpp` unless noted.
 
 ## Unit lift
 

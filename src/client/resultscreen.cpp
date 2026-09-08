@@ -1,4 +1,4 @@
-#include "viewer/resultscreen.h"
+#include "client/resultscreen.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -6,12 +6,12 @@
 #include <vector>
 
 #include "util/png.h"
-#include "viewer/blockfont.h"
-#include "viewer/cursors.h"
-#include "viewer/menumusic.h"
-#include "viewer/settings.h"
-#include "viewer/dev.h"
-#include "viewer/appquit.h"
+#include "client/blockfont.h"
+#include "client/cursors.h"
+#include "client/menumusic.h"
+#include "client/settings.h"
+#include "client/dev.h"
+#include "client/appquit.h"
 
 namespace tak {
 

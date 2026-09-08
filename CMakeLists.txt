@@ -91,9 +91,9 @@ target_link_libraries(missiontool PRIVATE tak-formats)
 add_executable(aitool tools/aitool.cpp src/ai/ai.cpp)
 target_link_libraries(aitool PRIVATE tak-formats)
 
-# --- Viewer (needs SDL2; skipped with a warning if unavailable) ---------------
+# --- Client (needs SDL2; skipped with a warning if unavailable) ---------------
 
-option(TAK_BUILD_VIEWER "Build the SDL2 asset viewer" ON)
+option(TAK_BUILD_CLIENT "Build the SDL2 client (asset viewer + game)" ON)
 
 # Optional FFmpeg for decoding the retail Bink (.bik) menu videos. When present,
 # the main menu plays the door hover videos; when absent, it falls back to the GAF
@@ -103,10 +103,10 @@ if(PkgConfig_FOUND)
   pkg_check_modules(FFMPEG IMPORTED_TARGET libavcodec libavformat libavutil libswscale libswresample)
 endif()
 
-if(TAK_BUILD_VIEWER)
+if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/viewer/main.cpp src/viewer/mainmenu.cpp src/viewer/settings.cpp src/viewer/options.cpp src/viewer/campaignscreen.cpp src/viewer/briefingscreen.cpp src/viewer/resultscreen.cpp src/viewer/cursors.cpp src/video/bink.cpp)
+    add_executable(takclient src/client/main.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/cursors.cpp src/video/bink.cpp)
     target_link_libraries(takclient PRIVATE tak-formats SDL2::SDL2)
     # We provide our own main() and call SDL_SetMainReady(). Define SDL_MAIN_HANDLED for
     # the WHOLE target (not just main.cpp) so it applies before ANY header pulls in

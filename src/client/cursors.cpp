@@ -1,4 +1,4 @@
-#include "viewer/cursors.h"
+#include "client/cursors.h"
 
 #include "gaf/gaf.h"
 #include "hpi/hpi.h"

@@ -1,4 +1,4 @@
-#include "viewer/settings.h"
+#include "client/settings.h"
 
 #include <SDL.h>
 

@@ -50,7 +50,7 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
 - **Release vs debug CLI.** A RELEASE `build/takclient` is hardened: it accepts ONLY
   `--data <dir>` and `--version` (`--help` prints that), reads NO `TAK_*` env vars, and
   always launches the front-end menu — every mode keyword (`game`/`map`/`replay`/`model`),
-  gameplay/dev/test flag, and env hook is `#ifndef NDEBUG` (see `src/viewer/dev.h` for the
+  gameplay/dev/test flag, and env hook is `#ifndef NDEBUG` (see `src/client/dev.h` for the
   env wrapper). So all the CLI-driven flows below need the DEBUG `build-dbg/` binaries.
 - Play (debug build): `./build-dbg/takclient game "<map name>" --data <retail-install-dir> [--side X --aiside Y]`
   — the engine reads a retail install directly (root `*.hpi` + `Maps/` + `Music/`
@@ -72,7 +72,7 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
 
 - `src/sim/` — deterministic sim (movement, A* nav, combat, economy). The
   authority for gameplay state; guard determinism carefully here.
-- `src/viewer/main.cpp` — the SDL2 app (`takclient`): rendering + input, and the
+- `src/client/main.cpp` — the SDL2 app (`takclient`): rendering + input, and the
   **COB animation VM runs here**, so animation never affects the sim hash.
 - `src/net/` + `src/server/` — client-server MP (lockstep relay, referee,
   server-run AI). `src/ai/` — the skirmish AI (emits commands).

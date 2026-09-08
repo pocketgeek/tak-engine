@@ -15,8 +15,8 @@
 #include "net/netcompat.h"
 
 #include "campaign/campaign.h"
-#include "viewer/briefingscreen.h"
-#include "viewer/resultscreen.h"
+#include "client/briefingscreen.h"
+#include "client/resultscreen.h"
 #include "cob/vm.h"
 #include "crt/crt.h"
 #include "gaf/gaf.h"
@@ -33,13 +33,13 @@
 #include "tnt/tnt.h"
 #include "util/png.h"
 #include "version.h"
-#include "viewer/cursors.h"
-#include "viewer/options.h"
-#include "viewer/settings.h"
-#include "viewer/dev.h"
-#include "viewer/appquit.h"
-#include "viewer/mainmenu.h"
-#include "viewer/menumusic.h"
+#include "client/cursors.h"
+#include "client/options.h"
+#include "client/settings.h"
+#include "client/dev.h"
+#include "client/appquit.h"
+#include "client/mainmenu.h"
+#include "client/menumusic.h"
 
 // Keep our own main() on every platform (don't let SDL redefine it to SDL_main /
 // pull in SDL2main + a WinMain); we call SDL_SetMainReady() in main() instead. This
