@@ -57,13 +57,14 @@ public:
 
 private:
     struct Control {
-        enum Kind { Section, Slider, Toggle, Button } kind;
+        enum Kind { Section, Slider, Toggle, Button, Dropdown } kind;
         std::string label;
         float lo = 0, hi = 1;
-        std::function<float()> get;
-        std::function<void(float)> set;
+        std::function<float()> get;              // Dropdown: the selected option index
+        std::function<void(float)> set;          // Dropdown: select option `index`
         std::function<std::string(float)> fmt;   // value -> display text
         std::function<void()> action;            // Button: click handler
+        std::function<std::vector<std::string>()> options;   // Dropdown: the choices
         SDL_FRect row{};                          // filled by layout()
     };
 
@@ -91,6 +92,7 @@ private:
     float scroll_ = 0;      // content scroll offset (px)
     float contentH_ = 0;    // total laid-out content height
     int drag_ = -1;         // index of the slider being dragged, or -1
+    int openDrop_ = -1;     // index of the open Dropdown control (-1 = none)
     float u_ = 1.0f;        // layout unit (scaled to window)
     SDL_FRect panel_{};     // the panel rect (for scroll clamping)
     SDL_FRect defaultsRect_{}, saveRect_{}, backRect_{};   // footer buttons (filled by layout())
