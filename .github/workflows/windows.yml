@@ -58,6 +58,29 @@ jobs:
           name: takclient-windows-x64
           path: dist-win/
 
+      # Debug build: the release binaries are hardened (only --data/--version, no env
+      # vars), so ship an unhardened DEBUG bundle for devs who need the CLI flags,
+      # TAK_* env hooks, and the headless --mp* harness.
+      - name: Configure + build (debug)
+        run: |
+          cmake -B build-debug -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-debug
+
+      - name: Bundle (exes + required DLLs) + zip (debug)
+        run: |
+          mkdir -p dist-win-debug
+          cp build-debug/takclient.exe build-debug/takserver.exe dist-win-debug/
+          ldd build-debug/takclient.exe build-debug/takserver.exe \
+            | awk '/mingw64\/bin/ {print $3}' | sort -u \
+            | while read -r dll; do cp "$dll" dist-win-debug/; done
+          (cd dist-win-debug && zip -r ../takclient-windows-x64-debug.zip .)
+
+      - name: Upload CI artifact (debug)
+        uses: actions/upload-artifact@v7
+        with:
+          name: takclient-windows-x64-debug
+          path: dist-win-debug/
+
       - name: Determinism gate (cross-platform parity)
         run: |
           expected=ab1ef54ae324bd0e
@@ -78,4 +101,6 @@ jobs:
         run: |
           gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY `
             --title "TAK Engine $env:GITHUB_REF_NAME" --generate-notes --verify-tag 2>$null
-          gh release upload $env:GITHUB_REF_NAME takclient-windows-x64.zip --repo $env:GITHUB_REPOSITORY --clobber
+          gh release upload $env:GITHUB_REF_NAME `
+            takclient-windows-x64.zip takclient-windows-x64-debug.zip `
+            --repo $env:GITHUB_REPOSITORY --clobber
