@@ -736,7 +736,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
                 }
             }
             s.faction = faction % 5;
-            s.color = color % 11;   // 10 = the synthesized plaid
+            s.color = color % 10;
             s.team = uint8_t(team % kMaxSlots);
             s.ready = ready ? 1 : 0;
             s.aiLevel = aiLevel > 4 ? 2 : aiLevel;   // 0=passive 1=easy 2=normal 3=hard 4=absurd
