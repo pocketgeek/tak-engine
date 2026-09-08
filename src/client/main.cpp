@@ -2573,6 +2573,7 @@ public:
         cfg.gods = room.opts.gods != 0;
         cfg.unitCap = room.opts.unitCap;
         cfg.monarchExpendable = room.opts.monarchExpendable != 0;
+        cfg.stressTest = room.opts.stressTest != 0;
         cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
             const auto& s = room.slots[i];
@@ -2831,6 +2832,8 @@ public:
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
             // tests -- re-cadences the server without touching the (deterministic) sim.
             if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, 40));
+            if (tak::devEnv("TAK_STRESS")) o.stressTest = 1;   // headless: spawn ~95% cap per AI
+            if (const char* uc = tak::devEnv("TAK_UNITCAP")) o.unitCap = uint16_t(std::atoi(uc));
             // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
             // slot can be an AI -- an all-AI game to watch.
             bool watch = autoMode == 1 && tak::devEnv("TAK_MP_WATCH");
@@ -6457,6 +6460,7 @@ private:
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
     bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
+    bool createStressTest_ = false;   // SP spectate: spawn ~95% of each AI's unit cap at start
     // One selectable map plus the attributes the picker can sort by, read once from
     // the map's .ota GlobalHeader (a tiny text file -- no need to decompress the TNT).
     struct MapInfo {
@@ -8984,6 +8988,13 @@ private:
             lbBtn(x, y, 240, 26, spSpectate_ ? "SPECTATE (WATCH AIS): ON"
                                              : "SPECTATE (WATCH AIS): OFF", true,
                   [this] { spSpectate_ = !spSpectate_; }); y += 34;
+            // Stress test (spectate only): every AI starts at ~95% of the unit cap in
+            // its faction's combat units -- an instant heavy load to profile the sim.
+            if (spSpectate_) {
+                lbBtn(x, y, 240, 26, createStressTest_ ? "STRESS TEST: ON"
+                                                       : "STRESS TEST: OFF", true,
+                      [this] { createStressTest_ = !createStressTest_; }); y += 34;
+            }
         }
         // Override tier for the game: NONE (pure retail) / COSMETIC (art & sound
         // may differ) / FULL (gameplay overrides allowed but every player must
@@ -9000,6 +9011,8 @@ private:
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0; o.gods = createGods_ ? 1 : 0;
             o.overridePolicy = createOverride_;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
+            // Stress test only applies to an all-AI spectate game.
+            o.stressTest = (singlePlayer_ && spSpectate_ && createStressTest_) ? 1 : 0;
             // SP spectate: create as a spectator (no slot) so every slot can be an AI;
             // the game-start path flags spectating_ + noFog_ from mp_->isSpectator().
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(),
@@ -10359,6 +10372,7 @@ static bool loadReplayFile(const std::string& path, ReplayFile& out) {
     if (fmt >= 3) out.cfg.unitCap = uint16_t(r.u32());
     out.cfg.monarchExpendable = true;             // fmt<4 replays ran monarch-expendable
     if (fmt >= 4) out.cfg.monarchExpendable = r.u8() != 0;
+    if (fmt >= 5) out.cfg.stressTest = r.u8() != 0;   // fmt<5 had no stress test
     r.u32();                       // seed (setupMatch derives its own timing)
     uint8_t nslots = r.u8();
     out.crusades = crusades != 0;

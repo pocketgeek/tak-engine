@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 21;       // 21: GameOptions.monarchExpendable (monarch-death loss rule)
+constexpr uint32_t kNetVersion = 22;       // 22: GameOptions.stressTest (SP all-AI load test)
                                            // 20: +control squads/formations (Cmd::SetSquad)
                                            // 15: GameOptions.speed/speedUnlock + Set/SpeedUpdate msgs
                                            // 14: Cmd::Headbang (Shift+H emote)
@@ -25,7 +25,8 @@ constexpr uint32_t kNetVersion = 21;       // 21: GameOptions.monarchExpendable 
                                            // 12: builder repair (Cmd::Repair + Unit::repairId)
                                            // 11: unit stance/cloak/active in sim + Cmd::Stance/Cloak/SetActive
                                            // 10: reclaimable features in sim + Cmd::Reclaim (area-clear)
-constexpr uint32_t kMaxFrame = 1u << 16;   // 64 KB frame cap (hardening)
+constexpr uint32_t kMaxFrame = 1u << 18;   // 256 KB frame cap (hardening) -- headroom for a
+                                           // big tick bundle when many units are ordered at once
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate
 constexpr int kHashPeriod = 30;            // ticks between StateHash reports; the
@@ -111,6 +112,9 @@ struct GameOptions {
     uint16_t unitCap = 2000;
     // When 0 (default) losing your Monarch loses the game; 1 makes it just a unit.
     uint8_t monarchExpendable = 0;
+    // Stress test (SP all-AI spectate): 1 = spawn each AI at ~95% of the unit cap in
+    // its faction's combat units the moment the game starts, to load-test the sim.
+    uint8_t stressTest = 0;
 };
 
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer

@@ -171,6 +171,10 @@ public:
     void loadBuildTree(const hpi::Vfs& vfs, const std::string& prefix);
     const UnitType* find(const std::string& id) const;
     const std::vector<std::string>& buildable(const std::string& builderId) const;
+    // Mobile, armed combat units of a faction `side` ("ARA".."CRE"), in a fixed
+    // (name-sorted) order so every peer builds the same stress-test army. Excludes
+    // structures, builders, the Monarch, and anything with no weapon.
+    std::vector<const UnitType*> combatUnits(const std::string& side) const;
     // Largest build menu of any builder (drives the minimum window width so the
     // whole icon row always fits at full size -- some Crusades menus reach 13).
     std::size_t maxBuildMenu() const {

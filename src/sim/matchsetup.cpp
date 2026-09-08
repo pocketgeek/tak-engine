@@ -315,6 +315,29 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         ++spot;
         world.spawn(monarch, mx, mz, 0, i);
         world.player(i).mana = cfg.startMana;
+
+        // Stress test: fill this player to ~95% of the unit cap with its faction's
+        // combat units right now, so an all-AI game starts under a heavy sim load.
+        // Deterministic: fixed roster (name-sorted), round-robin, grid placement --
+        // every peer builds the identical army, so lockstep holds.
+        if (cfg.stressTest && monarch) {
+            auto roster = reg.combatUnits(monarch->side);
+            int cap = cfg.unitCap > 0 ? cfg.unitCap : 1000;   // unlimited -> a sane default
+            int target = (cap * 95) / 100;
+            if (!roster.empty() && target > 0) {
+                int cols = 1;                                 // integer ceil(sqrt(target))
+                while (cols * cols < target) ++cols;
+                const float spacing = 16.0f;
+                float x0 = mx - float(cols) * spacing * 0.5f; // centre the block on the start
+                float z0 = mz + spacing;                      // just south of the Monarch
+                for (int k = 0; k < target; ++k) {
+                    const UnitType* t = roster[size_t(k) % roster.size()];
+                    float ux = x0 + float(k % cols) * spacing;
+                    float uz = z0 + float(k / cols) * spacing;
+                    world.spawn(t, ux, uz, 0, i);
+                }
+            }
+        }
     }
     // Block the (structure) footprints just spawned. Monarchs move, so this is a
     // no-op today, but it mirrors the client and covers any non-mover spawns.

@@ -356,6 +356,19 @@ const UnitType* TypeRegistry::find(const std::string& id) const {
     return it == types_.end() ? nullptr : &it->second;
 }
 
+std::vector<const UnitType*> TypeRegistry::combatUnits(const std::string& side) const {
+    std::vector<const UnitType*> out;
+    // types_ is a std::map keyed by lowercased id, so this walk is name-sorted and
+    // identical on every peer -> a deterministic stress-test roster.
+    for (const auto& [id, t] : types_) {
+        if (t.side != side) continue;
+        if (!t.canMove || t.isBuilder || t.isStructure() || t.commander) continue;
+        if (t.weapons.empty()) continue;   // must be able to fight (drives real load)
+        out.push_back(&t);
+    }
+    return out;
+}
+
 int World::spawn(const UnitType* type, float x, float z, float heading, int player) {
     Unit u;
     u.id = nextId_++;

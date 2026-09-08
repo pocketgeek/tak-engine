@@ -41,6 +41,8 @@ struct MatchConfig {
     float startMana = 2800;
     int unitCap = 2000;             // per-player live-unit limit (0 = unlimited)
     bool monarchExpendable = true;  // false = losing your Monarch loses the game
+    bool stressTest = false;        // spawn each player at ~95% of the unit cap in combat
+                                    // units at setup (SP all-AI load test)
 };
 
 // The starting Monarch of each faction (index = faction id).

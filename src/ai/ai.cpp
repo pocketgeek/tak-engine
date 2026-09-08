@@ -366,7 +366,15 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     bool tapped = me.mana < 200.0f && me.income < 40.0f;
 
     if (int(idle.size()) >= bigPush || tapped) {
-        for (int id : idle) emit(sink, tak::net::Cmd::AttackMove, id, "", tx, tz);
+        // Commit the army -- but cap commands per think so a huge force (a near-cap
+        // game, or a stress test with thousands of units) doesn't emit one giant tick
+        // bundle that blows the wire frame limit. The rest stay idle and deploy over
+        // the next few thinks; all march to the same goal, so they still share a flow
+        // field. kMaxWaveCmds keeps even several coincident AIs well under the cap.
+        constexpr int kMaxWaveCmds = 256;
+        int n = std::min(int(idle.size()), kMaxWaveCmds);
+        for (int i = 0; i < n; ++i)
+            emit(sink, tak::net::Cmd::AttackMove, idle[size_t(i)], "", tx, tz);
         lastRaidTick_ = simTick;      // let the freshly-built stragglers regroup, don't raid next
         scouted_ = true;
         return;
