@@ -6450,6 +6450,7 @@ private:
     bool quitRequested_ = false;   // set by the in-game QUIT button -> main() exits the app
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)
     bool spSpectate_ = false;      // SP: watch the AIs (host takes no slot)
+    bool specAutoSeated_ = false;  // SP spectate: one-shot -- fill every open slot with a random-race AI
     bool externalLobbyMusic_ = false;   // front-end owns the lobby BGM -> suppress ours
     int lbField_ = 0;   // active text field: 1=createName 2=createPass 3=joinPass 4=chat
     float lobbyScale_ = 2.0f;               // lobby fit scale (set in render)
@@ -8982,6 +8983,7 @@ private:
             // the game-start path flags spectating_ + noFog_ from mp_->isSpectator().
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(),
                             singlePlayer_ && spSpectate_, singlePlayer_);
+            specAutoSeated_ = false;   // arm the one-shot auto-seat for this new room
             lobbyScreen_ = LobbyScreen::Browser;
         });
         if (!singlePlayer_)   // a private single-player game has no browser to go back to
@@ -9114,6 +9116,18 @@ private:
                   x + winW - 320, y + 22, 1.5f, {150, 175, 150, 255});
         y += 34;
         bool host = (room.hostId == mp_->myClientId());
+        // SP spectate ("watch the AIs"): the instant the host lands in the room, fill
+        // every open capacity slot with an AI -- each on its own team/colour and a
+        // RANDOM race -- so the watcher gets a full free-for-all with no hand-seating.
+        // Closed slots (no start position on this map) are skipped. One-shot
+        // (specAutoSeated_), so the host can still tweak/close slots afterwards.
+        if (singlePlayer_ && spSpectate_ && host && room.mySlot < 0 && !specAutoSeated_) {
+            std::mt19937 rng(uint32_t(SDL_GetTicks64()) ^ (room.id * 2654435761u));
+            for (int i = 0; i < tak::net::kMaxSlots; ++i)
+                if (room.slots[i].type == 0)   // open capacity slot
+                    mp_->setSlot(i, 2, uint8_t(rng() % 5), uint8_t(i), uint8_t(i), 1, aiLevelEnv());
+            specAutoSeated_ = true;
+        }
         // slot table
         const char* typeName[4] = {"OPEN", "HUMAN", "AI", "CLOSED"};
         for (int i = 0; i < tak::net::kMaxSlots; ++i) {
@@ -9217,7 +9231,7 @@ private:
               {70, 110, 70, 255});
         lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
             mp_->leaveGame(); lobbyScreen_ = LobbyScreen::Browser;
-            mpReadied_ = false; mpStarted_ = false; });
+            mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false; });
         // The game starts at normal speed; the host can allow it to be changed
         // in-game, and the host's -/+ keys then re-cadence the match live.
         y += 40;
