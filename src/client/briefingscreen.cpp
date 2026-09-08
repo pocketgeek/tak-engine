@@ -1,3 +1,4 @@
+#include "client/options.h"
 #include "client/briefingscreen.h"
 
 #include <algorithm>
@@ -66,7 +67,7 @@ bool BriefingScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, const std::stri
         SDL_AudioSpec spec{};
         Uint32 len = 0;
         if (SDL_LoadWAV_RW(SDL_RWFromConstMem(wav.data(), int(wav.size())), 1, &spec, &vo.buf, &len)) {
-            vo.dev = SDL_OpenAudioDevice(nullptr, 0, &spec, nullptr, 0);
+            vo.dev = tak::openAudioDevice(0, &spec, nullptr, 0);
             int gain = settings ? std::clamp(settings->masterVol * settings->sfxVol * 128 / (256 * 256), 0, 128) : 128;
             if (vo.dev && gain > 0) {
                 if (gain < 128) {   // scale to the user's volume

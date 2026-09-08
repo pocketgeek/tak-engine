@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "hpi/hpi.h"
+#include "client/options.h"   // tak::openAudioDevice (routes to the chosen device)
 
 namespace tak {
 
@@ -45,7 +46,7 @@ public:
         want.callback = &MenuMusic::mixThunk;
         want.userdata = this;
         pos_ = 0;                        // set before the device unpauses (callback reads it)
-        dev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);   // flags 0 => have == want
+        dev_ = tak::openAudioDevice(0, &want, &have, 0);   // flags 0 => have == want
         if (!dev_) { src_.clear(); return; }
         silence_ = have.silence;
         track_ = track;

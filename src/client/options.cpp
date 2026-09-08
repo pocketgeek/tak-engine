@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace tak {
 
@@ -12,15 +13,32 @@ namespace {
 
 void SDLCALL probeSilence(void*, Uint8* s, int len) { SDL_memset(s, 0, size_t(len)); }
 
-// Open a probe device requesting `req` channels and return what it negotiates.
-int probeChannels(int req) {
+// The user-chosen output device NAME ("" = system default). Set once at startup from
+// Settings::audioDevice (validated), and cleared back to system default if a chosen
+// device turns out to be missing or fails to open. Process-global so SoundBank and the
+// menu/briefing audio all open the same device.
+std::string g_audioDevice;
+int g_channelCache = -1;   // detectOutputChannels() memo; -1 = re-probe
+
+// Open a probe on `dev` (nullptr = system default) requesting `req` channels and return
+// what it negotiates.
+int probeChannels(const char* dev, int req) {
     SDL_AudioSpec want{}, got{};
     want.freq = 11025; want.format = AUDIO_S16SYS; want.channels = Uint8(req);
     want.samples = 1024; want.callback = probeSilence;   // callback-based, like SoundBank
-    SDL_AudioDeviceID d = SDL_OpenAudioDevice(nullptr, 0, &want, &got, SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
+    SDL_AudioDeviceID d = SDL_OpenAudioDevice(dev, 0, &want, &got, SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
     int ch = (d && got.channels) ? got.channels : 0;
     if (d) SDL_CloseAudioDevice(d);
     return ch;
+}
+
+// Index of an output device by name (-1 if absent), for SDL_GetAudioDeviceSpec.
+int deviceIndex(const char* name) {
+    if (!name) return -1;
+    int n = SDL_GetNumAudioDevices(0);
+    for (int i = 0; i < n; ++i)
+        if (const char* dn = SDL_GetAudioDeviceName(i, 0); dn && !std::strcmp(dn, name)) return i;
+    return -1;
 }
 
 // Speaker label per channel count (mirrors SoundBank::channelRole / channelGains).
@@ -39,26 +57,71 @@ std::string timesFmt(float v) { char b[16]; std::snprintf(b, sizeof b, "%.2fX", 
 
 }  // namespace
 
-// The one true output-channel count for this process, so SoundBank (which mixes
-// into it) and the Options sliders always agree. GetDefaultAudioInfo only advises
-// the REQUEST (often 2 even on a 5.1/7.1 rig); the real layout is what the OPENED
-// device negotiates. Probe once (callback-based, like SoundBank) and, if that's
-// stereo, probe again asking for 5.1 -- many setups (PipeWire) advertise a 2ch
-// default but open surround when asked. Cached: computed once, identical everywhere.
+// The one true output-channel count for this process (of the chosen device, or the
+// system default), so SoundBank and the Options per-speaker sliders always agree.
+// Computed once and cached; re-probed after a device change.
 int detectOutputChannels() {
-    static int cached = -1;
-    if (cached >= 0) return cached;
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return (cached = 2);
-    int req = 2;
-    SDL_AudioSpec def{};
-    if (SDL_GetDefaultAudioInfo(nullptr, &def, 0) == 0 && def.channels >= 2)
-        req = std::min<int>(def.channels, 8);
-    int ch = probeChannels(req);
-    if (ch <= 2) { int hi = probeChannels(6); if (hi > ch) ch = hi; }
+    if (g_channelCache >= 0) return g_channelCache;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return (g_channelCache = 2);
+    const char* dev = g_audioDevice.empty() ? nullptr : g_audioDevice.c_str();
+    // The device's ADVERTISED layout is the truth: SDL_GetDefaultAudioInfo reports the
+    // configured default sink (2 on a stereo box, 6 on a real 5.1 sink), and
+    // GetAudioDeviceSpec does the same for a named device. We do NOT speculatively
+    // probe for 6 -- PipeWire/PulseAudio will happily open a 6-channel VIRTUAL stream
+    // that downmixes to two physical speakers, which is exactly why a 2-channel box was
+    // being reported as 5.1. Request the advertised count and cap the result to it.
+    int adv = 2;
+    SDL_AudioSpec spec{};
+    if (!dev) {
+        if (SDL_GetDefaultAudioInfo(nullptr, &spec, 0) == 0 && spec.channels >= 1)
+            adv = std::clamp(int(spec.channels), 1, 8);
+    } else if (int idx = deviceIndex(dev); idx >= 0 &&
+               SDL_GetAudioDeviceSpec(idx, 0, &spec) == 0 && spec.channels >= 1) {
+        adv = std::clamp(int(spec.channels), 1, 8);
+    }
+    int ch = probeChannels(dev, adv);
+    if (ch <= 0 && dev) ch = probeChannels(nullptr, adv);   // chosen device unusable -> system
     if (ch <= 0) ch = 2;
-    cached = std::clamp(ch, 1, 8);
-    std::fprintf(stderr, "audio: detected %d output channels (default advised %d)\n", cached, req);
-    return cached;
+    g_channelCache = std::clamp(std::min(ch, adv), 1, 8);
+    std::fprintf(stderr, "audio: %d output channels on %s\n", g_channelCache,
+                 dev ? dev : "system default");
+    return g_channelCache;
+}
+
+std::vector<std::string> listAudioDevices() {
+    std::vector<std::string> out;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return out;
+    int n = SDL_GetNumAudioDevices(0);
+    for (int i = 0; i < n; ++i)
+        if (const char* dn = SDL_GetAudioDeviceName(i, 0)) out.emplace_back(dn);
+    return out;
+}
+
+void setAudioDevice(const std::string& name) {
+    std::string prev = g_audioDevice;
+    g_audioDevice.clear();
+    if (!name.empty()) {
+        if (deviceIndex(name.c_str()) >= 0) g_audioDevice = name;
+        else std::fprintf(stderr, "audio: chosen device '%s' not present -- using system default\n",
+                          name.c_str());
+    }
+    if (g_audioDevice != prev) g_channelCache = -1;  // re-probe on next detectOutputChannels
+}
+
+const std::string& currentAudioDevice() { return g_audioDevice; }
+
+SDL_AudioDeviceID openAudioDevice(int iscapture, const SDL_AudioSpec* want,
+                                  SDL_AudioSpec* got, int allowed) {
+    if (!g_audioDevice.empty()) {
+        SDL_AudioDeviceID d = SDL_OpenAudioDevice(g_audioDevice.c_str(), iscapture, want, got, allowed);
+        if (d) return d;
+        // Missing / inaccessible at open time -> permanently fall back to system default.
+        std::fprintf(stderr, "audio: device '%s' failed to open -- falling back to system default\n",
+                     g_audioDevice.c_str());
+        g_audioDevice.clear();
+        g_channelCache = -1;
+    }
+    return SDL_OpenAudioDevice(nullptr, iscapture, want, got, allowed);
 }
 
 OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
@@ -82,8 +145,30 @@ void OptionsScreen::build(int channels) {
     auto button = [&](const char* label, std::function<void()> action) {
         ctls_.push_back({Control::Button, label, 0, 1, {}, {}, {}, std::move(action), {}});
     };
+    // A cycle control: `disp()` is shown in a wide chip, `action` advances to the next.
+    auto cycleButton = [&](const char* label, std::function<std::string()> disp,
+                           std::function<void()> action) {
+        ctls_.push_back({Control::Button, label, 0, 1, {}, {},
+                         [disp = std::move(disp)](float) { return disp(); },
+                         std::move(action), {}});
+    };
 
     section("AUDIO");
+    // Output device: "System Default" plus every current output device. On startup a
+    // saved-but-missing device auto-falls-back to system (see setAudioDevice); here the
+    // user can pick one explicitly.
+    cycleButton("SOUND DEVICE",
+        [this] { return s_.audioDevice.empty() ? std::string("SYSTEM DEFAULT") : s_.audioDevice; },
+        [this] {
+            std::vector<std::string> opts{std::string()};   // "" = system default
+            for (auto& d : listAudioDevices()) opts.push_back(d);
+            size_t i = 0;
+            for (size_t k = 0; k < opts.size(); ++k)
+                if (opts[k] == s_.audioDevice) { i = k; break; }
+            s_.audioDevice = opts[(i + 1) % opts.size()];
+            setAudioDevice(s_.audioDevice);
+            if (onChange_) onChange_();
+        });
     slider("MASTER VOLUME", 0, 256, [&] { return float(s_.masterVol); },
            [&](float v) { s_.masterVol = int(v + 0.5f); }, [](float v) { return pctOf(v, 256); });
     slider("MUSIC VOLUME", 0, 256, [&] { return float(s_.bgmVol); },
@@ -286,13 +371,21 @@ void OptionsScreen::render(int winW, int winH) {
                           on ? SDL_Color{210, 240, 215, 255} : SDL_Color{170, 175, 185, 255});
         } else if (c.kind == Control::Button) {
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
-            SDL_FRect chip{c.row.x + c.row.w - 96 * u_, c.row.y + 5 * u_, 96 * u_, 24 * u_};
+            // A `fmt`-carrying button is a CYCLE control (e.g. audio device): show the
+            // current value in a wide chip and cycle it on click. Plain buttons show
+            // "OPEN >". The value is truncated to fit the chip.
+            bool cycle = bool(c.fmt);
+            float cw = cycle ? 300 * u_ : 96 * u_;
+            SDL_FRect chip{c.row.x + c.row.w - cw, c.row.y + 5 * u_, cw, 24 * u_};
             SDL_SetRenderDrawColor(ren_, 52, 60, 82, 255);
             SDL_RenderFillRectF(ren_, &chip);
             SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &chip);
-            const char* t = "OPEN >";
-            drawBlockText(ren_, t, chip.x + (chip.w - blockTextWidth(t, 2.0f * u_)) / 2,
-                          chip.y + (chip.h - 7 * 2.0f * u_) / 2, 2.0f * u_, {215, 225, 245, 255});
+            std::string t = cycle ? c.fmt(0) : std::string("OPEN >");
+            float tpx = cycle ? 1.6f * u_ : 2.0f * u_;
+            int maxCh = int((chip.w - 16 * u_) / (6 * tpx));   // block glyph = 6px wide
+            if (cycle && int(t.size()) > maxCh && maxCh > 0) t = t.substr(0, size_t(maxCh));
+            drawBlockText(ren_, t, chip.x + (chip.w - blockTextWidth(t, tpx)) / 2,
+                          chip.y + (chip.h - 7 * tpx) / 2, tpx, {215, 225, 245, 255});
         } else if (c.kind == Control::Slider) {
             float val = c.get();
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 4 * u_, fpx, {225, 230, 240, 255});

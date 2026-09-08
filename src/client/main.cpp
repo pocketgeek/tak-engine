@@ -152,6 +152,48 @@ bool spawnLocalServer(const std::string& serverBin, const std::string& dataRoot,
     return true;
 #endif
 }
+
+// Path to the takserver binary that sits beside this client. argv[0] is unreliable:
+// launched from PATH (e.g. the /usr/bin .rpm/.deb install) it's the bare name
+// "takclient" with no directory, and execl/CreateProcess do NOT search PATH -- which
+// is why single-player "never started takserver". Resolve the REAL executable's
+// directory (/proc/self/exe on Linux, the module path on Windows), then fall back to
+// argv[0]'s directory and finally a PATH scan. Returns the first "takserver" found.
+std::string resolveServerBin(const char* argv0) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto tryDir = [&](const fs::path& dir) -> std::string {
+        if (dir.empty()) return {};
+        fs::path p = dir / "takserver";
+        return fs::exists(p, ec) ? p.string() : std::string{};
+    };
+#if defined(__linux__)
+    { char buf[4096]; ssize_t n = ::readlink("/proc/self/exe", buf, sizeof buf - 1);
+      if (n > 0) { buf[n] = '\0'; auto r = tryDir(fs::path(buf).parent_path()); if (!r.empty()) return r; } }
+#elif defined(_WIN32)
+    { char buf[MAX_PATH]; DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+      if (n > 0 && n < MAX_PATH) { auto r = tryDir(fs::path(buf).parent_path()); if (!r.empty()) return r; } }
+#endif
+    if (auto r = tryDir(fs::path(argv0).parent_path()); !r.empty()) return r;
+    if (const char* path = std::getenv("PATH")) {
+        std::string ps(path);
+        for (size_t s = 0; s <= ps.size();) {
+            size_t sep = ps.find(
+#ifdef _WIN32
+                ';'
+#else
+                ':'
+#endif
+                , s);
+            std::string dir = ps.substr(s, sep == std::string::npos ? std::string::npos : sep - s);
+            if (auto r = tryDir(dir); !r.empty()) return r;
+            if (sep == std::string::npos) break;
+            s = sep + 1;
+        }
+    }
+    // Nothing found -- return the old argv[0]-relative guess so the caller can report it.
+    return (fs::path(argv0).parent_path() / "takserver").string();
+}
 }  // namespace
 
 namespace {
@@ -689,8 +731,7 @@ public:
         want.samples = 1024;
         want.callback = &SoundBank::mixThunk;
         want.userdata = this;
-        dev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &spec_,
-                                   SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
+        dev_ = tak::openAudioDevice(0, &want, &spec_, SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
         chan_ = dev_ ? (spec_.channels ? spec_.channels : 2) : 1;
         std::fprintf(stderr, "audio: %d output channels%s%s\n", chan_,
                      chan_ >= 4 ? " (surround: front/rear enabled)" : "",
@@ -10620,6 +10661,10 @@ int main(int argc, char** argv) {
     // Persisted Options (audio/camera/display prefs). CLI flags still win where they
     // apply; the file is the source of truth for anything not passed on the CLI.
     tak::Settings settings = tak::loadSettings();
+    // Select the saved output device before ANY audio opens (validated -- an absent
+    // device falls back to system default). Keep the setting so the picker still shows
+    // the user's choice even if it's currently unplugged.
+    tak::setAudioDevice(settings.audioDevice);
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
     std::string winTitle = std::string("takclient ") + tak::kVersion;
@@ -10755,8 +10800,7 @@ int main(int argc, char** argv) {
         // Single-player: auto-launch a private local server and play a 1-v-AI game
         // on it (the AI runs server-side). Not visible to other players.
         int p = pickFreePort();
-        std::string serverBin =
-            (std::filesystem::path(argv[0]).parent_path() / "takserver").string();
+        std::string serverBin = resolveServerBin(argv[0]);
         if (p <= 0 || !spawnLocalServer(serverBin, dataRoot, p)) {
             std::fprintf(stderr, "single-player: could not launch a local server (%s)\n",
                          serverBin.c_str());

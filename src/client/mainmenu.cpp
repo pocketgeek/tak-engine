@@ -36,6 +36,30 @@ namespace tak {
 
 namespace {
 
+// Resolve a subpath under `base` case-insensitively, segment by segment. Retail
+// folders (Movies, Movies/Gui, Music, ...) may be ANY case on a case-sensitive
+// filesystem -- a fixed "Movies/Gui" silently finds nothing if the install uses
+// "movies/gui". Returns empty if any segment is missing.
+fs::path ciResolve(fs::path base, std::initializer_list<const char*> parts) {
+    std::error_code ec;
+    auto low = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](unsigned char c) { return char(std::tolower(c)); });
+        return s;
+    };
+    if (!fs::exists(base, ec)) return {};
+    for (const char* want : parts) {
+        std::string wl = low(want);
+        fs::path found;
+        for (auto& e : fs::directory_iterator(base, ec)) {
+            if (low(e.path().filename().string()) == wl) { found = e.path(); break; }
+        }
+        if (found.empty()) return {};
+        base = std::move(found);
+    }
+    return base;
+}
+
 // Per-door hover video state: hold the idle clip (`*4`), play hover-in (`*5`) once,
 // loop (`*6`) while hovered, then play hover-out (`*7`) back to idle.
 enum class DoorState { Idle, In, Loop, Out };
@@ -145,7 +169,7 @@ struct MainMenu::Impl {
             // click is queued at once (never a partial fill), so a short device
             // period can't underrun it. ~128/11025 ~= 12ms vs ~46ms at 512.
             want.samples = 128;
-            sfxDev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+            sfxDev_ = tak::openAudioDevice(0, &want, &have, 0);
             if (sfxDev_) SDL_PauseAudioDevice(sfxDev_, 0);
         }
         // Scale to a UI level that sits above the (soft, ~45/128) menu music.
@@ -224,7 +248,12 @@ struct MainMenu::Impl {
     // "machine5.bik" / "GIRL5.BIK" mix resolves on a case-sensitive filesystem.
     void indexVideos() {
         std::error_code ec;
-        fs::path dir = fs::path(install) / "Movies" / "Gui";
+        fs::path dir = ciResolve(fs::path(install), {"Movies", "Gui"});
+        if (dir.empty()) {
+            std::fprintf(stderr, "menu: no Movies/Gui under %s -- door videos disabled "
+                         "(doors stay on their static art)\n", install.c_str());
+            return;
+        }
         for (auto& e : fs::directory_iterator(dir, ec)) {
             if (!e.is_regular_file()) continue;
             std::string n = e.path().filename().string();
@@ -233,6 +262,8 @@ struct MainMenu::Impl {
                            [](unsigned char c) { return char(std::tolower(c)); });
             bikByLower[low] = e.path().string();
         }
+        std::fprintf(stderr, "menu: indexed %zu door video(s) from %s\n",
+                     bikByLower.size(), dir.string().c_str());
     }
 
     std::string findBik(const std::string& base, int n) const {
@@ -688,7 +719,9 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
     // Locate <install>/Movies/<name> case-insensitively (retail ships LOGO.BIK etc.).
     std::string path;
     std::error_code ec;
-    for (auto& e : fs::directory_iterator(fs::path(install) / "Movies", ec)) {
+    fs::path moviesDir = ciResolve(fs::path(install), {"Movies"});
+    if (moviesDir.empty()) return;
+    for (auto& e : fs::directory_iterator(moviesDir, ec)) {
         if (!e.is_regular_file()) continue;
         std::string low = e.path().filename().string();
         std::transform(low.begin(), low.end(), low.begin(),
@@ -722,7 +755,7 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
         want.channels = uint8_t(vid.audioChannels());
         want.samples = 1024;
         want.callback = nullptr;   // queue-driven
-        adev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+        adev = tak::openAudioDevice(0, &want, &have, 0);
         if (adev) SDL_PauseAudioDevice(adev, 0);
     }
     const double fps = vid.fps() > 1.0 ? vid.fps() : 30.0;

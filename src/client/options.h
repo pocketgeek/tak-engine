@@ -15,10 +15,27 @@
 
 namespace tak {
 
-// The process-wide output-channel count (1/2/4/6/8), probed once and cached. Shared
-// by SoundBank (which requests it) and the Options per-speaker sliders, so they
-// always agree even when PipeWire's default advises stereo on a surround rig.
+// The process-wide output-channel count (1/2/4/6/8) of the chosen device (or the
+// system default), probed once and cached. Shared by SoundBank (which requests it) and
+// the Options per-speaker sliders, so they always agree.
 int detectOutputChannels();
+
+// --- Output device selection -------------------------------------------------------
+// Names of the current output devices (for the Options picker); [] entry is implicitly
+// "System Default".
+std::vector<std::string> listAudioDevices();
+// Choose the output device by name ("" = system default). Validated: an absent name
+// falls back to system default. Call once at startup from Settings::audioDevice, before
+// any audio is opened.
+void setAudioDevice(const std::string& name);
+// The device currently in effect ("" = system default).
+const std::string& currentAudioDevice();
+// Open the chosen output device (or system default), falling back to system default --
+// permanently -- if the chosen one is missing or won't open. ALL audio opens go
+// through this so a stale saved device can never wedge sound. Mirrors
+// SDL_OpenAudioDevice's (iscapture, want, got, allowed_changes) signature.
+SDL_AudioDeviceID openAudioDevice(int iscapture, const SDL_AudioSpec* want,
+                                  SDL_AudioSpec* got, int allowed);
 
 class OptionsScreen {
 public:

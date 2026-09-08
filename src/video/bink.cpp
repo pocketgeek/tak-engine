@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "video/bink.h"
 
 #include <algorithm>
@@ -146,7 +147,21 @@ bool BinkVideo::open(std::vector<uint8_t> data) {
 
     AVStream* st = d_->fmt->streams[d_->stream];
     const AVCodec* dec = avcodec_find_decoder(st->codecpar->codec_id);
-    if (!dec) { close(); return false; }
+    if (!dec) {
+        // The container parsed but the installed libavcodec has no decoder for this
+        // codec -- the usual reason menu/door videos won't play. On Fedora the stock
+        // "libavcodec-free" can lack the Bink decoder; the full FFmpeg (RPM Fusion)
+        // has it. Log ONCE so a static-doors report is self-diagnosing.
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            std::fprintf(stderr, "video: installed FFmpeg has no '%s' decoder -- menu/door "
+                         "videos disabled. Install the full FFmpeg (e.g. RPM Fusion's "
+                         "'ffmpeg', or 'libavcodec-freeworld').\n",
+                         avcodec_get_name(st->codecpar->codec_id));
+        }
+        close(); return false;
+    }
     d_->ctx = avcodec_alloc_context3(dec);
     if (!d_->ctx || avcodec_parameters_to_context(d_->ctx, st->codecpar) < 0
         || avcodec_open2(d_->ctx, dec, nullptr) < 0) { close(); return false; }

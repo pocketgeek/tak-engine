@@ -35,6 +35,8 @@ struct Settings {
     int   bgmVol      = 128;       // background music (SoundBank music + MenuMusic); 50%
     int   sfxVol      = 256;       // unit / world / UI sound effects
     float chanGain[8] = {1, 1, 1, 1, 1, 1, 1, 1};   // per-output-speaker trim, 0..1
+    std::string audioDevice;       // output device NAME; "" = system default. Falls back
+                                   // to system default if the saved name is gone at startup.
 
     // ---- camera / input ----
     float mouseZoomSpeed  = 1.0f;  // wheel-zoom sensitivity; 0.25..4.0
@@ -79,6 +81,7 @@ struct Settings {
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
             && a.playerName == b.playerName && a.lastMap == b.lastMap
+            && a.audioDevice == b.audioDevice
             && a.hotkeys == b.hotkeys
             && a.campaignCompleted == b.campaignCompleted;
     }
