@@ -2701,6 +2701,19 @@ public:
         }
         // Cosmetics once per frame, covering the game time actually played.
         if (drained > 0) cosmeticStep(float(drained) / 30.0f);
+        // Spectator progress heartbeat: keep the server's flow-control ack FRESH even
+        // when we're caught up and not draining. The per-tick hash send only fires while
+        // draining (at 30-tick boundaries), so a caught-up spectator would stop acking;
+        // the server -- pacing an all-AI game to that now-stale ack -- would then hold
+        // forever (ACTUAL 0.0x) and eventually time us out ("recv failed"). One ack per
+        // ~0.4s wall keeps the server's view of our position current.
+        if (mp_->isSpectator()) {
+            uint64_t nowHb = SDL_GetTicks64();
+            if (nowHb - lastSpecAckMs_ > 400) {
+                lastSpecAckMs_ = nowHb;
+                mp_->sendHash(netTick_ ? netTick_ - 1 : 0, world_.stateHash());
+            }
+        }
         // Measure the ACTUAL game speed: how fast our sim really advances (ticks/sec
         // over a ~0.5s window, /30 = a speed multiplier). At the requested speed this
         // tracks it; when a client can't keep up (or the server paces to the slowest)
@@ -2931,6 +2944,8 @@ public:
             if (spec) {
                 spectating_ = true;   // watch-only: no fog, no control, no resume
                 noFog_ = true;
+                showCounts_ = true;   // the F4 scoreboard is on by default while spectating
+                gameStartMs_ = SDL_GetTicks64();
             } else {
                 mp_->reportLoaded(gameDataHash());
                 writeResume(mp_->gameId(), mp_->resumeToken());
@@ -2946,6 +2961,8 @@ public:
                 // no resume ticket, and nothing to report loaded.
                 spectating_ = true;
                 noFog_ = true;
+                showCounts_ = true;   // F4 scoreboard on by default while spectating
+                gameStartMs_ = SDL_GetTicks64();
             } else {
                 mp_->reportLoaded(gameDataHash());
                 writeResume(mp_->gameId(), mp_->resumeToken());   // reconnect ticket
@@ -6666,6 +6683,8 @@ private:
     // Actual-vs-requested game-speed meter (F4): measured from our own tick advance.
     uint64_t actualSpeedT0_ = 0, actualSpeedTick0_ = 0;
     float actualSpeed_ = 0.0f;
+    uint64_t lastSpecAckMs_ = 0;   // spectator flow-control heartbeat (see mpStep)
+    uint64_t gameStartMs_ = 0;     // wall time the game/spectate began (F4 real-time elapsed)
     bool follow_ = false;
     bool trackSel_ = false;   // T: keep the camera centred on the selection
     bool trace_ = false;
@@ -9429,7 +9448,19 @@ private:
                       SDL_Color{210, 215, 225, 255});
         }
         y += lh;
-        // --- column-header line ---
+        // --- column-header line (left: elapsed clocks in a net game; right: labels) ---
+        if (mp_) {
+            int gsec = int(netTick_) / 30;   // game time = ticks / 30Hz
+            char tb[64];
+            if (gameStartMs_) {              // spectating: real (wall) time too
+                int rsec = int((SDL_GetTicks64() - gameStartMs_) / 1000);
+                std::snprintf(tb, sizeof tb, "GAME %d:%02d  REAL %d:%02d",
+                              gsec / 60, gsec % 60, rsec / 60, rsec % 60);
+            } else {
+                std::snprintf(tb, sizeof tb, "GAME %d:%02d", gsec / 60, gsec % 60);
+            }
+            blockText(tb, x, y + 3, hx, SDL_Color{175, 180, 190, 255});
+        }
         if (showMana) blockText("MANA", colMana, y + 3, hx, SDL_Color{150, 150, 155, 255});
         blockText("UNITS", colUnits, y + 3, hx, SDL_Color{150, 150, 155, 255});
         blockText("KILLS", colKills, y + 3, hx, SDL_Color{150, 150, 155, 255});
