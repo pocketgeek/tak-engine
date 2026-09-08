@@ -3513,8 +3513,21 @@ public:
                 std::fflush(stdout);
             }
         }
+        // Register newly-seen units for rendering (load the model + COB once per type,
+        // then build a per-unit animation VM and run its Create script). BUDGETED: a huge
+        // simultaneous spawn -- the stress test, a mass transport unload, or a big army
+        // revealed by fog -- would otherwise build thousands of VMs and run their Create
+        // scripts in ONE frame, a multi-hundred-millisecond hitch that "settles" only once
+        // every unit is registered. Cap new registrations per frame so the cost spreads
+        // over ~a second; the render path already skips units not yet in unitType_, so the
+        // stragglers just pop in a few frames later. Purely cosmetic -- the sim already has
+        // them (they move/fight); this only gates when the client starts drawing them.
+        int regBudget = kRegistrationsPerFrame;
         for (auto& u : world_.units())
-            if (u.type && u.alive() && !unitType_.count(u.id)) registerUnit(u);
+            if (u.type && u.alive() && !unitType_.count(u.id)) {
+                registerUnit(u);
+                if (--regBudget <= 0) break;
+            }
         // Kick off the summon fade-in/shimmer for anything just conjured from a
         // building (the producer flags justBuilt for that one tick); then age the
         // active effects and drop finished or dead ones. Cosmetic, viewer-only.
@@ -5526,6 +5539,9 @@ private:
     float lodPx_ = 64.0f;                        // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 0.5f;  // LOD only when really zoomed out
                                                  // (zoom below this); full 3D otherwise
+    // Max NEW units the client registers (model/COB/anim VM + Create script) per frame,
+    // so a mass simultaneous spawn streams in over ~a second instead of freezing one frame.
+    static constexpr int kRegistrationsPerFrame = 64;
 
     static int facingIndex(float heading, int n) {
         int k = int(std::lround(heading / (2.0f * 3.14159265f) * float(n)));
