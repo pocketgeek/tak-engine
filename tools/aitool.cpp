@@ -114,6 +114,24 @@ int main(int argc, char** argv) {
         for (const auto& [id, n] : comp) { s += id + ":" + std::to_string(n) + " "; }
         std::printf("t=%3ds  income=%.0f mana=%.0f  army=%d closest-to-enemy=%.0f  | %s\n",
                     t, income, mana, army, army ? minDist : -1, s.c_str());
+        if (std::getenv("TAK_AI_ECON")) {
+            // Where is the income going? Dump every under-construction site and every
+            // builder's job so we can see a stalled/over-expensive build freezing the economy.
+            for (const auto& u : w.units()) {
+                if (!u.alive() || u.player != 1 || !u.type) continue;
+                if (u.underConstruction)
+                    std::printf("      UC %s#%d hp=%.0f%% cost=%.0f btime=%.0f\n",
+                                u.type->id.c_str(), u.id, 100.f * u.hp / std::max(u.type->maxHp, 1.f),
+                                u.type->buildCost, u.type->buildTime);
+                if (u.type->isBuilder && (u.buildSiteId || !u.buildQueue.empty() || u.repeatType)) {
+                    std::string q;
+                    for (const auto* qt : u.buildQueue) if (qt) q += qt->id + " ";
+                    std::printf("      builder %s#%d site=%d prog=%.0f queue=[%s] repeat=%s\n",
+                                u.type->id.c_str(), u.id, u.buildSiteId, u.buildProgress,
+                                q.c_str(), u.repeatType ? u.repeatType->id.c_str() : "-");
+                }
+            }
+        }
         if (std::getenv("TAK_AI_UNITS"))
             for (const auto& u : w.units())
                 if (u.alive() && u.player == 1 && u.type && u.type->canMove && !u.type->isBuilder) {

@@ -87,6 +87,10 @@ struct UnitType {
     float maxHp = 100;
     bool canMove = false;
     bool isBuilder = false;
+    // Buildings vs mobile units: the reliable test is maxVel. The FBI `canmove`
+    // flag is set on some buildings too (e.g. the Keep, or the Taros Hell), so a
+    // canMove building would otherwise be mistaken for a mobile builder.
+    bool isStructure() const { return maxVel <= 0.0f; }
     float buildDist = 0;    // FBI builddistance: how far a builder reaches to build
     bool onMana = false;    // must be built on a mana deposit (yardmap 'S'), e.g. lodestones
     float buildCost = 0;    // mana

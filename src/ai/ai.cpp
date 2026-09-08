@@ -32,7 +32,7 @@ DiffParams paramsFor(Difficulty d) {
     switch (d) {
         // Sluggish: reacts slowly, builds up slowly, and only commits once it has
         // gathered a sizeable group -- so it's passive and beatable.
-        case Difficulty::Easy:   return {60, 6, 1, 1, 70,  false};
+        case Difficulty::Easy:   return {60, 4, 1, 1, 70,  false};
         // Fast, army-heavy, and aggressive: reacts often, attacks with small groups,
         // and pushes bigger unit limits.
         case Difficulty::Hard:   return {20, 2, 3, 8, 150, true};
@@ -107,7 +107,7 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
             float secs = ut->buildTime / std::max(producer.type->workerTime, 1.0f);
             if (world.player(player_).mana + income * secs < ut->buildCost) continue;
         }
-        if (ut->canMove && !ut->isBuilder) w *= econFactor;   // army: economy tweak
+        if (!ut->isStructure() && !ut->isBuilder) w *= econFactor;   // army: economy tweak
         total += w;
         if (rand(total) < w) chosen = ut;                     // reservoir sample
     }
@@ -119,13 +119,13 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
 // placement spot is probed against the (const) world, then issued as a Build.
 void Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
                          const tak::sim::UnitType* pick, const CommandSink& sink) {
-    if (!pick->canMove) {                       // structure
-        if (p.type->canMove && p.type->isBuilder) {
+    if (pick->isStructure()) {                  // structure
+        if (!p.type->isStructure() && p.type->isBuilder) {
             float x, z;
             if (placeSite(world, pick, p.x, p.z, x, z))
                 emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
         }
-    } else if (!p.type->canMove) {              // factory trains mobile
+    } else if (p.type->isStructure()) {         // factory trains mobile
         emit(sink, tak::net::Cmd::Train, p.id, pick->id, 0, 0);
     } else if (p.type->isBuilder) {             // mobile builder conjures mobile
         for (float r = 40; r < 170; r += 20)
@@ -225,7 +225,7 @@ void Controller::sendWaves(const tak::sim::World& world, const CommandSink& sink
     double sx = 0, sz = 0;
     const tak::sim::UnitType* atype = nullptr;
     for (auto& u : world.units())
-        if (u.alive() && u.player == player_ && u.type && u.type->canMove &&
+        if (u.alive() && u.player == player_ && u.type && !u.type->isStructure() &&
             !u.type->isBuilder && waveFree(u)) {
             idle.push_back(u.id);
             sx += u.x; sz += u.z;
@@ -273,12 +273,25 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     std::vector<int> producers;
     for (auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type) continue;
-        if (u.type->canMove && u.type->isBuilder && u.orders.empty() &&
-            u.buildSiteId == 0)
+        // A building can carry canMove=1 in its FBI (the Keep, the Taros Hell), so
+        // classify by isStructure() (maxVel), not canMove -- otherwise a canMove
+        // building is mistaken for a mobile builder and issued Build orders it can't
+        // honour. And never drive a producer that is itself still under construction.
+        if (!u.type->isStructure() && u.type->isBuilder && !u.underConstruction &&
+            u.orders.empty() && u.buildSiteId == 0)
             producers.push_back(u.id);                        // idle mobile builder
-        else if (!u.type->canMove && !u.underConstruction && u.buildQueue.empty() &&
+        else if (u.type->isStructure() && !u.underConstruction && u.buildQueue.empty() &&
                  !registry_.buildable(u.type->id).empty())
             producers.push_back(u.id);                        // idle factory
+    }
+    // Round-robin who acts when the per-think cap is smaller than the producer count
+    // (Easy caps at 1): otherwise the lowest-id producer -- the Monarch -- takes the
+    // only slot every think, so it keeps building economy and the factories never get
+    // to train an army. Rotating by the think index gives each producer its turn.
+    if (!producers.empty() && dp_.producersPerThink < int(producers.size())) {
+        uint32_t rr = simTick / uint32_t(std::max(dp_.thinkPeriod, 1));
+        std::rotate(producers.begin(),
+                    producers.begin() + rr % uint32_t(producers.size()), producers.end());
     }
     // Over-commit throttle: while broke with construction already in progress, don't
     // start ANOTHER build. Concurrent builds share the one mana pool, so piling on more

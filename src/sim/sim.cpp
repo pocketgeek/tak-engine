@@ -1342,7 +1342,10 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
 
 int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     Unit* b = unit(builderId);
-    if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove)
+    // A mobile builder only: a building may carry canMove=1 in its FBI but can never
+    // place structures, and a site still under construction is not yet a builder.
+    if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
+        b->underConstruction)
         return 0;
     if (atUnitCap(b->player)) return 0;   // at the unit cap: can't start a new build
     if (!canPlace(type, x, z)) return 0;
@@ -1394,7 +1397,8 @@ void World::cancelBuilds(int builderId) {
 void World::assist(int builderId, int siteId) {
     Unit* b = unit(builderId);
     Unit* site = unit(siteId);
-    if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove)
+    if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
+        b->underConstruction)
         return;
     if (!site || !site->alive() || !site->underConstruction ||
         !allied(site->player, b->player))
