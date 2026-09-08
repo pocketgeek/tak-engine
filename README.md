@@ -54,6 +54,10 @@ data — see **Game data**):
 - **Fedora / RHEL** — [tak-engine-x86_64.rpm](https://github.com/pocketgeek/tak-engine/releases/latest/download/tak-engine-x86_64.rpm) — `sudo dnf install ./tak-engine-x86_64.rpm`
 - [**All releases**](https://github.com/pocketgeek/tak-engine/releases) · or build from source below.
 
+Each release also attaches per-platform **debug** binaries (`*-debug`) — the same
+`takclient`/`takserver` *without* the release CLI/env hardening, so developers get the
+launch modes, dev flags, `TAK_*` env hooks, and the headless `--mp*` harness.
+
 All of these resolve to the newest [release](https://github.com/pocketgeek/tak-engine/releases);
 the `.deb`/`.rpm` packages install `takclient` + `takserver` to `/usr/bin` and pull
 their SDL2/jpeg/zlib runtime deps automatically. They appear once the first tagged
@@ -177,54 +181,55 @@ The engine is **client-server only** — every game runs on a `takserver`, and t
 AI runs *only* on the server. Single-player is just a private game on a server the
 client starts for you.
 
-The simplest way in is the **front-end menu** — run `takclient` with no mode (a mode
-keyword is optional) and pick single-player, multiplayer, or options from the three
-doors:
+Point it at your install and it opens the retail **front-end menu**:
 
 ```sh
 ./build/takclient --data /path/to/tak_install
 ```
 
-Or launch straight into a game from the command line. `takclient game` takes a **map
-name** and the install directory:
+From the three doors you pick **Single-Player**, **Multiplayer**, or **Campaign**,
+then choose the map, your faction and colour, teams, and — for each AI opponent — one
+of five **difficulty levels** in the lobby:
 
-```sh
-./build/takclient game "King of the Hill" --data /path/to/tak_install \
-    --side ara --aiside tar
-```
+| Difficulty | Behaviour |
+| --- | --- |
+| **Passive** | turtles and only *defends* — builds an army but never marches out |
+| **Easy** | slow to build up, attacks late in small groups |
+| **Normal** | balanced economy and pressure |
+| **Hard** | reacts fast, pushes bigger armies, attacks early |
+| **Absurd** | Hard, plus **double mana income** from every source — an economic juggernaut |
 
-With no `--server`, this **auto-launches a private local server** in the
-background, connects to it, and starts a single-player game vs a server-run AI
-(`--side` / `--aiside` pick the factions). The local server is torn down when you
-quit, and the game is never visible to other players. Add `--server <host>` (see
-below) to play on a shared server instead.
+Each side begins with **only its Monarch**, dropped on the map's real start positions
+(from the `.ota`). The Monarch trickles mogrium and builds the first lodestones and
+keep, which then train the army — the AI opponent bootstraps the same way, following a
+needs-based build plan (economy → a factory → army). In a god-enabled match, a faction
+whose priests (`attractsgods` units) have channelled enough mana favour manifests its
+**god** once the appear time passes.
 
-`--overrides {none,cosmetic,full}` chooses which of your `overrides/` are mounted
-(default `full`): `none` = pure retail, `cosmetic` = only art/sound/music (never
-affects a multiplayer game), `full` = everything including gameplay data.
+Audio, display, camera, and rendering preferences — including anti-aliasing, the
+distance-impostor **LOD**, and the **unit-sprite** mode — are set in the in-game
+**Options** screen (Esc → Options) and persisted per user.
 
-Each side begins with **only its Monarch**, dropped on the map's real start
-positions (from the `.ota`). The Monarch trickles mogrium and builds the first
-lodestones and keep, which then train the army — the AI opponent bootstraps the
-same way.
+### Command line
 
-### Options
+A **release** build is deliberately minimal — it accepts only:
 
 | Flag | Effect |
 | --- | --- |
-| `--side ara\|tar\|ver\|zon\|cre` | your faction (Zhon has no Keep — its Monarch and Beast Handlers summon creatures; Creon needs the Iron Plague data) |
-| `--aiside <faction>` | the AI opponent's faction |
-| `--color N` / `--aicolor N` | player-colour variant (0–9), independent of faction |
-| `--crusades` | the **Crusades balance** — the alternate stats and build menus the final patch shipped for ranked "Darien Crusades" play (`unitscb`/`canbuildcb`, layered over the base roster) |
-| `--cheat` | all construction/production is instant and free |
-| `--demo` | stage a ready-army AI-vs-AI war instead |
-| `--mission <.ota>` | load a campaign mission (`.ota`/`.cob`) |
-| `--server <host>` … | join a multiplayer game — see [Multiplayer](#multiplayer) |
-| `--maxfps N` / `--novsync` | frame cap (`0` = uncapped) / disable vsync (title shows live FPS) |
+| `--data <retail-install-dir>` | the game-data root (**required**): root `*.hpi` + `Maps/` + `Music/` + `overrides/` |
+| `--version` | print the version and exit (`--help` prints this usage) |
 
-In a god-enabled match, a faction whose priests (`attractsgods` units) have
-channelled enough mana favour manifests its **god** once the appear time passes
-(`TAK_GODTIME=<seconds>` shortens it for testing).
+Everything else — factions, colours, difficulty, the map, multiplayer, overrides — is
+chosen through the menu, and a release build reads **no environment variables**.
+
+**Debug builds** additionally accept the launch modes `game <map>` / `map <map>` /
+`replay <file.takrep>` / `model <file.3do>` and the dev/test flags (`--side`,
+`--aiside`, `--server`, `--overrides {none,cosmetic,full}`, `--crusades`, `--cheat`,
+`--demo`, `--mission`, `--campaign`, `--maxfps`, `--novsync`, the `--mp*` headless
+harness, …) plus the `TAK_*` diagnostic env vars. Run a debug `--help` for the full
+list. `--overrides` defaults to `full` (a release build always mounts `full`):
+`none` = pure retail, `cosmetic` = only art/sound/music, `full` = everything including
+gameplay data.
 
 ### Controls
 
@@ -239,15 +244,15 @@ Hotkeys follow the game's `Keys.TDF`.
 | **Minimap orders** | with an order armed (**F**/**M**/**A**/**P**/**G**), click the minimap to issue it at that spot — e.g. **F** then a minimap click = fight-move across the map |
 | **Build queue** | at a training building: left-click **+1**, **Shift** **+5**, **Ctrl+Shift** **+10**; right-click removes the same; **Ctrl**+left toggles infinite production. Each icon shows its queued count. (A builder that *places* things — structures, or a mobile conjurer like a Beast Handler — arms placement instead: click to position.) |
 | **Reclaim** | with a mobile builder (any unit with `canreclaim`, monarchs included) selected, **right-click-drag** a box to clear it — the builder roams the area reclaiming trees, rocks, and buildings for mana (nearest first). Sacred Stones and Standing Stones are left alone. **Shift** appends the sweep to its orders. |
-| **Game** | **Pause** · **+/−** game speed (single-player: −10…+10, 0 = normal, +10 = 10×; in a net game only the **host** can change it, and only if the lobby's *in-game speed* is unlocked) · **F4** status/scoreboard · **F6** player-colour picker |
+| **Game** | **Pause** · **+/−** game speed (single-player: −10…+10, 0 = normal, +10 = 10×; in a net game only the **host** can change it, and only if the lobby's *in-game speed* is unlocked) · **F4** status/scoreboard |
 | **Disco** 🪩 | **Shift+D** — your monarchs spin, bob, hue-cycle, and glow on a little dance floor for 10s, to a synthesised disco track that plays positionally from the monarch. Purely cosmetic, but synced over the lockstep so every player sees it. |
 | **Headbang** 🤘 | **Shift+H** — your monarchs headbang to a synthesised heavy-metal track (positional, from the monarch), nodding and flashing red on a mosh-pit glow for 10s. Also cosmetic and lockstep-synced. |
 
-Rendering toggles (all default to the smart option): **F10** cycles sprite-sheet
-rendering **AUTO** → **ON** → **OFF** (AUTO drops to the cheaper animated sprites
-only while a real crowd can't hold 60 fps, then back to 3D); **F8** toggles the
-distance-impostor LOD (a cached billboard for units that are tiny on screen).
-Background music plays from the faction soundtrack.
+Rendering keeps full 3D models until a real crowd can't hold 60 fps, then drops to
+cheaper animated sprites and back to 3D as the crowd clears; distant units use a cached
+billboard **LOD**. Both are automatic by default and adjustable in **Options** (*Unit
+Sprites* AUTO/ON/OFF, *Distant Impostors* on/off). Background music plays from the
+faction soundtrack.
 
 ## Multiplayer
 
@@ -261,10 +266,13 @@ identical sim with only ~35-byte commands on the wire.
 # somewhere reachable (default port 7677):
 ./build/takserver --port 7677 --data /path/to/tak_install
 
-# each player:
-./build/takclient game "<map name>" --data /path/to/tak_install \
-    --server <host> [--serverport N] [--name X] [--overrides none|cosmetic|full]
+# each player — launch the client and join through the menu's Multiplayer door
+# (enter the server's host[:port] there, then browse/create/join in the lobby):
+./build/takclient --data /path/to/tak_install
 ```
+
+(A debug build can also connect straight from the command line, skipping the menu:
+`takclient game "<map>" --data <dir> --server <host> [--serverport N] [--name X]`.)
 
 - **Referee sim.** With `--data`, the server also runs a referee simulation that
   hosts the AI players (so no host machine is loaded by them) and holds the
@@ -310,7 +318,8 @@ Start the server with `--replaydir <dir>` and it writes a self-contained
 ./build/takclient replay <file.takrep> --data /path/to/tak_install
 ```
 
-**Pause** and the **+/−** speed keys scrub it; a bar shows elapsed / total time.
+**Pause** and the **+/−** speed keys scrub it; a bar shows elapsed / total time. (The
+`replay` launch mode is a debug-build feature — a release build accepts only `--data`.)
 
 ## Overrides
 
@@ -319,10 +328,11 @@ archives -- overrides the shipped data, exactly like the original game. For
 example a `overrides/click.hpi` holding `sounds/*.wav` replaces the faction
 order-acknowledgement tones. Overrides are classified as **cosmetic** (art,
 models, animation, sound, music, fonts, GUI) or **gameplay** (unit/weapon/side/
-build/feature data, maps); `--overrides cosmetic` mounts only the former.
-Cosmetic overrides never affect a multiplayer game and can differ between
-players; gameplay overrides (mounted only under `--overrides full`) change the
-data fingerprint, so under `full` every player must share the same ones.
+build/feature data, maps). A release build always mounts **`full`** (everything);
+a debug build can restrict it with `--overrides {none,cosmetic,full}` (`cosmetic`
+mounts only the art/sound tier). Cosmetic overrides never affect a multiplayer game
+and can differ between players; gameplay overrides (the `full` tier) change the data
+fingerprint, so under `full` every player must share the same ones.
 
 ## Project layout
 
