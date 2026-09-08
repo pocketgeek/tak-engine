@@ -72,6 +72,12 @@ private:
     void layout(int winW, int winH);
     void commit(Control& c, float mx);            // set a slider from a mouse x
 
+    // Snapshot the output-device list into devSnapshot_ ([0] = "" = system default). Taken
+    // ONCE at build and again each time the dropdown opens -- never per frame: SDL re-runs
+    // detection on every SDL_GetNumAudioDevices() and can return a different order/count
+    // each call, so scanning live made the open list churn ("keep re-sorting").
+    void refreshDevices();
+
     // Geometry of the open dropdown `c`'s scrollable option list: its top `y0`, per-item
     // height `itemH`, and visible viewport height `viewH` (capped to the panel so a long
     // device list never runs past the footer). Also clamps dropScroll_ to the overflow,
@@ -100,6 +106,7 @@ private:
     int drag_ = -1;         // index of the slider being dragged, or -1
     int openDrop_ = -1;     // index of the open Dropdown control (-1 = none)
     float dropScroll_ = 0;  // scroll offset (px) INSIDE the open dropdown's option list
+    std::vector<std::string> devSnapshot_;   // output devices ([0]="" system default, rest A-Z)
     float u_ = 1.0f;        // layout unit (scaled to window)
     SDL_FRect panel_{};     // the panel rect (for scroll clamping)
     SDL_FRect defaultsRect_{}, saveRect_{}, backRect_{};   // footer buttons (filled by layout())

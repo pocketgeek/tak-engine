@@ -3,6 +3,7 @@
 #include "client/blockfont.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -158,11 +159,8 @@ void OptionsScreen::build(int channels) {
     // Output device: "System Default" plus every current output device. On startup a
     // saved-but-missing device auto-falls-back to system (see setAudioDevice); here the
     // user picks one from the list.
-    auto deviceValues = [] {                         // stored values ("" = system default)
-        std::vector<std::string> v{std::string()};
-        for (auto& d : listAudioDevices()) v.push_back(d);
-        return v;
-    };
+    refreshDevices();                                // one A-Z snapshot; re-taken on each open
+    auto deviceValues = [this] { return devSnapshot_; };   // stored values ("" = system default)
     dropdown("SOUND DEVICE",
         [deviceValues] {                             // display labels
             std::vector<std::string> labels;
@@ -290,6 +288,20 @@ void OptionsScreen::commit(Control& c, float mx) {
     if (onChange_) onChange_();
 }
 
+void OptionsScreen::refreshDevices() {
+    auto devs = listAudioDevices();
+    std::sort(devs.begin(), devs.end(),                  // stable A-Z (case-insensitive)
+              [](const std::string& a, const std::string& b) {
+                  return std::lexicographical_compare(
+                      a.begin(), a.end(), b.begin(), b.end(),
+                      [](unsigned char x, unsigned char y) {
+                          return std::tolower(x) < std::tolower(y);
+                      });
+              });
+    devSnapshot_.assign(1, std::string());               // [0] = "" = system default (always first)
+    for (auto& d : devs) devSnapshot_.push_back(d);
+}
+
 void OptionsScreen::dropViewport(const Control& c, int nOpts, float& y0, float& itemH,
                                  float& viewH) {
     itemH = 24 * u_;
@@ -380,7 +392,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             }
             if (c.kind == Control::Slider) { drag_ = int(i); commit(c, mx); return false; }
             if (c.kind == Control::Button) { if (c.action) c.action(); return false; }
-            if (c.kind == Control::Dropdown) { openDrop_ = int(i); dropScroll_ = 0; return false; }   // open the list
+            if (c.kind == Control::Dropdown) { refreshDevices(); openDrop_ = int(i); dropScroll_ = 0; return false; }   // fresh A-Z list
         }
         return false;
     }
