@@ -352,6 +352,9 @@ private:
     // clear_[c] = side of the largest all-walkable square whose min corner is c.
     // Lazily rebuilt (dirtied by block()); a foot-cell unit fits at corner c iff
     // clear_[c] >= foot. mutable so fits()/pathfinding can build it on demand.
+    // Values saturate at 15 (the max queryable footprint), which is what lets
+    // block() refresh only a bounded rect instead of dirtying the whole grid.
+    void updateClearanceRect(int cx, int cz, int w, int h) const;
     mutable std::vector<uint16_t> clear_;
     mutable bool clearDirty_ = true;
     int w_ = 0, h_ = 0;
@@ -379,6 +382,19 @@ public:
     void dirAt(float x, float z, float& dx, float& dz) const;
     // Was the goal cell reachable from (x,z)? (finite integration distance)
     bool reachable(float x, float z) const;
+    // Any reachable cell inside the CELL rect [x0,x1]x[z0,z1] (inclusive, clamped)?
+    // Used by targeted flow invalidation: a nav edit whose padded rect touches no
+    // reachable cell of this field cannot alter it (the change lives in a pocket
+    // this field never routes through), so the field survives the edit.
+    bool touchesReachable(int x0, int z0, int x1, int z1) const {
+        if (w_ <= 0) return false;
+        x0 = std::max(x0, 0); z0 = std::max(z0, 0);
+        x1 = std::min(x1, w_ - 1); z1 = std::min(z1, h_ - 1);
+        for (int z = z0; z <= z1; ++z)
+            for (int x = x0; x <= x1; ++x)
+                if (dist_[size_t(z) * w_ + x] != 0xFFFF) return true;
+        return false;
+    }
 
     uint32_t used = 0;   // tick of last use, for the flow-cache LRU eviction
 
@@ -668,6 +684,13 @@ private:
     // cache is therefore mutable and this is a logical-const query. Single-threaded
     // per world (not safe to call off the sim thread). See docs/multiplayer-design.md.
     const FlowField* flowFor(const UnitType* type, float gx, float gz) const;
+    // Targeted flow invalidation after a GROUND nav edit in the cell rect
+    // (cx, cz, w, h): water/hover grids never change post-setup so their fields
+    // always survive, and a ground field survives when the rect -- padded by its
+    // footprint reach -- touches none of its reachable cells. Replaces the old
+    // clear-everything (which forced a burst of full-map Dijkstra rebuilds on
+    // every building placed, cancelled, reclaimed, or decayed).
+    void invalidateFlows(int cx, int cz, int w, int h);
     mutable std::map<long long, FlowField> flowCache_;
 
     // Uniform spatial hash over mobile units, rebuilt each tick, so the

@@ -581,11 +581,25 @@ void NavGrid::block(int cx, int cz, int w, int h, bool blocked) {
         for (int x = cx; x < cx + w; ++x)
             if (x >= 0 && z >= 0 && x < w_ && z < h_)
                 cells_[size_t(z) * w_ + x] = blocked ? 0 : 1;
-    clearDirty_ = true;   // footprint clearance depends on the walkability grid
+    // Footprint clearance depends on the walkability grid. When it has already been
+    // built, refresh just the affected rect (values are clamped at kClearMax, so a
+    // cell change can influence clearance at most kClearMax cells down-left) instead
+    // of dirtying the whole map -- a full rebuild is a w*h DP that every building
+    // placement used to re-trigger on the next fits() query.
+    if (!clearDirty_ && !clear_.empty())
+        updateClearanceRect(cx, cz, w, h);
+    else
+        clearDirty_ = true;
 }
 
+// Stored clearance saturates here. fits() only ever asks about footprints <= 15
+// cells (footCells/flowFor clamp), so every value >= 15 answers identically -- and
+// the clamp is what bounds how far a walkability edit can propagate (see block()).
+static constexpr uint16_t kClearMax = 15;
+
 // Largest all-walkable square with each cell as its min (bottom-left) corner, by the
-// classic DP from the far corner inward. Deterministic (pure function of cells_).
+// classic DP from the far corner inward, saturated at kClearMax. Deterministic
+// (pure function of cells_).
 void NavGrid::rebuildClearance() const {
     clear_.assign(size_t(w_) * size_t(h_), 0);
     for (int z = h_ - 1; z >= 0; --z)
@@ -594,9 +608,32 @@ void NavGrid::rebuildClearance() const {
             uint16_t r  = (x + 1 < w_)               ? clear_[size_t(z) * w_ + x + 1]     : 0;
             uint16_t u  = (z + 1 < h_)               ? clear_[size_t(z + 1) * w_ + x]     : 0;
             uint16_t ru = (x + 1 < w_ && z + 1 < h_) ? clear_[size_t(z + 1) * w_ + x + 1] : 0;
-            clear_[size_t(z) * w_ + x] = uint16_t(1 + std::min({r, u, ru}));
+            clear_[size_t(z) * w_ + x] =
+                std::min<uint16_t>(kClearMax, uint16_t(1 + std::min({r, u, ru})));
         }
     clearDirty_ = false;
+}
+
+// Recompute the clearance DP over just the cells a walkability edit in the given
+// rect can influence: the rect itself plus kClearMax cells down-left (the DP reads
+// up-right neighbours, and saturation stops the influence beyond that band). Same
+// order and arithmetic as the full rebuild, so the result is bit-identical to it.
+void NavGrid::updateClearanceRect(int cx, int cz, int w, int h) const {
+    int x0 = std::max(0, cx - int(kClearMax));
+    int z0 = std::max(0, cz - int(kClearMax));
+    int x1 = std::min(w_ - 1, cx + w - 1);
+    int z1 = std::min(h_ - 1, cz + h - 1);
+    for (int z = z1; z >= z0; --z)
+        for (int x = x1; x >= x0; --x) {
+            uint16_t v = 0;
+            if (cells_[size_t(z) * w_ + x]) {
+                uint16_t r  = (x + 1 < w_)               ? clear_[size_t(z) * w_ + x + 1]     : 0;
+                uint16_t u  = (z + 1 < h_)               ? clear_[size_t(z + 1) * w_ + x]     : 0;
+                uint16_t ru = (x + 1 < w_ && z + 1 < h_) ? clear_[size_t(z + 1) * w_ + x + 1] : 0;
+                v = std::min<uint16_t>(kClearMax, uint16_t(1 + std::min({r, u, ru})));
+            }
+            clear_[size_t(z) * w_ + x] = v;
+        }
 }
 
 bool NavGrid::fits(int cx, int cz, int foot) const {
@@ -801,6 +838,29 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const 
     auto& stored = flowCache_[key];
     stored = std::move(ff);
     return stored.ready() ? &stored : nullptr;
+}
+
+void World::invalidateFlows(int cx, int cz, int w, int h) {
+    for (auto it = flowCache_.begin(); it != flowCache_.end();) {
+        long long hi = it->first / 100000000LL;
+        int domain = int(hi / 16), foot = int(hi % 16);
+        // Only nav_ (Ground) ever changes after setup; other domains' fields hold.
+        if (domain != int(UnitType::Domain::Ground)) { ++it; continue; }
+        // A failed build (no fitting goal) may succeed after an unblock: retry it.
+        if (!it->second.ready()) { it = flowCache_.erase(it); continue; }
+        // Pad by the footprint reach (+1 for the freshly-connectable frontier): a
+        // walkability change can only alter fits()/adjacency within that band. If no
+        // reachable cell of the field lies inside, neither blocking (nothing routed
+        // there) nor unblocking (still sealed off) can change its dist_/dir_ -- the
+        // kept field is bit-identical to a fresh build, so the memo stays pure and
+        // every peer that holds this entry makes the same keep/evict call.
+        int pad = foot + 1;
+        if (it->second.touchesReachable(cx - pad, cz - pad,
+                                        cx + w - 1 + pad, cz + h - 1 + pad))
+            it = flowCache_.erase(it);
+        else
+            ++it;
+    }
 }
 
 // A unit's footprint size in cells (square approximation) for footprint-aware nav.
@@ -1408,7 +1468,11 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     site->hp = type->maxHp * 0.05f;
     // Auto-join: a conjured MOBILE unit inherits the builder's squad (a building never does).
     if (bsquad && !type->isStructure()) site->squad = bsquad;
-    if (!type->canMove) { blockFootprint(nav_, *type, x, z, true); flowCache_.clear(); }
+    if (!type->canMove) {
+        blockFootprint(nav_, *type, x, z, true);
+        invalidateFlows(int(x) / 16 - type->footX / 2, int(z) / 16 - type->footZ / 2,
+                        type->footX, type->footZ);
+    }
     b = unit(builderId);   // spawn may have reallocated units_
     b->buildSiteId = id;
     order(builderId, x, z + float(type->footZ) * 8 + 24, false);
@@ -1439,7 +1503,9 @@ void World::cancelBuilds(int builderId) {
         if (site && site->underConstruction && !site->buildBegun) {
             if (site->type && !site->type->canMove) {
                 blockFootprint(nav_, *site->type, site->x, site->z, false);
-                flowCache_.clear();
+                invalidateFlows(int(site->x) / 16 - site->type->footX / 2,
+                                int(site->z) / 16 - site->type->footZ / 2,
+                                site->type->footX, site->type->footZ);
             }
             site->underConstruction = false;
             site->deadFor = 1000.0f;   // fully gone (painter skips deadFor>=4)
@@ -1534,7 +1600,7 @@ void World::tickReclaim(Unit& b, float dt) {
         f.alive = false;
         if (f.blocks) {   // free the ground cells it occupied (setupMatch blocked nav_)
             nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2, f.fx, f.fz, false);
-            flowCache_.clear();
+            invalidateFlows(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2, f.fx, f.fz);
         }
         advance();
     }
@@ -1670,7 +1736,8 @@ void World::decayConstruction(Unit& u, float dt) {
     if (u.hp > 0) return;
     if (!u.type->canMove) {
         blockFootprint(nav_, *u.type, u.x, u.z, false);
-        flowCache_.clear();
+        invalidateFlows(int(u.x) / 16 - u.type->footX / 2, int(u.z) / 16 - u.type->footZ / 2,
+                        u.type->footX, u.type->footZ);
     }
     u.underConstruction = false;
     u.deadFor = 1000.0f;   // fully gone (painter skips deadFor>=4), no death anim
