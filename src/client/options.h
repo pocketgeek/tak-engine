@@ -27,7 +27,8 @@ public:
     // the user clicks SAVE (persist to disk). audioChannels: number of output channels
     // to expose per-channel sliders for (0 = auto-detect the default device).
     OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
-                  std::function<void()> onSave, int audioChannels = 0);
+                  std::function<void()> onSave, int audioChannels = 0,
+                  std::function<void()> onHotkeys = {});
 
     // Feed one SDL event. Returns true when the user leaves (Esc / BACK); the host
     // should then stop showing the screen. Persisting is explicit (the SAVE button
@@ -39,12 +40,13 @@ public:
 
 private:
     struct Control {
-        enum Kind { Section, Slider, Toggle } kind;
+        enum Kind { Section, Slider, Toggle, Button } kind;
         std::string label;
         float lo = 0, hi = 1;
         std::function<float()> get;
         std::function<void(float)> set;
         std::function<std::string(float)> fmt;   // value -> display text
+        std::function<void()> action;            // Button: click handler
         SDL_FRect row{};                          // filled by layout()
     };
 
@@ -58,6 +60,7 @@ private:
         Settings d;
         d.playerName = s_.playerName;
         d.lastMap = s_.lastMap;
+        d.hotkeys = s_.hotkeys;     // hotkeys have their own reset (Hotkeys screen)
         return s_ == d;
     }
 
@@ -65,6 +68,7 @@ private:
     Settings& s_;
     std::function<void()> onChange_;
     std::function<void()> onSave_;
+    std::function<void()> onHotkeys_;   // opens the hotkey config screen (host-provided)
     std::vector<Control> ctls_;
     bool dirty_ = false;    // unsaved changes since the last save/open -> SAVE enabled
     float scroll_ = 0;      // content scroll offset (px)

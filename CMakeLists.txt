@@ -106,7 +106,7 @@ endif()
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/main.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/cursors.cpp src/video/bink.cpp)
+    add_executable(takclient src/client/main.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/cursors.cpp src/video/bink.cpp)
     target_link_libraries(takclient PRIVATE tak-formats SDL2::SDL2)
     # We provide our own main() and call SDL_SetMainReady(). Define SDL_MAIN_HANDLED for
     # the WHOLE target (not just main.cpp) so it applies before ANY header pulls in

@@ -78,6 +78,9 @@ Settings loadSettings() {
             int i = key[8] - '0';
             if (i >= 0 && i < 8) s.chanGain[i] = asFloat(0.0f, 1.0f);
         }
+        else if (key.rfind("hotkey.", 0) == 0 && key.size() > 7) {   // hotkey.<action-id> = <chord>
+            s.hotkeys[key.substr(7)] = val;
+        }
         else if (key.rfind("campaigndone.", 0) == 0 && key.size() > 13) {  // campaigndone.<id> = i,j,k
             std::string id = key.substr(13);
             std::stringstream cs(val);
@@ -121,6 +124,7 @@ bool saveSettings(const Settings& s) {
     o << "cursorScale = " << s.cursorScale << "\n";
     o << "playerName = " << s.playerName << "\n";
     o << "lastMap = " << s.lastMap << "\n";
+    for (const auto& [id, chord] : s.hotkeys) o << "hotkey." << id << " = " << chord << "\n";
     for (const auto& [id, done] : s.campaignCompleted) {
         if (done.empty()) continue;
         o << "campaigndone." << id << " = ";

@@ -62,20 +62,25 @@ int detectOutputChannels() {
 }
 
 OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
-                             std::function<void()> onSave, int audioChannels)
-    : ren_(ren), s_(s), onChange_(std::move(onChange)), onSave_(std::move(onSave)) {
+                             std::function<void()> onSave, int audioChannels,
+                             std::function<void()> onHotkeys)
+    : ren_(ren), s_(s), onChange_(std::move(onChange)), onSave_(std::move(onSave)),
+      onHotkeys_(std::move(onHotkeys)) {
     build(audioChannels > 0 ? audioChannels : detectOutputChannels());
 }
 
 void OptionsScreen::build(int channels) {
     std::fprintf(stderr, "Options: %d speaker sliders\n", channels);
-    auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}}); };
+    auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
     auto slider = [&](const char* label, float lo, float hi, std::function<float()> get,
                       std::function<void(float)> set, std::function<std::string(float)> fmt) {
-        ctls_.push_back({Control::Slider, label, lo, hi, std::move(get), std::move(set), std::move(fmt), {}});
+        ctls_.push_back({Control::Slider, label, lo, hi, std::move(get), std::move(set), std::move(fmt), {}, {}});
     };
     auto toggle = [&](const char* label, std::function<float()> get, std::function<void(float)> set) {
-        ctls_.push_back({Control::Toggle, label, 0, 1, std::move(get), std::move(set), {}, {}});
+        ctls_.push_back({Control::Toggle, label, 0, 1, std::move(get), std::move(set), {}, {}, {}});
+    };
+    auto button = [&](const char* label, std::function<void()> action) {
+        ctls_.push_back({Control::Button, label, 0, 1, {}, {}, {}, std::move(action), {}});
     };
 
     section("AUDIO");
@@ -140,6 +145,12 @@ void OptionsScreen::build(int channels) {
     slider("CURSOR SIZE", 1, 8, [&] { return float(s_.cursorScale); },
            [&](float v) { s_.cursorScale = int(v + 0.5f); },
            [](float v) { return std::to_string(int(v + 0.5f)) + "X"; });
+
+    // CONTROLS: opens the separate hotkey-rebinding screen (host-owned).
+    if (onHotkeys_) {
+        section("CONTROLS");
+        button("CONFIGURE HOTKEYS", [this] { if (onHotkeys_) onHotkeys_(); });
+    }
     // SAVE / BACK are drawn as a fixed footer (see layout()/render()), not list rows.
 }
 
@@ -201,9 +212,11 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             if (atDefaults()) return false;         // already default -> disabled, ignore
             std::string keepName = s_.playerName;   // not shown here -> preserve these
             std::string keepMap = s_.lastMap;
+            auto keepKeys = s_.hotkeys;             // hotkeys reset from their own screen
             s_ = Settings{};
             s_.playerName = keepName;
             s_.lastMap = keepMap;
+            s_.hotkeys = std::move(keepKeys);
             dirty_ = true;
             if (onChange_) onChange_();
             return false;
@@ -217,6 +230,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
                 c.set(c.get() > 0.5f ? 0.0f : 1.0f); dirty_ = true; if (onChange_) onChange_(); return false;
             }
             if (c.kind == Control::Slider) { drag_ = int(i); commit(c, mx); return false; }
+            if (c.kind == Control::Button) { if (c.action) c.action(); return false; }
         }
         return false;
     }
@@ -270,6 +284,15 @@ void OptionsScreen::render(int winW, int winH) {
             drawBlockText(ren_, t, pill.x + (pill.w - blockTextWidth(t, 2.0f * u_)) / 2,
                           pill.y + (pill.h - 7 * 2.0f * u_) / 2, 2.0f * u_,
                           on ? SDL_Color{210, 240, 215, 255} : SDL_Color{170, 175, 185, 255});
+        } else if (c.kind == Control::Button) {
+            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
+            SDL_FRect chip{c.row.x + c.row.w - 96 * u_, c.row.y + 5 * u_, 96 * u_, 24 * u_};
+            SDL_SetRenderDrawColor(ren_, 52, 60, 82, 255);
+            SDL_RenderFillRectF(ren_, &chip);
+            SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &chip);
+            const char* t = "OPEN >";
+            drawBlockText(ren_, t, chip.x + (chip.w - blockTextWidth(t, 2.0f * u_)) / 2,
+                          chip.y + (chip.h - 7 * 2.0f * u_) / 2, 2.0f * u_, {215, 225, 245, 255});
         } else if (c.kind == Control::Slider) {
             float val = c.get();
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 4 * u_, fpx, {225, 230, 240, 255});

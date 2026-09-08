@@ -106,7 +106,7 @@ private:
     SDL_AudioFormat fmt_ = 0;
     Uint8 silence_ = 0;          // device silence byte (have.silence)
     size_t pos_ = 0;             // play cursor into src_ (bytes, frame-aligned); audio thread only
-    std::atomic<int> master_{256}, bgm_{192};   // read by the audio thread, set from the main thread
+    std::atomic<int> master_{256}, bgm_{128};   // read by the audio thread, set from the main thread
     int track_ = -1;
 };
 

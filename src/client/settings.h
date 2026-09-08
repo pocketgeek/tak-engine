@@ -32,7 +32,7 @@ struct Settings {
 
     // ---- audio (0..256, matching SoundBank's internal scale) ----
     int   masterVol  = 256;        // global gain over everything
-    int   bgmVol      = 192;       // background music (SoundBank music + MenuMusic); 75%
+    int   bgmVol      = 128;       // background music (SoundBank music + MenuMusic); 50%
     int   sfxVol      = 256;       // unit / world / UI sound effects
     float chanGain[8] = {1, 1, 1, 1, 1, 1, 1, 1};   // per-output-speaker trim, 0..1
 
@@ -45,6 +45,12 @@ struct Settings {
     // ---- misc ----
     std::string playerName;        // default name for multiplayer
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
+
+    // ---- hotkeys ----
+    // Rebindable in-game key chords, by action id (see src/client/hotkeys). Only
+    // bindings that DIFFER from the factory default are stored ("NONE" = an explicit
+    // unbind); anything absent uses the default, so new defaults propagate.
+    std::map<std::string, std::string> hotkeys;
 
     // ---- campaign progress ----
     // Which missions the player has COMPLETED, per campaign (id -> set of 0-based
@@ -73,6 +79,7 @@ struct Settings {
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
             && a.playerName == b.playerName && a.lastMap == b.lastMap
+            && a.hotkeys == b.hotkeys
             && a.campaignCompleted == b.campaignCompleted;
     }
     friend bool operator!=(const Settings& a, const Settings& b) { return !(a == b); }

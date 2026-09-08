@@ -235,7 +235,9 @@ gameplay data.
 
 ### Controls
 
-Hotkeys follow the game's `Keys.TDF`.
+Default hotkeys follow the game's `Keys.TDF`; every in-game command / selection /
+emote key is **rebindable** in **Options → CONTROLS → Configure Hotkeys** (click a
+row, press the new key; right-click clears).
 
 | | |
 | --- | --- |

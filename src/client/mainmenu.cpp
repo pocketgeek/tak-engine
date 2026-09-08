@@ -9,6 +9,8 @@
 #include "client/resultscreen.h"
 #include "client/cursors.h"
 #include "client/menumusic.h"
+#include "client/hotkeys.h"
+#include "client/hotkeysscreen.h"
 #include "client/options.h"
 #include "client/settings.h"
 #include "client/dev.h"
@@ -100,6 +102,7 @@ struct MainMenu::Impl {
 
     // The Options overlay, opened from the Options button (see run()).
     std::unique_ptr<OptionsScreen> options_;
+    std::unique_ptr<HotkeysScreen> hotkeys_;   // opened from Options -> CONTROLS
 
     // The campaign / mission picker, opened from the PlayStory door (see run()). When
     // the player picks a mission it closes and chosenMission_ names the bundle stem.
@@ -584,6 +587,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 continue;   // swallow everything else while typing
             }
 
+            if (d_->hotkeys_) {   // hotkey overlay sits on top of Options
+                if (d_->hotkeys_->input(e, w, h)) d_->hotkeys_.reset();   // BACK / Esc -> Options
+                continue;
+            }
             if (d_->options_) {   // Options overlay is up: route everything to it
                 if (d_->options_->input(e, w, h)) d_->options_.reset();   // BACK / Esc (SAVE is explicit)
                 continue;
@@ -622,6 +629,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     // Open the Options overlay in place (rather than exiting). onChange
                     // applies audio + window live; SAVE persists (BACK does not).
                     SDL_Renderer* ren = d_->ren;
+                    Impl* dd = d_;
                     d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
                         [ren, music, settings] {
                             if (music) music->setVolume(settings->masterVol, settings->bgmVol);
@@ -629,7 +637,12 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                                 SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
                             SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
                         },
-                        [settings] { saveSettings(*settings); });
+                        [settings] { saveSettings(*settings); },
+                        0,
+                        [dd, ren, settings] {   // CONTROLS -> hotkey config overlay
+                            dd->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
+                                [] {}, [settings] { saveSettings(*settings); });
+                        });
                 }
                 else if (c == Choice::Campaign && settings) {
                     // Open the campaign / mission picker in place; a picked mission
@@ -651,6 +664,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         d_->render(w, h);
         if (d_->serverSelect) d_->renderServerSelect(w, h);
         if (d_->options_) d_->options_->render(w, h);
+        if (d_->hotkeys_) d_->hotkeys_->render(w, h);   // above Options
         if (d_->campaign_) d_->campaign_->render(w, h);
         // Draw the cursor last so it sits above the doors and the overlays.
         if (d_->cursors_.ok()) {

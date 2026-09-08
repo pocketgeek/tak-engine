@@ -34,6 +34,8 @@
 #include "util/png.h"
 #include "version.h"
 #include "client/cursors.h"
+#include "client/hotkeys.h"
+#include "client/hotkeysscreen.h"
 #include "client/options.h"
 #include "client/settings.h"
 #include "client/dev.h"
@@ -1200,7 +1202,7 @@ private:
     std::vector<std::string> playlist_;
     std::vector<int16_t> music_;
     size_t musicPos_ = 0, musicTrack_ = 0;
-    int musicVol_ = 192;  // out of 256 (BGM); 75% default
+    int musicVol_ = 128;  // out of 256 (BGM); 50% default
     int masterVol_ = 256; // out of 256, global gain over the whole mix
     int sfxVol_ = 256;    // out of 256, sound effects
     float chanGain_[8] = {1, 1, 1, 1, 1, 1, 1, 1};   // per-output-channel trim 0..1
@@ -1955,6 +1957,7 @@ public:
         // and fog/minimap/impostors are always linear by design.
         bilinear_ = s.bilinear;
         healthBars_ = std::clamp(s.healthBars, 0, 2);
+        hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys
         mapView_.setBilinear(s.bilinear);
         SDL_ScaleMode fm = s.bilinear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
         for (auto& [id, a] : featureArt_) {
@@ -1978,7 +1981,15 @@ public:
                 SDL_RenderSetVSync(ren_, settings_->vsync ? 1 : 0);
             },
             [this] { saveSettings(*settings_); },
-            sounds_.channelCount());
+            sounds_.channelCount(),
+            [this] { openHotkeys(); });
+    }
+    // Open the hotkey-config overlay (from the Options screen's CONTROLS button).
+    void openHotkeys() {
+        if (!settings_) return;
+        hotkeysScreen_ = std::make_unique<tak::HotkeysScreen>(ren_, *settings_,
+            [this] { hotkeys_.load(settings_->hotkeys); },   // live-apply the rebind
+            [this] { saveSettings(*settings_); });
     }
     // Persist / read the resume ticket (gameId + rotating token) so a killed
     // client can rejoin its held slot on restart.
@@ -2010,6 +2021,13 @@ public:
         winW_ = winW;
         winH_ = winH;
         if (inLobbyPhase()) { lobbyInput(e, winW, winH); return; }
+        // Hotkey-config overlay (opened FROM Options) sits on top of it, so it takes
+        // input first while up. Cursor tracking as below.
+        if (hotkeysScreen_) {
+            if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
+            if (hotkeysScreen_->input(e, winW, winH)) hotkeysScreen_.reset();   // BACK / Esc -> Options
+            return;
+        }
         // Options overlay (opened from the Esc menu) takes all input while up.
         if (options_) {
             // Keep the drawn cursor tracking the mouse (same as the exitMenu_ branch
@@ -4540,6 +4558,7 @@ public:
             btn("QUIT", [this] { quitRequested_ = true; });
         }
         if (options_) options_->render(winW, winH);   // topmost of all
+        if (hotkeysScreen_) hotkeysScreen_->render(winW, winH);   // above Options
     }
 
     void advance(float seconds) {
@@ -6298,6 +6317,8 @@ private:
     float uiScale_ = 1.0f;
     tak::Settings* settings_ = nullptr;               // main()'s settings (for the in-game Options)
     std::unique_ptr<tak::OptionsScreen> options_;     // in-game Options overlay
+    std::unique_ptr<tak::HotkeysScreen> hotkeysScreen_;   // opened from Options -> CONTROLS
+    tak::Hotkeys hotkeys_;                             // effective bindings (from settings)
     int gameSpeed_ = 0;         // -10..+10 game-speed level (+/- keys); 0 = normal
     // 10^(level/10): +10 = 10x, 0 = 1x, -10 = 0.1x.
     // Game-speed multiplier. Forced to 1x in a networked game: the peers advance
@@ -8236,53 +8257,8 @@ private:
             noticeTimer_ = 2;
             return true;
         }
-        if (key == SDLK_F4) { showCounts_ = !showCounts_; return true; }
-        // LOD impostors (F8) and sprite mode (F10) are now Options-menu settings; the
-        // player colour is chosen in the lobby, not in-game. Height debug is env-only.
-        if (key == SDLK_d && ctrl) {              // self-destruct the selected unit(s)
-            // Through the command path (Cmd::Destroy), not a direct hp write --
-            // a local mutation would silently desync a networked game.
-            int n = 0;
-            for (int id : selection_)
-                if (auto* su = world_.unit(id))
-                    if (su->alive() && su->player == localPlayer_) {
-                        tak::net::Command c;
-                        c.kind = tak::net::Cmd::Destroy;
-                        c.unitId = id;
-                        issue(c);
-                        ++n;
-                    }
-            notice_ = "DESTRUCT " + std::to_string(n);
-            noticeTimer_ = 2;
-            return true;
-        }
-        // One emote at a time -- don't even send the command while a disco or headbang
-        // is already running (the sim enforces this too, deterministically). The busy
-        // notice reflects what you're ACTUALLY doing, not the key you pressed.
-        bool emoting = world_.discoActive(localPlayer_) || world_.headbangActive(localPlayer_);
-        const char* busy = world_.discoActive(localPlayer_) ? "ALREADY GROOVING" : "ALREADY ROCKING";
-        if (key == SDLK_d && shift) {             // DISCO! your monarchs boogie 10s
-            if (emoting) { notice_ = busy; noticeTimer_ = 2; return true; }
-            // Purely cosmetic, but routed through the lockstep command path so every
-            // peer sees your monarchs dance (the sim just runs a per-player timer).
-            tak::net::Command c;
-            c.kind = tak::net::Cmd::Disco;
-            issue(c);                             // issue() stamps c.player = localPlayer_
-            notice_ = "DISCO TIME";
-            noticeTimer_ = 2;
-            return true;
-        }
-        if (key == SDLK_h && shift) {             // HEADBANG! your monarchs mosh 10s
-            if (emoting) { notice_ = busy; noticeTimer_ = 2; return true; }
-            tak::net::Command c;
-            c.kind = tak::net::Cmd::Headbang;
-            issue(c);
-            notice_ = "HEADBANG!!";
-            noticeTimer_ = 2;
-            return true;
-        }
         // [ and ] tune the LOD size threshold live (raise it to make impostors
-        // engage at larger on-screen sizes / less zoom-out).
+        // engage at larger on-screen sizes / less zoom-out). Structural, not rebindable.
         if (key == SDLK_LEFTBRACKET || key == SDLK_RIGHTBRACKET) {
             lodPx_ = std::clamp(lodPx_ + (key == SDLK_RIGHTBRACKET ? 16.0f : -16.0f),
                                 16.0f, 400.0f);
@@ -8295,6 +8271,7 @@ private:
         // GROUP, ALT+N a FORMATION; SHIFT appends instead of replacing. A plain digit
         // recalls squad N. Squads are lockstep sim state (Cmd::SetSquad); a unit is in one
         // squad at a time, and a number is a group XOR a formation (assigning replaces).
+        // Structural (the whole number row), not rebindable.
         int digit = -1;
         if (key >= SDLK_0 && key <= SDLK_9) digit = int(key - SDLK_0);
         if (digit >= 0 && !spectating_) {
@@ -8304,38 +8281,78 @@ private:
             return true;
         }
 
-        // Selection commands (modifier-based, no armed order).
-        if (ctrl && key == SDLK_a) { selectOwned([](const tak::sim::Unit&){ return true; });
-                                     return true; }
-        if (ctrl && key == SDLK_z) {   // all of the currently-selected type
-            const auto* first = selection_.empty() ? nullptr
-                                                    : world_.unit(selection_.front());
-            const auto* t = first ? first->type : nullptr;
-            if (t) selectOwned([t](const tak::sim::Unit& u){ return u.type == t; });
-            return true;
-        }
-        if (ctrl && key == SDLK_u) {   // everything visible on screen
-            selectOwned([this](const tak::sim::Unit& u){ return onScreen(u); });
-            return true;
+        // Everything below is a REBINDABLE action: resolve the pressed chord to an
+        // Act via the user's hotkey config (src/client/hotkeys) and dispatch.
+        switch (hotkeys_.match(int32_t(key), mod)) {
+            case tak::Act::ToggleCounts: showCounts_ = !showCounts_; return true;
+            case tak::Act::SelfDestruct: {   // self-destruct the selected unit(s)
+                // Through the command path (Cmd::Destroy), not a direct hp write --
+                // a local mutation would silently desync a networked game.
+                int n = 0;
+                for (int id : selection_)
+                    if (auto* su = world_.unit(id))
+                        if (su->alive() && su->player == localPlayer_) {
+                            tak::net::Command c;
+                            c.kind = tak::net::Cmd::Destroy;
+                            c.unitId = id;
+                            issue(c);
+                            ++n;
+                        }
+                notice_ = "DESTRUCT " + std::to_string(n);
+                noticeTimer_ = 2;
+                return true;
+            }
+            case tak::Act::Disco:
+            case tak::Act::Headbang: {
+                // One emote at a time -- don't even send the command while a disco or
+                // headbang is already running (the sim enforces this too). The busy
+                // notice reflects what you're ACTUALLY doing, not the key you pressed.
+                bool emoting = world_.discoActive(localPlayer_) || world_.headbangActive(localPlayer_);
+                if (emoting) {
+                    notice_ = world_.discoActive(localPlayer_) ? "ALREADY GROOVING" : "ALREADY ROCKING";
+                    noticeTimer_ = 2; return true;
+                }
+                bool disco = hotkeys_.match(int32_t(key), mod) == tak::Act::Disco;
+                tak::net::Command c;
+                c.kind = disco ? tak::net::Cmd::Disco : tak::net::Cmd::Headbang;
+                issue(c);   // routed through lockstep so every peer sees the dance
+                notice_ = disco ? "DISCO TIME" : "HEADBANG!!";
+                noticeTimer_ = 2;
+                return true;
+            }
+            // Selection commands (no armed order, no selection prerequisite).
+            case tak::Act::SelectAll:
+                selectOwned([](const tak::sim::Unit&){ return true; });
+                return true;
+            case tak::Act::SelectSameType: {   // all of the currently-selected type
+                const auto* first = selection_.empty() ? nullptr : world_.unit(selection_.front());
+                const auto* t = first ? first->type : nullptr;
+                if (t) selectOwned([t](const tak::sim::Unit& u){ return u.type == t; });
+                return true;
+            }
+            case tak::Act::SelectOnScreen:
+                selectOwned([this](const tak::sim::Unit& u){ return onScreen(u); });
+                return true;
+            default: break;
         }
         if (ctrl) return false;   // other CTRL combos fall through to the map view
 
         // Order commands need at least one selected unit.
         if (selection_.empty()) return false;
-        switch (key) {
-            case SDLK_f: pendingCmd_ = 'f'; return true;   // fight-move
-            case SDLK_m: pendingCmd_ = 'm'; return true;   // move
-            case SDLK_a: pendingCmd_ = 'a'; return true;   // attack
-            case SDLK_p: pendingCmd_ = 'p'; return true;   // patrol
-            case SDLK_g: pendingCmd_ = 'g'; return true;   // guard
-            case SDLK_w:                                   // cycle active weapon
+        switch (hotkeys_.match(int32_t(key), mod)) {
+            case tak::Act::FightMove: pendingCmd_ = 'f'; return true;
+            case tak::Act::Move:      pendingCmd_ = 'm'; return true;
+            case tak::Act::Attack:    pendingCmd_ = 'a'; return true;
+            case tak::Act::Patrol:    pendingCmd_ = 'p'; return true;
+            case tak::Act::Guard:     pendingCmd_ = 'g'; return true;
+            case tak::Act::CycleWeapon:                       // cycle active weapon
                 if (const auto* u = multiWeaponSel()) {
                     int n = int(u->type->weapons.size());
                     selectWeapon((u->weaponSlot + 1) % n);
                 }
                 pendingCmd_ = 0;
                 return true;
-            case SDLK_s:                                   // stop (immediate)
+            case tak::Act::Stop:                              // stop (immediate)
                 for (int id : selection_) {
                     tak::net::Command c;
                     c.kind = tak::net::Cmd::Stop;
@@ -8344,12 +8361,12 @@ private:
                 }
                 pendingCmd_ = 0;
                 return true;
-            case SDLK_t:                                   // track/untrack selection
+            case tak::Act::TrackSelection:                    // track/untrack selection
                 trackSel_ = !trackSel_;
                 if (trackSel_) centerOnSelection();
                 pendingCmd_ = 0;
                 return true;
-            case SDLK_n: cycleNextUnit(); return true;     // next unit
+            case tak::Act::NextUnit: cycleNextUnit(); return true;
             default: return false;
         }
     }
