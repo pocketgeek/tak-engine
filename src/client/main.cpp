@@ -719,6 +719,15 @@ public:
             index_[stem] = path;
         }
 
+        openOutput();
+    }
+
+    // Open (or re-open) the output device on the current tak::g_audioDevice. Safe to call
+    // again to switch devices live (Options): it closes the old device first, which stops
+    // and joins the mix thread, so there's no concurrent access to chan_/spec_ while we
+    // reconfigure. The detected channel layout follows the newly-chosen device.
+    void openOutput() {
+        if (dev_) { SDL_CloseAudioDevice(dev_); dev_ = 0; }
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
         // The process-wide detected layout (see tak::detectOutputChannels) -- shared
         // with the Options per-speaker sliders so they always match what we mix into,
@@ -738,6 +747,9 @@ public:
                      (chan_ == 6 || chan_ == 8) ? ", LFE subwoofer driven" : "");
         if (dev_) SDL_PauseAudioDevice(dev_, 0);
     }
+
+    // Live output-device switch from Options: re-open on the now-current device.
+    void reopenDevice() { openOutput(); }
 
     // (User sound overrides -- e.g. overrides/click.hpi replacing the faction
     // order tones -- now arrive through the VFS's overrides layer, which wins the
@@ -2031,7 +2043,8 @@ public:
             },
             [this] { saveSettings(*settings_); },
             sounds_.channelCount(),
-            [this] { openHotkeys(); });
+            [this] { openHotkeys(); },
+            [this] { sounds_.reopenDevice(); });   // live output-device switch
     }
     // Open the hotkey-config overlay (from the Options screen's CONTROLS button).
     void openHotkeys() {

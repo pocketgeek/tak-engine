@@ -673,7 +673,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         [dd, ren, settings] {   // CONTROLS -> hotkey config overlay
                             dd->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
                                 [] {}, [settings] { saveSettings(*settings); });
-                        });
+                        },
+                        [music] { if (music) music->reopen(); });   // live output-device switch
                 }
                 else if (c == Choice::Campaign && settings) {
                     // Open the campaign / mission picker in place; a picked mission

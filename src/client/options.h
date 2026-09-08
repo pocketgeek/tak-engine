@@ -49,9 +49,12 @@ public:
     // invoked after any value change so the host applies it live. onSave: invoked when
     // the user clicks SAVE (persist to disk). audioChannels: number of output channels
     // to expose per-channel sliders for (0 = auto-detect the default device).
+    // onAudioDevice: invoked when the user picks a DIFFERENT output device, so the host can
+    // re-open its audio streams (SoundBank / menu music) on it live -- no restart. The
+    // speaker-slider row set is rebuilt for the new channel count automatically.
     OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                   std::function<void()> onSave, int audioChannels = 0,
-                  std::function<void()> onHotkeys = {});
+                  std::function<void()> onHotkeys = {}, std::function<void()> onAudioDevice = {});
 
     // Feed one SDL event. Returns true when the user leaves (Esc / BACK); the host
     // should then stop showing the screen. Persisting is explicit (the SAVE button
@@ -77,6 +80,10 @@ private:
     void build(int audioChannels);
     void layout(int winW, int winH);
     void commit(Control& c, float mx);            // set a slider from a mouse x
+
+    // Rebuild the control list (called deferred, outside the input/render loops) after a
+    // device change so the SPEAKER sliders match the new device's channel count.
+    void applyPendingRebuild();
 
     // Snapshot the output-device list into devSnapshot_ ([0] = "" = system default). Taken
     // ONCE at build and again each time the dropdown opens -- never per frame: SDL re-runs
@@ -112,6 +119,8 @@ private:
     std::function<void()> onChange_;
     std::function<void()> onSave_;
     std::function<void()> onHotkeys_;   // opens the hotkey config screen (host-provided)
+    std::function<void()> onAudioDevice_;   // host re-opens audio on a live device switch
+    bool pendingRebuild_ = false;       // a device change asked for a deferred control rebuild
     std::vector<Control> ctls_;
     bool dirty_ = false;    // unsaved changes since the last save/open -> SAVE enabled
     float scroll_ = 0;      // content scroll offset (px)

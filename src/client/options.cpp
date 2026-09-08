@@ -146,13 +146,23 @@ SDL_AudioDeviceID openAudioDevice(int iscapture, const SDL_AudioSpec* want,
 
 OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                              std::function<void()> onSave, int audioChannels,
-                             std::function<void()> onHotkeys)
+                             std::function<void()> onHotkeys, std::function<void()> onAudioDevice)
     : ren_(ren), s_(s), onChange_(std::move(onChange)), onSave_(std::move(onSave)),
-      onHotkeys_(std::move(onHotkeys)) {
+      onHotkeys_(std::move(onHotkeys)), onAudioDevice_(std::move(onAudioDevice)) {
     build(audioChannels > 0 ? audioChannels : detectOutputChannels());
 }
 
+// Rebuild the speaker sliders (etc.) after a device change. Deferred to input()/render()
+// so it never runs while a caller still holds a reference into ctls_.
+void OptionsScreen::applyPendingRebuild() {
+    if (!pendingRebuild_) return;
+    pendingRebuild_ = false;
+    openDrop_ = -1; drag_ = -1; dropScroll_ = 0;   // transient control state -> invalid after rebuild
+    build(detectOutputChannels());
+}
+
 void OptionsScreen::build(int channels) {
+    ctls_.clear();   // rebuildable: a live device switch re-runs this with a new channel count
     std::fprintf(stderr, "Options: %d speaker sliders\n", channels);
     auto section = [&](const char* label) { ctls_.push_back({Control::Section, label, 0, 0, {}, {}, {}, {}, {}}); };
     auto slider = [&](const char* label, float lo, float hi, std::function<float()> get,
@@ -194,9 +204,13 @@ void OptionsScreen::build(int channels) {
         [this, deviceValues](float idx) {            // apply
             auto v = deviceValues();
             size_t i = size_t(idx < 0 ? 0 : idx);
-            s_.audioDevice = i < v.size() ? v[i] : std::string();
-            setAudioDevice(s_.audioDevice);
-            if (onChange_) onChange_();
+            std::string chosen = i < v.size() ? v[i] : std::string();
+            if (chosen == s_.audioDevice) return;    // same device -> nothing to switch
+            s_.audioDevice = chosen;
+            setAudioDevice(s_.audioDevice);          // resets the channel-count cache
+            pendingRebuild_ = true;                  // re-lay the SPEAKER sliders for the new count
+            if (onAudioDevice_) onAudioDevice_();     // host re-opens its streams on the new device
+            if (onChange_) onChange_();               // re-apply volumes to the re-opened device
         });
     slider("MASTER VOLUME", 0, 256, [&] { return float(s_.masterVol); },
            [&](float v) { s_.masterVol = int(v + 0.5f); }, [](float v) { return pctOf(v, 256); });
@@ -334,6 +348,7 @@ void OptionsScreen::dropViewport(const Control& c, int nOpts, float& y0, float& 
 }
 
 bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
+    applyPendingRebuild();   // fold in a pending device-change rebuild before this event
     layout(winW, winH);
     if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
         if (openDrop_ >= 0) { openDrop_ = -1; return false; }   // close the dropdown, not the screen
@@ -425,6 +440,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
 }
 
 void OptionsScreen::render(int winW, int winH) {
+    applyPendingRebuild();   // in case the change came between input() and this frame
     layout(winW, winH);
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
 

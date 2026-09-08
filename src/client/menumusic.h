@@ -46,11 +46,26 @@ public:
         want.callback = &MenuMusic::mixThunk;
         want.userdata = this;
         pos_ = 0;                        // set before the device unpauses (callback reads it)
+        openWant_ = want;                // kept so reopen() can re-open on a new device
         dev_ = tak::openAudioDevice(0, &want, &have, 0);   // flags 0 => have == want
         if (!dev_) { src_.clear(); return; }
         silence_ = have.silence;
         track_ = track;
         SDL_PauseAudioDevice(dev_, 0);   // the callback starts pulling
+    }
+
+    // Re-open the current track on the now-current output device (Options device switch),
+    // continuing from the same play position so the music doesn't restart. No-op if nothing
+    // is playing -- the next start() then simply opens on the new device.
+    void reopen() {
+        if (!dev_ || src_.empty()) return;
+        SDL_CloseAudioDevice(dev_);      // stops + joins the callback thread; pos_ is preserved
+        dev_ = 0;
+        SDL_AudioSpec have{};
+        dev_ = tak::openAudioDevice(0, &openWant_, &have, 0);
+        if (!dev_) { src_.clear(); track_ = -1; return; }
+        silence_ = have.silence;
+        SDL_PauseAudioDevice(dev_, 0);
     }
 
     // BGM + master volume on the SoundBank 0..256 scale. Applies live WITHOUT
@@ -103,6 +118,7 @@ private:
     }
 
     SDL_AudioDeviceID dev_ = 0;
+    SDL_AudioSpec openWant_{};    // spec used to open dev_, kept so reopen() can switch devices
     std::vector<uint8_t> src_;    // unscaled source, kept so volume can re-apply live
     SDL_AudioFormat fmt_ = 0;
     Uint8 silence_ = 0;          // device silence byte (have.silence)
