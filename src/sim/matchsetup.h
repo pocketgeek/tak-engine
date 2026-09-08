@@ -40,6 +40,7 @@ struct MatchConfig {
     float godAppearSec = 1800;      // when gods may manifest (if enabled)
     float startMana = 2800;
     int unitCap = 2000;             // per-player live-unit limit (0 = unlimited)
+    bool monarchExpendable = true;  // false = losing your Monarch loses the game
 };
 
 // The starting Monarch of each faction (index = faction id).

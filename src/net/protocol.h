@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 20;       // 20: +control squads/formations (Cmd::SetSquad)
+constexpr uint32_t kNetVersion = 21;       // 21: GameOptions.monarchExpendable (monarch-death loss rule)
+                                           // 20: +control squads/formations (Cmd::SetSquad)
                                            // 15: GameOptions.speed/speedUnlock + Set/SpeedUpdate msgs
                                            // 14: Cmd::Headbang (Shift+H emote)
                                            // 13: under-construction units contribute no income/storage (economy fix)
@@ -108,6 +109,8 @@ struct GameOptions {
     // Per-player unit limit (production/build halts a player at this many live units).
     // One of 250/500/1000/2000/5000; 2000 default. Serialised as u32.
     uint16_t unitCap = 2000;
+    // When 0 (default) losing your Monarch loses the game; 1 makes it just a unit.
+    uint8_t monarchExpendable = 0;
 };
 
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer

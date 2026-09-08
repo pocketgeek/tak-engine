@@ -87,6 +87,7 @@ struct UnitType {
     float maxHp = 100;
     bool canMove = false;
     bool isBuilder = false;
+    bool commander = false;   // FBI commander=1: the faction's Monarch (loss condition)
     // Buildings vs mobile units: the reliable test is maxVel. The FBI `canmove`
     // flag is set on some buildings too (e.g. the Keep, or the Taros Hell), so a
     // canMove building would otherwise be mistaken for a mobile builder.
@@ -587,6 +588,9 @@ public:
 
     // Which player the fog-of-war grid tracks (default 0 = local player).
     void setVisPlayer(int t) { visPlayer_ = t; }
+    // Monarch-expendable rule (net GameOptions): when FALSE, losing your Monarch
+    // (a commander unit) loses you the game even if other units survive.
+    void setMonarchExpendable(bool e) { monarchExpendable_ = e; }
     // Deterministic digest of sim state, for lockstep sync checking.
     uint64_t stateHash() const;
 
@@ -763,6 +767,8 @@ private:
         return v;
     }();
     int winningTeam_ = -1;
+    bool monarchExpendable_ = true;      // default: Monarch is just a unit (net option overrides)
+    std::vector<uint8_t> hadMonarch_;   // per-player: ever fielded a Monarch (for the loss rule)
     bool godsEnabled_ = false;
     int unitCap_ = 0;                 // per-player live-unit limit (0 = unlimited)
     float godAppearTime_ = 1e9f, clock_ = 0;

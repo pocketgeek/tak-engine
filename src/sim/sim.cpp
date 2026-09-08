@@ -99,6 +99,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.turnRate = tr * kCobAngle * kTick;
             t.maxHp = float(info->numberOr("maxdamage", 100));
             t.isBuilder = info->numberOr("builder", 0) != 0;
+            t.commander = info->numberOr("commander", 0) != 0;   // the Monarch
             t.buildCost = float(info->numberOr("buildcost", 0));
             t.buildTime = float(info->numberOr("buildtime", 0));
             t.workerTime = float(info->numberOr("workertime", 1));
@@ -2788,25 +2789,39 @@ int World::updateOutcome() {
     // alive counts, then per-team. This runs on every sim (referee included),
     // so all peers conclude win/defeat on the same tick.
     std::vector<int> aliveByPlayer(players_.size(), 0);
+    // Living Monarch (commander unit) per player, for the monarch-loss rule.
+    std::vector<int> monarchByPlayer(players_.size(), 0);
     for (const auto& u : units_)
         if (u.alive() && u.type &&
-            u.player >= 0 && u.player < int(players_.size()))
+            u.player >= 0 && u.player < int(players_.size())) {
             ++aliveByPlayer[size_t(u.player)];
+            if (u.type->commander) ++monarchByPlayer[size_t(u.player)];
+        }
+    if (hadMonarch_.size() != players_.size()) hadMonarch_.assign(players_.size(), 0);
     for (int p = 0; p < int(players_.size()); ++p) {
-        players_[size_t(p)].defeated = (aliveByPlayer[size_t(p)] == 0);
+        if (monarchByPlayer[size_t(p)] > 0) hadMonarch_[size_t(p)] = 1;
+        // No living units OR -- when the Monarch is NOT expendable -- a player who
+        // once fielded a Monarch has now lost it. Both are deterministic and computed
+        // identically on every peer + the referee, so win/defeat agree in lockstep.
+        bool monarchDead = !monarchExpendable_ && hadMonarch_[size_t(p)] &&
+                           monarchByPlayer[size_t(p)] == 0;
+        players_[size_t(p)].defeated = (aliveByPlayer[size_t(p)] == 0) || monarchDead;
         players_[size_t(p)].unitCount = aliveByPlayer[size_t(p)];   // re-sync the cap count
     }
 
     // Count DISTINCT teams that still have a living unit (robust to any team id,
     // not just 0..n-1): a surviving player counts its team once -- the first time
     // that team appears among survivors. If exactly one team remains it wins.
+    // A player counts as surviving only if NOT defeated -- so a monarch-loss
+    // elimination (units still alive but the Monarch is dead) removes them from the
+    // running just like being wiped out.
     int survivingTeam = -1, survivingCount = 0;
     for (int p = 0; p < int(players_.size()); ++p) {
-        if (aliveByPlayer[size_t(p)] == 0) continue;
+        if (players_[size_t(p)].defeated) continue;
         int tm = players_[size_t(p)].team;
         bool firstOfTeam = true;
         for (int q = 0; q < p; ++q)
-            if (aliveByPlayer[size_t(q)] > 0 && players_[size_t(q)].team == tm) {
+            if (!players_[size_t(q)].defeated && players_[size_t(q)].team == tm) {
                 firstOfTeam = false;
                 break;
             }

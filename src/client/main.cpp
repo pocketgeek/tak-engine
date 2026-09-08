@@ -2565,6 +2565,7 @@ public:
         cfg.mapPath = mapPath_;
         cfg.gods = room.opts.gods != 0;
         cfg.unitCap = room.opts.unitCap;
+        cfg.monarchExpendable = room.opts.monarchExpendable != 0;
         cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
             const auto& s = room.slots[i];
@@ -6401,6 +6402,7 @@ private:
     float lobbyOffX_ = 0, lobbyOffY_ = 0;   // lobby centre offset (logical units; set in render)
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
+    bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
     std::vector<std::pair<std::string, std::string>> mapList_;  // {name, tnt path}, cached
     // Create-screen map picker: a scrollable list box. mapScroll_ is the index of the
     // first visible row; the rest is geometry cached each frame for wheel + scrollbar
@@ -8831,6 +8833,11 @@ private:
               [this] { createCrusades_ = !createCrusades_; }); y += 34;
         lbBtn(x, y, 170, 26, createGods_ ? "GODS: ON" : "GODS: OFF", true,
               [this] { createGods_ = !createGods_; }); y += 34;
+        // When OFF, losing your Monarch loses the game (retail commander rule); ON
+        // makes the Monarch just another unit.
+        lbBtn(x, y, 240, 26, createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
+                                               : "MONARCH EXPENDABLE: OFF", true,
+              [this] { createMonarchExp_ = !createMonarchExp_; }); y += 34;
         // SP only: spectate mode -- you take no slot and just watch the AIs fight.
         // Seat AIs in the slots below, then START.
         if (singlePlayer_) {
@@ -8852,6 +8859,7 @@ private:
         lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0; o.gods = createGods_ ? 1 : 0;
             o.overridePolicy = createOverride_;
+            o.monarchExpendable = createMonarchExp_ ? 1 : 0;
             // SP spectate: create as a spectator (no slot) so every slot can be an AI;
             // the game-start path flags spectating_ + noFog_ from mp_->isSpectator().
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(),
@@ -10131,6 +10139,8 @@ static bool loadReplayFile(const std::string& path, ReplayFile& out) {
     if (fmt >= 2) out.overridePolicy = r.u8();   // override tier the game ran under
     out.cfg.unitCap = 0;                          // fmt<3 replays ran without a unit cap
     if (fmt >= 3) out.cfg.unitCap = uint16_t(r.u32());
+    out.cfg.monarchExpendable = true;             // fmt<4 replays ran monarch-expendable
+    if (fmt >= 4) out.cfg.monarchExpendable = r.u8() != 0;
     r.u32();                       // seed (setupMatch derives its own timing)
     uint8_t nslots = r.u8();
     out.crusades = crusades != 0;
