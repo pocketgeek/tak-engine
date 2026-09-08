@@ -25,10 +25,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build g++ libsdl2-dev zlib1g-dev libjpeg-dev dpkg-dev
+            cmake ninja-build g++ git make libsdl2-dev zlib1g-dev libjpeg-dev dpkg-dev
+      # Build a minimal static Bink-only FFmpeg so the package plays the door videos
+      # with NO runtime FFmpeg dependency (see tools/build-ffmpeg-bink.sh). Cached across
+      # runs by the FFmpeg version.
+      - name: Cache static FFmpeg (Bink)
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg-bink
+          key: ffmpeg-bink-deb-n7.1.1
+      - name: Build static FFmpeg (Bink)
+        run: ./tools/build-ffmpeg-bink.sh
       - name: Build + package (.deb)
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON
           cmake --build build
           (cd build && cpack -G DEB)
           dpkg-deb -I build/tak-engine-amd64.deb   # show control + auto deps
@@ -38,7 +48,7 @@ jobs:
       # hooks, and the headless --mp* harness.
       - name: Build binaries (debug)
         run: |
-          cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTAK_STATIC_FFMPEG=ON
           cmake --build build-debug
           mkdir -p dist-linux-debug
           cp build-debug/takclient build-debug/takserver dist-linux-debug/
@@ -69,12 +79,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # A minimal static Bink-only FFmpeg is built inside the container and linked
+      # statically (-DTAK_STATIC_FFMPEG=ON), so the .rpm plays the door videos with NO
+      # runtime FFmpeg -- stock Fedora's libavcodec-free lacks the Bink decoder, and we no
+      # longer need RPM Fusion. rpm --requires then shows only SDL2/jpeg/zlib.
       - name: Build + package (.rpm) in a Fedora container
         run: |
           docker run --rm -v "$PWD:/src" -w /src fedora:latest bash -c '
-            dnf -y install cmake ninja-build gcc-c++ SDL2-devel zlib-devel \
+            dnf -y install cmake ninja-build gcc-c++ git make SDL2-devel zlib-devel \
                            libjpeg-turbo-devel rpm-build &&
-            cmake -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release &&
+            ./tools/build-ffmpeg-bink.sh &&
+            cmake -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON &&
             cmake --build build-rpm &&
             (cd build-rpm && cpack -G RPM) &&
             rpm -qp --requires build-rpm/tak-engine-x86_64.rpm'

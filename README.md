@@ -119,6 +119,31 @@ cmake -B build -G Ninja
 cmake --build build
 ```
 
+### Menu door videos (optional Bink/FFmpeg)
+
+The animated front-end door clips are Bink1 (`.bik`) video, decoded through
+FFmpeg. It's optional — without it the doors fall back to their static GAF art —
+and there are two ways to get it:
+
+- **System FFmpeg (default).** Configure finds `libavcodec`/`libavformat`/… via
+  `pkg-config` and links them dynamically. The catch: the build's `libavcodec`
+  must actually contain the Bink decoder. Stock Fedora's `libavcodec-free` does
+  **not**; install RPM Fusion's `ffmpeg` (or `libavcodec-freeworld`) for it.
+
+- **Bundled static FFmpeg (`-DTAK_STATIC_FFMPEG=ON`).** Build a minimal, Bink-only
+  FFmpeg once and link it *into* `takclient`, so the binary decodes the door
+  videos with **no runtime FFmpeg at all** — nothing to install on the target box:
+
+  ```sh
+  ./tools/build-ffmpeg-bink.sh           # -> third_party/ffmpeg-bink (static, ~+1 MB)
+  cmake -B build -G Ninja -DTAK_STATIC_FFMPEG=ON
+  cmake --build build
+  ```
+
+  This is what the release packages use, so the shipped `.rpm`/`.deb`/zips play the
+  door videos on a stock system. The Bink path is pure LGPL (no GPL codecs pulled
+  in). `TAK_FFMPEG_PREFIX` overrides where the static install lives.
+
 ### Cross-platform builds
 
 The engine builds for **Linux**, **Windows 11 (x64)**, and **macOS (Apple

@@ -97,10 +97,51 @@ option(TAK_BUILD_CLIENT "Build the SDL2 client (asset viewer + game)" ON)
 
 # Optional FFmpeg for decoding the retail Bink (.bik) menu videos. When present,
 # the main menu plays the door hover videos; when absent, it falls back to the GAF
-# door art. libavcodec carries a clean-room Bink decoder (GPL-compatible).
+# door art. libavcodec carries a clean-room Bink decoder (LGPL).
+#
+# Two ways to get it:
+#   * Default: link the system FFmpeg dynamically (pkg-config). Needs a build whose
+#     libavcodec includes the Bink decoder (stock Fedora's libavcodec-free does NOT;
+#     RPM Fusion's does).
+#   * -DTAK_STATIC_FFMPEG=ON: statically link a MINIMAL, Bink-only FFmpeg built by
+#     tools/build-ffmpeg-bink.sh, so the shipped binary needs no runtime FFmpeg at all.
+#     TAK_FFMPEG_PREFIX overrides where that static install lives.
+option(TAK_STATIC_FFMPEG "Statically link a minimal Bink-only FFmpeg (tools/build-ffmpeg-bink.sh)" OFF)
+set(TAK_FFMPEG_PREFIX "" CACHE PATH "Install prefix of the static Bink-only FFmpeg")
+
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
-  pkg_check_modules(FFMPEG IMPORTED_TARGET libavcodec libavformat libavutil libswscale libswresample)
+  if(TAK_STATIC_FFMPEG)
+    if(NOT TAK_FFMPEG_PREFIX)
+      set(TAK_FFMPEG_PREFIX "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-bink")
+    endif()
+    set(ENV{PKG_CONFIG_PATH} "${TAK_FFMPEG_PREFIX}/lib/pkgconfig")
+    # Order high-level -> low-level so the static archives resolve left-to-right.
+    pkg_check_modules(FFMPEG libavformat libavcodec libswscale libswresample libavutil)
+  else()
+    pkg_check_modules(FFMPEG IMPORTED_TARGET libavcodec libavformat libavutil libswscale libswresample)
+  endif()
+endif()
+
+# One INTERFACE target both takclient and biktool link, hiding the static/dynamic split.
+if(FFMPEG_FOUND)
+  add_library(tak_ffmpeg INTERFACE)
+  target_compile_definitions(tak_ffmpeg INTERFACE TAK_HAVE_FFMPEG)
+  if(TAK_STATIC_FFMPEG)
+    target_include_directories(tak_ffmpeg INTERFACE ${FFMPEG_STATIC_INCLUDE_DIRS})
+    # --start/--end-group makes the circular FFmpeg archives resolve regardless of order
+    # (GNU ld / MinGW). Apple's ld does multi-pass, so pass the flags straight through.
+    if(APPLE)
+      target_link_libraries(tak_ffmpeg INTERFACE ${FFMPEG_STATIC_LDFLAGS})
+    else()
+      target_link_libraries(tak_ffmpeg INTERFACE
+        -Wl,--start-group ${FFMPEG_STATIC_LDFLAGS} -Wl,--end-group)
+    endif()
+    message(STATUS "FFmpeg: STATIC Bink-only build from ${TAK_FFMPEG_PREFIX}")
+  else()
+    target_link_libraries(tak_ffmpeg INTERFACE PkgConfig::FFMPEG)
+    message(STATUS "FFmpeg: system (dynamic) — Bink (.bik) menu videos enabled.")
+  endif()
 endif()
 
 if(TAK_BUILD_CLIENT)
@@ -113,10 +154,8 @@ if(TAK_BUILD_CLIENT)
     # <SDL.h> -- otherwise, on Windows, SDL_main.h renames our main to SDL_main via a
     # transitive include and the MinGW link fails with "undefined reference to WinMain".
     target_compile_definitions(takclient PRIVATE SDL_MAIN_HANDLED)
-    if(FFMPEG_FOUND)
-      target_link_libraries(takclient PRIVATE PkgConfig::FFMPEG)
-      target_compile_definitions(takclient PRIVATE TAK_HAVE_FFMPEG)
-      message(STATUS "FFmpeg found — Bink (.bik) menu videos enabled.")
+    if(TARGET tak_ffmpeg)
+      target_link_libraries(takclient PRIVATE tak_ffmpeg)
     else()
       message(STATUS "FFmpeg not found — menu .bik videos disabled (GAF door art fallback).")
     endif()
@@ -133,10 +172,9 @@ if(TAK_BUILD_CLIENT)
 endif()
 
 # biktool: standalone Bink -> frame-dump debug tool (only when FFmpeg is present).
-if(FFMPEG_FOUND)
+if(TARGET tak_ffmpeg)
   add_executable(biktool tools/biktool.cpp src/video/bink.cpp)
-  target_link_libraries(biktool PRIVATE tak-formats PkgConfig::FFMPEG)
-  target_compile_definitions(biktool PRIVATE TAK_HAVE_FFMPEG)
+  target_link_libraries(biktool PRIVATE tak-formats tak_ffmpeg)
 endif()
 
 # --- Multiplayer server (headless; no SDL) ------------------------------------

@@ -34,3 +34,6 @@ compile_commands.json
 *.gp3
 *.ufo
 !overrides/click.hpi
+
+# Locally-built minimal static FFmpeg (tools/build-ffmpeg-bink.sh)
+third_party/

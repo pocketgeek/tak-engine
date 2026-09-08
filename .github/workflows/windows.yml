@@ -35,11 +35,24 @@ jobs:
             mingw-w64-x86_64-SDL2
             mingw-w64-x86_64-libjpeg-turbo
             mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-pkgconf
+            git
+            make
             zip
+
+      # Minimal static Bink-only FFmpeg so the bundle plays the door videos with no
+      # runtime FFmpeg DLLs (see tools/build-ffmpeg-bink.sh). Cached by FFmpeg version.
+      - name: Cache static FFmpeg (Bink)
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg-bink
+          key: ffmpeg-bink-windows-x64-n7.1.1
+      - name: Build static FFmpeg (Bink)
+        run: ./tools/build-ffmpeg-bink.sh
 
       - name: Configure + build
         run: |
-          cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON
           cmake --build build
 
       - name: Bundle (exes + required DLLs) + zip
@@ -63,7 +76,7 @@ jobs:
       # TAK_* env hooks, and the headless --mp* harness.
       - name: Configure + build (debug)
         run: |
-          cmake -B build-debug -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug
+          cmake -B build-debug -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug -DTAK_STATIC_FFMPEG=ON
           cmake --build build-debug
 
       - name: Bundle (exes + required DLLs) + zip (debug)
