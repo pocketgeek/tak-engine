@@ -462,6 +462,20 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
             int d = seaLevel - int(heights[size_t(z) * w + x]);
             depth_[size_t(z) * w + x] = uint8_t(std::clamp(d, 0, 255));
         }
+    // Fog starts FULLY UNEXPLORED the moment terrain exists: before this, vis_ was
+    // allocated lazily by the first updateVisibility (0.25s into the sim), and an
+    // empty vis_ makes drawFog skip and cellVisible() report everything visible --
+    // so the first rendered frames flashed the whole bare map (masked historically
+    // by the synchronous load stall; exposed once terrain composited async). Local
+    // display only (never hashed); the headless referee (visPlayer_ < 0) skips fog
+    // entirely. Sized to THIS terrain, so loading a different map into the same
+    // world also re-fits the grid instead of keeping stale dimensions.
+    if (visPlayer_ >= 0) {
+        visW_ = w;
+        visH_ = h;
+        vis_.assign(size_t(w) * size_t(h), 0);
+        ++visGen_;   // the renderer re-uploads the (all-fogged) texture
+    }
 }
 
 void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked) {
