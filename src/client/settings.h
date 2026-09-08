@@ -27,10 +27,11 @@ struct Settings {
     int   spriteMode = 0;          // unit sprites: 0=auto, 1=on, 2=off
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
     bool  bilinear   = false;      // smooth (bilinear) terrain + feature scaling, like retail's option
+    int   healthBars = 1;          // unit health bars: 0=off, 1=only when damaged, 2=always
 
     // ---- audio (0..256, matching SoundBank's internal scale) ----
     int   masterVol  = 256;        // global gain over everything
-    int   bgmVol      = 90;        // background music (SoundBank music + MenuMusic)
+    int   bgmVol      = 192;       // background music (SoundBank music + MenuMusic); 75%
     int   sfxVol      = 256;       // unit / world / UI sound effects
     float chanGain[8] = {1, 1, 1, 1, 1, 1, 1, 1};   // per-output-speaker trim, 0..1
 
@@ -65,6 +66,7 @@ struct Settings {
             && a.uiScale == b.uiScale && a.antiAlias == b.antiAlias
             && a.lod == b.lod && a.spriteMode == b.spriteMode
             && a.buildBarAlign == b.buildBarAlign && a.bilinear == b.bilinear
+            && a.healthBars == b.healthBars
             && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale

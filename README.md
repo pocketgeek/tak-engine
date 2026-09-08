@@ -208,8 +208,9 @@ whose priests (`attractsgods` units) have channelled enough mana favour manifest
 
 Audio, display, camera, and rendering preferences — anti-aliasing, **bilinear
 filtering** (retail's smooth-scaling video option), the distance-impostor **LOD**,
-the **unit-sprite** mode, and the **build-menu alignment** (left / center / right) —
-are set in the in-game **Options** screen (Esc → Options) and persisted per user.
+the **unit-sprite** mode, **health bars** (off / damaged / always), and the
+**build-menu alignment** (left / center / right) — are set in the in-game
+**Options** screen (Esc → Options) and persisted per user.
 
 ### Command line
 

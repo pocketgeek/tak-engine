@@ -63,6 +63,7 @@ Settings loadSettings() {
         else if (key == "spriteMode")      s.spriteMode = asInt(0, 2);
         else if (key == "buildBarAlign")   s.buildBarAlign = asInt(0, 2);
         else if (key == "bilinear")        s.bilinear = asBool();
+        else if (key == "healthBars")      s.healthBars = asInt(0, 2);
         else if (key == "masterVol")       s.masterVol = asInt(0, 256);
         else if (key == "bgmVol")          s.bgmVol = asInt(0, 256);
         else if (key == "sfxVol")          s.sfxVol = asInt(0, 256);
@@ -107,6 +108,7 @@ bool saveSettings(const Settings& s) {
     o << "spriteMode = " << s.spriteMode << "\n";
     o << "buildBarAlign = " << s.buildBarAlign << "\n";
     o << "bilinear = " << (s.bilinear ? 1 : 0) << "\n";
+    o << "healthBars = " << s.healthBars << "\n";
     o << "masterVol = " << s.masterVol << "\n";
     o << "bgmVol = " << s.bgmVol << "\n";
     o << "sfxVol = " << s.sfxVol << "\n";

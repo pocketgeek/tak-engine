@@ -115,6 +115,9 @@ void OptionsScreen::build(int channels) {
     // Retail's video option: smooth terrain + feature scaling (off = crisp pixels).
     toggle("BILINEAR FILTERING", [&] { return s_.bilinear ? 1.0f : 0.0f; },
            [&](float v) { s_.bilinear = v > 0.5f; });
+    slider("HEALTH BARS", 0, 2, [&] { return float(s_.healthBars); },
+           [&](float v) { s_.healthBars = std::clamp(int(v + 0.5f), 0, 2); },
+           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "ALWAYS" : l >= 1 ? "DAMAGED" : "OFF"); });
 
     section("CAMERA");
     slider("MOUSE ZOOM SPEED", 0.25f, 4.0f, [&] { return s_.mouseZoomSpeed; },
