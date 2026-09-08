@@ -290,22 +290,42 @@ void OptionsScreen::commit(Control& c, float mx) {
     if (onChange_) onChange_();
 }
 
+void OptionsScreen::dropViewport(const Control& c, int nOpts, float& y0, float& itemH,
+                                 float& viewH) {
+    itemH = 24 * u_;
+    y0 = c.row.y + 5 * u_ + 24 * u_;                     // just below the closed chip
+    float footerH = 52 * u_;
+    float maxBottom = panel_.y + panel_.h - footerH - 6 * u_;   // keep clear of the footer
+    float fullH = itemH * float(std::max(nOpts, 1));
+    viewH = std::clamp(maxBottom - y0, itemH, fullH);    // at least one row, at most the list
+    float maxScroll = std::max(0.0f, fullH - viewH);
+    dropScroll_ = std::clamp(dropScroll_, 0.0f, maxScroll);
+}
+
 bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
     layout(winW, winH);
     if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
         if (openDrop_ >= 0) { openDrop_ = -1; return false; }   // close the dropdown, not the screen
         return true;
     }
-    if (e.type == SDL_MOUSEWHEEL) { scroll_ -= e.wheel.y * 42 * u_; return false; }
+    if (e.type == SDL_MOUSEWHEEL) {
+        // While a dropdown is open, the wheel scrolls ITS list, not the panel underneath --
+        // otherwise the panel slides and the pop-up runs out from under the cursor.
+        if (openDrop_ >= 0 && openDrop_ < int(ctls_.size()) &&
+            ctls_[size_t(openDrop_)].kind == Control::Dropdown) {
+            const Control& c = ctls_[size_t(openDrop_)];
+            int n = c.options ? int(c.options().size()) : 0;
+            float y0, itemH, viewH;
+            dropScroll_ -= e.wheel.y * 42 * u_;
+            dropViewport(c, n, y0, itemH, viewH);        // clamps dropScroll_
+            return false;
+        }
+        scroll_ -= e.wheel.y * 42 * u_;
+        return false;
+    }
 
     auto in = [](const SDL_FRect& r, float mx, float my) {
         return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
-    };
-    // Geometry of an open dropdown's pop-up (must match render()).
-    auto dropItem = [this](const Control& c, size_t i) {
-        float cw = 300 * u_, itemH = 24 * u_;
-        return SDL_FRect{c.row.x + c.row.w - cw, c.row.y + 5 * u_ + 24 * u_ + float(i) * itemH,
-                         cw, itemH};
     };
     if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
         float bmx = float(e.button.x), bmy = float(e.button.y);
@@ -316,12 +336,18 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             ctls_[size_t(openDrop_)].kind == Control::Dropdown) {
             Control& c = ctls_[size_t(openDrop_)];
             auto opts = c.options ? c.options() : std::vector<std::string>{};
-            for (size_t i = 0; i < opts.size(); ++i)
-                if (in(dropItem(c, i), bmx, bmy)) {
+            float cw = 300 * u_, y0, itemH, viewH;
+            dropViewport(c, int(opts.size()), y0, itemH, viewH);
+            float x = c.row.x + c.row.w - cw;
+            // Only clicks inside the scrolled viewport count (items scroll under a clip).
+            if (bmx >= x && bmx <= x + cw && bmy >= y0 && bmy <= y0 + viewH) {
+                int i = int((bmy - y0 + dropScroll_) / itemH);
+                if (i >= 0 && i < int(opts.size())) {
                     if (c.set) c.set(float(i));
                     dirty_ = true; openDrop_ = -1;
                     return false;
                 }
+            }
             openDrop_ = -1;
             if (in(c.row, bmx, bmy)) return false;   // clicked its own chip -> just close
         }
@@ -354,7 +380,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             }
             if (c.kind == Control::Slider) { drag_ = int(i); commit(c, mx); return false; }
             if (c.kind == Control::Button) { if (c.action) c.action(); return false; }
-            if (c.kind == Control::Dropdown) { openDrop_ = int(i); return false; }   // open the list
+            if (c.kind == Control::Dropdown) { openDrop_ = int(i); dropScroll_ = 0; return false; }   // open the list
         }
         return false;
     }
@@ -489,20 +515,27 @@ void OptionsScreen::render(int winW, int winH) {
         const Control& c = ctls_[size_t(openDrop_)];
         auto opts = c.options ? c.options() : std::vector<std::string>{};
         int sel = int(c.get ? c.get() : 0.0f);
-        float cw = 300 * u_, itemH = 24 * u_, dpx = 1.6f * u_;
-        float x = c.row.x + c.row.w - cw, y0 = c.row.y + 5 * u_ + 24 * u_;
-        SDL_FRect bg{x, y0, cw, itemH * float(std::max<size_t>(opts.size(), 1))};
+        float cw = 300 * u_, dpx = 1.6f * u_, y0, itemH, viewH;
+        dropViewport(c, int(opts.size()), y0, itemH, viewH);
+        float x = c.row.x + c.row.w - cw;
+        SDL_FRect bg{x, y0, cw, viewH};
         SDL_SetRenderDrawColor(ren_, 30, 34, 46, 255); SDL_RenderFillRectF(ren_, &bg);
         SDL_SetRenderDrawColor(ren_, 140, 150, 185, 255); SDL_RenderDrawRectF(ren_, &bg);
+        // Clip the rows to the viewport so a list taller than the panel scrolls under it.
+        SDL_Rect clip{int(x), int(y0), int(cw) + 1, int(viewH) + 1};
+        SDL_RenderSetClipRect(ren_, &clip);
         int maxCh = int((cw - 16 * u_) / (6 * dpx));
         for (size_t i = 0; i < opts.size(); ++i) {
-            SDL_FRect it{x, y0 + float(i) * itemH, cw, itemH};
+            float iy = y0 + float(i) * itemH - dropScroll_;
+            if (iy + itemH < y0 || iy > y0 + viewH) continue;   // fully scrolled out
+            SDL_FRect it{x, iy, cw, itemH};
             if (int(i) == sel) { SDL_SetRenderDrawColor(ren_, 52, 74, 96, 255); SDL_RenderFillRectF(ren_, &it); }
             std::string t = opts[i];
             if (int(t.size()) > maxCh && maxCh > 0) t = t.substr(0, size_t(maxCh));
             drawBlockText(ren_, t, it.x + 6 * u_, it.y + (itemH - 7 * dpx) / 2, dpx,
                           int(i) == sel ? SDL_Color{215, 235, 245, 255} : SDL_Color{200, 205, 220, 255});
         }
+        SDL_RenderSetClipRect(ren_, nullptr);
     }
 }
 

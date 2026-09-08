@@ -72,6 +72,12 @@ private:
     void layout(int winW, int winH);
     void commit(Control& c, float mx);            // set a slider from a mouse x
 
+    // Geometry of the open dropdown `c`'s scrollable option list: its top `y0`, per-item
+    // height `itemH`, and visible viewport height `viewH` (capped to the panel so a long
+    // device list never runs past the footer). Also clamps dropScroll_ to the overflow,
+    // so input hit-testing, the wheel handler, and render() all agree frame-to-frame.
+    void dropViewport(const Control& c, int nOpts, float& y0, float& itemH, float& viewH);
+
     // True when every setting DEFAULTS would reset already equals its default value
     // (playerName / lastMap are preserved by DEFAULTS, so they're excluded).
     bool atDefaults() const {
@@ -93,6 +99,7 @@ private:
     float contentH_ = 0;    // total laid-out content height
     int drag_ = -1;         // index of the slider being dragged, or -1
     int openDrop_ = -1;     // index of the open Dropdown control (-1 = none)
+    float dropScroll_ = 0;  // scroll offset (px) INSIDE the open dropdown's option list
     float u_ = 1.0f;        // layout unit (scaled to window)
     SDL_FRect panel_{};     // the panel rect (for scroll clamping)
     SDL_FRect defaultsRect_{}, saveRect_{}, backRect_{};   // footer buttons (filled by layout())
