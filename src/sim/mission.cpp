@@ -49,7 +49,7 @@ MissionScript::MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node
         std::fprintf(stderr, "mission: cob load failed (%s): %s\n", origin_.c_str(), e.what());
         return;
     }
-    vm_ = std::make_unique<cob::Vm>(cob_);
+    vm_ = std::make_unique<cob::Vm>(cob_, /*deterministicRand=*/true);   // hashed: mission RAND must be lockstep-identical
     vm_->onMapCommand = [this](int nameIdx, const std::vector<int32_t>& a) {
         return mapCommand(*world_, nameIdx, a);
     };

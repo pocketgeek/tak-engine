@@ -1076,7 +1076,7 @@ void World::tickTransport(Unit& u, float dt) {
         Unit* t = unit(o.targetId);
         if (!t || !t->alive() || !t->type ||
             int(t->cargo.size()) >= t->type->transportCap) {
-            u.orders.pop_front();
+            u.orders.erase(u.orders.begin());
             return;
         }
         float dx = t->x - u.x, dz = t->z - u.z;
@@ -1112,7 +1112,7 @@ void World::tickTransport(Unit& u, float dt) {
         Unit* c = unit(id);
         return !c || !c->inTransport;
     });
-    if (u.cargo.empty()) u.orders.pop_front();
+    if (u.cargo.empty()) u.orders.erase(u.orders.begin());
 }
 
 void World::attackMove(int unitId, float x, float z, bool queue) {
@@ -1399,7 +1399,7 @@ void World::tickCombat(Unit& u, float dt) {
                 return;                         // no clear shot: don't acquire it
             bestD = d; best = e.id;
         });
-        if (best) u.orders.push_front({0, 0, best});
+        if (best) u.orders.insert(u.orders.begin(), {0, 0, best});
     }
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
 
@@ -1407,7 +1407,7 @@ void World::tickCombat(Unit& u, float dt) {
         Order& o = u.orders.front();
         Unit* t = unit(o.targetId);
         if (!t || !t->alive()) {
-            u.orders.pop_front();
+            u.orders.erase(u.orders.begin());
             return;
         }
         o.x = t->x;
@@ -1420,7 +1420,7 @@ void World::tickCombat(Unit& u, float dt) {
 
     Unit* target = unit(u.orders.front().targetId);
     if (!target || !target->alive()) {
-        u.orders.pop_front();
+        u.orders.erase(u.orders.begin());
         return;
     }
     float dx = target->x - u.x, dz = target->z - u.z;
@@ -1448,7 +1448,7 @@ void World::tickCombat(Unit& u, float dt) {
                               std::max(u.type->footX, u.type->footZ) / 2,
                               std::max(target->type->footX, target->type->footZ) / 2);
     if (!u.type->canMove && dist > best) {      // static units can't chase
-        u.orders.pop_front();
+        u.orders.erase(u.orders.begin());
         return;
     }
     if (dist > best * 0.95f || (!los && u.type->canMove)) {
@@ -1507,7 +1507,7 @@ void World::tickCombat(Unit& u, float dt) {
             target->hp = std::max(target->hp, target->type->maxHp * 0.5f);
             target->lastHitBy = 0;
             u.captureProg = 0;
-            u.orders.pop_front();   // done with this one
+            u.orders.erase(u.orders.begin());   // done with this one
         }
     }
 }
@@ -1732,7 +1732,7 @@ void World::tickReclaim(Unit& b, float dt) {
         b.reclaimId = 0;
         while (!b.reclaimQueue.empty()) {
             int nid = b.reclaimQueue.front();
-            b.reclaimQueue.pop_front();
+            b.reclaimQueue.erase(b.reclaimQueue.begin());
             const Feature* nf = feature(nid);
             if (nf && nf->alive) { b.reclaimId = nid; order(b.id, nf->x, nf->z, false); break; }
         }
@@ -1878,7 +1878,7 @@ void World::tickConstruction(Unit& b, float dt) {
         while (Unit* nb = unit(bid)) {
             if (nb->buildOrders.empty()) break;
             BuildOrder o = nb->buildOrders.front();
-            nb->buildOrders.pop_front();
+            nb->buildOrders.erase(nb->buildOrders.begin());
             if (startBuild(bid, o.type, o.x, o.z) != 0) break;
         }
     }
@@ -2177,7 +2177,7 @@ void World::tickProduction(Unit& u, float dt) {
         return;
     }
     u.buildProgress = 0;
-    u.buildQueue.pop_front();
+    u.buildQueue.erase(u.buildQueue.begin());
     // spawn() may reallocate units_, invalidating `u`; capture the id and re-fetch.
     int producerId = u.id, player = u.player;
     int id = spawn(t, sx, sz, 3.14159f, player);
@@ -2470,7 +2470,7 @@ void World::tick(float dt) {
             // SetMission "w N": hold position while the scripted wait counts down.
             u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
             u.orders.front().wait -= dt;
-            if (u.orders.front().wait <= 0.0f) u.orders.pop_front();
+            if (u.orders.front().wait <= 0.0f) u.orders.erase(u.orders.begin());
         } else if (u.orders.front().waitAttack) {
             // SetMission "wa": ambush -- hold until a non-allied unit is within sight,
             // then release to the next order (usually an attack).
@@ -2482,7 +2482,7 @@ void World::tick(float dt) {
                     float dx = e.x - u.x, dz = e.z - u.z;
                     if (dx * dx + dz * dz <= sight * sight) { threat = true; break; }
                 }
-            if (threat) u.orders.pop_front();
+            if (threat) u.orders.erase(u.orders.begin());
         } else {
             const Order& o = u.orders.front();
             float dx = o.x - u.x, dz = o.z - u.z;
@@ -2495,7 +2495,7 @@ void World::tick(float dt) {
             if (dist < arrive) {
                 if (o.targetId == 0) {
                     Order done = o;
-                    u.orders.pop_front();
+                    u.orders.erase(u.orders.begin());
                     if (done.patrol) u.orders.push_back(done);
                 }
                 continue;

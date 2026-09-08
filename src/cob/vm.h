@@ -35,8 +35,16 @@ class Vm {
 public:
     // The bytecode is immutable and shared: every unit of a type references ONE
     // parsed File (some are 60-140KB of code words) instead of owning a copy.
-    explicit Vm(std::shared_ptr<const File> file);
-    explicit Vm(File file) : Vm(std::make_shared<const File>(std::move(file))) {}
+    //
+    // `deterministicRand`: the RAND opcode's RNG. false (default) = a tiny 8-byte
+    // PRNG -- used by the client's per-unit animation VMs, whose RAND is purely
+    // cosmetic (never hashed), which is what keeps a Vm from carrying a 5 KB
+    // std::mt19937 x tens of thousands of units. true = the exact retail mt19937
+    // sequence, for a VM whose RAND CAN feed hashed sim state (the mission
+    // god-script runner) so lockstep stays byte-identical.
+    explicit Vm(std::shared_ptr<const File> file, bool deterministicRand = false);
+    explicit Vm(File file, bool deterministicRand = false)
+        : Vm(std::make_shared<const File>(std::move(file)), deterministicRand) {}
 
     // Start a script by name with integer args; returns false if unknown.
     bool start(const std::string& script, const std::vector<int32_t>& args = {});
@@ -93,7 +101,20 @@ private:
     bool ticking_ = false;
     bool anyMotion_ = false;   // any piece has a live move/turn/spin (gates the sweep)
     float now_ = 0;
-    std::mt19937 rng_{12345};
+    // RAND state. `detRng_` (a lazily-built mt19937 seeded 12345) is only used when
+    // deterministicRand was requested -- so an ordinary animation VM carries just the
+    // 8-byte xorshift `rng_` and a null pointer, not a 5 KB Mersenne Twister.
+    uint64_t rng_ = 12345;
+    bool detRand_ = false;
+    std::unique_ptr<std::mt19937> detRng_;
+    uint32_t nextRand() {
+        if (detRand_) {
+            if (!detRng_) detRng_ = std::make_unique<std::mt19937>(12345);
+            return uint32_t((*detRng_)());
+        }
+        rng_ ^= rng_ << 13; rng_ ^= rng_ >> 7; rng_ ^= rng_ << 17;   // xorshift64
+        return uint32_t(rng_);
+    }
 };
 
 } // namespace tak::cob

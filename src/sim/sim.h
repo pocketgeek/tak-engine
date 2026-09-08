@@ -253,15 +253,20 @@ struct Unit {
     float conjureRate = 0;     // site: hp/sec the last builder added; drives decay
     bool  beingBuilt = false;  // site: transient -- a builder worked it this tick
     int buildSiteId = 0;   // builder: id of the building it is constructing
-    std::deque<BuildOrder> buildOrders;   // builder: queued (shift) builds
+    // These queues hold at most a handful of entries and are edited only on order
+    // completion (not in a hot inner loop), so std::vector -- which allocates NOTHING
+    // when empty, unlike std::deque's eager ~576-byte control block -- is both the
+    // memory-lean and the faster choice; front-pops become erase(begin()). Element
+    // order (all that stateHash folds in) is preserved, so lockstep is byte-identical.
+    std::vector<BuildOrder> buildOrders;   // builder: queued (shift) builds
     int reclaimId = 0;                 // builder: feature being reclaimed (0 = none)
-    std::deque<int> reclaimQueue;      // builder: queued area-reclaim feature ids
+    std::vector<int> reclaimQueue;     // builder: queued area-reclaim feature ids
     int repairId = 0;                  // builder: damaged friendly being repaired (0 = none)
     int inTransport = 0;   // id of carrying transport, 0 = none
     std::vector<int> cargo;
-    std::deque<Order> orders;
+    std::vector<Order> orders;
     // Production (buildings with a build tree).
-    std::deque<const UnitType*> buildQueue;
+    std::vector<const UnitType*> buildQueue;
     float buildProgress = 0;   // seconds of work done on queue front
     int justBuilt = 0;         // unit id produced this tick (viewer hook), else 0
     const UnitType* repeatType = nullptr;   // infinite production: re-queue when idle

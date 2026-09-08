@@ -32,7 +32,8 @@ float angTowards(float cur, float target, float step) {
 
 } // namespace
 
-Vm::Vm(std::shared_ptr<const File> file) : file_(std::move(file)) {
+Vm::Vm(std::shared_ptr<const File> file, bool deterministicRand)
+    : file_(std::move(file)), detRand_(deterministicRand) {
     statics_.assign(file_->numStatics + 8, 0);
     pieces_.assign(file_->pieces.size(), PieceState{});
 }
@@ -168,7 +169,7 @@ void Vm::run(Thread& t) {
             case 0x10041000: {                                                // RAND
                 int32_t hi = pop(t), lo = pop(t);
                 if (hi < lo) std::swap(hi, lo);
-                push(t, lo + int32_t(rng_() % uint32_t(hi - lo + 1)));
+                push(t, lo + int32_t(nextRand() % uint32_t(hi - lo + 1)));
                 t.pc += 1; break;
             }
             case 0x10042000: {                                                // GET_UNIT_VALUE
