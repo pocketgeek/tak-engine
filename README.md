@@ -105,8 +105,9 @@ Every stage is complete:
    draw calls; and each unit's walk/fly cycle is baked to an **animated sprite
    sheet** (16 facings, real cycle timing) drawn as a single quad — the classic
    RTS trick — with the full 3D model kept for close-ups and attack/death poses.
-   The sim is O(n) (spatial-hash neighbour queries, staggered acquisition), so a
-   thousand-unit battle is CPU-cheap too.
+   The sim is O(n) (spatial-hash neighbour queries, staggered acquisition, parallel
+   flow-field building, crowd-adaptive work caps), so even battles of tens of
+   thousands of units stay tractable.
 
 ## Building
 
@@ -194,10 +195,15 @@ of five **difficulty levels** in the lobby:
 | Difficulty | Behaviour |
 | --- | --- |
 | **Passive** | turtles and only *defends* — builds an army but never marches out |
-| **Easy** | slow to build up, attacks late in small groups |
-| **Normal** | balanced economy and pressure |
-| **Hard** | reacts fast, pushes bigger armies, attacks early |
-| **Absurd** | Hard, plus **double mana income** from every source — an economic juggernaut |
+| **Easy** | slow to build up; no harassment, then commits a single army late |
+| **Normal** | harasses with small **raiding parties** while massing a main army sized to its mana income |
+| **Hard** | reacts fast; raids early, but **holds its big attack** until it has a large army relative to its income |
+| **Absurd** | Hard, plus **double mana income** from every source — an economic juggernaut (so its army threshold is huge) |
+
+From **Normal** up the AI doesn't trickle units in: it peels off a few for **raids**
+to pressure and scout, and holds the main force back until it's massed a decisive army
+scaled to its mana income, then commits it — re-mustering the next wave afterward.
+(Easy skips the raids and just gathers one army.)
 
 Each side begins with **only its Monarch**, dropped on the map's real start positions
 (from the `.ota`). The Monarch trickles mogrium and builds the first lodestones and
@@ -206,11 +212,12 @@ needs-based build plan (economy → a factory → army). In a god-enabled match,
 whose priests (`attractsgods` units) have channelled enough mana favour manifests its
 **god** once the appear time passes.
 
-Audio, display, camera, and rendering preferences — anti-aliasing, **bilinear
-filtering** (retail's smooth-scaling video option), the distance-impostor **LOD**,
-the **unit-sprite** mode, **health bars** (off / damaged / always), and the
-**build-menu alignment** (left / center / right) — are set in the in-game
-**Options** screen (Esc → Options) and persisted per user.
+Audio (master / music / SFX volumes + per-speaker trim), display, camera, and
+rendering preferences — anti-aliasing, **bilinear filtering** (retail's
+smooth-scaling video option), the distance-impostor **LOD**, the **unit-sprite**
+mode, **health bars** (off / damaged / always), and the **build-menu alignment**
+(left / center / right) and **scale** — are set in the in-game **Options** screen
+(Esc → Options) and persisted per user.
 
 ### Command line
 
@@ -281,7 +288,9 @@ identical sim with only ~35-byte commands on the wire.
 - **Referee sim.** With `--data`, the server also runs a referee simulation that
   hosts the AI players (so no host machine is loaded by them) and holds the
   canonical state hash every client is checked against. Without `--data` it's a
-  pure relay and clients cross-check hashes among themselves.
+  pure relay and clients cross-check hashes among themselves. A server hosting
+  several games at once ticks their sims **in parallel** across CPU cores (games
+  are independent), while a single game keeps its intra-tick worker parallelism.
 - **Game-data agreement.** Every peer fingerprints the gameplay data its sim will
   read (`hpi::gameplayHash`: unit/weapon/side/build/feature files, never maps or
   cosmetics) and sends it in the handshake. The server rejects anyone whose
@@ -290,14 +299,17 @@ identical sim with only ~35-byte commands on the wire.
   of desyncing mid-game. Cosmetic (`cosmetic`-tier) overrides don't change the
   fingerprint, so players can keep their own art and sound.
 - **Lobby.** The in-client lobby has a game browser, a create-game dialog
-  (name/password/map, crusades & gods toggles), and a room where each player
-  picks faction, colour, and team and readies up; the host opens/closes slots,
-  kicks, and starts. The host also sets the **unit cap** — the per-player live-unit
-  limit (250 / 500 / 1000 / 2000 / 5000, default 2000; production and new builds
-  stall a player once they reach it) — and can **allow in-game speed changes** so
-  the host's **+/−** keys re-cadence the match live (0.5×–4×). Speed only changes
-  how fast ticks happen in wall-clock — the per-tick `dt` is fixed — so the sim
-  stays bit-identical and deterministic.
+  (name/password/map; **crusades**, **gods**, and **Monarch Expendable** toggles),
+  and a room where each player picks faction, colour, and team and readies up; the
+  host opens/closes slots, kicks, and starts. **Monarch Expendable** is the loss
+  rule: *off* (the retail commander rule) means losing your Monarch loses you the
+  game even if other units survive; *on* makes the Monarch just another unit. The
+  host also sets the **unit cap** — the per-player live-unit limit (250 / 500 /
+  1000 / 2000 / 5000, default 2000; production and new builds stall a player once
+  they reach it) — and can **allow in-game speed changes** so the host's **+/−**
+  keys re-cadence the match live (0.5×–4×). Speed only changes how fast ticks
+  happen in wall-clock — the per-tick `dt` is fixed — so the sim stays bit-identical
+  and deterministic.
 - **Cross-build determinism.** The sim's trig is routed through a
   deterministic-math shim (`src/sim/detmath`), so lockstep holds across
   compilers and CPUs, not just the same binary. Everyone still needs the same
@@ -307,7 +319,11 @@ identical sim with only ~35-byte commands on the wire.
   forfeit deterministically.
 - **Spectate.** A running game can be **watched live** from the browser (the
   **WATCH** button): the spectator replays the bundle log to the present, then
-  follows along with no fog and no control.
+  follows along with no fog, no control, and a radar that shows every unit.
+  Single-player has its own spectate mode too — flip **SPECTATE (WATCH AIS)** in
+  the SP lobby and every slot fills with a random-faction AI to just watch them
+  fight (there's even a **STRESS TEST** toggle that starts each AI at ~95 % of the
+  unit cap, for load-testing the sim).
 
 See `docs/multiplayer-design.md` for the full design, and `docs/detmath-scope.md`
 for the determinism contract. (The old 2-player `--host`/`--join` peer mode is
@@ -344,19 +360,22 @@ fingerprint, so under `full` every player must share the same ones.
 | --- | --- |
 | `src/hpi/` | HPI archive reader (TAK's revised format vs. classic TA) |
 | `src/gaf/` | GAF/TAF sprite, animation, and font decoding |
+| `src/video/` | `.bik` (Bink Video) decoding for the menu door clips (FFmpeg-backed) |
 | `src/tnt/` | TNT map decoding |
 | `src/tdo/` | 3DO model loading |
 | `src/cob/` | COB script bytecode VM (unit animation/scripting) |
 | `src/tdf/` | TDF/FBI/OTA text-config parsing |
 | `src/crt/` | `.crt` scenario/trigger parsing |
+| `src/campaign/` | campaign spine (`camps/*.tdf`) + in-sim mission/god-script runner |
 | `src/sim/` | deterministic simulation (movement, A* pathing, combat, economy) |
 | `src/net/` | multiplayer wire format, framed TCP, client protocol |
 | `src/server/` | `takserver`, the headless lobby + lockstep relay |
 | `src/ai/` | the skirmish AI (server-portable; emits commands) |
 | `src/terrain/` | terrain / palette handling |
 | `src/util/` | shared helpers |
+| `src/gui/` | retail `.gui` HUD/gadget layout parsing |
 | `src/client/` | the SDL2 app (`takclient`: asset viewer + game) |
-| `tools/` | CLI format tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`) |
+| `tools/` | CLI format tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`, `missiontool`, `biktool`) |
 | `docs/` | format notes + reverse-engineering findings (`retail-engine.md` = the `KINGDOMS.icd` disassembly) |
 
 ## License
