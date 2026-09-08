@@ -129,11 +129,30 @@ if(FFMPEG_FOUND)
   target_compile_definitions(tak_ffmpeg INTERFACE TAK_HAVE_FFMPEG)
   if(TAK_STATIC_FFMPEG)
     target_include_directories(tak_ffmpeg INTERFACE ${FFMPEG_STATIC_INCLUDE_DIRS})
-    # --start/--end-group makes the circular FFmpeg archives resolve regardless of order
-    # (GNU ld / MinGW). Apple's ld does multi-pass, so pass the flags straight through.
     if(APPLE)
-      target_link_libraries(tak_ffmpeg INTERFACE ${FFMPEG_STATIC_LDFLAGS})
+      # pkg-config lists macOS frameworks as the two tokens "-framework" "CoreVideo";
+      # a plain link-libraries list would turn the bare "CoreVideo" into -lCoreVideo
+      # (ld: library 'CoreVideo' not found). Re-pair each into a SHELL: link option so
+      # both tokens reach the linker intact, and link the -L/-l rest normally. (Apple's
+      # ld is multi-pass, so the circular archives need no --start-group.)
+      set(_ff_rest "")
+      list(LENGTH FFMPEG_STATIC_LDFLAGS _ff_n)
+      set(_ff_i 0)
+      while(_ff_i LESS _ff_n)
+        list(GET FFMPEG_STATIC_LDFLAGS ${_ff_i} _ff_tok)
+        if(_ff_tok STREQUAL "-framework")
+          math(EXPR _ff_i "${_ff_i}+1")
+          list(GET FFMPEG_STATIC_LDFLAGS ${_ff_i} _ff_fw)
+          target_link_options(tak_ffmpeg INTERFACE "SHELL:-framework ${_ff_fw}")
+        else()
+          list(APPEND _ff_rest "${_ff_tok}")
+        endif()
+        math(EXPR _ff_i "${_ff_i}+1")
+      endwhile()
+      target_link_libraries(tak_ffmpeg INTERFACE ${_ff_rest})
     else()
+      # --start/--end-group resolves the circular FFmpeg archives regardless of order
+      # (GNU ld / MinGW).
       target_link_libraries(tak_ffmpeg INTERFACE
         -Wl,--start-group ${FFMPEG_STATIC_LDFLAGS} -Wl,--end-group)
     endif()

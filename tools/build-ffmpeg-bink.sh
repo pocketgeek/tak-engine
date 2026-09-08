@@ -51,6 +51,8 @@ cd "$SRC"
   --disable-programs --disable-doc --disable-htmlpages --disable-manpages --disable-txtpages \
   --disable-everything --disable-network --disable-autodetect --disable-asm --disable-debug \
   --disable-iconv --disable-zlib --disable-bzlib --disable-lzma --disable-sdl2 \
+  --disable-videotoolbox --disable-audiotoolbox --disable-avfoundation \
+  --disable-coreimage --disable-appkit --disable-securetransport \
   --enable-swscale --enable-swresample \
   --enable-demuxer=bink \
   --enable-decoder=bink,binkaudio_dct,binkaudio_rdft \
