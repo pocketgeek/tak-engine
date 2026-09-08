@@ -54,7 +54,7 @@ cd "$SRC"
   --enable-swscale --enable-swresample \
   --enable-demuxer=bink \
   --enable-decoder=bink,binkaudio_dct,binkaudio_rdft \
-  "${cross_args[@]}"
+  ${cross_args[@]+"${cross_args[@]}"}   # 3.2-safe empty-array expansion (macOS ships Bash 3.2)
 
 make -j"$JOBS"
 make install
