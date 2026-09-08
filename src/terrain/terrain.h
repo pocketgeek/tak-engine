@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,8 @@ public:
     jpeg::Image renderMap(const tnt::Map& map);
 
     // Render one 32px block into `dst` (RGBA, dstW px wide) at (dx, dy).
+    // Thread-safe: the decoded-tile cache is guarded, so background chunk/minimap
+    // builders and the main thread may composite concurrently.
     void renderBlock(const tnt::Map& map, int bx, int by,
                      std::vector<uint8_t>& dst, int dstW, int dx, int dy);
 
@@ -31,6 +34,7 @@ private:
     const jpeg::Image& section(uint32_t key);
 
     const hpi::Vfs* vfs_ = nullptr;
+    std::mutex mu_;                           // guards cache_ (see renderBlock)
     std::map<uint32_t, jpeg::Image> cache_;   // key -> decoded section (lazy)
 };
 

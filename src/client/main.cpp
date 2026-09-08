@@ -59,6 +59,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -173,12 +174,31 @@ void screenshot(SDL_Renderer* ren, int w, int h, const std::string& path) {
 class MapView {
 public:
     MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& mapPath)
-        : ren_(ren), map_(tak::tnt::Map::load(vfs.read(mapPath), mapPath)), comp_(vfs) {}
+        : ren_(ren), map_(tak::tnt::Map::load(vfs.read(mapPath), mapPath)), comp_(vfs) {
+        chunkWorker_ = std::thread([this] { chunkWorkerLoop(); });
+    }
+
+    ~MapView() {
+        {
+            std::lock_guard<std::mutex> lk(chunkMu_);
+            chunkStop_ = true;
+        }
+        chunkCv_.notify_all();
+        if (chunkWorker_.joinable()) chunkWorker_.join();
+    }
 
     // Swap in a different map (discarding cached chunk textures). The compositor's
     // decoded-tile cache is content-addressed by tile key, so it stays valid. Used at
     // game start so the render terrain matches the map the sim actually loaded.
     void reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
+        // Quiesce the chunk worker first: it reads map_, which is about to be swapped.
+        {
+            std::unique_lock<std::mutex> lk(chunkMu_);
+            chunkQueue_.clear();
+            chunkCv_.wait(lk, [this] { return !chunkBusy_; });
+            chunkDone_.clear();      // stale composites of the OLD map
+            chunkPending_.clear();
+        }
         for (auto& [k, t] : chunks_) if (t) SDL_DestroyTexture(t);
         chunks_.clear();
         map_ = tak::tnt::Map::load(vfs.read(mapPath), mapPath);
@@ -239,11 +259,31 @@ public:
 
     void ensureChunks(int winW, int winH) {
         clampOffset(winW, winH);
+        uploadReadyChunks();   // adopt whatever the worker finished since last frame
         int c0x = int(offX_) / kChunk, c0y = int(offY_) / kChunk;
         int c1x = int(offX_ + winW / zoom_) / kChunk, c1y = int(offY_ + winH / zoom_) / kChunk;
+        // Queue visible chunks first, then a one-chunk prefetch ring so scrolling
+        // usually meets terrain that is already composited. The worker JPEG-decodes
+        // + composites off-thread; missing chunks draw as nothing for a frame or
+        // two instead of freezing the main thread (a big cold view used to stall
+        // 200-400ms right as the world appeared).
         for (int cy = c0y; cy <= c1y; ++cy)
             for (int cx = c0x; cx <= c1x; ++cx)
-                chunk(cx, cy);
+                requestChunk(cx, cy);
+        for (int cy = c0y - 1; cy <= c1y + 1; ++cy)
+            for (int cx = c0x - 1; cx <= c1x + 1; ++cx)
+                if (cy < c0y || cy > c1y || cx < c0x || cx > c1x)
+                    requestChunk(cx, cy);
+    }
+
+    // Block until every queued chunk is composited and uploaded. Screenshot paths
+    // only -- normal play never waits.
+    void finishChunks() {
+        {
+            std::unique_lock<std::mutex> lk(chunkMu_);
+            chunkCv_.wait(lk, [this] { return chunkQueue_.empty() && !chunkBusy_; });
+        }
+        uploadReadyChunks();
     }
 
     void draw(int winW, int winH) {
@@ -253,8 +293,9 @@ public:
         int c1x = int(offX_ + winW / zoom_) / kChunk, c1y = int(offY_ + winH / zoom_) / kChunk;
         for (int cy = c0y; cy <= c1y; ++cy)
             for (int cx = c0x; cx <= c1x; ++cx) {
-                SDL_Texture* t = chunk(cx, cy);
-                if (!t) continue;
+                auto it = chunks_.find(std::make_pair(cx, cy));
+                SDL_Texture* t = it != chunks_.end() ? it->second : nullptr;
+                if (!t) continue;   // still compositing: pops in a frame or two
                 // Integer-rounded edges so adjacent chunks always abut.
                 int x0 = int(std::lround((cx * kChunk - offX_) * zoom_));
                 int y0 = int(std::lround((cy * kChunk - offY_) * zoom_));
@@ -277,32 +318,78 @@ public:
 private:
     static constexpr int kChunk = 512;
 
-    SDL_Texture* chunk(int cx, int cy) {
+    // Queue a chunk for background compositing (no-op if built, queued, or off-map).
+    void requestChunk(int cx, int cy) {
         int bx0 = cx * kChunk / 32, by0 = cy * kChunk / 32;
-        if (bx0 >= map_.blocksX || by0 >= map_.blocksY || cx < 0 || cy < 0) return nullptr;
+        if (bx0 >= map_.blocksX || by0 >= map_.blocksY || cx < 0 || cy < 0) return;
         auto key = std::make_pair(cx, cy);
-        auto it = chunks_.find(key);
-        if (it != chunks_.end()) return it->second;
+        if (chunks_.count(key)) return;
+        std::lock_guard<std::mutex> lk(chunkMu_);
+        if (!chunkPending_.insert(key).second) return;   // already queued/in flight
+        chunkQueue_.push_back(key);
+        chunkCv_.notify_one();
+    }
 
-        std::vector<uint8_t> buf(size_t(kChunk) * kChunk * 4, 0);
-        int nb = kChunk / 32;
-        for (int y = 0; y < nb; ++y)
-            for (int x = 0; x < nb; ++x) {
-                int bx = bx0 + x, by = by0 + y;
-                if (bx >= map_.blocksX || by >= map_.blocksY) continue;
-                comp_.renderBlock(map_, bx, by, buf, kChunk, x * 32, y * 32);
-            }
-        SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
-                                           SDL_TEXTUREACCESS_STATIC, kChunk, kChunk);
-        SDL_UpdateTexture(t, nullptr, buf.data(), kChunk * 4);
-        chunks_[key] = t;
-        return t;
+    // Main thread: turn finished composites into textures (texture creation must
+    // stay on the render thread; the CPU buffers were filled by the worker).
+    void uploadReadyChunks() {
+        std::vector<DoneChunk> done;
+        {
+            std::lock_guard<std::mutex> lk(chunkMu_);
+            done.swap(chunkDone_);
+            for (const auto& d : done) chunkPending_.erase(std::make_pair(d.cx, d.cy));
+        }
+        for (auto& d : done) {
+            auto key = std::make_pair(d.cx, d.cy);
+            if (chunks_.count(key)) continue;
+            SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                               SDL_TEXTUREACCESS_STATIC, kChunk, kChunk);
+            SDL_UpdateTexture(t, nullptr, d.buf.data(), kChunk * 4);
+            chunks_[key] = t;
+        }
+    }
+
+    // Worker thread: composite queued chunks into CPU buffers. Reads map_ and comp_
+    // only (comp_ locks its own tile cache; reload() quiesces this thread before
+    // swapping map_). Never touches SDL or chunks_.
+    void chunkWorkerLoop() {
+        std::unique_lock<std::mutex> lk(chunkMu_);
+        for (;;) {
+            chunkCv_.wait(lk, [this] { return chunkStop_ || !chunkQueue_.empty(); });
+            if (chunkStop_) return;
+            auto [cx, cy] = chunkQueue_.front();
+            chunkQueue_.pop_front();
+            chunkBusy_ = true;
+            lk.unlock();
+            DoneChunk d{cx, cy, std::vector<uint8_t>(size_t(kChunk) * kChunk * 4, 0)};
+            int bx0 = cx * kChunk / 32, by0 = cy * kChunk / 32;
+            int nb = kChunk / 32;
+            for (int y = 0; y < nb; ++y)
+                for (int x = 0; x < nb; ++x) {
+                    int bx = bx0 + x, by = by0 + y;
+                    if (bx >= map_.blocksX || by >= map_.blocksY) continue;
+                    comp_.renderBlock(map_, bx, by, d.buf, kChunk, x * 32, y * 32);
+                }
+            lk.lock();
+            chunkBusy_ = false;
+            chunkDone_.push_back(std::move(d));
+            chunkCv_.notify_all();   // reload()/finishChunks() may be waiting
+        }
     }
 
     SDL_Renderer* ren_;
     tak::tnt::Map map_;
     tak::terrain::Compositor comp_;
     std::map<std::pair<int, int>, SDL_Texture*> chunks_;
+    // Async chunk pipeline (see chunkWorkerLoop).
+    struct DoneChunk { int cx, cy; std::vector<uint8_t> buf; };
+    std::thread chunkWorker_;
+    std::mutex chunkMu_;
+    std::condition_variable chunkCv_;
+    std::deque<std::pair<int, int>> chunkQueue_;
+    std::set<std::pair<int, int>> chunkPending_;   // queued or in flight
+    std::vector<DoneChunk> chunkDone_;
+    bool chunkStop_ = false, chunkBusy_ = false;
     float offX_ = 0, offY_ = 0, zoom_ = 0.35f;
     float zoomSpeed_ = 1.0f;   // wheel-zoom sensitivity exponent (Options)
 };
@@ -1347,6 +1434,8 @@ public:
         return tak::sim::parseStartPositions(vfs_, mapPath_);
     }
 
+    ~GameView() { resetMinimap(); }   // join the async minimap crunch before members die
+
     GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,
              const std::string& installRoot, tak::hpi::OverridePolicy policy,
              bool demo, bool scenario, bool mission,
@@ -2382,6 +2471,7 @@ public:
         // lockstep with no relayed actions. See docs/campaign-design.md.
         if (!room.mission.empty()) {
             mapPath_ = "missions/" + room.mission + ".tnt";
+            resetMinimap();   // its thread reads the map being swapped
             mapView_.reload(vfs_, mapPath_);
             int human = 0;
             tak::sim::setupMission(world_, registry_, vfs_, room.mission, human);
@@ -2422,6 +2512,7 @@ public:
         // Without this, picking a non-default map drew the launch map's terrain under a
         // different map's sim -- phantom water, a monarch out in it, and misaligned fog.
         if (std::string rp = tak::hpi::findMap(vfs_, room.mapId); !rp.empty()) mapPath_ = rp;
+        resetMinimap();   // its thread reads the map being swapped
         mapView_.reload(vfs_, mapPath_);
         tak::sim::MatchConfig cfg;
         cfg.vfs = &vfs_;
@@ -6387,6 +6478,31 @@ private:
     static constexpr SDL_Color kFightMoveTint{255, 90, 80, 255};
     SDL_Texture* fogTex_ = nullptr;
     SDL_Texture* miniTex_ = nullptr;
+    // Async minimap crunch (see buildMinimap): thread + handoff buffer.
+    std::thread miniThread_;
+    std::mutex miniMu_;
+    std::vector<uint8_t> miniPix_;
+    bool miniBuilding_ = false, miniReady_ = false;
+
+    // Screenshot path only: block until terrain chunks and the minimap are done so
+    // a capture never shows half-composited scenery. Normal play never waits.
+public:
+    void finishTerrain() {
+        mapView_.finishChunks();
+        for (int i = 0; i < 1000 && !miniTex_; ++i) {   // adopt once the crunch lands
+            buildMinimap();
+            if (!miniTex_) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+private:
+    // Join the minimap thread and drop its output -- required before the map it
+    // reads is swapped (mapView_.reload) and at teardown.
+    void resetMinimap() {
+        if (miniThread_.joinable()) miniThread_.join();
+        miniBuilding_ = miniReady_ = false;
+        miniPix_.clear();
+        if (miniTex_) { SDL_DestroyTexture(miniTex_); miniTex_ = nullptr; }
+    }
     SDL_Texture* panelTex_ = nullptr;
     int panelW_ = 0, panelH_ = 0;
     SDL_Texture* botTex_ = nullptr;
@@ -6444,26 +6560,48 @@ private:
         return {float(winW) - miniSize() - 10, 10, float(miniSize()), float(miniSize()) * aspect};
     }
 
+    // Build the minimap WITHOUT stalling the first frame: averaging every block
+    // decodes every terrain tile on the map (hundreds of ms cold), so the crunch
+    // runs on a background thread and the texture is adopted when it lands. Both
+    // call sites poll `if (!miniTex_) buildMinimap();` each frame already, which
+    // doubles as the completion poll; the minimap frame just paints empty briefly.
     void buildMinimap() {
-        int bw = mapView_.map().blocksX, bh = mapView_.map().blocksY;
-        std::vector<uint8_t> pix(size_t(bw) * bh * 4);
-        std::vector<uint8_t> block(32 * 32 * 4);
-        for (int bz = 0; bz < bh; ++bz)
-            for (int bx = 0; bx < bw; ++bx) {
-                mapView_.compositor().renderBlock(mapView_.map(), bx, bz, block, 32, 0, 0);
-                uint32_t r = 0, g = 0, b = 0;
-                for (size_t i = 0; i < block.size(); i += 4) {
-                    r += block[i]; g += block[i + 1]; b += block[i + 2];
+        if (miniBuilding_) {
+            std::lock_guard<std::mutex> lk(miniMu_);
+            if (!miniReady_) return;    // still crunching
+            int bw = mapView_.map().blocksX, bh = mapView_.map().blocksY;
+            miniTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                                         SDL_TEXTUREACCESS_STATIC, bw, bh);
+            SDL_UpdateTexture(miniTex_, nullptr, miniPix_.data(), bw * 4);
+            SDL_SetTextureScaleMode(miniTex_, SDL_ScaleModeLinear);
+            miniPix_.clear();
+            miniBuilding_ = false;
+            if (miniThread_.joinable()) miniThread_.join();
+            return;
+        }
+        miniBuilding_ = true;
+        miniReady_ = false;
+        if (miniThread_.joinable()) miniThread_.join();   // stale thread from a reload
+        miniThread_ = std::thread([this] {
+            int bw = mapView_.map().blocksX, bh = mapView_.map().blocksY;
+            std::vector<uint8_t> pix(size_t(bw) * bh * 4);
+            std::vector<uint8_t> block(32 * 32 * 4);
+            for (int bz = 0; bz < bh; ++bz)
+                for (int bx = 0; bx < bw; ++bx) {
+                    mapView_.compositor().renderBlock(mapView_.map(), bx, bz, block, 32, 0, 0);
+                    uint32_t r = 0, g = 0, b = 0;
+                    for (size_t i = 0; i < block.size(); i += 4) {
+                        r += block[i]; g += block[i + 1]; b += block[i + 2];
+                    }
+                    size_t n = block.size() / 4;
+                    uint8_t* p = &pix[(size_t(bz) * bw + bx) * 4];
+                    p[0] = uint8_t(r / n); p[1] = uint8_t(g / n); p[2] = uint8_t(b / n);
+                    p[3] = 255;
                 }
-                size_t n = block.size() / 4;
-                uint8_t* p = &pix[(size_t(bz) * bw + bx) * 4];
-                p[0] = uint8_t(r / n); p[1] = uint8_t(g / n); p[2] = uint8_t(b / n);
-                p[3] = 255;
-            }
-        miniTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
-                                     SDL_TEXTUREACCESS_STATIC, bw, bh);
-        SDL_UpdateTexture(miniTex_, nullptr, pix.data(), bw * 4);
-        SDL_SetTextureScaleMode(miniTex_, SDL_ScaleModeLinear);
+            std::lock_guard<std::mutex> lk(miniMu_);
+            miniPix_ = std::move(pix);
+            miniReady_ = true;
+        });
     }
 
     void drawMinimap(int winW, int winH) {
@@ -6473,7 +6611,7 @@ private:
         SDL_FRect frame{r.x - 2, r.y - 2, r.w + 4, r.h + 4};
         SDL_SetRenderDrawColor(ren_, 30, 30, 40, 255);
         SDL_RenderFillRectF(ren_, &frame);
-        SDL_RenderCopyF(ren_, miniTex_, nullptr, &r);
+        if (miniTex_) SDL_RenderCopyF(ren_, miniTex_, nullptr, &r);
         if (fogTex_) SDL_RenderCopyF(ren_, fogTex_, nullptr, &r);
 
         float mapW = float(mapView_.map().blocksX) * 32;
@@ -10624,9 +10762,20 @@ int main(int argc, char** argv) {
             static int frames = 0;
             bool ready = shotMsEnv ? (SDL_GetTicks64() - shotT0 >= uint64_t(std::atoi(shotMsEnv)))
                                    : (++frames >= 3);
+            static bool shotArmed = false;
             if (ready && ktPhase < 0) {
-                screenshot(ren, w, h, shot);
-                running = false;
+                // Terrain + minimap build asynchronously now: finish them, let the
+                // loop render ONE more frame with everything uploaded (this block
+                // runs after the frame's draw, so finishing here is too late for
+                // the current backbuffer), then capture on the next pass.
+                if (gameView) gameView->finishTerrain();
+                else if (mapView) mapView->finishChunks();
+                if (!shotArmed) {
+                    shotArmed = true;
+                } else {
+                    screenshot(ren, w, h, shot);
+                    running = false;
+                }
             }
         }
     }

@@ -29,6 +29,10 @@ const jpeg::Image& Compositor::section(uint32_t key) {
 
 void Compositor::renderBlock(const tnt::Map& map, int bx, int by,
                              std::vector<uint8_t>& dst, int dstW, int dx, int dy) {
+    // One coarse lock for lookup+decode+copy: `section` returns a reference into
+    // cache_, so the copy below must not race a rehash from another thread. The
+    // JPEG decode dominates the hold time and only ever runs once per tile.
+    std::lock_guard<std::mutex> lk(mu_);
     size_t b = size_t(by) * map.blocksX + bx;
     const jpeg::Image& img = section(map.tileKeys[b]);
     int sx = (map.tileCols[b] * kBlock) % std::max(img.width, 1);
