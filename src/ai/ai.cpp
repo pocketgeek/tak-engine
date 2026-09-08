@@ -32,17 +32,17 @@ DiffParams paramsFor(Difficulty d) {
     switch (d) {
         // Turtle: Easy's build-up, but never sends an attack wave -- it only defends
         // (idle units still auto-fire on anything that walks into range).
-        case Difficulty::Passive: return {60, 4, 1, 1, 70,  false, false};
+        case Difficulty::Passive: return {60, 4, 1, 70,  false, false};
         // Sluggish: reacts slowly, builds up slowly, and only commits once it has
         // gathered a sizeable group -- so it's passive and beatable.
-        case Difficulty::Easy:   return {60, 4, 1, 1, 70,  false, true};
+        case Difficulty::Easy:   return {60, 4, 1, 70,  false, true};
         // Fast, army-heavy, and aggressive: reacts often, attacks with small groups,
         // and pushes bigger unit limits.
-        case Difficulty::Hard:   return {20, 2, 3, 8, 150, true,  true};
+        case Difficulty::Hard:   return {20, 2, 8, 150, true,  true};
         // Hard's behaviour, plus a 2x income cheat applied to the sim (incomeMultFor).
-        case Difficulty::Absurd: return {20, 2, 3, 8, 150, true,  true};
+        case Difficulty::Absurd: return {20, 2, 8, 150, true,  true};
         case Difficulty::Normal:
-        default:                 return {30, 3, 2, 3, 100, true,  true};
+        default:                 return {30, 3, 3, 100, true,  true};
     }
 }
 
@@ -78,48 +78,111 @@ int Controller::countOf(const tak::sim::World& world, const std::string& id) con
     return n;
 }
 
-float Controller::manaRatio(const tak::sim::World& world) const {
-    const auto& tm = world.player(player_);
-    return tm.mana / std::max(tm.storage, 100.0f);
+// What is this unit FOR? Derived purely from its stats, so it works for every faction:
+//   Economy  - a structure that makes/holds mana (lodestone, mana storage)
+//   Factory  - a structure that trains units (keep, castle, hell)
+//   Defense  - any other structure (towers, walls)
+//   Builder  - a mobile unit that builds (Monarch, Dark Mason, priest)
+//   Army     - any other mobile unit (the combatants)
+BuildCat Controller::categoryOf(const tak::sim::UnitType* t) const {
+    if (t->isStructure()) {
+        if (!registry_.buildable(t->id).empty()) return BuildCat::Factory;
+        if (t->income > 0 || t->storage > 0) return BuildCat::Economy;
+        return BuildCat::Defense;
+    }
+    return t->isBuilder ? BuildCat::Builder : BuildCat::Army;
 }
 
-// Weighted-random pick over a producer's build menu (retail 0x412d00): a unit's
-// weight is its probability share; anything at its limit is excluded; army units
-// are scaled by econFactor (rich economy => more army). Skips structures the
-// economy can't yet fund so a builder never traps itself on a stalled site.
+// Count the empire by category and set the targets the planner steers toward.
+Needs Controller::assessNeeds(const tak::sim::World& world) const {
+    Needs n;
+    const auto& me = world.player(player_);
+    n.income = me.income / std::max(me.manaMult, 1.0f);   // ignore an Absurd AI's cheat
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player != player_ || !u.type) continue;
+        switch (categoryOf(u.type)) {
+            case BuildCat::Economy:  ++n.economy;   break;
+            case BuildCat::Factory:  ++n.factories; break;
+            case BuildCat::Builder:  ++n.builders;  break;
+            case BuildCat::Army:     ++n.army;      break;
+            case BuildCat::Defense:  break;
+        }
+    }
+    // One factory per ~40 income so production can actually spend what we earn; a couple
+    // of mobile builders is plenty (more just spiral the economy). Hard/Absurd run hotter.
+    n.desiredFactories = std::clamp(int(n.income / 40.0f) + 1, 1, 8);
+    n.builderCap = (diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd) ? 3 : 2;
+    return n;
+}
+
+// Priority of building one more of a category, given the empire's needs. Higher wins;
+// 0 means "have enough, don't". The ladder: guarantee production, floor the economy,
+// keep a few builders, grow economy/factories to match income, then army as the sink.
+int Controller::desire(BuildCat c, const Needs& n) const {
+    switch (c) {
+        case BuildCat::Economy:
+            // Bootstrap income BEFORE the pricey first factory -- building a 1700-mana
+            // keep out of the opening treasury with no income starves everything after.
+            if (n.income < 20.0f) return 95;
+            return n.income < 25.0f + 20.0f * n.factories ? 60 : 0; // sustain the factories
+        case BuildCat::Factory:
+            if (n.factories == 0) return 90;                        // then: some production
+            return n.factories < n.desiredFactories ? 70 : 0;       // scale with income
+        case BuildCat::Builder:
+            return n.builders < n.builderCap ? 65 : 0;              // a handful, then stop
+        case BuildCat::Army:
+            return 50;                                              // the default sink
+        case BuildCat::Defense:
+            return 0;                                               // (profile walls weight 0)
+    }
+    return 0;
+}
+
+// Pick what a producer should build: the most-needed category its menu can supply
+// (desire()), then a weighted-random draw WITHIN that category (profile weights, for
+// variety + retail flavour). A candidate must be affordable to finish and under its
+// difficulty-scaled limit. Returns nullptr if nothing worth building is affordable now.
 const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
                                                    const tak::sim::Unit& producer,
-                                                   int econFactor) {
+                                                   const Needs& needs) {
     const auto& menu = registry_.buildable(producer.type->id);
-    const tak::sim::UnitType* chosen = nullptr;
-    int total = 0;
-    // Plan against BASE income, not an Absurd AI's cheated 2x: the affordability gate
-    // should reason like Hard does, so the cheat shows up as builds finishing faster
-    // and never stalling -- not as the richer treasury luring the weighted pick onto
-    // pricey early buildings (which starved the army in testing).
     const auto& me = world.player(player_);
-    float income = me.income / std::max(me.manaMult, 1.0f);
-    for (const auto& id : menu) {
-        const auto* ut = registry_.find(id);
-        if (!ut) continue;
-        auto wi = profile_.weight.find(id);
+    float income = me.income / std::max(me.manaMult, 1.0f);   // plan against base income
+    // A menu entry the AI may build right now: has a positive weight, is under its
+    // limit, and savings + income over its build time cover the cost (so a builder
+    // never traps itself on a site the mana runs dry beneath).
+    auto usable = [&](const tak::sim::UnitType* ut) -> int {
+        if (!ut) return 0;
+        auto wi = profile_.weight.find(ut->id);
         int w = wi == profile_.weight.end() ? 0 : wi->second;
-        if (w <= 0) continue;
-        auto li = profile_.limit.find(id);
+        if (w <= 0) return 0;
+        auto li = profile_.limit.find(ut->id);
         int lim = li == profile_.limit.end() ? -1 : li->second;
-        // Difficulty scales the hard caps: Hard fields bigger armies, Easy smaller.
-        if (lim >= 0 && countOf(world, id) >= std::max(1, lim * dp_.limitScale / 100)) continue;
-        // "Can I finish this?" -- the classic AI bankruptcy is blowing the opening
-        // treasury on one expensive unit before any economy, or starting a build the
-        // mana runs dry mid-site so the builder stalls there FOREVER. A build is
-        // affordable when savings + income over its build time cover the cost.
+        if (lim >= 0 && countOf(world, ut->id) >= std::max(1, lim * dp_.limitScale / 100))
+            return 0;
         if (ut->buildTime > 0) {
             float secs = ut->buildTime / std::max(producer.type->workerTime, 1.0f);
-            if (world.player(player_).mana + income * secs < ut->buildCost) continue;
+            if (me.mana + income * secs < ut->buildCost) return 0;
         }
-        if (!ut->isStructure() && !ut->isBuilder) w *= econFactor;   // army: economy tweak
+        return w;
+    };
+    // Pass 1: the highest desire among categories this producer can actually build now.
+    int best = 0;
+    for (const auto& id : menu) {
+        const auto* ut = registry_.find(id);
+        if (usable(ut) <= 0) continue;
+        best = std::max(best, desire(categoryOf(ut), needs));
+    }
+    if (best <= 0) return nullptr;   // nothing needed is affordable -> wait (no spiral)
+    // Pass 2: weighted-random among the usable entries in that top category.
+    const tak::sim::UnitType* chosen = nullptr;
+    int total = 0;
+    for (const auto& id : menu) {
+        const auto* ut = registry_.find(id);
+        int w = usable(ut);
+        if (w <= 0 || desire(categoryOf(ut), needs) != best) continue;
         total += w;
-        if (rand(total) < w) chosen = ut;                     // reservoir sample
+        if (rand(total) < w) chosen = ut;   // reservoir sample
     }
     return chosen;
 }
@@ -277,7 +340,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     if ((simTick % uint32_t(dp_.thinkPeriod)) != uint32_t(player_ % dp_.thinkPeriod)) return;
     if (world.player(player_).defeated) return;
 
-    int econFactor = manaRatio(world) >= 0.5f ? dp_.econRich : 1;
+    const Needs needs = assessNeeds(world);   // one empire assessment drives every producer
     // Snapshot the idle producers, then act on up to producersPerThink of them -- the
     // per-think cap is what paces the economy across difficulties (Easy builds one
     // thing per think, Hard many).
@@ -319,7 +382,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
             if (acted >= dp_.producersPerThink) break;
             const auto* p = world.unit(pid);
             if (!p || !p->alive()) continue;
-            if (const auto* pick = weightedPick(world, *p, econFactor)) {
+            if (const auto* pick = weightedPick(world, *p, needs)) {
                 produce(world, *p, pick, sink);
                 ++acted;
             }

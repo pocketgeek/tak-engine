@@ -63,13 +63,31 @@ inline constexpr float incomeMultFor(Difficulty d) {
 struct DiffParams {
     int  thinkPeriod;      // sim ticks between decisions (30 = 1 Hz); lower = faster reactions
     int  waveSize;         // idle fighters gathered before an attack wave commits
-    int  econRich;         // army build-weight multiplier when mana is plentiful
     int  producersPerThink;// how many idle producers act each think (economy/APM pace)
     int  limitScale;       // percent applied to the profile's unit limits (100 = as shipped)
     bool scout;            // send an early lone scout toward an enemy start
     bool attack;           // commit attack waves at all (Passive never does -- defends only)
 };
 DiffParams paramsFor(Difficulty d);
+
+// What a buildable unit is FOR, derived from its UnitType (faction-agnostic) so the
+// planner can balance an army instead of drawing types blindly. See Controller::categoryOf.
+enum class BuildCat { Economy, Factory, Builder, Army, Defense };
+
+// The empire's current shape, assessed once per think. The planner compares these to
+// simple targets to decide which category a producer should build next -- so the AI
+// bootstraps an economy, adds factories to spend its income, keeps only a few builders,
+// and then pours the rest into army, rather than letting a weighted-random draw spiral
+// into all-economy / all-builders / no-soldiers (the old seed-fragile failure).
+struct Needs {
+    float income = 0;          // BASE income (an Absurd AI's cheat divided back out)
+    int   economy = 0;         // count: income/storage structures
+    int   factories = 0;       // count: structures that train units
+    int   builders = 0;        // count: mobile builders (incl. the Monarch)
+    int   army = 0;            // count: mobile combatants
+    int   builderCap = 2;      // stop making builders past this (a handful, not a horde)
+    int   desiredFactories = 1;// how many factories the current income wants to feed
+};
 
 // Sink for the commands a Controller decides to issue this tick. Offline this
 // applies them immediately; on the server it queues them into the tick sequencer.
@@ -98,9 +116,13 @@ private:
 
     // --- decision helpers (all read-only over the world) ---------------------
     int   countOf(const tak::sim::World&, const std::string& id) const;
-    float manaRatio(const tak::sim::World&) const;
+    // Needs-based build planner: assess the empire, score each category against its
+    // target, and let a producer build the most-needed thing its menu offers.
+    Needs assessNeeds(const tak::sim::World&) const;
+    BuildCat categoryOf(const tak::sim::UnitType*) const;
+    int   desire(BuildCat, const Needs&) const;
     const tak::sim::UnitType* weightedPick(const tak::sim::World&,
-                                           const tak::sim::Unit& producer, int econFactor);
+                                           const tak::sim::Unit& producer, const Needs&);
     void produce(const tak::sim::World&, const tak::sim::Unit& producer,
                  const tak::sim::UnitType* pick, const CommandSink&);
     bool placeSite(const tak::sim::World&, const tak::sim::UnitType*, float nx, float nz,
