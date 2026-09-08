@@ -1948,6 +1948,7 @@ public:
         lodEnabled_ = s.lod;                              // Options: distant impostors
         spriteMode_ = std::clamp(s.spriteMode, 0, 2);     // Options: unit sprite mode
         buildBarAlign_ = std::clamp(s.buildBarAlign, 0, 2);   // Options: build-menu row
+        buildBarScale_ = std::clamp(s.buildBarScale, 0.75f, 2.0f);
         // Bilinear filtering (retail video option): smooth the terrain and the
         // standalone feature/shadow sprites. The packed model-texture atlas stays
         // NEAREST regardless (linear sampling would bleed neighbouring sprites),
@@ -5339,6 +5340,7 @@ public:
 private:
     bool lodEnabled_ = true;    // distant impostors on by default; Options toggles
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
+    float buildBarScale_ = 1.0f;   // extra row scale on top of uiScale_ (Options)
     bool bilinear_ = false;     // smooth terrain/feature scaling (Options)
     int healthBars_ = 1;        // 0=off 1=damaged-only 2=always (Options)
     float lodPx_ = 64.0f;                        // model shorter than this -> impostor
@@ -9355,8 +9357,10 @@ private:
         if (b) {
             const auto menu = conjureMenu(b->type->id);   // mission-filtered
             int n = int(menu.size());
-            float iconSz = float(barH()) - 10.0f;
-            float gap = 6.0f;
+            // Row size: the bar height (already uiScale-scaled) times the user's
+            // extra BUILD MENU SCALE, so the row can grow independently of the HUD.
+            float iconSz = (float(barH()) - 10.0f) * buildBarScale_;
+            float gap = 6.0f * buildBarScale_;
             float rowW = n > 0 ? (n - 1) * (iconSz + gap) + iconSz : 0;
             float x0 = buildBarAlign_ == 1 ? (float(winW) - rowW) / 2.0f
                      : buildBarAlign_ == 2 ? float(winW) - rowW - 10.0f

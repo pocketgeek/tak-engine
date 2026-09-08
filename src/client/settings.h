@@ -26,6 +26,7 @@ struct Settings {
     bool  lod        = true;       // distant-unit impostors (perf); on by default
     int   spriteMode = 0;          // unit sprites: 0=auto, 1=on, 2=off
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
+    float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.75..2.0
     bool  bilinear   = false;      // smooth (bilinear) terrain + feature scaling, like retail's option
     int   healthBars = 1;          // unit health bars: 0=off, 1=only when damaged, 2=always
 
@@ -65,7 +66,8 @@ struct Settings {
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
             && a.uiScale == b.uiScale && a.antiAlias == b.antiAlias
             && a.lod == b.lod && a.spriteMode == b.spriteMode
-            && a.buildBarAlign == b.buildBarAlign && a.bilinear == b.bilinear
+            && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
+            && a.bilinear == b.bilinear
             && a.healthBars == b.healthBars
             && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
