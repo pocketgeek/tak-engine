@@ -3548,6 +3548,11 @@ public:
                     a.building = working;
                     if (working) {
                         a.vm->start("StartBuilding") || a.vm->start("startbuild");
+                        // The conjure sound: every builder's own sound class maps its
+                        // [default] event to its faction's TONE* chime (TONEARA/TAR/
+                        // VER/ZON/CRE) -- retail plays it ONCE as the build starts,
+                        // not on a loop, and the class file makes it per-builder.
+                        if (noFog_ || world_.cellVisible(u.x, u.z)) voice(u.id, "default");
                     } else {
                         a.vm->start("StopBuilding");
                         a.vm->start("restore_x") || a.vm->start("RestoreAfterDelay");
@@ -3555,19 +3560,6 @@ public:
                 } else if (working && a.vm->threadCount() == 0) {
                     // Single-pass pose scripts: re-invoke each cycle, like walk.
                     a.vm->start("startbuild") || a.vm->start("StartBuilding");
-                }
-                // The conjure sound: retail plays the magical summon shimmer while a
-                // builder works; loop the shipped SUMMON2 (3.1s) at the unit while
-                // it is visible.
-                if (working) {
-                    a.buildSndT -= dt;
-                    if (a.buildSndT <= 0.0f) {
-                        a.buildSndT = 3.0f;
-                        if ((noFog_ || world_.cellVisible(u.x, u.z)) && sounds_.has("summon2"))
-                            sounds_.playWorld("summon2", u.x, u.z);
-                    }
-                } else {
-                    a.buildSndT = 0;   // next work session starts its sound at once
                 }
             }
             // Buildings: yard/production anims. Detect via isStructure (maxVel<=0),
@@ -4720,7 +4712,6 @@ private:
         bool dying = false;
         bool producing = false;
         bool building = false;   // mobile builder actively working a site (conjure anim)
-        float buildSndT = 0;     // countdown to the next conjure-sound retrigger
         bool firing = false;
         bool flying = false;
         bool airborne = false;   // true while the flight animation should run
