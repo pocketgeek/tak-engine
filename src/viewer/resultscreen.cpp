@@ -11,6 +11,7 @@
 #include "viewer/menumusic.h"
 #include "viewer/settings.h"
 #include "viewer/dev.h"
+#include "viewer/appquit.h"
 
 namespace tak {
 
@@ -44,6 +45,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
     }
 
     for (;;) {
+        if (tak::termRequested()) return ResultChoice::Menu;   // SIGTERM/SIGINT -> unwind to quit
         int w = 0, h = 0;
         SDL_GetRendererOutputSize(ren, &w, &h);
         float u = std::clamp(std::min(w / 1280.0f, h / 720.0f), 1.0f, 3.0f);

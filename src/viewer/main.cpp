@@ -37,6 +37,7 @@
 #include "viewer/options.h"
 #include "viewer/settings.h"
 #include "viewer/dev.h"
+#include "viewer/appquit.h"
 #include "viewer/mainmenu.h"
 #include "viewer/menumusic.h"
 
@@ -9845,10 +9846,15 @@ int main(int argc, char** argv) {
     // Create the window + renderer up front so the front-end menu can drive the
     // single-player / multiplayer setup that follows it.
     if (shot.empty()) SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
+    // Own SIGTERM/SIGINT ourselves: SDL would turn them into an SDL_QUIT event, which the
+    // menu ignores (quit via the Exit door), so a kill/Ctrl-C would otherwise wedge a
+    // headless run. Our handler sets a flag every event loop polls (see appquit.h).
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
+    tak::installSignalHandlers();
     // Persisted Options (audio/camera/display prefs). CLI flags still win where they
     // apply; the file is the source of truth for anything not passed on the CLI.
     tak::Settings settings = tak::loadSettings();
@@ -9894,6 +9900,7 @@ int main(int argc, char** argv) {
     if (fromMenu && shot.empty())
         tak::MainMenu::playIntro(ren, dataRoot);
     for (;;) {
+    if (tak::termRequested()) { quitApp = true; break; }   // SIGTERM/SIGINT between sessions
     if (fromMenu) { serverHost = launchServerHost;
                     serverPort = launchServerPort; args = launchArgs;
                     menuMusic.start(vfs, 15);   // front-end BGM (idempotent; loops into the lobby)
@@ -10185,6 +10192,7 @@ int main(int argc, char** argv) {
 
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
+        if (tak::termRequested()) { running = false; quitApp = true; break; }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             // The window-manager close button (title-bar X) fires SDL_QUIT; we

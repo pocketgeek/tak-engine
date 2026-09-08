@@ -12,6 +12,7 @@
 #include "viewer/options.h"
 #include "viewer/settings.h"
 #include "viewer/dev.h"
+#include "viewer/appquit.h"
 
 #include <memory>
 
@@ -554,6 +555,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     Uint64 prev = SDL_GetPerformanceCounter();
     const double freq = double(SDL_GetPerformanceFrequency());
     for (;;) {
+        if (tak::termRequested()) return Choice::Exit;   // SIGTERM/SIGINT -> quit the app
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) continue;   // ignore the WM close button; use the Exit door
@@ -736,6 +738,7 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
     int frame = 0;
     bool skip = false;
     for (;;) {
+        if (tak::termRequested()) break;   // SIGTERM/SIGINT -> abandon the intro
         SDL_Event e;
         while (SDL_PollEvent(&e))
             if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_QUIT)

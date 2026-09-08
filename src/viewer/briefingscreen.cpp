@@ -14,6 +14,7 @@
 #include "viewer/menumusic.h"
 #include "viewer/settings.h"
 #include "viewer/dev.h"
+#include "viewer/appquit.h"
 
 namespace tak {
 
@@ -89,6 +90,7 @@ bool BriefingScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, const std::stri
     SDL_FlushEvents(SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP);
 
     for (;;) {
+        if (tak::termRequested()) return false;   // SIGTERM/SIGINT -> abort to shutdown
         int w = 0, h = 0;
         SDL_GetRendererOutputSize(ren, &w, &h);
         float u = std::clamp(std::min(w / 1280.0f, h / 720.0f), 1.0f, 3.0f);
