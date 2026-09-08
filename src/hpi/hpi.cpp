@@ -62,15 +62,35 @@ std::vector<uint8_t> readChunk(const std::vector<uint8_t>& data, size_t& off) {
     return out;
 }
 
-// A block (dir/name) is either a single SQSH chunk or stored raw.
-std::vector<uint8_t> readBlock(const std::vector<uint8_t>& data, uint32_t off, uint32_t size) {
-    if (off + 4 <= data.size() && std::memcmp(&data[off], "SQSH", 4) == 0) {
-        size_t pos = off;
+// Read one dir/name block straight from the archive FILE without slurping the
+// whole archive: the block is either a single SQSH chunk (19-byte header +
+// compressed payload) or stored raw. The directory+name blocks are tens of KB
+// while the archives total hundreds of MB, so seeking to just these makes
+// mounting a retail root ~25x faster (and cold-start far cheaper still); the
+// full file is only ever read lazily by bytes() when something is extracted.
+std::vector<uint8_t> readBlockAt(std::ifstream& in, uint32_t off, uint32_t size) {
+    uint8_t hdr[kChunkHeaderSize];
+    in.clear();
+    in.seekg(off);
+    in.read(reinterpret_cast<char*>(hdr), 4);
+    if (in && std::memcmp(hdr, "SQSH", 4) == 0) {
+        in.read(reinterpret_cast<char*>(hdr + 4), kChunkHeaderSize - 4);
+        if (!in) throw std::runtime_error("short read on SQSH block header");
+        uint32_t compSize = u32(hdr + 7);
+        std::vector<uint8_t> data(kChunkHeaderSize + size_t(compSize));
+        std::memcpy(data.data(), hdr, kChunkHeaderSize);
+        in.read(reinterpret_cast<char*>(data.data() + kChunkHeaderSize),
+                std::streamsize(compSize));
+        if (!in) throw std::runtime_error("short read on SQSH block payload");
+        size_t pos = 0;
         return readChunk(data, pos);
     }
-    if (uint64_t(off) + size > data.size())
-        throw std::runtime_error("block overruns archive");
-    return {data.begin() + off, data.begin() + off + size};
+    in.clear();               // not SQSH (or too short): stored raw
+    in.seekg(off);
+    std::vector<uint8_t> data(size);
+    in.read(reinterpret_cast<char*>(data.data()), std::streamsize(size));
+    if (!in) throw std::runtime_error("block overruns archive");
+    return data;
 }
 
 std::string nameAt(const std::vector<uint8_t>& names, uint32_t off) {
@@ -126,9 +146,10 @@ Archive::Archive(const std::filesystem::path& file) : file_(file) {
     if (header_.version != 0x00020000)
         throw std::runtime_error(file.string() + ": not a TAK (v2) archive");
 
-    auto data = readFile(file_);
-    auto dirBlock = readBlock(data, header_.dirBlock, header_.dirSize);
-    auto nameBlock = readBlock(data, header_.nameBlock, header_.nameSize);
+    std::ifstream in(file_, std::ios::binary);
+    if (!in) throw std::runtime_error("cannot open " + file_.string());
+    auto dirBlock = readBlockAt(in, header_.dirBlock, header_.dirSize);
+    auto nameBlock = readBlockAt(in, header_.nameBlock, header_.nameSize);
     walk(dirBlock, nameBlock, 0, "", entries_);
 }
 

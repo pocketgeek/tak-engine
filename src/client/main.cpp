@@ -10078,16 +10078,22 @@ int main(int argc, char** argv) {
         if (playerName.empty()) playerName = "player";
         // Hello carries the PURE-RETAIL gameplay fingerprint (no overrides), so the
         // base game files are checked regardless of anyone's tier; the room's tier
-        // and its gameplay overrides are agreed later, at load.
-        if (!dataRoot.empty())
-            mp->setDataHash(tak::hpi::gameplayHash(
-                tak::hpi::mountRetailRoot(dataRoot, tak::hpi::OverridePolicy::None)));
-        // A freshly-spawned local server takes a couple seconds to mount + load, so
-        // retry the connect while it comes up.
+        // and its gameplay overrides are agreed later, at load. The install is
+        // immutable while the game runs, so the fingerprint (a mount + a read of
+        // every gameplay file) is computed once and reused across menu->Play loops.
+        static uint64_t retailHash = 0;
+        if (!dataRoot.empty()) {
+            if (!retailHash)
+                retailHash = tak::hpi::gameplayHash(
+                    tak::hpi::mountRetailRoot(dataRoot, tak::hpi::OverridePolicy::None));
+            mp->setDataHash(retailHash);
+        }
+        // A freshly-spawned local server takes a moment to mount + listen (~0.25s
+        // warm); poll fast so single-player doesn't pay coarse-sleep quantization.
         bool ok = false;
-        for (int attempt = 0; attempt < (gLocalServerUp ? 60 : 1) && !ok; ++attempt) {
+        for (int attempt = 0; attempt < (gLocalServerUp ? 200 : 1) && !ok; ++attempt) {
             ok = mp->connect(serverHost, uint16_t(serverPort), playerName);
-            if (!ok && gLocalServerUp) std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            if (!ok && gLocalServerUp) std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
         if (!ok) {
             std::fprintf(stderr, "server: %s\n", mp->error().c_str());
