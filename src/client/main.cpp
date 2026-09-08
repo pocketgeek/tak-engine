@@ -9398,34 +9398,40 @@ private:
                 SDL_RenderDrawRectF(ren_, &r);
                 // Infinite-build marker: bright +++ over the repeating unit's icon.
                 if (b->repeatType == bt) {
-                    float px = 2.8f;
+                    float px = 2.8f * buildBarScale_;   // badges track the row scale
                     float pw = blockWidth("+++", px);
                     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
-                    SDL_FRect pb{r.x + (r.w - pw) / 2 - 3, r.y + 4, pw + 6, 22};
+                    SDL_FRect pb{r.x + (r.w - pw) / 2 - 3, r.y + 4 * buildBarScale_,
+                                 pw + 6, 22 * buildBarScale_};
                     SDL_RenderFillRectF(ren_, &pb);
-                    blockText("+++", r.x + (r.w - pw) / 2, r.y + 7, px, {120, 255, 130, 255});
+                    blockText("+++", r.x + (r.w - pw) / 2, r.y + 7 * buildBarScale_, px,
+                              {120, 255, 130, 255});
                 }
                 // Queued-count badge (bottom-right of the icon): how many are queued.
                 if (int qc = world_.queuedCount(b->id, bt)) {
                     char num[8];
                     std::snprintf(num, sizeof num, "%d", qc);
-                    float px = 2.2f, nw = blockWidth(num, px);
+                    float px = 2.2f * buildBarScale_, nw = blockWidth(num, px);
                     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 205);
-                    SDL_FRect nb{r.x + r.w - nw - 7, r.y + r.h - 21, nw + 7, 20};
+                    SDL_FRect nb{r.x + r.w - nw - 7 * buildBarScale_,
+                                 r.y + r.h - 21 * buildBarScale_,
+                                 nw + 7 * buildBarScale_, 20 * buildBarScale_};
                     SDL_RenderFillRectF(ren_, &nb);
-                    blockText(num, r.x + r.w - nw - 4, r.y + r.h - 18, px, {255, 235, 140, 255});
+                    blockText(num, r.x + r.w - nw - 4 * buildBarScale_,
+                              r.y + r.h - 18 * buildBarScale_, px, {255, 235, 140, 255});
                 }
                 if (hot) {
                     char tip[80];
                     std::snprintf(tip, sizeof tip, "%s  %d MANA", bt->name.c_str(),
                                   int(bt->buildCost));
-                    float px = 2.0f;
+                    float px = 2.0f * buildBarScale_;
                     float tw = blockWidth(tip, px);
                     float tipx = std::clamp(r.x + iconSz / 2 - tw / 2, 6.0f, winW - tw - 6);
                     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
-                    SDL_FRect tb{tipx - 6, iconY - 28, tw + 12, 26};
+                    SDL_FRect tb{tipx - 6, iconY - 28 * buildBarScale_,
+                                 tw + 12, 26 * buildBarScale_};
                     SDL_RenderFillRectF(ren_, &tb);
-                    blockText(tip, tipx, iconY - 24, px, {255, 240, 190, 255});
+                    blockText(tip, tipx, iconY - 24 * buildBarScale_, px, {255, 240, 190, 255});
                 }
                 iconRects_.push_back({r, bt});
                 x += iconSz + gap;
@@ -9435,7 +9441,8 @@ private:
                 std::snprintf(q, sizeof q, "TRAINING %s (%zu)",
                               b->buildQueue.front()->name.c_str(),
                               b->buildQueue.size());
-                blockText(q, x0, iconY - 24, 1.8f, {160, 210, 255, 255});
+                blockText(q, x0, iconY - 24 * buildBarScale_, 1.8f * buildBarScale_,
+                          {160, 210, 255, 255});
             }
         }
 
