@@ -342,7 +342,17 @@ void Vm::run(Thread& t) {
                 t.pc += 2; break;
             }
             case 0x10071000: pop(t); t.pc += 2; break;                        // EXPLODE
-            case 0x10072000: pop(t); push(t, 0); t.pc += 2; break;            // PLAY_SOUND (pop1/push1)
+            case 0x10072000: {                                                // PLAY_SOUND
+                // Inline arg = COB name-table index (the wav stem); the popped stack
+                // value is a priority we don't model. Retail plays each unit's own
+                // sounds this way (attack swooshes, the Beast Handler's build whip,
+                // death cries) -- see the name table in cob::File.
+                pop(t);
+                if (onPlaySound) onPlaySound(arg(0));
+                push(t, 0);
+                t.pc += 2;
+                break;
+            }
             case 0x10074000: t.pc += 3; break;                                // engine cmd (3-word, stack-neutral)
             case 0x10073000: {                                                // MAP_COMMAND
                 int sub = arg(0), argc = arg(1);

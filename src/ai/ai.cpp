@@ -244,7 +244,8 @@ bool Controller::nearestVisibleEnemy(const tak::sim::World& world, float cx, flo
     struct Eye { float x, z, r2; };
     std::vector<Eye> eyes;
     for (auto& u : world.units())
-        if (u.alive() && u.player == player_ && u.type && !u.embarked()) {
+        if (u.alive() && u.player == player_ && u.type && !u.embarked() &&
+            !u.underConstruction) {   // a half-built unit has no eyes yet
             float s = std::max(u.type->sight, u.type->radar);
             eyes.push_back({u.x, u.z, s * s});
         }

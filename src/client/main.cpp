@@ -3420,7 +3420,12 @@ public:
             if (u.justFired && u.type) {
                 using Fx = tak::sim::WeaponFx;
                 const auto& w = u.type->weapon;
-                if (w.melee)
+                // Generic firing sounds are a stand-in for units whose COB carries no
+                // PLAY_SOUND of its own; units with script audio (attack swooshes,
+                // spell cracks) now play those instead -- doubling both was wrong.
+                bool scripted = it != anims_.end() && it->second.cobSounds;
+                if (scripted) { /* the attack script provides the sound */ }
+                else if (w.melee)
                     sounds_.playWorld("ahitfl0" + std::to_string(1 + (salt_++ % 3)), u.x, u.z);
                 else if (w.fx == Fx::Fire)
                     sounds_.playWorld(sounds_.has("firedrag") ? "firedrag" : "fireflsh", u.x, u.z);
@@ -3458,7 +3463,8 @@ public:
                     a.vm->setStatic(0, 0);
                     a.vm->start("death") || a.vm->start("Dying") || a.vm->start("Killed");
                     const std::string& id = u.type->id;
-                    if (sounds_.has(id + "die1")) sounds_.playWorld(id + "die1", u.x, u.z);
+                    if (a.cobSounds) { /* the Dying script plays its own death cry */ }
+                    else if (sounds_.has(id + "die1")) sounds_.playWorld(id + "die1", u.x, u.z);
                     else if (sounds_.has(id + "die2")) sounds_.playWorld(id + "die2", u.x, u.z);
                     // Death effect: a real GAF explosion sized to the unit (bigger
                     // footprint => bigger blast), plus blood particles for flesh.
@@ -3547,12 +3553,10 @@ public:
                 if (working != a.building) {
                     a.building = working;
                     if (working) {
+                        // The conjure sound comes from the script itself: build
+                        // scripts PLAY_SOUND their own per-unit audio (the Beast
+                        // Handler's whip crack, etc.) now that the opcode is real.
                         a.vm->start("StartBuilding") || a.vm->start("startbuild");
-                        // The conjure sound: every builder's own sound class maps its
-                        // [default] event to its faction's TONE* chime (TONEARA/TAR/
-                        // VER/ZON/CRE) -- retail plays it ONCE as the build starts,
-                        // not on a loop, and the class file makes it per-builder.
-                        if (noFog_ || world_.cellVisible(u.x, u.z)) voice(u.id, "default");
                     } else {
                         a.vm->start("StopBuilding");
                         a.vm->start("restore_x") || a.vm->start("RestoreAfterDelay");
@@ -3599,11 +3603,21 @@ public:
         // Drain emit-sfx the VMs stashed (fire/smoke from FireControl-style loops),
         // now serially on the main thread, into the world-space effect system.
         for (auto& [id, a] : anims_) {
-            if (a.pendingSfx.empty()) continue;
+            if (a.pendingSfx.empty() && a.pendingSnd.empty()) continue;
             const auto* u = world_.unit(id);
-            if (u && u->type && (noFog_ || world_.cellVisible(u->x, u->z)))
+            if (u && u->type && (noFog_ || world_.cellVisible(u->x, u->z))) {
                 for (auto& [piece, sfx] : a.pendingSfx) emitSfx(*u, a, piece, sfx);
+                // COB PLAY_SOUND: resolve the name-table index to a wav stem. This is
+                // how retail plays per-unit action sounds -- the Beast Handler's whip
+                // crack when a conjure starts, attack swooshes, death cries.
+                for (int32_t si : a.pendingSnd) {
+                    std::string nm = a.vm->file().name(uint32_t(si));
+                    std::transform(nm.begin(), nm.end(), nm.begin(), ::tolower);
+                    if (!nm.empty() && sounds_.has(nm)) sounds_.playWorld(nm, u->x, u->z);
+                }
+            }
             a.pendingSfx.clear();
+            a.pendingSnd.clear();
         }
     }
 
@@ -4720,6 +4734,8 @@ private:
         // emit-sfx (piece, sfxType) captured off the worker thread; drained on the
         // main thread after the parallel VM tick (SDL/effects_ are main-thread only).
         std::vector<std::pair<int, int32_t>> pendingSfx;
+        std::vector<int32_t> pendingSnd;   // COB PLAY_SOUND name indices, drained on main
+        bool cobSounds = false;   // script plays its own audio: skip the generic stand-ins
         // Continuous ambient fire/smoke: retail runs one persistent emitter per unit,
         // so we draw ONE looping flame/smoke, kept alive while the emit-loop re-fires
         // (fireT/smokeT = seconds since the last emit of each). Smooth, not per-emit.
@@ -4836,9 +4852,13 @@ private:
                     std::transform(n.begin(), n.end(), n.begin(), ::tolower);
                     cc.pieceNames.push_back(n);
                 }
+                if (!cc.file->names.empty())
+                    for (uint32_t w : cc.file->code)
+                        if (w == 0x10072000) { cc.hasSounds = true; break; }
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
             a.pieceNames = ci->second.pieceNames;
+            a.cobSounds = ci->second.hasSounds;
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             // TA COB unit-state queries answered from the sim.
             int unitId = u.id;
@@ -4898,6 +4918,9 @@ private:
             // drains it into effects_ after the parallel tick.
             st.vm->onEmitSfx = [buf = &st.pendingSfx](int piece, int32_t sfx) {
                 buf->push_back({piece, sfx});
+            };
+            st.vm->onPlaySound = [buf = &st.pendingSnd](int32_t idx) {
+                buf->push_back(idx);
             };
         }
         unitType_[u.id] = typeId;
@@ -5106,7 +5129,11 @@ private:
     std::vector<PaintItem> paintItems_;   // per-frame painter list (capacity reused)
     std::unordered_set<int> targetSet_;   // per-frame attack-target ids (reused)
     // Parsed COB scripts shared per unit type (see registerUnit).
-    struct CobCache { std::shared_ptr<const tak::cob::File> file; std::vector<std::string> pieceNames; };
+    struct CobCache {
+        std::shared_ptr<const tak::cob::File> file;
+        std::vector<std::string> pieceNames;
+        bool hasSounds = false;   // any PLAY_SOUND op: the script provides its own audio
+    };
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };
     struct DrawOp { const tak::sim::Unit* u; const FeatureInst* f;

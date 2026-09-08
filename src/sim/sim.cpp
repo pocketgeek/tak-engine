@@ -2004,8 +2004,10 @@ void World::updateVisibility() {
     }();
     for (const auto& u : units_) {
         // Shared team vision: every unit on the viewing player's team reveals fog
-        // (a negative visPlayer_ -- the headless referee -- reveals nothing).
-        if (!u.alive() || !u.type || visPlayer_ < 0 || !allied(u.player, visPlayer_))
+        // (a negative visPlayer_ -- the headless referee -- reveals nothing). A unit
+        // still UNDER CONSTRUCTION has no eyes yet -- it reveals nothing until built.
+        if (!u.alive() || !u.type || u.underConstruction || visPlayer_ < 0 ||
+            !allied(u.player, visPlayer_))
             continue;
         // Reveal to the greater of sight and radar range (radardistance). Radar
         // sees THROUGH terrain, so the line-of-sight test applies only to the sight

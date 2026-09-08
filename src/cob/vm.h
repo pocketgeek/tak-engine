@@ -48,6 +48,10 @@ public:
     // emit-sfx (0x1000F000): spawn a visual effect (fire/smoke/...) at `piece`.
     // sfxType is the packed COB code (e.g. 256|6 = large flame, 256|1 = smoke).
     std::function<void(int piece, int32_t sfxType)> onEmitSfx;
+    // play-sound (0x10072000): play the wav named by COB name-table index `nameIdx`
+    // at the unit. Like onEmitSfx, the hook only STASHES on the (worker) VM thread;
+    // the host drains it on the main thread.
+    std::function<void(int32_t nameIdx)> onPlaySound;
     void setStatic(size_t i, int32_t v);
     void reset() { threads_.clear(); }   // stop all threads, keep piece poses
 
