@@ -1937,6 +1937,7 @@ public:
         uiScale_ = s.uiScale;
         lodEnabled_ = s.lod;                              // Options: distant impostors
         spriteMode_ = std::clamp(s.spriteMode, 0, 2);     // Options: unit sprite mode
+        buildBarAlign_ = std::clamp(s.buildBarAlign, 0, 2);   // Options: build-menu row
     }
 
     // main()'s live settings, so the in-game Options screen can edit + persist them.
@@ -5249,6 +5250,7 @@ private:
 public:
 private:
     bool lodEnabled_ = true;    // distant impostors on by default; Options toggles
+    int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
     float lodPx_ = 64.0f;                        // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 0.5f;  // LOD only when really zoomed out
                                                  // (zoom below this); full 3D otherwise
@@ -9253,9 +9255,9 @@ private:
             }
         }
 
-        // Bottom-LEFT conjure menu: clickable build icons for the selected builder,
-        // in a horizontal row just above the info bar's left end -- where retail draws
-        // it (not the old centred strip over the map).
+        // Conjure menu: clickable build icons for the selected builder, in a
+        // horizontal row just above the info bar. Where it sits along the bottom is
+        // a user preference (Options "BUILD MENU": left / centered / right).
         iconRects_.clear();
         const auto* b = selectedBuilder();
         if (b) {
@@ -9264,7 +9266,10 @@ private:
             float iconSz = float(barH()) - 10.0f;
             float gap = 6.0f;
             float rowW = n > 0 ? (n - 1) * (iconSz + gap) + iconSz : 0;
-            float x0 = 10;                          // left-aligned
+            float x0 = buildBarAlign_ == 1 ? (float(winW) - rowW) / 2.0f
+                     : buildBarAlign_ == 2 ? float(winW) - rowW - 10.0f
+                                           : 10.0f;
+            x0 = std::max(x0, 10.0f);               // a huge menu never runs off-screen left
             float iconY = bar.y - iconSz - 5;       // sit just above the bar
             float x = x0;
             // A recessed container behind the row so the conjure menu reads as one HUD

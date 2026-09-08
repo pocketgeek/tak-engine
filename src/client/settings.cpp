@@ -61,6 +61,7 @@ Settings loadSettings() {
         else if (key == "antiAlias")       { int a = asInt(0, 4); s.antiAlias = (a >= 4) ? 4 : (a >= 2) ? 2 : 0; }
         else if (key == "lod")             s.lod = asBool();
         else if (key == "spriteMode")      s.spriteMode = asInt(0, 2);
+        else if (key == "buildBarAlign")   s.buildBarAlign = asInt(0, 2);
         else if (key == "masterVol")       s.masterVol = asInt(0, 256);
         else if (key == "bgmVol")          s.bgmVol = asInt(0, 256);
         else if (key == "sfxVol")          s.sfxVol = asInt(0, 256);
@@ -103,6 +104,7 @@ bool saveSettings(const Settings& s) {
     o << "antiAlias = " << s.antiAlias << "\n";
     o << "lod = " << (s.lod ? 1 : 0) << "\n";
     o << "spriteMode = " << s.spriteMode << "\n";
+    o << "buildBarAlign = " << s.buildBarAlign << "\n";
     o << "masterVol = " << s.masterVol << "\n";
     o << "bgmVol = " << s.bgmVol << "\n";
     o << "sfxVol = " << s.sfxVol << "\n";

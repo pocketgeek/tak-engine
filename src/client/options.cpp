@@ -108,6 +108,10 @@ void OptionsScreen::build(int channels) {
     slider("UNIT SPRITES", 0, 2, [&] { return float(s_.spriteMode); },
            [&](float v) { s_.spriteMode = std::clamp(int(v + 0.5f), 0, 2); },
            [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "OFF" : l >= 1 ? "ON" : "AUTO"); });
+    // Where the in-game conjure/build icon row sits along the bottom of the screen.
+    slider("BUILD MENU", 0, 2, [&] { return float(s_.buildBarAlign); },
+           [&](float v) { s_.buildBarAlign = std::clamp(int(v + 0.5f), 0, 2); },
+           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "RIGHT" : l >= 1 ? "CENTER" : "LEFT"); });
 
     section("CAMERA");
     slider("MOUSE ZOOM SPEED", 0.25f, 4.0f, [&] { return s_.mouseZoomSpeed; },
