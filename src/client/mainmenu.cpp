@@ -525,7 +525,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (const char* sc = settings ? tak::devEnv("TAK_SHOT_CAMPAIGN") : nullptr) {
             int tab = std::atoi(sc);   // TAK_SHOT_CAMPAIGN=1 -> Iron Plague tab
             Settings tmp = *settings;
-            if (tab == 1) tmp.campaignDone["the iron plague"] = 24;   // reveal finale + alt ending
+            // Mark a mix of Iron Plague missions completed so the shot shows DONE + PLAY
+            // rows and the next-up highlight (nothing is locked either way).
+            if (tab == 1)
+                for (int i = 0; i < 12; ++i) tmp.campaignCompleted["the iron plague"].insert(i);
             CampaignScreen cs(d_->ren, d_->vfs, tmp, tab);
             cs.render(w, h);
         }

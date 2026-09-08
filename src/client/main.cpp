@@ -10496,18 +10496,22 @@ int main(int argc, char** argv) {
         bool finalMission = false;
         for (const auto& c : tak::loadCampaigns(vfs)) {
             if (c.id != campaignId) continue;
-            if (campaignStem == c.altFinal) { title = "ALT ENDING"; finalMission = true; }  // terminal branch
-            for (int i = 0; i < c.count(); ++i)
+            int completedIdx = -1;   // which slot was just beaten (kAltMission for the alt branch)
+            if (campaignStem == c.altFinal) {   // terminal alt branch
+                title = "ALT ENDING"; finalMission = true; completedIdx = tak::kAltMission;
+            } else for (int i = 0; i < c.count(); ++i)
                 if (c.missions[size_t(i)].stem == campaignStem) {
                     title = "MISSION " + std::to_string(i + 1);
                     if (i + 1 >= c.count()) finalMission = true;
-                    if (oc > 0) {   // victory: unlock + reveal the next mission
-                        int& done = settings.campaignDone[campaignId];
-                        if (i + 1 > done) { done = i + 1; saveSettings(settings); }
-                        if (i + 1 < c.count()) nextStem = c.missions[size_t(i + 1)].stem;
-                    }
+                    completedIdx = i;
+                    if (i + 1 < c.count()) nextStem = c.missions[size_t(i + 1)].stem;  // "play next" convenience
                     break;
                 }
+            // Victory: record THIS mission as completed. Nothing is ever locked -- this
+            // only tracks what's been beaten.
+            if (oc > 0 && completedIdx != -1 &&
+                settings.campaignCompleted[campaignId].insert(completedIdx).second)
+                saveSettings(settings);
             break;
         }
         killLocalServer(); mp.reset(); gameView.reset();   // free the mission before the movie/modal

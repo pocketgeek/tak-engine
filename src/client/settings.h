@@ -8,9 +8,13 @@
 // live in GameOptions/MatchConfig, not here.)
 
 #include <map>
+#include <set>
 #include <string>
 
 namespace tak {
+
+// Completion index for a campaign's alternate-ending branch (it has no numbered slot).
+inline constexpr int kAltMission = -2;
 
 struct Settings {
     // ---- display / window ----
@@ -39,13 +43,18 @@ struct Settings {
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
 
     // ---- campaign progress ----
-    // Per-campaign count of missions COMPLETED (campaign id -> n). Mission n is the
-    // next one to play / the highest unlocked; a fresh campaign is absent (== 0).
-    // Keyed by Campaign::id (the lowercased camps/*.tdf stem). See src/campaign.
-    std::map<std::string, int> campaignDone;
-    int campaignProgress(const std::string& id) const {
-        auto it = campaignDone.find(id);
-        return it == campaignDone.end() ? 0 : it->second;
+    // Which missions the player has COMPLETED, per campaign (id -> set of 0-based
+    // mission indices; the alternate ending is kAltMission). Keyed by Campaign::id
+    // (the lowercased camps/*.tdf stem). Missions are NEVER locked -- this only records
+    // what's been beaten, for the DONE marker and the "play next" hint. See src/campaign.
+    std::map<std::string, std::set<int>> campaignCompleted;
+    bool missionCompleted(const std::string& id, int mission) const {
+        auto it = campaignCompleted.find(id);
+        return it != campaignCompleted.end() && it->second.count(mission) > 0;
+    }
+    int completedCount(const std::string& id) const {
+        auto it = campaignCompleted.find(id);
+        return it == campaignCompleted.end() ? 0 : int(it->second.size());
     }
 
     friend bool operator==(const Settings& a, const Settings& b) {
@@ -57,7 +66,7 @@ struct Settings {
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
             && a.playerName == b.playerName && a.lastMap == b.lastMap
-            && a.campaignDone == b.campaignDone;
+            && a.campaignCompleted == b.campaignCompleted;
     }
     friend bool operator!=(const Settings& a, const Settings& b) { return !(a == b); }
 };

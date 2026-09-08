@@ -2,11 +2,11 @@
 
 // The campaign / mission picker overlay, hosted by the main menu's "PlayStory" door.
 // Lists the installed campaigns (Book of Darien, The Iron Plague, its alt ending) and,
-// for the selected one, its missions -- completed, current (the next to play), and
-// still-locked. Picking a playable mission closes the overlay with a chosen stem the
-// host launches through the mission runner. Progress comes from tak::Settings
-// (campaignDone), which the host advances on victory. Draws with the shared block
-// font; owns no game state.
+// for the selected one, its missions -- each marked DONE or PLAY (nothing is ever
+// locked), with the first unbeaten mission highlighted as the suggested next. Picking
+// a mission closes the overlay with a chosen stem the host launches through the mission
+// runner. Completion comes from tak::Settings (campaignCompleted), which the host
+// records on victory. Draws with the shared block font; owns no game state.
 
 #include <SDL.h>
 
