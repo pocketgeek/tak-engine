@@ -114,6 +114,10 @@ std::vector<std::string> listAudioDevices() {
 }
 
 void setAudioDevice(const std::string& name) {
+    // Ensure the audio subsystem is up (and the device snapshot taken) BEFORE validating:
+    // at startup this runs right after SDL_Init(VIDEO), so without this SDL_GetNumAudioDevices
+    // would see zero devices and EVERY saved device would falsely read as "not present".
+    initAudioCaps();
     std::string prev = g_audioDevice;
     g_audioDevice.clear();
     if (!name.empty()) {
@@ -121,7 +125,7 @@ void setAudioDevice(const std::string& name) {
         else std::fprintf(stderr, "audio: chosen device '%s' not present -- using system default\n",
                           name.c_str());
     }
-    if (g_audioDevice != prev) g_channelCache = -1;  // re-probe on next detectOutputChannels
+    if (g_audioDevice != prev) g_channelCache = -1;  // recompute on next detectOutputChannels
 }
 
 const std::string& currentAudioDevice() { return g_audioDevice; }

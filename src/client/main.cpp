@@ -10664,10 +10664,11 @@ int main(int argc, char** argv) {
     // Select the saved output device before ANY audio opens (validated -- an absent
     // device falls back to system default). Keep the setting so the picker still shows
     // the user's choice even if it's currently unplugged.
+    // setAudioDevice() calls initAudioCaps() internally, which snapshots each device's true
+    // channel layout NOW -- before the menu music / door videos open a stereo stream that
+    // would collapse the 5.1 sink's advertised layout to 2 -- and inits the audio subsystem
+    // so the saved device actually validates (SDL_Init above is video-only).
     tak::setAudioDevice(settings.audioDevice);
-    // Snapshot each device's true channel layout NOW, before the menu music / door videos
-    // open a stereo stream that would collapse the 5.1 sink's advertised layout to 2.
-    tak::initAudioCaps();
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
     std::string winTitle = std::string("takclient ") + tak::kVersion;
