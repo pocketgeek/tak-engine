@@ -1433,10 +1433,17 @@ void World::tickCombat(Unit& u, float dt) {
     // in / reposition rather than firing through it (melee & flyers are exempt).
     bool needLoS = best > 64.0f && !u.type->canFly &&
                    target->type && !target->type->canFly;
-    bool los = !needLoS ||
-               nav_.losBetween(u.x, u.z, target->x, target->z,
-                               std::max(u.type->footX, u.type->footZ) / 2,
-                               std::max(target->type->footX, target->type->footZ) / 2);
+    // LoS gates ONLY in-range firing and in-range repositioning; an out-of-range
+    // chaser advances regardless (the `dist > best*0.95` move test below
+    // short-circuits before `los` is read, and the fire gate is never reached out of
+    // range). So defer the raycast until we're actually close enough for it to
+    // matter -- identical result, but a marching army (the bulk of a big battle, all
+    // out of range) stops paying for a per-tick line-of-sight cast it never uses.
+    bool los = true;
+    if (needLoS && dist <= best * 0.95f)
+        los = nav_.losBetween(u.x, u.z, target->x, target->z,
+                              std::max(u.type->footX, u.type->footZ) / 2,
+                              std::max(target->type->footX, target->type->footZ) / 2);
     if (!u.type->canMove && dist > best) {      // static units can't chase
         u.orders.pop_front();
         return;
@@ -1942,9 +1949,19 @@ void World::setRepeat(int builderId, const UnitType* type) {
 }
 
 void World::tickAuras(float dt) {
+    // Projecting every aura through a dense crowd every tick is the top sim cost in a
+    // massive battle (~50ms at 30k units). Buffs change slowly -- they take ~0.5s to
+    // fade -- so above a crowd threshold refresh them every kAuraStride ticks instead
+    // of every tick: a ~0.1s update granularity that's imperceptible in a huge melee
+    // but cuts the aura cost by the stride. Below the threshold it runs every tick, so
+    // normal play stays byte-identical. Deterministic (tick-count + unit-count gated,
+    // identical on every peer). The relax scales with the stride so a buff still fades
+    // over the same wall-clock ~0.5s after its projector stops refreshing it.
+    uint32_t stride = units_.size() > 8000 ? 3u : 1u;
+    if (tickCounter_ % stride != 0) return;   // buffs held between refreshes
     // Every unit's buffs relax back toward 1.0; aura projectors then refresh the
     // units in their radius, so a buff holds while in range and fades on leaving.
-    float relax = std::min(1.0f, 2.0f * dt);   // ~0.5s to fade after leaving range
+    float relax = std::min(1.0f, 2.0f * dt * float(stride));   // catch up skipped ticks
     for (auto& u : units_) {
         if (!u.alive()) continue;
         u.atkBuff += (1.0f - u.atkBuff) * relax;
