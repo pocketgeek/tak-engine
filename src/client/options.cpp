@@ -91,23 +91,36 @@ void OptionsScreen::build(int channels) {
                [this, i](float v) { s_.chanGain[i] = v; }, [](float v) { return pctOf(v, 1); });
     }
 
+    // DISPLAY: the window / output device itself.
     section("DISPLAY");
     toggle("FULLSCREEN", [&] { return s_.fullscreen ? 1.0f : 0.0f; },
            [&](float v) { s_.fullscreen = v > 0.5f; });
     toggle("VSYNC", [&] { return s_.vsync ? 1.0f : 0.0f; }, [&](float v) { s_.vsync = v > 0.5f; });
     slider("MAX FPS", 30, 240, [&] { return float(s_.maxFps); },
            [&](float v) { s_.maxFps = int(v + 0.5f); }, [](float v) { return std::to_string(int(v + 0.5f)); });
-    slider("UI SCALE", 0.75f, 2.0f, [&] { return s_.uiScale; },
-           [&](float v) { s_.uiScale = v; }, [](float v) { return pctOf(v, 1); });
+
+    // GRAPHICS: how the scene is rendered (quality / performance trade-offs).
+    section("GRAPHICS");
     // Supersampling AA as a simple on/off; ON is 2x.
     toggle("ANTI-ALIASING", [&] { return s_.antiAlias >= 2 ? 1.0f : 0.0f; },
            [&](float v) { s_.antiAlias = v > 0.5f ? 2 : 0; });
+    // Retail's video option: smooth terrain + feature scaling (off = crisp pixels).
+    toggle("BILINEAR FILTERING", [&] { return s_.bilinear ? 1.0f : 0.0f; },
+           [&](float v) { s_.bilinear = v > 0.5f; });
     // Distant-unit impostors (perf) and the unit-sprite mode -- were F8 / F10 in-game.
     toggle("DISTANT IMPOSTORS", [&] { return s_.lod ? 1.0f : 0.0f; },
            [&](float v) { s_.lod = v > 0.5f; });
     slider("UNIT SPRITES", 0, 2, [&] { return float(s_.spriteMode); },
            [&](float v) { s_.spriteMode = std::clamp(int(v + 0.5f), 0, 2); },
            [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "OFF" : l >= 1 ? "ON" : "AUTO"); });
+
+    // INTERFACE: on-screen HUD -- its size, and the game overlays.
+    section("INTERFACE");
+    slider("UI SCALE", 0.75f, 2.0f, [&] { return s_.uiScale; },
+           [&](float v) { s_.uiScale = v; }, [](float v) { return pctOf(v, 1); });
+    slider("HEALTH BARS", 0, 2, [&] { return float(s_.healthBars); },
+           [&](float v) { s_.healthBars = std::clamp(int(v + 0.5f), 0, 2); },
+           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "ALWAYS" : l >= 1 ? "DAMAGED" : "OFF"); });
     // Where the in-game conjure/build icon row sits along the bottom of the screen.
     slider("BUILD MENU", 0, 2, [&] { return float(s_.buildBarAlign); },
            [&](float v) { s_.buildBarAlign = std::clamp(int(v + 0.5f), 0, 2); },
@@ -115,12 +128,6 @@ void OptionsScreen::build(int channels) {
     // Extra scale for the build icon row, applied ON TOP of UI SCALE (same range).
     slider("BUILD MENU SCALE", 0.75f, 2.0f, [&] { return s_.buildBarScale; },
            [&](float v) { s_.buildBarScale = v; }, [](float v) { return pctOf(v, 1); });
-    // Retail's video option: smooth terrain + feature scaling (off = crisp pixels).
-    toggle("BILINEAR FILTERING", [&] { return s_.bilinear ? 1.0f : 0.0f; },
-           [&](float v) { s_.bilinear = v > 0.5f; });
-    slider("HEALTH BARS", 0, 2, [&] { return float(s_.healthBars); },
-           [&](float v) { s_.healthBars = std::clamp(int(v + 0.5f), 0, 2); },
-           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "ALWAYS" : l >= 1 ? "DAMAGED" : "OFF"); });
 
     section("CAMERA");
     slider("MOUSE ZOOM SPEED", 0.25f, 4.0f, [&] { return s_.mouseZoomSpeed; },
