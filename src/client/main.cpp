@@ -1293,6 +1293,13 @@ public:
         return int(x);
     }
 
+    // Tallest glyph cell, for sizing a backing panel behind a line of text.
+    int height(float scale = 1) const {
+        int h = 0;
+        for (const Glyph& g : glyphs_) if (g.h > h) h = g.h;
+        return int(h * scale);
+    }
+
     void draw(SDL_Renderer* ren, const std::string& text, float x, float y,
               float scale = 1, SDL_Color tint = {255, 255, 255, 255}) const {
         for (unsigned char c : text) {
@@ -4434,24 +4441,19 @@ public:
             if (behindSec > 0.75f && outcome_ == 0 && !paused_) {
                 char bb[48];
                 std::snprintf(bb, sizeof bb, "BEHIND BY %.1fs", behindSec);
-                float tw = float(hudFont_.width(bb, 1.8f));
                 float t = std::min(1.0f, behindSec / 10.0f);
                 SDL_Color col{255, uint8_t(210 - int(150 * t)), uint8_t(90 - int(60 * t)), 255};
-                hudFont_.draw(ren_, bb, (float(winW) - tw) / 2, 78, 1.8f, col);
+                hudBanner(bb, 78, 1.8f, col, winW);
             }
-            if (!netError_.empty()) {
-                std::string msg = "NETWORK: " + netError_;
-                float tw = float(hudFont_.width(msg, 2.0f));
-                hudFont_.draw(ren_, msg, (float(winW) - tw) / 2, 150, 2.0f,
-                              {255, 120, 100, 255});
-            }
+            if (!netError_.empty())
+                hudBanner("NETWORK: " + netError_, 150, 2.0f, {255, 140, 120, 255}, winW);
         }
         if (scenUnit_ && scenTime_ > 0 && outcome_ == 0 && hudFont_.ok()) {
             char sb[96];
             int rem = int(scenTime_ - scenClock_);
             std::snprintf(sb, sizeof sb, "%s IN %s: %d:%02d", scenUnit_->name.c_str(),
                           scenRegion_.name.c_str(), rem / 60, rem % 60);
-            hudFont_.draw(ren_, sb, 12, 46, 1.5f, {255, 220, 140, 255});
+            hudBanner(sb, 46, 1.5f, {255, 220, 140, 255}, winW, 12);
         }
         if (pendingCmd_ && hudFont_.ok()) {
             const char* msg = pendingCmd_ == 'a'   ? "ATTACK: CLICK TARGET"
@@ -4463,13 +4465,10 @@ public:
                               : pendingCmd_ == 'l' ? "LOAD: CLICK UNIT TO CARRY"
                               : pendingCmd_ == 'u' ? "UNLOAD: CLICK DESTINATION"
                                                    : "MOVE: CLICK DESTINATION";
-            hudFont_.draw(ren_, msg, 12, 100, 1.6f, {255, 200, 120, 255});
+            hudBanner(msg, 100, 1.6f, {255, 200, 120, 255}, winW, 12);
         }
-        if (noticeTimer_ > 0 && hudFont_.ok() && !notice_.empty()) {
-            float tw = float(hudFont_.width(notice_, 2.5f));
-            hudFont_.draw(ren_, notice_, (float(winW) - tw) / 2, 120, 2.5f,
-                          {255, 230, 120, 255});
-        }
+        if (noticeTimer_ > 0 && hudFont_.ok() && !notice_.empty())
+            hudBanner(notice_, 120, 2.5f, {255, 230, 120, 255}, winW);
         if (paused_ && bigFont_.ok()) {
             const char* msg = "PAUSED";
             float tw = float(bigFont_.width(msg, 1.2f));
@@ -8639,6 +8638,28 @@ private:
         }
     }
     float blockWidth(const std::string& s, float px) const { return s.size() * 6 * px; }
+
+    // A top-of-screen status line (network error, notice, pending-order prompt).
+    // These print coloured text straight over the terrain, where it can be nearly
+    // unreadable against grass/rock -- so back every one with a dark rounded panel
+    // first. Returns the y for a following line so stacked messages don't collide.
+    // `leftX < 0` centres the text in `winW`; otherwise it's the left edge.
+    float hudBanner(const std::string& msg, float y, float scale, SDL_Color col,
+                    int winW, float leftX = -1) {
+        if (!hudFont_.ok() || msg.empty()) return y;
+        float tw = float(hudFont_.width(msg, scale));
+        float th = float(hudFont_.height(scale));
+        float x = leftX < 0 ? (float(winW) - tw) / 2 : leftX;
+        const float padX = 10, padTop = 6, padBot = 6;
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        SDL_FRect bg{x - padX, y - padTop, tw + 2 * padX, th + padTop + padBot};
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
+        SDL_RenderFillRectF(ren_, &bg);
+        SDL_SetRenderDrawColor(ren_, 255, 255, 255, 40);   // faint hairline for definition
+        SDL_RenderDrawRectF(ren_, &bg);
+        hudFont_.draw(ren_, msg, x, y, scale, col);
+        return y + th + padTop + padBot + 6;
+    }
 
     // ==================== interactive multiplayer lobby ====================
 
