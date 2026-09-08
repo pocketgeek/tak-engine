@@ -929,14 +929,18 @@ void Server::closeTick(Room& r) {
     w.u32(uint32_t(r.pendingEvents.size()));
     for (const auto& e : r.pendingEvents) { w.u8(uint8_t(e.kind)); w.u8(e.player); }
     broadcastRoom(r, Msg::TickBundle, w);
-    r.log.push_back(w.b);   // keep the full bundle log for reconnect/replay
+    r.log.push_back(std::move(w.b));   // keep the full bundle log for reconnect/replay
+                                       // (moved: broadcastRoom already copied it out)
 
-    // Advance the referee sim by this same bundle, then record its canonical hash.
+    // Advance the referee sim by this same bundle, then record its canonical hash --
+    // but only at the ticks clients actually REPORT (kHashPeriod): hashing every
+    // tick burned ~8ms/s per 2000-unit room on hashes that were never read.
     if (r.ref) {
         for (const auto& cmd : r.pending) tak::sim::applyCommand(*r.ref, *r.reg, cmd);
         for (const auto& e : r.pendingEvents) tak::sim::applyEvent(*r.ref, e);
         r.ref->tick(1.0f / kServerHz);
-        r.refHash[r.tick] = r.ref->stateHash();
+        if (r.tick % uint32_t(kHashPeriod) == 0)
+            r.refHash[r.tick] = r.ref->stateHash();
         // bound the ring
         while (r.refHash.size() > 300) r.refHash.erase(r.refHash.begin());
         // Campaign win/lose: the referee's mission runner is authoritative -- announce
@@ -1008,10 +1012,15 @@ int Server::run() {
     std::fprintf(stderr, "takserver %s listening on port %u (protocol v%u)\n",
                  tak::kVersion, port_, kNetVersion);
 
+    // Hoisted out of the loop so their capacity persists across wakeups (this loop
+    // runs at least at tick rate; rebuilding the contents is cheap, reallocating
+    // them thousands of times a second is not).
+    std::vector<pollfd> pfds;
+    std::vector<uint32_t> ids;
     for (;;) {
         // Build the pollfd set: listen + every client (POLLOUT when it has pending writes).
-        std::vector<pollfd> pfds;
-        std::vector<uint32_t> ids;
+        pfds.clear();
+        ids.clear();
         // Field-wise (not brace) init: a socket fd is `int` here but `SOCKET`
         // (unsigned) in a Windows pollfd, which brace-init would reject as narrowing.
         pollfd lp{}; lp.fd = listenFd_; lp.events = POLLIN; pfds.push_back(lp);

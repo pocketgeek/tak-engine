@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <random>
 #include <vector>
 
@@ -32,7 +33,10 @@ struct PieceState {
 
 class Vm {
 public:
-    explicit Vm(File file);
+    // The bytecode is immutable and shared: every unit of a type references ONE
+    // parsed File (some are 60-140KB of code words) instead of owning a copy.
+    explicit Vm(std::shared_ptr<const File> file);
+    explicit Vm(File file) : Vm(std::make_shared<const File>(std::move(file))) {}
 
     // Start a script by name with integer args; returns false if unknown.
     bool start(const std::string& script, const std::vector<int32_t>& args = {});
@@ -51,7 +55,7 @@ public:
     void tick(float dt);
 
     const std::vector<PieceState>& pieces() const { return pieces_; }
-    const File& file() const { return file_; }
+    const File& file() const { return *file_; }
     size_t threadCount() const { return threads_.size(); }
     std::vector<uint32_t> threadPcs() const {
         std::vector<uint32_t> out;
@@ -77,12 +81,13 @@ private:
     int32_t pop(Thread& t);
     void push(Thread& t, int32_t v);
 
-    File file_;
+    std::shared_ptr<const File> file_;
     std::vector<int32_t> statics_;
     std::vector<PieceState> pieces_;
     std::vector<Thread> threads_;
     std::vector<Thread> pending_;
     bool ticking_ = false;
+    bool anyMotion_ = false;   // any piece has a live move/turn/spin (gates the sweep)
     float now_ = 0;
     std::mt19937 rng_{12345};
 };

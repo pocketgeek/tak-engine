@@ -81,6 +81,9 @@ enum class BuildCat { Economy, Factory, Builder, Army, Defense };
 // into all-economy / all-builders / no-soldiers (the old seed-fragile failure).
 struct Needs {
     float income = 0;          // BASE income (an Absurd AI's cheat divided back out)
+    // Own live units per type, filled in the same assessNeeds pass -- weightedPick's
+    // limit checks read this instead of re-scanning all units per menu entry.
+    std::unordered_map<const tak::sim::UnitType*, int> counts;
     int   economy = 0;         // count: income/storage structures
     int   factories = 0;       // count: structures that train units
     int   builders = 0;        // count: mobile builders (incl. the Monarch)
@@ -115,7 +118,6 @@ private:
     }
 
     // --- decision helpers (all read-only over the world) ---------------------
-    int   countOf(const tak::sim::World&, const std::string& id) const;
     // Needs-based build planner: assess the empire, score each category against its
     // target, and let a producer build the most-needed thing its menu offers.
     Needs assessNeeds(const tak::sim::World&) const;

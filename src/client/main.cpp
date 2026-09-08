@@ -1239,10 +1239,14 @@ public:
     ThreadPool(const ThreadPool&) = delete;
     ThreadPool& operator=(const ThreadPool&) = delete;
 
+    // minParallel: run serially below this count. Dispatch (wake + join across all
+    // workers) measures ~30us flat, so a callsite whose per-item work is tiny must
+    // set this high -- e.g. the COB VM tick at ~0.2us/item only breaks even around
+    // ~2000 items; heavy per-item work (model projection) keeps the low default.
     template <class F>
-    void parallelFor(size_t count, F&& f) {
+    void parallelFor(size_t count, F&& f, size_t minParallel = 32) {
         if (count == 0) return;
-        if (n_ == 1 || count < 32) { f(size_t(0), count); return; }  // not worth it
+        if (n_ == 1 || count < minParallel) { f(size_t(0), count); return; }  // not worth it
         std::function<void(size_t, size_t)> fn =
             [&f](size_t b, size_t e) { f(b, e); };
         {
@@ -2477,7 +2481,7 @@ public:
             for (const auto& e : bd.events) applyEvent(e);
             update(1.0f / 30.0f);
             // Spectators observe only -- they seat no player and report no hash.
-            if (netTick_ % 30 == 0 && !mp_->isSpectator())
+            if (netTick_ % uint32_t(tak::net::kHashPeriod) == 0 && !mp_->isSpectator())
                 mp_->sendHash(netTick_, world_.stateHash());
             ++netTick_;
             ++drained;
@@ -3426,7 +3430,7 @@ public:
         }
         pool_.parallelFor(vmTick_.size(), [&](size_t b, size_t e) {
             for (size_t i = b; i < e; ++i) vmTick_[i]->tick(dt);
-        });
+        }, /*minParallel=*/1500);   // ~0.2us/VM: pool dispatch only pays off at scale
         // Drain emit-sfx the VMs stashed (fire/smoke from FireControl-style loops),
         // now serially on the main thread, into the world-space effect system.
         for (auto& [id, a] : anims_) {
@@ -3524,9 +3528,12 @@ public:
         mapView_.draw(mvw, winH);
         float zm0 = mapView_.zoom();
 
-        // Painter list: features and units together, sorted by map z.
-        struct Item { float z; const tak::sim::Unit* u; const FeatureInst* f; };
-        std::vector<Item> items;
+        // Painter list: features and units together, sorted by map z. Lives in a
+        // member so its capacity survives across frames (it was the last per-frame
+        // buffer here still heap-allocated fresh every draw).
+        using Item = PaintItem;
+        auto& items = paintItems_;
+        items.clear();
         const auto& vis = world_.visibility();
         int vw = world_.visW();
         for (const auto& f : features_) {
@@ -3949,7 +3956,8 @@ public:
             // Attack-target indicator: RED brackets on any enemy a selected unit is
             // ordered to attack, so you can see what you've told them to hit.
             const SDL_Color red{245, 70, 60, 255};
-            std::unordered_set<int> targets;
+            auto& targets = targetSet_;   // member: reused across frames
+            targets.clear();
             for (int sid : selection_)
                 if (const auto* su = world_.unit(sid))
                     for (const auto& o : su->orders)
@@ -4033,7 +4041,11 @@ public:
                                           : SDL_Color{240, 224, 120, 255});
             }
 
-        // Production progress above busy buildings.
+        // Production progress above busy buildings -- viewport-culled and batched
+        // into one draw call, same treatment as the health bars above (the two
+        // state-changing FillRects per building broke the render batch each time,
+        // and map-wide AI production drew bars at off-screen coordinates).
+        shadowBatch_.clear();
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
             if (!alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
@@ -4044,12 +4056,16 @@ public:
             float bx = (u.x - mapView_.offX()) * zm - bw / 2 - uLiftX(u) * zm;
             float by = (u.z - mapView_.offY()) * zm - float(u.type->footZ) * 8 * zm - 14 * zm
                        - uLiftY(u) * zm;
-            SDL_FRect bg{bx - 1, by - 1, bw + 2, bh + 2};
-            SDL_SetRenderDrawColor(ren_, 10, 10, 10, 220);
-            SDL_RenderFillRectF(ren_, &bg);
-            SDL_FRect fg{bx, by, bw * frac, bh};
-            SDL_SetRenderDrawColor(ren_, 90, 170, 255, 255);
-            SDL_RenderFillRectF(ren_, &fg);
+            if (bx < -60 || bx > mvw + 60 || by < -60 || by > winH + 60) continue;
+            pushQuad(shadowBatch_, bx - 1, by - 1, bw + 2, bh + 2,
+                     SDL_Color{10, 10, 10, 220});
+            pushQuad(shadowBatch_, bx, by, bw * frac, bh,
+                     SDL_Color{90, 170, 255, 255});
+        }
+        if (!shadowBatch_.empty()) {
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_RenderGeometry(ren_, nullptr, shadowBatch_.data(),
+                               int(shadowBatch_.size()), nullptr, 0);
         }
 
         // Player mana bar top left (legacy; only without the bottom bar).
@@ -4629,14 +4645,25 @@ private:
         }
         Anim a;
         try {
-            std::string cobPath = "scripts/" + typeId + ".cob";
-            auto cobFile = tak::cob::load(vread(cobPath), cobPath);
-            for (const auto& p : cobFile.pieces) {
-                std::string n = p;
-                std::transform(n.begin(), n.end(), n.begin(), ::tolower);
-                a.pieceNames.push_back(n);
+            // Per-type COB cache: parse the script once and share the immutable
+            // bytecode across every unit of the type (each Vm previously owned a
+            // full copy -- 60-140KB of code words per unit in a big army -- and
+            // every spawn re-read + re-parsed the file).
+            auto ci = cobCache_.find(typeId);
+            if (ci == cobCache_.end()) {
+                std::string cobPath = "scripts/" + typeId + ".cob";
+                CobCache cc;
+                cc.file = std::make_shared<const tak::cob::File>(
+                    tak::cob::load(vread(cobPath), cobPath));
+                for (const auto& p : cc.file->pieces) {
+                    std::string n = p;
+                    std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+                    cc.pieceNames.push_back(n);
+                }
+                ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
-            a.vm = std::make_unique<tak::cob::Vm>(std::move(cobFile));
+            a.pieceNames = ci->second.pieceNames;
+            a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             // TA COB unit-state queries answered from the sim.
             int unitId = u.id;
             a.vm->onGet = [this, unitId](int32_t valId,
@@ -4899,6 +4926,12 @@ private:
     // copies across the pool, then replay the draw ops. Keeps depth order exact.
     std::vector<SDL_Vertex> bodyVerts_;
     struct FeatureInst;   // defined below; DrawOp only needs the pointer type
+    struct PaintItem { float z; const tak::sim::Unit* u; const FeatureInst* f; };
+    std::vector<PaintItem> paintItems_;   // per-frame painter list (capacity reused)
+    std::unordered_set<int> targetSet_;   // per-frame attack-target ids (reused)
+    // Parsed COB scripts shared per unit type (see registerUnit).
+    struct CobCache { std::shared_ptr<const tak::cob::File> file; std::vector<std::string> pieceNames; };
+    std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };
     struct DrawOp { const tak::sim::Unit* u; const FeatureInst* f;
                     SDL_Texture* tex; int start, count; };   // seg if u&&f both null
@@ -9655,20 +9688,31 @@ private:
         std::erase_if(particles_, [](const Particle& p) { return p.life <= 0; });
     }
     void drawParticles() {
+        // One batched geometry call instead of a state change + FillRect per
+        // particle (battles keep hundreds live -- that pattern broke the render
+        // batch hundreds of times a frame). Off-screen particles cost nothing.
         float zm = mapView_.zoom();
-        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        partBatch_.clear();
         for (const auto& p : particles_) {
+            float sx = (p.x - mapView_.offX()) * zm;
+            float sy = (p.z - mapView_.offY()) * zm - p.alt * zm;
+            if (sx < -40 || sx > float(winW_) + 40 || sy < -80 || sy > float(winH_) + 40)
+                continue;   // cheap screen cull before the fog + lift lookups
             if (!world_.cellVisible(p.x, p.z)) continue;
             float t = std::clamp(p.life / std::max(p.maxLife, 1e-3f), 0.0f, 1.0f);
-            float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
-            float sy = (p.z - mapView_.offY()) * zm - p.alt * zm - terrainLift(p.x, p.z) * zm;
+            sx -= terrainLiftX(p.x, p.z) * zm;
+            sy -= terrainLift(p.x, p.z) * zm;
             float r = p.size * zm * (p.kind == 1 ? (1.4f - t) : t);
             Uint8 a = Uint8(std::clamp(t * 255.0f, 0.0f, 255.0f));
-            SDL_SetRenderDrawColor(ren_, p.r, p.g, p.b, a);
-            SDL_FRect rc{sx - r, sy - r, 2 * r, 2 * r};
-            SDL_RenderFillRectF(ren_, &rc);
+            pushQuad(partBatch_, sx - r, sy - r, 2 * r, 2 * r, SDL_Color{p.r, p.g, p.b, a});
+        }
+        if (!partBatch_.empty()) {
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_RenderGeometry(ren_, nullptr, partBatch_.data(),
+                               int(partBatch_.size()), nullptr, 0);
         }
     }
+    std::vector<SDL_Vertex> partBatch_;   // reused particle-quad batch
 
     SoundBank sounds_;
     ThreadPool pool_;                       // for parallel per-unit VM ticks

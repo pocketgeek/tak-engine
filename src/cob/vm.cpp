@@ -32,16 +32,16 @@ float angTowards(float cur, float target, float step) {
 
 } // namespace
 
-Vm::Vm(File file) : file_(std::move(file)) {
-    statics_.assign(file_.numStatics + 8, 0);
-    pieces_.assign(file_.pieces.size(), PieceState{});
+Vm::Vm(std::shared_ptr<const File> file) : file_(std::move(file)) {
+    statics_.assign(file_->numStatics + 8, 0);
+    pieces_.assign(file_->pieces.size(), PieceState{});
 }
 
 bool Vm::start(const std::string& script, const std::vector<int32_t>& args) {
-    int idx = file_.scriptIndex(script);
+    int idx = file_->scriptIndex(script);
     if (idx < 0) return false;
     Thread t;
-    t.pc = file_.scripts[size_t(idx)].entry;
+    t.pc = file_->scripts[size_t(idx)].entry;
     t.locals = args;
     t.locals.resize(std::max<size_t>(args.size(), 16), 0);
     // Starting from inside a hook while tick() iterates threads_ must not
@@ -68,21 +68,31 @@ void Vm::push(Thread& t, int32_t v) { t.stack.push_back(v); }
 void Vm::tick(float dt) {
     now_ += dt;
 
-    // Progress piece animations.
-    for (auto& p : pieces_) {
-        for (int a = 0; a < 3; ++a) {
-            if (p.moving[a]) {
-                p.move[a] = towards(p.move[a], p.moveTarget[a], p.moveSpeed[a] * dt);
-                if (p.move[a] == p.moveTarget[a]) p.moving[a] = false;
+    // Progress piece animations. The sweep is gated on anyMotion_ -- the branchy
+    // pieces x 3-axes walk was ~80% of an IDLE unit's tick cost, and a standing
+    // army/garrisoned building animates nothing. Ops that start a move/turn/spin
+    // set the flag; the sweep clears it once every animation has settled.
+    if (anyMotion_) {
+        bool still = false;
+        for (auto& p : pieces_) {
+            for (int a = 0; a < 3; ++a) {
+                if (p.moving[a]) {
+                    p.move[a] = towards(p.move[a], p.moveTarget[a], p.moveSpeed[a] * dt);
+                    if (p.move[a] == p.moveTarget[a]) p.moving[a] = false;
+                }
+                if (p.turning[a]) {
+                    p.rot[a] = angTowards(p.rot[a], p.rotTarget[a], p.rotSpeed[a] * dt);
+                    if (p.rot[a] == p.rotTarget[a]) p.turning[a] = false;
+                }
+                if (p.spinAccel[a] > 0 && p.spin[a] != p.spinTarget[a])
+                    p.spin[a] = towards(p.spin[a], p.spinTarget[a], p.spinAccel[a] * dt);
+                p.rot[a] += p.spin[a] * dt;
+                if (p.moving[a] || p.turning[a] || p.spin[a] != 0 ||
+                    (p.spinAccel[a] > 0 && p.spin[a] != p.spinTarget[a]))
+                    still = true;
             }
-            if (p.turning[a]) {
-                p.rot[a] = angTowards(p.rot[a], p.rotTarget[a], p.rotSpeed[a] * dt);
-                if (p.rot[a] == p.rotTarget[a]) p.turning[a] = false;
-            }
-            if (p.spinAccel[a] > 0 && p.spin[a] != p.spinTarget[a])
-                p.spin[a] = towards(p.spin[a], p.spinTarget[a], p.spinAccel[a] * dt);
-            p.rot[a] += p.spin[a] * dt;
         }
+        anyMotion_ = still;
     }
 
     ticking_ = true;
@@ -103,7 +113,7 @@ void Vm::run(Thread& t) {
         t.waitPiece = -1;
     }
 
-    const auto& code = file_.code;
+    const auto& code = file_->code;
     for (int guard = 0; guard < 5000; ++guard) {
         if (t.pc >= code.size()) { t.dead = true; return; }
         uint32_t op = code[t.pc];
@@ -194,9 +204,9 @@ void Vm::run(Thread& t) {
                 std::vector<int32_t> params(size_t(std::max(nparams, 0)));
                 for (int i = nparams - 1; i >= 0; --i) params[size_t(i)] = pop(t);
                 t.pc += 3;
-                if (script >= 0 && size_t(script) < file_.scripts.size()) {
+                if (script >= 0 && size_t(script) < file_->scripts.size()) {
                     Thread nt;
-                    nt.pc = file_.scripts[size_t(script)].entry;
+                    nt.pc = file_->scripts[size_t(script)].entry;
                     nt.locals = params;
                     nt.locals.resize(std::max<size_t>(params.size(), 16), 0);
                     nt.signalMask = t.signalMask;
@@ -215,8 +225,8 @@ void Vm::run(Thread& t) {
                 int32_t script = arg(0), nparams = arg(1);
                 for (int i = 0; i < nparams; ++i) pop(t);
                 t.callStack.push_back(t.pc + 3);
-                if (script >= 0 && size_t(script) < file_.scripts.size())
-                    t.pc = file_.scripts[size_t(script)].entry;
+                if (script >= 0 && size_t(script) < file_->scripts.size())
+                    t.pc = file_->scripts[size_t(script)].entry;
                 else { t.dead = true; return; }
                 break;
             }
@@ -258,6 +268,7 @@ void Vm::run(Thread& t) {
                         p.moveTarget[axis] = target;
                         p.moveSpeed[axis] = speed;
                         p.moving[axis] = true;
+                        anyMotion_ = true;
                     }
                 }
                 t.pc += 3; break;
@@ -275,6 +286,7 @@ void Vm::run(Thread& t) {
                         p.rotTarget[axis] = target;
                         p.rotSpeed[axis] = std::abs(speed);
                         p.turning[axis] = true;
+                        anyMotion_ = true;
                     }
                 }
                 t.pc += 3; break;
@@ -290,6 +302,7 @@ void Vm::run(Thread& t) {
                     p.spinTarget[axis] = target;
                     p.spinAccel[axis] = std::abs(accel);
                     if (accel == 0) p.spin[axis] = target;
+                    anyMotion_ = true;
                 }
                 t.pc += 3; break;
             }
@@ -302,6 +315,7 @@ void Vm::run(Thread& t) {
                     p.spinTarget[axis] = 0;
                     p.spinAccel[axis] = std::abs(decel);
                     if (decel == 0) p.spin[axis] = 0;
+                    anyMotion_ = true;
                 }
                 t.pc += 3; break;
             }

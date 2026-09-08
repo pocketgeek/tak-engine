@@ -71,13 +71,6 @@ void Controller::emit(const CommandSink& sink, tak::net::Cmd kind, int unitId,
     sink(c);
 }
 
-int Controller::countOf(const tak::sim::World& world, const std::string& id) const {
-    int n = 0;
-    for (auto& u : world.units())
-        if (u.player == player_ && u.type && u.alive() && u.type->id == id) ++n;
-    return n;
-}
-
 // What is this unit FOR? Derived purely from its stats, so it works for every faction:
 //   Economy  - a structure that makes/holds mana (lodestone, mana storage)
 //   Factory  - a structure that trains units (keep, castle, hell)
@@ -100,6 +93,7 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     n.income = me.income / std::max(me.manaMult, 1.0f);   // ignore an Absurd AI's cheat
     for (const auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type) continue;
+        ++n.counts[u.type];
         switch (categoryOf(u.type)) {
             case BuildCat::Economy:  ++n.economy;   break;
             case BuildCat::Factory:  ++n.factories; break;
@@ -158,8 +152,12 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         if (w <= 0) return 0;
         auto li = profile_.limit.find(ut->id);
         int lim = li == profile_.limit.end() ? -1 : li->second;
-        if (lim >= 0 && countOf(world, ut->id) >= std::max(1, lim * dp_.limitScale / 100))
-            return 0;
+        if (lim >= 0) {
+            auto ci = needs.counts.find(ut);
+            if ((ci == needs.counts.end() ? 0 : ci->second) >=
+                std::max(1, lim * dp_.limitScale / 100))
+                return 0;
+        }
         if (ut->buildTime > 0) {
             float secs = ut->buildTime / std::max(producer.type->workerTime, 1.0f);
             if (me.mana + income * secs < ut->buildCost) return 0;

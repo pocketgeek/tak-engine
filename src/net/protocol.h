@@ -27,6 +27,8 @@ constexpr uint32_t kNetVersion = 20;       // 20: +control squads/formations (Cm
 constexpr uint32_t kMaxFrame = 1u << 16;   // 64 KB frame cap (hardening)
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate
+constexpr int kHashPeriod = 30;            // ticks between StateHash reports; the
+                                           // referee hashes only these ticks too
 
 // Message kinds. Lobby and game messages share one stream per connection.
 enum class Msg : uint8_t {
