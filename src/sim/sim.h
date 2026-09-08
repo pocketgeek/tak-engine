@@ -729,6 +729,30 @@ private:
             }
         }
     }
+    // As forEachNear, but stops after `maxVisits` candidates. Deterministic (the grid
+    // iteration order is fixed), so a lockstep-safe density cap: in an overcrowded cell
+    // a unit only needs to interact with a bounded number of the nearest others (e.g.
+    // the separation push is dominated by the closest neighbours). maxVisits <= 0 = all.
+    template <class F>
+    void forEachNearCapped(float x, float z, float radius, int maxVisits, F&& fn) const {
+        if (gW_ <= 0) return;
+        if (maxVisits <= 0) { forEachNear(x, z, radius, std::forward<F>(fn)); return; }
+        int r = int(radius / gCell_) + 1;
+        int cx = int((x - gOx_) / gCell_), cz = int((z - gOz_) / gCell_);
+        int seen = 0;
+        for (int dz = -r; dz <= r; ++dz) {
+            int gz = cz + dz;
+            if (gz < 0 || gz >= gH_) continue;
+            for (int dx = -r; dx <= r; ++dx) {
+                int gx = cx + dx;
+                if (gx < 0 || gx >= gW_) continue;
+                for (int i = gHead_[size_t(gz) * gW_ + gx]; i >= 0; i = gNext_[size_t(i)]) {
+                    fn(i);
+                    if (++seen >= maxVisits) return;
+                }
+            }
+        }
+    }
     std::vector<int> gHead_, gNext_;
     int gW_ = 0, gH_ = 0;
     float gCell_ = 32.0f, gOx_ = 0, gOz_ = 0;
@@ -775,6 +799,8 @@ private:
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
     uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
                                  // (deterministic: derived from the live-unit count)
+    uint32_t flowQuantShift_ = 1;// flow-goal block = 2^shift cells; coarsens with the
+                                 // crowd so a huge battle shares fewer distinct fields
     int pathBudget_ = 0;         // A* repaths still allowed this tick (crowd throttle)
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.

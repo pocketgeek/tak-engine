@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <array>
+#include <atomic>
 #include <thread>
 
 namespace tak::sim {
@@ -853,12 +854,14 @@ bool World::flowKeyFor(const UnitType* type, float gx, float gz, FlowKey& out) c
     // -- measured ~300x slower ticks (full-map Dijkstras rebuilt every tick) once
     // live goals exceeded it. The memo stays a pure function of (domain, foot,
     // block), identical on every peer.
-    int qcx = cx & ~1, qcz = cz & ~1;
+    int q = int(flowQuantShift_);      // block = 2^q cells (crowd-adaptive)
+    int mask = ~((1 << q) - 1), half = 1 << (q - 1);
+    int qcx = cx & mask, qcz = cz & mask;
     out.key = (domain * 16LL + foot) * 100000000LL +
               (long long)(qcz * grid.width() + qcx);
     out.grid = &grid;
-    out.bx = float(qcx + 1) * 16.0f;   // block centre
-    out.bz = float(qcz + 1) * 16.0f;
+    out.bx = float(qcx + half) * 16.0f;   // block centre
+    out.bz = float(qcz + half) * 16.0f;
     out.foot = foot;
     return true;
 }
@@ -915,13 +918,24 @@ void World::prefetchFlows() {
     auto _b0 = std::chrono::steady_clock::now();
     for (const auto& m : misses) m.grid->ensureClearance();   // workers must only read
     std::vector<FlowField> built(misses.size());
-    std::vector<std::thread> th;
-    th.reserve(misses.size() - 1);
-    for (size_t i = 1; i < misses.size(); ++i)
-        th.emplace_back([&, i] {
+    // BOUNDED parallelism: a fixed pool of workers (<= hardware threads) pulls builds
+    // off a shared atomic cursor. The old code spawned ONE std::thread PER miss -- a
+    // 5000-unit, 8-AI battle can miss ~450 fields in a tick, so it spawned ~450 threads
+    // EVERY tick and the creation/oversubscription cost dwarfed the (cheap) Dijkstras.
+    // Each field is an independent pure function, so the result is identical regardless
+    // of how the work is split; insertion below stays serial in miss order.
+    unsigned hw = std::thread::hardware_concurrency();
+    unsigned nth = std::min<unsigned>(hw ? hw : 1u, unsigned(misses.size()));
+    std::atomic<size_t> cursor{0};
+    auto worker = [&] {
+        for (size_t i = cursor.fetch_add(1, std::memory_order_relaxed); i < misses.size();
+             i = cursor.fetch_add(1, std::memory_order_relaxed))
             built[i].build(*misses[i].grid, misses[i].bx, misses[i].bz, misses[i].foot);
-        });
-    built[0].build(*misses[0].grid, misses[0].bx, misses[0].bz, misses[0].foot);
+    };
+    std::vector<std::thread> th;
+    th.reserve(nth - 1);
+    for (unsigned k = 1; k < nth; ++k) th.emplace_back(worker);
+    worker();                          // the calling thread participates
     for (auto& t : th) t.join();
     for (size_t i = 0; i < misses.size(); ++i) {
         evictFlowLru(flowCache_);
@@ -2288,6 +2302,12 @@ void World::tick(float dt) {
         uint32_t live = 0;
         for (const auto& u : units_) if (u.alive() && u.type) ++live;
         acqStride_ = std::clamp<uint32_t>(4 + live / 700, 4, 16);
+        // Flow-goal quantization coarsens with the crowd too: 2x2 cell blocks normally,
+        // up to 8x8 in a massive battle. Fewer distinct goal blocks means far fewer
+        // full-map flow-field builds per tick (the dominant cost at 10k+ units), at the
+        // price of homing onto a coarser goal centre before steering to the exact order
+        // point -- imperceptible at that scale. Deterministic (live count).
+        flowQuantShift_ = std::clamp<uint32_t>(1 + live / 3000, 1, 3);
     }
 
     prefetchFlows();   // batch-build this tick's missing flow fields on threads
@@ -2636,10 +2656,19 @@ void World::tick(float dt) {
         const NavGrid& g = navFor(u.type);
         return g.empty() || g.walkable(int(nx) / 16, int(nz) / 16);
     };
+    // Density cap: in a MASSIVE battle (units piled far denser than they separate),
+    // the 3x3 neighbourhood of a cell can hold hundreds of units, making this O(n^2)
+    // within the pile. The separation push is dominated by the nearest few, so above a
+    // crowd threshold each unit interacts with at most kSepCap neighbours -- bounding
+    // the pathological case while normal/moderate battles (below the threshold) keep the
+    // exact all-pairs behaviour. Deterministic (crowd count + fixed grid order).
+    uint32_t liveSep = 0;
+    for (const auto& u : units_) if (u.alive() && u.type) ++liveSep;
+    int sepCap = liveSep > 4000 ? 24 : 0;   // 0 = uncapped
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& a = units_[i];
         if (!a.alive() || a.embarked() || !a.type || !a.type->canMove || a.type->canFly) continue;
-        forEachNear(a.x, a.z, kSep, [&](int j) {
+        forEachNearCapped(a.x, a.z, kSep, sepCap, [&](int j) {
             if (size_t(j) <= i) return;   // handle each pair once, and skip self
             Unit& b = units_[size_t(j)];
             if (!b.alive() || b.embarked() || !b.type || !b.type->canMove || b.type->canFly) return;
