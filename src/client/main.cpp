@@ -3550,7 +3550,7 @@ public:
                 if (m != a.walking) {
                     a.walking = m;
                     a.vm->reset();
-                    a.vm->setStatic(0, m ? 1 : 0);
+                    a.vm->setStatic(a.moveGate, m ? 1 : 0);   // per-COB gate (vermage=3, most=0)
                     if (m) { a.vm->start("walk") || a.vm->start("walk_legs"); }
                     else { a.vm->start("restore_x") || a.vm->start("restore_legs"); }
                     a.firing = false;
@@ -4280,8 +4280,9 @@ public:
                                int(shadowBatch_.size()), nullptr, 0);
         }
 
-        // Player mana bar top left (legacy; only without the bottom bar).
-        if (!panelTex_) {
+        // Player mana bar top left (legacy; only without the bottom bar). A spectator
+        // isn't a player -- no personal mana readout.
+        if (!panelTex_ && !spectating_) {
             auto& tm = world_.player(localPlayer_);
             float cap = std::max(tm.storage, 100.0f);
             SDL_FRect bg{10, 10, 180, 12};
@@ -4329,14 +4330,19 @@ public:
         // Done with world-space: drop the clip and draw the right-hand panel and
         // its minimap + order column on a solid strip (never over the map).
         SDL_RenderSetClipRect(ren_, nullptr);
+        // Neutral panel strip behind the minimap (kept for spectators too -- it's plain
+        // chrome, not the faction art). The command panel + mana bulb + conjure menu
+        // (renderGui) and the bottom InfoPanel chrome (drawPanel) are PLAYER-only: a
+        // spectator isn't a player and gets neither, just the minimap and the F4 board.
         SDL_SetRenderDrawColor(ren_, 16, 14, 12, 255);
         SDL_FRect panelStrip{float(mvw), 0, float(winW - mvw), float(winH) - barH()};
         SDL_RenderFillRectF(ren_, &panelStrip);
         drawMinimap(winW, winH);
-        renderGui(winW, winH);
-
-        drawPanel(winW, winH);
-        drawObjectivesPanel(winW, winH);
+        if (!spectating_) {
+            renderGui(winW, winH);
+            drawPanel(winW, winH);
+            drawObjectivesPanel(winW, winH);
+        }
         if (showCounts_) drawUnitCounts(winW);
         if (showHDebug_) drawHDebug();
 
@@ -4755,6 +4761,7 @@ private:
         bool airborne = false;   // true while the flight animation should run
         float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
         int flyGate = 8;         // static index that this unit's `fly` gates on
+        int moveGate = 0;        // static index this unit's `walk` gates on (see walkGateOf)
         // emit-sfx (piece, sfxType) captured off the worker thread; drained on the
         // main thread after the parallel VM tick (SDL/effects_ are main-thread only).
         std::vector<std::pair<int, int32_t>> pendingSfx;
@@ -4835,6 +4842,23 @@ private:
         return 8;
     }
 
+    // The static index a unit's WALK cycle gates its piece motion on -- the client's
+    // state machine sets this to 1 while moving so the walk script actually animates.
+    // Most ground units (araking/tarnecro/zonlord) read static 0, but a HOVER unit
+    // like the Veruna monarch (vermage) reads static 3 -- retail's MoveWatcher thread
+    // (which we don't run) fills it. The walk script's first opcode is that PUSH_STATIC,
+    // so derive the index instead of hard-coding 0. Tries walk / walk_legs / tread.
+    static int walkGateOf(const tak::cob::File& f) {
+        for (const char* name : {"walk", "walk_legs", "tread"}) {
+            int si = f.scriptIndex(name);
+            if (si < 0) continue;
+            uint32_t e = f.scripts[size_t(si)].entry;
+            if (e + 1 < f.code.size() && f.code[e] == 0x10021004)   // PUSH_STATIC
+                return int(f.code[e + 1]);
+        }
+        return 0;
+    }
+
     // At max veterancy, a unit with a `veteranmodel` swaps its mesh for the
     // fancier promoted 3DO (same piece structure, so the COB/anim carries over).
     void maybeSwapVeteranModel(const tak::sim::Unit& u) {
@@ -4880,10 +4904,12 @@ private:
                 if (!cc.file->names.empty())
                     for (uint32_t w : cc.file->code)
                         if (w == 0x10072000) { cc.hasSounds = true; break; }
+                cc.moveGate = walkGateOf(*cc.file);
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
             a.pieceNames = ci->second.pieceNames;
             a.cobSounds = ci->second.hasSounds;
+            a.moveGate = ci->second.moveGate;
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             // TA COB unit-state queries answered from the sim.
             int unitId = u.id;
@@ -5158,6 +5184,7 @@ private:
         std::shared_ptr<const tak::cob::File> file;
         std::vector<std::string> pieceNames;
         bool hasSounds = false;   // any PLAY_SOUND op: the script provides its own audio
+        int moveGate = 0;         // walk-cycle moving-flag static index (walkGateOf)
     };
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };
@@ -5578,6 +5605,7 @@ private:
         tmp.pieceNames = names;
         tmp.vm = std::move(vm);
         tmp.flyGate = flyGateOf(*tmp.vm);
+        tmp.moveGate = walkGateOf(tmp.vm->file());
         bool animated = canMove || canFly;
         // (Re)start the locomotion animation from the top -- used before each bake
         // attempt so a retry on a fresh page re-captures the same frames.
@@ -5586,11 +5614,12 @@ private:
             if (canFly) { tmp.vm->setStatic(tmp.flyGate, 1); tmp.vm->start("fly");
                           for (int s = 0; s < 8; ++s) tmp.vm->tick(1.0f / 30); }
             else if (canMove) {
-                // Ground walk scripts gate their leg motion on static 0 (the "moving"
-                // flag the live anim loop sets); without it walk_legs no-ops and every
-                // baked frame is the same standing pose. Set it, exactly as the live
-                // update loop does, so the bake captures a real walk cycle.
-                tmp.vm->setStatic(0, 1);
+                // Ground walk scripts gate their leg motion on their moving-flag
+                // static (walkGateOf: 0 for most, 3 for the Veruna monarch); without it
+                // walk_legs no-ops and every baked frame is the same standing pose. Set
+                // it, exactly as the live update loop does, so the bake captures a real
+                // walk cycle.
+                tmp.vm->setStatic(tmp.moveGate, 1);
                 tmp.vm->start("walk") || tmp.vm->start("walk_legs");
             }
             else {
@@ -6768,7 +6797,9 @@ private:
         shadowBatch_.clear();
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
-            if (!alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
+            // A spectator (noFog_) sees every unit on the radar; a player sees only
+            // allied units and enemies currently in view.
+            if (!noFog_ && !alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
             SDL_FPoint p = toMini(u.x, u.z);
             SDL_Color tc = playerColor(u.player);
             pushQuad(shadowBatch_, p.x - 1.5f, p.y - 1.5f, 3, 3, tc);
@@ -9224,16 +9255,22 @@ private:
         const float px = 2.4f, lh = 7 * px + 9, x = 12;
         float y = 12;
         const float nameX = x + (teams ? 40 : 0);
-        const float panelW = (board || teams) ? 340.0f : 270.0f;
-        const float colUnits = x + panelW - 128, colKills = x + panelW - 50;
+        // A spectator sees the full economy: an extra MANA column (income) per faction,
+        // so a widened panel with the columns pushed left to make room.
+        const bool showMana = spectating_;
+        const float panelW = (showMana ? 440.0f : (board || teams) ? 340.0f : 270.0f);
+        const float colMana = x + panelW - 168;
+        const float colUnits = x + panelW - (showMana ? 96 : 128),
+                    colKills = x + panelW - 40;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 175);
         SDL_FRect bg{x - 7, y - 7, panelW, (rows + 1) * lh + 8};
         SDL_RenderFillRectF(ren_, &bg);
         char buf[64];
-        // FPS on the left; UNITS / KILLS column headers on the right.
+        // FPS on the left; MANA (spectator only) / UNITS / KILLS column headers.
         std::snprintf(buf, sizeof buf, "FPS %d", int(fps_ + 0.5f));
         blockText(buf, x, y, px, SDL_Color{190, 190, 195, 255});
+        if (showMana) blockText("MANA", colMana, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
         blockText("UNITS", colUnits, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
         blockText("KILLS", colKills, y + 3, 1.8f, SDL_Color{150, 150, 155, 255});
         y += lh;
@@ -9260,6 +9297,11 @@ private:
                 if (np > 2) s = "P" + std::to_string(t + 1) + " " + s;
             }
             blockText(s, nameX, y, px, c);
+            if (showMana) {   // current mana + income, e.g. "1234 +18"
+                const auto& pl = world_.player(t);
+                std::snprintf(buf, sizeof buf, "%d +%d", int(pl.mana), int(pl.income));
+                blockText(buf, colMana, y, 1.8f, c);
+            }
             std::snprintf(buf, sizeof buf, "%d", cnt[t]);
             blockText(buf, colUnits, y, px, c);
             std::snprintf(buf, sizeof buf, "%d", world_.player(t).kills);
