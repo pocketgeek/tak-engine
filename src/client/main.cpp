@@ -306,6 +306,14 @@ public:
             }
     }
 
+    // Bilinear terrain scaling (retail's video option). Applies to already-built
+    // chunk textures immediately and to every chunk composited afterwards.
+    void setBilinear(bool b) {
+        bilinear_ = b;
+        for (auto& [k, t] : chunks_)
+            if (t) SDL_SetTextureScaleMode(t, b ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+    }
+
     float offX() const { return offX_; }
     float offY() const { return offY_; }
     float zoom() const { return zoom_; }
@@ -345,6 +353,7 @@ private:
             SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                                SDL_TEXTUREACCESS_STATIC, kChunk, kChunk);
             SDL_UpdateTexture(t, nullptr, d.buf.data(), kChunk * 4);
+            if (bilinear_) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
             chunks_[key] = t;
         }
     }
@@ -390,6 +399,7 @@ private:
     std::set<std::pair<int, int>> chunkPending_;   // queued or in flight
     std::vector<DoneChunk> chunkDone_;
     bool chunkStop_ = false, chunkBusy_ = false;
+    bool bilinear_ = false;   // smooth chunk scaling (Options; see setBilinear)
     float offX_ = 0, offY_ = 0, zoom_ = 0.35f;
     float zoomSpeed_ = 1.0f;   // wheel-zoom sensitivity exponent (Options)
 };
@@ -1938,6 +1948,17 @@ public:
         lodEnabled_ = s.lod;                              // Options: distant impostors
         spriteMode_ = std::clamp(s.spriteMode, 0, 2);     // Options: unit sprite mode
         buildBarAlign_ = std::clamp(s.buildBarAlign, 0, 2);   // Options: build-menu row
+        // Bilinear filtering (retail video option): smooth the terrain and the
+        // standalone feature/shadow sprites. The packed model-texture atlas stays
+        // NEAREST regardless (linear sampling would bleed neighbouring sprites),
+        // and fog/minimap/impostors are always linear by design.
+        bilinear_ = s.bilinear;
+        mapView_.setBilinear(s.bilinear);
+        SDL_ScaleMode fm = s.bilinear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
+        for (auto& [id, a] : featureArt_) {
+            for (SDL_Texture* t : a.frames) if (t) SDL_SetTextureScaleMode(t, fm);
+            if (a.shadow) SDL_SetTextureScaleMode(a.shadow, fm);
+        }
     }
 
     // main()'s live settings, so the in-game Options screen can edit + persist them.
@@ -5251,6 +5272,7 @@ public:
 private:
     bool lodEnabled_ = true;    // distant impostors on by default; Options toggles
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
+    bool bilinear_ = false;     // smooth terrain/feature scaling (Options)
     float lodPx_ = 64.0f;                        // model shorter than this -> impostor
     static constexpr float kLodZoomGate = 0.5f;  // LOD only when really zoomed out
                                                  // (zoom below this); full 3D otherwise
@@ -7003,6 +7025,7 @@ private:
                                 ff.width, ff.height);
                             SDL_UpdateTexture(t, nullptr, ff.rgba.data(), ff.width * 4);
                             SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+                            if (bilinear_) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
                             a.frames.push_back(t);
                         }
                         if (!a.frames.empty()) {
@@ -7022,6 +7045,7 @@ private:
                                                      fr.height);
                         SDL_UpdateTexture(a.shadow, nullptr, px.data(), fr.width * 4);
                         SDL_SetTextureBlendMode(a.shadow, SDL_BLENDMODE_BLEND);
+                        if (bilinear_) SDL_SetTextureScaleMode(a.shadow, SDL_ScaleModeLinear);
                         a.sw = fr.width; a.sh = fr.height;
                         a.sxoff = fr.xoff; a.syoff = fr.yoff;
                     }

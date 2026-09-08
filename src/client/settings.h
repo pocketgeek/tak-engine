@@ -26,6 +26,7 @@ struct Settings {
     bool  lod        = true;       // distant-unit impostors (perf); on by default
     int   spriteMode = 0;          // unit sprites: 0=auto, 1=on, 2=off
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
+    bool  bilinear   = false;      // smooth (bilinear) terrain + feature scaling, like retail's option
 
     // ---- audio (0..256, matching SoundBank's internal scale) ----
     int   masterVol  = 256;        // global gain over everything
@@ -63,7 +64,7 @@ struct Settings {
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
             && a.uiScale == b.uiScale && a.antiAlias == b.antiAlias
             && a.lod == b.lod && a.spriteMode == b.spriteMode
-            && a.buildBarAlign == b.buildBarAlign
+            && a.buildBarAlign == b.buildBarAlign && a.bilinear == b.bilinear
             && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale

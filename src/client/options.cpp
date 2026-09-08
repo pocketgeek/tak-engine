@@ -112,6 +112,9 @@ void OptionsScreen::build(int channels) {
     slider("BUILD MENU", 0, 2, [&] { return float(s_.buildBarAlign); },
            [&](float v) { s_.buildBarAlign = std::clamp(int(v + 0.5f), 0, 2); },
            [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "RIGHT" : l >= 1 ? "CENTER" : "LEFT"); });
+    // Retail's video option: smooth terrain + feature scaling (off = crisp pixels).
+    toggle("BILINEAR FILTERING", [&] { return s_.bilinear ? 1.0f : 0.0f; },
+           [&](float v) { s_.bilinear = v > 0.5f; });
 
     section("CAMERA");
     slider("MOUSE ZOOM SPEED", 0.25f, 4.0f, [&] { return s_.mouseZoomSpeed; },
