@@ -2627,6 +2627,13 @@ public:
                 mp_->sendHash(netTick_, world_.stateHash());
             ++netTick_;
             ++drained;
+            // During a heavy catch-up (a spectator fast-forwarding a big backlog at high
+            // game speed), service the connection every so often -- answer the server's
+            // keepalive pings and keep draining our recv buffer. Otherwise a spectator
+            // busy simulating for >15s stops ponging and the server drops it ("peer
+            // closed"). poll() is cheap (recv + ping/pong + flush); we ignore its result
+            // here, the next top-of-mpStep poll() surfaces any real error.
+            if ((drained & 63) == 0) mp_->poll();
         };
         if (netDelay_ == -2) {   // one-time init from the env
             // The adaptive jitter buffer is ON by default: it only ever reduces
@@ -2697,8 +2704,19 @@ public:
         if (mp_->bufferedBundles() > 900) {
             if (!mpSlowSinceMs_) mpSlowSinceMs_ = now;
             else if (now - mpSlowSinceMs_ > 5000) {
-                netError_ = "this machine can't keep up with the game speed";
-                return false;
+                if (mp_->isSpectator()) {
+                    // A spectator is a WATCHER, not a lockstep participant -- it holds
+                    // nobody up. If it can't sustain the game speed (e.g. a big battle
+                    // at 4x) it just LAGS behind the live game instead of disconnecting;
+                    // the keepalive poll in the drain keeps the connection healthy. Show
+                    // a transient hint and carry on. (Lowering the speed catches it up.)
+                    notice_ = "SPEED TOO HIGH -- SPECTATOR LAGGING";
+                    noticeTimer_ = 2;
+                    mpSlowSinceMs_ = now;   // re-arm; don't spam
+                } else {
+                    netError_ = "this machine can't keep up with the game speed";
+                    return false;
+                }
             }
         } else {
             mpSlowSinceMs_ = 0;
