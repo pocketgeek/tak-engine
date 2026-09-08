@@ -3534,7 +3534,33 @@ public:
                     a.vm->start("walk") || a.vm->start("walk_legs");
                 }
             }
-            if (u.type && !u.type->canMove) {   // buildings: yard/production anims
+            // Mobile builders: the conjure/build animation while actively working a
+            // site (constructing, repairing, or reclaiming). Retail drives this via
+            // the COB StartBuilding/StopBuilding hooks -- StartBuilding raises the
+            // script's own "am building" gate and kicks the startbuild pose loop,
+            // StopBuilding clears it. Flyers are excluded: their hover loop owns the
+            // VM (they already animate while conjuring mid-air).
+            if (u.type->isBuilder && !isStructure(u.type) && !a.flying) {
+                bool working = !u.walking() &&
+                               (u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0);
+                if (working != a.building) {
+                    a.building = working;
+                    if (working) {
+                        a.vm->start("StartBuilding") || a.vm->start("startbuild");
+                    } else {
+                        a.vm->start("StopBuilding");
+                        a.vm->start("restore_x") || a.vm->start("RestoreAfterDelay");
+                    }
+                } else if (working && a.vm->threadCount() == 0) {
+                    // Single-pass pose scripts: re-invoke each cycle, like walk.
+                    a.vm->start("startbuild") || a.vm->start("StartBuilding");
+                }
+            }
+            // Buildings: yard/production anims. Detect via isStructure (maxVel<=0),
+            // NOT !canMove -- the Keep/Castle/Hell carry canmove=1 in their FBI, so
+            // the old test skipped every factory and none of them ever animated
+            // while training.
+            if (u.type && isStructure(u.type)) {
                 bool busy = !u.buildQueue.empty();
                 if (busy != a.producing) {
                     a.producing = busy;
@@ -4677,6 +4703,7 @@ private:
         bool walking = false;
         bool dying = false;
         bool producing = false;
+        bool building = false;   // mobile builder actively working a site (conjure anim)
         bool firing = false;
         bool flying = false;
         bool airborne = false;   // true while the flight animation should run
