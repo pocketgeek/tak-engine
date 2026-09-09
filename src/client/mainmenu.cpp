@@ -679,8 +679,16 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
                             [ren, music, settings] {
                                 if (music) music->setVolume(settings->masterVol, settings->bgmVol);
-                                if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
-                                    SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                                // onChange fires on EVERY control tweak. Only re-apply the
+                                // window mode when it actually differs -- a redundant
+                                // SDL_SetWindowFullscreen reconfigures the Wayland surface and
+                                // drops subsequent mouse-button events (motion still flows), so
+                                // the first click "works" and then clicks go dead.
+                                if (SDL_Window* wnd = SDL_RenderGetWindow(ren)) {
+                                    bool isFs = (SDL_GetWindowFlags(wnd) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+                                    if (isFs != settings->fullscreen)
+                                        SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                                }
                                 SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
                             },
                             [settings] { saveSettings(*settings); }, 0, [] {},

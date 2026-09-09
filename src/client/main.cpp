@@ -2146,8 +2146,14 @@ public:
         options_ = std::make_unique<tak::OptionsScreen>(ren_, *settings_,
             [this] {
                 applySettings(*settings_);
-                if (SDL_Window* w = SDL_RenderGetWindow(ren_))
-                    SDL_SetWindowFullscreen(w, settings_->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                // Only re-apply the window mode on an ACTUAL change: a redundant
+                // SDL_SetWindowFullscreen reconfigures the (Wayland) surface and drops
+                // later mouse-button events -- see the menu Options callback.
+                if (SDL_Window* w = SDL_RenderGetWindow(ren_)) {
+                    bool isFs = (SDL_GetWindowFlags(w) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+                    if (isFs != settings_->fullscreen)
+                        SDL_SetWindowFullscreen(w, settings_->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                }
                 SDL_RenderSetVSync(ren_, settings_->vsync ? 1 : 0);
             },
             [this] { saveSettings(*settings_); },
