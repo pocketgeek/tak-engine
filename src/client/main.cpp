@@ -2788,6 +2788,7 @@ public:
             if (drained < budget && !mp_->haveBundle(netTick_)) ++netBenchStalls_;
         }
         // Cosmetics once per frame, covering the game time actually played.
+        lastDrained_ = drained;   // for the frame-spike diagnostic (TAK_FRAMELOG)
         if (drained > 0) cosmeticStep(float(drained) / 30.0f);
         // Spectator progress heartbeat: keep the server's flow-control ack FRESH even
         // when we're caught up and not draining. The per-tick hash send only fires while
@@ -2861,7 +2862,7 @@ public:
         replayMode_ = true;
         noFog_ = true;             // a spectator sees the whole map
         localPlayer_ = 0;
-        world_.setVisPlayer(0);
+        world_.setVisPlayer(-1);   // no fog needed (noFog_) -> skip the O(units) fog pass
         side_ = "ara";
         loadPanel(side_);
         loadGui(side_);
@@ -3039,6 +3040,7 @@ public:
             if (spec) {
                 spectating_ = true;   // watch-only: no fog, no control, no resume
                 noFog_ = true;
+                world_.setVisPlayer(-1);   // sees everything -> skip the wasted O(units) fog pass
                 showCounts_ = true;   // the F4 scoreboard is on by default while spectating
                 gameStartMs_ = SDL_GetTicks64();
             } else {
@@ -3056,6 +3058,7 @@ public:
                 // no resume ticket, and nothing to report loaded.
                 spectating_ = true;
                 noFog_ = true;
+                world_.setVisPlayer(-1);   // sees everything -> skip the wasted O(units) fog pass
                 showCounts_ = true;   // F4 scoreboard on by default while spectating
                 gameStartMs_ = SDL_GetTicks64();
             } else {
@@ -6628,9 +6631,11 @@ private:
     float netAccum_ = 0;         // wall-clock tick accumulator (seconds)
     uint64_t netStepMs_ = 0;     // last mpStep wall time
     long netBenchFrames_ = 0, netBenchStalls_ = 0;   // jitter-buffer stall metric
+    int lastDrained_ = 0;   // sim ticks advanced on the last frame (frame-spike diagnostic)
 public:
     long netBenchFrames() const { return netBenchFrames_; }
     long netBenchStalls() const { return netBenchStalls_; }
+    int lastDrained() const { return lastDrained_; }
     void netEnableRttProbe() { if (mp_) mp_->enableRttProbe(); }
     float netRttMs() const { return mp_ ? mp_->rttMs() : 0.0f; }
     int netDelay() const { return netDelay_; }
@@ -11412,6 +11417,30 @@ int main(int argc, char** argv) {
         // keep the OS arrow.
         if (gameView) gameView->drawCursorOverlay();
         SDL_RenderPresent(ren);
+        // Frame-spike diagnostic (TAK_FRAMELOG=1): log present-to-present intervals that
+        // spike above ~1.8x the running average, with time since the last spike (the
+        // period) and how many sim ticks ran that frame (ticks>0 => the spike is the sim
+        // tick; ticks==0 => it's render/GPU/net). Raw getenv so it works in the release build.
+        {
+            static const bool _fl = getenv("TAK_FRAMELOG") != nullptr;
+            if (_fl && gameView) {
+                static uint64_t lastP = 0, lastSpikeMs = 0;
+                static double emaMs = 8.0;
+                uint64_t nowMs2 = SDL_GetTicks64();
+                if (lastP) {
+                    double fms = double(nowMs2 - lastP);
+                    if (fms > emaMs * 1.8 && fms > 6.0) {
+                        std::fprintf(stderr, "FRAMESPIKE ms=%.1f avg=%.1f period=%llums ticks=%d\n",
+                                     fms, emaMs,
+                                     (unsigned long long)(lastSpikeMs ? nowMs2 - lastSpikeMs : 0),
+                                     gameView->lastDrained());
+                        lastSpikeMs = nowMs2;
+                    }
+                    emaMs = emaMs * 0.9 + fms * 0.1;
+                }
+                lastP = nowMs2;
+            }
+        }
         if (prof) {
             double t5 = pnow();
             pPres += t5 - t4;
