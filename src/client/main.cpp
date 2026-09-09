@@ -11373,6 +11373,11 @@ int main(int argc, char** argv) {
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
         if (tak::termRequested()) { running = false; quitApp = true; break; }
+        // Pin the newest published sim snapshot for this whole iteration -- input handlers
+        // (below) AND the render pass (further down) read front(), so the pin must span both
+        // so a concurrent publish from the sim worker (Stage B) can't tear them. Released by
+        // endFrame() after the cursor overlay, once every front()-reading pass is done.
+        if (gameView) gameView->beginFrame();
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             // The window-manager close button (title-bar X) fires SDL_QUIT; we
@@ -11562,10 +11567,6 @@ int main(int argc, char** argv) {
         if (modelView) modelView->draw(w, h, dt);
         double t1 = prof ? pnow() : 0;
         if (gameView) {
-            // Pin the newest published sim snapshot for this whole frame's reads, so a
-            // concurrent publish from the sim worker (Stage B) can't tear them. Released
-            // by endFrame() below once every front()-reading pass is done.
-            gameView->beginFrame();
             // Real-time camera/audio every frame, BEFORE the sim step -- so pan,
             // edge-scroll, follow, shake and music stay smooth even when a net
             // game's sim is stalled waiting on a bundle (the deferred netAccum-style
