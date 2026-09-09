@@ -2683,7 +2683,7 @@ public:
         benchPrevWallMs_ = SDL_GetTicks64();
         benchCliPrev_ = tak::proc::sample(0);
         benchSrvPrev_ = benchServerPid_ ? tak::proc::sample(benchServerPid_) : tak::proc::Sample{};
-        benchNextTick_ = 150; benchSamples_.clear(); benchStatsShown_ = false;
+        benchNextTick_ = 300; benchSamples_.clear(); benchStatsShown_ = false;
     }
     // Record one metrics row for game-second `gameSec`: client/server CPU% (delta over the
     // wall interval since the last sample), RSS, fps and sim speed.
@@ -2714,7 +2714,7 @@ public:
         uint32_t gt = front().gameTick, end = world_.benchmarkEndTick();
         while (benchNextTick_ <= gt && benchNextTick_ <= end) {
             pushBenchSample(int(benchNextTick_ / 30));
-            benchNextTick_ += 150;
+            benchNextTick_ += 300;
         }
         if (gt >= end) benchStatsShown_ = true;   // run complete -> show the stats overlay
     }
@@ -2726,6 +2726,31 @@ public:
         int sec = int(front().gameTick / 30);
         if (benchSamples_.empty() || benchSamples_.back().gameSec != sec) pushBenchSample(sec);
         benchStatsShown_ = true;
+    }
+    // Benchmark flythrough: each 10s leg tracks one AI's monarch (leg 0 -> AI1 .. leg 7 ->
+    // AI8), starting fully zoomed out and zooming in across the leg, then cutting to the
+    // next. Camera only -- view state is never hashed. Called each frame during the run.
+    void benchmarkCamera(float dt, int winW, int winH) {
+        if (!benchmarkMode_ || benchStatsShown_ || !world_.benchmarkMode()) return;
+        int leg = int(front().gameTick / 300);   // 0..7, one per faction / 10s leg
+        if (leg < 0) leg = 0;
+        if (leg > 7) leg = 7;
+        if (leg != benchCamLeg_) { benchCamLeg_ = leg; benchLegT_ = 0.0f; }   // new leg -> reset
+        benchLegT_ += dt;
+        float p = benchLegT_ / 10.0f;             // progress through the 10s leg
+        if (p > 1.0f) p = 1.0f;
+        // Zoom: all the way out at the leg start, zooming in over the leg.
+        float zOut = mapView_.minZoom(winW, winH);
+        float zIn = std::max(zOut * 2.5f, 1.6f);  // a clear close-up, comfortably above zOut
+        float z = zOut + (zIn - zOut) * p;
+        mapView_.setZoom(z);
+        // Track this leg's AI monarch (player == leg) from the render snapshot.
+        for (const UnitR* u : front().live)
+            if (u && u->player == leg && isMonarchType(u->type)) {
+                mapView_.setOffset(u->x - winW * 0.5f / z, u->z - winH * 0.5f / z);
+                break;
+            }
+        mapView_.clampOffset(winW, winH);
     }
     // The benchmark results overlay: a per-milestone table of client/server CPU + memory,
     // fps and sim speed, plus the display settings that produced them. A single centered
@@ -7418,10 +7443,12 @@ private:
     std::vector<BenchSample> benchSamples_;
     tak::proc::Sample benchCliPrev_, benchSrvPrev_;
     uint64_t benchPrevWallMs_ = 0;
-    uint32_t benchNextTick_ = 150;      // next milestone tick (150,300,...,1200)
+    uint32_t benchNextTick_ = 300;      // next milestone tick (300,600,...,2400)
     long benchServerPid_ = 0;           // local takserver pid (0 = N/A, e.g. headless)
     bool benchStatsShown_ = false;      // the benchmark stats overlay is up
     SDL_FRect benchDoneRect_{};          // the stats overlay's DONE button (set each render)
+    int benchCamLeg_ = -1;              // benchmark flythrough: leg (faction) the camera is on
+    float benchLegT_ = 0.0f;            // seconds into the current leg (drives the zoom-in)
     // The worker: pop bundles FIFO, simulate under simMutex_, hand back the state hash.
     void simWorkerLoop() {
         for (;;) {
@@ -12061,8 +12088,9 @@ int main(int argc, char** argv) {
             // so the walk cycle is smooth at display rate and the heavy parallel VM pass no
             // longer piles onto the 1-in-8 net frame that runs the sim tick.
             if (!benchFrozen) {
+                gameView->benchmarkCamera(dt, w, h);   // benchmark flythrough (no-op otherwise)
                 gameView->animFrame(dt);
-                gameView->benchmarkSample();   // perf samples at each 5s milestone (no-op unless benchmarking)
+                gameView->benchmarkSample();   // perf samples at each 10s milestone (no-op unless benchmarking)
             }
             double t2 = prof ? pnow() : 0;
             gameView->draw(w, h);

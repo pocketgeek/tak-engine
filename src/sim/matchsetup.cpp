@@ -301,16 +301,27 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     auto starts = parseStartPositions(vfs, cfg.mapPath);
     float cx = map.blocksX * 16.0f, cz = map.blocksY * 16.0f;
     std::vector<std::pair<float, float>> spots = starts;
+    // Benchmark: ignore the map's (few) start positions and spread all factions evenly
+    // on a big ring around the map centre, so their large armies don't pile onto each
+    // other. Radius is kept well inside the map edge (each army block is ~2840px wide).
+    if (cfg.benchmark) {
+        spots.clear();
+        float radius = std::min(cx, cz) * 0.62f;
+        for (int k = 0; k < used; ++k) {
+            float a = float(k) / float(std::max(used, 1)) * 6.2831853f;
+            spots.push_back({cx + detmath::cos(a) * radius, cz + detmath::sin(a) * radius});
+        }
+    }
     while (int(spots.size()) < used) {
         float a = float(spots.size()) / float(std::max(used, 1)) * 6.2831853f;
         spots.push_back({cx + detmath::cos(a) * 300, cz + detmath::sin(a) * 300});
     }
     std::vector<std::pair<float, float>> assigned;
     int spot = 0;
-    // Benchmark: per-faction staged spawn plan (deltas summing to 4999, + the monarch =
-    // 5000 each) fired at 5s intervals. Built per faction in the loop below, deterministic.
+    // Benchmark: per-faction staged spawn plan (deltas summing to 4975, + the monarch)
+    // fired at 10s intervals. Built per faction in the loop below, deterministic.
     static const int kBenchDeltas[7] = {225, 250, 500, 1000, 1000, 1000, 1000};   // sum = 4975
-    static const uint32_t kBenchTicks[7] = {150, 300, 450, 600, 750, 900, 1050};   // 5s..35s @30Hz
+    static const uint32_t kBenchTicks[7] = {300, 600, 900, 1200, 1500, 1800, 2100};   // 10s..70s @30Hz
     std::vector<BenchStage> benchPlan;
     if (cfg.benchmark) { benchPlan.resize(7); for (int s = 0; s < 7; ++s) benchPlan[s].tick = kBenchTicks[s]; }
     for (int i = 0; i < int(cfg.slots.size()); ++i) {
@@ -361,7 +372,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 if (t->domain != UnitType::Domain::Water) roster.push_back(t);
             if (!roster.empty()) {
                 int cols = 1; while (cols * cols < 4975) ++cols;   // ceil(sqrt(4975)) = 71
-                const float spacing = 24.0f;
+                const float spacing = 40.0f;                       // spread out (was 24)
                 float x0 = mx - float(cols) * spacing * 0.5f;   // centre the block on the start
                 float z0 = mz - float(cols) * spacing * 0.5f;
                 int idx = 0;
@@ -374,7 +385,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             }
         }
     }
-    if (cfg.benchmark) world.setBenchmarkPlan(std::move(benchPlan), 1200);   // end at tick 1200 (40s)
+    if (cfg.benchmark) world.setBenchmarkPlan(std::move(benchPlan), 2400);   // end at tick 2400 (80s)
     // Block the (structure) footprints just spawned. Monarchs move, so this is a
     // no-op today, but it mirrors the client and covers any non-mover spawns.
     for (auto& u : world.units()) {
