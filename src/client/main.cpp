@@ -2714,7 +2714,10 @@ public:
             // an all-AI room has no seated players to form a consensus). Without it the
             // server floods a lagging spectator until the connection breaks.
             if (netTick_ % uint32_t(tak::net::kHashPeriod) == 0)
-                mp_->sendHash(netTick_, world_.stateHash());
+                // A spectator's hash is a progress ACK only (never desync-checked), so
+                // skip the O(units) stateHash for it -- a seated player still sends the
+                // real hash for the lockstep desync check.
+                mp_->sendHash(netTick_, mp_->isSpectator() ? 0 : world_.stateHash());
             ++netTick_;
             ++drained;
             // During a heavy catch-up (a spectator fast-forwarding a big backlog at high
@@ -2796,7 +2799,12 @@ public:
             uint64_t nowHb = SDL_GetTicks64();
             if (nowHb - lastSpecAckMs_ > 400) {
                 lastSpecAckMs_ = nowHb;
-                mp_->sendHash(netTick_ ? netTick_ - 1 : 0, world_.stateHash());
+                // A spectator's hash is a pure progress ACK -- the server never
+                // desync-checks it (an all-AI room has no seated consensus). So send a
+                // trivial value, NOT world_.stateHash(): folding thousands of units into an
+                // FNV every 0.4s on the render thread was a periodic hitch that scaled with
+                // the battle. The TICK is what the server's flow control reads.
+                mp_->sendHash(netTick_ ? netTick_ - 1 : 0, 0);
             }
         }
         // Measure the ACTUAL game speed: how fast our sim really advances (ticks/sec
