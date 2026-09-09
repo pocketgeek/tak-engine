@@ -29,7 +29,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"     # repo root
 ZLIB_VERSION="${ZLIB_VERSION:-v1.3.1}"
 JPEG_VERSION="${JPEG_VERSION:-3.0.4}"
-SDL2_VERSION="${SDL2_VERSION:-release-2.30.9}"
+SDL2_VERSION="${SDL2_VERSION:-release-2.32.10}"   # 2.32.x tracks the current PipeWire API (GCC-strict)
 PREFIX="${PREFIX:-$here/third_party/static-deps}"
 SRC="${SRC:-$PREFIX/src}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
