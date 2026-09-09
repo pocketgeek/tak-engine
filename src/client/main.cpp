@@ -35,6 +35,7 @@
 #include "util/png.h"
 #include "version.h"
 #include "client/cursors.h"
+#include "client/gpuvram.h"   // central GPU-texture VRAM accountant + hard cap
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
@@ -253,7 +254,7 @@ public:
             chunkDone_.clear();      // stale composites of the OLD map
             chunkPending_.clear();
         }
-        for (auto& [k, t] : chunks_) if (t) SDL_DestroyTexture(t);
+        for (auto& [k, t] : chunks_) if (t) gpuvram::destroy(t);
         chunks_.clear();
         map_ = tak::tnt::Map::load(vfs.read(mapPath), mapPath);
     }
@@ -328,6 +329,17 @@ public:
             for (int cx = c0x - 1; cx <= c1x + 1; ++cx)
                 if (cy < c0y || cy > c1y || cx < c0x || cx > c1x)
                     requestChunk(cx, cy);
+        // Evict chunks well outside the visible+prefetch ring so terrain VRAM tracks the
+        // working set, not the pan history (part of the GPU cap). A 3-chunk margin keeps
+        // normal panning from thrashing; evicted chunks recomposite off-thread on return.
+        const int M = 3;
+        for (auto it = chunks_.begin(); it != chunks_.end(); ) {
+            int cx = it->first.first, cy = it->first.second;
+            if (cx >= c0x - 1 - M && cx <= c1x + 1 + M && cy >= c0y - 1 - M && cy <= c1y + 1 + M) { ++it; continue; }
+            gpuvram::destroy(it->second);
+            { std::lock_guard<std::mutex> lk(chunkMu_); chunkPending_.erase(it->first); }
+            it = chunks_.erase(it);
+        }
     }
 
     // Block until every queued chunk is composited and uploaded. Screenshot paths
@@ -419,8 +431,14 @@ private:
                 std::lock_guard<std::mutex> lk(chunkMu_); chunkPending_.erase(key); continue;
             }
             if (n >= kUploadBudget) { deferred.push_back(std::move(d)); continue; }
-            SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+            // Respect the GPU budget/backoff so terrain can never start the exhaustion
+            // storm; a deferred chunk stays pending and uploads once there's room.
+            if (gpuvram::blocked() || !gpuvram::wouldFit(size_t(kChunk) * kChunk * 4)) {
+                deferred.push_back(std::move(d)); continue;
+            }
+            SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                SDL_TEXTUREACCESS_STATIC, kChunk, kChunk);
+            if (!t) { gpuvram::noteFail(); deferred.push_back(std::move(d)); continue; }
             SDL_UpdateTexture(t, nullptr, d.buf.data(), kChunk * 4);
             if (bilinear_) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
             chunks_[key] = t;
@@ -628,7 +646,7 @@ private:
                     std::string name = seq.name;
                     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                     if (textures_.count(name)) continue;
-                    SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                    SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                        SDL_TEXTUREACCESS_STATIC,
                                                        f.width, f.height);
                     SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
@@ -1359,7 +1377,7 @@ public:
             g.h = f.height;
             g.yoff = f.yoff;
             if (f.width > 0 && f.height > 0) {
-                g.tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,
+                g.tex = gpuvram::create(ren, SDL_PIXELFORMAT_RGBA32,
                                           SDL_TEXTUREACCESS_STATIC, f.width, f.height);
                 SDL_UpdateTexture(g.tex, nullptr, f.rgba.data(), f.width * 4);
                 SDL_SetTextureBlendMode(g.tex, SDL_BLENDMODE_BLEND);
@@ -4507,6 +4525,7 @@ public:
         // and building its vertex buffer); the render thread then only submits the
         // finished geometry, one texture-batched draw call per unit. Without this
         // the whole frame is single-threaded and pegs one core at large unit counts.
+        ++sprTick_;   // frame counter for sprite-page LRU (stamps SprPage.lastUse below)
         visUnits_.clear();
         geomIndex_.assign(front().units.size(), -1);   // id -> slot; -1 = not in view
                                                         // (front().units is id-indexed, sized to cover every live id)
@@ -4556,6 +4575,17 @@ public:
         // Bake sprite sheets for visible models when sprite mode is on -- one NEW
         // set per frame (each is kSprFacings x kSprFrames render-target captures).
         if (spritesEnabled_) {
+            // Pass 1: mark every ON-SCREEN sprite set's page used THIS frame, so the LRU
+            // in newSprPage() never evicts a page whose sprites are still visible.
+            for (const auto* u : visUnits_) {
+                if (!u->type) continue;
+                auto sit = sprites_.find(std::make_pair(unitType_.at(u->id), colorSlot_[u->player & 7]));
+                if (sit != sprites_.end() && sit->second.ready && sit->second.page)
+                    for (auto& pg : sprPages_)
+                        if (pg.tex == sit->second.page) { pg.lastUse = sprTick_; break; }
+            }
+            // Pass 2: bake ONE new set this frame (spread the cost); a bake may evict a
+            // page NOT stamped above -- never a visible one, never the in-progress page.
             for (const auto* u : visUnits_) {
                 if (!u->type) continue;
                 auto key = std::make_pair(unitType_.at(u->id), colorSlot_[u->player & 7]);
@@ -5843,7 +5873,7 @@ private:
                     for (size_t i = 0; i < n; ++i) {
                         auto& f = seq.frames[i];
                         if (f.width == 0 || f.height == 0) break;
-                        SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                        SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                            SDL_TEXTUREACCESS_STATIC,
                                                            f.width, f.height);
                         SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
@@ -6030,17 +6060,10 @@ private:
     // starved the compositor itself ("Failed to start frame" = whole-screen
     // flicker). Units render as full 3D models during the pause -- correct, just
     // less cheap -- and baking resumes automatically once the pause lapses.
-    uint32_t gpuAllocBackoffUntil_ = 0;
-    bool gpuAllocBlocked() const {
-        return gpuAllocBackoffUntil_ != 0 &&
-               SDL_GetTicks() < gpuAllocBackoffUntil_;
-    }
-    void noteGpuAllocFail() {
-        if (!gpuAllocBlocked())
-            std::fprintf(stderr, "gpu: texture allocation failed (VRAM pressure?) "
-                                 "-- pausing atlas/sprite baking for 3s\n");
-        gpuAllocBackoffUntil_ = SDL_GetTicks() + 3000;
-    }
+    // Backoff now lives in the shared gpuvram accountant (so terrain chunks, which are
+    // baked by MapView, participate too). These thin forwarders keep the call sites.
+    bool gpuAllocBlocked() const { return gpuvram::blocked(); }
+    void noteGpuAllocFail() { gpuvram::noteFail(); }
     static constexpr float kImpScale = 2.0f;    // impostor render supersampling
 
     // Sprite sheets: the locomotion animation (walk / fly) baked to a grid of
@@ -6058,9 +6081,15 @@ private:
         bool ready = false;
     };
     std::map<std::pair<std::string, int>, SpriteSet> sprites_;
-    std::vector<SDL_Texture*> sprPages_;   // 4096 atlas pages (multi-page: scales,
-    int sprAtlasDim_ = 4096;               // and 4096 targets work everywhere)
-    int sprCurX_ = 0, sprCurY_ = 0, sprShelfH_ = 0;
+    // Sprite-atlas pages, 64 MiB each (4096x4096 RGBA). A hard LRU cap (kMaxSprPages)
+    // bounds their VRAM: when full, newSprPage() evicts the least-recently-DRAWN page
+    // instead of growing -- so a huge/diverse army can't run the GPU out of memory. Each
+    // page owns its own shelf-packing cursor so evicting one never corrupts another.
+    struct SprPage { SDL_Texture* tex = nullptr; uint64_t lastUse = 0; int curX = 0, curY = 0, shelfH = 0; };
+    std::vector<SprPage> sprPages_;
+    int sprAtlasDim_ = 4096;               // 4096 targets work everywhere
+    uint64_t sprTick_ = 0;                 // ++ once per frame; stamps SprPage.lastUse
+    static constexpr int kMaxSprPages = 8; // 512 MiB hard ceiling on sprite VRAM
     // Sprite mode: AUTO (default) turns sprite sheets on only while the frame can't
     // hold 60fps, off again once the crowd clears -- so units keep full 3D detail
     // until the scene actually needs the cheaper representation. The Options menu
@@ -6101,7 +6130,25 @@ private:
     bool newSprPage() {
         AaScaleReset _sr(ren_);
         if (gpuAllocBlocked()) return false;   // don't retry a failed 64MB alloc per frame
-        SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+        const size_t pageBytes = size_t(sprAtlasDim_) * size_t(sprAtlasDim_) * 4;   // 64 MiB
+        // At the page ceiling OR over the global VRAM budget: evict the least-recently-
+        // DRAWN page (never the in-progress back() page) rather than allocate more. This
+        // is the hard cap -- a diverse 40k-unit army tops out at kMaxSprPages, not GBs.
+        while (int(sprPages_.size()) >= kMaxSprPages || !gpuvram::wouldFit(pageBytes)) {
+            int victim = -1; uint64_t oldest = UINT64_MAX;
+            for (int i = 0; i + 1 < int(sprPages_.size()); ++i)   // exclude back() (in-progress)
+                if (sprPages_[size_t(i)].lastUse < sprTick_ && sprPages_[size_t(i)].lastUse < oldest)
+                    { oldest = sprPages_[size_t(i)].lastUse; victim = i; }
+            if (victim < 0) return false;   // every page drawn this frame -> can't evict, refuse
+            SDL_Texture* vt = sprPages_[size_t(victim)].tex;
+            // Drop every SpriteSet that lived on the evicted page so none keeps a dangling
+            // page pointer; those keys rebake on demand (one/frame) when next visible.
+            for (auto it = sprites_.begin(); it != sprites_.end(); )
+                it = (it->second.page == vt) ? sprites_.erase(it) : std::next(it);
+            gpuvram::destroy(vt);
+            sprPages_.erase(sprPages_.begin() + victim);
+        }
+        SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                            SDL_TEXTUREACCESS_TARGET, sprAtlasDim_, sprAtlasDim_);
         if (!t) { noteGpuAllocFail(); return false; }
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
@@ -6112,8 +6159,7 @@ private:
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
         SDL_RenderClear(ren_);
         SDL_SetRenderTarget(ren_, p0);
-        sprPages_.push_back(t);
-        sprCurX_ = sprCurY_ = sprShelfH_ = 0;
+        sprPages_.push_back(SprPage{t});   // fresh page, cursor at 0
         return true;
     }
 public:
@@ -6126,10 +6172,10 @@ public:
     // Surface-backed caches (shadows, build FX) keep their pixels and are untouched.
     void invalidateRenderTargets() {
         freeSpritePages();
-        for (SDL_Texture* t : atlasTex_) if (t) SDL_DestroyTexture(t);
+        for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
         atlasTex_.clear();
         impostors_.clear();
-        if (impAtlas_) { SDL_DestroyTexture(impAtlas_); impAtlas_ = nullptr; }
+        if (impAtlas_) { gpuvram::destroy(impAtlas_); impAtlas_ = nullptr; }
         impCurX_ = impCurY_ = impShelfH_ = 0;
     }
 private:
@@ -6143,10 +6189,9 @@ private:
     // that reference the texture (SDL >= 2.0.10) -- if draws ever bypass SDL's
     // command queue, move the auto-tune free to before update() instead.
     void freeSpritePages() {
-        for (SDL_Texture* t : sprPages_) if (t) SDL_DestroyTexture(t);
+        for (auto& p : sprPages_) if (p.tex) gpuvram::destroy(p.tex);
         sprPages_.clear();
         sprites_.clear();
-        sprCurX_ = sprCurY_ = sprShelfH_ = 0;
     }
 public:
 private:
@@ -6227,7 +6272,7 @@ private:
         if (int(atlasTex_.size()) <= slot) atlasTex_.resize(size_t(slot) + 1, nullptr);
         if (atlasTex_[slot]) return atlasTex_[slot];
         if (gpuAllocBlocked()) return nullptr;   // don't retry a failed alloc per frame
-        SDL_Texture* atlas = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+        SDL_Texture* atlas = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                SDL_TEXTUREACCESS_TARGET, atlasW_, atlasH_);
         if (!atlas) { noteGpuAllocFail(); return nullptr; }
         SDL_SetTextureBlendMode(atlas, SDL_BLENDMODE_BLEND);
@@ -6262,7 +6307,7 @@ private:
         if (!atlas) return;   // slot atlas unavailable (alloc backoff): bake later
         if (!impAtlas_) {
             if (gpuAllocBlocked()) return;   // don't retry a failed 64MB alloc per frame
-            impAtlas_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+            impAtlas_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                           SDL_TEXTUREACCESS_TARGET, impAtlasDim_, impAtlasDim_);
             if (!impAtlas_) { noteGpuAllocFail(); return; }
             SDL_SetTextureBlendMode(impAtlas_, SDL_BLENDMODE_BLEND);
@@ -6447,7 +6492,7 @@ private:
             period = std::clamp(period, 0.3f, 2.0f);
         }
         bool atlasFull = false, pageAllocFailed = false;
-        SDL_Texture* target = sprPages_.back();
+        SDL_Texture* target = sprPages_.back().tex;
         // Capture the current VM pose at facing fi into a packed cell of `target`.
         auto capture = [&](int fi, SDL_Rect& outR, SDL_FRect& outB) {
             float heading = float(fi) / kSprFacings * 2.0f * kPi;
@@ -6471,9 +6516,10 @@ private:
             const int pad = 2;
             int w = std::clamp(int(std::ceil((maxX - minX) * S)) + 2 * pad, 2, 400);
             int h = std::clamp(int(std::ceil((maxY - minY) * S)) + 2 * pad, 2, 400);
-            if (sprCurX_ + w > sprAtlasDim_) { sprCurX_ = 0; sprCurY_ += sprShelfH_ + 1; sprShelfH_ = 0; }
-            if (sprCurY_ + h > sprAtlasDim_) { atlasFull = true; return; }
-            int rx = sprCurX_, ry = sprCurY_;
+            SprPage& pg = sprPages_.back();   // the in-progress bake target owns the cursor
+            if (pg.curX + w > sprAtlasDim_) { pg.curX = 0; pg.curY += pg.shelfH + 1; pg.shelfH = 0; }
+            if (pg.curY + h > sprAtlasDim_) { atlasFull = true; return; }
+            int rx = pg.curX, ry = pg.curY;
             for (auto& t : scratch) {
                 SDL_Vertex v[3];
                 for (int i = 0; i < 3; ++i) {
@@ -6485,15 +6531,15 @@ private:
             }
             outR = SDL_Rect{rx, ry, w, h};
             outB = SDL_FRect{minX - pad / S, minY - pad / S, w / S, h / S};
-            sprCurX_ += w + 1;
-            sprShelfH_ = std::max(sprShelfH_, h);
+            pg.curX += w + 1;
+            pg.shelfH = std::max(pg.shelfH, h);
         };
         // Bake all frames into the current page; if it overflows, start a fresh
         // page and re-bake from the top (at most one retry -- a type that can't fit
         // an empty page is left not-ready and just uses its full model).
         for (int attempt = 0; attempt < 2; ++attempt) {
             initAnim();
-            target = sprPages_.back();
+            target = sprPages_.back().tex;
             SDL_SetRenderTarget(ren_, target);
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             atlasFull = false;
@@ -7622,7 +7668,7 @@ private:
         if (miniThread_.joinable()) miniThread_.join();
         miniBuilding_ = miniReady_ = false;
         miniPix_.clear();
-        if (miniTex_) { SDL_DestroyTexture(miniTex_); miniTex_ = nullptr; }
+        if (miniTex_) { gpuvram::destroy(miniTex_); miniTex_ = nullptr; }
     }
     SDL_Texture* panelTex_ = nullptr;
     int panelW_ = 0, panelH_ = 0;
@@ -7691,7 +7737,7 @@ private:
             std::lock_guard<std::mutex> lk(miniMu_);
             if (!miniReady_) return;    // still crunching
             int bw = mapView_.map().blocksX, bh = mapView_.map().blocksY;
-            miniTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+            miniTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                          SDL_TEXTUREACCESS_STATIC, bw, bh);
             SDL_UpdateTexture(miniTex_, nullptr, miniPix_.data(), bw * 4);
             SDL_SetTextureScaleMode(miniTex_, SDL_ScaleModeLinear);
@@ -8010,7 +8056,7 @@ private:
                         px[i] = px[i + 1] = px[i + 2] = 0;
                         px[i + 3] = px[i + 3] ? 90 : 0;
                     }
-                    SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                    SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                        SDL_TEXTUREACCESS_STATIC,
                                                        fr.width, fr.height);
                     SDL_UpdateTexture(t, nullptr, px.data(), fr.width * 4);
@@ -8091,7 +8137,7 @@ private:
                             if (ff.width == 0 || ff.height != fr.height ||
                                 ff.width != fr.width)
                                 continue;   // keep uniform dimensions only
-                            SDL_Texture* t = SDL_CreateTexture(
+                            SDL_Texture* t = gpuvram::create(
                                 ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
                                 ff.width, ff.height);
                             SDL_UpdateTexture(t, nullptr, ff.rgba.data(), ff.width * 4);
@@ -8111,7 +8157,7 @@ private:
                             px[i] = px[i + 1] = px[i + 2] = 0;
                             px[i + 3] = px[i + 3] ? 90 : 0;
                         }
-                        a.shadow = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                        a.shadow = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                      SDL_TEXTUREACCESS_STATIC, fr.width,
                                                      fr.height);
                         SDL_UpdateTexture(a.shadow, nullptr, px.data(), fr.width * 4);
@@ -8280,14 +8326,14 @@ private:
                 if (sq.frames.empty()) continue;
                 auto& f = sq.frames[0];
                 if (sq.name == "AidPanel" || sq.name == "MainPanel") {
-                    panelTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                    panelTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                   SDL_TEXTUREACCESS_STATIC, f.width,
                                                   f.height);
                     SDL_UpdateTexture(panelTex_, nullptr, f.rgba.data(), f.width * 4);
                     panelW_ = f.width;
                     panelH_ = f.height;
                 } else if (sq.name == "AidBotPanel" || sq.name == "BottomPanel") {
-                    botTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                    botTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                 SDL_TEXTUREACCESS_STATIC, f.width,
                                                 f.height);
                     SDL_UpdateTexture(botTex_, nullptr, f.rgba.data(), f.width * 4);
@@ -8327,7 +8373,7 @@ private:
                 if (sq.frames.empty()) return nullptr;
                 auto& f = sq.frames[size_t(frame)];
                 if (f.width == 0 || f.height == 0) return nullptr;
-                SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                    SDL_TEXTUREACCESS_STATIC, f.width,
                                                    f.height);
                 SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
@@ -8343,7 +8389,7 @@ private:
     void loadGui(const std::string& side) {
         for (auto& v : guiTex_)
             for (auto* t : v)
-                if (t) SDL_DestroyTexture(t);
+                if (t) gpuvram::destroy(t);
         guiTex_.clear();
         gui_ = {};
         std::string path = "guis/" + side + "ingame.gui";
@@ -8405,7 +8451,7 @@ private:
                 auto& frames = buildFx_[side];
                 for (auto& fr : seqs[0].frames) {
                     if (fr.width == 0) continue;
-                    SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                    SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                        SDL_TEXTUREACCESS_STATIC,
                                                        fr.width, fr.height);
                     SDL_UpdateTexture(t, nullptr, fr.rgba.data(), fr.width * 4);
@@ -8432,7 +8478,7 @@ private:
                     for (int i = 0; i < 3; ++i) {
                         auto& f = sq.frames[size_t(idx[i])];
                         if (f.width == 0) continue;
-                        b.frames[i] = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                        b.frames[i] = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                         SDL_TEXTUREACCESS_STATIC,
                                                         f.width, f.height);
                         SDL_UpdateTexture(b.frames[i], nullptr, f.rgba.data(),
@@ -9127,7 +9173,7 @@ private:
         for (const auto& path : paths) {
             try {
                 auto img = tak::jpeg::load(vread(path));
-                tex = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                tex = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                         SDL_TEXTUREACCESS_STATIC, img.width, img.height);
                 SDL_UpdateTexture(tex, nullptr, img.rgba.data(), img.width * 4);
                 SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
@@ -9144,7 +9190,7 @@ private:
         SDL_Texture* tex = nullptr;
         try {
             auto img = tak::jpeg::load(vread("anims/buildpic/" + typeId + ".jpg"));
-            tex = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+            tex = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                     SDL_TEXTUREACCESS_STATIC, img.width, img.height);
             SDL_UpdateTexture(tex, nullptr, img.rgba.data(), img.width * 4);
         } catch (const std::exception&) {}
@@ -9181,7 +9227,7 @@ private:
                 maxY = std::max(maxY, t.v[i].position.y);
             }
         const int ICON = 64;
-        SDL_Texture* tgt = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+        SDL_Texture* tgt = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                              SDL_TEXTUREACCESS_TARGET, ICON, ICON);
         // Transient VRAM failure: un-cache so the icon renders after the backoff
         // (the up-front nullptr stays only for permanent no-model failures).
@@ -9818,7 +9864,7 @@ private:
     }
 
     void buildMapPreview(const std::string& tntPath) {
-        if (mapPreviewTex_) { SDL_DestroyTexture(mapPreviewTex_); mapPreviewTex_ = nullptr; }
+        if (mapPreviewTex_) { gpuvram::destroy(mapPreviewTex_); mapPreviewTex_ = nullptr; }
         mapPreviewFor_ = tntPath;
         mapPreviewW_ = mapPreviewH_ = 0;
         mapPreviewDims_.clear();
@@ -9839,7 +9885,7 @@ private:
             const uint8_t* c = &(*pal)[size_t(p) * 4];
             rgba[i * 4 + 0] = c[0]; rgba[i * 4 + 1] = c[1]; rgba[i * 4 + 2] = c[2]; rgba[i * 4 + 3] = 255;
         }
-        mapPreviewTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
+        mapPreviewTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
         if (!mapPreviewTex_) return;
         SDL_SetTextureBlendMode(mapPreviewTex_, SDL_BLENDMODE_BLEND);
         SDL_UpdateTexture(mapPreviewTex_, nullptr, rgba.data(), w * 4);
@@ -10700,7 +10746,7 @@ private:
         if (vis.empty()) return;
         int w = frameVisW(), h = frameVisH();
         if (!fogTex_) {
-            fogTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+            fogTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                         SDL_TEXTUREACCESS_STREAMING, w, h);
             SDL_SetTextureBlendMode(fogTex_, SDL_BLENDMODE_BLEND);
             SDL_SetTextureScaleMode(fogTex_, SDL_ScaleModeLinear);
@@ -11000,7 +11046,7 @@ private:
                 if (!seq) continue;
                 for (auto& fr : seq->frames) {
                     if (fr.width == 0 || fr.height == 0) continue;
-                    SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
+                    SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                        SDL_TEXTUREACCESS_STATIC,
                                                        fr.width, fr.height);
                     SDL_UpdateTexture(t, nullptr, fr.rgba.data(), fr.width * 4);
@@ -12024,15 +12070,22 @@ int main(int argc, char** argv) {
         }
         if (aaS > 1.0f && w > 0 && h > 0)
             aaS = std::min(aaS, std::min(float(aaMaxDim) / w, float(aaMaxDim) / h));
+        // VRAM-cap integration: the AA supersample target is a big optional texture
+        // (up to ~230 MiB at 4K). Under memory pressure drop it entirely and release it;
+        // otherwise step the scale down until the target fits the remaining budget.
+        if (gpuvram::blocked()) { aaS = 1.0f; if (aaTex) { gpuvram::destroy(aaTex); aaTex = nullptr; aaW = aaH = 0; } }
+        while (aaS > 1.0f && w > 0 && h > 0 &&
+               !gpuvram::wouldFit(size_t(w * aaS) * size_t(h * aaS) * 4))
+            aaS = (aaS > 1.5f) ? 1.4142f : 1.0f;   // 2x -> 1.41x -> off
         bool aaOn = false;
         if (gameView && aaS > 1.0f && !gameView->inLobbyPhase()) {
             int tw = int(w * aaS), th = int(h * aaS);
             if (!aaTex || aaW != tw || aaH != th) {
-                if (aaTex) SDL_DestroyTexture(aaTex);
-                aaTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
+                if (aaTex) gpuvram::destroy(aaTex);
+                aaTex = gpuvram::create(ren, SDL_PIXELFORMAT_RGBA8888,
                                           SDL_TEXTUREACCESS_TARGET, tw, th);
                 if (aaTex) { SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear); aaW = tw; aaH = th; }
-                else { aaW = aaH = 0; std::fprintf(stderr, "AA: %dx%d target alloc failed; AA off\n", tw, th); }
+                else { aaW = aaH = 0; gpuvram::noteFail(); std::fprintf(stderr, "AA: %dx%d target alloc failed; AA off\n", tw, th); }
             }
             if (aaTex) aaOn = true;
         }
@@ -12261,11 +12314,11 @@ int main(int argc, char** argv) {
     // Free the (large) AA supersample target on the way back to the menu -- a benchmark
     // at 4K leaves a multi-hundred-MB texture allocated on a VRAM-tight GPU, which can
     // stall the menu's present. It's rebuilt on demand when the next game needs AA.
-    if (aaTex) { SDL_DestroyTexture(aaTex); aaTex = nullptr; aaW = aaH = 0; }
+    if (aaTex) { gpuvram::destroy(aaTex); aaTex = nullptr; aaW = aaH = 0; }
     if (quitApp || !fromMenu) break;
     }  // ---- end outer session loop ----
 
-    if (aaTex) SDL_DestroyTexture(aaTex);
+    if (aaTex) gpuvram::destroy(aaTex);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();

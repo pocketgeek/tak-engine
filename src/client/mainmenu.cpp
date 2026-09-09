@@ -1,4 +1,5 @@
 #include "client/mainmenu.h"
+#include "client/gpuvram.h"
 
 #include "gaf/gaf.h"
 #include "gui/gui.h"
@@ -146,10 +147,10 @@ struct MainMenu::Impl {
     Impl(SDL_Renderer* r, const hpi::Vfs& v, std::string in)
         : ren(r), vfs(v), install(std::move(in)) {}
     ~Impl() {
-        if (bg) SDL_DestroyTexture(bg);
-        for (auto& d : doors) { if (d.gaf) SDL_DestroyTexture(d.gaf);
-                                if (d.vtex) SDL_DestroyTexture(d.vtex); }
-        for (auto& b : buttons) for (auto* t : b.tex) if (t) SDL_DestroyTexture(t);
+        if (bg) gpuvram::destroy(bg);
+        for (auto& d : doors) { if (d.gaf) gpuvram::destroy(d.gaf);
+                                if (d.vtex) gpuvram::destroy(d.vtex); }
+        for (auto& b : buttons) for (auto* t : b.tex) if (t) gpuvram::destroy(t);
         if (sfxDev_) SDL_CloseAudioDevice(sfxDev_);
     }
 
@@ -238,7 +239,7 @@ struct MainMenu::Impl {
                 if (sq.frames.empty()) return nullptr;
                 auto& f = sq.frames[size_t(frame)];
                 if (f.width == 0 || f.height == 0) return nullptr;
-                SDL_Texture* t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,
+                SDL_Texture* t = gpuvram::create(ren, SDL_PIXELFORMAT_RGBA32,
                                                    SDL_TEXTUREACCESS_STATIC, f.width, f.height);
                 SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
                 SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
@@ -280,7 +281,7 @@ struct MainMenu::Impl {
     void setDoorTex(Door& d) {
         if (d.vw <= 0 || d.vh <= 0 || d.rgba.empty()) return;
         if (!d.vtex) {
-            d.vtex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888,
+            d.vtex = gpuvram::create(ren, SDL_PIXELFORMAT_ABGR8888,
                                        SDL_TEXTUREACCESS_STREAMING, d.vw, d.vh);
             // Bink frames are opaque -- ignore any decoder alpha. Linear filtering
             // smooths the low-res door clips (~150-220px) when scaled to the window.
@@ -834,7 +835,7 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
     if (!vid.open(std::move(bytes))) return;
     const int vw = vid.width(), vh = vid.height();
     if (vw <= 0 || vh <= 0) return;
-    SDL_Texture* tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888,
+    SDL_Texture* tex = gpuvram::create(ren, SDL_PIXELFORMAT_ABGR8888,
                                          SDL_TEXTUREACCESS_STREAMING, vw, vh);
     if (!tex) return;
     SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);   // smooth when scaled to the window
@@ -929,7 +930,7 @@ void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const ch
         SDL_Delay(4);
     }
     if (adev) SDL_CloseAudioDevice(adev);
-    SDL_DestroyTexture(tex);
+    gpuvram::destroy(tex);
     // Leave the OS arrow hidden -- the menu that follows keeps its cursor hidden and draws
     // the custom one, so restoring here would only flash the arrow before the menu appears.
     // Drop the skip key/click so it doesn't leak as a phantom press into the menu.

@@ -1,4 +1,5 @@
 #include "client/cursors.h"
+#include "client/gpuvram.h"
 
 #include "gaf/gaf.h"
 #include "hpi/hpi.h"
@@ -47,7 +48,7 @@ CursorSet::~CursorSet() {
     releaseHardware();
     for (auto& frames : anims_)
         for (auto& f : frames)
-            if (f.tex) SDL_DestroyTexture(f.tex);
+            if (f.tex) gpuvram::destroy(f.tex);
 }
 
 bool CursorSet::load(SDL_Renderer* ren, const hpi::Vfs& vfs) {
@@ -75,7 +76,7 @@ bool CursorSet::load(SDL_Renderer* ren, const hpi::Vfs& vfs) {
         if (it == byName.end()) continue;               // leave empty; draw() falls back
         for (const auto& fr : it->second->frames) {
             if (fr.width <= 0 || fr.height <= 0) continue;
-            SDL_Texture* t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,
+            SDL_Texture* t = gpuvram::create(ren, SDL_PIXELFORMAT_RGBA32,
                                                SDL_TEXTUREACCESS_STATIC, fr.width, fr.height);
             if (!t) continue;
             SDL_UpdateTexture(t, nullptr, fr.rgba.data(), fr.width * 4);
