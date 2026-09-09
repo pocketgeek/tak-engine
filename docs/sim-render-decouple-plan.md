@@ -289,3 +289,23 @@ ticking happens during the lobby -> no stumbles there).
   simThreaded_ flag defaulting to inline). Behaviour identical.
 - **B1b** convert the remaining render-thread world_ reads to the snapshot. Worker still OFF.
 - **B1c** flip the worker ON for gameplay. Heavy manual test (races are invisible to --mpai).
+
+---
+
+## STATUS 2026-09-08: B1c IMPLEMENTED + REVIEW-HARDENED + HEADLESS-VERIFIED
+
+All stages committed (B0 4c18c47 .. B1c-3 27b4f98). The sim worker (Option D) is ON by
+default for interactive games; world_.tick no longer runs on the render thread.
+
+- Inline --mpai byte-identical: hash 9ec4f308daf984b1 @ tick 1800 ("Adamantine Gate").
+- Worker-on --mpai (TAK_SIM_THREAD=1): reproducible + err=none (threaded sim byte-matches
+  the referee at every checkpoint). Its hash differs from inline run-to-run because the
+  server AI scheduling reacts to ACK timing -- lockstep still holds (identical bundles to
+  all peers).
+- A 22-agent adversarial threading-review workflow (b1c-threading-review) found 14 real
+  concurrency bugs; ALL fixed in B1c-3. Critical: worker spawn()->registerUnit() raced the
+  client render maps -> gated registerUnit to the main thread.
+
+REMAINING: only USER live testing (a real game / spectator / 2-player MP) -- races, visual
+correctness, and the worker-spawn path (god summon, mission reinforcements) can't be seen
+by --mpai. Everything logically verified + headless-clean.
