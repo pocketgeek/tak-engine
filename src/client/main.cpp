@@ -1601,7 +1601,7 @@ public:
         return tak::sim::parseStartPositions(vfs_, mapPath_);
     }
 
-    ~GameView() { resetMinimap(); }   // join the async minimap crunch before members die
+    ~GameView() { stopSimThread(); resetMinimap(); }   // join the sim worker + minimap crunch before members die
 
     GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,
              const std::string& installRoot, tak::hpi::OverridePolicy policy,
@@ -2777,29 +2777,48 @@ public:
         if (!mp_->poll()) { netError_ = mp_->error().empty() ? "disconnected" : mp_->error(); return false; }
         if (mp_->desynced()) { netError_ = mp_->desyncReason(); return false; }
         if (!outbox_.empty()) { mp_->sendCommands(outbox_); outbox_.clear(); }
+        // Decide once whether to run the sim on its own worker thread. On for interactive
+        // net games (the whole point -- keeps world_.tick off the render thread); off for the
+        // headless harness/replay (inline, byte-identical + deterministic) unless
+        // TAK_SIM_THREAD forces it on to VERIFY the threaded sim against the referee.
+        if (!simThreadDecided_) {
+            simThreadDecided_ = true;
+            wantSimThread_ = (tak::devEnv("TAK_SIM_THREAD") != nullptr);
+            if (wantSimThread_) startSimThread();
+        }
         // Simulate every delivered tick, but cap per frame so a big catch-up
         // (rejoin replay) stays responsive rather than freezing for seconds.
         tak::net::Bundle bd;
         int drained = 0;
         auto simTick = [&] {
-            for (const auto& c : bd.cmds) apply(c);
-            for (const auto& e : bd.events) applyEvent(e);
-            // Only the SIM half per bundle (speedMult() is 1 in net games): the
-            // cosmetic half runs once after the drain, so a rejoin/spectate
-            // catch-up replays lockstep state without replaying 512 ticks of
-            // sounds, effects and VM dispatch per frame.
-            simStep(1.0f / 30.0f);
-            // Report our processed tick every kHashPeriod. A seated player sends its
-            // state hash (desync check + flow-control ack); a spectator sends one too
-            // -- purely as a progress ACK so the server can pace an all-AI watch game
-            // to what the spectator can sustain (its hash is never desync-checked, since
-            // an all-AI room has no seated players to form a consensus). Without it the
-            // server floods a lagging spectator until the connection breaks.
-            if (netTick_ % uint32_t(tak::net::kHashPeriod) == 0)
-                // A spectator's hash is a progress ACK only (never desync-checked), so
-                // skip the O(units) stateHash for it -- a seated player still sends the
-                // real hash for the lockstep desync check.
-                mp_->sendHash(netTick_, mp_->isSpectator() ? 0 : world_.stateHash());
+            if (useSimThread_) {
+                // Hand this tick's bundle to the sim worker (FIFO == lockstep tick order).
+                // world_ is simulated there; the state hash comes back via simOutbox_ and is
+                // sent to the server below. The main thread stays free for the render.
+                SimJob job;
+                job.bundle = bd;
+                job.tick = netTick_;
+                job.wantHash = (netTick_ % uint32_t(tak::net::kHashPeriod) == 0);
+                job.spectator = mp_->isSpectator();
+                { std::lock_guard<std::mutex> lk(inboxMutex_); simInbox_.push_back(std::move(job)); }
+                inboxCv_.notify_one();
+            } else {
+                for (const auto& c : bd.cmds) apply(c);
+                for (const auto& e : bd.events) applyEvent(e);
+                // Only the SIM half per bundle (speedMult() is 1 in net games): the
+                // cosmetic half runs once after the drain, so a rejoin/spectate
+                // catch-up replays lockstep state without replaying 512 ticks of
+                // sounds, effects and VM dispatch per frame.
+                simStep(1.0f / 30.0f);
+                // Report our processed tick every kHashPeriod. A seated player sends its
+                // state hash (desync check + flow-control ack); a spectator sends one too
+                // -- purely as a progress ACK so the server can pace an all-AI watch game
+                // to what the spectator can sustain (its hash is never desync-checked, since
+                // an all-AI room has no seated players to form a consensus). A spectator's
+                // hash is a progress ACK only, so skip the O(units) stateHash for it.
+                if (netTick_ % uint32_t(tak::net::kHashPeriod) == 0)
+                    mp_->sendHash(netTick_, mp_->isSpectator() ? 0 : world_.stateHash());
+            }
             ++netTick_;
             ++drained;
             // During a heavy catch-up (a spectator fast-forwarding a big backlog at high
@@ -2868,6 +2887,13 @@ public:
             // reserve). One count per starved frame.
             ++netBenchFrames_;
             if (drained < budget && !mp_->haveBundle(netTick_)) ++netBenchStalls_;
+        }
+        // Send the worker's finished per-tick state hashes to the server (lockstep desync
+        // check + flow-control ack). Drained here on the main thread -- mp_ has a single owner.
+        if (useSimThread_) {
+            std::deque<HashJob> done;
+            { std::lock_guard<std::mutex> lk(outboxMutex_); done.swap(simOutbox_); }
+            for (const auto& h : done) mp_->sendHash(h.tick, h.hash);
         }
         // Cosmetics once per frame, covering the game time actually played.
         if (drained > 0) cosmeticStep(float(drained) / 30.0f);
@@ -7132,6 +7158,65 @@ private:
     }
     uint32_t netTick_ = 0;
     std::string netError_;
+    // --- Sim/render decouple: the sim worker thread (Stage B1c) ----------------------
+    // The worker runs the heavy sim tick (apply commands/events + world_.tick + captureFrame)
+    // off the render thread. The main thread owns the network (mp_): it drains delivered
+    // bundles and hands them to the worker via simInbox_ (FIFO == lockstep tick order), and
+    // sends the worker's per-tick state hash back to the server from simOutbox_. world_ is
+    // mutated ONLY by the worker (under simMutex_); the render reads the published snapshot,
+    // and its remaining live-world_ read (canPlace) takes simMutex_. Off for headless/replay
+    // (inline path) unless wantSimThread_ (TAK_SIM_THREAD) forces it on for verification.
+    struct SimJob { tak::net::Bundle bundle; uint32_t tick = 0; bool wantHash = false; bool spectator = false; };
+    struct HashJob { uint32_t tick = 0; uint64_t hash = 0; };
+    std::thread simThread_;
+    std::mutex simMutex_;               // guards world_ mutation (worker) vs live reads (canPlace)
+    std::mutex inboxMutex_;
+    std::condition_variable inboxCv_;
+    std::deque<SimJob> simInbox_;       // main -> worker: bundles to simulate, in tick order
+    std::mutex outboxMutex_;
+    std::deque<HashJob> simOutbox_;     // worker -> main: {tick, hash} to send to the server
+    std::atomic<bool> simQuit_{false};
+    bool useSimThread_ = false;         // true while the worker is running for this game
+    bool wantSimThread_ = false;        // decided once per game (see mpStep)
+    bool simThreadDecided_ = false;
+    // The worker: pop bundles FIFO, simulate under simMutex_, hand back the state hash.
+    void simWorkerLoop() {
+        for (;;) {
+            SimJob job;
+            {
+                std::unique_lock<std::mutex> lk(inboxMutex_);
+                inboxCv_.wait(lk, [&]{ return simQuit_.load() || !simInbox_.empty(); });
+                if (simInbox_.empty()) return;   // quit signalled and nothing left to process
+                job = std::move(simInbox_.front());
+                simInbox_.pop_front();
+            }
+            uint64_t hash = 0;
+            {
+                std::lock_guard<std::mutex> lk(simMutex_);
+                for (const auto& c : job.bundle.cmds) apply(c);
+                for (const auto& e : job.bundle.events) applyEvent(e);
+                simStep(1.0f / 30.0f);   // world_.tick + captureFrame (publishes a snapshot)
+                if (job.wantHash) hash = job.spectator ? 0 : world_.stateHash();
+            }
+            if (job.wantHash) {
+                std::lock_guard<std::mutex> lk(outboxMutex_);
+                simOutbox_.push_back({job.tick, hash});
+            }
+        }
+    }
+    void startSimThread() {
+        if (useSimThread_) return;
+        useSimThread_ = true;
+        simQuit_ = false;
+        simThread_ = std::thread([this]{ simWorkerLoop(); });
+    }
+    void stopSimThread() {
+        if (!useSimThread_) return;
+        { std::lock_guard<std::mutex> lk(inboxMutex_); simQuit_ = true; }
+        inboxCv_.notify_one();
+        if (simThread_.joinable()) simThread_.join();
+        useSimThread_ = false;
+    }
     // Actual-vs-requested game-speed meter (F4): measured from our own tick advance.
     uint64_t actualSpeedT0_ = 0, actualSpeedTick0_ = 0;
     float actualSpeed_ = 0.0f;
@@ -10822,7 +10907,7 @@ private:
     std::vector<tak::cob::Vm*> vmTick_;     // scratch list for the parallel pass
     SoundClasses soundClasses_;
     uint32_t salt_ = 0;
-    int outcome_ = 0;   // 0 = playing, 1 = victory, -1 = defeat
+    std::atomic<int> outcome_{0};   // 0 = playing, 1 = victory, -1 = defeat (worker writes, main reads)
     bool sawTeam_[tak::sim::kMaxPlayers] = {};   // teams that have ever fielded a unit
     // Dev-only N-player free-for-all / teams harness (TAK_FFA=N[,teams]); the
     // real lobby (multiplayer M3) replaces it. When >0, an AI Controller drives
