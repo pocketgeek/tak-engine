@@ -3454,7 +3454,7 @@ public:
     // runs for EVERY drained bundle -- it is what lockstep requires -- while the
     // cosmetic half below runs ONCE per frame afterwards.
     void simStep(float dt) {
-        double _sim0 = double(SDL_GetPerformanceCounter());
+        int64_t _sim0 = int64_t(SDL_GetPerformanceCounter());
         // Advance the sim in sub-steps capped at 1/30s so fast speeds (or a laggy
         // frame) can't move a unit far enough to tunnel a wall; effects/AI below use
         // the full scaled dt (they only interpolate, so a big step is harmless).
@@ -3463,8 +3463,7 @@ public:
             world_.tick(step);
             rem -= step;
         }
-        profSimMs_ += (double(SDL_GetPerformanceCounter()) - _sim0)
-                      / (double(SDL_GetPerformanceFrequency()) / 1000.0);
+        profSimTicks_ += int64_t(SDL_GetPerformanceCounter()) - _sim0;
         // God economy: once a player's favour fills after the appear time, its
         // faction's god manifests among its forces.
         if (world_.godsEnabled())
@@ -4173,9 +4172,10 @@ public:
 
     // Fetch and reset the per-draw sub-phase timers (for TAK_PROF).
     void takeProf(double& projMs, double& submitMs, double& simMs, long& lod, long& full) {
-        projMs = profProjMs_; submitMs = profSubmitMs_; simMs = profSimMs_;
+        projMs = profProjMs_; submitMs = profSubmitMs_;
+        simMs = double(profSimTicks_.exchange(0)) * 1000.0 / double(SDL_GetPerformanceFrequency());
         lod = lodDrawn_; full = fullDrawn_;
-        profProjMs_ = 0; profSubmitMs_ = 0; profSimMs_ = 0; lodDrawn_ = 0; fullDrawn_ = 0;
+        profProjMs_ = 0; profSubmitMs_ = 0; lodDrawn_ = 0; fullDrawn_ = 0;   // profSimTicks_ reset via exchange above
     }
 
     void draw(int winW, int winH) {
@@ -5735,7 +5735,10 @@ private:
     std::vector<CopyTask> copyTasks_;
     std::vector<DrawOp> drawOps_;
     double profProjMs_ = 0, profSubmitMs_ = 0;   // TAK_PROF sub-phase timers (main thread)
-    std::atomic<double> profSimMs_{0};            // accumulated by the sim worker; read/reset on main
+    std::atomic<int64_t> profSimTicks_{0};        // sim-tick time in raw perf-counter ticks,
+                                                  // accumulated by the worker, read/reset on main.
+                                                  // Integer atomic -- portable (atomic<double>
+                                                  // arithmetic isn't supported by Apple libc++).
     long lodDrawn_ = 0, fullDrawn_ = 0;                 // impostor vs full-model counts
 
     // Texture atlas: every unit texture packed into one big texture per player-
