@@ -3538,6 +3538,7 @@ public:
     // reseeds so we don't zip across the map. Client-only, viewer-only -- never hashed.
     void captureFrame() {
         ++frameGen_;   // records written this pass get gen==frameGen_ (=> live this tick)
+        frameLive_.clear();
         size_t need = world_.units().size() + 1;
         if (interp_.size() < need) interp_.resize(need);
         for (const auto& u : world_.units()) {
@@ -3547,6 +3548,7 @@ public:
             // Render-read fields, captured for ALL units (alive + dead-recent: the death
             // animation and the deadFor>=4 cull both need a live value).
             s.gen = frameGen_;
+            frameLive_.push_back(&s);   // compact live list (mirrors world_.units())
             s.id = u.id; s.type = u.type; s.player = u.player;
             s.hp = u.hp; s.mana = u.mana; s.veteran = u.veteran; s.deadFor = u.deadFor;
             s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
@@ -4360,10 +4362,12 @@ public:
         profSubmitMs_ += (double(SDL_GetPerformanceCounter()) - _st0) / _ptFreq;
 
         // Ghosts of the local player's queued (shift) build orders.
-        for (const auto& u : world_.units())
+        for (const UnitR* _up : frameLive_) {
+            const UnitR& u = *_up;
             if (u.alive() && u.player == localPlayer_)
                 for (const auto& bo : u.buildOrders)
                     if (bo.type) drawGhostAt(bo.type, bo.x, bo.z);
+        }
 
         // Projectiles: drawn per weapon family (only where visible).
         float zm = mapView_.zoom();
@@ -4564,7 +4568,8 @@ public:
         // into one draw call (each was two state-changing FillRects, so a damaged
         // crowd used to break the render batch thousands of times a frame).
         shadowBatch_.clear();
-        for (const auto& u : world_.units()) {
+        for (const UnitR* _up : frameLive_) {
+            const UnitR& u = *_up;
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
             if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
@@ -4594,7 +4599,8 @@ public:
         // The number is the recall key (squad 10 shows as "0"). Skipped when zoomed
         // far out so it doesn't clutter the field.
         if (hudFont_.ok() && zm > 0.55f)
-            for (const auto& u : world_.units()) {
+            for (const UnitR* _up : frameLive_) {
+                const UnitR& u = *_up;
                 if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_ ||
                     u.squad == 0)
                     continue;
@@ -4618,7 +4624,8 @@ public:
         // state-changing FillRects per building broke the render batch each time,
         // and map-wide AI production drew bars at off-screen coordinates).
         shadowBatch_.clear();
-        for (const auto& u : world_.units()) {
+        for (const UnitR* _up : frameLive_) {
+            const UnitR& u = *_up;
             if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
             if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
             float total = u.buildQueue.front()->buildTime /
@@ -6906,6 +6913,8 @@ private:
     // it stack right on top instead of the decal being flat while units float above.
     float uLiftY(const tak::sim::Unit& u) { return terrainLift(u.x, u.z); }
     float uLiftX(const tak::sim::Unit& u) { return terrainLiftX(u.x, u.z); }
+    float uLiftY(const UnitR& u) { return terrainLift(u.x, u.z); }   // snapshot overloads
+    float uLiftX(const UnitR& u) { return terrainLiftX(u.x, u.z); }
 
     // A unit's current render altitude (flyers rise to cruiseAlt; 0 for ground
     // units or units with no live anim). Used to lift a flyer's projectiles/effects
@@ -7058,6 +7067,7 @@ private:
     // captureInterp / interpPose). Viewer-only, never hashed.
     std::vector<UnitR> interp_;         // per-unit render snapshot, indexed by unit id (see UnitR)
     uint32_t frameGen_ = 0;             // bumped each captureFrame; UnitR.gen==this => live this tick
+    std::vector<const UnitR*> frameLive_;   // compact list of units live this tick (render loops iterate this)
     std::array<PlayerR, 8> framePlayers_{};   // per-tick player snapshot (see PlayerR)
     int frameNumPlayers_ = 0;
     std::vector<uint8_t> frameVis_;    // fog snapshot (copy of world_.vis_; re-copied on visGen change)
