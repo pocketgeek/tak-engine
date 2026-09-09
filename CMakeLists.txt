@@ -24,11 +24,22 @@ option(TAK_STATIC_LIBS "Statically link vendored zlib/libjpeg/SDL2 (tools/build-
 set(TAK_STATIC_DEPS_PREFIX "${CMAKE_SOURCE_DIR}/third_party/static-deps"
     CACHE PATH "Install prefix of the vendored static zlib/libjpeg/SDL2")
 if(TAK_STATIC_LIBS)
-  list(PREPEND CMAKE_PREFIX_PATH "${TAK_STATIC_DEPS_PREFIX}")
-  set(ZLIB_ROOT "${TAK_STATIC_DEPS_PREFIX}")
   set(ZLIB_USE_STATIC_LIBS ON)              # FindZLIB honours this (CMake >= 3.24)
-  set(JPEG_ROOT "${TAK_STATIC_DEPS_PREFIX}") # only the .a lives there -> found static
-  message(STATUS "Static libs: zlib/libjpeg/SDL2 from ${TAK_STATIC_DEPS_PREFIX}")
+  if(EXISTS "${TAK_STATIC_DEPS_PREFIX}/lib" OR EXISTS "${TAK_STATIC_DEPS_PREFIX}/lib64")
+    # Vendored archives built by tools/build-static-deps.sh (Linux, macOS).
+    list(PREPEND CMAKE_PREFIX_PATH "${TAK_STATIC_DEPS_PREFIX}")
+    set(ZLIB_ROOT "${TAK_STATIC_DEPS_PREFIX}")
+    set(JPEG_ROOT "${TAK_STATIC_DEPS_PREFIX}")   # only the .a lives there -> found static
+    message(STATUS "Static libs: vendored from ${TAK_STATIC_DEPS_PREFIX}")
+  else()
+    # No vendored prefix: use the toolchain's own static archives (e.g. MSYS2/MinGW ships
+    # libz.a/libjpeg.a/libSDL2.a alongside the import libs). Prefer .a over the .dll.a
+    # import libs so find_package resolves the static ones; SDL2::SDL2-static links static.
+    if(WIN32)
+      set(CMAKE_FIND_LIBRARY_SUFFIXES .a .dll.a ${CMAKE_FIND_LIBRARY_SUFFIXES})
+    endif()
+    message(STATUS "Static libs: from the toolchain's static archives")
+  endif()
 endif()
 
 # --- Format libraries (no external dependencies) ------------------------------

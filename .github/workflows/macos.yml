@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install dependencies
-        run: brew install ninja sdl2 jpeg-turbo pkg-config
+        run: brew install ninja pkg-config
 
       # Minimal static Bink-only FFmpeg so the bundle plays the door videos with no
       # runtime FFmpeg (see tools/build-ffmpeg-bink.sh). Cached by FFmpeg version.
@@ -32,17 +32,23 @@ jobs:
           key: ffmpeg-bink-macos-arm64-n7.1.1
       - name: Build static FFmpeg (Bink)
         run: ./tools/build-ffmpeg-bink.sh
+      # Static zlib/libjpeg/SDL2 (built from source, like Linux) so the binary is fully
+      # self-contained -- no Homebrew dylibs referenced. SDL2 still links the system
+      # frameworks (Cocoa/Metal/CoreAudio/...), which macOS forbids linking statically.
+      - name: Cache static deps (zlib/libjpeg/SDL2)
+        uses: actions/cache@v4
+        with:
+          path: third_party/static-deps
+          key: static-deps-macos-arm64-zlib1.3.1-jpeg3.0.4-sdl2.32.10
+      - name: Build static deps (zlib/libjpeg/SDL2)
+        run: ./tools/build-static-deps.sh
 
       - name: Configure + build
-        # Pin jpeg-turbo explicitly: FindJPEG otherwise resolves to Mono.framework's
-        # ancient libjpeg (whose jpeg_mem_src lacks the const 2nd arg). FIND_FRAMEWORK
-        # LAST deprioritises frameworks generally.
+        # FIND_FRAMEWORK=LAST keeps FindJPEG off Mono.framework's ancient libjpeg; the
+        # vendored static zlib/jpeg/SDL2 (TAK_STATIC_LIBS) are found via the prefix.
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON \
-            -DCMAKE_FIND_FRAMEWORK=LAST \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix sdl2)" \
-            -DJPEG_INCLUDE_DIR="$(brew --prefix jpeg-turbo)/include" \
-            -DJPEG_LIBRARY="$(brew --prefix jpeg-turbo)/lib/libjpeg.dylib"
+            -DTAK_STATIC_LIBS=ON -DCMAKE_FIND_FRAMEWORK=LAST
           cmake --build build
 
       - name: Bundle + zip
@@ -63,10 +69,7 @@ jobs:
       - name: Configure + build (debug)
         run: |
           cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTAK_STATIC_FFMPEG=ON \
-            -DCMAKE_FIND_FRAMEWORK=LAST \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix sdl2)" \
-            -DJPEG_INCLUDE_DIR="$(brew --prefix jpeg-turbo)/include" \
-            -DJPEG_LIBRARY="$(brew --prefix jpeg-turbo)/lib/libjpeg.dylib"
+            -DTAK_STATIC_LIBS=ON -DCMAKE_FIND_FRAMEWORK=LAST
           cmake --build build-debug
 
       - name: Bundle + zip (debug)
