@@ -181,24 +181,34 @@ tick), so each commit must keep that hash and look pixel-identical.
   (`buildUnitGeom`, `special()`, `drawUnit`, `DrawOp`, `dancing/headbanging`, build bars,
   selection brackets, squad labels) reads `UnitR`. `UnitR` grew to a full render-read mirror
   (orders/buildQueue/buildOrders/cargo/squad/stance/status/cloak/... captured in captureFrame).
-- A(3/n partial) (`34f81ac`): `unitScreen(const UnitR&)` + callers via `frameUnit(id)`.
-  `PlayerR` struct + `framePlayers_` snapshot + `framePlayer(p)`/`frameNumPlayers()`; mana
-  readouts + F4 scoreboard converted.
+- A(3/n) (`34f81ac`): `unitScreen(const UnitR&)` + callers via `frameUnit(id)`. `PlayerR`
+  struct + `framePlayers_` snapshot + `framePlayer(p)`/`frameNumPlayers()`; mana readouts +
+  F4 scoreboard converted.
+- A(4/n) (`f362ec7`): fog snapshot (`frameVis_` + `cellVisibleR()`/`frameVisibility()`/
+  `frameVisW/H()`/`frameVisGeneration()`; every render fog read converted) + projectile
+  snapshot (`frameProjectiles_`, full copy each tick; projectile draw reads it).
+- A(5/n) (`4cc8d9b`): `UnitR.gen` stamp + `frameUnitP(id)` (pointer w/ world_.unit() null-
+  for-absent-or-dead semantics). draw()-region unit lookups converted.
 
 **Remaining for Stage A (the mechanical grind -- same pattern: mirror field names, swap
 `world_.unit(id)`->`frameUnit(id)`, `world_.units()`->iterate `interp_` (skip !type),
 `world_.player(p)`->`framePlayer(p)`; bodies unchanged because names mirror):**
-- ~36 `world_.unit(` + ~21 `world_.units()` reads at lines >4600 (HUD selected-unit detail
-  panel, effects spawns that read sim units, minimap dots, input/picking scans, order-target
-  lookups). Note: NOT all >4600 reads are render -- skip genuine sim reads (canPlace/command
-  validation in the input->emit path validate against LIVE world_ and STAY).
-- Fog: ~20 `world_.cellVisible/visibility/visW` reads. Add a fog snapshot (copy `vis_` +
-  visW/visH + visGen when visGen changes; noFog_ spectators skip it) and a render-side
-  `cellVisible(fog,x,z)` helper. Gate `fogTex_` re-upload on the snapshot's visGen.
-- Projectiles: the `world_.projectiles()` loop (~4339) -> `ProjectileR` snapshot (full copy
-  each tick; the sim push_back/erase_if every tick would dangle a live iterator under Stage B).
-- Features: cull uses `world_.featureAliveAt` (fine to snapshot .alive per feature); client
-  `features_` art list is already render-owned.
+- ~37 remaining `world_.unit(id)` reads (mostly the HUD detail panel 7900-9000 + minimap +
+  input handlers). Convert the DISPLAY ones to `frameUnitP(id)` (`auto*` deduces `const
+  UnitR*`; bodies unchanged, null check preserved). LEAVE input->emit validation reads on
+  LIVE `world_.unit()` (canPlace / order validation must see the current tick, not a
+  snapshot). The mutating `auto* u = world_.unit()` sites (e.g. ~10287, ~8750) STAY (they
+  write sim state -- those belong on the sim thread in Stage B). Categorize per-site.
+- ~21 `world_.units()` render loops: add a compact live list `std::vector<const UnitR*>
+  frameLive_` (captureFrame pushes &interp_[id] for each captured unit), then change each
+  render `for (auto& u : world_.units())` to `for (const UnitR* _up : frameLive_) { const
+  UnitR& u = *_up; ... }`. Leave sim/input loops (mpStep/cosmeticStep event drains, canPlace
+  scans) on live world_.units().
+- Features: LEFT ON LIVE world_ for now -- `features_` is setup-only (never resizes), so the
+  render iterating `world_.features()` doesn't dangle under Stage B and the only mutable bit
+  (`f.alive` via reclaim) is a benign torn bool. Snapshot later only if it matters.
+- DONE already: fog (A4), projectiles (A4), players (A3), the whole unit DRAW path (A1/A2)
+  and draw()-region unit lookups (A5).
 
 **Then Stage B** (see §4/§5 above): move mpStep+simStep+captureFrame+mp_ onto a sim thread,
 double-buffer the snapshot publish, render->sim command/chat queue (replaces outbox_ + direct
