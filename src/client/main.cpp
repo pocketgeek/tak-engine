@@ -1494,6 +1494,32 @@ struct AaScaleReset {
 
 // Units simulated on a real map: left-click select, right-click move order
 // (shift queues waypoints), arrows scroll, wheel zoom.
+// Per-tick render SNAPSHOT of a sim Unit (sim/render decouple -- see
+// docs/sim-render-decouple-plan.md). Field names + methods MIRROR sim::Unit so render code
+// reads them unchanged; captured each tick by GameView::captureFrame() so the render never
+// dereferences world_. Also carries the motion-interpolation prev pose (px/pz/ph); the curr
+// pose is x/z/heading (mirroring Unit). Indexed by unit id in interp_.
+struct UnitR {
+    float px = 0, pz = 0, ph = 0;   // previous-tick pose (for interpolation)
+    bool  seeded = false;           // has a valid prev pose to interpolate from
+    // --- snapshot of Unit's render-read surface (same names as sim::Unit) ---
+    int id = 0;
+    const tak::sim::UnitType* type = nullptr;
+    int player = 0;
+    float x = 0, z = 0, heading = 0;   // current-tick pose
+    float hp = 0;
+    int veteran = 0;
+    float deadFor = -1;
+    int inTransport = 0;
+    bool underConstruction = false, buildBegun = false;
+    bool moving_ = false;   // cached u.moving()
+    bool disco = false;     // cached world_.discoActive(player)
+    bool alliedToLocal = false;   // cached alliedToLocal(player)
+    bool alive() const { return deadFor < 0; }
+    bool embarked() const { return inTransport != 0; }
+    bool moving() const { return moving_; }
+};
+
 class GameView {
 public:
     struct FactionKit {
@@ -3478,25 +3504,40 @@ public:
                 if (!teamAlive) outcome_ = -1;
             }
         }
-        captureInterp();   // snapshot post-tick unit poses for render-side motion interpolation
+        captureFrame();   // snapshot post-tick unit state for the render (poses + read fields)
     }
 
     // Snapshot every unit's post-tick pose (x/z/heading) so the render can GLIDE units
     // between the 30Hz sim ticks instead of stepping them (visible stutter above 30Hz).
     // prev <- last tick's curr, curr <- now; a large jump (teleport / id reuse / respawn)
     // reseeds so we don't zip across the map. Client-only, viewer-only -- never hashed.
-    void captureInterp() {
+    void captureFrame() {
         size_t need = world_.units().size() + 1;
         if (interp_.size() < need) interp_.resize(need);
         for (const auto& u : world_.units()) {
             if (u.id < 0 || size_t(u.id) >= interp_.size()) continue;
-            Interp& s = interp_[size_t(u.id)];
-            if (!u.type || !u.alive()) { s.seeded = false; continue; }
-            if (s.seeded && (std::abs(u.x - s.cx) > 200.0f || std::abs(u.z - s.cz) > 200.0f))
-                s.seeded = false;   // teleported -> don't interpolate the jump
-            if (s.seeded) { s.px = s.cx; s.pz = s.cz; s.ph = s.ch; }
-            s.cx = u.x; s.cz = u.z; s.ch = u.heading;
-            if (!s.seeded) { s.px = s.cx; s.pz = s.cz; s.ph = s.ch; s.seeded = true; }
+            UnitR& s = interp_[size_t(u.id)];
+            if (!u.type) { s.seeded = false; s.type = nullptr; continue; }
+            // Render-read fields, captured for ALL units (alive + dead-recent: the death
+            // animation and the deadFor>=4 cull both need a live value).
+            s.id = u.id; s.type = u.type; s.player = u.player;
+            s.hp = u.hp; s.veteran = u.veteran; s.deadFor = u.deadFor;
+            s.inTransport = u.inTransport;
+            s.underConstruction = u.underConstruction; s.buildBegun = u.buildBegun;
+            s.moving_ = u.moving();
+            s.disco = world_.discoActive(u.player);
+            s.alliedToLocal = alliedToLocal(u.player);
+            // Pose: interpolate alive units between ticks; a dead unit holds its death pose.
+            if (u.alive()) {
+                if (s.seeded && (std::abs(u.x - s.x) > 200.0f || std::abs(u.z - s.z) > 200.0f))
+                    s.seeded = false;   // teleported -> don't interpolate the jump
+                if (s.seeded) { s.px = s.x; s.pz = s.z; s.ph = s.heading; }
+                s.x = u.x; s.z = u.z; s.heading = u.heading;
+                if (!s.seeded) { s.px = s.x; s.pz = s.z; s.ph = s.heading; s.seeded = true; }
+            } else {
+                s.x = u.x; s.z = u.z; s.heading = u.heading;
+                s.px = s.x; s.pz = s.z; s.ph = s.heading; s.seeded = false;
+            }
         }
         interpTickMs_ = SDL_GetTicks64();
         interpTickDurMs_ = (1000.0f / 30.0f) / std::max(0.1f, animSpeed());
@@ -3505,19 +3546,21 @@ public:
     // Interpolated render pose for a unit: glides x/z (and shortest-path heading) between
     // the last two ticks by interpAlpha_ (0..1 through the current tick interval). Falls
     // back to live state when the option is off or there's no history. Viewer-only.
-    void interpPose(const tak::sim::Unit& u, float& x, float& z, float& heading) const {
-        x = u.x; z = u.z; heading = u.heading;
-        if (!settings_ || !settings_->smoothMotion) return;
-        if (u.id < 0 || size_t(u.id) >= interp_.size()) return;
-        const Interp& s = interp_[size_t(u.id)];
-        if (!s.seeded) return;
+    void interpPose(const UnitR& s, float& x, float& z, float& heading) const {
+        x = s.x; z = s.z; heading = s.heading;
+        if (!settings_ || !settings_->smoothMotion || !s.seeded) return;
         float a = interpAlpha_;
-        x = s.px + (s.cx - s.px) * a;
-        z = s.pz + (s.cz - s.pz) * a;
-        float dh = s.ch - s.ph;
+        x = s.px + (s.x - s.px) * a;
+        z = s.pz + (s.z - s.pz) * a;
+        float dh = s.heading - s.ph;
         while (dh >  3.14159265f) dh -= 6.28318531f;   // shortest-path turn
         while (dh < -3.14159265f) dh += 6.28318531f;
         heading = s.ph + dh * a;
+    }
+    // Lookup helper: the render snapshot record for a unit id (empty default if absent).
+    const UnitR& frameUnit(int id) const {
+        static const UnitR kEmpty{};
+        return (id >= 0 && size_t(id) < interp_.size()) ? interp_[size_t(id)] : kEmpty;
     }
 
     // The DISPLAY half: impact sounds/effects, particles, animation state and the
@@ -3987,25 +4030,25 @@ public:
             float key = f.mana ? f.z - 24.0f : f.z;
             items.push_back({key, nullptr, &f});
         }
-        for (auto& u : world_.units()) {
-            if (u.deadFor >= 4.0f || u.embarked()) continue;
+        for (const auto& u : world_.units()) {
+            if (u.id < 0 || size_t(u.id) >= interp_.size()) continue;
+            const UnitR& r = interp_[size_t(u.id)];   // this tick's snapshot
+            if (r.deadFor >= 4.0f || r.embarked()) continue;
             // Unregistered (e.g. a type whose model failed to load): not drawable,
             // and every render path does unitType_.at(u.id) -- skip it here so none
             // of them throw (a throw in the parallel projection aborts the process).
             if (!unitType_.count(u.id)) continue;
-            if (!noFog_ && !alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
+            if (!noFog_ && !r.alliedToLocal && !world_.cellVisible(r.x, r.z)) continue;
             // Frustum cull: only units whose anchor falls in (or just outside) the
             // map viewport are projected and drawn. The margin is generous and
             // asymmetric -- models extend well above their anchor, so a unit above
-            // the top edge can still show its lower body. Without this, every
-            // fog-visible unit was drawn regardless of camera position, so the
-            // frame rate didn't improve when the crowd scrolled off screen.
-            // Cull on the LIFTED anchor (where the unit is actually drawn), else a unit
-            // lifted onto the screen from just below the edge on high ground vanishes.
-            float sx = (u.x - mapView_.offX()) * zm0 - uLiftX(u) * zm0;
-            float sy = (u.z - mapView_.offY()) * zm0 - uLiftY(u) * zm0;
+            // the top edge can still show its lower body. Cull on the LIFTED anchor
+            // (where the unit is actually drawn), else a unit lifted onto the screen
+            // from just below the edge on high ground vanishes.
+            float sx = (r.x - mapView_.offX()) * zm0 - terrainLiftX(r.x, r.z) * zm0;
+            float sy = (r.z - mapView_.offY()) * zm0 - terrainLift(r.x, r.z) * zm0;
             if (sx < -160 || sx > mvw + 160 || sy < -260 || sy > winH + 120) continue;
-            items.push_back({u.z, &u, nullptr});
+            items.push_back({r.z, &u, nullptr});   // (visUnits_ stays Unit* this increment)
         }
         std::stable_sort(items.begin(), items.end(),
                   [](const Item& a, const Item& b) { return a.z < b.z; });
@@ -6037,7 +6080,7 @@ private:
         int slot = colorSlot_[u.player & 7];
         // Interpolated pose so the unit glides between 30Hz sim ticks (lift computed at the
         // interpolated spot so it stays seated on the terrain as it moves).
-        float ix, iz, ih; interpPose(u, ix, iz, ih);
+        float ix, iz, ih; interpPose(frameUnit(u.id), ix, iz, ih);
         float ax = (ix - mapView_.offX()) * zm - terrainLiftX(ix, iz) * zm;
         float ay = (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm;
         // Sprite sheet: draw a moving/idle unit as one animated quad from the baked
@@ -6817,7 +6860,7 @@ private:
             auto it = anims_.find(u.id);
             alt = (it != anims_.end()) ? it->second.altitude : u.type->cruiseAlt;
         }
-        float ix, iz, ih; interpPose(u, ix, iz, ih);   // match the gliding model position
+        float ix, iz, ih; interpPose(frameUnit(u.id), ix, iz, ih);   // match the gliding model position
         return {(ix - mapView_.offX()) * zm - terrainLiftX(ix, iz) * zm,
                 (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm - alt * 0.8f * zm - 12.0f * zm};
     }
@@ -6935,8 +6978,7 @@ private:
 
     // Render-side motion interpolation: glide units between 30Hz sim ticks (see
     // captureInterp / interpPose). Viewer-only, never hashed.
-    struct Interp { float px = 0, pz = 0, ph = 0, cx = 0, cz = 0, ch = 0; bool seeded = false; };
-    std::vector<Interp> interp_;        // indexed by unit id (prev + curr tick pose)
+    std::vector<UnitR> interp_;         // per-unit render snapshot, indexed by unit id (see UnitR)
     uint64_t interpTickMs_ = 0;         // wall-clock ms of the last captured tick
     float interpTickDurMs_ = 1000.0f / 30.0f;   // nominal tick interval (speed-scaled)
     float interpAlpha_ = 0.0f;          // 0..1 through the current tick interval (per frame)
