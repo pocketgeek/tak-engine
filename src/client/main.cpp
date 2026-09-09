@@ -3236,7 +3236,8 @@ public:
             bool priv = autoMode == 7 || autoMode == 8 || benchmarkMode_;
             std::string mission = autoMode == 8 ? missionStem_ : std::string();
             uint8_t cap = (autoMode == 8 || benchmarkMode_) ? tak::net::kMaxSlots : mpCapacity();
-            std::string createMap = benchmarkMode_ ? std::string("Ulasem") : mapId;
+            // Exact stem match (findMap): the map file is "ulasem arena.tnt".
+            std::string createMap = benchmarkMode_ ? std::string("Ulasem Arena") : mapId;
             mp_->createGame(benchmarkMode_ ? "Benchmark" : (priv ? "Single Player" : "headless"),
                             "", createMap, o, cap, watch, priv, mission);
         } else if (st == S::Lobby && autoMode == 5) {
@@ -11836,6 +11837,12 @@ int main(int argc, char** argv) {
         return gameView->netError().empty() ? 0 : 1;
     }
 
+    // Lobby driver for THIS session (TAK_MPAUTO overrides mpAutoMode). Computed once
+    // per session -- NOT a function-static, which would freeze it at the first game's
+    // value and break re-entry (e.g. a Benchmark launched after any earlier game would
+    // inherit that game's mode and just sit in the lobby instead of auto-hosting).
+    const int autoOv = tak::devEnv("TAK_MPAUTO")
+                           ? std::atoi(tak::devEnv("TAK_MPAUTO")) : mpAutoMode;
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
         if (tak::termRequested()) { running = false; quitApp = true; break; }
@@ -12044,10 +12051,8 @@ int main(int argc, char** argv) {
                 // advances the lobby (auto-matchmaking for now -- a lobby UI is
                 // follow-on), and simulates every delivered tick. (void)netAccum.
                 (void)netAccum;
-                // TAK_MPAUTO=N overrides the lobby driver (0 = UI-driven, the
-                // default; 1 = auto-host; 2 = auto-join) -- handy for screenshots.
-                static int autoOv = tak::devEnv("TAK_MPAUTO")
-                                        ? std::atoi(tak::devEnv("TAK_MPAUTO")) : mpAutoMode;
+                // autoOv (computed once per session above) drives the lobby: 0 =
+                // UI-driven, 1 = auto-host, etc. TAK_MPAUTO can override it.
                 gameView->mpAutoStep(autoOv, serverMapId, crusades);
             } else {
                 gameView->update(dt);
