@@ -2144,17 +2144,20 @@ public:
     void openOptions() {
         if (!settings_) return;
         options_ = std::make_unique<tak::OptionsScreen>(ren_, *settings_,
-            [this] {
+            [this, fsWas = settings_->fullscreen, vsWas = settings_->vsync]() mutable {
                 applySettings(*settings_);
-                // Only re-apply the window mode on an ACTUAL change: a redundant
-                // SDL_SetWindowFullscreen reconfigures the (Wayland) surface and drops
-                // later mouse-button events -- see the menu Options callback.
-                if (SDL_Window* w = SDL_RenderGetWindow(ren_)) {
-                    bool isFs = (SDL_GetWindowFlags(w) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
-                    if (isFs != settings_->fullscreen)
+                // Only touch the window/renderer when that display setting actually changed
+                // since Options opened -- re-issuing it on every tweak re-commits the
+                // (Wayland) surface and later clicks miss/die. See the menu Options callback.
+                if (settings_->fullscreen != fsWas) {
+                    if (SDL_Window* w = SDL_RenderGetWindow(ren_))
                         SDL_SetWindowFullscreen(w, settings_->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                    fsWas = settings_->fullscreen;
                 }
-                SDL_RenderSetVSync(ren_, settings_->vsync ? 1 : 0);
+                if (settings_->vsync != vsWas) {
+                    SDL_RenderSetVSync(ren_, settings_->vsync ? 1 : 0);
+                    vsWas = settings_->vsync;
+                }
             },
             [this] { saveSettings(*settings_); },
             sounds_.channelCount(),
@@ -12251,6 +12254,10 @@ int main(int argc, char** argv) {
     // to the menu or exit the app.
     killLocalServer();
     mp.reset();
+    // Clear the in-game minimum-window-size constraint (set per game at the build-icon
+    // sizing above). Leaving it on the persistent window makes the returned menu's
+    // surface re-negotiation-prone on Wayland (see the Options click-death bug).
+    SDL_SetWindowMinimumSize(win, 0, 0);
     if (quitApp || !fromMenu) break;
     }  // ---- end outer session loop ----
 

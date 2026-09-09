@@ -543,6 +543,7 @@ struct MainMenu::Impl {
         auto tw = [](const std::string& s, float px) { return s.empty() ? 0.0f : (s.size() * 6.0f - 1.0f) * px; };
         shadowText("SETTINGS", px0 + (pw - tw("SETTINGS", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
+        { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
         const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "BENCHMARK"};
         float by = py0 + pad + titleH;
         for (int i = 0; i < nBtn; ++i) {
@@ -638,6 +639,21 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) continue;   // ignore the WM close button; use the Exit door
+            // Mouse events arrive in window points; our hit-rects are in output pixels.
+            // Map with SDL_RenderWindowToLogical -- reliable on Wayland fractional scaling,
+            // where the size getters report window==drawable yet pointer events are in a
+            // smaller logical space. Without this, after a game re-commits the surface at a
+            // non-1:1 scale, what's drawn no longer matches where clicks land. Mirrors the
+            // in-game input path (main.cpp).
+            if (e.type == SDL_MOUSEMOTION) {
+                float lx, ly;
+                SDL_RenderWindowToLogical(d_->ren, e.motion.x, e.motion.y, &lx, &ly);
+                e.motion.x = int(lx); e.motion.y = int(ly);
+            } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                float lx, ly;
+                SDL_RenderWindowToLogical(d_->ren, e.button.x, e.button.y, &lx, &ly);
+                e.button.x = int(lx); e.button.y = int(ly);
+            }
 
             if (d_->serverSelect) {   // multiplayer: typing a server address
                 if (e.type == SDL_TEXTINPUT) {
@@ -677,19 +693,25 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     if (hit(d_->setBtnRect_[0])) {          // OPTIONS -> the audio/display screen
                         d_->settingsMenu_ = false;
                         d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
-                            [ren, music, settings] {
+                            [ren, music, settings, fsWas = settings->fullscreen,
+                             vsWas = settings->vsync]() mutable {
                                 if (music) music->setVolume(settings->masterVol, settings->bgmVol);
-                                // onChange fires on EVERY control tweak. Only re-apply the
-                                // window mode when it actually differs -- a redundant
-                                // SDL_SetWindowFullscreen reconfigures the Wayland surface and
-                                // drops subsequent mouse-button events (motion still flows), so
-                                // the first click "works" and then clicks go dead.
-                                if (SDL_Window* wnd = SDL_RenderGetWindow(ren)) {
-                                    bool isFs = (SDL_GetWindowFlags(wnd) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
-                                    if (isFs != settings->fullscreen)
+                                // onChange fires on EVERY control tweak (a volume-slider drag
+                                // fires it many times a second). ANY window/renderer reconfigure
+                                // here re-commits the Wayland surface -- which rescales it and
+                                // drops pointer-button events, so later clicks miss or die. Touch
+                                // the surface ONLY when that display setting actually changed since
+                                // this Options screen opened. (Compare the VALUE, not
+                                // SDL_GetWindowFlags, which is unreliable on Wayland.)
+                                if (settings->fullscreen != fsWas) {
+                                    if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
                                         SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                                    fsWas = settings->fullscreen;
                                 }
-                                SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
+                                if (settings->vsync != vsWas) {
+                                    SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
+                                    vsWas = settings->vsync;
+                                }
                             },
                             [settings] { saveSettings(*settings); }, 0, [] {},
                             [music] { if (music) music->reopen(); });   // live output-device switch
@@ -774,7 +796,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             } else {
                 SDL_ShowCursor(SDL_DISABLE);
                 int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
-                d_->cursors_.draw(d_->ren, CursorId::Normal, mx, my, sc);
+                float lmx, lmy; SDL_RenderWindowToLogical(d_->ren, mx, my, &lmx, &lmy);
+                d_->cursors_.draw(d_->ren, CursorId::Normal, int(lmx), int(lmy), sc);
             }
         }
         SDL_RenderPresent(d_->ren);
