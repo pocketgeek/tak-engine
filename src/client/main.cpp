@@ -1402,6 +1402,23 @@ public:
         return int(h * scale);
     }
 
+    // Where `text` actually renders vertically, relative to the `y` passed to draw():
+    // its pixels occupy [y + topOff, y + topOff + h]. draw() lifts each glyph by its
+    // yoff, so topOff is usually NEGATIVE (the text sits ABOVE y). Used to draw a
+    // backing box that truly wraps the text instead of sitting below it.
+    void vbounds(const std::string& text, float scale, float& topOff, float& h) const {
+        bool any = false; float top = 0, bot = 0;
+        for (unsigned char c : text) {
+            const Glyph& g = glyphs_[c];
+            if (!g.tex || c == ' ') continue;
+            float gt = -float(g.yoff) * scale, gb = float(g.h - g.yoff) * scale;
+            if (!any) { top = gt; bot = gb; any = true; }
+            else { top = std::min(top, gt); bot = std::max(bot, gb); }
+        }
+        if (!any) { topOff = 0; h = float(height(scale)); return; }
+        topOff = top; h = bot - top;
+    }
+
     void draw(SDL_Renderer* ren, const std::string& text, float x, float y,
               float scale = 1, SDL_Color tint = {255, 255, 255, 255}) const {
         for (unsigned char c : text) {
@@ -5213,7 +5230,7 @@ public:
         // Spectator badge: a live watcher can pan/zoom but issues no orders. Use the
         // crisp 5x7 block font (the scaled GAF hudFont smeared/overlapped here).
         if (spectating_) {
-            const char* m = "SPECTATING";
+            const char* m = benchmarkMode_ ? "BENCHMARKING" : "SPECTATING";
             float px = 3.0f;
             float tw = blockWidth(m, px), th = 7 * px;
             float bx = (winW - tw) / 2, by = 24;
@@ -9596,16 +9613,21 @@ private:
                     int winW, float leftX = -1) {
         if (!hudFont_.ok() || msg.empty()) return y;
         float tw = float(hudFont_.width(msg, scale));
-        float th = float(hudFont_.height(scale));
+        float topOff, th;
+        hudFont_.vbounds(msg, scale, topOff, th);   // real text extent (draw() lifts by yoff)
         float x = leftX < 0 ? (float(winW) - tw) / 2 : leftX;
         const float padX = 10, padTop = 6, padBot = 6;
+        // `y` is the TOP of the banner box; the text is inset by padTop inside it. Offset
+        // the draw origin so the text's true visual top lands at y+padTop -- so the box
+        // wraps the text instead of drawing below it (draw() renders glyphs above `y`).
+        float drawY = y + padTop - topOff;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        SDL_FRect bg{x - padX, y - padTop, tw + 2 * padX, th + padTop + padBot};
+        SDL_FRect bg{x - padX, y, tw + 2 * padX, th + padTop + padBot};
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
         SDL_RenderFillRectF(ren_, &bg);
         SDL_SetRenderDrawColor(ren_, 255, 255, 255, 40);   // faint hairline for definition
         SDL_RenderDrawRectF(ren_, &bg);
-        hudFont_.draw(ren_, msg, x, y, scale, col);
+        hudFont_.draw(ren_, msg, x, drawY, scale, col);
         return y + th + padTop + padBot + 6;
     }
 
