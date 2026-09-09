@@ -128,20 +128,20 @@ cmake -B build -G Ninja
 cmake --build build
 ```
 
-### Menu door videos (optional Bink/FFmpeg)
+### Menu door videos (Bink/FFmpeg)
 
 The animated front-end door clips are Bink1 (`.bik`) video, decoded through
-FFmpeg. It's optional — without it the doors fall back to their static GAF art —
-and there are two ways to get it:
+FFmpeg. **The downloaded releases need no FFmpeg installed** — every shipped
+package (`.rpm`/`.deb`/zips, all three platforms) links a minimal, Bink-only
+FFmpeg **statically into `takclient`**, so the door videos just play on a stock
+system with nothing to install. It stays optional either way: with no FFmpeg
+decoder at all, the doors fall back to their static GAF art.
 
-- **System FFmpeg (default).** Configure finds `libavcodec`/`libavformat`/… via
-  `pkg-config` and links them dynamically. The catch: the build's `libavcodec`
-  must actually contain the Bink decoder. Stock Fedora's `libavcodec-free` does
-  **not**; install RPM Fusion's `ffmpeg` (or `libavcodec-freeworld`) for it.
+Building from source, pick one:
 
-- **Bundled static FFmpeg (`-DTAK_STATIC_FFMPEG=ON`).** Build a minimal, Bink-only
-  FFmpeg once and link it *into* `takclient`, so the binary decodes the door
-  videos with **no runtime FFmpeg at all** — nothing to install on the target box:
+- **Bundled static FFmpeg (`-DTAK_STATIC_FFMPEG=ON`) — what the releases use.**
+  Build the minimal Bink-only FFmpeg once and link it *into* the binary, so it
+  decodes the door videos with **no runtime FFmpeg at all**:
 
   ```sh
   ./tools/build-ffmpeg-bink.sh           # -> third_party/ffmpeg-bink (static, ~+1 MB)
@@ -149,9 +149,14 @@ and there are two ways to get it:
   cmake --build build
   ```
 
-  This is what the release packages use, so the shipped `.rpm`/`.deb`/zips play the
-  door videos on a stock system. The Bink path is pure LGPL (no GPL codecs pulled
-  in). `TAK_FFMPEG_PREFIX` overrides where the static install lives.
+  The Bink path is pure LGPL (no GPL codecs pulled in). `TAK_FFMPEG_PREFIX`
+  overrides where the static install lives.
+
+- **System FFmpeg (the plain-`cmake` default, without that flag).** Configure
+  finds `libavcodec`/`libavformat`/… via `pkg-config` and links them dynamically.
+  The catch: the build's `libavcodec` must actually contain the Bink decoder.
+  Stock Fedora's `libavcodec-free` does **not**; install RPM Fusion's `ffmpeg`
+  (or `libavcodec-freeworld`) for it.
 
 ### Cross-platform builds
 
