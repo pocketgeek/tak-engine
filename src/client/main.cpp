@@ -12258,6 +12258,10 @@ int main(int argc, char** argv) {
     // sizing above). Leaving it on the persistent window makes the returned menu's
     // surface re-negotiation-prone on Wayland (see the Options click-death bug).
     SDL_SetWindowMinimumSize(win, 0, 0);
+    // Free the (large) AA supersample target on the way back to the menu -- a benchmark
+    // at 4K leaves a multi-hundred-MB texture allocated on a VRAM-tight GPU, which can
+    // stall the menu's present. It's rebuilt on demand when the next game needs AA.
+    if (aaTex) { SDL_DestroyTexture(aaTex); aaTex = nullptr; aaW = aaH = 0; }
     if (quitApp || !fromMenu) break;
     }  // ---- end outer session loop ----
 
