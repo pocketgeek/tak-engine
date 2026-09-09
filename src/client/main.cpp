@@ -2785,12 +2785,12 @@ public:
     // next. Camera only -- view state is never hashed. Called each frame during the run.
     void benchmarkCamera(float dt, int winW, int winH) {
         if (!benchmarkMode_ || benchStatsShown_ || !world_.benchmarkMode()) return;
-        int leg = int(front().gameTick / 300);   // 0..7, one per faction / 10s leg
+        int leg = int(front().gameTick / 225);   // 0..7, one per faction / 7.5s leg (60s / 8)
         if (leg < 0) leg = 0;
         if (leg > 7) leg = 7;
         if (leg != benchCamLeg_) { benchCamLeg_ = leg; benchLegT_ = 0.0f; }   // new leg -> reset
         benchLegT_ += dt;
-        float p = benchLegT_ / 10.0f;             // progress through the 10s leg
+        float p = benchLegT_ / 7.5f;              // progress through the 7.5s leg
         if (p > 1.0f) p = 1.0f;
         // Zoom: all the way out at the leg start, zooming in over the leg.
         float zOut = mapView_.minZoom(winW, winH);
@@ -2816,7 +2816,7 @@ public:
         const float colW[10] = {82*k, 96*k, 122*k, 122*k, 122*k, 70*k, 122*k, 122*k, 70*k, 96*k};
         float tableW = 0; for (float c : colW) tableW += c;
         const char* title = "BENCHMARK RESULTS";
-        const char* sub   = "8-AI FFA -- ULASEM ARENA -- ~5000 UNITS/FACTION OVER 7 WAVES";
+        const char* sub   = "8-AI FFA -- ULASEM ARENA -- 1 UNIT/FACTION EVERY 0.25S FOR 60S";
 
         float contentW = tableW;
         if (blockWidth(sub, subPx) > contentW) contentW = blockWidth(sub, subPx);
@@ -7549,7 +7549,7 @@ private:
     std::vector<BenchSample> benchSamples_;
     tak::proc::Sample benchCliPrev_, benchSrvPrev_;
     uint64_t benchPrevWallMs_ = 0;
-    uint32_t benchNextTick_ = 300;      // next milestone tick (300,600,...,2400)
+    uint32_t benchNextTick_ = 300;      // next milestone tick (300,600,...,1800)
     long benchServerPid_ = 0;           // local takserver pid (0 = N/A, e.g. headless)
     bool benchStatsShown_ = false;      // the benchmark stats overlay is up
     SDL_FRect benchDoneRect_{};          // the stats overlay's DONE button (set each render)
