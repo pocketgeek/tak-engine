@@ -1498,7 +1498,7 @@ struct AaScaleReset {
 // docs/sim-render-decouple-plan.md). Field names + methods MIRROR sim::Unit so render code
 // reads them unchanged; captured each tick by GameView::captureFrame() so the render never
 // dereferences world_. Also carries the motion-interpolation prev pose (px/pz/ph); the curr
-// pose is x/z/heading (mirroring Unit). Indexed by unit id in interp_.
+// pose is x/z/heading (mirroring Unit). Indexed by unit id in Frame::units.
 struct UnitR {
     float px = 0, pz = 0, ph = 0;   // previous-tick pose (for interpolation)
     bool  seeded = false;           // has a valid prev pose to interpolate from
@@ -1543,6 +1543,23 @@ struct PlayerR {
     int kills = 0, unitCount = 0, team = 0;
     bool defeated = false, godSummoned = false;
     float discoLeft = 0, headbangLeft = 0;
+};
+
+// A complete per-tick render snapshot -- everything the render/HUD reads from the sim.
+// Double-buffered (front = what the render reads, back = what captureFrame writes); the sim
+// publishes by swapping. `live` points into THIS Frame's `units`, so it swaps consistently.
+struct Frame {
+    std::vector<UnitR> units;            // indexed by unit id
+    std::vector<const UnitR*> live;      // compact list of units live this tick (points into units)
+    std::array<PlayerR, 8> players{};
+    int numPlayers = 0;
+    std::vector<uint8_t> vis;            // fog (empty for a noFog_ spectator)
+    int visW = 0, visH = 0;
+    uint32_t visGen = 0;
+    std::vector<tak::sim::Projectile> projectiles;
+    uint64_t tickMs = 0;                 // wall-clock of this tick (for interpolation)
+    float tickDurMs = 1000.0f / 30.0f;
+    uint32_t gen = 0;                    // capture generation (UnitR.gen == this => live this tick)
 };
 
 class GameView {
@@ -3537,18 +3554,20 @@ public:
     // prev <- last tick's curr, curr <- now; a large jump (teleport / id reuse / respawn)
     // reseeds so we don't zip across the map. Client-only, viewer-only -- never hashed.
     void captureFrame() {
-        ++frameGen_;   // records written this pass get gen==frameGen_ (=> live this tick)
-        frameLive_.clear();
+        Frame& fb = back();             // we write the back buffer, then publish it
+        const Frame& pf = front();      // the previously-published frame (last tick's poses)
+        fb.gen = ++captureCounter_;     // records written this pass get gen==fb.gen (=> live this tick)
+        fb.live.clear();
         size_t need = world_.units().size() + 1;
-        if (interp_.size() < need) interp_.resize(need);
+        if (fb.units.size() < need) fb.units.resize(need);
         for (const auto& u : world_.units()) {
-            if (u.id < 0 || size_t(u.id) >= interp_.size()) continue;
-            UnitR& s = interp_[size_t(u.id)];
+            if (u.id < 0 || size_t(u.id) >= fb.units.size()) continue;
+            UnitR& s = fb.units[size_t(u.id)];
             if (!u.type) { s.seeded = false; s.type = nullptr; continue; }
             // Render-read fields, captured for ALL units (alive + dead-recent: the death
             // animation and the deadFor>=4 cull both need a live value).
-            s.gen = frameGen_;
-            frameLive_.push_back(&s);   // compact live list (mirrors world_.units())
+            s.gen = fb.gen;
+            fb.live.push_back(&s);   // compact live list (mirrors world_.units())
             s.id = u.id; s.type = u.type; s.player = u.player;
             s.hp = u.hp; s.mana = u.mana; s.veteran = u.veteran; s.deadFor = u.deadFor;
             s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
@@ -3564,38 +3583,46 @@ public:
             s.disco = world_.discoActive(u.player);
             s.headbang = world_.headbangActive(u.player);
             s.alliedToLocal = alliedToLocal(u.player);
-            // Pose: interpolate alive units between ticks; a dead unit holds its death pose.
-            if (u.alive()) {
-                if (s.seeded && (std::abs(u.x - s.x) > 200.0f || std::abs(u.z - s.z) > 200.0f))
-                    s.seeded = false;   // teleported -> don't interpolate the jump
-                if (s.seeded) { s.px = s.x; s.pz = s.z; s.ph = s.heading; }
+            // Pose: prev comes from the previously-published frame's curr for this SAME unit
+            // (id live last tick + matching type). Interpolate alive units between ticks;
+            // a dead unit holds its death pose. A big jump (teleport / id reuse) seeds fresh.
+            const UnitR* prev = (size_t(u.id) < pf.units.size() &&
+                                 pf.units[size_t(u.id)].gen == pf.gen &&
+                                 pf.units[size_t(u.id)].type == u.type)
+                                    ? &pf.units[size_t(u.id)] : nullptr;
+            if (u.alive() && prev &&
+                std::abs(u.x - prev->x) <= 200.0f && std::abs(u.z - prev->z) <= 200.0f) {
+                s.px = prev->x; s.pz = prev->z; s.ph = prev->heading;   // interpolate from last tick
                 s.x = u.x; s.z = u.z; s.heading = u.heading;
-                if (!s.seeded) { s.px = s.x; s.pz = s.z; s.ph = s.heading; s.seeded = true; }
+                s.seeded = true;
             } else {
                 s.x = u.x; s.z = u.z; s.heading = u.heading;
-                s.px = s.x; s.pz = s.z; s.ph = s.heading; s.seeded = false;
+                s.px = s.x; s.pz = s.z; s.ph = s.heading;
+                s.seeded = u.alive();   // dead holds its pose (never interpolated)
             }
         }
         // Player table snapshot for the HUD/scoreboard.
-        frameNumPlayers_ = world_.numPlayers();
-        for (int p = 0; p < frameNumPlayers_ && p < int(framePlayers_.size()); ++p) {
+        fb.numPlayers = world_.numPlayers();
+        for (int p = 0; p < fb.numPlayers && p < int(fb.players.size()); ++p) {
             const auto& pl = world_.player(p);
-            PlayerR& r = framePlayers_[size_t(p)];
+            PlayerR& r = fb.players[size_t(p)];
             r.mana = pl.mana; r.storage = pl.storage; r.income = pl.income;
             r.godFavor = pl.godFavor; r.kills = pl.kills; r.unitCount = pl.unitCount;
             r.team = pl.team; r.defeated = pl.defeated; r.godSummoned = pl.godSummoned;
             r.discoLeft = pl.discoLeft; r.headbangLeft = pl.headbangLeft;
         }
-        frameProjectiles_ = world_.projectiles();   // sim push_back/erase each tick -> must copy
-        // Fog snapshot: copy vis_ only when it actually changed (fog recomputes ~4Hz, so
-        // most ticks skip the copy). A spectator (noFog_) never reads it.
-        if (frameVisGeneration() != frameVisGen_ || frameVis_.size() != frameVisibility().size()) {
-            frameVis_ = frameVisibility();
-            frameVisW_ = frameVisW(); frameVisH_ = frameVisH();
-            frameVisGen_ = frameVisGeneration();
+        fb.projectiles = world_.projectiles();   // sim push_back/erase each tick -> must copy
+        // Fog snapshot: copy world_.vis_ into this buffer only when THIS buffer's fog is stale
+        // (fog recomputes ~4Hz, so at most ~2 copies per change -- one per buffer). A spectator
+        // (noFog_) leaves vis_ empty, so the copy is a no-op and cellVisibleR reveals all.
+        if (fb.visGen != world_.visGeneration() || fb.vis.size() != world_.visibility().size()) {
+            fb.vis = world_.visibility();
+            fb.visW = world_.visW(); fb.visH = world_.visH();
+            fb.visGen = world_.visGeneration();
         }
-        interpTickMs_ = SDL_GetTicks64();
-        interpTickDurMs_ = (1000.0f / 30.0f) / std::max(0.1f, animSpeed());
+        fb.tickMs = SDL_GetTicks64();
+        fb.tickDurMs = (1000.0f / 30.0f) / std::max(0.1f, animSpeed());
+        publishFrame();   // atomic-swap point: render now reads this buffer as front()
     }
 
     // Interpolated render pose for a unit: glides x/z (and shortest-path heading) between
@@ -3615,32 +3642,36 @@ public:
     // Lookup helper: the render snapshot record for a unit id (empty default if absent).
     const UnitR& frameUnit(int id) const {
         static const UnitR kEmpty{};
-        return (id >= 0 && size_t(id) < interp_.size()) ? interp_[size_t(id)] : kEmpty;
+        const Frame& f = front();
+        return (id >= 0 && size_t(id) < f.units.size()) ? f.units[size_t(id)] : kEmpty;
     }
     // Pointer form matching world_.unit()'s semantics: nullptr unless the id is a unit that
-    // is LIVE this tick (captured with the current gen). Use to replace world_.unit(id) in
+    // is LIVE this tick (captured with this frame's gen). Use to replace world_.unit(id) in
     // render/HUD reads (the null check keeps working).
     const UnitR* frameUnitP(int id) const {
-        if (id < 0 || size_t(id) >= interp_.size()) return nullptr;
-        const UnitR& r = interp_[size_t(id)];
-        return (r.gen == frameGen_ && r.type) ? &r : nullptr;
+        const Frame& f = front();
+        if (id < 0 || size_t(id) >= f.units.size()) return nullptr;
+        const UnitR& r = f.units[size_t(id)];
+        return (r.gen == f.gen && r.type) ? &r : nullptr;
     }
     // Player snapshot accessors (mirror world_.player()/numPlayers() for the HUD).
     const PlayerR& framePlayer(int p) const {
         static const PlayerR kEmpty{};
-        return (p >= 0 && p < int(framePlayers_.size())) ? framePlayers_[size_t(p)] : kEmpty;
+        const Frame& f = front();
+        return (p >= 0 && p < int(f.players.size())) ? f.players[size_t(p)] : kEmpty;
     }
-    int frameNumPlayers() const { return frameNumPlayers_; }
+    int frameNumPlayers() const { return front().numPlayers; }
     // Fog snapshot accessors (mirror world_.cellVisible/visibility/visW/visGeneration).
-    const std::vector<uint8_t>& frameVisibility() const { return frameVis_; }
-    int frameVisW() const { return frameVisW_; }
-    int frameVisH() const { return frameVisH_; }
-    uint32_t frameVisGeneration() const { return frameVisGen_; }
+    const std::vector<uint8_t>& frameVisibility() const { return front().vis; }
+    int frameVisW() const { return front().visW; }
+    int frameVisH() const { return front().visH; }
+    uint32_t frameVisGeneration() const { return front().visGen; }
     bool cellVisibleR(float x, float z) const {
-        if (frameVis_.empty()) return true;
+        const Frame& f = front();
+        if (f.vis.empty()) return true;
         int cx = int(x) / 16, cz = int(z) / 16;
-        if (cx < 0 || cz < 0 || cx >= frameVisW_ || cz >= frameVisH_) return false;
-        return frameVis_[size_t(cz) * frameVisW_ + cx] == 2;
+        if (cx < 0 || cz < 0 || cx >= f.visW || cz >= f.visH) return false;
+        return f.vis[size_t(cz) * f.visW + cx] == 2;
     }
 
     // The DISPLAY half: impact sounds/effects, particles, animation state and the
@@ -4110,14 +4141,13 @@ public:
             float key = f.mana ? f.z - 24.0f : f.z;
             items.push_back({key, nullptr, &f});
         }
-        for (const auto& u : world_.units()) {
-            if (u.id < 0 || size_t(u.id) >= interp_.size()) continue;
-            const UnitR& r = interp_[size_t(u.id)];   // this tick's snapshot
+        for (const UnitR* _up : front().live) {
+            const UnitR& r = *_up;   // this tick's snapshot (front().live mirrors world_.units())
             if (r.deadFor >= 4.0f || r.embarked()) continue;
             // Unregistered (e.g. a type whose model failed to load): not drawable,
             // and every render path does unitType_.at(u.id) -- skip it here so none
             // of them throw (a throw in the parallel projection aborts the process).
-            if (!unitType_.count(u.id)) continue;
+            if (!unitType_.count(r.id)) continue;
             if (!noFog_ && !r.alliedToLocal && !cellVisibleR(r.x, r.z)) continue;
             // Frustum cull: only units whose anchor falls in (or just outside) the
             // map viewport are projected and drawn. The margin is generous and
@@ -4148,8 +4178,8 @@ public:
         if (geomPool_.size() < visUnits_.size()) geomPool_.resize(visUnits_.size());
         // Fraction through the current sim-tick interval, for motion interpolation this
         // frame (clamped: a late tick just holds at the newest pose until it arrives).
-        interpAlpha_ = interpTickDurMs_ > 0.0f
-            ? std::clamp(float(SDL_GetTicks64() - interpTickMs_) / interpTickDurMs_, 0.0f, 1.0f)
+        interpAlpha_ = front().tickDurMs > 0.0f
+            ? std::clamp(float(SDL_GetTicks64() - front().tickMs) / front().tickDurMs, 0.0f, 1.0f)
             : 1.0f;
         // Build the texture atlas for every colour slot in view (main thread; the
         // parallel pass below only reads the finished atlas pointers).
@@ -4362,7 +4392,7 @@ public:
         profSubmitMs_ += (double(SDL_GetPerformanceCounter()) - _st0) / _ptFreq;
 
         // Ghosts of the local player's queued (shift) build orders.
-        for (const UnitR* _up : frameLive_) {
+        for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
             if (u.alive() && u.player == localPlayer_)
                 for (const auto& bo : u.buildOrders)
@@ -4371,7 +4401,7 @@ public:
 
         // Projectiles: drawn per weapon family (only where visible).
         float zm = mapView_.zoom();
-        for (const auto& p : frameProjectiles_) {
+        for (const auto& p : front().projectiles) {
             if (!cellVisibleR(p.x, p.z)) continue;
             float t = std::clamp(p.age / std::max(p.flight, 0.05f), 0.0f, 1.0f);
             // Flyer shots: lift the whole trajectory by the altitude interpolated
@@ -4568,7 +4598,7 @@ public:
         // into one draw call (each was two state-changing FillRects, so a damaged
         // crowd used to break the render batch thousands of times a frame).
         shadowBatch_.clear();
-        for (const UnitR* _up : frameLive_) {
+        for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
@@ -4599,7 +4629,7 @@ public:
         // The number is the recall key (squad 10 shows as "0"). Skipped when zoomed
         // far out so it doesn't clutter the field.
         if (hudFont_.ok() && zm > 0.55f)
-            for (const UnitR* _up : frameLive_) {
+            for (const UnitR* _up : front().live) {
                 const UnitR& u = *_up;
                 if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_ ||
                     u.squad == 0)
@@ -4624,7 +4654,7 @@ public:
         // state-changing FillRects per building broke the render batch each time,
         // and map-wide AI production drew bars at off-screen coordinates).
         shadowBatch_.clear();
-        for (const UnitR* _up : frameLive_) {
+        for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
             if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
             if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
@@ -7065,18 +7095,16 @@ private:
 
     // Render-side motion interpolation: glide units between 30Hz sim ticks (see
     // captureInterp / interpPose). Viewer-only, never hashed.
-    std::vector<UnitR> interp_;         // per-unit render snapshot, indexed by unit id (see UnitR)
-    uint32_t frameGen_ = 0;             // bumped each captureFrame; UnitR.gen==this => live this tick
-    std::vector<const UnitR*> frameLive_;   // compact list of units live this tick (render loops iterate this)
-    std::array<PlayerR, 8> framePlayers_{};   // per-tick player snapshot (see PlayerR)
-    int frameNumPlayers_ = 0;
-    std::vector<uint8_t> frameVis_;    // fog snapshot (copy of world_.vis_; re-copied on visGen change)
-    int frameVisW_ = 0, frameVisH_ = 0;
-    uint32_t frameVisGen_ = 0;
-    std::vector<tak::sim::Projectile> frameProjectiles_;   // per-tick projectile snapshot
-    uint64_t interpTickMs_ = 0;         // wall-clock ms of the last captured tick
-    float interpTickDurMs_ = 1000.0f / 30.0f;   // nominal tick interval (speed-scaled)
-    float interpAlpha_ = 0.0f;          // 0..1 through the current tick interval (per frame)
+    // Double-buffered render snapshot: the render reads front(), captureFrame writes back()
+    // and publishes with a swap. Single-threaded for now; Stage B threads the writer, at
+    // which point the swap is the only sync point between the sim and render threads.
+    Frame frameBuf_[2];
+    int frontIdx_ = 0;
+    uint32_t captureCounter_ = 0;       // monotonic; each Frame.gen gets a unique value
+    const Frame& front() const { return frameBuf_[frontIdx_]; }
+    Frame& back() { return frameBuf_[frontIdx_ ^ 1]; }
+    void publishFrame() { frontIdx_ ^= 1; }
+    float interpAlpha_ = 0.0f;          // 0..1 through the current tick interval (per render frame)
     // Fight-move ('f') reuses the Attack glyph tinted this red-orange, so it reads apart
     // from a real attack order -- for both the order-column button and the mouse cursor.
     static constexpr SDL_Color kFightMoveTint{255, 90, 80, 255};
