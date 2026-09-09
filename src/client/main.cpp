@@ -1526,6 +1526,7 @@ struct UnitR {
     std::vector<tak::sim::Order> orders;
     std::vector<tak::sim::BuildOrder> buildOrders;
     std::vector<int> cargo;
+    std::vector<int> reclaimQueue;   // builder's queued area-reclaim feature ids
     const tak::sim::UnitType* repeatType = nullptr;
     bool moving_ = false, walking_ = false;   // cached u.moving()/u.walking()
     bool disco = false, headbang = false;      // cached world_.disco/headbangActive(player)
@@ -2011,11 +2012,12 @@ public:
     // view). It runs alongside the faction music -- a dance-floor track from the unit.
     void discoSound() {
         for (int p = 0; p < 8 && p < world_.numPlayers(); ++p) {
-            bool on = world_.discoActive(p);
+            bool on = frameDiscoActive(p);
             if (on) {
                 // Centroid of this player's (visible) dancing monarchs.
                 float cx = 0, cz = 0; int n = 0;
-                for (const auto& u : world_.units()) {
+                for (const UnitR* _up : front().live) {
+                    const UnitR& u = *_up;
                     if (u.player != p || !u.alive() || !isMonarchType(u.type)) continue;
                     if (!alliedToLocal(p) && !noFog_ && !cellVisibleR(u.x, u.z)) continue;
                     cx += u.x; cz += u.z; ++n;
@@ -2033,10 +2035,11 @@ public:
     // Same as discoSound but for the Shift+H headbang -> the heavy-metal track.
     void headbangSound() {
         for (int p = 0; p < 8 && p < world_.numPlayers(); ++p) {
-            bool on = world_.headbangActive(p);
+            bool on = frameHeadbangActive(p);
             if (on) {
                 float cx = 0, cz = 0; int n = 0;
-                for (const auto& u : world_.units()) {
+                for (const UnitR* _up : front().live) {
+                    const UnitR& u = *_up;
                     if (u.player != p || !u.alive() || !isMonarchType(u.type)) continue;
                     if (!alliedToLocal(p) && !noFog_ && !cellVisibleR(u.x, u.z)) continue;
                     cx += u.x; cz += u.z; ++n;
@@ -2391,7 +2394,8 @@ public:
                 float ccx = (dragX0_ + dragX1_) / 2, ccy = (dragY0_ + dragY1_) / 2;
                 int hit = -1;
                 float best = 30.0f * 30.0f;
-                for (auto& u : world_.units()) {
+                for (const UnitR* _up : front().live) {
+                    const UnitR& u = *_up;
                     if (!u.alive() || u.underConstruction) continue;  // not-yet-built: unselectable
                     SDL_FPoint p = unitScreen(frameUnit(u.id));
                     float dx = p.x - ccx, dy = p.y - ccy;
@@ -2402,12 +2406,14 @@ public:
                     voice(hit, "select");
                 }
             } else {
-                for (auto& u : world_.units())
+                for (const UnitR* _up : front().live) {
+                    const UnitR& u = *_up;
                     if (u.alive() && u.player == localPlayer_ && !u.underConstruction) {
                         SDL_FPoint p = unitScreen(frameUnit(u.id));
                         if (p.x >= sx0 && p.x <= sx1 && p.y >= sy0 && p.y <= sy1)
                             selection_.push_back(u.id);
                     }
+                }
             }
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.button == SDL_BUTTON_RIGHT && !selection_.empty()) {
@@ -2430,7 +2436,7 @@ public:
     // it on a plain click: transport unload/load, assist/guard, attack, or move.
     void rightClickOrder(float wx, float wz, bool queue) {
         if (selection_.empty()) return;
-        const auto* first = world_.unit(selection_.front());
+        const auto* first = frameUnitP(selection_.front());
         // Selected transport with cargo: right-click = sail + disembark.
             if (first && first->type && first->type->canTransport &&
                 !first->cargo.empty()) {
@@ -2445,7 +2451,8 @@ public:
             // Clicking a friendly transport = board it.
             int friendlyTransport = -1;
             float bestT = 24 * 24;
-            for (auto& u : world_.units()) {
+            for (const UnitR* _up : front().live) {
+                const UnitR& u = *_up;
                 if (!u.alive() || !first || u.player != first->player || !u.type ||
                     !u.type->canTransport)
                     continue;
@@ -2471,7 +2478,8 @@ public:
             {
                 int siteId = -1;   float bestSite = 1e18f;
                 int allyId = -1;   float bestAlly = 22.0f * 22.0f;
-                for (auto& u : world_.units()) {
+                for (const UnitR* _up : front().live) {
+                    const UnitR& u = *_up;
                     if (!u.alive() || u.embarked() || !u.type || !first ||
                         !world_.allied(u.player, first->player)) continue;
                     float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
@@ -2482,10 +2490,10 @@ public:
                     } else if (d < bestAlly) { bestAlly = d; allyId = u.id; }
                 }
                 if (siteId >= 0) {
-                    const auto* st = world_.unit(siteId);
+                    const auto* st = frameUnitP(siteId);
                     bool any = false;
                     for (int id : selection_) {
-                        const auto* bu = world_.unit(id);
+                        const auto* bu = frameUnitP(id);
                         if (!bu || !bu->type || !bu->type->isBuilder) continue;
                         const auto& menu = registry_.buildable(bu->type->id);
                         if (std::find(menu.begin(), menu.end(), st->type->id) == menu.end())
@@ -2502,7 +2510,7 @@ public:
                 if (allyId >= 0) {
                     bool any = false;
                     for (int id : selection_) {
-                        const auto* gu = world_.unit(id);
+                        const auto* gu = frameUnitP(id);
                         if (!gu || !gu->type || gu->type->weapon.damage <= 0) continue;
                         tak::net::Command c;
                         c.kind = tak::net::Cmd::Guard;
@@ -2518,7 +2526,8 @@ public:
             // not enemies -- clicking one falls through to a move, not an attack.)
             int enemy = -1;
             float best = 20 * 20;
-            for (auto& u : world_.units()) {
+            for (const UnitR* _up : front().live) {
+                const UnitR& u = *_up;
                 if (!u.alive() || u.embarked() || !first ||
                     world_.allied(u.player, first->player)) continue;
                 float dx = u.x - wx, dz = u.z - wz;
@@ -2561,10 +2570,10 @@ public:
                 float cx = 0, cz = 0;
                 int n = 0;
                 for (int id : selection_)
-                    if (const auto* u = world_.unit(id)) { cx += u->x; cz += u->z; ++n; }
+                    if (const auto* u = frameUnitP(id)) { cx += u->x; cz += u->z; ++n; }
                 if (n) { cx /= float(n); cz /= float(n); }
                 for (int id : selection_) {
-                    const auto* u = world_.unit(id);
+                    const auto* u = frameUnitP(id);
                     if (!u) continue;
                     tak::net::Command c;
                     c.kind = tak::net::Cmd::Move;
@@ -2580,7 +2589,7 @@ public:
     // A mobile, reclaim-capable builder of ours is selected (drives the right-drag).
     bool haveReclaimer() {
         for (int id : selection_)
-            if (const auto* u = world_.unit(id))
+            if (const auto* u = frameUnitP(id))
                 if (u->alive() && u->type && u->type->isBuilder && u->type->canMove &&
                     u->type->canReclaim && u->player == localPlayer_)
                     return true;
@@ -2588,7 +2597,7 @@ public:
     }
     int firstReclaimer() {
         for (int id : selection_)
-            if (const auto* u = world_.unit(id))
+            if (const auto* u = frameUnitP(id))
                 if (u->alive() && u->type && u->type->isBuilder && u->type->canMove &&
                     u->type->canReclaim && u->player == localPlayer_)
                     return id;
@@ -2598,7 +2607,7 @@ public:
     // feature in the box, nearest-first (approximating retail's greedy re-scan).
     void issueReclaimBox(float x0, float z0, float x1, float z1, bool queue) {
         int builderId = firstReclaimer();
-        const auto* b = world_.unit(builderId);
+        const auto* b = frameUnitP(builderId);
         if (!b) return;
         float minx = std::min(x0, x1), maxx = std::max(x0, x1);
         float minz = std::min(z0, z1), maxz = std::max(z0, z1);
@@ -3588,7 +3597,7 @@ public:
             s.buildSiteId = u.buildSiteId; s.reclaimId = u.reclaimId; s.repairId = u.repairId;
             s.buildProgress = u.buildProgress;
             s.buildQueue = u.buildQueue; s.orders = u.orders; s.buildOrders = u.buildOrders;
-            s.cargo = u.cargo; s.repeatType = u.repeatType;
+            s.cargo = u.cargo; s.reclaimQueue = u.reclaimQueue; s.repeatType = u.repeatType;
             s.moving_ = u.moving(); s.walking_ = u.walking();
             s.disco = world_.discoActive(u.player);
             s.headbang = world_.headbangActive(u.player);
@@ -4199,7 +4208,8 @@ public:
         // finished geometry, one texture-batched draw call per unit. Without this
         // the whole frame is single-threaded and pegs one core at large unit counts.
         visUnits_.clear();
-        geomIndex_.assign(world_.units().size() + 1, -1);   // id -> slot; -1 = not in view
+        geomIndex_.assign(front().units.size(), -1);   // id -> slot; -1 = not in view
+                                                        // (front().units is id-indexed, sized to cover every live id)
         for (const auto& it : items)
             if (it.u && it.u->id >= 0 && size_t(it.u->id) < geomIndex_.size()) {
                 geomIndex_[size_t(it.u->id)] = int(visUnits_.size());
@@ -4541,7 +4551,7 @@ public:
             }
         }
 
-        // Selection membership as a hash set: the old code did world_.unit(id) (a
+        // Selection membership as a hash set: the old code did frameUnitP(id) (a
         // linear scan) per selected unit and std::find(selection_) per world unit
         // -- both O(n^2) once a big army was selected, which tanked the frame.
         selSet_.clear();
@@ -4552,12 +4562,12 @@ public:
         if (!selSet_.empty()) {
             const SDL_Color grn{70, 240, 90, 255};
             float zms = mapView_.zoom();
-            // Iterate the (few) selected ids, not the whole world -- world_.unit(id)
+            // Iterate the (few) selected ids, not the whole world -- frameUnitP(id)
             // is O(1). (A duplicate id would just redraw the same brackets in place.)
             for (int selId : selection_) {
-                const tak::sim::Unit* up = world_.unit(selId);
+                const UnitR* up = frameUnitP(selId);
                 if (!up || !up->alive() || !up->type) continue;
-                const tak::sim::Unit& u = *up;
+                const UnitR& u = *up;
                 float cx = (u.x - mapView_.offX()) * zms - uLiftX(u) * zms;
                 float cy = (u.z - mapView_.offY()) * zms - uLiftY(u) * zms;
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
@@ -4593,11 +4603,11 @@ public:
             auto& targets = targetSet_;   // member: reused across frames
             targets.clear();
             for (int sid : selection_)
-                if (const auto* su = world_.unit(sid))
+                if (const auto* su = frameUnitP(sid))
                     for (const auto& o : su->orders)
                         if (o.targetId > 0) targets.insert(o.targetId);
             for (int tid : targets) {
-                const auto* t = world_.unit(tid);
+                const auto* t = frameUnitP(tid);
                 if (!t || !t->alive() || !t->type) continue;
                 SDL_FPoint p = unitScreen(frameUnit(tid));   // includes flyer altitude
                 float cx = p.x, cy = p.y + 12.0f * zms;   // undo unitScreen's body bias
@@ -4724,7 +4734,7 @@ public:
                               int(tm.income));
                 hudFont_.draw(ren_, buf, 198, 21, 1.5f, {170, 225, 255, 255});
                 if (!selection_.empty()) {
-                    const auto* u = world_.unit(selection_.front());
+                    const auto* u = frameUnitP(selection_.front());
                     if (u && u->alive() && u->type) {
                         std::snprintf(buf, sizeof buf, "%s  %d/%d", u->type->name.c_str(),
                                       int(u->hp), int(u->type->maxHp));
@@ -4846,7 +4856,7 @@ public:
             std::string msg;
             SDL_Color col{255, 220, 90, 255};
             if (spectating_ || replayMode_) {
-                int wt = world_.winningTeam();
+                int wt = frameWinningTeam();
                 msg = wt >= 0 ? "TEAM " + std::to_string(wt + 1) + " WINS" : "GAME OVER";
             } else {
                 msg = outcome_ > 0 ? "VICTORY" : "DEFEAT";
@@ -5100,7 +5110,7 @@ private:
     // Plain-hover cursor: classify what is under the world point, mirroring the priority
     // in rightClickOrder() so the pointer previews the order a right-click would issue.
     tak::CursorId hoverCursor(float wx, float wz) {
-        const auto* first = selection_.empty() ? nullptr : world_.unit(selection_.front());
+        const auto* first = selection_.empty() ? nullptr : frameUnitP(selection_.front());
 
         // Selected transport carrying cargo -> unload cursor anywhere.
         if (first && first->type && first->type->canTransport && !first->cargo.empty())
@@ -5110,7 +5120,7 @@ private:
             // A friendly transport under the pointer -> board/load.
             {
                 float best = 24.0f * 24.0f; bool found = false;
-                for (auto& u : world_.units()) {
+                for (const UnitR* _up : front().live) { const UnitR& u = *_up;
                     if (!u.alive() || !u.type || !u.type->canTransport || u.player != first->player)
                         continue;
                     float dx = u.x - wx, dz = u.z - wz;
@@ -5121,7 +5131,7 @@ private:
             // Allied conjure site (assist) / your own unit (select) / a teammate's (green).
             int siteId = -1, ownId = -1, allyId = -1;
             float bSite = 1e18f, bOwn = 22.0f * 22.0f, bAlly = 22.0f * 22.0f;
-            for (auto& u : world_.units()) {
+            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
                 if (!u.alive() || u.embarked() || !u.type ||
                     !world_.allied(u.player, first->player)) continue;
                 float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
@@ -5138,7 +5148,7 @@ private:
 
             // An enemy under the pointer -> attack if we have a weapon, else the red target.
             int enemy = -1; float best2 = 20.0f * 20.0f;
-            for (auto& u : world_.units()) {
+            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
                 if (!u.alive() || u.embarked() || world_.allied(u.player, first->player)) continue;
                 float dx = u.x - wx, dz = u.z - wz;
                 if (dx * dx + dz * dz < best2) { best2 = dx * dx + dz * dz; enemy = u.id; }
@@ -5146,7 +5156,7 @@ private:
             if (enemy >= 0) {
                 bool canAtk = false;
                 for (int id : selection_)
-                    if (const auto* a = world_.unit(id))
+                    if (const auto* a = frameUnitP(id))
                         if (a->type && a->type->weapon.damage > 0) { canAtk = true; break; }
                 return canAtk ? tak::CursorId::Attack : tak::CursorId::Red;
             }
@@ -5167,7 +5177,7 @@ private:
         }
 
         // Nothing selected: highlight your own unit under the pointer, else the arrow.
-        for (auto& u : world_.units()) {
+        for (const UnitR* _up : front().live) { const UnitR& u = *_up;
             if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_) continue;
             float dx = u.x - wx, dz = u.z - wz;
             if (dx * dx + dz * dz < 22.0f * 22.0f) return tak::CursorId::Select;
@@ -6539,7 +6549,7 @@ private:
 
         // A builder actively conjuring a site sparkles over ITSELF too (the worker end).
         if (u.type && u.buildSiteId != 0) {
-            const auto* site = world_.unit(u.buildSiteId);
+            const auto* site = frameUnitP(u.buildSiteId);
             if (site && site->buildBegun)
                 sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());
         }
@@ -6987,7 +6997,7 @@ private:
     // an impact blast onto a flyer (the hit record only carries the impact point).
     float flyerAltAt(float x, float z) const {
         float best = 24.0f * 24.0f, alt = 0.0f;
-        for (const auto& u : world_.units()) {
+        for (const UnitR* _up : front().live) { const UnitR& u = *_up;
             if (!u.alive() || !u.type || !u.type->canFly) continue;
             float dx = u.x - x, dz = u.z - z, d = dx * dx + dz * dz;
             if (d < best) { best = d; alt = unitAltById(u.id); }
@@ -7303,7 +7313,7 @@ private:
         // All unit dots batched into one draw call (per-unit FillRect + colour
         // set was thousands of state changes a frame at large unit counts).
         shadowBatch_.clear();
-        for (const auto& u : world_.units()) {
+        for (const UnitR* _up : front().live) { const UnitR& u = *_up;
             if (!u.alive() || u.embarked() || !u.type) continue;
             // A spectator (noFog_) sees every unit on the radar; a player sees only
             // allied units and enemies currently in view.
@@ -7348,7 +7358,7 @@ private:
         float wx, wz;
         if (selection_.empty() || !minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
         for (int id : selection_) {
-            const auto* u = world_.unit(id);
+            const auto* u = frameUnitP(id);
             if (!u || u->player != localPlayer_) continue;
             tak::net::Command c;
             c.kind = tak::net::Cmd::Move;
@@ -7358,7 +7368,7 @@ private:
             c.queue = queue ? 1 : 0;
             issue(c);
         }
-        if (const auto* u = world_.unit(selection_.front()); u && u->player == localPlayer_)
+        if (const auto* u = frameUnitP(selection_.front()); u && u->player == localPlayer_)
             voice(selection_.front(), "move");
         return true;
     }
@@ -7392,13 +7402,13 @@ private:
         if (cmd == 'r') {   // repair: heal the damaged friendly under the cursor
             int builderId = -1;
             for (int id : selection_) {
-                const auto* u = world_.unit(id);
+                const auto* u = frameUnitP(id);
                 if (u && u->type && u->type->isBuilder && u->type->canMove &&
                     u->player == localPlayer_) { builderId = id; break; }
             }
             if (builderId < 0) return;
             int tid = -1; float best = 28.0f * 28.0f;
-            for (auto& u : world_.units()) {
+            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
                 if (!u.alive() || u.embarked() || u.id == builderId || !u.type) continue;
                 if (!world_.allied(u.player, localPlayer_)) continue;
                 if (u.underConstruction || u.hp >= u.type->maxHp) continue;   // only damaged
@@ -7418,7 +7428,7 @@ private:
         if (cmd == 'u') {   // unload: selected transport(s) sail to (wx,wz), disembark
             bool any = false;
             for (int id : selection_) {
-                const auto* u = world_.unit(id);
+                const auto* u = frameUnitP(id);
                 if (!u || !u->type || !u->type->canTransport || u->cargo.empty()) continue;
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::Unload;
@@ -7434,14 +7444,14 @@ private:
         if (cmd == 'l') {   // load: the friendly unit under the cursor boards a transport
             int transportId = -1;
             for (int id : selection_) {
-                const auto* u = world_.unit(id);
+                const auto* u = frameUnitP(id);
                 if (u && u->type && u->type->canTransport &&
                     int(u->cargo.size()) < u->type->transportCap) { transportId = id; break; }
             }
-            const auto* t = transportId >= 0 ? world_.unit(transportId) : nullptr;
+            const auto* t = transportId >= 0 ? frameUnitP(transportId) : nullptr;
             if (!t) return;
             int pid = -1; float best = 24.0f * 24.0f;
-            for (auto& u : world_.units()) {
+            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
                 if (!u.alive() || u.embarked() || u.id == transportId || !u.type) continue;
                 if (u.player != t->player || u.type->canTransport) continue;
                 float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
@@ -7460,7 +7470,7 @@ private:
             int buddy = -1;
             float best = precise ? 24.0f : 96.0f;   // generous radius on the minimap
             best *= best;
-            for (auto& u : world_.units()) {
+            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
                 if (!u.alive() || u.player != localPlayer_) continue;
                 float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
                 if (d < best) { best = d; buddy = u.id; }
@@ -7482,9 +7492,9 @@ private:
         // on the minimap) it is an attack-move to the ground point.
         int enemy = -1;
         if (cmd == 'a' && precise) {
-            const auto* first = world_.unit(selection_.front());
+            const auto* first = frameUnitP(selection_.front());
             float best = 20 * 20;
-            for (auto& u : world_.units()) {
+            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
                 if (!u.alive() || u.embarked() || !first ||
                     world_.allied(u.player, first->player))
                     continue;
@@ -8060,9 +8070,9 @@ private:
     }
 
     // The front selected unit, if it has more than one weapon (worth a picker).
-    const tak::sim::Unit* multiWeaponSel() {
+    const UnitR* multiWeaponSel() {
         if (selection_.empty()) return nullptr;
-        const auto* u = world_.unit(selection_.front());
+        const auto* u = frameUnitP(selection_.front());
         if (u && u->alive() && u->type && u->type->weapons.size() > 1) return u;
         return nullptr;
     }
@@ -8113,7 +8123,7 @@ private:
     // Issue SetWeapon(slot) for every selected unit that has that slot.
     void selectWeapon(int slot) {
         for (int id : selection_) {
-            const auto* u = world_.unit(id);
+            const auto* u = frameUnitP(id);
             if (!u || !u->type || int(u->type->weapons.size()) <= slot) continue;
             tak::net::Command c;
             c.kind = tak::net::Cmd::SetWeapon;
@@ -8171,7 +8181,7 @@ private:
     std::vector<std::pair<int, char>> guiActiveButtons() const {
         std::vector<std::pair<int, char>> out;
         if (gui_.gadgets.empty() || selection_.empty()) return out;
-        const tak::sim::Unit* front = world_.unit(selection_.front());
+        const UnitR* front = frameUnitP(selection_.front());
         if (!front || !front->type) return out;
         auto add = [&](const char* nm, char c) {
             int i = guiIdx(nm);
@@ -8187,7 +8197,7 @@ private:
         // never both a reclaimer and a transport, so only one shows.
         bool builder = false, reclaimer = false;
         for (int id : selection_) {
-            const auto* u = world_.unit(id);
+            const auto* u = frameUnitP(id);
             if (!u || !u->alive() || !u->type || !u->type->isBuilder ||
                 !u->type->canMove || u->player != localPlayer_)
                 continue;
@@ -8247,8 +8257,8 @@ private:
             }
         }
 
-        const tak::sim::Unit* front =
-            !selection_.empty() ? world_.unit(selection_.front()) : nullptr;
+        const UnitR* selFront =
+            !selection_.empty() ? frameUnitP(selection_.front()) : nullptr;
         for (auto [idx, cmd] : guiActiveButtons()) {
             const auto& g = gui_.gadgets[idx];
             auto& tex = guiTex_[idx];
@@ -8258,14 +8268,14 @@ private:
                        mouseY_ <= r.y + r.h;
             bool active = false;
             if (cmd >= '1' && cmd <= '3')
-                active = front && front->weaponSlot == (cmd - '1');
-            else if (cmd == 'O') active = front && front->stance == 0;
-            else if (cmd == 'D') active = front && front->stance == 1;
-            else if (cmd == 'H') active = front && front->stance == 2;
-            else if (cmd == 'K') active = front && front->cloakOn;
-            else if (cmd == 'k') active = front && !front->cloakOn;
-            else if (cmd == 'N') active = front && front->active;
-            else if (cmd == 'F') active = front && !front->active;
+                active = selFront && selFront->weaponSlot == (cmd - '1');
+            else if (cmd == 'O') active = selFront && selFront->stance == 0;
+            else if (cmd == 'D') active = selFront && selFront->stance == 1;
+            else if (cmd == 'H') active = selFront && selFront->stance == 2;
+            else if (cmd == 'K') active = selFront && selFront->cloakOn;
+            else if (cmd == 'k') active = selFront && !selFront->cloakOn;
+            else if (cmd == 'N') active = selFront && selFront->active;
+            else if (cmd == 'F') active = selFront && !selFront->active;
             else if (cmd != 's')
                 active = pendingCmd_ == cmd;
             // Frame semantics differ by button family (both list imgs = frames 0,1,2):
@@ -8280,10 +8290,10 @@ private:
             // Weapon slots composite the weapon's own icon (anims/weaponpic) -- the
             // WPrimaryButton GAF is just an empty recess. The pic already includes the
             // frame, so it replaces the slot art.
-            if (cmd >= '1' && cmd <= '3' && front) {
+            if (cmd >= '1' && cmd <= '3' && selFront) {
                 int slot = cmd - '1';
-                SDL_Texture* wt = slot < int(front->type->weapons.size())
-                    ? weaponIcon(front->type->weapons[size_t(slot)].name, active || hot)
+                SDL_Texture* wt = slot < int(selFront->type->weapons.size())
+                    ? weaponIcon(selFront->type->weapons[size_t(slot)].name, active || hot)
                     : nullptr;
                 if (wt) SDL_RenderCopyF(ren_, wt, nullptr, &r);
                 else {
@@ -8354,16 +8364,16 @@ private:
             blockText(nums, mbox.x + (mbox.w - w2) * 0.5f, y0 + lineH + gap, px, mc);
             // +income / -expenditure (conjure + repair drain, computed here) flanking orb.
             float expend = 0;
-            for (const auto& un : world_.units()) {
+            for (const UnitR* _up : front().live) { const UnitR& un = *_up;
                 if (un.player != localPlayer_ || !un.alive() || !un.type) continue;
                 if (un.buildSiteId)
-                    if (const auto* st = world_.unit(un.buildSiteId);
+                    if (const auto* st = frameUnitP(un.buildSiteId);
                         st && st->type && st->underConstruction) {
                         float total = st->type->buildTime / std::max(un.type->workerTime, 0.01f);
                         expend += st->type->buildCost / std::max(total, 0.01f);
                     }
                 if (un.repairId)
-                    if (const auto* t2 = world_.unit(un.repairId);
+                    if (const auto* t2 = frameUnitP(un.repairId);
                         t2 && t2->type && t2->hp < t2->type->maxHp) {
                         float total = t2->type->buildTime / std::max(un.type->workerTime, 0.01f);
                         expend += t2->type->buildCost / std::max(total, 0.01f);
@@ -8454,7 +8464,7 @@ private:
     // Issue a per-unit toggle command (targetId = value) to every selected own unit.
     void issuePerUnit(tak::net::Cmd kind, int value) {
         for (int id : selection_) {
-            const auto* u = world_.unit(id);
+            const auto* u = frameUnitP(id);
             if (!u || u->player != localPlayer_) continue;
             tak::net::Command c;
             c.kind = kind;
@@ -8522,8 +8532,8 @@ private:
                 if (r.h < 5) { r.y -= (5 - r.h) * 0.5f; r.h = 5; }
                 drawBar(r.x, r.y, r.w, r.h, frac, c);
             };
-            const tak::sim::Unit* u =
-                selection_.empty() ? nullptr : world_.unit(selection_.front());
+            const UnitR* u =
+                selection_.empty() ? nullptr : frameUnitP(selection_.front());
             if (u && (!u->alive() || !u->type)) u = nullptr;
             float tpx = std::max(2.0f, float(barH()) / 24.0f);
 
@@ -8531,7 +8541,7 @@ private:
             std::string tName; float tProg = 0;
             if (u) {
                 if (u->buildSiteId) {
-                    if (const auto* s = world_.unit(u->buildSiteId); s && s->type) {
+                    if (const auto* s = frameUnitP(u->buildSiteId); s && s->type) {
                         tName = s->type->name;
                         tProg = s->hp / std::max(1.0f, s->type->maxHp);
                     }
@@ -8597,7 +8607,7 @@ private:
 
     // A one-word description of what the selected unit is doing, for the command
     // panel's HelpText recess.
-    const char* unitStatusText(const tak::sim::Unit* u) const {
+    const char* unitStatusText(const UnitR* u) const {
         if (!u || !u->type) return "";
         if (u->stonedFor > 0) return "PETRIFIED";
         if (u->frozenFor > 0) return "FROZEN";
@@ -8622,10 +8632,10 @@ private:
     }
 
     // What a builder is currently conjuring/building, for the info bar (else "").
-    std::string conjureTargetName(const tak::sim::Unit* u) const {
+    std::string conjureTargetName(const UnitR* u) const {
         if (!u || !u->type) return {};
         if (u->buildSiteId != 0)
-            if (const auto* site = world_.unit(u->buildSiteId); site && site->type)
+            if (const auto* site = frameUnitP(u->buildSiteId); site && site->type)
                 return site->type->name;
         if (!u->buildQueue.empty() && u->buildQueue.front())
             return u->buildQueue.front()->name;
@@ -8772,9 +8782,9 @@ private:
     }
 
     // The selected builder (any builder in the selection).
-    const tak::sim::Unit* selectedBuilder() {
+    const UnitR* selectedBuilder() {
         for (int id : selection_) {
-            const auto* u = world_.unit(id);
+            const auto* u = frameUnitP(id);
             if (u && u->alive() && u->type && u->type->isBuilder) return u;
         }
         return nullptr;
@@ -8847,7 +8857,7 @@ private:
                 // a local mutation would silently desync a networked game.
                 int n = 0;
                 for (int id : selection_)
-                    if (auto* su = world_.unit(id))
+                    if (auto* su = frameUnitP(id))
                         if (su->alive() && su->player == localPlayer_) {
                             tak::net::Command c;
                             c.kind = tak::net::Cmd::Destroy;
@@ -8864,9 +8874,9 @@ private:
                 // One emote at a time -- don't even send the command while a disco or
                 // headbang is already running (the sim enforces this too). The busy
                 // notice reflects what you're ACTUALLY doing, not the key you pressed.
-                bool emoting = world_.discoActive(localPlayer_) || world_.headbangActive(localPlayer_);
+                bool emoting = frameDiscoActive(localPlayer_) || frameHeadbangActive(localPlayer_);
                 if (emoting) {
-                    notice_ = world_.discoActive(localPlayer_) ? "ALREADY GROOVING" : "ALREADY ROCKING";
+                    notice_ = frameDiscoActive(localPlayer_) ? "ALREADY GROOVING" : "ALREADY ROCKING";
                     noticeTimer_ = 2; return true;
                 }
                 bool disco = hotkeys_.match(int32_t(key), mod) == tak::Act::Disco;
@@ -8879,16 +8889,16 @@ private:
             }
             // Selection commands (no armed order, no selection prerequisite).
             case tak::Act::SelectAll:
-                selectOwned([](const tak::sim::Unit&){ return true; });
+                selectOwned([](const UnitR&){ return true; });
                 return true;
             case tak::Act::SelectSameType: {   // all of the currently-selected type
-                const auto* first = selection_.empty() ? nullptr : world_.unit(selection_.front());
+                const auto* first = selection_.empty() ? nullptr : frameUnitP(selection_.front());
                 const auto* t = first ? first->type : nullptr;
-                if (t) selectOwned([t](const tak::sim::Unit& u){ return u.type == t; });
+                if (t) selectOwned([t](const UnitR& u){ return u.type == t; });
                 return true;
             }
             case tak::Act::SelectOnScreen:
-                selectOwned([this](const tak::sim::Unit& u){ return onScreen(u); });
+                selectOwned([this](const UnitR& u){ return onScreen(u); });
                 return true;
             default: break;
         }
@@ -8933,10 +8943,12 @@ private:
     void selectOwned(Pred pred) {
         if (spectating_) return;   // watch-only
         selection_.clear();
-        for (auto& u : world_.units())
+        for (const UnitR* _up : front().live) {
+            const UnitR& u = *_up;
             if (u.alive() && u.player == localPlayer_ && u.type && !u.underConstruction &&
                 pred(u))
                 selection_.push_back(u.id);
+        }
         if (!selection_.empty()) voice(selection_.front(), "select");
     }
 
@@ -8958,12 +8970,14 @@ private:
         if (spectating_ || num < 1 || num > 10 || selection_.empty()) return;
         int want = sign * num;
         std::unordered_set<int> sel(selection_.begin(), selection_.end());
-        for (auto& u : world_.units())
+        for (const UnitR* _up : front().live) {
+            const UnitR& u = *_up;
             if (u.alive() && u.player == localPlayer_ && std::abs(int(u.squad)) == num &&
                 sel.find(u.id) == sel.end())
                 issueSquad(u.id, append ? want : 0);   // append: retype it; else evict it
+        }
         for (int id : selection_)
-            if (const auto* u = world_.unit(id); u && u->alive() && u->player == localPlayer_)
+            if (const auto* u = frameUnitP(id); u && u->alive() && u->player == localPlayer_)
                 issueSquad(id, want);
     }
 
@@ -8973,10 +8987,12 @@ private:
     void recallSquad(int num) {
         if (spectating_) return;
         selection_.clear();
-        for (auto& u : world_.units())
+        for (const UnitR* _up : front().live) {
+            const UnitR& u = *_up;
             if (u.alive() && u.player == localPlayer_ && u.type &&
                 std::abs(int(u.squad)) == num && !u.type->isBuilder)
                 selection_.push_back(u.id);
+        }
         if (!selection_.empty()) { centerOn(selection_.front()); voice(selection_.front(), "select"); }
     }
 
@@ -8984,12 +9000,12 @@ private:
     void clearSquad() {
         if (spectating_) return;
         for (int id : selection_)
-            if (const auto* u = world_.unit(id);
+            if (const auto* u = frameUnitP(id);
                 u && u->alive() && u->player == localPlayer_ && u->squad)
                 issueSquad(id, 0);
     }
 
-    bool onScreen(const tak::sim::Unit& u) const {
+    bool onScreen(const UnitR& u) const {
         float sx = (u.x - mapView_.offX()) * mapView_.zoom();
         float sy = (u.z - mapView_.offY()) * mapView_.zoom();
         return sx >= 0 && sy >= 0 && sx <= float(winW_) && sy <= float(winH_) - barH();
@@ -8999,10 +9015,12 @@ private:
     void cycleNextUnit() {
         if (spectating_) return;   // watch-only
         std::vector<int> owned;
-        for (auto& u : world_.units())
+        for (const UnitR* _up : front().live) {
+            const UnitR& u = *_up;
             if (u.alive() && u.player == localPlayer_ && u.type && u.type->canMove &&
                 !u.underConstruction)
                 owned.push_back(u.id);
+        }
         if (owned.empty()) return;
         int cur = selection_.empty() ? -1 : selection_.front();
         auto it = std::find(owned.begin(), owned.end(), cur);
@@ -9015,7 +9033,7 @@ private:
     }
 
     void centerOn(int id) {
-        const auto* u = world_.unit(id);
+        const auto* u = frameUnitP(id);
         if (!u) return;
         mapView_.setOffset(u->x - (winW_ / 2.0f) / mapView_.zoom(),
                            u->z - (winH_ / 2.0f) / mapView_.zoom());
@@ -9027,7 +9045,7 @@ private:
         float cx = 0, cz = 0;
         int n = 0;
         for (int id : selection_) {
-            const auto* u = world_.unit(id);
+            const auto* u = frameUnitP(id);
             if (u && u->alive()) { cx += u->x; cz += u->z; ++n; }
         }
         if (!n) return false;
@@ -9855,7 +9873,7 @@ private:
                 SDL_RenderFillRectF(ren_, &r);
             }
         char buf[64];
-        for (const auto& u : world_.units()) {
+        for (const UnitR* _up : front().live) { const UnitR& u = *_up;
             if (!u.alive() || !u.type) continue;
             if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z) && !noFog_) continue;
             float sx = (u.x - mapView_.offX()) * zm;
@@ -9890,7 +9908,7 @@ private:
         int cnt[tak::sim::kMaxPlayers] = {};
         std::string sd[tak::sim::kMaxPlayers];
         int np = frameNumPlayers();
-        for (const auto& u : world_.units()) {
+        for (const UnitR* _up : front().live) { const UnitR& u = *_up;
             if (!u.alive() || !u.type) continue;
             int t = u.player;
             if (t < 0 || t >= np) continue;
@@ -10179,7 +10197,7 @@ private:
                               {120, 255, 130, 255});
                 }
                 // Queued-count badge (bottom-right of the icon): how many are queued.
-                if (int qc = world_.queuedCount(b->id, bt)) {
+                if (int qc = frameQueuedCount(b->id, bt)) {
                     char num[8];
                     std::snprintf(num, sizeof num, "%d", qc);
                     float px = 2.2f * buildBarScale_, nw = blockWidth(num, px);
