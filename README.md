@@ -63,9 +63,10 @@ Each release also attaches per-platform **debug** binaries (`*-debug`) — the s
 launch modes, dev flags, `TAK_*` env hooks, and the headless `--mp*` harness.
 
 All of these resolve to the newest [release](https://github.com/pocketgeek/tak-engine/releases);
-the `.deb`/`.rpm` packages install `takclient` + `takserver` to `/usr/bin` and pull
-their SDL2/jpeg/zlib runtime deps automatically. They appear once the first tagged
-release finishes building.
+the `.deb`/`.rpm` packages install `takclient` + `takserver` to `/usr/bin`; SDL2,
+libjpeg and zlib are linked **statically** (and the Bink FFmpeg too), so the packages
+are self-contained — they pull only base system libraries, nothing extra to install.
+They appear once the first tagged release finishes building.
 
 > **This project contains no game content.** You must own the original game
 > (e.g. the GOG release of *Total Annihilation: Kingdoms + The Iron Plague*); the
