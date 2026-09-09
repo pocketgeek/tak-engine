@@ -307,6 +307,12 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     }
     std::vector<std::pair<float, float>> assigned;
     int spot = 0;
+    // Benchmark: per-faction staged spawn plan (deltas summing to 4999, + the monarch =
+    // 5000 each) fired at 5s intervals. Built per faction in the loop below, deterministic.
+    static const int kBenchDeltas[7] = {249, 250, 500, 1000, 1000, 1000, 1000};
+    static const uint32_t kBenchTicks[7] = {150, 300, 450, 600, 750, 900, 1050};   // 5s..35s @30Hz
+    std::vector<BenchStage> benchPlan;
+    if (cfg.benchmark) { benchPlan.resize(7); for (int s = 0; s < 7; ++s) benchPlan[s].tick = kBenchTicks[s]; }
     for (int i = 0; i < int(cfg.slots.size()); ++i) {
         if (!cfg.slots[i].used) continue;
         const UnitType* monarch = reg.find(kMonarchs[cfg.slots[i].faction % 5]);
@@ -343,7 +349,29 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 }
             }
         }
+        // Benchmark: append this faction's staged units (land+air combat only -- Water-
+        // domain excluded, so no boats on land) to the plan, on a deterministic grid
+        // centred on the start. Same roster/order/grid on every peer -> lockstep.
+        if (cfg.benchmark && monarch) {
+            std::vector<const UnitType*> roster;
+            for (const UnitType* t : reg.combatUnits(monarch->side))
+                if (t->domain != UnitType::Domain::Water) roster.push_back(t);
+            if (!roster.empty()) {
+                int cols = 1; while (cols * cols < 4999) ++cols;   // ceil(sqrt(4999)) = 71
+                const float spacing = 24.0f;
+                float x0 = mx - float(cols) * spacing * 0.5f;   // centre the block on the start
+                float z0 = mz - float(cols) * spacing * 0.5f;
+                int idx = 0;
+                for (int s = 0; s < 7; ++s)
+                    for (int k = 0; k < kBenchDeltas[s]; ++k, ++idx)
+                        benchPlan[size_t(s)].units.push_back(
+                            {roster[size_t(idx) % roster.size()],
+                             x0 + float(idx % cols) * spacing,
+                             z0 + float(idx / cols) * spacing, i});
+            }
+        }
     }
+    if (cfg.benchmark) world.setBenchmarkPlan(std::move(benchPlan), 1200);   // end at tick 1200 (40s)
     // Block the (structure) footprints just spawned. Monarchs move, so this is a
     // no-op today, but it mirrors the client and covers any non-mover spawns.
     for (auto& u : world.units()) {

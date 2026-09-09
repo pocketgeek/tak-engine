@@ -2255,6 +2255,14 @@ void World::tickProduction(Unit& u, float dt) {
 
 void World::tick(float dt) {
     ++tickCounter_;
+    // Benchmark: fire the staged spawn plan at its scheduled ticks. Deterministic -- both
+    // the client sim and the referee run the identical plan (built in setupMatch), so
+    // lockstep holds. It IS hashed (real sim state), which is fine: every peer agrees.
+    while (benchCursor_ < benchPlan_.size() && benchPlan_[benchCursor_].tick <= tickCounter_) {
+        for (const auto& bs : benchPlan_[benchCursor_].units)
+            spawn(bs.type, bs.x, bs.z, 0, bs.player);
+        ++benchCursor_;
+    }
     std::chrono::steady_clock::time_point _tk0, _sep0;
     if (g_phase) { _tk0 = std::chrono::steady_clock::now();
                    g_tcomb = g_flowMs = g_pathMs = 0; g_flowN = g_pathN = 0; }

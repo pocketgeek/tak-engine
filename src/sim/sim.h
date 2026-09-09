@@ -461,9 +461,22 @@ constexpr int kMaxPlayers = 8;
 
 class MissionScript;   // src/sim/mission.h -- optional campaign "god" script + win/lose
 
+// Benchmark staged-spawn plan: a set of units to spawn at a scheduled tick. Built once in
+// setupMatch (deterministically -- so the client sim and the referee build the identical
+// plan) and executed by World::tick. See MatchConfig::benchmark.
+struct BenchSpawn { const UnitType* type = nullptr; float x = 0, z = 0; int player = 0; };
+struct BenchStage { uint32_t tick = 0; std::vector<BenchSpawn> units; };
+
 class World {
 public:
     int spawn(const UnitType* type, float x, float z, float heading = 0, int player = 0);
+    // Benchmark: install the staged spawn plan (see BenchStage). endTick marks when the
+    // benchmark run finishes; benchmarkMode() is true while a plan is installed.
+    void setBenchmarkPlan(std::vector<BenchStage> plan, uint32_t endTick) {
+        benchPlan_ = std::move(plan); benchCursor_ = 0; benchEndTick_ = endTick;
+    }
+    bool benchmarkMode() const { return benchEndTick_ > 0; }
+    uint32_t benchmarkEndTick() const { return benchEndTick_; }
     // Build per-domain nav grids from heights + sea level.
     void setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel);
     NavGrid& nav() { return nav_; }
@@ -818,6 +831,9 @@ private:
     int unitCap_ = 0;                 // per-player live-unit limit (0 = unlimited)
     float godAppearTime_ = 1e9f, clock_ = 0;
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
+    std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
+    size_t benchCursor_ = 0;              // next unexecuted stage
+    uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run
     uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
                                  // (deterministic: derived from the live-unit count)
     uint32_t flowQuantShift_ = 1;// flow-goal block = 2^shift cells; coarsens with the

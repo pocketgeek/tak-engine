@@ -87,6 +87,7 @@ static void readSlots(Reader& r, RoomView& v) {
     v.opts.monarchExpendable = r.u8();
     v.opts.stressTest = r.u8();
     v.opts.fogExplored = r.u8();
+    v.opts.benchmark = r.u8();
     v.hostId = r.u32();
     for (int i = 0; i < kMaxSlots; ++i) {
         SlotInfo& s = v.slots[i];
@@ -223,7 +224,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
     Writer w; w.str(name); w.str(password); w.str(mapId); w.str(mission);
     w.u8(o.crusades); w.u8(o.gods); w.u8(o.forfeitSelfDestruct); w.u8(o.overridePolicy);
     w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
-    w.u8(o.stressTest); w.u8(o.fogExplored);
+    w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark);
     w.u8(capacity);   // map's start-position count (the server has no map data)
     w.u8(spectate ? 1 : 0);   // host watches, taking no slot
     w.u8(priv ? 1 : 0);       // private (single-player): not in the public game list
@@ -251,7 +252,7 @@ void MpClient::setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
 void MpClient::setGameOptions(const GameOptions& o) {
     Writer w; w.u8(o.crusades); w.u8(o.gods); w.u8(o.forfeitSelfDestruct);
     w.u8(o.overridePolicy); w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
-    w.u8(o.stressTest); w.u8(o.fogExplored);
+    w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark);
     send(Msg::SetGameOptions, w);
 }
 

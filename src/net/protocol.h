@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 23;       // 23: GameOptions.fogExplored (fog-of-war memory)
+constexpr uint32_t kNetVersion = 24;       // 24: GameOptions.benchmark (all-AI perf run)
                                            // 20: +control squads/formations (Cmd::SetSquad)
                                            // 15: GameOptions.speed/speedUnlock + Set/SpeedUpdate msgs
                                            // 14: Cmd::Headbang (Shift+H emote)
@@ -119,6 +119,9 @@ struct GameOptions {
     // have seen stays revealed (dimmed) when out of line of sight; 0 = NOT EXPLORED --
     // cells go dark again the moment they leave sight (no map memory). Host-set in the room.
     uint8_t fogExplored = 1;
+    // Benchmark mode: an all-AI perf run with a staged spawn schedule (see
+    // MatchConfig::benchmark). Deterministic, so it IS part of the hashed sim.
+    uint8_t benchmark = 0;
 };
 
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer

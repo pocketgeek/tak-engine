@@ -43,6 +43,10 @@ struct MatchConfig {
     bool monarchExpendable = true;  // false = losing your Monarch loses the game
     bool stressTest = false;        // spawn each player at ~95% of the unit cap in combat
                                     // units at setup (SP all-AI load test)
+    bool benchmark = false;         // benchmark mode: build a STAGED deterministic spawn
+                                    // plan (249/250/500/1000x4 land+air combat units per
+                                    // faction at 5s intervals; 5000 each incl. monarch)
+                                    // executed by World::tick -- see World::setBenchmarkPlan.
 };
 
 // The starting Monarch of each faction (index = faction id).
