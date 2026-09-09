@@ -5258,7 +5258,15 @@ public:
         // Spectator badge: a live watcher can pan/zoom but issues no orders. Use the
         // crisp 5x7 block font (the scaled GAF hudFont smeared/overlapped here).
         if (spectating_) {
-            const char* m = benchmarkMode_ ? "BENCHMARKING" : "SPECTATING";
+            std::string m = "SPECTATING";
+            if (benchmarkMode_) {   // append a countdown from the benchmark duration to 0
+                uint32_t end = world_.benchmarkEndTick(), gt = front().gameTick;
+                int rem = (end == 0) ? int(end) : (gt < end ? int((end - gt + 29) / 30) : 0);
+                if (end == 0) rem = 60;   // not started yet -> full duration
+                char buf[40];
+                std::snprintf(buf, sizeof buf, "BENCHMARKING  %d:%02d", rem / 60, rem % 60);
+                m = buf;
+            }
             float px = 3.0f;
             float tw = blockWidth(m, px), th = 7 * px;
             float bx = (winW - tw) / 2, by = 24;
