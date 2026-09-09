@@ -1,0 +1,574 @@
+#include "client/gameview.h"
+
+// Out-of-line GameView method definitions (lobby concern), split from the
+// class body in gameview.h so editing a body recompiles only this translation
+// unit. Trivial getters, ctors, static, template, constexpr and default-arg
+// methods stay inline in the header. Grouping is by name heuristic.
+
+    bool GameView::inLobbyPhase() const {
+        if (!mp_ || mpSetupDone_) return false;
+        auto s = mp_->state();
+        return s == tak::net::MpClient::State::Connecting ||
+               s == tak::net::MpClient::State::Lobby ||
+               s == tak::net::MpClient::State::InRoom ||
+               s == tak::net::MpClient::State::Done;
+    }
+
+    int GameView::geomSlot(int id) const {
+        return (id >= 0 && size_t(id) < geomIndex_.size()) ? geomIndex_[size_t(id)] : -1;
+    }
+
+    void GameView::drawLobby(int winW, int winH) {
+        lobbyHots_.clear();
+        // Map-picker geometry is only live while the create screen is shown; clear it
+        // so a stale thumb/list rect can't grab clicks or wheel on the other screens.
+        mapListRect_ = mapThumbRect_ = SDL_FRect{0, 0, 0, 0};
+        // absorb any new chat
+        if (mp_) for (auto& m : mp_->takeChat()) chatLog_.push_back(m);
+        // The ground + centred panel frame are painted by the caller (the viewport is
+        // already offset to this panel); RenderClear would ignore the viewport.
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        float cx = winW / 2.0f;
+        const char* title = singlePlayer_ ? "SINGLE PLAYER VS AI" : "TA:KINGDOMS  MULTIPLAYER";
+        blockText(title, cx - blockWidth(title, 2.6f) / 2, 24, 2.6f, {210, 200, 150, 255});
+        if (!mp_) return;
+        auto st = mp_->state();
+        if (st == tak::net::MpClient::State::Connecting) {
+            blockText("connecting to server...", cx - 120, winH / 2.0f, 2.0f, {200, 200, 210, 255});
+            return;
+        }
+        if (st == tak::net::MpClient::State::Done) {
+            std::string m = "disconnected: " + (mp_->error().empty() ? std::string("server closed") : mp_->error());
+            blockText(m, cx - blockWidth(m, 2.0f) / 2, winH / 2.0f, 2.0f, {255, 130, 110, 255});
+            return;
+        }
+        if (st == tak::net::MpClient::State::InRoom) drawRoom(winW, winH);
+        else if (lobbyScreen_ == LobbyScreen::Create) drawCreate(winW, winH);
+        else drawBrowser(winW, winH);
+    }
+
+    void GameView::drawBrowser(int winW, int winH) {
+        (void)winH;
+        // keep the list fresh without needing a manual refresh
+        if (SDL_GetTicks64() - mpListMs_ > 1000) { mp_->listGames(); mpListMs_ = SDL_GetTicks64(); }
+        float x = 60, y = 80, w = winW - 120.0f;
+        blockText("GAMES", x, y, 2.2f, {200, 205, 220, 255});
+        lbBtn(x + w - 200, y - 6, 95, 26, "REFRESH", true, [this] { mp_->listGames(); });
+        lbBtn(x + w - 100, y - 6, 100, 26, "CREATE", true,
+              [this] { lobbyScreen_ = LobbyScreen::Create; });
+        y += 34;
+        // column header
+        blockText("NAME", x + 8, y, 1.6f, {130, 135, 150, 255});
+        blockText("MAP", x + 220, y, 1.6f, {130, 135, 150, 255});
+        blockText("PLAYERS", x + w - 200, y, 1.6f, {130, 135, 150, 255});
+        y += 20;
+        const auto& games = mp_->games();
+        if (games.empty())
+            blockText("no games -- create one, or refresh", x + 8, y + 10, 1.8f, {150, 150, 160, 255});
+        for (const auto& g : games) {
+            SDL_FRect row{x, y, w, 30};
+            bool hot = lbHot(row) && !g.running;
+            SDL_SetRenderDrawColor(ren_, hot ? 46 : 30, hot ? 52 : 34, hot ? 72 : 44, 255);
+            SDL_RenderFillRectF(ren_, &row);
+            blockText(g.name, x + 8, y + 8, 1.8f, {225, 228, 236, 255});
+            blockText(g.mapId, x + 220, y + 8, 1.6f, {180, 185, 195, 255});
+            char pc[32]; std::snprintf(pc, sizeof pc, "%d/%d", g.players, g.capacity);
+            blockText(pc, x + w - 200, y + 8, 1.8f, {200, 205, 215, 255});
+            if (g.passworded)
+                blockText("LOCK", x + w - (g.running ? 232 : 120), y + 8, 1.6f, {230, 200, 120, 255});
+            if (g.running) {
+                // A running game can't be joined, but it can be watched live.
+                blockText("LIVE", x + w - 158, y + 8, 1.6f, {230, 140, 120, 255});
+                lbBtn(x + w - 96, y + 3, 92, 24, "WATCH", true,
+                      [this, id = g.id] { mp_->spectate(id, joinPass_); });
+            } else {
+                lobbyHots_.push_back({row, [this, id = g.id] { mp_->joinGame(id, joinPass_); }});
+            }
+            y += 34;
+        }
+        // password entry for locked games
+        lbField(x, winH - 70.0f, 200, "PASSWORD (for locked games)", joinPass_, 3);
+        lbBtn(winW - 140.0f, winH - 40.0f, 120, 30, "BACK", true, [this] { menuRequested_ = true; });
+    }
+
+    void GameView::buildMapList() {
+        mapList_.clear();
+        for (auto& [name, path] : tak::hpi::listMaps(vfs_)) {
+            MapInfo mi; mi.name = name; mi.path = path;
+            std::filesystem::path op = path; op.replace_extension(".ota");
+            std::string otaPath = op.generic_string();
+            if (vfs_.has(otaPath)) {
+                try {
+                    auto b = vfs_.read(otaPath);
+                    auto root = tak::tdf::parseText(std::string(b.begin(), b.end()), otaPath);
+                    if (const auto* gh = root.child("globalheader")) {
+                        mi.players = int(gh->numberOr("numplayers", 0));
+                        std::string sz = gh->valueOr("size", "");   // e.g. "16 x 16"
+                        int a = 0, c = 0;
+                        if (std::sscanf(sz.c_str(), "%d x %d", &a, &c) == 2) { mi.sizeW = a; mi.sizeH = c; }
+                    }
+                } catch (const std::exception&) {}
+            }
+            if (mi.players == 0)   // .ota had no numplayers: count the start positions
+                mi.players = int(tak::sim::parseStartPositions(vfs_, path).size());
+            mapList_.push_back(std::move(mi));
+        }
+        sortMapList();
+    }
+
+    void GameView::sortMapList() {
+        int dir = mapSortDir_, key = mapSort_;
+        auto lname = [](const std::string& s) {
+            std::string t = s; std::transform(t.begin(), t.end(), t.begin(), ::tolower); return t;
+        };
+        std::stable_sort(mapList_.begin(), mapList_.end(),
+                         [&](const MapInfo& a, const MapInfo& b) {
+            long long c = 0;
+            if (key == 1) c = a.players - b.players;
+            else if (key == 2) c = a.area() - b.area();
+            if (c == 0) {   // tiebreak (and the whole order for NAME) by name A->Z
+                std::string na = lname(a.name), nb = lname(b.name);
+                if (na != nb) return dir > 0 ? na < nb : na > nb;
+                return false;
+            }
+            return dir > 0 ? c < 0 : c > 0;
+        });
+    }
+
+    void GameView::buildMapPreview(const std::string& tntPath) {
+        if (mapPreviewTex_) { gpuvram::destroy(mapPreviewTex_); mapPreviewTex_ = nullptr; }
+        mapPreviewFor_ = tntPath;
+        mapPreviewW_ = mapPreviewH_ = 0;
+        mapPreviewDims_.clear();
+        if (tntPath.empty()) return;
+        std::vector<uint8_t> d;
+        try { d = vfs_.read(tntPath); } catch (...) { return; }
+        if (d.size() < 52) return;
+        int w = 0, h = 0; const uint8_t* idx = nullptr;
+        if (!tntIndexedImage(d, 12, w, h, idx) && !tntIndexedImage(d, 11, w, h, idx)) return;
+        std::string ota = readOta(tntPath);
+        const std::vector<uint8_t>* pal = kingdomPalette(otaField(ota, "kingdom"));
+        if (!pal) pal = kingdomPalette("aramon");   // maps without a kingdom get a default
+        if (!pal) return;
+        std::vector<uint8_t> rgba(size_t(w) * h * 4);
+        for (size_t i = 0; i < size_t(w) * h; ++i) {
+            uint8_t p = idx[i];
+            if (p == 9) { rgba[i * 4 + 3] = 0; continue; }   // retail's transparent index
+            const uint8_t* c = &(*pal)[size_t(p) * 4];
+            rgba[i * 4 + 0] = c[0]; rgba[i * 4 + 1] = c[1]; rgba[i * 4 + 2] = c[2]; rgba[i * 4 + 3] = 255;
+        }
+        mapPreviewTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
+        if (!mapPreviewTex_) return;
+        SDL_SetTextureBlendMode(mapPreviewTex_, SDL_BLENDMODE_BLEND);
+        SDL_UpdateTexture(mapPreviewTex_, nullptr, rgba.data(), w * 4);
+        SDL_SetTextureScaleMode(mapPreviewTex_, SDL_ScaleModeLinear);
+        mapPreviewW_ = w; mapPreviewH_ = h;
+        // Info line under the preview, retail-style: "<size>  <N> PLAYER" (memory
+        // dropped). The .ota supplies size ("9 x 7", already in 32-cell units) and
+        // numplayers; derive them from the tnt / start positions if the .ota omits them.
+        auto u32 = [&](size_t o) { return uint32_t(d[o]) | (uint32_t(d[o + 1]) << 8)
+                 | (uint32_t(d[o + 2]) << 16) | (uint32_t(d[o + 3]) << 24); };
+        std::string size = otaField(ota, "size");
+        if (size.empty()) size = std::to_string(u32(4) / 32) + " x " + std::to_string(u32(8) / 32);
+        std::string players = otaField(ota, "numplayers");
+        if (players.empty()) {
+            int n = int(tak::sim::parseStartPositions(vfs_, tntPath).size());
+            if (n > 0) players = std::to_string(n);
+        }
+        mapPreviewDims_ = size + (players.empty() ? "" : "   " + players + " PLAYER");
+    }
+
+    void GameView::drawCreate(int winW, int winH) {
+        (void)winW; (void)winH;
+        float x = 80, y = 90;
+        blockText(singlePlayer_ ? "SINGLE PLAYER VS AI" : "CREATE GAME", x, y, 2.2f,
+                  {200, 205, 220, 255}); y += 40;
+        // A private single-player game needs no name or password.
+        if (!singlePlayer_) {
+            lbField(x, y, 260, "GAME NAME", createName_, 1); y += 46;
+            lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 46;
+        }
+        blockText(std::string("MAP: ") + mpMapId_, x, y, 1.8f, {180, 185, 195, 255}); y += 30;
+        lbBtn(x, y, 170, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
+              [this] { createCrusades_ = !createCrusades_; }); y += 34;
+        lbBtn(x, y, 170, 26, createGods_ ? "GODS: ON" : "GODS: OFF", true,
+              [this] { createGods_ = !createGods_; }); y += 34;
+        // When OFF, losing your Monarch loses the game (retail commander rule); ON
+        // makes the Monarch just another unit.
+        lbBtn(x, y, 240, 26, createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
+                                               : "MONARCH EXPENDABLE: OFF", true,
+              [this] { createMonarchExp_ = !createMonarchExp_; }); y += 34;
+        // SP only: spectate mode -- you take no slot and just watch the AIs fight.
+        // Seat AIs in the slots below, then START.
+        if (singlePlayer_) {
+            lbBtn(x, y, 240, 26, spSpectate_ ? "SPECTATE (WATCH AIS): ON"
+                                             : "SPECTATE (WATCH AIS): OFF", true,
+                  [this] { spSpectate_ = !spSpectate_; }); y += 34;
+            // Stress test (spectate only): every AI starts at ~95% of the unit cap in
+            // its faction's combat units -- an instant heavy load to profile the sim.
+            if (spSpectate_) {
+                lbBtn(x, y, 240, 26, createStressTest_ ? "STRESS TEST: ON"
+                                                       : "STRESS TEST: OFF", true,
+                      [this] { createStressTest_ = !createStressTest_; }); y += 34;
+            }
+        }
+        // Override tier for the game: NONE (pure retail) / COSMETIC (art & sound
+        // may differ) / FULL (gameplay overrides allowed but every player must
+        // have the same ones). The host's own launch tier caps it (you can't offer
+        // FULL if you didn't mount your gameplay overrides).
+        static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
+        lbBtn(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
+              [this] { createOverride_ = uint8_t((createOverride_ + 1) % 3); }); y += 44;
+        // Footer buttons, symmetric: BACK at the bottom-left and CREATE at the
+        // bottom-right, both inset by `x` from their side and at the same height.
+        // BROWSER (MP only) sits just left of CREATE.
+        const float by = kLobbyH - 40, bw = 120;
+        lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty(), [this] {
+            tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0; o.gods = createGods_ ? 1 : 0;
+            o.overridePolicy = createOverride_;
+            o.monarchExpendable = createMonarchExp_ ? 1 : 0;
+            // Stress test only applies to an all-AI spectate game.
+            o.stressTest = (singlePlayer_ && spSpectate_ && createStressTest_) ? 1 : 0;
+            // SP spectate: create as a spectator (no slot) so every slot can be an AI;
+            // the game-start path flags spectating_ + noFog_ from mp_->isSpectator().
+            mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(),
+                            singlePlayer_ && spSpectate_, singlePlayer_);
+            specAutoSeated_ = false;   // arm the one-shot auto-seat for this new room
+            lobbyScreen_ = LobbyScreen::Browser;
+        });
+        if (!singlePlayer_)   // a private single-player game has no browser to go back to
+            lbBtn(kLobbyW - x - bw - 122, by, 110, 30, "BROWSER", true,
+                  [this] { lobbyScreen_ = LobbyScreen::Browser; });
+        lbBtn(x, by, bw, 30, "BACK", true, [this] { menuRequested_ = true; });
+
+        // Map picker (right column): a scrollable list box. Selecting sets both the
+        // wire id (mpMapId_ = bare .tnt stem) and mapPath_, so mpCapacity() recomputes
+        // the chosen map's start-position count.
+        if (mapList_.empty()) buildMapList();
+        // Adopt the remembered map once (persisted across launches), and scroll to it.
+        if (!mapPrefApplied_ && settings_ && !settings_->lastMap.empty()) {
+            for (int i = 0; i < int(mapList_.size()); ++i)
+                if (mapList_[size_t(i)].name == settings_->lastMap) {
+                    mpMapId_ = mapList_[size_t(i)].name;
+                    mapPath_ = mapList_[size_t(i)].path;
+                    mapScroll_ = std::max(0, i - 3);
+                    break;
+                }
+            mapPrefApplied_ = true;
+        }
+        float lx = 400, hy = 90;
+        blockText("SELECT MAP", lx, hy, 1.8f, {200, 205, 220, 255});
+        // Sort buttons: NAME / PLAYERS / SIZE. Clicking sets the sort key; clicking the
+        // active one flips ascending/descending. The active key shows an up/down arrow.
+        {
+            const char* keys[3] = {"NAME", "PLAYERS", "SIZE"};
+            const float bw = 86, bh = 20, sy = hy + 20;
+            for (int k = 0; k < 3; ++k) {
+                float bx = lx + k * (bw + 6);
+                SDL_FRect b{bx, sy, bw, bh};
+                bool active = mapSort_ == k;
+                SDL_SetRenderDrawColor(ren_, active ? 56 : 34, active ? 74 : 38, active ? 96 : 50, 255);
+                SDL_RenderFillRectF(ren_, &b);
+                SDL_SetRenderDrawColor(ren_, 90, 100, 130, 255); SDL_RenderDrawRectF(ren_, &b);
+                std::string lbl = keys[k];
+                if (active) lbl += mapSortDir_ > 0 ? " ^" : " v";
+                blockText(lbl, bx + 6, sy + 5, 1.5f,
+                          active ? SDL_Color{215, 230, 245, 255} : SDL_Color{170, 178, 195, 255});
+                lobbyHots_.push_back({b, [this, k] {
+                    if (mapSort_ == k) mapSortDir_ = -mapSortDir_;   // toggle direction
+                    else { mapSort_ = k; mapSortDir_ = 1; }
+                    sortMapList();
+                    mapScroll_ = 0;
+                }});
+            }
+        }
+        const float boxX = lx, boxY = hy + 46, boxW = 340, boxH = 344, rowH = 24, sbW = 12;
+        const int total = int(mapList_.size());
+        mapVisRows_ = int(boxH / rowH);
+        mapTotalRows_ = total;
+        clampMapScroll();
+        mapListRect_ = {boxX, boxY, boxW, boxH};
+        // box background + border
+        SDL_FRect box{boxX, boxY, boxW, boxH};
+        SDL_SetRenderDrawColor(ren_, 24, 26, 34, 255); SDL_RenderFillRectF(ren_, &box);
+        SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &box);
+        const float rowW = boxW - sbW - 4;
+        const float infoW = 96;                     // right-side "2P 8x8" column
+        const int maxCh = int((rowW - infoW - 12) / 12);   // name chars that fit at px 2.0
+        for (int r = 0; r < mapVisRows_; ++r) {
+            int i = mapScroll_ + r;
+            if (i >= total) break;
+            const MapInfo& m = mapList_[size_t(i)];
+            const std::string& nm = m.name;
+            const std::string& pth = m.path;
+            bool sel = (nm == mpMapId_);
+            SDL_FRect row{boxX + 2, boxY + r * rowH, rowW, rowH};
+            bool hot = lbHot(row);
+            SDL_Color rc = sel ? SDL_Color{44, 78, 44, 255}
+                         : hot ? SDL_Color{40, 46, 62, 255} : SDL_Color{24, 26, 34, 255};
+            SDL_SetRenderDrawColor(ren_, rc.r, rc.g, rc.b, 255); SDL_RenderFillRectF(ren_, &row);
+            blockText(nm.size() > size_t(maxCh) ? nm.substr(0, size_t(maxCh)) : nm,
+                      boxX + 8, row.y + (rowH - 14) / 2, 2.0f,
+                      sel ? SDL_Color{200, 240, 200, 255} : SDL_Color{220, 225, 235, 255});
+            // Right-aligned player count + size, e.g. "4P 16x16".
+            char info[24];
+            if (m.sizeW > 0) std::snprintf(info, sizeof info, "%dP %dx%d", m.players, m.sizeW, m.sizeH);
+            else std::snprintf(info, sizeof info, "%dP", m.players);
+            blockText(info, boxX + rowW - blockWidth(info, 1.5f) - 6, row.y + (rowH - 11) / 2, 1.5f,
+                      sel ? SDL_Color{170, 210, 170, 255} : SDL_Color{150, 160, 178, 255});
+            lobbyHots_.push_back({row, [this, nm, pth] {
+                mpMapId_ = nm; mapPath_ = pth;
+                if (settings_) { settings_->lastMap = nm; saveSettings(*settings_); }  // remember it
+            }});
+        }
+        // Scrollbar: track + a proportional, draggable thumb (also wheel-scrollable).
+        if (total > mapVisRows_) {
+            float trackX = boxX + boxW - sbW;
+            SDL_FRect track{trackX, boxY, sbW, boxH};
+            SDL_SetRenderDrawColor(ren_, 30, 32, 42, 255); SDL_RenderFillRectF(ren_, &track);
+            float thumbH = std::max(24.0f, boxH * mapVisRows_ / total);
+            float thumbY = boxY + (boxH - thumbH) * mapScroll_ / float(total - mapVisRows_);
+            mapThumbRect_ = {trackX, thumbY, sbW, thumbH};
+            SDL_SetRenderDrawColor(ren_, mapDrag_ ? 130 : 90, mapDrag_ ? 150 : 100,
+                                   mapDrag_ ? 190 : 130, 255);
+            SDL_RenderFillRectF(ren_, &mapThumbRect_);
+        } else {
+            mapThumbRect_ = {0, 0, 0, 0};
+        }
+
+        // Preview of the selected map (its embedded minimap), right of the list.
+        if (mapPreviewFor_ != mapPath_) buildMapPreview(mapPath_);
+        const float pvx = boxX + boxW + 12, pvy = boxY, pvW = 192, pvH = 192;
+        blockText("PREVIEW", pvx, hy, 1.8f, {200, 205, 220, 255});
+        SDL_FRect pbox{pvx, pvy, pvW, pvH};
+        SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &pbox);
+        if (mapPreviewTex_ && mapPreviewW_ > 0) {
+            float sc = std::min(pvW / float(mapPreviewW_), pvH / float(mapPreviewH_));
+            float iw = mapPreviewW_ * sc, ih = mapPreviewH_ * sc;
+            SDL_FRect dst{pvx + (pvW - iw) / 2, pvy + (pvH - ih) / 2, iw, ih};
+            SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
+        } else {
+            blockText("NO PREVIEW", pvx + 34, pvy + pvH / 2 - 7, 1.6f, {120, 125, 140, 255});
+        }
+        SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
+        if (!mapPreviewDims_.empty())
+            blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
+    }
+
+    void GameView::drawRoom(int winW, int winH) {
+        const auto& room = mp_->room();
+        float x = 40, y = 78;
+        blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
+        blockText(std::string("MAP  ") + room.mapId, x + winW - 320, y + 4, 1.8f, {180, 185, 195, 255});
+        // Override tier for this game (joiners adopt it; FULL needs matching gameplay files).
+        static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
+        blockText(std::string("OVERRIDES  ") + kTier[room.opts.overridePolicy & 3],
+                  x + winW - 320, y + 22, 1.5f, {150, 175, 150, 255});
+        y += 34;
+        bool host = (room.hostId == mp_->myClientId());
+        // SP spectate ("watch the AIs"): the instant the host lands in the room, fill
+        // every open capacity slot with an AI -- each on its own team/colour and a
+        // RANDOM race -- so the watcher gets a full free-for-all with no hand-seating.
+        // Closed slots (no start position on this map) are skipped. One-shot
+        // (specAutoSeated_), so the host can still tweak/close slots afterwards.
+        if (singlePlayer_ && spSpectate_ && host && room.mySlot < 0 && !specAutoSeated_) {
+            std::mt19937 rng(uint32_t(SDL_GetTicks64()) ^ (room.id * 2654435761u));
+            for (int i = 0; i < tak::net::kMaxSlots; ++i)
+                if (room.slots[i].type == 0)   // open capacity slot
+                    mp_->setSlot(i, 2, uint8_t(rng() % 5), uint8_t(i), uint8_t(i), 1, aiLevelEnv());
+            specAutoSeated_ = true;
+        }
+        // slot table
+        const char* typeName[4] = {"OPEN", "HUMAN", "AI", "CLOSED"};
+        for (int i = 0; i < tak::net::kMaxSlots; ++i) {
+            const auto& s = room.slots[i];
+            bool mine = (i == room.mySlot);
+            SDL_FRect row{x, y, winW - 320.0f, 30};
+            SDL_SetRenderDrawColor(ren_, mine ? 40 : 26, mine ? 48 : 30, mine ? 66 : 40, 255);
+            SDL_RenderFillRectF(ren_, &row);
+            char sn[8]; std::snprintf(sn, sizeof sn, "%d", i + 1);
+            blockText(sn, x + 8, y + 8, 1.8f, {150, 155, 170, 255});
+            // type (host may cycle open<->closed on empty slots)
+            SDL_Color tcol = s.type == 1 ? SDL_Color{200, 230, 200, 255}
+                           : s.type == 2 ? SDL_Color{230, 220, 150, 255}
+                                         : SDL_Color{130, 135, 150, 255};
+            blockText(typeName[s.type % 4], x + 34, y + 8, 1.6f, tcol);
+            if (host && s.type != 1) {
+                // Host cycles an empty slot OPEN -> AI -> CLOSED. AI opponents are
+                // seated (and run) on the server; this is how you set up multi-AI
+                // games (including single-player vs several AIs).
+                SDL_FRect tb{x + 34, y + 6, 60, 18};
+                lobbyHots_.push_back({tb, [this, i, t = s.type] {
+                    uint8_t nt = t == 0 ? 2 : (t == 2 ? 3 : 0);
+                    const auto& s2 = mpRoom().slots[i];
+                    mp_->setSlot(i, nt, s2.faction, s2.color, s2.team, 0, s2.aiLevel); }});
+            }
+            if (s.type == 1) blockText(s.name, x + 100, y + 8, 1.8f, {225, 228, 236, 255});
+            else if (s.type == 2) {
+                blockText(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f,
+                          {210, 200, 150, 255});
+                // AI difficulty (host cycles PASSIVE -> EASY -> NORMAL -> HARD -> ABSURD).
+                static const char* diffName[5] = {"PASSIVE", "EASY", "NORMAL", "HARD", "ABSURD"};
+                static const SDL_Color diffCol[5] = {
+                    {150, 180, 210, 255},   // passive  (calm blue)
+                    {150, 200, 150, 255},   // easy     (green)
+                    {210, 200, 150, 255},   // normal   (neutral gold)
+                    {225, 150, 140, 255},   // hard     (red)
+                    {230, 120, 220, 255}};  // absurd   (magenta)
+                uint8_t lvl = s.aiLevel % 5;
+                blockText(diffName[lvl], x + 178, y + 9, 1.4f, diffCol[lvl]);
+                if (host) { SDL_FRect db{x + 176, y + 6, 92, 18};
+                    lobbyHots_.push_back({db, [this, i] { const auto& s2 = mpRoom().slots[i];
+                        mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
+                                     uint8_t((s2.aiLevel + 1) % 5)); }}); }
+            }
+            // faction / color / team edit: your own row, or (host) any AI row.
+            bool canEdit = mine || (host && s.type == 2);
+            blockText(factionName(s.faction), x + 260, y + 8, 1.6f, {200, 205, 215, 255});
+            if (canEdit) { SDL_FRect fb{x + 260, y + 6, 90, 18};
+                lobbyHots_.push_back({fb, [this, i] { const auto& s2 = mpRoom().slots[i];
+                    mp_->setSlot(i, s2.type, (s2.faction + 1) % 5, s2.color, s2.team, s2.ready, s2.aiLevel); }}); }
+            colorSwatch(x + 360, y + 5, 20, s.color, canEdit ? std::function<void()>([this, i] {
+                // Cycle to the next colour NOT already held by another used slot --
+                // landing on a taken colour just blocked READY, which was a trap.
+                const auto& r2 = mpRoom();
+                const auto& s2 = r2.slots[i];
+                uint8_t next = s2.color;
+                for (int step = 1; step <= 10; ++step) {
+                    uint8_t cand = uint8_t((s2.color + step) % 10);
+                    bool taken = false;
+                    for (int k = 0; k < tak::net::kMaxSlots; ++k)
+                        if (k != i && (r2.slots[k].type == 1 || r2.slots[k].type == 2) &&
+                            r2.slots[k].color == cand) { taken = true; break; }
+                    if (!taken) { next = cand; break; }
+                }
+                mp_->setSlot(i, s2.type, s2.faction, next, s2.team, s2.ready, s2.aiLevel); }) : nullptr);
+            char tm[8]; std::snprintf(tm, sizeof tm, "T%d", s.team + 1);
+            blockText(tm, x + 392, y + 8, 1.8f, {200, 205, 215, 255});
+            if (canEdit) { SDL_FRect teb{x + 392, y + 6, 34, 18};
+                lobbyHots_.push_back({teb, [this, i] { const auto& s2 = mpRoom().slots[i];
+                    mp_->setSlot(i, s2.type, s2.faction, s2.color, uint8_t((s2.team + 1) % tak::net::kMaxSlots), s2.ready, s2.aiLevel); }}); }
+            if (s.type == 1 && !singlePlayer_) {   // SP: the player is always ready, no column
+                SDL_Color rc = s.ready ? SDL_Color{130, 230, 140, 255} : SDL_Color{120, 125, 135, 255};
+                blockText(s.ready ? "READY" : "NOT READY", x + 440, y + 8, 1.6f, rc);
+            }
+            // host kick button for other humans
+            if (host && s.type == 1 && !mine) {
+                lbBtn(x + row.w - 54, y + 3, 50, 22, "KICK", true, [this, i] { mp_->kick(i); });
+            }
+            y += 34;
+        }
+        y += 10;
+        // controls
+        float bx = x;
+        if (singlePlayer_) {
+            // SP: no READY button -- the player is always ready. Keep the slot marked
+            // ready (once, self-limiting) so the host's START enables.
+            if (room.mySlot >= 0 && !room.slots[room.mySlot].ready) {
+                const auto& s = room.slots[room.mySlot];
+                mp_->setSlot(room.mySlot, 1, s.faction, s.color, s.team, 1, s.aiLevel);
+            }
+        } else {
+            bool iAmReady = room.mySlot >= 0 && room.slots[room.mySlot].ready;
+            lbBtn(x, y, 130, 30, iAmReady ? "UNREADY" : "READY", room.mySlot >= 0, [this, iAmReady] {
+                const auto& s = mpRoom().slots[mpRoom().mySlot];
+                mp_->setSlot(mpRoom().mySlot, 1, s.faction, s.color, s.team, iAmReady ? 0 : 1, s.aiLevel); });
+            bx = x + 142;
+        }
+        // start (host): enabled when >=2 used slots and all humans ready and colors unique
+        bool canStart = host && startValid(room);
+        lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
+              {70, 110, 70, 255});
+        lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
+            mp_->leaveGame(); lobbyScreen_ = LobbyScreen::Browser;
+            mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false; });
+        // The game starts at normal speed; the host can allow it to be changed
+        // in-game, and the host's -/+ keys then re-cadence the match live.
+        y += 40;
+        if (host) {
+            std::string ub = std::string("ALLOW SPEED CHANGE IN-GAME: ") + (room.opts.speedUnlock ? "ON" : "OFF");
+            lbBtn(x, y, 420, 26, ub, true, [this] {
+                auto o = mpRoom().opts; o.speedUnlock = o.speedUnlock ? 0 : 1;
+                mp_->setGameOptions(o); });
+        }
+        // Per-player unit cap (host cycles 250/500/1000/2000/5000; everyone sees it).
+        y += 34;
+        char cb[40]; std::snprintf(cb, sizeof cb, "UNIT CAP  %d", int(room.opts.unitCap));
+        blockText(cb, x, y + 6, 2.0f, {205, 210, 225, 255});
+        if (host) {
+            lbBtn(x + 220, y, 90, 26, "CHANGE", true, [this] {
+                static const uint16_t seq[] = {250, 500, 1000, 2000, 5000};
+                auto o = mpRoom().opts; int idx = 3;   // default 2000
+                for (int k = 0; k < 5; ++k) if (seq[k] == o.unitCap) idx = k;
+                o.unitCap = seq[(idx + 1) % 5];
+                mp_->setGameOptions(o); });
+        }
+        // Fog of war memory (display-only rule, never hashed): EXPLORED keeps seen terrain
+        // dimmed-but-visible; NOT EXPLORED darkens it again the moment it leaves sight.
+        y += 34;
+        {
+            std::string fb = std::string("FOG OF WAR: ") +
+                             (room.opts.fogExplored ? "EXPLORED" : "NOT EXPLORED");
+            if (host)
+                lbBtn(x, y, 420, 26, fb, true, [this] {
+                    auto o = mpRoom().opts; o.fogExplored = o.fogExplored ? 0 : 1;
+                    mp_->setGameOptions(o); });
+            else
+                blockText(fb, x, y + 6, 2.0f, {205, 210, 225, 255});
+        }
+        // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
+        if (!singlePlayer_) {
+            float chx = winW - 300.0f, chy = 78, chw = 280;
+            SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
+            SDL_FRect cp{chx, chy, chw, winH - 150.0f}; SDL_RenderFillRectF(ren_, &cp);
+            blockText("CHAT", chx + 8, chy + 6, 1.8f, {160, 165, 180, 255});
+            float ly = chy + cp.h - 20;
+            for (auto it = chatLog_.rbegin(); it != chatLog_.rend() && ly > chy + 26; ++it) {
+                std::string line = it->first + ": " + it->second;
+                if (line.size() > 40) line = line.substr(0, 40);
+                blockText(line, chx + 8, ly, 1.4f, {200, 205, 215, 255});
+                ly -= 16;
+            }
+            lbField(chx, winH - 66.0f, chw - 70, "SAY", chatDraft_, 4);
+            lbBtn(chx + chw - 62, winH - 52.0f, 56, 24, "SEND", !chatDraft_.empty(), [this] {
+                mp_->chat(chatDraft_); chatDraft_.clear(); });
+        }
+    }
+
+    void GameView::lobbyMouse(float& mx, float& my) const {
+        mx = mouseX_ / lobbyScale_ - lobbyOffX_;
+        my = mouseY_ / lobbyScale_ - lobbyOffY_;
+    }
+
+    void GameView::lobbyInput(const SDL_Event& e, int winW, int winH) {
+        (void)winW; (void)winH;
+        if (e.type == SDL_MOUSEMOTION) {
+            mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y);
+            if (mapDrag_) setMapScrollFromThumb();   // dragging the map scrollbar
+        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+            mapDrag_ = false;
+        } else if (e.type == SDL_MOUSEWHEEL) {
+            float mx, my; lobbyMouse(mx, my);
+            if (ptIn(mapListRect_, mx, my)) {   // scroll the map list under the cursor
+                mapScroll_ -= e.wheel.y;
+                clampMapScroll();
+            }
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+            mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
+            lbField_ = 0; SDL_StopTextInput();
+            float mx, my; lobbyMouse(mx, my);
+            if (ptIn(mapThumbRect_, mx, my)) { mapDrag_ = true; return; }   // grab the thumb
+            for (auto& [r, action] : lobbyHots_)
+                if (ptIn(r, mx, my)) { action(); break; }
+        } else if (e.type == SDL_TEXTINPUT && lbField_) {
+            std::string* f = lbFieldBuf();
+            if (f && f->size() < 24) *f += e.text.text;
+        } else if (e.type == SDL_KEYDOWN && lbField_) {
+            if (e.key.keysym.sym == SDLK_BACKSPACE) { std::string* f = lbFieldBuf(); if (f && !f->empty()) f->pop_back(); }
+            else if (e.key.keysym.sym == SDLK_RETURN) {
+                if (lbField_ == 4 && !chatDraft_.empty()) { mp_->chat(chatDraft_); chatDraft_.clear(); }
+                lbField_ = 0; SDL_StopTextInput();
+            } else if (e.key.keysym.sym == SDLK_ESCAPE) { lbField_ = 0; SDL_StopTextInput(); }
+        }
+    }
+
