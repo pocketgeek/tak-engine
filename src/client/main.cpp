@@ -2337,7 +2337,7 @@ public:
                 buildDrag_ = true;
                 bdX0_ = wx;
                 bdZ0_ = wz;
-            } else if (!selection_.empty() && world_.canPlace(placing_, wx, wz)) {
+            } else if (!selection_.empty() && canPlaceLocked(placing_, wx, wz)) {
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::Build;
                 c.unitId = selectedBuilder() ? selectedBuilder()->id : selection_.front();
@@ -2644,6 +2644,9 @@ public:
         mp_ = mp;
     }
     bool isNet() const { return mp_ != nullptr; }
+    // Run the sim on its own worker thread (Stage B1c). On by default for interactive
+    // games; the headless harness disables it (inline == deterministic) unless verifying.
+    void setSimThreadMode(bool on) { simThreadMode_ = on; }
 
     // Route a command: offline it applies immediately; in a net game it is queued
     // for the server, which stamps ownership and sequences it into a tick bundle.
@@ -2783,7 +2786,7 @@ public:
         // TAK_SIM_THREAD forces it on to VERIFY the threaded sim against the referee.
         if (!simThreadDecided_) {
             simThreadDecided_ = true;
-            wantSimThread_ = (tak::devEnv("TAK_SIM_THREAD") != nullptr);
+            wantSimThread_ = simThreadMode_;
             if (wantSimThread_) startSimThread();
         }
         // Simulate every delivered tick, but cap per frame so a big catch-up
@@ -4581,7 +4584,7 @@ public:
             float mx, mz;
             pickWorld(mouseX_, mouseY_, mx, mz);
             for (auto& [x, z] : buildLinePositions(bdX0_, bdZ0_, mx, mz))
-                drawGhostAt(placing_, x, z, !world_.canPlace(placing_, x, z));
+                drawGhostAt(placing_, x, z, !canPlaceLocked(placing_, x, z));
         } else if (placing_) {
             drawGhost();
         }
@@ -5152,7 +5155,7 @@ private:
         // Build/conjure placement: green when it fits, red when blocked (matches the ghost).
         if (placing_ && mouseX_ >= 0) {
             float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
-            return world_.canPlace(placing_, wx, wz) ? tak::CursorId::Green : tak::CursorId::Red;
+            return canPlaceLocked(placing_, wx, wz) ? tak::CursorId::Green : tak::CursorId::Red;
         }
         // Right-drag "clear this area": show the broom only once the pointer has moved
         // enough to actually be a box (the same 6px threshold that tells a right-CLICK
@@ -7179,6 +7182,7 @@ private:
     bool useSimThread_ = false;         // true while the worker is running for this game
     bool wantSimThread_ = false;        // decided once per game (see mpStep)
     bool simThreadDecided_ = false;
+    bool simThreadMode_ = true;         // interactive default ON; the headless harness opts out
     // The worker: pop bundles FIFO, simulate under simMutex_, hand back the state hash.
     void simWorkerLoop() {
         for (;;) {
@@ -7216,6 +7220,14 @@ private:
         inboxCv_.notify_one();
         if (simThread_.joinable()) simThread_.join();
         useSimThread_ = false;
+    }
+    // canPlace reads live world_ (units_, which the worker resizes on spawn/death, plus the
+    // nav grid), so it can't run lock-free while the worker ticks. Take simMutex_ for the
+    // read. Placement-UX only and rare (a ghost while positioning a building), so the brief
+    // wait for the current tick is invisible; uncontended and cheap when inline.
+    bool canPlaceLocked(const tak::sim::UnitType* type, float x, float z) {
+        std::lock_guard<std::mutex> lk(simMutex_);
+        return world_.canPlace(type, x, z);
     }
     // Actual-vs-requested game-speed meter (F4): measured from our own tick advance.
     uint64_t actualSpeedT0_ = 0, actualSpeedTick0_ = 0;
@@ -10492,7 +10504,7 @@ private:
         if (!placing_ || selection_.empty()) return;
         int builderId = selectedBuilder() ? selectedBuilder()->id : selection_.front();
         for (auto& [x, z] : buildLinePositions(x0, z0, x1, z1)) {
-            if (!world_.canPlace(placing_, x, z)) continue;
+            if (!canPlaceLocked(placing_, x, z)) continue;
             tak::net::Command c;
             c.kind = tak::net::Cmd::Build;
             c.unitId = builderId;
@@ -10511,7 +10523,7 @@ private:
         // unit/building -- a plain ghost where it can go, red-washed where it can't.
         float wx, wz;
         pickWorld(mouseX_, mouseY_, wx, wz);
-        bool ok = world_.canPlace(placing_, wx, wz);
+        bool ok = canPlaceLocked(placing_, wx, wz);
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         drawGhostAt(placing_, wx, wz, !ok);
         // Small name tag above the ghost so the player still sees what's queued.
@@ -11502,6 +11514,9 @@ int main(int argc, char** argv) {
     }
     if (gameView && mp && mpHeadless) {
         std::string mapId = std::filesystem::path(args[0]).stem().string();
+        // The harness runs the sim INLINE (single-threaded == deterministic + reproducible)
+        // unless TAK_SIM_THREAD asks to verify the threaded sim against the referee.
+        gameView->setSimThreadMode(tak::devEnv("TAK_SIM_THREAD") != nullptr);
         if (mpHeadless == 8) gameView->setMissionStem(missionStem);
         int limitTicks = int((startTime > 0 ? startTime : 60) * 30);
         // Jitter benchmark: run the client loop at a FIXED 60 fps (so the stall
