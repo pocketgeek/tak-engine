@@ -2191,6 +2191,12 @@ public:
     void input(const SDL_Event& e, int winW, int winH) {
         winW_ = winW;
         winH_ = winH;
+        // A benchmark RUN is hands-off: swallow ALL input (mouse + keys). Only Esc
+        // does anything -- it ends the run early and brings up the stats screen.
+        if (benchmarkMode_ && !benchStatsShown_) {
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) stopBenchmark();
+            return;
+        }
         if (inLobbyPhase()) { lobbyInput(e, winW, winH); return; }
         // Benchmark results overlay: topmost of all. DONE / Esc / any click returns to menu.
         if (benchStatsShown_) {
@@ -2679,55 +2685,96 @@ public:
         benchSrvPrev_ = benchServerPid_ ? tak::proc::sample(benchServerPid_) : tak::proc::Sample{};
         benchNextTick_ = 150; benchSamples_.clear(); benchStatsShown_ = false;
     }
+    // Record one metrics row for game-second `gameSec`: client/server CPU% (delta over the
+    // wall interval since the last sample), RSS, fps and sim speed.
+    void pushBenchSample(int gameSec) {
+        uint64_t nowMs = SDL_GetTicks64();
+        double wallSec = benchPrevWallMs_ ? double(nowMs - benchPrevWallMs_) / 1000.0 : 0;
+        tak::proc::Sample cli = tak::proc::sample(0);
+        tak::proc::Sample srv = benchServerPid_ ? tak::proc::sample(benchServerPid_) : tak::proc::Sample{};
+        auto pct = [&](const tak::proc::Sample& n, const tak::proc::Sample& p) {
+            return (n.ok && wallSec > 0) ? (n.cpuSeconds - p.cpuSeconds) / wallSec * 100.0 : 0.0;
+        };
+        BenchSample s;
+        s.gameSec = gameSec;
+        s.liveUnits = int(front().live.size());
+        s.clientCpuPct = pct(cli, benchCliPrev_);
+        s.serverCpuPct = pct(srv, benchSrvPrev_);
+        s.clientRss = cli.rssBytes;
+        s.serverRss = srv.rssBytes;
+        s.fps = fps_;
+        s.simSpeed = actualSpeed_;
+        benchSamples_.push_back(s);
+        benchCliPrev_ = cli; benchSrvPrev_ = srv; benchPrevWallMs_ = nowMs;
+    }
     // Take a metrics sample each time the game clock crosses a 5s milestone; when it reaches
     // the benchmark end tick, flag the stats overlay. Called once per rendered frame.
     void benchmarkSample() {
         if (!benchmarkMode_ || !world_.benchmarkMode() || benchStatsShown_) return;
         uint32_t gt = front().gameTick, end = world_.benchmarkEndTick();
         while (benchNextTick_ <= gt && benchNextTick_ <= end) {
-            uint64_t nowMs = SDL_GetTicks64();
-            double wallSec = benchPrevWallMs_ ? double(nowMs - benchPrevWallMs_) / 1000.0 : 0;
-            tak::proc::Sample cli = tak::proc::sample(0);
-            tak::proc::Sample srv = benchServerPid_ ? tak::proc::sample(benchServerPid_) : tak::proc::Sample{};
-            auto pct = [&](const tak::proc::Sample& n, const tak::proc::Sample& p) {
-                return (n.ok && wallSec > 0) ? (n.cpuSeconds - p.cpuSeconds) / wallSec * 100.0 : 0.0;
-            };
-            BenchSample s;
-            s.gameSec = int(benchNextTick_ / 30);
-            s.liveUnits = int(front().live.size());
-            s.clientCpuPct = pct(cli, benchCliPrev_);
-            s.serverCpuPct = pct(srv, benchSrvPrev_);
-            s.clientRss = cli.rssBytes;
-            s.serverRss = srv.rssBytes;
-            s.fps = fps_;
-            s.simSpeed = actualSpeed_;
-            benchSamples_.push_back(s);
-            benchCliPrev_ = cli; benchSrvPrev_ = srv; benchPrevWallMs_ = nowMs;
+            pushBenchSample(int(benchNextTick_ / 30));
             benchNextTick_ += 150;
         }
         if (gt >= end) benchStatsShown_ = true;   // run complete -> show the stats overlay
     }
+    // Esc during a run: end the benchmark now. If the sim has started, record a closing
+    // sample at the current second and show the stats screen; otherwise bail to the menu.
+    void stopBenchmark() {
+        if (benchStatsShown_ || !benchmarkMode_) return;
+        if (!world_.benchmarkMode()) { menuRequested_ = true; return; }   // still in setup -> abort
+        int sec = int(front().gameTick / 30);
+        if (benchSamples_.empty() || benchSamples_.back().gameSec != sec) pushBenchSample(sec);
+        benchStatsShown_ = true;
+    }
     // The benchmark results overlay: a per-milestone table of client/server CPU + memory,
-    // fps and sim speed, plus the display settings that produced them. DONE -> main menu.
+    // fps and sim speed, plus the display settings that produced them. A single centered
+    // panel, scaled up on big displays. DONE / Esc / click -> main menu.
     void renderBenchmarkStats(int winW, int winH) {
+        // One scale factor drives the whole panel, so it stays big + legible at 4K.
+        float k = float(winH) / 1000.0f; k = k < 1.0f ? 1.0f : (k > 2.4f ? 2.4f : k);
+        const float titlePx = 4.0f * k, subPx = 1.8f * k, cellPx = 2.2f * k, setPx = 2.0f * k;
+        const float pad = 44 * k, rowH = 34 * k;
+        const float colW[8] = {82*k, 96*k, 122*k, 122*k, 122*k, 122*k, 70*k, 96*k};
+        float tableW = 0; for (float c : colW) tableW += c;
+        const char* title = "BENCHMARK RESULTS";
+        const char* sub   = "8-AI FFA -- ULASEM ARENA -- ~5000 UNITS/FACTION OVER 7 WAVES";
+
+        float contentW = tableW;
+        if (blockWidth(sub, subPx) > contentW) contentW = blockWidth(sub, subPx);
+        int rows = int(benchSamples_.size());
+        float contentH = 7 * (titlePx + subPx + cellPx + setPx) + rows * rowH + 370 * k;
+        float panelW = contentW + 2 * pad, panelH = contentH + 2 * pad;
+        float px0 = (winW - panelW) * 0.5f, py0 = (winH - panelH) * 0.5f;
+        if (px0 < 0) px0 = 0;
+        if (py0 < 0) py0 = 0;
+
+        // Dim the frozen game, then the centered panel.
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 215);
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 220);
         SDL_FRect dim{0, 0, float(winW), float(winH)}; SDL_RenderFillRectF(ren_, &dim);
-        float x = winW * 0.07f, y = winH * 0.05f;
-        blockText("BENCHMARK RESULTS", x, y, 3.2f, {235, 225, 180, 255}); y += 46;
-        blockText("8-AI FFA ON ULASEM ARENA -- 225/250/500/1000X4 UNITS PER FACTION, +5S EACH",
-                  x, y, 1.4f, {165, 170, 185, 255}); y += 32;
+        SDL_FRect panel{px0, py0, panelW, panelH};
+        SDL_SetRenderDrawColor(ren_, 26, 28, 36, 245); SDL_RenderFillRectF(ren_, &panel);
+        SDL_SetRenderDrawColor(ren_, 120, 128, 150, 255); SDL_RenderDrawRectF(ren_, &panel);
+
+        const float cxL = px0 + pad;
+        float y = py0 + pad;
+        blockText(title, px0 + (panelW - blockWidth(title, titlePx)) * 0.5f, y, titlePx, {235, 225, 180, 255});
+        y += 7 * titlePx + 22 * k;
+        blockText(sub, px0 + (panelW - blockWidth(sub, subPx)) * 0.5f, y, subPx, {165, 170, 185, 255});
+        y += 7 * subPx + 26 * k;
+
         const char* hdr[8] = {"TIME", "UNITS", "CLI CPU", "CLI MEM", "SRV CPU", "SRV MEM", "FPS", "SIM"};
-        const float colW[8] = {90, 110, 130, 130, 130, 130, 90, 90};
-        float cx = x;
-        for (int c = 0; c < 8; ++c) { blockText(hdr[c], cx, y, 1.6f, {200, 205, 220, 255}); cx += colW[c]; }
-        y += 26;
+        float cx = cxL;
+        for (int c = 0; c < 8; ++c) { blockText(hdr[c], cx, y, cellPx, {205, 210, 225, 255}); cx += colW[c]; }
+        y += 7 * cellPx + 10 * k;
         SDL_SetRenderDrawColor(ren_, 90, 95, 120, 255);
-        SDL_FRect ln{x, y, cx - x - 20, 2}; SDL_RenderFillRectF(ren_, &ln); y += 8;
+        SDL_FRect ln{cxL, y, tableW, 2 * k}; SDL_RenderFillRectF(ren_, &ln);
+        y += 12 * k;
         char b[64];
         for (const auto& s : benchSamples_) {
-            cx = x;
-            auto cell = [&](const char* t) { blockText(t, cx, y, 1.6f, {225, 228, 238, 255}); };
+            cx = cxL;
+            auto cell = [&](const char* t) { blockText(t, cx, y, cellPx, {228, 231, 240, 255}); };
             std::snprintf(b, sizeof b, "%dS", s.gameSec); cell(b); cx += colW[0];
             std::snprintf(b, sizeof b, "%d", s.liveUnits); cell(b); cx += colW[1];
             std::snprintf(b, sizeof b, "%.0f%%", s.clientCpuPct); cell(b); cx += colW[2];
@@ -2738,11 +2785,12 @@ public:
             cell(b); cx += colW[5];
             std::snprintf(b, sizeof b, "%.0f", s.fps); cell(b); cx += colW[6];
             std::snprintf(b, sizeof b, "%.2fX", s.simSpeed); cell(b);
-            y += 24;
+            y += rowH;
         }
-        y += 18;
-        blockText("SETTINGS", x, y, 2.0f, {200, 205, 220, 255}); y += 28;
-        auto sl = [&](const std::string& t) { blockText(t, x, y, 1.6f, {200, 205, 215, 255}); y += 22; };
+        y += 30 * k;
+        blockText("SETTINGS", cxL, y, setPx, {205, 210, 225, 255});
+        y += 7 * setPx + 24 * k;
+        auto sl = [&](const std::string& t) { blockText(t, cxL, y, setPx, {200, 205, 215, 255}); y += 28 * k; };
         std::snprintf(b, sizeof b, "RESOLUTION  %d X %d", winW, winH); sl(b);
         sl(std::string("FULLSCREEN  ") + (settings_ && settings_->fullscreen ? "ON" : "OFF"));
         sl(std::string("VSYNC       ") + (settings_ && settings_->vsync ? "ON" : "OFF"));
@@ -2750,12 +2798,15 @@ public:
         else sl("MAX FPS     (VSYNC)");
         sl(std::string("ANTI-ALIAS  ") + (settings_ && settings_->antiAlias ? "2X" : "OFF"));
         sl(std::string("BILINEAR    ") + (settings_ && settings_->bilinear ? "ON" : "OFF"));
-        y += 12;
-        SDL_FRect done{x, y, 220, 46}; benchDoneRect_ = done;
+        y += 20 * k;
+
+        const float dw = 240 * k, dh = 56 * k;
+        SDL_FRect done{px0 + (panelW - dw) * 0.5f, y, dw, dh}; benchDoneRect_ = done;
         bool hot = mouseX_ >= done.x && mouseX_ <= done.x + done.w && mouseY_ >= done.y && mouseY_ <= done.y + done.h;
         SDL_SetRenderDrawColor(ren_, hot ? 90 : 60, hot ? 110 : 66, hot ? 150 : 86, 255); SDL_RenderFillRectF(ren_, &done);
         SDL_SetRenderDrawColor(ren_, hot ? 180 : 100, hot ? 200 : 110, hot ? 240 : 140, 255); SDL_RenderDrawRectF(ren_, &done);
-        blockText("DONE", done.x + 78, done.y + 13, 2.4f, {230, 234, 244, 255});
+        blockText("DONE", done.x + (dw - blockWidth("DONE", setPx)) * 0.5f, done.y + (dh - 7 * setPx) * 0.5f,
+                  setPx, {230, 234, 244, 255});
     }
     // Flush + join the sim worker (drains any pending simInbox_ ticks first). For the headless
     // harness to call before reading the final world hash, so it reflects every processed tick.
@@ -5246,6 +5297,12 @@ public:
     // (slow) load; the desktop cursor returns on its own when the window is destroyed.
     void drawCursorOverlay() {
         if (!cursorsInit_) { cursorsInit_ = true; cursors_.load(ren_, vfs_); }
+        // A benchmark RUN is hands-off: hide the cursor entirely (OS + software). It
+        // returns for the stats screen (benchStatsShown_) so DONE is clickable.
+        if (benchmarkMode_ && !benchStatsShown_) {
+            if (cursorMode_ != 0) { cursors_.releaseHardware(); SDL_ShowCursor(SDL_DISABLE); cursorMode_ = 0; }
+            return;
+        }
         if (!cursors_.ok()) {   // no cursor art -> just keep the OS arrow
             if (cursorMode_ != 1) { SDL_ShowCursor(SDL_ENABLE); cursorMode_ = 1; }
             return;
@@ -11974,8 +12031,13 @@ int main(int argc, char** argv) {
             // edge-scroll, follow, shake and music stay smooth even when a net
             // game's sim is stalled waiting on a bundle (the deferred netAccum-style
             // decoupling this comment used to promise).
-            gameView->cameraFrame(dt);
-            if (gameView->replayMode()) {
+            // Once the benchmark stats screen is up the game is PAUSED behind it:
+            // no camera, sim stepping or animation until DONE/Esc returns to the menu.
+            const bool benchFrozen = gameView->benchmarkStatsShown();
+            if (!benchFrozen) gameView->cameraFrame(dt);
+            if (benchFrozen) {
+                // frozen -- fall through to draw() so the overlay still renders
+            } else if (gameView->replayMode()) {
                 gameView->replayStep(dt);   // play back a recorded .takrep
             } else if (gameView->isNet()) {
                 // Server-sequenced lockstep: one mpAutoStep pumps the connection,
@@ -11993,8 +12055,10 @@ int main(int argc, char** argv) {
             // Advance unit animation every render frame (decoupled from the 30Hz sim tick),
             // so the walk cycle is smooth at display rate and the heavy parallel VM pass no
             // longer piles onto the 1-in-8 net frame that runs the sim tick.
-            gameView->animFrame(dt);
-            gameView->benchmarkSample();   // perf samples at each 5s milestone (no-op unless benchmarking)
+            if (!benchFrozen) {
+                gameView->animFrame(dt);
+                gameView->benchmarkSample();   // perf samples at each 5s milestone (no-op unless benchmarking)
+            }
             double t2 = prof ? pnow() : 0;
             gameView->draw(w, h);
             double t3 = prof ? pnow() : 0;
