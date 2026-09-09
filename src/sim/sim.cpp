@@ -2068,8 +2068,10 @@ void World::updateVisibility() {
         visH_ = nav_.height();
         vis_.assign(size_t(visW_) * visH_, 0);
     }
+    // Demote last pass's visible cells: to EXPLORED (1, dimmed but remembered) normally, or
+    // straight to hidden (0) when fog memory is off, so they go dark again once out of sight.
     for (auto& v : vis_)
-        if (v == 2) v = 1;
+        if (v == 2) v = fogExplored_ ? 1 : 0;
     // Eye above the unit's ground cell: sees over small bumps, not over real
     // walls/hills. Paired with the sight-line MARGIN in sightClear so small rock
     // clutter stops casting fog shadows. Live-tunable via TAK_FOG_EYE.

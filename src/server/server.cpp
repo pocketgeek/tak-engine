@@ -458,7 +458,7 @@ void Server::writeSlots(Writer& w, Room& r) {
     w.u8(r.opts.crusades); w.u8(r.opts.gods); w.u8(r.opts.forfeitSelfDestruct);
     w.u8(r.opts.overridePolicy);
     w.u8(r.opts.speed); w.u8(r.opts.speedUnlock); w.u32(r.opts.unitCap); w.u8(r.opts.monarchExpendable);
-    w.u8(r.opts.stressTest);
+    w.u8(r.opts.stressTest); w.u8(r.opts.fogExplored);
     w.u32(r.hostId);
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = r.slots[i];
@@ -512,6 +512,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             o.unitCap = clampUnitCap(uint16_t(r.u32()));
             o.monarchExpendable = r.u8() ? 1 : 0;
             o.stressTest = r.u8() ? 1 : 0;
+            o.fogExplored = r.u8() ? 1 : 0;
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
@@ -863,6 +864,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             o.overridePolicy = rd.u8(); o.speed = rd.u8(); o.speedUnlock = rd.u8();
             o.unitCap = clampUnitCap(uint16_t(rd.u32())); o.monarchExpendable = rd.u8() ? 1 : 0;
             o.stressTest = rd.u8() ? 1 : 0;
+            o.fogExplored = rd.u8() ? 1 : 0;
             if (!rd.ok) return;
             if (o.speed < 1) o.speed = 1;
             if (o.speed > 40) o.speed = 40;   // clamp 0.1x .. 4.0x

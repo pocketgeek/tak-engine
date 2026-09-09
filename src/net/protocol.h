@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 22;       // 22: GameOptions.stressTest (SP all-AI load test)
+constexpr uint32_t kNetVersion = 23;       // 23: GameOptions.fogExplored (fog-of-war memory)
                                            // 20: +control squads/formations (Cmd::SetSquad)
                                            // 15: GameOptions.speed/speedUnlock + Set/SpeedUpdate msgs
                                            // 14: Cmd::Headbang (Shift+H emote)
@@ -115,6 +115,10 @@ struct GameOptions {
     // Stress test (SP all-AI spectate): 1 = spawn each AI at ~95% of the unit cap in
     // its faction's combat units the moment the game starts, to load-test the sim.
     uint8_t stressTest = 0;
+    // Fog of war memory (client-only display, never hashed): 1 = EXPLORED -- terrain you
+    // have seen stays revealed (dimmed) when out of line of sight; 0 = NOT EXPLORED --
+    // cells go dark again the moment they leave sight (no map memory). Host-set in the room.
+    uint8_t fogExplored = 1;
 };
 
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer

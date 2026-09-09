@@ -2778,6 +2778,7 @@ public:
         // client-only presentation
         localPlayer_ = room.mySlot < 0 ? 0 : room.mySlot;
         world_.setVisPlayer(localPlayer_);
+        world_.setFogExplored(room.opts.fogExplored != 0);   // lobby fog-of-war memory (display-only)
         for (auto& u : world_.units())
             if (u.player == localPlayer_ && u.type) { playerMonarchId_ = u.id; builderId_ = u.id; break; }
         const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
@@ -9947,6 +9948,19 @@ private:
                 for (int k = 0; k < 5; ++k) if (seq[k] == o.unitCap) idx = k;
                 o.unitCap = seq[(idx + 1) % 5];
                 mp_->setGameOptions(o); });
+        }
+        // Fog of war memory (display-only rule, never hashed): EXPLORED keeps seen terrain
+        // dimmed-but-visible; NOT EXPLORED darkens it again the moment it leaves sight.
+        y += 34;
+        {
+            std::string fb = std::string("FOG OF WAR: ") +
+                             (room.opts.fogExplored ? "EXPLORED" : "NOT EXPLORED");
+            if (host)
+                lbBtn(x, y, 420, 26, fb, true, [this] {
+                    auto o = mpRoom().opts; o.fogExplored = o.fogExplored ? 0 : 1;
+                    mp_->setGameOptions(o); });
+            else
+                blockText(fb, x, y + 6, 2.0f, {205, 210, 225, 255});
         }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
         if (!singlePlayer_) {

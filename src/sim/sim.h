@@ -597,6 +597,9 @@ public:
 
     // Which player the fog-of-war grid tracks (default 0 = local player).
     void setVisPlayer(int t) { visPlayer_ = t; }
+    // Fog-of-war memory (client display only, never hashed): true = a seen cell stays
+    // EXPLORED (dimmed) when it leaves sight; false = NOT EXPLORED -- it reverts to dark.
+    void setFogExplored(bool e) { fogExplored_ = e; }
     // Monarch-expendable rule (net GameOptions): when FALSE, losing your Monarch
     // (a commander unit) loses you the game even if other units survive.
     void setMonarchExpendable(bool e) { monarchExpendable_ = e; }
@@ -775,6 +778,7 @@ private:
 
     std::vector<uint8_t> vis_;
     int visPlayer_ = 0;
+    bool fogExplored_ = true;   // keep seen cells dimmed (vs. reverting to dark); display-only
     int visW_ = 0, visH_ = 0;
     // Client-local fog acceleration: the LoS-tested cell set for a (sight, radar,
     // cell) combination is a pure function of the IMMUTABLE heightmap, so it is
