@@ -189,6 +189,24 @@ tick), so each commit must keep that hash and look pixel-identical.
   snapshot (`frameProjectiles_`, full copy each tick; projectile draw reads it).
 - A(5/n) (`4cc8d9b`): `UnitR.gen` stamp + `frameUnitP(id)` (pointer w/ world_.unit() null-
   for-absent-or-dead semantics). draw()-region unit lookups converted.
+- A(6/n) (`595b8a6`): all DISPLAY `world_.unit(id)` reads -> `frameUnitP` (info panel / GUI
+  bar / order column / weapon buttons / drawPanel / drawUnit / cursor / minimap roster /
+  unit-voice / updateEffects).
+- A(7/n) (`88b174c`): `frameLive_` compact live-unit list; the read-only draw() per-unit
+  loops (shift ghosts, health bars, squad labels, train bars) iterate it. uLift UnitR
+  overloads.
+
+**STAGE A DISPLAY CONVERSION IS ESSENTIALLY DONE.** Every render/HUD read of unit/player/
+fog/projectile state now goes through a snapshot. The `world_` reads that REMAIN in
+main.cpp are all Stage-B-coupled and convert AS PART of Stage B, not before:
+  - input->emit handlers (minimapClick/Order, issueArmedOrder, handleKey, *Click, squad
+    ops): read for a UI preview (snapshot, 1-tick stale OK) but EMIT to the sim; in Stage B
+    they post to the render->sim command queue and the sim thread validates authoritatively.
+  - per-unit COB VM `onGet` callbacks (set in registerUnit): the VM ticks on the render
+    thread and reads live unit state -- must read the snapshot once the sim is threaded.
+  - the mutating `auto* u = world_.unit()` sites + summonGod/registerUnit setup: real sim
+    interactions that move onto the sim thread.
+  - Features: left on live world_ (setup-only vector, benign torn `f.alive`).
 
 **Remaining for Stage A (the mechanical grind -- same pattern: mirror field names, swap
 `world_.unit(id)`->`frameUnit(id)`, `world_.units()`->iterate `interp_` (skip !type),
