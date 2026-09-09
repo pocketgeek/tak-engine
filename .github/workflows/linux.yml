@@ -57,7 +57,7 @@ jobs:
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON
           cmake --build build
           (cd build && cpack -G DEB)
-          dpkg-deb -I build/tak-engine-amd64.deb   # show control + auto deps
+          dpkg-deb -I build/tak-engine-*.deb   # show control + auto deps
       # Debug build: the release binaries are hardened (only --data/--version, no env
       # vars). Ship an unhardened DEBUG tarball (not a .deb -- it would collide with the
       # release package's /usr/bin paths) for devs who need the CLI flags, TAK_* env
@@ -73,7 +73,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: tak-engine-deb
-          path: build/tak-engine-amd64.deb
+          path: build/tak-engine-*.deb
       - name: Upload CI artifact (debug)
         uses: actions/upload-artifact@v7
         with:
@@ -87,7 +87,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
           gh release upload "$GITHUB_REF_NAME" \
-            build/tak-engine-amd64.deb tak-engine-linux-x64-debug.tar.gz \
+            build/tak-engine-*.deb tak-engine-linux-x64-debug.tar.gz \
             --repo "$GITHUB_REPOSITORY" --clobber
 
   rpm:
@@ -112,12 +112,12 @@ jobs:
             cmake -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON &&
             cmake --build build-rpm &&
             (cd build-rpm && cpack -G RPM) &&
-            rpm -qp --requires build-rpm/tak-engine-x86_64.rpm'
+            rpm -qp --requires build-rpm/tak-engine-*.rpm'
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
         with:
           name: tak-engine-rpm
-          path: build-rpm/tak-engine-x86_64.rpm
+          path: build-rpm/tak-engine-*.rpm
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -125,4 +125,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
-          gh release upload "$GITHUB_REF_NAME" build-rpm/tak-engine-x86_64.rpm --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$GITHUB_REF_NAME" build-rpm/tak-engine-*.rpm --repo "$GITHUB_REPOSITORY" --clobber

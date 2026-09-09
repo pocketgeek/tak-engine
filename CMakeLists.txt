@@ -253,8 +253,8 @@ target_link_libraries(cobtool PRIVATE tak-formats)
 
 # --- Packaging: native .deb + .rpm via CPack (Linux) --------------------------
 # One source of truth for both package families. Build, then from the build dir:
-#   cpack -G DEB   -> tak-engine-amd64.deb    (sudo apt install ./tak-engine-amd64.deb)
-#   cpack -G RPM   -> tak-engine-x86_64.rpm   (sudo dnf install ./tak-engine-x86_64.rpm)
+#   cpack -G DEB   -> tak-engine-<version>-amd64.deb   (sudo apt install ./tak-engine-*-amd64.deb)
+#   cpack -G RPM   -> tak-engine-<version>-x86_64.rpm  (sudo dnf install ./tak-engine-*-x86_64.rpm)
 # The release CI builds these with -DTAK_STATIC_LIBS=ON, so SDL2/jpeg/zlib (and the Bink
 # FFmpeg) are baked in -- SHLIBDEPS/AUTOREQ below then auto-detect only the C/C++ runtime.
 # SDL2 still dlopens its X11/Wayland/audio backends, which every desktop that can run the
@@ -276,10 +276,11 @@ if(UNIX AND NOT APPLE)
   set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-or-later")   # SPDX identifier
   set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 
-  # Stable, version-less asset names so the README's releases/latest/download links
-  # stay valid across versions (the package's internal version is ${PROJECT_VERSION}).
-  set(CPACK_DEBIAN_FILE_NAME "tak-engine-amd64.deb")
-  set(CPACK_RPM_FILE_NAME "tak-engine-x86_64.rpm")
+  # Version-stamped asset names (the download filename records the release); the CI
+  # globs these when attaching to the release, and the README links to the releases
+  # page rather than a fixed latest/download URL.
+  set(CPACK_DEBIAN_FILE_NAME "tak-engine-${PROJECT_VERSION}-amd64.deb")
+  set(CPACK_RPM_FILE_NAME "tak-engine-${PROJECT_VERSION}-x86_64.rpm")
 
   # Auto-detect the shared-library dependencies for each family.
   set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
