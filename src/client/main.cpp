@@ -358,8 +358,23 @@ public:
         }
     }
 
+    // A low-res whole-map overview (one texel per 32px block), drawn UNDER the chunk grid
+    // so a not-yet-composited chunk shows blurry terrain instead of a black rectangle. The
+    // owner sets this (GameView's minimap texture); null = no underlay (plain background).
+    void setUnderlay(SDL_Texture* t) { underlay_ = t; }
+
     void draw(int winW, int winH) {
         clampOffset(winW, winH);
+
+        // Underlay first: stretch the overview across the whole map's screen rect. Chunks
+        // draw on top at full detail; gaps between them fall back to this instead of black.
+        if (underlay_) {
+            int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;   // full map in world px
+            int ux0 = int(std::lround((0 - offX_) * zoom_)), uy0 = int(std::lround((0 - offY_) * zoom_));
+            int ux1 = int(std::lround((mapW - offX_) * zoom_)), uy1 = int(std::lround((mapH - offY_) * zoom_));
+            SDL_Rect udst{ux0, uy0, ux1 - ux0, uy1 - uy0};
+            SDL_RenderCopy(ren_, underlay_, nullptr, &udst);
+        }
 
         int c0x = int(offX_) / kChunk, c0y = int(offY_) / kChunk;
         int c1x = int(offX_ + winW / zoom_) / kChunk, c1y = int(offY_ + winH / zoom_) / kChunk;
@@ -367,7 +382,7 @@ public:
             for (int cx = c0x; cx <= c1x; ++cx) {
                 auto it = chunks_.find(std::make_pair(cx, cy));
                 SDL_Texture* t = it != chunks_.end() ? it->second : nullptr;
-                if (!t) continue;   // still compositing: pops in a frame or two
+                if (!t) continue;   // still compositing: the underlay shows through
                 // Integer-rounded edges so adjacent chunks always abut.
                 int x0 = int(std::lround((cx * kChunk - offX_) * zoom_));
                 int y0 = int(std::lround((cy * kChunk - offY_) * zoom_));
@@ -496,6 +511,7 @@ private:
     bool bilinear_ = false;   // smooth chunk scaling (Options; see setBilinear)
     float offX_ = 0, offY_ = 0, zoom_ = 0.35f;
     float zoomSpeed_ = 1.0f;   // wheel-zoom sensitivity exponent (Options)
+    SDL_Texture* underlay_ = nullptr;   // low-res overview drawn under chunks (not owned)
 };
 
 // -------------------------------------------------------------- model mode
@@ -4525,6 +4541,7 @@ public:
         int mvw = mapViewW(winW);
         SDL_Rect worldClip{0, 0, mvw, winH};
         SDL_RenderSetClipRect(ren_, &worldClip);
+        mapView_.setUnderlay(miniTex_);   // low-res gap filler (null until the overview bakes)
         mapView_.draw(mvw, winH);
         float zm0 = mapView_.zoom();
 
