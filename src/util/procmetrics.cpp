@@ -82,9 +82,12 @@ Sample sample(long pid) {
         const char* rp = std::strrchr(buf, ')');
         if (rp) {
             // After ')' the fields are: state(3) ppid(4) ... utime(14) stime(15).
-            // Skip 11 space-separated fields (3..13), then read utime + stime.
+            // Field 3 (state) is a single NON-numeric char (e.g. "R"), so skip that
+            // token first; fields 4..15 are then numeric -- read utime + stime.
             const char* q = rp + 1;
-            int field = 3;
+            while (*q == ' ') ++q;
+            while (*q && *q != ' ') ++q;   // skip the state token
+            int field = 4;
             unsigned long long utime = 0, stime = 0;
             while (*q && field <= 15) {
                 while (*q == ' ') ++q;
