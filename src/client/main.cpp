@@ -3447,6 +3447,46 @@ public:
                 if (!teamAlive) outcome_ = -1;
             }
         }
+        captureInterp();   // snapshot post-tick unit poses for render-side motion interpolation
+    }
+
+    // Snapshot every unit's post-tick pose (x/z/heading) so the render can GLIDE units
+    // between the 30Hz sim ticks instead of stepping them (visible stutter above 30Hz).
+    // prev <- last tick's curr, curr <- now; a large jump (teleport / id reuse / respawn)
+    // reseeds so we don't zip across the map. Client-only, viewer-only -- never hashed.
+    void captureInterp() {
+        size_t need = world_.units().size() + 1;
+        if (interp_.size() < need) interp_.resize(need);
+        for (const auto& u : world_.units()) {
+            if (u.id < 0 || size_t(u.id) >= interp_.size()) continue;
+            Interp& s = interp_[size_t(u.id)];
+            if (!u.type || !u.alive()) { s.seeded = false; continue; }
+            if (s.seeded && (std::abs(u.x - s.cx) > 200.0f || std::abs(u.z - s.cz) > 200.0f))
+                s.seeded = false;   // teleported -> don't interpolate the jump
+            if (s.seeded) { s.px = s.cx; s.pz = s.cz; s.ph = s.ch; }
+            s.cx = u.x; s.cz = u.z; s.ch = u.heading;
+            if (!s.seeded) { s.px = s.cx; s.pz = s.cz; s.ph = s.ch; s.seeded = true; }
+        }
+        interpTickMs_ = SDL_GetTicks64();
+        interpTickDurMs_ = (1000.0f / 30.0f) / std::max(0.1f, animSpeed());
+    }
+
+    // Interpolated render pose for a unit: glides x/z (and shortest-path heading) between
+    // the last two ticks by interpAlpha_ (0..1 through the current tick interval). Falls
+    // back to live state when the option is off or there's no history. Viewer-only.
+    void interpPose(const tak::sim::Unit& u, float& x, float& z, float& heading) const {
+        x = u.x; z = u.z; heading = u.heading;
+        if (!settings_ || !settings_->smoothMotion) return;
+        if (u.id < 0 || size_t(u.id) >= interp_.size()) return;
+        const Interp& s = interp_[size_t(u.id)];
+        if (!s.seeded) return;
+        float a = interpAlpha_;
+        x = s.px + (s.cx - s.px) * a;
+        z = s.pz + (s.cz - s.pz) * a;
+        float dh = s.ch - s.ph;
+        while (dh >  3.14159265f) dh -= 6.28318531f;   // shortest-path turn
+        while (dh < -3.14159265f) dh += 6.28318531f;
+        heading = s.ph + dh * a;
     }
 
     // The DISPLAY half: impact sounds/effects, particles, animation state and the
@@ -3949,6 +3989,11 @@ public:
                 visUnits_.push_back(it.u);
             }
         if (geomPool_.size() < visUnits_.size()) geomPool_.resize(visUnits_.size());
+        // Fraction through the current sim-tick interval, for motion interpolation this
+        // frame (clamped: a late tick just holds at the newest pose until it arrives).
+        interpAlpha_ = interpTickDurMs_ > 0.0f
+            ? std::clamp(float(SDL_GetTicks64() - interpTickMs_) / interpTickDurMs_, 0.0f, 1.0f)
+            : 1.0f;
         // Build the texture atlas for every colour slot in view (main thread; the
         // parallel pass below only reads the finished atlas pointers).
         bool builtGlow = false;
@@ -5956,8 +6001,11 @@ private:
 
         float zm = mapView_.zoom();
         int slot = colorSlot_[u.player & 7];
-        float ax = (u.x - mapView_.offX()) * zm - uLiftX(u) * zm;
-        float ay = (u.z - mapView_.offY()) * zm - uLiftY(u) * zm;
+        // Interpolated pose so the unit glides between 30Hz sim ticks (lift computed at the
+        // interpolated spot so it stays seated on the terrain as it moves).
+        float ix, iz, ih; interpPose(u, ix, iz, ih);
+        float ax = (ix - mapView_.offX()) * zm - terrainLiftX(ix, iz) * zm;
+        float ay = (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm;
         // Sprite sheet: draw a moving/idle unit as one animated quad from the baked
         // locomotion cycle. Attack/death poses keep the full 3D model (rare).
         if (spritesEnabled_) {
@@ -5969,7 +6017,7 @@ private:
             bool special = anim && (anim->dying || anim->firing);
             if (sit != sprites_.end() && sit->second.ready && !special) {
                 const SpriteSet& ss = sit->second;
-                int fi = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f,
+                int fi = facingIndex((u.type && u.type->canMove) ? ih : 0.0f,
                                      kSprFacings);
                 int frame = 0;
                 if (ss.frames > 1 && !grounded) {
@@ -6006,7 +6054,7 @@ private:
             if (hit != modelH_.end() && iit != impostors_.end() && iit->second.ready
                 && hit->second * zm < lodPx_) {
                 const Impostor& imp = iit->second;
-                int f = facingIndex((u.type && u.type->canMove) ? u.heading : 0.0f, kFacings);
+                int f = facingIndex((u.type && u.type->canMove) ? ih : 0.0f, kFacings);
                 const SDL_Rect& r = imp.rect[f];
                 const SDL_FRect& bb = imp.bbox[f];
                 float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
@@ -6029,7 +6077,7 @@ private:
         if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
             base.t[1] = anim ? anim->altitude : u.type->cruiseAlt;
         // Flyers face -heading exactly like ground movers (no flyer facing branch).
-        float facing = (u.type && (u.type->canMove || u.type->canFly)) ? -u.heading : 0.0f;
+        float facing = (u.type && (u.type->canMove || u.type->canFly)) ? -ih : 0.0f;
         // Disco emote: a dancing monarch spins, bobs and hue-cycles. Local wall-time
         // (animClock_) drives the smooth motion; world_.discoActive() (a synced sim
         // timer) gates it. Pure client-side eye-candy -- nothing here is hashed.
@@ -6735,8 +6783,9 @@ private:
             auto it = anims_.find(u.id);
             alt = (it != anims_.end()) ? it->second.altitude : u.type->cruiseAlt;
         }
-        return {(u.x - mapView_.offX()) * zm - uLiftX(u) * zm,
-                (u.z - mapView_.offY()) * zm - uLiftY(u) * zm - alt * 0.8f * zm - 12.0f * zm};
+        float ix, iz, ih; interpPose(u, ix, iz, ih);   // match the gliding model position
+        return {(ix - mapView_.offX()) * zm - terrainLiftX(ix, iz) * zm,
+                (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm - alt * 0.8f * zm - 12.0f * zm};
     }
 
     // Height-aware picking: invert the render lift so a click on elevated terrain
@@ -6849,6 +6898,14 @@ private:
     bool cursorsInit_ = false;          // attempted the one-time load yet?
     int  cursorMode_ = -1;              // -1 uninit, 0 software (drawn), 1 hardware (OS-tracked)
     bool hwCursorFailed_ = false;       // hardware cursor rejected once -> stay on software
+
+    // Render-side motion interpolation: glide units between 30Hz sim ticks (see
+    // captureInterp / interpPose). Viewer-only, never hashed.
+    struct Interp { float px = 0, pz = 0, ph = 0, cx = 0, cz = 0, ch = 0; bool seeded = false; };
+    std::vector<Interp> interp_;        // indexed by unit id (prev + curr tick pose)
+    uint64_t interpTickMs_ = 0;         // wall-clock ms of the last captured tick
+    float interpTickDurMs_ = 1000.0f / 30.0f;   // nominal tick interval (speed-scaled)
+    float interpAlpha_ = 0.0f;          // 0..1 through the current tick interval (per frame)
     // Fight-move ('f') reuses the Attack glyph tinted this red-orange, so it reads apart
     // from a real attack order -- for both the order-column button and the mouse cursor.
     static constexpr SDL_Color kFightMoveTint{255, 90, 80, 255};

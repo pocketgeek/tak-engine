@@ -277,6 +277,10 @@ void OptionsScreen::build(int channels) {
     // stalls the render loop (the retail Direct3D "hardware cursor" option).
     toggle("HARDWARE CURSOR", [&] { return s_.hardwareCursor ? 1.0f : 0.0f; },
            [&](float v) { s_.hardwareCursor = v > 0.5f; });
+    // Glide units between the 30Hz sim ticks instead of stepping them -- smooth motion
+    // above 30fps, at the cost of ~one tick (33ms) of visual latency.
+    toggle("SMOOTH MOTION", [&] { return s_.smoothMotion ? 1.0f : 0.0f; },
+           [&](float v) { s_.smoothMotion = v > 0.5f; });
 
     // CONTROLS: opens the separate hotkey-rebinding screen (host-owned).
     if (onHotkeys_) {

@@ -73,6 +73,7 @@ Settings loadSettings() {
         else if (key == "edgeScroll")      s.edgeScroll = asBool();
         else if (key == "cursorScale")     s.cursorScale = asInt(1, 8);
         else if (key == "hardwareCursor")  s.hardwareCursor = asBool();
+        else if (key == "smoothMotion")    s.smoothMotion = asBool();
         else if (key == "playerName")      s.playerName = val;
         else if (key == "audioDevice")     s.audioDevice = val;
         else if (key == "lastMap")         s.lastMap = val;
@@ -125,6 +126,7 @@ bool saveSettings(const Settings& s) {
     o << "edgeScroll = " << (s.edgeScroll ? 1 : 0) << "\n";
     o << "cursorScale = " << s.cursorScale << "\n";
     o << "hardwareCursor = " << (s.hardwareCursor ? 1 : 0) << "\n";
+    o << "smoothMotion = " << (s.smoothMotion ? 1 : 0) << "\n";
     o << "playerName = " << s.playerName << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
     o << "lastMap = " << s.lastMap << "\n";

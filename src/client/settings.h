@@ -44,6 +44,7 @@ struct Settings {
     bool  edgeScroll      = true;  // pan when the cursor is at a screen edge
     int   cursorScale     = 4;     // custom mouse-cursor size multiplier; 1..8 (4 = default)
     bool  hardwareCursor  = false; // OS-tracked cursor: stays smooth when the game hitches
+    bool  smoothMotion    = true;  // interpolate unit motion between 30Hz sim ticks (glide, not step)
 
     // ---- misc ----
     std::string playerName;        // default name for multiplayer
@@ -81,7 +82,7 @@ struct Settings {
             && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
-            && a.hardwareCursor == b.hardwareCursor
+            && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
             && a.playerName == b.playerName && a.lastMap == b.lastMap
             && a.audioDevice == b.audioDevice
             && a.hotkeys == b.hotkeys
