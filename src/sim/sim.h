@@ -477,6 +477,7 @@ public:
     }
     bool benchmarkMode() const { return benchEndTick_ > 0; }
     uint32_t benchmarkEndTick() const { return benchEndTick_; }
+    uint32_t tickCount() const { return tickCounter_; }   // ticks elapsed (benchmark timing)
     // Build per-domain nav grids from heights + sea level.
     void setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel);
     NavGrid& nav() { return nav_; }

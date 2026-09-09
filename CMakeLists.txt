@@ -194,7 +194,10 @@ endif()
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/main.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/cursors.cpp src/video/bink.cpp)
+    add_executable(takclient src/client/main.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/video/bink.cpp)
+    if(WIN32)
+      target_link_libraries(takclient PRIVATE psapi)   # GetProcessMemoryInfo (benchmark metrics)
+    endif()
     # The vendored static SDL2 (TAK_STATIC_LIBS) exposes SDL2::SDL2-static (with its
     # transitive -ldl/-lm/-lpthread etc. baked into the target); the system SDL2 exposes
     # SDL2::SDL2. We provide our own main (SDL_MAIN_HANDLED), so SDL2main is never needed.
