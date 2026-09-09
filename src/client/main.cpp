@@ -2056,6 +2056,11 @@ public:
                 for (size_t k = 0; k < playerB.size(); ++k)
                     world_.attack(playerB[k], playerA[k % playerA.size()], false);
             }
+            // Showcase: pre-select the player's keep so the command panel shows its
+            // conjure/build menu and the info bar shows the portrait (a fuller HUD for
+            // screenshots). Harmless otherwise -- demo is a dev/showcase mode.
+            if (keepId_ >= 0) selectOnly(keepId_);
+            else if (!playerA.empty()) selectOnly(playerA.front());
         }
         }
 
@@ -4479,6 +4484,13 @@ public:
     }
 
     void draw(int winW, int winH) {
+        // Keep the last-known window size current from the draw path too, not just
+        // from SDL input events: a headless capture (dummy video driver) gets no
+        // events, so without this winW_/winH_ stay 0 and the HUD (command panel,
+        // culling) lays out against the wrong size. A real window syncs the same
+        // values via input(), so this is a no-op there.
+        winW_ = winW;
+        winH_ = winH;
         manageMusic();
         discoSound();     // fire the disco track from a monarch when its player starts dancing
         headbangSound();  // ...and the metal track on headbang

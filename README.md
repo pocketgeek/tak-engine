@@ -6,7 +6,7 @@
 
 _Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit of OpenRA and the Robot War Engine._
 
-[![version](https://img.shields.io/badge/version-0.4.0-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.5.5-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599c?style=flat-square&logo=cplusplus&logoColor=white)](CMakeLists.txt)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![multiplayer](https://img.shields.io/badge/multiplayer-deterministic%20lockstep-b03a2e?style=flat-square)](#multiplayer)
@@ -14,22 +14,26 @@ _Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit
 
 <br>
 
-<img src="docs/img/title.jpg" width="82%" alt="TAK Engine — the retail three-door front-end, rebuilt from scratch">
+<img src="docs/img/title.jpg" width="70%" alt="TAK Engine — the retail three-door front-end, rebuilt from scratch">
 
 <br><br>
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/img/ingame.jpg" alt="In-game view: a full battle map with the retail HUD, minimap and fog-free spectator camera"></td>
+    <td width="50%"><img src="docs/img/ingame.jpg" alt="The built-in 8-AI benchmark in flight: a monarch on the battlefield, thousands of units in play, a live scoreboard and the run countdown"></td>
+    <td width="50%"><img src="docs/img/gameplay.jpg" alt="A skirmish in progress — a monarch, its keep and an army, under the retail command HUD"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/img/benchmark.jpg" alt="The benchmark results screen: per-10s CPU, memory, frame rate, sim speed, GPU utilisation and VRAM for client and server"></td>
     <td width="50%"><img src="docs/img/lobby.jpg" alt="The multiplayer / single-player lobby: 8 slots, teams, colours, factions, unit cap and speed options"></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/img/disco.jpg" height="280" alt="A monarch dancing on a glowing disco floor"><br><em>Monarchs can disco… <code>Shift+D</code></em></td>
-    <td align="center"><img src="docs/img/headbang.jpg" height="280" alt="A monarch headbanging in a red mosh-pit glow"><br><em>…and headbang to synth-metal. <code>Shift+H</code></em></td>
+    <td align="center"><img src="docs/img/disco.jpg" height="260" alt="A monarch dancing on a glowing disco floor"><br><em>Monarchs can disco… <code>Shift+D</code></em></td>
+    <td align="center"><img src="docs/img/headbang.jpg" height="260" alt="A monarch headbanging in a red mosh-pit glow"><br><em>…and headbang to synth-metal. <code>Shift+H</code></em></td>
   </tr>
 </table>
 
-<sub>Thousands of units on screen · deterministic lockstep MP · animated 3D-model sprites · a full retail-style HUD · and, yes, dancing kings.</sub>
+<sub>Thousands of units on screen · deterministic lockstep MP · animated 3D-model sprites · a full retail-style HUD · a built-in benchmark · and, yes, dancing kings.</sub>
 
 </div>
 
@@ -38,7 +42,7 @@ _Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit
 A modern, cross-platform engine recreation for **Total Annihilation: Kingdoms**
 (Cavedog Entertainment, 1999), in the spirit of OpenRA and Robot War Engine.
 
-**Version 0.4.0** — reported by `takclient --version` and `takserver --version`
+**Version 0.5.5** — reported by `takclient --version` and `takserver --version`
 (and shown in the window title / server banner). The release version is set in
 one place, `project(... VERSION ...)` in `CMakeLists.txt`, and is separate from
 the multiplayer wire protocol version, which is gated independently at connect.
@@ -107,7 +111,12 @@ Every stage is complete:
    RTS trick — with the full 3D model kept for close-ups and attack/death poses.
    The sim is O(n) (spatial-hash neighbour queries, staggered acquisition, parallel
    flow-field building, crowd-adaptive work caps), so even battles of tens of
-   thousands of units stay tractable.
+   thousands of units stay tractable. GPU texture memory is bounded by a
+   **self-calibrating VRAM budget** (LRU-evicting sprite atlas pages, terrain
+   working-set eviction, AA that steps down under pressure — it tightens itself
+   the moment an allocation fails), so a giant scene can't exhaust the card; and
+   terrain is **streamed** in chunks over a low-res overview, so map tiles never
+   flash in as black squares.
 
 ## Building
 
@@ -176,8 +185,12 @@ and attaches its artifact to the GitHub Release. Cutting a release is just
 
 ## Game data
 
-Point the engine straight at a **retail install directory** with `--data` -- no
-extraction step. It reads the shipped archives and folders in place:
+Point the engine straight at a **retail install directory** — no extraction
+step. Pass it with `--data`, or just launch `takclient` with no arguments: it
+pops up a **native folder picker** ("choose your TA:Kingdoms install"), checks
+the folder actually holds the game data, and **remembers it** (saved in config,
+re-validated each launch) so you're only asked once. It reads the shipped
+archives and folders in place:
 
 ```
 <install>/
@@ -188,9 +201,13 @@ extraction step. It reads the shipped archives and folders in place:
   overrides/         YOUR overrides -- loose files or *.hpi/*.kmp, highest priority
 ```
 
-Only the `*.hpi` in the install root are read (loose files there are ignored);
-maps come from `maps.hpi` and the `Maps/*.kmp`, music from `Music/`, and anything
-in `overrides/` wins over everything.
+Only the **canonical** retail archives in the install root are read — the base
+game, the Iron Plague expansion (`IP*.hpi`), and the official map/rocket packs;
+any other `*.hpi` dropped in the root (and all loose files there) is ignored. Maps
+come from `maps.hpi` and the `Maps/*.kmp`, music from `Music/`, and anything in
+`overrides/` wins over everything. A small **authenticity manifest** of those root
+archives is saved with the folder, so a changed or moved install is caught on the
+next launch.
 
 **HPI precedence.** The retail game shipped each update as a new HPI/UFO that
 superseded older copies of a file, and the engine reproduces the exact rule
@@ -244,6 +261,15 @@ mode, **health bars** (off / damaged / always), and the **build-menu alignment**
 (left / center / right) and **scale** — are set in the in-game **Options** screen
 (Esc → Options) and persisted per user.
 
+**Benchmark.** *Settings → Benchmark* runs a fixed, deterministic 8-AI
+free-for-all on Ulasem Arena at a chosen **intensity** — Low to *Extra Absurd*,
+spawning one unit per faction every 1 s, 0.5 s, 0.25 s, 0.125 s, 0.0625 s, or
+0.03125 s — for 60 s, then shows a **stats screen** with, at each 10 s mark, the
+client and server **CPU %, memory, frame rate, sim speed**, plus **GPU
+utilisation, texture VRAM and device VRAM** and the display settings that
+produced them. A repeatable load test that stresses the sim and renderer at
+scale.
+
 ### Command line
 
 A **release** build is deliberately minimal — it accepts only:
@@ -268,7 +294,7 @@ gameplay data.
 ### Controls
 
 Default hotkeys follow the game's `Keys.TDF`; every in-game command / selection /
-emote key is **rebindable** in **Options → CONTROLS → Configure Hotkeys** (click a
+emote key is **rebindable** in the **Esc / Settings menu → CONTROLS** (click a
 row, press the new key; right-click clears).
 
 | | |
