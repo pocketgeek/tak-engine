@@ -1534,6 +1534,15 @@ struct UnitR {
     bool walking() const { return walking_; }
 };
 
+// Per-tick render snapshot of a sim Player (mirrors sim::Player's read field names, like
+// UnitR). Captured each tick so the HUD/scoreboard never reads live world_ players.
+struct PlayerR {
+    float mana = 0, storage = 0, income = 0, godFavor = 0;
+    int kills = 0, unitCount = 0, team = 0;
+    bool defeated = false, godSummoned = false;
+    float discoLeft = 0, headbangLeft = 0;
+};
+
 class GameView {
 public:
     struct FactionKit {
@@ -2363,7 +2372,7 @@ public:
                 float best = 30.0f * 30.0f;
                 for (auto& u : world_.units()) {
                     if (!u.alive() || u.underConstruction) continue;  // not-yet-built: unselectable
-                    SDL_FPoint p = unitScreen(u);
+                    SDL_FPoint p = unitScreen(frameUnit(u.id));
                     float dx = p.x - ccx, dy = p.y - ccy;
                     if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; hit = u.id; }
                 }
@@ -2374,7 +2383,7 @@ public:
             } else {
                 for (auto& u : world_.units())
                     if (u.alive() && u.player == localPlayer_ && !u.underConstruction) {
-                        SDL_FPoint p = unitScreen(u);
+                        SDL_FPoint p = unitScreen(frameUnit(u.id));
                         if (p.x >= sx0 && p.x <= sx1 && p.y >= sy0 && p.y <= sy1)
                             selection_.push_back(u.id);
                     }
@@ -3561,6 +3570,16 @@ public:
                 s.px = s.x; s.pz = s.z; s.ph = s.heading; s.seeded = false;
             }
         }
+        // Player table snapshot for the HUD/scoreboard.
+        frameNumPlayers_ = world_.numPlayers();
+        for (int p = 0; p < frameNumPlayers_ && p < int(framePlayers_.size()); ++p) {
+            const auto& pl = world_.player(p);
+            PlayerR& r = framePlayers_[size_t(p)];
+            r.mana = pl.mana; r.storage = pl.storage; r.income = pl.income;
+            r.godFavor = pl.godFavor; r.kills = pl.kills; r.unitCount = pl.unitCount;
+            r.team = pl.team; r.defeated = pl.defeated; r.godSummoned = pl.godSummoned;
+            r.discoLeft = pl.discoLeft; r.headbangLeft = pl.headbangLeft;
+        }
         interpTickMs_ = SDL_GetTicks64();
         interpTickDurMs_ = (1000.0f / 30.0f) / std::max(0.1f, animSpeed());
     }
@@ -3584,6 +3603,12 @@ public:
         static const UnitR kEmpty{};
         return (id >= 0 && size_t(id) < interp_.size()) ? interp_[size_t(id)] : kEmpty;
     }
+    // Player snapshot accessors (mirror world_.player()/numPlayers() for the HUD).
+    const PlayerR& framePlayer(int p) const {
+        static const PlayerR kEmpty{};
+        return (p >= 0 && p < int(framePlayers_.size())) ? framePlayers_[size_t(p)] : kEmpty;
+    }
+    int frameNumPlayers() const { return frameNumPlayers_; }
 
     // The DISPLAY half: impact sounds/effects, particles, animation state and the
     // COB VMs, timers, camera-follow. Runs once per rendered frame with the game
@@ -4479,7 +4504,7 @@ public:
             for (int tid : targets) {
                 const auto* t = world_.unit(tid);
                 if (!t || !t->alive() || !t->type) continue;
-                SDL_FPoint p = unitScreen(*t);   // includes flyer altitude
+                SDL_FPoint p = unitScreen(frameUnit(tid));   // includes flyer altitude
                 float cx = p.x, cy = p.y + 12.0f * zms;   // undo unitScreen's body bias
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
                 // Match the green selection brackets: sized to the target's footprint.
@@ -4587,7 +4612,7 @@ public:
         // Player mana bar top left (legacy; only without the bottom bar). A spectator
         // isn't a player -- no personal mana readout.
         if (!panelTex_ && !spectating_) {
-            auto& tm = world_.player(localPlayer_);
+            const PlayerR& tm = framePlayer(localPlayer_);
             float cap = std::max(tm.storage, 100.0f);
             SDL_FRect bg{10, 10, 180, 12};
             SDL_SetRenderDrawColor(ren_, 20, 20, 30, 230);
@@ -6875,14 +6900,14 @@ private:
     // raised by alt*0.8*zoom, same factor as drawUnit). Used for height-correct
     // marquee/click selection so a lifted or airborne unit is picked where it's SEEN,
     // not at its flat ground cell.
-    SDL_FPoint unitScreen(const tak::sim::Unit& u) {
+    SDL_FPoint unitScreen(const UnitR& u) {
         float zm = mapView_.zoom();
         float alt = 0.0f;
         if (u.type && u.type->canFly) {
             auto it = anims_.find(u.id);
             alt = (it != anims_.end()) ? it->second.altitude : u.type->cruiseAlt;
         }
-        float ix, iz, ih; interpPose(frameUnit(u.id), ix, iz, ih);   // match the gliding model position
+        float ix, iz, ih; interpPose(u, ix, iz, ih);   // match the gliding model position
         return {(ix - mapView_.offX()) * zm - terrainLiftX(ix, iz) * zm,
                 (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm - alt * 0.8f * zm - 12.0f * zm};
     }
@@ -7001,6 +7026,8 @@ private:
     // Render-side motion interpolation: glide units between 30Hz sim ticks (see
     // captureInterp / interpPose). Viewer-only, never hashed.
     std::vector<UnitR> interp_;         // per-unit render snapshot, indexed by unit id (see UnitR)
+    std::array<PlayerR, 8> framePlayers_{};   // per-tick player snapshot (see PlayerR)
+    int frameNumPlayers_ = 0;
     uint64_t interpTickMs_ = 0;         // wall-clock ms of the last captured tick
     float interpTickDurMs_ = 1000.0f / 30.0f;   // nominal tick interval (speed-scaled)
     float interpAlpha_ = 0.0f;          // 0..1 through the current tick interval (per frame)
@@ -8168,7 +8195,7 @@ private:
         // above it, with +income to the orb's left and -expenditure to its right.
         int cb = guiIdx("CrystalBall");
         if (cb >= 0) {
-            const auto& tm = world_.player(localPlayer_);
+            const PlayerR& tm = framePlayer(localPlayer_);
             float cap = std::max(tm.storage, 100.0f);
             SDL_FRect orb = guiCmdRect(gui_.gadgets[cb]);
             if (!guiTex_[cb].empty()) {
@@ -9739,7 +9766,7 @@ private:
     void drawUnitCounts(int winW) {
         int cnt[tak::sim::kMaxPlayers] = {};
         std::string sd[tak::sim::kMaxPlayers];
-        int np = world_.numPlayers();
+        int np = frameNumPlayers();
         for (const auto& u : world_.units()) {
             if (!u.alive() || !u.type) continue;
             int t = u.player;
@@ -9754,7 +9781,7 @@ private:
         // Are there real alliances (a team with 2+ members)? If so, show a team tag.
         bool teams = false;
         { int tc[tak::sim::kMaxPlayers] = {};
-          for (int t = 0; t < np; ++t) tc[world_.player(t).team % tak::sim::kMaxPlayers]++;
+          for (int t = 0; t < np; ++t) tc[framePlayer(t).team % tak::sim::kMaxPlayers]++;
           for (int t = 0; t < tak::sim::kMaxPlayers; ++t) if (tc[t] > 1) teams = true; }
         int rows = 0, totalUnits = 0;
         for (int t = 0; t < np; ++t) { if (board || cnt[t] > 0) ++rows; totalUnits += cnt[t]; }
@@ -9815,11 +9842,11 @@ private:
         y += lh;
         for (int t = 0; t < np; ++t) {
             if (!board && cnt[t] == 0) continue;
-            bool dead = world_.player(t).defeated;
+            bool dead = framePlayer(t).defeated;
             SDL_Color c = playerColor(t);
             if (dead) { c.r /= 2; c.g /= 2; c.b /= 2; }   // dim a knocked-out player
             if (teams) {   // small team tag, e.g. "T2"
-                std::snprintf(buf, sizeof buf, "T%d", world_.player(t).team + 1);
+                std::snprintf(buf, sizeof buf, "T%d", framePlayer(t).team + 1);
                 blockText(buf, x, y, 1.8f, dead ? SDL_Color{110, 110, 115, 255}
                                                 : SDL_Color{170, 175, 185, 255});
             }
@@ -9837,13 +9864,13 @@ private:
             }
             blockText(s, nameX, y, px, c);
             if (showMana) {   // current mana + income, e.g. "1234 +18"
-                const auto& pl = world_.player(t);
+                const PlayerR& pl = framePlayer(t);
                 std::snprintf(buf, sizeof buf, "%d +%d", int(pl.mana), int(pl.income));
                 blockText(buf, colMana, y, hx, c);
             }
             std::snprintf(buf, sizeof buf, "%d", cnt[t]);
             blockText(buf, colUnits, y, px, c);
-            std::snprintf(buf, sizeof buf, "%d", world_.player(t).kills);
+            std::snprintf(buf, sizeof buf, "%d", framePlayer(t).kills);
             blockText(buf, colKills, y, px, c);
             if (dead) blockText("OUT", nameX + blockWidth(s, px) + 8, y, 1.7f,
                                 SDL_Color{210, 90, 70, 255});
@@ -10070,7 +10097,7 @@ private:
         // Bottom-RIGHT: mana -- only on our own bar. The retail GUI bar draws the mana
         // readout at the command-panel foot around the orb (renderGui) instead.
         if (!guiBar) {
-            auto& tm = world_.player(localPlayer_);
+            const PlayerR& tm = framePlayer(localPlayer_);
             float manaX = float(winW) - 192;
             shade(manaX - 8, 200);
             SDL_Color txt{0, 0, 0, 255};
