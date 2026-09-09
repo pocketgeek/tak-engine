@@ -162,3 +162,47 @@ Define `rendersnapshot.h`. After each `mpStep` drain, on the same thread, popula
 - **Determinism regression detection.** The `--mpai` hash guards sim state, but `vis_`/interp are *not* hashed — a subtle fog or interp bug won't trip the hash. Stage A/B need a visual smoke pass (a short recorded play session compared frame-to-frame), not just the hash, to catch snapshot field omissions.
 
 Key files: sim types `src/sim/sim.h:193-458`; the loop + all reads `src/client/main.cpp` (`mpStep 2694`, `simStep 3319`, `captureInterp 3488`, `interpPose 3508`, `cosmeticStep 3527`, `buildUnitGeom 6020`, `unitScreen 6810`, HUD `8300-10110`, input `2247-2560/7130-7300`, fog/projectiles/minimap `3969-4316/7089/10019`); net `src/net/client.{h,cpp}`. New: `src/client/rendersnapshot.h`.
+
+---
+
+## PROGRESS & RESUME POINT (as of this session)
+
+**Baseline to hold:** `--mpai` hash `ae7bbf89d0faa007`, detmath golden `ab1ef54ae324bd0e`.
+Every A-stage is single-threaded and must stay behaviorally identical (snapshot = current
+tick), so each commit must keep that hash and look pixel-identical.
+
+**Done (committed):**
+- Stage 0 (`6078bd1`): removed the render-side `world_.clearHits()` (last render mutation).
+- A(1/n) (`945ef8f`): `UnitR` struct at namespace scope (mirrors sim::Unit read fields +
+  methods + interp prev pose); `captureFrame()` (was captureInterp) populates it each tick
+  for all units incl. dead-recent; `interpPose(const UnitR&)`; `frameUnit(id)` accessor; the
+  unit cull loop reads the snapshot.
+- A(2/n) (`ba99ec5`): `visUnits_` is now `std::vector<const UnitR*>`; whole unit draw path
+  (`buildUnitGeom`, `special()`, `drawUnit`, `DrawOp`, `dancing/headbanging`, build bars,
+  selection brackets, squad labels) reads `UnitR`. `UnitR` grew to a full render-read mirror
+  (orders/buildQueue/buildOrders/cargo/squad/stance/status/cloak/... captured in captureFrame).
+- A(3/n partial) (`34f81ac`): `unitScreen(const UnitR&)` + callers via `frameUnit(id)`.
+  `PlayerR` struct + `framePlayers_` snapshot + `framePlayer(p)`/`frameNumPlayers()`; mana
+  readouts + F4 scoreboard converted.
+
+**Remaining for Stage A (the mechanical grind -- same pattern: mirror field names, swap
+`world_.unit(id)`->`frameUnit(id)`, `world_.units()`->iterate `interp_` (skip !type),
+`world_.player(p)`->`framePlayer(p)`; bodies unchanged because names mirror):**
+- ~36 `world_.unit(` + ~21 `world_.units()` reads at lines >4600 (HUD selected-unit detail
+  panel, effects spawns that read sim units, minimap dots, input/picking scans, order-target
+  lookups). Note: NOT all >4600 reads are render -- skip genuine sim reads (canPlace/command
+  validation in the input->emit path validate against LIVE world_ and STAY).
+- Fog: ~20 `world_.cellVisible/visibility/visW` reads. Add a fog snapshot (copy `vis_` +
+  visW/visH + visGen when visGen changes; noFog_ spectators skip it) and a render-side
+  `cellVisible(fog,x,z)` helper. Gate `fogTex_` re-upload on the snapshot's visGen.
+- Projectiles: the `world_.projectiles()` loop (~4339) -> `ProjectileR` snapshot (full copy
+  each tick; the sim push_back/erase_if every tick would dangle a live iterator under Stage B).
+- Features: cull uses `world_.featureAliveAt` (fine to snapshot .alive per feature); client
+  `features_` art list is already render-owned.
+
+**Then Stage B** (see §4/§5 above): move mpStep+simStep+captureFrame+mp_ onto a sim thread,
+double-buffer the snapshot publish, render->sim command/chat queue (replaces outbox_ + direct
+mp_ calls), sim->render outcome/netError/chat atomics, join-before-teardown. Keep an inline
+single-threaded mode for the headless harnesses. Hazards: per-tick event ordering during
+catch-up, MpClient single-owner, lobby<->game teardown lifetime, visual smoke (hash won't
+catch snapshot-field omissions).
