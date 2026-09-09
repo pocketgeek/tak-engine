@@ -3793,7 +3793,7 @@ public:
         int regBudget = kRegistrationsPerFrame;
         for (auto& u : world_.units())
             if (u.type && u.alive() && !unitType_.count(u.id)) {
-                registerUnit(u);
+                registerUnit(u.id, u.type);
                 if (--regBudget <= 0) break;
             }
         // Kick off the summon fade-in/shimmer for anything just conjured from a
@@ -4038,7 +4038,7 @@ public:
         // now serially on the main thread, into the world-space effect system.
         for (auto& [id, a] : anims_) {
             if (a.pendingSfx.empty() && a.pendingSnd.empty()) continue;
-            const auto* u = world_.unit(id);
+            const auto* u = frameUnitP(id);
             if (u && u->type && (noFog_ || cellVisibleR(u->x, u->z))) {
                 for (auto& [piece, sfx] : a.pendingSfx) emitSfx(*u, a, piece, sfx);
                 // COB PLAY_SOUND: resolve the name-table index to a wav stem. This is
@@ -5224,7 +5224,7 @@ private:
     // the unit. The Sacred Fire's FireControl loop re-emits every ~0.5s, so the short
     // flame/smoke puffs stack into a continuous flicker (as retail's persistent
     // particle emitter does). Cosmetic; not hashed.
-    void emitSfx(const tak::sim::Unit& u, Anim& a, int piece, int32_t sfx) {
+    void emitSfx(const UnitR& u, Anim& a, int piece, int32_t sfx) {
         const char* anim = sfxAnimFor(sfx);
         if (!anim) return;
         const EffectAnim* ea = effectFor(anim);
@@ -5262,7 +5262,7 @@ private:
             if (findPieceY(c, name, y, out)) return true;
         return false;
     }
-    float pieceLift(const tak::sim::Unit& u, const Anim& a, int piece) {
+    float pieceLift(const UnitR& u, const Anim& a, int piece) {
         if (!a.pieceNames || piece < 0 || size_t(piece) >= a.pieceNames->size() || !u.type) return 0.0f;
         auto vt = visuals_.find(u.type->id);
         if (vt == visuals_.end()) return 0.0f;
@@ -5316,8 +5316,11 @@ private:
         it->second = vm;   // draw the promoted mesh from now on
     }
 
-    void registerUnit(const tak::sim::Unit& u) {
-        const std::string& typeId = u.type->id;
+    // Client-side per-unit setup (model + COB animation VM). Takes id+type only (not a
+    // Unit/UnitR) so it is callable from either the sim path (spawn) or the render path
+    // (cosmeticStep, off front().live) without touching live world_.
+    void registerUnit(int id, const tak::sim::UnitType* type) {
+        const std::string& typeId = type->id;
         if (!visuals_.count(typeId)) {
             try {
                 visuals_[typeId] = {tak::tdo::load(vread("objects3d/" + typeId + ".3do"))};
@@ -5354,10 +5357,12 @@ private:
             a.moveGate = ci->second.moveGate;
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             // TA COB unit-state queries answered from the sim.
-            int unitId = u.id;
+            int unitId = id;
             a.vm->onGet = [this, unitId](int32_t valId,
                                          const std::vector<int32_t>&) -> int32_t {
-                const auto* su = world_.unit(unitId);
+                // Ticked on the worker pool (animFrame) -- read the pinned render snapshot,
+                // never live world_, which the sim thread mutates concurrently under Stage B.
+                const auto* su = frameUnitP(unitId);
                 if (!su || !su->type) return 0;
                 switch (valId) {
                     case 0:  return su->buildQueue.empty() ? 0 : 1;   // ACTIVATION
@@ -5380,14 +5385,14 @@ private:
             // Flyers deploy their wings and start flapping at spawn via their
             // flight scripts; without these they sit in the landed rest pose
             // (which also reads as facing the wrong way).
-            if (u.type && u.type->canFly) {
+            if (type && type->canFly) {
                 a.flying = true;   // starts grounded; the update loop flies her
                 a.flyGate = flyGateOf(*a.vm);
                 // Start in the folded landed pose, not the wings-spread rest
                 // pose, so a flyer that spawns idle and never takes off (e.g. the
                 // Monarch at game start) doesn't sit in a T-pose.
                 a.vm->start("land");
-            } else if (isStructure(u.type)) {
+            } else if (isStructure(type)) {
                 // Buildings: run the COB constructor so ambient loops start (e.g. the
                 // Keep's Create kicks off its flag/smoke scripts, the Sacred Fire's
                 // its FireControl flicker). Detect via isStructure (maxVel<=0), NOT
@@ -5405,7 +5410,7 @@ private:
                 if (animatedTex_.count(t)) { a.usesGlow = true; break; }
             }
         if (a.vm) {
-            Anim& st = anims_[u.id] = std::move(a);
+            Anim& st = anims_[id] = std::move(a);
             // The VM is ticked on the worker pool, so emit-sfx only stashes into this
             // unit's own buffer (std::map nodes are pointer-stable); the main thread
             // drains it into effects_ after the parallel tick.
@@ -5416,7 +5421,7 @@ private:
                 buf->push_back(idx);
             };
         }
-        unitType_[u.id] = typeId;
+        unitType_[id] = typeId;
     }
 
     // Manifest player `t`'s faction god at its army's centre (once favour fills).
@@ -5442,7 +5447,7 @@ private:
         const auto* type = registry_.find(typeId);
         if (!type) return -1;
         int id = world_.spawn(type, x, z, heading, player);
-        if (const auto* u = world_.unit(id)) registerUnit(*u);
+        registerUnit(id, type);
         if (!unitType_.count(id)) return -1;
         return id;
     }
