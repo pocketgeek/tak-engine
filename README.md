@@ -281,11 +281,13 @@ A **release** build is deliberately minimal — it accepts only:
 
 | Flag | Effect |
 | --- | --- |
-| `--data <retail-install-dir>` | the game-data root (**required**): root `*.hpi` + `Maps/` + `Music/` + `overrides/` |
+| `--data <retail-install-dir>` | the game-data root (root `*.hpi` + `Maps/` + `Music/` + `overrides/`). **Optional** — with no `--data`, the client re-uses the folder saved in config, or pops the folder picker on first run (see **Game data**) |
 | `--version` | print the version and exit (`--help` prints this usage) |
 
-Everything else — factions, colours, difficulty, the map, multiplayer, overrides — is
-chosen through the menu, and a release build reads **no environment variables**.
+So a release `takclient` needs **no arguments at all** to launch. Everything else —
+the data folder, factions, colours, difficulty, the map, multiplayer, overrides — is
+handled by the first-run picker and the menu, and a release build reads **no
+environment variables**.
 
 **Debug builds** additionally accept the launch modes `game <map>` / `map <map>` /
 `replay <file.takrep>` / `model <file.3do>` and the dev/test flags (`--side`,
