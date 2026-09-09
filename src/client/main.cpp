@@ -2647,6 +2647,21 @@ public:
     // Run the sim on its own worker thread (Stage B1c). On by default for interactive
     // games; the headless harness disables it (inline == deterministic) unless verifying.
     void setSimThreadMode(bool on) { simThreadMode_ = on; }
+    // Flush + join the sim worker (drains any pending simInbox_ ticks first). For the headless
+    // harness to call before reading the final world hash, so it reflects every processed tick.
+    void shutdownSim() { stopSimThread(); }
+    // Dev --keytest helper: pick an own unit (builder preferred) + live count from the render
+    // SNAPSHOT, so the harness never iterates live world_.units() while the worker ticks.
+    std::pair<int, size_t> keytestPickOwnUnit() const {
+        int pick = -1, any = -1;
+        for (const UnitR* _up : front().live) {
+            const UnitR& u = *_up;
+            if (!u.alive() || u.player != 0 || !u.type) continue;
+            any = u.id;
+            if (u.type->isBuilder) pick = u.id;
+        }
+        return { pick >= 0 ? pick : any, front().live.size() };
+    }
 
     // Route a command: offline it applies immediately; in a net game it is queued
     // for the server, which stamps ownership and sequences it into a tick bundle.
@@ -2897,6 +2912,7 @@ public:
             std::deque<HashJob> done;
             { std::lock_guard<std::mutex> lk(outboxMutex_); done.swap(simOutbox_); }
             for (const auto& h : done) mp_->sendHash(h.tick, h.hash);
+            drainPendingNotice();   // apply any HUD notice the worker posted (god/mission/scenario)
         }
         // Cosmetics once per frame, covering the game time actually played.
         if (drained > 0) cosmeticStep(float(drained) / 30.0f);
@@ -2914,8 +2930,13 @@ public:
                 // desync-checks it (an all-AI room has no seated consensus). So send a
                 // trivial value, NOT world_.stateHash(): folding thousands of units into an
                 // FNV every 0.4s on the render thread was a periodic hitch that scaled with
-                // the battle. The TICK is what the server's flow control reads.
-                mp_->sendHash(netTick_ ? netTick_ - 1 : 0, 0);
+                // the battle. The TICK is what the server's flow control reads -- and it must
+                // be the tick actually PROCESSED (the worker's, when threaded), not the push
+                // position netTick_, or the server thinks we're further along than we are and
+                // over-delivers (growing the sim backlog).
+                uint32_t ackTick = useSimThread_ ? simProcessedTick_.load(std::memory_order_relaxed)
+                                                 : (netTick_ ? netTick_ - 1 : 0);
+                mp_->sendHash(ackTick, 0);
             }
         }
         // Measure the ACTUAL game speed: how fast our sim really advances (ticks/sec
@@ -2935,9 +2956,14 @@ public:
         // "Machine too slow" guard: if the backlog stays deep for a sustained
         // stretch, this client can't process ticks as fast as they arrive and
         // will never catch up -- fail clearly instead of falling ever further
-        // behind (or reconnect-looping).
+        // behind (or reconnect-looping). With the sim worker, the main thread drains
+        // mp_'s buffer FAST (into simInbox_), so bufferedBundles() no longer reflects a
+        // slow client -- the backlog is (pushed - processed). Count both.
         uint64_t now = SDL_GetTicks64();
-        if (mp_->bufferedBundles() > 900) {
+        long long simBacklog = useSimThread_
+            ? std::max<long long>(0, (long long)netTick_ - 1 - (long long)simProcessedTick_.load(std::memory_order_relaxed))
+            : 0;
+        if (mp_->bufferedBundles() + simBacklog > 900) {
             if (!mpSlowSinceMs_) mpSlowSinceMs_ = now;
             else if (now - mpSlowSinceMs_ > 5000) {
                 if (mp_->isSpectator()) {
@@ -3450,7 +3476,7 @@ public:
                 if (!sr.done && scenClock2_ >= sr.atTime) {
                     sr.done = true;
                     spawn(sr.type, sr.x, sr.z, 0, sr.player);
-                    if (hudFont_.ok()) { notice_ = "A POWER AWAKENS"; noticeTimer_ = 5; }
+                    if (hudFont_.ok()) postNotice("A POWER AWAKENS", 5);
                 }
             } else if (sr.maintainCount > 0) {
                 sr.cooldown -= dt;
@@ -3469,8 +3495,7 @@ public:
         }
         for (auto& m : messages_) {
             if (m.first >= 0 && scenClock2_ >= m.first) {
-                notice_ = m.second;
-                noticeTimer_ = 8;
+                postNotice(m.second, 8);
                 m.first = -1;
             }
         }
@@ -5502,16 +5527,23 @@ private:
         if (!god) return;
         int id = spawn(side + "god", cx / n, cz / n, 3.14159f, t);
         (void)id;
-        if (t == localPlayer_ && hudFont_.ok()) { notice_ = "YOUR GOD HAS ANSWERED"; noticeTimer_ = 6; }
-        else if (hudFont_.ok()) { notice_ = "AN ENEMY GOD RISES"; noticeTimer_ = 6; }
+        if (t == localPlayer_ && hudFont_.ok()) postNotice("YOUR GOD HAS ANSWERED", 6);
+        else if (hudFont_.ok()) postNotice("AN ENEMY GOD RISES", 6);
     }
 
     int spawn(const std::string& typeId, float x, float z, float heading, int player) {
         const auto* type = registry_.find(typeId);
         if (!type) return -1;
         int id = world_.spawn(type, x, z, heading, player);
-        registerUnit(id, type);
-        if (!unitType_.count(id)) return -1;
+        // registerUnit mutates the client render maps (visuals_/cobCache_/anims_/unitType_),
+        // which the render thread + the animFrame VM pool read/iterate. It must run ONLY on
+        // the main thread. When spawn() is reached from the SIM WORKER (summonGod / mission
+        // reinforcements / mapCommand, all inside simStep), skip it: the main thread's
+        // cosmeticStep lazily registers every live snapshot unit, so it is redundant there.
+        if (std::this_thread::get_id() == mainThreadId_) {
+            registerUnit(id, type);
+            if (!unitType_.count(id)) return -1;
+        }
         return id;
     }
 
@@ -5702,7 +5734,8 @@ private:
                     SDL_Texture* tex; int start, count; };   // seg if u&&f both null
     std::vector<CopyTask> copyTasks_;
     std::vector<DrawOp> drawOps_;
-    double profProjMs_ = 0, profSubmitMs_ = 0, profSimMs_ = 0;   // TAK_PROF sub-phase timers
+    double profProjMs_ = 0, profSubmitMs_ = 0;   // TAK_PROF sub-phase timers (main thread)
+    std::atomic<double> profSimMs_{0};            // accumulated by the sim worker; read/reset on main
     long lodDrawn_ = 0, fullDrawn_ = 0;                 // impostor vs full-model counts
 
     // Texture atlas: every unit texture packed into one big texture per player-
@@ -7171,6 +7204,7 @@ private:
     // (inline path) unless wantSimThread_ (TAK_SIM_THREAD) forces it on for verification.
     struct SimJob { tak::net::Bundle bundle; uint32_t tick = 0; bool wantHash = false; bool spectator = false; };
     struct HashJob { uint32_t tick = 0; uint64_t hash = 0; };
+    std::thread::id mainThreadId_ = std::this_thread::get_id();   // set at construction (main thread)
     std::thread simThread_;
     std::mutex simMutex_;               // guards world_ mutation (worker) vs live reads (canPlace)
     std::mutex inboxMutex_;
@@ -7179,6 +7213,7 @@ private:
     std::mutex outboxMutex_;
     std::deque<HashJob> simOutbox_;     // worker -> main: {tick, hash} to send to the server
     std::atomic<bool> simQuit_{false};
+    std::atomic<uint32_t> simProcessedTick_{0};   // last tick the worker finished (backlog/ack)
     bool useSimThread_ = false;         // true while the worker is running for this game
     bool wantSimThread_ = false;        // decided once per game (see mpStep)
     bool simThreadDecided_ = false;
@@ -7206,6 +7241,7 @@ private:
                 std::lock_guard<std::mutex> lk(outboxMutex_);
                 simOutbox_.push_back({job.tick, hash});
             }
+            simProcessedTick_.store(job.tick, std::memory_order_relaxed);   // for backlog/ack tracking
         }
     }
     void startSimThread() {
@@ -7228,6 +7264,23 @@ private:
     bool canPlaceLocked(const tak::sim::UnitType* type, float x, float z) {
         std::lock_guard<std::mutex> lk(simMutex_);
         return world_.canPlace(type, x, z);
+    }
+    // HUD notice setter that is safe to call from the sim worker: the worker's sim events
+    // (god summon, scenario/mission messages) defer into a pending slot that the main thread
+    // applies in mpStep, so notice_ (a std::string draw() reads every frame) and noticeTimer_
+    // are only ever touched on the main thread. Direct on the main thread.
+    std::mutex noticeMutex_;
+    std::string pendingNotice_;
+    float pendingNoticeTimer_ = 0;
+    bool pendingNoticeSet_ = false;
+    void postNotice(std::string msg, float t) {
+        if (std::this_thread::get_id() == mainThreadId_) { notice_ = std::move(msg); noticeTimer_ = t; return; }
+        std::lock_guard<std::mutex> lk(noticeMutex_);
+        pendingNotice_ = std::move(msg); pendingNoticeTimer_ = t; pendingNoticeSet_ = true;
+    }
+    void drainPendingNotice() {   // main thread only
+        std::lock_guard<std::mutex> lk(noticeMutex_);
+        if (pendingNoticeSet_) { notice_ = std::move(pendingNotice_); noticeTimer_ = pendingNoticeTimer_; pendingNoticeSet_ = false; }
     }
     // Actual-vs-requested game-speed meter (F4): measured from our own tick advance.
     uint64_t actualSpeedT0_ = 0, actualSpeedTick0_ = 0;
@@ -10503,8 +10556,11 @@ private:
     void placeBuildLine(float x0, float z0, float x1, float z1) {
         if (!placing_ || selection_.empty()) return;
         int builderId = selectedBuilder() ? selectedBuilder()->id : selection_.front();
+        // Lock the sim ONCE for the whole line: a build-line drag is often dozens of sites,
+        // and O(N) separate canPlaceLocked() calls would each risk waiting a full tick.
+        std::lock_guard<std::mutex> lk(simMutex_);
         for (auto& [x, z] : buildLinePositions(x0, z0, x1, z1)) {
-            if (!canPlaceLocked(placing_, x, z)) continue;
+            if (!world_.canPlace(placing_, x, z)) continue;   // simMutex_ already held
             tak::net::Command c;
             c.kind = tak::net::Cmd::Build;
             c.unitId = builderId;
@@ -10581,10 +10637,9 @@ private:
                 float wx = float(a[1]) * 16 + 8, wz = float(a[2]) * 16 + 8;
                 int id = spawn(type, wx + float(reinfIdx_ % 3) * 18,
                                wz + float(reinfIdx_ % 2) * 18, 3.14159f, player);
-                if (id >= 0 && player == 0 && hudFont_.ok()) notice_ = "REINFORCEMENTS!";
+                if (id >= 0 && player == 0 && hudFont_.ok()) postNotice("REINFORCEMENTS!", 6);
                 if (trace_) std::printf("SPAWN4 %s player%d at %d,%d -> id %d\n",
                                         type.c_str(), player, a[1], a[2], id);
-                if (id >= 0) noticeTimer_ = 6;
                 return id;
             }
             case 3: case 5: {   // HEURISTIC: activate spawned unit - join force
@@ -11524,10 +11579,18 @@ int main(int argc, char** argv) {
         // usual tight poll loop.
         bool bench = tak::devEnv("TAK_NETBENCH") != nullptr;
         if (bench) gameView->netEnableRttProbe();
-        while (gameView->mpAutoStep(mpHeadless, mapId, crusades)) {
-            if (int(gameView->netTick()) >= limitTicks) break;
+        while (true) {
+            // Pin the snapshot for the iteration (mirrors the interactive render loop), so
+            // cosmeticStep's front() reads can't tear against the worker under TAK_SIM_THREAD.
+            gameView->beginFrame();
+            bool cont = gameView->mpAutoStep(mpHeadless, mapId, crusades);
+            gameView->endFrame();
+            if (!cont || int(gameView->netTick()) >= limitTicks) break;
             SDL_Delay(bench ? 16 : 2);   // ~60 fps for the benchmark
         }
+        // Flush + join the worker so the final world hash reflects every pushed tick (no read
+        // race against a still-running worker). No-op when inline.
+        gameView->shutdownSim();
         std::fprintf(stderr, "mp-headless done: tick=%u hash=%016llx units=%zu err=%s\n",
                      gameView->netTick(), (unsigned long long)gameView->worldHashPublic(),
                      gameView->aliveUnits(),
@@ -11639,17 +11702,11 @@ int main(int argc, char** argv) {
             };
             if (ktPhase == 0 && ktClock > 0.3f) {
                 {
-                    int pick = -1, any = -1;
-                    for (auto& u : gameView->worldRef().units()) {
-                        if (!u.alive() || u.player != 0 || !u.type) continue;
-                        any = u.id;
-                        if (u.type->isBuilder) pick = u.id;
-                    }
-                    if (pick < 0) pick = any;   // fall back to any own unit
+                    auto [pick, ucount] = gameView->keytestPickOwnUnit();
                     if (pick >= 0) {
                         gameView->selectOnly(pick);
                         std::fprintf(stderr, "KEYTEST select unit %d (of %zu units)\n",
-                                     pick, gameView->worldRef().units().size());
+                                     pick, ucount);
                         // --selonly: hold this selection for the shot (no map clicks,
                         // which would deselect). Otherwise continue the order test.
                         if (keytestSelectOnly) { std::printf("KEYTEST done\n"); ktPhase = -1; }
