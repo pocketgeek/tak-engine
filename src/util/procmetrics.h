@@ -6,6 +6,7 @@
 // /proc, macOS via libproc's proc_pid_rusage, Windows via GetProcessTimes/PSAPI.
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace tak::proc {
 
@@ -20,5 +21,18 @@ Sample sample(long pid);
 
 long selfPid();   // this process's pid
 int numCpus();    // online logical CPUs (to report CPU% of one core vs. all cores)
+
+// Best-effort GPU stats (whole device, all processes). Read from `nvidia-smi` if present
+// (NVIDIA, any OS), else Linux AMD sysfs (amdgpu). ok=false when no source is available
+// (e.g. Intel, macOS) -- callers show "N/A". Cheap-ish but the nvidia-smi path spawns a
+// process, so sample it sparingly (e.g. per benchmark milestone, not per frame).
+struct GpuSample {
+    double utilPct = -1;    // GPU utilization %, -1 if unknown
+    size_t memUsed = 0;     // device VRAM used (all processes), bytes; 0 if unknown
+    size_t memTotal = 0;    // total device VRAM, bytes; 0 if unknown
+    std::string name;       // adapter name if known
+    bool ok = false;        // false = no GPU stats source on this system
+};
+GpuSample gpuSample();
 
 }  // namespace tak::proc

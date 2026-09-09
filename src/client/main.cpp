@@ -2751,6 +2751,12 @@ public:
         s.simSpeed = actualSpeed_;
         s.gpuBytes = gpuvram::bytes();       // client GPU texture memory (bounded by the cap)
         s.sprPages = int(sprPages_.size());
+        tak::proc::GpuSample gpu = tak::proc::gpuSample();   // whole-device util % + VRAM
+        if (gpu.ok) {
+            s.gpuPct = gpu.utilPct;
+            s.gpuSysUsed = gpu.memUsed;
+            if (benchGpuName_.empty()) { benchGpuName_ = gpu.name; benchGpuTotal_ = gpu.memTotal; }
+        }
         benchSamples_.push_back(s);
         benchCliPrev_ = cli; benchSrvPrev_ = srv; benchPrevWallMs_ = nowMs;
     }
@@ -2807,7 +2813,7 @@ public:
         float k = float(winH) / 1000.0f; k = k < 1.0f ? 1.0f : (k > 2.4f ? 2.4f : k);
         const float titlePx = 4.0f * k, subPx = 1.8f * k, cellPx = 2.2f * k, setPx = 2.0f * k;
         const float pad = 44 * k, rowH = 34 * k;
-        const float colW[9] = {82*k, 96*k, 122*k, 122*k, 122*k, 122*k, 122*k, 70*k, 96*k};
+        const float colW[10] = {82*k, 96*k, 122*k, 122*k, 122*k, 70*k, 122*k, 122*k, 70*k, 96*k};
         float tableW = 0; for (float c : colW) tableW += c;
         const char* title = "BENCHMARK RESULTS";
         const char* sub   = "8-AI FFA -- ULASEM ARENA -- ~5000 UNITS/FACTION OVER 7 WAVES";
@@ -2815,7 +2821,7 @@ public:
         float contentW = tableW;
         if (blockWidth(sub, subPx) > contentW) contentW = blockWidth(sub, subPx);
         int rows = int(benchSamples_.size());
-        float contentH = 7 * (titlePx + subPx + cellPx + setPx) + rows * rowH + 454 * k;
+        float contentH = 7 * (titlePx + subPx + cellPx + setPx) + rows * rowH + 482 * k;
         float panelW = contentW + 2 * pad, panelH = contentH + 2 * pad;
         float px0 = (winW - panelW) * 0.5f, py0 = (winH - panelH) * 0.5f;
         if (px0 < 0) px0 = 0;
@@ -2836,9 +2842,9 @@ public:
         blockText(sub, px0 + (panelW - blockWidth(sub, subPx)) * 0.5f, y, subPx, {165, 170, 185, 255});
         y += 7 * subPx + 26 * k;
 
-        const char* hdr[9] = {"TIME", "UNITS", "CLI CPU", "CLI MEM", "GPU MEM", "SRV CPU", "SRV MEM", "FPS", "SIM"};
+        const char* hdr[10] = {"TIME", "UNITS", "CLI CPU", "CLI MEM", "GPU MEM", "GPU%", "SRV CPU", "SRV MEM", "FPS", "SIM"};
         float cx = cxL;
-        for (int c = 0; c < 9; ++c) { blockText(hdr[c], cx, y, cellPx, {205, 210, 225, 255}); cx += colW[c]; }
+        for (int c = 0; c < 10; ++c) { blockText(hdr[c], cx, y, cellPx, {205, 210, 225, 255}); cx += colW[c]; }
         y += 7 * cellPx + 10 * k;
         SDL_SetRenderDrawColor(ren_, 90, 95, 120, 255);
         SDL_FRect ln{cxL, y, tableW, 2 * k}; SDL_RenderFillRectF(ren_, &ln);
@@ -2852,11 +2858,13 @@ public:
             std::snprintf(b, sizeof b, "%.0f%%", s.clientCpuPct); cell(b); cx += colW[2];
             std::snprintf(b, sizeof b, "%zuMB", s.clientRss / (1024 * 1024)); cell(b); cx += colW[3];
             std::snprintf(b, sizeof b, "%zuMB", s.gpuBytes / (1024 * 1024)); cell(b); cx += colW[4];
-            if (s.serverRss) std::snprintf(b, sizeof b, "%.0f%%", s.serverCpuPct); else std::snprintf(b, sizeof b, "N/A");
+            if (s.gpuPct >= 0) std::snprintf(b, sizeof b, "%.0f%%", s.gpuPct); else std::snprintf(b, sizeof b, "N/A");
             cell(b); cx += colW[5];
-            if (s.serverRss) std::snprintf(b, sizeof b, "%zuMB", s.serverRss / (1024 * 1024)); else std::snprintf(b, sizeof b, "N/A");
+            if (s.serverRss) std::snprintf(b, sizeof b, "%.0f%%", s.serverCpuPct); else std::snprintf(b, sizeof b, "N/A");
             cell(b); cx += colW[6];
-            std::snprintf(b, sizeof b, "%.0f", s.fps); cell(b); cx += colW[7];
+            if (s.serverRss) std::snprintf(b, sizeof b, "%zuMB", s.serverRss / (1024 * 1024)); else std::snprintf(b, sizeof b, "N/A");
+            cell(b); cx += colW[7];
+            std::snprintf(b, sizeof b, "%.0f", s.fps); cell(b); cx += colW[8];
             std::snprintf(b, sizeof b, "%.2fX", s.simSpeed); cell(b);
             y += rowH;
         }
@@ -2865,8 +2873,8 @@ public:
         y += 7 * setPx + 24 * k;
         auto sl = [&](const std::string& t) { blockText(t, cxL, y, setPx, {200, 205, 215, 255}); y += 28 * k; };
         std::snprintf(b, sizeof b, "RESOLUTION  %d X %d", winW, winH); sl(b);
-        SDL_RendererInfo ri;
-        if (SDL_GetRendererInfo(ren_, &ri) == 0) { std::snprintf(b, sizeof b, "RENDERER    %s", ri.name); sl(b); }
+        if (!benchGpuName_.empty()) sl(std::string("GPU         ") + benchGpuName_);
+        else { SDL_RendererInfo ri; if (SDL_GetRendererInfo(ren_, &ri) == 0) { std::snprintf(b, sizeof b, "RENDERER    %s", ri.name); sl(b); } }
         sl(std::string("FULLSCREEN  ") + (settings_ && settings_->fullscreen ? "ON" : "OFF"));
         sl(std::string("VSYNC       ") + (settings_ && settings_->vsync ? "ON" : "OFF"));
         if (settings_ && !settings_->vsync) { std::snprintf(b, sizeof b, "MAX FPS     %d", settings_->maxFps); sl(b); }
@@ -2874,10 +2882,19 @@ public:
         sl(std::string("ANTI-ALIAS  ") + (settings_ && settings_->antiAlias ? "2X" : "OFF"));
         sl(std::string("BILINEAR    ") + (settings_ && settings_->bilinear ? "ON" : "OFF"));
         // GPU texture memory: the self-calibrating cap, and this run's peak usage/pages.
-        size_t gpuPeak = 0; int pagePeak = 0;
-        for (const auto& s : benchSamples_) { if (s.gpuBytes > gpuPeak) gpuPeak = s.gpuBytes; if (s.sprPages > pagePeak) pagePeak = s.sprPages; }
+        size_t gpuPeak = 0, sysPeak = 0; int pagePeak = 0;
+        for (const auto& s : benchSamples_) {
+            if (s.gpuBytes > gpuPeak) gpuPeak = s.gpuBytes;
+            if (s.sprPages > pagePeak) pagePeak = s.sprPages;
+            if (s.gpuSysUsed > sysPeak) sysPeak = s.gpuSysUsed;
+        }
         std::snprintf(b, sizeof b, "GPU TEX CAP %zuMB", gpuvram::cap() >> 20); sl(b);
         std::snprintf(b, sizeof b, "GPU PEAK    %zuMB  (%d SPRITE PAGES)", gpuPeak >> 20, pagePeak); sl(b);
+        if (sysPeak) {
+            if (benchGpuTotal_) std::snprintf(b, sizeof b, "SYS VRAM    %zu / %zuMB PEAK", sysPeak >> 20, benchGpuTotal_ >> 20);
+            else std::snprintf(b, sizeof b, "SYS VRAM    %zuMB PEAK", sysPeak >> 20);
+            sl(b);
+        }
         y += 20 * k;
 
         const float dw = 240 * k, dh = 56 * k;
@@ -7523,8 +7540,12 @@ private:
         size_t clientRss = 0, serverRss = 0;         // bytes
         size_t gpuBytes = 0;                         // tracked client texture VRAM (gpuvram)
         int sprPages = 0;                            // live sprite-atlas pages (VRAM cap gauge)
+        double gpuPct = -1;                          // whole-GPU utilization %, -1 = unknown
+        size_t gpuSysUsed = 0;                       // whole-GPU VRAM used (all processes), bytes
         float fps = 0, simSpeed = 0;
     };
+    std::string benchGpuName_;                       // GPU adapter name (captured once)
+    size_t benchGpuTotal_ = 0;                       // total GPU VRAM, bytes
     std::vector<BenchSample> benchSamples_;
     tak::proc::Sample benchCliPrev_, benchSrvPrev_;
     uint64_t benchPrevWallMs_ = 0;
