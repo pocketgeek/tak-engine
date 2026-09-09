@@ -1502,22 +1502,36 @@ struct AaScaleReset {
 struct UnitR {
     float px = 0, pz = 0, ph = 0;   // previous-tick pose (for interpolation)
     bool  seeded = false;           // has a valid prev pose to interpolate from
-    // --- snapshot of Unit's render-read surface (same names as sim::Unit) ---
+    // --- snapshot of Unit's render-read surface (same NAMES as sim::Unit, so render code
+    //     that reads u.<field> works unchanged once its parameter is a UnitR) ---
     int id = 0;
     const tak::sim::UnitType* type = nullptr;
     int player = 0;
     float x = 0, z = 0, heading = 0;   // current-tick pose
-    float hp = 0;
+    float hp = 0, mana = 0;
     int veteran = 0;
     float deadFor = -1;
     int inTransport = 0;
+    int8_t squad = 0;
+    int stance = 1;
+    int weaponSlot = 0;
     bool underConstruction = false, buildBegun = false;
-    bool moving_ = false;   // cached u.moving()
-    bool disco = false;     // cached world_.discoActive(player)
-    bool alliedToLocal = false;   // cached alliedToLocal(player)
+    bool cloaked = false, cloakOn = true, active = true;
+    float frozenFor = 0, stonedFor = 0, paralyzedFor = 0;
+    int buildSiteId = 0, reclaimId = 0, repairId = 0;
+    float buildProgress = 0;
+    std::vector<const tak::sim::UnitType*> buildQueue;
+    std::vector<tak::sim::Order> orders;
+    std::vector<tak::sim::BuildOrder> buildOrders;
+    std::vector<int> cargo;
+    const tak::sim::UnitType* repeatType = nullptr;
+    bool moving_ = false, walking_ = false;   // cached u.moving()/u.walking()
+    bool disco = false, headbang = false;      // cached world_.disco/headbangActive(player)
+    bool alliedToLocal = false;                // cached alliedToLocal(player)
     bool alive() const { return deadFor < 0; }
     bool embarked() const { return inTransport != 0; }
     bool moving() const { return moving_; }
+    bool walking() const { return walking_; }
 };
 
 class GameView {
@@ -3521,11 +3535,19 @@ public:
             // Render-read fields, captured for ALL units (alive + dead-recent: the death
             // animation and the deadFor>=4 cull both need a live value).
             s.id = u.id; s.type = u.type; s.player = u.player;
-            s.hp = u.hp; s.veteran = u.veteran; s.deadFor = u.deadFor;
-            s.inTransport = u.inTransport;
+            s.hp = u.hp; s.mana = u.mana; s.veteran = u.veteran; s.deadFor = u.deadFor;
+            s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
+            s.weaponSlot = u.weaponSlot;
             s.underConstruction = u.underConstruction; s.buildBegun = u.buildBegun;
-            s.moving_ = u.moving();
+            s.cloaked = u.cloaked; s.cloakOn = u.cloakOn; s.active = u.active;
+            s.frozenFor = u.frozenFor; s.stonedFor = u.stonedFor; s.paralyzedFor = u.paralyzedFor;
+            s.buildSiteId = u.buildSiteId; s.reclaimId = u.reclaimId; s.repairId = u.repairId;
+            s.buildProgress = u.buildProgress;
+            s.buildQueue = u.buildQueue; s.orders = u.orders; s.buildOrders = u.buildOrders;
+            s.cargo = u.cargo; s.repeatType = u.repeatType;
+            s.moving_ = u.moving(); s.walking_ = u.walking();
             s.disco = world_.discoActive(u.player);
+            s.headbang = world_.headbangActive(u.player);
             s.alliedToLocal = alliedToLocal(u.player);
             // Pose: interpolate alive units between ticks; a dead unit holds its death pose.
             if (u.alive()) {
@@ -4048,7 +4070,7 @@ public:
             float sx = (r.x - mapView_.offX()) * zm0 - terrainLiftX(r.x, r.z) * zm0;
             float sy = (r.z - mapView_.offY()) * zm0 - terrainLift(r.x, r.z) * zm0;
             if (sx < -160 || sx > mvw + 160 || sy < -260 || sy > winH + 120) continue;
-            items.push_back({r.z, &u, nullptr});   // (visUnits_ stays Unit* this increment)
+            items.push_back({r.z, &r, nullptr});
         }
         std::stable_sort(items.begin(), items.end(),
                   [](const Item& a, const Item& b) { return a.z < b.z; });
@@ -4133,7 +4155,7 @@ public:
 
         // Is this unit drawn whole by drawUnit (needs clip rects / interleaved
         // effects) rather than folded into the shared batches?
-        auto special = [&](const tak::sim::Unit& u, const UnitGeom& g) {
+        auto special = [&](const UnitR& u, const UnitGeom& g) {
             bool occluded = !g.canFly && g.occY < g.ay - 2.0f;
             bool conjuring = u.underConstruction && u.type;
             // A worker (conjuring a site or reclaiming) routes through drawUnit too, so
@@ -5457,13 +5479,13 @@ private:
         float ax = 0, ay = 0, occY = 0, alt = 0;
         bool canFly = false;
     };
-    std::vector<const tak::sim::Unit*> visUnits_;
+    std::vector<const UnitR*> visUnits_;
     std::vector<SDL_Vertex> unitBatch_, shadowBatch_;   // cross-unit render batches
     // Body pass assembled in parallel: plan offsets serially, scatter the vertex
     // copies across the pool, then replay the draw ops. Keeps depth order exact.
     std::vector<SDL_Vertex> bodyVerts_;
     struct FeatureInst;   // defined below; DrawOp only needs the pointer type
-    struct PaintItem { float z; const tak::sim::Unit* u; const FeatureInst* f; };
+    struct PaintItem { float z; const UnitR* u; const FeatureInst* f; };
     std::vector<PaintItem> paintItems_;   // per-frame painter list (capacity reused)
     std::unordered_set<int> targetSet_;   // per-frame attack-target ids (reused)
     // Parsed COB scripts shared per unit type (see registerUnit).
@@ -5475,7 +5497,7 @@ private:
     };
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };
-    struct DrawOp { const tak::sim::Unit* u; const FeatureInst* f;
+    struct DrawOp { const UnitR* u; const FeatureInst* f;
                     SDL_Texture* tex; int start, count; };   // seg if u&&f both null
     std::vector<CopyTask> copyTasks_;
     std::vector<DrawOp> drawOps_;
@@ -6055,15 +6077,15 @@ private:
         return SDL_Color{cl(r), cl(g), cl(b), 255};
     }
     // Is this unit currently disco-dancing (a monarch whose player hit Shift+D)?
-    bool dancing(const tak::sim::Unit& u) const {
-        return isMonarchType(u.type) && world_.discoActive(u.player);
+    bool dancing(const UnitR& u) const {
+        return isMonarchType(u.type) && u.disco;
     }
     // ...or headbanging to heavy metal (a monarch whose player hit Shift+H)?
-    bool headbanging(const tak::sim::Unit& u) const {
-        return isMonarchType(u.type) && world_.headbangActive(u.player);
+    bool headbanging(const UnitR& u) const {
+        return isMonarchType(u.type) && u.headbang;
     }
 
-    void buildUnitGeom(const tak::sim::Unit& u, UnitGeom& g, std::vector<Tri>& scratch) {
+    void buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch) {
         g.verts.clear();
         g.runs.clear();
         g.canFly = u.type && u.type->canFly;
@@ -6080,7 +6102,7 @@ private:
         int slot = colorSlot_[u.player & 7];
         // Interpolated pose so the unit glides between 30Hz sim ticks (lift computed at the
         // interpolated spot so it stays seated on the terrain as it moves).
-        float ix, iz, ih; interpPose(frameUnit(u.id), ix, iz, ih);
+        float ix, iz, ih; interpPose(u, ix, iz, ih);
         float ax = (ix - mapView_.offX()) * zm - terrainLiftX(ix, iz) * zm;
         float ay = (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm;
         // Sprite sheet: draw a moving/idle unit as one animated quad from the baked
@@ -6265,7 +6287,7 @@ private:
             }
     }
 
-    void drawUnit(const tak::sim::Unit& u) {
+    void drawUnit(const UnitR& u) {
         // A placed-but-not-yet-started site shows as a faint ghost until the
         // builder arrives and it begins conjuring for real.
         if (u.underConstruction && !u.buildBegun) {
