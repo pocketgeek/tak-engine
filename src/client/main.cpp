@@ -3565,7 +3565,10 @@ public:
                 spawnBurst(h.x, h.z, 5, h.target->blood[0], h.target->blood[1],
                            h.target->blood[2], 26, 1.8f, 0);
         }
-        world_.clearHits();
+        // (No world_.clearHits() here: World::tick already clears hits_ at the start of the
+        //  next tick, so the viewer-side clear was redundant -- and dropping it keeps the
+        //  render path from mutating sim state, a prerequisite for the sim-thread decouple.
+        //  See docs/sim-render-decouple-plan.md.)
         updateParticles(dt);
         updateEffects(dt);
         updateRings(dt);
