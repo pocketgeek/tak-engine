@@ -66,6 +66,9 @@ jobs:
           fi
           echo "OK: no SDL2/jpeg/zlib/ffmpeg DLL imports -- fully static"
 
+      - name: Project version
+        run: echo "VERSION=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')" >> "$GITHUB_ENV"
+
       - name: Bundle (exes + required DLLs) + zip
         run: |
           mkdir -p dist-win
@@ -75,7 +78,7 @@ jobs:
           ldd build/takclient.exe build/takserver.exe \
             | awk '/mingw64\/bin/ {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" dist-win/; done
-          (cd dist-win && zip -r ../takclient-windows-x64.zip .)
+          (cd dist-win && zip -r "../takclient-$VERSION-windows-x64.zip" .)
 
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
@@ -126,6 +129,7 @@ jobs:
         run: |
           gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY `
             --title "TAK Engine $env:GITHUB_REF_NAME" --generate-notes --verify-tag 2>$null
+          $zip = "takclient-$($env:VERSION)-windows-x64.zip"
           gh release upload $env:GITHUB_REF_NAME `
-            takclient-windows-x64.zip takclient-windows-x64-debug.zip `
+            $zip takclient-windows-x64-debug.zip `
             --repo $env:GITHUB_REPOSITORY --clobber

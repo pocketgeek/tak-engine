@@ -52,8 +52,8 @@ the multiplayer wire protocol version, which is gated independently at connect.
 Latest pre-built binaries (self-contained; you still supply your own retail game
 data — see **Game data**):
 
-- **Windows x64** — [takclient-windows-x64.zip](https://github.com/pocketgeek/tak-engine/releases/latest/download/takclient-windows-x64.zip)
-- **macOS (Apple Silicon)** — [takclient-macos-arm64.zip](https://github.com/pocketgeek/tak-engine/releases/latest/download/takclient-macos-arm64.zip)
+- **Windows x64** — grab `takclient-<version>-windows-x64.zip` from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest)
+- **macOS (Apple Silicon)** — grab `takclient-<version>-macos-arm64.zip` from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest)
 - **Debian / Ubuntu** — grab `tak-engine-<version>-amd64.deb` from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest), then `sudo apt install ./tak-engine-*-amd64.deb`
 - **Fedora / RHEL** — grab `tak-engine-<version>-x86_64.rpm` from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest), then `sudo dnf install ./tak-engine-*-x86_64.rpm`
 - [**All releases**](https://github.com/pocketgeek/tak-engine/releases) · or build from source below.

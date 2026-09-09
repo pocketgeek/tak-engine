@@ -61,11 +61,14 @@ jobs:
           fi
           echo "OK: only system libs/frameworks linked -- as static as macOS allows"
 
+      - name: Project version
+        run: echo "VERSION=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')" >> "$GITHUB_ENV"
+
       - name: Bundle + zip
         run: |
           mkdir -p dist-macos
           cp build/takclient build/takserver dist-macos/
-          (cd dist-macos && zip -r ../takclient-macos-arm64.zip .)
+          (cd dist-macos && zip -r "../takclient-$VERSION-macos-arm64.zip" .)
 
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
@@ -114,5 +117,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
           gh release upload "$GITHUB_REF_NAME" \
-            takclient-macos-arm64.zip takclient-macos-arm64-debug.zip \
+            "takclient-$VERSION-macos-arm64.zip" takclient-macos-arm64-debug.zip \
             --repo "$GITHUB_REPOSITORY" --clobber
