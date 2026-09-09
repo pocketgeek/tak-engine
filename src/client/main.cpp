@@ -1546,8 +1546,8 @@ struct PlayerR {
 };
 
 // A complete per-tick render snapshot -- everything the render/HUD reads from the sim.
-// Double-buffered (front = what the render reads, back = what captureFrame writes); the sim
-// publishes by swapping. `live` points into THIS Frame's `units`, so it swaps consistently.
+// Triple-buffered (see frameBuf_): the render reads front(), the writer fills a spare and
+// publishes it. `live` points into THIS Frame's `units`, so it swaps consistently.
 struct Frame {
     std::vector<UnitR> units;            // indexed by unit id
     std::vector<const UnitR*> live;      // compact list of units live this tick (points into units)
@@ -1557,6 +1557,8 @@ struct Frame {
     int visW = 0, visH = 0;
     uint32_t visGen = 0;
     std::vector<tak::sim::Projectile> projectiles;
+    std::vector<tak::sim::World::HitFx> hits;   // weapon impacts this tick (cosmeticStep FX)
+    int winningTeam = -1;                // world_.winningTeam() (victory overlay)
     uint64_t tickMs = 0;                 // wall-clock of this tick (for interpolation)
     float tickDurMs = 1000.0f / 30.0f;
     uint32_t gen = 0;                    // capture generation (UnitR.gen == this => live this tick)
@@ -3620,6 +3622,8 @@ public:
             r.discoLeft = pl.discoLeft; r.headbangLeft = pl.headbangLeft;
         }
         fb.projectiles = world_.projectiles();   // sim push_back/erase each tick -> must copy
+        fb.hits = world_.hits();                  // weapon impacts this tick (cleared next tick)
+        fb.winningTeam = world_.winningTeam();
         // Fog snapshot: copy world_.vis_ into this buffer only when THIS buffer's fog is stale
         // (fog recomputes ~4Hz, so at most ~2 copies per change -- one per buffer). A spectator
         // (noFog_) leaves vis_ empty, so the copy is a no-op and cellVisibleR reveals all.
@@ -3684,6 +3688,20 @@ public:
         int cx = int(x) / 16, cz = int(z) / 16;
         if (cx < 0 || cz < 0 || cx >= f.visW || cz >= f.visH) return false;
         return f.vis[size_t(cz) * f.visW + cx] == 2;
+    }
+    // More snapshot accessors mirroring the World calls the render used to make directly.
+    const std::vector<tak::sim::World::HitFx>& frameHits() const { return front().hits; }
+    int frameWinningTeam() const { return front().winningTeam; }
+    // world_.discoActive/headbangActive(p) == players_[p].{disco,headbang}Left > 0.
+    bool frameDiscoActive(int p) const { return framePlayer(p).discoLeft > 0; }
+    bool frameHeadbangActive(int p) const { return framePlayer(p).headbangLeft > 0; }
+    // world_.queuedCount(builderId,type): count of that type queued on the builder.
+    int frameQueuedCount(int builderId, const tak::sim::UnitType* type) const {
+        const UnitR* b = frameUnitP(builderId);
+        if (!b || !type) return 0;
+        int n = 0;
+        for (const auto* q : b->buildQueue) if (q == type) ++n;
+        return n;
     }
 
     // The DISPLAY half: impact sounds/effects, particles, animation state and the
