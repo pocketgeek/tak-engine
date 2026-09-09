@@ -2145,7 +2145,7 @@ void World::updateVisibility() {
     };
     size_t n = reveals.size();
     unsigned hw = serialFlow_ ? 1u : std::thread::hardware_concurrency();
-    unsigned nth = std::min<unsigned>(hw ? hw : 1u, unsigned((n + 1023) / 1024));  // >=1024/thread
+    unsigned nth = std::min<unsigned>(hw ? hw : 1u, unsigned((n + 255) / 256));  // >=256/thread
     if (nth <= 1) {
         stamp(0, n);
     } else {
@@ -2312,7 +2312,11 @@ void World::tick(float dt) {
 
     visTimer_ -= dt;
     if (visTimer_ <= 0) {
-        visTimer_ = 0.25f;
+        // Fog recompute period widens with the crowd: 0.25s normally, up to 0.5s in a huge
+        // battle. Fog is the dominant per-0.25s render-thread cost at scale, and a slightly
+        // slower reveal is imperceptible -- but it halves the periodic spike RATE. Fog is
+        // client-only display (never hashed), so this pacing has no lockstep effect.
+        visTimer_ = std::clamp(0.25f + float(units_.size()) / 8000.0f, 0.25f, 0.5f);
         updateVisibility();
     }
 
