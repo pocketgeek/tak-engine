@@ -2076,12 +2076,16 @@ void World::updateVisibility() {
     static float EYE = [] {
         const char* e = std::getenv("TAK_FOG_EYE"); return e ? float(std::atof(e)) : 40.0f;
     }();
-    // PASS 1 (serial): gather every revealer's stamp parameters, computing+inserting any
-    // missing LoS masks now -- the visMaskCache_ writes are the only shared-map mutation,
-    // so they stay single-threaded. The heavy stamping runs in parallel in pass 2. Fog is
-    // client-only display (the referee returned above), so NONE of this is hashed.
+    // PASS 1a (serial, cheap): gather every revealer's stamp parameters, and collect the
+    // set of NEW LoS masks that need computing (deduped via an empty cache placeholder --
+    // the ray-march that fills them runs in parallel in pass 1b). Bound the cache up front;
+    // clearing mid-pass would desync the placeholder dedup. Fog is client-only display (the
+    // referee returned above), so NONE of this is hashed.
+    if (visMaskCache_.size() >= 8192) visMaskCache_.clear();
     struct Reveal { int cx, cz, r, rRadar2; bool los; uint64_t key; };
+    struct Miss   { uint64_t key; int cx, cz, r, rRadar2; };
     std::vector<Reveal> reveals;
+    std::vector<Miss>   misses;
     reveals.reserve(units_.size());
     for (const auto& u : units_) {
         // Shared team vision: every allied, built, living unit reveals fog.
@@ -2099,28 +2103,58 @@ void World::updateVisibility() {
                          rSight > rRadar;   // only worth testing where sight exceeds radar
         uint64_t key = 0;
         if (losBlocks) {
-            // LoS mask: the visible-cell set for (sight, radar, cell) is a pure function of
-            // the immutable heightmap, computed ONCE (the O(r^3) ray-march) then re-stamped
-            // while a unit of this class stands on the cell.
+            // LoS mask key: the visible-cell set for (sight, radar, cell) is a pure function
+            // of the immutable heightmap -- computed ONCE, then re-stamped while a unit of
+            // this class stands on the cell.
             key = (uint64_t(uint32_t(rSight)) << 52) | (uint64_t(uint32_t(rRadar)) << 40) |
                   (uint64_t(uint32_t(cx)) << 20) | uint32_t(cz);
-            if (visMaskCache_.find(key) == visMaskCache_.end()) {
-                if (visMaskCache_.size() >= 8192) visMaskCache_.clear();   // bounded; rebuilds on demand
-                std::vector<uint32_t>& mask = visMaskCache_[key];
-                float eyeH = float(heights_[size_t(cz) * hW_ + cx]) + EYE;
-                for (int dz = -r; dz <= r; ++dz)
-                    for (int dx = -r; dx <= r; ++dx) {
+            // emplace an empty placeholder: .second==true means this key is new this pass,
+            // so it needs the ray-march (and dedups repeats of the same class+cell).
+            if (visMaskCache_.emplace(key, std::vector<uint32_t>{}).second)
+                misses.push_back({key, cx, cz, r, rRadar2});
+        }
+        reveals.push_back({cx, cz, r, rRadar2, losBlocks, key});
+    }
+    // PASS 1b (PARALLEL): the O(r^3) LoS ray-march for each new mask -- the expensive part
+    // a moving army keeps retriggering. Each computes independently, reading only the
+    // immutable heightmap into a local buffer (no shared-map writes); we install them
+    // serially afterwards. This is what makes fog cheap at scale for a seated player too.
+    if (!misses.empty()) {
+        std::vector<std::vector<uint32_t>> built(misses.size());
+        auto march = [&](size_t b, size_t e) {
+            for (size_t i = b; i < e; ++i) {
+                const Miss& m = misses[i];
+                std::vector<uint32_t>& mask = built[i];
+                float eyeH = float(heights_[size_t(m.cz) * hW_ + m.cx]) + EYE;
+                for (int dz = -m.r; dz <= m.r; ++dz)
+                    for (int dx = -m.r; dx <= m.r; ++dx) {
                         int dd = dx * dx + dz * dz;
-                        if (dd > r * r) continue;
-                        int x = cx + dx, z = cz + dz;
+                        if (dd > m.r * m.r) continue;
+                        int x = m.cx + dx, z = m.cz + dz;
                         if (x < 0 || z < 0 || x >= visW_ || z >= visH_) continue;
                         // Inside radar range: revealed unconditionally. Beyond it, LoS-gated.
-                        if (dd > rRadar2 && !sightClear(cx, cz, eyeH, x, z)) continue;
+                        if (dd > m.rRadar2 && !sightClear(m.cx, m.cz, eyeH, x, z)) continue;
                         mask.push_back(uint32_t(size_t(z) * visW_ + x));
                     }
             }
+        };
+        size_t mn = misses.size();
+        unsigned hw = serialFlow_ ? 1u : std::thread::hardware_concurrency();
+        unsigned nth = std::min<unsigned>(hw ? hw : 1u, unsigned((mn + 15) / 16));  // heavy: ~16/thread
+        if (nth <= 1) {
+            march(0, mn);
+        } else {
+            size_t chunk = (mn + nth - 1) / nth;
+            std::vector<std::thread> th;
+            th.reserve(nth - 1);
+            for (unsigned k = 1; k < nth; ++k) {
+                size_t bb = std::min(mn, size_t(k) * chunk), ee = std::min(mn, bb + chunk);
+                if (bb < ee) th.emplace_back(march, bb, ee);
+            }
+            march(0, std::min(mn, chunk));
+            for (auto& t : th) t.join();
         }
-        reveals.push_back({cx, cz, r, rRadar2, losBlocks, key});
+        for (size_t i = 0; i < mn; ++i) visMaskCache_[misses[i].key] = std::move(built[i]);
     }
     // PASS 2 (parallel): stamp vis_[i]=2 for every revealer's cells (cached mask or circle
     // fill). It only READS the now-warm cache and writes the constant 2, so overlapping
