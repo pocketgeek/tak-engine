@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(tak-engine VERSION 0.4.1 LANGUAGES CXX)
+project(tak-engine VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -241,7 +241,10 @@ target_link_libraries(cobtool PRIVATE tak-formats)
 # One source of truth for both package families. Build, then from the build dir:
 #   cpack -G DEB   -> tak-engine-amd64.deb    (sudo apt install ./tak-engine-amd64.deb)
 #   cpack -G RPM   -> tak-engine-x86_64.rpm   (sudo dnf install ./tak-engine-x86_64.rpm)
-# The runtime deps (SDL2/jpeg/zlib) are auto-detected so apt/dnf pull them in.
+# The release CI builds these with -DTAK_STATIC_LIBS=ON, so SDL2/jpeg/zlib (and the Bink
+# FFmpeg) are baked in -- SHLIBDEPS/AUTOREQ below then auto-detect only the C/C++ runtime.
+# SDL2 still dlopens its X11/Wayland/audio backends, which every desktop that can run the
+# game already has; those are not declared (they aren't link-time deps of a static SDL2).
 if(UNIX AND NOT APPLE)
   install(TARGETS takserver RUNTIME DESTINATION bin)
   if(TARGET takclient)

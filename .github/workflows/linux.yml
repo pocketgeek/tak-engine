@@ -3,8 +3,9 @@ run-name: Linux packages · ${{ github.ref_name }}
 
 # Builds native Linux packages via CPack only on a version-bump tag (v*), or on
 # manual dispatch: a .deb on Ubuntu (Debian/Ubuntu family) and a .rpm in a Fedora
-# container (Fedora/RHEL family), each in its own environment so the auto-detected
-# runtime deps (SDL2/jpeg/zlib sonames) match that family. Each job uploads a CI
+# container (Fedora/RHEL family), each in its own environment. SDL2/jpeg/zlib and the
+# Bink FFmpeg are statically linked (built from source; -DTAK_STATIC_LIBS=ON +
+# -DTAK_STATIC_FFMPEG=ON), so the packages are self-contained. Each job uploads a CI
 # artifact; on a tag it also attaches the package to the GitHub Release.
 
 on:
@@ -24,8 +25,14 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update
+          # Build tools + the SDL2 backend -dev headers needed to BUILD a static SDL2 with
+          # its X11/Wayland/audio drivers (the libs themselves are built from source below).
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build g++ git make libsdl2-dev zlib1g-dev libjpeg-dev dpkg-dev
+            cmake ninja-build g++ git make dpkg-dev nasm \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev \
+            libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev \
+            libxss-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev \
+            libgl1-mesa-dev libegl1-mesa-dev
       # Build a minimal static Bink-only FFmpeg so the package plays the door videos
       # with NO runtime FFmpeg dependency (see tools/build-ffmpeg-bink.sh). Cached across
       # runs by the FFmpeg version.
@@ -36,9 +43,18 @@ jobs:
           key: ffmpeg-bink-deb-n7.1.1
       - name: Build static FFmpeg (Bink)
         run: ./tools/build-ffmpeg-bink.sh
+      # Build static zlib/libjpeg/SDL2 so the package is self-contained (no libSDL2/jpeg/zlib
+      # runtime deps; see tools/build-static-deps.sh). Cached by the lib versions.
+      - name: Cache static deps (zlib/libjpeg/SDL2)
+        uses: actions/cache@v4
+        with:
+          path: third_party/static-deps
+          key: static-deps-deb-zlib1.3.1-jpeg3.0.4-sdl2.32.10
+      - name: Build static deps (zlib/libjpeg/SDL2)
+        run: ./tools/build-static-deps.sh
       - name: Build + package (.deb)
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON
           cmake --build build
           (cd build && cpack -G DEB)
           dpkg-deb -I build/tak-engine-amd64.deb   # show control + auto deps
@@ -48,7 +64,7 @@ jobs:
       # hooks, and the headless --mp* harness.
       - name: Build binaries (debug)
         run: |
-          cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTAK_STATIC_FFMPEG=ON
+          cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON
           cmake --build build-debug
           mkdir -p dist-linux-debug
           cp build-debug/takclient build-debug/takserver dist-linux-debug/
@@ -86,10 +102,14 @@ jobs:
       - name: Build + package (.rpm) in a Fedora container
         run: |
           docker run --rm -v "$PWD:/src" -w /src fedora:latest bash -c '
-            dnf -y install cmake ninja-build gcc-c++ git make SDL2-devel zlib-devel \
-                           libjpeg-turbo-devel rpm-build &&
+            dnf -y install cmake ninja-build gcc-c++ git make rpm-build nasm \
+                 alsa-lib-devel pulseaudio-libs-devel pipewire-devel dbus-devel \
+                 libX11-devel libXext-devel libXcursor-devel libXi-devel libXrandr-devel \
+                 libXfixes-devel libXScrnSaver-devel libxkbcommon-devel wayland-devel \
+                 wayland-protocols-devel libdecor-devel mesa-libGL-devel mesa-libEGL-devel &&
             ./tools/build-ffmpeg-bink.sh &&
-            cmake -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON &&
+            ./tools/build-static-deps.sh &&
+            cmake -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON &&
             cmake --build build-rpm &&
             (cd build-rpm && cpack -G RPM) &&
             rpm -qp --requires build-rpm/tak-engine-x86_64.rpm'
