@@ -234,3 +234,58 @@ mp_ calls), sim->render outcome/netError/chat atomics, join-before-teardown. Kee
 single-threaded mode for the headless harnesses. Hazards: per-tick event ordering during
 catch-up, MpClient single-owner, lobby<->game teardown lifetime, visual smoke (hash won't
 catch snapshot-field omissions).
+
+---
+
+## STAGE B — REVISED DESIGN DECISION (2026-09-08, during implementation)
+
+B0 (commit 4c18c47) is DONE: the snapshot is a double-buffered `Frame` (front/back),
+`captureFrame()` writes back() and publishes with a swap; render reads front(). Still
+single-threaded, hash-verified byte-identical (9ec4f308daf984b1 on Adamantine Gate).
+B0 also FIXED a fog regression from f362ec7 (the vis-copy guard read its own accessors,
+so a player's fog snapshot never updated -> no fog overlay/cull; --mpai can't see fog).
+
+**The threading boundary is REVISED from the original §4/§5 plan.** Do NOT move `mp_`
+(MpClient) or the lobby/matchmaking half of `mpAutoStep` onto the worker. Reading
+`mpAutoStep` (main.cpp ~2977) shows it does a large amount of lobby/room/list/setSlot/
+startGame work that shares state with the render's menu/lobby UI, and `mp_` is a
+single-owner socket. Threading all of that is high-risk for no benefit (no `world_`
+ticking happens during the lobby -> no stumbles there).
+
+### Chosen architecture ("Option D"): network stays on the main thread; only `world_`
+### (tick + captureFrame) moves to a worker.
+
+- **Main thread** keeps `mpAutoStep`: `mp_->poll()`, lobby/matchmaking, `sendCommands`,
+  and DRAINING delivered tick-bundles. Instead of calling `simStep` inline, it pushes
+  each delivered tick-bundle (its relayed commands + tick number) onto `simInbox_`
+  (a mutex queue). `mp_` is touched ONLY here (single owner, no threading of the socket).
+- **Sim worker** pops bundles from `simInbox_` in FIFO (== delivery == lockstep) order,
+  applies commands + `world_.tick()`, then `captureFrame()` (publishes). After each tick
+  it pushes `{netTick, stateHash}` onto `simOutbox_`; the main thread pops it and calls
+  `mp_->sendHash(...)`. So `world_` is touched ONLY by the worker during gameplay.
+- **Render** (main thread, after `mpAutoStep`) reads the published snapshot only.
+- **Only-during-gameplay**: the worker exists between game-start and game-end; the lobby
+  runs entirely on the main thread. Join the worker before teardown / return-to-menu.
+- **Inline mode** (headless `--mpai`, replay): NO worker; the main thread drains
+  `simInbox_` synchronously right after pushing, so the flow is byte-identical and the
+  harnesses stay single-threaded/deterministic. A `bool simThreaded_` selects the path.
+
+### Cross-thread channels (minimal):
+1. `simInbox_`  (main -> worker): delivered tick-bundles. std::mutex + std::vector, or deque.
+2. `simOutbox_` (worker -> main): `{netTick, hash}` to send; also netError/mission-outcome
+   (atomics) and any chat the sim surfaces.
+3. The `Frame` triple-buffer (worker publishes, main reads). Upgrade B0's 2 buffers to 3
+   with a `published_`/`reading_` index pair under a brief mutex, so the worker never writes
+   the buffer the render is mid-read on (2 buffers can tear if a render frame spans 2 ticks).
+
+### Remaining render-thread `world_` reads to convert first (B1b, gated by a read-scope
+### map): animFrame (COB VM onGet), cameraFrame (follow target), and any leftover draw/HUD/
+### minimap/input reads Stage A didn't reach. Input canPlace/order-validation may need the
+### LIVE world_ -- for those, keep them on the main thread only while the worker is idle, or
+### validate against the snapshot. (The read-scope map enumerates the exact set.)
+
+### Slices (each committed, --mpai + player/spectator tested):
+- **B1a** infra, worker OFF (triple-buffer + simInbox_/simOutbox_ + worker scaffold +
+  simThreaded_ flag defaulting to inline). Behaviour identical.
+- **B1b** convert the remaining render-thread world_ reads to the snapshot. Worker still OFF.
+- **B1c** flip the worker ON for gameplay. Heavy manual test (races are invisible to --mpai).
