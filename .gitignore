@@ -35,5 +35,6 @@ compile_commands.json
 *.ufo
 !overrides/click.hpi
 
-# Locally-built minimal static FFmpeg (tools/build-ffmpeg-bink.sh)
+# Locally-built vendored static deps: minimal FFmpeg (tools/build-ffmpeg-bink.sh) and
+# zlib/libjpeg/SDL2 (tools/build-static-deps.sh). Build output -- never committed.
 third_party/

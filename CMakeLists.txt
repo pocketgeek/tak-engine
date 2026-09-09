@@ -14,6 +14,23 @@ endif()
 
 add_compile_options(-Wall -Wextra)
 
+# --- Optional: statically link vendored zlib / libjpeg / SDL2 -----------------
+# -DTAK_STATIC_LIBS=ON links the static archives built by tools/build-static-deps.sh into
+# TAK_STATIC_DEPS_PREFIX, so the binaries carry zlib/libjpeg/SDL2 internally -- no matching
+# shared library needed at runtime, and the versions are pinned. (SDL2 still dlopens its
+# X11/Wayland/audio backends, so THOSE system libs must still be present.) Default OFF is
+# the normal system-shared build.
+option(TAK_STATIC_LIBS "Statically link vendored zlib/libjpeg/SDL2 (tools/build-static-deps.sh)" OFF)
+set(TAK_STATIC_DEPS_PREFIX "${CMAKE_SOURCE_DIR}/third_party/static-deps"
+    CACHE PATH "Install prefix of the vendored static zlib/libjpeg/SDL2")
+if(TAK_STATIC_LIBS)
+  list(PREPEND CMAKE_PREFIX_PATH "${TAK_STATIC_DEPS_PREFIX}")
+  set(ZLIB_ROOT "${TAK_STATIC_DEPS_PREFIX}")
+  set(ZLIB_USE_STATIC_LIBS ON)              # FindZLIB honours this (CMake >= 3.24)
+  set(JPEG_ROOT "${TAK_STATIC_DEPS_PREFIX}") # only the .a lives there -> found static
+  message(STATUS "Static libs: zlib/libjpeg/SDL2 from ${TAK_STATIC_DEPS_PREFIX}")
+endif()
+
 # --- Format libraries (no external dependencies) ------------------------------
 
 find_package(ZLIB REQUIRED)
@@ -167,7 +184,15 @@ if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
     add_executable(takclient src/client/main.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/cursors.cpp src/video/bink.cpp)
-    target_link_libraries(takclient PRIVATE tak-formats SDL2::SDL2)
+    # The vendored static SDL2 (TAK_STATIC_LIBS) exposes SDL2::SDL2-static (with its
+    # transitive -ldl/-lm/-lpthread etc. baked into the target); the system SDL2 exposes
+    # SDL2::SDL2. We provide our own main (SDL_MAIN_HANDLED), so SDL2main is never needed.
+    if(TAK_STATIC_LIBS AND TARGET SDL2::SDL2-static)
+      set(_tak_sdl2 SDL2::SDL2-static)
+    else()
+      set(_tak_sdl2 SDL2::SDL2)
+    endif()
+    target_link_libraries(takclient PRIVATE tak-formats ${_tak_sdl2})
     # We provide our own main() and call SDL_SetMainReady(). Define SDL_MAIN_HANDLED for
     # the WHOLE target (not just main.cpp) so it applies before ANY header pulls in
     # <SDL.h> -- otherwise, on Windows, SDL_main.h renames our main to SDL_main via a
