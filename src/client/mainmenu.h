@@ -41,6 +41,8 @@ public:
     // (e.g. "takmission01_mt") and the campaign id it belongs to; empty otherwise.
     const std::string& chosenMission() const;
     const std::string& chosenCampaign() const;
+    // After run() returns Choice::Benchmark, the picked intensity level (1=Low..5=Absurd).
+    int chosenBenchmarkLevel() const;
 
     // Play a fullscreen intro clip (Movies/<nameLower>, e.g. "logo.bik") once, scaled
     // to fill the window (letterboxed, linear-filtered). Returns when the clip ends or

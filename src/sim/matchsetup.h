@@ -43,11 +43,24 @@ struct MatchConfig {
     bool monarchExpendable = true;  // false = losing your Monarch loses the game
     bool stressTest = false;        // spawn each player at ~95% of the unit cap in combat
                                     // units at setup (SP all-AI load test)
-    bool benchmark = false;         // benchmark mode: build a STAGED deterministic spawn
-                                    // plan (249/250/500/1000x4 land+air combat units per
-                                    // faction at 5s intervals; 5000 each incl. monarch)
-                                    // executed by World::tick -- see World::setBenchmarkPlan.
+    int benchmark = 0;              // benchmark INTENSITY: 0=off, 1=Low..5=Absurd. Builds a
+                                    // deterministic ramp (1 unit/faction every 1/spawnsPerSec
+                                    // seconds for 60s), executed by World::tick.
 };
+
+// Benchmark intensity levels (0=off, 1..5). Each faction spawns one unit every
+// 1/spawnsPerSec seconds over the 60s run. Shared by the sim (setupMatch) and the client
+// (menu + results label) so both agree.
+inline int benchmarkSpawnsPerSec(int level) { return (level >= 1 && level <= 5) ? (1 << (level - 1)) : 0; }
+inline int benchmarkSpawns(int level) { return benchmarkSpawnsPerSec(level) * 60; }
+inline const char* benchmarkLevelName(int level) {
+    static const char* n[6] = {"", "LOW", "MEDIUM", "HIGH", "VERY HIGH", "ABSURD"};
+    return (level >= 1 && level <= 5) ? n[level] : "";
+}
+inline const char* benchmarkLevelInterval(int level) {
+    static const char* iv[6] = {"", "1S", "0.5S", "0.25S", "0.125S", "0.0625S"};
+    return (level >= 1 && level <= 5) ? iv[level] : "";
+}
 
 // The starting Monarch of each faction (index = faction id).
 extern const char* const kMonarchs[5];

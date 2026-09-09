@@ -132,6 +132,9 @@ struct MainMenu::Impl {
     // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
     bool settingsMenu_ = false;
     SDL_FRect setBtnRect_[3]{};        // [0]=OPTIONS, [1]=CONTROLS, [2]=BENCHMARK (set each render)
+    bool benchMenu_ = false;          // benchmark intensity submenu (opened from SETTINGS)
+    SDL_FRect benchBtnRect_[5]{};      // LOW..ABSURD hit-rects (set each render)
+    int chosenBenchmark_ = 0;         // picked benchmark level 1..5 (0 = none)
 
     // The campaign / mission picker, opened from the PlayStory door (see run()). When
     // the player picks a mission it closes and chosenMission_ names the bundle stem.
@@ -562,6 +565,44 @@ struct MainMenu::Impl {
         shadowText("ESC - BACK", px0 + pad, by + 2, 1.8f, {150, 155, 175, 255});
     }
 
+    // Benchmark intensity submenu: 5 spawn-rate levels. Records benchBtnRect_ for run().
+    void renderBenchMenu(int winW, int winH) {
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        SDL_FRect dim{0, 0, float(winW), float(winH)};
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
+        SDL_RenderFillRectF(ren, &dim);
+        const int nBtn = 5;
+        const float bw = 460, bh = 52, gap = 14, pad = 34, titlePx = 3.2f;
+        const float titleH = 7 * titlePx + 22;
+        const float pw = bw + pad * 2;
+        const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 28;
+        const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
+        SDL_FRect panel{px0, py0, pw, ph};
+        SDL_SetRenderDrawColor(ren, 26, 28, 36, 240); SDL_RenderFillRectF(ren, &panel);
+        SDL_SetRenderDrawColor(ren, 120, 130, 160, 255); SDL_RenderDrawRectF(ren, &panel);
+        auto tw = [](const std::string& s, float px) { return s.empty() ? 0.0f : (s.size() * 6.0f - 1.0f) * px; };
+        shadowText("BENCHMARK", px0 + (pw - tw("BENCHMARK", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
+        int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
+        { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
+        const char* labels[nBtn] = {
+            "LOW  -  1 UNIT / FACTION / 1S", "MEDIUM  -  EVERY 0.5S", "HIGH  -  EVERY 0.25S",
+            "VERY HIGH  -  EVERY 0.125S", "ABSURD  -  EVERY 0.0625S"};
+        float by = py0 + pad + titleH;
+        for (int i = 0; i < nBtn; ++i) {
+            SDL_FRect r{px0 + pad, by, bw, bh};
+            benchBtnRect_[i] = r;
+            bool hot = mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+            SDL_SetRenderDrawColor(ren, hot ? 90 : 60, hot ? 110 : 66, hot ? 150 : 86, 255);
+            SDL_RenderFillRectF(ren, &r);
+            SDL_SetRenderDrawColor(ren, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
+            SDL_RenderDrawRectF(ren, &r);
+            float lpx = 1.9f, lw = tw(labels[i], lpx);
+            blockText(labels[i], r.x + (bw - lw) / 2, r.y + (bh - 7 * lpx) / 2, lpx, {228, 232, 242, 255});
+            by += bh + gap;
+        }
+        shadowText("ESC - BACK", px0 + pad, by + 2, 1.8f, {150, 155, 175, 255});
+    }
+
     void screenshot(int winW, int winH, const std::string& path) {
         std::vector<uint8_t> px(size_t(winW) * size_t(winH) * 4);
         if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), winW * 4) == 0)
@@ -720,11 +761,25 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         d_->settingsMenu_ = false;
                         d_->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
                             [] {}, [settings] { saveSettings(*settings); });
-                    } else if (hit(d_->setBtnRect_[2])) {   // BENCHMARK -> launch the perf run
+                    } else if (hit(d_->setBtnRect_[2])) {   // BENCHMARK -> intensity submenu
                         d_->settingsMenu_ = false;
-                        d_->flushSfx(w, h);
-                        return Choice::Benchmark;
+                        d_->benchMenu_ = true;
                     }
+                }
+                continue;
+            }
+            if (d_->benchMenu_) {   // benchmark intensity submenu (LOW..ABSURD)
+                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) { d_->benchMenu_ = false; }
+                else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                    float fx = float(e.button.x), fy = float(e.button.y);
+                    auto hit = [&](const SDL_FRect& r) { return fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h; };
+                    for (int i = 0; i < 5; ++i)
+                        if (hit(d_->benchBtnRect_[i])) {
+                            d_->chosenBenchmark_ = i + 1;   // 1=Low .. 5=Absurd
+                            d_->benchMenu_ = false;
+                            d_->flushSfx(w, h);
+                            return Choice::Benchmark;
+                        }
                 }
                 continue;
             }
@@ -783,6 +838,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         d_->render(w, h);
         if (d_->serverSelect) d_->renderServerSelect(w, h);
         if (d_->settingsMenu_) d_->renderSettingsMenu(w, h);
+        if (d_->benchMenu_) d_->renderBenchMenu(w, h);
         if (d_->options_) d_->options_->render(w, h);
         if (d_->hotkeys_) d_->hotkeys_->render(w, h);   // above Options
         if (d_->campaign_) d_->campaign_->render(w, h);
@@ -807,6 +863,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
 }
 
 const std::string& MainMenu::chosenMission() const { return d_->chosenMission_; }
+int MainMenu::chosenBenchmarkLevel() const { return d_->chosenBenchmark_; }
 const std::string& MainMenu::chosenCampaign() const { return d_->chosenCampaign_; }
 
 void MainMenu::playIntro(SDL_Renderer* ren, const std::string& install, const char* nameLower) {

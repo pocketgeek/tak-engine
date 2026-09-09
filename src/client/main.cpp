@@ -2719,7 +2719,7 @@ public:
     void setSimThreadMode(bool on) { simThreadMode_ = on; }
     // Benchmark run: an all-AI watch game on Ulasem Arena with the staged benchmark spawn
     // plan (see MatchConfig::benchmark). Drives the createGame/seat path in mpAutoStep.
-    void setBenchmark(bool b) { benchmarkMode_ = b; }
+    void setBenchmark(int level) { benchmarkLevel_ = level; benchmarkMode_ = level > 0; }
     bool benchmarkMode() const { return benchmarkMode_; }
     void setBenchmarkServerPid(long pid) { benchServerPid_ = pid; }   // local takserver, for its metrics
     bool benchmarkStatsShown() const { return benchStatsShown_; }
@@ -2816,7 +2816,12 @@ public:
         const float colW[10] = {82*k, 96*k, 122*k, 122*k, 122*k, 70*k, 122*k, 122*k, 70*k, 96*k};
         float tableW = 0; for (float c : colW) tableW += c;
         const char* title = "BENCHMARK RESULTS";
-        const char* sub   = "8-AI FFA -- ULASEM ARENA -- 1 UNIT/FACTION EVERY 0.25S FOR 60S";
+        char subBuf[160];
+        std::snprintf(subBuf, sizeof subBuf,
+                      "8-AI FFA -- ULASEM ARENA -- %s: 1 UNIT/FACTION EVERY %s FOR 60S",
+                      tak::sim::benchmarkLevelName(benchmarkLevel_),
+                      tak::sim::benchmarkLevelInterval(benchmarkLevel_));
+        const char* sub = subBuf;
 
         float contentW = tableW;
         if (blockWidth(sub, subPx) > contentW) contentW = blockWidth(sub, subPx);
@@ -3009,7 +3014,8 @@ public:
         cfg.unitCap = room.opts.unitCap;
         cfg.monarchExpendable = room.opts.monarchExpendable != 0;
         cfg.stressTest = room.opts.stressTest != 0;
-        cfg.benchmark = room.opts.benchmark != 0;
+        cfg.benchmark = room.opts.benchmark;
+        if (room.opts.benchmark) benchmarkLevel_ = room.opts.benchmark;   // for the results label
         cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
             const auto& s = room.slots[i];
@@ -3316,12 +3322,15 @@ public:
             // tests -- re-cadences the server without touching the (deterministic) sim.
             if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, 40));
             if (tak::devEnv("TAK_STRESS")) o.stressTest = 1;   // headless: spawn ~95% cap per AI
-            if (tak::devEnv("TAK_BENCH")) benchmarkMode_ = true;   // headless: full benchmark run
-                                                                   // (forces watch + 8 AI + cap 8 + Ulasem below)
+            if (const char* be = tak::devEnv("TAK_BENCH")) {   // headless: benchmark run
+                int lv = std::atoi(be);                        // TAK_BENCH=<level 1..5>, default High
+                benchmarkLevel_ = (lv >= 1 && lv <= 5) ? lv : 3;
+                benchmarkMode_ = true;                         // (forces watch + 8 AI + cap 8 + Ulasem below)
+            }
             if (const char* uc = tak::devEnv("TAK_UNITCAP")) o.unitCap = uint16_t(std::atoi(uc));
             // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
             // slot can be an AI -- an all-AI game to watch.
-            if (benchmarkMode_) o.benchmark = 1;   // menu Benchmark: staged spawn plan
+            if (benchmarkMode_) o.benchmark = uint8_t(benchmarkLevel_);   // menu Benchmark: intensity level
             // Benchmark is an all-AI WATCH run (host takes no slot) on Ulasem Arena, forced
             // to 8 slots regardless of the map's start-position count (setupMatch synthesises
             // the extra starts), private (not in the browser).
@@ -7541,6 +7550,7 @@ private:
     bool simThreadDecided_ = false;
     bool simThreadMode_ = true;         // interactive default ON; the headless harness opts out
     bool benchmarkMode_ = false;        // menu Benchmark: all-AI watch run + staged spawn plan
+    int benchmarkLevel_ = 0;            // benchmark intensity 1..5 (for the plan + results label)
     // Benchmark metrics: one sample per 5s milestone (the 7 spawn stages + the 40s end).
     struct BenchSample {
         int gameSec = 0, liveUnits = 0;
@@ -11739,6 +11749,7 @@ int main(int argc, char** argv) {
     int mpAutoMode = 0;
     bool menuInteractive = false;   // menu single-player -> interactive lobby, not auto-play
     bool benchmarkLaunch = false;   // menu Benchmark -> auto-host an all-AI watch perf run
+    int benchmarkLevel = 0;         // picked benchmark intensity 1..5
     std::string campaignStem;       // menu campaign pick -> host this mission (autoMode 8)
     std::string campaignId;         // ...its campaign id (for progress persistence)
     // Next/Retry chosen on the previous mission's result screen: re-enter directly.
@@ -11771,6 +11782,10 @@ int main(int argc, char** argv) {
             if (choice == tak::MainMenu::Choice::Campaign) {
                 campaignStem = menu.chosenMission();
                 campaignId = menu.chosenCampaign();
+            }
+            if (choice == tak::MainMenu::Choice::Benchmark) {
+                benchmarkLevel = menu.chosenBenchmarkLevel();
+                if (benchmarkLevel < 1 || benchmarkLevel > 5) benchmarkLevel = 3;   // safety default = High
             }
         }
         if (!shot.empty()) { SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
@@ -11926,7 +11941,7 @@ int main(int argc, char** argv) {
                     gameView->setMissionStem(campaignStem);         // autoMode 8 hosts this mission
                 else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
                 else if (benchmarkLaunch) {   // menu Benchmark: all-AI watch run + metrics
-                    gameView->setBenchmark(true);
+                    gameView->setBenchmark(benchmarkLevel);
                     gameView->setBenchmarkServerPid(localServerPid());
                 }
                 if (const char* rp = tak::devEnv("TAK_RESUME")) gameView->setResumePath(rp);

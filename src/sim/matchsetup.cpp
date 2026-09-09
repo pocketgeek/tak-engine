@@ -318,14 +318,15 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     }
     std::vector<std::pair<float, float>> assigned;
     int spot = 0;
-    // Benchmark: a gradual ramp -- 1 unit per faction every 0.25s (7.5 ticks @30Hz) for
-    // 60s = 240 spawns/faction. Deterministic: stage k fires at tick round((k+1)*7.5),
-    // built with integer math so every peer agrees. Units filled per faction below.
-    static const int kBenchSpawns = 240;
+    // Benchmark: a gradual ramp -- each faction spawns 1 unit every 1/spawnsPerSec seconds
+    // for 60s (=1800 ticks). Intensity level (cfg.benchmark 1..5) sets the count; stage k
+    // fires at tick (k+1)*1800/N via integer math so every peer agrees. Units filled below.
+    const int kBenchSpawns = benchmarkSpawns(cfg.benchmark);   // 0 when off
     std::vector<BenchStage> benchPlan;
-    if (cfg.benchmark) {
-        benchPlan.resize(kBenchSpawns);
-        for (int s = 0; s < kBenchSpawns; ++s) benchPlan[s].tick = uint32_t((s + 1) * 30 / 4);
+    if (kBenchSpawns > 0) {
+        benchPlan.resize(size_t(kBenchSpawns));
+        for (int s = 0; s < kBenchSpawns; ++s)
+            benchPlan[size_t(s)].tick = uint32_t((uint64_t(s + 1) * 1800) / uint64_t(kBenchSpawns));
     }
     for (int i = 0; i < int(cfg.slots.size()); ++i) {
         if (!cfg.slots[i].used) continue;
