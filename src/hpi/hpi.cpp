@@ -18,6 +18,8 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -322,7 +324,14 @@ MountSet::MountSet(const std::filesystem::path& dir, MountConfig cfg)
                 if (!e.is_regular_file()) continue;
                 std::string ext = e.path().extension().string();
                 for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
-                if (ext == want) group.push_back(e.path());
+                if (ext != want) continue;
+                if (!cfg_.archiveNames.empty()) {   // name whitelist (retail root)
+                    std::string fn = e.path().filename().string();
+                    for (char& c : fn) c = char(std::tolower(static_cast<unsigned char>(c)));
+                    if (std::find(cfg_.archiveNames.begin(), cfg_.archiveNames.end(), fn)
+                        == cfg_.archiveNames.end()) continue;
+                }
+                group.push_back(e.path());
             }
         std::sort(group.begin(), group.end(), ci);
         archiveFiles_.insert(archiveFiles_.end(), group.begin(), group.end());
@@ -548,6 +557,69 @@ uint64_t gameplayHash(const Vfs& vfs) {
     return h;
 }
 
+// The canonical root archives (lowercased): retail base game + Iron Plague expansion +
+// the official map/rocket packs. Nothing else in the install root is ever mounted.
+const std::vector<std::string> kRootHpiNames = {
+    "data.hpi", "english.hpi", "maps.hpi", "missions.hpi", "sections.hpi", "terrain.hpi",
+    "meta.hpi", "ipdata.hpi", "ipenglish.hpi", "ipmissions.hpi", "ipsections.hpi",
+    "boneyards.hpi", "boneyards2.hpi", "jersey.hpi", "v2rocket.hpi", "v3rocket.hpi",
+};
+
+// Lowercased filenames present in the install root (regular files only).
+static std::set<std::string> rootFileNames(const std::filesystem::path& root) {
+    namespace fs = std::filesystem;
+    std::set<std::string> have;
+    std::error_code ec;
+    if (fs::is_directory(root, ec))
+        for (const auto& e : fs::directory_iterator(root, ec)) {
+            if (ec) break;
+            if (!e.is_regular_file(ec)) continue;
+            std::string n = e.path().filename().string();
+            for (char& c : n) c = char(std::tolower(static_cast<unsigned char>(c)));
+            have.insert(n);
+        }
+    return have;
+}
+
+bool validInstall(const std::filesystem::path& root, std::string* reason) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (root.empty() || !fs::is_directory(root, ec)) { if (reason) *reason = "not a folder"; return false; }
+    // The essential base archives must be present (Iron Plague + map packs are optional).
+    static const char* kEssential[] = {"data.hpi", "terrain.hpi", "sections.hpi", "maps.hpi"};
+    std::set<std::string> have = rootFileNames(root);
+    for (const char* need : kEssential)
+        if (!have.count(need)) { if (reason) *reason = std::string("missing ") + need; return false; }
+    // Confirm the archives actually mount and a core gameplay file resolves.
+    try {
+        Vfs vfs = mountRetailRoot(root, OverridePolicy::None);
+        if (!vfs.has("gamedata/sidedata.tdf")) { if (reason) *reason = "core game data unreadable"; return false; }
+    } catch (const std::exception& e) { if (reason) *reason = std::string("mount failed: ") + e.what(); return false; }
+    return true;
+}
+
+std::string rootManifest(const std::filesystem::path& root) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    // name -> byte size, for the canonical root HPIs that are actually present (sorted).
+    std::map<std::string, uintmax_t> present;
+    if (fs::is_directory(root, ec))
+        for (const auto& e : fs::directory_iterator(root, ec)) {
+            if (ec) break;
+            if (!e.is_regular_file(ec)) continue;
+            std::string l = e.path().filename().string();
+            for (char& c : l) c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (std::find(kRootHpiNames.begin(), kRootHpiNames.end(), l) == kRootHpiNames.end()) continue;
+            present[l] = fs::file_size(e.path(), ec);
+        }
+    uint64_t h = 1469598103934665603ull;   // FNV-1a over "name:size;" pairs
+    auto mix = [&](const std::string& s) { for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; } };
+    for (const auto& [n, sz] : present) { mix(n); mix(":"); mix(std::to_string(sz)); mix(";"); }
+    char buf[20];
+    std::snprintf(buf, sizeof buf, "%016llx", static_cast<unsigned long long>(h));
+    return buf;
+}
+
 Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides) {
     namespace fs = std::filesystem;
     Vfs vfs;
@@ -571,10 +643,11 @@ Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides)
     // Lowest precedence: loose music tracks, mapped under music/.
     if (fs::path music = findSub("Music"); !music.empty())
         vfs.addLayer(MountSet(music, MountConfig{.includeLoose = true, .archiveExts = {}, .keep = {}}), "music/");
-    // The base game + expansions: ONLY the *.hpi archives in the root (no loose
-    // files), layered by the retail newest-entry-date rule. maps.hpi and
-    // terrain.hpi ride in here too (Maps/*.tnt, terrain/*.jpg).
-    vfs.addLayer(MountSet(root, MountConfig{.includeLoose = false, .archiveExts = {".hpi"}, .keep = {}}));
+    // The base game + expansions: ONLY the canonical *.hpi archives in the root (no
+    // loose files, and never a stray/unknown *.hpi), layered by the retail
+    // newest-entry-date rule. maps.hpi and terrain.hpi ride in here too.
+    vfs.addLayer(MountSet(root, MountConfig{.includeLoose = false, .archiveExts = {".hpi"},
+                                            .keep = {}, .archiveNames = kRootHpiNames}));
     // Single-map .kmp archives (each an HPI -> kmap/<name>.*) plus any loose maps.
     // A handful of community .kmp bundle MODDED gameplay data (their own canbuild/
     // units/gamedata); retail reads a .kmp only for its map, so we expose just the

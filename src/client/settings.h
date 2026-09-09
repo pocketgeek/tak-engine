@@ -50,6 +50,11 @@ struct Settings {
     std::string playerName;        // default name for multiplayer
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
 
+    // ---- data / install location ----
+    std::string dataDir;           // retail install folder (picked once; re-checked at launch)
+    std::string dataManifest;      // authenticity digest of the root HPIs when last validated
+                                   // (hpi::rootManifest); a mismatch re-runs validation
+
     // ---- hotkeys ----
     // Rebindable in-game key chords, by action id (see src/client/hotkeys). Only
     // bindings that DIFFER from the factory default are stored ("NONE" = an explicit

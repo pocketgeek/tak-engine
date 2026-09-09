@@ -129,6 +129,10 @@ struct MountConfig {
     // returns true. Empty = keep everything. Used for the cosmetic override tier,
     // which excludes gameplay-affecting files so they can't diverge in MP.
     std::function<bool(const std::string&)> keep;
+    // Optional archive-name whitelist (LOWERCASED filenames incl. extension). When
+    // non-empty, ONLY archives whose filename is listed are mounted -- so the retail
+    // root loads exactly the known HPIs and never a stray *.hpi dropped alongside them.
+    std::vector<std::string> archiveNames;
 };
 
 class MountSet {
@@ -212,6 +216,22 @@ uint64_t gameplayHash(const Vfs& vfs);
 // Build the runtime VFS for a retail install root (see the layer diagram above).
 Vfs mountRetailRoot(const std::filesystem::path& root,
                     OverridePolicy overrides = OverridePolicy::Full);
+
+// The canonical root HPI archives of a TA:Kingdoms install (base game + Iron Plague +
+// the official map packs), lowercased. mountRetailRoot mounts ONLY these from the root;
+// any other *.hpi dropped in the root is ignored.
+extern const std::vector<std::string> kRootHpiNames;
+
+// Does `root` look like a usable install? True iff the essential base archives are
+// present + readable and a core gameplay file resolves through the mount. When it
+// returns false and `reason` is non-null, `reason` gets a short human-readable message.
+bool validInstall(const std::filesystem::path& root, std::string* reason = nullptr);
+
+// A cheap authenticity manifest of the canonical root HPIs present in `root`: a hex
+// digest folding each file's name + byte size. It changes if a root archive is added,
+// removed, replaced or resized, so a value saved in config can flag a tampered/moved
+// install on the next launch.
+std::string rootManifest(const std::filesystem::path& root);
 
 // Resolve a map by display name (the .tnt stem, case-insensitive) to its VFS
 // path, searching both map namespaces: Maps/ (maps.hpi & co.) and kmap/ (.kmp

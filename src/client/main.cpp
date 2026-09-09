@@ -35,6 +35,7 @@
 #include "util/png.h"
 #include "version.h"
 #include "client/cursors.h"
+#include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/gpuvram.h"   // central GPU-texture VRAM accountant + hard cap
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
@@ -11390,6 +11391,55 @@ static bool loadReplayFile(const std::string& path, ReplayFile& out) {
     return true;
 }
 
+// Resolve the retail data folder. Priority: an explicit --data (dataRoot already set) >
+// the folder saved in config (re-validated each launch) > a native folder picker. On a
+// successful pick/validate the location + an authenticity manifest are saved to config.
+// `allowPrompt` gates the picker (off for headless runs, which always pass --data).
+// Leaves dataRoot empty if it can't be resolved; the caller then aborts.
+static void resolveDataDir(std::string& dataRoot, tak::Settings& settings, bool allowPrompt) {
+    namespace hpi = tak::hpi;
+    // 1. Explicit --data wins. Honour it even if it doesn't validate (a dev override);
+    //    if it DOES validate, remember it so a later launch needs no --data.
+    if (!dataRoot.empty()) {
+        if (settings.dataDir != dataRoot && hpi::validInstall(dataRoot, nullptr)) {
+            settings.dataDir = dataRoot;
+            settings.dataManifest = hpi::rootManifest(dataRoot);
+            tak::saveSettings(settings);
+        }
+        return;
+    }
+    // 2. The saved folder, if it still holds a valid install.
+    if (!settings.dataDir.empty() && hpi::validInstall(settings.dataDir, nullptr)) {
+        dataRoot = settings.dataDir;
+        std::string m = hpi::rootManifest(dataRoot);   // note if the root archives changed
+        if (m != settings.dataManifest) { settings.dataManifest = m; tak::saveSettings(settings); }
+        return;
+    }
+    // 3. Ask (interactive only). Loop so a wrong pick can be corrected in place.
+    if (!allowPrompt) return;
+    if (!tak::haveDirPicker()) {
+        std::fprintf(stderr, "no folder picker available (install kdialog or zenity) and no "
+                             "--data given -- cannot locate the game data\n");
+        return;
+    }
+    for (int tries = 0; tries < 6; ++tries) {
+        std::string picked = tak::pickDirectory(
+            "Select your Total Annihilation: Kingdoms install folder", settings.dataDir);
+        if (picked.empty()) return;   // cancelled
+        std::string why;
+        if (hpi::validInstall(picked, &why)) {
+            dataRoot = picked;
+            settings.dataDir = picked;
+            settings.dataManifest = hpi::rootManifest(picked);
+            tak::saveSettings(settings);
+            return;
+        }
+        tak::errorBox("Not a game folder",
+                      "That folder isn't a Total Annihilation: Kingdoms install (" + why +
+                      ").\n\nChoose the folder that contains data.hpi, terrain.hpi and Maps/.");
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -11547,8 +11597,7 @@ int main(int argc, char** argv) {
     tak::hpi::OverridePolicy pol = tak::hpi::OverridePolicy::Full;
     if (overridesArg == "none") pol = tak::hpi::OverridePolicy::None;
     else if (overridesArg == "cosmetic") pol = tak::hpi::OverridePolicy::Cosmetic;
-    tak::hpi::Vfs vfs;
-    if (!dataRoot.empty()) vfs = tak::hpi::mountRetailRoot(dataRoot, pol);
+    tak::hpi::Vfs vfs;   // mounted AFTER the data folder is resolved (below, post-settings)
 
     // The engine is client-server only: every real game runs on a server, and AIs
     // run ONLY on the server. Local dev/test harnesses (which free-run the sim with
@@ -11583,6 +11632,18 @@ int main(int argc, char** argv) {
     // would collapse the 5.1 sink's advertised layout to 2 -- and inits the audio subsystem
     // so the saved device actually validates (SDL_Init above is video-only).
     tak::setAudioDevice(settings.audioDevice);
+    // Locate the retail data folder now that SDL (message boxes) and the config are up:
+    // explicit --data, else the saved folder, else a native picker. Headless/harness runs
+    // always pass --data, so they never prompt. Then mount it (must precede menu/game use).
+    if (!dataRoot.empty() || !localHarness) {
+        resolveDataDir(dataRoot, settings, /*allowPrompt=*/mpHeadless == 0);
+        if (dataRoot.empty()) {
+            std::fprintf(stderr, "no Total Annihilation: Kingdoms data folder selected -- exiting\n");
+            SDL_Quit();
+            return 1;
+        }
+        vfs = tak::hpi::mountRetailRoot(dataRoot, pol);
+    }
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
     std::string winTitle = std::string("takclient ") + tak::kVersion;

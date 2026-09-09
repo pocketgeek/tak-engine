@@ -77,6 +77,8 @@ Settings loadSettings() {
         else if (key == "playerName")      s.playerName = val;
         else if (key == "audioDevice")     s.audioDevice = val;
         else if (key == "lastMap")         s.lastMap = val;
+        else if (key == "dataDir")         s.dataDir = val;
+        else if (key == "dataManifest")    s.dataManifest = val;
         else if (key.rfind("chanGain", 0) == 0 && key.size() == 9) {  // chanGain0..7
             int i = key[8] - '0';
             if (i >= 0 && i < 8) s.chanGain[i] = asFloat(0.0f, 1.0f);
@@ -130,6 +132,8 @@ bool saveSettings(const Settings& s) {
     o << "playerName = " << s.playerName << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
     o << "lastMap = " << s.lastMap << "\n";
+    o << "dataDir = " << s.dataDir << "\n";
+    o << "dataManifest = " << s.dataManifest << "\n";
     for (const auto& [id, chord] : s.hotkeys) o << "hotkey." << id << " = " << chord << "\n";
     for (const auto& [id, done] : s.campaignCompleted) {
         if (done.empty()) continue;
