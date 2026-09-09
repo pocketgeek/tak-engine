@@ -1996,7 +1996,7 @@ public:
                 float cx = 0, cz = 0; int n = 0;
                 for (const auto& u : world_.units()) {
                     if (u.player != p || !u.alive() || !isMonarchType(u.type)) continue;
-                    if (!alliedToLocal(p) && !noFog_ && !world_.cellVisible(u.x, u.z)) continue;
+                    if (!alliedToLocal(p) && !noFog_ && !cellVisibleR(u.x, u.z)) continue;
                     cx += u.x; cz += u.z; ++n;
                 }
                 if (n) {
@@ -2017,7 +2017,7 @@ public:
                 float cx = 0, cz = 0; int n = 0;
                 for (const auto& u : world_.units()) {
                     if (u.player != p || !u.alive() || !isMonarchType(u.type)) continue;
-                    if (!alliedToLocal(p) && !noFog_ && !world_.cellVisible(u.x, u.z)) continue;
+                    if (!alliedToLocal(p) && !noFog_ && !cellVisibleR(u.x, u.z)) continue;
                     cx += u.x; cz += u.z; ++n;
                 }
                 if (n) {
@@ -3580,6 +3580,14 @@ public:
             r.team = pl.team; r.defeated = pl.defeated; r.godSummoned = pl.godSummoned;
             r.discoLeft = pl.discoLeft; r.headbangLeft = pl.headbangLeft;
         }
+        frameProjectiles_ = world_.projectiles();   // sim push_back/erase each tick -> must copy
+        // Fog snapshot: copy vis_ only when it actually changed (fog recomputes ~4Hz, so
+        // most ticks skip the copy). A spectator (noFog_) never reads it.
+        if (frameVisGeneration() != frameVisGen_ || frameVis_.size() != frameVisibility().size()) {
+            frameVis_ = frameVisibility();
+            frameVisW_ = frameVisW(); frameVisH_ = frameVisH();
+            frameVisGen_ = frameVisGeneration();
+        }
         interpTickMs_ = SDL_GetTicks64();
         interpTickDurMs_ = (1000.0f / 30.0f) / std::max(0.1f, animSpeed());
     }
@@ -3609,6 +3617,17 @@ public:
         return (p >= 0 && p < int(framePlayers_.size())) ? framePlayers_[size_t(p)] : kEmpty;
     }
     int frameNumPlayers() const { return frameNumPlayers_; }
+    // Fog snapshot accessors (mirror world_.cellVisible/visibility/visW/visGeneration).
+    const std::vector<uint8_t>& frameVisibility() const { return frameVis_; }
+    int frameVisW() const { return frameVisW_; }
+    int frameVisH() const { return frameVisH_; }
+    uint32_t frameVisGeneration() const { return frameVisGen_; }
+    bool cellVisibleR(float x, float z) const {
+        if (frameVis_.empty()) return true;
+        int cx = int(x) / 16, cz = int(z) / 16;
+        if (cx < 0 || cz < 0 || cx >= frameVisW_ || cz >= frameVisH_) return false;
+        return frameVis_[size_t(cz) * frameVisW_ + cx] == 2;
+    }
 
     // The DISPLAY half: impact sounds/effects, particles, animation state and the
     // COB VMs, timers, camera-follow. Runs once per rendered frame with the game
@@ -3648,7 +3667,7 @@ public:
                 if (h.weapon->fireStarter && !world_.isWater(h.x, h.z))
                     spawnEffectAnim("flame", h.x, h.z, 0.0f, 0.0f, 5);   // fire lingers
                 // Camera shake for heavy impacts you can actually see.
-                if (h.weapon->shakeMag > 0 && world_.cellVisible(h.x, h.z))
+                if (h.weapon->shakeMag > 0 && cellVisibleR(h.x, h.z))
                     triggerShake(h.weapon->shakeMag, h.weapon->shakeDur);
             }
             if (h.target && h.target->bodyType == "flesh")
@@ -3936,7 +3955,7 @@ public:
         for (auto& [id, a] : anims_) {
             if (a.pendingSfx.empty() && a.pendingSnd.empty()) continue;
             const auto* u = world_.unit(id);
-            if (u && u->type && (noFog_ || world_.cellVisible(u->x, u->z))) {
+            if (u && u->type && (noFog_ || cellVisibleR(u->x, u->z))) {
                 for (auto& [piece, sfx] : a.pendingSfx) emitSfx(*u, a, piece, sfx);
                 // COB PLAY_SOUND: resolve the name-table index to a wav stem. This is
                 // how retail plays per-unit action sounds -- the Beast Handler's whip
@@ -4059,8 +4078,8 @@ public:
         using Item = PaintItem;
         auto& items = paintItems_;
         items.clear();
-        const auto& vis = world_.visibility();
-        int vw = world_.visW();
+        const auto& vis = frameVisibility();
+        int vw = frameVisW();
         for (const auto& f : features_) {
             if (!world_.featureAliveAt(f.x, f.z)) continue;   // reclaimed away by a builder
             int cx = int(f.x) / 16, cz = int(f.z) / 16;
@@ -4085,7 +4104,7 @@ public:
             // and every render path does unitType_.at(u.id) -- skip it here so none
             // of them throw (a throw in the parallel projection aborts the process).
             if (!unitType_.count(u.id)) continue;
-            if (!noFog_ && !r.alliedToLocal && !world_.cellVisible(r.x, r.z)) continue;
+            if (!noFog_ && !r.alliedToLocal && !cellVisibleR(r.x, r.z)) continue;
             // Frustum cull: only units whose anchor falls in (or just outside) the
             // map viewport are projected and drawn. The margin is generous and
             // asymmetric -- models extend well above their anchor, so a unit above
@@ -4336,8 +4355,8 @@ public:
 
         // Projectiles: drawn per weapon family (only where visible).
         float zm = mapView_.zoom();
-        for (const auto& p : world_.projectiles()) {
-            if (!world_.cellVisible(p.x, p.z)) continue;
+        for (const auto& p : frameProjectiles_) {
+            if (!cellVisibleR(p.x, p.z)) continue;
             float t = std::clamp(p.age / std::max(p.flight, 0.05f), 0.0f, 1.0f);
             // Flyer shots: lift the whole trajectory by the altitude interpolated
             // from the firing unit down to the target (0.8x, matching the sprite
@@ -4536,7 +4555,7 @@ public:
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
-            if (!alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
+            if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
             // Options "HEALTH BARS": 0 = never, 1 = only damaged units (default,
             // the retail behaviour), 2 = every unit, full HP included.
@@ -4589,7 +4608,7 @@ public:
         shadowBatch_.clear();
         for (const auto& u : world_.units()) {
             if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
-            if (!alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
+            if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
             float total = u.buildQueue.front()->buildTime /
                           std::max(u.type->workerTime, 0.01f);
             float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
@@ -7028,6 +7047,10 @@ private:
     std::vector<UnitR> interp_;         // per-unit render snapshot, indexed by unit id (see UnitR)
     std::array<PlayerR, 8> framePlayers_{};   // per-tick player snapshot (see PlayerR)
     int frameNumPlayers_ = 0;
+    std::vector<uint8_t> frameVis_;    // fog snapshot (copy of world_.vis_; re-copied on visGen change)
+    int frameVisW_ = 0, frameVisH_ = 0;
+    uint32_t frameVisGen_ = 0;
+    std::vector<tak::sim::Projectile> frameProjectiles_;   // per-tick projectile snapshot
     uint64_t interpTickMs_ = 0;         // wall-clock ms of the last captured tick
     float interpTickDurMs_ = 1000.0f / 30.0f;   // nominal tick interval (speed-scaled)
     float interpAlpha_ = 0.0f;          // 0..1 through the current tick interval (per frame)
@@ -7184,7 +7207,7 @@ private:
             if (!u.alive() || u.embarked() || !u.type) continue;
             // A spectator (noFog_) sees every unit on the radar; a player sees only
             // allied units and enemies currently in view.
-            if (!noFog_ && !alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z)) continue;
+            if (!noFog_ && !alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
             SDL_FPoint p = toMini(u.x, u.z);
             SDL_Color tc = playerColor(u.player);
             pushQuad(shadowBatch_, p.x - 1.5f, p.y - 1.5f, 3, 3, tc);
@@ -9734,7 +9757,7 @@ private:
         char buf[64];
         for (const auto& u : world_.units()) {
             if (!u.alive() || !u.type) continue;
-            if (!alliedToLocal(u.player) && !world_.cellVisible(u.x, u.z) && !noFog_) continue;
+            if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z) && !noFog_) continue;
             float sx = (u.x - mapView_.offX()) * zm;
             float rawY = (u.z - mapView_.offY()) * zm;
             float lift = terrainLift(u.x, u.z);
@@ -10112,9 +10135,9 @@ private:
 
     void drawFog() {
         if (noFog_) return;
-        const auto& vis = world_.visibility();
+        const auto& vis = frameVisibility();
         if (vis.empty()) return;
-        int w = world_.visW(), h = world_.visH();
+        int w = frameVisW(), h = frameVisH();
         if (!fogTex_) {
             fogTex_ = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                         SDL_TEXTUREACCESS_STREAMING, w, h);
@@ -10124,8 +10147,8 @@ private:
         // The fog CONTENT only changes when the sim recomputes visibility (4Hz);
         // frames render far more often (up to 240Hz), so rewrite + re-upload the
         // streaming texture only when the vis generation actually advanced.
-        if (fogTexGen_ != world_.visGeneration()) {
-            fogTexGen_ = world_.visGeneration();
+        if (fogTexGen_ != frameVisGeneration()) {
+            fogTexGen_ = frameVisGeneration();
             void* px = nullptr;
             int pitch = 0;
             if (SDL_LockTexture(fogTex_, nullptr, &px, &pitch) == 0) {
@@ -10484,7 +10507,7 @@ private:
         for (const auto& r : rings_) {
             float local = r.age - r.delay;
             if (local < 0 || !r.anim || r.anim->frames.empty()) continue;
-            if (!world_.cellVisible(r.x, r.z)) continue;
+            if (!cellVisibleR(r.x, r.z)) continue;
             float t = std::clamp(local / std::max(r.dur, 1e-3f), 0.0f, 1.0f);
             float radius = r.maxR * t;
             int nf = int(r.anim->frames.size());
@@ -10507,7 +10530,7 @@ private:
             if (!e.anim || e.anim->frames.empty()) continue;
             float local = e.age - e.delay;
             if (local < 0) continue;                // still waiting to start
-            if (!world_.cellVisible(e.x, e.z)) continue;
+            if (!cellVisibleR(e.x, e.z)) continue;
             float per = effLoopLen(e);
             float within = local - std::floor(local / per) * per;   // into this loop
             int nf = int(e.anim->frames.size());
@@ -10533,7 +10556,7 @@ private:
             if (!fire && !smk) continue;
             const auto* u = world_.unit(id);
             if (!u || !u->type) continue;
-            if (!noFog_ && !world_.cellVisible(u->x, u->z)) continue;
+            if (!noFog_ && !cellVisibleR(u->x, u->z)) continue;
             auto draw = [&](const EffectAnim* ea, float lift, float fps) {
                 int nf = int(ea->frames.size());
                 int fi = int(animClock_ * fps + float(id) * 0.37f) % nf;
@@ -10620,7 +10643,7 @@ private:
             float sy = (p.z - mapView_.offY()) * zm - p.alt * zm;
             if (sx < -40 || sx > float(winW_) + 40 || sy < -80 || sy > float(winH_) + 40)
                 continue;   // cheap screen cull before the fog + lift lookups
-            if (!world_.cellVisible(p.x, p.z)) continue;
+            if (!cellVisibleR(p.x, p.z)) continue;
             float t = std::clamp(p.life / std::max(p.maxLife, 1e-3f), 0.0f, 1.0f);
             sx -= terrainLiftX(p.x, p.z) * zm;
             sy -= terrainLift(p.x, p.z) * zm;
