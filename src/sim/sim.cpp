@@ -1262,6 +1262,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     // Damage + status one victim, honouring veterancy, auras and immunities.
     auto hurt = [&](Unit& e, float scale) {
         if (e.stonedFor > 0) return;   // petrified units are impervious
+        if (benchmarkMode() && e.type && e.type->commander) return;   // benchmark: Monarchs are invincible
         // base × attacker-attack (↑) ÷ victim-armour (↓); armour = veterancy × aura.
         float armour = std::max(e.vetMul() * e.armBuff, 0.01f);
         float dealt = w.damageVs(e.type) * atkMul / armour * scale;
@@ -2388,7 +2389,7 @@ void World::tick(float dt) {
                 // Apply the impact: direct hit + area splash (per the weapon's
                 // FBI areaofeffect), using the grid from the previous rebuild.
                 if (p.wsrc) applyHit(*p.wsrc, t->x, t->z, p.fromPlayer, p.fromId, t);
-                else t->hp -= p.damage;
+                else if (!(benchmarkMode() && t->type && t->type->commander)) t->hp -= p.damage;
                 p.life = -1;
             }
         }
