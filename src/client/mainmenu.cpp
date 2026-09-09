@@ -124,9 +124,13 @@ struct MainMenu::Impl {
     SDL_AudioDeviceID sfxDev_ = 0;
     std::unordered_map<std::string, std::vector<uint8_t>> sfxPcm_;
 
-    // The Options overlay, opened from the Options button (see run()).
+    // The Options overlay, opened from the SETTINGS menu (see run()).
     std::unique_ptr<OptionsScreen> options_;
-    std::unique_ptr<HotkeysScreen> hotkeys_;   // opened from Options -> CONTROLS
+    std::unique_ptr<HotkeysScreen> hotkeys_;   // opened from the SETTINGS menu -> CONTROLS
+    // The SETTINGS menu overlay -- the lower-right menu button opens THIS (OPTIONS / CONTROLS)
+    // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
+    bool settingsMenu_ = false;
+    SDL_FRect setBtnRect_[2]{};        // [0]=OPTIONS, [1]=CONTROLS hit-rects (set each render)
 
     // The campaign / mission picker, opened from the PlayStory door (see run()). When
     // the player picks a mission it closes and chosenMission_ names the bundle stem.
@@ -376,6 +380,7 @@ struct MainMenu::Impl {
             bt.sound = clickSound(*g);
             bt.tip = g->cmd;   // gui cmd doubles as the hover help caption
             if (b.act == Choice::Exit) bt.tip = "Exit";   // retail's cmd is "Exit to Windows"
+            if (b.act == Choice::Options) bt.tip = "Settings";   // opens the SETTINGS menu now
             loadSfx(bt.sound);
             for (int i = 0; i < 3 && i < int(g->imgs.size()); ++i)
                 bt.tex[i] = gafTex(g->imgs[size_t(i)].gaf, g->imgs[size_t(i)].seq, g->imgs[size_t(i)].frame);
@@ -518,6 +523,42 @@ struct MainMenu::Impl {
         blockText("ENTER - CONNECT     ESC - BACK", x0 + 30, y0 + 156, 2.0f, {150, 155, 175, 255});
     }
 
+    // The SETTINGS menu overlay: OPTIONS / CONTROLS, styled like the in-game GAME MENU.
+    // Records the two hit-rects in setBtnRect_ for the click handler in run().
+    void renderSettingsMenu(int winW, int winH) {
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        SDL_FRect dim{0, 0, float(winW), float(winH)};
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
+        SDL_RenderFillRectF(ren, &dim);
+        const float bw = 320, bh = 54, gap = 16, pad = 34, titlePx = 3.2f;
+        const float titleH = 7 * titlePx + 22;
+        const float pw = bw + pad * 2;
+        const float ph = pad * 2 + titleH + 2 * bh + gap + 28;
+        const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
+        SDL_FRect panel{px0, py0, pw, ph};
+        SDL_SetRenderDrawColor(ren, 26, 28, 36, 240); SDL_RenderFillRectF(ren, &panel);
+        SDL_SetRenderDrawColor(ren, 120, 130, 160, 255); SDL_RenderDrawRectF(ren, &panel);
+        // blockText advances 6*px per glyph (5 + 1 gap); estimate width for centring.
+        auto tw = [](const std::string& s, float px) { return s.empty() ? 0.0f : (s.size() * 6.0f - 1.0f) * px; };
+        shadowText("SETTINGS", px0 + (pw - tw("SETTINGS", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
+        int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
+        const char* labels[2] = {"OPTIONS", "CONTROLS"};
+        float by = py0 + pad + titleH;
+        for (int i = 0; i < 2; ++i) {
+            SDL_FRect r{px0 + pad, by, bw, bh};
+            setBtnRect_[i] = r;
+            bool hot = mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+            SDL_SetRenderDrawColor(ren, hot ? 90 : 60, hot ? 110 : 66, hot ? 150 : 86, 255);
+            SDL_RenderFillRectF(ren, &r);
+            SDL_SetRenderDrawColor(ren, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
+            SDL_RenderDrawRectF(ren, &r);
+            float lpx = 2.5f, lw = tw(labels[i], lpx);
+            blockText(labels[i], r.x + (bw - lw) / 2, r.y + (bh - 7 * lpx) / 2, lpx, {228, 232, 242, 255});
+            by += bh + gap;
+        }
+        shadowText("ESC - BACK", px0 + pad, by + 2, 1.8f, {150, 155, 175, 255});
+    }
+
     void screenshot(int winW, int winH, const std::string& path) {
         std::vector<uint8_t> px(size_t(winW) * size_t(winH) * 4);
         if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), winW * 4) == 0)
@@ -626,6 +667,31 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 if (d_->options_->input(e, w, h)) d_->options_.reset();   // BACK / Esc (SAVE is explicit)
                 continue;
             }
+            if (d_->settingsMenu_) {   // the SETTINGS menu (OPTIONS / CONTROLS) is up
+                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) { d_->settingsMenu_ = false; }
+                else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                    float fx = float(e.button.x), fy = float(e.button.y);
+                    auto hit = [&](const SDL_FRect& r) { return fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h; };
+                    SDL_Renderer* ren = d_->ren;
+                    if (hit(d_->setBtnRect_[0])) {          // OPTIONS -> the audio/display screen
+                        d_->settingsMenu_ = false;
+                        d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
+                            [ren, music, settings] {
+                                if (music) music->setVolume(settings->masterVol, settings->bgmVol);
+                                if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
+                                    SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                                SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
+                            },
+                            [settings] { saveSettings(*settings); }, 0, [] {},
+                            [music] { if (music) music->reopen(); });   // live output-device switch
+                    } else if (hit(d_->setBtnRect_[1])) {   // CONTROLS -> hotkey rebinding
+                        d_->settingsMenu_ = false;
+                        d_->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
+                            [] {}, [settings] { saveSettings(*settings); });
+                    }
+                }
+                continue;
+            }
 
             if (d_->campaign_) {   // campaign picker is up: route everything to it
                 if (d_->campaign_->input(e, w, h)) {
@@ -657,24 +723,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 }
                 if (c == Choice::Multiplayer) { d_->serverSelect = true; SDL_StartTextInput(); }
                 else if (c == Choice::Options && settings) {
-                    // Open the Options overlay in place (rather than exiting). onChange
-                    // applies audio + window live; SAVE persists (BACK does not).
-                    SDL_Renderer* ren = d_->ren;
-                    Impl* dd = d_;
-                    d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
-                        [ren, music, settings] {
-                            if (music) music->setVolume(settings->masterVol, settings->bgmVol);
-                            if (SDL_Window* wnd = SDL_RenderGetWindow(ren))
-                                SDL_SetWindowFullscreen(wnd, settings->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-                            SDL_RenderSetVSync(ren, settings->vsync ? 1 : 0);
-                        },
-                        [settings] { saveSettings(*settings); },
-                        0,
-                        [dd, ren, settings] {   // CONTROLS -> hotkey config overlay
-                            dd->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
-                                [] {}, [settings] { saveSettings(*settings); });
-                        },
-                        [music] { if (music) music->reopen(); });   // live output-device switch
+                    // The lower-right menu button opens the SETTINGS menu (OPTIONS / CONTROLS),
+                    // NOT the Options screen directly -- see the settingsMenu_ router above.
+                    d_->settingsMenu_ = true;
                 }
                 else if (c == Choice::Campaign && settings) {
                     // Open the campaign / mission picker in place; a picked mission
@@ -695,6 +746,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (music) music->poll();
         d_->render(w, h);
         if (d_->serverSelect) d_->renderServerSelect(w, h);
+        if (d_->settingsMenu_) d_->renderSettingsMenu(w, h);
         if (d_->options_) d_->options_->render(w, h);
         if (d_->hotkeys_) d_->hotkeys_->render(w, h);   // above Options
         if (d_->campaign_) d_->campaign_->render(w, h);

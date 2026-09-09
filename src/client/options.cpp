@@ -172,9 +172,8 @@ void OptionsScreen::build(int channels) {
     auto toggle = [&](const char* label, std::function<float()> get, std::function<void(float)> set) {
         ctls_.push_back({Control::Toggle, label, 0, 1, std::move(get), std::move(set), {}, {}, {}});
     };
-    auto button = [&](const char* label, std::function<void()> action) {
-        ctls_.push_back({Control::Button, label, 0, 1, {}, {}, {}, std::move(action), {}});
-    };
+    // (The Options screen no longer hosts a button row -- hotkey config moved to the
+    // SETTINGS menu; Control::Button still exists for future use, just unused here.)
     // A dropdown: `options()` lists the display choices, get() is the selected index,
     // set(index) applies the choice. Rendered closed as a chip + arrow; clicking opens
     // a pop-up list.
@@ -282,11 +281,9 @@ void OptionsScreen::build(int channels) {
     toggle("SMOOTH MOTION", [&] { return s_.smoothMotion ? 1.0f : 0.0f; },
            [&](float v) { s_.smoothMotion = v > 0.5f; });
 
-    // CONTROLS: opens the separate hotkey-rebinding screen (host-owned).
-    if (onHotkeys_) {
-        section("CONTROLS");
-        button("CONFIGURE HOTKEYS", [this] { if (onHotkeys_) onHotkeys_(); });
-    }
+    // (Hotkey rebinding moved OUT of Options: it's now a CONTROLS entry in the settings
+    // menu -- the in-game Esc menu and the title screen's menu button. See mainmenu.cpp
+    // and the in-game GAME MENU. onHotkeys_ is retained for compatibility but unused here.)
     // SAVE / BACK are drawn as a fixed footer (see layout()/render()), not list rows.
 }
 

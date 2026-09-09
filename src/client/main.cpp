@@ -5045,7 +5045,7 @@ public:
             SDL_RenderFillRectF(ren_, &dim);
 
             const float bw = 280, bh = 50, gap = 14, pad = 32, titlePx = 3.0f;
-            const int nBtn = canReturnToMenu_ ? 4 : 3;
+            const int nBtn = canReturnToMenu_ ? 5 : 4;
             const float titleH = 7 * titlePx + 24;
             const float pw = bw + pad * 2;
             const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap;
@@ -5078,6 +5078,7 @@ public:
             };
             btn("RESUME", [this] { exitMenu_ = false; });
             btn("OPTIONS", [this] { exitMenu_ = false; openOptions(); });
+            btn("CONTROLS", [this] { exitMenu_ = false; openHotkeys(); });   // hotkey rebinding
             if (canReturnToMenu_) btn("MAIN MENU", [this] { menuRequested_ = true; });
             btn("QUIT", [this] { quitRequested_ = true; });
         }
