@@ -19,7 +19,7 @@ struct Settings;
 
 class MainMenu {
 public:
-    enum class Choice { None, SinglePlayer, Campaign, Multiplayer, Options, Exit };
+    enum class Choice { None, SinglePlayer, Campaign, Multiplayer, Options, Benchmark, Exit };
 
     // ren: the app renderer. vfs: the mounted retail root (for guis/anims). install:
     // the retail install dir on disk (the door .bik videos are loose files under

@@ -309,7 +309,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     int spot = 0;
     // Benchmark: per-faction staged spawn plan (deltas summing to 4999, + the monarch =
     // 5000 each) fired at 5s intervals. Built per faction in the loop below, deterministic.
-    static const int kBenchDeltas[7] = {249, 250, 500, 1000, 1000, 1000, 1000};
+    static const int kBenchDeltas[7] = {225, 250, 500, 1000, 1000, 1000, 1000};   // sum = 4975
     static const uint32_t kBenchTicks[7] = {150, 300, 450, 600, 750, 900, 1050};   // 5s..35s @30Hz
     std::vector<BenchStage> benchPlan;
     if (cfg.benchmark) { benchPlan.resize(7); for (int s = 0; s < 7; ++s) benchPlan[s].tick = kBenchTicks[s]; }
@@ -327,7 +327,10 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         // Deterministic: fixed roster (name-sorted), round-robin, grid placement --
         // every peer builds the identical army, so lockstep holds.
         if (cfg.stressTest && monarch) {
-            auto roster = reg.combatUnits(monarch->side);
+            // Land+air combat units only (exclude Water-domain so no boats spawn on land).
+            std::vector<const UnitType*> roster;
+            for (const UnitType* t : reg.combatUnits(monarch->side))
+                if (t->domain != UnitType::Domain::Water) roster.push_back(t);
             int cap = cfg.unitCap > 0 ? cfg.unitCap : 1000;   // unlimited -> a sane default
             int target = (cap * 95) / 100;
             if (!roster.empty() && target > 0) {
@@ -357,7 +360,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             for (const UnitType* t : reg.combatUnits(monarch->side))
                 if (t->domain != UnitType::Domain::Water) roster.push_back(t);
             if (!roster.empty()) {
-                int cols = 1; while (cols * cols < 4999) ++cols;   // ceil(sqrt(4999)) = 71
+                int cols = 1; while (cols * cols < 4975) ++cols;   // ceil(sqrt(4975)) = 71
                 const float spacing = 24.0f;
                 float x0 = mx - float(cols) * spacing * 0.5f;   // centre the block on the start
                 float z0 = mz - float(cols) * spacing * 0.5f;

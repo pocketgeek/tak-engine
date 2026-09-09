@@ -2647,6 +2647,10 @@ public:
     // Run the sim on its own worker thread (Stage B1c). On by default for interactive
     // games; the headless harness disables it (inline == deterministic) unless verifying.
     void setSimThreadMode(bool on) { simThreadMode_ = on; }
+    // Benchmark run: an all-AI watch game on Ulasem Arena with the staged benchmark spawn
+    // plan (see MatchConfig::benchmark). Drives the createGame/seat path in mpAutoStep.
+    void setBenchmark(bool b) { benchmarkMode_ = b; }
+    bool benchmarkMode() const { return benchmarkMode_; }
     // Flush + join the sim worker (drains any pending simInbox_ ticks first). For the headless
     // harness to call before reading the final world hash, so it reflects every processed tick.
     void shutdownSim() { stopSimThread(); }
@@ -3057,20 +3061,26 @@ public:
             // tests -- re-cadences the server without touching the (deterministic) sim.
             if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, 40));
             if (tak::devEnv("TAK_STRESS")) o.stressTest = 1;   // headless: spawn ~95% cap per AI
-            if (tak::devEnv("TAK_BENCH")) o.benchmark = 1;     // headless: staged benchmark spawns
+            if (tak::devEnv("TAK_BENCH")) benchmarkMode_ = true;   // headless: full benchmark run
+                                                                   // (forces watch + 8 AI + cap 8 + Ulasem below)
             if (const char* uc = tak::devEnv("TAK_UNITCAP")) o.unitCap = uint16_t(std::atoi(uc));
             // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
             // slot can be an AI -- an all-AI game to watch.
-            bool watch = autoMode == 1 && tak::devEnv("TAK_MP_WATCH");
+            if (benchmarkMode_) o.benchmark = 1;   // menu Benchmark: staged spawn plan
+            // Benchmark is an all-AI WATCH run (host takes no slot) on Ulasem Arena, forced
+            // to 8 slots regardless of the map's start-position count (setupMatch synthesises
+            // the extra starts), private (not in the browser).
+            bool watch = (autoMode == 1 && tak::devEnv("TAK_MP_WATCH")) || benchmarkMode_;
             // Mode 7 is interactive SINGLE-PLAYER: a private game (hidden from the
             // browser) with one server-run AI opponent.
             // Mode 8 is a single-player CAMPAIGN mission: a private game whose world is
             // built from the mission bundle (server + every peer run setupMission).
-            bool priv = autoMode == 7 || autoMode == 8;
+            bool priv = autoMode == 7 || autoMode == 8 || benchmarkMode_;
             std::string mission = autoMode == 8 ? missionStem_ : std::string();
-            uint8_t cap = autoMode == 8 ? tak::net::kMaxSlots : mpCapacity();
-            mp_->createGame(priv ? "Single Player" : "headless", "", mapId, o,
-                            cap, watch, priv, mission);
+            uint8_t cap = (autoMode == 8 || benchmarkMode_) ? tak::net::kMaxSlots : mpCapacity();
+            std::string createMap = benchmarkMode_ ? std::string("Ulasem") : mapId;
+            mp_->createGame(benchmarkMode_ ? "Benchmark" : (priv ? "Single Player" : "headless"),
+                            "", createMap, o, cap, watch, priv, mission);
         } else if (st == S::Lobby && autoMode == 5) {
             // Rejoin: read the resume ticket the original session saved and
             // reconnect to the held slot.
@@ -3095,9 +3105,14 @@ public:
             const auto& r = mp_->room();
             // Host-spectator (TAK_MP_WATCH): seat AIs in the LOW slots (0..N-1) and
             // don't seat self -- an all-AI game the host just watches.
-            if (autoMode == 1 && r.mySlot < 0 && tak::devEnv("TAK_MP_WATCH")) {
+            if (r.mySlot < 0 && (benchmarkMode_ || (autoMode == 1 && tak::devEnv("TAK_MP_WATCH")))) {
                 const char* ai = tak::devEnv("TAK_MP_AIS");
-                int nAi = std::clamp(ai ? std::atoi(ai) : 2, 2, int(tak::net::kMaxSlots));
+                // Benchmark: always a full 8-faction FFA (each AI its own team -> they fight,
+                // which is the point of the load test). FIXED factions by slot (k%5):
+                // AI1 Aramon, AI2 Taros, AI3 Veruna, AI4 Zhon, AI5 Creon, AI6 Aramon,
+                // AI7 Taros, AI8 Veruna -- never random.
+                int nAi = benchmarkMode_ ? int(tak::net::kMaxSlots)
+                                         : std::clamp(ai ? std::atoi(ai) : 2, 2, int(tak::net::kMaxSlots));
                 for (int k = 0; k < nAi; ++k)
                     mp_->setSlot(k, 2, uint8_t(k % 5), uint8_t(k), uint8_t(k), 1, aiLevelEnv());
                 mpReadied_ = true;
@@ -7225,6 +7240,7 @@ private:
     bool wantSimThread_ = false;        // decided once per game (see mpStep)
     bool simThreadDecided_ = false;
     bool simThreadMode_ = true;         // interactive default ON; the headless harness opts out
+    bool benchmarkMode_ = false;        // menu Benchmark: all-AI watch run + staged spawn plan
     // The worker: pop bundles FIFO, simulate under simMutex_, hand back the state hash.
     void simWorkerLoop() {
         for (;;) {
@@ -11335,6 +11351,7 @@ int main(int argc, char** argv) {
     // 8 = auto campaign mission (create the mission room, seat, start, then play).
     int mpAutoMode = 0;
     bool menuInteractive = false;   // menu single-player -> interactive lobby, not auto-play
+    bool benchmarkLaunch = false;   // menu Benchmark -> auto-host an all-AI watch perf run
     std::string campaignStem;       // menu campaign pick -> host this mission (autoMode 8)
     std::string campaignId;         // ...its campaign id (for progress persistence)
     // Next/Retry chosen on the previous mission's result screen: re-enter directly.
@@ -11372,9 +11389,11 @@ int main(int argc, char** argv) {
         if (!shot.empty()) { SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
         if (choice != tak::MainMenu::Choice::SinglePlayer &&
             choice != tak::MainMenu::Choice::Multiplayer &&
+            choice != tak::MainMenu::Choice::Benchmark &&
             !(choice == tak::MainMenu::Choice::Campaign && !campaignStem.empty())) {
             quitApp = true; break;   // exit / options (or campaign with no pick) -> leave the app
         }
+        benchmarkLaunch = (choice == tak::MainMenu::Choice::Benchmark);
         mode = "game";
         if (args.empty()) args.push_back("athri cay");   // TODO: map picker (SP battle menu)
         if (choice == tak::MainMenu::Choice::Multiplayer) {
@@ -11386,9 +11405,11 @@ int main(int argc, char** argv) {
                 sv = sv.substr(0, colon);
             }
             serverHost = sv.empty() ? std::string("127.0.0.1") : sv;
-        } else {
+        } else if (!benchmarkLaunch) {
             menuInteractive = true;   // single-player: local server, but stop in the lobby
         }
+        // Benchmark: like single-player (local server) but auto-hosts an all-AI watch run
+        // -- no interactive lobby, and mpAutoMode is forced to 1 below.
     }
 
     // Campaign mission: play the intro movie, then the briefing, before spinning up
@@ -11428,7 +11449,8 @@ int main(int argc, char** argv) {
         serverHost = "127.0.0.1"; serverPort = p;
         // Campaign mission -> auto-host it (mode 8); menu skirmish stops in the lobby
         // (mode 0); CLI single-player auto-plays vs an AI (mode 7).
-        mpAutoMode = !campaignStem.empty() ? 8 : (menuInteractive ? 0 : 7);
+        mpAutoMode = benchmarkLaunch ? 1
+                   : !campaignStem.empty() ? 8 : (menuInteractive ? 0 : 7);
         std::fprintf(stderr, "single-player: local server on port %d%s\n", p,
                      !campaignStem.empty() ? " (campaign)" : menuInteractive ? " (lobby)" : "");
     }
@@ -11516,6 +11538,7 @@ int main(int argc, char** argv) {
                 if (!campaignStem.empty())
                     gameView->setMissionStem(campaignStem);         // autoMode 8 hosts this mission
                 else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
+                else if (benchmarkLaunch) gameView->setBenchmark(true); // menu Benchmark: all-AI watch run
                 if (const char* rp = tak::devEnv("TAK_RESUME")) gameView->setResumePath(rp);
             }
             // Never let the window shrink below what the widest build-icon row

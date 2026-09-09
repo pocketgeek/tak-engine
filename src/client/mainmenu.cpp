@@ -130,7 +130,7 @@ struct MainMenu::Impl {
     // The SETTINGS menu overlay -- the lower-right menu button opens THIS (OPTIONS / CONTROLS)
     // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
     bool settingsMenu_ = false;
-    SDL_FRect setBtnRect_[2]{};        // [0]=OPTIONS, [1]=CONTROLS hit-rects (set each render)
+    SDL_FRect setBtnRect_[3]{};        // [0]=OPTIONS, [1]=CONTROLS, [2]=BENCHMARK (set each render)
 
     // The campaign / mission picker, opened from the PlayStory door (see run()). When
     // the player picks a mission it closes and chosenMission_ names the bundle stem.
@@ -530,10 +530,11 @@ struct MainMenu::Impl {
         SDL_FRect dim{0, 0, float(winW), float(winH)};
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
         SDL_RenderFillRectF(ren, &dim);
+        const int nBtn = 3;
         const float bw = 320, bh = 54, gap = 16, pad = 34, titlePx = 3.2f;
         const float titleH = 7 * titlePx + 22;
         const float pw = bw + pad * 2;
-        const float ph = pad * 2 + titleH + 2 * bh + gap + 28;
+        const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 28;
         const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
         SDL_FRect panel{px0, py0, pw, ph};
         SDL_SetRenderDrawColor(ren, 26, 28, 36, 240); SDL_RenderFillRectF(ren, &panel);
@@ -542,9 +543,9 @@ struct MainMenu::Impl {
         auto tw = [](const std::string& s, float px) { return s.empty() ? 0.0f : (s.size() * 6.0f - 1.0f) * px; };
         shadowText("SETTINGS", px0 + (pw - tw("SETTINGS", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
-        const char* labels[2] = {"OPTIONS", "CONTROLS"};
+        const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "BENCHMARK"};
         float by = py0 + pad + titleH;
-        for (int i = 0; i < 2; ++i) {
+        for (int i = 0; i < nBtn; ++i) {
             SDL_FRect r{px0 + pad, by, bw, bh};
             setBtnRect_[i] = r;
             bool hot = mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
@@ -688,6 +689,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         d_->settingsMenu_ = false;
                         d_->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
                             [] {}, [settings] { saveSettings(*settings); });
+                    } else if (hit(d_->setBtnRect_[2])) {   // BENCHMARK -> launch the perf run
+                        d_->settingsMenu_ = false;
+                        d_->flushSfx(w, h);
+                        return Choice::Benchmark;
                     }
                 }
                 continue;
