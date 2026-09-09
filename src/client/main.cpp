@@ -3554,8 +3554,16 @@ public:
     // prev <- last tick's curr, curr <- now; a large jump (teleport / id reuse / respawn)
     // reseeds so we don't zip across the map. Client-only, viewer-only -- never hashed.
     void captureFrame() {
-        Frame& fb = back();             // we write the back buffer, then publish it
-        const Frame& pf = front();      // the previously-published frame (last tick's poses)
+        // Pick a spare buffer to write: never the published one (the render may pin it on
+        // its next beginFrame) and never the one the render is currently pinned on. With
+        // three buffers there is always exactly one such spare.
+        int w;
+        {
+            std::lock_guard<std::mutex> lk(frameMutex_);
+            for (w = 0; w < 3; ++w) if (w != published_ && w != reading_) break;
+        }
+        Frame& fb = frameBuf_[w];                // write buffer
+        const Frame& pf = frameBuf_[published_]; // previously-published frame (last tick's poses)
         fb.gen = ++captureCounter_;     // records written this pass get gen==fb.gen (=> live this tick)
         fb.live.clear();
         size_t need = world_.units().size() + 1;
@@ -3622,7 +3630,11 @@ public:
         }
         fb.tickMs = SDL_GetTicks64();
         fb.tickDurMs = (1000.0f / 30.0f) / std::max(0.1f, animSpeed());
-        publishFrame();   // atomic-swap point: render now reads this buffer as front()
+        // Publish: the render's next beginFrame() will pin this buffer as front().
+        {
+            std::lock_guard<std::mutex> lk(frameMutex_);
+            published_ = w;
+        }
     }
 
     // Interpolated render pose for a unit: glides x/z (and shortest-path heading) between
@@ -7094,16 +7106,35 @@ private:
     bool hwCursorFailed_ = false;       // hardware cursor rejected once -> stay on software
 
     // Render-side motion interpolation: glide units between 30Hz sim ticks (see
-    // captureInterp / interpPose). Viewer-only, never hashed.
-    // Double-buffered render snapshot: the render reads front(), captureFrame writes back()
-    // and publishes with a swap. Single-threaded for now; Stage B threads the writer, at
-    // which point the swap is the only sync point between the sim and render threads.
-    Frame frameBuf_[2];
-    int frontIdx_ = 0;
+    // captureFrame / interpPose). Viewer-only, never hashed.
+    // TRIPLE-buffered render snapshot for the sim/render decouple. The writer (the sim
+    // worker in threaded mode, or captureFrame inline) fills a spare buffer and publishes
+    // it (published_); the render pins the newest published buffer for a whole frame
+    // (beginFrame -> reading_) so a concurrent publish never tears its reads. The writer
+    // always picks the third buffer -- never published_, never reading_ -- so with three
+    // buffers there is always a free one even if a render frame spans two ticks. Two
+    // buffers would tear in exactly that case. front() returns the render's pinned buffer.
+    Frame frameBuf_[3];
+    std::mutex frameMutex_;             // guards published_/reading_ (brief index swaps only)
+    int published_ = 0;                 // newest fully-written buffer (writer sets under lock)
+    int reading_ = -1;                  // buffer the render pinned this frame, or -1
+    int renderReadIdx_ = 0;             // render-thread's pinned buffer (mirrors reading_)
     uint32_t captureCounter_ = 0;       // monotonic; each Frame.gen gets a unique value
-    const Frame& front() const { return frameBuf_[frontIdx_]; }
-    Frame& back() { return frameBuf_[frontIdx_ ^ 1]; }
-    void publishFrame() { frontIdx_ ^= 1; }
+    const Frame& front() const { return frameBuf_[renderReadIdx_]; }
+public:
+    // Render thread: pin the newest published buffer for this frame's reads, then release.
+    // Call beginFrame() before any front() read and endFrame() once all are done. Public
+    // because the top-level render loop drives them around the whole per-frame gameView pass.
+    void beginFrame() {
+        std::lock_guard<std::mutex> lk(frameMutex_);
+        renderReadIdx_ = published_;
+        reading_ = published_;
+    }
+    void endFrame() {
+        std::lock_guard<std::mutex> lk(frameMutex_);
+        reading_ = -1;
+    }
+private:
     float interpAlpha_ = 0.0f;          // 0..1 through the current tick interval (per render frame)
     // Fight-move ('f') reuses the Attack glyph tinted this red-orange, so it reads apart
     // from a real attack order -- for both the order-column button and the mouse cursor.
@@ -11531,6 +11562,10 @@ int main(int argc, char** argv) {
         if (modelView) modelView->draw(w, h, dt);
         double t1 = prof ? pnow() : 0;
         if (gameView) {
+            // Pin the newest published sim snapshot for this whole frame's reads, so a
+            // concurrent publish from the sim worker (Stage B) can't tear them. Released
+            // by endFrame() below once every front()-reading pass is done.
+            gameView->beginFrame();
             // Real-time camera/audio every frame, BEFORE the sim step -- so pan,
             // edge-scroll, follow, shake and music stay smooth even when a net
             // game's sim is stalled waiting on a bundle (the deferred netAccum-style
@@ -11581,6 +11616,7 @@ int main(int argc, char** argv) {
         // the AA-resolved scene) at native resolution. Only in-game; the asset viewers
         // keep the OS arrow.
         if (gameView) gameView->drawCursorOverlay();
+        if (gameView) gameView->endFrame();   // release the pinned sim snapshot for this frame
         SDL_RenderPresent(ren);
         if (prof) {
             double t5 = pnow();
