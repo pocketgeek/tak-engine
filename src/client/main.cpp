@@ -1529,6 +1529,9 @@ struct UnitR {
     std::vector<int> reclaimQueue;   // builder's queued area-reclaim feature ids
     const tak::sim::UnitType* repeatType = nullptr;
     bool moving_ = false, walking_ = false;   // cached u.moving()/u.walking()
+    float speed = 0;                           // px/s (diagnostic use)
+    bool justFired = false;                    // one-tick: fired a weapon this tick
+    int justBuilt = 0;                         // one-tick: unit id produced this tick, else 0
     bool disco = false, headbang = false;      // cached world_.disco/headbangActive(player)
     bool alliedToLocal = false;                // cached alliedToLocal(player)
     bool alive() const { return deadFor < 0; }
@@ -3509,6 +3512,18 @@ public:
                     building_.erase(u.id);
                     missionVm_->start("UnitCreated", {u.id, 0});
                 }
+                if (u.alive()) missionAliveP0_.insert(u.id);
+            }
+            // Death edge: a tracked player-0 unit that is now dead (or removed) fires the
+            // mission "UnitDestroyed" hook. Done here on the SIM thread (deterministic, all
+            // peers agree) instead of render-side in cosmeticStep, where it raced the sim
+            // thread under Stage B and diverged from the referee.
+            for (auto it = missionAliveP0_.begin(); it != missionAliveP0_.end();) {
+                const auto* mu = world_.unit(*it);
+                if (!mu || !mu->alive()) {
+                    missionVm_->start("UnitDestroyed", {*it});
+                    it = missionAliveP0_.erase(it);
+                } else ++it;
             }
         }
         if (amphib_) {
@@ -3599,6 +3614,7 @@ public:
             s.buildQueue = u.buildQueue; s.orders = u.orders; s.buildOrders = u.buildOrders;
             s.cargo = u.cargo; s.reclaimQueue = u.reclaimQueue; s.repeatType = u.repeatType;
             s.moving_ = u.moving(); s.walking_ = u.walking();
+            s.speed = u.speed; s.justFired = u.justFired; s.justBuilt = u.justBuilt;
             s.disco = world_.discoActive(u.player);
             s.headbang = world_.headbangActive(u.player);
             s.alliedToLocal = alliedToLocal(u.player);
@@ -3718,9 +3734,15 @@ public:
     // time actually covered -- during a rejoin/spectate catch-up this used to run
     // its full body up to 512x per frame (~18ms of pure pool dispatch alone).
     void cosmeticStep(float dt) {
+        // Reads the render SNAPSHOT (front()/frameHits()), never live world_, so it is safe
+        // on the main thread while the sim worker ticks. One-tick EVENTS (impacts, justFired)
+        // are gated on newTick_ so they fire once per published tick even if cosmeticStep is
+        // called more than once against the same pinned snapshot.
+        const bool newTick_ = (front().gen != lastCosmeticGen_);
+        lastCosmeticGen_ = front().gen;
         // Weapon impacts this tick: play each weapon's soundhitclass, picking the
         // material-specific variant from the struck unit's bodytype (flesh/armor/..).
-        for (const auto& h : world_.hits()) {
+        if (newTick_) for (const auto& h : frameHits()) {
             if (h.weapon && !h.weapon->soundHit.empty()) {
                 const std::string& body = h.target ? h.target->bodyType : std::string("default");
                 const std::string* wav = soundClasses_.pick(h.weapon->soundHit, body, salt_++);
@@ -3770,7 +3792,8 @@ public:
             if (acc >= 2.0f) {
                 acc = 0;
                 int moving = 0, stalled = 0, ordered = 0;
-                for (auto& u : world_.units()) {
+                for (const UnitR* _up : front().live) {
+                    const UnitR& u = *_up;
                     if (!u.alive() || !u.type || !u.type->canMove || u.type->canFly ||
                         u.orders.empty() || u.orders.front().targetId != 0) continue;
                     ordered++;
@@ -3791,18 +3814,22 @@ public:
         // stragglers just pop in a few frames later. Purely cosmetic -- the sim already has
         // them (they move/fight); this only gates when the client starts drawing them.
         int regBudget = kRegistrationsPerFrame;
-        for (auto& u : world_.units())
+        for (const UnitR* _up : front().live) {
+            const UnitR& u = *_up;
             if (u.type && u.alive() && !unitType_.count(u.id)) {
                 registerUnit(u.id, u.type);
                 if (--regBudget <= 0) break;
             }
+        }
         // Kick off the summon fade-in/shimmer for anything just conjured from a
         // building (the producer flags justBuilt for that one tick); then age the
         // active effects and drop finished or dead ones. Cosmetic, viewer-only.
-        for (auto& u : world_.units())
+        for (const UnitR* _up : front().live) {
+            const UnitR& u = *_up;
             if (u.justBuilt && !birthFx_.count(u.justBuilt)) birthFx_[u.justBuilt] = 0.0f;
+        }
         for (auto it = birthFx_.begin(); it != birthFx_.end();) {
-            const tak::sim::Unit* bu = world_.unit(it->first);
+            const auto* bu = frameUnitP(it->first);
             it->second += dt;
             if (it->second >= kBirthFxDur || !bu || !bu->alive()) it = birthFx_.erase(it);
             else ++it;
@@ -3810,7 +3837,8 @@ public:
         if (briefTimer_ > 0) briefTimer_ -= dt;
         animClock_ += dt;
 
-        for (auto& u : world_.units()) {
+        for (const UnitR* _up : front().live) {
+            const UnitR& u = *_up;
             if (u.alive() || u.deadFor < 4.0f || corpsed_.count(u.id)) continue;
             corpsed_.insert(u.id);
             if (u.type && !u.type->corpse.empty())
@@ -3820,24 +3848,29 @@ public:
 
         // (T-tracking / edge-scroll / shake now run per-frame in cameraFrame, so
         // the camera stays smooth when the net sim stalls.)
-        if (follow_ && !world_.units().empty()) {
+        if (follow_ && !front().live.empty()) {
             // Track moving friendly units; fall back to everyone.
             float cx = 0, cz = 0;
             int n = 0;
-            for (auto& u : world_.units())
+            for (const UnitR* _up : front().live) {
+                const UnitR& u = *_up;
                 if (u.alive() && u.player == 0 && u.type && u.type->canMove &&
                     u.moving()) { cx += u.x; cz += u.z; ++n; }
+            }
             if (!n)
-                for (auto& u : world_.units())
+                for (const UnitR* _up : front().live) {
+                    const UnitR& u = *_up;
                     if (u.alive()) { cx += u.x; cz += u.z; ++n; }
+                }
             if (n)
                 mapView_.setOffset(cx / float(n) - 640 / mapView_.zoom(),
                                    cz / float(n) - 400 / mapView_.zoom());
         }
-        for (auto& u : world_.units()) {
+        for (const UnitR* _up : front().live) {
+            const UnitR& u = *_up;
             if (u.alive()) maybeSwapVeteranModel(u);
             auto it = anims_.find(u.id);
-            if (u.justFired && u.type) {
+            if (u.justFired && newTick_ && u.type) {
                 using Fx = tak::sim::WeaponFx;
                 const auto& w = u.type->weapon;
                 // Generic firing sounds are a stand-in for units whose COB carries no
@@ -3900,8 +3933,9 @@ public:
                                    u.type->blood[2], 40, 2.2f, 0, dAlt);
                     } else
                         spawnBurst(u.x, u.z, 10, 110, 100, 90, 30, 2.4f, 1, dAlt);
-                    if (missionVm_ && u.player == 0)
-                        missionVm_->start("UnitDestroyed", {u.id});
+                    // (The mission "UnitDestroyed" hook now fires deterministically in
+                    // simStep on the sim thread -- see the death-edge detection there --
+                    // rather than here off the render-side death animation.)
                 }
                 continue;   // VM advanced in the parallel pass below
             }
@@ -5303,7 +5337,7 @@ private:
 
     // At max veterancy, a unit with a `veteranmodel` swaps its mesh for the
     // fancier promoted 3DO (same piece structure, so the COB/anim carries over).
-    void maybeSwapVeteranModel(const tak::sim::Unit& u) {
+    void maybeSwapVeteranModel(const UnitR& u) {
         if (!u.type || u.veteran < 10 || u.type->veteranModel.empty()) return;
         const std::string& vm = u.type->veteranModel;
         auto it = unitType_.find(u.id);
@@ -7169,6 +7203,7 @@ public:
     }
 private:
     float interpAlpha_ = 0.0f;          // 0..1 through the current tick interval (per render frame)
+    uint32_t lastCosmeticGen_ = 0;      // front().gen last processed by cosmeticStep's per-tick pass
     // Fight-move ('f') reuses the Attack glyph tinted this red-orange, so it reads apart
     // from a real attack order -- for both the order-column button and the mouse cursor.
     static constexpr SDL_Color kFightMoveTint{255, 90, 80, 255};
@@ -10804,6 +10839,7 @@ private:
     std::map<int, Region> regions_;
     int missionTowerIdx_ = -1;
     std::set<int> building_;
+    std::set<int> missionAliveP0_;   // player-0 units seen alive (for the UnitDestroyed edge)
     std::map<int, std::vector<std::string>> reinfPool_;
     int reinfIdx_ = 0;
     std::vector<std::string> briefing_;
