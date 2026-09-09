@@ -133,8 +133,8 @@ struct MainMenu::Impl {
     bool settingsMenu_ = false;
     SDL_FRect setBtnRect_[3]{};        // [0]=OPTIONS, [1]=CONTROLS, [2]=BENCHMARK (set each render)
     bool benchMenu_ = false;          // benchmark intensity submenu (opened from SETTINGS)
-    SDL_FRect benchBtnRect_[5]{};      // LOW..ABSURD hit-rects (set each render)
-    int chosenBenchmark_ = 0;         // picked benchmark level 1..5 (0 = none)
+    SDL_FRect benchBtnRect_[6]{};      // LOW..EXTRA ABSURD hit-rects (set each render)
+    int chosenBenchmark_ = 0;         // picked benchmark level 1..6 (0 = none)
 
     // The campaign / mission picker, opened from the PlayStory door (see run()). When
     // the player picks a mission it closes and chosenMission_ names the bundle stem.
@@ -571,8 +571,8 @@ struct MainMenu::Impl {
         SDL_FRect dim{0, 0, float(winW), float(winH)};
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
         SDL_RenderFillRectF(ren, &dim);
-        const int nBtn = 5;
-        const float bw = 460, bh = 52, gap = 14, pad = 34, titlePx = 3.2f;
+        const int nBtn = 6;
+        const float bw = 560, bh = 50, gap = 13, pad = 34, titlePx = 3.2f;
         const float titleH = 7 * titlePx + 22;
         const float pw = bw + pad * 2;
         const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 28;
@@ -586,7 +586,8 @@ struct MainMenu::Impl {
         { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
         const char* labels[nBtn] = {
             "LOW  -  1 UNIT / FACTION / 1S", "MEDIUM  -  EVERY 0.5S", "HIGH  -  EVERY 0.25S",
-            "VERY HIGH  -  EVERY 0.125S", "ABSURD  -  EVERY 0.0625S"};
+            "VERY HIGH  -  EVERY 0.125S", "ABSURD  -  EVERY 0.0625S",
+            "EXTRA ABSURD +WTH  -  EVERY 0.03125S"};
         float by = py0 + pad + titleH;
         for (int i = 0; i < nBtn; ++i) {
             SDL_FRect r{px0 + pad, by, bw, bh};
@@ -773,9 +774,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     float fx = float(e.button.x), fy = float(e.button.y);
                     auto hit = [&](const SDL_FRect& r) { return fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h; };
-                    for (int i = 0; i < 5; ++i)
+                    for (int i = 0; i < 6; ++i)
                         if (hit(d_->benchBtnRect_[i])) {
-                            d_->chosenBenchmark_ = i + 1;   // 1=Low .. 5=Absurd
+                            d_->chosenBenchmark_ = i + 1;   // 1=Low .. 6=Extra Absurd
                             d_->benchMenu_ = false;
                             d_->flushSfx(w, h);
                             return Choice::Benchmark;

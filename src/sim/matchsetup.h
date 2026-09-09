@@ -48,18 +48,21 @@ struct MatchConfig {
                                     // seconds for 60s), executed by World::tick.
 };
 
-// Benchmark intensity levels (0=off, 1..5). Each faction spawns one unit every
+// Benchmark intensity levels (0=off, 1..6). Each faction spawns one unit every
 // 1/spawnsPerSec seconds over the 60s run. Shared by the sim (setupMatch) and the client
 // (menu + results label) so both agree.
-inline int benchmarkSpawnsPerSec(int level) { return (level >= 1 && level <= 5) ? (1 << (level - 1)) : 0; }
+constexpr int kBenchLevels = 6;
+inline int benchmarkSpawnsPerSec(int level) { return (level >= 1 && level <= kBenchLevels) ? (1 << (level - 1)) : 0; }
 inline int benchmarkSpawns(int level) { return benchmarkSpawnsPerSec(level) * 60; }
 inline const char* benchmarkLevelName(int level) {
-    static const char* n[6] = {"", "LOW", "MEDIUM", "HIGH", "VERY HIGH", "ABSURD"};
-    return (level >= 1 && level <= 5) ? n[level] : "";
+    static const char* n[kBenchLevels + 1] = {"", "LOW", "MEDIUM", "HIGH", "VERY HIGH", "ABSURD",
+                                              "EXTRA ABSURD +WTH"};
+    return (level >= 1 && level <= kBenchLevels) ? n[level] : "";
 }
 inline const char* benchmarkLevelInterval(int level) {
-    static const char* iv[6] = {"", "1S", "0.5S", "0.25S", "0.125S", "0.0625S"};
-    return (level >= 1 && level <= 5) ? iv[level] : "";
+    static const char* iv[kBenchLevels + 1] = {"", "1S", "0.5S", "0.25S", "0.125S", "0.0625S",
+                                               "0.03125S"};
+    return (level >= 1 && level <= kBenchLevels) ? iv[level] : "";
 }
 
 // The starting Monarch of each faction (index = faction id).

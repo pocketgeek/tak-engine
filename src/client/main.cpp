@@ -3339,8 +3339,8 @@ public:
             if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, 40));
             if (tak::devEnv("TAK_STRESS")) o.stressTest = 1;   // headless: spawn ~95% cap per AI
             if (const char* be = tak::devEnv("TAK_BENCH")) {   // headless: benchmark run
-                int lv = std::atoi(be);                        // TAK_BENCH=<level 1..5>, default High
-                benchmarkLevel_ = (lv >= 1 && lv <= 5) ? lv : 3;
+                int lv = std::atoi(be);                        // TAK_BENCH=<level 1..6>, default High
+                benchmarkLevel_ = (lv >= 1 && lv <= tak::sim::kBenchLevels) ? lv : 3;
                 benchmarkMode_ = true;                         // (forces watch + 8 AI + cap 8 + Ulasem below)
             }
             if (const char* uc = tak::devEnv("TAK_UNITCAP")) o.unitCap = uint16_t(std::atoi(uc));
@@ -11802,7 +11802,7 @@ int main(int argc, char** argv) {
             }
             if (choice == tak::MainMenu::Choice::Benchmark) {
                 benchmarkLevel = menu.chosenBenchmarkLevel();
-                if (benchmarkLevel < 1 || benchmarkLevel > 5) benchmarkLevel = 3;   // safety default = High
+                if (benchmarkLevel < 1 || benchmarkLevel > tak::sim::kBenchLevels) benchmarkLevel = 3;   // safety default = High
             }
         }
         if (!shot.empty()) { SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
