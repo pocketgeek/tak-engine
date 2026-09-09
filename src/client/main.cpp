@@ -1502,6 +1502,8 @@ struct AaScaleReset {
 struct UnitR {
     float px = 0, pz = 0, ph = 0;   // previous-tick pose (for interpolation)
     bool  seeded = false;           // has a valid prev pose to interpolate from
+    uint32_t gen = 0;               // captureFrame generation this record was last written
+                                    // (== frame gen means the unit is live THIS tick)
     // --- snapshot of Unit's render-read surface (same NAMES as sim::Unit, so render code
     //     that reads u.<field> works unchanged once its parameter is a UnitR) ---
     int id = 0;
@@ -3535,6 +3537,7 @@ public:
     // prev <- last tick's curr, curr <- now; a large jump (teleport / id reuse / respawn)
     // reseeds so we don't zip across the map. Client-only, viewer-only -- never hashed.
     void captureFrame() {
+        ++frameGen_;   // records written this pass get gen==frameGen_ (=> live this tick)
         size_t need = world_.units().size() + 1;
         if (interp_.size() < need) interp_.resize(need);
         for (const auto& u : world_.units()) {
@@ -3543,6 +3546,7 @@ public:
             if (!u.type) { s.seeded = false; s.type = nullptr; continue; }
             // Render-read fields, captured for ALL units (alive + dead-recent: the death
             // animation and the deadFor>=4 cull both need a live value).
+            s.gen = frameGen_;
             s.id = u.id; s.type = u.type; s.player = u.player;
             s.hp = u.hp; s.mana = u.mana; s.veteran = u.veteran; s.deadFor = u.deadFor;
             s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
@@ -3610,6 +3614,14 @@ public:
     const UnitR& frameUnit(int id) const {
         static const UnitR kEmpty{};
         return (id >= 0 && size_t(id) < interp_.size()) ? interp_[size_t(id)] : kEmpty;
+    }
+    // Pointer form matching world_.unit()'s semantics: nullptr unless the id is a unit that
+    // is LIVE this tick (captured with the current gen). Use to replace world_.unit(id) in
+    // render/HUD reads (the null check keeps working).
+    const UnitR* frameUnitP(int id) const {
+        if (id < 0 || size_t(id) >= interp_.size()) return nullptr;
+        const UnitR& r = interp_[size_t(id)];
+        return (r.gen == frameGen_ && r.type) ? &r : nullptr;
     }
     // Player snapshot accessors (mirror world_.player()/numPlayers() for the HUD).
     const PlayerR& framePlayer(int p) const {
@@ -7045,6 +7057,7 @@ private:
     // Render-side motion interpolation: glide units between 30Hz sim ticks (see
     // captureInterp / interpPose). Viewer-only, never hashed.
     std::vector<UnitR> interp_;         // per-unit render snapshot, indexed by unit id (see UnitR)
+    uint32_t frameGen_ = 0;             // bumped each captureFrame; UnitR.gen==this => live this tick
     std::array<PlayerR, 8> framePlayers_{};   // per-tick player snapshot (see PlayerR)
     int frameNumPlayers_ = 0;
     std::vector<uint8_t> frameVis_;    // fog snapshot (copy of world_.vis_; re-copied on visGen change)
