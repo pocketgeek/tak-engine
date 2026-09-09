@@ -10008,7 +10008,7 @@ private:
         // Bottom-LEFT: portrait + stats for the selected unit. Skipped when the retail
         // InfoPanel bar already drew the unit info (drawGuiInfoBar).
         if (!guiBar && !selection_.empty() && statFont_.ok()) {
-            const auto* u = world_.unit(selection_.front());
+            const auto* u = frameUnitP(selection_.front());
             if (u && u->alive() && u->type) {
                 float px = 8;
                 shade(px, 288);
@@ -10297,7 +10297,7 @@ private:
     }
 
     int rosterIndexOf(int unitId) {
-        auto* u = world_.unit(unitId);
+        auto* u = frameUnitP(unitId);
         if (!u || !u->type) return -1;
         for (size_t i = 0; i < missionRoster_.size(); ++i)
             if (missionRoster_[i] == u->type->id) return int(i);
@@ -10347,7 +10347,7 @@ private:
             }
             case 3: case 5: {   // HEURISTIC: activate spawned unit - join force
                 if (a.empty()) return 0;
-                const auto* u = world_.unit(a[0]);
+                const auto* u = frameUnitP(a[0]);
                 if (!u) return 0;
                 float bx = 0, bz = 0;
                 int n = 0;
@@ -10366,7 +10366,7 @@ private:
     }
 
     void voice(int unitId, const std::string& event) {
-        const auto* u = world_.unit(unitId);
+        const auto* u = frameUnitP(unitId);
         if (!u || !u->type || u->type->soundClass.empty()) return;
         if (const auto* wav = soundClasses_.pick(u->type->soundClass, event, salt_++))
             sounds_.playWorld(*wav, u->x, u->z);
@@ -10567,7 +10567,7 @@ private:
             bool fire = a.fireFx && a.fireT < kLinger;
             bool smk = a.smokeFx && a.smokeT < kLinger;
             if (!fire && !smk) continue;
-            const auto* u = world_.unit(id);
+            const auto* u = frameUnitP(id);
             if (!u || !u->type) continue;
             if (!noFog_ && !cellVisibleR(u->x, u->z)) continue;
             auto draw = [&](const EffectAnim* ea, float lift, float fps) {
