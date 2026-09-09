@@ -51,6 +51,16 @@ jobs:
             -DTAK_STATIC_LIBS=ON -DCMAKE_FIND_FRAMEWORK=LAST
           cmake --build build
 
+      - name: Verify fully static (only system libs/frameworks linked)
+        run: |
+          otool -L build/takclient
+          # macOS can't static-link libSystem/frameworks, so those are expected; assert
+          # NO Homebrew/@rpath/local dylib (SDL2/jpeg/zlib/ffmpeg must be baked in).
+          if otool -L build/takclient | tail -n +2 | grep -qE '@rpath|@loader_path|/opt/homebrew|/usr/local'; then
+            echo "::error::takclient links a non-system dylib -- not fully static"; exit 1
+          fi
+          echo "OK: only system libs/frameworks linked -- as static as macOS allows"
+
       - name: Bundle + zip
         run: |
           mkdir -p dist-macos

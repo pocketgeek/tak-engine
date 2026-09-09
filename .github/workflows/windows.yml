@@ -57,6 +57,15 @@ jobs:
           cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON
           cmake --build build
 
+      - name: Verify fully static (no SDL2/jpeg/zlib/ffmpeg DLL imports)
+        run: |
+          imports=$(objdump -p build/takclient.exe | awk '/DLL Name:/{print tolower($3)}')
+          echo "$imports"
+          if echo "$imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil'; then
+            echo "::error::takclient.exe still imports a non-static media DLL -- not fully static"; exit 1
+          fi
+          echo "OK: no SDL2/jpeg/zlib/ffmpeg DLL imports -- fully static"
+
       - name: Bundle (exes + required DLLs) + zip
         run: |
           mkdir -p dist-win
