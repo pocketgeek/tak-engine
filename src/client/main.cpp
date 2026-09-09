@@ -327,7 +327,12 @@ public:
             std::unique_lock<std::mutex> lk(chunkMu_);
             chunkCv_.wait(lk, [this] { return chunkQueue_.empty() && !chunkBusy_; });
         }
-        uploadReadyChunks();
+        // Screenshot path: upload EVERYTHING now (loop past the per-frame upload budget).
+        for (;;) {
+            uploadReadyChunks();
+            std::lock_guard<std::mutex> lk(chunkMu_);
+            if (chunkDone_.empty()) break;
+        }
     }
 
     void draw(int winW, int winH) {
@@ -389,16 +394,32 @@ private:
         {
             std::lock_guard<std::mutex> lk(chunkMu_);
             done.swap(chunkDone_);
-            for (const auto& d : done) chunkPending_.erase(std::make_pair(d.cx, d.cy));
         }
+        // Budget GPU uploads per frame: each chunk is a 512x512 (~1MB) texture create +
+        // upload, and edge-scrolling finishes a whole prefetch row at once -- uploading
+        // them all in one frame is a hitch that repeats every time you cross a chunk
+        // boundary. Upload a few now; the leftovers wait (still marked pending, still
+        // ahead of the view thanks to the one-chunk prefetch ring) for the next frames.
+        constexpr size_t kUploadBudget = 2;
+        size_t n = 0;
+        std::vector<DoneChunk> deferred;
         for (auto& d : done) {
             auto key = std::make_pair(d.cx, d.cy);
-            if (chunks_.count(key)) continue;
+            if (chunks_.count(key)) {   // already uploaded on an earlier frame
+                std::lock_guard<std::mutex> lk(chunkMu_); chunkPending_.erase(key); continue;
+            }
+            if (n >= kUploadBudget) { deferred.push_back(std::move(d)); continue; }
             SDL_Texture* t = SDL_CreateTexture(ren_, SDL_PIXELFORMAT_RGBA32,
                                                SDL_TEXTUREACCESS_STATIC, kChunk, kChunk);
             SDL_UpdateTexture(t, nullptr, d.buf.data(), kChunk * 4);
             if (bilinear_) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
             chunks_[key] = t;
+            { std::lock_guard<std::mutex> lk(chunkMu_); chunkPending_.erase(key); }
+            ++n;
+        }
+        if (!deferred.empty()) {   // carry the rest to the next frame (still pending)
+            std::lock_guard<std::mutex> lk(chunkMu_);
+            for (auto& d : deferred) chunkDone_.push_back(std::move(d));
         }
     }
 
