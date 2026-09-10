@@ -1134,6 +1134,11 @@ private:
     };
     std::map<std::pair<std::string, int>, Impostor> impostors_;  // (model, slot)
     std::map<std::string, float> modelH_;    // model projected height (px @ zoom 1)
+    // Per-type on-screen sprite box (offset from the draw anchor, px @ zoom 1), the
+    // union over facings of the projected model bounds. Drives click-selection so a
+    // click anywhere on the drawn unit (a tall building's roof, a body above its
+    // feet) hits it -- computed lazily via unitHitBox(), cached here.
+    std::map<std::string, SDL_FRect> hitBoxes_;
     SDL_Texture* impAtlas_ = nullptr;
     int impAtlasDim_ = 4096, impCurX_ = 0, impCurY_ = 0, impShelfH_ = 0;
     // After a failed GPU texture allocation (VRAM pressure), pause every bake /
@@ -1648,6 +1653,10 @@ private:
     // marquee/click selection so a lifted or airborne unit is picked where it's SEEN,
     // not at its flat ground cell.
     SDL_FPoint unitScreen(const UnitR& u);
+
+    // Per-type on-screen sprite box (offset from the draw anchor, px @ zoom 1),
+    // computed once by projecting the model over all facings and cached in hitBoxes_.
+    const SDL_FRect& unitHitBox(const tak::sim::UnitType* type);
 
     // Height-aware picking: invert the render lift so a click on elevated terrain
     // (a wall/plateau top, drawn lifted UP on screen) resolves to the cell whose

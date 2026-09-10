@@ -251,16 +251,20 @@
                     const UnitR& u = *_up;
                     if (!u.alive() || u.underConstruction || !u.type) continue;  // not-yet-built: unselectable
                     SDL_FPoint p = unitScreen(frameUnit(u.id));
-                    // Hit region = the unit's on-screen footprint, matching the drawn
-                    // selection brackets (foot cells * 8 world px * zoom), with a small
-                    // screen floor so tiny / zoomed-out units stay easy to click. A big
-                    // building is now grabbable across its whole size, not just a central dot.
-                    float rx = std::max(std::max(u.type->footX, 1) * 8.0f, 11.0f) * zms;
-                    float ry = std::max(std::max(u.type->footZ, 1) * 8.0f, 8.0f) * zms;
-                    rx = std::max(rx, 14.0f); ry = std::max(ry, 14.0f);
-                    float dx = p.x - ccx, dy = p.y - ccy;
-                    if (std::fabs(dx) <= rx && std::fabs(dy) <= ry) {
-                        float d = dx * dx + dy * dy;   // overlap -> nearest center wins
+                    // Hit region = the unit's actual on-screen SPRITE box (projected model
+                    // bounds, unitHitBox), so a click ANYWHERE on the drawn unit -- a tall
+                    // building's roof, a body above its feet -- selects it. unitScreen is the
+                    // sprite draw anchor minus 12*zoom in y, so add that back. A small screen
+                    // floor keeps tiny/zoomed-out units clickable; overlaps -> nearest centre.
+                    const SDL_FRect& hb = unitHitBox(u.type);
+                    float ax = p.x, ay = p.y + 12.0f * zms;         // sprite draw anchor
+                    float cx = ax + (hb.x + hb.w * 0.5f) * zms;     // sprite box centre
+                    float cy = ay + (hb.y + hb.h * 0.5f) * zms;
+                    float hw = std::max(hb.w * zms * 0.5f, 9.0f);   // half-extents, floored
+                    float hh = std::max(hb.h * zms * 0.5f, 9.0f);
+                    if (std::fabs(ccx - cx) <= hw && std::fabs(ccy - cy) <= hh) {
+                        float dx = cx - ccx, dy = cy - ccy;
+                        float d = dx * dx + dy * dy;   // overlap -> nearest sprite centre wins
                         if (d < best) { best = d; hit = u.id; }
                     }
                 }

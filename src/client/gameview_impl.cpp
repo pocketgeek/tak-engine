@@ -1542,6 +1542,41 @@
                 (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm - alt * 0.8f * zm - 12.0f * zm};
     }
 
+    const SDL_FRect& GameView::unitHitBox(const tak::sim::UnitType* type) {
+        auto it = hitBoxes_.find(type->id);
+        if (it != hitBoxes_.end()) return it->second;
+        // Fallback (model not loaded): a small box just above the anchor.
+        SDL_FRect box{-12.0f, -28.0f, 24.0f, 30.0f};
+        auto vt = visuals_.find(type->id);
+        if (vt != visuals_.end()) {
+            float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
+            bool any = false;
+            std::vector<Tri> scratch;
+            // Union the projected bounds over every facing (a mover looks different from
+            // each side; a STRUCTURE is drawn at a fixed facing -- and never rotates even
+            // with the canmove=1/no-velocity FBI quirk -- so one pass). Positions are the
+            // same @ zoom 1 as the sprite bake's bbox, so this box matches what's drawn.
+            bool structure = isStructure(type);
+            int facings = structure ? 1 : kFacings;
+            for (int k = 0; k < facings; ++k) {
+                float heading = float(k) / float(kFacings) * 2.0f * 3.14159265f;
+                float facing = structure ? 0.0f : -heading;
+                scratch.clear();
+                collect(scratch, nullptr, vt->second.model.root, Xform{}, nullptr, facing, 0, false);
+                for (const auto& t : scratch)
+                    for (int i = 0; i < 3; ++i) {
+                        minX = std::min(minX, t.v[i].position.x);
+                        minY = std::min(minY, t.v[i].position.y);
+                        maxX = std::max(maxX, t.v[i].position.x);
+                        maxY = std::max(maxY, t.v[i].position.y);
+                        any = true;
+                    }
+            }
+            if (any) box = SDL_FRect{minX, minY, maxX - minX, maxY - minY};
+        }
+        return hitBoxes_.emplace(type->id, box).first->second;
+    }
+
     void GameView::pickWorld(float sx, float sy, float& wx, float& wz) {
         float zm = mapView_.zoom();
         // Flat (no-lift) world position of the click.
