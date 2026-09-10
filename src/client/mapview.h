@@ -106,15 +106,4 @@ private:
     float offX_ = 0, offY_ = 0, zoom_ = 0.35f;
     float zoomSpeed_ = 1.0f;   // wheel-zoom sensitivity exponent (Options)
     SDL_Texture* underlay_ = nullptr;   // low-res overview drawn under chunks (not owned)
-
-    // Animated water (display only, never hashed): a seamless caustic scrolls over
-    // cells below sea level, composited through a half-res target and added on top.
-    void drawWater(int winW, int winH);
-    void buildWaterMask();   // whole-map, 1 texel/cell, RGB = water glint strength
-    void buildCaustic();     // seamless tiling caustic pattern
-    SDL_Texture* waterMask_ = nullptr;
-    SDL_Texture* caustic_ = nullptr;
-    SDL_Texture* waterRT_ = nullptr;   // half-res scratch render target
-    int waterRTw_ = 0, waterRTh_ = 0;
-    bool waterChecked_ = false, hasWater_ = false;
 };

@@ -30,6 +30,8 @@ struct Palette {
 struct Frame {
     int width = 0, height = 0;
     int xoff = 0, yoff = 0;          // anchor point within the frame
+    int delayTicks = 2;              // display duration in 30Hz engine ticks (the u32
+                                     // after each frame pointer; waves ship 2 -> 15fps)
     std::vector<uint8_t> rgba;       // width*height*4
 };
 

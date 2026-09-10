@@ -204,8 +204,9 @@
             for (int tx = 0; tx < TW; ++tx) {
                 int h = m.heights[size_t(ty * H / TH) * W + (tx * W / TW)];
                 if (h < sea) {
-                    int d = std::clamp((sea - h) * 3, 0, 120);
-                    put(tx, ty, uint8_t(46 - d / 4), uint8_t(98 - d / 3), uint8_t(152 - d / 3));
+                    // Dark teal, matching the retail sea art the game actually draws.
+                    int d = std::clamp((sea - h) * 2, 0, 40);
+                    put(tx, ty, uint8_t(14 - d / 8), uint8_t(72 - d / 2), uint8_t(74 - d / 2));
                 } else {
                     int e = std::clamp((h - sea) / 2, 0, 70);
                     put(tx, ty, uint8_t(std::min(255, lc[0] + e)),

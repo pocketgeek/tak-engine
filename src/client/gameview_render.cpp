@@ -349,13 +349,27 @@
                                  float(f.sw) * zm0, float(f.sh) * zm0};
                     SDL_RenderCopyF(ren_, f.shadow, nullptr, &sd);
                 }
-                SDL_FRect dst{(f.x - mapView_.offX() - float(f.xoff)) * zm0 - lfx,
-                              (f.z - mapView_.offY() - float(f.yoff)) * zm0 - lfy,
-                              float(f.w) * zm0, float(f.h) * zm0};
+                // Retail feature playback: one shared clock per TYPE (every
+                // instance of a sequence shows the identical frame -- variety
+                // comes from the 16 different wave sequences, not phase), 30Hz
+                // engine ticks holding each frame for its GAF delay (waves ship
+                // delay=2 -> 15fps), looping continuously. Each frame is drawn at
+                // its OWN size + anchor -- the wave art authors motion that way.
                 SDL_Texture* tex = f.tex;
-                if (f.frames && f.frames->size() > 1)
-                    tex = (*f.frames)[(size_t(animClock_ * 8) + size_t(f.seed)) %
-                                      f.frames->size()];
+                int fw = f.w, fh = f.h, fxo = f.xoff, fyo = f.yoff;
+                if (f.frames && f.frames->size() > 1 && f.art && f.art->totalTicks > 0) {
+                    int tick = int(animClock_ * 30.0f) % f.art->totalTicks;
+                    size_t idx = size_t(std::upper_bound(f.art->tickEnd.begin(),
+                                                         f.art->tickEnd.end(), tick) -
+                                        f.art->tickEnd.begin());
+                    if (idx >= f.frames->size()) idx = 0;
+                    tex = (*f.frames)[idx];
+                    const auto& g = f.art->fgeom[idx];
+                    fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
+                }
+                SDL_FRect dst{(f.x - mapView_.offX() - float(fxo)) * zm0 - lfx,
+                              (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
+                              float(fw) * zm0, float(fh) * zm0};
                 SDL_RenderCopyF(ren_, tex, nullptr, &dst);
             } else if (op.u) {
                 drawUnit(*op.u);
@@ -1693,11 +1707,14 @@
                         bool animate = def.numberOr("animating", 0) != 0 ||
                                        def.numberOr("animatable", 0) != 0;
                         size_t nf = animate ? sq.frames.size() : 1;
+                        // Keep EVERY frame at its own size/anchor: wave sequences
+                        // author their motion through per-frame w/h/xoff/yoff (the
+                        // foam sweeps by re-anchoring each tightly-cropped frame),
+                        // so dropping non-uniform frames froze them.
+                        int acc = 0;
                         for (size_t fi = 0; fi < nf; ++fi) {
                             auto& ff = sq.frames[fi];
-                            if (ff.width == 0 || ff.height != fr.height ||
-                                ff.width != fr.width)
-                                continue;   // keep uniform dimensions only
+                            if (ff.width == 0 || ff.height == 0) continue;
                             SDL_Texture* t = gpuvram::create(
                                 ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
                                 ff.width, ff.height);
@@ -1705,11 +1722,15 @@
                             SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
                             if (bilinear_) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
                             a.frames.push_back(t);
+                            a.fgeom.push_back({ff.width, ff.height, ff.xoff, ff.yoff});
+                            acc += std::max(1, ff.delayTicks);
+                            a.tickEnd.push_back(acc);
                         }
+                        a.totalTicks = acc;
                         if (!a.frames.empty()) {
                             a.tex = a.frames[0];
-                            a.w = fr.width; a.h = fr.height;
-                            a.xoff = fr.xoff; a.yoff = fr.yoff;
+                            a.w = a.fgeom[0].w; a.h = a.fgeom[0].h;
+                            a.xoff = a.fgeom[0].xoff; a.yoff = a.fgeom[0].yoff;
                         }
                     } else if (!seqShad.empty() && ieq(sq.name, seqShad)) {
                         // Shadow: silhouette drawn as translucent black.
@@ -1745,7 +1766,7 @@
         FeatureInst inst;
         inst.tex = a->tex;
         inst.frames = &a->frames;
-        inst.seed = int(features_.size() * 7);
+        inst.art = a;   // per-frame geometry + GAF tick timeline (stable: map node)
         inst.shadow = a->shadow;
         inst.w = a->w; inst.h = a->h; inst.xoff = a->xoff; inst.yoff = a->yoff;
         inst.sw = a->sw; inst.sh = a->sh; inst.sxoff = a->sxoff; inst.syoff = a->syoff;
@@ -1836,11 +1857,13 @@
     }
 
     void GameView::addShorelineWaves() {
-        // Retail shipped animated wave sprites (category=waves) that map authors dot
-        // along coasts. We place them procedurally at water cells touching land, so
-        // generated maps get surf too. Display only: addFeature(..., blockNav=false)
-        // adds a render instance with no nav/mana/reclaim side effect, and they
-        // animate through the same GAF pipeline as any feature.
+        // Shipped maps hand-place their wave features as sparse OFFSHORE breakers
+        // (Athri Cay: 34 sprites on a 480x480 map, 4-15 cells off the coast in
+        // strings 10-18 cells apart along SOME stretches -- never a continuous
+        // surf rim; some maps have zero). Generated maps have no author, so
+        // scatter them retail-style here. Display only: addFeature(...,
+        // blockNav=false) is a render instance with no nav/mana/sim effect.
+        if (!tak::mapgen::isGeneratedMapId(mapPath_)) return;   // authored maps ship their own
         const auto& map = mapView_.map();
         const int W = map.width, H = map.height, sea = map.seaLevel;
         if (W <= 0 || H <= 0 || int(map.heights.size()) < size_t(W) * H) return;
@@ -1853,36 +1876,76 @@
         auto land = [&](int x, int z) {
             return x >= 0 && z >= 0 && x < W && z < H && map.heights[size_t(z) * W + x] >= sea;
         };
-        // Variant by which way the land lies -- the sprite draws (via its anchor)
-        // toward the land, so foam sits at the shoreline. Calibrated from the GAF
-        // anchors: cardinals land-N->13 S->01 E->07 W->03; inside corners (two
-        // adjacent cardinals) and convex corners (a diagonal only) use the diagonal
-        // variants NW->04 NE->06 SE->16 SW->10.
-        const int S = 4;                         // ~one wave per 4x4 stretch of coast
-        std::vector<uint8_t> used(size_t(W / S + 1) * (H / S + 1), 0);
-        int placed = 0;
+        // Multi-source BFS: distance (in cells) from every water cell to land.
+        std::vector<uint8_t> dist(size_t(W) * H, 255);
+        std::vector<int> q; q.reserve(size_t(W) * H / 4);
         for (int z = 0; z < H; ++z)
-            for (int x = 0; x < W; ++x) {
-                if (land(x, z)) continue;        // waves sit on the water side
-                bool n = land(x, z - 1), s = land(x, z + 1), e = land(x + 1, z), w = land(x - 1, z);
-                bool nw = land(x - 1, z - 1), ne = land(x + 1, z - 1),
-                     sw = land(x - 1, z + 1), se = land(x + 1, z + 1);
-                if (!(n || s || e || w || nw || ne || sw || se)) continue;
-                size_t uc = size_t(z / S) * (W / S + 1) + (x / S);
-                if (used[uc]) continue;          // spacing
-                used[uc] = 1;
+            for (int x = 0; x < W; ++x)
+                if (land(x, z)) { dist[size_t(z) * W + x] = 0; q.push_back(z * W + x); }
+        for (size_t head = 0; head < q.size(); ++head) {
+            int c = q[head], cx = c % W, cz = c / W;
+            int d = dist[size_t(c)];
+            if (d >= 15) continue;
+            static const int dx4[] = {1, -1, 0, 0}, dz4[] = {0, 0, 1, -1};
+            for (int k = 0; k < 4; ++k) {
+                int nx = cx + dx4[k], nz = cz + dz4[k];
+                if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                size_t ni = size_t(nz) * W + nx;
+                if (dist[ni] != 255) continue;
+                dist[ni] = uint8_t(d + 1);
+                q.push_back(int(ni));
+            }
+        }
+        // One candidate per 12x12 bucket, hash-gated to ~45% so the breakers form
+        // intermittent strings (not every stretch of coast gets any) -- matching
+        // the shipped density/spacing. Stable per map (hash on bucket + map dims).
+        auto hash = [&](uint64_t v) {
+            v ^= uint64_t(W) << 32 ^ uint64_t(H) ^ (uint64_t(sea) << 20);
+            v = (v ^ (v >> 30)) * 0xbf58476d1ce4e5b9ULL;
+            v = (v ^ (v >> 27)) * 0x94d049bb133111ebULL;
+            return v ^ (v >> 31);
+        };
+        int placed = 0;
+        for (int bz = 0; bz < H; bz += 12)
+            for (int bx = 0; bx < W; bx += 12) {
+                if (hash(uint64_t(bz) * 100003 + bx) % 100 >= 45) continue;
+                // Best cell in the bucket: offshore band 5..14, nearest to 9 out.
+                int cx = -1, cz = -1, best = 99;
+                for (int z = bz; z < std::min(bz + 12, H); ++z)
+                    for (int x = bx; x < std::min(bx + 12, W); ++x) {
+                        int d = dist[size_t(z) * W + x];
+                        if (land(x, z) || d < 5 || d > 14) continue;
+                        if (std::abs(d - 9) < best) { best = std::abs(d - 9); cx = x; cz = z; }
+                    }
+                if (cx < 0) continue;
+                // Face the crest toward the nearest shore: steepest-descent walk
+                // down the distance field to land, then classify the direction.
+                int wx = cx, wz = cz;
+                for (int step = 0; step < 20 && !land(wx, wz); ++step) {
+                    int bd = dist[size_t(wz) * W + wx], nx = wx, nz = wz;
+                    static const int dx4[] = {1, -1, 0, 0}, dz4[] = {0, 0, 1, -1};
+                    for (int k = 0; k < 4; ++k) {
+                        int tx = wx + dx4[k], tz = wz + dz4[k];
+                        if (tx < 0 || tz < 0 || tx >= W || tz >= H) continue;
+                        if (dist[size_t(tz) * W + tx] < bd) { bd = dist[size_t(tz) * W + tx]; nx = tx; nz = tz; }
+                    }
+                    if (nx == wx && nz == wz) break;
+                    wx = nx; wz = nz;
+                }
+                int ddx = wx - cx, ddz = wz - cz;
+                // Variant by land direction (foam draws toward the land; anchors
+                // calibrated from the GAF): cardinals N->13 S->01 E->07 W->03,
+                // diagonals NW->04 NE->06 SE->16 SW->10.
                 int v;
-                if (n && w) v = 4; else if (n && e) v = 6;          // inside corners
-                else if (s && e) v = 16; else if (s && w) v = 10;
-                else if (n) v = 13; else if (s) v = 1;             // straight edges
-                else if (e) v = 7; else if (w) v = 3;
-                else if (nw) v = 4; else if (ne) v = 6;            // convex (diagonal-only)
-                else if (se) v = 16; else v = 10;                 // sw
+                bool diag = std::abs(ddx) * 2 > std::abs(ddz) && std::abs(ddz) * 2 > std::abs(ddx);
+                if (diag) v = ddx < 0 ? (ddz < 0 ? 4 : 10) : (ddz < 0 ? 6 : 16);
+                else if (std::abs(ddx) >= std::abs(ddz)) v = ddx >= 0 ? 7 : 3;
+                else v = ddz >= 0 ? 1 : 13;
                 char nm[24];
                 std::snprintf(nm, sizeof nm, "%sWave%02d", wp.c_str(), v);
-                if (addFeature(nm, float(x) * 16 + 8, float(z) * 16 + 8, false)) ++placed;
+                if (addFeature(nm, float(cx) * 16 + 8, float(cz) * 16 + 8, false)) ++placed;
             }
-        std::printf("shoreline waves: %d placed (%sWave)\n", placed, wp.c_str());
+        std::printf("offshore waves: %d placed (%sWave)\n", placed, wp.c_str());
     }
 
     bool GameView::buildIconClick(float mx, float my, bool lmb, bool rmb) {

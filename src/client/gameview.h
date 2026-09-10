@@ -1903,10 +1903,11 @@ private:
     // minimap location (F + minimap = fight-move there). Returns true if handled.
     bool minimapArmedOrder(float mx, float my, int winW, int winH);
 
+    struct FeatArt;   // defined just below; FeatureInst only needs the pointer type
     struct FeatureInst {
         SDL_Texture* tex = nullptr;
         const std::vector<SDL_Texture*>* frames = nullptr;
-        int seed = 0;
+        const FeatArt* art = nullptr;   // per-frame geometry + GAF timing
         SDL_Texture* shadow = nullptr;
         int w = 0, h = 0, xoff = 0, yoff = 0;
         int sw = 0, sh = 0, sxoff = 0, syoff = 0;
@@ -1925,6 +1926,14 @@ private:
         int w = 0, h = 0, xoff = 0, yoff = 0;
         int sw = 0, sh = 0, sxoff = 0, syoff = 0;
         std::vector<SDL_Texture*> frames;   // >1 entries when animating
+        // Animated sequences (waves especially) author motion through PER-FRAME
+        // size + anchor offsets, and each frame carries a GAF display duration in
+        // 30Hz engine ticks. Retail keeps one clock per TYPE (all instances in
+        // sync) and loops continuously.
+        struct FGeom { int w = 0, h = 0, xoff = 0, yoff = 0; };
+        std::vector<FGeom> fgeom;   // per-frame geometry, parallel to frames
+        std::vector<int> tickEnd;   // cumulative end tick per frame
+        int totalTicks = 0;         // full loop length in 30Hz ticks
     };
     std::map<std::string, tak::tdf::Node> featureDefs_;
     std::map<std::string, tak::gaf::Palette> featurePals_;

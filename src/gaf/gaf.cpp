@@ -1,5 +1,6 @@
 #include "gaf/gaf.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
@@ -223,6 +224,11 @@ std::vector<Sequence> load(const std::vector<uint8_t>& d, const Palette& pal,
         need(d, e + 40, uint64_t(numFrames) * 8, "frame pointers");
         for (uint16_t f = 0; f < numFrames; ++f) {
             Frame fr = decodeFrame(d, u32(&d[e + 40 + f * 8]), pal);
+            // The second dword of each frame record is the display duration in
+            // 30Hz engine ticks (retail advances feature anims once per ~30fps
+            // frame, holding each GAF frame for this count).
+            uint32_t delay = u32(&d[e + 40 + f * 8 + 4]);
+            fr.delayTicks = int(std::clamp<uint32_t>(delay, 1, 300));
             if (transparentIndex >= 0) {
                 const uint8_t* key = pal.rgba[transparentIndex];
                 for (size_t px = 0; px + 3 < fr.rgba.size(); px += 4)

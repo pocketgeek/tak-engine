@@ -45,14 +45,19 @@ uint32_t fractal(uint64_t seed, int cx, int cz, int span) {
 }
 
 // Per-world ground + sea terrain section JPG keys (terrain/<key:08x>.jpg), verified
-// present in terrain.hpi. col=row=0 of each is a clean fill piece.
-struct WorldArt { uint32_t ground, sea; };
+// present in terrain.hpi, plus each section's VALID wallpaper period in 32px tiles.
+// Ground fills are seamless across their whole grid (16x16; Zhon's is 256px = 8x8).
+// The sea JPGs are 512px but only PARTLY art: Aramon/Taros/Zhon carry a 5x5 block
+// of flat dark-teal water in the top-left corner and pure-black padding elsewhere
+// (only Veruna's dgsea fills all 16x16) -- wallpapering them %16 sampled ~90%
+// padding, which is what made generated water look black.
+struct WorldArt { uint32_t ground, sea; uint8_t groundK, seaK; };
 constexpr std::array<WorldArt, kMapTypes> kWorldArt = {{
-    {0x868a8222u, 0x0c2e64b2u},   // Aramon: grass / asea
-    {0xca4200f8u, 0xb8524a38u},   // Taros:  low_ground / taros_sea
-    {0xd3259f0fu, 0x9a5c5436u},   // Veruna: A512Lowland / dgsea
-    {0x9bb50b09u, 0x59f53dfdu},   // Zhon:   jungletile80 / H2OTILE
-    {0x868a8222u, 0x0c2e64b2u},   // Creon:  (fall back to Aramon art until IP tiles wired)
+    {0x868a8222u, 0x0c2e64b2u, 16, 5},    // Aramon: grass / asea
+    {0xca4200f8u, 0xb8524a38u, 16, 5},    // Taros:  low_ground / taros_sea
+    {0xd3259f0fu, 0x9a5c5436u, 16, 16},   // Veruna: A512Lowland / dgsea (full-art sea)
+    {0x9bb50b09u, 0x59f53dfdu, 8, 5},     // Zhon:   jungletile80 (256px) / H2OTILE
+    {0x868a8222u, 0x0c2e64b2u, 16, 5},    // Creon:  (fall back to Aramon art until IP tiles wired)
 }};
 
 // Per-world doodad + mana palette (names verified in features/<world>/*.tdf).
@@ -176,11 +181,12 @@ Result generate(const Params& raw) {
     }
 
     // ---- terrain tiles: WALLPAPER the world's ground/sea section (col=bx%K,row=by%K).
-    //      Shipped maps tile the full 512px (Zhon 256px) section this way, so a field
-    //      cycles through all its sub-tiles instead of stamping one 32px tile. Sea
-    //      sections are 16x16; the Zhon ground section is 8x8, the rest 16x16. -------
+    //      Shipped maps tile sections this way, so a field cycles through the
+    //      section's sub-tiles instead of stamping one 32px tile. K comes from each
+    //      section's VALID art region (see kWorldArt: most sea JPGs are only 5x5
+    //      real art + black padding). ------------------------------------------------
     const WorldArt art = kWorldArt[p.mapType];
-    const int kGround = (p.mapType == Zhon) ? 8 : 16, kSea = 16;
+    const int kGround = art.groundK, kSea = art.seaK;
     size_t blocks = size_t(m.blocksX) * m.blocksY;
     m.tileKeys.resize(blocks);
     m.tileCols.resize(blocks);
@@ -188,12 +194,13 @@ Result generate(const Params& raw) {
     for (int by = 0; by < m.blocksY; ++by)
         for (int bx = 0; bx < m.blocksX; ++bx) {
             int cx = bx * 2, cz = by * 2;   // 2x2 cells under the 32px block
-            // Only a FULLY-submerged block gets the (near-black) sea tile; a shore
-            // block keeps a ground tile and its below-sea cells are tinted shallow
-            // water by the compositor -- otherwise a sea tile's above-sea cell shows
-            // through as a black speck.
-            int hmax = std::max({hAt(cx, cz), hAt(cx + 1, cz), hAt(cx, cz + 1), hAt(cx + 1, cz + 1)});
-            bool water = hmax < m.seaLevel;
+            // Majority rule: a block that is mostly underwater gets the sea tile,
+            // so the drawn waterline rounds to the nearest block edge. (Shipped
+            // maps refine this with hand-painted shore-transition sections --
+            // possible follow-up via the sections.hpi berm pieces.)
+            int below = (hAt(cx, cz) < m.seaLevel) + (hAt(cx + 1, cz) < m.seaLevel) +
+                        (hAt(cx, cz + 1) < m.seaLevel) + (hAt(cx + 1, cz + 1) < m.seaLevel);
+            bool water = below >= 2;
             size_t i = size_t(by) * m.blocksX + bx;
             m.tileKeys[i] = water ? art.sea : art.ground;
             int K = water ? kSea : kGround;

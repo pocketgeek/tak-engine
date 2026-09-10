@@ -25,9 +25,6 @@ MapView::~MapView() {
     }
     chunkCv_.notify_all();
     if (chunkWorker_.joinable()) chunkWorker_.join();
-    if (waterMask_) gpuvram::destroy(waterMask_);
-    if (caustic_) gpuvram::destroy(caustic_);
-    if (waterRT_) gpuvram::destroy(waterRT_);
 }
 
 void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
@@ -42,8 +39,6 @@ void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     for (auto& [k, t] : chunks_) if (t) gpuvram::destroy(t);
     chunks_.clear();
     map_ = genOrLoad(vfs, mapPath);
-    if (waterMask_) { gpuvram::destroy(waterMask_); waterMask_ = nullptr; }
-    waterChecked_ = false; hasWater_ = false;   // rebuild the mask for the new map
 }
 
 void MapView::input(const SDL_Event& e) {
@@ -159,140 +154,6 @@ void MapView::draw(int winW, int winH) {
             SDL_Rect dst{x0, y0, x1 - x0, y1 - y0};
             SDL_RenderCopy(ren_, t, nullptr, &dst);
         }
-
-    drawWater(winW, winH);   // animated caustic over below-sea cells
-}
-
-void MapView::buildWaterMask() {
-    waterChecked_ = true;
-    hasWater_ = false;
-    if (waterMask_) { gpuvram::destroy(waterMask_); waterMask_ = nullptr; }
-    const int W = map_.width, H = map_.height, sea = map_.seaLevel;
-    if (W <= 0 || H <= 0 || int(map_.heights.size()) < W * H) return;
-    auto land = [&](int x, int z) {
-        if (x < 0 || z < 0 || x >= W || z >= H) return false;
-        return map_.heights[size_t(z) * W + x] >= sea;
-    };
-    std::vector<uint8_t> px(size_t(W) * H * 4, 0);
-    for (int z = 0; z < H; ++z)
-        for (int x = 0; x < W; ++x) {
-            uint8_t s = 0;
-            if (!land(x, z)) {                   // a water cell
-                hasWater_ = true;
-                int h = map_.heights[size_t(z) * W + x];
-                int base = 108 + std::clamp(sea - h, 0, 60) * 42 / 60;   // 108..150 open water
-                // Surf: the caustic runs BRIGHT right at the waterline and fades a few
-                // cells out, so the scrolling caustic reads as foam rolling on the
-                // shore. Nearest land within 3 cells (Chebyshev) sets the boost.
-                int near = 9;
-                for (int dz = -3; dz <= 3 && near > 1; ++dz)
-                    for (int dx = -3; dx <= 3; ++dx)
-                        if (land(x + dx, z + dz)) { near = std::min(near, std::max(std::abs(dx), std::abs(dz))); }
-                int foam = near <= 3 ? (4 - near) * 46 : 0;   // 138 / 92 / 46 at 1 / 2 / 3 cells
-                s = uint8_t(std::clamp(base + foam, 0, 255));
-            }
-            size_t i = (size_t(z) * W + x) * 4;
-            px[i] = px[i + 1] = px[i + 2] = s; px[i + 3] = 255;
-        }
-    if (!hasWater_) return;
-    waterMask_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, W, H);
-    if (!waterMask_) { hasWater_ = false; return; }
-    SDL_UpdateTexture(waterMask_, nullptr, px.data(), W * 4);
-    SDL_SetTextureScaleMode(waterMask_, SDL_ScaleModeLinear);   // smooth shorelines
-}
-
-void MapView::buildCaustic() {
-    const int N = 256;   // seamless: every grating uses an integer frequency, period N
-    std::vector<uint8_t> px(size_t(N) * N * 4);
-    for (int y = 0; y < N; ++y)
-        for (int x = 0; x < N; ++x) {
-            float u = float(x) / N * 6.2831853f, v = float(y) / N * 6.2831853f;
-            float a = std::sin(u * 2 + std::cos(v * 3)) * 0.5f
-                    + std::sin(v * 2 + std::cos(u * 3)) * 0.5f
-                    + std::sin((u + v) * 3) * 0.35f;
-            a = a * 0.5f + 0.5f;   // 0..1
-            a = a * a;             // sharpen into veins
-            int b = std::clamp(int(a * 190.0f), 0, 255);   // modest glint, not blinding
-            size_t i = (size_t(y) * N + x) * 4;   // cyan-white glint
-            px[i] = uint8_t(b * 52 / 100); px[i + 1] = uint8_t(b * 78 / 100);
-            px[i + 2] = uint8_t(b);        px[i + 3] = 255;
-        }
-    caustic_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, N, N);
-    if (!caustic_) return;
-    SDL_UpdateTexture(caustic_, nullptr, px.data(), N * 4);
-    SDL_SetTextureScaleMode(caustic_, SDL_ScaleModeLinear);
-}
-
-void MapView::drawWater(int winW, int winH) {
-    if (!waterChecked_) buildWaterMask();
-    if (!hasWater_) return;                       // fully-dry map: nothing to animate
-    if (!caustic_) buildCaustic();
-    if (!caustic_ || !waterMask_) return;
-
-    const int down = 2;                           // composite at half res (cheap, smooth)
-    int rw = std::max(1, winW / down), rh = std::max(1, winH / down);
-    if (!waterRT_ || waterRTw_ != rw || waterRTh_ != rh) {
-        if (waterRT_) gpuvram::destroy(waterRT_);
-        waterRT_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, rw, rh);
-        waterRTw_ = rw; waterRTh_ = rh;
-        if (waterRT_) SDL_SetTextureScaleMode(waterRT_, SDL_ScaleModeLinear);
-    }
-    if (!waterRT_) return;
-
-    // SDL_SetRenderTarget resets the scale AND clip of whichever target it selects,
-    // so a naive round-trip through waterRT_ would wipe the AA supersample scale and
-    // the caller's world clip rect -- leaving every unit/feature/HUD drawn after us
-    // mis-scaled and unclipped, with the mouse offset (the "AA pointer drift"). Snap-
-    // shot and restore that state around the switch.
-    SDL_Texture* prev = SDL_GetRenderTarget(ren_);
-    float sSx = 1, sSy = 1; SDL_RenderGetScale(ren_, &sSx, &sSy);
-    SDL_bool sClipOn = SDL_RenderIsClipEnabled(ren_);
-    SDL_Rect sClip; SDL_RenderGetClipRect(ren_, &sClip);
-
-    SDL_SetRenderTarget(ren_, waterRT_);
-    SDL_RenderSetScale(ren_, 1.0f, 1.0f);   // waterRT_ composites 1:1
-    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
-    SDL_RenderClear(ren_);
-
-    const float z = zoom_ / down;                 // world px -> RT px
-    const int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;   // full map, world px
-    SDL_Rect mdst{int(std::lround((0 - offX_) * z)), int(std::lround((0 - offY_) * z)),
-                  0, 0};
-    mdst.w = int(std::lround((mapW - offX_) * z)) - mdst.x;
-    mdst.h = int(std::lround((mapH - offY_) * z)) - mdst.y;
-    SDL_RenderSetClipRect(ren_, &mdst);           // keep glints inside the map rect
-
-    const float t = SDL_GetTicks() / 1000.0f;     // wall clock (display only)
-    // Two caustic layers scroll opposite ways -> shifting interference = ripples.
-    // Anchored to the world (pan offset) so glints track terrain, plus a slow drift.
-    auto layer = [&](float wx, float wy, int tile, SDL_BlendMode bm) {
-        SDL_SetTextureBlendMode(caustic_, bm);
-        // Integer step so tiles abut exactly (no sub-pixel seam lines in the water).
-        int ox = int(std::floor(std::fmod(wx, float(tile)))); if (ox > 0) ox -= tile;
-        int oy = int(std::floor(std::fmod(wy, float(tile)))); if (oy > 0) oy -= tile;
-        for (int y = oy; y < rh; y += tile)
-            for (int x = ox; x < rw; x += tile) {
-                SDL_Rect d{x, y, tile, tile};
-                SDL_RenderCopy(ren_, caustic_, nullptr, &d);
-            }
-    };
-    layer(-offX_ * z + t * 13, -offY_ * z + t * 8,  128,  SDL_BLENDMODE_NONE);
-    layer(-offX_ * z - t * 9,  -offY_ * z + t * 11, 192,  SDL_BLENDMODE_ADD);
-
-    // Confine the glints to water: MOD the whole-map mask over the caustic (RGB *=
-    // strength -> zero on land). Stretch it to the same rect the terrain occupies.
-    SDL_SetTextureBlendMode(waterMask_, SDL_BLENDMODE_MOD);
-    SDL_RenderCopy(ren_, waterMask_, nullptr, &mdst);
-
-    SDL_RenderSetClipRect(ren_, nullptr);
-    SDL_SetRenderTarget(ren_, prev);
-    // Restore scale first, then the clip (which is expressed in scaled coords), so
-    // both round-trip exactly to what the caller had before we switched targets.
-    SDL_RenderSetScale(ren_, sSx, sSy);
-    SDL_RenderSetClipRect(ren_, sClipOn ? &sClip : nullptr);
-    SDL_SetTextureBlendMode(waterRT_, SDL_BLENDMODE_ADD);
-    SDL_Rect full{0, 0, winW, winH};   // scaled by sSx now, and clipped to the world rect
-    SDL_RenderCopy(ren_, waterRT_, nullptr, &full);
 }
 
 void MapView::setBilinear(bool b) {
