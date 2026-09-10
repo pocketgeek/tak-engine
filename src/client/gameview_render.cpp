@@ -1804,6 +1804,45 @@
         return nullptr;
     }
 
+    // Upload RGBA with the transparent texels' RGB BLED from their opaque
+    // neighbours: GAF art keeps RGB=black under alpha 0, so bilinear sampling
+    // mixes that black into the visible edge -- a 1px dark contour traced
+    // around every feathered sprite (grass tufts on sand made it obvious).
+    // Colour-bleeding fixes the fringe with ordinary BLEND mode, so it works
+    // on every renderer backend (custom/premultiplied blend modes are NOT
+    // supported by the software renderer and silently fall back to opaque).
+    static void premulUpload(SDL_Texture* t, const std::vector<uint8_t>& rgba, int w) {
+        std::vector<uint8_t> px = rgba;
+        int h = w > 0 ? int(px.size() / 4) / w : 0;
+        auto A = [&](int x, int y) { return px[(size_t(y) * w + x) * 4 + 3]; };
+        // Two passes so the bleed reaches diagonal/1px-gap texels too.
+        for (int pass = 0; pass < 2; ++pass) {
+            std::vector<uint8_t> src = px;
+            auto SA = [&](int x, int y) { return src[(size_t(y) * w + x) * 4 + 3]; };
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x) {
+                    size_t i = (size_t(y) * w + x) * 4;
+                    if (src[i + 3] != 0) continue;   // visible texel: keep
+                    int r = 0, g = 0, b = 0, n = 0;
+                    for (int dy = -1; dy <= 1; ++dy)
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            int nx = x + dx, ny = y + dy;
+                            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                            size_t j = (size_t(ny) * w + nx) * 4;
+                            if (src[j + 3] == 0 &&
+                                (pass == 0 || (src[j] | src[j+1] | src[j+2]) == 0))
+                                continue;   // neighbour has no colour to lend
+                            r += src[j]; g += src[j + 1]; b += src[j + 2]; ++n;
+                        }
+                    if (n) { px[i] = uint8_t(r / n); px[i + 1] = uint8_t(g / n);
+                             px[i + 2] = uint8_t(b / n); }
+                }
+        }
+        (void)A;
+        SDL_UpdateTexture(t, nullptr, px.data(), w * 4);
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+    }
+
     GameView::FeatArt* GameView::featureArtFor(const tak::tdf::Node& def,
                                                const char* seqKey, const char* shadKey) {
         std::string file = def.valueOr("filename", "");
@@ -1844,8 +1883,7 @@
                             SDL_Texture* t = gpuvram::create(
                                 ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
                                 ff.width, ff.height);
-                            SDL_UpdateTexture(t, nullptr, ff.rgba.data(), ff.width * 4);
-                            SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+                            premulUpload(t, ff.rgba, ff.width);
                             if (bilinear_) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
                             a.frames.push_back(t);
                             a.fgeom.push_back({ff.width, ff.height, ff.xoff, ff.yoff});
@@ -1868,8 +1906,7 @@
                         a.shadow = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                      SDL_TEXTUREACCESS_STATIC, fr.width,
                                                      fr.height);
-                        SDL_UpdateTexture(a.shadow, nullptr, px.data(), fr.width * 4);
-                        SDL_SetTextureBlendMode(a.shadow, SDL_BLENDMODE_BLEND);
+                        premulUpload(a.shadow, px, fr.width);
                         if (bilinear_) SDL_SetTextureScaleMode(a.shadow, SDL_ScaleModeLinear);
                         a.sw = fr.width; a.sh = fr.height;
                         a.sxoff = fr.xoff; a.syoff = fr.yoff;
