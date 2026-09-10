@@ -108,9 +108,12 @@ the **tile/section palette + brush tools**, the **height tools**, the
     delete + a Unit Properties dialog (double-click: player/health/armor/weapon/
     veteran/angle); Save writes the map's .crt, preserving the trigger rules,
     regions, and custom types the unit tool doesn't touch.]
-4. Scenario Properties / Resize / Use Only / Check Map.
-   [modal widget layer + Scenario Properties + Resize DONE; Use Only + Check Map
-    need placed units]
+4. Scenario Properties / Resize / Use Only / Check Map. ✅
+   [Scenario Properties + Resize (modal widget layer); Use Only checklist overlay
+    (toggle allowed types; writes the sibling <map>.tdf `[TYPE]\t{}` list + the
+    OTA `useonlyunits=<name>.tdf` ref, empty=unrestricted); Check Map message box
+    (warns which placed unit types are restricted — the one retail validation,
+    also fired at save). Keys: P/R/U/C.]
 5. The trigger system (Scripting): condition/action opcode tables (RE), rule
    editor, per-player rules, OTA script write.
 6. Land Lasso + Clear Area; Recent files; polish to 1:1.

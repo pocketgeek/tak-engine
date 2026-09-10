@@ -42,4 +42,11 @@ std::vector<uint8_t> saveScenario(tak::crt::Scenario base,
 // Sorted UPPERCASE unit-type names from every units/*.fbi (for the palette/combo).
 std::vector<std::string> unitTypeNames(const tak::hpi::Vfs& vfs);
 
+// Use-only unit restriction. The map's <name>.tdf (referenced by the OTA
+// `useonlyunits=<name>.tdf`) lists the allowed types, one `[TYPE] {}` section
+// each. loadUseOnly returns them UPPERCASE; writeUseOnly emits the retail
+// `[TYPE]\t{}` CRLF format. An empty list means "no restriction".
+std::vector<std::string> loadUseOnly(const tak::hpi::Vfs& vfs, const std::string& tdfPath);
+std::string writeUseOnly(const std::vector<std::string>& types);
+
 } // namespace cart

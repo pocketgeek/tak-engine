@@ -1,6 +1,7 @@
 #include "cartographer/units.h"
 
 #include "hpi/hpi.h"
+#include "tdf/tdf.h"
 
 #include <algorithm>
 #include <cmath>
@@ -57,6 +58,25 @@ std::vector<uint8_t> saveScenario(tak::crt::Scenario base,
         base.units.push_back(std::move(u));
     }
     return tak::crt::write(base);
+}
+
+std::vector<std::string> loadUseOnly(const tak::hpi::Vfs& vfs, const std::string& tdfPath) {
+    std::vector<std::string> out;
+    std::vector<uint8_t> d;
+    try { d = vfs.read(tdfPath); } catch (const std::exception&) { return out; }
+    tak::tdf::Node root = tak::tdf::parseText(std::string(d.begin(), d.end()), tdfPath);
+    for (const std::string& name : root.childOrder) {   // childOrder is lowercased
+        std::string up = name;
+        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+        out.push_back(up);
+    }
+    return out;
+}
+
+std::string writeUseOnly(const std::vector<std::string>& types) {
+    std::string s;
+    for (const auto& t : types) s += "[" + t + "]\t{}\r\n";
+    return s;
 }
 
 std::vector<std::string> unitTypeNames(const tak::hpi::Vfs& vfs) {

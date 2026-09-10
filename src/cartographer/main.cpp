@@ -30,6 +30,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <string>
 
 namespace {
@@ -192,6 +193,13 @@ int main(int argc, char** argv) {
     tak::crt::Scenario scen = cart::loadScenario(vfs, crtPath);
     std::vector<cart::PlacedUnit> units = cart::toPlaced(scen);
     bool unitsEdited = false;
+
+    // Use-only restriction: the allowed unit types (UPPERCASE). Loaded from the
+    // sibling <map>.tdf when the OTA references one; empty = unrestricted.
+    std::set<std::string> useOnly;
+    std::string useOnlyTdf = mapPath.substr(0, mapPath.rfind('.')) + ".tdf";
+    if (!scenario.useOnlyUnits.empty())
+        for (auto& t : cart::loadUseOnly(vfs, useOnlyTdf)) useOnly.insert(t);
     // Set when the terrain is painted, so Save regenerates the minimaps (an
     // unedited save stays byte-identical to the source; an edited one gets a
     // fresh overview reflecting the paint).
@@ -207,6 +215,24 @@ int main(int argc, char** argv) {
         std::vector<uint8_t> tnt = mapView.map().save();
         bool ok = writeFile(tntPath, tnt.data(), tnt.size());
         std::string stem = tntPath.substr(0, tntPath.rfind('.'));
+        std::string base = stem.substr(stem.rfind('/') + 1);
+        // Use-only restriction: write/clear the sibling .tdf and set the OTA
+        // reference BEFORE serializing the OTA (which embeds the filename).
+        if (!useOnly.empty()) {
+            std::vector<std::string> types(useOnly.begin(), useOnly.end());   // sorted (set)
+            std::string tdf = cart::writeUseOnly(types);
+            ok &= writeFile(stem + ".tdf", tdf.data(), tdf.size());
+            scenario.useOnlyUnits = base + ".tdf";
+            // Check-Map warning also fires at save (retail behaviour): placed
+            // units whose type is not allowed will not appear in the game.
+            int restricted = 0;
+            for (const auto& u : units) if (!useOnly.count(u.type)) ++restricted;
+            if (restricted)
+                std::fprintf(stderr, "check-map: %d placed unit(s) have restricted "
+                             "types and will not show up in the game\n", restricted);
+        } else {
+            scenario.useOnlyUnits.clear();
+        }
         std::string otaText = scenario.write();
         ok &= writeFile(stem + ".ota", otaText.data(), otaText.size());
         // The scenario .crt: written whenever the map has (or had) placed units
@@ -395,18 +421,37 @@ int main(int argc, char** argv) {
         return -1;
     };
 
-    // --- Modal dialogs (Scenario Properties, Resize, Unit Properties) ---------
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT };
+    // --- Modal dialogs (Scenario Properties, Resize, Unit Properties, Message) -
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE };
     static constexpr int kMaxFields = 6;
     Modal modal = M_NONE;
     std::string mf[kMaxFields];              // field buffers
     bool mfNumeric[kMaxFields] = {};
     const char* mLabel[kMaxFields] = {};
-    const char* mTitle = "";
+    std::string mTitle;
     int mN = 0;                              // active field count
     int mfocus = 0;
     int editUnit = -1;                       // UNITS: index being edited (M_UNIT)
+    std::vector<std::string> mMsg;           // M_MESSAGE: wrapped text lines
     SDL_Rect mBox[kMaxFields]{}, mOK{}, mCancel{};   // render-computed hit rects
+    // Pop a message box (word-wrapped to ~46 cols) — used by Check Map.
+    auto openMessage = [&](const std::string& title, const std::string& text) {
+        mMsg.clear();
+        std::string line;
+        std::string word;
+        auto flush = [&]() { if (!line.empty()) { mMsg.push_back(line); line.clear(); } };
+        for (size_t i = 0; i <= text.size(); ++i) {
+            char c = i < text.size() ? text[i] : ' ';
+            if (c == ' ' || c == '\n') {
+                if (line.size() + word.size() + 1 > 46) flush();
+                if (!line.empty()) line += ' ';
+                line += word; word.clear();
+                if (c == '\n') flush();
+            } else word += c;
+        }
+        flush();
+        mTitle = title; modal = M_MESSAGE; mN = 0; mfocus = 0;
+    };
     auto openModal = [&](Modal m, int unitIdx = -1) {
         mfocus = 0; editUnit = unitIdx;
         if (m == M_SCENARIO) {
@@ -459,6 +504,32 @@ int main(int argc, char** argv) {
         modal = M_NONE; SDL_StopTextInput();
     };
 
+    // --- Use Only restriction list + Check Map (phase 4) ----------------------
+    bool useOnlyOpen = false;
+    int useOnlyScroll = 0;
+    SDL_Rect uoList{}, uoDone{}, uoClear{};   // render-computed hit rects
+    // Check Map: retail warns only about placed units whose type is restricted.
+    auto checkMap = [&]() {
+        if (useOnly.empty()) {
+            openMessage("CHECK MAP", "No unit-type restriction is set (Use Only is "
+                        "empty), so every placed unit will appear in the game.");
+            return;
+        }
+        std::vector<std::string> bad;
+        std::set<std::string> seen;
+        for (const auto& u : units)
+            if (!useOnly.count(u.type) && seen.insert(u.type).second) bad.push_back(u.type);
+        if (bad.empty()) {
+            openMessage("CHECK MAP", "Map OK: every placed unit's type is in the "
+                        "Use Only list.");
+            return;
+        }
+        std::string list;
+        for (size_t i = 0; i < bad.size(); ++i) { if (i) list += ", "; list += bad[i]; }
+        openMessage("CHECK MAP", std::to_string(bad.size()) + " placed unit type(s) "
+                    "have been restricted and will not show up in the game: " + list);
+    };
+
     if (!shotPath.empty()) {
         mapView.setZoom(0.3f);          // fit-ish view for the shot
         mapView.finishChunks();         // wait for the terrain to decode+upload
@@ -473,14 +544,36 @@ int main(int argc, char** argv) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) { running = false; continue; }
+            // The Use Only checklist overlay swallows input while up.
+            if (useOnlyOpen) {
+                if (e.type == SDL_MOUSEWHEEL) {
+                    int maxS = std::max(0, int(unitTypes.size()) * 14 - uoList.h);
+                    useOnlyScroll = std::clamp(useOnlyScroll - e.wheel.y * 40, 0, maxS);
+                } else if (e.type == SDL_KEYDOWN &&
+                           (e.key.keysym.sym == SDLK_ESCAPE || e.key.keysym.sym == SDLK_RETURN)) {
+                    useOnlyOpen = false;
+                } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                    int mx = e.button.x, my = e.button.y;
+                    if (cart::pointIn(mx, my, uoDone)) useOnlyOpen = false;
+                    else if (cart::pointIn(mx, my, uoClear)) useOnly.clear();
+                    else if (cart::pointIn(mx, my, uoList)) {
+                        int row = (my - uoList.y + useOnlyScroll) / 14;
+                        if (row >= 0 && row < int(unitTypes.size())) {
+                            const std::string& t = unitTypes[size_t(row)];
+                            if (useOnly.count(t)) useOnly.erase(t); else useOnly.insert(t);
+                        }
+                    }
+                }
+                continue;
+            }
             // A modal dialog swallows all input while up.
             if (modal != M_NONE) {
-                if (e.type == SDL_TEXTINPUT) {
+                if (e.type == SDL_TEXTINPUT && mN > 0) {
                     for (const char* c = e.text.text; *c; ++c)
                         if (!mfNumeric[mfocus] || (*c >= '0' && *c <= '9')) mf[mfocus] += *c;
                 } else if (e.type == SDL_KEYDOWN) {
                     SDL_Keycode k = e.key.keysym.sym;
-                    if (k == SDLK_BACKSPACE && !mf[mfocus].empty()) mf[mfocus].pop_back();
+                    if (k == SDLK_BACKSPACE && mN > 0 && !mf[mfocus].empty()) mf[mfocus].pop_back();
                     else if (k == SDLK_TAB) mfocus = (mfocus + 1) % std::max(1, mN);
                     else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) applyModal();
                     else if (k == SDLK_ESCAPE) { modal = M_NONE; SDL_StopTextInput(); }
@@ -505,6 +598,10 @@ int main(int argc, char** argv) {
                 openModal(M_SCENARIO);   // Scenario -> Properties
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_r) {
                 openModal(M_RESIZE);     // Scenario -> Resize
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_u) {
+                useOnlyOpen = true;      // Scenario -> Use Only (unit restriction)
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_c) {
+                checkMap();              // Scenario -> Check Map
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_LEFTBRACKET) {
                 currentPlayer = (currentPlayer + 7) % 8;   // UNITS: pick placement player
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RIGHTBRACKET) {
@@ -815,10 +912,19 @@ int main(int argc, char** argv) {
                       "   UNITS: " + std::to_string(units.size());
         else
             status += "   STARTS: " + std::to_string(scenario.starts.size());
+        if (!useOnly.empty()) status += "   USEONLY: " + std::to_string(useOnly.size());
         cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
 
-        // Modal dialog over everything (N fields, height fits the field count).
-        if (modal != M_NONE) {
+        // Message box (Check Map result): wrapped text + a single OK.
+        if (modal == M_MESSAGE) {
+            int ph = 66 + int(mMsg.size()) * 12;
+            SDL_Rect ct = cart::drawPanel(ren, w, h, 360, ph, mTitle);
+            for (size_t i = 0; i < mMsg.size(); ++i)
+                cart::drawText(ren, mMsg[i], ct.x, ct.y + int(i) * 12, 1, 225, 228, 236);
+            mOK = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18, "OK", true);
+            mCancel = {};   // no cancel on a message box
+        } else if (modal != M_NONE) {
+            // N-field dialog; height fits the field count.
             int ph = 70 + mN * 40;
             SDL_Rect ct = cart::drawPanel(ren, w, h, 320, ph, mTitle);
             if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size()))
@@ -829,6 +935,28 @@ int main(int argc, char** argv) {
             mOK = cart::drawButton(ren, ct.x + ct.w - 150, ct.y + ct.h - 20, 70, 18, "OK", true);
             mCancel = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18,
                                        "CANCEL", false);
+        }
+
+        // Use Only checklist overlay: scrollable unit-type list, click to toggle.
+        if (useOnlyOpen) {
+            SDL_Rect ct = cart::drawPanel(ren, w, h, 320, 460, "USE ONLY UNITS");
+            std::string hdr = useOnly.empty()
+                ? "ALL UNITS ALLOWED (empty = no restriction)"
+                : std::to_string(useOnly.size()) + " ALLOWED  (click to toggle)";
+            cart::drawText(ren, hdr, ct.x, ct.y - 16, 1, 180, 205, 185);
+            int listH = ct.h - 30;
+            uoList = {ct.x, ct.y, ct.w, listH};
+            SDL_RenderSetClipRect(ren, &uoList);
+            for (int i = 0; i < int(unitTypes.size()); ++i) {
+                int ry = ct.y + i * 14 - useOnlyScroll;
+                if (ry + 12 < ct.y || ry > ct.y + listH) continue;   // cull
+                bool on = useOnly.count(unitTypes[size_t(i)]) > 0;
+                cart::drawText(ren, (on ? "[X] " : "[ ] ") + unitTypes[size_t(i)],
+                               ct.x + 2, ry, 1, on ? 235 : 128, on ? 235 : 130, on ? 180 : 138);
+            }
+            SDL_RenderSetClipRect(ren, nullptr);
+            uoClear = cart::drawButton(ren, ct.x, ct.y + ct.h - 20, 100, 18, "UNRESTRICT", false);
+            uoDone = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18, "DONE", true);
         }
 
         SDL_RenderPresent(ren);
