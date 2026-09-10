@@ -1,4 +1,5 @@
 #include "hpi/hpi.h"
+#include "tdf/tdf.h"
 #include "tnt/mapgen.h"
 
 #include <zlib.h>
@@ -515,10 +516,14 @@ bool affectsGameplay(const std::string& path) {
         // stats, movement classes, faction data, god timing. Everything else in
         // gamedata/ (explosions, soundclasses, download, ...) is read by the
         // viewer/audio only -> cosmetic.
-        // Feature defs became sim inputs with reclaim (energy/footprint) and
-        // burning (flamable/spreadchance/sparktime/featureburnt) -- a modified
-        // tree TDF now desyncs, so it must fault the data-hash check instead.
-        if (k.find("features/") != std::string::npos) return true;
+        // Feature defs are DUAL-USE: mostly art keys (filename/seqname/object)
+        // that cosmetic reskin packs edit freely, plus a handful of sim inputs
+        // (footprint/energy/flamable/spreadchance/...). Classifying the whole
+        // file as gameplay killed cosmetic doodad reskins, so they stay
+        // cosmetic-mountable here; the SIM-relevant content is protected
+        // separately -- gameplayHash digests just those keys in canonical
+        // form (below), so an art-only override hashes identically while a
+        // sim-key edit still faults the version gate instead of desyncing.
         if (k.find("weapons/") != std::string::npos) return true;
         if (k.find("moveinfo") != std::string::npos || k.find("sidedata") != std::string::npos ||
             k.find("gods") != std::string::npos)
@@ -558,6 +563,55 @@ uint64_t gameplayHash(const Vfs& vfs) {
         mix(reinterpret_cast<const uint8_t*>(k.data()), k.size());
         uint8_t z = 0; mix(&z, 1);
         try { auto b = vfs.read(byKey[k]); mix(b.data(), b.size()); } catch (const std::exception&) {}
+    }
+    // Feature TDFs: hash only the keys the deterministic sim consumes (the
+    // exact set matchsetup's FeatDef loader reads), in canonical sorted order.
+    // Art keys (filename/seqname/object/world/...) are deliberately absent, so
+    // a cosmetic reskin that only redirects art hashes the same as retail --
+    // while an override touching footprints, reclaim yield, or the burn chain
+    // changes the hash and faults the MP version gate cleanly.
+    {
+        auto mixs = [&](const std::string& v) {
+            mix(reinterpret_cast<const uint8_t*>(v.data()), v.size());
+            uint8_t z = 0; mix(&z, 1);
+        };
+        static const char* kSimKeys[] = {
+            "animating", "blocking", "category", "damage", "decomposetime",
+            "energy", "featureburnt", "featuredead", "flamable", "footprintx",
+            "footprintz", "indestructible", "isfrozen", "isstone",
+            "reclaimable", "resurrectable", "sparktime", "spreadchance",
+        };
+        std::map<std::string, std::string> featFiles;   // sorted mount keys
+        for (const std::string& p : vfs.list("features")) {
+            std::string k = MountSet::key(p);
+            if (k.size() < 4 || k.substr(k.size() - 4) != ".tdf") continue;
+            featFiles[k] = p;
+        }
+        for (const auto& [k, p] : featFiles) {
+            tak::tdf::Node root;
+            try {
+                auto b = vfs.read(p);
+                root = tak::tdf::parseText(std::string(b.begin(), b.end()), p);
+            } catch (const std::exception&) { continue; }   // loader skips it too
+            std::map<std::string, const tak::tdf::Node*> secs;   // sorted sections
+            for (const auto& n : root.childOrder) {
+                std::string lo = n;
+                for (char& c : lo) c = char(std::tolower(static_cast<unsigned char>(c)));
+                secs[lo] = &root.children.at(n);
+            }
+            for (const auto& [nm, node] : secs) {
+                mixs(nm);
+                for (const char* sk : kSimKeys) {
+                    std::string v = node->valueOr(sk, "");
+                    for (char& c : v)
+                        c = char(std::tolower(static_cast<unsigned char>(c)));
+                    mixs(v);
+                }
+                // seqnameburn's NAME is art, but its PRESENCE gates ignition
+                // (retail StartBurning requires a burn anim) -- hash the bit.
+                mixs(node->valueOr("seqnameburn", "").empty() ? "0" : "1");
+            }
+        }
     }
     return h;
 }
