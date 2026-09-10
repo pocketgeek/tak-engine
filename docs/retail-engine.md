@@ -88,3 +88,36 @@ classes → the real `maxslope`/`max·minwaterdepth`) · `gamedata/SIDEDATA.tdf`
 `gamedata/Gods.tdf` (god timing) · `gamedata/{explosions,effects,damageflames,
 soundclasses}/*.tdf` · `CanBuild/<builder>/*.tdf` · `Maps/*.ota` + `*.tnt` ·
 `*.gaf`/`*.taf`/`*.3do`/`*.cob`.
+
+## Weapon in-range model (icd, 2026-09-10)
+
+The in-range predicate is a per-weapon-subclass virtual (vtable slots 3/4;
+MeleeWeapon vtable `0x5f3af8`, base WeaponType `0x5f3710`):
+
+- **Base `WeaponType::inRange` @0x530580** (point variant @0x530500): `range==0`
+  → always true; else strictly **2D centre-to-centre** from the two units'
+  position dwords (`unit+0x68` x, `+0x70` z, 16.16 fixed; y at `+0x6c` is
+  skipped), 64-bit squared compare `(dx²+dz²)>>32 <= range²` (inclusive). Used
+  unchanged by Guided/LineOfSight/Wandering weapons. No footprint subtraction,
+  no weapon-piece origin.
+- **BallisticWeapon @0x52bc60**: solves the launch arc first (helper `0x52bd10`,
+  the only user of dy; `0x8000` = no solution → out of range), then falls
+  through to the base centre test.
+- **MeleeWeapon @0x52b980** (point @0x52b8a0): **never reads `range`**. Each
+  unit's footprint box is position ∓ `foot<<19` (∓ 8px·footCells, cell-snapped);
+  in range iff on BOTH axes `|centreΔ| − halfA − halfB < 0x80000` (= 8 px) —
+  i.e. the boxes are within half a cell of touching. (`range` in melee TDFs —
+  10..250 in shipped data — is dead weight.)
+- Weapon TDF parse @0x530780: `range` readInt → `[WeaponType+0x90]`, clamped
+  min 2; `minrange` → `+0x94`. Unit-def weapon-type pointers at `+0x1aa`
+  (3 dwords). Range-ring UI strings @0x4d6823; debug dump @0x4fbf6b.
+
+## Ship / no-walk mover animation (icd + COB, 2026-09-10)
+
+Ships have no `walk` script. The engine drives them with the **`MoveRate`**
+callin on move start/stop (arg > 0 = moving); the COB's `Create` ambients
+(`MotionControl`, wake/oar controllers) poll the static that `MoveRate` sets
+and select `slowrow`/`row`/`fastrow` from **`GET_UNIT_VALUE 29`** (current
+speed, thresholds 25/75 ⇒ percent of max). `TurnDirection(deg)` steers the
+rudder/sail trim; `WindChange` orients sails/flags (FBI `wind=1`). Resetting
+such a unit's VM kills the Create ambients permanently — nothing restarts them.
