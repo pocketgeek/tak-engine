@@ -51,6 +51,7 @@ add_library(tak-formats
   src/hpi/hpi.cpp
   src/gaf/gaf.cpp
   src/tnt/tnt.cpp
+  src/tnt/mapgen.cpp
   src/tdo/tdo.cpp
   src/tdf/tdf.cpp
   src/cob/cob.cpp

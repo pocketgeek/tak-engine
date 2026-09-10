@@ -78,6 +78,10 @@ public:
 private:
     static constexpr int kChunk = 512;
 
+    // Load a real map from the VFS, OR -- when mapPath is a "~gen1~" random-map id --
+    // build it procedurally in memory (client & server share the deterministic gen).
+    static tak::tnt::Map genOrLoad(const tak::hpi::Vfs& vfs, const std::string& mapPath);
+
     // Queue a chunk for background compositing (no-op if built, queued, or off-map).
     void requestChunk(int cx, int cy);
     // Main thread: turn finished composites into textures.

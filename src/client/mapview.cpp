@@ -2,12 +2,19 @@
 
 #include "client/gpuvram.h"
 #include "hpi/hpi.h"           // tak::hpi::Vfs::read (ctor / reload)
+#include "tnt/mapgen.h"        // "~gen1~" random-map ids -> procedural map
 
 #include <algorithm>
 #include <cmath>
 
+tak::tnt::Map MapView::genOrLoad(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
+    if (tak::mapgen::isGeneratedMapId(mapPath))
+        return tak::mapgen::generate(tak::mapgen::decodeMapId(mapPath)).map;
+    return tak::tnt::Map::load(vfs.read(mapPath), mapPath);
+}
+
 MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& mapPath)
-    : ren_(ren), map_(tak::tnt::Map::load(vfs.read(mapPath), mapPath)), comp_(vfs) {
+    : ren_(ren), map_(genOrLoad(vfs, mapPath)), comp_(vfs) {
     chunkWorker_ = std::thread([this] { chunkWorkerLoop(); });
 }
 
@@ -31,7 +38,7 @@ void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     }
     for (auto& [k, t] : chunks_) if (t) gpuvram::destroy(t);
     chunks_.clear();
-    map_ = tak::tnt::Map::load(vfs.read(mapPath), mapPath);
+    map_ = genOrLoad(vfs, mapPath);
 }
 
 void MapView::input(const SDL_Event& e) {

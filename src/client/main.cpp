@@ -32,6 +32,7 @@
 #include "tdo/tdo.h"
 #include "terrain/terrain.h"
 #include "tnt/tnt.h"
+#include "tnt/mapgen.h"
 #include "util/png.h"
 #include "version.h"
 #include "client/cursors.h"
@@ -735,7 +736,11 @@ int main(int argc, char** argv) {
                          rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "");
             gameView->startReplay(rf.cfg, std::move(rf.bundles));
         } else if (mode == "map" && !args.empty() && !dataRoot.empty()) {
-            std::string mapPath = tak::hpi::findMap(vfs, args[0]);
+            // A "~gen1~" id is a random-map recipe MapView builds in memory; a plain
+            // name resolves to a real .tnt in the mounted data.
+            std::string mapPath = tak::mapgen::isGeneratedMapId(args[0])
+                                      ? args[0]
+                                      : tak::hpi::findMap(vfs, args[0]);
             if (mapPath.empty()) { std::fprintf(stderr, "map '%s' not found\n", args[0].c_str()); return 1; }
             mapView = std::make_unique<MapView>(ren, vfs, mapPath);
         } else if (mode == "game" && !args.empty() && !dataRoot.empty()) {
