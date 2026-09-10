@@ -694,7 +694,10 @@ public:
     // source weapon (soundhitclass / hweffect) and the unit struck (body material
     // for the material-specific hit sound). Cleared at the start of each tick.
     struct HitFx { float x = 0, z = 0; const Weapon* weapon = nullptr;
-                   const UnitType* target = nullptr; };
+                   const UnitType* target = nullptr;
+                   int victimId = 0;            // primary struck unit (0 = ground hit)
+                   float fromX = 0, fromZ = 0;  // attacker pos (viewer flinch direction)
+                   float damage = 0; };         // pre-armour damage vs the victim
     const std::vector<HitFx>& hits() const { return hits_; }
     void clearHits() { hits_.clear(); }
 

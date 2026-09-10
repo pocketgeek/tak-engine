@@ -1253,7 +1253,14 @@ float Weapon::damageVs(const UnitType* t) const {
 void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId,
                      Unit* primary) {
     // Record the impact for the viewer (hit sound / effect).
-    hits_.push_back({hx, hz, &w, primary ? primary->type : nullptr});
+    {
+        HitFx hf{hx, hz, &w, primary ? primary->type : nullptr};
+        if (primary) { hf.victimId = primary->id; hf.damage = w.damageVs(primary->type); }
+        const Unit* from = fromId ? unit(fromId) : nullptr;
+        hf.fromX = from ? from->x : hx;
+        hf.fromZ = from ? from->z : hz;
+        hits_.push_back(hf);
+    }
     // Attacker's veteran attack multiplier boosts damage dealt (retail scales the
     // attacker's attack stat by vetMul); the victim's boosts armour (below).
     const Unit* attacker = fromId ? unit(fromId) : nullptr;

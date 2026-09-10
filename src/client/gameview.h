@@ -891,6 +891,9 @@ private:
         bool hasAim = false;     // has an AimWeapon script (turret/torso target tracking)
         int aimTarget = 0;       // unit id the last AimWeapon start tracked (0 = none)
         float aimNext = 0;       // animClock_ time of the next aim refresh
+        bool hasFlinch = false;  // has a HitByWeapon script (damage flinch)
+        bool hasWind = false;    // has a WindChange script (flags/sails)
+        int windStamp = 0;       // last windGen_ this unit received (0 = never)
         bool hasMelee = false;   // has MoveWatcher/MeleeControl: the COB drives its own
                                  // gait retail-style (Create ambients poll GET 29/28/34
                                  // and CALL walk_* themselves) -- the manual walk state
@@ -1109,6 +1112,8 @@ private:
         bool hasWalk = false;     // has a walk/walk_legs/tread script (hasWalkCycle)
         bool hasMelee = false;    // has MoveWatcher/MeleeControl (retail self-driven gait)
         bool hasAim = false;      // has an AimWeapon script
+        bool hasFlinch = false;   // has a HitByWeapon script
+        bool hasWind = false;     // has a WindChange script
     };
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };
@@ -2464,6 +2469,11 @@ private:
         float x = 0, z = 0, age = 0, delay = 0, dur = 1.2f, maxR = 120;
         int sprites = 24;
     };
+    // Ambient wind (retail WindChange callin): a slow random walk, re-sent to
+    // every unit with the script whenever it shifts. Purely cosmetic, per-client.
+    float windHeading_ = 0.8f, windSpeed_ = 150;
+    float windNext_ = 0;   // animClock_ time of the next shift
+    int windGen_ = 1;      // bumped per shift; Anim.windStamp tracks delivery
     // Camera shake (weapon shakemagnitude/shakeduration on heavy impacts).
     float shakeTime_ = 0, shakeDur_ = 0, shakeMag_ = 0;
     void triggerShake(float mag, float dur);

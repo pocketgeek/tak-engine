@@ -735,6 +735,34 @@
             if (h.target && h.target->bodyType == "flesh")
                 spawnBurst(h.x, h.z, 5, h.target->blood[0], h.target->blood[1],
                            h.target->blood[2], 26, 1.8f, 0);
+            // Damage flinch (retail HitByWeapon callin): args are
+            // (damageType, cos*400, sin*400, damage) -- the scripts themselves
+            // gate on damage>10 and skip damageType 4 (paralyze), so status
+            // weapons map there and everything else passes 0. Direction is the
+            // bearing from the victim to the attacker, in rendered-facing space
+            // (same convention as the aim driver).
+            if (h.victimId)
+                if (auto fi = anims_.find(h.victimId);
+                    fi != anims_.end() && fi->second.hasFlinch && fi->second.vm)
+                    if (const UnitR* v = frameUnitP(h.victimId);
+                        v && v->alive() && v->type) {
+                        int dtype = (h.weapon && h.weapon->status !=
+                                     tak::sim::Weapon::Status::None) ? 4 : 0;
+                        bool rot = v->type->canFly || v->type->canMove;
+                        float ang = std::atan2(h.fromX - v->x, h.fromZ - v->z) -
+                                    (rot ? v->heading : 0.0f);
+                        fi->second.vm->start("HitByWeapon",
+                            {dtype, int32_t(std::cos(ang) * 400.0f),
+                             int32_t(std::sin(ang) * 400.0f), int32_t(h.damage)});
+                    }
+        }
+        // Ambient wind: a slow random walk; each shift bumps windGen_ and the
+        // per-unit loop below re-sends WindChange to flags/sails as they differ.
+        if (animClock_ >= windNext_) {
+            windNext_ = animClock_ + 20.0f + float(salt_++ % 20);
+            windHeading_ += (float(salt_++ % 200) - 100.0f) / 100.0f;
+            windSpeed_ = 50.0f + float(salt_++ % 250);
+            ++windGen_;
         }
         // (No world_.clearHits() here: World::tick already clears hits_ at the start of the
         //  next tick, so the viewer-side clear was redundant -- and dropping it keeps the
@@ -1025,6 +1053,19 @@
                     a.vm->start("TargetCleared", {1});
                 }
             }
+            // Wind delivery (retail WindChange(speed, heading)): the script TURNs
+            // flag/sail pieces straight to arg1, so pass the wind bearing in
+            // rendered-facing space (structures: absolute; movers: minus heading).
+            if (a.hasWind && a.windStamp != windGen_) {
+                a.windStamp = windGen_;
+                constexpr float kTau = 6.2831853f;
+                bool rotates = u.type->canFly || u.type->canMove;
+                float w = windHeading_ - (rotates ? u.heading : 0.0f);
+                while (w > kTau / 2) w -= kTau;
+                while (w < -kTau / 2) w += kTau;
+                a.vm->start("WindChange", {int32_t(windSpeed_),
+                                           int32_t(w * (65536.0f / kTau))});
+            }
             // Mobile builders: the conjure/build animation while actively working a
             // site (constructing, repairing, or reclaiming). Retail drives this via
             // the COB StartBuilding/StopBuilding hooks -- StartBuilding raises the
@@ -1267,6 +1308,8 @@
                 cc.hasMelee = cc.file->scriptIndex("MoveWatcher") >= 0 ||
                               cc.file->scriptIndex("MeleeControl") >= 0;
                 cc.hasAim = cc.file->scriptIndex("AimWeapon") >= 0;
+                cc.hasFlinch = cc.file->scriptIndex("HitByWeapon") >= 0;
+                cc.hasWind = cc.file->scriptIndex("WindChange") >= 0;
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
             a.pieceNames = &ci->second.pieceNames;
@@ -1275,6 +1318,8 @@
             a.hasWalk = ci->second.hasWalk;
             a.hasMelee = ci->second.hasMelee;
             a.hasAim = ci->second.hasAim;
+            a.hasFlinch = ci->second.hasFlinch;
+            a.hasWind = ci->second.hasWind;
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             // TA COB unit-state queries answered from the sim.
             int unitId = id;
