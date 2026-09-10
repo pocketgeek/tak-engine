@@ -2103,7 +2103,19 @@ private:
                          ? std::pow(2.0f, float(semitone - kToneRef) / 12.0f)
                          : 1.0f;
         std::string t = "tone" + side_;
-        if (sounds_.has(t)) sounds_.play(t, 2.0f, rate);
+        if (!sounds_.has(t)) return;
+        // Peak-normalize the acknowledgment to a prominent UI level: retail's
+        // DirectSound path played tones hot (full per-ear gain, no equal-power
+        // pan loss, no mixing headroom); matching by amplitude alone leaves
+        // both retail's tone (peak 0.31) and soft click.hpi replacements
+        // (peak 0.39) buried under our /2-headroom + 0.707-pan chain. Target
+        // ~0.7 per ear: gain = 0.7 / (peak * 0.5 * 0.707), capped so a
+        // near-silent file can't amplify noise floor.
+        float peak = sounds_.peakOf(t);
+        float gain = peak > 0.01f
+                         ? std::clamp(0.7f / (peak * 0.5f * 0.707f), 1.0f, 8.0f)
+                         : 2.0f;
+        sounds_.play(t, gain, rate);
     }
 
     // The conjure/build menu for a builder type, filtered by the active mission's unit

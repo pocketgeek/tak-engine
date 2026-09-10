@@ -122,6 +122,23 @@ public:
     void play(const std::string& name, float gain = 1.0f, float rate = 1.0f) {
         playAt(name, 0.0f, 0.0f, false, 0, 0, gain, rate);
     }
+    // Peak amplitude (0..1) of a loaded sample, for normalizing UI feedback:
+    // computed once per sound and cached.
+    float peakOf(const std::string& name) {
+        std::string n = name;
+        std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+        auto pi = peaks_.find(n);
+        if (pi != peaks_.end()) return pi->second;
+        auto it = index_.find(n);
+        if (it == index_.end()) return 0.0f;
+        const auto* samples = load(n, it->second);
+        int peak = 0;
+        if (samples)
+            for (int16_t v : *samples) peak = std::max(peak, std::abs(int(v)));
+        float pf = float(peak) / 32767.0f;
+        peaks_[n] = pf;
+        return pf;
+    }
 
     // Positional: pan by the source's world position relative to the listener.
     // Left/right from x; front(up)/rear(down) from z on surround setups. The sound is
@@ -603,6 +620,7 @@ private:
 
     std::map<std::string, std::string> index_;
     std::map<std::string, std::vector<int16_t>> cache_;
+    std::map<std::string, float> peaks_;   // per-sound peak (UI normalization)
     Channel channels_[8];
     std::vector<std::string> playlist_;
     std::vector<int16_t> music_;
