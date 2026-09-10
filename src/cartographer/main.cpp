@@ -184,6 +184,14 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "saved %s (%zu bytes)\n", path.c_str(), w);
         return w == n;
     };
+
+    // The map's scenario .crt, kept in full so a save preserves the trigger
+    // rules, regions, and custom types the unit tool doesn't edit. `units` is
+    // the editor's working view (map pixels); `scen` is everything else.
+    std::string crtPath = mapPath.substr(0, mapPath.rfind('.')) + ".crt";
+    tak::crt::Scenario scen = cart::loadScenario(vfs, crtPath);
+    std::vector<cart::PlacedUnit> units = cart::toPlaced(scen);
+    bool unitsEdited = false;
     // Set when the terrain is painted, so Save regenerates the minimaps (an
     // unedited save stays byte-identical to the source; an edited one gets a
     // fresh overview reflecting the paint).
@@ -198,9 +206,15 @@ int main(int argc, char** argv) {
         }
         std::vector<uint8_t> tnt = mapView.map().save();
         bool ok = writeFile(tntPath, tnt.data(), tnt.size());
-        std::string ota = tntPath.substr(0, tntPath.rfind('.')) + ".ota";
+        std::string stem = tntPath.substr(0, tntPath.rfind('.'));
         std::string otaText = scenario.write();
-        ok &= writeFile(ota, otaText.data(), otaText.size());
+        ok &= writeFile(stem + ".ota", otaText.data(), otaText.size());
+        // The scenario .crt: written whenever the map has (or had) placed units
+        // or trigger rules, preserving everything the unit tool doesn't edit.
+        if (!units.empty() || !scen.units.empty() || !scen.regions.empty()) {
+            std::vector<uint8_t> crt = cart::saveScenario(scen, units);
+            ok &= writeFile(stem + ".crt", crt.data(), crt.size());
+        }
         return ok;
     };
 
@@ -213,9 +227,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "cartographer: %zu placeable features for '%s'\n",
                  features.list().size(), world.c_str());
 
-    // Placed units (from the map's .crt) + the unit-type list for the palette.
-    std::string crtPath = mapPath.substr(0, mapPath.rfind('.')) + ".crt";
-    std::vector<cart::PlacedUnit> units = cart::loadUnits(vfs, crtPath);
+    // Unit-type list for the palette (units + scen loaded above, before saveMap).
     std::vector<std::string> unitTypes = cart::unitTypeNames(vfs);
     std::fprintf(stderr, "cartographer: %zu placed units, %zu unit types\n",
                  units.size(), unitTypes.size());
@@ -383,23 +395,41 @@ int main(int argc, char** argv) {
         return -1;
     };
 
-    // --- Modal dialogs (Scenario Properties, Resize) --------------------------
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE };
+    // --- Modal dialogs (Scenario Properties, Resize, Unit Properties) ---------
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT };
+    static constexpr int kMaxFields = 6;
     Modal modal = M_NONE;
-    std::string mf[2];              // field buffers
-    bool mfNumeric[2] = {false, false};
+    std::string mf[kMaxFields];              // field buffers
+    bool mfNumeric[kMaxFields] = {};
+    const char* mLabel[kMaxFields] = {};
+    const char* mTitle = "";
+    int mN = 0;                              // active field count
     int mfocus = 0;
-    SDL_Rect mBox[2]{}, mOK{}, mCancel{};   // render-computed hit rects
-    auto openModal = [&](Modal m) {
-        modal = m; mfocus = 0;
+    int editUnit = -1;                       // UNITS: index being edited (M_UNIT)
+    SDL_Rect mBox[kMaxFields]{}, mOK{}, mCancel{};   // render-computed hit rects
+    auto openModal = [&](Modal m, int unitIdx = -1) {
+        mfocus = 0; editUnit = unitIdx;
         if (m == M_SCENARIO) {
-            mf[0] = scenario.missionName; mf[1] = scenario.missionDescription;
-            mfNumeric[0] = mfNumeric[1] = false;
+            mTitle = "SCENARIO PROPERTIES"; mN = 2;
+            mLabel[0] = "SCENARIO NAME"; mf[0] = scenario.missionName;        mfNumeric[0] = false;
+            mLabel[1] = "DESCRIPTION";   mf[1] = scenario.missionDescription; mfNumeric[1] = false;
         } else if (m == M_RESIZE) {
-            mf[0] = std::to_string(mapView.map().width / 32);
-            mf[1] = std::to_string(mapView.map().height / 32);
-            mfNumeric[0] = mfNumeric[1] = true;
+            mTitle = "RESIZE MAP"; mN = 2;
+            mLabel[0] = "WIDTH (UNITS)";  mf[0] = std::to_string(mapView.map().width / 32);  mfNumeric[0] = true;
+            mLabel[1] = "HEIGHT (UNITS)"; mf[1] = std::to_string(mapView.map().height / 32); mfNumeric[1] = true;
+        } else if (m == M_UNIT && unitIdx >= 0 && unitIdx < int(units.size())) {
+            const auto& u = units[size_t(unitIdx)];
+            mTitle = "UNIT PROPERTIES"; mN = 6;
+            mLabel[0] = "PLAYER (0-7)";  mf[0] = std::to_string(u.player);      mfNumeric[0] = true;
+            mLabel[1] = "HEALTH %";      mf[1] = std::to_string(u.health);      mfNumeric[1] = true;
+            mLabel[2] = "ARMOR %";       mf[2] = std::to_string(u.armor);       mfNumeric[2] = true;
+            mLabel[3] = "WEAPON %";      mf[3] = std::to_string(u.weapon);      mfNumeric[3] = true;
+            mLabel[4] = "VETERAN (0-9)"; mf[4] = std::to_string(u.veteran);     mfNumeric[4] = true;
+            mLabel[5] = "ANGLE (DEG)";   mf[5] = std::to_string(int(u.angle));  mfNumeric[5] = true;
+        } else {
+            return;   // nothing to open
         }
+        modal = m;
         SDL_StartTextInput();
     };
     auto applyModal = [&]() {
@@ -415,6 +445,16 @@ int main(int argc, char** argv) {
             scenario.sizeW = wu; scenario.sizeH = hu;
             mapView.tilesEdited();
             edited = true;
+        } else if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size())) {
+            auto& u = units[size_t(editUnit)];
+            u.player  = std::clamp(std::atoi(mf[0].c_str()), 0, 7);
+            u.health  = std::clamp(std::atoi(mf[1].c_str()), 0, 100);
+            u.armor   = std::clamp(std::atoi(mf[2].c_str()), 0, 1000);
+            u.weapon  = std::clamp(std::atoi(mf[3].c_str()), 0, 1000);
+            u.veteran = std::clamp(std::atoi(mf[4].c_str()), 0, 9);
+            int a = std::atoi(mf[5].c_str()) % 360; if (a < 0) a += 360;
+            u.angle = float(a);
+            unitsEdited = true;
         }
         modal = M_NONE; SDL_StopTextInput();
     };
@@ -441,16 +481,17 @@ int main(int argc, char** argv) {
                 } else if (e.type == SDL_KEYDOWN) {
                     SDL_Keycode k = e.key.keysym.sym;
                     if (k == SDLK_BACKSPACE && !mf[mfocus].empty()) mf[mfocus].pop_back();
-                    else if (k == SDLK_TAB) mfocus = (mfocus + 1) % 2;
+                    else if (k == SDLK_TAB) mfocus = (mfocus + 1) % std::max(1, mN);
                     else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) applyModal();
                     else if (k == SDLK_ESCAPE) { modal = M_NONE; SDL_StopTextInput(); }
                 } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                            e.button.button == SDL_BUTTON_LEFT) {
                     int mx = e.button.x, my = e.button.y;
-                    if (cart::pointIn(mx, my, mBox[0])) mfocus = 0;
-                    else if (cart::pointIn(mx, my, mBox[1])) mfocus = 1;
-                    else if (cart::pointIn(mx, my, mOK)) applyModal();
-                    else if (cart::pointIn(mx, my, mCancel)) { modal = M_NONE; SDL_StopTextInput(); }
+                    bool onField = false;
+                    for (int i = 0; i < mN; ++i)
+                        if (cart::pointIn(mx, my, mBox[i])) { mfocus = i; onField = true; }
+                    if (!onField && cart::pointIn(mx, my, mOK)) applyModal();
+                    else if (!onField && cart::pointIn(mx, my, mCancel)) { modal = M_NONE; SDL_StopTextInput(); }
                 }
                 continue;
             }
@@ -525,14 +566,18 @@ int main(int argc, char** argv) {
                 } else if (tool == UNITS) {   // grab an existing unit, else place one
                     int hit = unitAt(e.button.x, e.button.y);
                     int cx, cz;
-                    if (hit >= 0) draggingUnit = hit;
-                    else if (selectedType >= 0 && mouseCell(e.button.x, e.button.y, cx, cz)) {
+                    if (hit >= 0 && e.button.clicks >= 2) {
+                        openModal(M_UNIT, hit);   // double-click: edit properties
+                    } else if (hit >= 0) {
+                        draggingUnit = hit;
+                    } else if (selectedType >= 0 && mouseCell(e.button.x, e.button.y, cx, cz)) {
                         cart::PlacedUnit u;
                         u.type = unitTypes[size_t(selectedType)];
                         u.player = currentPlayer;
                         u.x = cx * 16.0f + 8; u.z = cz * 16.0f + 8;
                         units.push_back(u);
                         draggingUnit = int(units.size()) - 1;
+                        unitsEdited = true;
                     }
                 } else {   // STARTS: grab an existing marker, else place a new one
                     int hit = startAt(e.button.x, e.button.y);
@@ -559,7 +604,7 @@ int main(int argc, char** argv) {
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_RIGHT && tool == UNITS) {
                 int hit = unitAt(e.button.x, e.button.y);   // right-click deletes a unit
-                if (hit >= 0) units.erase(units.begin() + hit);
+                if (hit >= 0) { units.erase(units.begin() + hit); unitsEdited = true; }
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 draggingStart = -1; draggingUnit = -1;
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK) &&
@@ -573,6 +618,7 @@ int main(int argc, char** argv) {
                     if (mouseCell(e.motion.x, e.motion.y, cx, cz)) {
                         units[size_t(draggingUnit)].x = cx * 16.0f + 8;
                         units[size_t(draggingUnit)].z = cz * 16.0f + 8;
+                        unitsEdited = true;
                     }
                 } else if (draggingStart >= 0) {
                     int cx, cz;   // drag a start marker to a new cell
@@ -771,14 +817,15 @@ int main(int argc, char** argv) {
             status += "   STARTS: " + std::to_string(scenario.starts.size());
         cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
 
-        // Modal dialog over everything.
+        // Modal dialog over everything (N fields, height fits the field count).
         if (modal != M_NONE) {
-            const char* title = modal == M_SCENARIO ? "SCENARIO PROPERTIES" : "RESIZE MAP";
-            const char* l0 = modal == M_SCENARIO ? "SCENARIO NAME" : "WIDTH (UNITS)";
-            const char* l1 = modal == M_SCENARIO ? "DESCRIPTION" : "HEIGHT (UNITS)";
-            SDL_Rect ct = cart::drawPanel(ren, w, h, 320, 150, title);
-            mBox[0] = cart::drawField(ren, ct.x, ct.y, ct.w, l0, mf[0], mfocus == 0);
-            mBox[1] = cart::drawField(ren, ct.x, ct.y + 40, ct.w, l1, mf[1], mfocus == 1);
+            int ph = 70 + mN * 40;
+            SDL_Rect ct = cart::drawPanel(ren, w, h, 320, ph, mTitle);
+            if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size()))
+                cart::drawText(ren, units[size_t(editUnit)].type, ct.x, ct.y - 16, 1, 200, 200, 200);
+            for (int i = 0; i < mN; ++i)
+                mBox[i] = cart::drawField(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
+                                          mf[i], mfocus == i);
             mOK = cart::drawButton(ren, ct.x + ct.w - 150, ct.y + ct.h - 20, 70, 18, "OK", true);
             mCancel = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18,
                                        "CANCEL", false);

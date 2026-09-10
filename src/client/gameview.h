@@ -314,7 +314,11 @@ public:
                 std::string id = p.name;
                 std::transform(id.begin(), id.end(), id.begin(), ::tolower);
                 int player = std::clamp(p.player, 0, 3);
-                if (spawn(id, p.x, p.z, 3.14159f, player) >= 0 && player == 0) {
+                // .crt stores facing in degrees (shipped maps use 180 = due
+                // south, which is the old hard-coded heading); honour per-unit
+                // angles now that the record is read correctly.
+                float heading = p.angle * 3.14159265f / 180.0f;
+                if (spawn(id, p.x, p.z, heading, player) >= 0 && player == 0) {
                     cx += p.x; cz += p.z; ++n;
                 }
             }

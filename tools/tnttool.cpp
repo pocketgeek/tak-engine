@@ -4,27 +4,67 @@
 //   tnttool heightmap <map.tnt> <out.png>
 //   tnttool minimap <map.tnt> <out.png>   (grayscale; palette applied later)
 
+#include "crt/crt.h"
 #include "hpi/hpi.h"
 #include "terrain/terrain.h"
 #include "tnt/ota.h"
 #include "tnt/tnt.h"
 #include "util/png.h"
 
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <set>
+#include <vector>
 
 int main(int argc, char** argv) {
     if (argc < 3) {
         std::cerr << "usage: tnttool info|heightmap|minimap <map.tnt> [out.png]\n"
                      "       tnttool render <map.tnt> <terrain-dir> <out.png>\n"
                      "       tnttool roundtrip <map.tnt>\n"
-                     "       tnttool ota <map.ota>\n";
+                     "       tnttool ota <map.ota>\n"
+                     "       tnttool crt <map.crt>\n";
         return 2;
     }
     std::string cmd = argv[1];
     try {
+        if (cmd == "crt") {
+            // tnttool crt <file.crt> -- parse + re-serialize. Verifies the
+            // parsed fields survive parse->write->parse and that write is
+            // byte-stable (write(parse(write)) == write). Retail files carry
+            // in-memory residue in unused record bytes, so a clean write is
+            // not byte-identical to the source, but is semantically exact.
+            std::ifstream in(argv[2], std::ios::binary);
+            std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            auto s = tak::crt::parse(d);
+            auto w = tak::crt::write(s);
+            auto s2 = tak::crt::parse(w);
+            auto w2 = tak::crt::write(s2);
+            bool sem = s.units.size() == s2.units.size() &&
+                       s.customTypes.size() == s2.customTypes.size() &&
+                       s.regions.size() == s2.regions.size() &&
+                       s.players.size() == s2.players.size();
+            for (size_t i = 0; sem && i < s.units.size(); ++i) {
+                const auto &a = s.units[i], &b = s2.units[i];
+                sem = a.objectName == b.objectName && a.x == b.x && a.z == b.z &&
+                      a.player == b.player && a.health == b.health &&
+                      a.armor == b.armor && a.weapon == b.weapon &&
+                      a.angle == b.angle && a.veteran == b.veteran;
+            }
+            bool stable = (w == w2);
+            size_t rules = 0;
+            for (const auto& groups : s.players)
+                for (const auto& g : groups) rules += g.conditions.size() + g.actions.size();
+            std::cout << "CRT " << argv[2] << ": " << s.units.size() << " units, "
+                      << s.customTypes.size() << " custom types, " << rules
+                      << " rules, " << s.regions.size() << " regions\n";
+            std::cout << (sem && stable ? "ROUNDTRIP OK (" : "ROUNDTRIP FAILED (")
+                      << w.size() << " bytes; semantic=" << (sem ? "ok" : "FAIL")
+                      << " stable=" << (stable ? "ok" : "FAIL") << ")\n";
+            return sem && stable ? 0 : 1;
+        }
         if (cmd == "ota") {
             // tnttool ota <file.ota> -- parse + re-serialize, byte-compare.
             std::ifstream in(argv[2], std::ios::binary);

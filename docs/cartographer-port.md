@@ -102,13 +102,12 @@ the **tile/section palette + brush tools**, the **height tools**, the
 0. Skeleton: window, open a `.tnt`, render terrain (reuse MapView), pan/zoom. ✅ this session
 1. TNT writer + New/Save/Save As round-trip (load→save→byte-compare).
 2. Tile palette + paint brush; height tools; Grid overlay; zoom levels.
-3. Feature/unit/start-pos placement + selection + the property dialogs.
-   [start positions + FEATURES + UNITS placement DONE. Units read from the
-    SHARED tak::crt (also used by takclient/takserver); render as player-
-    coloured markers, place/move/delete in memory. Unit Properties dialog +
-    .crt WRITER pending the record-offset RE -- and those go in tak::crt so
-    the ENGINE gets full scenario unit stats too (it now reads only name/x/z/
-    player).]
+3. Feature/unit/start-pos placement + selection + the property dialogs. ✅
+   [start positions + FEATURES + UNITS all DONE. Units read/written through the
+    SHARED tak::crt (parse/write; also used by takclient/takserver). Place/move/
+    delete + a Unit Properties dialog (double-click: player/health/armor/weapon/
+    veteran/angle); Save writes the map's .crt, preserving the trigger rules,
+    regions, and custom types the unit tool doesn't touch.]
 4. Scenario Properties / Resize / Use Only / Check Map.
    [modal widget layer + Scenario Properties + Resize DONE; Use Only + Check Map
     need placed units]
@@ -154,13 +153,45 @@ have been restricted. They will not show up in the game."). No pathing/overlap
 checks. Same warning also fires at save.
 
 ### The scenario (placed units + triggers) is a BINARY `.crt`, NOT the OTA
-`.crt` writer 0x40d8d0; top-level (PROVEN from an empty 56-byte crt):
-`float32 version=1.0` · `int32 numCustomTypes` (name[256]+int[4] each) ·
-`int32 numPlacedUnits` · `UnitRecord[N]` (568/0x238 bytes each, raw struct) ·
-`int32 numPlayers(=9)` · per player: `int32 numRuleGroups`, per group:
-`int32 numRules`, `RuleRecord[M]` (1328/0x530 bytes; string params char[256]
-at +0x240). Intra-record field offsets = TODO (recover from rule-editor OnOK +
-CRT loader 0x40de2c). Rules are stored **per player** (Copy/Paste Player Rules).
+`.crt` writer 0x40d8d0 / loader ~0x40de42. Full layout **PROVEN byte-exact**
+against every shipped `.crt` (empty 56-byte files through 120 KB Savannah Hunt)
+and implemented in the SHARED `src/crt/` (`tak::crt::parse`/`write`, used by
+takclient/takserver AND cartographer). Top-level, no padding anywhere:
+
+```
+f32 version = 1.0
+i32 numCustomTypes;  CustomType[272] x N
+i32 numUnits;        UnitRecord[568]  x N
+i32 numPlayers (=9);
+    per player: i32 numGroups
+        per group: i32 numConditions; Rule[324] x n
+                   i32 numActions;    Rule[324] x n
+i32 numRegions;      RegionDef[272] x N
+```
+
+- **UnitRecord (568/0x238):** objectName char[256]@0x000 · uniqueName
+  char[256]@0x100 · i32 X@0x200 (16px cells) · i32 Y@0x204 (=200) · i32 Z@0x208
+  · i32 player@0x20c (0..8) · i32 health%@0x210 · i32 armor%@0x214 ·
+  i32 weapon%@0x218 · i32 angle@0x21c (deg 0..359) · i32 veteran@0x220. Bytes
+  0x224..0x238 are a type-derived cache + heap ptr = in-memory residue; a clean
+  writer zero-fills them and the game loads identically. Coords are **16px
+  cells** (NOT the old 2px-unit guess; old offsets 0x160/0x1f8/0x1fa are zero in
+  every file — that was the bug in the pre-RE reader).
+- **CustomType (272/0x110):** name char[256]@0x000 · i32 stat[4]@0x100 =
+  default {health,armor,weapon,?} — a type is "custom" only when its stats
+  differ from {100,100,100,0} (e.g. Cairbray's VERBALL = {100,0,0,0}).
+- **Rule (324):** i32 opcode@0x000 · 5 x char[64] operand slots@0x004. A "group"
+  is one condition-set + one action-set; conditions and actions share this
+  record format but use INDEPENDENT opcode spaces. Numeric spinner values are
+  stored as ASCII in the slots (no separate int array). In memory the record is
+  0x244 with slots at 0x100.. and opcode at 0x240; on disk it is 324.
+- **RegionDef (272/0x110):** name char[64]@0x000 · i32 x1,z1,x2,z2@0x100 (cells);
+  0x040..0x0FF is in-memory junk (zero-filled on a clean write). Includes the
+  per-player start zones ("Player 1"...).
+- There is **no per-player header** — team/color/AI live in the `.ota`, not the
+  `.crt`; player identity is purely the index 0..8.
+
+The 1328-byte RuleRecord in an earlier note was wrong (it is 324 on disk).
 
 ### Trigger opcodes: 26 CONDITIONS + 26 ACTIONS (tables at 0x51c190)
 Param types: value, unit type, player, location, text string, flag. Conditions
@@ -172,11 +203,18 @@ location="Anywhere"; text string = literal 256-byte string; flag = int index.
 Full 26+26 template list captured in the RE task output (session d39a8c26,
 task ac01eaf629a4e233d).
 
-### Engine gap: `.crt`/trigger runner is NET-NEW
-Our `src/sim/mission.cpp` is the CAMPAIGN runner (COB god-script + OTA keys) --
-a DIFFERENT system. To actually PLAY scenario maps the engine needs a `.crt`
-reader + a rule evaluator for these 26+26 opcodes (later milestone; the editor
-authors them first).
+### Engine gap: `.crt`/trigger RUNNER is NET-NEW (reader is now correct)
+`tak::crt::parse` now reads the full record (positions, per-unit stats, rules,
+regions) correctly — fixing a real engine bug where the scenario loader read
+placements from zero offsets (wrong player, dropped units). The engine's
+scenario branch (`gameview.h`) spawns units at the corrected cells and now
+honours each unit's facing angle. Still net-new: (1) APPLYING per-unit stats
+(health/veteran/armor/weapon) to the spawned sim unit — needs sim setters +
+a kNetVersion bump since it touches hashed state; (2) a real rule EVALUATOR for
+the 26+26 opcodes (the engine's current `loadTriggers` view is a heuristic flat
+stream; the proven typed model — separate condition/action opcode spaces per
+group — is the migration target). `src/sim/mission.cpp` remains the separate
+CAMPAIGN runner (COB god-script + OTA keys).
 
 ### Command ID -> handler VAs (for follow-up RE)
 ScenProps 0x401890 · UseOnly 0x401910 · zoom 0x401990/a10/a90/b10 · 12.5%
@@ -191,6 +229,10 @@ TXT 0x41c4e0 · CRT 0x40d8d0 · bundle 0x418b80. GetCell 0x419120 · SectionStam
 ## RE status
 - Resource map + command handlers + tool behaviours + trigger opcode tables +
   TNT/OTA write formats + coordinate model + world types: **DONE**.
-- Pending deep RE (for later phases): `.crt` UnitRecord (568B) + RuleRecord
-  (1328B) intra-field offsets; minimap-generation exact downsample; HPI/.kmp
-  bundle writer.
+- `.crt` full binary layout (UnitRecord 568B, Rule 324B, CustomType 272B,
+  RegionDef 272B, per-player group structure): **DONE** — proven byte-exact,
+  implemented as `tak::crt::parse`/`write` in the shared lib, round-trip tested
+  by `tnttool crt` across all 27 shipped scenario maps.
+- Pending deep RE (for later phases): minimap-generation exact downsample;
+  HPI/.kmp bundle writer; whether the loader consumes UnitRecord 0x224/0x228
+  (type cache) or re-derives from objectName (almost certainly the latter).

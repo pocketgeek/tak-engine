@@ -7,49 +7,115 @@
 
 namespace tak::crt {
 
-// .crt scenario files: initial unit placements for a map, plus a trigger
-// section (not yet parsed). Reverse-engineered layout (version 1.0, flag 0):
-//   f32 version; u32 flag; u32 count;
-//   count x 568-byte records: char name[32] @0, u8 player @352,
-//   u16 x @504, u16 z @506 (both in 2px units).
+// .crt scenario files: the initial unit placements for a map, the per-player
+// trigger rules, custom unit-type stat overrides, and named regions.
+//
+// Layout (static analysis of Cartographer.exe's writer/loader, cross-validated
+// byte-exact against every shipped .crt):
+//
+//   f32 version = 1.0
+//   i32 numCustomTypes;  CustomType[272] x numCustomTypes
+//   i32 numUnits;        UnitRecord[568]  x numUnits
+//   i32 numPlayers (=9);
+//       per player: i32 numGroups
+//           per group: i32 numConditions; Rule[324] x n
+//                      i32 numActions;    Rule[324] x n
+//   i32 numRegions;      RegionDef[272] x numRegions
+//
+// There is no inter-record padding. Bytes outside the fields below are in-memory
+// residue in retail files (the record is a raw dump of the editor's live object);
+// a clean writer zero-fills them and the game loads the result identically.
 
-struct Placement {
-    std::string name;   // unit type (objectname)
-    float x = 0, z = 0; // map pixels
-    int player = 0;
+// ---- Full typed model (parse/write) --------------------------------------
+
+struct Unit {
+    std::string objectName;      // FBI type name (@0x000, char[256])
+    std::string uniqueName;      // scenario-unique name (@0x100, usually empty)
+    int32_t x = 0, z = 0;        // 16px cell coords (@0x200 / @0x208)
+    int32_t y = 200;             // vertical; constant 200 in shipped maps (@0x204)
+    int32_t player = 0;          // 0..8 (@0x20c)
+    int32_t health = 100;        // %   0..100  (@0x210)
+    int32_t armor = 100;         // %   0..1000 (@0x214)
+    int32_t weapon = 100;        // %   0..1000 (@0x218)
+    int32_t angle = 0;           // deg 0..359  (@0x21c)
+    int32_t veteran = 0;         //     0..9    (@0x220)
 };
 
-// Returns placements; empty if the file is empty or an unsupported variant.
-std::vector<Placement> load(const std::vector<uint8_t>& d);   // from a VFS buffer
+// A unit type whose default health/armor/weapon differ from (100,100,100).
+struct CustomType {
+    std::string name;                          // @0x000, char[256]
+    int32_t stat[4] = {100, 100, 100, 0};      // @0x100: health,armor,weapon,(veteran?)
+};
 
-// Trigger section (after the placement records):
-//   header { i32 version(9), i32 numTriggers, ... } (16 bytes)
-//   trigger records: { i32 params[1..3], char slots[5][64] } — slots hold
-//     unit type names, region names, player names, ASCII numbers
-//   trailer { i32 numDefs, numDefs x 272-byte defs:
-//     { char name[64], uninitialized[192], i32 x1,z1,x2,z2 } } — region
-//     definitions in 16px cells (includes per-player start zones)
+// One condition or action record (324 bytes on disk). Conditions and actions
+// share this format but use independent opcode spaces.
+struct Rule {
+    int32_t opcode = 0;          // @0x000
+    std::string slot[5];         // @0x004: five 64-byte operand strings
+};
+
+// A trigger "group": a set of conditions and the actions to run when they hold.
+struct RuleGroup {
+    std::vector<Rule> conditions;
+    std::vector<Rule> actions;
+};
+
 struct Region {
-    std::string name;
-    int x1 = 0, z1 = 0, x2 = 0, z2 = 0;   // cells
+    std::string name;            // @0x000, char[64]
+    int32_t x1 = 0, z1 = 0, x2 = 0, z2 = 0;   // 16px cells (@0x100)
 };
 
-// One trigger record: 1-4 leading ints then five 64-byte operand slots.
-// The record's opcode is the LAST int (earlier ints are trailing params
-// of the previous record). Known ops: 1 = at-time(seconds), 7 = spawn
-// (type, region), 13 = score-count(type, region), 16 = count-condition
-// (n, type, region), 2/17/18 = variable ops, 3 = var compare.
+// A parsed .crt in full. `players` holds one entry per player (9 in shipped
+// files), each a list of that player's rule groups.
+struct Scenario {
+    float version = 1.0f;
+    std::vector<CustomType> customTypes;
+    std::vector<Unit> units;
+    std::vector<std::vector<RuleGroup>> players;
+    std::vector<Region> regions;
+};
+
+// Parse a whole .crt. Returns an empty Scenario (version 0) if `d` is not a
+// version-1.0 .crt or is structurally malformed.
+Scenario parse(const std::vector<uint8_t>& d);
+
+// Serialize a Scenario to bytes. Structurally byte-exact to retail (same order,
+// counts, and record sizes); the in-memory residue retail leaves in unused
+// record bytes is zero-filled. parse(write(s)) == s for the fields above.
+std::vector<uint8_t> write(const Scenario& s);
+
+// ---- Legacy engine-facing views (thin adapters over parse) ----------------
+
+// A single placement, in the shape the engine's scenario loader consumes.
+// Coordinates are map PIXELS (cells * 16). Also carries the full RE'd fields
+// for callers that want to apply per-unit stats.
+struct Placement {
+    std::string name;            // unit type (objectName)
+    float x = 0, z = 0;          // map pixels
+    int player = 0;
+    int health = 100, armor = 100, weapon = 100, veteran = 0;
+    float angle = 0;             // degrees
+    std::string uniqueName;
+};
+
+// Placements from a .crt buffer (empty if not a valid .crt).
+std::vector<Placement> load(const std::vector<uint8_t>& d);
+
+// One trigger record in the legacy flat-stream view: the opcode plus the
+// non-empty operand slots, in order.
 struct TrigRecord {
-    std::vector<int32_t> ints;
-    std::vector<std::string> slots;   // non-empty slots, in order
+    std::vector<int32_t> ints;        // {opcode}
+    std::vector<std::string> slots;   // non-empty operand slots
     int32_t op() const { return ints.empty() ? 0 : ints.back(); }
 };
 
+// Rules (conditions+actions, all players, in file order) plus the regions, in
+// the flat shape the engine's scenario-rule reader consumes.
 struct Triggers {
     std::vector<TrigRecord> records;
     std::vector<Region> regions;
 };
 
-Triggers loadTriggers(const std::vector<uint8_t>& d);   // from a VFS buffer
+Triggers loadTriggers(const std::vector<uint8_t>& d);
 
 } // namespace tak::crt
