@@ -888,6 +888,10 @@ private:
         int flyGate = 8;         // static index that this unit's `fly` gates on
         int moveGate = 0;        // static index this unit's `walk` gates on (see walkGateOf)
         bool hasWalk = false;    // has a walk/walk_legs/tread script (vs a Create-ambient mover)
+        bool hasMelee = false;   // has MoveWatcher/MeleeControl: the COB drives its own
+                                 // gait retail-style (Create ambients poll GET 29/28/34
+                                 // and CALL walk_* themselves) -- the manual walk state
+                                 // machine must stay out, and NOTHING may reset the VM
         // emit-sfx (piece, sfxType) captured off the worker thread; drained on the
         // main thread after the parallel VM tick (SDL/effects_ are main-thread only).
         std::vector<std::pair<int, int32_t>> pendingSfx;
@@ -1096,6 +1100,7 @@ private:
         bool hasSounds = false;   // any PLAY_SOUND op: the script provides its own audio
         int moveGate = 0;         // walk-cycle moving-flag static index (walkGateOf)
         bool hasWalk = false;     // has a walk/walk_legs/tread script (hasWalkCycle)
+        bool hasMelee = false;    // has MoveWatcher/MeleeControl (retail self-driven gait)
     };
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };

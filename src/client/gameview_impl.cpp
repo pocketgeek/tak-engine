@@ -850,11 +850,15 @@
                 // keep their continuous flight threads running, so don't reset.
                 if (it != anims_.end() && !u.walking()) {
                     auto& fa = it->second;
-                    // Reset only walk-cycle units: for ships etc. the reset would
-                    // permanently kill the Create ambients (MotionControl, wakes,
-                    // flag) that nothing restarts -- the Ark froze after its first
-                    // AA shot because of exactly this.
-                    if (!fa.flying && fa.hasWalk) { fa.vm->reset(); fa.vm->setStatic(0, 0); }
+                    // Reset only MANUALLY-driven walk-cycle units: for ships and
+                    // MeleeControl-driven walkers the reset would permanently kill
+                    // the Create ambients (gait driver, wakes, veteran swaps) that
+                    // nothing restarts -- the Ark froze after its first AA shot
+                    // because of exactly this.
+                    if (!fa.flying && fa.hasWalk && !fa.hasMelee) {
+                        fa.vm->reset();
+                        fa.vm->setStatic(0, 0);
+                    }
                     fa.vm->start("FireWeapon") || fa.vm->start("attack1") ||
                         fa.vm->start("fire") || fa.vm->start("MeleeAttack");
                     fa.walking = false;
@@ -868,7 +872,11 @@
                     a.dying = true;
                     a.vm->reset();
                     a.vm->setStatic(0, 0);
-                    a.vm->start("death") || a.vm->start("Dying") || a.vm->start("Killed");
+                    // Dying FIRST: it plays the death cry (92 units PLAY_SOUND
+                    // there, zero in `death`), CALLs `death` itself for the
+                    // fall-over, then EXPLODEs. Starting `death` directly
+                    // skipped the cry -- 105 units died silently.
+                    a.vm->start("Dying") || a.vm->start("death") || a.vm->start("Killed");
                     const std::string& id = u.type->id;
                     if (a.cobSounds) { /* the Dying script plays its own death cry */ }
                     else if (sounds_.has(id + "die1")) sounds_.playWorld(id + "die1", u.x, u.z);
@@ -934,6 +942,13 @@
                     a.vm->setStatic(a.flyGate, 0);
                     a.vm->start("land") || a.vm->start("restore_x");   // landed pose
                 }
+            } else if (a.hasMelee) {
+                // Retail-driven mover: its Create ambients ARE the gait driver --
+                // MoveWatcher polls GET 29 (speed) into the walk static and
+                // MeleeControl CALLs walk / walk_water / walk_road and the restore
+                // poses itself. Nothing to do per tick, and nothing here may reset
+                // the VM (that would kill the ambients permanently -- retail never
+                // resets a living unit's VM).
             } else if (a.hasWalk) {
                 bool m = u.walking();
                 if (m != a.walking) {
@@ -1165,12 +1180,15 @@
                         if (w == 0x10072000) { cc.hasSounds = true; break; }
                 cc.moveGate = walkGateOf(*cc.file);
                 cc.hasWalk = hasWalkCycle(*cc.file);
+                cc.hasMelee = cc.file->scriptIndex("MoveWatcher") >= 0 ||
+                              cc.file->scriptIndex("MeleeControl") >= 0;
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
             a.pieceNames = &ci->second.pieceNames;
             a.cobSounds = ci->second.hasSounds;
             a.moveGate = ci->second.moveGate;
             a.hasWalk = ci->second.hasWalk;
+            a.hasMelee = ci->second.hasMelee;
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             // TA COB unit-state queries answered from the sim.
             int unitId = id;
@@ -1180,27 +1198,45 @@
                 // never live world_, which the sim thread mutates concurrently under Stage B.
                 const auto* su = frameUnitP(unitId);
                 if (!su || !su->type) return 0;
+                // TAK's GET_UNIT_VALUE numbering (icd getter table @0x50d394) --
+                // NOT TA-1997's. The old TA-numbered cases here answered ids no
+                // shipped TAK script asks for, while id 4 (HEALTH%) returned 0 --
+                // making every building COB's SmokeControl/DamageFlameControl
+                // believe it was at 0 HP and belch damage smoke from spawn.
                 switch (valId) {
-                    case 0:  return su->buildQueue.empty() ? 0 : 1;   // ACTIVATION
-                    case 3:  return int32_t(su->hp / su->type->maxHp * 100);  // HEALTH
-                    case 5:  return su->moving() ? 1 : 0;             // BUSY
-                    case 8:  {                                        // UNIT_XZ
+                    case 1:  return su->buildQueue.empty() ? 0 : 1;   // ACTIVATION
+                    case 4:  return int32_t(su->hp / su->type->maxHp * 100);  // HEALTH %
+                    case 6:  return su->moving() ? 1 : 0;             // BUSY
+                    case 9:  {                                        // UNIT_XZ
                         int32_t x = int32_t(su->x) & 0xFFFF;
                         int32_t z = int32_t(su->z) & 0xFFFF;
                         return (x << 16) | z;
                     }
-                    case 16:                                           // BUILD_PERCENT_LEFT
-                    case 17: return su->underConstruction              // (scripts push 17; the
+                    case 17: return su->underConstruction              // BUILD_PERCENT_LEFT (the
                                  ? int32_t(100 - su->hp / su->type->maxHp * 100)  // Create wait-
                                  : 0;                                  // loops on it, so ambient
                                                                        // anims/emit-sfx hold off
                                                                        // until the building is up)
+                    case 27:                                           // HEADING (16-bit angle)
+                        return int32_t(su->heading * (65536.0f / 6.2831853f)) & 0xFFFF;
+                    case 28: {                                         // STANDING ON WATER
+                        // (MeleeControl picks walk_water; WakeControl gates wakes.)
+                        const auto& mp = mapView_.map();               // const after load
+                        int cx = std::clamp(int(su->x) / 16, 0, mp.width - 1);
+                        int cz = std::clamp(int(su->z) / 16, 0, mp.height - 1);
+                        return mp.heights[size_t(cz) * mp.width + cx] < mp.seaLevel ? 1 : 0;
+                    }
                     case 29:                                           // CURRENT_SPEED (% of max:
                         return su->type->maxVel > 0                    // ship MotionControl picks
                                    ? int32_t(std::clamp(               // slowrow/row/fastrow at
                                          su->speed / su->type->maxVel * 100.0f,  // 25/75)
                                          0.0f, 100.0f))
                                    : 0;
+                    case 32: return su->veteran;                       // VETERAN LEVEL (StatusControl
+                                                                       // swaps golden weapon pieces)
+                    // 18 YARD_OPEN, 33 turn-rate, 34 on-road, 46 has-target: 0 is
+                    // benign/correct for the shipped uses (no roads in TAK maps;
+                    // yard treated clear).
                     default: return 0;
                 }
             };
@@ -1214,7 +1250,7 @@
                 // pose, so a flyer that spawns idle and never takes off (e.g. the
                 // Monarch at game start) doesn't sit in a T-pose.
                 a.vm->start("land");
-            } else if (isStructure(type) || !a.hasWalk) {
+            } else if (isStructure(type) || !a.hasWalk || a.hasMelee) {
                 // Buildings: run the COB constructor so ambient loops start (e.g. the
                 // Keep's Create kicks off its flag/smoke scripts, the Sacred Fire's
                 // its FireControl flicker). Detect via isStructure (maxVel<=0), NOT
