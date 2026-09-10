@@ -34,7 +34,11 @@ void Compositor::renderBlock(const tnt::Map& map, int bx, int by,
     // JPEG decode dominates the hold time and only ever runs once per tile.
     std::lock_guard<std::mutex> lk(mu_);
     size_t b = size_t(by) * map.blocksX + bx;
-    const jpeg::Image& img = section(map.tileKeys[b]);
+    const jpeg::Image* imgp = nullptr;
+    // A key the install can't resolve must not throw out of the chunk worker
+    // thread (std::terminate); the block just stays empty.
+    try { imgp = &section(map.tileKeys[b]); } catch (const std::exception&) { return; }
+    const jpeg::Image& img = *imgp;
     int sx = (map.tileCols[b] * kBlock) % std::max(img.width, 1);
     int sy = (map.tileRows[b] * kBlock) % std::max(img.height, 1);
     // Water is just a texture, exactly like land: retail draws the sea sections

@@ -64,6 +64,72 @@ constexpr std::array<WorldArt, kMapTypes> kWorldArt = {{
     {0x814dddc1u, 0x9a5c5436u, 16, 16},   // Creon:  turf / (Veruna sea stand-in)
 }};
 
+// ---- shore-transition art ------------------------------------------------------
+// Retail coastlines are hand-painted bank/beach prefab sections, not a hard
+// ground/sea tile flip. Mined per world from the shipped maps' shoreline blocks
+// (aramon/taros/veruna/zhon) and from the creon/shores prefab sections in
+// IPSections.hpi: for each 4-bit corner case (bit0 NW, bit1 NE, bit2 SW, bit3 SE
+// wet) the authored transition tile. Straight edges cycle a run of tiles along the
+// coast; the prefabs paint continuous bands, so the line one step toward land is
+// the bank-approach art (ring0) and one step toward water the shallow art (ring15).
+// All 512px (16x16-tile) sections, identity col/row. Display only -- never hashed.
+struct ShoreEdge { uint32_t key; uint8_t fixed; uint8_t runLen; uint8_t run[16]; };
+struct ShoreTile { uint32_t key; uint8_t col, row; };
+struct WorldShore {
+    ShoreEdge n, s, w, e;            // water N (case 3), S (12), W (5), E (10)
+    ShoreTile c1, c2, c4, c8;        // inner corners: water pocket NW / NE / SW / SE
+    ShoreTile c7, c11, c13, c14;     // outer bends: land only SE / SW / NE / NW
+};
+// All entries mined from each world's designed "Coast Sandy" prefab kit in
+// sections.hpi (creon/shores in IPSections.hpi): straights from the n/s/e/w
+// pieces (contiguous authored runs only, so adjacent stamped tiles are adjacent
+// art), outer bends from the ne/nw/se/sw pieces, inner pockets from the
+// dedicated inner-corner pieces.
+constexpr std::array<WorldShore, kMapTypes> kWorldShore = {{
+    {   // Aramon: ascoast01a-12a_80 (01-04 straights, 05-08 outer, 09-12 inner)
+        {0xa3e7d383u, 5, 3, {13, 14, 15}},
+        {0xdb770551u, 13, 4, {7, 8, 9, 10}},
+        {0x4a5aaee2u, 2, 3, {11, 12, 13}},
+        {0x4e806e78u, 11, 4, {5, 6, 7, 8}},
+        {0x4c542c48u, 3, 4}, {0xaf614593u, 12, 2}, {0x9e40bceau, 1, 11}, {0xa4669c42u, 13, 13},
+        {0x13d16b0du, 2, 4}, {0x23132165u, 10, 3}, {0xb2e62e1eu, 1, 8}, {0xc66aa8d4u, 13, 13},
+    },
+    {   // Taros: Coast Sandy n01/s01/e01/w01 + ne/nw/se/sw + nee/nwe/see/swe
+        // (runs picked so the ring lines beside them are painted -- these JPGs
+        //  leave a few deep-water tiles black where maps use the sea fill)
+        {0xa8b04632u, 6, 6, {10, 11, 12, 13, 14, 15}},
+        {0x5b4bb9d9u, 11, 9, {0, 1, 2, 3, 4, 5, 6, 7, 8}},
+        {0x922cde10u, 6, 7, {9, 10, 11, 12, 13, 14, 15}},
+        {0xea4a228eu, 9, 5, {4, 5, 6, 7, 8}},
+        {0xeae65890u, 4, 4}, {0x35c3afadu, 10, 5}, {0x87c7b1c9u, 3, 11}, {0xc3834599u, 11, 11},
+        {0xb2f2f272u, 6, 7}, {0x702a36a0u, 7, 8}, {0xbdaf4de7u, 4, 11}, {0x80a8acc8u, 9, 9},
+    },
+    {   // Veruna: Coast Sandy n01/s01/e01/w01 + corners
+        {0x1155cdd1u, 1, 6, {8, 9, 10, 11, 12, 13}},
+        {0xd5f99723u, 13, 4, {6, 7, 8, 9}},
+        {0xaf4d1117u, 2, 5, {2, 3, 4, 5, 6}},
+        {0x4cd42696u, 13, 3, {6, 7, 8}},
+        {0x6e306cc6u, 4, 2}, {0x0060ae02u, 13, 2}, {0xf4ec3c94u, 1, 12}, {0x7d73e12fu, 14, 12},
+        {0x66b4388au, 10, 8}, {0x3a20ea34u, 5, 10}, {0x594351e3u, 6, 6}, {0xaccce484u, 13, 13},
+    },
+    {   // Zhon: Coast Sandy n1/s1/e1/w1 + 1xx outer / 2xx inner corners
+        {0xdfcb5bf3u, 5, 3, {7, 8, 9}},
+        {0x265e3cd8u, 12, 3, {0, 1, 2}},
+        {0xbc123c42u, 5, 3, {13, 14, 15}},
+        {0x30626406u, 11, 3, {7, 8, 9}},
+        {0xe0320816u, 4, 4}, {0xdd6f3d8fu, 10, 5}, {0x8c6e085eu, 1, 13}, {0x5777bd91u, 10, 9},
+        {0x650d3f3fu, 12, 7}, {0x2466d208u, 5, 8}, {0xa89c7242u, 6, 3}, {0xd9337b65u, 6, 6},
+    },
+    {   // Creon: sections/creon/shores/*.tnt prefabs (IPSections.hpi)
+        {0x9cba08e2u, 8, 2, {7, 8}},
+        {0x4987a7a5u, 12, 2, {7, 8}},
+        {0x4157232du, 5, 4, {12, 13, 14, 15}},
+        {0x8d17c1fcu, 10, 3, {6, 7, 8}},
+        {0xb5155f1fu, 4, 4}, {0xe5afdbf5u, 11, 2}, {0xf5fded6du, 1, 13}, {0x7c36bc02u, 14, 13},
+        {0x128e8cd4u, 8, 9}, {0x6c00cc44u, 5, 9}, {0x7c0ee09eu, 7, 10}, {0x7084884cu, 8, 8},
+    },
+}};
+
 // Per-world doodad + mana palette (names verified in features/<world>/*.tdf).
 // Trees (category=trees) and rocks (category=rocks) are reclaimable obstacles --
 // we vary across ALL the art variants so no one type repeats. A mana deposit is a
@@ -207,21 +273,71 @@ Result generate(const Params& raw) {
     m.tileKeys.resize(blocks);
     m.tileCols.resize(blocks);
     m.tileRows.resize(blocks);
+    // Classify every block by the SHARED corner grid (cells 2bx,2by / +2), so
+    // adjacent blocks agree on their common boundary and edge tiles line up:
+    // 4-bit case, bit0 NW / bit1 NE / bit2 SW / bit3 SE below sea.
+    std::vector<uint8_t> bcase(blocks);
+    auto wetC = [&](int x, int z) { return hAt(x, z) < m.seaLevel; };
     for (int by = 0; by < m.blocksY; ++by)
         for (int bx = 0; bx < m.blocksX; ++bx) {
-            int cx = bx * 2, cz = by * 2;   // 2x2 cells under the 32px block
-            // Majority rule: a block that is mostly underwater gets the sea tile,
-            // so the drawn waterline rounds to the nearest block edge. (Shipped
-            // maps refine this with hand-painted shore-transition sections --
-            // possible follow-up via the sections.hpi berm pieces.)
-            int below = (hAt(cx, cz) < m.seaLevel) + (hAt(cx + 1, cz) < m.seaLevel) +
-                        (hAt(cx, cz + 1) < m.seaLevel) + (hAt(cx + 1, cz + 1) < m.seaLevel);
-            bool water = below >= 2;
+            int cx = bx * 2, cz = by * 2;
+            bcase[size_t(by) * m.blocksX + bx] =
+                uint8_t(wetC(cx, cz) | (wetC(cx + 2, cz) << 1) |
+                        (wetC(cx, cz + 2) << 2) | (wetC(cx + 2, cz + 2) << 3));
+        }
+    auto caseAt = [&](int bx, int by) -> int {
+        if (bx < 0 || by < 0 || bx >= m.blocksX || by >= m.blocksY) return -1;
+        int c = bcase[size_t(by) * m.blocksX + bx];
+        return (c == 6 || c == 9) ? 15 : c;   // diagonal pinches render as open water
+    };
+    const WorldShore& sh = kWorldShore[p.mapType];
+    auto setT = [&](size_t i, uint32_t k, int c, int r) {
+        m.tileKeys[i] = k; m.tileCols[i] = uint8_t(c); m.tileRows[i] = uint8_t(r);
+    };
+    for (int by = 0; by < m.blocksY; ++by)
+        for (int bx = 0; bx < m.blocksX; ++bx) {
             size_t i = size_t(by) * m.blocksX + bx;
-            m.tileKeys[i] = water ? art.sea : art.ground;
-            int K = water ? kSea : kGround;
-            m.tileCols[i] = uint8_t(bx % K);
-            m.tileRows[i] = uint8_t(by % K);
+            switch (caseAt(bx, by)) {
+            // straight shorelines: cycle the authored bank run along the coast
+            case 3:  setT(i, sh.n.key, sh.n.run[bx % sh.n.runLen], sh.n.fixed); break;
+            case 12: setT(i, sh.s.key, sh.s.run[bx % sh.s.runLen], sh.s.fixed); break;
+            case 5:  setT(i, sh.w.key, sh.w.fixed, sh.w.run[by % sh.w.runLen]); break;
+            case 10: setT(i, sh.e.key, sh.e.fixed, sh.e.run[by % sh.e.runLen]); break;
+            // corners
+            case 1:  setT(i, sh.c1.key, sh.c1.col, sh.c1.row); break;
+            case 2:  setT(i, sh.c2.key, sh.c2.col, sh.c2.row); break;
+            case 4:  setT(i, sh.c4.key, sh.c4.col, sh.c4.row); break;
+            case 8:  setT(i, sh.c8.key, sh.c8.col, sh.c8.row); break;
+            case 7:  setT(i, sh.c7.key, sh.c7.col, sh.c7.row); break;
+            case 11: setT(i, sh.c11.key, sh.c11.col, sh.c11.row); break;
+            case 13: setT(i, sh.c13.key, sh.c13.col, sh.c13.row); break;
+            case 14: setT(i, sh.c14.key, sh.c14.col, sh.c14.row); break;
+            case 0:
+                // pure land: bank-approach ring when hugging a straight shoreline
+                if (caseAt(bx, by - 1) == 3)
+                    setT(i, sh.n.key, sh.n.run[bx % sh.n.runLen], sh.n.fixed + 1);
+                else if (caseAt(bx, by + 1) == 12)
+                    setT(i, sh.s.key, sh.s.run[bx % sh.s.runLen], sh.s.fixed - 1);
+                else if (caseAt(bx - 1, by) == 5)
+                    setT(i, sh.w.key, sh.w.fixed + 1, sh.w.run[by % sh.w.runLen]);
+                else if (caseAt(bx + 1, by) == 10)
+                    setT(i, sh.e.key, sh.e.fixed - 1, sh.e.run[by % sh.e.runLen]);
+                else
+                    setT(i, art.ground, bx % kGround, by % kGround);
+                break;
+            default:   // 15 (and 6/9): shallow ring beside a straight, else sea fill
+                if (caseAt(bx, by + 1) == 3)
+                    setT(i, sh.n.key, sh.n.run[bx % sh.n.runLen], sh.n.fixed - 1);
+                else if (caseAt(bx, by - 1) == 12)
+                    setT(i, sh.s.key, sh.s.run[bx % sh.s.runLen], sh.s.fixed + 1);
+                else if (caseAt(bx + 1, by) == 5)
+                    setT(i, sh.w.key, sh.w.fixed - 1, sh.w.run[by % sh.w.runLen]);
+                else if (caseAt(bx - 1, by) == 10)
+                    setT(i, sh.e.key, sh.e.fixed + 1, sh.e.run[by % sh.e.runLen]);
+                else
+                    setT(i, art.sea, bx % kSea, by % kSea);
+                break;
+            }
         }
 
     // No features yet (Phase 2 adds doodads + mana); minimap left empty (cosmetic).
