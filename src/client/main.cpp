@@ -281,14 +281,26 @@ static void resolveDataDir(std::string& dataRoot, tak::Settings& settings, bool 
         }
         return;
     }
-    // 2. The saved folder, if it still holds a valid install.
+    // 2. The local directory: drop the binary into a game folder and it just
+    //    works, no --data or picker. Used for THIS run without clobbering the
+    //    saved install path (so launching elsewhere later still finds it).
+    {
+        std::error_code ec;
+        std::filesystem::path here = std::filesystem::current_path(ec);
+        if (!ec && hpi::validInstall(here, nullptr)) {
+            dataRoot = here.string();
+            std::fprintf(stderr, "data: using the local directory %s\n", dataRoot.c_str());
+            return;
+        }
+    }
+    // 3. The saved folder, if it still holds a valid install.
     if (!settings.dataDir.empty() && hpi::validInstall(settings.dataDir, nullptr)) {
         dataRoot = settings.dataDir;
         std::string m = hpi::rootManifest(dataRoot);   // note if the root archives changed
         if (m != settings.dataManifest) { settings.dataManifest = m; tak::saveSettings(settings); }
         return;
     }
-    // 3. Ask (interactive only). Loop so a wrong pick can be corrected in place.
+    // 4. Ask (interactive only). Loop so a wrong pick can be corrected in place.
     if (!allowPrompt) return;
     if (!tak::haveDirPicker()) {
         std::fprintf(stderr, "no folder picker available (install kdialog or zenity) and no "

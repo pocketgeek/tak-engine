@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <string>
 
@@ -51,10 +52,21 @@ int main(int argc, char** argv) {
         }
         else if (a[0] != '-') mapName = a;
     }
+    // Data root: --data wins; otherwise the local directory if it holds a valid
+    // install (drop the editor into a game folder and it just works).
+    if (dataRoot.empty()) {
+        std::error_code ec;
+        std::filesystem::path here = std::filesystem::current_path(ec);
+        if (!ec && tak::hpi::validInstall(here, nullptr)) {
+            dataRoot = here.string();
+            std::fprintf(stderr, "data: using the local directory %s\n", dataRoot.c_str());
+        }
+    }
     if (dataRoot.empty() || mapName.empty()) {
         std::fprintf(stderr,
-            "Cartographer (TA:Kingdoms map editor) -- phase 1\n"
-            "usage: cartographer \"<map name>\" --data <retail-install-dir>\n"
+            "Cartographer (TA:Kingdoms map editor) -- phase 2\n"
+            "usage: cartographer \"<map name>\" [--data <retail-install-dir>]\n"
+            "         (--data is optional when run from inside a game folder)\n"
             "         [--out <dir>]        Ctrl+S save destination (default .)\n"
             "         [--save <file.tnt>]  headless: save the map and exit\n");
         return 2;
