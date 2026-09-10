@@ -145,7 +145,7 @@ constexpr std::array<WorldLevels, kMapTypes> kLevels = {{
 // resolve, so an over-long list is harmless.
 struct Span { const char* const* p; int n; };
 struct WorldFeatures {
-    Span trees, rocks, henges;
+    Span trees, rocks;
     std::array<const char*, 3> sacred;   // weak, medium, strong (sacredsite 1.0/1.5/2.0)
 };
 
@@ -153,32 +153,21 @@ constexpr const char* kAraTree[] = {"AraTree01", "AraTree02", "AraTree03", "AraT
                                     "AraTree06", "AraTree07", "AraTree08", "AraTree09", "AraTree10"};
 constexpr const char* kAraRock[] = {"AraRock01", "AraRock02", "AraRock03", "AraRock04",
                                     "AraRock05", "AraRock06", "AraRock07"};
-constexpr const char* kAraHenge[] = {"AraHenge01", "AraHenge02", "AraHenge03", "AraHenge04", "AraHenge05",
-                                     "AraHenge06", "AraHenge07", "AraHenge08", "AraHenge09"};
 
 constexpr const char* kTarTree[] = {"TarTree01", "TarTree02", "TarTree03", "TarTree04", "TarTree05",
                                     "TarTree06", "TarTree07", "TarTree08", "TarTree09"};
 constexpr const char* kTarRock[] = {"TarRock07", "TarRock06", "TarRock05", "TarRock04",
                                     "TarRock03", "TarRock02", "TarRock01"};   // small->big
-constexpr const char* kTarHenge[] = {"TarHenge01", "TarHenge02", "TarHenge03", "TarHenge04", "TarHenge05",
-                                     "TarHenge06", "TarHenge07", "TarHenge08", "TarHenge09", "TarHenge10",
-                                     "TarHenge11", "TarHenge12", "TarHenge13", "TarHenge14"};
 
 constexpr const char* kVerTree[] = {"VerTree01", "VerTree02", "VerTree03", "VerTree04", "VerTree05",
                                     "VerTree06", "VerTree07", "VerTree08", "VerTree09"};
 constexpr const char* kVerRock[] = {"VeRock01", "VeRock02", "VeRock05", "VeRock07",
                                     "VeRock04", "VeRock03", "VeRock06"};   // small->big
-constexpr const char* kVerHenge[] = {"VerHenge01", "VerHenge02", "VerHenge03", "VerHenge04", "VerHenge05",
-                                     "VerHenge06", "VerHenge07", "VerHenge08", "VerHenge09", "VerHenge10",
-                                     "VerHenge11"};
 
 constexpr const char* kZonTree[] = {"ZonTree01", "ZonTree02", "ZonTree03",
                                     "ZonTree04", "ZonTree05", "ZonTree06"};
 constexpr const char* kZonRock[] = {"ZonRock07", "ZonRock06", "ZonRock05", "ZonRock04",
                                     "ZonRock03", "ZonRock02", "ZonRock01"};   // small->big
-constexpr const char* kZonHenge[] = {"ZonHenge01", "ZonHenge02", "ZonHenge03", "ZonHenge04", "ZonHenge05",
-                                     "ZonHenge06", "ZonHenge07", "ZonHenge08", "ZonHenge09", "ZonHenge10",
-                                     "ZonHenge11"};
 
 // Creon (Iron Plague): features/creon/*.tdf in IPData.hpi.
 constexpr const char* kCreTree[] = {"CreTree01", "CreTree02", "CreTree03", "CreTree04", "CreTree05",
@@ -186,18 +175,80 @@ constexpr const char* kCreTree[] = {"CreTree01", "CreTree02", "CreTree03", "CreT
 constexpr const char* kCreRock[] = {"CRERock12", "CRERock07", "CRERock09", "CRERock10", "CRERock11",
                                     "CRERock02", "CRERock03", "CRERock04", "CRERock06", "CRERock05",
                                     "CRERock13", "CRERock01", "CRERock08"};   // small->big
-constexpr const char* kCreHenge[] = {"CREHenge01", "CREHenge02", "CREHenge03", "CREHenge04", "CREHenge05",
-                                     "CREHenge06", "CREHenge07", "CREHenge08", "CREHenge09", "CREHenge10",
-                                     "CREHenge11", "CREHenge12", "CREHenge13", "CREHenge14", "CREHenge15",
-                                     "CREHenge16", "CREHenge17", "CREHenge18", "CREHenge19", "CREHenge20",
-                                     "CREHenge21", "CREHenge22", "CREHenge23"};
 
 constexpr std::array<WorldFeatures, kMapTypes> kWorldFeat = {{
-    {{kAraTree, 10}, {kAraRock, 7}, {kAraHenge, 9},  {{"AraMana01", "AraMana02", "AraMana03"}}},
-    {{kTarTree, 9},  {kTarRock, 7}, {kTarHenge, 14}, {{"TarMana01", "TarMana02", "TarMana03"}}},
-    {{kVerTree, 9},  {kVerRock, 7}, {kVerHenge, 11}, {{"VerMana01", "VerMana02", "VerMana03"}}},
-    {{kZonTree, 6},  {kZonRock, 7}, {kZonHenge, 11}, {{"ZonMana01", "ZonMana02", "ZonMana03"}}},
-    {{kCreTree, 9},  {kCreRock, 13}, {kCreHenge, 23}, {{"CReMana01", "CREMana02", "CREMana03"}}},
+    {{kAraTree, 10}, {kAraRock, 7},  {{"AraMana01", "AraMana02", "AraMana03"}}},
+    {{kTarTree, 9},  {kTarRock, 7},  {{"TarMana01", "TarMana02", "TarMana03"}}},
+    {{kVerTree, 9},  {kVerRock, 7},  {{"VerMana01", "VerMana02", "VerMana03"}}},
+    {{kZonTree, 6},  {kZonRock, 7},  {{"ZonMana01", "ZonMana02", "ZonMana03"}}},
+    {{kCreTree, 9},  {kCreRock, 13},  {{"CReMana01", "CREMana02", "CREMana03"}}},
+}};
+
+// ---- mana-deposit henge rings --------------------------------------------------
+// Mined from ALL 101 shipped maps (1207 deposits, 3230 henges): each henge
+// variant is an ARC SEGMENT authored for ONE compass slot at a canonical anchor
+// offset from the sacred stone (3-6 cells -- tighter than our old 5-8 scatter).
+// A retail deposit is ONE sacred stone + 2-4 henges from DISTINCT slots
+// (canonical trio NW+NE+S where the world has it), each at its variant's
+// canonical offset with +-1 cell of jitter (+-2 on Zhon, the loosest world).
+// Weights are the shipped occurrence counts.
+enum RingSlot { rN, rNE, rE, rSE, rS, rSW, rW, rNW };
+struct RingPiece { const char* name; int8_t dx, dz; uint8_t slot; uint8_t w; };
+struct RingSpec {
+    const RingPiece* p; int n;
+    uint8_t cnt[6];      // cumulative % thresholds: ring size k when roll < cnt[k]
+    int8_t jitter;       // +- cells around the canonical offset
+    uint8_t order[8];    // slot preference order (canonical trio first)
+};
+constexpr RingPiece kAraRing[] = {
+    {"AraHenge01", -4, -4, rNW, 95}, {"AraHenge08", -5, -4, rNW, 47},
+    {"AraHenge09", +3, -3, rNE, 89}, {"AraHenge02", +3, -3, rNE, 61},
+    {"AraHenge05", +3, -4, rNE, 19}, {"AraHenge03", +4, -1, rE, 17},
+    {"AraHenge07", -1, +6, rS, 117}, {"AraHenge04",  0, +5, rS, 56},
+    {"AraHenge06", -5, -1, rW, 49},
+};
+constexpr RingPiece kTarRing[] = {
+    {"TarHenge09", -4, -3, rNW, 135}, {"TarHenge01", -4, -4, rNW, 25},
+    {"TarHenge02", -1, -4, rN, 47},   {"TarHenge10", +1, -5, rN, 38},
+    {"TarHenge11", +4, -3, rNE, 137}, {"TarHenge04", +3, -3, rNE, 33},
+    {"TarHenge05", +4,  0, rE, 59},   {"TarHenge06", +3, +3, rSE, 38},
+    {"TarHenge12", +3, +3, rSE, 19},  {"TarHenge13",  0, +5, rS, 156},
+    {"TarHenge14", -4, +3, rSW, 62},  {"TarHenge08", -4,  0, rW, 28},
+    {"TarHenge03", -5,  0, rW, 15},   {"TarHenge07", -7, +2, rW, 11},
+};
+constexpr RingPiece kVerRing[] = {
+    {"VerHenge10", -4, -3, rNW, 68},  {"VerHenge01b", -5, -4, rNW, 38},
+    {"VerHenge01", -6, -4, rNW, 26},  {"VerHenge02", -1, -5, rN, 36},
+    {"VerHenge11", +3, -2, rNE, 72},  {"VerHenge04", +3, -3, rNE, 24},
+    {"VerHenge05b", +4, 0, rE, 31},   {"VerHenge05", +4,  0, rE, 24},
+    {"VerHenge09", -1, +4, rS, 102},  {"VerHenge07",  0, +4, rS, 19},
+    {"VerHenge08", -4, +2, rSW, 54},
+};
+constexpr RingPiece kZonRing[] = {
+    {"ZonHenge02", -3, -5, rNW, 46},  {"ZonHenge01", -4, -4, rNW, 25},
+    {"ZonHenge10", -4, -3, rNW, 16},  {"ZonHenge06",  0, -5, rN, 41},
+    {"ZonHenge03", +2, -5, rN, 36},   {"ZonHenge07", +3, -4, rNE, 34},
+    {"ZonHenge04", +5,  0, rE, 31},   {"ZonHenge05", +3, +2, rSE, 48},
+    {"ZonHenge09", +1, +4, rS, 49},   {"ZonHenge11", -6, +4, rSW, 41},
+    {"ZonHenge08", -5, +1, rW, 40},
+};
+constexpr RingPiece kCreRing[] = {
+    {"CREHenge17", -1, -5, rN, 18},   {"CREHenge16", -3, -4, rN, 9},
+    {"CREHenge22", +3, -4, rNE, 16},  {"CREHenge21", +4, -2, rNE, 9},
+    {"CREHenge23", +4, -3, rNE, 8},   {"CREHenge09", +4, +1, rE, 7},
+    {"CREHenge14",  0, +5, rS, 11},   {"CREHenge07",  0, +4, rS, 7},
+    {"CREHenge15", -3, +4, rSW, 21},  {"CREHenge05", -3, +3, rSW, 10},
+    {"CREHenge19", -5, +1, rW, 32},   {"CREHenge11", -6, -1, rW, 7},
+    {"CREHenge06", -3, -5, rNW, 7},   {"CREHenge03", -5, -4, rNW, 6},
+};
+constexpr std::array<RingSpec, kMapTypes> kRing = {{
+    // cnt: shipped ring-size distribution (cumulative %); order: canonical first.
+    {kAraRing, 9,  {0, 0, 30, 93, 100, 100}, 1, {rNW, rNE, rS, rW, rE, rSW, rN, rSE}},
+    {kTarRing, 14, {0, 0, 23, 67, 88, 100},  1, {rNW, rNE, rS, rSW, rE, rN, rW, rSE}},
+    {kVerRing, 11, {0, 19, 58, 94, 99, 100}, 1, {rNW, rNE, rS, rSW, rN, rE, rW, rSE}},
+    {kZonRing, 11, {0, 5, 24, 66, 91, 100},  2, {rNW, rSE, rN, rSW, rW, rNE, rE, rS}},
+    // 21% of shipped Creon deposits are BARE (no ring at all) -- reproduced.
+    {kCreRing, 14, {21, 27, 71, 96, 100, 100}, 1, {rW, rN, rNE, rSW, rS, rE, rNW, rSE}},
 }};
 
 // Even compass directions (integer, scaled by 1000) for start-position rings.
@@ -488,17 +539,41 @@ Result generate(const Params& raw, const tak::hpi::Vfs& vfs) {
         return true;
     };
     auto placeDeposit = [&](int cx, int cz) {
-        uint32_t sr = uint32_t(splitmix(frng) % 100);
-        int tier = sr < 60 ? 0 : (sr < 90 ? 1 : 2);   // 60% weak / 30% medium / 10% strong
+        // Sacred stone tier at the shipped 01:02:03 mix (223:446:537 of 1206).
+        uint32_t sr = uint32_t(splitmix(frng) % 1206);
+        int tier = sr < 223 ? 0 : (sr < 669 ? 1 : 2);
         place(cx, cz, wf.sacred[size_t(tier)], 2, 2);
         depots.push_back({cx, cz});
-        int nStones = 3 + int(splitmix(frng) % 3);    // 3..5 standing stones ring the spot
-        for (int s = 0; s < nStones; ++s) {
-            auto [ox, oz] = kCompass[splitmix(frng) % 8];
-            int rad = 5 + int(splitmix(frng) % 4);     // 5..8 cells out from the centre
-            int hx = cx + ox * rad / 1000, hz = cz + oz * rad / 1000;
-            const char* hn = wf.henges.p[splitmix(frng) % uint64_t(wf.henges.n)];
-            if (fits(hx, hz, 3, 3)) place(hx, hz, hn, 3, 3);
+        // Ring the stone the retail way (see kRing): draw the ring size from the
+        // world's shipped distribution, walk the slot-preference order (skipping
+        // a slot ~12% of the time for variety when spares remain), and place each
+        // slot's arc-segment variant at its canonical offset + jitter. A henge
+        // whose spot doesn't fit is simply omitted, as retail maps do.
+        const RingSpec& rs = kRing[p.mapType];
+        int roll = int(splitmix(frng) % 100), want = 5;
+        for (int k = 0; k < 6; ++k) if (roll < rs.cnt[k]) { want = k; break; }
+        uint64_t skipBits = splitmix(frng);
+        int placedH = 0, remaining = 0;
+        bool slotHas[8] = {};
+        for (int i = 0; i < rs.n; ++i) slotHas[rs.p[i].slot] = true;
+        for (int oi = 0; oi < 8; ++oi) if (slotHas[rs.order[oi]]) ++remaining;
+        for (int oi = 0; oi < 8 && placedH < want; ++oi) {
+            int slot = rs.order[oi];
+            if (!slotHas[slot]) continue;
+            --remaining;
+            if (remaining >= want - placedH && ((skipBits >> oi) & 7) == 0)
+                continue;   // variety: occasionally pass over a canonical slot
+            int total = 0;
+            for (int i = 0; i < rs.n; ++i) if (rs.p[i].slot == slot) total += rs.p[i].w;
+            int pickW = int(splitmix(frng) % uint64_t(total));
+            const RingPiece* pc = nullptr;
+            for (int i = 0; i < rs.n; ++i)
+                if (rs.p[i].slot == slot) { if ((pickW -= rs.p[i].w) < 0) { pc = &rs.p[i]; break; } }
+            int jr = rs.jitter;
+            int hx = cx + pc->dx + int(splitmix(frng) % uint64_t(2 * jr + 1)) - jr;
+            int hz = cz + pc->dz + int(splitmix(frng) % uint64_t(2 * jr + 1)) - jr;
+            ++placedH;   // the slot is consumed even if the piece doesn't fit
+            if (fits(hx, hz, 3, 3)) place(hx, hz, pc->name, 3, 3);
         }
     };
     // Try to drop a deposit within [rmin,rmax] cells of (tx,tz), on spaced land.
