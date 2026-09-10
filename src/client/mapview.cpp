@@ -169,14 +169,27 @@ void MapView::buildWaterMask() {
     if (waterMask_) { gpuvram::destroy(waterMask_); waterMask_ = nullptr; }
     const int W = map_.width, H = map_.height, sea = map_.seaLevel;
     if (W <= 0 || H <= 0 || int(map_.heights.size()) < W * H) return;
+    auto land = [&](int x, int z) {
+        if (x < 0 || z < 0 || x >= W || z >= H) return false;
+        return map_.heights[size_t(z) * W + x] >= sea;
+    };
     std::vector<uint8_t> px(size_t(W) * H * 4, 0);
     for (int z = 0; z < H; ++z)
         for (int x = 0; x < W; ++x) {
-            int h = map_.heights[size_t(z) * W + x];
             uint8_t s = 0;
-            if (h < sea) {                       // deeper water glints a touch stronger
+            if (!land(x, z)) {                   // a water cell
                 hasWater_ = true;
-                s = uint8_t(135 + std::clamp(sea - h, 0, 60) * 90 / 60);   // 135..225
+                int h = map_.heights[size_t(z) * W + x];
+                int base = 108 + std::clamp(sea - h, 0, 60) * 42 / 60;   // 108..150 open water
+                // Surf: the caustic runs BRIGHT right at the waterline and fades a few
+                // cells out, so the scrolling caustic reads as foam rolling on the
+                // shore. Nearest land within 3 cells (Chebyshev) sets the boost.
+                int near = 9;
+                for (int dz = -3; dz <= 3 && near > 1; ++dz)
+                    for (int dx = -3; dx <= 3; ++dx)
+                        if (land(x + dx, z + dz)) { near = std::min(near, std::max(std::abs(dx), std::abs(dz))); }
+                int foam = near <= 3 ? (4 - near) * 46 : 0;   // 138 / 92 / 46 at 1 / 2 / 3 cells
+                s = uint8_t(std::clamp(base + foam, 0, 255));
             }
             size_t i = (size_t(z) * W + x) * 4;
             px[i] = px[i + 1] = px[i + 2] = s; px[i + 3] = 255;
