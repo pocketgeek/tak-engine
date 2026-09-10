@@ -239,8 +239,18 @@ void MapView::drawWater(int winW, int winH) {
     }
     if (!waterRT_) return;
 
+    // SDL_SetRenderTarget resets the scale AND clip of whichever target it selects,
+    // so a naive round-trip through waterRT_ would wipe the AA supersample scale and
+    // the caller's world clip rect -- leaving every unit/feature/HUD drawn after us
+    // mis-scaled and unclipped, with the mouse offset (the "AA pointer drift"). Snap-
+    // shot and restore that state around the switch.
     SDL_Texture* prev = SDL_GetRenderTarget(ren_);
+    float sSx = 1, sSy = 1; SDL_RenderGetScale(ren_, &sSx, &sSy);
+    SDL_bool sClipOn = SDL_RenderIsClipEnabled(ren_);
+    SDL_Rect sClip; SDL_RenderGetClipRect(ren_, &sClip);
+
     SDL_SetRenderTarget(ren_, waterRT_);
+    SDL_RenderSetScale(ren_, 1.0f, 1.0f);   // waterRT_ composites 1:1
     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
     SDL_RenderClear(ren_);
 
@@ -276,8 +286,12 @@ void MapView::drawWater(int winW, int winH) {
 
     SDL_RenderSetClipRect(ren_, nullptr);
     SDL_SetRenderTarget(ren_, prev);
+    // Restore scale first, then the clip (which is expressed in scaled coords), so
+    // both round-trip exactly to what the caller had before we switched targets.
+    SDL_RenderSetScale(ren_, sSx, sSy);
+    SDL_RenderSetClipRect(ren_, sClipOn ? &sClip : nullptr);
     SDL_SetTextureBlendMode(waterRT_, SDL_BLENDMODE_ADD);
-    SDL_Rect full{0, 0, winW, winH};
+    SDL_Rect full{0, 0, winW, winH};   // scaled by sSx now, and clipped to the world rect
     SDL_RenderCopy(ren_, waterRT_, nullptr, &full);
 }
 
