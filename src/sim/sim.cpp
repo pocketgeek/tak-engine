@@ -3339,11 +3339,18 @@ void World::tick(float dt) {
     int sepCap = liveSep > 4000 ? 24 : 0;   // 0 = uncapped
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& a = units_[i];
-        if (!a.alive() || a.embarked() || !a.type || !a.type->canMove || a.type->canFly) continue;
+        // isStructure(), NOT canmove: the Keep/castle/smith family ships
+        // canmove=1 with zero velocity, and a canmove gate let fresh spawns
+        // (e.g. a resurrection at a corpse beside a building) SHOVE the
+        // building -- which the unstick pass then walked right off its
+        // footprint. Buildings never separate.
+        if (!a.alive() || a.embarked() || !a.type || !a.type->canMove ||
+            a.type->isStructure() || a.type->canFly) continue;
         forEachNearCapped(a.x, a.z, kSep, sepCap, [&](int j) {
             if (size_t(j) <= i) return;   // handle each pair once, and skip self
             Unit& b = units_[size_t(j)];
-            if (!b.alive() || b.embarked() || !b.type || !b.type->canMove || b.type->canFly) return;
+            if (!b.alive() || b.embarked() || !b.type || !b.type->canMove ||
+                b.type->isStructure() || b.type->canFly) return;
             float dx = b.x - a.x, dz = b.z - a.z;
             float d2 = dx * dx + dz * dz;
             if (d2 >= kSep * kSep) return;
@@ -3362,8 +3369,10 @@ void World::tick(float dt) {
     // building, shoved by a crowd, or clipped a corner) is nudged toward the
     // nearest walkable cell so it can never wedge permanently.
     for (auto& u : units_) {
+        // Same isStructure guard as separation: a canmove=1 building sits on
+        // its own blocked footprint, so the unstick would march it away.
         if (!u.alive() || u.embarked() || !u.type || !u.type->canMove ||
-            u.type->canFly)
+            u.type->isStructure() || u.type->canFly)
             continue;
         const NavGrid& g = navFor(u.type);
         if (g.empty()) continue;

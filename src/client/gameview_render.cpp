@@ -265,7 +265,7 @@
             unitBatch_.clear();
             SDL_Texture* st = nullptr;
             auto flush = [&] {
-                if (!unitBatch_.empty())
+                if (!unitBatch_.empty() && st)   // null = failed shadow tex: skip
                     SDL_RenderGeometry(ren_, st, unitBatch_.data(),
                                        int(unitBatch_.size()), nullptr, 0);
                 unitBatch_.clear();
@@ -420,13 +420,13 @@
                         {{dst.x, dst.y + dst.h}, wc, {0, 1}},
                     };
                     static const int wIdx[6] = {0, 1, 2, 0, 2, 3};
-                    SDL_RenderGeometry(ren_, tex, v, 4, wIdx, 6);
+                    if (tex) SDL_RenderGeometry(ren_, tex, v, 4, wIdx, 6);
                 } else {
                     SDL_RenderCopyF(ren_, tex, nullptr, &dst);
                 }
             } else if (op.u) {
                 drawUnit(*op.u);
-            } else if (op.count > 0) {
+            } else if (op.count > 0 && op.tex) {   // null atlas page: skip, no white
                 SDL_RenderGeometry(ren_, op.tex, bodyVerts_.data() + op.start,
                                    op.count, nullptr, 0);
             }
@@ -1334,7 +1334,7 @@
                     v[i].position.x = (t.v[i].position.x - minX) * S + float(rx + pad);
                     v[i].position.y = (t.v[i].position.y - minY) * S + float(ry + pad);
                 }
-                SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
+                if (t.tex) SDL_RenderGeometry(ren_, t.tex, v, 3, nullptr, 0);
             }
             outR = SDL_Rect{rx, ry, w, h};
             outB = SDL_FRect{minX - pad / S, minY - pad / S, w / S, h / S};
@@ -1662,7 +1662,13 @@
         bool conjuring = u.type && (u.underConstruction || birthProgress(u.id) < 1.0f);
         int off = 0;
         for (const auto& r : g.runs) {
-            SDL_RenderGeometry(ren_, r.first, g.verts.data() + off, r.second, nullptr, 0);
+            // A null run texture (an atlas page that failed to allocate under
+            // VRAM pressure -- corpse meshes load mid-game) must be SKIPPED:
+            // SDL_RenderGeometry(nullptr,..) paints the raw vertex colours as a
+            // solid white shape. Invisible-until-retry beats a white flash.
+            if (r.first)
+                SDL_RenderGeometry(ren_, r.first, g.verts.data() + off, r.second,
+                                   nullptr, 0);
             off += r.second;
         }
 
@@ -1889,6 +1895,7 @@
                             SDL_Texture* t = gpuvram::create(
                                 ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
                                 ff.width, ff.height);
+                            if (!t) continue;   // VRAM-pressure alloc fail: drop the frame
                             premulUpload(t, ff.rgba, ff.width);
                             if (bilinear_) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
                             a.frames.push_back(t);
