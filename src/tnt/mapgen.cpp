@@ -1,7 +1,12 @@
 #include "tnt/mapgen.h"
 
+#include "hpi/hpi.h"   // coast prefab sections are read through the VFS
+
 #include <algorithm>
 #include <array>
+#include <map>
+#include <memory>
+#include <string>
 
 namespace tak::mapgen {
 
@@ -55,7 +60,9 @@ struct WorldArt { uint32_t ground, sea; uint8_t groundK, seaK; };
 constexpr std::array<WorldArt, kMapTypes> kWorldArt = {{
     {0x868a8222u, 0x0c2e64b2u, 16, 5},    // Aramon: grass / asea
     {0xca4200f8u, 0xb8524a38u, 16, 5},    // Taros:  low_ground / taros_sea
-    {0xd3259f0fu, 0x9a5c5436u, 16, 16},   // Veruna: A512Lowland / dgsea (full-art sea)
+    // Veruna: sandy-cay land (a0863a34, dunes/sand -- what the Coast Sandy kit's
+    // land edges blend into, Athri Cay style) over dgsea (full-art teal sea).
+    {0xa0863a34u, 0x9a5c5436u, 16, 16},
     {0x9bb50b09u, 0x59f53dfdu, 8, 5},     // Zhon:   jungletile80 (256px) / H2OTILE
     // Creon (Iron Plague, IPData.hpi): green turf fill mined from the takx19-26
     // mission maps (their other big fill, 93c585b7, is city cobblestone). Every
@@ -64,70 +71,68 @@ constexpr std::array<WorldArt, kMapTypes> kWorldArt = {{
     {0x814dddc1u, 0x9a5c5436u, 16, 16},   // Creon:  turf / (Veruna sea stand-in)
 }};
 
-// ---- shore-transition art ------------------------------------------------------
-// Retail coastlines are hand-painted bank/beach prefab sections, not a hard
-// ground/sea tile flip. Mined per world from the shipped maps' shoreline blocks
-// (aramon/taros/veruna/zhon) and from the creon/shores prefab sections in
-// IPSections.hpi: for each 4-bit corner case (bit0 NW, bit1 NE, bit2 SW, bit3 SE
-// wet) the authored transition tile. Straight edges cycle a run of tiles along the
-// coast; the prefabs paint continuous bands, so the line one step toward land is
-// the bank-approach art (ring0) and one step toward water the shallow art (ring15).
-// All 512px (16x16-tile) sections, identity col/row. Display only -- never hashed.
-struct ShoreEdge { uint32_t key; uint8_t fixed; uint8_t runLen; uint8_t run[16]; };
-struct ShoreTile { uint32_t key; uint8_t col, row; };
-struct WorldShore {
-    ShoreEdge n, s, w, e;            // water N (case 3), S (12), W (5), E (10)
-    ShoreTile c1, c2, c4, c8;        // inner corners: water pocket NW / NE / SW / SE
-    ShoreTile c7, c11, c13, c14;     // outer bends: land only SE / SW / NE / NW
+// ---- coast prefab kits ---------------------------------------------------------
+// Retail coastlines are whole hand-painted 512px prefab SECTIONS (plain TNT files
+// in sections.hpi / IPSections.hpi: one terrain key, an identity col/row tile
+// grid, an authored bank heightfield, sometimes beach features). The generator
+// lays its coastline out on the section grid and stamps these whole -- that is
+// where retail's big sweeping curves come from. Role order below: straights with
+// water N/S/E/W of the piece; outer bends (water wraps NW/NE/SE/SW around a land
+// tip); inner pockets (water only in the NW/NE/SW/SE corner).
+enum ShoreRole { kRN, kRS, kRE, kRW, kONW, kONE, kOSE, kOSW, kINW, kINE, kISW, kISE, kRoles };
+struct ShoreKit {
+    const char* dir;
+    const char* name[kRoles];
+    const char* var[3];   // interchangeable cosmetic variants, picked by position
+    const char* ext;
 };
-// All entries mined from each world's designed "Coast Sandy" prefab kit in
-// sections.hpi (creon/shores in IPSections.hpi): straights from the n/s/e/w
-// pieces (contiguous authored runs only, so adjacent stamped tiles are adjacent
-// art), outer bends from the ne/nw/se/sw pieces, inner pockets from the
-// dedicated inner-corner pieces.
-constexpr std::array<WorldShore, kMapTypes> kWorldShore = {{
-    {   // Aramon: ascoast01a-12a_80 (01-04 straights, 05-08 outer, 09-12 inner)
-        {0xa3e7d383u, 5, 3, {13, 14, 15}},
-        {0xdb770551u, 13, 4, {7, 8, 9, 10}},
-        {0x4a5aaee2u, 2, 3, {11, 12, 13}},
-        {0x4e806e78u, 11, 4, {5, 6, 7, 8}},
-        {0x4c542c48u, 3, 4}, {0xaf614593u, 12, 2}, {0x9e40bceau, 1, 11}, {0xa4669c42u, 13, 13},
-        {0x13d16b0du, 2, 4}, {0x23132165u, 10, 3}, {0xb2e62e1eu, 1, 8}, {0xc66aa8d4u, 13, 13},
-    },
-    {   // Taros: Coast Sandy n01/s01/e01/w01 + ne/nw/se/sw + nee/nwe/see/swe
-        // (runs picked so the ring lines beside them are painted -- these JPGs
-        //  leave a few deep-water tiles black where maps use the sea fill)
-        {0xa8b04632u, 6, 6, {10, 11, 12, 13, 14, 15}},
-        {0x5b4bb9d9u, 11, 9, {0, 1, 2, 3, 4, 5, 6, 7, 8}},
-        {0x922cde10u, 6, 7, {9, 10, 11, 12, 13, 14, 15}},
-        {0xea4a228eu, 9, 5, {4, 5, 6, 7, 8}},
-        {0xeae65890u, 4, 4}, {0x35c3afadu, 10, 5}, {0x87c7b1c9u, 3, 11}, {0xc3834599u, 11, 11},
-        {0xb2f2f272u, 6, 7}, {0x702a36a0u, 7, 8}, {0xbdaf4de7u, 4, 11}, {0x80a8acc8u, 9, 9},
-    },
-    {   // Veruna: Coast Sandy n01/s01/e01/w01 + corners
-        {0x1155cdd1u, 1, 6, {8, 9, 10, 11, 12, 13}},
-        {0xd5f99723u, 13, 4, {6, 7, 8, 9}},
-        {0xaf4d1117u, 2, 5, {2, 3, 4, 5, 6}},
-        {0x4cd42696u, 13, 3, {6, 7, 8}},
-        {0x6e306cc6u, 4, 2}, {0x0060ae02u, 13, 2}, {0xf4ec3c94u, 1, 12}, {0x7d73e12fu, 14, 12},
-        {0x66b4388au, 10, 8}, {0x3a20ea34u, 5, 10}, {0x594351e3u, 6, 6}, {0xaccce484u, 13, 13},
-    },
-    {   // Zhon: Coast Sandy n1/s1/e1/w1 + 1xx outer / 2xx inner corners
-        {0xdfcb5bf3u, 5, 3, {7, 8, 9}},
-        {0x265e3cd8u, 12, 3, {0, 1, 2}},
-        {0xbc123c42u, 5, 3, {13, 14, 15}},
-        {0x30626406u, 11, 3, {7, 8, 9}},
-        {0xe0320816u, 4, 4}, {0xdd6f3d8fu, 10, 5}, {0x8c6e085eu, 1, 13}, {0x5777bd91u, 10, 9},
-        {0x650d3f3fu, 12, 7}, {0x2466d208u, 5, 8}, {0xa89c7242u, 6, 3}, {0xd9337b65u, 6, 6},
-    },
-    {   // Creon: sections/creon/shores/*.tnt prefabs (IPSections.hpi)
-        {0x9cba08e2u, 8, 2, {7, 8}},
-        {0x4987a7a5u, 12, 2, {7, 8}},
-        {0x4157232du, 5, 4, {12, 13, 14, 15}},
-        {0x8d17c1fcu, 10, 3, {6, 7, 8}},
-        {0xb5155f1fu, 4, 4}, {0xe5afdbf5u, 11, 2}, {0xf5fded6du, 1, 13}, {0x7c36bc02u, 14, 13},
-        {0x128e8cd4u, 8, 9}, {0x6c00cc44u, 5, 9}, {0x7c0ee09eu, 7, 10}, {0x7084884cu, 8, 8},
-    },
+constexpr std::array<ShoreKit, kMapTypes> kShoreKit = {{
+    {"Sections/Aramon/Coast Sandy/",
+     {"ascoast01", "ascoast02", "ascoast03", "ascoast04", "ascoast05", "ascoast06",
+      "ascoast07", "ascoast08", "ascoast12", "ascoast11", "ascoast09", "ascoast10"},
+     {"a_80", "b_80", "c_80"}, ".TNT"},
+    {"Sections/Taros/Coast Sandy/",
+     {"n", "s", "e", "w", "nw", "ne", "se", "sw", "nwe", "nee", "swe", "see"},
+     {"01", "02", "03"}, ".TNT"},
+    {"Sections/Veruna/Coast Sandy/",
+     {"n", "s", "e", "w", "nw", "ne", "se", "sw", "n_w", "e_n", "s_w", "e_s"},
+     {"01", "02", "03"}, ".TNT"},
+    // Zhon uses the JUNGLE palette's coast kit so the land edges blend into the
+    // jungletile ground fill (plain "Coast Sandy" is for its sand-flat palette).
+    {"Sections/Zhon/Coast Sandy Jungle/",
+     {"n", "s", "e", "w", "1nw", "1ne", "1se", "1sw", "2nw", "2ne", "2sw", "2se"},
+     {"1", "2", "3"}, ".TNT"},
+    {"sections/creon/shores/",
+     {"n", "s", "e", "w", "nw", "ne", "se", "sw", "n_w", "e_n", "s_w", "e_s"},
+     {"01", "02", "03"}, ".tnt"},
+}};
+
+// Marching case (bit0 NW, bit1 NE, bit2 SW, bit3 SE wet) -> kit role, -1 = none.
+constexpr int kCaseRole[16] = {
+    -1,     // 0  all dry
+    kINW,   // 1  water pocket NW
+    kINE,   // 2  water pocket NE
+    kRN,    // 3  water north
+    kISW,   // 4  water pocket SW
+    kRW,    // 5  water west
+    -1,     // 6  diagonal pinch (cleaned away)
+    kONW,   // 7  only SE dry: water wraps NW
+    kISE,   // 8  water pocket SE
+    -1,     // 9  diagonal pinch (cleaned away)
+    kRE,    // 10 water east
+    kONE,   // 11 only SW dry: water wraps NE
+    kRS,    // 12 water south
+    kOSW,   // 13 only NE dry: water wraps SW
+    kOSE,   // 14 only NW dry: water wraps SE
+    -1,     // 15 all wet
+};
+
+// Retail authoring levels the coast prefabs assume: {seaLevel, flat land level}.
+// Aramon + Creon kits are authored at land 80 (river-map style, sea 40); the
+// three sea worlds at land 62 (sea 58). Measured from the shipped prefabs/maps.
+struct WorldLevels { uint8_t sea, land; };
+constexpr std::array<WorldLevels, kMapTypes> kLevels = {{
+    {40, 80}, {58, 62}, {58, 62}, {58, 62}, {40, 80},
 }};
 
 // Per-world doodad + mana palette (names verified in features/<world>/*.tdf).
@@ -216,39 +221,87 @@ Params sanitize(Params p) {
     return p;
 }
 
-Result generate(const Params& raw) {
+Result generate(const Params& raw, const tak::hpi::Vfs& vfs) {
     Params p = sanitize(raw);
     Result r;
     tak::tnt::Map& m = r.map;
     const int W = p.widthCells, H = p.heightCells;
     m.width = W; m.height = H;
     m.blocksX = W / 2; m.blocksY = H / 2;
+    const int SW = W / 32, SH = H / 32;   // map size in 512px section units
 
-    // ---- heightfield: terraced like the shipped maps -- a dominant ground plateau
-    //      just above sea, one or two higher plateaus, joined by ramps. Terrain pixels
-    //      render FLAT (all cliff relief in shipped maps is baked tile art we don't
-    //      have); heights only LIFT units/features on screen. So relief stays gentle
-    //      (no cliff faces to float over) and the ground plateau is the modal height,
-    //      so flat ground lifts by zero and only raised terraces rise. ---------------
-    m.seaLevel = 58;
+    // ---- coarse land/water mask on the SECTION-CORNER grid ------------------------
+    // The coastline is decided at 512px granularity so whole coast prefabs can be
+    // stamped -- this is what gives retail's sweeping curves instead of a 32px
+    // block staircase. Adjacent sections share corners, so the marching cases mesh.
+    const WorldLevels lv = kLevels[p.mapType];
+    m.seaLevel = lv.sea;
+    const int land = lv.land;
     const int span = std::max(W, H);
-    // waterDensity picks how much of the fractal range falls below the shoreline
-    // (default ~96 -> ~19% water; the slider spans a few percent up to mostly ocean).
+    // waterDensity picks how much of the fractal range falls below the shoreline.
     const int seaThresh = std::clamp(40 + int(p.waterDensity) * 85 / 255, 30, 180);
+    std::vector<uint8_t> wet(size_t(SW + 1) * (SH + 1));
+    for (int j = 0; j <= SH; ++j)
+        for (int i = 0; i <= SW; ++i)
+            wet[size_t(j) * (SW + 1) + i] =
+                uint8_t(int(fractal(p.seed, i * 32, j * 32, span)) < seaThresh);
+    auto wetAt = [&](int i, int j) {
+        i = std::clamp(i, 0, SW); j = std::clamp(j, 0, SH);
+        return int(wet[size_t(j) * (SW + 1) + i]);
+    };
+    auto scase = [&](int sx, int sy) {
+        return wetAt(sx, sy) | (wetAt(sx + 1, sy) << 1) |
+               (wetAt(sx, sy + 1) << 2) | (wetAt(sx + 1, sy + 1) << 3);
+    };
+    // No prefab depicts a diagonal pinch (cases 6/9 -- retail never authors them):
+    // dry the offending corner until the mask is clean. Deterministic scan order.
+    for (int pass = 0; pass < 8; ++pass) {
+        bool changed = false;
+        for (int sy = 0; sy < SH; ++sy)
+            for (int sx = 0; sx < SW; ++sx) {
+                int c = scase(sx, sy);
+                if (c == 6) { wet[size_t(sy) * (SW + 1) + sx + 1] = 0; changed = true; }
+                if (c == 9) { wet[size_t(sy) * (SW + 1) + sx] = 0; changed = true; }
+            }
+        if (!changed) break;
+    }
+
+    // ---- heights -------------------------------------------------------------------
+    // Interior land sections get the procedural terraces (base plateau = the
+    // world's authored flat level, so it meets the prefab land edges exactly);
+    // water sections sit at 0 (retail deep-water floor); shoreline sections get
+    // the prefab's authored bank heights when stamped below.
     const int landRange = std::max(1, 255 - seaThresh);
-    const int t1 = seaThresh + landRange * 60 / 100;   // ground plateau -> ~60% of land
-    const int t2 = seaThresh + landRange * 85 / 100;   // mid plateau    -> ~25% of land
-    const int kDeep = 28, kL0 = 72, kL1 = 112, kL2 = 156;   // discrete terrace heights
+    const int t1 = seaThresh + landRange * 60 / 100;   // base plateau ~60% of land
+    const int t2 = seaThresh + landRange * 85 / 100;   // mid plateau  ~25%
+    const int kL1 = std::min(250, land + 42), kL2 = std::min(250, land + 92);
+    // Raised terraces only where the whole 3x3 section neighbourhood is land, so
+    // the blur can never bleed a hill into a stamped prefab's edge rows.
+    std::vector<uint8_t> interior(size_t(SW) * SH, 0);
+    for (int sy = 0; sy < SH; ++sy)
+        for (int sx = 0; sx < SW; ++sx) {
+            bool ok = true;
+            for (int dy = -1; dy <= 1 && ok; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                    if (scase(std::clamp(sx + dx, 0, SW - 1),
+                              std::clamp(sy + dy, 0, SH - 1)) != 0) { ok = false; break; }
+            interior[size_t(sy) * SW + sx] = uint8_t(ok);
+        }
     m.heights.resize(size_t(W) * H);
     for (int z = 0; z < H; ++z)
         for (int x = 0; x < W; ++x) {
-            int rr = int(fractal(p.seed, x, z, span));
-            m.heights[size_t(z) * W + x] =
-                uint8_t(rr < seaThresh ? kDeep : rr < t1 ? kL0 : rr < t2 ? kL1 : kL2);
+            int c = scase(x >> 5, z >> 5);
+            uint8_t h;
+            if (c == 15) h = 0;
+            else if (c != 0 || !interior[size_t(z >> 5) * SW + (x >> 5)]) h = uint8_t(land);
+            else {
+                int rr = int(fractal(p.seed, x, z, span));
+                h = uint8_t(rr < t1 ? land : rr < t2 ? kL1 : kL2);
+            }
+            m.heights[size_t(z) * W + x] = h;
         }
-    // Turn the hard terrace steps into walkable ramps with a few integer box-blur
-    // passes: a plateau interior (4*h + 4 equal neighbours)/8 == h stays flat; only
-    // the boundaries slope. Edge cells clamp to themselves.
+    // Box-blur the terrace steps into walkable ramps (interior only by
+    // construction; shoreline sections are overwritten by the prefab stamp).
     auto hAt = [&](int x, int z) {
         x = std::clamp(x, 0, W - 1); z = std::clamp(z, 0, H - 1);
         return int(m.heights[size_t(z) * W + x]);
@@ -262,92 +315,92 @@ Result generate(const Params& raw) {
         m.heights.swap(tmp);
     }
 
-    // ---- terrain tiles: WALLPAPER the world's ground/sea section (col=bx%K,row=by%K).
-    //      Shipped maps tile sections this way, so a field cycles through the
-    //      section's sub-tiles instead of stamping one 32px tile. K comes from each
-    //      section's VALID art region (see kWorldArt: most sea JPGs are only 5x5
-    //      real art + black padding). ------------------------------------------------
+    // ---- terrain tiles: fills, then whole coast prefabs -----------------------------
+    // Land/water sections WALLPAPER the world's ground/sea fill (col=bx%K,row=by%K;
+    // K = the fill's VALID art region, see kWorldArt). Shoreline sections are then
+    // stamped whole from the world's Coast Sandy prefab kit: tiles, the authored
+    // bank HEIGHTS (overwriting the placeholder -- this is what puts the sim
+    // waterline exactly on the painted shoreline), and any beach features the
+    // prefab carries.
     const WorldArt art = kWorldArt[p.mapType];
     const int kGround = art.groundK, kSea = art.seaK;
     size_t blocks = size_t(m.blocksX) * m.blocksY;
     m.tileKeys.resize(blocks);
     m.tileCols.resize(blocks);
     m.tileRows.resize(blocks);
-    // Classify every block by the SHARED corner grid (cells 2bx,2by / +2), so
-    // adjacent blocks agree on their common boundary and edge tiles line up:
-    // 4-bit case, bit0 NW / bit1 NE / bit2 SW / bit3 SE below sea.
-    std::vector<uint8_t> bcase(blocks);
-    auto wetC = [&](int x, int z) { return hAt(x, z) < m.seaLevel; };
-    for (int by = 0; by < m.blocksY; ++by)
-        for (int bx = 0; bx < m.blocksX; ++bx) {
-            int cx = bx * 2, cz = by * 2;
-            bcase[size_t(by) * m.blocksX + bx] =
-                uint8_t(wetC(cx, cz) | (wetC(cx + 2, cz) << 1) |
-                        (wetC(cx, cz + 2) << 2) | (wetC(cx + 2, cz + 2) << 3));
-        }
-    auto caseAt = [&](int bx, int by) -> int {
-        if (bx < 0 || by < 0 || bx >= m.blocksX || by >= m.blocksY) return -1;
-        int c = bcase[size_t(by) * m.blocksX + bx];
-        return (c == 6 || c == 9) ? 15 : c;   // diagonal pinches render as open water
-    };
-    const WorldShore& sh = kWorldShore[p.mapType];
-    auto setT = [&](size_t i, uint32_t k, int c, int r) {
-        m.tileKeys[i] = k; m.tileCols[i] = uint8_t(c); m.tileRows[i] = uint8_t(r);
-    };
     for (int by = 0; by < m.blocksY; ++by)
         for (int bx = 0; bx < m.blocksX; ++bx) {
             size_t i = size_t(by) * m.blocksX + bx;
-            switch (caseAt(bx, by)) {
-            // straight shorelines: cycle the authored bank run along the coast
-            case 3:  setT(i, sh.n.key, sh.n.run[bx % sh.n.runLen], sh.n.fixed); break;
-            case 12: setT(i, sh.s.key, sh.s.run[bx % sh.s.runLen], sh.s.fixed); break;
-            case 5:  setT(i, sh.w.key, sh.w.fixed, sh.w.run[by % sh.w.runLen]); break;
-            case 10: setT(i, sh.e.key, sh.e.fixed, sh.e.run[by % sh.e.runLen]); break;
-            // corners
-            case 1:  setT(i, sh.c1.key, sh.c1.col, sh.c1.row); break;
-            case 2:  setT(i, sh.c2.key, sh.c2.col, sh.c2.row); break;
-            case 4:  setT(i, sh.c4.key, sh.c4.col, sh.c4.row); break;
-            case 8:  setT(i, sh.c8.key, sh.c8.col, sh.c8.row); break;
-            case 7:  setT(i, sh.c7.key, sh.c7.col, sh.c7.row); break;
-            case 11: setT(i, sh.c11.key, sh.c11.col, sh.c11.row); break;
-            case 13: setT(i, sh.c13.key, sh.c13.col, sh.c13.row); break;
-            case 14: setT(i, sh.c14.key, sh.c14.col, sh.c14.row); break;
-            case 0:
-                // pure land: bank-approach ring when hugging a straight shoreline
-                if (caseAt(bx, by - 1) == 3)
-                    setT(i, sh.n.key, sh.n.run[bx % sh.n.runLen], sh.n.fixed + 1);
-                else if (caseAt(bx, by + 1) == 12)
-                    setT(i, sh.s.key, sh.s.run[bx % sh.s.runLen], sh.s.fixed - 1);
-                else if (caseAt(bx - 1, by) == 5)
-                    setT(i, sh.w.key, sh.w.fixed + 1, sh.w.run[by % sh.w.runLen]);
-                else if (caseAt(bx + 1, by) == 10)
-                    setT(i, sh.e.key, sh.e.fixed - 1, sh.e.run[by % sh.e.runLen]);
-                else
-                    setT(i, art.ground, bx % kGround, by % kGround);
-                break;
-            default:   // 15 (and 6/9): shallow ring beside a straight, else sea fill
-                if (caseAt(bx, by + 1) == 3)
-                    setT(i, sh.n.key, sh.n.run[bx % sh.n.runLen], sh.n.fixed - 1);
-                else if (caseAt(bx, by - 1) == 12)
-                    setT(i, sh.s.key, sh.s.run[bx % sh.s.runLen], sh.s.fixed + 1);
-                else if (caseAt(bx + 1, by) == 5)
-                    setT(i, sh.w.key, sh.w.fixed - 1, sh.w.run[by % sh.w.runLen]);
-                else if (caseAt(bx - 1, by) == 10)
-                    setT(i, sh.e.key, sh.e.fixed + 1, sh.e.run[by % sh.e.runLen]);
-                else
-                    setT(i, art.sea, bx % kSea, by % kSea);
-                break;
-            }
+            int c = scase(bx >> 4, by >> 4);
+            bool water = (c == 15);   // shore blocks get stamped; fill land-ish meanwhile
+            m.tileKeys[i] = water ? art.sea : art.ground;
+            int K = water ? kSea : kGround;
+            m.tileCols[i] = uint8_t(bx % K);
+            m.tileRows[i] = uint8_t(by % K);
         }
-
-    // No features yet (Phase 2 adds doodads + mana); minimap left empty (cosmetic).
     m.features.assign(size_t(W) * H, 0xFFFF);
+
+    // Prefab loader: cached per path, tolerant of a missing variant (falls back to
+    // the next; a fully missing piece leaves the fill -- same files on every peer,
+    // so the fallback is byte-identical too).
+    const ShoreKit& kit = kShoreKit[p.mapType];
+    std::map<std::string, std::unique_ptr<tak::tnt::Map>> pieceCache;
+    auto loadPiece = [&](int role, uint64_t vh) -> const tak::tnt::Map* {
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            int v = int((vh + uint64_t(attempt)) % 3);
+            std::string path = std::string(kit.dir) + kit.name[role] + kit.var[v] + kit.ext;
+            auto it = pieceCache.find(path);
+            if (it == pieceCache.end()) {
+                std::unique_ptr<tak::tnt::Map> pm;
+                try {
+                    auto d = vfs.read(path);
+                    auto loaded = tak::tnt::Map::load(d, path);
+                    if (loaded.width == 32 && loaded.height == 32)
+                        pm = std::make_unique<tak::tnt::Map>(std::move(loaded));
+                } catch (const std::exception&) {}
+                it = pieceCache.emplace(std::move(path), std::move(pm)).first;
+            }
+            if (it->second) return it->second.get();
+        }
+        return nullptr;
+    };
+    struct PendingFeat { int cx, cz; std::string name; };
+    std::vector<PendingFeat> prefabFeats;
+    for (int sy = 0; sy < SH; ++sy)
+        for (int sx = 0; sx < SW; ++sx) {
+            int role = kCaseRole[scase(sx, sy)];
+            if (role < 0) continue;
+            uint64_t vh = p.seed ^ (uint64_t(sy) * 1000003u + uint64_t(sx) * 7919u);
+            const tak::tnt::Map* pc = loadPiece(role, splitmix(vh));   // vh is advanced in place
+            if (!pc) continue;
+            // heights + features: 32x32 cells at (sx*32, sy*32)
+            for (int z = 0; z < 32; ++z)
+                for (int x = 0; x < 32; ++x) {
+                    int cx = sx * 32 + x, cz = sy * 32 + z;
+                    m.heights[size_t(cz) * W + cx] = pc->heights[size_t(z) * 32 + x];
+                    uint16_t fi = pc->features[size_t(z) * 32 + x];
+                    if (fi != 0xFFFF && fi < pc->featureNames.size())
+                        prefabFeats.push_back({cx, cz, pc->featureNames[fi]});
+                }
+            // tiles: 16x16 blocks at (sx*16, sy*16)
+            for (int bz = 0; bz < 16; ++bz)
+                for (int bxl = 0; bxl < 16; ++bxl) {
+                    size_t bi = size_t(sy * 16 + bz) * m.blocksX + (sx * 16 + bxl);
+                    size_t pi = size_t(bz) * 16 + bxl;
+                    m.tileKeys[bi] = pc->tileKeys[pi];
+                    m.tileCols[bi] = pc->tileCols[pi];
+                    m.tileRows[bi] = pc->tileRows[pi];
+                }
+        }
 
     // ---- start positions: N spread around a ring, snapped to the nearest solid
     //      land, kept off the edges. Deterministic (integer compass table) -------
     auto isLand = [&](int cx, int cz) {
         if (cx < 0 || cz < 0 || cx >= W || cz >= H) return false;
-        return int(m.heights[size_t(cz) * W + cx]) > m.seaLevel + 4;   // dry, not shallows
+        // Dry (not shallows) AND on an interior land section -- keeps starts,
+        // mana and doodads off the stamped prefab beaches.
+        return int(m.heights[size_t(cz) * W + cx]) > m.seaLevel + 3 &&
+               scase(cx >> 5, cz >> 5) == 0;
     };
     // Nearest land to (cx,cz) via an expanding square scan (bounded), else the point.
     auto snapLand = [&](int cx, int cz) -> std::pair<int, int> {
@@ -378,12 +431,17 @@ Result generate(const Params& raw) {
     // come from one integer PRNG in a fixed order => byte-identical on every peer.
     const WorldFeatures& wf = kWorldFeat[p.mapType];
     m.featureNames.clear();
-    auto featIdx = [&](const char* nm) -> uint16_t {
+    auto featIdx = [&](const std::string& nm) -> uint16_t {
         for (size_t i = 0; i < m.featureNames.size(); ++i)
             if (m.featureNames[i] == nm) return uint16_t(i);
         m.featureNames.emplace_back(nm);
         return uint16_t(m.featureNames.size() - 1);
     };
+    // The stamped coast prefabs' own features (beach rocks etc.) go in first, with
+    // their names remapped into this map's table; their cells are claimed below so
+    // the procedural scatter avoids them.
+    for (const auto& pf : prefabFeats)
+        m.features[size_t(pf.cz) * W + pf.cx] = featIdx(pf.name);
     auto nearStart = [&](int cx, int cz, int pad) {
         for (auto& [sx, sz] : r.starts) {
             int dx = cx - sx, dz = cz - sz;
@@ -396,6 +454,8 @@ Result generate(const Params& raw) {
     // claims its footprint (centred on the anchor, matching the sim's nav blocking)
     // so later features avoid it.
     std::vector<uint8_t> claim(size_t(W) * H, 0);
+    for (const auto& pf : prefabFeats)   // prefab features block the scatter
+        claim[size_t(pf.cz) * W + pf.cx] = 1;
     auto fits = [&](int cx, int cz, int fx, int fz) {
         for (int dz = 0; dz < fz; ++dz)
             for (int dx = 0; dx < fx; ++dx) {

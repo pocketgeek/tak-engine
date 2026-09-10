@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+namespace tak::hpi { class Vfs; }
+
 namespace tak::mapgen {
 
 // One of the retail worlds; also selects the terrain section art + feature palette.
@@ -43,8 +45,11 @@ std::string encodeMapId(const Params& p);
 Params      decodeMapId(const std::string& id);     // sane defaults on a malformed id
 std::string friendlyLabel(const Params& p);
 
-// The generator. Deterministic in the params (same params -> identical bytes).
-Result generate(const Params& p);
+// The generator. Deterministic in the params + the install's prefab sections
+// (coastlines are stamped from the retail Coast Sandy section TNTs read through
+// the VFS -- same install => identical bytes on every peer; the MP data-hash
+// agreement already pins the install).
+Result generate(const Params& p, const hpi::Vfs& vfs);
 
 // Clamp raw UI inputs to supported ranges (even cells, 2..8 players, sane size).
 Params sanitize(Params p);

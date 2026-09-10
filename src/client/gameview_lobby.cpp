@@ -183,7 +183,7 @@
         // Roll the map from the seed (cheap integer-only work) and paint a downsampled
         // height/water map with feature + start markers, so the sliders preview live.
         tak::mapgen::Params gp = tak::mapgen::decodeMapId(id);
-        tak::mapgen::Result g = tak::mapgen::generate(gp);
+        tak::mapgen::Result g = tak::mapgen::generate(gp, vfs_);
         const tak::tnt::Map& m = g.map;
         const int W = m.width, H = m.height, sea = m.seaLevel;
         if (W <= 0 || H <= 0 || m.heights.size() < size_t(W) * H) return;
@@ -191,7 +191,7 @@
         const int TW = std::max(1, W * cap / mx), TH = std::max(1, H * cap / mx);
         // World-flavoured land tint (loosely matches each world's ground section art).
         static const uint8_t landRGB[tak::mapgen::kMapTypes][3] = {
-            {74, 118, 58}, {112, 84, 54}, {66, 120, 104}, {46, 92, 46}, {34, 80, 60}};
+            {74, 118, 58}, {112, 84, 54}, {200, 172, 148}, {46, 92, 46}, {34, 80, 60}};
         const uint8_t* lc = landRGB[gp.mapType % tak::mapgen::kMapTypes];
         std::vector<uint8_t> rgba(size_t(TW) * TH * 4, 255);
         auto put = [&](int tx, int ty, uint8_t r, uint8_t gg, uint8_t b) {
