@@ -11,6 +11,7 @@
 
 #include <SDL.h>
 
+#include "cartographer/newmap.h"
 #include "cartographer/sections.h"
 #include "client/mapview.h"
 #include "terrain/terrain.h"
@@ -40,8 +41,8 @@ void fillRect(SDL_Renderer* r, int x, int y, int w, int h, Uint8 cr, Uint8 cg, U
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string dataRoot, mapName, outDir = ".", exportPath, stampName;
-    int stampBX = 0, stampBY = 0;
+    std::string dataRoot, mapName, outDir = ".", exportPath, stampName, newWorld = "aramon";
+    int stampBX = 0, stampBY = 0, newW = 0, newH = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--data" && i + 1 < argc) dataRoot = argv[++i];
@@ -50,6 +51,10 @@ int main(int argc, char** argv) {
         else if (a == "--stamp" && i + 3 < argc) {   // headless: stamp <name> <bx> <by>
             stampName = argv[++i]; stampBX = std::atoi(argv[++i]); stampBY = std::atoi(argv[++i]);
         }
+        else if (a == "--new" && i + 1 < argc) {   // headless: --new WxH (Units) + --save
+            std::sscanf(argv[++i], "%dx%d", &newW, &newH);
+        }
+        else if (a == "--world" && i + 1 < argc) newWorld = argv[++i];
         else if (a[0] != '-') mapName = a;
     }
     // Data root: --data wins; otherwise the local directory if it holds a valid
@@ -62,7 +67,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "data: using the local directory %s\n", dataRoot.c_str());
         }
     }
-    if (dataRoot.empty() || mapName.empty()) {
+    if (dataRoot.empty() || (mapName.empty() && newW <= 0)) {
         std::fprintf(stderr,
             "Cartographer (TA:Kingdoms map editor) -- phase 2\n"
             "usage: cartographer \"<map name>\" [--data <retail-install-dir>]\n"
@@ -96,6 +101,40 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "mount %s: %s\n", dataRoot.c_str(), e.what());
         return 1;
     }
+    // --new WxH: build a fresh flat map for --world and save it (headless). The
+    // in-editor New dialog arrives with the widget layer; this is the create path.
+    if (newW > 0 && newH > 0) {
+        cart::SectionLibrary nsections;
+        nsections.scan(vfs, newWorld);
+        tak::terrain::Compositor ncomp(vfs);
+        tak::tnt::Map nm = cart::newBlankMap(vfs, nsections, ncomp, newWorld, newW, newH);
+        if (nm.width == 0) {
+            std::fprintf(stderr, "new: no sections for world '%s'\n", newWorld.c_str());
+            return 1;
+        }
+        tak::tnt::Scenario nsc;
+        nsc.kingdom = newWorld;
+        nsc.missionName = mapName.empty() ? "Untitled" : mapName;
+        nsc.sizeW = newW; nsc.sizeH = newH;
+        std::string base = exportPath.empty()
+            ? (outDir + "/" + (mapName.empty() ? "new" : mapName) + ".tnt") : exportPath;
+        std::string otaP = base.substr(0, base.rfind('.')) + ".ota";
+        auto put = [](const std::string& p, const void* d, size_t n) {
+            std::FILE* f = std::fopen(p.c_str(), "wb");
+            if (!f) return false;
+            bool ok = std::fwrite(d, 1, n, f) == n; std::fclose(f);
+            std::fprintf(stderr, "saved %s (%zu bytes)\n", p.c_str(), n);
+            return ok;
+        };
+        std::vector<uint8_t> tb = nm.save();
+        std::string ot = nsc.write();
+        bool ok = put(base, tb.data(), tb.size()) & put(otaP, ot.data(), ot.size());
+        std::fprintf(stderr, "new: %dx%d Units (%dx%d cells) world=%s\n",
+                     newW, newH, nm.width, nm.height, newWorld.c_str());
+        SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
+        return ok ? 0 : 1;
+    }
+
     // Resolve the map name to its .tnt VFS path (Maps/<name>.tnt or a .kmp's
     // kmap/<name>.tnt), same resolution the game uses.
     std::string mapPath;
@@ -139,9 +178,18 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "saved %s (%zu bytes)\n", path.c_str(), w);
         return w == n;
     };
+    // Set when the terrain is painted, so Save regenerates the minimaps (an
+    // unedited save stays byte-identical to the source; an edited one gets a
+    // fresh overview reflecting the paint).
+    bool edited = false;
     // Save the map as loose <stem>.tnt + <stem>.ota. Loose Maps/<name>.* is
     // read directly by the engine VFS, so a saved map is immediately playable.
     auto saveMap = [&](const std::string& tntPath) -> bool {
+        if (edited) {
+            std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
+            cart::generateMinimaps(mapView.editMap(), mapView.compositor(),
+                                   cart::loadWorldPalette(vfs, wld));
+        }
         std::vector<uint8_t> tnt = mapView.map().save();
         bool ok = writeFile(tntPath, tnt.data(), tnt.size());
         std::string ota = tntPath.substr(0, tntPath.rfind('.')) + ".ota";
@@ -165,6 +213,7 @@ int main(int argc, char** argv) {
                 const tak::tnt::Map* sec = sections.load(vfs, s.path);
                 if (sec && cart::stampSection(mapView.editMap(), *sec, bx, by)) {
                     mapView.tilesEdited();
+                    edited = true;
                     return true;
                 }
             }
@@ -233,8 +282,10 @@ int main(int argc, char** argv) {
         int blkY = int((mapView.offY() + ly / mapView.zoom()) / 32.0f);
         int snapX = (blkX / sec->blocksX) * sec->blocksX;
         int snapY = (blkY / sec->blocksY) * sec->blocksY;
-        if (cart::stampSection(mapView.editMap(), *sec, snapX, snapY))
+        if (cart::stampSection(mapView.editMap(), *sec, snapX, snapY)) {
             mapView.tilesEdited();
+            edited = true;
+        }
         (void)w; (void)h;
     };
 
