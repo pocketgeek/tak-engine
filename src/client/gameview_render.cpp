@@ -1867,11 +1867,17 @@
         const auto& map = mapView_.map();
         const int W = map.width, H = map.height, sea = map.seaLevel;
         if (W <= 0 || H <= 0 || int(map.heights.size()) < size_t(W) * H) return;
-        // World prefix (AraWave/TarWave/VerWave/ZonWave) from the map's feature names.
+        // World prefix (AraWave/TarWave/VerWave/ZonWave/CreWave) from the map's
+        // feature names (case-insensitive: Creon TDFs mix "CreTree"/"CRERock").
         std::string wp = "Ara";
         for (const auto& n : map.featureNames) {
             std::string p = n.substr(0, 3);
-            if (p == "Tar" || p == "Ver" || p == "Zon" || p == "Ara") { wp = p; break; }
+            std::transform(p.begin(), p.end(), p.begin(), ::tolower);
+            if (p == "tar") { wp = "Tar"; break; }
+            if (p == "ver") { wp = "Ver"; break; }
+            if (p == "zon") { wp = "Zon"; break; }
+            if (p == "ara") { wp = "Ara"; break; }
+            if (p == "cre") { wp = "Cre"; break; }
         }
         auto land = [&](int x, int z) {
             return x >= 0 && z >= 0 && x < W && z < H && map.heights[size_t(z) * W + x] >= sea;

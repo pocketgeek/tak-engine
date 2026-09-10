@@ -57,7 +57,11 @@ constexpr std::array<WorldArt, kMapTypes> kWorldArt = {{
     {0xca4200f8u, 0xb8524a38u, 16, 5},    // Taros:  low_ground / taros_sea
     {0xd3259f0fu, 0x9a5c5436u, 16, 16},   // Veruna: A512Lowland / dgsea (full-art sea)
     {0x9bb50b09u, 0x59f53dfdu, 8, 5},     // Zhon:   jungletile80 (256px) / H2OTILE
-    {0x868a8222u, 0x0c2e64b2u, 16, 5},    // Creon:  (fall back to Aramon art until IP tiles wired)
+    // Creon (Iron Plague, IPData.hpi): green turf fill mined from the takx19-26
+    // mission maps (their other big fill, 93c585b7, is city cobblestone). Every
+    // shipped Creon map is DRY -- IP never used a Creon deep-sea fill -- so water
+    // borrows Veruna's dgsea (full 16x16 teal). CreWave01-16 exist for shores.
+    {0x814dddc1u, 0x9a5c5436u, 16, 16},   // Creon:  turf / (Veruna sea stand-in)
 }};
 
 // Per-world doodad + mana palette (names verified in features/<world>/*.tdf).
@@ -105,12 +109,24 @@ constexpr const char* kZonHenge[] = {"ZonHenge01", "ZonHenge02", "ZonHenge03", "
                                      "ZonHenge06", "ZonHenge07", "ZonHenge08", "ZonHenge09", "ZonHenge10",
                                      "ZonHenge11"};
 
+// Creon (Iron Plague): features/creon/*.tdf in IPData.hpi.
+constexpr const char* kCreTree[] = {"CreTree01", "CreTree02", "CreTree03", "CreTree04", "CreTree05",
+                                    "CreTree06", "CreTree07", "CreTree08", "CreTree09"};
+constexpr const char* kCreRock[] = {"CRERock12", "CRERock07", "CRERock09", "CRERock10", "CRERock11",
+                                    "CRERock02", "CRERock03", "CRERock04", "CRERock06", "CRERock05",
+                                    "CRERock13", "CRERock01", "CRERock08"};   // small->big
+constexpr const char* kCreHenge[] = {"CREHenge01", "CREHenge02", "CREHenge03", "CREHenge04", "CREHenge05",
+                                     "CREHenge06", "CREHenge07", "CREHenge08", "CREHenge09", "CREHenge10",
+                                     "CREHenge11", "CREHenge12", "CREHenge13", "CREHenge14", "CREHenge15",
+                                     "CREHenge16", "CREHenge17", "CREHenge18", "CREHenge19", "CREHenge20",
+                                     "CREHenge21", "CREHenge22", "CREHenge23"};
+
 constexpr std::array<WorldFeatures, kMapTypes> kWorldFeat = {{
     {{kAraTree, 10}, {kAraRock, 7}, {kAraHenge, 9},  {{"AraMana01", "AraMana02", "AraMana03"}}},
     {{kTarTree, 9},  {kTarRock, 7}, {kTarHenge, 14}, {{"TarMana01", "TarMana02", "TarMana03"}}},
     {{kVerTree, 9},  {kVerRock, 7}, {kVerHenge, 11}, {{"VerMana01", "VerMana02", "VerMana03"}}},
     {{kZonTree, 6},  {kZonRock, 7}, {kZonHenge, 11}, {{"ZonMana01", "ZonMana02", "ZonMana03"}}},
-    {{kAraTree, 10}, {kAraRock, 7}, {kAraHenge, 9},  {{"AraMana01", "AraMana02", "AraMana03"}}},  // Creon->Aramon
+    {{kCreTree, 9},  {kCreRock, 13}, {kCreHenge, 23}, {{"CReMana01", "CREMana02", "CREMana03"}}},
 }};
 
 // Even compass directions (integer, scaled by 1000) for start-position rings.
