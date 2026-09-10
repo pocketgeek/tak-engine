@@ -2088,15 +2088,18 @@ private:
     bool guiClick(float mx, float my);
     // Retail HUD feedback: every side-panel / build-icon press plays the local
     // faction's click tone (sounds/tone<side>.wav -- the click.hpi overridables).
-    // Retail acknowledgment bong: the faction tone, optionally pitch-shifted
-    // to a chromatic semitone (soundclass "_NN-note" entries; A=1..G#=12).
-    // semitone 0 = native pitch. Reference note provisional pending the icd
-    // playback-rate confirmation. gain 2.0 undoes the mixer's /2 headroom:
-    // retail played tones at native amplitude, and quiet click.hpi
-    // replacements vanish at half volume.
+    // Retail acknowledgment bong: the faction tone. The soundclass "_NN-note"
+    // entry names LOOK like chromatic semitones (A=1..G#=12), but whether
+    // retail actually pitch-shifts per command is UNPROVEN -- player memory
+    // says one unvarying bong, and this data has dead keys (TreeBurn). The
+    // pitch stays OFF until the icd playback-rate disassembly proves it;
+    // the mixer's rate support is ready if it does. gain 2.0 undoes the /2
+    // mixing headroom: retail played tones at native amplitude, and quiet
+    // click.hpi replacements vanish at half volume.
     void playClickTone(int semitone = 0) {
-        constexpr int kToneRef = 4;   // assume the tone is recorded at c (_04)
-        float rate = semitone > 0
+        constexpr bool kPitchedBongs = false;   // pending icd proof
+        constexpr int kToneRef = 4;
+        float rate = (kPitchedBongs && semitone > 0)
                          ? std::pow(2.0f, float(semitone - kToneRef) / 12.0f)
                          : 1.0f;
         std::string t = "tone" + side_;
