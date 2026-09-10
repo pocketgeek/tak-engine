@@ -22,7 +22,32 @@ int main(int argc, char** argv) {
     try {
         auto m = tak::tnt::Map::load(argv[2]);
 
-        if (cmd == "info") {
+        if (cmd == "roundtrip") {
+            // Load, re-serialize with Map::save(), reload, and compare every
+            // field -- proves the writer reproduces the retail TNT layout.
+            auto bytes = m.save();
+            auto r = tak::tnt::Map::load(bytes, "<roundtrip>");
+            auto eq = [](const char* n, bool ok) {
+                std::cout << "  " << (ok ? "OK  " : "FAIL") << " " << n << "\n";
+                return ok;
+            };
+            bool ok = true;
+            ok &= eq("dims/sea", r.width == m.width && r.height == m.height &&
+                                 r.seaLevel == m.seaLevel);
+            ok &= eq("heights", r.heights == m.heights);
+            ok &= eq("features", r.features == m.features);
+            ok &= eq("tileKeys", r.tileKeys == m.tileKeys);
+            ok &= eq("tileCols", r.tileCols == m.tileCols);
+            ok &= eq("tileRows", r.tileRows == m.tileRows);
+            ok &= eq("featureNames", r.featureNames == m.featureNames);
+            ok &= eq("minimap", r.minimapW == m.minimapW && r.minimapH == m.minimapH &&
+                                r.minimap == m.minimap);
+            ok &= eq("overview", r.overviewW == m.overviewW && r.overviewH == m.overviewH &&
+                                 r.overview == m.overview);
+            std::cout << (ok ? "ROUNDTRIP OK (" : "ROUNDTRIP FAILED (")
+                      << bytes.size() << " bytes)\n";
+            return ok ? 0 : 1;
+        } else if (cmd == "info") {
             std::cout << m.width << "x" << m.height << " cells ("
                       << m.width * 16 << "x" << m.height * 16 << " px)\n";
             std::set<uint32_t> keys(m.tileKeys.begin(), m.tileKeys.end());

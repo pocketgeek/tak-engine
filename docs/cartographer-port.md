@@ -68,11 +68,23 @@ Ron Gilbert (design).
 
 ## File formats to master (RE targets)
 
-- **`.tnt`** WRITE format — we already READ it (`src/tnt/tnt.cpp`): header words
-  (dims, tile keys, cols/rows, heights, feature plane, minimap, second large
-  minimap at word 12). Need the exact WRITE layout + minimap generation.
-- **`.ota`** — scenario/globalheader (TDF); we parse start positions already.
-  Need the full field set the editor writes (name, description, units, triggers).
+- **`.tnt`** WRITE format — DONE (`Map::save()`, RE'd from Cartographer 0x41ba70):
+  52-byte header (13 dwords, magic 0x4000) then sections in physical order:
+  heights(u8/cell) · features(u16/cell) · feature-name table(count x 132B:
+  {u32 seq, 128B name}) · tile keys(u32/block) · cols(u8) · rows(u8) ·
+  small minimap(126x126 {u32 w,u32 h,bytes}) · large overview minimap
+  ({u32 w,u32 h,bytes}). All row-major. Minimap regeneration (from tiles +
+  the 256-colour terrain palette) is still needed for NEW/resized maps --
+  round-trip preserves the loaded ones verbatim.
+- A shipped map is a **`.kmp` = HPI archive** of 5 members (kmap\<name>.{tnt,
+  ota,tdf,crt,txt}); only .tnt + .ota are needed for a game-loadable map. The
+  .crt holds placed game units as raw 568-byte binary structs (editor-internal).
+- **`.ota`** — scenario TDF; the editor emits (in order) [GlobalHeader]:
+  Copyright, missionname, missiondescription, kingdom, numplayers, size
+  (`W x H`, cells/32), memory=`32 MB`, useonlyunits, hasscenario; nested
+  [Map Data]: Type=`Network 1`, aiprofile=`DEFAULT`; nested [specials] /
+  [special%d]: specialwhat=`StartPos%d`, XPos, ZPos. Start positions are
+  16-byte records (XPos, ZPos, number). WRITER still to build (phase 4).
 - Tile sections come from the retail install's `terrain/<hexkey>.jpg` +
   `sections.hpi` prefabs — reuse `terrain::Compositor` + the section prefab loader.
 

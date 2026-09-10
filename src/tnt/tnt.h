@@ -41,13 +41,21 @@ struct Map {
     std::vector<uint8_t> tileRows;   // blocksX*blocksY
 
     int minimapW = 0, minimapH = 0;
-    std::vector<uint8_t> minimap;    // 8-bit indexed
+    std::vector<uint8_t> minimap;    // 8-bit indexed (small, header word 11; 126x126)
+    int overviewW = 0, overviewH = 0;
+    std::vector<uint8_t> overview;   // 8-bit indexed (large, header word 12; per-block)
     std::vector<std::string> featureNames;   // indexed by feature-layer values
 
     static Map load(const std::filesystem::path& file);
     // Parse from an in-memory buffer (a VFS-resolved archive entry). `origin`
     // names the source in error messages.
     static Map load(const std::vector<uint8_t>& d, const std::string& origin = "<memory>");
+
+    // Serialize to the retail TNT byte layout (version 0x4000). Round-trips a
+    // loaded map (Cartographer save format, RE'd from Cartographer.exe 0x41ba70):
+    // 52-byte header + heights/features/feature-names/keys/cols/rows/small- and
+    // large-minimap sections in that physical order. See docs/cartographer-port.md.
+    std::vector<uint8_t> save() const;
 };
 
 } // namespace tak::tnt
