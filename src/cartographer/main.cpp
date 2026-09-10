@@ -32,16 +32,20 @@ void fillRect(SDL_Renderer* r, int x, int y, int w, int h, Uint8 cr, Uint8 cg, U
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string dataRoot, mapName;
+    std::string dataRoot, mapName, outDir = ".", exportPath;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--data" && i + 1 < argc) dataRoot = argv[++i];
+        else if (a == "--out" && i + 1 < argc) outDir = argv[++i];   // Save destination
+        else if (a == "--save" && i + 1 < argc) exportPath = argv[++i];  // headless export+exit
         else if (a[0] != '-') mapName = a;
     }
     if (dataRoot.empty() || mapName.empty()) {
         std::fprintf(stderr,
-            "Cartographer (TA:Kingdoms map editor) -- phase 0\n"
-            "usage: cartographer \"<map name>\" --data <retail-install-dir>\n");
+            "Cartographer (TA:Kingdoms map editor) -- phase 1\n"
+            "usage: cartographer \"<map name>\" --data <retail-install-dir>\n"
+            "         [--out <dir>]        Ctrl+S save destination (default .)\n"
+            "         [--save <file.tnt>]  headless: save the map and exit\n");
         return 2;
     }
 
@@ -90,6 +94,26 @@ int main(int argc, char** argv) {
                  mapName.c_str(), mapPath.c_str(),
                  mapView.map().blocksX, mapView.map().blocksY);
 
+    // Write the current map's .tnt to `path`. Loose Maps/<name>.tnt is read
+    // directly by the engine VFS, so a saved map is immediately playable.
+    auto saveTnt = [&](const std::string& path) -> bool {
+        std::vector<uint8_t> bytes = mapView.map().save();
+        std::FILE* f = std::fopen(path.c_str(), "wb");
+        if (!f) { std::fprintf(stderr, "save: cannot open %s\n", path.c_str()); return false; }
+        size_t n = std::fwrite(bytes.data(), 1, bytes.size(), f);
+        std::fclose(f);
+        std::fprintf(stderr, "saved %s (%zu bytes)\n", path.c_str(), n);
+        return n == bytes.size();
+    };
+
+    // Headless one-shot export: --save <file.tnt> writes and exits (round-trip
+    // / convert path, also how the save is regression-tested).
+    if (!exportPath.empty()) {
+        bool ok = saveTnt(exportPath);
+        SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
+        return ok ? 0 : 1;
+    }
+
     bool running = true;
     while (running) {
         SDL_Event e;
@@ -97,7 +121,14 @@ int main(int argc, char** argv) {
             if (e.type == SDL_QUIT) running = false;
             else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)
                 running = false;
-            else {
+            else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
+                     e.key.keysym.sym == SDLK_s) {
+                // File -> Save (Ctrl+S): write <out>/<name>.tnt. A real file
+                // picker for Save As arrives with the dialog layer; for now the
+                // Ctrl+Shift+S variant just appends a "-edit" suffix.
+                bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
+                saveTnt(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt");
+            } else {
                 // The map canvas owns pan/zoom below the menu strip; MapView reads
                 // in window coords, so this is 1:1 for now (chrome offset comes
                 // when the canvas gets its own viewport in phase 1).
