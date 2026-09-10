@@ -558,6 +558,7 @@ int main(int argc, char** argv) {
     // launches only, and never for a headless screenshot run.
     if (fromMenu && shot.empty())
         tak::MainMenu::playIntro(ren, dataRoot);
+    std::string menuConnectError;   // failed MP connect -> shown when the menu reopens
     for (;;) {
     if (tak::termRequested()) { quitApp = true; break; }   // SIGTERM/SIGINT between sessions
     if (fromMenu) { serverHost = launchServerHost;
@@ -602,6 +603,10 @@ int main(int argc, char** argv) {
         tak::MainMenu::Choice choice;
         {
             tak::MainMenu menu(ren, vfs, dataRoot);
+            if (!menuConnectError.empty()) {   // reopen the dropdown with the error
+                menu.setConnectError(menuConnectError);
+                menuConnectError.clear();
+            }
             choice = menu.run(shot, &menuServer, &menuMusic, &settings);
             if (choice == tak::MainMenu::Choice::Campaign) {
                 campaignStem = menu.chosenMission();
@@ -710,6 +715,15 @@ int main(int argc, char** argv) {
         if (!ok) {
             std::fprintf(stderr, "server: %s\n", mp->error().c_str());
             killLocalServer();
+            // A menu-launched connect failure returns to the front-end with the
+            // error shown in the reopened CONNECT dropdown -- never exits the app.
+            if (fromMenu) {
+                menuConnectError = mp->error().empty()
+                                       ? "COULD NOT CONNECT TO " + serverHost
+                                       : mp->error();
+                mp.reset();
+                continue;
+            }
             return 1;
         }
         std::printf("connected to %s:%d as '%s'\n", serverHost.c_str(), serverPort, playerName.c_str());

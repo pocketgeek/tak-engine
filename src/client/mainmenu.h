@@ -34,6 +34,10 @@ public:
     // (headless screenshot for tests). On a Multiplayer choice, *serverOut (if given)
     // receives the chosen server address (empty = default/localhost). `music` (if
     // given) is polled each frame so the shared background track keeps looping.
+    // A failed multiplayer connect loops back here: run() reopens the CONNECT
+    // dropdown with this message shown in red, instead of the app exiting.
+    void setConnectError(const std::string& msg);
+
     Choice run(const std::string& shotPath = "", std::string* serverOut = nullptr,
                MenuMusic* music = nullptr, Settings* settings = nullptr);
 

@@ -463,6 +463,9 @@ struct MainMenu::Impl {
     std::string serverText = "127.0.0.1";   // custom-entry text
     std::vector<SDL_FRect> serverRects;     // row hit-rects (rebuilt each render)
     SDL_FRect serverBoxRect{};              // custom text-box hit-rect
+    SDL_FRect serverConnectRect{}, serverBackRect{};   // button hit-rects
+    std::string serverError;                // shown in red after a failed connect
+    std::string pendingConnectError;        // set via setConnectError before run()
 
     void openServerSelect(const Settings* settings) {
         serverItems.clear();
@@ -481,6 +484,7 @@ struct MainMenu::Impl {
                 if (!dup && serverItems.size() < 7) serverItems.push_back(sv);
             }
         serverSel = 0;
+        serverError.clear();
         serverSelect = true;
     }
     bool serverCustom() const { return serverSel == int(serverItems.size()); }
@@ -548,15 +552,18 @@ struct MainMenu::Impl {
         SDL_FRect dim{0, 0, float(winW), float(winH)}; SDL_RenderFillRectF(ren, &dim);
         const int rows = int(serverItems.size()) + 1;   // + CUSTOM
         const float rowH = 40, pw = 560;
-        float ph = 78 + rows * rowH + (serverCustom() ? 56 : 0) + 58;
+        const float errH = serverError.empty() ? 0 : 26;
+        float ph = 78 + errH + rows * rowH + (serverCustom() ? 56 : 0) + 64;
         float x0 = (winW - pw) / 2, y0 = (winH - ph) / 2;
         SDL_SetRenderDrawColor(ren, 28, 30, 40, 245);
         SDL_FRect panel{x0, y0, pw, ph}; SDL_RenderFillRectF(ren, &panel);
         SDL_SetRenderDrawColor(ren, 150, 150, 175, 255); SDL_RenderDrawRectF(ren, &panel);
         blockText("CONNECT TO SERVER", x0 + 30, y0 + 24, 3.0f, {210, 205, 160, 255});
+        if (!serverError.empty())
+            blockText(serverError.substr(0, 42), x0 + 30, y0 + 54, 1.8f, {235, 120, 110, 255});
         // Dropdown rows: the default server, remembered servers, then CUSTOM.
         serverRects.clear();
-        float ry = y0 + 66;
+        float ry = y0 + 66 + errH;
         for (int i = 0; i < rows; ++i) {
             SDL_FRect r{x0 + 30, ry, pw - 60, rowH - 6};
             bool sel = (i == serverSel);
@@ -588,8 +595,22 @@ struct MainMenu::Impl {
             serverBoxRect = box;
             ry += 56;
         }
-        blockText("UP:DOWN - SELECT   ENTER - CONNECT   ESC - BACK",
-                  x0 + 30, ry + 18, 1.8f, {150, 155, 175, 255});
+        // CONNECT / BACK buttons (clicking a row only SELECTS -- connecting is
+        // always an explicit action, so a stray click can't fire a connection).
+        auto button = [&](float bx, const char* label, SDL_FRect& out, bool bright) {
+            SDL_FRect b{bx, ry + 12, 150, 36};
+            SDL_SetRenderDrawColor(ren, bright ? 46 : 30, bright ? 66 : 34, bright ? 100 : 46, 255);
+            SDL_RenderFillRectF(ren, &b);
+            SDL_SetRenderDrawColor(ren, bright ? 160 : 110, bright ? 185 : 120,
+                                   bright ? 235 : 150, 255);
+            SDL_RenderDrawRectF(ren, &b);
+            float tw = float(std::strlen(label)) * 6 * 2.2f;
+            blockText(label, b.x + (b.w - tw) / 2 + 2, b.y + 11, 2.2f,
+                      bright ? SDL_Color{230, 238, 250, 255} : SDL_Color{185, 190, 205, 255});
+            out = b;
+        };
+        button(x0 + 30, "CONNECT", serverConnectRect, true);
+        button(x0 + 196, "BACK", serverBackRect, false);
     }
 
     // The SETTINGS menu overlay: OPTIONS / CONTROLS, styled like the in-game GAME MENU.
@@ -698,6 +719,8 @@ MainMenu::MainMenu(SDL_Renderer* ren, const hpi::Vfs& vfs, std::string install)
     : d_(new Impl(ren, vfs, std::move(install))) { d_->load(); }
 MainMenu::~MainMenu() { delete d_; }
 
+void MainMenu::setConnectError(const std::string& msg) { d_->pendingConnectError = msg; }
+
 MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut,
                                MenuMusic* music, Settings* settings) {
     int w = 0, h = 0;
@@ -718,14 +741,16 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             cs.render(w, h);
         }
         // Debug: TAK_SHOT_SERVER captures the CONNECT dropdown (2 = CUSTOM selected,
-        // showing the address field); seeds sample remembered servers if none saved.
+        // showing the address field; 3 = failed-connect error shown); seeds sample
+        // remembered servers if none saved.
         if (settings && tak::devEnv("TAK_SHOT_SERVER")) {
             Settings tmp = *settings;
             if (tmp.knownServers.empty())
                 tmp.knownServers = {"192.168.1.50:7677", "example.dyndns.org"};
             d_->openServerSelect(&tmp);
-            if (std::atoi(tak::devEnv("TAK_SHOT_SERVER")) == 2)
-                d_->setServerSel(int(d_->serverItems.size()));   // CUSTOM view
+            int m = std::atoi(tak::devEnv("TAK_SHOT_SERVER"));
+            if (m == 2) d_->setServerSel(int(d_->serverItems.size()));   // CUSTOM view
+            if (m == 3) d_->serverError = "COULD NOT CONNECT TO TAK.PGNET.US";
             d_->renderServerSelect(w, h);
         }
         d_->screenshot(w, h, shotPath);
@@ -750,6 +775,14 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     // screen's load; window destruction returns the desktop cursor at app exit.
     if (!d_->cursorsInit_) { d_->cursorsInit_ = true; d_->cursors_.load(d_->ren, d_->vfs); }
     SDL_ShowCursor(d_->cursors_.ok() ? SDL_DISABLE : SDL_ENABLE);
+
+    // Returning from a failed connect: reopen the dropdown with the error shown,
+    // so the player lands back where they were instead of at a bare menu.
+    if (!d_->pendingConnectError.empty()) {
+        d_->openServerSelect(settings);
+        d_->serverError = d_->pendingConnectError;
+        d_->pendingConnectError.clear();
+    }
 
     Uint64 prev = SDL_GetPerformanceCounter();
     const double freq = double(SDL_GetPerformanceFrequency());
@@ -802,19 +835,21 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     float mx = float(e.button.x), my = float(e.button.y);
                     auto in = [&](const SDL_FRect& r) {
-                        return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+                        return r.w > 0 && mx >= r.x && mx <= r.x + r.w &&
+                               my >= r.y && my <= r.y + r.h;
                     };
+                    // Rows only SELECT; connecting is the explicit button (or ENTER).
                     for (size_t i = 0; i < d_->serverRects.size(); ++i)
-                        if (in(d_->serverRects[i])) {
-                            if (int(i) == d_->serverSel) {   // second click connects
-                                if (connect()) return Choice::Multiplayer;
-                            } else {
-                                d_->setServerSel(int(i));
-                            }
-                            break;
-                        }
-                    if (d_->serverBoxRect.w > 0 && in(d_->serverBoxRect))
+                        if (in(d_->serverRects[i])) { d_->setServerSel(int(i)); break; }
+                    if (in(d_->serverBoxRect))
                         d_->setServerSel(int(d_->serverItems.size()));   // focus the field
+                    if (in(d_->serverConnectRect)) {
+                        if (connect()) return Choice::Multiplayer;
+                    }
+                    if (in(d_->serverBackRect)) {
+                        d_->serverSelect = false;
+                        SDL_StopTextInput();
+                    }
                 }
                 continue;   // swallow everything else while the dropdown is open
             }
