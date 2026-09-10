@@ -119,7 +119,9 @@ public:
     }
 
     // Non-positional (UI, music-adjacent) — centred across all speakers.
-    void play(const std::string& name) { playAt(name, 0.0f, 0.0f); }
+    void play(const std::string& name, float gain = 1.0f) {
+        playAt(name, 0.0f, 0.0f, false, 0, 0, gain);
+    }
 
     // Positional: pan by the source's world position relative to the listener.
     // Left/right from x; front(up)/rear(down) from z on surround setups. The sound is
@@ -347,7 +349,8 @@ public:
   public:
 
     void playAt(const std::string& name, float pan, float depth,
-                bool positional = false, float wx = 0, float wz = 0) {
+                bool positional = false, float wx = 0, float wz = 0,
+                float gain = 1.0f) {
         std::string n = name;
         std::transform(n.begin(), n.end(), n.begin(), ::tolower);
         auto it = index_.find(n);
@@ -365,6 +368,7 @@ public:
                 c.positional = positional;
                 c.wx = wx;
                 c.wz = wz;
+                c.gain = gain;
                 break;
             }
         SDL_UnlockAudioDevice(dev_);
@@ -377,6 +381,7 @@ private:
         float pan = 0, depth = 0;   // -1..+1 : left..right, front..rear
         float wx = 0, wz = 0;       // world emission point (for positional re-panning)
         bool positional = false;    // true = re-pan every frame from (wx,wz)
+        float gain = 1.0f;          // per-sound boost (UI clicks undo the /2 headroom)
     };
     // Recompute a channel's pan/depth from its world point and the current listener.
     void repan(Channel& c) {
@@ -473,7 +478,7 @@ private:
             if (!c.data) continue;
             channelGains(c.pan, c.depth, g);
             for (int f = 0; f < frames && c.pos < c.data->size(); ++f, ++c.pos) {
-                int s = (*c.data)[c.pos] / 2 * sfxVol_ / 256;
+                int s = int(float((*c.data)[c.pos]) * c.gain) / 2 * sfxVol_ / 256;
                 for (int ci = 0; ci < ch; ++ci)
                     if (g[ci] != 0.0f) add(f, ci, int(s * g[ci]));
                 if (lfe >= 0) lfeMono_[size_t(f)] += s;
