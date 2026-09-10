@@ -11,6 +11,7 @@
 
 #include "net/protocol.h"   // Command, Cmd, Event
 #include "sim/sim.h"
+#include "tnt/tnt.h"        // tnt::Map (registerMapFeatures)
 
 namespace tak::sim {
 
@@ -81,6 +82,10 @@ std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
 // nav grid), so it may run after a client has already loaded the map for render.
 // Returns the start position assigned to each USED slot, in slot order (for the
 // camera). Every peer that calls this with the same config gets the same world.
+// Register the map's obstacle features (+ burn-type table) into a world built
+// WITHOUT setupMatch (client local-harness / mission / scenario paths).
+void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs& vfs);
+
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
                                                 const MatchConfig& cfg);
 

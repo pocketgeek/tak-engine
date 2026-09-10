@@ -295,6 +295,20 @@ struct Unit {
 // every peer -- so reclaim stays in lockstep. Not a Unit: no orders or combat,
 // just reclaim "work" a builder chips away for mana. A `blocks` feature also
 // occupies the nav grid, freed when it is reclaimed.
+// Per-feature-type burn/footprint data the sim needs (built by setupMatch from
+// the feature TDFs, identical on every peer -- indices are shared lockstep state).
+struct FeatType {
+    std::string name;        // lowercase TDF section name (client art lookup)
+    bool flamable = false;   // TDF flamable=1: can be ignited / spread to
+    bool hasBurnAnim = false;// TDF seqnameburn present (retail StartBurning requires it)
+    int  spreadChance = 0;   // TDF spreadchance (percent)
+    int  sparkTicks = 0;     // TDF sparktime * 30 (retail stores seconds*30)
+    int  burntType = -1;     // TDF featureburnt -> index into the same table
+    float energy = 0;        // reclaim yield of this stage
+    int  fx = 1, fz = 1;
+    bool blocking = false;
+};
+
 struct Feature {
     int   id = 0;          // cz*terrainWidth + cx: position-derived, peer-identical
     float x = 0, z = 0;
@@ -304,6 +318,13 @@ struct Feature {
     float workFull = 1;    // initial work (for the proportional mana drip)
     bool  blocks = false;  // occupied the nav grid
     bool  alive = true;    // false once fully reclaimed (decal disappears)
+    // Burning (retail mechanic, icd 0x494b40/0x495110/0x495300 -- ours runs
+    // fully deterministic in the lockstep sim instead of retail's host-authority
+    // event scheme). All hashed.
+    int   type = -1;       // index into World's FeatType table (-1 = untyped)
+    uint8_t burn = 0;      // 1 = burning
+    int   spreadIn = 0;    // ticks until the single spread event (sparktime-derived)
+    int   burnLeft = 0;    // ticks until burn-out (swap to burntType / die)
 };
 
 struct Projectile {
@@ -543,9 +564,15 @@ public:
     // Reclaimable features (trees/rocks/houses). Populated only by setupMatch (the
     // one deterministic per-peer walk); never from the viewer. See struct Feature.
     void addFeature(int id, float x, float z, float manaYield, float work,
-                    int fx, int fz, bool blocks);
+                    int fx, int fz, bool blocks, int type = -1);
     const std::vector<Feature>& features() const { return features_; }
     const Feature* feature(int id) const;                 // by id, nullptr if none
+    const Feature* featureAt(float x, float z) const;     // by cell (viewer burn/art sync)
+    void setFeatureTypes(std::vector<FeatType> t) { featTypes_ = std::move(t); }
+    // Drop all registered features (setupMatch rebuilds authoritatively -- the
+    // client ctor may have pre-registered the launch map's via registerMapFeatures).
+    void clearFeatures() { features_.clear(); featureIdx_.clear(); }
+    const std::vector<FeatType>& featureTypes() const { return featTypes_; }
     bool featureAliveAt(float x, float z) const;          // viewer decal sync
     // Order a mobile builder to reclaim feature `featureId` (queue = append to its
     // reclaim queue, for an area drag). Grants the feature's mana as it consumes it.
@@ -854,6 +881,17 @@ private:
     std::vector<int> justDied_;                // unit ids that died this tick (mission hook)
     std::vector<std::pair<float, float>> manaSpots_;
     std::vector<Feature> features_;             // reclaimable map features
+    std::vector<FeatType> featTypes_;           // per-type burn data (setup-time, static)
+    // Burn RNG: retail rolls spread on its game LCG (icd 0x535cc0, Lehmer 16807);
+    // ours is identical on every peer -- draws happen only in deterministic sim
+    // paths, and the state is folded into stateHash.
+    uint32_t burnRng_ = 0x54414B21;
+    int burnRand(int n) {
+        burnRng_ = uint32_t((uint64_t(burnRng_) * 16807ULL) % 0x7FFFFFFFULL);
+        return n > 0 ? int(burnRng_ % uint32_t(n)) : 0;
+    }
+    void igniteFeature(Feature& f);
+    void tickBurning();
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
     std::vector<Projectile> projectiles_;
     std::vector<HitFx> hits_;

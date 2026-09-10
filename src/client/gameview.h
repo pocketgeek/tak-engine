@@ -191,7 +191,9 @@ public:
 
         if (mission) {
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
-                              mapView_.map().height, mapView_.map().seaLevel);
+                              mapView_.map().height, mapView_.map().seaLevel,
+                              &mapView_.map().features);
+            tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_);
             try {
                 auto ota = vtdf(mapSibling(".ota"));
                 const auto* gh = ota.child("globalheader");
@@ -299,7 +301,9 @@ public:
 
         if (scenario) {
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
-                              mapView_.map().height, mapView_.map().seaLevel);
+                              mapView_.map().height, mapView_.map().seaLevel,
+                              &mapView_.map().features);
+            tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_);
             std::string crtPath = mapSibling(".crt");
             auto placements = vhas(crtPath) ? tak::crt::load(vread(crtPath))
                                             : std::vector<tak::crt::Placement>{};
@@ -424,7 +428,9 @@ public:
         }
 
         world_.setTerrain(mapView_.map().heights, mapView_.map().width,
-                          mapView_.map().height, mapView_.map().seaLevel);
+                          mapView_.map().height, mapView_.map().seaLevel,
+                          &mapView_.map().features);
+        tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_);
         loadFeatures();
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
 
@@ -1939,6 +1945,11 @@ private:
         int w = 0, h = 0, xoff = 0, yoff = 0;
         int sw = 0, sh = 0, sxoff = 0, syoff = 0;
         float x = 0, z = 0;
+        std::string name;    // lowercase feature key (burn art + burnt-swap lookups)
+        const FeatArt* burnArt = nullptr;   // seqnameburn playback (lazy, on ignition)
+        uint8_t burnVis = 0; // sim says burning: draw burnArt + emit smoke
+        int simType = -2;    // last-seen sim FeatType index (-2 = not yet synced)
+        float lastSmoke = 0; // animClock_ of the last smoke puff
         bool tree = false;   // category=trees (eligible for the wind-sway option)
         bool mana = false;   // category=mana (deposit cluster: kept walkable/buildable)
         bool glowy = false;  // the animated "Sacred Stone" centre -- the actual
@@ -1978,7 +1989,10 @@ private:
 
     const tak::gaf::Palette* featurePalette(std::string world);
 
-    FeatArt* featureArtFor(const tak::tdf::Node& def);
+    FeatArt* featureArtFor(const tak::tdf::Node& def, const char* seqKey = "seqname",
+                           const char* shadKey = "seqnameshad");
+    void swapFeatureArt(FeatureInst& fi, const std::string& name);
+    void syncBurningFeatures();
 
     // Place one feature instance by definition name; returns success.
     bool addFeature(const std::string& rawName, float x, float z, bool blockNav);

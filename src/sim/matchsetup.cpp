@@ -169,7 +169,10 @@ namespace {
 // Feature definition fields the sim cares about: is it a mana deposit, and its
 // footprint (for nav blocking). Loaded from the feature TDFs.
 struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx = 1, fz = 1;
-                 int reclaimable = 0; float energy = 0; };
+                 int reclaimable = 0; float energy = 0;
+                 // Burning chain (see World::tickBurning).
+                 bool flamable = false; bool hasBurnAnim = false;
+                 int spreadChance = 0; int sparkTicks = 0; std::string burnt; };
 
 std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
     std::unordered_map<std::string, FeatDef> defs;
@@ -195,6 +198,12 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     d.fz = int(node.numberOr("footprintz", 1));
                     d.reclaimable = int(node.numberOr("reclaimable", 0));
                     d.energy = float(node.numberOr("energy", 0));   // reclaim mana yield
+                    d.flamable = node.numberOr("flamable", 0) != 0;
+                    d.hasBurnAnim = !node.valueOr("seqnameburn", "").empty();
+                    d.spreadChance = int(node.numberOr("spreadchance", 0));
+                    d.sparkTicks = int(node.numberOr("sparktime", 0) * 30);
+                    d.burnt = node.valueOr("featureburnt", "");
+                    std::transform(d.burnt.begin(), d.burnt.end(), d.burnt.begin(), ::tolower);
                     defs[k] = d;
                 }
             } catch (const std::exception&) {}
@@ -202,7 +211,60 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
     } catch (const std::exception&) {}
     return defs;
 }
+struct FeatTypeInterner {
+    const std::unordered_map<std::string, FeatDef>& defs;
+    std::vector<tak::sim::FeatType> table;
+    std::unordered_map<std::string, int> byName;
+    explicit FeatTypeInterner(const std::unordered_map<std::string, FeatDef>& d) : defs(d) {}
+    int intern(const std::string& nm) {
+        if (nm.empty()) return -1;
+        if (auto it = byName.find(nm); it != byName.end()) return it->second;
+        auto di = defs.find(nm);
+        if (di == defs.end()) return -1;
+        int idx = int(table.size());
+        byName[nm] = idx;                  // reserve BEFORE recursing (cycle guard)
+        tak::sim::FeatType t;
+        t.name = nm;
+        t.flamable = di->second.flamable;
+        t.hasBurnAnim = di->second.hasBurnAnim;
+        t.spreadChance = di->second.spreadChance;
+        t.sparkTicks = di->second.sparkTicks;
+        t.energy = di->second.energy;
+        t.fx = di->second.fx; t.fz = di->second.fz;
+        t.blocking = di->second.blocking != 0;
+        table.push_back(std::move(t));
+        table[size_t(idx)].burntType = intern(di->second.burnt);
+        return idx;
+    }
+};
 }  // namespace
+
+// Register the map's obstacle features into the sim world (reclaim + burning),
+// exactly as setupMatch's placement loop does -- for the client's LOCAL harness
+// and mission paths, which build their worlds without setupMatch. Nav blocking
+// is NOT done here (those paths already block via their own feature placement).
+void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs& vfs) {
+    if (map.featureNames.empty()) return;
+    auto defs = loadFeatureDefs(vfs);
+    FeatTypeInterner types(defs);
+    for (int cz = 0; cz < map.height; ++cz)
+        for (int cx = 0; cx < map.width; ++cx) {
+            uint16_t v = map.features[size_t(cz) * map.width + cx];
+            if (v >= map.featureNames.size()) continue;
+            std::string key = map.featureNames[v];
+            std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+            auto di = defs.find(key);
+            if (di == defs.end()) continue;
+            if ((di->second.reclaimable || di->second.flamable) && !di->second.mana) {
+                float x = float(cx) * 16 + 8, z = float(cz) * 16 + 8;
+                float work = std::max(di->second.energy, 60.0f);
+                world.addFeature(cz * map.width + cx, x, z, di->second.energy, work,
+                                 di->second.fx, di->second.fz, di->second.blocking != 0,
+                                 types.intern(key));
+            }
+        }
+    world.setFeatureTypes(std::move(types.table));
+}
 
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
                                                 const MatchConfig& cfg) {
@@ -221,10 +283,16 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         map = tak::tnt::Map::load(vfs.read(cfg.mapPath), cfg.mapPath);
     }
     world.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
+    world.clearFeatures();   // authoritative rebuild (the client ctor pre-registers)
 
     // Features: block nav footprints, and gather mana-deposit positions. Iterate
     // in the same (row-major) order the client does so clustering is identical.
     auto defs = loadFeatureDefs(vfs);
+    // Intern feature names into the world's FeatType table, resolving the
+    // featureburnt chain recursively (AraTree01 -> AraTree01a -> Arasmudge01).
+    // First-seen order over the row-major cell walk = identical on every peer.
+    FeatTypeInterner types(defs);
+    auto featTypeIdx = [&](const std::string& nm) { return types.intern(nm); };
     std::vector<std::pair<float, float>> rawMana, rawAll;
     if (!map.featureNames.empty()) {
         for (int cz = 0; cz < map.height; ++cz)
@@ -247,15 +315,18 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                     world.nav().block(int(x) / 16 - fx / 2, int(z) / 16 - fz / 2, fx, fz, true);
                 }
                 // Reclaimable obstacle features (trees/rocks/houses) enter the sim so
-                // a mobile builder can clear them for mana. The id is derived from the
-                // cell, so every peer records the identical feature (lockstep-safe).
-                if (di->second.reclaimable && !di->second.mana) {
+                // a mobile builder can clear them for mana -- and flamable ones so
+                // dragonfire can burn them (World::tickBurning). The id is derived
+                // from the cell, so every peer records the identical feature.
+                if ((di->second.reclaimable || di->second.flamable) && !di->second.mana) {
                     float work = std::max(di->second.energy, 60.0f);   // rocks (energy 0) still take a beat
                     world.addFeature(cz * map.width + cx, x, z, di->second.energy, work,
-                                     di->second.fx, di->second.fz, di->second.blocking != 0);
+                                     di->second.fx, di->second.fz, di->second.blocking != 0,
+                                     featTypeIdx(key));
                 }
             }
     }
+    world.setFeatureTypes(std::move(types.table));
     // The buildable spot is the glowing Sacred Stone centre, not the ring of
     // static Standing Stones (both are category=mana). Fallback: a deposit with
     // no glowy centre in the data uses its category=mana features instead.

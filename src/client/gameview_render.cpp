@@ -88,6 +88,7 @@
         const auto& vis = frameVisibility();
         int vw = frameVisW();
         for (const auto& f : features_) {
+            if (!f.tex) continue;   // burnt away to a stage with no art
             if (!world_.featureAliveAt(f.x, f.z)) continue;   // reclaimed away by a builder
             int cx = int(f.x) / 16, cz = int(f.z) / 16;
             if (!noFog_ && !vis.empty() && (cx < 0 || cz < 0 || cx >= vw ||
@@ -357,6 +358,27 @@
                 // its OWN size + anchor -- the wave art authors motion that way.
                 SDL_Texture* tex = f.tex;
                 int fw = f.w, fh = f.h, fxo = f.xoff, fyo = f.yoff;
+                // Burning: seqnameburn playback replaces the standing art
+                // (retail swaps to the burn anim + flame overlays on ignition).
+                if (f.burnVis && f.burnArt && f.burnArt->tex) {
+                    const FeatArt* ba = f.burnArt;
+                    tex = ba->tex; fw = ba->w; fh = ba->h; fxo = ba->xoff; fyo = ba->yoff;
+                    if (ba->frames.size() > 1 && ba->totalTicks > 0) {
+                        int tick = int(animClock_ * 30.0f) % ba->totalTicks;
+                        size_t idx = size_t(std::upper_bound(ba->tickEnd.begin(),
+                                                             ba->tickEnd.end(), tick) -
+                                            ba->tickEnd.begin());
+                        if (idx >= ba->frames.size()) idx = 0;
+                        tex = ba->frames[idx];
+                        const auto& g = ba->fgeom[idx];
+                        fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
+                    }
+                    SDL_FRect dst{(f.x - mapView_.offX() - float(fxo)) * zm0 - lfx,
+                                  (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
+                                  float(fw) * zm0, float(fh) * zm0};
+                    SDL_RenderCopyF(ren_, tex, nullptr, &dst);
+                    continue;
+                }
                 if (f.frames && f.frames->size() > 1 && f.art && f.art->totalTicks > 0) {
                     int tick = int(animClock_ * 30.0f) % f.art->totalTicks;
                     size_t idx = size_t(std::upper_bound(f.art->tickEnd.begin(),
@@ -1745,10 +1767,12 @@
         return nullptr;
     }
 
-    GameView::FeatArt* GameView::featureArtFor(const tak::tdf::Node& def) {
+    GameView::FeatArt* GameView::featureArtFor(const tak::tdf::Node& def,
+                                               const char* seqKey, const char* shadKey) {
         std::string file = def.valueOr("filename", "");
-        std::string seq = def.valueOr("seqname", "");
-        std::string seqShad = def.valueOr("seqnameshad", "");
+        std::string seq = def.valueOr(seqKey, "");
+        std::string seqShad = def.valueOr(shadKey, "");
+        if (seq.empty()) return nullptr;   // e.g. a def without seqnameburn
         std::string key = file + "|" + seq;
         auto it = featureArt_.find(key);
         if (it != featureArt_.end()) return it->second.tex ? &it->second : nullptr;
@@ -1837,6 +1861,7 @@
         inst.sw = a->sw; inst.sh = a->sh; inst.sxoff = a->sxoff; inst.syoff = a->syoff;
         inst.x = x;
         inst.z = z;
+        inst.name = key;
         // Mana deposits ("Sacred Stone", category=Mana) are the spots you build
         // lodestones ON, so they must stay buildable (walkable) — never block
         // the nav grid for them, or canPlace rejects the deposit itself.
@@ -1859,6 +1884,59 @@
             world_.nav().block(int(x) / 16 - fx / 2, int(z) / 16 - fz / 2, fx, fz, true);
         }
         return true;
+    }
+
+    // Burn-out art swap: the sim swapped this feature to its featureburnt stage
+    // in place (same cell/id); re-point the instance at the burnt feature's art.
+    void GameView::swapFeatureArt(FeatureInst& fi, const std::string& name) {
+        fi.name = name;
+        fi.burnArt = nullptr;
+        fi.tree = false;   // a burnt stump/smudge doesn't sway
+        auto di = featureDefs_.find(name);
+        FeatArt* a = di != featureDefs_.end() ? featureArtFor(di->second) : nullptr;
+        if (!a) { fi.tex = nullptr; fi.frames = nullptr; fi.art = nullptr;
+                  fi.shadow = nullptr; return; }   // no art: vanish (draw skips)
+        fi.tex = a->tex; fi.frames = &a->frames; fi.art = a; fi.shadow = a->shadow;
+        fi.w = a->w; fi.h = a->h; fi.xoff = a->xoff; fi.yoff = a->yoff;
+        fi.sw = a->sw; fi.sh = a->sh; fi.sxoff = a->sxoff; fi.syoff = a->syoff;
+    }
+
+    // Per-frame sync of sim burning state onto the visual features: ignition
+    // starts the seqnameburn playback + smoke, burn-out swaps to the burnt art.
+    void GameView::syncBurningFeatures() {
+        if (world_.featureTypes().empty()) return;
+        for (auto& fi : features_) {
+            const auto* sf = world_.featureAt(fi.x, fi.z);
+            if (!sf || sf->type < 0) continue;
+            if (fi.simType == -2) fi.simType = sf->type;       // first sight
+            else if (sf->type != fi.simType) {                  // burnt-stage swap
+                fi.simType = sf->type;
+                swapFeatureArt(fi, world_.featureTypes()[size_t(sf->type)].name);
+            }
+            bool b = sf->alive && sf->burn != 0;
+            if (b && !fi.burnVis) {                             // ignition edge
+                auto di = featureDefs_.find(fi.name);
+                if (di != featureDefs_.end())
+                    fi.burnArt = featureArtFor(di->second, "seqnameburn",
+                                               "seqnameburnshad");
+                static const bool kBurnLog = tak::devEnv("TAK_BURNLOG") != nullptr;
+                if (kBurnLog)
+                    std::fprintf(stderr, "burn-vis %s art=%d\n", fi.name.c_str(),
+                                 fi.burnArt && fi.burnArt->tex ? 1 : 0);
+                // Flame overlays: retail plays seqnamefrontflame/backflame from a
+                // shared flame registry; our looping "flame" effect stands in,
+                // sized to cover the 5s sim burn.
+                spawnEffectAnim("flame", fi.x, fi.z, 0.0f, 0.0f, 7);
+                spawnEffectAnim("flame", fi.x - 8, fi.z + 6, 0.3f, 0.0f, 7);
+            }
+            fi.burnVis = b ? 1 : 0;
+            if (b && animClock_ >= fi.lastSmoke + 0.35f &&
+                (noFog_ || cellVisibleR(fi.x, fi.z))) {
+                fi.lastSmoke = animClock_ + float(salt_++ % 20) * 0.01f;
+                spawnBurst(fi.x, fi.z, 2, 90, 80, 80, 12, 2.6f, 1, float(fi.h) * 0.4f);
+                spawnBurst(fi.x, fi.z, 1, 240, 140, 40, 14, 1.8f, 0, 6);
+            }
+        }
     }
 
     void GameView::loadFeatures() {

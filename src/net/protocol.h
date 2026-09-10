@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 30;       // 30: road cells (roadmultiplier speed)
+constexpr uint32_t kNetVersion = 31;       // 31: feature burning (fire spread sim)
                                            // 28: retail melee = footprint adjacency
                                            // 26: benchmark level 6 (Extra Absurd)
                                            // 25: GameOptions.benchmark carries an INTENSITY

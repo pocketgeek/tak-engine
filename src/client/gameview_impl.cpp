@@ -342,7 +342,21 @@
         int tw = spawn("vertower", cx - 40, cz + 220, 0.0f, 0);
         int zm = spawn("tarzom", cx + 160, cz + 100, -1.57f, 1);
         world_.attack(tw, zm, false);   // explicit order: aim runs even without LOS
-        mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
+        // Feature-burning check: park a victim right beside a flamable feature
+        // and have a dragon breathe on it -- the splash must ignite the tree
+        // (spread + burnt swap then follow on their own).
+        float tx = cx + 60, tz = cz - 60;
+        for (const auto& ft : world_.features())
+            if (ft.alive && ft.type >= 0 &&
+                world_.featureTypes()[size_t(ft.type)].flamable) {
+                float ddx = ft.x - cx, ddz = ft.z - cz;
+                if (ddx * ddx + ddz * ddz < 400 * 400) { tx = ft.x + 20; tz = ft.z; break; }
+            }
+        int dr = spawn("tardrag", tx - 260, tz - 40, 1.57f, 1);
+        int ar = spawn("araarch", tx, tz, -1.57f, 0);
+        world_.attack(dr, ar, false);
+        // Watch the burn, not the tower: centre the camera on the target tree.
+        mapView_.setOffset(tx - 640 / mapView_.zoom(), tz - 400 / mapView_.zoom());
     }
 
     void GameView::lodeTest() {
@@ -756,6 +770,8 @@
                              int32_t(std::sin(ang) * 400.0f), int32_t(h.damage)});
                     }
         }
+        // Sim-driven feature fire: burn-anim playback, smoke, burnt-art swaps.
+        syncBurningFeatures();
         // Ambient wind: a slow random walk; each shift bumps windGen_ and the
         // per-unit loop below re-sends WindChange to flags/sails as they differ.
         if (animClock_ >= windNext_) {

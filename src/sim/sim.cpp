@@ -1291,6 +1291,7 @@ float Weapon::damageVs(const UnitType* t) const {
 
 void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId,
                      Unit* primary) {
+
     // Record the impact for the viewer (hit sound / effect).
     {
         HitFx hf{hx, hz, &w, primary ? primary->type : nullptr};
@@ -1328,6 +1329,29 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         }
     };
     if (primary) hurt(*primary, 1.0f);
+    // Firestarter ignition (retail icd 0x529dc0 -> 0x4961a0): every feature
+    // head cell within aoe/2 of the impact -- impact cell exempt from the
+    // radius check, so a no-splash weapon (Fire Breath, aoe 0) still torches
+    // the cell it strikes. Deterministic in every peer's sim (state + RNG
+    // hashed). Must run BEFORE the aoe<=0 early-out below.
+    if (w.fireStarter && !featTypes_.empty() && terW_ > 0) {
+        float r = std::max(w.aoe * 0.5f, 8.0f);
+        int icx = int(hx) / 16, icz = int(hz) / 16;
+        int rc = int(r) / 16 + 1;
+        for (int dz = -rc; dz <= rc; ++dz)
+            for (int dx = -rc; dx <= rc; ++dx) {
+                int cx = icx + dx, cz = icz + dz;
+                if (cx < 0 || cz < 0 || cx >= terW_ || cz >= terH_) continue;
+                auto it = featureIdx_.find(cz * terW_ + cx);
+                if (it == featureIdx_.end()) continue;
+                Feature& f = features_[it->second];
+                if (!(dx == 0 && dz == 0)) {   // impact cell ignites regardless
+                    float fdx = f.x - hx, fdz = f.z - hz;
+                    if (fdx * fdx + fdz * fdz > r * r) continue;
+                }
+                igniteFeature(f);
+            }
+    }
     if (w.aoe <= 0) return;
     // Splash the surrounding enemies, scaled from full at the centre to `edge`
     // at the rim (so an area weapon actually hits a crowd, per its FBI aoe).
@@ -1766,10 +1790,12 @@ void World::assist(int builderId, int siteId) {
 }
 
 void World::addFeature(int id, float x, float z, float manaYield, float work,
-                       int fx, int fz, bool blocks) {
+                       int fx, int fz, bool blocks, int type) {
     featureIdx_[id] = features_.size();
-    features_.push_back(Feature{id, x, z, fx, fz, manaYield,
-                                std::max(work, 1.0f), std::max(work, 1.0f), blocks, true});
+    Feature f{id, x, z, fx, fz, manaYield,
+              std::max(work, 1.0f), std::max(work, 1.0f), blocks, true};
+    f.type = type;
+    features_.push_back(f);
 }
 
 const Feature* World::feature(int id) const {
@@ -1777,11 +1803,91 @@ const Feature* World::feature(int id) const {
     return it == featureIdx_.end() ? nullptr : &features_[it->second];
 }
 
+const Feature* World::featureAt(float x, float z) const {
+    if (terW_ <= 0) return nullptr;
+    return feature((int(z) / 16) * terW_ + int(x) / 16);
+}
+
 bool World::featureAliveAt(float x, float z) const {
     if (terW_ <= 0) return true;
     int cx = int(x) / 16, cz = int(z) / 16;
     const Feature* f = feature(cz * terW_ + cx);
     return !f || f->alive;   // decorative (untracked) cells are always "alive"
+}
+
+// --- Feature burning (retail mechanic; icd 0x494b40 StartBurning, 0x495110
+// BurnSpread, 0x495300 BurnOut). Retail synced fire as host-authority events;
+// our lockstep equivalent runs it deterministically in every peer's sim. The
+// retail burnweapon ("TreeBurn") is DEAD DATA -- the engine wants a [BurnWeapon]
+// subsection which no shipped feature has, so burning never damages units, and
+// neither does ours. Burn duration in retail is the burn-anim GAF length; the
+// sim can't read art, so a fixed 5s stands in (typical tree-burn length).
+static constexpr int kBurnTicks = 150;
+
+void World::igniteFeature(Feature& f) {
+    if (f.burn || !f.alive || f.type < 0) return;
+    const FeatType& ft = featTypes_[size_t(f.type)];
+    if (!ft.flamable || !ft.hasBurnAnim) return;
+    static const bool kBurnLog = std::getenv("TAK_BURNLOG") != nullptr;
+    if (kBurnLog)
+        std::fprintf(stderr, "ignite %s at %.0f,%.0f (spark %d)\n",
+                     ft.name.c_str(), f.x, f.z, ft.sparkTicks);
+    f.burn = 1;
+    // Retail spread timer: sparktime30/2 + rand(sparktime30/2), one LCG draw.
+    int half = std::max(ft.sparkTicks / 2, 1);
+    f.spreadIn = half + burnRand(half);
+    f.burnLeft = kBurnTicks;
+}
+
+void World::tickBurning() {
+    if (featTypes_.empty()) return;
+    // Index-based: igniteFeature never reallocates (spread only flips state).
+    for (size_t i = 0; i < features_.size(); ++i) {
+        Feature& f = features_[i];
+        if (!f.alive || !f.burn) continue;
+        // Spread fires ONCE per burning feature (retail slot+0x44 never reloads):
+        // a 7x7 box around the head cell, each flamable neighbour rolls
+        // rand(100) < its own spreadchance. (Retail's downwind spark phase moves
+        // <1 cell at shipped wind speeds -- omitted.)
+        if (f.spreadIn > 0 && --f.spreadIn == 0) {
+            int cx = int(f.x) / 16, cz = int(f.z) / 16;
+            for (int dz = -3; dz <= 3; ++dz)
+                for (int dx = -3; dx <= 3; ++dx) {
+                    if (dx == 0 && dz == 0) continue;
+                    int nx = cx + dx, nz = cz + dz;
+                    if (nx < 0 || nz < 0 || nx >= terW_ || nz >= terH_) continue;
+                    auto it = featureIdx_.find(nz * terW_ + nx);
+                    if (it == featureIdx_.end()) continue;
+                    Feature& nf = features_[it->second];
+                    if (!nf.alive || nf.burn || nf.type < 0) continue;
+                    const FeatType& nft = featTypes_[size_t(nf.type)];
+                    if (!nft.flamable || !nft.hasBurnAnim) continue;
+                    if (burnRand(100) < nft.spreadChance) igniteFeature(nf);
+                }
+        }
+        if (--f.burnLeft <= 0) {
+            // Burn-out: swap to the featureburnt stage IN PLACE (same id/cell --
+            // the client watches f.type to swap art), or die outright.
+            f.burn = 0;
+            const FeatType* bt = nullptr;
+            if (f.type >= 0) {
+                int bi = featTypes_[size_t(f.type)].burntType;
+                if (bi >= 0) bt = &featTypes_[size_t(bi)];
+                f.type = bi;
+            }
+            if (f.blocks)   // old stage's footprint frees first
+                nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
+                           f.fx, f.fz, false);
+            if (!bt) { f.alive = false; f.blocks = false; continue; }
+            f.fx = bt->fx; f.fz = bt->fz;
+            f.blocks = bt->blocking;
+            if (f.blocks)
+                nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
+                           f.fx, f.fz, true);
+            f.manaYield = bt->energy;
+            f.work = f.workFull = std::max(bt->energy, 60.0f);
+        }
+    }
 }
 
 // Reclaim rate: work is consumed at a flat rate (retail ties reclaim duration to
@@ -2367,6 +2473,7 @@ void World::tickProduction(Unit& u, float dt) {
 
 void World::tick(float dt) {
     ++tickCounter_;
+    tickBurning();   // feature fire: spread + burn-out (deterministic, hashed)
     // Benchmark: fire the staged spawn plan at its scheduled ticks. Deterministic -- both
     // the client sim and the referee run the identical plan (built in setupMatch), so
     // lockstep holds. It IS hashed (real sim state), which is fine: every peer agrees.
@@ -3061,9 +3168,17 @@ uint64_t World::stateHash() const {
     // a desync directly (mana/nav already reflect it indirectly). Order-independent.
     uint64_t fAlive = 0, fWork = 0;
     for (const auto& f : features_)
-        if (f.alive) { ++fAlive; uint32_t w; std::memcpy(&w, &f.work, 4); fWork ^= (uint64_t(w) << 1) ^ uint64_t(uint32_t(f.id)); }
+        if (f.alive) {
+            ++fAlive;
+            uint32_t w; std::memcpy(&w, &f.work, 4);
+            fWork ^= (uint64_t(w) << 1) ^ uint64_t(uint32_t(f.id)) ^
+                     // burning state: type swaps and burn timers are sim state
+                     (uint64_t(uint32_t(f.type + 1)) << 17) ^
+                     (uint64_t(f.burn) << 33) ^ (uint64_t(uint32_t(f.burnLeft)) << 40);
+        }
     mix(fAlive);
     mix(fWork);
+    mix(uint64_t(burnRng_));   // burn-RNG stream position must agree
     if (mission_) mission_->foldHash(h);   // mission triggers/vars/outcome are lockstep state
     return h;
 }
