@@ -1921,6 +1921,7 @@ private:
         int w = 0, h = 0, xoff = 0, yoff = 0;
         int sw = 0, sh = 0, sxoff = 0, syoff = 0;
         float x = 0, z = 0;
+        bool tree = false;   // category=trees (eligible for the wind-sway option)
         bool mana = false;   // category=mana (deposit cluster: kept walkable/buildable)
         bool glowy = false;  // the animated "Sacred Stone" centre -- the actual
                              // buildable spot; category=mana + animating=1. The

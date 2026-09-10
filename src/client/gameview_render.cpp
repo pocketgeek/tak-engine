@@ -370,7 +370,28 @@
                 SDL_FRect dst{(f.x - mapView_.offX() - float(fxo)) * zm0 - lfx,
                               (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
                               float(fw) * zm0, float(fh) * zm0};
-                SDL_RenderCopyF(ren_, tex, nullptr, &dst);
+                if (f.tree && settings_ && settings_->treeSway) {
+                    // Wind sway (Options; beyond-retail -- retail trees are static
+                    // single-frame GAFs): shear the crown sideways on two blended
+                    // gust sines, pivoting at the trunk base (the GAF anchor sits
+                    // there). Per-tree phase so a forest ripples instead of rocking
+                    // in unison. Display-only; the sim never sees it.
+                    float ph = f.x * 0.043f + f.z * 0.029f;
+                    float sway = std::sin(animClock_ * 1.1f + ph) * 0.7f +
+                                 std::sin(animClock_ * 2.7f + ph * 1.7f) * 0.3f;
+                    float shear = sway * dst.h * 0.04f;
+                    const SDL_Color wc{255, 255, 255, 255};
+                    SDL_Vertex v[4] = {
+                        {{dst.x + shear, dst.y}, wc, {0, 0}},
+                        {{dst.x + dst.w + shear, dst.y}, wc, {1, 0}},
+                        {{dst.x + dst.w, dst.y + dst.h}, wc, {1, 1}},
+                        {{dst.x, dst.y + dst.h}, wc, {0, 1}},
+                    };
+                    static const int wIdx[6] = {0, 1, 2, 0, 2, 3};
+                    SDL_RenderGeometry(ren_, tex, v, 4, wIdx, 6);
+                } else {
+                    SDL_RenderCopyF(ren_, tex, nullptr, &dst);
+                }
             } else if (op.u) {
                 drawUnit(*op.u);
             } else if (op.count > 0) {
@@ -1822,6 +1843,7 @@
         std::string cat = di->second.valueOr("category", "");
         std::transform(cat.begin(), cat.end(), cat.begin(), ::tolower);
         inst.mana = (cat == "mana");
+        inst.tree = (cat == "trees");
         // The buildable spot is the animated Sacred Stone centre; the static
         // Standing Stones sharing the category are just ruins around it.
         inst.glowy = inst.mana && di->second.numberOr("animating", 0) != 0;

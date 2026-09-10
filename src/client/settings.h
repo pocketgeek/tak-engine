@@ -29,6 +29,7 @@ struct Settings {
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
     float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.75..2.0
     bool  bilinear   = false;      // smooth (bilinear) terrain + feature scaling, like retail's option
+    bool  treeSway   = true;       // trees sway in the wind (beyond-retail nicety; display-only)
     int   healthBars = 1;          // unit health bars: 0=off, 1=only when damaged, 2=always
 
     // ---- audio (0..256, matching SoundBank's internal scale) ----
@@ -86,7 +87,7 @@ struct Settings {
             && a.uiScale == b.uiScale && a.antiAlias == b.antiAlias
             && a.lod == b.lod && a.spriteMode == b.spriteMode
             && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
-            && a.bilinear == b.bilinear
+            && a.bilinear == b.bilinear && a.treeSway == b.treeSway
             && a.healthBars == b.healthBars
             && a.masterVol == b.masterVol && a.bgmVol == b.bgmVol && a.sfxVol == b.sfxVol
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
