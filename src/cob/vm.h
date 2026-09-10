@@ -60,6 +60,11 @@ public:
     // at the unit. Like onEmitSfx, the hook only STASHES on the (worker) VM thread;
     // the host drains it on the main thread.
     std::function<void(int32_t nameIdx)> onPlaySound;
+    // explode (0x10071000): piece flies off as debris (flags = COB explode type;
+    // bit 0x20 = no debris entity, high bits add one-shot effects -- icd 0x50dd20).
+    // The VM hides the piece when debris spawns; the hook only STASHES (worker
+    // thread), the host drains on the main thread like onEmitSfx.
+    std::function<void(int piece, int32_t flags)> onExplode;
     void setStatic(size_t i, int32_t v);
     void reset() { threads_.clear(); }   // stop all threads, keep piece poses
 

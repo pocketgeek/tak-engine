@@ -342,7 +342,17 @@ void Vm::run(Thread& t) {
                 if (onEmitSfx) onEmitSfx(piece, sfx);
                 t.pc += 2; break;
             }
-            case 0x10071000: pop(t); t.pc += 2; break;                        // EXPLODE
+            case 0x10071000: {                                                // EXPLODE
+                // Piece debris (retail icd 0x50dd20): the piece flies off with a
+                // random arc unless flag 0x20. Hide it here so the model shows it
+                // gone; the host's hook draws the flying chunk + effects.
+                int piece = arg(0);
+                int32_t flags = pop(t);
+                if (!(flags & 0x20) && piece >= 0 && size_t(piece) < pieces_.size())
+                    pieces_[size_t(piece)].visible = false;
+                if (onExplode) onExplode(piece, flags);
+                t.pc += 2; break;
+            }
             case 0x10072000: {                                                // PLAY_SOUND
                 // Inline arg = COB name-table index (the wav stem); the popped stack
                 // value is a priority we don't model. Retail plays each unit's own

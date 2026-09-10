@@ -896,6 +896,7 @@ private:
         // main thread after the parallel VM tick (SDL/effects_ are main-thread only).
         std::vector<std::pair<int, int32_t>> pendingSfx;
         std::vector<int32_t> pendingSnd;   // COB PLAY_SOUND name indices, drained on main
+        std::vector<std::pair<int, int32_t>> pendingExplode;   // EXPLODE (piece, flags)
         bool cobSounds = false;   // script plays its own audio: skip the generic stand-ins
         int workId = 0;           // site/target the build anim last fired for (one-shot per job)
         // Continuous ambient fire/smoke: retail runs one persistent emitter per unit,
@@ -913,6 +914,9 @@ private:
     // flame/smoke puffs stack into a continuous flicker (as retail's persistent
     // particle emitter does). Cosmetic; not hashed.
     void emitSfx(const UnitR& u, Anim& a, int piece, int32_t sfx);
+    // COB EXPLODE: the piece flies off as a debris chunk (retail icd 0x50dd20)
+    // plus the TA-flag extras (SMOKE/FIRE bits, BITMAPn explosion classes).
+    void explodePiece(const UnitR& u, Anim& a, int piece, int32_t flags);
     // Map a packed COB sfx code to the retail effect GAF sequence. (KINGDOMS.icd
     // emitSfx @0x50da20: the 0x100 bit flags the extended emitter family, low bits
     // pick the effect -- 4/5/6 = damage-flame small/med/large from anims/flames.gaf,

@@ -1046,10 +1046,12 @@
         // Drain emit-sfx the VMs stashed (fire/smoke from FireControl-style loops),
         // now serially on the main thread, into the world-space effect system.
         for (auto& [id, a] : anims_) {
-            if (a.pendingSfx.empty() && a.pendingSnd.empty()) continue;
+            if (a.pendingSfx.empty() && a.pendingSnd.empty() &&
+                a.pendingExplode.empty()) continue;
             const auto* u = frameUnitP(id);
             if (u && u->type && (noFog_ || cellVisibleR(u->x, u->z))) {
                 for (auto& [piece, sfx] : a.pendingSfx) emitSfx(*u, a, piece, sfx);
+                for (auto& [piece, fl] : a.pendingExplode) explodePiece(*u, a, piece, fl);
                 // COB PLAY_SOUND: resolve the name-table index to a wav stem. This is
                 // how retail plays per-unit action sounds -- the Beast Handler's whip
                 // crack when a conjure starts, attack swooshes, death cries.
@@ -1061,6 +1063,7 @@
             }
             a.pendingSfx.clear();
             a.pendingSnd.clear();
+            a.pendingExplode.clear();
         }
     }
 
@@ -1124,6 +1127,37 @@
         float lift = pieceLift(u, a, piece);
         if (anim[0] == 's') { a.smokeFx = ea; a.smokeT = 0; a.smokeLift = lift; }
         else                { a.fireFx = ea;  a.fireT = 0;  a.fireLift = lift; }
+    }
+
+    void GameView::explodePiece(const UnitR& u, Anim& a, int piece, int32_t flags) {
+        float dAlt = pieceLift(u, a, piece) + unitAltById(u.id);
+        // Debris chunks at retail velocities (icd 0x50dd20: vx,vz = (20-rand(40))<<12,
+        // vy = rand(10)<<14, 16.16 px/tick => +-37.5 / up-to-75 px/s, life 900ms),
+        // suppressed by BITMAPONLY (0x20 -- the VM already kept the piece visible).
+        if (!(flags & 0x20)) {
+            bool flesh = u.type->bodyType == "flesh";
+            for (int i = 0; i < 3; ++i) {
+                Particle p;
+                p.x = u.x; p.z = u.z; p.alt = 4 + dAlt;
+                p.vx = 37.5f - float(salt_++ % 75);
+                p.vz = 37.5f - float(salt_++ % 75);
+                p.valt = float(salt_++ % 75);
+                p.maxLife = p.life = 0.9f;
+                p.size = 2.5f + float(salt_++ % 100) / 40.0f;   // chunky
+                if (flesh && i < 2) { p.r = u.type->blood[0]; p.g = u.type->blood[1];
+                                      p.b = u.type->blood[2]; }
+                else { p.r = 115; p.g = 100; p.b = 80; }        // wood/stone chunk
+                p.kind = 0;
+                particles_.push_back(p);
+            }
+        }
+        // TA flag extras: SMOKE (8), FIRE (16), BITMAP1..NUKE (0x100..0x2000) pick
+        // an explosion-class one-shot at the piece.
+        if (flags & 8)  spawnBurst(u.x, u.z, 3, 90, 80, 80, 14, 2.6f, 1, dAlt);
+        if (flags & 16) spawnBurst(u.x, u.z, 4, 240, 130, 40, 26, 2.2f, 0, dAlt);
+        if (flags & 0x3F00)
+            spawnEffect(flags >= 0x1000 ? "medium explosion" : "small explosion",
+                        u.x, u.z, dAlt);
     }
 
     float GameView::pieceLift(const UnitR& u, const Anim& a, int piece) {
@@ -1280,6 +1314,9 @@
             };
             st.vm->onPlaySound = [buf = &st.pendingSnd](int32_t idx) {
                 buf->push_back(idx);
+            };
+            st.vm->onExplode = [buf = &st.pendingExplode](int piece, int32_t flags) {
+                buf->push_back({piece, flags});
             };
         }
         unitType_[id] = typeId;

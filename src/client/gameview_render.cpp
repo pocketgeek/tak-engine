@@ -1932,7 +1932,7 @@
         if (!tak::mapgen::isGeneratedMapId(mapPath_)) return;   // authored maps ship their own
         const auto& map = mapView_.map();
         const int W = map.width, H = map.height, sea = map.seaLevel;
-        if (W <= 0 || H <= 0 || int(map.heights.size()) < size_t(W) * H) return;
+        if (W <= 0 || H <= 0 || map.heights.size() < size_t(W) * H) return;
         // World prefix (AraWave/TarWave/VerWave/ZonWave/CreWave) from the map's
         // feature names (case-insensitive: Creon TDFs mix "CreTree"/"CRERock").
         std::string wp = "Ara";
