@@ -125,7 +125,10 @@
         // client-only presentation
         localPlayer_ = room.mySlot < 0 ? 0 : room.mySlot;
         world_.setVisPlayer(localPlayer_);
-        world_.setFogExplored(room.opts.fogExplored != 0);   // lobby fog-of-war memory (display-only)
+        world_.setFogExplored(room.opts.fogExplored == 1);   // lobby fog-of-war memory (display-only)
+        if (room.opts.fogExplored == 2) noFog_ = true;       // FULL VISION: no fog at all --
+                                                             // same spectator path, so the
+                                                             // wasted-visibility work is skipped too
         if (benchmarkMode_) benchmarkBaseline();             // t=0 baseline for the perf samples
         for (auto& u : world_.units())
             if (u.player == localPlayer_ && u.type) { playerMonarchId_ = u.id; builderId_ = u.id; break; }

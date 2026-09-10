@@ -272,8 +272,11 @@ Result generate(const Params& raw, const tak::hpi::Vfs& vfs) {
     // water sections sit at 0 (retail deep-water floor); shoreline sections get
     // the prefab's authored bank heights when stamped below.
     const int landRange = std::max(1, 255 - seaThresh);
-    const int t1 = seaThresh + landRange * 60 / 100;   // base plateau ~60% of land
-    const int t2 = seaThresh + landRange * 85 / 100;   // mid plateau  ~25%
+    // reliefDensity scales how much of the interior rises into plateaus: 0 = dead
+    // flat, 128 ~= the previous default (~40% of land raised), 255 = mostly mesa.
+    const int raised = int(p.reliefDensity) * 79 / 255;            // % of land raised
+    const int t1 = seaThresh + landRange * (100 - raised) / 100;   // base plateau
+    const int t2 = t1 + (255 - t1) * 5 / 8;                        // mid vs high split
     const int kL1 = std::min(250, land + 42), kL2 = std::min(250, land + 92);
     // Raised terraces only where the whole 3x3 section neighbourhood is land, so
     // the blur can never bleed a hill into a stamped prefab's edge rows.
@@ -529,22 +532,23 @@ Result generate(const Params& raw, const tak::hpi::Vfs& vfs) {
         ++placed;
     }
 
-    // Doodads: per-land-cell probability from doodadDensity. ~1 in 7 is a rock
-    // (smaller ones biased common via min-of-two draws); the rest are trees. Every
-    // draw picks a fresh variant so no single tree/rock repeats across the map.
-    int thresh = int(p.doodadDensity) * 5 / 4;   // out of 10000 (max ~3% of land cells)
+    // Doodads: independent per-cell probabilities per TYPE (each has its own
+    // slider). Every placement picks a fresh variant so nothing repeats; rocks are
+    // small-biased via min-of-two draws. One PRNG draw per cell, fixed order =>
+    // byte-identical on every peer.
+    const int treeThresh = int(p.treeDensity) * 5 / 4;   // /10000 (max ~3% of land)
+    const int rockThresh = int(p.rockDensity) * 5 / 8;   // /10000 (max ~1.6%)
     for (int cz = 0; cz < H; ++cz)
         for (int cx = 0; cx < W; ++cx) {
             uint64_t roll = splitmix(frng);   // one draw per cell (keeps order deterministic)
             if (!isLand(cx, cz) || claim[size_t(cz) * W + cx] || nearStart(cx, cz, 6)) continue;
-            if (int(roll % 10000) >= thresh) continue;
-            if ((roll >> 20) % 7 == 0) {      // rock (small-biased)
+            if (int(roll % 10000) < treeThresh) {          // tree (any variant)
+                const char* nm = wf.trees.p[(roll >> 24) % uint64_t(wf.trees.n)];
+                if (fits(cx, cz, 2, 2)) place(cx, cz, nm, 2, 2);
+            } else if (int((roll >> 13) % 10000) < rockThresh) {   // rock (small-biased)
                 int a = int((roll >> 24) % uint64_t(wf.rocks.n));
                 int b = int((roll >> 33) % uint64_t(wf.rocks.n));
                 if (fits(cx, cz, 3, 3)) place(cx, cz, wf.rocks.p[std::min(a, b)], 3, 3);
-            } else {                          // tree (any variant)
-                const char* nm = wf.trees.p[(roll >> 24) % uint64_t(wf.trees.n)];
-                if (fits(cx, cz, 2, 2)) place(cx, cz, nm, 2, 2);
             }
         }
     return r;
@@ -583,9 +587,11 @@ std::string encodeMapId(const Params& pin) {
     b.push_back(char(p.mapType));
     put16(b, p.widthCells); put16(b, p.heightCells);
     b.push_back(char(p.players));
-    b.push_back(char(p.doodadDensity));
+    b.push_back(char(p.treeDensity));
+    b.push_back(char(p.rockDensity));
     b.push_back(char(p.manaDensity));
     b.push_back(char(p.waterDensity));
+    b.push_back(char(p.reliefDensity));
     return std::string(kMagic) + toHex(b);
 }
 
@@ -608,9 +614,19 @@ Params decodeMapId(const std::string& id) {
         p.mapType = u8(10);
         p.widthCells = u16(11); p.heightCells = u16(13);
         p.players = u8(15);
-        p.doodadDensity = u8(16);
-        p.manaDensity = u8(17);
-        p.waterDensity = u8(18);
+        if (p.formatVer >= 2 && raw.size() >= 21) {
+            p.treeDensity = u8(16);
+            p.rockDensity = u8(17);
+            p.manaDensity = u8(18);
+            p.waterDensity = u8(19);
+            p.reliefDensity = u8(20);
+        } else {   // v1 ids: one doodad slider drove both, no relief control
+            p.treeDensity = u8(16);
+            p.rockDensity = uint8_t(std::min(255, int(u8(16)) * 3 / 4));
+            p.manaDensity = u8(17);
+            p.waterDensity = u8(18);
+            p.reliefDensity = 128;
+        }
     }
     return sanitize(p);
 }

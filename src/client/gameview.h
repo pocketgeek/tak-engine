@@ -1576,7 +1576,7 @@ private:
     // slider bar rects for drag hit-testing.
     tak::mapgen::Params genParams_{};
     int genSlider_ = -1;
-    SDL_FRect genSliderRect_[3]{};
+    SDL_FRect genSliderRect_[5]{};
     void applyGenParams();             // re-encode genParams_ -> mpMapId_
     void setGenSlider(int i, float mx);  // drag a density slider from a panel-x
     SDL_FRect mapListRect_{};          // the list box (rows area) -- wheel target

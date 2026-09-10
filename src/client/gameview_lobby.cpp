@@ -257,9 +257,13 @@
         if (r.w <= 0) return;
         float t = std::clamp((mx - r.x) / r.w, 0.0f, 1.0f);
         uint8_t v = uint8_t(t * 255.0f + 0.5f);
-        if (i == 0) genParams_.doodadDensity = v;
-        else if (i == 1) genParams_.manaDensity = v;
-        else genParams_.waterDensity = v;
+        switch (i) {
+            case 0: genParams_.treeDensity = v; break;
+            case 1: genParams_.rockDensity = v; break;
+            case 2: genParams_.manaDensity = v; break;
+            case 3: genParams_.waterDensity = v; break;
+            default: genParams_.reliefDensity = v; break;
+        }
         applyGenParams();
     }
 
@@ -466,9 +470,11 @@
             blockText(pc, bx + bw + 8, py + 16, 1.5f, {160, 165, 180, 255});
             py += 44;
         };
-        slider(0, "DOODADS  (trees & rocks)", genParams_.doodadDensity);
-        slider(1, "MANA SPOTS", genParams_.manaDensity);
-        slider(2, "WATER", genParams_.waterDensity);
+        slider(0, "TREES", genParams_.treeDensity);
+        slider(1, "ROCKS", genParams_.rockDensity);
+        slider(2, "MANA SPOTS", genParams_.manaDensity);
+        slider(3, "WATER", genParams_.waterDensity);
+        slider(4, "HILLS  (plateaus & ramps)", genParams_.reliefDensity);
         lbBtn(px, py, 140, 24, "RE-ROLL SEED", true, [this] {
             genParams_.seed = genParams_.seed * 6364136223846793005ULL + 1442695040888963407ULL;
             applyGenParams();
@@ -645,15 +651,18 @@
                 o.unitCap = seq[(idx + 1) % 5];
                 mp_->setGameOptions(o); });
         }
-        // Fog of war memory (display-only rule, never hashed): EXPLORED keeps seen terrain
-        // dimmed-but-visible; NOT EXPLORED darkens it again the moment it leaves sight.
+        // Fog of war (display-only rule, never hashed): NOT EXPLORED darkens seen
+        // terrain again when it leaves sight; EXPLORED keeps it dimmed-but-visible;
+        // FULL VISION removes fog entirely (whole map + every unit, all players).
         y += 34;
         {
+            static const char* kFogName[3] = {"NOT EXPLORED", "EXPLORED", "FULL VISION"};
             std::string fb = std::string("FOG OF WAR: ") +
-                             (room.opts.fogExplored ? "EXPLORED" : "NOT EXPLORED");
+                             kFogName[std::min<int>(room.opts.fogExplored, 2)];
             if (host)
                 lbBtn(x, y, 420, 26, fb, true, [this] {
-                    auto o = mpRoom().opts; o.fogExplored = o.fogExplored ? 0 : 1;
+                    auto o = mpRoom().opts;
+                    o.fogExplored = uint8_t((o.fogExplored + 1) % 3);
                     mp_->setGameOptions(o); });
             else
                 blockText(fb, x, y + 6, 2.0f, {205, 210, 225, 255});
@@ -701,7 +710,7 @@
             lbField_ = 0; SDL_StopTextInput();
             float mx, my; lobbyMouse(mx, my);
             if (ptIn(mapThumbRect_, mx, my)) { mapDrag_ = true; return; }   // grab the thumb
-            for (int gi = 0; gi < 3; ++gi)   // grab a density slider
+            for (int gi = 0; gi < 5; ++gi)   // grab a density slider
                 if (ptIn(genSliderRect_[gi], mx, my)) { genSlider_ = gi; setGenSlider(gi, mx); return; }
             for (auto& [r, action] : lobbyHots_)
                 if (ptIn(r, mx, my)) { action(); break; }

@@ -17,8 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 28;       // 28: retail melee = footprint adjacency
-                                           //     edge + builder gives up an unreachable site
+constexpr uint32_t kNetVersion = 29;       // 29: fog option gains FULL VISION
+                                           // 28: retail melee = footprint adjacency
                                            // 26: benchmark level 6 (Extra Absurd)
                                            // 25: GameOptions.benchmark carries an INTENSITY
                                            // level (0=off, 1=Low..N), was a bool
@@ -120,9 +120,11 @@ struct GameOptions {
     // Stress test (SP all-AI spectate): 1 = spawn each AI at ~95% of the unit cap in
     // its faction's combat units the moment the game starts, to load-test the sim.
     uint8_t stressTest = 0;
-    // Fog of war memory (client-only display, never hashed): 1 = EXPLORED -- terrain you
-    // have seen stays revealed (dimmed) when out of line of sight; 0 = NOT EXPLORED --
-    // cells go dark again the moment they leave sight (no map memory). Host-set in the room.
+    // Fog of war (client-only display, never hashed -- every client applies the
+    // same room rule, so it stays fair): 0 = NOT EXPLORED (cells go dark again the
+    // moment they leave sight), 1 = EXPLORED (seen terrain stays dimmed-visible),
+    // 2 = FULL VISION (no fog at all: the whole map and every unit are visible).
+    // Host-set in the room.
     uint8_t fogExplored = 1;
     // Benchmark INTENSITY: 0=off, 1=Low..6=Extra Absurd -- an all-AI perf run with a spawn ramp
     // (see MatchConfig::benchmark). Deterministic, so it IS part of the hashed sim.

@@ -23,14 +23,16 @@ namespace tak::mapgen {
 enum MapType : uint8_t { Aramon = 0, Taros = 1, Veruna = 2, Zhon = 3, Creon = 4, kMapTypes };
 
 struct Params {
-    uint16_t formatVer = 1;
+    uint16_t formatVer = 2;          // v2 split doodads into tree/rock + added relief
     uint64_t seed = 1;
     uint8_t  mapType = Aramon;
     uint16_t widthCells = 256, heightCells = 256;   // multiples of 32, clamped
     uint8_t  players = 2;            // 2..8
-    uint8_t  doodadDensity = 128;    // 0..255 (few..lots)
-    uint8_t  manaDensity = 128;      // 0..255 (few..lots)
+    uint8_t  treeDensity = 128;      // 0..255 (few..lots)
+    uint8_t  rockDensity = 96;       // 0..255
+    uint8_t  manaDensity = 128;      // 0..255
     uint8_t  waterDensity = 96;      // 0..255 (how much of the map is water)
+    uint8_t  reliefDensity = 128;    // 0..255 (plateaus + ramps: 0 = flat)
 };
 
 struct Result {
