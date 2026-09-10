@@ -2407,6 +2407,10 @@
     }
 
     void GameView::voice(int unitId, const std::string& event) {
+        // Retail command feedback: every ORDER click plays the faction's click
+        // tone (sounds/tone<side>.wav -- what click.hpi override packs replace)
+        // under the unit's acknowledgment line. Selection stays voice-only.
+        if (event != "select") playClickTone();
         const auto* u = frameUnitP(unitId);
         if (!u || !u->type || u->type->soundClass.empty()) return;
         if (const auto* wav = soundClasses_.pick(u->type->soundClass, event, salt_++))
