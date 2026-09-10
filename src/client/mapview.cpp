@@ -104,10 +104,15 @@ void MapView::ensureChunks(int winW, int winH) {
         for (int cx = c0x - 1; cx <= c1x + 1; ++cx)
             if (cy < c0y || cy > c1y || cx < c0x || cx > c1x)
                 requestChunk(cx, cy);
-    // Evict chunks well outside the visible+prefetch ring so terrain VRAM tracks the
-    // working set, not the pan history (part of the GPU cap). A 3-chunk margin keeps
-    // normal panning from thrashing; evicted chunks recomposite off-thread on return.
-    const int M = 3;
+    // Evict chunks outside the visible+prefetch ring so terrain VRAM tracks the
+    // working set, not the pan history (part of the GPU cap). Each resident chunk
+    // is a 512x512 RGBA texture = 1 MiB, so the ring size dominates terrain VRAM:
+    // at 7680x2160 the visible span alone is ~85 chunks, and the old 3-chunk
+    // margin (a FIXED count, so its cost balloons with resolution) added a
+    // ~240 MiB halo on top -- a big share of an 8 GB card. One margin chunk past
+    // the prefetch ring keeps normal panning smooth (evicted chunks recomposite
+    // off-thread in ~ms on return); the ring is now prefetch+1, not prefetch+3.
+    const int M = 1;
     for (auto it = chunks_.begin(); it != chunks_.end(); ) {
         int cx = it->first.first, cy = it->first.second;
         if (cx >= c0x - 1 - M && cx <= c1x + 1 + M && cy >= c0y - 1 - M && cy <= c1y + 1 + M) { ++it; continue; }
