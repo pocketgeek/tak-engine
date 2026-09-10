@@ -77,7 +77,12 @@ public:
         want.freq = 11025;
         want.format = AUDIO_S16SYS;
         want.channels = Uint8(chans);
-        want.samples = 1024;
+        // 256 samples @ 11025 Hz = ~23ms of device buffer. The old 1024 put
+        // ~93ms between a command click and its acknowledgment tone -- a very
+        // feelable lag on the mouse. The mix callback is light (a handful of
+        // 11kHz channels), so short periods are cheap; the OS adds its own
+        // safety on top.
+        want.samples = 256;
         want.callback = &SoundBank::mixThunk;
         want.userdata = this;
         dev_ = tak::openAudioDevice(0, &want, &spec_, SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
