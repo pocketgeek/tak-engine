@@ -11,6 +11,7 @@
 
 #include <SDL.h>
 
+#include "cartographer/features.h"
 #include "cartographer/font5x7.h"
 #include "cartographer/newmap.h"
 #include "cartographer/sections.h"
@@ -205,6 +206,10 @@ int main(int argc, char** argv) {
     cart::SectionLibrary sections;
     std::string world = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
     sections.scan(vfs, world);
+    cart::FeatureLibrary features;
+    features.scan(vfs, world);
+    std::fprintf(stderr, "cartographer: %zu placeable features for '%s'\n",
+                 features.list().size(), world.c_str());
     std::fprintf(stderr, "cartographer: %zu sections for world '%s'\n",
                  sections.list().size(), world.c_str());
 
@@ -246,10 +251,31 @@ int main(int argc, char** argv) {
     constexpr int kPaletteW = 200;   // left section-palette panel
     constexpr int kThumb = 88;       // section thumbnail cell (px)
     const int cols = std::max(1, (kPaletteW - 8) / (kThumb + 4));
-    int selected = sections.list().empty() ? -1 : 0;
+    int selected = sections.list().empty() ? -1 : 0;   // section index (TERRAIN)
+    int selectedFeat = features.list().empty() ? -1 : 0; // feature index (FEATURES)
     int paletteScroll = 0;
     bool showGrid = false;
     static const float kZoomLevels[5] = {1.0f, 0.75f, 0.5f, 0.25f, 0.125f};
+
+    // Feature-sprite textures (GAF frame 0), cached by feature name, used both in
+    // the palette and to draw placed features on the canvas.
+    std::map<std::string, SDL_Texture*> featTex;
+    auto featTextureFor = [&](const cart::FeatureRef& r) -> SDL_Texture* {
+        auto it = featTex.find(r.name);
+        if (it != featTex.end()) return it->second;
+        SDL_Texture* t = nullptr;
+        const cart::FeatSprite* sp = features.sprite(vfs, r);
+        if (sp && sp->w > 0) {
+            t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
+                                  sp->w, sp->h);
+            if (t) {
+                SDL_UpdateTexture(t, nullptr, sp->rgba.data(), sp->w * 4);
+                SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+            }
+        }
+        featTex[r.name] = t;
+        return t;
+    };
 
     // Lazy section thumbnails: render a prefab's terrain (Compositor) once into a
     // small texture, cached by path. Only visible cells ever render.
@@ -292,9 +318,27 @@ int main(int argc, char** argv) {
         (void)w; (void)h;
     };
 
-    // --- Object tools (start positions this phase; features/units next) --------
-    enum Tool { TERRAIN, STARTS };
+    // --- Object tools (terrain paint, feature placement, start positions) -----
+    enum Tool { TERRAIN, FEATURES, STARTS };
     Tool tool = TERRAIN;
+    // Place/erase a feature in the .tnt feature plane at the mouse cell.
+    auto placeFeature = [&](int mx, int my, bool erase) {
+        if (selectedFeat < 0 || mx < kPaletteW) return;
+        float wx = mapView.offX() + float(mx - kPaletteW) / mapView.zoom();
+        float wz = mapView.offY() + float(my - kMenuH) / mapView.zoom();
+        int cx = int(wx / 16.0f), cz = int(wz / 16.0f);
+        auto& mp = mapView.editMap();
+        if (cx < 0 || cz < 0 || cx >= mp.width || cz >= mp.height) return;
+        size_t ci = size_t(cz) * mp.width + cx;
+        if (erase) { mp.features[ci] = 0xFFFF; edited = true; return; }
+        const std::string& name = features.list()[size_t(selectedFeat)].name;
+        uint16_t idx = 0xFFFF;   // intern the feature name into the map's table
+        for (size_t i = 0; i < mp.featureNames.size(); ++i)
+            if (mp.featureNames[i] == name) { idx = uint16_t(i); break; }
+        if (idx == 0xFFFF) { mp.featureNames.push_back(name); idx = uint16_t(mp.featureNames.size() - 1); }
+        mp.features[ci] = idx;
+        edited = true;
+    };
     int draggingStart = -1;           // index into scenario.starts while dragging
     // Canvas mouse -> map cell (16px). Returns false if off the canvas/map.
     auto mouseCell = [&](int mx, int my, int& cx, int& cz) -> bool {
@@ -337,32 +381,35 @@ int main(int argc, char** argv) {
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_g) {
                 showGrid = !showGrid;   // View -> Grid
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_TAB) {
-                tool = tool == TERRAIN ? STARTS : TERRAIN;   // cycle tool
+                tool = Tool((int(tool) + 1) % 3);   // cycle TERRAIN->FEATURES->STARTS
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
                        e.key.keysym.sym <= SDLK_5) {
                 // Zoom levels 1..5 = 100/75/50/25/12.5% (retail's five steps).
                 mapView.setZoom(kZoomLevels[e.key.keysym.sym - SDLK_1]);
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_LEFT && e.button.y < kMenuH) {
-                // Toolbar buttons: TERRAIN | STARTS (each ~72px, after a title).
-                int bx = e.button.x - 96;
-                if (bx >= 0 && bx < 72) tool = TERRAIN;
-                else if (bx >= 72 && bx < 144) tool = STARTS;
+                // Toolbar buttons: TERRAIN | FEATURES | STARTS (each 72px).
+                int bi = (e.button.x - 96) / 72;
+                if (bi >= 0 && bi < 3) tool = Tool(bi);
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_LEFT && e.button.x < kPaletteW &&
                        e.button.y >= kMenuH && e.button.y < h - kStatusH) {
-                // Palette click -> select a section thumbnail.
+                // Palette click -> select a section (TERRAIN) or feature (FEATURES).
                 int px = e.button.x - 4;
                 int py = e.button.y - kMenuH + paletteScroll;
                 int col = px / (kThumb + 4), row = py / (kThumb + 4);
                 if (col >= 0 && col < cols) {
                     int idx = row * cols + col;
-                    if (idx >= 0 && idx < int(sections.list().size())) selected = idx;
+                    if (tool == FEATURES) {
+                        if (idx >= 0 && idx < int(features.list().size())) selectedFeat = idx;
+                    } else if (idx >= 0 && idx < int(sections.list().size())) selected = idx;
                 }
             } else if (e.type == SDL_MOUSEWHEEL) {
                 int mxp, myp; SDL_GetMouseState(&mxp, &myp);
-                if (mxp < kPaletteW) {   // scroll the palette
-                    int rows = (int(sections.list().size()) + cols - 1) / cols;
+                if (mxp < kPaletteW) {   // scroll the palette (tool-dependent count)
+                    int n = tool == FEATURES ? int(features.list().size())
+                                             : int(sections.list().size());
+                    int rows = (n + cols - 1) / cols;
                     int maxScroll = std::max(0, rows * (kThumb + 4) - canvasH);
                     paletteScroll = std::clamp(paletteScroll - e.wheel.y * 40, 0, maxScroll);
                 } else {
@@ -372,6 +419,8 @@ int main(int argc, char** argv) {
                        e.button.button == SDL_BUTTON_LEFT && e.button.x >= kPaletteW) {
                 if (tool == TERRAIN) {
                     stampAtMouse(e.button.x, e.button.y, canvasW, canvasH);
+                } else if (tool == FEATURES) {
+                    placeFeature(e.button.x, e.button.y, false);
                 } else {   // STARTS: grab an existing marker, else place a new one
                     int hit = startAt(e.button.x, e.button.y);
                     int cx, cz;
@@ -390,12 +439,18 @@ int main(int argc, char** argv) {
                        e.button.button == SDL_BUTTON_RIGHT && tool == STARTS) {
                 int hit = startAt(e.button.x, e.button.y);   // right-click deletes a start
                 if (hit >= 0) scenario.starts.erase(scenario.starts.begin() + hit);
+            } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                       e.button.button == SDL_BUTTON_RIGHT && tool == FEATURES &&
+                       e.button.x >= kPaletteW) {
+                placeFeature(e.button.x, e.button.y, true);   // right-click erases
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 draggingStart = -1;
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK) &&
                        e.motion.x >= kPaletteW) {
                 if (tool == TERRAIN) {
                     stampAtMouse(e.motion.x, e.motion.y, canvasW, canvasH);   // drag-paint
+                } else if (tool == FEATURES) {
+                    placeFeature(e.motion.x, e.motion.y, false);   // drag-place features
                 } else if (draggingStart >= 0) {
                     int cx, cz;   // drag a start marker to a new cell
                     if (mouseCell(e.motion.x, e.motion.y, cx, cz)) {
@@ -404,11 +459,14 @@ int main(int argc, char** argv) {
                     }
                 }
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_RMASK)) {
-                // Right-drag pans (left-drag paints); feed MapView a synthetic
-                // left-drag motion so its pan handler moves the view.
-                SDL_Event pan = e;
-                pan.motion.state = SDL_BUTTON_LMASK;
-                mapView.input(pan);
+                if (tool == FEATURES && e.motion.x >= kPaletteW) {
+                    placeFeature(e.motion.x, e.motion.y, true);   // right-drag erases
+                } else {
+                    // Right-drag pans; feed MapView a synthetic left-drag motion.
+                    SDL_Event pan = e;
+                    pan.motion.state = SDL_BUTTON_LMASK;
+                    mapView.input(pan);
+                }
             } else if (e.type != SDL_MOUSEBUTTONDOWN && e.type != SDL_MOUSEMOTION) {
                 mapView.input(e);
             }
@@ -443,6 +501,33 @@ int main(int argc, char** argv) {
                 SDL_RenderDrawLine(ren, 0, int(sy), canvasW, int(sy));
             }
         }
+        // Placed features: draw each non-empty feature-plane cell's sprite at its
+        // cell, anchored like the game. Culled to the visible canvas.
+        {
+            const auto& mp = mapView.map();
+            float zm = mapView.zoom();
+            for (int cz = 0; cz < mp.height; ++cz)
+                for (int cx = 0; cx < mp.width; ++cx) {
+                    uint16_t v = mp.features[size_t(cz) * mp.width + cx];
+                    if (v >= 0xFFFA || v >= mp.featureNames.size()) continue;
+                    float bx = (cx * 16.0f - mapView.offX()) * zm;
+                    float by = (cz * 16.0f - mapView.offY()) * zm;
+                    if (bx < -64 || by < -64 || bx > canvasW + 64 || by > canvasH + 64) continue;
+                    const cart::FeatureRef* r = features.byName(mp.featureNames[v]);
+                    if (!r) continue;
+                    SDL_Texture* t = featTextureFor(*r);
+                    const cart::FeatSprite* sp = features.sprite(vfs, *r);
+                    if (!t || !sp || sp->w == 0) {   // no art: a small marker
+                        SDL_SetRenderDrawColor(ren, 90, 200, 90, 220);
+                        SDL_Rect dot{int(bx) - 2, int(by) - 2, 4, 4};
+                        SDL_RenderFillRect(ren, &dot);
+                        continue;
+                    }
+                    SDL_FRect dst{bx - sp->xoff * zm, by - sp->yoff * zm,
+                                  sp->w * zm, sp->h * zm};
+                    SDL_RenderCopyF(ren, t, nullptr, &dst);
+                }
+        }
         // Start-position markers (drawn in canvas-local coords: gold diamonds
         // with the StartPos number). Off-map ones simply fall outside.
         for (int i = 0; i < int(scenario.starts.size()); ++i) {
@@ -469,16 +554,29 @@ int main(int argc, char** argv) {
         fillRect(ren, 0, kMenuH, kPaletteW, canvasH, 30, 32, 40);
         SDL_Rect palClip{0, kMenuH, kPaletteW, canvasH};
         SDL_RenderSetClipRect(ren, &palClip);
-        for (int i = 0; i < int(sections.list().size()); ++i) {
+        int palN = tool == FEATURES ? int(features.list().size())
+                                    : int(sections.list().size());
+        int palSel = tool == FEATURES ? selectedFeat : selected;
+        for (int i = 0; i < palN; ++i) {
             int col = i % cols, row = i / cols;
             int cx = 4 + col * (kThumb + 4);
             int cy = kMenuH + 4 + row * (kThumb + 4) - paletteScroll;
             if (cy + kThumb < kMenuH || cy > h - kStatusH) continue;   // cull
             SDL_Rect cell{cx, cy, kThumb, kThumb};
-            if (SDL_Texture* t = thumbFor(sections.list()[size_t(i)].path))
-                SDL_RenderCopy(ren, t, nullptr, &cell);
-            else fillRect(ren, cx, cy, kThumb, kThumb, 50, 52, 60);
-            if (i == selected) {   // selection highlight
+            SDL_Texture* t = tool == FEATURES ? featTextureFor(features.list()[size_t(i)])
+                                              : thumbFor(sections.list()[size_t(i)].path);
+            fillRect(ren, cx, cy, kThumb, kThumb, 44, 46, 54);   // cell backing
+            if (t) {
+                if (tool == FEATURES) {   // feature sprite: fit-centre, keep aspect
+                    const cart::FeatSprite* sp = features.sprite(vfs, features.list()[size_t(i)]);
+                    float sc = std::min(float(kThumb) / std::max(sp->w, 1),
+                                        float(kThumb) / std::max(sp->h, 1));
+                    int dw = int(sp->w * sc), dh = int(sp->h * sc);
+                    SDL_Rect fc{cx + (kThumb - dw) / 2, cy + (kThumb - dh) / 2, dw, dh};
+                    SDL_RenderCopy(ren, t, nullptr, &fc);
+                } else SDL_RenderCopy(ren, t, nullptr, &cell);
+            }
+            if (i == palSel) {   // selection highlight
                 SDL_SetRenderDrawColor(ren, 255, 210, 90, 255);
                 SDL_Rect b{cx - 1, cy - 1, kThumb + 2, kThumb + 2};
                 SDL_RenderDrawRect(ren, &b);
@@ -497,8 +595,8 @@ int main(int argc, char** argv) {
 
         // Menu strip: title + tool buttons (active one highlighted).
         cart::drawText(ren, "CARTOGRAPHER", 6, 7, 1, 200, 200, 210);
-        const char* names[2] = {"TERRAIN", "STARTS"};
-        for (int t = 0; t < 2; ++t) {
+        const char* names[3] = {"TERRAIN", "FEATURES", "STARTS"};
+        for (int t = 0; t < 3; ++t) {
             int bx = 96 + t * 72;
             bool active = int(tool) == t;
             fillRect(ren, bx, 3, 68, kMenuH - 6, active ? 90 : 60, active ? 80 : 62,
