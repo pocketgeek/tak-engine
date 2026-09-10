@@ -454,8 +454,45 @@ struct MainMenu::Impl {
     }
 
     // ---- minimal block font + multiplayer server-select overlay ---------------
+    // A dropdown: the default server on top, then every server that has connected
+    // successfully before (Settings::knownServers), then CUSTOM with a text field.
+    static constexpr const char* kDefaultServer = "tak.pgnet.us";
     bool serverSelect = false;
-    std::string serverText = "127.0.0.1";
+    std::vector<std::string> serverItems;   // dropdown rows (default + remembered)
+    int serverSel = 0;                      // selected row; == serverItems.size() -> CUSTOM
+    std::string serverText = "127.0.0.1";   // custom-entry text
+    std::vector<SDL_FRect> serverRects;     // row hit-rects (rebuilt each render)
+    SDL_FRect serverBoxRect{};              // custom text-box hit-rect
+
+    void openServerSelect(const Settings* settings) {
+        serverItems.clear();
+        serverItems.push_back(kDefaultServer);
+        auto ieq = [](const std::string& a, const std::string& b) {
+            if (a.size() != b.size()) return false;
+            for (size_t i = 0; i < a.size(); ++i)
+                if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i]))
+                    return false;
+            return true;
+        };
+        if (settings)
+            for (const auto& sv : settings->knownServers) {
+                bool dup = false;
+                for (const auto& it : serverItems) if (ieq(it, sv)) { dup = true; break; }
+                if (!dup && serverItems.size() < 7) serverItems.push_back(sv);
+            }
+        serverSel = 0;
+        serverSelect = true;
+    }
+    bool serverCustom() const { return serverSel == int(serverItems.size()); }
+    void setServerSel(int i) {   // manage SDL text input across the CUSTOM boundary
+        bool wasCustom = serverCustom();
+        serverSel = std::clamp(i, 0, int(serverItems.size()));
+        if (serverCustom() && !wasCustom) SDL_StartTextInput();
+        if (!serverCustom() && wasCustom) SDL_StopTextInput();
+    }
+    std::string serverChoice() const {
+        return serverCustom() ? serverText : serverItems[size_t(serverSel)];
+    }
 
     static const uint8_t* glyph5x7(char c) {
         static const std::unordered_map<char, std::array<uint8_t, 5>> F = {
@@ -509,22 +546,50 @@ struct MainMenu::Impl {
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 160);
         SDL_FRect dim{0, 0, float(winW), float(winH)}; SDL_RenderFillRectF(ren, &dim);
-        float pw = 560, ph = 210, x0 = (winW - pw) / 2, y0 = (winH - ph) / 2;
+        const int rows = int(serverItems.size()) + 1;   // + CUSTOM
+        const float rowH = 40, pw = 560;
+        float ph = 78 + rows * rowH + (serverCustom() ? 56 : 0) + 58;
+        float x0 = (winW - pw) / 2, y0 = (winH - ph) / 2;
         SDL_SetRenderDrawColor(ren, 28, 30, 40, 245);
         SDL_FRect panel{x0, y0, pw, ph}; SDL_RenderFillRectF(ren, &panel);
         SDL_SetRenderDrawColor(ren, 150, 150, 175, 255); SDL_RenderDrawRectF(ren, &panel);
         blockText("CONNECT TO SERVER", x0 + 30, y0 + 24, 3.0f, {210, 205, 160, 255});
-        SDL_SetRenderDrawColor(ren, 16, 18, 26, 255);
-        SDL_FRect box{x0 + 30, y0 + 78, pw - 60, 46}; SDL_RenderFillRectF(ren, &box);
-        SDL_SetRenderDrawColor(ren, 120, 140, 180, 255); SDL_RenderDrawRectF(ren, &box);
-        blockText(serverText, box.x + 12, box.y + 14, 3.0f, {230, 235, 245, 255});
-        // blinking caret
-        if ((SDL_GetTicks() / 500) % 2 == 0) {
-            float cx = box.x + 12 + float(serverText.size()) * 6 * 3.0f;
-            SDL_SetRenderDrawColor(ren, 230, 235, 245, 255);
-            SDL_FRect car{cx, box.y + 12, 3, 22}; SDL_RenderFillRectF(ren, &car);
+        // Dropdown rows: the default server, remembered servers, then CUSTOM.
+        serverRects.clear();
+        float ry = y0 + 66;
+        for (int i = 0; i < rows; ++i) {
+            SDL_FRect r{x0 + 30, ry, pw - 60, rowH - 6};
+            bool sel = (i == serverSel);
+            SDL_SetRenderDrawColor(ren, sel ? 52 : 16, sel ? 66 : 18, sel ? 96 : 26, 255);
+            SDL_RenderFillRectF(ren, &r);
+            SDL_SetRenderDrawColor(ren, sel ? 160 : 90, sel ? 185 : 100, sel ? 235 : 130, 255);
+            SDL_RenderDrawRectF(ren, &r);
+            std::string label = i < int(serverItems.size()) ? serverItems[size_t(i)]
+                                                            : std::string("CUSTOM...");
+            blockText(label, r.x + 14, r.y + 9, 2.4f,
+                      sel ? SDL_Color{235, 240, 250, 255} : SDL_Color{175, 180, 195, 255});
+            if (i == 0)   // mark the official default server
+                blockText("DEFAULT", r.x + r.w - 110, r.y + 13, 1.6f, {150, 165, 145, 255});
+            serverRects.push_back(r);
+            ry += rowH;
         }
-        blockText("ENTER - CONNECT     ESC - BACK", x0 + 30, y0 + 156, 2.0f, {150, 155, 175, 255});
+        // CUSTOM selected: the address entry field below the list.
+        serverBoxRect = {0, 0, 0, 0};
+        if (serverCustom()) {
+            SDL_SetRenderDrawColor(ren, 16, 18, 26, 255);
+            SDL_FRect box{x0 + 30, ry + 4, pw - 60, 46}; SDL_RenderFillRectF(ren, &box);
+            SDL_SetRenderDrawColor(ren, 120, 140, 180, 255); SDL_RenderDrawRectF(ren, &box);
+            blockText(serverText, box.x + 12, box.y + 14, 3.0f, {230, 235, 245, 255});
+            if ((SDL_GetTicks() / 500) % 2 == 0) {   // blinking caret
+                float cx = box.x + 12 + float(serverText.size()) * 6 * 3.0f;
+                SDL_SetRenderDrawColor(ren, 230, 235, 245, 255);
+                SDL_FRect car{cx, box.y + 12, 3, 22}; SDL_RenderFillRectF(ren, &car);
+            }
+            serverBoxRect = box;
+            ry += 56;
+        }
+        blockText("UP:DOWN - SELECT   ENTER - CONNECT   ESC - BACK",
+                  x0 + 30, ry + 18, 1.8f, {150, 155, 175, 255});
     }
 
     // The SETTINGS menu overlay: OPTIONS / CONTROLS, styled like the in-game GAME MENU.
@@ -652,6 +717,17 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             CampaignScreen cs(d_->ren, d_->vfs, tmp, tab);
             cs.render(w, h);
         }
+        // Debug: TAK_SHOT_SERVER captures the CONNECT dropdown (2 = CUSTOM selected,
+        // showing the address field); seeds sample remembered servers if none saved.
+        if (settings && tak::devEnv("TAK_SHOT_SERVER")) {
+            Settings tmp = *settings;
+            if (tmp.knownServers.empty())
+                tmp.knownServers = {"192.168.1.50:7677", "example.dyndns.org"};
+            d_->openServerSelect(&tmp);
+            if (std::atoi(tak::devEnv("TAK_SHOT_SERVER")) == 2)
+                d_->setServerSel(int(d_->serverItems.size()));   // CUSTOM view
+            d_->renderServerSelect(w, h);
+        }
         d_->screenshot(w, h, shotPath);
         // Debug: TAK_SHOT_RESULT captures the victory result screen (saves to its path).
         if (settings && tak::devEnv("TAK_SHOT_RESULT"))
@@ -698,8 +774,15 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 e.button.x = int(lx); e.button.y = int(ly);
             }
 
-            if (d_->serverSelect) {   // multiplayer: typing a server address
-                if (e.type == SDL_TEXTINPUT) {
+            if (d_->serverSelect) {   // multiplayer: the server dropdown
+                auto connect = [&]() -> bool {
+                    std::string sv = d_->serverChoice();
+                    if (sv.empty()) return false;   // empty custom field: stay
+                    SDL_StopTextInput();
+                    if (serverOut) *serverOut = sv;
+                    return true;
+                };
+                if (e.type == SDL_TEXTINPUT && d_->serverCustom()) {
                     for (const char* p = e.text.text; *p; ++p) {
                         unsigned char ch = (unsigned char)*p;
                         if (d_->serverText.size() < 64 &&
@@ -709,14 +792,31 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 } else if (e.type == SDL_KEYDOWN) {
                     SDL_Keycode k = e.key.keysym.sym;
                     if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
-                        SDL_StopTextInput();
-                        if (serverOut) *serverOut = d_->serverText;
-                        return Choice::Multiplayer;
+                        if (connect()) return Choice::Multiplayer;
                     }
+                    if (k == SDLK_UP) d_->setServerSel(d_->serverSel - 1);
+                    if (k == SDLK_DOWN || k == SDLK_TAB) d_->setServerSel(d_->serverSel + 1);
                     if (k == SDLK_ESCAPE) { d_->serverSelect = false; SDL_StopTextInput(); }
-                    if (k == SDLK_BACKSPACE && !d_->serverText.empty()) d_->serverText.pop_back();
+                    if (k == SDLK_BACKSPACE && d_->serverCustom() && !d_->serverText.empty())
+                        d_->serverText.pop_back();
+                } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                    float mx = float(e.button.x), my = float(e.button.y);
+                    auto in = [&](const SDL_FRect& r) {
+                        return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+                    };
+                    for (size_t i = 0; i < d_->serverRects.size(); ++i)
+                        if (in(d_->serverRects[i])) {
+                            if (int(i) == d_->serverSel) {   // second click connects
+                                if (connect()) return Choice::Multiplayer;
+                            } else {
+                                d_->setServerSel(int(i));
+                            }
+                            break;
+                        }
+                    if (d_->serverBoxRect.w > 0 && in(d_->serverBoxRect))
+                        d_->setServerSel(int(d_->serverItems.size()));   // focus the field
                 }
-                continue;   // swallow everything else while typing
+                continue;   // swallow everything else while the dropdown is open
             }
 
             if (d_->hotkeys_) {   // hotkey overlay sits on top of Options
@@ -813,7 +913,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     SDL_PumpEvents();
                     SDL_FlushEvents(SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP);
                 }
-                if (c == Choice::Multiplayer) { d_->serverSelect = true; SDL_StartTextInput(); }
+                if (c == Choice::Multiplayer) d_->openServerSelect(settings);
                 else if (c == Choice::Options && settings) {
                     // The lower-right menu button opens the SETTINGS menu (OPTIONS / CONTROLS),
                     // NOT the Options screen directly -- see the settingsMenu_ router above.

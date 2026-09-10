@@ -77,6 +77,12 @@ Settings loadSettings() {
         else if (key == "playerName")      s.playerName = val;
         else if (key == "audioDevice")     s.audioDevice = val;
         else if (key == "lastMap")         s.lastMap = val;
+        else if (key == "knownServers") {  // comma-joined, most recent first
+            std::stringstream ks(val);
+            std::string tok;
+            while (std::getline(ks, tok, ',') && s.knownServers.size() < 8)
+                if (!tok.empty()) s.knownServers.push_back(tok);
+        }
         else if (key == "dataDir")         s.dataDir = val;
         else if (key == "dataManifest")    s.dataManifest = val;
         else if (key.rfind("chanGain", 0) == 0 && key.size() == 9) {  // chanGain0..7
@@ -132,6 +138,12 @@ bool saveSettings(const Settings& s) {
     o << "playerName = " << s.playerName << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
     o << "lastMap = " << s.lastMap << "\n";
+    if (!s.knownServers.empty()) {
+        o << "knownServers = ";
+        for (size_t i = 0; i < s.knownServers.size(); ++i)
+            o << (i ? "," : "") << s.knownServers[i];
+        o << "\n";
+    }
     o << "dataDir = " << s.dataDir << "\n";
     o << "dataManifest = " << s.dataManifest << "\n";
     for (const auto& [id, chord] : s.hotkeys) o << "hotkey." << id << " = " << chord << "\n";

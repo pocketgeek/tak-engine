@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace tak {
 
@@ -49,6 +50,9 @@ struct Settings {
     // ---- misc ----
     std::string playerName;        // default name for multiplayer
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
+    // Servers that connected successfully (most recent first, capped at 8). The
+    // menu's CONNECT dropdown lists these under the default server.
+    std::vector<std::string> knownServers;
 
     // ---- data / install location ----
     std::string dataDir;           // retail install folder (picked once; re-checked at launch)
@@ -89,6 +93,7 @@ struct Settings {
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
             && a.playerName == b.playerName && a.lastMap == b.lastMap
+            && a.knownServers == b.knownServers
             && a.audioDevice == b.audioDevice
             && a.hotkeys == b.hotkeys
             && a.campaignCompleted == b.campaignCompleted;

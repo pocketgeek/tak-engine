@@ -594,6 +594,8 @@ int main(int argc, char** argv) {
 
     // Front-end: the retail three-door main menu. Its choice drives the setup below
     // (single-player -> local server + lobby; multiplayer -> connect + browser).
+    std::string rememberServer;   // menu-picked MP server; saved to Settings on a
+                                  // successful connect (feeds the CONNECT dropdown)
     if (mode == "menu") {
         if (dataRoot.empty()) { std::fprintf(stderr, "menu: needs --data <retail-install-dir>\n"); return 1; }
         std::string menuServer;
@@ -622,6 +624,7 @@ int main(int argc, char** argv) {
         if (args.empty()) args.push_back("athri cay");   // TODO: map picker (SP battle menu)
         if (choice == tak::MainMenu::Choice::Multiplayer) {
             std::string sv = menuServer.empty() ? std::string("127.0.0.1") : menuServer;
+            rememberServer = sv;   // remembered (as picked/typed) if the connect succeeds
             auto colon = sv.find(':');   // accept host:port
             if (colon != std::string::npos) {
                 int p = std::atoi(sv.substr(colon + 1).c_str());
@@ -710,6 +713,24 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::printf("connected to %s:%d as '%s'\n", serverHost.c_str(), serverPort, playerName.c_str());
+        // Remember a menu-picked server that connected successfully: move-to-front
+        // (case-insensitive dedupe), cap 8, persist. Feeds the CONNECT dropdown.
+        if (!rememberServer.empty()) {
+            auto ieq = [](const std::string& a, const std::string& b) {
+                if (a.size() != b.size()) return false;
+                for (size_t i = 0; i < a.size(); ++i)
+                    if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i]))
+                        return false;
+                return true;
+            };
+            auto& ks = settings.knownServers;
+            ks.erase(std::remove_if(ks.begin(), ks.end(),
+                                    [&](const std::string& s) { return ieq(s, rememberServer); }),
+                     ks.end());
+            ks.insert(ks.begin(), rememberServer);
+            if (ks.size() > 8) ks.resize(8);
+            tak::saveSettings(settings);
+        }
     }
 
 
