@@ -16,6 +16,7 @@
 #include "cartographer/font5x7.h"
 #include "cartographer/newmap.h"
 #include "cartographer/sections.h"
+#include "cartographer/triggers.h"
 #include "cartographer/units.h"
 #include "client/mapview.h"
 #include "terrain/terrain.h"
@@ -421,8 +422,8 @@ int main(int argc, char** argv) {
         return -1;
     };
 
-    // --- Modal dialogs (Scenario Properties, Resize, Unit Properties, Message) -
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE };
+    // --- Modal dialogs (Scenario Properties, Resize, Unit/Rule props, Message) -
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE };
     static constexpr int kMaxFields = 6;
     Modal modal = M_NONE;
     std::string mf[kMaxFields];              // field buffers
@@ -432,6 +433,7 @@ int main(int argc, char** argv) {
     int mN = 0;                              // active field count
     int mfocus = 0;
     int editUnit = -1;                       // UNITS: index being edited (M_UNIT)
+    tak::crt::Rule* editRule = nullptr;      // M_RULE: rule whose params are edited
     std::vector<std::string> mMsg;           // M_MESSAGE: wrapped text lines
     SDL_Rect mBox[kMaxFields]{}, mOK{}, mCancel{};   // render-computed hit rects
     // Pop a message box (word-wrapped to ~46 cols) — used by Check Map.
@@ -500,8 +502,29 @@ int main(int argc, char** argv) {
             int a = std::atoi(mf[5].c_str()) % 360; if (a < 0) a += 360;
             u.angle = float(a);
             unitsEdited = true;
+        } else if (modal == M_RULE && editRule) {
+            for (int i = 0; i < mN; ++i) editRule->slot[i] = mf[i];
+            for (int i = mN; i < 5; ++i) editRule->slot[i].clear();
+            editRule = nullptr;
         }
         modal = M_NONE; SDL_StopTextInput();
+    };
+    // Open the param editor for a condition/action rule (fields = its opcode's
+    // parameters, in slot order).
+    auto openRuleEditor = [&](tak::crt::Rule* r, bool isAction) {
+        const auto& defs = isAction ? cart::actionDefs() : cart::conditionDefs();
+        int op = std::clamp(r->opcode, 0, int(defs.size()) - 1);
+        const auto& params = defs[size_t(op)].params;
+        editRule = r; mfocus = 0;
+        mN = std::min(int(params.size()), kMaxFields);
+        mTitle = (isAction ? "ACTION: " : "CONDITION: ") + cart::formatRule(isAction, *r);
+        for (int i = 0; i < mN; ++i) {
+            mLabel[i] = cart::paramLabel(params[size_t(i)]);
+            mf[i] = r->slot[size_t(i)];
+            mfNumeric[i] = false;   // slots hold ASCII (numbers, names, flags)
+        }
+        modal = M_RULE;
+        if (mN > 0) SDL_StartTextInput();
     };
 
     // --- Use Only restriction list + Check Map (phase 4) ----------------------
@@ -528,6 +551,32 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < bad.size(); ++i) { if (i) list += ", "; list += bad[i]; }
         openMessage("CHECK MAP", std::to_string(bad.size()) + " placed unit type(s) "
                     "have been restricted and will not show up in the game: " + list);
+    };
+
+    // --- Scenario Scripting (per-player trigger rules) overlay (phase 5) ------
+    bool scriptOpen = false;
+    int scrPlayer = 0;                     // 0..8
+    int scrGroup = -1;                     // selected rule-group in this player
+    int scrCondSel = -1, scrActSel = -1;   // selected condition / action row
+    int scrRuleScroll = 0, scrCondScroll = 0, scrActScroll = 0;
+    bool pickOpen = false, pickAction = false;   // opcode picker (add cond/act)
+    int pickScroll = 0;
+    SDL_Rect rRuleList{}, rCondList{}, rActList{}, rPickList{};   // render-computed
+    SDL_Rect rPrevP{}, rNextP{}, rAddRule{}, rDelRule{}, rAddCond{}, rDelCond{},
+             rAddAct{}, rDelAct{}, rScrDone{}, rPickCancel{};
+    auto scrGroups = [&]() -> std::vector<tak::crt::RuleGroup>& {
+        return scen.players[size_t(scrPlayer)];
+    };
+    auto curGroup = [&]() -> tak::crt::RuleGroup* {
+        auto& gs = scrGroups();
+        return (scrGroup >= 0 && scrGroup < int(gs.size())) ? &gs[size_t(scrGroup)] : nullptr;
+    };
+    auto openScripting = [&]() {
+        if (int(scen.players.size()) < 9) scen.players.resize(9);   // retail writes 9
+        scriptOpen = true; scrPlayer = 0;
+        scrGroup = scen.players[0].empty() ? -1 : 0;
+        scrCondSel = scrActSel = -1;
+        scrRuleScroll = scrCondScroll = scrActScroll = 0;
     };
 
     if (!shotPath.empty()) {
@@ -588,6 +637,101 @@ int main(int argc, char** argv) {
                 }
                 continue;
             }
+            // The Scripting (trigger) overlay swallows input while up.
+            if (scriptOpen) {
+                constexpr int kRow = 12;
+                // Nested opcode picker (choose a condition/action type to add).
+                if (pickOpen) {
+                    const auto& defs = pickAction ? cart::actionDefs() : cart::conditionDefs();
+                    if (e.type == SDL_MOUSEWHEEL) {
+                        int maxS = std::max(0, int(defs.size()) * kRow - rPickList.h);
+                        pickScroll = std::clamp(pickScroll - e.wheel.y * 36, 0, maxS);
+                    } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                        pickOpen = false;
+                    } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                        int mx = e.button.x, my = e.button.y;
+                        if (cart::pointIn(mx, my, rPickCancel)) pickOpen = false;
+                        else if (cart::pointIn(mx, my, rPickList)) {
+                            int row = (my - rPickList.y + pickScroll) / kRow;
+                            tak::crt::RuleGroup* g = curGroup();
+                            if (g && row >= 0 && row < int(defs.size())) {
+                                tak::crt::Rule r; r.opcode = row;
+                                for (size_t i = 0; i < defs[size_t(row)].params.size() && i < 5; ++i)
+                                    r.slot[i] = cart::defaultParam(defs[size_t(row)].params[i]);
+                                if (pickAction) { g->actions.push_back(r); scrActSel = int(g->actions.size()) - 1; }
+                                else { g->conditions.push_back(r); scrCondSel = int(g->conditions.size()) - 1; }
+                                pickOpen = false;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                auto& gs = scrGroups();
+                tak::crt::RuleGroup* g = curGroup();
+                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                    scriptOpen = false;
+                } else if (e.type == SDL_MOUSEWHEEL) {
+                    int mx, my; SDL_GetMouseState(&mx, &my);
+                    if (cart::pointIn(mx, my, rRuleList)) {
+                        int maxS = std::max(0, int(gs.size()) * kRow - rRuleList.h);
+                        scrRuleScroll = std::clamp(scrRuleScroll - e.wheel.y * 36, 0, maxS);
+                    } else if (g && cart::pointIn(mx, my, rCondList)) {
+                        int maxS = std::max(0, int(g->conditions.size()) * kRow - rCondList.h);
+                        scrCondScroll = std::clamp(scrCondScroll - e.wheel.y * 36, 0, maxS);
+                    } else if (g && cart::pointIn(mx, my, rActList)) {
+                        int maxS = std::max(0, int(g->actions.size()) * kRow - rActList.h);
+                        scrActScroll = std::clamp(scrActScroll - e.wheel.y * 36, 0, maxS);
+                    }
+                } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                    int mx = e.button.x, my = e.button.y;
+                    bool dbl = e.button.clicks >= 2;
+                    if (cart::pointIn(mx, my, rScrDone)) scriptOpen = false;
+                    else if (cart::pointIn(mx, my, rPrevP)) {
+                        scrPlayer = (scrPlayer + 8) % 9; scrGroup = scen.players[size_t(scrPlayer)].empty() ? -1 : 0;
+                        scrCondSel = scrActSel = -1; scrRuleScroll = scrCondScroll = scrActScroll = 0;
+                    } else if (cart::pointIn(mx, my, rNextP)) {
+                        scrPlayer = (scrPlayer + 1) % 9; scrGroup = scen.players[size_t(scrPlayer)].empty() ? -1 : 0;
+                        scrCondSel = scrActSel = -1; scrRuleScroll = scrCondScroll = scrActScroll = 0;
+                    } else if (cart::pointIn(mx, my, rAddRule)) {
+                        gs.push_back({}); scrGroup = int(gs.size()) - 1; scrCondSel = scrActSel = -1;
+                    } else if (cart::pointIn(mx, my, rDelRule) && g) {
+                        gs.erase(gs.begin() + scrGroup);
+                        scrGroup = gs.empty() ? -1 : std::min(scrGroup, int(gs.size()) - 1);
+                        scrCondSel = scrActSel = -1;
+                    } else if (cart::pointIn(mx, my, rAddCond)) {
+                        if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; }
+                        pickOpen = true; pickAction = false; pickScroll = 0;
+                    } else if (cart::pointIn(mx, my, rAddAct)) {
+                        if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; }
+                        pickOpen = true; pickAction = true; pickScroll = 0;
+                    } else if (cart::pointIn(mx, my, rDelCond) && g && scrCondSel >= 0 &&
+                               scrCondSel < int(g->conditions.size())) {
+                        g->conditions.erase(g->conditions.begin() + scrCondSel); scrCondSel = -1;
+                    } else if (cart::pointIn(mx, my, rDelAct) && g && scrActSel >= 0 &&
+                               scrActSel < int(g->actions.size())) {
+                        g->actions.erase(g->actions.begin() + scrActSel); scrActSel = -1;
+                    } else if (cart::pointIn(mx, my, rRuleList)) {
+                        int row = (my - rRuleList.y + scrRuleScroll) / kRow;
+                        if (row >= 0 && row < int(gs.size())) {
+                            scrGroup = row; scrCondSel = scrActSel = -1;
+                            scrCondScroll = scrActScroll = 0;
+                        }
+                    } else if (g && cart::pointIn(mx, my, rCondList)) {
+                        int row = (my - rCondList.y + scrCondScroll) / kRow;
+                        if (row >= 0 && row < int(g->conditions.size())) {
+                            scrCondSel = row;
+                            if (dbl) openRuleEditor(&g->conditions[size_t(row)], false);
+                        }
+                    } else if (g && cart::pointIn(mx, my, rActList)) {
+                        int row = (my - rActList.y + scrActScroll) / kRow;
+                        if (row >= 0 && row < int(g->actions.size())) {
+                            scrActSel = row;
+                            if (dbl) openRuleEditor(&g->actions[size_t(row)], true);
+                        }
+                    }
+                }
+                continue;
+            }
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)
                 running = false;
             else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
@@ -602,6 +746,8 @@ int main(int argc, char** argv) {
                 useOnlyOpen = true;      // Scenario -> Use Only (unit restriction)
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_c) {
                 checkMap();              // Scenario -> Check Map
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_t) {
+                openScripting();         // Scenario -> Scripting (triggers)
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_LEFTBRACKET) {
                 currentPlayer = (currentPlayer + 7) % 8;   // UNITS: pick placement player
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RIGHTBRACKET) {
@@ -914,6 +1060,90 @@ int main(int argc, char** argv) {
             status += "   STARTS: " + std::to_string(scenario.starts.size());
         if (!useOnly.empty()) status += "   USEONLY: " + std::to_string(useOnly.size());
         cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
+
+        // Scripting (trigger) overlay: per-player rule groups + their
+        // conditions and actions. Drawn under the picker / param modal.
+        if (scriptOpen) {
+            constexpr int kRow = 12;
+            SDL_Rect ct = cart::drawPanel(ren, w, h, 780, 520, "SCENARIO SCRIPTING");
+            auto& gs = scen.players[size_t(scrPlayer)];
+            tak::crt::RuleGroup* g = curGroup();
+            // Header row: player nav, rule count, Done.
+            rPrevP = cart::drawButton(ren, ct.x, ct.y, 18, 14, "<", false);
+            cart::drawText(ren, "PLAYER " + std::to_string(scrPlayer), ct.x + 24, ct.y + 3, 1, 220, 224, 235);
+            rNextP = cart::drawButton(ren, ct.x + 104, ct.y, 18, 14, ">", false);
+            cart::drawText(ren, std::to_string(gs.size()) + " RULES", ct.x + 132, ct.y + 3, 1, 175, 185, 200);
+            rScrDone = cart::drawButton(ren, ct.x + ct.w - 60, ct.y, 56, 14, "DONE", true);
+
+            int colW = (ct.w - 20) / 3;
+            int x0 = ct.x, x1 = ct.x + colW + 10, x2 = ct.x + 2 * colW + 20;
+            cart::drawText(ren, "RULES", x0, ct.y + 20, 1, 150, 200, 150);
+            cart::drawText(ren, "CONDITIONS", x1, ct.y + 20, 1, 150, 200, 150);
+            cart::drawText(ren, "ACTIONS", x2, ct.y + 20, 1, 150, 200, 150);
+            int listY = ct.y + 32, listH = ct.h - 32 - 24;
+            rRuleList = {x0, listY, colW, listH};
+            rCondList = {x1, listY, colW, listH};
+            rActList = {x2, listY, colW, listH};
+            for (const SDL_Rect* a : {&rRuleList, &rCondList, &rActList}) {
+                SDL_SetRenderDrawColor(ren, 22, 24, 32, 255); SDL_RenderFillRect(ren, a);
+                SDL_SetRenderDrawColor(ren, 70, 74, 90, 255); SDL_RenderDrawRect(ren, a);
+            }
+            // Rule (group) list.
+            SDL_RenderSetClipRect(ren, &rRuleList);
+            for (int i = 0; i < int(gs.size()); ++i) {
+                int ry = listY + i * kRow - scrRuleScroll;
+                if (ry + kRow < listY || ry > listY + listH) continue;
+                bool sel = i == scrGroup;
+                if (sel) { SDL_SetRenderDrawColor(ren, 58, 68, 95, 255); SDL_Rect hr{x0, ry, colW, kRow}; SDL_RenderFillRect(ren, &hr); }
+                std::string lbl = "Rule " + std::to_string(i + 1) + "  " +
+                    std::to_string(gs[size_t(i)].conditions.size()) + "c/" +
+                    std::to_string(gs[size_t(i)].actions.size()) + "a";
+                cart::drawText(ren, lbl, x0 + 3, ry + 2, 1, sel ? 255 : 200, sel ? 235 : 205, sel ? 200 : 215);
+            }
+            SDL_RenderSetClipRect(ren, nullptr);
+            // Conditions + actions of the selected group.
+            auto drawRules = [&](const SDL_Rect& area, int scroll, const std::vector<tak::crt::Rule>* rules,
+                                 bool isAct, int selRow) {
+                if (!rules) return;
+                SDL_RenderSetClipRect(ren, &area);
+                for (int i = 0; i < int(rules->size()); ++i) {
+                    int ry = area.y + i * kRow - scroll;
+                    if (ry + kRow < area.y || ry > area.y + area.h) continue;
+                    bool sel = i == selRow;
+                    if (sel) { SDL_SetRenderDrawColor(ren, 58, 68, 95, 255); SDL_Rect hr{area.x, ry, area.w, kRow}; SDL_RenderFillRect(ren, &hr); }
+                    cart::drawText(ren, cart::formatRule(isAct, (*rules)[size_t(i)]), area.x + 3, ry + 2, 1,
+                                   sel ? 255 : 205, sel ? 235 : 210, sel ? 200 : 220);
+                }
+                SDL_RenderSetClipRect(ren, nullptr);
+            };
+            drawRules(rCondList, scrCondScroll, g ? &g->conditions : nullptr, false, scrCondSel);
+            drawRules(rActList, scrActScroll, g ? &g->actions : nullptr, true, scrActSel);
+            // Column action buttons.
+            int by = ct.y + ct.h - 18;
+            rAddRule = cart::drawButton(ren, x0, by, 44, 16, "+RULE", true);
+            rDelRule = cart::drawButton(ren, x0 + 48, by, 44, 16, "-RULE", false);
+            rAddCond = cart::drawButton(ren, x1, by, 44, 16, "+COND", true);
+            rDelCond = cart::drawButton(ren, x1 + 48, by, 44, 16, "-COND", false);
+            rAddAct = cart::drawButton(ren, x2, by, 40, 16, "+ACT", true);
+            rDelAct = cart::drawButton(ren, x2 + 44, by, 40, 16, "-ACT", false);
+            cart::drawText(ren, "double-click a condition/action to edit its parameters",
+                           ct.x, by - 12, 1, 150, 154, 168);
+
+            // Nested opcode picker (choose a condition/action type to add).
+            if (pickOpen) {
+                const auto& defs = pickAction ? cart::actionDefs() : cart::conditionDefs();
+                SDL_Rect pc = cart::drawPanel(ren, w, h, 480, 400, pickAction ? "ADD ACTION" : "ADD CONDITION");
+                rPickList = {pc.x, pc.y, pc.w, pc.h - 28};
+                SDL_RenderSetClipRect(ren, &rPickList);
+                for (int i = 0; i < int(defs.size()); ++i) {
+                    int ry = pc.y + i * kRow - pickScroll;
+                    if (ry + kRow < pc.y || ry > pc.y + rPickList.h) continue;
+                    cart::drawText(ren, defs[size_t(i)].templ, pc.x + 3, ry + 2, 1, 210, 214, 225);
+                }
+                SDL_RenderSetClipRect(ren, nullptr);
+                rPickCancel = cart::drawButton(ren, pc.x + pc.w - 74, pc.y + pc.h - 20, 70, 18, "CANCEL", false);
+            }
+        }
 
         // Message box (Check Map result): wrapped text + a single OK.
         if (modal == M_MESSAGE) {

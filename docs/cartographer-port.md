@@ -115,7 +115,14 @@ the **tile/section palette + brush tools**, the **height tools**, the
     (warns which placed unit types are restricted — the one retail validation,
     also fired at save). Keys: P/R/U/C.]
 5. The trigger system (Scripting): condition/action opcode tables (RE), rule
-   editor, per-player rules, OTA script write.
+   editor, per-player rules, script write. ✅
+   [Scripting overlay (key T): per-player rule groups, each a list of conditions
+    + actions rendered human-readably from the 26+26 opcode templates
+    (src/cartographer/triggers). Navigate players/rules; +/- RULE, +/- COND,
+    +/- ACT (26-item opcode picker); double-click a condition/action to edit its
+    parameters (fields labelled by param kind). Saves through tak::crt::write in
+    the .crt -- verified: Ulin's Folly's 30 rules load, render correctly ("I
+    control more than 2 ARAAT at hill"), and save back byte-identical.]
 6. Land Lasso + Clear Area; Recent files; polish to 1:1.
 
 ## Deep RE findings (tools + triggers, confirmed from the binary)
