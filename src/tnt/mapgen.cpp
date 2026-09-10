@@ -188,8 +188,12 @@ Result generate(const Params& raw) {
     for (int by = 0; by < m.blocksY; ++by)
         for (int bx = 0; bx < m.blocksX; ++bx) {
             int cx = bx * 2, cz = by * 2;   // 2x2 cells under the 32px block
-            int hs = (hAt(cx, cz) + hAt(cx + 1, cz) + hAt(cx, cz + 1) + hAt(cx + 1, cz + 1)) / 4;
-            bool water = hs < m.seaLevel;
+            // Only a FULLY-submerged block gets the (near-black) sea tile; a shore
+            // block keeps a ground tile and its below-sea cells are tinted shallow
+            // water by the compositor -- otherwise a sea tile's above-sea cell shows
+            // through as a black speck.
+            int hmax = std::max({hAt(cx, cz), hAt(cx + 1, cz), hAt(cx, cz + 1), hAt(cx + 1, cz + 1)});
+            bool water = hmax < m.seaLevel;
             size_t i = size_t(by) * m.blocksX + bx;
             m.tileKeys[i] = water ? art.sea : art.ground;
             int K = water ? kSea : kGround;
