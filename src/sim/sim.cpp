@@ -1340,6 +1340,18 @@ void World::fire(Unit& u, Unit& target, int slot) {
     projectiles_.push_back(p);
 }
 
+// Retail melee ignores its TDF `range` entirely: MeleeWeapon::inRange (icd
+// @0x52b980) passes when the two units' footprint boxes are within half a cell
+// (8px) of TOUCHING on both axes -- edge adjacency, not a radial distance.
+// (Ranged weapons use the base test, icd @0x530580: 2D centre-to-centre,
+// inclusive.) Treating melee `range` as radial left Zhon beasts (range 250)
+// halting 15 cells out and biting air, and the Sailor (range 10) unable to ever
+// reach a legal firing distance past the 13px separation floor.
+static bool meleeInRange(const UnitType* a, const UnitType* b, float dx, float dz) {
+    return std::abs(dx) < 8.0f * float(a->footX + b->footX) + 8.0f &&
+           std::abs(dz) < 8.0f * float(a->footZ + b->footZ) + 8.0f;
+}
+
 void World::tickCombat(Unit& u, float dt) {
     for (auto& r : u.reloads)
         if (r > 0) r -= dt;
@@ -1444,6 +1456,10 @@ void World::tickCombat(Unit& u, float dt) {
                     ? 8.0f * float(std::max(target->type->footX, target->type->footZ)) + 24.0f
                     : 0.0f;
     float reach = best + pad;
+    // Melee: retail closes to footprint adjacency (see meleeInRange above);
+    // `range` and LoS play no part.
+    bool adj = sel && sel->melee && target->type &&
+               meleeInRange(u.type, target->type, dx, dz);
     // Ranged units need a clear line to shoot; a wall between them means close
     // in / reposition rather than firing through it (melee & flyers are exempt).
     bool needLoS = best > 64.0f && !u.type->canFly &&
@@ -1463,7 +1479,8 @@ void World::tickCombat(Unit& u, float dt) {
         u.orders.erase(u.orders.begin());
         return;
     }
-    if (dist > reach * 0.95f || (!los && u.type->canMove)) {
+    if ((sel && sel->melee) ? !adj
+                            : (dist > reach * 0.95f || (!los && u.type->canMove))) {
         // Advance toward the target, steering around impassable terrain.
         u.repathLeft -= dt;
         Order& o = u.orders.front();
@@ -1505,7 +1522,8 @@ void World::tickCombat(Unit& u, float dt) {
     // Fire the selected weapon when the target is in its [minrange, range] band,
     // within aimtolerance, has a clear shot, and (unless noairweapon) may hit air.
     if (sel && !(sel->noAir && target->type && target->type->canFly) &&
-        (sel->melee || los) && u.reloads[slot] <= 0 && dist <= sel->range + pad &&
+        (sel->melee || los) && u.reloads[slot] <= 0 &&
+        (sel->melee ? adj : dist <= sel->range + pad) &&
         dist >= sel->minRange && std::abs(diff) < std::max(sel->aimTol, 0.03f))
         fire(u, *target, slot);
     // cancapture: a charmer converts the target after sustained contact (~3s) or
@@ -2572,6 +2590,15 @@ void World::tick(float dt) {
                 Unit* t = unit(u.orders.front().targetId);
                 if (!t) return false;
                 float dx = t->x - u.x, dz = t->z - u.z;
+                // Melee holds at footprint adjacency (must agree with tickCombat's
+                // gates, else a unit standing at contact is dragged back into
+                // walking by the radial test below).
+                int slot = u.type->weapons.empty()
+                               ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
+                const Weapon* sel =
+                    slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
+                if (sel && sel->melee && t->type)
+                    return meleeInRange(u.type, t->type, dx, dz);
                 // Pad by a structure target's footprint half-extent so "holding in
                 // range" agrees with tickCombat's fire gate (else a unit stopped at a
                 // building's edge gets dragged back into moving).

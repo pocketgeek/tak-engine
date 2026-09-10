@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 27;       // 27: combat range to a building's footprint
+constexpr uint32_t kNetVersion = 28;       // 28: retail melee = footprint adjacency
                                            //     edge + builder gives up an unreachable site
                                            // 26: benchmark level 6 (Extra Absurd)
                                            // 25: GameOptions.benchmark carries an INTENSITY
