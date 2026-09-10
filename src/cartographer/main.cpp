@@ -11,6 +11,7 @@
 
 #include <SDL.h>
 
+#include "cartographer/font5x7.h"
 #include "cartographer/newmap.h"
 #include "cartographer/sections.h"
 #include "client/mapview.h"
@@ -18,6 +19,7 @@
 #include "util/jpeg.h"
 #include "hpi/hpi.h"
 #include "tnt/ota.h"
+#include "util/png.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -41,7 +43,7 @@ void fillRect(SDL_Renderer* r, int x, int y, int w, int h, Uint8 cr, Uint8 cg, U
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string dataRoot, mapName, outDir = ".", exportPath, stampName, newWorld = "aramon";
+    std::string dataRoot, mapName, outDir = ".", exportPath, stampName, newWorld = "aramon", shotPath;
     int stampBX = 0, stampBY = 0, newW = 0, newH = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -55,6 +57,7 @@ int main(int argc, char** argv) {
             std::sscanf(argv[++i], "%dx%d", &newW, &newH);
         }
         else if (a == "--world" && i + 1 < argc) newWorld = argv[++i];
+        else if (a == "--shot" && i + 1 < argc) shotPath = argv[++i];   // render 1 frame -> PNG
         else if (a[0] != '-') mapName = a;
     }
     // Data root: --data wins; otherwise the local directory if it holds a valid
@@ -289,6 +292,32 @@ int main(int argc, char** argv) {
         (void)w; (void)h;
     };
 
+    // --- Object tools (start positions this phase; features/units next) --------
+    enum Tool { TERRAIN, STARTS };
+    Tool tool = TERRAIN;
+    int draggingStart = -1;           // index into scenario.starts while dragging
+    // Canvas mouse -> map cell (16px). Returns false if off the canvas/map.
+    auto mouseCell = [&](int mx, int my, int& cx, int& cz) -> bool {
+        if (mx < kPaletteW) return false;
+        float wx = mapView.offX() + float(mx - kPaletteW) / mapView.zoom();
+        float wz = mapView.offY() + float(my - kMenuH) / mapView.zoom();
+        cx = int(wx / 16.0f); cz = int(wz / 16.0f);
+        return cx >= 0 && cz >= 0 && cx < mapView.map().width && cz < mapView.map().height;
+    };
+    // Start position whose marker is near screen (mx,my), or -1.
+    auto startAt = [&](int mx, int my) -> int {
+        for (int i = 0; i < int(scenario.starts.size()); ++i) {
+            float sx = kPaletteW + (scenario.starts[i].xpos * 16.0f - mapView.offX()) * mapView.zoom();
+            float sy = kMenuH + (scenario.starts[i].zpos * 16.0f - mapView.offY()) * mapView.zoom();
+            if (std::abs(sx - mx) <= 10 && std::abs(sy - my) <= 10) return i;
+        }
+        return -1;
+    };
+
+    if (!shotPath.empty()) {
+        mapView.setZoom(0.3f);          // fit-ish view for the shot
+        mapView.finishChunks();         // wait for the terrain to decode+upload
+    }
     bool running = true;
     while (running) {
         int w, h;
@@ -307,10 +336,18 @@ int main(int argc, char** argv) {
                 saveMap(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt");
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_g) {
                 showGrid = !showGrid;   // View -> Grid
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_TAB) {
+                tool = tool == TERRAIN ? STARTS : TERRAIN;   // cycle tool
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
                        e.key.keysym.sym <= SDLK_5) {
                 // Zoom levels 1..5 = 100/75/50/25/12.5% (retail's five steps).
                 mapView.setZoom(kZoomLevels[e.key.keysym.sym - SDLK_1]);
+            } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                       e.button.button == SDL_BUTTON_LEFT && e.button.y < kMenuH) {
+                // Toolbar buttons: TERRAIN | STARTS (each ~72px, after a title).
+                int bx = e.button.x - 96;
+                if (bx >= 0 && bx < 72) tool = TERRAIN;
+                else if (bx >= 72 && bx < 144) tool = STARTS;
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_LEFT && e.button.x < kPaletteW &&
                        e.button.y >= kMenuH && e.button.y < h - kStatusH) {
@@ -331,13 +368,41 @@ int main(int argc, char** argv) {
                 } else {
                     mapView.input(e);   // zoom the canvas
                 }
-            } else if ((e.type == SDL_MOUSEBUTTONDOWN &&
-                        e.button.button == SDL_BUTTON_LEFT && e.button.x >= kPaletteW)) {
-                // Left-click on the canvas -> stamp the selected section.
-                stampAtMouse(e.button.x, e.button.y, canvasW, canvasH);
+            } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                       e.button.button == SDL_BUTTON_LEFT && e.button.x >= kPaletteW) {
+                if (tool == TERRAIN) {
+                    stampAtMouse(e.button.x, e.button.y, canvasW, canvasH);
+                } else {   // STARTS: grab an existing marker, else place a new one
+                    int hit = startAt(e.button.x, e.button.y);
+                    int cx, cz;
+                    if (hit >= 0) draggingStart = hit;
+                    else if (mouseCell(e.button.x, e.button.y, cx, cz)) {
+                        int num = 1;   // next free StartPosN
+                        for (bool used = true; used; ++num) {
+                            used = false;
+                            for (auto& s : scenario.starts) if (s.number == num) used = true;
+                        }
+                        scenario.starts.push_back({num - 1, cx, cz});
+                        draggingStart = int(scenario.starts.size()) - 1;
+                    }
+                }
+            } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                       e.button.button == SDL_BUTTON_RIGHT && tool == STARTS) {
+                int hit = startAt(e.button.x, e.button.y);   // right-click deletes a start
+                if (hit >= 0) scenario.starts.erase(scenario.starts.begin() + hit);
+            } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                draggingStart = -1;
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK) &&
                        e.motion.x >= kPaletteW) {
-                stampAtMouse(e.motion.x, e.motion.y, canvasW, canvasH);   // drag-paint
+                if (tool == TERRAIN) {
+                    stampAtMouse(e.motion.x, e.motion.y, canvasW, canvasH);   // drag-paint
+                } else if (draggingStart >= 0) {
+                    int cx, cz;   // drag a start marker to a new cell
+                    if (mouseCell(e.motion.x, e.motion.y, cx, cz)) {
+                        scenario.starts[size_t(draggingStart)].xpos = cx;
+                        scenario.starts[size_t(draggingStart)].zpos = cz;
+                    }
+                }
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_RMASK)) {
                 // Right-drag pans (left-drag paints); feed MapView a synthetic
                 // left-drag motion so its pan handler moves the view.
@@ -378,6 +443,26 @@ int main(int argc, char** argv) {
                 SDL_RenderDrawLine(ren, 0, int(sy), canvasW, int(sy));
             }
         }
+        // Start-position markers (drawn in canvas-local coords: gold diamonds
+        // with the StartPos number). Off-map ones simply fall outside.
+        for (int i = 0; i < int(scenario.starts.size()); ++i) {
+            float sx = (scenario.starts[i].xpos * 16.0f - mapView.offX()) * mapView.zoom();
+            float sy = (scenario.starts[i].zpos * 16.0f - mapView.offY()) * mapView.zoom();
+            if (sx < -12 || sy < -12 || sx > canvasW + 12 || sy > canvasH + 12) continue;
+            SDL_Vertex d[4] = {
+                {{sx, sy - 9}, {255, 205, 70, 255}, {0, 0}},
+                {{sx + 9, sy}, {255, 205, 70, 255}, {0, 0}},
+                {{sx, sy + 9}, {255, 205, 70, 255}, {0, 0}},
+                {{sx - 9, sy}, {255, 205, 70, 255}, {0, 0}},
+            };
+            int di[6] = {0, 1, 2, 0, 2, 3};
+            SDL_RenderGeometry(ren, nullptr, d, 4, di, 6);
+            SDL_SetRenderDrawColor(ren, 30, 20, 0, 255);
+            SDL_Rect out{int(sx) - 9, int(sy) - 9, 18, 18};
+            SDL_RenderDrawRect(ren, &out);
+            cart::drawText(ren, std::to_string(scenario.starts[i].number),
+                           int(sx) - 2, int(sy) - 3, 1, 20, 14, 0);
+        }
         SDL_RenderSetViewport(ren, nullptr);
 
         // Palette panel (left).
@@ -410,7 +495,40 @@ int main(int argc, char** argv) {
         fillRect(ren, 0, h - kStatusH, w, kStatusH, 38, 40, 50);
         fillRect(ren, 0, h - kStatusH, w, 1, 12, 12, 16);
 
+        // Menu strip: title + tool buttons (active one highlighted).
+        cart::drawText(ren, "CARTOGRAPHER", 6, 7, 1, 200, 200, 210);
+        const char* names[2] = {"TERRAIN", "STARTS"};
+        for (int t = 0; t < 2; ++t) {
+            int bx = 96 + t * 72;
+            bool active = int(tool) == t;
+            fillRect(ren, bx, 3, 68, kMenuH - 6, active ? 90 : 60, active ? 80 : 62,
+                     active ? 40 : 74);
+            cart::drawText(ren, names[t], bx + 8, 7, 1, active ? 255 : 190,
+                           active ? 220 : 190, active ? 120 : 200);
+        }
+
+        // Status bar: cursor cell, tool, zoom, start count.
+        int mxg, myg; SDL_GetMouseState(&mxg, &myg);
+        int ccx, ccz;
+        std::string coord = mouseCell(mxg, myg, ccx, ccz)
+            ? "( " + std::to_string(ccx) + ", " + std::to_string(ccz) + " )" : "";
+        char zbuf[16];
+        std::snprintf(zbuf, sizeof zbuf, "%d%%", int(mapView.zoom() * 100 + 0.5f));
+        std::string status = coord + "   TOOL: " + names[int(tool)] + "   ZOOM: " + zbuf +
+                             "   STARTS: " + std::to_string(scenario.starts.size());
+        cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
+
         SDL_RenderPresent(ren);
+        if (!shotPath.empty()) {
+            int ow, oh; SDL_GetRendererOutputSize(ren, &ow, &oh);
+            std::vector<uint8_t> px(size_t(ow) * oh * 4);
+            if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGBA32,
+                                     px.data(), ow * 4) == 0) {
+                tak::png::write(shotPath, ow, oh, px);
+                std::fprintf(stderr, "shot %s (%dx%d)\n", shotPath.c_str(), ow, oh);
+            }
+            running = false;
+        }
     }
 
     for (auto& [k, t] : thumbs) if (t) SDL_DestroyTexture(t);

@@ -103,6 +103,8 @@ the **tile/section palette + brush tools**, the **height tools**, the
 1. TNT writer + New/Save/Save As round-trip (load→save→byte-compare).
 2. Tile palette + paint brush; height tools; Grid overlay; zoom levels.
 3. Feature/unit/start-pos placement + selection + the property dialogs.
+   [start positions DONE: markers, place/move/delete, OTA save; +5x7 bitmap font,
+    tool toolbar, status bar, --shot capture]
 4. Scenario Properties / Resize / Use Only / Check Map.
 5. The trigger system (Scripting): condition/action opcode tables (RE), rule
    editor, per-player rules, OTA script write.
