@@ -25,6 +25,7 @@ bool gInstantBuild = false;
 // thread, so each thread accumulates (and prints) its own room's timing -- both
 // race-free and correctly attributed.
 static const bool g_phase = getenv("TAK_PHASE") != nullptr;
+static double g_visMs = 0, g_burnMs = 0, g_gridMs = 0;   // finer "other" split
 static thread_local double g_tcomb = 0, g_flowMs = 0, g_pathMs = 0;
 static thread_local long g_flowN = 0, g_pathN = 0;
 
@@ -837,9 +838,15 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1,
         pathFrom_[i] = fromIdx;
         pathStamp_[i] = pathGen_;
     };
+    // Octile heuristic. With road preference active, off-road steps cost 1.2x
+    // while a base-rate h underestimates by up to 20% -- which made A* explore
+    // FAR more nodes (single 50ms searches on Two Castles). Weight h by the
+    // off-road factor on road maps: paths may be up to 20% suboptimal (they
+    // just prefer roads a little harder), but search cost returns to normal.
+    const float hw = roads_ ? 1.2f : 1.0f;
     auto hcost = [&](int x, int z) {
         float ax = float(std::abs(x - tx)), az = float(std::abs(z - tz));
-        return std::max(ax, az) + 0.41421f * std::min(ax, az);
+        return (std::max(ax, az) + 0.41421f * std::min(ax, az)) * hw;
     };
     int start = sz * w_ + sx, goal = tz * w_ + tx;
     touch(size_t(start), 0, -1);
@@ -2681,7 +2688,12 @@ void World::tickProduction(Unit& u, float dt) {
 
 void World::tick(float dt) {
     ++tickCounter_;
-    tickBurning();   // feature fire: spread + burn-out (deterministic, hashed)
+    {
+        auto _b = std::chrono::steady_clock::now();
+        tickBurning();   // feature fire: spread + burn-out (deterministic, hashed)
+        if (g_phase) g_burnMs += std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now() - _b).count();
+    }
     // Benchmark: fire the staged spawn plan at its scheduled ticks. Deterministic -- both
     // the client sim and the referee run the identical plan (built in setupMatch), so
     // lockstep holds. It IS hashed (real sim state), which is fine: every peer agrees.
@@ -2692,7 +2704,8 @@ void World::tick(float dt) {
     }
     std::chrono::steady_clock::time_point _tk0, _sep0;
     if (g_phase) { _tk0 = std::chrono::steady_clock::now();
-                   g_tcomb = g_flowMs = g_pathMs = 0; g_flowN = g_pathN = 0; }
+                   g_tcomb = g_flowMs = g_pathMs = 0; g_flowN = g_pathN = 0;
+                   g_visMs = g_burnMs = g_gridMs = 0; }
     // Cap A* repaths per tick: a big group that jams while moving can trip the
     // blocked/stuck watchdogs en masse, and hundreds of path searches in one tick
     // stall the sim. Deferred units retry a later tick. Deterministic (fixed budget,
@@ -2788,7 +2801,12 @@ void World::tick(float dt) {
         // slower reveal is imperceptible -- but it halves the periodic spike RATE. Fog is
         // client-only display (never hashed), so this pacing has no lockstep effect.
         visTimer_ = std::clamp(0.25f + float(units_.size()) / 8000.0f, 0.25f, 0.5f);
+        {
+        auto _v = std::chrono::steady_clock::now();
         updateVisibility();
+        if (g_phase) g_visMs += std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - _v).count();
+    }
     }
 
     // Projectiles.
@@ -3320,7 +3338,12 @@ void World::tick(float dt) {
     // Separation: push overlapping mobile units apart. The spatial hash limits
     // each unit to its ~3x3 neighbourhood, so this is O(n) not O(n^2). Each pair
     // is handled once (by the lower index), so the result matches the old loop.
-    rebuildGrid();   // units moved this tick; rebuild for accurate neighbours
+    {
+        auto _g = std::chrono::steady_clock::now();
+        rebuildGrid();   // units moved this tick; rebuild for accurate neighbours
+        if (g_phase) g_gridMs += std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now() - _g).count();
+    }
     tickAbilities(dt);   // reclaim / resurrect corpses (uses the fresh grid)
     tickAuras(dt);       // AdjustArmor/Attack stat auras (uses the fresh grid)
     constexpr float kSep = 13.0f;
@@ -3408,9 +3431,11 @@ void World::tick(float dt) {
         static double thr = getenv("TAK_PHASE_MS") ? atof(getenv("TAK_PHASE_MS")) : 15.0;
         if (ttot > thr) {   // only report a stall (threshold tunable via TAK_PHASE_MS)
             int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
-            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f flow=%.1f(x%ld) path=%.1f(x%ld) other=%.1f units=%d\n",
+            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f flow=%.1f(x%ld) path=%.1f(x%ld) vis=%.1f burn=%.1f grid=%.1f other=%.1f units=%d\n",
                          ttot, g_tcomb, tsep, g_flowMs, g_flowN, g_pathMs, g_pathN,
-                         ttot - g_tcomb - tsep - g_flowMs - g_pathMs, alive);
+                         g_visMs, g_burnMs, g_gridMs,
+                         ttot - g_tcomb - tsep - g_flowMs - g_pathMs - g_visMs -
+                             g_burnMs - g_gridMs, alive);
         }
     }
     // Campaign mission runner: feed this tick's build/death events into the "god"
