@@ -279,15 +279,49 @@ if(UNIX AND NOT APPLE)
 
   # Version-stamped asset names (the download filename records the release); the CI
   # globs these when attaching to the release, and the README links to the releases
-  # page rather than a fixed latest/download URL.
-  set(CPACK_DEBIAN_FILE_NAME "tak-engine-${PROJECT_VERSION}-amd64.deb")
-  set(CPACK_RPM_FILE_NAME "tak-engine-${PROJECT_VERSION}-x86_64.rpm")
+  # page rather than a fixed latest/download URL. TAK_DISTRO_TAG ("ubuntu22.04",
+  # "fedora44", ...) is set by the per-distro CI matrix so each build's package
+  # names the distro it was built on/for.
+  set(TAK_DISTRO_TAG "" CACHE STRING "distro tag baked into package file names (e.g. ubuntu22.04)")
+  set(_tak_dtag "")
+  if(TAK_DISTRO_TAG)
+    set(_tak_dtag "${TAK_DISTRO_TAG}-")
+  endif()
+  set(CPACK_DEBIAN_FILE_NAME "tak-engine-${PROJECT_VERSION}-${_tak_dtag}amd64.deb")
+  set(CPACK_RPM_FILE_NAME "tak-engine-${PROJECT_VERSION}-${_tak_dtag}x86_64.rpm")
 
   # Auto-detect the shared-library dependencies for each family.
   set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
   set(CPACK_DEBIAN_PACKAGE_SECTION "games")
   set(CPACK_RPM_PACKAGE_AUTOREQ ON)
   set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
+
+  include(CPack)
+elseif(WIN32)
+  # Windows installer (NSIS via CPack; the CI's MSYS2 job runs `cpack -G NSIS`).
+  # Binaries install into the chosen folder root (no bin/), with Start-menu
+  # shortcuts and an uninstaller. The static build has no DLLs to carry.
+  install(TARGETS takserver RUNTIME DESTINATION .)
+  if(TARGET takclient)
+    install(TARGETS takclient RUNTIME DESTINATION .)
+  endif()
+
+  set(CPACK_PACKAGE_NAME "tak-engine")
+  set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+      "Clean-room engine recreation of Total Annihilation: Kingdoms")
+  set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/pocketgeek/tak-engine")
+  set(CPACK_PACKAGE_CONTACT "Curtis Edge <pocket_geek@pgnet.us>")
+  set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+  set(CPACK_PACKAGE_FILE_NAME "tak-engine-${PROJECT_VERSION}-windows-x64-setup")
+  set(CPACK_PACKAGE_INSTALL_DIRECTORY "TAK Engine")
+  set(CPACK_NSIS_DISPLAY_NAME "TAK Engine")
+  set(CPACK_NSIS_PACKAGE_NAME "TAK Engine")
+  set(CPACK_NSIS_URL_INFO_ABOUT "https://github.com/pocketgeek/tak-engine")
+  set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+  set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")        # shortcuts point at the install root
+  set(CPACK_PACKAGE_EXECUTABLES "takclient" "TAK Engine")
+  set(CPACK_NSIS_MUI_FINISHPAGE_RUN "takclient.exe")
 
   include(CPack)
 endif()

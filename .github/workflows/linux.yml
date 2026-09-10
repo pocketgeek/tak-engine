@@ -1,12 +1,14 @@
 name: Linux packages
 run-name: Linux packages · ${{ github.ref_name }}
 
-# Builds native Linux packages via CPack only on a version-bump tag (v*), or on
-# manual dispatch: a .deb on Ubuntu (Debian/Ubuntu family) and a .rpm in a Fedora
-# container (Fedora/RHEL family), each in its own environment. SDL2/jpeg/zlib and the
-# Bink FFmpeg are statically linked (built from source; -DTAK_STATIC_LIBS=ON +
-# -DTAK_STATIC_FFMPEG=ON), so the packages are self-contained. Each job uploads a CI
-# artifact; on a tag it also attaches the package to the GitHub Release.
+# Builds native per-distro Linux packages only on a version-bump tag (v*), or on
+# manual dispatch: .debs for Ubuntu 22.04/24.04/26.04 + Debian 12/13, an .rpm for
+# Fedora 44, and a pacman .pkg.tar.zst for Arch -- each compiled INSIDE that
+# distro's container so glibc and package metadata match the target. SDL2/jpeg/
+# zlib and the Bink FFmpeg are statically linked (built from source;
+# -DTAK_STATIC_LIBS=ON + -DTAK_STATIC_FFMPEG=ON), so the packages are otherwise
+# self-contained. Every leg uploads a CI artifact; the release job attaches them
+# all to the GitHub Release on a tag.
 
 on:
   push:
@@ -17,112 +19,160 @@ permissions:
   contents: write
 
 jobs:
-  deb:
-    name: Debian/Ubuntu (.deb)
+  package:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # debug=true on the OLDEST glibc leg: its unhardened debug tarball runs
+          # everywhere. cmake_dl: ubuntu 22.04 ships cmake 3.22 (< our 3.24 min);
+          # cxx12: its default g++ is 11, too old for our C++20.
+          - { name: 'Ubuntu 22.04 (.deb)', image: 'ubuntu:22.04', family: deb,
+              tag: ubuntu22.04, debug: true, cmake_dl: true, cxx12: true }
+          - { name: 'Ubuntu 24.04 (.deb)', image: 'ubuntu:24.04', family: deb, tag: ubuntu24.04 }
+          - { name: 'Ubuntu 26.04 (.deb)', image: 'ubuntu:26.04', family: deb, tag: ubuntu26.04 }
+          - { name: 'Debian 12 (.deb)',    image: 'debian:12',    family: deb, tag: debian12 }
+          - { name: 'Debian 13 (.deb)',    image: 'debian:13',    family: deb, tag: debian13 }
+          - { name: 'Fedora 44 (.rpm)',    image: 'fedora:44',    family: rpm, tag: fedora44 }
+          - { name: 'Arch (.pkg.tar.zst)', image: 'archlinux:latest', family: arch, tag: arch }
     steps:
-      - uses: actions/checkout@v7
-      - name: Install build deps
+      # Deps FIRST (before checkout: the checkout action needs nothing from us,
+      # but the containers lack git/curl until this runs).
+      - name: Install build deps (apt)
+        if: matrix.family == 'deb'
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          # Build tools + the SDL2 backend -dev headers needed to BUILD a static SDL2 with
-          # its X11/Wayland/audio drivers (the libs themselves are built from source below).
-          sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build g++ git make dpkg-dev nasm \
+          apt-get update
+          # Build tools + the SDL2 backend -dev headers needed to BUILD a static
+          # SDL2 with its X11/Wayland/audio drivers (the libs themselves are
+          # built from source below).
+          apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ git make dpkg-dev nasm pkg-config file \
+            curl ca-certificates xz-utils \
             libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev \
             libxss-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev \
             libgl1-mesa-dev libegl1-mesa-dev
-      # Build a minimal static Bink-only FFmpeg so the package plays the door videos
-      # with NO runtime FFmpeg dependency (see tools/build-ffmpeg-bink.sh). Cached across
-      # runs by the FFmpeg version.
+          if [ "${{ matrix.cxx12 }}" = "true" ]; then apt-get install -y g++-12; fi
+      - name: Install build deps (dnf)
+        if: matrix.family == 'rpm'
+        run: |
+          dnf -y install cmake ninja-build gcc-c++ git make rpm-build nasm pkgconf \
+            tar gzip zstd xz \
+            alsa-lib-devel pulseaudio-libs-devel pipewire-devel dbus-devel \
+            libX11-devel libXext-devel libXcursor-devel libXi-devel libXrandr-devel \
+            libXfixes-devel libXScrnSaver-devel libxkbcommon-devel wayland-devel \
+            wayland-protocols-devel libdecor-devel mesa-libGL-devel mesa-libEGL-devel
+      - name: Install build deps (pacman)
+        if: matrix.family == 'arch'
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel cmake ninja git nasm pkgconf curl \
+            alsa-lib libpulse pipewire dbus \
+            libx11 libxext libxcursor libxi libxrandr libxfixes libxss \
+            libxkbcommon wayland wayland-protocols libdecor mesa
+
+      - uses: actions/checkout@v7
+
+      # Ubuntu 22.04 ships CMake 3.22; our minimum is 3.24. Drop in the official
+      # binary tarball (x86_64) ahead of it on PATH.
+      - name: Newer CMake (ubuntu 22.04)
+        if: matrix.cmake_dl == true
+        run: |
+          curl -fsSL -o /tmp/cmake.tar.gz \
+            https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-linux-x86_64.tar.gz
+          tar -C /opt -xzf /tmp/cmake.tar.gz
+          ln -sf /opt/cmake-3.28.6-linux-x86_64/bin/cmake /usr/local/bin/cmake
+          ln -sf /opt/cmake-3.28.6-linux-x86_64/bin/cpack /usr/local/bin/cpack
+          cmake --version
+
+      # Static Bink-only FFmpeg + static zlib/libjpeg/SDL2 (see the tools/
+      # scripts): built inside THIS distro's container, cached per distro.
       - name: Cache static FFmpeg (Bink)
         uses: actions/cache@v4
         with:
           path: third_party/ffmpeg-bink
-          key: ffmpeg-bink-deb-n7.1.1
+          key: ffmpeg-bink-${{ matrix.tag }}-n7.1.1
       - name: Build static FFmpeg (Bink)
         run: ./tools/build-ffmpeg-bink.sh
-      # Build static zlib/libjpeg/SDL2 so the package is self-contained (no libSDL2/jpeg/zlib
-      # runtime deps; see tools/build-static-deps.sh). Cached by the lib versions.
       - name: Cache static deps (zlib/libjpeg/SDL2)
         uses: actions/cache@v4
         with:
           path: third_party/static-deps
-          key: static-deps-deb-zlib1.3.1-jpeg3.0.4-sdl2.32.10
+          key: static-deps-${{ matrix.tag }}-zlib1.3.1-jpeg3.0.4-sdl2.32.10
       - name: Build static deps (zlib/libjpeg/SDL2)
         run: ./tools/build-static-deps.sh
-      - name: Build + package (.deb)
+
+      - name: Configure + build
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON
+          if [ "${{ matrix.cxx12 }}" = "true" ]; then export CC=gcc-12 CXX=g++-12; fi
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON \
+            -DTAK_DISTRO_TAG=${{ matrix.tag }}
           cmake --build build --target takclient takserver   # the package ships only these two
+
+      - name: Package (.deb)
+        if: matrix.family == 'deb'
+        run: |
           (cd build && cpack -G DEB)
           dpkg-deb -I build/tak-engine-*.deb   # show control + auto deps
-      # Debug build: the release binaries are hardened (only --data/--version, no env
-      # vars). Ship an unhardened DEBUG tarball (not a .deb -- it would collide with the
-      # release package's /usr/bin paths) for devs who need the CLI flags, TAK_* env
-      # hooks, and the headless --mp* harness.
-      - name: Build binaries (debug)
+          mkdir -p dist && cp build/tak-engine-*.deb dist/
+      - name: Package (.rpm)
+        if: matrix.family == 'rpm'
         run: |
+          (cd build && cpack -G RPM)
+          rpm -qp --requires build/tak-engine-*.rpm
+          mkdir -p dist && cp build/tak-engine-*.rpm dist/
+      - name: Package (.pkg.tar.zst)
+        if: matrix.family == 'arch'
+        run: |
+          VERSION=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')
+          sed -i "s/@VERSION@/$VERSION/" packaging/arch/PKGBUILD
+          # makepkg refuses to run as root: hand the tree to a build user.
+          useradd -m builder
+          chown -R builder: .
+          su builder -c 'cd packaging/arch && makepkg -f --nodeps'
+          pacman -Qip packaging/arch/tak-engine-*.pkg.tar.zst
+          mkdir -p dist && cp packaging/arch/tak-engine-*.pkg.tar.zst dist/
+
+      # Debug tarball from the oldest-glibc leg only: the release binaries are
+      # hardened (only --data/--version, no env vars), so devs get an unhardened
+      # DEBUG build with the CLI flags, TAK_* env hooks, and the --mp* harness.
+      - name: Build + tar the debug binaries
+        if: matrix.debug == true
+        run: |
+          export CC=gcc-12 CXX=g++-12
           cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON
           cmake --build build-debug --target takclient takserver
           mkdir -p dist-linux-debug
           cp build-debug/takclient build-debug/takserver dist-linux-debug/
-          tar -C dist-linux-debug -czf tak-engine-linux-x64-debug.tar.gz .
+          tar -C dist-linux-debug -czf dist/tak-engine-linux-x64-debug.tar.gz .
+
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
         with:
-          name: tak-engine-deb
-          path: build/tak-engine-*.deb
-      - name: Upload CI artifact (debug)
-        uses: actions/upload-artifact@v7
-        with:
-          name: tak-engine-linux-x64-debug
-          path: tak-engine-linux-x64-debug.tar.gz
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
-          gh release upload "$GITHUB_REF_NAME" \
-            build/tak-engine-*.deb tak-engine-linux-x64-debug.tar.gz \
-            --repo "$GITHUB_REPOSITORY" --clobber
+          name: tak-engine-${{ matrix.tag }}
+          path: dist/*
 
-  rpm:
-    name: Fedora/RHEL (.rpm)
+  release:
+    name: Attach to release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      # A minimal static Bink-only FFmpeg is built inside the container and linked
-      # statically (-DTAK_STATIC_FFMPEG=ON), so the .rpm plays the door videos with NO
-      # runtime FFmpeg -- stock Fedora's libavcodec-free lacks the Bink decoder, and we no
-      # longer need RPM Fusion. rpm --requires then shows only SDL2/jpeg/zlib.
-      - name: Build + package (.rpm) in a Fedora container
-        run: |
-          docker run --rm -v "$PWD:/src" -w /src fedora:latest bash -c '
-            dnf -y install cmake ninja-build gcc-c++ git make rpm-build nasm \
-                 alsa-lib-devel pulseaudio-libs-devel pipewire-devel dbus-devel \
-                 libX11-devel libXext-devel libXcursor-devel libXi-devel libXrandr-devel \
-                 libXfixes-devel libXScrnSaver-devel libxkbcommon-devel wayland-devel \
-                 wayland-protocols-devel libdecor-devel mesa-libGL-devel mesa-libEGL-devel &&
-            ./tools/build-ffmpeg-bink.sh &&
-            ./tools/build-static-deps.sh &&
-            cmake -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON &&
-            cmake --build build-rpm --target takclient takserver &&
-            (cd build-rpm && cpack -G RPM) &&
-            rpm -qp --requires build-rpm/tak-engine-*.rpm'
-      - name: Upload CI artifact
-        uses: actions/upload-artifact@v7
+      - uses: actions/download-artifact@v7
         with:
-          name: tak-engine-rpm
-          path: build-rpm/tak-engine-*.rpm
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
+          pattern: tak-engine-*
+          merge-multiple: true
+          path: dist
+      - name: Create release + upload packages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
-          gh release upload "$GITHUB_REF_NAME" build-rpm/tak-engine-*.rpm --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber

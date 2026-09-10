@@ -70,11 +70,34 @@ jobs:
           cp build/takclient build/takserver dist-macos/
           (cd dist-macos && zip -r "../takclient-$VERSION-macos-arm64.zip" .)
 
+      # Drag-and-drop disk image: a "TAK Engine.app" bundle (Finder-launchable;
+      # the release client opens the front-end menu + data-dir picker, so no CLI
+      # is needed) plus an /Applications symlink, packed with hdiutil. Ad-hoc
+      # codesigned so Apple Silicon will run it (users still right-click > Open
+      # the first time -- we don't hold a notarization identity).
+      - name: App bundle + DMG
+        run: |
+          APPDIR="dist-dmg/TAK Engine.app"
+          mkdir -p "$APPDIR/Contents/MacOS"
+          cp build/takclient build/takserver "$APPDIR/Contents/MacOS/"
+          sed "s/@VERSION@/$VERSION/g" packaging/macos/Info.plist > "$APPDIR/Contents/Info.plist"
+          codesign --force --deep -s - "$APPDIR"
+          ln -s /Applications dist-dmg/Applications
+          hdiutil create -volname "TAK Engine" -srcfolder dist-dmg -ov -format UDZO \
+            "tak-engine-$VERSION-macos-arm64.dmg"
+          hdiutil verify "tak-engine-$VERSION-macos-arm64.dmg"
+
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
         with:
           name: takclient-macos-arm64
           path: dist-macos/
+
+      - name: Upload CI artifact (DMG)
+        uses: actions/upload-artifact@v7
+        with:
+          name: tak-engine-macos-arm64-dmg
+          path: tak-engine-*.dmg
 
       # Debug build: the release binaries are hardened (only --data/--version, no env
       # vars), so ship an unhardened DEBUG bundle for devs who need the CLI flags,
@@ -118,4 +141,5 @@ jobs:
             --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
           gh release upload "$GITHUB_REF_NAME" \
             "takclient-$VERSION-macos-arm64.zip" takclient-macos-arm64-debug.zip \
+            "tak-engine-$VERSION-macos-arm64.dmg" \
             --repo "$GITHUB_REPOSITORY" --clobber

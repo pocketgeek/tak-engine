@@ -60,6 +60,7 @@ else
   cmake -S "$j" -B "$j/build" -G "${CMAKE_GENERATOR:-Unix Makefiles}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DCMAKE_INSTALL_LIBDIR=lib \
     -DENABLE_SHARED=OFF -DENABLE_STATIC=ON \
     -DWITH_TURBOJPEG=OFF -DWITH_JPEG8=ON \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
@@ -83,6 +84,7 @@ else
   cmake -S "$s" -B "$s/build" -G "${CMAKE_GENERATOR:-Unix Makefiles}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DCMAKE_INSTALL_LIBDIR=lib \
     -DSDL_STATIC=ON -DSDL_SHARED=OFF -DSDL_STATIC_PIC=ON \
     -DSDL_TEST=OFF
   cmake --build "$s/build" -j"$JOBS"

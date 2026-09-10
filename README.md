@@ -52,11 +52,13 @@ the multiplayer wire protocol version, which is gated independently at connect.
 Latest pre-built binaries (self-contained; you still supply your own retail game
 data — see **Game data**):
 
-- **Windows x64** — grab `takclient-<version>-windows-x64.zip` from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest)
-- **macOS (Apple Silicon)** — grab `takclient-<version>-macos-arm64.zip` from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest)
-- **Debian / Ubuntu** — grab `tak-engine-<version>-amd64.deb` from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest), then `sudo apt install ./tak-engine-*-amd64.deb`
-- **Fedora / RHEL** — grab `tak-engine-<version>-x86_64.rpm` from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest), then `sudo dnf install ./tak-engine-*-x86_64.rpm`
-- [**All releases**](https://github.com/pocketgeek/tak-engine/releases) · or build from source below.
+- **Windows x64** — the `tak-engine-<version>-windows-x64-setup.exe` installer (Start-menu shortcuts + uninstaller), or the plain `takclient-<version>-windows-x64.zip`
+- **macOS (Apple Silicon)** — the `tak-engine-<version>-macos-arm64.dmg` disk image (drag *TAK Engine* to Applications; right-click → Open the first time), or the plain `takclient-<version>-macos-arm64.zip`
+- **Ubuntu 22.04 / 24.04 / 26.04** — `tak-engine-<version>-ubuntu<rel>-amd64.deb`, then `sudo apt install ./tak-engine-*.deb`
+- **Debian 12 / 13** — `tak-engine-<version>-debian<rel>-amd64.deb`, then `sudo apt install ./tak-engine-*.deb`
+- **Fedora 44** — `tak-engine-<version>-fedora44-x86_64.rpm`, then `sudo dnf install ./tak-engine-*.rpm`
+- **Arch** — `tak-engine-<version>-1-x86_64.pkg.tar.zst`, then `sudo pacman -U ./tak-engine-*.pkg.tar.zst`
+- All from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest) · [all releases](https://github.com/pocketgeek/tak-engine/releases) · or build from source below.
 
 Each release also attaches per-platform **debug** binaries (`*-debug`) — the same
 `takclient`/`takserver` *without* the release CLI/env hardening, so developers get the
