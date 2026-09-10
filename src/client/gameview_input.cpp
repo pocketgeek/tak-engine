@@ -244,14 +244,25 @@
                 // render lift + flyer altitude), so a unit on a lifted wall top or a
                 // Monarch cruising overhead is selected where it's drawn.
                 float ccx = (dragX0_ + dragX1_) / 2, ccy = (dragY0_ + dragY1_) / 2;
+                float zms = mapView_.zoom();
                 int hit = -1;
-                float best = 30.0f * 30.0f;
+                float best = 1e30f;
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
-                    if (!u.alive() || u.underConstruction) continue;  // not-yet-built: unselectable
+                    if (!u.alive() || u.underConstruction || !u.type) continue;  // not-yet-built: unselectable
                     SDL_FPoint p = unitScreen(frameUnit(u.id));
+                    // Hit region = the unit's on-screen footprint, matching the drawn
+                    // selection brackets (foot cells * 8 world px * zoom), with a small
+                    // screen floor so tiny / zoomed-out units stay easy to click. A big
+                    // building is now grabbable across its whole size, not just a central dot.
+                    float rx = std::max(std::max(u.type->footX, 1) * 8.0f, 11.0f) * zms;
+                    float ry = std::max(std::max(u.type->footZ, 1) * 8.0f, 8.0f) * zms;
+                    rx = std::max(rx, 14.0f); ry = std::max(ry, 14.0f);
                     float dx = p.x - ccx, dy = p.y - ccy;
-                    if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; hit = u.id; }
+                    if (std::fabs(dx) <= rx && std::fabs(dy) <= ry) {
+                        float d = dx * dx + dy * dy;   // overlap -> nearest center wins
+                        if (d < best) { best = d; hit = u.id; }
+                    }
                 }
                 if (hit >= 0) {
                     selection_.push_back(hit);

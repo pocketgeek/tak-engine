@@ -746,9 +746,10 @@
             // buffer keeps only a tiny intended reserve (~netDelay_ ticks, <0.2 s),
             // so surface this only once the lag is clearly abnormal: the machine
             // can't keep up, or a link stall is draining faster than it refills.
+            // Only shown past 2 s so ordinary jitter never flashes the warning.
             // Escalates amber -> red toward the ~10 s server reconnect threshold.
             float behindSec = float(mp_->bufferedBundles()) / float(tak::net::kServerHz);
-            if (behindSec > 0.75f && outcome_ == 0 && !paused_) {
+            if (behindSec > 2.0f && outcome_ == 0 && !paused_) {
                 char bb[48];
                 std::snprintf(bb, sizeof bb, "BEHIND BY %.1fs", behindSec);
                 float t = std::min(1.0f, behindSec / 10.0f);

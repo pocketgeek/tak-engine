@@ -1,8 +1,10 @@
 #include "util/procmetrics.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -16,6 +18,7 @@
 #else   // Linux / other /proc systems
 #  include <cstdio>
 #  include <cstring>
+#  include <dirent.h>
 #  include <unistd.h>
 #endif
 
@@ -157,6 +160,73 @@ bool readLL(const char* path, long long& out) {
     out = v;
     return true;
 }
+
+// Intel (i915/xe) GPU via DRM client fdinfo (/proc/self/fdinfo/*). Engine busy time
+// is a cumulative ns counter per DRM client, so we diff it against wall time between
+// calls to get util%. This is THIS process's GPU time (not whole-device) -- the best
+// a non-root reader gets on Intel; memUsed is the resident GPU memory (memTotal is
+// unknown, an iGPU shares system RAM). Fails closed (returns false) if not Intel.
+bool intelGpuSample(GpuSample& g) {
+    DIR* d = opendir("/proc/self/fdinfo");
+    if (!d) return false;
+    std::set<long> seen;            // dedupe: many fds map to one DRM client
+    unsigned long long engineNs = 0;
+    size_t residentBytes = 0;
+    bool anyIntel = false;
+    struct dirent* de;
+    while ((de = readdir(d)) != nullptr) {
+        if (de->d_name[0] == '.') continue;
+        std::string path = std::string("/proc/self/fdinfo/") + de->d_name;
+        FILE* f = std::fopen(path.c_str(), "r");
+        if (!f) continue;
+        char line[256];
+        bool isIntel = false; long client = -1;
+        unsigned long long eNs = 0; size_t resB = 0;
+        while (std::fgets(line, sizeof line, f)) {
+            if (std::strncmp(line, "drm-driver:", 11) == 0)
+                isIntel = std::strstr(line, "i915") || std::strstr(line, "xe");
+            else if (std::strncmp(line, "drm-client-id:", 14) == 0)
+                client = std::atol(line + 14);
+            else if (std::strncmp(line, "drm-engine-", 11) == 0) {
+                char* c = std::strchr(line, ':');   // "<N> ns" only (skip capacity lines)
+                if (c && std::strstr(c, " ns")) eNs += std::strtoull(c + 1, nullptr, 10);
+            } else if (std::strncmp(line, "drm-resident-", 13) == 0) {
+                char* c = std::strchr(line, ':');
+                if (c) {
+                    unsigned long long v = std::strtoull(c + 1, nullptr, 10);
+                    if (std::strstr(c, "MiB")) resB += size_t(v) << 20;
+                    else if (std::strstr(c, "KiB")) resB += size_t(v) << 10;
+                    else resB += size_t(v);
+                }
+            }
+        }
+        std::fclose(f);
+        if (isIntel) {
+            anyIntel = true;
+            if (client < 0 || seen.insert(client).second) { engineNs += eNs; residentBytes += resB; }
+        }
+    }
+    closedir(d);
+    if (!anyIntel) return false;
+
+    unsigned long long wallNs = (unsigned long long)
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    static unsigned long long prevEng = 0, prevWall = 0;
+    if (prevWall != 0 && wallNs > prevWall) {
+        double dEng = engineNs >= prevEng ? double(engineNs - prevEng) : 0.0;
+        double u = dEng / double(wallNs - prevWall) * 100.0;
+        g.utilPct = u < 0 ? 0.0 : (u > 100.0 ? 100.0 : u);
+    } else {
+        g.utilPct = 0.0;   // first sample: no delta yet
+    }
+    prevEng = engineNs; prevWall = wallNs;
+    g.memUsed = residentBytes;
+    g.memTotal = 0;        // integrated GPU shares system RAM -- no fixed VRAM total
+    g.name = "Intel GPU";
+    g.ok = true;
+    return true;
+}
 #endif
 }  // namespace
 
@@ -207,6 +277,8 @@ GpuSample gpuSample() {
             return g;
         }
     }
+    // Intel (i915/xe): DRM fdinfo. Only this process's GPU time, but better than N/A.
+    if (intelGpuSample(g)) return g;
 #endif
     return g;
 }

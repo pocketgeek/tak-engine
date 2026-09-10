@@ -22,10 +22,12 @@ Sample sample(long pid);
 long selfPid();   // this process's pid
 int numCpus();    // online logical CPUs (to report CPU% of one core vs. all cores)
 
-// Best-effort GPU stats (whole device, all processes). Read from `nvidia-smi` if present
-// (NVIDIA, any OS), else Linux AMD sysfs (amdgpu). ok=false when no source is available
-// (e.g. Intel, macOS) -- callers show "N/A". Cheap-ish but the nvidia-smi path spawns a
-// process, so sample it sparingly (e.g. per benchmark milestone, not per frame).
+// Best-effort GPU stats. Read from `nvidia-smi` if present (NVIDIA, any OS; whole
+// device), else Linux AMD sysfs (amdgpu; whole device), else Linux Intel (i915/xe)
+// via DRM client fdinfo -- which reports THIS process's GPU time + resident memory,
+// not the whole device (util% is diffed between calls). ok=false when no source is
+// available (e.g. macOS non-NVIDIA) -- callers show "N/A". Cheap-ish, but the
+// nvidia-smi path spawns a process, so sample sparingly (per benchmark milestone).
 struct GpuSample {
     double utilPct = -1;    // GPU utilization %, -1 if unknown
     size_t memUsed = 0;     // device VRAM used (all processes), bytes; 0 if unknown

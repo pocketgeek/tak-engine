@@ -945,19 +945,43 @@ private:
         return 8;
     }
 
+    // Word length of a COB opcode (opcode word + inline args) for the ops that can
+    // precede a walk gate; 0 = one we don't decode (caller stops). Mirrors vm.cpp.
+    static int cobOpLen(uint32_t op) {
+        switch (op) {
+            case 0x10021001: case 0x10021002: case 0x10021004:   // PUSH_CONST/LOCAL/STATIC
+            case 0x10023002: case 0x10023004:                    // POP_LOCAL/STATIC
+                return 2;
+            case 0x10022000: case 0x10024000:                    // CREATE_LOCAL / POP_STACK
+            case 0x10031000: case 0x10032000: case 0x10033000: case 0x10034000:  // + - * /
+            case 0x10035000: case 0x10036000: case 0x10037000: case 0x10038000:  // AND OR XOR NOT
+            case 0x10039000: case 0x1003A000: case 0x1003B000:   // SHL SHR MOD
+                return 1;
+            default: return 0;
+        }
+    }
+
     // The static index a unit's WALK cycle gates its piece motion on -- the client's
     // state machine sets this to 1 while moving so the walk script actually animates.
     // Most ground units (araking/tarnecro/zonlord) read static 0, but a HOVER unit
     // like the Veruna monarch (vermage) reads static 3 -- retail's MoveWatcher thread
-    // (which we don't run) fills it. The walk script's first opcode is that PUSH_STATIC,
-    // so derive the index instead of hard-coding 0. Tries walk / walk_legs / tread.
+    // (which we don't run) fills it. The enabling gate is the FIRST PUSH_STATIC before
+    // the walk script's first JUMP_IF_FALSE; decode forward to it, since a few units
+    // (e.g. the Taros tarmind) front-load a loop-counter setup before the gate.
+    // Tries walk / walk_legs / tread.
     static int walkGateOf(const tak::cob::File& f) {
         for (const char* name : {"walk", "walk_legs", "tread"}) {
             int si = f.scriptIndex(name);
             if (si < 0) continue;
             uint32_t e = f.scripts[size_t(si)].entry;
-            if (e + 1 < f.code.size() && f.code[e] == 0x10021004)   // PUSH_STATIC
-                return int(f.code[e + 1]);
+            for (int guard = 0; guard < 24 && e + 1 < f.code.size(); ++guard) {
+                uint32_t op = f.code[e];
+                if (op == 0x10021004) return int(f.code[e + 1]);   // PUSH_STATIC -> the gate
+                if (op == 0x10066000) break;                       // JUMP_IF_FALSE -> no static gate
+                int len = cobOpLen(op);
+                if (len <= 0) break;                               // unknown op: give up, fall to 0
+                e += uint32_t(len);
+            }
         }
         return 0;
     }
