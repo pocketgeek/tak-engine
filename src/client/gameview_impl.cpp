@@ -336,6 +336,12 @@
         int a = spawn("araarch", cx - 40, cz, 1.57f, 0);
         int e = spawn("tararch", cx + 200, cz, -1.57f, 1);
         world_.attack(a, e, false);
+        // Aim-pipeline check: a Veruna watch tower (5-TURN AimWeapon) with an
+        // enemy off-axis to its north-east -- the turret must visibly swing to
+        // face it (auto-acquire), proving the AimWeapon heading sign.
+        int tw = spawn("vertower", cx - 40, cz + 220, 0.0f, 0);
+        int zm = spawn("tarzom", cx + 160, cz + 100, -1.57f, 1);
+        world_.attack(tw, zm, false);   // explicit order: aim runs even without LOS
         mapView_.setOffset(cx - 640 / mapView_.zoom(), cz - 400 / mapView_.zoom());
     }
 
@@ -975,6 +981,50 @@
                     a.vm->start("MoveRate", {m ? 100 : 0});
                 }
             }
+            // Turret aim (retail AimWeapon pipeline, display-only). The engaged
+            // target -- ordered attack or auto-acquire -- always sits at
+            // orders.front (auto-acquire INSERTS one), so the snapshot already
+            // has it. Retail convention (vertower disasm): arg0 = 32768 + signed
+            // relative heading in COB angle units (the script subtracts 32768
+            // and TURNs its y-axis to it), arg1 = pitch (x-axis TURN, we pass 0
+            // on our flat battlefield), arg2 is echoed back via SET 22 (aim-
+            // ready token; we don't gate sim fire on it -- hash safety).
+            // TargetCleared(token) on loss runs the restore path. Sign verified
+            // visually (vertower firetest): script space takes PLUS the sim-
+            // relative bearing -- the piece-Y render negation and the mirrored
+            // model basis cancel.
+            if (a.hasAim) {
+                int tgt = 0;
+                if (!u.orders.empty()) {
+                    const auto& o = u.orders.front();
+                    if (o.targetId && !o.load && !o.guard) tgt = o.targetId;
+                }
+                const UnitR* t = tgt ? frameUnitP(tgt) : nullptr;
+                if (t && t->alive() && !u.underConstruction) {
+                    if (tgt != a.aimTarget || animClock_ >= a.aimNext) {
+                        a.aimTarget = tgt;
+                        a.aimNext = animClock_ + 0.33f;   // retail re-aims each cycle
+                        constexpr float kTau = 6.2831853f;
+                        // Structures render yaw-locked (facing 0 in drawUnit) even
+                        // though the sim turns their heading toward the target --
+                        // aim against the RENDERED facing, not the sim heading.
+                        bool rotates = u.type->canFly || u.type->canMove;
+                        float rel = std::atan2(t->x - u.x, t->z - u.z) -
+                                    (rotates ? u.heading : 0.0f);
+                        while (rel > kTau / 2) rel -= kTau;
+                        while (rel < -kTau / 2) rel += kTau;
+                        int32_t h16 = 32768 + int32_t(rel * (65536.0f / kTau));
+                        bool ok = a.vm->start("AimWeapon", {h16, 0, 1});
+                        static const bool kAimLog = tak::devEnv("TAK_AIMLOG") != nullptr;
+                        if (kAimLog)
+                            std::fprintf(stderr, "aim u%d tgt%d rel=%.2f h16=%d ok=%d\n",
+                                         u.id, tgt, rel, h16, int(ok));
+                    }
+                } else if (a.aimTarget) {
+                    a.aimTarget = 0;
+                    a.vm->start("TargetCleared", {1});
+                }
+            }
             // Mobile builders: the conjure/build animation while actively working a
             // site (constructing, repairing, or reclaiming). Retail drives this via
             // the COB StartBuilding/StopBuilding hooks -- StartBuilding raises the
@@ -1216,6 +1266,7 @@
                 cc.hasWalk = hasWalkCycle(*cc.file);
                 cc.hasMelee = cc.file->scriptIndex("MoveWatcher") >= 0 ||
                               cc.file->scriptIndex("MeleeControl") >= 0;
+                cc.hasAim = cc.file->scriptIndex("AimWeapon") >= 0;
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
             a.pieceNames = &ci->second.pieceNames;
@@ -1223,6 +1274,7 @@
             a.moveGate = ci->second.moveGate;
             a.hasWalk = ci->second.hasWalk;
             a.hasMelee = ci->second.hasMelee;
+            a.hasAim = ci->second.hasAim;
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             // TA COB unit-state queries answered from the sim.
             int unitId = id;
@@ -1295,6 +1347,11 @@
                 // so start it here and let it run (the walk state machine leaves them be).
                 a.vm->start("Create");
             }
+            if (a.hasAim && type->weapon.reload > 0)
+                // Seed RestoreAfterDelay's timer (retail SetMaxReloadTime, ms):
+                // unseeded, the turret snaps back to rest the moment an aim ends.
+                a.vm->start("SetMaxReloadTime",
+                            {int32_t(type->weapon.reload * 1000.0f)});
         } catch (const std::exception&) { /* unit stays unanimated */ }
         // Flag units whose model uses an animated glow texture (lodestone/mana/crystal)
         // so the glow only cycles once built -- held static while still conjuring.

@@ -888,6 +888,9 @@ private:
         int flyGate = 8;         // static index that this unit's `fly` gates on
         int moveGate = 0;        // static index this unit's `walk` gates on (see walkGateOf)
         bool hasWalk = false;    // has a walk/walk_legs/tread script (vs a Create-ambient mover)
+        bool hasAim = false;     // has an AimWeapon script (turret/torso target tracking)
+        int aimTarget = 0;       // unit id the last AimWeapon start tracked (0 = none)
+        float aimNext = 0;       // animClock_ time of the next aim refresh
         bool hasMelee = false;   // has MoveWatcher/MeleeControl: the COB drives its own
                                  // gait retail-style (Create ambients poll GET 29/28/34
                                  // and CALL walk_* themselves) -- the manual walk state
@@ -1105,6 +1108,7 @@ private:
         int moveGate = 0;         // walk-cycle moving-flag static index (walkGateOf)
         bool hasWalk = false;     // has a walk/walk_legs/tread script (hasWalkCycle)
         bool hasMelee = false;    // has MoveWatcher/MeleeControl (retail self-driven gait)
+        bool hasAim = false;      // has an AimWeapon script
     };
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };
