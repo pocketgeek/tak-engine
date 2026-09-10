@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 26;       // 26: benchmark level 6 (Extra Absurd)
+constexpr uint32_t kNetVersion = 27;       // 27: combat range to a building's footprint
+                                           //     edge + builder gives up an unreachable site
+                                           // 26: benchmark level 6 (Extra Absurd)
                                            // 25: GameOptions.benchmark carries an INTENSITY
                                            // level (0=off, 1=Low..N), was a bool
                                            // 24: GameOptions.benchmark (all-AI perf run)

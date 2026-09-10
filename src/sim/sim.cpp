@@ -1433,6 +1433,17 @@ void World::tickCombat(Unit& u, float dt) {
                    ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
     const Weapon* sel = slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
     float best = sel ? sel->range : u.type->maxRange();
+    // Range is to the target's footprint EDGE, not its centre. A building's centre is
+    // deep inside a blocked footprint, so a centre-distance check leaves a short-range
+    // attacker grinding the edge (never "in range") or a flyer buried inside it. For a
+    // STRUCTURE target, pad the effective range by its footprint half-extent plus a
+    // small margin for where nav actually halts at the edge (mirrors the builder reach
+    // in tickConstruction). Mobile targets keep centre-distance, so unit-vs-unit combat
+    // is unchanged.
+    float pad = target->type->maxVel <= 0.0f
+                    ? 8.0f * float(std::max(target->type->footX, target->type->footZ)) + 24.0f
+                    : 0.0f;
+    float reach = best + pad;
     // Ranged units need a clear line to shoot; a wall between them means close
     // in / reposition rather than firing through it (melee & flyers are exempt).
     bool needLoS = best > 64.0f && !u.type->canFly &&
@@ -1444,15 +1455,15 @@ void World::tickCombat(Unit& u, float dt) {
     // matter -- identical result, but a marching army (the bulk of a big battle, all
     // out of range) stops paying for a per-tick line-of-sight cast it never uses.
     bool los = true;
-    if (needLoS && dist <= best * 0.95f)
+    if (needLoS && dist <= reach * 0.95f)
         los = nav_.losBetween(u.x, u.z, target->x, target->z,
                               std::max(u.type->footX, u.type->footZ) / 2,
                               std::max(target->type->footX, target->type->footZ) / 2);
-    if (!u.type->canMove && dist > best) {      // static units can't chase
+    if (!u.type->canMove && dist > reach) {     // static units can't chase
         u.orders.erase(u.orders.begin());
         return;
     }
-    if (dist > best * 0.95f || (!los && u.type->canMove)) {
+    if (dist > reach * 0.95f || (!los && u.type->canMove)) {
         // Advance toward the target, steering around impassable terrain.
         u.repathLeft -= dt;
         Order& o = u.orders.front();
@@ -1494,7 +1505,7 @@ void World::tickCombat(Unit& u, float dt) {
     // Fire the selected weapon when the target is in its [minrange, range] band,
     // within aimtolerance, has a clear shot, and (unless noairweapon) may hit air.
     if (sel && !(sel->noAir && target->type && target->type->canFly) &&
-        (sel->melee || los) && u.reloads[slot] <= 0 && dist <= sel->range &&
+        (sel->melee || los) && u.reloads[slot] <= 0 && dist <= sel->range + pad &&
         dist >= sel->minRange && std::abs(diff) < std::max(sel->aimTol, 0.03f))
         fire(u, *target, slot);
     // cancapture: a charmer converts the target after sustained contact (~3s) or
@@ -1634,6 +1645,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     }
     b = unit(builderId);   // spawn may have reallocated units_
     b->buildSiteId = id;
+    b->buildStuckT = 0; b->buildStuckD = 1e30f;   // fresh job: reset the reach watchdog
     order(builderId, x, z + float(type->footZ) * 8 + 24, false);
     return id;
 }
@@ -1685,6 +1697,7 @@ void World::assist(int builderId, int siteId) {
     // Latch onto the existing site; tickConstruction walks there and resumes at
     // this builder's rate (buildTime / workerTime) from the site's current HP.
     b->buildSiteId = siteId;
+    b->buildStuckT = 0; b->buildStuckD = 1e30f;   // fresh job: reset the reach watchdog
     order(builderId, site->x, site->z + float(site->type->footZ) * 8 + 24, false);
 }
 
@@ -1847,7 +1860,41 @@ void World::tickConstruction(Unit& b, float dt) {
     // else the default footprint-derived range.
     float reach = std::max(half + 40.0f,
                            b.type->buildDist > 0 ? b.type->buildDist + half : 0.0f);
-    if (dx * dx + dz * dz > reach * reach) return;   // still walking there
+    float gd = dx * dx + dz * dz;
+    if (gd > reach * reach) {                          // out of range: still walking there
+        // Give-up watchdog: if the builder gets no closer (~20px, squared 400) for ~8s,
+        // it can't reach the site -- abandon it and pop the next queued build. Uses the
+        // same fixed-dt / squared-distance idiom as the movement goalStuck watchdog, so
+        // it stays deterministic (buildStuck* are non-hashed scratch, like goalStuck*).
+        if (gd < b.buildStuckD - 400.0f) {             // real progress: reset the timer
+            b.buildStuckD = gd; b.buildStuckT = 0;
+        } else if ((b.buildStuckT += dt) > 8.0f) {
+            b.buildStuckT = 0; b.buildStuckD = 1e30f;
+            int bid = b.id;
+            // Drop an un-started ghost site (as cancelBuilds does) so its marker and
+            // blocked footprint don't linger.
+            if (!site->buildBegun) {
+                if (site->type && !site->type->canMove) {
+                    blockFootprint(nav_, *site->type, site->x, site->z, false);
+                    invalidateFlows(int(site->x) / 16 - site->type->footX / 2,
+                                    int(site->z) / 16 - site->type->footZ / 2,
+                                    site->type->footX, site->type->footZ);
+                }
+                site->underConstruction = false;
+                site->deadFor = 1000.0f;
+            }
+            b.buildSiteId = 0;
+            // Advance to the next queued build (startBuild may realloc units_).
+            while (Unit* nb = unit(bid)) {
+                if (nb->buildOrders.empty()) break;
+                BuildOrder o = nb->buildOrders.front();
+                nb->buildOrders.erase(nb->buildOrders.begin());
+                if (startBuild(bid, o.type, o.x, o.z) != 0) break;
+            }
+        }
+        return;
+    }
+    b.buildStuckT = 0; b.buildStuckD = 1e30f;          // in range: reset the watchdog
     site->buildBegun = true;   // in range: the site starts materialising now
     b.orders.clear();
     b.speed = 0;
@@ -2525,7 +2572,12 @@ void World::tick(float dt) {
                 Unit* t = unit(u.orders.front().targetId);
                 if (!t) return false;
                 float dx = t->x - u.x, dz = t->z - u.z;
-                if (std::sqrt(dx * dx + dz * dz) > u.type->maxRange() * 0.95f) return false;
+                // Pad by a structure target's footprint half-extent so "holding in
+                // range" agrees with tickCombat's fire gate (else a unit stopped at a
+                // building's edge gets dragged back into moving).
+                float pad = t->type->maxVel <= 0.0f
+                    ? 8.0f * float(std::max(t->type->footX, t->type->footZ)) + 24.0f : 0.0f;
+                if (std::sqrt(dx * dx + dz * dz) > (u.type->maxRange() + pad) * 0.95f) return false;
                 // Don't sit still with no shot: a ranged unit whose line to the
                 // target is blocked keeps moving to get around the wall.
                 bool needLoS = u.type->maxRange() > 64.0f && !u.type->canFly &&

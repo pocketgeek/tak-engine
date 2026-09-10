@@ -224,6 +224,8 @@ struct Unit {
     float stuckX = 0, stuckZ = 0;   // position when the stuck timer last reset
     float goalStuckT = 0;           // seconds a point-destination move has not gotten closer
     float goalStuckD = 1e30f;       // best (closest) squared distance to that goal so far
+    float buildStuckT = 0;          // seconds a builder has approached its site with no progress
+    float buildStuckD = 1e30f;      // best (closest) squared dist to the build site so far
     float deadFor = -1;    // >= 0 once dead; counts up for death animation
     // --- extended runtime state --------------------------------------------
     float mana = 0;        // personal mana pool (casters), capped at type->maxMana
