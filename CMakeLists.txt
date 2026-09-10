@@ -229,6 +229,16 @@ if(TAK_BUILD_CLIENT)
       # MinGW link fails with "undefined reference to WinMain".
       target_link_options(takclient PRIVATE -mconsole)
     endif()
+
+    # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
+    # Shares the engine's terrain render stack (mapview + tak-formats) so maps
+    # look byte-identical to the game.
+    add_executable(cartographer src/cartographer/main.cpp src/client/mapview.cpp)
+    target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
+    target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
+    if(WIN32)
+      target_link_options(cartographer PRIVATE -mconsole)
+    endif()
   else()
     message(WARNING "SDL2 not found — skipping takclient. Install SDL2-devel.")
   endif()
