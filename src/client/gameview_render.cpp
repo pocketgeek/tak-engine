@@ -527,9 +527,11 @@
         } else if (placing_) {
             drawGhost();
         }
-        if (reclaimDrag_) {
+        if (reclaimDrag_ && (std::abs(mouseX_ - rdSx0_) >= 6.0f ||
+                             std::abs(mouseY_ - rdSy0_) >= 6.0f)) {
             // Screen-space "clear this area" box, with a marker on every reclaimable
-            // feature it currently catches.
+            // feature it currently catches. Same 6px arming threshold as the
+            // marquee: a plain right-click order shouldn't flash the box.
             float zm = mapView_.zoom();
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             float x0 = std::min(rdSx0_, mouseX_), y0 = std::min(rdSy0_, mouseY_);
@@ -889,7 +891,11 @@
                       {220, 220, 230, 255});
         }
 
-        if (dragging_) {
+        // Marquee only once the drag covers real area: under the same 6px
+        // threshold the release is treated as a CLICK-select, so a couple of
+        // pixels of hand jitter shouldn't flash a box.
+        if (dragging_ && (std::abs(dragX1_ - dragX0_) >= 6.0f ||
+                          std::abs(dragY1_ - dragY0_) >= 6.0f)) {
             SDL_FRect r{std::min(dragX0_, dragX1_), std::min(dragY0_, dragY1_),
                         std::abs(dragX1_ - dragX0_), std::abs(dragY1_ - dragY0_)};
             SDL_SetRenderDrawColor(ren_, 120, 255, 150, 200);
