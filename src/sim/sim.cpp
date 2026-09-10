@@ -477,6 +477,7 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
                 }
             }
     }
+    nav_.setRoads(&roads_);   // ground domain only: marches prefer highways
     // 0xFFFC cells are hard blockers (retail rates them impassable for every
     // movement domain AND rejects building placement on them -- icd 0x508190 /
     // 0x507705; they sit under castle wall/gate/dock art baked into terrain).
@@ -567,7 +568,7 @@ bool FlowField::build(const NavGrid& nav, float gx, float gz, int foot) {
     // faster). The result is bit-identical to the heap version -- Dijkstra's
     // final distances are unique, and superseded entries are skipped on pop.
     dist_.assign(n, 0xFFFF);
-    constexpr int kMaxStep = 14;
+    constexpr int kMaxStep = 17;   // widest edge: diagonal onto a non-road cell
     std::array<std::vector<int>, kMaxStep + 1> buckets;
     dist_[size_t(goal_)] = 0;
     buckets[0].push_back(goal_);
@@ -575,6 +576,8 @@ bool FlowField::build(const NavGrid& nav, float gx, float gz, int foot) {
     static const int dcx[8] = {1, -1, 0, 0, 1, 1, -1, -1};
     static const int dcz[8] = {0, 0, 1, -1, 1, -1, 1, -1};
     static const int dcost[8] = {10, 10, 10, 10, 14, 14, 14, 14};
+    // Non-road step penalty, matching findPath's 1.2x road preference.
+    static const int dcostOff[8] = {12, 12, 12, 12, 17, 17, 17, 17};
     for (int cost = 0; remaining > 0 && cost < 0xFFFF; ++cost) {
         // Every entry in this slot has logical cost == `cost`: pushes made while
         // processing it land at cost+10/cost+14 (< cost+15, so never back here),
@@ -591,7 +594,13 @@ bool FlowField::build(const NavGrid& nav, float gx, float gz, int foot) {
                 if (k >= 4 && (!nav.fits(cx + dcx[k], cz, foot) ||
                                !nav.fits(cx, cz + dcz[k], foot)))
                     continue;
-                int nd = cost + dcost[k];
+                // Reverse-Dijkstra: this edge is travelled ni -> idx in real
+                // movement, so the road test is on idx (the cell stepped ONTO).
+                // Road-less grids stay on base costs: 12/17's diagonal ratio
+                // differs slightly from 10/14's, so applying it everywhere
+                // would perturb tie-breaks (and hashes) on every map.
+                int nd = cost + (!nav.hasRoads() || nav.roadAt(cx, cz)
+                                     ? dcost[k] : dcostOff[k]);
                 size_t ni = size_t(nz) * w_ + nx;
                 if (nd < dist_[ni] && nd < 0xFFFF) {
                     dist_[ni] = uint16_t(nd);
@@ -832,8 +841,12 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1,
             if (d >= 4 && (!fits(cx + DX[d], cz, foot) || !fits(cx, cz + DZ[d], foot)))
                 continue;   // no diagonal corner cutting
             float step = d >= 4 ? 1.41421f : 1.0f;
-            float ng = gAt(size_t(n.idx)) + step;
             int ni = nz * w_ + nx;
+            // Road preference: stepping onto a non-road cell costs 1.2x, so a
+            // parallel road is worth up to ~20% of detour. Roads keep the base
+            // cost, which leaves the octile heuristic admissible unchanged.
+            if (roads_ && !roadAt(nx, nz)) step *= 1.2f;
+            float ng = gAt(size_t(n.idx)) + step;
             if (ng < gAt(size_t(ni))) {
                 touch(size_t(ni), ng, n.idx);
                 open.push_back({ng + hcost(nx, nz), ni});

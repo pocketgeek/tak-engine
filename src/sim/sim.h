@@ -344,6 +344,17 @@ public:
     int height() const { return h_; }
     // Mark a rectangle of cells blocked (building footprint) or clear.
     void block(int cx, int cz, int w, int h, bool blocked);
+    // Road preference (ground grid only): pathfinding rates non-road steps ~1.2x
+    // costlier, so marches drift onto highways -- the retail steering area-rater
+    // scores road cells 7 vs 6 (icd 0x508527). `roads` must outlive the grid and
+    // match its dimensions (World::roads_; null = no preference).
+    void setRoads(const std::vector<uint8_t>* roads) {
+        roads_ = (roads && roads->size() == size_t(w_) * size_t(h_)) ? roads : nullptr;
+    }
+    bool roadAt(int cx, int cz) const {
+        return roads_ && (*roads_)[size_t(cz) * w_ + cx] != 0;
+    }
+    bool hasRoads() const { return roads_ != nullptr; }
 
     // A* in cell space (16px cells), with waypoint simplification. `foot` = the unit's
     // footprint size in cells (1 = point). Returns world-space waypoints; empty if
@@ -377,6 +388,7 @@ private:
     void updateClearanceRect(int cx, int cz, int w, int h) const;
     mutable std::vector<uint16_t> clear_;
     mutable bool clearDirty_ = true;
+    const std::vector<uint8_t>* roads_ = nullptr;   // see setRoads
     int w_ = 0, h_ = 0;
 };
 
