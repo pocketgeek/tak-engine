@@ -97,7 +97,7 @@ Every stage is complete:
    regen, veterancy (kills → +10 %/level attack·armour·reload, gold sheen,
    promoted `veteranmodel`), per-unit mana pools & mana-per-shot, area-of-effect
    splash + per-target-category damage, status weapons (freeze / petrify /
-   paralyze / mind-control) with immunities, cloaking, reclaim / resurrect /
+   paralyze) with immunities, cloaking, reclaim / resurrect /
    capture, `AdjustArmor`/`AdjustAttack` auras, terrain-class movement
    (`MOVEINFO.tdf` slope/water limits + water/road speed), radar sight,
    line-of-sight firing, flow-field group movement, and a summonable-god economy.
@@ -121,8 +121,9 @@ Every stage is complete:
 
 ## Building
 
-Requires CMake ≥ 3.24, a C++20 compiler, and Ninja. SDL2 is found on the system
-or fetched automatically.
+Requires CMake ≥ 3.24, a C++20 compiler, and Ninja. SDL2 must be present on the
+system (e.g. `SDL2-devel` / `libsdl2-dev`); if it's missing the client is skipped
+with a warning and only the headless tools + server build.
 
 ```sh
 cmake -B build -G Ninja
@@ -185,8 +186,9 @@ CI (`.github/workflows/`) splits per-commit checks from release builds.
 `determinism.yml` runs on every `main` push (sim changes) as the fast lockstep
 gate. The platform builds — `windows.yml` (MSYS2/MinGW), `macos.yml` (native
 `macos-14`), and `linux.yml` (`.deb` on Ubuntu, `.rpm` in a Fedora container) —
-run **only on a version-bump tag** (`v*`): each builds, runs the determinism gate,
-and attaches its artifact to the GitHub Release. Cutting a release is just
+run **only on a version-bump tag** (`v*`): each builds and attaches its artifact to
+the GitHub Release, and the Windows and macOS builds additionally run the
+cross-platform determinism gate. Cutting a release is just
 `git tag vX.Y.Z && git push origin vX.Y.Z` (bump `project(... VERSION ...)` first).
 
 ## Game data
@@ -212,8 +214,8 @@ game, the Iron Plague expansion (`IP*.hpi`), and the official map/rocket packs;
 any other `*.hpi` dropped in the root (and all loose files there) is ignored. Maps
 come from `maps.hpi` and the `Maps/*.kmp`, music from `Music/`, and anything in
 `overrides/` wins over everything. A small **authenticity manifest** of those root
-archives is saved with the folder, so a changed or moved install is caught on the
-next launch.
+archives is recorded with the folder and recomputed each launch; a moved or
+unreadable install re-opens the folder picker.
 
 **HPI precedence.** The retail game shipped each update as a new HPI/UFO that
 superseded older copies of a file, and the engine reproduces the exact rule
@@ -394,7 +396,7 @@ Start the server with `--replaydir <dir>` and it writes a self-contained
 `.takrep` for every finished game. Play one back as a spectator:
 
 ```sh
-./build/takclient replay <file.takrep> --data /path/to/tak_install
+./build-dbg/takclient replay <file.takrep> --data /path/to/tak_install
 ```
 
 **Pause** and the **+/−** speed keys scrub it; a bar shows elapsed / total time. (The
@@ -434,7 +436,7 @@ fingerprint, so under `full` every player must share the same ones.
 | `src/util/` | shared helpers |
 | `src/gui/` | retail `.gui` HUD/gadget layout parsing |
 | `src/client/` | the SDL2 app (`takclient`: asset viewer + game) |
-| `tools/` | CLI format tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`, `missiontool`, `biktool`) |
+| `tools/` | CLI dev tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`, `missiontool`, `biktool`, `aitool`) |
 | `docs/` | format notes + reverse-engineering findings (`retail-engine.md` = the `KINGDOMS.icd` disassembly) |
 
 ## License
