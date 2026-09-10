@@ -37,11 +37,34 @@ void Compositor::renderBlock(const tnt::Map& map, int bx, int by,
     const jpeg::Image& img = section(map.tileKeys[b]);
     int sx = (map.tileCols[b] * kBlock) % std::max(img.width, 1);
     int sy = (map.tileRows[b] * kBlock) % std::max(img.height, 1);
+    // The per-world "sea" sections are near-black placeholders (retail draws an
+    // animated water surface over them, which we don't). Tint any below-sea cell a
+    // blue depth-gradient so water reads as water instead of black squares -- keyed
+    // on the map heightfield, not the tile, so it fixes both generated maps and
+    // shipped ocean maps. Display only (the terrain texture is never hashed).
+    const int sea = map.seaLevel;
+    const bool haveH = map.width > 0 && map.heights.size() >= size_t(map.width) * map.height;
     for (int y = 0; y < kBlock; ++y) {
         if (sy + y >= img.height) break;
         const uint8_t* srow = &img.rgba[(size_t(sy + y) * img.width + sx) * 4];
         uint8_t* drow = &dst[(size_t(dy + y) * dstW + dx) * 4];
-        std::memcpy(drow, srow, size_t(std::min(kBlock, img.width - sx)) * 4);
+        int copyW = std::min(kBlock, img.width - sx);
+        std::memcpy(drow, srow, size_t(copyW) * 4);
+        if (!haveH) continue;
+        int cz = by * 2 + (y >> 4);                 // 32px block spans 2 cells (16px each)
+        if (cz >= map.height) continue;
+        for (int x = 0; x < copyW; ++x) {
+            int cx = bx * 2 + (x >> 4);
+            if (cx >= map.width) break;
+            int h = map.heights[size_t(cz) * map.width + cx];
+            if (h >= sea) continue;                 // land
+            int depth = std::clamp(sea - h, 0, 70);
+            int wr = 58 - depth * 38 / 70, wg = 120 - depth * 70 / 70, wb = 165 - depth * 65 / 70;
+            uint8_t* p = drow + x * 4;               // blend 78% water + 22% tile (faint ripple)
+            p[0] = uint8_t((wr * 78 + p[0] * 22) / 100);
+            p[1] = uint8_t((wg * 78 + p[1] * 22) / 100);
+            p[2] = uint8_t((wb * 78 + p[2] * 22) / 100);
+        }
     }
 }
 
