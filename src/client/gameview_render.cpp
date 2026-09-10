@@ -2149,6 +2149,7 @@
         if (!lmb && !rmb) return false;
         for (const auto& [r, bt] : iconRects_) {
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+            playClickTone();
             const auto* b = selectedBuilder();
             if (!b || !bt) return true;   // consume the click even if it can't act
             uint16_t mod = SDL_GetModState();

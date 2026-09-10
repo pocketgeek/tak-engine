@@ -1111,6 +1111,7 @@
     bool GameView::guiClick(float mx, float my) {
         for (auto& [r, cmd] : guiBtnRects_) {
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+            playClickTone();
             if (cmd == 's') {
                 for (int id : selection_) {
                     tak::net::Command c;

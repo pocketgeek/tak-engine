@@ -2086,6 +2086,12 @@ private:
 
     // Returns true if the click hit (and was handled by) a command-panel button.
     bool guiClick(float mx, float my);
+    // Retail HUD feedback: every side-panel / build-icon press plays the local
+    // faction's click tone (sounds/tone<side>.wav -- the click.hpi overridables).
+    void playClickTone() {
+        std::string t = "tone" + side_;
+        if (sounds_.has(t)) sounds_.play(t);
+    }
 
     // The conjure/build menu for a builder type, filtered by the active mission's unit
     // whitelist (missions/<stem>.tdf) when one is loaded -- so a campaign mission only
