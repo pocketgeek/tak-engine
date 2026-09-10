@@ -108,9 +108,81 @@ the **tile/section palette + brush tools**, the **height tools**, the
    editor, per-player rules, OTA script write.
 6. Land Lasso + Clear Area; Recent files; polish to 1:1.
 
+## Deep RE findings (tools + triggers, confirmed from the binary)
+
+### Tile painting = section-PREFAB stamp (not per-cell, not flood)
+- Left panel is a palette (`CItemView`) with tabs: **Map Sections, Special,
+  Features, Trigger, Units, Buildings**. Map Sections load from
+  `sections/<world>/<category>/*.tnt` (each a prefab `.tnt`; a section is
+  256px = 8x8 tiles = 16x16 cells). We ALREADY load section prefabs for the map
+  generator (reuse that).
+- Left-click (land mode) snaps to a **256px grid** and copies the selected
+  section's cells `{tileKey u32, col u8, row u8}` verbatim into the tile plane.
+  Height rides in the prefab -- there is **NO separate height tool** (painting a
+  section sets art + height together; confirms the flat-mosaic model).
+- **Land Lasso** (Ctrl+L) is a MODE TOGGLE (land-editing on = stamp sections;
+  off = place/select palette objects), not a marquee.
+- **Clear Area**: drag a region -> confirm -> removes all units+features inside.
+
+### Zoom = 5 discrete levels only
+1.0 / 0.75 / 0.5 / 0.25 / 0.125 (In/Out step 0.25, half-step at 0.125<->0.25).
+
+### World Type = kingdoms from `gamedata/sidedata.tdf`
+SIDE0 ARAMON, SIDE1 TAROS, SIDE2 VERUNA, SIDE3 ZHON (SIDE4-6 non-playable;
+CREON only in Iron Plague `IPData.hpi`). Selecting a world sets OTA
+`kingdom=<lower>` and drives per-world paths: `sections/<world>/...`,
+`features/<world>/*.tdf` (+ `features/all worlds`, `features/corpses`),
+palettes `palettes/<world>{,_features,_textures}.pcx`, and `waterheight`
+(ARAMON=40, others ~58) from that SIDE. **Minimap palette = `palettes/<world>.pcx`.**
+
+### Coordinate model (fully reconciled)
+1 cell = 16px; 1 tile/block = 32px = 2 cells; **1 "Unit" = 512px = 32 cells =
+16 tiles**. TNT header dims are in cells. OTA `size = cells>>5` (Units).
+Unit/StartPos XPos/ZPos are in **cells** (world px = xpos*16).
+
+### Check Map (cmd 32798) = ONE validation
+Warns if any placed unit's type is on the use-only restriction list ("...they
+have been restricted. They will not show up in the game."). No pathing/overlap
+checks. Same warning also fires at save.
+
+### The scenario (placed units + triggers) is a BINARY `.crt`, NOT the OTA
+`.crt` writer 0x40d8d0; top-level (PROVEN from an empty 56-byte crt):
+`float32 version=1.0` · `int32 numCustomTypes` (name[256]+int[4] each) ·
+`int32 numPlacedUnits` · `UnitRecord[N]` (568/0x238 bytes each, raw struct) ·
+`int32 numPlayers(=9)` · per player: `int32 numRuleGroups`, per group:
+`int32 numRules`, `RuleRecord[M]` (1328/0x530 bytes; string params char[256]
+at +0x240). Intra-record field offsets = TODO (recover from rule-editor OnOK +
+CRT loader 0x40de2c). Rules are stored **per player** (Copy/Paste Player Rules).
+
+### Trigger opcodes: 26 CONDITIONS + 26 ACTIONS (tables at 0x51c190)
+Param types: value, unit type, player, location, text string, flag. Conditions
+are opcode==display-index (identity remap). ACTIONS: display order != internal
+opcode -- a remap permutation (0x51c3b0); the 4 team/opponent victory variants +
+the 4-arg Display were appended later, so **serialize the INTERNAL opcode**.
+String-param defaults: unit type="Any Unit", player="All Players",
+location="Anywhere"; text string = literal 256-byte string; flag = int index.
+Full 26+26 template list captured in the RE task output (session d39a8c26,
+task ac01eaf629a4e233d).
+
+### Engine gap: `.crt`/trigger runner is NET-NEW
+Our `src/sim/mission.cpp` is the CAMPAIGN runner (COB god-script + OTA keys) --
+a DIFFERENT system. To actually PLAY scenario maps the engine needs a `.crt`
+reader + a rule evaluator for these 26+26 opcodes (later milestone; the editor
+authors them first).
+
+### Command ID -> handler VAs (for follow-up RE)
+ScenProps 0x401890 · UseOnly 0x401910 · zoom 0x401990/a10/a90/b10 · 12.5%
+0x402ed0 · ZoomIn 0x402460 · ZoomOut 0x4024e0 · Resize 0x402560 · LandLasso
+0x402700 · Scripting 0x4027a0 · Triggers-view 0x4028b0 · Grid 0x402910 ·
+ClearArea 0x402f50 · CheckMap 0x403030 · Unit Del/Props 0x40b5c0/0x40b690 ·
+Feature Del 0x40b460 · StartPos Del 0x40b750 · Trigger Del/Props
+0x40bfa0/0x40bfe0. Writers: TNT 0x41ba70 · OTA 0x41bfd0 · UseOnly 0x41c400 ·
+TXT 0x41c4e0 · CRT 0x40d8d0 · bundle 0x418b80. GetCell 0x419120 · SectionStamp
+0x41d2d0 · SetZoom 0x419790.
+
 ## RE status
-- Resource map: DONE (menus/dialogs/strings extracted).
-- Command IDs → handlers: 32771-32798 are the custom commands (disassemble each
-  `OnCommand` case). 57600+ are stock MFC File/View.
-- Pending deep RE: TNT write bytes, OTA write fields, trigger opcode tables,
-  minimap generation, tile-section palette source.
+- Resource map + command handlers + tool behaviours + trigger opcode tables +
+  TNT/OTA write formats + coordinate model + world types: **DONE**.
+- Pending deep RE (for later phases): `.crt` UnitRecord (568B) + RuleRecord
+  (1328B) intra-field offsets; minimap-generation exact downsample; HPI/.kmp
+  bundle writer.

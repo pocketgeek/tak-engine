@@ -6,20 +6,40 @@
 
 #include "hpi/hpi.h"
 #include "terrain/terrain.h"
+#include "tnt/ota.h"
 #include "tnt/tnt.h"
 #include "util/png.h"
 
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <set>
 
 int main(int argc, char** argv) {
     if (argc < 3) {
         std::cerr << "usage: tnttool info|heightmap|minimap <map.tnt> [out.png]\n"
-                     "       tnttool render <map.tnt> <terrain-dir> <out.png>\n";
+                     "       tnttool render <map.tnt> <terrain-dir> <out.png>\n"
+                     "       tnttool roundtrip <map.tnt>\n"
+                     "       tnttool ota <map.ota>\n";
         return 2;
     }
     std::string cmd = argv[1];
     try {
+        if (cmd == "ota") {
+            // tnttool ota <file.ota> -- parse + re-serialize, byte-compare.
+            std::ifstream in(argv[2], std::ios::binary);
+            std::string text((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+            auto sc = tak::tnt::Scenario::parse(text);
+            auto out = sc.write();
+            std::cout << "OTA " << argv[2] << ": " << sc.starts.size()
+                      << " start pos, size " << sc.sizeW << "x" << sc.sizeH
+                      << ", kingdom=" << sc.kingdom << "\n";
+            std::cout << (out == text ? "BYTE-IDENTICAL (" : "DIFFERS (")
+                      << out.size() << " vs " << text.size() << " bytes)\n";
+            return out == text ? 0 : 1;
+        }
+
         auto m = tak::tnt::Map::load(argv[2]);
 
         if (cmd == "roundtrip") {

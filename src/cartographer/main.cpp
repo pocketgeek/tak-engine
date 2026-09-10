@@ -13,6 +13,7 @@
 
 #include "client/mapview.h"
 #include "hpi/hpi.h"
+#include "tnt/ota.h"
 
 #include <cstdio>
 #include <cstring>
@@ -90,26 +91,47 @@ int main(int argc, char** argv) {
 
     MapView mapView(ren, vfs, mapPath);
     mapView.setBilinear(true);
-    std::fprintf(stderr, "cartographer: editing '%s' (%s), %dx%d blocks\n",
-                 mapName.c_str(), mapPath.c_str(),
-                 mapView.map().blocksX, mapView.map().blocksY);
 
-    // Write the current map's .tnt to `path`. Loose Maps/<name>.tnt is read
-    // directly by the engine VFS, so a saved map is immediately playable.
-    auto saveTnt = [&](const std::string& path) -> bool {
-        std::vector<uint8_t> bytes = mapView.map().save();
+    // Load the companion .ota scenario (metadata + start positions) so a Save
+    // round-trips the whole map, not just terrain. Missing/parse-fail = defaults.
+    tak::tnt::Scenario scenario;
+    {
+        std::string otaPath = mapPath.substr(0, mapPath.rfind('.')) + ".ota";
+        try {
+            auto b = vfs.read(otaPath);
+            scenario = tak::tnt::Scenario::parse(std::string(b.begin(), b.end()));
+        } catch (const std::exception&) { /* no .ota: keep defaults */ }
+    }
+    std::fprintf(stderr,
+                 "cartographer: editing '%s' (%s), %dx%d blocks; scenario '%s' "
+                 "kingdom=%s, %zu start positions\n",
+                 mapName.c_str(), mapPath.c_str(), mapView.map().blocksX,
+                 mapView.map().blocksY, scenario.missionName.c_str(),
+                 scenario.kingdom.c_str(), scenario.starts.size());
+
+    auto writeFile = [](const std::string& path, const void* data, size_t n) -> bool {
         std::FILE* f = std::fopen(path.c_str(), "wb");
         if (!f) { std::fprintf(stderr, "save: cannot open %s\n", path.c_str()); return false; }
-        size_t n = std::fwrite(bytes.data(), 1, bytes.size(), f);
+        size_t w = std::fwrite(data, 1, n, f);
         std::fclose(f);
-        std::fprintf(stderr, "saved %s (%zu bytes)\n", path.c_str(), n);
-        return n == bytes.size();
+        std::fprintf(stderr, "saved %s (%zu bytes)\n", path.c_str(), w);
+        return w == n;
+    };
+    // Save the map as loose <stem>.tnt + <stem>.ota. Loose Maps/<name>.* is
+    // read directly by the engine VFS, so a saved map is immediately playable.
+    auto saveMap = [&](const std::string& tntPath) -> bool {
+        std::vector<uint8_t> tnt = mapView.map().save();
+        bool ok = writeFile(tntPath, tnt.data(), tnt.size());
+        std::string ota = tntPath.substr(0, tntPath.rfind('.')) + ".ota";
+        std::string otaText = scenario.write();
+        ok &= writeFile(ota, otaText.data(), otaText.size());
+        return ok;
     };
 
     // Headless one-shot export: --save <file.tnt> writes and exits (round-trip
     // / convert path, also how the save is regression-tested).
     if (!exportPath.empty()) {
-        bool ok = saveTnt(exportPath);
+        bool ok = saveMap(exportPath);
         SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
         return ok ? 0 : 1;
     }
@@ -127,7 +149,7 @@ int main(int argc, char** argv) {
                 // picker for Save As arrives with the dialog layer; for now the
                 // Ctrl+Shift+S variant just appends a "-edit" suffix.
                 bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
-                saveTnt(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt");
+                saveMap(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt");
             } else {
                 // The map canvas owns pan/zoom below the menu strip; MapView reads
                 // in window coords, so this is 1:1 for now (chrome offset comes
