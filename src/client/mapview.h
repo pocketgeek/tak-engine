@@ -75,6 +75,13 @@ public:
     void setZoomSpeed(float m);
     const tak::tnt::Map& map() const { return map_; }
 
+    // --- Editing (Cartographer) ------------------------------------------------
+    // Mutable terrain access: edit map().tileKeys/tileCols/tileRows/heights/
+    // features, then call tilesEdited() so any newly-referenced section textures
+    // decode+upload and the tile-quad batch rebuilds next frame.
+    tak::tnt::Map& editMap() { return map_; }
+    void tilesEdited() { queueAllSections(); tileBatchDirty_ = true; }
+
 private:
     static constexpr int kBlock = 32;   // one map cell = a 32px tile
 

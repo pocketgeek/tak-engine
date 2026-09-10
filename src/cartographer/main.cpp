@@ -11,12 +11,18 @@
 
 #include <SDL.h>
 
+#include "cartographer/sections.h"
 #include "client/mapview.h"
+#include "terrain/terrain.h"
+#include "util/jpeg.h"
 #include "hpi/hpi.h"
 #include "tnt/ota.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <algorithm>
 #include <cstring>
+#include <map>
 #include <string>
 
 namespace {
@@ -33,12 +39,16 @@ void fillRect(SDL_Renderer* r, int x, int y, int w, int h, Uint8 cr, Uint8 cg, U
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string dataRoot, mapName, outDir = ".", exportPath;
+    std::string dataRoot, mapName, outDir = ".", exportPath, stampName;
+    int stampBX = 0, stampBY = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--data" && i + 1 < argc) dataRoot = argv[++i];
         else if (a == "--out" && i + 1 < argc) outDir = argv[++i];   // Save destination
         else if (a == "--save" && i + 1 < argc) exportPath = argv[++i];  // headless export+exit
+        else if (a == "--stamp" && i + 3 < argc) {   // headless: stamp <name> <bx> <by>
+            stampName = argv[++i]; stampBX = std::atoi(argv[++i]); stampBY = std::atoi(argv[++i]);
+        }
         else if (a[0] != '-') mapName = a;
     }
     if (dataRoot.empty() || mapName.empty()) {
@@ -128,6 +138,38 @@ int main(int argc, char** argv) {
         return ok;
     };
 
+    // Section-prefab palette for this map's world (falls back to aramon).
+    cart::SectionLibrary sections;
+    std::string world = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
+    sections.scan(vfs, world);
+    std::fprintf(stderr, "cartographer: %zu sections for world '%s'\n",
+                 sections.list().size(), world.c_str());
+
+    // Stamp a named section into the map at block (bx,by), returning whether it
+    // matched a section. The editor calls this on canvas click; --stamp tests it.
+    auto stampByName = [&](const std::string& name, int bx, int by) -> bool {
+        for (const auto& s : sections.list())
+            if (s.name == name) {
+                const tak::tnt::Map* sec = sections.load(vfs, s.path);
+                if (sec && cart::stampSection(mapView.editMap(), *sec, bx, by)) {
+                    mapView.tilesEdited();
+                    return true;
+                }
+            }
+        return false;
+    };
+
+    // Headless one-shot: --stamp <name> <bx> <by> then save (edit-path test).
+    if (!stampName.empty()) {
+        bool hit = stampByName(stampName, stampBX, stampBY);
+        std::fprintf(stderr, "stamp '%s' at (%d,%d): %s\n", stampName.c_str(),
+                     stampBX, stampBY, hit ? "OK" : "no such section");
+        bool ok = hit && saveMap(exportPath.empty() ? (outDir + "/" + mapName + "-edit.tnt")
+                                                     : exportPath);
+        SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
+        return ok ? 0 : 1;
+    }
+
     // Headless one-shot export: --save <file.tnt> writes and exits (round-trip
     // / convert path, also how the save is regression-tested).
     if (!exportPath.empty()) {
@@ -136,8 +178,61 @@ int main(int argc, char** argv) {
         return ok ? 0 : 1;
     }
 
+    // --- Interactive editor state ---------------------------------------------
+    constexpr int kPaletteW = 200;   // left section-palette panel
+    constexpr int kThumb = 88;       // section thumbnail cell (px)
+    const int cols = std::max(1, (kPaletteW - 8) / (kThumb + 4));
+    int selected = sections.list().empty() ? -1 : 0;
+    int paletteScroll = 0;
+    bool showGrid = false;
+    static const float kZoomLevels[5] = {1.0f, 0.75f, 0.5f, 0.25f, 0.125f};
+
+    // Lazy section thumbnails: render a prefab's terrain (Compositor) once into a
+    // small texture, cached by path. Only visible cells ever render.
+    std::map<std::string, SDL_Texture*> thumbs;
+    auto thumbFor = [&](const std::string& path) -> SDL_Texture* {
+        auto it = thumbs.find(path);
+        if (it != thumbs.end()) return it->second;
+        SDL_Texture* t = nullptr;
+        if (const tak::tnt::Map* sec = sections.load(vfs, path)) {
+            tak::jpeg::Image img = mapView.compositor().renderMap(*sec);
+            if (img.width > 0 && img.height > 0) {
+                t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,
+                                      SDL_TEXTUREACCESS_STATIC, img.width, img.height);
+                if (t) {
+                    SDL_UpdateTexture(t, nullptr, img.rgba.data(), img.width * 4);
+                    SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
+                }
+            }
+        }
+        thumbs[path] = t;   // cache even null (a prefab that won't render)
+        return t;
+    };
+
+    auto stampAtMouse = [&](int mx, int my, int w, int h) {
+        if (selected < 0 || mx < kPaletteW) return;   // palette side, not the canvas
+        const auto& s = sections.list()[size_t(selected)];
+        const tak::tnt::Map* sec = sections.load(vfs, s.path);
+        if (!sec || sec->blocksX <= 0) return;
+        // Canvas-local -> world -> block, snapped to the section's own size so
+        // sections tile cleanly.
+        float lx = float(mx - kPaletteW), ly = float(my - kMenuH);
+        int blkX = int((mapView.offX() + lx / mapView.zoom()) / 32.0f);
+        int blkY = int((mapView.offY() + ly / mapView.zoom()) / 32.0f);
+        int snapX = (blkX / sec->blocksX) * sec->blocksX;
+        int snapY = (blkY / sec->blocksY) * sec->blocksY;
+        if (cart::stampSection(mapView.editMap(), *sec, snapX, snapY))
+            mapView.tilesEdited();
+        (void)w; (void)h;
+    };
+
     bool running = true;
     while (running) {
+        int w, h;
+        SDL_GetRendererOutputSize(ren, &w, &h);
+        int canvasH = h - kMenuH - kStatusH;
+        int canvasW = w - kPaletteW;
+
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
@@ -145,45 +240,117 @@ int main(int argc, char** argv) {
                 running = false;
             else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
                      e.key.keysym.sym == SDLK_s) {
-                // File -> Save (Ctrl+S): write <out>/<name>.tnt. A real file
-                // picker for Save As arrives with the dialog layer; for now the
-                // Ctrl+Shift+S variant just appends a "-edit" suffix.
                 bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
                 saveMap(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt");
-            } else {
-                // The map canvas owns pan/zoom below the menu strip; MapView reads
-                // in window coords, so this is 1:1 for now (chrome offset comes
-                // when the canvas gets its own viewport in phase 1).
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_g) {
+                showGrid = !showGrid;   // View -> Grid
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
+                       e.key.keysym.sym <= SDLK_5) {
+                // Zoom levels 1..5 = 100/75/50/25/12.5% (retail's five steps).
+                mapView.setZoom(kZoomLevels[e.key.keysym.sym - SDLK_1]);
+            } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                       e.button.button == SDL_BUTTON_LEFT && e.button.x < kPaletteW &&
+                       e.button.y >= kMenuH && e.button.y < h - kStatusH) {
+                // Palette click -> select a section thumbnail.
+                int px = e.button.x - 4;
+                int py = e.button.y - kMenuH + paletteScroll;
+                int col = px / (kThumb + 4), row = py / (kThumb + 4);
+                if (col >= 0 && col < cols) {
+                    int idx = row * cols + col;
+                    if (idx >= 0 && idx < int(sections.list().size())) selected = idx;
+                }
+            } else if (e.type == SDL_MOUSEWHEEL) {
+                int mxp, myp; SDL_GetMouseState(&mxp, &myp);
+                if (mxp < kPaletteW) {   // scroll the palette
+                    int rows = (int(sections.list().size()) + cols - 1) / cols;
+                    int maxScroll = std::max(0, rows * (kThumb + 4) - canvasH);
+                    paletteScroll = std::clamp(paletteScroll - e.wheel.y * 40, 0, maxScroll);
+                } else {
+                    mapView.input(e);   // zoom the canvas
+                }
+            } else if ((e.type == SDL_MOUSEBUTTONDOWN &&
+                        e.button.button == SDL_BUTTON_LEFT && e.button.x >= kPaletteW)) {
+                // Left-click on the canvas -> stamp the selected section.
+                stampAtMouse(e.button.x, e.button.y, canvasW, canvasH);
+            } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK) &&
+                       e.motion.x >= kPaletteW) {
+                stampAtMouse(e.motion.x, e.motion.y, canvasW, canvasH);   // drag-paint
+            } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_RMASK)) {
+                // Right-drag pans (left-drag paints); feed MapView a synthetic
+                // left-drag motion so its pan handler moves the view.
+                SDL_Event pan = e;
+                pan.motion.state = SDL_BUTTON_LMASK;
+                mapView.input(pan);
+            } else if (e.type != SDL_MOUSEBUTTONDOWN && e.type != SDL_MOUSEMOTION) {
                 mapView.input(e);
             }
         }
 
-        int w, h;
-        SDL_GetRendererOutputSize(ren, &w, &h);
-        int canvasH = h - kMenuH - kStatusH;
+        mapView.ensureChunks(canvasW, canvasH);
 
-        mapView.ensureChunks(w, canvasH);
-
-        // Editor ground: a neutral slate behind everything.
         SDL_SetRenderDrawColor(ren, 24, 26, 32, 255);
         SDL_RenderClear(ren);
 
-        // Map canvas between the menu and status strips.
-        SDL_Rect canvas{0, kMenuH, w, canvasH};
+        // Map canvas (right of the palette, between menu and status).
+        SDL_Rect canvas{kPaletteW, kMenuH, canvasW, canvasH};
         SDL_RenderSetViewport(ren, &canvas);
-        mapView.draw(w, canvasH);
+        mapView.draw(canvasW, canvasH);
+        // Grid overlay: section (512px) lines bright, block (32px) lines faint.
+        if (showGrid) {
+            float zm = mapView.zoom();
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            int firstBlkX = int(mapView.offX()) / 32, firstBlkY = int(mapView.offY()) / 32;
+            for (int bxg = firstBlkX; ; ++bxg) {
+                float sx = (bxg * 32 - mapView.offX()) * zm;
+                if (sx > canvasW) break;
+                bool section = (bxg % 16) == 0;
+                SDL_SetRenderDrawColor(ren, 255, 255, 255, section ? 90 : 30);
+                SDL_RenderDrawLine(ren, int(sx), 0, int(sx), canvasH);
+            }
+            for (int byg = firstBlkY; ; ++byg) {
+                float sy = (byg * 32 - mapView.offY()) * zm;
+                if (sy > canvasH) break;
+                bool section = (byg % 16) == 0;
+                SDL_SetRenderDrawColor(ren, 255, 255, 255, section ? 90 : 30);
+                SDL_RenderDrawLine(ren, 0, int(sy), canvasW, int(sy));
+            }
+        }
         SDL_RenderSetViewport(ren, nullptr);
 
-        // Chrome: menu bar (top) + status bar (bottom). Real menus/text arrive
-        // with the font + UI layer in phase 1; these are the structural strips.
+        // Palette panel (left).
+        fillRect(ren, 0, kMenuH, kPaletteW, canvasH, 30, 32, 40);
+        SDL_Rect palClip{0, kMenuH, kPaletteW, canvasH};
+        SDL_RenderSetClipRect(ren, &palClip);
+        for (int i = 0; i < int(sections.list().size()); ++i) {
+            int col = i % cols, row = i / cols;
+            int cx = 4 + col * (kThumb + 4);
+            int cy = kMenuH + 4 + row * (kThumb + 4) - paletteScroll;
+            if (cy + kThumb < kMenuH || cy > h - kStatusH) continue;   // cull
+            SDL_Rect cell{cx, cy, kThumb, kThumb};
+            if (SDL_Texture* t = thumbFor(sections.list()[size_t(i)].path))
+                SDL_RenderCopy(ren, t, nullptr, &cell);
+            else fillRect(ren, cx, cy, kThumb, kThumb, 50, 52, 60);
+            if (i == selected) {   // selection highlight
+                SDL_SetRenderDrawColor(ren, 255, 210, 90, 255);
+                SDL_Rect b{cx - 1, cy - 1, kThumb + 2, kThumb + 2};
+                SDL_RenderDrawRect(ren, &b);
+                SDL_Rect b2{cx - 2, cy - 2, kThumb + 4, kThumb + 4};
+                SDL_RenderDrawRect(ren, &b2);
+            }
+        }
+        SDL_RenderSetClipRect(ren, nullptr);
+
+        // Chrome strips.
         fillRect(ren, 0, 0, w, kMenuH, 46, 48, 58);
         fillRect(ren, 0, kMenuH - 1, w, 1, 12, 12, 16);
+        fillRect(ren, kPaletteW - 1, kMenuH, 1, canvasH, 12, 12, 16);
         fillRect(ren, 0, h - kStatusH, w, kStatusH, 38, 40, 50);
         fillRect(ren, 0, h - kStatusH, w, 1, 12, 12, 16);
 
         SDL_RenderPresent(ren);
     }
 
+    for (auto& [k, t] : thumbs) if (t) SDL_DestroyTexture(t);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
