@@ -38,8 +38,27 @@
             return;
         }
         if (st == tak::net::MpClient::State::Done) {
-            std::string m = "disconnected: " + (mp_->error().empty() ? std::string("server closed") : mp_->error());
-            blockText(m, cx - blockWidth(m, 2.0f) / 2, winH / 2.0f, 2.0f, {255, 130, 110, 255});
+            // Connection over (server closed / rejected us / timed out): say WHY --
+            // MpClient preserves the server's Reject reason (e.g. "protocol version
+            // mismatch (server 28 / client 29)") -- and give the player a way OUT.
+            float my = winH / 2.0f - 40;
+            blockText("DISCONNECTED", cx - blockWidth("DISCONNECTED", 2.6f) / 2, my,
+                      2.6f, {255, 130, 110, 255});
+            std::string why = mp_->error().empty() ? std::string("the server closed the connection")
+                                                   : mp_->error();
+            // Long reasons (version-mismatch text) wrap onto two centred lines.
+            std::string l1 = why, l2;
+            if (why.size() > 56) {
+                size_t cut = why.rfind(' ', why.size() / 2 + 12);
+                if (cut == std::string::npos) cut = why.size() / 2;
+                l1 = why.substr(0, cut);
+                l2 = why.substr(cut + 1);
+            }
+            blockText(l1, cx - blockWidth(l1, 1.8f) / 2, my + 34, 1.8f, {215, 218, 228, 255});
+            if (!l2.empty())
+                blockText(l2, cx - blockWidth(l2, 1.8f) / 2, my + 56, 1.8f, {215, 218, 228, 255});
+            lbBtn(cx - 90, my + (l2.empty() ? 78.0f : 96.0f), 180, 32, "BACK TO MENU", true,
+                  [this] { menuRequested_ = true; });
             return;
         }
         if (st == tak::net::MpClient::State::InRoom) drawRoom(winW, winH);

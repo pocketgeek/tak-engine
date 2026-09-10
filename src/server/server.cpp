@@ -376,6 +376,10 @@ void Server::writeReplay(Room& r) {
 void Server::sendReject(Client& c, const std::string& why) {
     Writer w; w.str(why);
     c.conn.send(Msg::Reject, w);
+    // Every caller fail()s/closes the connection right after: push the reason out
+    // NOW, or the queued Reject dies with the socket and the client can only
+    // report "peer closed" instead of WHY it was turned away.
+    c.conn.flushWrite();
     std::fprintf(stderr, "reject client %u: %s\n", c.id, why.c_str());
 }
 

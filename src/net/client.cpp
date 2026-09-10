@@ -45,7 +45,21 @@ bool MpClient::poll() {
         baseMs_ = b ? std::max(0, std::atoi(b)) : 0;
         lossPct_ = l ? std::clamp(std::atoi(l), 0, 100) : 0;
     }
-    if (!conn_.recv()) { err_ = conn_.error(); state_ = State::Done; return false; }
+    if (!conn_.recv()) {
+        // Keep an existing reason (e.g. the server's Reject text): the socket
+        // closing right after a Reject must not overwrite WHY with "peer closed".
+        if (err_.empty()) {
+            err_ = conn_.error();
+            // A close during the handshake (never Welcomed) is almost always a
+            // version gate on a server too old to flush its Reject reason --
+            // say so instead of a bare "peer closed".
+            if (state_ == State::Connecting)
+                err_ = "server closed during handshake -- likely a protocol version "
+                       "mismatch (this client speaks v" + std::to_string(kNetVersion) + ")";
+        }
+        state_ = State::Done;
+        return false;
+    }
     Frame f;
     while (conn_.poll(f)) { onFrame(f); if (!conn_.ok()) break; }
     uint64_t now = nowMs();
@@ -69,8 +83,8 @@ bool MpClient::poll() {
     // give it the same long grace the server extends to spectators so a transient
     // stall doesn't self-terminate a display-only connection.
     uint64_t timeoutMs = spectator_ ? kSpectatorTimeoutMs : kTimeoutMs;
-    if (now - lastRecvMs_ > timeoutMs) { err_ = "server timeout"; state_ = State::Done; }
-    if (!conn_.flushWrite()) { err_ = conn_.error(); state_ = State::Done; }
+    if (now - lastRecvMs_ > timeoutMs) { if (err_.empty()) err_ = "server timeout"; state_ = State::Done; }
+    if (!conn_.flushWrite()) { if (err_.empty()) err_ = conn_.error(); state_ = State::Done; }
     if (!conn_.ok() && err_.empty()) { err_ = conn_.error(); state_ = State::Done; }
     return state_ != State::Done;
 }
