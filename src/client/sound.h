@@ -119,8 +119,8 @@ public:
     }
 
     // Non-positional (UI, music-adjacent) — centred across all speakers.
-    void play(const std::string& name, float gain = 1.0f) {
-        playAt(name, 0.0f, 0.0f, false, 0, 0, gain);
+    void play(const std::string& name, float gain = 1.0f, float rate = 1.0f) {
+        playAt(name, 0.0f, 0.0f, false, 0, 0, gain, rate);
     }
 
     // Positional: pan by the source's world position relative to the listener.
@@ -350,7 +350,7 @@ public:
 
     void playAt(const std::string& name, float pan, float depth,
                 bool positional = false, float wx = 0, float wz = 0,
-                float gain = 1.0f) {
+                float gain = 1.0f, float rate = 1.0f) {
         std::string n = name;
         std::transform(n.begin(), n.end(), n.begin(), ::tolower);
         auto it = index_.find(n);
@@ -369,6 +369,8 @@ public:
                 c.wx = wx;
                 c.wz = wz;
                 c.gain = gain;
+                c.fpos = 0;
+                c.step = uint32_t(std::clamp(rate, 0.25f, 4.0f) * 65536.0f);
                 break;
             }
         SDL_UnlockAudioDevice(dev_);
@@ -382,6 +384,8 @@ private:
         float wx = 0, wz = 0;       // world emission point (for positional re-panning)
         bool positional = false;    // true = re-pan every frame from (wx,wz)
         float gain = 1.0f;          // per-sound boost (UI clicks undo the /2 headroom)
+        uint32_t step = 65536;      // 16.16 playback rate (pitch); 65536 = native
+        uint64_t fpos = 0;          // 16.16 fractional read position
     };
     // Recompute a channel's pan/depth from its world point and the current listener.
     void repan(Channel& c) {
@@ -477,8 +481,11 @@ private:
         for (auto& c : channels_) {
             if (!c.data) continue;
             channelGains(c.pan, c.depth, g);
-            for (int f = 0; f < frames && c.pos < c.data->size(); ++f, ++c.pos) {
+            for (int f = 0; f < frames; ++f) {
+                c.pos = size_t(c.fpos >> 16);
+                if (c.pos >= c.data->size()) break;
                 int s = int(float((*c.data)[c.pos]) * c.gain) / 2 * sfxVol_ / 256;
+                c.fpos += c.step;
                 for (int ci = 0; ci < ch; ++ci)
                     if (g[ci] != 0.0f) add(f, ci, int(s * g[ci]));
                 if (lfe >= 0) lfeMono_[size_t(f)] += s;
@@ -631,8 +638,13 @@ public:
                         const auto& node = root.children.at(clsName);
                         for (const auto& evName : node.childOrder) {
                             auto& list = cls[evName];
-                            for (const auto& [wav, weight] : node.children.at(evName).values)
-                                list.push_back(wav);
+                            // Entries are WEIGHTED: the "_NN-note" click tone
+                            // carries 100.0 vs 1.0 per voice line, so retail
+                            // mostly bongs and only occasionally speaks.
+                            for (const auto& [wav, weight] : node.children.at(evName).values) {
+                                float w = float(std::atof(weight.c_str()));
+                                list.push_back({wav, w > 0 ? w : 1.0f});
+                            }
                         }
                     }
                 } catch (const std::exception&) {}
@@ -646,9 +658,21 @@ public:
         if (ci == classes_.end()) return nullptr;
         auto ei = ci->second.find(event);
         if (ei == ci->second.end() || ei->second.empty()) return nullptr;
-        return &ei->second[salt % ei->second.size()];
+        // Weighted pick (retail: note tone at 100.0 dwarfs 1.0 voice lines).
+        // The salt is a counter, so whiten it into a uniform draw first.
+        float total = 0;
+        for (const auto& [w, wt] : ei->second) total += wt;
+        uint32_t hsh = salt * 2654435761u;
+        float r = float(hsh & 0xFFFFF) / 1048576.0f * total;
+        for (const auto& [w, wt] : ei->second) {
+            r -= wt;
+            if (r <= 0) return &w;
+        }
+        return &ei->second.back().first;
     }
 
 private:
-    std::map<std::string, std::map<std::string, std::vector<std::string>>> classes_;
+    std::map<std::string,
+             std::map<std::string, std::vector<std::pair<std::string, float>>>>
+        classes_;
 };

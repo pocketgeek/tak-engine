@@ -2407,18 +2407,38 @@
     }
 
     void GameView::voice(int unitId, const std::string& event) {
-        // Retail command feedback is EITHER/OR, never stacked: a unit with an
-        // acknowledgment line for the event speaks it; one without gets the
-        // faction click tone (sounds/tone<side>.wav -- the "bong" click.hpi
-        // override packs replace). Most TAK units have no order voice, which
-        // is why retail bonged on nearly every command. Selection stays
-        // voice-or-silent.
+        // Retail command feedback: one WEIGHTED draw from the sound class's
+        // event pool -- the symbolic "_NN-note" entry (weight 100) vs the voice
+        // lines (weight 1 each), so units bong ~99% of the time and speak
+        // occasionally. The note names no file: it is the faction click tone
+        // (sounds/tone<side>.wav, what click.hpi packs replace) pitch-shifted
+        // to the named chromatic semitone (A=1..G#=12) -- a different pitch
+        // per command type. Units without a class fall back to the plain tone
+        // on command events.
         const auto* u = frameUnitP(unitId);
         const std::string* wav = nullptr;
         if (u && u->type && !u->type->soundClass.empty())
             wav = soundClasses_.pick(u->type->soundClass, event, salt_++);
-        if (wav) sounds_.playWorld(*wav, u->x, u->z);
-        else if (event != "select") playClickTone();
+        auto isTone = [](const std::string& w) {
+            return w.size() >= 4 &&
+                   std::tolower((unsigned char)w[0]) == 't' &&
+                   std::tolower((unsigned char)w[1]) == 'o' &&
+                   std::tolower((unsigned char)w[2]) == 'n' &&
+                   std::tolower((unsigned char)w[3]) == 'e';
+        };
+        if (wav && !wav->empty() && (*wav)[0] == '_') {
+            int semi = std::atoi(wav->c_str() + 1);
+            playClickTone(semi);
+        } else if (wav && isTone(*wav)) {
+            // Some classes name the faction tone directly (ARAKING's every
+            // event is just TONEARA): route it through the boosted tone path,
+            // or it plays half-volume and quiet click.hpi replacements vanish.
+            playClickTone();
+        } else if (wav) {
+            sounds_.playWorld(*wav, u->x, u->z);
+        } else if (event != "select") {
+            playClickTone();
+        }
     }
 
     void GameView::loadExplosionClasses() {

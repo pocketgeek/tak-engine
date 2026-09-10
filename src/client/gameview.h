@@ -2088,12 +2088,19 @@ private:
     bool guiClick(float mx, float my);
     // Retail HUD feedback: every side-panel / build-icon press plays the local
     // faction's click tone (sounds/tone<side>.wav -- the click.hpi overridables).
-    void playClickTone() {
-        // gain 2.0 undoes the mixer's /2 headroom: retail played the tone at
-        // the wav's native amplitude, and quiet click.hpi replacements vanish
-        // at half volume.
+    // Retail acknowledgment bong: the faction tone, optionally pitch-shifted
+    // to a chromatic semitone (soundclass "_NN-note" entries; A=1..G#=12).
+    // semitone 0 = native pitch. Reference note provisional pending the icd
+    // playback-rate confirmation. gain 2.0 undoes the mixer's /2 headroom:
+    // retail played tones at native amplitude, and quiet click.hpi
+    // replacements vanish at half volume.
+    void playClickTone(int semitone = 0) {
+        constexpr int kToneRef = 4;   // assume the tone is recorded at c (_04)
+        float rate = semitone > 0
+                         ? std::pow(2.0f, float(semitone - kToneRef) / 12.0f)
+                         : 1.0f;
         std::string t = "tone" + side_;
-        if (sounds_.has(t)) sounds_.play(t, 2.0f);
+        if (sounds_.has(t)) sounds_.play(t, 2.0f, rate);
     }
 
     // The conjure/build menu for a builder type, filtered by the active mission's unit
