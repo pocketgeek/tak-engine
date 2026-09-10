@@ -11,6 +11,7 @@
 
 #include <SDL.h>
 
+#include "cartographer/dialog.h"
 #include "cartographer/features.h"
 #include "cartographer/font5x7.h"
 #include "cartographer/newmap.h"
@@ -358,6 +359,42 @@ int main(int argc, char** argv) {
         return -1;
     };
 
+    // --- Modal dialogs (Scenario Properties, Resize) --------------------------
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE };
+    Modal modal = M_NONE;
+    std::string mf[2];              // field buffers
+    bool mfNumeric[2] = {false, false};
+    int mfocus = 0;
+    SDL_Rect mBox[2]{}, mOK{}, mCancel{};   // render-computed hit rects
+    auto openModal = [&](Modal m) {
+        modal = m; mfocus = 0;
+        if (m == M_SCENARIO) {
+            mf[0] = scenario.missionName; mf[1] = scenario.missionDescription;
+            mfNumeric[0] = mfNumeric[1] = false;
+        } else if (m == M_RESIZE) {
+            mf[0] = std::to_string(mapView.map().width / 32);
+            mf[1] = std::to_string(mapView.map().height / 32);
+            mfNumeric[0] = mfNumeric[1] = true;
+        }
+        SDL_StartTextInput();
+    };
+    auto applyModal = [&]() {
+        if (modal == M_SCENARIO) {
+            scenario.missionName = mf[0];
+            scenario.missionDescription = mf[1];
+        } else if (modal == M_RESIZE) {
+            int wu = std::max(1, std::atoi(mf[0].c_str()));
+            int hu = std::max(1, std::atoi(mf[1].c_str()));
+            std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
+            cart::resizeMap(mapView.editMap(), mapView.compositor(),
+                            cart::loadWorldPalette(vfs, wld), wu, hu);
+            scenario.sizeW = wu; scenario.sizeH = hu;
+            mapView.tilesEdited();
+            edited = true;
+        }
+        modal = M_NONE; SDL_StopTextInput();
+    };
+
     if (!shotPath.empty()) {
         mapView.setZoom(0.3f);          // fit-ish view for the shot
         mapView.finishChunks();         // wait for the terrain to decode+upload
@@ -371,13 +408,38 @@ int main(int argc, char** argv) {
 
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) running = false;
-            else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)
+            if (e.type == SDL_QUIT) { running = false; continue; }
+            // A modal dialog swallows all input while up.
+            if (modal != M_NONE) {
+                if (e.type == SDL_TEXTINPUT) {
+                    for (const char* c = e.text.text; *c; ++c)
+                        if (!mfNumeric[mfocus] || (*c >= '0' && *c <= '9')) mf[mfocus] += *c;
+                } else if (e.type == SDL_KEYDOWN) {
+                    SDL_Keycode k = e.key.keysym.sym;
+                    if (k == SDLK_BACKSPACE && !mf[mfocus].empty()) mf[mfocus].pop_back();
+                    else if (k == SDLK_TAB) mfocus = (mfocus + 1) % 2;
+                    else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) applyModal();
+                    else if (k == SDLK_ESCAPE) { modal = M_NONE; SDL_StopTextInput(); }
+                } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                           e.button.button == SDL_BUTTON_LEFT) {
+                    int mx = e.button.x, my = e.button.y;
+                    if (cart::pointIn(mx, my, mBox[0])) mfocus = 0;
+                    else if (cart::pointIn(mx, my, mBox[1])) mfocus = 1;
+                    else if (cart::pointIn(mx, my, mOK)) applyModal();
+                    else if (cart::pointIn(mx, my, mCancel)) { modal = M_NONE; SDL_StopTextInput(); }
+                }
+                continue;
+            }
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)
                 running = false;
             else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
                      e.key.keysym.sym == SDLK_s) {
                 bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
                 saveMap(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt");
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_p) {
+                openModal(M_SCENARIO);   // Scenario -> Properties
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_r) {
+                openModal(M_RESIZE);     // Scenario -> Resize
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_g) {
                 showGrid = !showGrid;   // View -> Grid
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_TAB) {
@@ -615,6 +677,19 @@ int main(int argc, char** argv) {
         std::string status = coord + "   TOOL: " + names[int(tool)] + "   ZOOM: " + zbuf +
                              "   STARTS: " + std::to_string(scenario.starts.size());
         cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
+
+        // Modal dialog over everything.
+        if (modal != M_NONE) {
+            const char* title = modal == M_SCENARIO ? "SCENARIO PROPERTIES" : "RESIZE MAP";
+            const char* l0 = modal == M_SCENARIO ? "SCENARIO NAME" : "WIDTH (UNITS)";
+            const char* l1 = modal == M_SCENARIO ? "DESCRIPTION" : "HEIGHT (UNITS)";
+            SDL_Rect ct = cart::drawPanel(ren, w, h, 320, 150, title);
+            mBox[0] = cart::drawField(ren, ct.x, ct.y, ct.w, l0, mf[0], mfocus == 0);
+            mBox[1] = cart::drawField(ren, ct.x, ct.y + 40, ct.w, l1, mf[1], mfocus == 1);
+            mOK = cart::drawButton(ren, ct.x + ct.w - 150, ct.y + ct.h - 20, 70, 18, "OK", true);
+            mCancel = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18,
+                                       "CANCEL", false);
+        }
 
         SDL_RenderPresent(ren);
         if (!shotPath.empty()) {

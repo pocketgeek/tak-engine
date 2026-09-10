@@ -102,6 +102,42 @@ void generateMinimaps(tak::tnt::Map& map, tak::terrain::Compositor& comp,
     map.overview = indexedMinimap(grid, map.blocksX, map.blocksY, ow, oh, pal);
 }
 
+void resizeMap(tak::tnt::Map& map, tak::terrain::Compositor& comp,
+               const tak::gaf::Palette& pal, int wUnits, int hUnits) {
+    int nw = std::max(1, wUnits) * 32, nh = std::max(1, hUnits) * 32;
+    int nbx = nw / 2, nby = nh / 2;
+    if (nw == map.width && nh == map.height) return;
+    size_t ncells = size_t(nw) * nh, nblocks = size_t(nbx) * nby;
+
+    uint8_t fillH = uint8_t(map.seaLevel + 22);   // flat land for new area
+    uint32_t fk = map.tileKeys.empty() ? 0 : map.tileKeys[0];
+    uint8_t fc = map.tileCols.empty() ? 0 : map.tileCols[0];
+    uint8_t fr = map.tileRows.empty() ? 0 : map.tileRows[0];
+
+    std::vector<uint8_t> h(ncells, fillH);
+    std::vector<uint16_t> ft(ncells, 0xFFFF);
+    std::vector<uint32_t> tk(nblocks, fk);
+    std::vector<uint8_t> tc(nblocks, fc), tr(nblocks, fr);
+
+    int cw = std::min(map.width, nw), ch = std::min(map.height, nh);
+    for (int y = 0; y < ch; ++y)
+        for (int x = 0; x < cw; ++x) {
+            h[size_t(y) * nw + x] = map.heights[size_t(y) * map.width + x];
+            ft[size_t(y) * nw + x] = map.features[size_t(y) * map.width + x];
+        }
+    int cbx = std::min(map.blocksX, nbx), cby = std::min(map.blocksY, nby);
+    for (int y = 0; y < cby; ++y)
+        for (int x = 0; x < cbx; ++x) {
+            size_t s = size_t(y) * map.blocksX + x, d = size_t(y) * nbx + x;
+            tk[d] = map.tileKeys[s]; tc[d] = map.tileCols[s]; tr[d] = map.tileRows[s];
+        }
+
+    map.width = nw; map.height = nh; map.blocksX = nbx; map.blocksY = nby;
+    map.heights = std::move(h); map.features = std::move(ft);
+    map.tileKeys = std::move(tk); map.tileCols = std::move(tc); map.tileRows = std::move(tr);
+    generateMinimaps(map, comp, pal);
+}
+
 tak::tnt::Map newBlankMap(const tak::hpi::Vfs& vfs, SectionLibrary& sections,
                           tak::terrain::Compositor& comp, const std::string& world,
                           int wUnits, int hUnits) {

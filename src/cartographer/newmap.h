@@ -33,4 +33,10 @@ tak::tnt::Map newBlankMap(const tak::hpi::Vfs& vfs, SectionLibrary& sections,
                           tak::terrain::Compositor& comp, const std::string& world,
                           int wUnits, int hUnits);
 
+// Resize `map` to wUnits x hUnits (1 Unit = 32 cells), keeping the overlapping
+// top-left region and filling any new area with the map's first tile + flat
+// land, then regenerating the minimaps.
+void resizeMap(tak::tnt::Map& map, tak::terrain::Compositor& comp,
+               const tak::gaf::Palette& pal, int wUnits, int hUnits);
+
 } // namespace cart

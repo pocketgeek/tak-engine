@@ -106,6 +106,8 @@ the **tile/section palette + brush tools**, the **height tools**, the
    [start positions DONE: markers, place/move/delete, OTA save; +5x7 bitmap font,
     tool toolbar, status bar, --shot capture]
 4. Scenario Properties / Resize / Use Only / Check Map.
+   [modal widget layer + Scenario Properties + Resize DONE; Use Only + Check Map
+    need placed units]
 5. The trigger system (Scripting): condition/action opcode tables (RE), rule
    editor, per-player rules, OTA script write.
 6. Land Lasso + Clear Area; Recent files; polish to 1:1.
