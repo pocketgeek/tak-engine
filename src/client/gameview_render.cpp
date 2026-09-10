@@ -1094,6 +1094,7 @@
         tmp.vm = std::move(vm);
         tmp.flyGate = flyGateOf(*tmp.vm);
         tmp.moveGate = walkGateOf(tmp.vm->file());
+        bool hasWalk = hasWalkCycle(tmp.vm->file());
         bool animated = canMove || canFly;
         // (Re)start the locomotion animation from the top -- used before each bake
         // attempt so a retry on a fresh page re-captures the same frames.
@@ -1101,7 +1102,7 @@
             tmp.vm->reset();
             if (canFly) { tmp.vm->setStatic(tmp.flyGate, 1); tmp.vm->start("fly");
                           for (int s = 0; s < 8; ++s) tmp.vm->tick(1.0f / 30); }
-            else if (canMove) {
+            else if (canMove && hasWalk) {
                 // Ground walk scripts gate their leg motion on their moving-flag
                 // static (walkGateOf: 0 for most, 3 for the Veruna monarch); without it
                 // walk_legs no-ops and every baked frame is the same standing pose. Set
@@ -1111,11 +1112,11 @@
                 tmp.vm->start("walk") || tmp.vm->start("walk_legs");
             }
             else {
-                // Static buildings: run the COB constructor exactly as registerUnit
-                // does for the live unit, then let it settle, so the bake reflects the
-                // same default piece visibility -- e.g. the Death Totem's Create hides
-                // its vetskull* pieces (veterancy skulls a fresh totem hasn't earned),
-                // which the sprite otherwise left visible while the 3D model hid them.
+                // Static buildings AND mobile no-walk movers (ships' oars, wheeled
+                // vehicles' wheels/props): run the COB constructor exactly as registerUnit
+                // does for the live unit, then let it settle, so the bake reflects the same
+                // default piece visibility (e.g. the Death Totem's Create hides its
+                // vetskull* pieces) and captures a moving unit's ambient loop.
                 tmp.vm->start("Create");
                 for (int s = 0; s < 6; ++s) tmp.vm->tick(1.0f / 30);
             }
@@ -1125,8 +1126,10 @@
         // across the whole bake window instead of freezing after the first pass.
         auto stepVm = [&](float dt) {
             tmp.vm->tick(dt);
-            if (canMove && !canFly && tmp.vm->threadCount() == 0)
-                tmp.vm->start("walk") || tmp.vm->start("walk_legs");
+            if (canMove && !canFly && tmp.vm->threadCount() == 0) {
+                if (hasWalk) tmp.vm->start("walk") || tmp.vm->start("walk_legs");
+                else tmp.vm->start("Create");   // no-walk mover: keep its ambient loop going
+            }
         };
         SDL_Texture* atlas = atlasFor(slot);
         // A page-allocation failure is transient (VRAM pressure) -- un-reserve the

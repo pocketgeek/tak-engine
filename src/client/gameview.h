@@ -881,6 +881,7 @@ private:
         float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
         int flyGate = 8;         // static index that this unit's `fly` gates on
         int moveGate = 0;        // static index this unit's `walk` gates on (see walkGateOf)
+        bool hasWalk = false;    // has a walk/walk_legs/tread script (vs a Create-ambient mover)
         // emit-sfx (piece, sfxType) captured off the worker thread; drained on the
         // main thread after the parallel VM tick (SDL/effects_ are main-thread only).
         std::vector<std::pair<int, int32_t>> pendingSfx;
@@ -969,6 +970,16 @@ private:
     // the walk script's first JUMP_IF_FALSE; decode forward to it, since a few units
     // (e.g. the Taros tarmind) front-load a loop-counter setup before the gate.
     // Tries walk / walk_legs / tread.
+    // True if the unit has a leg/tread walk cycle. A mobile unit WITHOUT one (ships'
+    // oars, wheeled war-machines' wheels/props) animates via its Create ambient loop
+    // instead, so registerUnit starts Create for it and the walk state machine leaves
+    // its VM alone (a walk-transition reset would wipe the ambient loop).
+    static bool hasWalkCycle(const tak::cob::File& f) {
+        for (const char* name : {"walk", "walk_legs", "tread"})
+            if (f.scriptIndex(name) >= 0) return true;
+        return false;
+    }
+
     static int walkGateOf(const tak::cob::File& f) {
         for (const char* name : {"walk", "walk_legs", "tread"}) {
             int si = f.scriptIndex(name);
@@ -1078,6 +1089,7 @@ private:
         std::vector<std::string> pieceNames;
         bool hasSounds = false;   // any PLAY_SOUND op: the script provides its own audio
         int moveGate = 0;         // walk-cycle moving-flag static index (walkGateOf)
+        bool hasWalk = false;     // has a walk/walk_legs/tread script (hasWalkCycle)
     };
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };

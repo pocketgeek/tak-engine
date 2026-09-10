@@ -930,7 +930,9 @@
                     a.vm->setStatic(a.flyGate, 0);
                     a.vm->start("land") || a.vm->start("restore_x");   // landed pose
                 }
-            } else {
+            } else if (a.hasWalk) {
+                // No-walk movers (ships/wheeled vehicles) fall through: their Create
+                // ambient loop runs untouched -- resetting the VM here would wipe it.
                 bool m = u.walking();
                 if (m != a.walking) {
                     a.walking = m;
@@ -1149,11 +1151,13 @@
                     for (uint32_t w : cc.file->code)
                         if (w == 0x10072000) { cc.hasSounds = true; break; }
                 cc.moveGate = walkGateOf(*cc.file);
+                cc.hasWalk = hasWalkCycle(*cc.file);
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
             a.pieceNames = &ci->second.pieceNames;
             a.cobSounds = ci->second.hasSounds;
             a.moveGate = ci->second.moveGate;
+            a.hasWalk = ci->second.hasWalk;
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             // TA COB unit-state queries answered from the sim.
             int unitId = id;
@@ -1191,12 +1195,15 @@
                 // pose, so a flyer that spawns idle and never takes off (e.g. the
                 // Monarch at game start) doesn't sit in a T-pose.
                 a.vm->start("land");
-            } else if (isStructure(type)) {
+            } else if (isStructure(type) || !a.hasWalk) {
                 // Buildings: run the COB constructor so ambient loops start (e.g. the
                 // Keep's Create kicks off its flag/smoke scripts, the Sacred Fire's
                 // its FireControl flicker). Detect via isStructure (maxVel<=0), NOT
                 // !canMove -- the Keep and friends set canmove=1 with no velocity, so
                 // the old !canMove test skipped them and they never animated.
+                // Also mobile units with NO walk cycle (ships' oars, wheeled war-machines'
+                // wheels/props): their motion is a Create ambient loop, not a walk script,
+                // so start it here and let it run (the walk state machine leaves them be).
                 a.vm->start("Create");
             }
         } catch (const std::exception&) { /* unit stays unanimated */ }
