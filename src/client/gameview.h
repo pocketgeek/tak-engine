@@ -1947,6 +1947,8 @@ private:
     bool addFeature(const std::string& rawName, float x, float z, bool blockNav);
 
     void loadFeatures();
+    // Scatter retail wave sprites along the coast (display only; see the impl).
+    void addShorelineWaves();
 
     // Track numbers for a side from gamedata/sidedata.tdf (falls back to IP).
     std::vector<int> factionMusicTracks(const std::string& side);

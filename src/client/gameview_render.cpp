@@ -1832,6 +1832,48 @@
             world_.nav().block(int(sx) / 16 - 1, int(sz) / 16 - 1, 2, 2, false);
         std::printf("mana deposits: %zu (from %zu features)\n",
                     manaSpots_.size(), raw.size());
+        addShorelineWaves();
+    }
+
+    void GameView::addShorelineWaves() {
+        // Retail shipped animated wave sprites (category=waves) that map authors dot
+        // along coasts. We place them procedurally at water cells touching land, so
+        // generated maps get surf too. Display only: addFeature(..., blockNav=false)
+        // adds a render instance with no nav/mana/reclaim side effect, and they
+        // animate through the same GAF pipeline as any feature.
+        const auto& map = mapView_.map();
+        const int W = map.width, H = map.height, sea = map.seaLevel;
+        if (W <= 0 || H <= 0 || int(map.heights.size()) < size_t(W) * H) return;
+        // World prefix (AraWave/TarWave/VerWave/ZonWave) from the map's feature names.
+        std::string wp = "Ara";
+        for (const auto& n : map.featureNames) {
+            std::string p = n.substr(0, 3);
+            if (p == "Tar" || p == "Ver" || p == "Zon" || p == "Ara") { wp = p; break; }
+        }
+        auto land = [&](int x, int z) {
+            return x >= 0 && z >= 0 && x < W && z < H && map.heights[size_t(z) * W + x] >= sea;
+        };
+        // Variant by which cardinal holds land -- the sprite draws (via its anchor)
+        // toward the land, so foam sits at the shoreline. Calibrated from the GAF
+        // anchors: land-N -> 13, land-S -> 01, land-E -> 07, land-W -> 03 (corners
+        // fall through to a cardinal).
+        const int S = 4;                         // ~one wave per 4x4 stretch of coast
+        std::vector<uint8_t> used(size_t(W / S + 1) * (H / S + 1), 0);
+        int placed = 0;
+        for (int z = 0; z < H; ++z)
+            for (int x = 0; x < W; ++x) {
+                if (land(x, z)) continue;        // waves sit on the water side
+                bool n = land(x, z - 1), s = land(x, z + 1), e = land(x + 1, z), w = land(x - 1, z);
+                if (!(n || s || e || w)) continue;
+                size_t uc = size_t(z / S) * (W / S + 1) + (x / S);
+                if (used[uc]) continue;          // spacing
+                used[uc] = 1;
+                int v = n ? 13 : s ? 1 : e ? 7 : 3;
+                char nm[24];
+                std::snprintf(nm, sizeof nm, "%sWave%02d", wp.c_str(), v);
+                if (addFeature(nm, float(x) * 16 + 8, float(z) * 16 + 8, false)) ++placed;
+            }
+        std::printf("shoreline waves: %d placed (%sWave)\n", placed, wp.c_str());
     }
 
     bool GameView::buildIconClick(float mx, float my, bool lmb, bool rmb) {
