@@ -135,6 +135,12 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                                                info->valueOr("soundclass", "")));
             t.sight = float(info->numberOr("sightdistance", 180));
             t.corpse = lower(info->valueOr("corpse", ""));
+            t.stoneFeat = lower(info->valueOr("stone", ""));
+            t.frozenFeat = lower(info->valueOr("frozen", ""));
+            t.corpseAdjX = int(info->numberOr("corpseadjustx", 0));
+            t.corpseAdjZ = int(info->numberOr("corpseadjustz", 0));
+            t.canAnimate = info->numberOr("cananimate", 0) != 0;
+            t.animName_ = lower(info->valueOr("animatetype", ""));
             t.shadowArt = lower(info->valueOr("shadowart", ""));
             t.veteranModel = lower(info->valueOr("veteranmodel", ""));
             t.bodyType = lower(info->valueOr("bodytype", "default"));
@@ -165,6 +171,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.activateWhenBuilt = info->numberOr("activatewhenbuilt", 1) != 0;
             t.cantBeStoned = info->numberOr("cantbestoned", 0) != 0;
             t.cantBeFrozen = info->numberOr("cantbefrozen", 0) != 0;
+            // Retail forces both on Monarchs (icd: def bit18 -> cantbestoned +
+            // cantbefrozen) -- else petrify would be an instant Monarch kill.
+            if (t.commander) t.cantBeStoned = t.cantBeFrozen = true;
             t.cantBeCaptured = info->numberOr("cantbecaptured", 0) != 0;
             t.cantBeTransported = info->numberOr("cantbetransported", 0) != 0;
             t.transportSize = int(info->numberOr("transportsize", 1));
@@ -253,8 +262,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                         s.find("frost") != std::string::npos ||
                         s.find("hail") != std::string::npos)
                         wp.status = Weapon::Status::Frozen;
+                    // "turn to stone", not bare "stone": the Stone Giant's
+                    // Flying Stones (boulders) and Divine Lodestone must NOT
+                    // petrify -- with statue deaths that would be lethal.
                     else if (s.find("petrif") != std::string::npos ||
-                             s.find("stone") != std::string::npos ||
+                             s.find("turn to stone") != std::string::npos ||
                              s.find("medusa") != std::string::npos)
                         wp.status = Weapon::Status::Stoned;
                     else if (s.find("paraly") != std::string::npos)
@@ -312,6 +324,12 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // Skip malformed definitions rather than fail the registry.
         }
     }
+    // Fix up cross-type references now that every unit is in the table
+    // (animatetype=MONGHOUL names another unit the animator raises).
+    for (auto& [id, t] : types_)
+        if (!t.animName_.empty())
+            if (auto it = types_.find(t.animName_); it != types_.end())
+                t.animateType = &it->second;
 }
 
 void TypeRegistry::loadBuildTree(const hpi::Vfs& vfs, const std::string& prefix) {
@@ -1329,21 +1347,40 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                 (w.status == Weapon::Status::Frozen && e.type->cantBeFrozen) ||
                 (w.status == Weapon::Status::Stoned && e.type->cantBeStoned);
             if (!immune) {
-                float& t = w.status == Weapon::Status::Frozen   ? e.frozenFor
-                         : w.status == Weapon::Status::Stoned   ? e.stonedFor
-                                                                : e.paralyzedFor;
-                t = std::max(t, w.statusDur);
-                e.speed = 0;
+                if (w.status == Weapon::Status::Paralyzed) {
+                    e.paralyzedFor = std::max(e.paralyzedFor, w.statusDur);
+                    e.speed = 0;
+                } else {
+                    // Retail petrify/freeze (icd 0x51a61a): HP zeroes INSTANTLY
+                    // regardless of amount -- the victim dies on the spot and
+                    // the death edge places its stone=/frozen= STATUE (blocking,
+                    // permanent, resurrectable back to life). The old temporary
+                    // stoned/frozen debuff was our pre-RE guess.
+                    bool freeze = w.status == Weapon::Status::Frozen;
+                    if (freeze) e.frozenFor = 1.0f; else e.stonedFor = 1.0f;
+                    e.hp = 0;
+                    e.deathType = freeze ? 15 : 14;
+                    e.speed = 0;
+                    static const bool kStatLog = std::getenv("TAK_BURNLOG") != nullptr;
+                    if (kStatLog)
+                        std::fprintf(stderr, "statue kill: %s %s at %.0f,%.0f\n",
+                                     e.type->id.c_str(), freeze ? "frozen" : "stoned",
+                                     e.x, e.z);
+                }
             }
         }
     };
     if (primary) hurt(*primary, 1.0f);
-    // Firestarter ignition (retail icd 0x529dc0 -> 0x4961a0): every feature
-    // head cell within aoe/2 of the impact -- impact cell exempt from the
-    // radius check, so a no-splash weapon (Fire Breath, aoe 0) still torches
-    // the cell it strikes. Deterministic in every peer's sim (state + RNG
-    // hashed). Must run BEFORE the aoe<=0 early-out below.
-    if (w.fireStarter && !featTypes_.empty() && terW_ > 0) {
+    // Features under fire (retail icd 0x529dc0 -> DamageFeature 0x4961a0):
+    // every feature head cell within aoe/2 of the impact -- the impact cell
+    // exempt from the radius check, so a no-splash weapon (Fire Breath, aoe 0)
+    // still strikes the cell it hits. A firestarter hit on a flamable feature
+    // IGNITES it instead of damaging it that hit; everything else accumulates
+    // weapon damage, and at the def's `damage` value the feature is destroyed
+    // -- swapped to its `featuredead` stage (npcwreck chains) or removed.
+    // Deterministic in every peer's sim (state + RNG hashed). Must run BEFORE
+    // the aoe<=0 early-out below.
+    if (!featTypes_.empty() && terW_ > 0) {
         float r = std::max(w.aoe * 0.5f, 8.0f);
         int icx = int(hx) / 16, icz = int(hz) / 16;
         int rc = int(r) / 16 + 1;
@@ -1354,11 +1391,20 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                 auto it = featureIdx_.find(cz * terW_ + cx);
                 if (it == featureIdx_.end()) continue;
                 Feature& f = features_[it->second];
-                if (!(dx == 0 && dz == 0)) {   // impact cell ignites regardless
+                if (!f.alive || f.type < 0) continue;
+                if (!(dx == 0 && dz == 0)) {   // impact cell is struck regardless
                     float fdx = f.x - hx, fdz = f.z - hz;
                     if (fdx * fdx + fdz * fdz > r * r) continue;
                 }
-                igniteFeature(f);
+                const FeatType& ft = featTypes_[size_t(f.type)];
+                if (ft.indestructible) continue;
+                if (w.fireStarter && ft.flamable && !f.burn && ft.hasBurnAnim) {
+                    igniteFeature(f);
+                    continue;   // ignition replaces the damage this hit
+                }
+                if (ft.hp <= 0) continue;   // no damage value: indestructible-by-damage
+                f.dmg += w.damage;
+                if (f.dmg >= ft.hp) swapFeature(f, ft.deadType);
             }
     }
     if (w.aoe <= 0) return;
@@ -1833,6 +1879,27 @@ bool World::featureAliveAt(float x, float z) const {
 // sim can't read art, so a fixed 5s stands in (typical tree-burn length).
 static constexpr int kBurnTicks = 150;
 
+// Swap a feature IN PLACE to another stage of its chain (featureburnt on
+// burn-out, featuredead on destruction; retail places the replacement neutral
+// -- our features carry no owner). newType < 0 = the feature is simply gone.
+void World::swapFeature(Feature& f, int newType) {
+    f.burn = 0;
+    f.dmg = 0;
+    if (f.blocks)   // old stage's footprint frees first
+        nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
+                   f.fx, f.fz, false);
+    if (newType < 0) { f.alive = false; f.blocks = false; f.type = -1; return; }
+    const FeatType& nt = featTypes_[size_t(newType)];
+    f.type = newType;
+    f.fx = nt.fx; f.fz = nt.fz;
+    f.blocks = nt.blocking;
+    if (f.blocks)
+        nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
+                   f.fx, f.fz, true);
+    f.manaYield = nt.energy;
+    f.work = f.workFull = std::max(nt.energy, 60.0f);
+}
+
 void World::igniteFeature(Feature& f) {
     if (f.burn || !f.alive || f.type < 0) return;
     const FeatType& ft = featTypes_[size_t(f.type)];
@@ -1874,28 +1941,10 @@ void World::tickBurning() {
                     if (burnRand(100) < nft.spreadChance) igniteFeature(nf);
                 }
         }
-        if (--f.burnLeft <= 0) {
+        if (--f.burnLeft <= 0)
             // Burn-out: swap to the featureburnt stage IN PLACE (same id/cell --
             // the client watches f.type to swap art), or die outright.
-            f.burn = 0;
-            const FeatType* bt = nullptr;
-            if (f.type >= 0) {
-                int bi = featTypes_[size_t(f.type)].burntType;
-                if (bi >= 0) bt = &featTypes_[size_t(bi)];
-                f.type = bi;
-            }
-            if (f.blocks)   // old stage's footprint frees first
-                nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
-                           f.fx, f.fz, false);
-            if (!bt) { f.alive = false; f.blocks = false; continue; }
-            f.fx = bt->fx; f.fz = bt->fz;
-            f.blocks = bt->blocking;
-            if (f.blocks)
-                nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
-                           f.fx, f.fz, true);
-            f.manaYield = bt->energy;
-            f.work = f.workFull = std::max(bt->energy, 60.0f);
-        }
+            swapFeature(f, featTypes_[size_t(f.type)].burntType);
     }
 }
 
@@ -2223,26 +2272,65 @@ void World::tickAuras(float dt) {
     }
 }
 
-void World::tickAbilities(float /*dt*/) {
+void World::tickAbilities(float dt) {
     // A corpse is a dead unit whose body still lies on the field: the death
     // anim has finished (4s) and decomposetime hasn't expired. Whether it can
     // be RAISED again is the corpse def's `resurrectable` (81 of the 150
     // shipped corpse defs; reclaiming works on any corpse).
     auto isCorpse = [](const Unit& c) {
-        return c.type && !c.alive() && c.deadFor >= 4.0f && c.deadFor < c.corpseUntil;
+        // Statues stand from the instant of death (retail: severity 0, no Dying
+        // anim); ordinary bodies appear after the 4s death animation.
+        float from = c.corpseStatue >= 0 ? 0.0f : 4.0f;
+        return c.type && !c.alive() && c.deadFor >= from && c.deadFor < c.corpseUntil;
     };
     auto corpseDef = [&](const Unit& c) -> const FeatType* {
-        int ct = corpseTypeOf(c.type);
+        int ct = c.corpseStatue >= 0 ? c.corpseStatue : corpseTypeOf(c.type);
         return ct >= 0 ? &featTypes_[size_t(ct)] : nullptr;
     };
-    struct Revive { const UnitType* type; float x, z; int player; };
+    auto retire = [&](Unit& c) {
+        c.deadFor = 1000.0f;
+        if (c.corpseBlocks) {
+            c.corpseBlocks = false;
+            blockFootprint(nav_, *c.type, c.x, c.z, false);
+        }
+    };
+    struct Revive { const UnitType* type; float x, z; int player; bool animate; };
     std::vector<Revive> revives;
     const float kR = 56.0f;
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& u = units_[i];
-        if (!u.alive() || !u.type || u.underConstruction || u.incapacitated()) continue;
-        if (!u.type->canReclaim && !u.type->canResurrect) continue;
-        if (!u.orders.empty()) continue;   // only while idle (not mid-order)
+        if (!u.alive() || !u.type || u.underConstruction || u.incapacitated() ||
+            !u.orders.empty()) {
+            if (u.reviveTarget) u.reviveTarget = 0;   // interrupted: channel drops
+            continue;
+        }
+        bool caster = u.type->canResurrect || (u.type->canAnimate && u.type->animateType);
+        if (!caster && !u.type->canReclaim) continue;
+
+        // A revive is a CHANNEL, not an instant (retail order-0xA task states:
+        // work = target buildtime / caster workertime, x0.3 for animate; mana
+        // drains across the channel at the same total as the build cost).
+        if (u.reviveTarget) {
+            Unit* c = unit(u.reviveTarget);
+            if (!c || !isCorpse(*c)) { u.reviveTarget = 0; continue; }
+            float dx = c->x - u.x, dz = c->z - u.z;
+            if (dx * dx + dz * dz > kR * kR * 4) { u.reviveTarget = 0; continue; }
+            bool animate = u.reviveMode == 2;
+            const UnitType* out = animate ? u.type->animateType : c->type;
+            float totalMana = out->buildCost * (animate ? 0.3f : 1.0f);
+            float inc = totalMana * dt / std::max(u.reviveTotal, 0.01f);
+            Player& tm = players_[size_t(u.player)];
+            if (tm.mana < inc) continue;   // starved: the channel stalls, not drops
+            tm.mana -= inc;
+            u.reviveLeft -= dt;
+            if (u.reviveLeft <= 0) {
+                revives.push_back({out, c->x, c->z, u.player, animate});
+                retire(*c);
+                u.reviveTarget = 0;
+            }
+            continue;
+        }
+
         // Corpses are dead (not in the spatial grid), so scan directly.
         for (size_t j = 0; j < units_.size(); ++j) {
             Unit& c = units_[j];
@@ -2250,36 +2338,47 @@ void World::tickAbilities(float /*dt*/) {
             float dx = c.x - u.x, dz = c.z - u.z;
             if (dx * dx + dz * dz > kR * kR) continue;
             const FeatType* cd = corpseDef(c);
-            if (u.type->canResurrect && c.player == u.player && cd && cd->resurrectable) {
-                float cost = c.type->buildCost;
-                Player& tm = players_[size_t(u.player)];
-                if (tm.mana >= cost) {
-                    tm.mana -= cost;
-                    revives.push_back({c.type, c.x, c.z, u.player});
-                    c.deadFor = 1000.0f;   // consumed
-                    if (c.corpseBlocks) {
-                        c.corpseBlocks = false;
-                        blockFootprint(nav_, *c.type, c.x, c.z, false);
-                    }
-                }
-            } else if (u.type->canReclaim && cd && cd->reclaimable) {
+            if (!cd) continue;
+            if (u.type->canResurrect && c.player == u.player && cd->resurrectable) {
+                // Channel length: buildtime / workertime seconds (retail
+                // 0x4201e9), mana drained over it; unit returns at 10% HP.
+                u.reviveTarget = c.id;
+                u.reviveMode = 1;
+                u.reviveTotal = u.reviveLeft =
+                    std::max(c.type->buildTime / std::max(u.type->workerTime, 0.01f),
+                             0.5f);
+                break;
+            } else if (u.type->canAnimate && u.type->animateType &&
+                       cd->resurrectable) {
+                // Animate (tarpries animatetype=MONGHOUL): ANY resurrectable
+                // corpse -- friend or foe -- rises as the caster's creature,
+                // at 0.3x the work and FULL HP (retail 0x420257/0x4206ba).
+                u.reviveTarget = c.id;
+                u.reviveMode = 2;
+                u.reviveTotal = u.reviveLeft =
+                    std::max(u.type->animateType->buildTime /
+                                 std::max(u.type->workerTime, 0.01f) * 0.3f,
+                             0.5f);
+                break;
+            } else if (u.type->canReclaim && cd->reclaimable) {
                 // Retail yield = the corpse def's energy -- 0 for every shipped
                 // corpse. You reclaim bodies to DENY resurrection, not for mana.
                 players_[size_t(u.player)].mana += cd->energy;
-                c.deadFor = 1000.0f;       // reclaimed away
-                if (c.corpseBlocks) {
-                    c.corpseBlocks = false;
-                    blockFootprint(nav_, *c.type, c.x, c.z, false);
-                }
+                retire(c);
             }
         }
     }
     for (const auto& r : revives) {
         int id = spawn(r.type, r.x, r.z, 3.14159f, r.player);
-        // Retail resurrect (icd 0x420666): the raised unit returns at 10% HP
-        // (min 1) -- carry it home before it fights again.
+        // Retail HP: resurrect returns the unit at 10% (min 1); an animated
+        // creature rises at FULL health (icd 0x420666-0x4206ba).
         if (Unit* nu = unit(id))
-            nu->hp = std::max(nu->type->maxHp * 0.1f, 1.0f);
+            if (!r.animate) nu->hp = std::max(nu->type->maxHp * 0.1f, 1.0f);
+        static const bool kRevLog = std::getenv("TAK_BURNLOG") != nullptr;
+        if (kRevLog)
+            std::fprintf(stderr, "%s: %s for p%d at %.0f,%.0f\n",
+                         r.animate ? "animate" : "resurrect",
+                         r.type->id.c_str(), r.player, r.x, r.z);
     }
 }
 
@@ -2707,6 +2806,20 @@ void World::tick(float dt) {
         if (!u.type) continue;
         if (!u.alive()) {
             u.deadFor += dt;
+            // CorpseAdjustX/Z: the wreck art sits offset from the building's
+            // centre (arakeep corpseadjustz=2). Shift the record -- and its nav
+            // block -- once, the moment the death anim ends and the corpse
+            // appears (retail places the corpse feature at the adjusted cell).
+            if (u.deadFor >= 4.0f && u.deadFor - dt < 4.0f &&
+                u.deadFor < u.corpseUntil &&
+                (u.type->corpseAdjX != 0 || u.type->corpseAdjZ != 0)) {
+                if (u.corpseBlocks) blockFootprint(nav_, *u.type, u.x, u.z, false);
+                u.x = std::clamp(u.x + float(u.type->corpseAdjX) * 16.0f,
+                                 8.0f, float(terW_) * 16.0f - 8.0f);
+                u.z = std::clamp(u.z + float(u.type->corpseAdjZ) * 16.0f,
+                                 8.0f, float(terH_) * 16.0f - 8.0f);
+                if (u.corpseBlocks) blockFootprint(nav_, *u.type, u.x, u.z, true);
+            }
             // The body decomposed (or was never a corpse): fully gone. Records
             // explicitly retired at 1000 stay put.
             if (u.deadFor >= u.corpseUntil && u.deadFor < 999.0f) {
@@ -2749,17 +2862,40 @@ void World::tick(float dt) {
             // (overkill >= maxHp -- placeholder severity rule pending the icd
             // Killed RE) or corpse-less units vanish with the death anim.
             {
-                int ct = corpseTypeOf(u.type);
+                // Retail severity (icd 0x512610): ((overkill% + HP% one second
+                // before death) / 2), clamped 1..100. Passed to the COB Killed.
+                float okPct = u.overkill * 100.0f / std::max(u.type->maxHp, 1.0f);
+                u.severity = uint8_t(std::clamp((okPct + float(u.hpPct1s)) * 0.5f,
+                                                1.0f, 100.0f));
+                // Dying while petrified/frozen leaves the FBI stone=/frozen=
+                // STATUE feature instead of the corpse (retail deathType 0xE/0xF
+                // path, 0x512d2a) -- blocking, permanent, and resurrectable
+                // (raising a statue un-petrifies the unit).
+                u.corpseStatue = u.stonedFor > 0 ? statueTypeOf(u.type, false)
+                              : u.frozenFor > 0 ? statueTypeOf(u.type, true) : -1;
+                static const bool kStatLog2 = std::getenv("TAK_BURNLOG") != nullptr;
+                if (kStatLog2 && (u.stonedFor > 0 || u.frozenFor > 0))
+                    std::fprintf(stderr, "statue edge: %s statue=%d stoned=%.1f\n",
+                                 u.type->id.c_str(), u.corpseStatue, u.stonedFor);
+                int ct = u.corpseStatue >= 0 ? u.corpseStatue : corpseTypeOf(u.type);
                 // Retail gib rule (icd 0x512610): deathType = the killing blow's
                 // FBI damagetype; 3 (explosion) makes Killed refuse the corpse
                 // and EXPLODE every piece. An unfinished conjure never leaves a
-                // corpse (corpseType forced 0 at 0x5127f5).
-                bool gib = u.deathType == 3 || u.underConstruction;
+                // corpse (corpseType forced 0 at 0x5127f5). Statues place
+                // unconditionally.
+                bool gib = (u.deathType == 3 || u.underConstruction) &&
+                           u.corpseStatue < 0;
                 if (ct >= 0 && !gib) {
-                    int d30 = featTypes_[size_t(ct)].decomposeTicks;
-                    // decomposetime 0 = never rots (building wrecks linger until
-                    // reclaimed, like retail).
-                    u.corpseUntil = d30 > 0 ? 4.0f + float(d30) / 30.0f : 1e9f;
+                    if (u.corpseStatue < 0 && isWater(u.x, u.z)) {
+                        // Retail water graves sink and fade in seconds, never
+                        // decompose, never get reclaimed (icd 0x512fbe).
+                        u.corpseUntil = 4.0f + 2.5f;
+                    } else {
+                        int d30 = featTypes_[size_t(ct)].decomposeTicks;
+                        // decomposetime 0 = never rots (building wrecks linger
+                        // until reclaimed, like retail).
+                        u.corpseUntil = d30 > 0 ? 4.0f + float(d30) / 30.0f : 1e9f;
+                    }
                 } else {
                     u.corpseUntil = 4.0f;
                 }
@@ -2785,6 +2921,13 @@ void World::tick(float dt) {
             u.deadFor = 0; u.orders.clear(); u.speed = 0; continue;
         }
 
+        // Retail 1-second HP-percent samples (unit+0x110/+0x111): the Killed
+        // severity reads the PREVIOUS sample, i.e. your health ~1s before death.
+        if (tickCounter_ % 30 == 0) {
+            u.hpPct1s = u.hpPctCur;
+            u.hpPctCur = uint8_t(std::clamp(u.hp / std::max(u.type->maxHp, 1.0f)
+                                            * 100.0f, 0.0f, 100.0f));
+        }
         // Status timers count down; HP regenerates (healtime); mana recharges.
         if (u.frozenFor > 0) u.frozenFor = std::max(0.0f, u.frozenFor - dt);
         if (u.stonedFor > 0) u.stonedFor = std::max(0.0f, u.stonedFor - dt);
@@ -3263,10 +3406,12 @@ uint64_t World::stateHash() const {
         if (f.alive) {
             ++fAlive;
             uint32_t w; std::memcpy(&w, &f.work, 4);
+            uint32_t dm; std::memcpy(&dm, &f.dmg, 4);
             fWork ^= (uint64_t(w) << 1) ^ uint64_t(uint32_t(f.id)) ^
-                     // burning state: type swaps and burn timers are sim state
+                     // burning/damage state: type swaps and timers are sim state
                      (uint64_t(uint32_t(f.type + 1)) << 17) ^
-                     (uint64_t(f.burn) << 33) ^ (uint64_t(uint32_t(f.burnLeft)) << 40);
+                     (uint64_t(f.burn) << 33) ^ (uint64_t(uint32_t(f.burnLeft)) << 40) ^
+                     (uint64_t(dm) << 9);
         }
     mix(fAlive);
     mix(fWork);

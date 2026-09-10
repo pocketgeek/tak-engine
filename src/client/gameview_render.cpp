@@ -107,6 +107,16 @@
         for (const UnitR* _up : front().live) {
             const UnitR& r = *_up;   // this tick's snapshot (front().live mirrors world_.units())
             if ((r.deadFor >= 4.0f && !r.corpsePhase) || r.embarked()) continue;
+            if (r.corpsePhase && r.corpseFeat >= 0) {
+                static const bool kCorpLog = tak::devEnv("TAK_BURNLOG") != nullptr;
+                static float lastLog = -10;
+                if (kCorpLog && animClock_ >= lastLog + 2.0f) {
+                    lastLog = animClock_;
+                    std::fprintf(stderr, "corpse draw: id=%d %s at world %.0f,%.0f screen %.0f,%.0f\n",
+                                 r.id, r.type->id.c_str(), r.x, r.z,
+                                 (r.x - mapView_.offX()) * zm0, (r.z - mapView_.offY()) * zm0);
+                }
+            }
             // Unregistered (e.g. a type whose model failed to load): not drawable,
             // and every render path does unitType_.at(u.id) -- skip it here so none
             // of them throw (a throw in the parallel projection aborts the process).
@@ -1453,6 +1463,20 @@
             discoCol = SDL_Color{210, 40, 40, 255};                 // deep metal red
             discoMix = bang * 0.5f;                                  // flash on the bang
             disco = true;                                            // reuse the tint path
+        }
+        // Statue corpses: a petrified body renders stone-gray, a frozen one
+        // ice-blue (the isstone/isfrozen statue defs), through the same vertex
+        // tint mix the emotes use.
+        if (u.corpsePhase && u.corpseFeat >= 0 &&
+            size_t(u.corpseFeat) < world_.featureTypes().size()) {
+            const auto& cf = world_.featureTypes()[size_t(u.corpseFeat)];
+            if (cf.isStone) {
+                discoCol = SDL_Color{145, 145, 150, 255};
+                discoMix = 0.65f; disco = true;
+            } else if (cf.isFrozen) {
+                discoCol = SDL_Color{160, 200, 255, 255};
+                discoMix = 0.55f; disco = true;
+            }
         }
         bool mirror = false;
         SDL_Texture* atlas = (slot >= 0 && size_t(slot) < atlasTex_.size())

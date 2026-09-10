@@ -355,6 +355,16 @@
         int dr = spawn("tardrag", tx - 260, tz - 40, 1.57f, 1);
         int ar = spawn("araarch", tx, tz, -1.57f, 0);
         world_.attack(dr, ar, false);
+        // Statue-death check: the Basilisk's gaze petrifies -- the victim must
+        // die on the spot and stand as a stone-gray, resurrectable statue.
+        int bs = spawn("zonbasil", tx - 120, tz + 90, 1.57f, 1);
+        int vic = spawn("arabow", tx + 40, tz + 90, -1.57f, 0);
+        world_.attack(bs, vic, false);
+        // Animate check: an idle necromancer beside the (soon) archer corpse
+        // must channel and raise a Ghoul from it. Hold-fire stance so it never
+        // auto-acquires (the channel needs it order-free).
+        int nec = spawn("tarpries", tx + 30, tz - 40, -1.57f, 1);
+        if (auto* np = world_.unit(nec)) np->stance = 2;
         // Watch the burn, not the tower: centre the camera on the target tree.
         mapView_.setOffset(tx - 640 / mapView_.zoom(), tz - 400 / mapView_.zoom());
     }
@@ -603,8 +613,12 @@
             s.buildQueue = u.buildQueue; s.orders = u.orders; s.buildOrders = u.buildOrders;
             s.cargo = u.cargo; s.reclaimQueue = u.reclaimQueue; s.repeatType = u.repeatType;
             s.moving_ = u.moving(); s.walking_ = u.walking();
-            s.corpsePhase = !u.alive() && u.deadFor >= 4.0f && u.deadFor < u.corpseUntil;
+            s.corpsePhase = !u.alive() && u.deadFor < u.corpseUntil &&
+                            u.deadFor >= (u.corpseStatue >= 0 ? 0.0f : 4.0f);
             s.deathType = u.deathType;
+            s.severity = u.severity;
+            s.corpseFeat = u.corpseStatue >= 0 ? u.corpseStatue
+                                               : world_.corpseTypeOf(u.type);
             s.speed = u.speed; s.justFired = u.justFired; s.justBuilt = u.justBuilt;
             s.disco = world_.discoActive(u.player);
             s.headbang = world_.headbangActive(u.player);
@@ -932,8 +946,15 @@
                     // there, zero in `death`), the fall-over via CALL death,
                     // the final EXPLODEs.
                     int32_t dtype = u.deathType;
-                    a.vm->start("Killed", {50, 0, dtype});
-                    a.vm->start("Dying", {dtype}) || a.vm->start("death");
+                    if (dtype >= 14) {
+                        // Petrified/frozen: retail skips Killed AND Dying
+                        // (severity forced 0) -- the victim simply freezes in
+                        // its current pose and stands as the statue. The reset
+                        // above already halted every thread; nothing plays.
+                    } else {
+                        a.vm->start("Killed", {int32_t(u.severity), 0, dtype});
+                        a.vm->start("Dying", {dtype}) || a.vm->start("death");
+                    }
                     const std::string& id = u.type->id;
                     if (a.cobSounds) { /* the Dying script plays its own death cry */ }
                     else if (sounds_.has(id + "die1")) sounds_.playWorld(id + "die1", u.x, u.z);
@@ -1289,7 +1310,7 @@
     // names don't match the corpse skeleton, so it renders in rest pose.
     void GameView::maybeSwapCorpseModel(const UnitR& u) {
         if (!u.type) return;
-        int ct = world_.corpseTypeOf(u.type);
+        int ct = u.corpseFeat;   // corpse OR statue def, resolved by the sim
         if (ct < 0) return;
         const std::string& obj = world_.featureTypes()[size_t(ct)].object;
         if (obj.empty()) return;

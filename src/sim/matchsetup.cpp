@@ -175,6 +175,9 @@ struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx
                  int spreadChance = 0; int sparkTicks = 0; std::string burnt;
                  // Corpse lifecycle (features/corpses).
                  int decomposeTicks = 0; bool resurrectable = false;
+                 bool isStone = false; bool isFrozen = false;
+                 bool indestructible = false;
+                 float hp = 0; std::string dead;
                  std::string object; };
 
 std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
@@ -211,6 +214,12 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     d.resurrectable = node.numberOr("resurrectable", 0) != 0;
                     d.object = node.valueOr("object", "");
                     std::transform(d.object.begin(), d.object.end(), d.object.begin(), ::tolower);
+                    d.isStone = node.numberOr("isstone", 0) != 0;
+                    d.isFrozen = node.numberOr("isfrozen", 0) != 0;
+                    d.indestructible = node.numberOr("indestructible", 0) != 0;
+                    d.hp = float(node.numberOr("damage", 0));
+                    d.dead = node.valueOr("featuredead", "");
+                    std::transform(d.dead.begin(), d.dead.end(), d.dead.begin(), ::tolower);
                     defs[k] = d;
                 }
             } catch (const std::exception&) {}
@@ -242,9 +251,14 @@ struct FeatTypeInterner {
         t.decomposeTicks = di->second.decomposeTicks;
         t.resurrectable = di->second.resurrectable;
         t.reclaimable = di->second.reclaimable != 0;
+        t.isStone = di->second.isStone;
+        t.isFrozen = di->second.isFrozen;
+        t.indestructible = di->second.indestructible;
+        t.hp = di->second.hp;
         t.object = di->second.object;
         table.push_back(std::move(t));
         table[size_t(idx)].burntType = intern(di->second.burnt);
+        table[size_t(idx)].deadType = intern(di->second.dead);
         return idx;
     }
 };
@@ -276,11 +290,15 @@ void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs&
             }
         }
     if (reg)
-        for (const auto& [tid, ut] : reg->types())
+        for (const auto& [tid, ut] : reg->types()) {
             if (!ut.corpse.empty()) {
                 int ci = types.intern(ut.corpse);
                 if (ci >= 0) world.mapCorpse(&ut, ci);
             }
+            if (!ut.stoneFeat.empty() || !ut.frozenFeat.empty())
+                world.mapStatue(&ut, types.intern(ut.stoneFeat),
+                                types.intern(ut.frozenFeat));
+        }
     world.setFeatureTypes(std::move(types.table));
 }
 
@@ -346,11 +364,14 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     }
     // Corpse defs: every unit type's FBI corpse= feature (and its chains) joins
     // the table so death can mint corpse records without art/def lookups later.
-    for (const auto& [tid, ut] : reg.types())
+    for (const auto& [tid, ut] : reg.types()) {
         if (!ut.corpse.empty()) {
             int ci = featTypeIdx(ut.corpse);
             if (ci >= 0) world.mapCorpse(&ut, ci);
         }
+        if (!ut.stoneFeat.empty() || !ut.frozenFeat.empty())
+            world.mapStatue(&ut, featTypeIdx(ut.stoneFeat), featTypeIdx(ut.frozenFeat));
+    }
     world.setFeatureTypes(std::move(types.table));
     // The buildable spot is the glowing Sacred Stone centre, not the ring of
     // static Standing Stones (both are category=mana). Fallback: a deposit with

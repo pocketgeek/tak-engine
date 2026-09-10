@@ -118,6 +118,12 @@ struct UnitType {
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     std::string bodyType = "default";   // FBI bodytype (flesh/armor/wood/..) = hit-sound material
     std::string corpse;       // FBI corpse feature name
+    std::string stoneFeat;    // FBI stone= statue feature (death while petrified)
+    std::string frozenFeat;   // FBI frozen= statue feature (death while frozen)
+    int corpseAdjX = 0, corpseAdjZ = 0;   // corpseadjustx/z: wreck offset in cells
+    bool canAnimate = false;              // cananimate: raises animateType from corpses
+    const UnitType* animateType = nullptr;   // animatetype=<unit>, resolved post-load
+    std::string animName_;                   // raw animatetype value (loadDir fixup)
     std::string shadowArt;    // FBI shadowart: shadow sprite name in shadows.gaf
     std::string veteranModel; // veteranmodel: 3DO the unit swaps to at max veterancy
     // --- extended FBI stats -------------------------------------------------
@@ -241,6 +247,14 @@ struct Unit {
                              // death anim; corpse types extend by decomposetime)
     float overkill = 0;      // damage past the killing blow (retail severity input)
     uint8_t deathType = 1;   // damagetype of the killing blow (3 = explosion/gib)
+    uint8_t severity = 0;    // retail Killed severity ((overkill% + 1s-ago HP%)/2)
+    uint8_t hpPct1s = 100;   // HP% sampled every 30 ticks (previous sample -- the
+    uint8_t hpPctCur = 100;  //  retail unit+0x111/+0x110 pair severity reads)
+    int corpseStatue = -1;   // FeatType override chosen at death (stone/frozen), -1 = corpse=
+    int reviveTarget = 0;    // priest: dead unit id being channelled back (0 = none)
+    int8_t reviveMode = 0;   // 1 = resurrect (own corpse), 2 = animate (raise ghoul)
+    float reviveLeft = 0;    // seconds of channel remaining
+    float reviveTotal = 1;   // full channel length (mana drains proportionally)
     bool corpseBlocks = false;   // dead structure still occupies its nav footprint
                                  // (blocking wreck / neutral wall) until retired
     // --- extended runtime state --------------------------------------------
@@ -325,6 +339,11 @@ struct FeatType {
     int  decomposeTicks = 0; // TDF decomposetime * 30 (0 = never rots)
     bool resurrectable = false;
     bool reclaimable = false;
+    bool isStone = false;    // TDF isstone=1 (statue: client tints it stone-gray)
+    bool isFrozen = false;   // TDF isfrozen=1 (client tints it ice-blue)
+    bool indestructible = false;
+    float hp = 0;            // TDF damage= (weapon damage the feature absorbs)
+    int  deadType = -1;      // TDF featuredead -> destroyed-replacement (placed neutral)
     std::string object;      // TDF object= (3D corpse mesh; client visual)
 };
 
@@ -342,6 +361,7 @@ struct Feature {
     // event scheme). All hashed.
     int   type = -1;       // index into World's FeatType table (-1 = untyped)
     uint8_t burn = 0;      // 1 = burning
+    float dmg = 0;         // accumulated weapon damage (dies at FeatType.hp)
     int   spreadIn = 0;    // ticks until the single spread event (sparktime-derived)
     int   burnLeft = 0;    // ticks until burn-out (swap to burntType / die)
 };
@@ -590,6 +610,15 @@ public:
     void setFeatureTypes(std::vector<FeatType> t) { featTypes_ = std::move(t); }
     // Unit type -> its corpse feature def (index into featTypes_, -1 = none).
     void mapCorpse(const UnitType* t, int featType) { corpseType_[t] = featType; }
+    void mapStatue(const UnitType* t, int stoneIdx, int frozenIdx) {
+        if (stoneIdx >= 0) stoneType_[t] = stoneIdx;
+        if (frozenIdx >= 0) frozenType_[t] = frozenIdx;
+    }
+    int statueTypeOf(const UnitType* t, bool frozen) const {
+        const auto& m = frozen ? frozenType_ : stoneType_;
+        auto it = m.find(t);
+        return it == m.end() ? -1 : it->second;
+    }
     int corpseTypeOf(const UnitType* t) const {
         auto it = corpseType_.find(t);
         return it == corpseType_.end() ? -1 : it->second;
@@ -908,6 +937,7 @@ private:
     std::vector<Feature> features_;             // reclaimable map features
     std::vector<FeatType> featTypes_;           // per-type burn data (setup-time, static)
     std::unordered_map<const UnitType*, int> corpseType_;   // unit -> corpse FeatType
+    std::unordered_map<const UnitType*, int> stoneType_, frozenType_;   // statue defs
     // Burn RNG: retail rolls spread on its game LCG (icd 0x535cc0, Lehmer 16807);
     // ours is identical on every peer -- draws happen only in deterministic sim
     // paths, and the state is folded into stateHash.
@@ -917,6 +947,7 @@ private:
         return n > 0 ? int(burnRng_ % uint32_t(n)) : 0;
     }
     void igniteFeature(Feature& f);
+    void swapFeature(Feature& f, int newType);   // chain stage swap (burnt/dead)
     void tickBurning();
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
     std::vector<Projectile> projectiles_;
