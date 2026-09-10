@@ -873,6 +873,23 @@ private:
     // Plain-hover cursor: classify what is under the world point, mirroring the priority
     // in rightClickOrder() so the pointer previews the order a right-click would issue.
     tak::CursorId hoverCursor(float wx, float wz);
+    // Screen-space sprite hit test: the unit's projected model bounds at its
+    // DRAWN position (terrain lift + flyer altitude), floored for tiny units --
+    // the same region click-select uses, so the hover cursor and a click always
+    // agree. Optional out: squared distance to the sprite centre (tie-breaks).
+    bool unitUnderCursor(const UnitR& u, float mx, float my, float* d2 = nullptr) {
+        float zms = mapView_.zoom();
+        SDL_FPoint p = unitScreen(u);
+        const SDL_FRect& hb = unitHitBox(u.type);
+        float ax = p.x, ay = p.y + 12.0f * zms;         // sprite draw anchor
+        float cx = ax + (hb.x + hb.w * 0.5f) * zms;
+        float cy = ay + (hb.y + hb.h * 0.5f) * zms;
+        float hw = std::max(hb.w * zms * 0.5f, 9.0f);
+        float hh = std::max(hb.h * zms * 0.5f, 9.0f);
+        if (std::fabs(mx - cx) > hw || std::fabs(my - cy) > hh) return false;
+        if (d2) { float dx = cx - mx, dy = cy - my; *d2 = dx * dx + dy * dy; }
+        return true;
+    }
 
     struct Visual {
         tak::tdo::Model model;

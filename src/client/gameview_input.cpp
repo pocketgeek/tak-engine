@@ -244,29 +244,17 @@
                 // render lift + flyer altitude), so a unit on a lifted wall top or a
                 // Monarch cruising overhead is selected where it's drawn.
                 float ccx = (dragX0_ + dragX1_) / 2, ccy = (dragY0_ + dragY1_) / 2;
-                float zms = mapView_.zoom();
                 int hit = -1;
                 float best = 1e30f;
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
                     if (!u.alive() || u.underConstruction || !u.type) continue;  // not-yet-built: unselectable
-                    SDL_FPoint p = unitScreen(frameUnit(u.id));
-                    // Hit region = the unit's actual on-screen SPRITE box (projected model
-                    // bounds, unitHitBox), so a click ANYWHERE on the drawn unit -- a tall
-                    // building's roof, a body above its feet -- selects it. unitScreen is the
-                    // sprite draw anchor minus 12*zoom in y, so add that back. A small screen
-                    // floor keeps tiny/zoomed-out units clickable; overlaps -> nearest centre.
-                    const SDL_FRect& hb = unitHitBox(u.type);
-                    float ax = p.x, ay = p.y + 12.0f * zms;         // sprite draw anchor
-                    float cx = ax + (hb.x + hb.w * 0.5f) * zms;     // sprite box centre
-                    float cy = ay + (hb.y + hb.h * 0.5f) * zms;
-                    float hw = std::max(hb.w * zms * 0.5f, 9.0f);   // half-extents, floored
-                    float hh = std::max(hb.h * zms * 0.5f, 9.0f);
-                    if (std::fabs(ccx - cx) <= hw && std::fabs(ccy - cy) <= hh) {
-                        float dx = cx - ccx, dy = cy - ccy;
-                        float d = dx * dx + dy * dy;   // overlap -> nearest sprite centre wins
-                        if (d < best) { best = d; hit = u.id; }
-                    }
+                    // Hit region = the drawn sprite box (unitUnderCursor: projected
+                    // model bounds + lift + flyer altitude -- shared with the hover
+                    // cursor so pointer feedback and the click always agree).
+                    // Overlaps resolve to the nearest sprite centre.
+                    float d = 0;
+                    if (unitUnderCursor(u, ccx, ccy, &d) && d < best) { best = d; hit = u.id; }
                 }
                 if (hit >= 0) {
                     selection_.push_back(hit);

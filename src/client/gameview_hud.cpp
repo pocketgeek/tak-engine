@@ -238,42 +238,36 @@
             return tak::CursorId::Unload;
 
         if (first) {
-            // A friendly transport under the pointer -> board/load.
-            {
-                float best = 24.0f * 24.0f; bool found = false;
-                for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-                    if (!u.alive() || !u.type || !u.type->canTransport || u.player != first->player)
-                        continue;
-                    float dx = u.x - wx, dz = u.z - wz;
-                    if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; found = true; }
-                }
-                if (found) return tak::CursorId::Load;
-            }
-            // Allied conjure site (assist) / your own unit (select) / a teammate's (green).
-            int siteId = -1, ownId = -1, allyId = -1;
-            float bSite = 1e18f, bOwn = 22.0f * 22.0f, bAlly = 22.0f * 22.0f;
+            // One SCREEN-SPACE pass over the drawn sprites (unitUnderCursor: the
+            // projected model bounds + lift + flyer altitude -- the exact region
+            // a click selects), categorised; overlaps resolve to the nearest
+            // sprite centre. The old world-space 20-22px centre radii ignored
+            // footprints entirely: most of a keep hovered as bare ground.
+            int loadId = -1, siteId = -1, ownId = -1, allyId = -1, enemy = -1;
+            float bLoad = 1e30f, bSite = 1e30f, bOwn = 1e30f, bAlly = 1e30f,
+                  bEnemy = 1e30f;
             for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-                if (!u.alive() || u.embarked() || !u.type ||
-                    !world_.allied(u.player, first->player)) continue;
-                float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
-                if (u.underConstruction) {
-                    float r = 20.0f + 8.0f * float(std::max(u.type->footX, u.type->footZ));
-                    if (d < r * r && d < bSite) { bSite = d; siteId = u.id; }
-                } else if (u.player == localPlayer_) {
+                if (!u.alive() || u.embarked() || !u.type) continue;
+                float d = 0;
+                if (!unitUnderCursor(u, mouseX_, mouseY_, &d)) continue;
+                bool ally = world_.allied(u.player, first->player);
+                if (ally && u.type->canTransport && u.player == first->player &&
+                    !u.underConstruction) {
+                    if (d < bLoad) { bLoad = d; loadId = u.id; }
+                } else if (ally && u.underConstruction) {
+                    if (d < bSite) { bSite = d; siteId = u.id; }
+                } else if (ally && u.player == localPlayer_) {
                     if (d < bOwn) { bOwn = d; ownId = u.id; }
-                } else if (d < bAlly) { bAlly = d; allyId = u.id; }
+                } else if (ally) {
+                    if (d < bAlly) { bAlly = d; allyId = u.id; }
+                } else {
+                    if (d < bEnemy) { bEnemy = d; enemy = u.id; }
+                }
             }
+            if (loadId >= 0) return tak::CursorId::Load;
             if (siteId >= 0) return tak::CursorId::Repair;   // assist a build/revive
             if (ownId  >= 0) return tak::CursorId::Select;
             if (allyId >= 0) return tak::CursorId::Green;
-
-            // An enemy under the pointer -> attack if we have a weapon, else the red target.
-            int enemy = -1; float best2 = 20.0f * 20.0f;
-            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-                if (!u.alive() || u.embarked() || world_.allied(u.player, first->player)) continue;
-                float dx = u.x - wx, dz = u.z - wz;
-                if (dx * dx + dz * dz < best2) { best2 = dx * dx + dz * dz; enemy = u.id; }
-            }
             if (enemy >= 0) {
                 bool canAtk = false;
                 for (int id : selection_)
