@@ -29,6 +29,7 @@
 #include "tdo/tdo.h"
 #include "terrain/terrain.h"
 #include "tnt/tnt.h"
+#include "tnt/mapgen.h"
 #include "util/png.h"
 #include "version.h"
 #include "client/cursors.h"
@@ -1561,6 +1562,14 @@ private:
     int mapScroll_ = 0;
     bool mapPrefApplied_ = false;      // adopted settings_->lastMap once this session
     bool mapDrag_ = false;             // dragging the scrollbar thumb
+    // Random-map generator ("Generate Random Map" in the picker): the current params,
+    // which slider is being dragged (0=doodad 1=mana 2=water, -1=none), and the three
+    // slider bar rects for drag hit-testing.
+    tak::mapgen::Params genParams_{};
+    int genSlider_ = -1;
+    SDL_FRect genSliderRect_[3]{};
+    void applyGenParams();             // re-encode genParams_ -> mpMapId_
+    void setGenSlider(int i, float mx);  // drag a density slider from a panel-x
     SDL_FRect mapListRect_{};          // the list box (rows area) -- wheel target
     SDL_FRect mapThumbRect_{};         // the scrollbar thumb -- drag grab
     int mapVisRows_ = 0, mapTotalRows_ = 0;   // for clamping + thumb drag math

@@ -6,6 +6,12 @@
 // methods stay inline in the header. Grouping is by name heuristic.
 
     uint8_t GameView::mpCapacity() const {
+        // A generated map's capacity is the player count baked into its "~gen1~" id.
+        // The lobby sets mpMapId_; the headless "game" flow only has mapPath_ -- honour
+        // either, since sim::parseStartPositions can't parse a synthetic id.
+        const std::string& gid = tak::mapgen::isGeneratedMapId(mpMapId_) ? mpMapId_ : mapPath_;
+        if (tak::mapgen::isGeneratedMapId(gid))
+            return uint8_t(std::clamp<int>(tak::mapgen::decodeMapId(gid).players, 2, tak::net::kMaxSlots));
         int n = int(parseStartPositions().size());
         return uint8_t(std::clamp(n < 2 ? 2 : n, 2, tak::net::kMaxSlots));
     }

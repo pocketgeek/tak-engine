@@ -178,6 +178,23 @@
         mapPreviewDims_ = size + (players.empty() ? "" : "   " + players + " PLAYER");
     }
 
+    void GameView::applyGenParams() {
+        genParams_ = tak::mapgen::sanitize(genParams_);
+        mpMapId_ = tak::mapgen::encodeMapId(genParams_);
+        mapPath_ = mpMapId_;   // generated: the id IS the path (findMap returns it as-is)
+    }
+
+    void GameView::setGenSlider(int i, float mx) {
+        const SDL_FRect& r = genSliderRect_[i];
+        if (r.w <= 0) return;
+        float t = std::clamp((mx - r.x) / r.w, 0.0f, 1.0f);
+        uint8_t v = uint8_t(t * 255.0f + 0.5f);
+        if (i == 0) genParams_.doodadDensity = v;
+        else if (i == 1) genParams_.manaDensity = v;
+        else genParams_.waterDensity = v;
+        applyGenParams();
+    }
+
     void GameView::drawCreate(int winW, int winH) {
         (void)winW; (void)winH;
         float x = 80, y = 90;
@@ -258,6 +275,14 @@
         }
         float lx = 400, hy = 90;
         blockText("SELECT MAP", lx, hy, 1.8f, {200, 205, 220, 255});
+        // Toggle between the map list and the random-map generator.
+        bool gen = tak::mapgen::isGeneratedMapId(mpMapId_);
+        lbBtn(lx + 176, hy - 2, 164, 22, gen ? "PICK AN EXISTING MAP" : "GENERATE RANDOM MAP", true,
+              [this, gen] {
+                  if (gen) { mpMapId_.clear(); mapPath_.clear(); }  // drop back to the list
+                  else applyGenParams();                           // encode the current gen params
+              });
+      if (!gen) {
         // Sort buttons: NAME / PLAYERS / SIZE. Clicking sets the sort key; clicking the
         // active one flips ascending/descending. The active key shows an up/down arrow.
         {
@@ -336,23 +361,81 @@
             mapThumbRect_ = {0, 0, 0, 0};
         }
 
-        // Preview of the selected map (its embedded minimap), right of the list.
-        if (mapPreviewFor_ != mapPath_) buildMapPreview(mapPath_);
-        const float pvx = boxX + boxW + 12, pvy = boxY, pvW = 192, pvH = 192;
+      } else {
+        // ---- random-map params panel (replaces the list) --------------------------
+        static const char* kTypeName[tak::mapgen::kMapTypes] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
+        static const int kSizes[] = {8, 12, 16, 20, 24};   // section-units (x32 cells) per side
+        float px = lx, py = hy + 50;
+        lbBtn(px, py, 300, 24, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
+              true, [this] { genParams_.mapType = uint8_t((genParams_.mapType + 1) % tak::mapgen::kMapTypes);
+                             applyGenParams(); }); py += 30;
+        int curU = genParams_.widthCells / 32;
+        char szl[48]; std::snprintf(szl, sizeof szl, "SIZE:  %d x %d", curU, curU);
+        lbBtn(px, py, 300, 24, szl, true, [this] {
+            int u = genParams_.widthCells / 32, ni = 0;
+            for (int k = 0; k < 5; ++k) if (kSizes[k] == u) ni = (k + 1) % 5;
+            genParams_.widthCells = genParams_.heightCells = uint16_t(kSizes[ni] * 32);
+            applyGenParams();
+        }); py += 30;
+        char pl[32]; std::snprintf(pl, sizeof pl, "PLAYERS:  %d", int(genParams_.players));
+        lbBtn(px, py, 300, 24, pl, true, [this] {
+            genParams_.players = uint8_t(genParams_.players >= 8 ? 2 : genParams_.players + 1);
+            applyGenParams();
+        }); py += 36;
+        auto slider = [&](int idx, const char* label, uint8_t val) {
+            blockText(label, px, py, 1.6f, {180, 185, 195, 255});
+            float bx = px, by = py + 18, bw = 300, bh = 14;
+            genSliderRect_[idx] = {bx, by, bw, bh};
+            SDL_FRect bar{bx, by, bw, bh};
+            SDL_SetRenderDrawColor(ren_, 30, 34, 46, 255); SDL_RenderFillRectF(ren_, &bar);
+            float t = val / 255.0f;
+            SDL_FRect fill{bx, by, bw * t, bh};
+            SDL_SetRenderDrawColor(ren_, 70, 120, 90, 255); SDL_RenderFillRectF(ren_, &fill);
+            SDL_FRect handle{bx + bw * t - 3, by - 2, 6, bh + 4};
+            SDL_SetRenderDrawColor(ren_, 200, 220, 200, 255); SDL_RenderFillRectF(ren_, &handle);
+            SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &bar);
+            char pc[8]; std::snprintf(pc, sizeof pc, "%d%%", int(val) * 100 / 255);
+            blockText(pc, bx + bw + 8, py + 16, 1.5f, {160, 165, 180, 255});
+            py += 44;
+        };
+        slider(0, "DOODADS  (trees & rocks)", genParams_.doodadDensity);
+        slider(1, "MANA SPOTS", genParams_.manaDensity);
+        slider(2, "WATER", genParams_.waterDensity);
+        lbBtn(px, py, 140, 24, "RE-ROLL SEED", true, [this] {
+            genParams_.seed = genParams_.seed * 6364136223846793005ULL + 1442695040888963407ULL;
+            applyGenParams();
+        });
+      }
+
+        // Preview panel, right of the list / params column. For a real map it's the
+        // embedded minimap; a generated map has no VFS file, so we show its params
+        // (the terrain is rolled fresh from the seed when the match starts).
+        const float pvx = lx + 352, pvy = hy + 46, pvW = 192, pvH = 192;
         blockText("PREVIEW", pvx, hy, 1.8f, {200, 205, 220, 255});
         SDL_FRect pbox{pvx, pvy, pvW, pvH};
         SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &pbox);
-        if (mapPreviewTex_ && mapPreviewW_ > 0) {
-            float sc = std::min(pvW / float(mapPreviewW_), pvH / float(mapPreviewH_));
-            float iw = mapPreviewW_ * sc, ih = mapPreviewH_ * sc;
-            SDL_FRect dst{pvx + (pvW - iw) / 2, pvy + (pvH - ih) / 2, iw, ih};
-            SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
+        if (gen) {
+            tak::mapgen::Params gp = tak::mapgen::decodeMapId(mpMapId_);
+            blockText("RANDOM MAP", pvx + 10, pvy + 12, 1.9f, {210, 220, 205, 255});
+            char l1[48]; std::snprintf(l1, sizeof l1, "%d x %d", gp.widthCells / 32, gp.heightCells / 32);
+            blockText(l1, pvx + 10, pvy + 40, 1.7f, {175, 185, 200, 255});
+            char l2[32]; std::snprintf(l2, sizeof l2, "%d PLAYERS", int(gp.players));
+            blockText(l2, pvx + 10, pvy + 62, 1.7f, {175, 185, 200, 255});
+            blockText("ROLLED EACH GAME", pvx + 10, pvy + pvH - 24, 1.4f, {120, 130, 145, 255});
         } else {
-            blockText("NO PREVIEW", pvx + 34, pvy + pvH / 2 - 7, 1.6f, {120, 125, 140, 255});
+            if (mapPreviewFor_ != mapPath_) buildMapPreview(mapPath_);
+            if (mapPreviewTex_ && mapPreviewW_ > 0) {
+                float sc = std::min(pvW / float(mapPreviewW_), pvH / float(mapPreviewH_));
+                float iw = mapPreviewW_ * sc, ih = mapPreviewH_ * sc;
+                SDL_FRect dst{pvx + (pvW - iw) / 2, pvy + (pvH - ih) / 2, iw, ih};
+                SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
+            } else {
+                blockText("NO PREVIEW", pvx + 34, pvy + pvH / 2 - 7, 1.6f, {120, 125, 140, 255});
+            }
+            if (!mapPreviewDims_.empty())
+                blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
         }
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
-        if (!mapPreviewDims_.empty())
-            blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
     }
 
     void GameView::drawRoom(int winW, int winH) {
@@ -545,8 +628,9 @@
         if (e.type == SDL_MOUSEMOTION) {
             mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y);
             if (mapDrag_) setMapScrollFromThumb();   // dragging the map scrollbar
+            if (genSlider_ >= 0) { float mx, my; lobbyMouse(mx, my); setGenSlider(genSlider_, mx); }
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
-            mapDrag_ = false;
+            mapDrag_ = false; genSlider_ = -1;
         } else if (e.type == SDL_MOUSEWHEEL) {
             float mx, my; lobbyMouse(mx, my);
             if (ptIn(mapListRect_, mx, my)) {   // scroll the map list under the cursor
@@ -558,6 +642,8 @@
             lbField_ = 0; SDL_StopTextInput();
             float mx, my; lobbyMouse(mx, my);
             if (ptIn(mapThumbRect_, mx, my)) { mapDrag_ = true; return; }   // grab the thumb
+            for (int gi = 0; gi < 3; ++gi)   // grab a density slider
+                if (ptIn(genSliderRect_[gi], mx, my)) { genSlider_ = gi; setGenSlider(gi, mx); return; }
             for (auto& [r, action] : lobbyHots_)
                 if (ptIn(r, mx, my)) { action(); break; }
         } else if (e.type == SDL_TEXTINPUT && lbField_) {
