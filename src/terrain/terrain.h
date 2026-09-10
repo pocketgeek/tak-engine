@@ -30,6 +30,15 @@ public:
     void renderBlock(const tnt::Map& map, int bx, int by,
                      std::vector<uint8_t>& dst, int dstW, int dx, int dy);
 
+    // Decode (or fetch the cached) section JPG for `key` and return it. The
+    // returned reference stays valid for the Compositor's lifetime (cache_ is a
+    // std::map -- node-stable across inserts). Thread-safe. Throws if absent.
+    // Used by the tile-atlas terrain renderer to upload each section once.
+    const jpeg::Image& sectionImage(uint32_t key) {
+        std::lock_guard<std::mutex> lk(mu_);
+        return section(key);
+    }
+
 private:
     const jpeg::Image& section(uint32_t key);
 

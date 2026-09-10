@@ -15,34 +15,50 @@ tak::tnt::Map MapView::genOrLoad(const tak::hpi::Vfs& vfs, const std::string& ma
 
 MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& mapPath)
     : ren_(ren), map_(genOrLoad(vfs, mapPath)), comp_(vfs) {
-    chunkWorker_ = std::thread([this] { chunkWorkerLoop(); });
+    secWorker_ = std::thread([this] { sectionWorkerLoop(); });
+    queueAllSections();
 }
 
 MapView::~MapView() {
     {
-        std::lock_guard<std::mutex> lk(chunkMu_);
-        chunkStop_ = true;
+        std::lock_guard<std::mutex> lk(secMu_);
+        secStop_ = true;
     }
-    chunkCv_.notify_all();
-    if (chunkWorker_.joinable()) chunkWorker_.join();
-    // Free the chunk textures: the renderer outlives the session, so skipping
-    // this leaked the whole map's 512px chunk set (and its gpuvram budget) on
-    // every menu->game->menu loop.
-    for (auto& [k, t] : chunks_) if (t) gpuvram::destroy(t);
+    secCv_.notify_all();
+    if (secWorker_.joinable()) secWorker_.join();
+    // Free the section textures: the renderer outlives the session, so skipping
+    // this leaked the map's terrain textures (and gpuvram budget) on every
+    // menu->game->menu loop.
+    for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
 }
 
 void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
-    // Quiesce the chunk worker first: it reads map_, which is about to be swapped.
+    // Quiesce the decode worker first: it reads map_, which is about to be swapped.
     {
-        std::unique_lock<std::mutex> lk(chunkMu_);
-        chunkQueue_.clear();
-        chunkCv_.wait(lk, [this] { return !chunkBusy_; });
-        chunkDone_.clear();      // stale composites of the OLD map
-        chunkPending_.clear();
+        std::unique_lock<std::mutex> lk(secMu_);
+        decodeQueue_.clear();
+        secCv_.wait(lk, [this] { return !secBusy_; });
+        decoded_.clear();      // stale decodes queued against the OLD map
+        secPending_.clear();
     }
-    for (auto& [k, t] : chunks_) if (t) gpuvram::destroy(t);
-    chunks_.clear();
+    for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
+    sections_.clear();
+    tileBatch_.clear();
+    tileBatchDirty_ = true;
+    builtZoom_ = -1;   // force a rebuild against the new map
     map_ = genOrLoad(vfs, mapPath);
+    queueAllSections();
+}
+
+void MapView::queueAllSections() {
+    // The map references a handful of section JPGs (Two Castles: 27). Collect
+    // the unique keys and hand them to the decode worker; each becomes one GPU
+    // texture. Deduped via secPending_.
+    std::set<uint32_t> keys(map_.tileKeys.begin(), map_.tileKeys.end());
+    std::lock_guard<std::mutex> lk(secMu_);
+    for (uint32_t k : keys)
+        if (secPending_.insert(k).second) decodeQueue_.push_back(k);
+    secCv_.notify_all();
 }
 
 void MapView::input(const SDL_Event& e) {
@@ -88,163 +104,162 @@ void MapView::clampOffset(int winW, int winH) {
 }
 
 void MapView::ensureChunks(int winW, int winH) {
+    // (Kept name: the call sites are unchanged.) Adopt any sections the worker
+    // decoded since last frame; that's all the per-frame texture work now --
+    // there is no per-view streaming/eviction. The map's whole section set
+    // (~7 MiB) is resident once decoded, resolution-independent.
     clampOffset(winW, winH);
-    uploadReadyChunks();   // adopt whatever the worker finished since last frame
-    int c0x = int(offX_) / kChunk, c0y = int(offY_) / kChunk;
-    int c1x = int(offX_ + winW / zoom_) / kChunk, c1y = int(offY_ + winH / zoom_) / kChunk;
-    // Queue visible chunks first, then a one-chunk prefetch ring so scrolling
-    // usually meets terrain that is already composited. The worker JPEG-decodes
-    // + composites off-thread; missing chunks draw as nothing for a frame or
-    // two instead of freezing the main thread (a big cold view used to stall
-    // 200-400ms right as the world appeared).
-    for (int cy = c0y; cy <= c1y; ++cy)
-        for (int cx = c0x; cx <= c1x; ++cx)
-            requestChunk(cx, cy);
-    for (int cy = c0y - 1; cy <= c1y + 1; ++cy)
-        for (int cx = c0x - 1; cx <= c1x + 1; ++cx)
-            if (cy < c0y || cy > c1y || cx < c0x || cx > c1x)
-                requestChunk(cx, cy);
-    // Evict chunks outside the visible+prefetch ring so terrain VRAM tracks the
-    // working set, not the pan history (part of the GPU cap). Each resident chunk
-    // is a 512x512 RGBA texture = 1 MiB, so the ring size dominates terrain VRAM:
-    // at 7680x2160 the visible span alone is ~85 chunks, and the old 3-chunk
-    // margin (a FIXED count, so its cost balloons with resolution) added a
-    // ~240 MiB halo on top -- a big share of an 8 GB card. One margin chunk past
-    // the prefetch ring keeps normal panning smooth (evicted chunks recomposite
-    // off-thread in ~ms on return); the ring is now prefetch+1, not prefetch+3.
-    const int M = 1;
-    for (auto it = chunks_.begin(); it != chunks_.end(); ) {
-        int cx = it->first.first, cy = it->first.second;
-        if (cx >= c0x - 1 - M && cx <= c1x + 1 + M && cy >= c0y - 1 - M && cy <= c1y + 1 + M) { ++it; continue; }
-        gpuvram::destroy(it->second);
-        { std::lock_guard<std::mutex> lk(chunkMu_); chunkPending_.erase(it->first); }
-        it = chunks_.erase(it);
-    }
+    uploadReadySections();
 }
 
 void MapView::finishChunks() {
+    // Screenshot path: block until every section is decoded AND uploaded.
     {
-        std::unique_lock<std::mutex> lk(chunkMu_);
-        chunkCv_.wait(lk, [this] { return chunkQueue_.empty() && !chunkBusy_; });
+        std::unique_lock<std::mutex> lk(secMu_);
+        secCv_.wait(lk, [this] { return decodeQueue_.empty() && !secBusy_; });
     }
-    // Screenshot path: upload EVERYTHING now (loop past the per-frame upload budget).
     for (;;) {
-        uploadReadyChunks();
-        std::lock_guard<std::mutex> lk(chunkMu_);
-        if (chunkDone_.empty()) break;
+        uploadReadySections();
+        std::lock_guard<std::mutex> lk(secMu_);
+        if (decoded_.empty()) break;
     }
+}
+
+void MapView::rebuildTileBatch(int winW, int winH) {
+    for (auto& [t, v] : tileBatch_) v.clear();   // keep per-texture capacity
+    const int mapW = map_.blocksX, mapH = map_.blocksY;
+    // Visible block range, clamped to the map.
+    int b0x = std::max(0, int(std::floor(offX_ / kBlock)));
+    int b0y = std::max(0, int(std::floor(offY_ / kBlock)));
+    int b1x = std::min(mapW - 1, int(std::floor((offX_ + winW / zoom_) / kBlock)));
+    int b1y = std::min(mapH - 1, int(std::floor((offY_ + winH / zoom_) / kBlock)));
+    const SDL_Color white{255, 255, 255, 255};
+    for (int by = b0y; by <= b1y; ++by) {
+        // Shared edges are computed from the WORLD edge (identical for adjacent
+        // tiles), so neighbours abut at exactly the same integer pixel -- no gaps,
+        // no overlap, matching the old integer-rounded chunk edges.
+        float y0 = float(std::lround((by * kBlock - offY_) * zoom_));
+        float y1 = float(std::lround(((by + 1) * kBlock - offY_) * zoom_));
+        for (int bx = b0x; bx <= b1x; ++bx) {
+            size_t b = size_t(by) * mapW + bx;
+            auto si = sections_.find(map_.tileKeys[b]);
+            if (si == sections_.end() || !si->second.tex) continue;  // underlay shows
+            const Section& s = si->second;
+            // Tile crop within the section (retail wraps col/row by the JPG size).
+            int sx = (map_.tileCols[b] * kBlock) % std::max(s.w, 1);
+            int sy = (map_.tileRows[b] * kBlock) % std::max(s.h, 1);
+            // Half-texel inset: bilinear at the quad edge then samples exactly the
+            // tile's own edge texel, never the neighbour -- seam-free without a
+            // baked gutter. Clamp for the rare non-32-multiple section.
+            float u0 = (sx + 0.5f) / s.w, v0 = (sy + 0.5f) / s.h;
+            float u1 = (std::min(sx + kBlock, s.w) - 0.5f) / s.w;
+            float v1 = (std::min(sy + kBlock, s.h) - 0.5f) / s.h;
+            float x0 = float(std::lround((bx * kBlock - offX_) * zoom_));
+            float x1 = float(std::lround(((bx + 1) * kBlock - offX_) * zoom_));
+            auto& vb = tileBatch_[s.tex];
+            SDL_Vertex tl{{x0, y0}, white, {u0, v0}};
+            SDL_Vertex tr{{x1, y0}, white, {u1, v0}};
+            SDL_Vertex br{{x1, y1}, white, {u1, v1}};
+            SDL_Vertex bl{{x0, y1}, white, {u0, v1}};
+            vb.push_back(tl); vb.push_back(tr); vb.push_back(br);
+            vb.push_back(tl); vb.push_back(br); vb.push_back(bl);
+        }
+    }
+    builtOffX_ = offX_; builtOffY_ = offY_; builtZoom_ = zoom_;
+    builtW_ = winW; builtH_ = winH;
+    tileBatchDirty_ = false;
 }
 
 void MapView::draw(int winW, int winH) {
     clampOffset(winW, winH);
 
-    // Underlay first: stretch the overview across the whole map's screen rect. Chunks
-    // draw on top at full detail; gaps between them fall back to this instead of black.
+    // Underlay first: stretch the overview across the whole map's screen rect. Tiles
+    // draw on top at full detail; not-yet-uploaded sections fall back to this.
     if (underlay_) {
-        int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;   // full map in world px
+        int mapW = map_.blocksX * kBlock, mapH = map_.blocksY * kBlock;
         int ux0 = int(std::lround((0 - offX_) * zoom_)), uy0 = int(std::lround((0 - offY_) * zoom_));
         int ux1 = int(std::lround((mapW - offX_) * zoom_)), uy1 = int(std::lround((mapH - offY_) * zoom_));
         SDL_Rect udst{ux0, uy0, ux1 - ux0, uy1 - uy0};
         SDL_RenderCopy(ren_, underlay_, nullptr, &udst);
     }
 
-    int c0x = int(offX_) / kChunk, c0y = int(offY_) / kChunk;
-    int c1x = int(offX_ + winW / zoom_) / kChunk, c1y = int(offY_ + winH / zoom_) / kChunk;
-    for (int cy = c0y; cy <= c1y; ++cy)
-        for (int cx = c0x; cx <= c1x; ++cx) {
-            auto it = chunks_.find(std::make_pair(cx, cy));
-            SDL_Texture* t = it != chunks_.end() ? it->second : nullptr;
-            if (!t) continue;   // still compositing: the underlay shows through
-            // Integer-rounded edges so adjacent chunks always abut.
-            int x0 = int(std::lround((cx * kChunk - offX_) * zoom_));
-            int y0 = int(std::lround((cy * kChunk - offY_) * zoom_));
-            int x1 = int(std::lround(((cx + 1) * kChunk - offX_) * zoom_));
-            int y1 = int(std::lround(((cy + 1) * kChunk - offY_) * zoom_));
-            SDL_Rect dst{x0, y0, x1 - x0, y1 - y0};
-            SDL_RenderCopy(ren_, t, nullptr, &dst);
-        }
+    // Rebuild the tile-quad batch only when the view moved or a section uploaded
+    // (idle spectating rebuilds nothing -- just re-submits the cached batch).
+    if (tileBatchDirty_ || offX_ != builtOffX_ || offY_ != builtOffY_ ||
+        zoom_ != builtZoom_ || winW != builtW_ || winH != builtH_)
+        rebuildTileBatch(winW, winH);
+
+    for (auto& [tex, verts] : tileBatch_)
+        if (tex && !verts.empty())
+            SDL_RenderGeometry(ren_, tex, verts.data(), int(verts.size()), nullptr, 0);
 }
 
 void MapView::setBilinear(bool b) {
     bilinear_ = b;
-    for (auto& [k, t] : chunks_)
-        if (t) SDL_SetTextureScaleMode(t, b ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+    for (auto& [k, s] : sections_)
+        if (s.tex) SDL_SetTextureScaleMode(s.tex, b ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
 }
 
 void MapView::setZoomSpeed(float m) { zoomSpeed_ = std::clamp(m, 0.25f, 4.0f); }
 
-void MapView::requestChunk(int cx, int cy) {
-    int bx0 = cx * kChunk / 32, by0 = cy * kChunk / 32;
-    if (bx0 >= map_.blocksX || by0 >= map_.blocksY || cx < 0 || cy < 0) return;
-    auto key = std::make_pair(cx, cy);
-    if (chunks_.count(key)) return;
-    std::lock_guard<std::mutex> lk(chunkMu_);
-    if (!chunkPending_.insert(key).second) return;   // already queued/in flight
-    chunkQueue_.push_back(key);
-    chunkCv_.notify_one();
-}
-
-void MapView::uploadReadyChunks() {
-    std::vector<DoneChunk> done;
+void MapView::uploadReadySections() {
+    std::vector<uint32_t> ready;
     {
-        std::lock_guard<std::mutex> lk(chunkMu_);
-        done.swap(chunkDone_);
+        std::lock_guard<std::mutex> lk(secMu_);
+        ready.swap(decoded_);
     }
-    // Budget GPU uploads per frame: each chunk is a 512x512 (~1MB) texture create +
-    // upload, and edge-scrolling finishes a whole prefetch row at once -- uploading
-    // them all in one frame is a hitch that repeats every time you cross a chunk
-    // boundary. Upload a few now; the leftovers wait (still marked pending, still
-    // ahead of the view thanks to the one-chunk prefetch ring) for the next frames.
-    constexpr size_t kUploadBudget = 2;
+    // A whole map is ~27 sections; upload a few per frame so a cold start never
+    // hitches, and never start the VRAM-exhaustion storm. Deferred keys stay in
+    // decoded_ (re-queued below) and upload once there's room.
+    constexpr size_t kUploadBudget = 3;
     size_t n = 0;
-    std::vector<DoneChunk> deferred;
-    for (auto& d : done) {
-        auto key = std::make_pair(d.cx, d.cy);
-        if (chunks_.count(key)) {   // already uploaded on an earlier frame
-            std::lock_guard<std::mutex> lk(chunkMu_); chunkPending_.erase(key); continue;
+    std::vector<uint32_t> deferred;
+    for (uint32_t key : ready) {
+        if (sections_.count(key)) continue;   // already uploaded
+        const tak::jpeg::Image* img = nullptr;
+        try { img = &comp_.sectionImage(key); } catch (const std::exception&) {
+            sections_[key] = {};   // absent JPG: remember so we never retry it
+            continue;
         }
-        if (n >= kUploadBudget) { deferred.push_back(std::move(d)); continue; }
-        // Respect the GPU budget/backoff so terrain can never start the exhaustion
-        // storm; a deferred chunk stays pending and uploads once there's room.
-        if (gpuvram::blocked() || !gpuvram::wouldFit(size_t(kChunk) * kChunk * 4)) {
-            deferred.push_back(std::move(d)); continue;
+        if (n >= kUploadBudget) { deferred.push_back(key); continue; }
+        if (gpuvram::blocked() ||
+            !gpuvram::wouldFit(size_t(img->width) * img->height * 4)) {
+            deferred.push_back(key); continue;
         }
         SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
-                                           SDL_TEXTUREACCESS_STATIC, kChunk, kChunk);
-        if (!t) { gpuvram::noteFail(); deferred.push_back(std::move(d)); continue; }
-        SDL_UpdateTexture(t, nullptr, d.buf.data(), kChunk * 4);
-        if (bilinear_) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
-        chunks_[key] = t;
-        { std::lock_guard<std::mutex> lk(chunkMu_); chunkPending_.erase(key); }
+                                           SDL_TEXTUREACCESS_STATIC, img->width, img->height);
+        if (!t) { gpuvram::noteFail(); deferred.push_back(key); continue; }
+        SDL_UpdateTexture(t, nullptr, img->rgba.data(), img->width * 4);
+        SDL_SetTextureScaleMode(t, bilinear_ ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+        sections_[key] = {t, img->width, img->height};
+        tileBatchDirty_ = true;   // a new section can fill in visible tiles
         ++n;
+        static const bool kLog = std::getenv("TAK_TERRAINLOG") != nullptr;
+        if (kLog)
+            std::fprintf(stderr, "terrain: section %08x %dx%d uploaded; %zu total, gpu=%zuMiB\n",
+                         key, img->width, img->height, sections_.size(),
+                         gpuvram::bytes() >> 20);
     }
-    if (!deferred.empty()) {   // carry the rest to the next frame (still pending)
-        std::lock_guard<std::mutex> lk(chunkMu_);
-        for (auto& d : deferred) chunkDone_.push_back(std::move(d));
+    if (!deferred.empty()) {
+        std::lock_guard<std::mutex> lk(secMu_);
+        for (uint32_t k : deferred) decoded_.push_back(k);
     }
 }
 
-void MapView::chunkWorkerLoop() {
-    std::unique_lock<std::mutex> lk(chunkMu_);
+void MapView::sectionWorkerLoop() {
+    std::unique_lock<std::mutex> lk(secMu_);
     for (;;) {
-        chunkCv_.wait(lk, [this] { return chunkStop_ || !chunkQueue_.empty(); });
-        if (chunkStop_) return;
-        auto [cx, cy] = chunkQueue_.front();
-        chunkQueue_.pop_front();
-        chunkBusy_ = true;
+        secCv_.wait(lk, [this] { return secStop_ || !decodeQueue_.empty(); });
+        if (secStop_) return;
+        uint32_t key = decodeQueue_.front();
+        decodeQueue_.pop_front();
+        secBusy_ = true;
         lk.unlock();
-        DoneChunk d{cx, cy, std::vector<uint8_t>(size_t(kChunk) * kChunk * 4, 0)};
-        int bx0 = cx * kChunk / 32, by0 = cy * kChunk / 32;
-        int nb = kChunk / 32;
-        for (int y = 0; y < nb; ++y)
-            for (int x = 0; x < nb; ++x) {
-                int bx = bx0 + x, by = by0 + y;
-                if (bx >= map_.blocksX || by >= map_.blocksY) continue;
-                comp_.renderBlock(map_, bx, by, d.buf, kChunk, x * 32, y * 32);
-            }
+        // Decode into the Compositor cache (the heavy JPEG work, once per section).
+        try { comp_.sectionImage(key); } catch (const std::exception&) { /* absent */ }
         lk.lock();
-        chunkBusy_ = false;
-        chunkDone_.push_back(std::move(d));
-        chunkCv_.notify_all();   // reload()/finishChunks() may be waiting
+        secBusy_ = false;
+        decoded_.push_back(key);
+        secCv_.notify_all();   // reload()/finishChunks() may be waiting
     }
 }

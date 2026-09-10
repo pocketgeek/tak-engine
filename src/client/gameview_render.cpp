@@ -1826,11 +1826,9 @@
     static void premulUpload(SDL_Texture* t, const std::vector<uint8_t>& rgba, int w) {
         std::vector<uint8_t> px = rgba;
         int h = w > 0 ? int(px.size() / 4) / w : 0;
-        auto A = [&](int x, int y) { return px[(size_t(y) * w + x) * 4 + 3]; };
         // Two passes so the bleed reaches diagonal/1px-gap texels too.
         for (int pass = 0; pass < 2; ++pass) {
             std::vector<uint8_t> src = px;
-            auto SA = [&](int x, int y) { return src[(size_t(y) * w + x) * 4 + 3]; };
             for (int y = 0; y < h; ++y)
                 for (int x = 0; x < w; ++x) {
                     size_t i = (size_t(y) * w + x) * 4;
@@ -1850,7 +1848,6 @@
                              px[i + 2] = uint8_t(b / n); }
                 }
         }
-        (void)A;
         SDL_UpdateTexture(t, nullptr, px.data(), w * 4);
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
     }

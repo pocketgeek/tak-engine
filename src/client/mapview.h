@@ -76,34 +76,52 @@ public:
     const tak::tnt::Map& map() const { return map_; }
 
 private:
-    static constexpr int kChunk = 512;
+    static constexpr int kBlock = 32;   // one map cell = a 32px tile
 
     // Load a real map from the VFS, OR -- when mapPath is a "~gen1~" random-map id --
     // build it procedurally in memory (client & server share the deterministic gen).
     static tak::tnt::Map genOrLoad(const tak::hpi::Vfs& vfs, const std::string& mapPath);
 
-    // Queue a chunk for background compositing (no-op if built, queued, or off-map).
-    void requestChunk(int cx, int cy);
-    // Main thread: turn finished composites into textures.
-    void uploadReadyChunks();
-    // Worker thread: composite queued chunks into CPU buffers.
-    void chunkWorkerLoop();
+    // Collect the map's unique section keys and queue them for decode.
+    void queueAllSections();
+    // Main thread: turn decoded section JPGs into GPU textures (budgeted/frame).
+    void uploadReadySections();
+    // Worker thread: JPEG-decode queued sections into the Compositor cache.
+    void sectionWorkerLoop();
 
     SDL_Renderer* ren_;
     tak::tnt::Map map_;
     tak::terrain::Compositor comp_;
-    std::map<std::pair<int, int>, SDL_Texture*> chunks_;
-    // Async chunk pipeline (see chunkWorkerLoop).
-    struct DoneChunk { int cx, cy; std::vector<uint8_t> buf; };
-    std::thread chunkWorker_;
-    std::mutex chunkMu_;
-    std::condition_variable chunkCv_;
-    std::deque<std::pair<int, int>> chunkQueue_;
-    std::set<std::pair<int, int>> chunkPending_;   // queued or in flight
-    std::vector<DoneChunk> chunkDone_;
-    bool chunkStop_ = false, chunkBusy_ = false;
-    bool bilinear_ = false;   // smooth chunk scaling (Options; see setBilinear)
+
+    // Terrain rendering: each referenced section JPG is uploaded ONCE as a GPU
+    // texture (~7 MiB for a whole map, resolution-independent -- the old 512px
+    // composite chunks cost ~1 MiB PER visible screen-chunk, hundreds of MiB at
+    // 4K). Visible 32px tiles draw as batched quads sampling their section, with
+    // a half-texel UV inset so bilinear filtering never bleeds across tiles.
+    struct Section { SDL_Texture* tex = nullptr; int w = 0, h = 0; };
+    std::map<uint32_t, Section> sections_;   // key -> uploaded texture (main thread)
+
+    // Async section decode: the worker JPEG-decodes referenced sections into the
+    // Compositor cache off-thread; the main thread uploads them (budgeted). Until
+    // a section is up the underlay shows through, exactly like the old chunks.
+    std::thread secWorker_;
+    std::mutex secMu_;
+    std::condition_variable secCv_;
+    std::deque<uint32_t> decodeQueue_;   // keys awaiting decode
+    std::vector<uint32_t> decoded_;      // keys decoded, awaiting GPU upload
+    std::set<uint32_t> secPending_;      // queued / in flight / uploaded (dedup)
+    bool secStop_ = false, secBusy_ = false;
+
+    // Per-frame tile-quad batch, keyed by section texture; cached across frames
+    // when the view is static (idle spectating rebuilds nothing).
+    std::map<SDL_Texture*, std::vector<SDL_Vertex>> tileBatch_;
+    float builtOffX_ = 1e30f, builtOffY_ = 1e30f, builtZoom_ = -1;
+    int builtW_ = -1, builtH_ = -1;
+    bool tileBatchDirty_ = true;   // set when a section uploads / view changes
+    void rebuildTileBatch(int winW, int winH);
+
+    bool bilinear_ = false;   // smooth terrain scaling (Options; see setBilinear)
     float offX_ = 0, offY_ = 0, zoom_ = 0.35f;
     float zoomSpeed_ = 1.0f;   // wheel-zoom sensitivity exponent (Options)
-    SDL_Texture* underlay_ = nullptr;   // low-res overview drawn under chunks (not owned)
+    SDL_Texture* underlay_ = nullptr;   // low-res overview drawn under tiles (not owned)
 };
