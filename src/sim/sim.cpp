@@ -143,6 +143,10 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.leash = float(info->numberOr("maneuverleashlength", 0));
             t.waterMult = float(info->numberOr("watermultiplier",
                                 info->numberOr("watermultipliser", 1)));
+            // Exact key only: the icd's parser knows no typo fallback, so
+            // verpult's "roadmultplier" never counted in retail either. The
+            // retail default is ~1.2 (16.16 0x13333), NOT 1.0.
+            t.roadMult = float(info->numberOr("roadmultiplier", 1.2));
             t.maxWaterDepth = float(info->numberOr("maxwaterdepth", 0));
             t.maxSlope = float(info->numberOr("maxslope", 255));
             t.radar = float(info->numberOr("radardistance", 0));
@@ -412,9 +416,20 @@ Unit* World::unit(int id) {
     return nullptr;
 }
 
-void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel) {
+void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel,
+                       const std::vector<uint16_t>* features) {
     heights_ = heights;   // keep raw heights for fog line-of-sight
     hW_ = w; hH_ = h;
+    // Road cells: the retail map format marks them as 0xFFFB in the feature
+    // plane (verified against Two Castles -- the mask traces the road network).
+    roads_.clear();
+    if (features && features->size() == size_t(w) * size_t(h)) {
+        bool any = false;
+        roads_.assign(size_t(w) * size_t(h), 0);
+        for (size_t i = 0; i < roads_.size(); ++i)
+            if ((*features)[i] == 0xFFFB) { roads_[i] = 1; any = true; }
+        if (!any) roads_.clear();   // no roads on this map: skip the per-tick test
+    }
     // Ground: no cliffs, water at most ankle deep (moveinfo MaxWaterDepth ~20).
     nav_ = NavGrid(heights, w, h, 20);
     for (int z = 0; z < h; ++z)
@@ -462,6 +477,17 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
                 }
             }
     }
+    // 0xFFFC cells are hard blockers (retail rates them impassable for every
+    // movement domain AND rejects building placement on them -- icd 0x508190 /
+    // 0x507705; they sit under castle wall/gate/dock art baked into terrain).
+    if (features && features->size() == size_t(w) * size_t(h))
+        for (int z = 0; z < h; ++z)
+            for (int x = 0; x < w; ++x)
+                if ((*features)[size_t(z) * w + x] == 0xFFFC) {
+                    nav_.block(x, z, 1, 1, true);
+                    navWater_.block(x, z, 1, 1, true);
+                    navHover_.block(x, z, 1, 1, true);
+                }
     // Per-cell slope (max 3x3 height spread) and water depth, for per-unit
     // maxSlope / maxWaterDepth checks on top of the shared domain grids.
     terW_ = w; terH_ = h;
@@ -2686,12 +2712,26 @@ void World::tick(float dt) {
                     if (uToGoal <= cToGoal + kFormBehind) target = std::min(target, f->slowest);
                 }
             }
-            // watermultiplier: a ground unit wading shallow water moves slower.
-            if (!u.type->canFly && u.type->waterMult != 1.0f && !depth_.empty()) {
-                int cx = int(u.x) / 16, cz = int(u.z) / 16;
-                if (cx >= 0 && cz >= 0 && cx < terW_ && cz < terH_ &&
-                    depth_[size_t(cz) * terW_ + cx] > 0)
-                    target *= u.type->waterMult;
+            // Terrain speed factors, retail-style (icd 0x51be12): ROAD first --
+            // whole footprint on road cells -- else shallow WATER, never both
+            // (a road bridge over the river keeps the road bonus).
+            if (!u.type->canFly) {
+                if (u.type->roadMult != 1.0f &&
+                    onRoad(u.x, u.z, u.type->footX, u.type->footZ)) {
+                    target *= u.type->roadMult;
+                    static const bool kRoadLog = std::getenv("TAK_ROADLOG") != nullptr;
+                    if (kRoadLog) {
+                        static int logged = 0;
+                        if (logged < 5)
+                            std::fprintf(stderr, "road boost: %s x%.2f (%d)\n",
+                                         u.type->id.c_str(), u.type->roadMult, ++logged);
+                    }
+                } else if (u.type->waterMult != 1.0f && !depth_.empty()) {
+                    int cx = int(u.x) / 16, cz = int(u.z) / 16;
+                    if (cx >= 0 && cz >= 0 && cx < terW_ && cz < terH_ &&
+                        depth_[size_t(cz) * terW_ + cx] > 0)
+                        target *= u.type->waterMult;
+                }
             }
             if (std::abs(diff) > 0.8f) target *= 0.3f;
             bool last = u.orders.size() == 1;

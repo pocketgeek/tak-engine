@@ -220,7 +220,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     } else {
         map = tak::tnt::Map::load(vfs.read(cfg.mapPath), cfg.mapPath);
     }
-    world.setTerrain(map.heights, map.width, map.height, map.seaLevel);
+    world.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
 
     // Features: block nav footprints, and gather mana-deposit positions. Iterate
     // in the same (row-major) order the client does so clustering is identical.

@@ -120,6 +120,9 @@ struct UnitType {
     float healTime = 0;       // healtime: seconds per HP regenerated (0 = no regen)
     float leash = 0;          // maneuverleashlength: max auto-chase distance (0 = unlimited)
     float waterMult = 1;      // watermultiplier: speed factor in shallow water
+    float roadMult = 1.2f;    // roadmultiplier: on-road speed factor. Retail's FBI
+                              // parser defaults it to 16.16 0x13333 (~1.2) -- icd
+                              // 0x4bfc5e -- so EVERY ground unit gains on roads.
     float maxWaterDepth = 0;  // deepest water a ground unit may wade into
     float maxSlope = 255;     // steepest cell height-spread the unit may cross
     float minWaterDepth = 0;  // shallowest water a water unit needs (from MOVEINFO)
@@ -480,8 +483,12 @@ public:
     bool benchmarkMode() const { return benchEndTick_ > 0; }
     uint32_t benchmarkEndTick() const { return benchEndTick_; }
     uint32_t tickCount() const { return tickCounter_; }   // ticks elapsed (benchmark timing)
-    // Build per-domain nav grids from heights + sea level.
-    void setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel);
+    // Build per-domain nav grids from heights + sea level. `features` is the
+    // map's raw per-cell feature plane if available: retail stores per-cell
+    // attributes in it as special values -- 0xFFFB marks ROAD cells (the
+    // roadmultiplier speed bonus + the COB walk_road gait).
+    void setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel,
+                    const std::vector<uint16_t>* features = nullptr);
     NavGrid& nav() { return nav_; }
     const NavGrid& navFor(const UnitType* t) const {
         if (t && t->domain == UnitType::Domain::Water) return navWater_;
@@ -536,6 +543,20 @@ public:
     void repair(int builderId, int targetId, bool queue);
     void tickRepair(Unit& b, float dt);
     // True if (x,z) lies over water (for choosing the water impact effect).
+    // Retail (icd 0x509760): a unit is "on road" only when EVERY cell under its
+    // footprint carries the road flag (ground units only; checked per tick into
+    // a status bit that GET 34 and the speed formula read).
+    bool onRoad(float x, float z, int footX = 1, int footZ = 1) const {
+        if (roads_.empty()) return false;
+        int cx = int(x) / 16, cz = int(z) / 16;
+        int x0 = cx - footX / 2, z0 = cz - footZ / 2;
+        if (x0 < 0 || z0 < 0 || x0 + footX > terW_ || z0 + footZ > terH_)
+            return false;
+        for (int dz = 0; dz < footZ; ++dz)
+            for (int dx = 0; dx < footX; ++dx)
+                if (!roads_[size_t(z0 + dz) * terW_ + size_t(x0 + dx)]) return false;
+        return true;
+    }
     bool isWater(float x, float z) const {
         if (depth_.empty()) return false;
         int cx = int(x) / 16, cz = int(z) / 16;
@@ -849,6 +870,7 @@ private:
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
     std::vector<uint8_t> slope_;   // local height spread
     std::vector<uint8_t> depth_;   // water depth (sea level - height), 0 on land
+    std::vector<uint8_t> roads_;   // 1 = road cell (feature-plane 0xFFFB); may be empty
     int terW_ = 0, terH_ = 0;
     // A cell passable for `t`, honouring its maxSlope / maxWaterDepth on top of
     // the shared domain nav grid.

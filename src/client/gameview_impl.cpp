@@ -1357,6 +1357,24 @@
                         int cz = std::clamp(int(su->z) / 16, 0, mp.height - 1);
                         return mp.heights[size_t(cz) * mp.width + cx] < mp.seaLevel ? 1 : 0;
                     }
+                    case 34: {                                         // STANDING ON ROAD
+                        // (MeleeControl picks walk_road; 92 units ask.) Roads are
+                        // 0xFFFB cells in the map's feature plane; retail sets the
+                        // bit only when the WHOLE footprint is on road (icd 0x509760).
+                        const auto& mp = mapView_.map();               // const after load
+                        if (mp.features.empty()) return 0;
+                        int fx = std::max(1, int(su->type->footX));
+                        int fz = std::max(1, int(su->type->footZ));
+                        int x0 = int(su->x) / 16 - fx / 2, z0 = int(su->z) / 16 - fz / 2;
+                        if (x0 < 0 || z0 < 0 || x0 + fx > mp.width || z0 + fz > mp.height)
+                            return 0;
+                        for (int dz = 0; dz < fz; ++dz)
+                            for (int dx = 0; dx < fx; ++dx)
+                                if (mp.features[size_t(z0 + dz) * mp.width +
+                                                size_t(x0 + dx)] != 0xFFFB)
+                                    return 0;
+                        return 1;
+                    }
                     case 29:                                           // CURRENT_SPEED (% of max:
                         return su->type->maxVel > 0                    // ship MotionControl picks
                                    ? int32_t(std::clamp(               // slowrow/row/fastrow at
@@ -1365,7 +1383,7 @@
                                    : 0;
                     case 32: return su->veteran;                       // VETERAN LEVEL (StatusControl
                                                                        // swaps golden weapon pieces)
-                    // 18 YARD_OPEN, 33 turn-rate, 34 on-road, 46 has-target: 0 is
+                    // 18 YARD_OPEN, 33 turn-rate, 46 has-target: 0 is
                     // benign/correct for the shipped uses (no roads in TAK maps;
                     // yard treated clear).
                     default: return 0;

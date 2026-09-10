@@ -27,6 +27,14 @@ struct Map {
     int blocksX = 0, blocksY = 0;    // in 32px blocks (width/2, height/2)
 
     std::vector<uint8_t> heights;    // width*height
+    // Per-cell feature plane. Normal values index featureNames; retail also
+    // packs per-cell ATTRIBUTES in as special values (icd map loader 0x50f0f0):
+    //   0xFFFF = empty
+    //   0xFFFB = ROAD cell (roadmultiplier speed bonus, COB walk_road gait;
+    //            retail converts it to a cell flag at load)
+    //   0xFFFC = hard BLOCKER (impassable + no building; under wall/gate art)
+    //   0xFFFD / 0xFFFE never appear in files -- retail generates them at
+    //   runtime (border margin / covered-by-multi-cell-feature).
     std::vector<uint16_t> features;  // width*height
     std::vector<uint32_t> tileKeys;  // blocksX*blocksY
     std::vector<uint8_t> tileCols;   // blocksX*blocksY
