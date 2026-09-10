@@ -55,6 +55,22 @@ constexpr std::array<WorldArt, kMapTypes> kWorldArt = {{
     {0x868a8222u, 0x0c2e64b2u},   // Creon:  (fall back to Aramon art until IP tiles wired)
 }};
 
+// Per-world doodad + mana feature palette (names from features/<world>/*.tdf --
+// trees/rocks are category=trees/rocks 1x1-ish reclaimable obstacles; the Henge is
+// a category=mana deposit). The sim skips any name it can't resolve, so this is safe.
+struct WorldFeatures {
+    std::array<const char*, 3> trees;
+    std::array<const char*, 3> rocks;
+    const char* mana;
+};
+constexpr std::array<WorldFeatures, kMapTypes> kWorldFeat = {{
+    {{"AraTree01", "AraTree02", "AraTree03"}, {"AraRock01", "AraRock02", "AraRock03"}, "AraHenge01"},
+    {{"TarTree01", "TarTree02", "TarTree03"}, {"TarRock01", "TarRock02", "TarRock03"}, "TarHenge01"},
+    {{"VerTree01", "VerTree02", "VerTree03"}, {"VerRock01", "VerRock02", "VerRock03"}, "VerHenge03"},
+    {{"ZonTree01", "ZonTree02", "ZonTree03"}, {"ZonRock01", "ZonRock02", "ZonRock03"}, "ZonHenge01"},
+    {{"AraTree01", "AraTree02", "AraTree03"}, {"AraRock01", "AraRock02", "AraRock03"}, "AraHenge01"},
+}};
+
 // Even compass directions (integer, scaled by 1000) for start-position rings.
 constexpr std::array<std::pair<int, int>, 8> kCompass = {{
     {0, -1000}, {707, -707}, {1000, 0}, {707, 707},
@@ -140,6 +156,61 @@ Result generate(const Params& raw) {
         int rz = std::clamp(ccz + dz * ringR / 1000, margin, H - 1 - margin);
         r.starts.push_back(snapLand(rx, rz));
     }
+
+    // ---- features: mana deposits (spread on land, spaced) + doodads (trees/rocks by
+    //      density). Anchor cell holds the feature index; footprints block nav. Same
+    //      integer PRNG => byte-identical on every peer -------------------------------
+    const WorldFeatures& wf = kWorldFeat[p.mapType];
+    m.featureNames.clear();
+    auto featIdx = [&](const char* nm) -> uint16_t {
+        for (size_t i = 0; i < m.featureNames.size(); ++i)
+            if (m.featureNames[i] == nm) return uint16_t(i);
+        m.featureNames.emplace_back(nm);
+        return uint16_t(m.featureNames.size() - 1);
+    };
+    auto occupied = [&](int cx, int cz) { return m.features[size_t(cz) * W + cx] != 0xFFFF; };
+    auto nearStart = [&](int cx, int cz, int pad) {
+        for (auto& [sx, sz] : r.starts) {
+            int dx = cx - sx, dz = cz - sz;
+            if (dx * dx + dz * dz < pad * pad) return true;
+        }
+        return false;
+    };
+    uint64_t frng = p.seed ^ 0x5eed1234abcdULL;
+
+    // Mana: count scales with density + area; placed on land, off start pads, spaced.
+    int area = W * H;
+    int manaCount = std::clamp(int(p.players) + area / std::max(1, 16000 - int(p.manaDensity) * 45),
+                               int(p.players), 64);
+    const int minSpace = 24;   // cells between mana spots
+    uint16_t manaFi = featIdx(wf.mana);
+    for (int placed = 0, tries = 0; placed < manaCount && tries < manaCount * 300; ++tries) {
+        int cx = int(splitmix(frng) % uint64_t(W));
+        int cz = int(splitmix(frng) % uint64_t(H));
+        if (!isLand(cx, cz) || occupied(cx, cz) || nearStart(cx, cz, 6)) continue;
+        bool ok = true;
+        for (int dz = -minSpace; dz <= minSpace && ok; ++dz)
+            for (int dx = -minSpace; dx <= minSpace && ok; ++dx) {
+                int nx = cx + dx, nz = cz + dz;
+                if (nx >= 0 && nz >= 0 && nx < W && nz < H &&
+                    m.features[size_t(nz) * W + nx] == manaFi) ok = false;
+            }
+        if (!ok) continue;
+        m.features[size_t(cz) * W + cx] = manaFi;
+        ++placed;
+    }
+
+    // Doodads: per-land-cell probability from doodadDensity (trees/rocks mixed).
+    int thresh = int(p.doodadDensity) * 5 / 4;   // out of 10000 (max ~3% of land cells)
+    for (int cz = 0; cz < H; ++cz)
+        for (int cx = 0; cx < W; ++cx) {
+            uint64_t roll = splitmix(frng);   // one draw per cell (keeps order deterministic)
+            if (!isLand(cx, cz) || occupied(cx, cz) || nearStart(cx, cz, 5)) continue;
+            if (int(roll % 10000) >= thresh) continue;
+            bool rock = (roll >> 20) & 1;
+            const char* nm = rock ? wf.rocks[(roll >> 24) % 3] : wf.trees[(roll >> 24) % 3];
+            m.features[size_t(cz) * W + cx] = featIdx(nm);
+        }
     return r;
 }
 
