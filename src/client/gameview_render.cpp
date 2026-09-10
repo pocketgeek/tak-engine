@@ -1853,10 +1853,11 @@
         auto land = [&](int x, int z) {
             return x >= 0 && z >= 0 && x < W && z < H && map.heights[size_t(z) * W + x] >= sea;
         };
-        // Variant by which cardinal holds land -- the sprite draws (via its anchor)
+        // Variant by which way the land lies -- the sprite draws (via its anchor)
         // toward the land, so foam sits at the shoreline. Calibrated from the GAF
-        // anchors: land-N -> 13, land-S -> 01, land-E -> 07, land-W -> 03 (corners
-        // fall through to a cardinal).
+        // anchors: cardinals land-N->13 S->01 E->07 W->03; inside corners (two
+        // adjacent cardinals) and convex corners (a diagonal only) use the diagonal
+        // variants NW->04 NE->06 SE->16 SW->10.
         const int S = 4;                         // ~one wave per 4x4 stretch of coast
         std::vector<uint8_t> used(size_t(W / S + 1) * (H / S + 1), 0);
         int placed = 0;
@@ -1864,11 +1865,19 @@
             for (int x = 0; x < W; ++x) {
                 if (land(x, z)) continue;        // waves sit on the water side
                 bool n = land(x, z - 1), s = land(x, z + 1), e = land(x + 1, z), w = land(x - 1, z);
-                if (!(n || s || e || w)) continue;
+                bool nw = land(x - 1, z - 1), ne = land(x + 1, z - 1),
+                     sw = land(x - 1, z + 1), se = land(x + 1, z + 1);
+                if (!(n || s || e || w || nw || ne || sw || se)) continue;
                 size_t uc = size_t(z / S) * (W / S + 1) + (x / S);
                 if (used[uc]) continue;          // spacing
                 used[uc] = 1;
-                int v = n ? 13 : s ? 1 : e ? 7 : 3;
+                int v;
+                if (n && w) v = 4; else if (n && e) v = 6;          // inside corners
+                else if (s && e) v = 16; else if (s && w) v = 10;
+                else if (n) v = 13; else if (s) v = 1;             // straight edges
+                else if (e) v = 7; else if (w) v = 3;
+                else if (nw) v = 4; else if (ne) v = 6;            // convex (diagonal-only)
+                else if (se) v = 16; else v = 10;                 // sw
                 char nm[24];
                 std::snprintf(nm, sizeof nm, "%sWave%02d", wp.c_str(), v);
                 if (addFeature(nm, float(x) * 16 + 8, float(z) * 16 + 8, false)) ++placed;
