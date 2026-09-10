@@ -2307,6 +2307,7 @@ private:
     void sortMapList();
 
     void buildMapPreview(const std::string& tntPath);
+    void buildGenPreview(const std::string& id);   // thumbnail for a "~gen1~" map
 
     void drawCreate(int winW, int winH);
 

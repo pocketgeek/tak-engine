@@ -141,6 +141,7 @@
         mapPreviewW_ = mapPreviewH_ = 0;
         mapPreviewDims_.clear();
         if (tntPath.empty()) return;
+        if (tak::mapgen::isGeneratedMapId(tntPath)) { buildGenPreview(tntPath); return; }
         std::vector<uint8_t> d;
         try { d = vfs_.read(tntPath); } catch (...) { return; }
         if (d.size() < 52) return;
@@ -176,6 +177,67 @@
             if (n > 0) players = std::to_string(n);
         }
         mapPreviewDims_ = size + (players.empty() ? "" : "   " + players + " PLAYER");
+    }
+
+    void GameView::buildGenPreview(const std::string& id) {
+        // Roll the map from the seed (cheap integer-only work) and paint a downsampled
+        // height/water map with feature + start markers, so the sliders preview live.
+        tak::mapgen::Params gp = tak::mapgen::decodeMapId(id);
+        tak::mapgen::Result g = tak::mapgen::generate(gp);
+        const tak::tnt::Map& m = g.map;
+        const int W = m.width, H = m.height, sea = m.seaLevel;
+        if (W <= 0 || H <= 0 || m.heights.size() < size_t(W) * H) return;
+        const int cap = 192, mx = std::max(W, H);
+        const int TW = std::max(1, W * cap / mx), TH = std::max(1, H * cap / mx);
+        // World-flavoured land tint (loosely matches each world's ground section art).
+        static const uint8_t landRGB[tak::mapgen::kMapTypes][3] = {
+            {74, 118, 58}, {112, 84, 54}, {66, 120, 104}, {46, 92, 46}, {74, 118, 58}};
+        const uint8_t* lc = landRGB[gp.mapType % tak::mapgen::kMapTypes];
+        std::vector<uint8_t> rgba(size_t(TW) * TH * 4, 255);
+        auto put = [&](int tx, int ty, uint8_t r, uint8_t gg, uint8_t b) {
+            if (tx < 0 || ty < 0 || tx >= TW || ty >= TH) return;
+            uint8_t* px = &rgba[(size_t(ty) * TW + tx) * 4];
+            px[0] = r; px[1] = gg; px[2] = b; px[3] = 255;
+        };
+        // Base: height-shaded water (deeper -> darker) / land (brighter with elevation).
+        for (int ty = 0; ty < TH; ++ty)
+            for (int tx = 0; tx < TW; ++tx) {
+                int h = m.heights[size_t(ty * H / TH) * W + (tx * W / TW)];
+                if (h < sea) {
+                    int d = std::clamp((sea - h) * 3, 0, 120);
+                    put(tx, ty, uint8_t(46 - d / 4), uint8_t(98 - d / 3), uint8_t(152 - d / 3));
+                } else {
+                    int e = std::clamp((h - sea) / 2, 0, 70);
+                    put(tx, ty, uint8_t(std::min(255, lc[0] + e)),
+                                uint8_t(std::min(255, lc[1] + e)), uint8_t(std::min(255, lc[2] + e)));
+                }
+            }
+        // Feature dots -- sparse, so plot every one lest the downsample drop it.
+        for (int cz = 0; cz < H; ++cz)
+            for (int cx = 0; cx < W; ++cx) {
+                uint16_t fi = m.features[size_t(cz) * W + cx];
+                if (fi == 0xFFFF || fi >= m.featureNames.size()) continue;
+                const std::string& nm = m.featureNames[fi];
+                int tx = cx * TW / W, ty = cz * TH / H;
+                if (nm.find("Henge") != std::string::npos) put(tx, ty, 245, 220, 90);       // mana: gold
+                else if (nm.find("Rock") != std::string::npos) put(tx, ty, 150, 148, 140);  // rock: grey
+                else put(tx, ty, 28, 66, 28);                                               // tree: dark green
+            }
+        // Start positions: bright 3x3 markers.
+        for (auto& [sx, sz] : g.starts) {
+            int tx = sx * TW / W, ty = sz * TH / H;
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) put(tx + dx, ty + dy, 250, 250, 255);
+        }
+        mapPreviewTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, TW, TH);
+        if (!mapPreviewTex_) return;
+        SDL_SetTextureBlendMode(mapPreviewTex_, SDL_BLENDMODE_BLEND);
+        SDL_UpdateTexture(mapPreviewTex_, nullptr, rgba.data(), TW * 4);
+        SDL_SetTextureScaleMode(mapPreviewTex_, SDL_ScaleModeNearest);
+        mapPreviewW_ = TW; mapPreviewH_ = TH;
+        char dims[48];
+        std::snprintf(dims, sizeof dims, "%d x %d   %d PLAYER", W / 32, H / 32, int(gp.players));
+        mapPreviewDims_ = dims;
     }
 
     void GameView::applyGenParams() {
@@ -407,35 +469,26 @@
         });
       }
 
-        // Preview panel, right of the list / params column. For a real map it's the
-        // embedded minimap; a generated map has no VFS file, so we show its params
-        // (the terrain is rolled fresh from the seed when the match starts).
+        // Preview panel, right of the list / params column. A real map shows its
+        // embedded minimap; a generated map shows a live thumbnail rolled from its
+        // seed (both go through buildMapPreview -> mapPreviewTex_).
         const float pvx = lx + 352, pvy = hy + 46, pvW = 192, pvH = 192;
         blockText("PREVIEW", pvx, hy, 1.8f, {200, 205, 220, 255});
         SDL_FRect pbox{pvx, pvy, pvW, pvH};
         SDL_SetRenderDrawColor(ren_, 18, 20, 28, 255); SDL_RenderFillRectF(ren_, &pbox);
-        if (gen) {
-            tak::mapgen::Params gp = tak::mapgen::decodeMapId(mpMapId_);
-            blockText("RANDOM MAP", pvx + 10, pvy + 12, 1.9f, {210, 220, 205, 255});
-            char l1[48]; std::snprintf(l1, sizeof l1, "%d x %d", gp.widthCells / 32, gp.heightCells / 32);
-            blockText(l1, pvx + 10, pvy + 40, 1.7f, {175, 185, 200, 255});
-            char l2[32]; std::snprintf(l2, sizeof l2, "%d PLAYERS", int(gp.players));
-            blockText(l2, pvx + 10, pvy + 62, 1.7f, {175, 185, 200, 255});
-            blockText("ROLLED EACH GAME", pvx + 10, pvy + pvH - 24, 1.4f, {120, 130, 145, 255});
+        if (mapPreviewFor_ != mapPath_) buildMapPreview(mapPath_);
+        if (mapPreviewTex_ && mapPreviewW_ > 0) {
+            float sc = std::min(pvW / float(mapPreviewW_), pvH / float(mapPreviewH_));
+            float iw = mapPreviewW_ * sc, ih = mapPreviewH_ * sc;
+            SDL_FRect dst{pvx + (pvW - iw) / 2, pvy + (pvH - ih) / 2, iw, ih};
+            SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
         } else {
-            if (mapPreviewFor_ != mapPath_) buildMapPreview(mapPath_);
-            if (mapPreviewTex_ && mapPreviewW_ > 0) {
-                float sc = std::min(pvW / float(mapPreviewW_), pvH / float(mapPreviewH_));
-                float iw = mapPreviewW_ * sc, ih = mapPreviewH_ * sc;
-                SDL_FRect dst{pvx + (pvW - iw) / 2, pvy + (pvH - ih) / 2, iw, ih};
-                SDL_RenderCopyF(ren_, mapPreviewTex_, nullptr, &dst);
-            } else {
-                blockText("NO PREVIEW", pvx + 34, pvy + pvH / 2 - 7, 1.6f, {120, 125, 140, 255});
-            }
-            if (!mapPreviewDims_.empty())
-                blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
+            blockText(gen ? "GENERATING" : "NO PREVIEW", pvx + 34, pvy + pvH / 2 - 7, 1.6f,
+                      {120, 125, 140, 255});
         }
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
+        if (!mapPreviewDims_.empty())
+            blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
     }
 
     void GameView::drawRoom(int winW, int winH) {
