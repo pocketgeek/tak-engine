@@ -103,8 +103,12 @@ the **tile/section palette + brush tools**, the **height tools**, the
 1. TNT writer + New/Save/Save As round-trip (load→save→byte-compare).
 2. Tile palette + paint brush; height tools; Grid overlay; zoom levels.
 3. Feature/unit/start-pos placement + selection + the property dialogs.
-   [start positions DONE: markers, place/move/delete, OTA save; +5x7 bitmap font,
-    tool toolbar, status bar, --shot capture]
+   [start positions + FEATURES + UNITS placement DONE. Units read from the
+    SHARED tak::crt (also used by takclient/takserver); render as player-
+    coloured markers, place/move/delete in memory. Unit Properties dialog +
+    .crt WRITER pending the record-offset RE -- and those go in tak::crt so
+    the ENGINE gets full scenario unit stats too (it now reads only name/x/z/
+    player).]
 4. Scenario Properties / Resize / Use Only / Check Map.
    [modal widget layer + Scenario Properties + Resize DONE; Use Only + Check Map
     need placed units]

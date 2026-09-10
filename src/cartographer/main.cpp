@@ -16,6 +16,7 @@
 #include "cartographer/font5x7.h"
 #include "cartographer/newmap.h"
 #include "cartographer/sections.h"
+#include "cartographer/units.h"
 #include "client/mapview.h"
 #include "terrain/terrain.h"
 #include "util/jpeg.h"
@@ -211,6 +212,13 @@ int main(int argc, char** argv) {
     features.scan(vfs, world);
     std::fprintf(stderr, "cartographer: %zu placeable features for '%s'\n",
                  features.list().size(), world.c_str());
+
+    // Placed units (from the map's .crt) + the unit-type list for the palette.
+    std::string crtPath = mapPath.substr(0, mapPath.rfind('.')) + ".crt";
+    std::vector<cart::PlacedUnit> units = cart::loadUnits(vfs, crtPath);
+    std::vector<std::string> unitTypes = cart::unitTypeNames(vfs);
+    std::fprintf(stderr, "cartographer: %zu placed units, %zu unit types\n",
+                 units.size(), unitTypes.size());
     std::fprintf(stderr, "cartographer: %zu sections for world '%s'\n",
                  sections.list().size(), world.c_str());
 
@@ -320,7 +328,23 @@ int main(int argc, char** argv) {
     };
 
     // --- Object tools (terrain paint, feature placement, start positions) -----
-    enum Tool { TERRAIN, FEATURES, STARTS };
+    enum Tool { TERRAIN, FEATURES, UNITS, STARTS };
+    int selectedType = unitTypes.empty() ? -1 : 0;   // unit-type index (UNITS palette)
+    int currentPlayer = 0;                            // player id new units get
+    int draggingUnit = -1;                            // index into units while dragging
+    // 8 player marker colours.
+    static const Uint8 kPlayerCol[8][3] = {
+        {80,120,255},{230,70,60},{80,200,90},{235,210,80},
+        {200,90,220},{80,210,220},{240,140,40},{200,200,210}};
+    // Placed unit whose marker is near screen (mx,my), or -1.
+    auto unitAt = [&](int mx, int my) -> int {
+        for (int i = int(units.size()) - 1; i >= 0; --i) {
+            float sx = kPaletteW + (units[i].x - mapView.offX()) * mapView.zoom();
+            float sy = kMenuH + (units[i].z - mapView.offY()) * mapView.zoom();
+            if (std::abs(sx - mx) <= 8 && std::abs(sy - my) <= 8) return i;
+        }
+        return -1;
+    };
     Tool tool = TERRAIN;
     // Place/erase a feature in the .tnt feature plane at the mouse cell.
     auto placeFeature = [&](int mx, int my, bool erase) {
@@ -440,10 +464,14 @@ int main(int argc, char** argv) {
                 openModal(M_SCENARIO);   // Scenario -> Properties
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_r) {
                 openModal(M_RESIZE);     // Scenario -> Resize
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_LEFTBRACKET) {
+                currentPlayer = (currentPlayer + 7) % 8;   // UNITS: pick placement player
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RIGHTBRACKET) {
+                currentPlayer = (currentPlayer + 1) % 8;
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_g) {
                 showGrid = !showGrid;   // View -> Grid
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_TAB) {
-                tool = Tool((int(tool) + 1) % 3);   // cycle TERRAIN->FEATURES->STARTS
+                tool = Tool((int(tool) + 1) % 4);   // cycle TERRAIN->FEATURES->UNITS->STARTS
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
                        e.key.keysym.sym <= SDLK_5) {
                 // Zoom levels 1..5 = 100/75/50/25/12.5% (retail's five steps).
@@ -452,23 +480,34 @@ int main(int argc, char** argv) {
                        e.button.button == SDL_BUTTON_LEFT && e.button.y < kMenuH) {
                 // Toolbar buttons: TERRAIN | FEATURES | STARTS (each 72px).
                 int bi = (e.button.x - 96) / 72;
-                if (bi >= 0 && bi < 3) tool = Tool(bi);
+                if (bi >= 0 && bi < 4) tool = Tool(bi);
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_LEFT && e.button.x < kPaletteW &&
                        e.button.y >= kMenuH && e.button.y < h - kStatusH) {
-                // Palette click -> select a section (TERRAIN) or feature (FEATURES).
-                int px = e.button.x - 4;
-                int py = e.button.y - kMenuH + paletteScroll;
-                int col = px / (kThumb + 4), row = py / (kThumb + 4);
-                if (col >= 0 && col < cols) {
-                    int idx = row * cols + col;
-                    if (tool == FEATURES) {
-                        if (idx >= 0 && idx < int(features.list().size())) selectedFeat = idx;
-                    } else if (idx >= 0 && idx < int(sections.list().size())) selected = idx;
+                // Palette click -> select a section/feature (thumbnails) or a unit
+                // type (UNITS = a text list, 14px rows).
+                if (tool == UNITS) {
+                    int row = (e.button.y - kMenuH + paletteScroll) / 14;
+                    if (row >= 0 && row < int(unitTypes.size())) selectedType = row;
+                } else {
+                    int px = e.button.x - 4;
+                    int py = e.button.y - kMenuH + paletteScroll;
+                    int col = px / (kThumb + 4), row = py / (kThumb + 4);
+                    if (col >= 0 && col < cols) {
+                        int idx = row * cols + col;
+                        if (tool == FEATURES) {
+                            if (idx >= 0 && idx < int(features.list().size())) selectedFeat = idx;
+                        } else if (idx >= 0 && idx < int(sections.list().size())) selected = idx;
+                    }
                 }
             } else if (e.type == SDL_MOUSEWHEEL) {
                 int mxp, myp; SDL_GetMouseState(&mxp, &myp);
                 if (mxp < kPaletteW) {   // scroll the palette (tool-dependent count)
+                    if (tool == UNITS) {
+                        int maxS = std::max(0, int(unitTypes.size()) * 14 - canvasH);
+                        paletteScroll = std::clamp(paletteScroll - e.wheel.y * 40, 0, maxS);
+                        continue;
+                    }
                     int n = tool == FEATURES ? int(features.list().size())
                                              : int(sections.list().size());
                     int rows = (n + cols - 1) / cols;
@@ -483,6 +522,18 @@ int main(int argc, char** argv) {
                     stampAtMouse(e.button.x, e.button.y, canvasW, canvasH);
                 } else if (tool == FEATURES) {
                     placeFeature(e.button.x, e.button.y, false);
+                } else if (tool == UNITS) {   // grab an existing unit, else place one
+                    int hit = unitAt(e.button.x, e.button.y);
+                    int cx, cz;
+                    if (hit >= 0) draggingUnit = hit;
+                    else if (selectedType >= 0 && mouseCell(e.button.x, e.button.y, cx, cz)) {
+                        cart::PlacedUnit u;
+                        u.type = unitTypes[size_t(selectedType)];
+                        u.player = currentPlayer;
+                        u.x = cx * 16.0f + 8; u.z = cz * 16.0f + 8;
+                        units.push_back(u);
+                        draggingUnit = int(units.size()) - 1;
+                    }
                 } else {   // STARTS: grab an existing marker, else place a new one
                     int hit = startAt(e.button.x, e.button.y);
                     int cx, cz;
@@ -505,14 +556,24 @@ int main(int argc, char** argv) {
                        e.button.button == SDL_BUTTON_RIGHT && tool == FEATURES &&
                        e.button.x >= kPaletteW) {
                 placeFeature(e.button.x, e.button.y, true);   // right-click erases
+            } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                       e.button.button == SDL_BUTTON_RIGHT && tool == UNITS) {
+                int hit = unitAt(e.button.x, e.button.y);   // right-click deletes a unit
+                if (hit >= 0) units.erase(units.begin() + hit);
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
-                draggingStart = -1;
+                draggingStart = -1; draggingUnit = -1;
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK) &&
                        e.motion.x >= kPaletteW) {
                 if (tool == TERRAIN) {
                     stampAtMouse(e.motion.x, e.motion.y, canvasW, canvasH);   // drag-paint
                 } else if (tool == FEATURES) {
                     placeFeature(e.motion.x, e.motion.y, false);   // drag-place features
+                } else if (tool == UNITS && draggingUnit >= 0) {
+                    int cx, cz;   // drag a unit to a new cell centre
+                    if (mouseCell(e.motion.x, e.motion.y, cx, cz)) {
+                        units[size_t(draggingUnit)].x = cx * 16.0f + 8;
+                        units[size_t(draggingUnit)].z = cz * 16.0f + 8;
+                    }
                 } else if (draggingStart >= 0) {
                     int cx, cz;   // drag a start marker to a new cell
                     if (mouseCell(e.motion.x, e.motion.y, cx, cz)) {
@@ -590,6 +651,22 @@ int main(int argc, char** argv) {
                     SDL_RenderCopyF(ren, t, nullptr, &dst);
                 }
         }
+        // Placed units: a player-coloured square with the type name above it.
+        for (int i = 0; i < int(units.size()); ++i) {
+            float sx = (units[i].x - mapView.offX()) * mapView.zoom();
+            float sy = (units[i].z - mapView.offY()) * mapView.zoom();
+            if (sx < -20 || sy < -20 || sx > canvasW + 20 || sy > canvasH + 20) continue;
+            const Uint8* pc = kPlayerCol[units[i].player & 7];
+            SDL_SetRenderDrawColor(ren, pc[0], pc[1], pc[2], 255);
+            SDL_Rect r{int(sx) - 5, int(sy) - 5, 10, 10};
+            SDL_RenderFillRect(ren, &r);
+            SDL_SetRenderDrawColor(ren, 12, 12, 16, 255);
+            SDL_RenderDrawRect(ren, &r);
+            if (mapView.zoom() > 0.28f)   // label only when there's room
+                cart::drawText(ren, units[i].type,
+                               int(sx) - cart::textWidth(units[i].type, 1) / 2,
+                               int(sy) - 15, 1, 235, 235, 245);
+        }
         // Start-position markers (drawn in canvas-local coords: gold diamonds
         // with the StartPos number). Off-map ones simply fall outside.
         for (int i = 0; i < int(scenario.starts.size()); ++i) {
@@ -616,6 +693,17 @@ int main(int argc, char** argv) {
         fillRect(ren, 0, kMenuH, kPaletteW, canvasH, 30, 32, 40);
         SDL_Rect palClip{0, kMenuH, kPaletteW, canvasH};
         SDL_RenderSetClipRect(ren, &palClip);
+        if (tool == UNITS) {   // a scrollable text list of unit types
+            for (int i = 0; i < int(unitTypes.size()); ++i) {
+                int ty = kMenuH + 2 + i * 14 - paletteScroll;
+                if (ty + 12 < kMenuH || ty > h - kStatusH) continue;
+                if (i == selectedType)
+                    fillRect(ren, 0, ty - 1, kPaletteW, 13, 70, 66, 40);
+                cart::drawText(ren, unitTypes[size_t(i)], 6, ty + 2, 1,
+                               i == selectedType ? 255 : 200, i == selectedType ? 220 : 205,
+                               i == selectedType ? 120 : 215);
+            }
+        } else {
         int palN = tool == FEATURES ? int(features.list().size())
                                     : int(sections.list().size());
         int palSel = tool == FEATURES ? selectedFeat : selected;
@@ -646,6 +734,7 @@ int main(int argc, char** argv) {
                 SDL_RenderDrawRect(ren, &b2);
             }
         }
+        }   // end else (thumbnail palette)
         SDL_RenderSetClipRect(ren, nullptr);
 
         // Chrome strips.
@@ -657,8 +746,8 @@ int main(int argc, char** argv) {
 
         // Menu strip: title + tool buttons (active one highlighted).
         cart::drawText(ren, "CARTOGRAPHER", 6, 7, 1, 200, 200, 210);
-        const char* names[3] = {"TERRAIN", "FEATURES", "STARTS"};
-        for (int t = 0; t < 3; ++t) {
+        const char* names[4] = {"TERRAIN", "FEATURES", "UNITS", "STARTS"};
+        for (int t = 0; t < 4; ++t) {
             int bx = 96 + t * 72;
             bool active = int(tool) == t;
             fillRect(ren, bx, 3, 68, kMenuH - 6, active ? 90 : 60, active ? 80 : 62,
@@ -674,8 +763,12 @@ int main(int argc, char** argv) {
             ? "( " + std::to_string(ccx) + ", " + std::to_string(ccz) + " )" : "";
         char zbuf[16];
         std::snprintf(zbuf, sizeof zbuf, "%d%%", int(mapView.zoom() * 100 + 0.5f));
-        std::string status = coord + "   TOOL: " + names[int(tool)] + "   ZOOM: " + zbuf +
-                             "   STARTS: " + std::to_string(scenario.starts.size());
+        std::string status = coord + "   TOOL: " + names[int(tool)] + "   ZOOM: " + zbuf;
+        if (tool == UNITS)
+            status += "   PLAYER: " + std::to_string(currentPlayer) +
+                      "   UNITS: " + std::to_string(units.size());
+        else
+            status += "   STARTS: " + std::to_string(scenario.starts.size());
         cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
 
         // Modal dialog over everything.

@@ -234,7 +234,7 @@ if(TAK_BUILD_CLIENT)
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps
     # look byte-identical to the game.
-    add_executable(cartographer src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/client/mapview.cpp)
+    add_executable(cartographer src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/client/mapview.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
     target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
     if(WIN32)
