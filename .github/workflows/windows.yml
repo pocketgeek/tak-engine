@@ -55,7 +55,7 @@ jobs:
         # + the WIN32 -static flag) so the .exe is fully self-contained -- no bundled DLLs.
         run: |
           cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON
-          cmake --build build
+          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test
 
       - name: Verify fully static (no SDL2/jpeg/zlib/ffmpeg DLL imports)
         run: |
@@ -92,7 +92,7 @@ jobs:
       - name: Configure + build (debug)
         run: |
           cmake -B build-debug -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON
-          cmake --build build-debug
+          cmake --build build-debug --target takclient takserver
 
       - name: Bundle (exes + required DLLs) + zip (debug)
         run: |
