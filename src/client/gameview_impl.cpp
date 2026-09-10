@@ -2407,14 +2407,18 @@
     }
 
     void GameView::voice(int unitId, const std::string& event) {
-        // Retail command feedback: every ORDER click plays the faction's click
-        // tone (sounds/tone<side>.wav -- what click.hpi override packs replace)
-        // under the unit's acknowledgment line. Selection stays voice-only.
-        if (event != "select") playClickTone();
+        // Retail command feedback is EITHER/OR, never stacked: a unit with an
+        // acknowledgment line for the event speaks it; one without gets the
+        // faction click tone (sounds/tone<side>.wav -- the "bong" click.hpi
+        // override packs replace). Most TAK units have no order voice, which
+        // is why retail bonged on nearly every command. Selection stays
+        // voice-or-silent.
         const auto* u = frameUnitP(unitId);
-        if (!u || !u->type || u->type->soundClass.empty()) return;
-        if (const auto* wav = soundClasses_.pick(u->type->soundClass, event, salt_++))
-            sounds_.playWorld(*wav, u->x, u->z);
+        const std::string* wav = nullptr;
+        if (u && u->type && !u->type->soundClass.empty())
+            wav = soundClasses_.pick(u->type->soundClass, event, salt_++);
+        if (wav) sounds_.playWorld(*wav, u->x, u->z);
+        else if (event != "select") playClickTone();
     }
 
     void GameView::loadExplosionClasses() {
