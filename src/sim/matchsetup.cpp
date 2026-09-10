@@ -17,6 +17,7 @@
 #include <memory>
 #include "tdf/tdf.h"
 #include "tnt/tnt.h"
+#include "tnt/mapgen.h"
 
 namespace tak::sim {
 
@@ -206,7 +207,19 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
                                                 const MatchConfig& cfg) {
     const hpi::Vfs& vfs = *cfg.vfs;
-    tak::tnt::Map map = tak::tnt::Map::load(vfs.read(cfg.mapPath), cfg.mapPath);
+    // A "~gen1~" mapPath is a random-map recipe: generate it in memory (identically
+    // on client and referee -- the params ride the mapId, generation is integer-only).
+    const bool generated = tak::mapgen::isGeneratedMapId(cfg.mapPath);
+    std::vector<std::pair<float, float>> genStarts;
+    tak::tnt::Map map;
+    if (generated) {
+        auto g = tak::mapgen::generate(tak::mapgen::decodeMapId(cfg.mapPath));
+        map = std::move(g.map);
+        for (auto& [scx, scz] : g.starts)   // cell -> px, matching parseStartPositions
+            genStarts.push_back({float(scx * 16), float(scz * 16)});
+    } else {
+        map = tak::tnt::Map::load(vfs.read(cfg.mapPath), cfg.mapPath);
+    }
     world.setTerrain(map.heights, map.width, map.height, map.seaLevel);
 
     // Features: block nav footprints, and gather mana-deposit positions. Iterate
@@ -298,7 +311,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // Assign the used slots to start positions (ring fallback if the map has too few).
     int used = 0;
     for (auto& s : cfg.slots) if (s.used) ++used;
-    auto starts = parseStartPositions(vfs, cfg.mapPath);
+    auto starts = generated ? genStarts : parseStartPositions(vfs, cfg.mapPath);
     float cx = map.blocksX * 16.0f, cz = map.blocksY * 16.0f;
     std::vector<std::pair<float, float>> spots = starts;
     // Benchmark: ignore the map's (few) start positions and spread all factions evenly

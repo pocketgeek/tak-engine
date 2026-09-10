@@ -1,4 +1,5 @@
 #include "hpi/hpi.h"
+#include "tnt/mapgen.h"
 
 #include <zlib.h>
 
@@ -696,6 +697,9 @@ std::vector<std::pair<std::string, std::string>> listMaps(const Vfs& vfs) {
 }
 
 std::string findMap(const Vfs& vfs, const std::string& name) {
+    // A "~gen1~" random-map id carries its recipe, not a file -- resolve it to itself
+    // so every call site (client, server referee, MP lobby) generates in memory.
+    if (tak::mapgen::isGeneratedMapId(name)) return name;
     std::string want = name;
     // Accept either a bare name or a name with a .tnt suffix.
     if (want.size() > 4) {
