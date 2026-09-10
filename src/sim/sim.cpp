@@ -1957,28 +1957,104 @@ void World::reclaim(int builderId, int featureId, bool queue) {
     if (!b || !b->alive() || !b->type || !b->type->isBuilder ||
         !b->type->canMove || !b->type->canReclaim)
         return;
-    const Feature* f = feature(featureId);
-    if (!f || !f->alive) return;
+    // Negative target = a CORPSE (dead-unit record: bodies, statues, building
+    // rubble), so the right-drag box and clicks can clear wrecks like features.
+    float tx, tz;
+    if (featureId < 0) {
+        const Unit* c = unit(-featureId);
+        // Accept anything dead or dying this tick whose def can be reclaimed
+        // (the walk takes longer than the death anim anyway).
+        if (!c || c->id == builderId || !c->type || (c->alive() && c->hp > 0))
+            return;
+        int ct = c->corpseStatue >= 0 ? c->corpseStatue : corpseTypeOf(c->type);
+        if (ct < 0 || !featTypes_[size_t(ct)].reclaimable) return;
+        tx = c->x; tz = c->z;
+        static const bool kRcLog = std::getenv("TAK_BURNLOG") != nullptr;
+        if (kRcLog)
+            std::fprintf(stderr, "corpse-reclaim ORDER: b%d -> %s (%d)\n",
+                         builderId, c->type->id.c_str(), -featureId);
+    } else {
+        const Feature* f = feature(featureId);
+        if (!f || !f->alive) return;
+        tx = f->x; tz = f->z;
+    }
     if (b->reclaimId == 0 && b->reclaimQueue.empty() && !queue) {
         b->reclaimId = featureId;
-        order(builderId, f->x, f->z, false);   // walk to it; tickReclaim takes over
+        order(builderId, tx, tz, false);   // walk to it; tickReclaim takes over
     } else {
         b->reclaimQueue.push_back(featureId);
     }
 }
 
 void World::tickReclaim(Unit& b, float dt) {
-    auto it = featureIdx_.find(b.reclaimId);
     auto advance = [&] {
-        // Pull the next still-alive target off the queue, or go idle.
+        // Pull the next still-valid target off the queue, or go idle.
+        // Negative ids are corpses (dead-unit records), positive are features.
         b.reclaimId = 0;
         while (!b.reclaimQueue.empty()) {
             int nid = b.reclaimQueue.front();
             b.reclaimQueue.erase(b.reclaimQueue.begin());
-            const Feature* nf = feature(nid);
-            if (nf && nf->alive) { b.reclaimId = nid; order(b.id, nf->x, nf->z, false); break; }
+            if (nid < 0) {
+                const Unit* nc = unit(-nid);
+                if (nc && nc->type && !nc->alive() && nc->deadFor < nc->corpseUntil) {
+                    b.reclaimId = nid;
+                    order(b.id, nc->x, nc->z, false);
+                    break;
+                }
+            } else {
+                const Feature* nf = feature(nid);
+                if (nf && nf->alive) { b.reclaimId = nid; order(b.id, nf->x, nf->z, false); break; }
+            }
         }
     };
+    if (b.reclaimId < 0) {
+        // Ordered corpse reclaim: walk to the body/wreck and consume it. Yields
+        // the corpse def's energy (0 for everything shipped) -- this is about
+        // clearing rubble and denying resurrection, not income.
+        Unit* c = unit(-b.reclaimId);
+        if (!c || !c->type || c->deadFor >= c->corpseUntil) { advance(); return; }
+        if (c->alive()) {
+            // hp<=0 = dying THIS tick (the death edge may run after us): hold
+            // the job. A genuinely healthy target is an invalid order: drop it.
+            if (c->hp > 0) advance();
+            return;
+        }
+        // Body still mid-death-anim: stand by until it settles (statues settle
+        // instantly).
+        if (c->deadFor < (c->corpseStatue >= 0 ? 0.0f : 4.0f)) return;
+        float dx = c->x - b.x, dz = c->z - b.z;
+        float reach = 24.0f + 8.0f * float(std::max(c->type->footX, c->type->footZ)) +
+                      (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
+        if (dx * dx + dz * dz > reach * reach) return;   // still walking there
+        b.speed = 0;
+        int ct = c->corpseStatue >= 0 ? c->corpseStatue : corpseTypeOf(c->type);
+        const FeatType* cd = ct >= 0 ? &featTypes_[size_t(ct)] : nullptr;
+        float step = kReclaimRate * dt;
+        // Proportional drip against the INITIAL work (= max(energy,60), set at
+        // death). Shipped corpse defs all have energy 0, so this grants nothing.
+        if (cd && cd->energy > 0 && c->corpseWork > 0)
+            players_[size_t(b.player)].mana +=
+                cd->energy * std::min(step, c->corpseWork) /
+                std::max(cd->energy, 60.0f);
+        c->corpseWork -= step;
+        if (c->corpseWork <= 0) {
+            c->deadFor = 1000.0f;   // consumed
+            if (c->corpseBlocks) {
+                c->corpseBlocks = false;
+                blockFootprint(nav_, *c->type, c->x, c->z, false);
+                invalidateFlows(int(c->x) / 16 - c->type->footX / 2,
+                                int(c->z) / 16 - c->type->footZ / 2,
+                                c->type->footX, c->type->footZ);
+            }
+            static const bool kRecLog = std::getenv("TAK_BURNLOG") != nullptr;
+            if (kRecLog)
+                std::fprintf(stderr, "corpse reclaimed: %s at %.0f,%.0f\n",
+                             c->type->id.c_str(), c->x, c->z);
+            advance();
+        }
+        return;
+    }
+    auto it = featureIdx_.find(b.reclaimId);
     if (it == featureIdx_.end()) { advance(); return; }
     Feature& f = features_[it->second];
     if (!f.alive) { advance(); return; }   // someone else got it (RECLAIMFAILED)
@@ -2899,6 +2975,8 @@ void World::tick(float dt) {
                 } else {
                     u.corpseUntil = 4.0f;
                 }
+                u.corpseWork = std::max(ct >= 0 ? featTypes_[size_t(ct)].energy : 0.0f,
+                                        60.0f);   // ~0.5s minimum consume time
                 // A dead structure frees its nav footprint -- unless its wreck
                 // BLOCKS (arakeep_dead blocking=1; a destroyed wall's ARAWALL
                 // feature likewise), which keeps the cells occupied until the

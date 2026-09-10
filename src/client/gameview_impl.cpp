@@ -165,6 +165,18 @@
             float dx = f.x - b->x, dz = f.z - b->z;
             targets.push_back({dx * dx + dz * dz, f.id});
         }
+        // Corpses, statues and building rubble in the box too (negative id =
+        // dead-unit record -- see World::reclaim).
+        for (const UnitR* _cp : front().live) {
+            const UnitR& cu = *_cp;
+            if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
+            if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
+                !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable)
+                continue;
+            if (cu.x < minx || cu.x > maxx || cu.z < minz || cu.z > maxz) continue;
+            float dx = cu.x - b->x, dz = cu.z - b->z;
+            targets.push_back({dx * dx + dz * dz, -cu.id});
+        }
         std::sort(targets.begin(), targets.end());
         bool first = true;
         for (auto& [d, fid] : targets) {
@@ -360,6 +372,12 @@
         int bs = spawn("zonbasil", tx - 120, tz + 90, 1.57f, 1);
         int vic = spawn("arabow", tx + 40, tz + 90, -1.57f, 0);
         world_.attack(bs, vic, false);
+        // Ordered corpse-reclaim check: a builder is sent (negative target id)
+        // to consume a fresh corpse -- the body must vanish when it arrives.
+        int rcv = spawn("arasword", cx - 200, cz + 120, 0.0f, 0);
+        if (auto* rd = world_.unit(rcv)) rd->hp = 0;   // dies this tick, normal corpse
+        int rcb = spawn("arabuild", cx - 250, cz + 160, 1.57f, 0);
+        world_.reclaim(rcb, -rcv, false);
         // Animate check: an idle necromancer beside the (soon) archer corpse
         // must channel and raise a Ghoul from it. Hold-fire stance so it never
         // auto-acquires (the channel needs it order-free).

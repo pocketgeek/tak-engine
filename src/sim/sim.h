@@ -251,6 +251,7 @@ struct Unit {
     uint8_t hpPct1s = 100;   // HP% sampled every 30 ticks (previous sample -- the
     uint8_t hpPctCur = 100;  //  retail unit+0x111/+0x110 pair severity reads)
     int corpseStatue = -1;   // FeatType override chosen at death (stone/frozen), -1 = corpse=
+    float corpseWork = 60;   // ordered-reclaim work left in the body (kReclaimRate/s)
     int reviveTarget = 0;    // priest: dead unit id being channelled back (0 = none)
     int8_t reviveMode = 0;   // 1 = resurrect (own corpse), 2 = animate (raise ghoul)
     float reviveLeft = 0;    // seconds of channel remaining

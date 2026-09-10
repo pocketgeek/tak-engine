@@ -107,14 +107,24 @@
             // A reclaimer clicking directly on a reclaimable feature (with no enemy
             // there) reclaims just that one -- retail's single Reclaim.
             if (enemy < 0 && haveReclaimer()) {
-                int fid = -1; float bestF = 1e18f;
+                int fid = 0; bool fhit = false; float bestF = 1e18f;
                 for (const auto& f : world_.features()) {
                     if (!f.alive) continue;
                     float dx = f.x - wx, dz = f.z - wz, d = dx * dx + dz * dz;
                     float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
-                    if (d < r * r && d < bestF) { bestF = d; fid = f.id; }
+                    if (d < r * r && d < bestF) { bestF = d; fid = f.id; fhit = true; }
                 }
-                if (fid >= 0) {
+                // Corpses / statues / rubble under the click too (negative id).
+                for (const UnitR* _cp : front().live) {
+                    const UnitR& cu = *_cp;
+                    if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
+                    if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
+                        !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable) continue;
+                    float dx = cu.x - wx, dz = cu.z - wz, d = dx * dx + dz * dz;
+                    float r = 18.0f + 8.0f * float(std::max(cu.type->footX, cu.type->footZ));
+                    if (d < r * r && d < bestF) { bestF = d; fid = -cu.id; fhit = true; }
+                }
+                if (fhit) {
                     int builderId = firstReclaimer();
                     tak::net::Command c;
                     c.kind = tak::net::Cmd::Reclaim;
@@ -457,14 +467,24 @@
         if (selection_.empty()) return;
         if (cmd == 'c') {   // clear/reclaim: reclaim the feature under the cursor
             if (!haveReclaimer()) return;
-            int fid = -1; float bestF = 1e18f;
+            int fid = 0; bool fhit = false; float bestF = 1e18f;
             for (const auto& f : world_.features()) {
                 if (!f.alive) continue;
                 float dx = f.x - wx, dz = f.z - wz, d = dx * dx + dz * dz;
                 float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
-                if (d < r * r && d < bestF) { bestF = d; fid = f.id; }
+                if (d < r * r && d < bestF) { bestF = d; fid = f.id; fhit = true; }
             }
-            if (fid < 0) return;
+            // Corpses / statues / rubble under the click too (negative id).
+            for (const UnitR* _cp : front().live) {
+                const UnitR& cu = *_cp;
+                if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
+                if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
+                    !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable) continue;
+                float dx = cu.x - wx, dz = cu.z - wz, d = dx * dx + dz * dz;
+                float r = 18.0f + 8.0f * float(std::max(cu.type->footX, cu.type->footZ));
+                if (d < r * r && d < bestF) { bestF = d; fid = -cu.id; fhit = true; }
+            }
+            if (!fhit) return;
             int builderId = firstReclaimer();
             tak::net::Command c;
             c.kind = tak::net::Cmd::Reclaim;

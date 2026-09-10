@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 33;       // 33: statue deaths, feature damage, channels
+constexpr uint32_t kNetVersion = 34;       // 34: ordered corpse reclaim (negative target)
                                            // 28: retail melee = footprint adjacency
                                            // 26: benchmark level 6 (Extra Absurd)
                                            // 25: GameOptions.benchmark carries an INTENSITY

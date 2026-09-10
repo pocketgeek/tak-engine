@@ -551,6 +551,19 @@
                 SDL_FRect m{fsx - 4, fsy - 4, 8, 8};
                 SDL_RenderDrawRectF(ren_, &m);
             }
+            // Corpses / statues / rubble get the same box markers.
+            for (const UnitR* _cp : front().live) {
+                const UnitR& cu = *_cp;
+                if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
+                if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
+                    !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable)
+                    continue;
+                if (cu.x < minx || cu.x > maxx || cu.z < minz || cu.z > maxz) continue;
+                float fsx = (cu.x - mapView_.offX()) * zm - terrainLiftX(cu.x, cu.z) * zm;
+                float fsy = (cu.z - mapView_.offY()) * zm - terrainLift(cu.x, cu.z) * zm;
+                SDL_FRect m{fsx - 4, fsy - 4, 8, 8};
+                SDL_RenderDrawRectF(ren_, &m);
+            }
         }
 
         // Selection membership as a hash set: the old code did frameUnitP(id) (a
