@@ -212,16 +212,21 @@
                                 uint8_t(std::min(255, lc[1] + e)), uint8_t(std::min(255, lc[2] + e)));
                 }
             }
-        // Feature dots -- sparse, so plot every one lest the downsample drop it.
+        // Feature dots -- sparse, so plot every one lest the downsample drop it. A
+        // Sacred Stone (the mana spot) gets a bold 2x2 gold marker; Standing Stones
+        // (ruins) are muted; rocks grey; trees dark green.
         for (int cz = 0; cz < H; ++cz)
             for (int cx = 0; cx < W; ++cx) {
                 uint16_t fi = m.features[size_t(cz) * W + cx];
                 if (fi == 0xFFFF || fi >= m.featureNames.size()) continue;
                 const std::string& nm = m.featureNames[fi];
                 int tx = cx * TW / W, ty = cz * TH / H;
-                if (nm.find("Henge") != std::string::npos) put(tx, ty, 245, 220, 90);       // mana: gold
-                else if (nm.find("Rock") != std::string::npos) put(tx, ty, 150, 148, 140);  // rock: grey
-                else put(tx, ty, 28, 66, 28);                                               // tree: dark green
+                if (nm.find("Mana") != std::string::npos) {                                 // sacred spot: gold
+                    for (int dy = 0; dy <= 1; ++dy)
+                        for (int dx = 0; dx <= 1; ++dx) put(tx + dx, ty + dy, 250, 224, 82);
+                } else if (nm.find("Henge") != std::string::npos) put(tx, ty, 176, 162, 132);  // ruins: stone
+                else if (nm.find("Rock") != std::string::npos) put(tx, ty, 150, 148, 140);      // rock: grey
+                else put(tx, ty, 28, 66, 28);                                                   // tree: dark green
             }
         // Start positions: bright 3x3 markers.
         for (auto& [sx, sz] : g.starts) {

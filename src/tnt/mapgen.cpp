@@ -55,20 +55,57 @@ constexpr std::array<WorldArt, kMapTypes> kWorldArt = {{
     {0x868a8222u, 0x0c2e64b2u},   // Creon:  (fall back to Aramon art until IP tiles wired)
 }};
 
-// Per-world doodad + mana feature palette (names from features/<world>/*.tdf --
-// trees/rocks are category=trees/rocks 1x1-ish reclaimable obstacles; the Henge is
-// a category=mana deposit). The sim skips any name it can't resolve, so this is safe.
+// Per-world doodad + mana palette (names verified in features/<world>/*.tdf).
+// Trees (category=trees) and rocks (category=rocks) are reclaimable obstacles --
+// we vary across ALL the art variants so no one type repeats. A mana deposit is a
+// glowing Sacred Stone centre (XxxManaNN, category=Mana + animating=1 -- the
+// buildable spot the sim harvests) ringed by static Standing Stones (XxxHengeNN,
+// "ruins"), exactly as the shipped maps lay them out. Rocks are ordered small->big
+// so placement can bias toward the little ones. The sim skips names it can't
+// resolve, so an over-long list is harmless.
+struct Span { const char* const* p; int n; };
 struct WorldFeatures {
-    std::array<const char*, 3> trees;
-    std::array<const char*, 3> rocks;
-    const char* mana;
+    Span trees, rocks, henges;
+    std::array<const char*, 3> sacred;   // weak, medium, strong (sacredsite 1.0/1.5/2.0)
 };
+
+constexpr const char* kAraTree[] = {"AraTree01", "AraTree02", "AraTree03", "AraTree04", "AraTree05",
+                                    "AraTree06", "AraTree07", "AraTree08", "AraTree09", "AraTree10"};
+constexpr const char* kAraRock[] = {"AraRock01", "AraRock02", "AraRock03", "AraRock04",
+                                    "AraRock05", "AraRock06", "AraRock07"};
+constexpr const char* kAraHenge[] = {"AraHenge01", "AraHenge02", "AraHenge03", "AraHenge04", "AraHenge05",
+                                     "AraHenge06", "AraHenge07", "AraHenge08", "AraHenge09"};
+
+constexpr const char* kTarTree[] = {"TarTree01", "TarTree02", "TarTree03", "TarTree04", "TarTree05",
+                                    "TarTree06", "TarTree07", "TarTree08", "TarTree09"};
+constexpr const char* kTarRock[] = {"TarRock07", "TarRock06", "TarRock05", "TarRock04",
+                                    "TarRock03", "TarRock02", "TarRock01"};   // small->big
+constexpr const char* kTarHenge[] = {"TarHenge01", "TarHenge02", "TarHenge03", "TarHenge04", "TarHenge05",
+                                     "TarHenge06", "TarHenge07", "TarHenge08", "TarHenge09", "TarHenge10",
+                                     "TarHenge11", "TarHenge12", "TarHenge13", "TarHenge14"};
+
+constexpr const char* kVerTree[] = {"VerTree01", "VerTree02", "VerTree03", "VerTree04", "VerTree05",
+                                    "VerTree06", "VerTree07", "VerTree08", "VerTree09"};
+constexpr const char* kVerRock[] = {"VeRock01", "VeRock02", "VeRock05", "VeRock07",
+                                    "VeRock04", "VeRock03", "VeRock06"};   // small->big
+constexpr const char* kVerHenge[] = {"VerHenge01", "VerHenge02", "VerHenge03", "VerHenge04", "VerHenge05",
+                                     "VerHenge06", "VerHenge07", "VerHenge08", "VerHenge09", "VerHenge10",
+                                     "VerHenge11"};
+
+constexpr const char* kZonTree[] = {"ZonTree01", "ZonTree02", "ZonTree03",
+                                    "ZonTree04", "ZonTree05", "ZonTree06"};
+constexpr const char* kZonRock[] = {"ZonRock07", "ZonRock06", "ZonRock05", "ZonRock04",
+                                    "ZonRock03", "ZonRock02", "ZonRock01"};   // small->big
+constexpr const char* kZonHenge[] = {"ZonHenge01", "ZonHenge02", "ZonHenge03", "ZonHenge04", "ZonHenge05",
+                                     "ZonHenge06", "ZonHenge07", "ZonHenge08", "ZonHenge09", "ZonHenge10",
+                                     "ZonHenge11"};
+
 constexpr std::array<WorldFeatures, kMapTypes> kWorldFeat = {{
-    {{"AraTree01", "AraTree02", "AraTree03"}, {"AraRock01", "AraRock02", "AraRock03"}, "AraHenge01"},
-    {{"TarTree01", "TarTree02", "TarTree03"}, {"TarRock01", "TarRock02", "TarRock03"}, "TarHenge01"},
-    {{"VerTree01", "VerTree02", "VerTree03"}, {"VerRock01", "VerRock02", "VerRock03"}, "VerHenge03"},
-    {{"ZonTree01", "ZonTree02", "ZonTree03"}, {"ZonRock01", "ZonRock02", "ZonRock03"}, "ZonHenge01"},
-    {{"AraTree01", "AraTree02", "AraTree03"}, {"AraRock01", "AraRock02", "AraRock03"}, "AraHenge01"},
+    {{kAraTree, 10}, {kAraRock, 7}, {kAraHenge, 9},  {{"AraMana01", "AraMana02", "AraMana03"}}},
+    {{kTarTree, 9},  {kTarRock, 7}, {kTarHenge, 14}, {{"TarMana01", "TarMana02", "TarMana03"}}},
+    {{kVerTree, 9},  {kVerRock, 7}, {kVerHenge, 11}, {{"VerMana01", "VerMana02", "VerMana03"}}},
+    {{kZonTree, 6},  {kZonRock, 7}, {kZonHenge, 11}, {{"ZonMana01", "ZonMana02", "ZonMana03"}}},
+    {{kAraTree, 10}, {kAraRock, 7}, {kAraHenge, 9},  {{"AraMana01", "AraMana02", "AraMana03"}}},  // Creon->Aramon
 }};
 
 // Even compass directions (integer, scaled by 1000) for start-position rings.
@@ -100,30 +137,64 @@ Result generate(const Params& raw) {
     m.width = W; m.height = H;
     m.blocksX = W / 2; m.blocksY = H / 2;
 
-    // Sea level from waterDensity: value noise clusters near 128, so a threshold near
-    // that fraction submerges roughly that share of the map.
-    m.seaLevel = std::clamp(40 + int(p.waterDensity) * 90 / 255, 40, 150);
+    // ---- heightfield: terraced like the shipped maps -- a dominant ground plateau
+    //      just above sea, one or two higher plateaus, joined by ramps. Terrain pixels
+    //      render FLAT (all cliff relief in shipped maps is baked tile art we don't
+    //      have); heights only LIFT units/features on screen. So relief stays gentle
+    //      (no cliff faces to float over) and the ground plateau is the modal height,
+    //      so flat ground lifts by zero and only raised terraces rise. ---------------
+    m.seaLevel = 58;
     const int span = std::max(W, H);
-
-    // ---- heightfield: smooth fractal noise (small neighbour deltas => no cliff
-    //      occlusion; shallow fringe + deep centres give natural shorelines) -------
+    // waterDensity picks how much of the fractal range falls below the shoreline
+    // (default ~96 -> ~19% water; the slider spans a few percent up to mostly ocean).
+    const int seaThresh = std::clamp(40 + int(p.waterDensity) * 85 / 255, 30, 180);
+    const int landRange = std::max(1, 255 - seaThresh);
+    const int t1 = seaThresh + landRange * 60 / 100;   // ground plateau -> ~60% of land
+    const int t2 = seaThresh + landRange * 85 / 100;   // mid plateau    -> ~25% of land
+    const int kDeep = 28, kL0 = 72, kL1 = 112, kL2 = 156;   // discrete terrace heights
     m.heights.resize(size_t(W) * H);
     for (int z = 0; z < H; ++z)
-        for (int x = 0; x < W; ++x)
-            m.heights[size_t(z) * W + x] = uint8_t(fractal(p.seed, x, z, span));
+        for (int x = 0; x < W; ++x) {
+            int rr = int(fractal(p.seed, x, z, span));
+            m.heights[size_t(z) * W + x] =
+                uint8_t(rr < seaThresh ? kDeep : rr < t1 ? kL0 : rr < t2 ? kL1 : kL2);
+        }
+    // Turn the hard terrace steps into walkable ramps with a few integer box-blur
+    // passes: a plateau interior (4*h + 4 equal neighbours)/8 == h stays flat; only
+    // the boundaries slope. Edge cells clamp to themselves.
+    auto hAt = [&](int x, int z) {
+        x = std::clamp(x, 0, W - 1); z = std::clamp(z, 0, H - 1);
+        return int(m.heights[size_t(z) * W + x]);
+    };
+    std::vector<uint8_t> tmp(m.heights.size());
+    for (int pass = 0; pass < 6; ++pass) {
+        for (int z = 0; z < H; ++z)
+            for (int x = 0; x < W; ++x)
+                tmp[size_t(z) * W + x] = uint8_t((4 * hAt(x, z) + hAt(x - 1, z) + hAt(x + 1, z)
+                                                  + hAt(x, z - 1) + hAt(x, z + 1)) / 8);
+        m.heights.swap(tmp);
+    }
 
-    // ---- terrain tiles: sea section where the block's centre cell is below the
-    //      water line, else the world's ground section (col=row=0 clean fill) -------
+    // ---- terrain tiles: WALLPAPER the world's ground/sea section (col=bx%K,row=by%K).
+    //      Shipped maps tile the full 512px (Zhon 256px) section this way, so a field
+    //      cycles through all its sub-tiles instead of stamping one 32px tile. Sea
+    //      sections are 16x16; the Zhon ground section is 8x8, the rest 16x16. -------
     const WorldArt art = kWorldArt[p.mapType];
+    const int kGround = (p.mapType == Zhon) ? 8 : 16, kSea = 16;
     size_t blocks = size_t(m.blocksX) * m.blocksY;
     m.tileKeys.resize(blocks);
-    m.tileCols.assign(blocks, 0);
-    m.tileRows.assign(blocks, 0);
+    m.tileCols.resize(blocks);
+    m.tileRows.resize(blocks);
     for (int by = 0; by < m.blocksY; ++by)
         for (int bx = 0; bx < m.blocksX; ++bx) {
-            int cx = bx * 2, cz = by * 2;   // top-left cell of the 32px block
-            int hgt = m.heights[size_t(cz) * W + cx];
-            m.tileKeys[size_t(by) * m.blocksX + bx] = (hgt < m.seaLevel) ? art.sea : art.ground;
+            int cx = bx * 2, cz = by * 2;   // 2x2 cells under the 32px block
+            int hs = (hAt(cx, cz) + hAt(cx + 1, cz) + hAt(cx, cz + 1) + hAt(cx + 1, cz + 1)) / 4;
+            bool water = hs < m.seaLevel;
+            size_t i = size_t(by) * m.blocksX + bx;
+            m.tileKeys[i] = water ? art.sea : art.ground;
+            int K = water ? kSea : kGround;
+            m.tileCols[i] = uint8_t(bx % K);
+            m.tileRows[i] = uint8_t(by % K);
         }
 
     // No features yet (Phase 2 adds doodads + mana); minimap left empty (cosmetic).
@@ -157,9 +228,11 @@ Result generate(const Params& raw) {
         r.starts.push_back(snapLand(rx, rz));
     }
 
-    // ---- features: mana deposits (spread on land, spaced) + doodads (trees/rocks by
-    //      density). Anchor cell holds the feature index; footprints block nav. Same
-    //      integer PRNG => byte-identical on every peer -------------------------------
+    // ---- features ----------------------------------------------------------------
+    // Mana deposits (each a glowing Sacred Stone centre ringed by Standing Stones)
+    // and doodads (varied trees + rocks by density). Anchor cell holds the feature
+    // index; a local claim-map reserves footprints so nothing overlaps. All draws
+    // come from one integer PRNG in a fixed order => byte-identical on every peer.
     const WorldFeatures& wf = kWorldFeat[p.mapType];
     m.featureNames.clear();
     auto featIdx = [&](const char* nm) -> uint16_t {
@@ -168,7 +241,6 @@ Result generate(const Params& raw) {
         m.featureNames.emplace_back(nm);
         return uint16_t(m.featureNames.size() - 1);
     };
-    auto occupied = [&](int cx, int cz) { return m.features[size_t(cz) * W + cx] != 0xFFFF; };
     auto nearStart = [&](int cx, int cz, int pad) {
         for (auto& [sx, sz] : r.starts) {
             int dx = cx - sx, dz = cz - sz;
@@ -176,40 +248,101 @@ Result generate(const Params& raw) {
         }
         return false;
     };
+    // Footprint reservation, separate from features[] (which stores only anchors):
+    // fits() checks a nominal footprint is clear land; place() writes the anchor and
+    // claims its footprint (centred on the anchor, matching the sim's nav blocking)
+    // so later features avoid it.
+    std::vector<uint8_t> claim(size_t(W) * H, 0);
+    auto fits = [&](int cx, int cz, int fx, int fz) {
+        for (int dz = 0; dz < fz; ++dz)
+            for (int dx = 0; dx < fx; ++dx) {
+                int nx = cx + dx - fx / 2, nz = cz + dz - fz / 2;
+                if (!isLand(nx, nz) || claim[size_t(nz) * W + nx]) return false;
+            }
+        return true;
+    };
+    auto place = [&](int cx, int cz, const char* nm, int fx, int fz) {
+        m.features[size_t(cz) * W + cx] = featIdx(nm);
+        for (int dz = 0; dz < fz; ++dz)
+            for (int dx = 0; dx < fx; ++dx) {
+                int nx = cx + dx - fx / 2, nz = cz + dz - fz / 2;
+                if (nx >= 0 && nz >= 0 && nx < W && nz < H) claim[size_t(nz) * W + nx] = 1;
+            }
+    };
     uint64_t frng = p.seed ^ 0x5eed1234abcdULL;
 
-    // Mana: count scales with density + area; placed on land, off start pads, spaced.
+    // One mana deposit: a Sacred Stone centre (weak most common) ringed by 2..5
+    // Standing Stones -- the "mana ruins" the shipped maps cluster around each spot.
+    std::vector<std::pair<int, int>> depots;
+    auto okDepot = [&](int cx, int cz, int minSp) {
+        for (auto& [dx0, dz0] : depots) {
+            int dx = cx - dx0, dz = cz - dz0;
+            if (dx * dx + dz * dz < minSp * minSp) return false;
+        }
+        return true;
+    };
+    auto placeDeposit = [&](int cx, int cz) {
+        uint32_t sr = uint32_t(splitmix(frng) % 100);
+        int tier = sr < 60 ? 0 : (sr < 90 ? 1 : 2);   // 60% weak / 30% medium / 10% strong
+        place(cx, cz, wf.sacred[size_t(tier)], 2, 2);
+        depots.push_back({cx, cz});
+        int nStones = 3 + int(splitmix(frng) % 3);    // 3..5 standing stones ring the spot
+        for (int s = 0; s < nStones; ++s) {
+            auto [ox, oz] = kCompass[splitmix(frng) % 8];
+            int rad = 5 + int(splitmix(frng) % 4);     // 5..8 cells out from the centre
+            int hx = cx + ox * rad / 1000, hz = cz + oz * rad / 1000;
+            const char* hn = wf.henges.p[splitmix(frng) % uint64_t(wf.henges.n)];
+            if (fits(hx, hz, 3, 3)) place(hx, hz, hn, 3, 3);
+        }
+    };
+    // Try to drop a deposit within [rmin,rmax] cells of (tx,tz), on spaced land.
+    auto tryDepositNear = [&](int tx, int tz, int rmin, int rmax) {
+        for (int t = 0; t < 80; ++t) {
+            int dx = int(splitmix(frng) % uint64_t(2 * rmax + 1)) - rmax;
+            int dz = int(splitmix(frng) % uint64_t(2 * rmax + 1)) - rmax;
+            int d2 = dx * dx + dz * dz;
+            if (d2 < rmin * rmin || d2 > rmax * rmax) continue;
+            int cx = tx + dx, cz = tz + dz;
+            if (cx < 3 || cz < 3 || cx >= W - 3 || cz >= H - 3) continue;
+            if (!isLand(cx, cz) || !fits(cx, cz, 2, 2) || !okDepot(cx, cz, 18)) continue;
+            placeDeposit(cx, cz);
+            return true;
+        }
+        return false;
+    };
+
+    // >=3 deposits near every start, then a density-scaled scatter across the map.
+    for (auto& [sx, sz] : r.starts)
+        for (int placed = 0, t = 0; placed < 3 && t < 12; ++t)
+            if (tryDepositNear(sx, sz, 16, 44)) ++placed;
     int area = W * H;
-    int manaCount = std::clamp(int(p.players) + area / std::max(1, 16000 - int(p.manaDensity) * 45),
-                               int(p.players), 64);
-    const int minSpace = 24;   // cells between mana spots
-    uint16_t manaFi = featIdx(wf.mana);
-    for (int placed = 0, tries = 0; placed < manaCount && tries < manaCount * 300; ++tries) {
-        int cx = int(splitmix(frng) % uint64_t(W));
-        int cz = int(splitmix(frng) % uint64_t(H));
-        if (!isLand(cx, cz) || occupied(cx, cz) || nearStart(cx, cz, 6)) continue;
-        bool ok = true;
-        for (int dz = -minSpace; dz <= minSpace && ok; ++dz)
-            for (int dx = -minSpace; dx <= minSpace && ok; ++dx) {
-                int nx = cx + dx, nz = cz + dz;
-                if (nx >= 0 && nz >= 0 && nx < W && nz < H &&
-                    m.features[size_t(nz) * W + nx] == manaFi) ok = false;
-            }
-        if (!ok) continue;
-        m.features[size_t(cz) * W + cx] = manaFi;
+    int scatter = std::clamp(area / std::max(1, 22000 - int(p.manaDensity) * 70), 0, 48);
+    for (int placed = 0, tries = 0; placed < scatter && tries < scatter * 200 + 400; ++tries) {
+        int cx = int(splitmix(frng) % uint64_t(W)), cz = int(splitmix(frng) % uint64_t(H));
+        if (cx < 3 || cz < 3 || cx >= W - 3 || cz >= H - 3) continue;
+        if (!isLand(cx, cz) || nearStart(cx, cz, 14) || !fits(cx, cz, 2, 2) || !okDepot(cx, cz, 22))
+            continue;
+        placeDeposit(cx, cz);
         ++placed;
     }
 
-    // Doodads: per-land-cell probability from doodadDensity (trees/rocks mixed).
+    // Doodads: per-land-cell probability from doodadDensity. ~1 in 7 is a rock
+    // (smaller ones biased common via min-of-two draws); the rest are trees. Every
+    // draw picks a fresh variant so no single tree/rock repeats across the map.
     int thresh = int(p.doodadDensity) * 5 / 4;   // out of 10000 (max ~3% of land cells)
     for (int cz = 0; cz < H; ++cz)
         for (int cx = 0; cx < W; ++cx) {
             uint64_t roll = splitmix(frng);   // one draw per cell (keeps order deterministic)
-            if (!isLand(cx, cz) || occupied(cx, cz) || nearStart(cx, cz, 5)) continue;
+            if (!isLand(cx, cz) || claim[size_t(cz) * W + cx] || nearStart(cx, cz, 6)) continue;
             if (int(roll % 10000) >= thresh) continue;
-            bool rock = (roll >> 20) & 1;
-            const char* nm = rock ? wf.rocks[(roll >> 24) % 3] : wf.trees[(roll >> 24) % 3];
-            m.features[size_t(cz) * W + cx] = featIdx(nm);
+            if ((roll >> 20) % 7 == 0) {      // rock (small-biased)
+                int a = int((roll >> 24) % uint64_t(wf.rocks.n));
+                int b = int((roll >> 33) % uint64_t(wf.rocks.n));
+                if (fits(cx, cz, 3, 3)) place(cx, cz, wf.rocks.p[std::min(a, b)], 3, 3);
+            } else {                          // tree (any variant)
+                const char* nm = wf.trees.p[(roll >> 24) % uint64_t(wf.trees.n)];
+                if (fits(cx, cz, 2, 2)) place(cx, cz, nm, 2, 2);
+            }
         }
     return r;
 }
