@@ -515,6 +515,10 @@ bool affectsGameplay(const std::string& path) {
         // stats, movement classes, faction data, god timing. Everything else in
         // gamedata/ (explosions, soundclasses, download, ...) is read by the
         // viewer/audio only -> cosmetic.
+        // Feature defs became sim inputs with reclaim (energy/footprint) and
+        // burning (flamable/spreadchance/sparktime/featureburnt) -- a modified
+        // tree TDF now desyncs, so it must fault the data-hash check instead.
+        if (k.find("features/") != std::string::npos) return true;
         if (k.find("weapons/") != std::string::npos) return true;
         if (k.find("moveinfo") != std::string::npos || k.find("sidedata") != std::string::npos ||
             k.find("gods") != std::string::npos)

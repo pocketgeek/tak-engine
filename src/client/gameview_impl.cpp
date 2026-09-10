@@ -603,6 +603,8 @@
             s.buildQueue = u.buildQueue; s.orders = u.orders; s.buildOrders = u.buildOrders;
             s.cargo = u.cargo; s.reclaimQueue = u.reclaimQueue; s.repeatType = u.repeatType;
             s.moving_ = u.moving(); s.walking_ = u.walking();
+            s.corpsePhase = !u.alive() && u.deadFor >= 4.0f && u.deadFor < u.corpseUntil;
+            s.deathType = u.deathType;
             s.speed = u.speed; s.justFired = u.justFired; s.justBuilt = u.justBuilt;
             s.disco = world_.discoActive(u.player);
             s.headbang = world_.headbangActive(u.player);
@@ -837,13 +839,11 @@
         if (briefTimer_ > 0) briefTimer_ -= dt;
         animClock_ += dt;
 
-        for (const UnitR* _up : front().live) {
-            const UnitR& u = *_up;
-            if (u.alive() || u.deadFor < 4.0f || corpsed_.count(u.id)) continue;
-            corpsed_.insert(u.id);
-            if (u.type && !u.type->corpse.empty())
-                addFeature(u.type->corpse, u.x, u.z, false);
-        }
+        // (Corpses: the sim keeps the dead-unit record for the corpse window and
+        // the paint pass draws it wearing the corpse mesh -- see
+        // maybeSwapCorpseModel. The old path here tried to spawn a cosmetic
+        // FEATURE, which never worked: corpse defs are object= models with no
+        // sprite art, so addFeature always bailed before drawing anything.)
         if (noticeTimer_ > 0) noticeTimer_ -= dt;
 
         // (T-tracking / edge-scroll / shake now run per-frame in cameraFrame, so
@@ -869,6 +869,7 @@
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
             if (u.alive()) maybeSwapVeteranModel(u);
+            else if (u.corpsePhase) maybeSwapCorpseModel(u);
             auto it = anims_.find(u.id);
             if (u.justFired && newTick_ && u.type) {
                 using Fx = tak::sim::WeaponFx;
@@ -922,11 +923,17 @@
                     a.dying = true;
                     a.vm->reset();
                     a.vm->setStatic(0, 0);
-                    // Dying FIRST: it plays the death cry (92 units PLAY_SOUND
-                    // there, zero in `death`), CALLs `death` itself for the
-                    // fall-over, then EXPLODEs. Starting `death` directly
-                    // skipped the cry -- 105 units died silently.
-                    a.vm->start("Dying") || a.vm->start("death") || a.vm->start("Killed");
+                    // Retail order (icd 0x512610): Killed(severity, corpseOut,
+                    // deathType) runs first -- deathType 3 (explosion kill)
+                    // EXPLODEs every piece there; no shipped script reads the
+                    // severity, and the corpse decision is the SIM's
+                    // (corpseUntil), so the out-param is ignored. Then
+                    // Dying(deathType): the death cry (92 units PLAY_SOUND
+                    // there, zero in `death`), the fall-over via CALL death,
+                    // the final EXPLODEs.
+                    int32_t dtype = u.deathType;
+                    a.vm->start("Killed", {50, 0, dtype});
+                    a.vm->start("Dying", {dtype}) || a.vm->start("death");
                     const std::string& id = u.type->id;
                     if (a.cobSounds) { /* the Dying script plays its own death cry */ }
                     else if (sounds_.has(id + "die1")) sounds_.playWorld(id + "die1", u.x, u.z);
@@ -1274,6 +1281,26 @@
         float out = 0.0f;
         findPieceY(vt->second.model.root, (*a.pieceNames)[size_t(piece)], 0.0f, out);
         return std::max(0.0f, out);
+    }
+
+    // Corpse mesh: once the death anim finishes, the body draws as the FBI
+    // corpse feature's `object=` model (arasword_dead etc.) through the normal
+    // unit pipeline -- same swap trick as the veteran meshes. The old VM's piece
+    // names don't match the corpse skeleton, so it renders in rest pose.
+    void GameView::maybeSwapCorpseModel(const UnitR& u) {
+        if (!u.type) return;
+        int ct = world_.corpseTypeOf(u.type);
+        if (ct < 0) return;
+        const std::string& obj = world_.featureTypes()[size_t(ct)].object;
+        if (obj.empty()) return;
+        auto it = unitType_.find(u.id);
+        if (it == unitType_.end() || it->second == obj) return;
+        if (!visuals_.count(obj)) {
+            try {
+                visuals_[obj] = {tak::tdo::load(vread("objects3d/" + obj + ".3do"))};
+            } catch (const std::exception&) { return; }   // no corpse mesh: keep pose
+        }
+        it->second = obj;
     }
 
     void GameView::maybeSwapVeteranModel(const UnitR& u) {

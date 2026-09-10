@@ -235,6 +235,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 wp.shakeMag = float(w->numberOr("shakemagnitude", 0));
                 wp.shakeDur = float(w->numberOr("shakeduration", 0));
                 wp.fireStarter = w->numberOr("firestarter", 0) != 0;
+                {
+                    std::string dtp = lower(w->valueOr("damagetype", "normal"));
+                    wp.dmgType = dtp == "fire" ? 2 : dtp == "explosion" ? 3
+                               : dtp == "paralyzer" ? 4 : 1;
+                }
                 wp.minRange = float(w->numberOr("minrange", 0));
                 wp.noAir = w->numberOr("noairweapon", 0) != 0;
                 wp.manaCost = float(w->numberOr("manapershot", 0));
@@ -1314,6 +1319,10 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         float armour = std::max(e.vetMul() * e.armBuff, 0.01f);
         float dealt = w.damageVs(e.type) * atkMul / armour * scale;
         e.hp -= dealt;
+        if (e.hp <= 0) {
+            e.overkill = std::max(e.overkill, -e.hp);          // retail severity input
+            e.deathType = uint8_t(w.dmgType);                  // 3 = explosion -> gib
+        }
         if (fromId) e.lastHitBy = fromId;
         if (w.status != Weapon::Status::None && e.type) {
             bool immune =
@@ -2215,9 +2224,16 @@ void World::tickAuras(float dt) {
 }
 
 void World::tickAbilities(float /*dt*/) {
-    // A corpse is a recently-dead unit still lying on the field.
+    // A corpse is a dead unit whose body still lies on the field: the death
+    // anim has finished (4s) and decomposetime hasn't expired. Whether it can
+    // be RAISED again is the corpse def's `resurrectable` (81 of the 150
+    // shipped corpse defs; reclaiming works on any corpse).
     auto isCorpse = [](const Unit& c) {
-        return c.type && !c.alive() && c.deadFor >= 0 && c.deadFor < 30.0f;
+        return c.type && !c.alive() && c.deadFor >= 4.0f && c.deadFor < c.corpseUntil;
+    };
+    auto corpseDef = [&](const Unit& c) -> const FeatType* {
+        int ct = corpseTypeOf(c.type);
+        return ct >= 0 ? &featTypes_[size_t(ct)] : nullptr;
     };
     struct Revive { const UnitType* type; float x, z; int player; };
     std::vector<Revive> revives;
@@ -2233,21 +2249,38 @@ void World::tickAbilities(float /*dt*/) {
             if (j == i || !isCorpse(c)) continue;
             float dx = c.x - u.x, dz = c.z - u.z;
             if (dx * dx + dz * dz > kR * kR) continue;
-            if (u.type->canResurrect && c.player == u.player) {
+            const FeatType* cd = corpseDef(c);
+            if (u.type->canResurrect && c.player == u.player && cd && cd->resurrectable) {
                 float cost = c.type->buildCost;
                 Player& tm = players_[size_t(u.player)];
                 if (tm.mana >= cost) {
                     tm.mana -= cost;
                     revives.push_back({c.type, c.x, c.z, u.player});
                     c.deadFor = 1000.0f;   // consumed
+                    if (c.corpseBlocks) {
+                        c.corpseBlocks = false;
+                        blockFootprint(nav_, *c.type, c.x, c.z, false);
+                    }
                 }
-            } else if (u.type->canReclaim) {
-                players_[size_t(u.player)].mana += c.type->buildCost * 0.25f;
+            } else if (u.type->canReclaim && cd && cd->reclaimable) {
+                // Retail yield = the corpse def's energy -- 0 for every shipped
+                // corpse. You reclaim bodies to DENY resurrection, not for mana.
+                players_[size_t(u.player)].mana += cd->energy;
                 c.deadFor = 1000.0f;       // reclaimed away
+                if (c.corpseBlocks) {
+                    c.corpseBlocks = false;
+                    blockFootprint(nav_, *c.type, c.x, c.z, false);
+                }
             }
         }
     }
-    for (const auto& r : revives) spawn(r.type, r.x, r.z, 3.14159f, r.player);
+    for (const auto& r : revives) {
+        int id = spawn(r.type, r.x, r.z, 3.14159f, r.player);
+        // Retail resurrect (icd 0x420666): the raised unit returns at 10% HP
+        // (min 1) -- carry it home before it fights again.
+        if (Unit* nu = unit(id))
+            nu->hp = std::max(nu->type->maxHp * 0.1f, 1.0f);
+    }
 }
 
 bool World::sightClear(int ux, int uz, float eyeH, int tx, int tz) const {
@@ -2607,7 +2640,13 @@ void World::tick(float dt) {
                 // Apply the impact: direct hit + area splash (per the weapon's
                 // FBI areaofeffect), using the grid from the previous rebuild.
                 if (p.wsrc) applyHit(*p.wsrc, t->x, t->z, p.fromPlayer, p.fromId, t);
-                else if (!(benchmarkMode() && t->type && t->type->commander)) t->hp -= p.damage;
+                else if (!(benchmarkMode() && t->type && t->type->commander)) {
+                    t->hp -= p.damage;
+                    if (t->hp <= 0) {
+                        t->overkill = std::max(t->overkill, -t->hp);
+                        t->deathType = p.wsrc ? uint8_t(p.wsrc->dmgType) : 1;
+                    }
+                }
                 p.life = -1;
             }
         }
@@ -2666,7 +2705,22 @@ void World::tick(float dt) {
 
     for (auto& u : units_) {
         if (!u.type) continue;
-        if (!u.alive()) { u.deadFor += dt; continue; }
+        if (!u.alive()) {
+            u.deadFor += dt;
+            // The body decomposed (or was never a corpse): fully gone. Records
+            // explicitly retired at 1000 stay put.
+            if (u.deadFor >= u.corpseUntil && u.deadFor < 999.0f) {
+                u.deadFor = 1000.0f;
+                if (u.corpseBlocks) {   // blocking wreck finally clears the ground
+                    u.corpseBlocks = false;
+                    blockFootprint(nav_, *u.type, u.x, u.z, false);
+                    invalidateFlows(int(u.x) / 16 - u.type->footX / 2,
+                                    int(u.z) / 16 - u.type->footZ / 2,
+                                    u.type->footX, u.type->footZ);
+                }
+            }
+            continue;
+        }
         if (u.hp <= 0) {
             // Award the destroyed unit's experiencepoints to the killer, then set
             // its veteran level = accumulatedXP / the killer's OWN experiencepoints,
@@ -2690,6 +2744,44 @@ void World::tick(float dt) {
                 }
             }
             if (mission_) justDied_.push_back(u.id);
+            // Corpse window: the body lies reclaimable (and, if its corpse def
+            // says so, resurrectable) until decomposetime runs out. Gibbed
+            // (overkill >= maxHp -- placeholder severity rule pending the icd
+            // Killed RE) or corpse-less units vanish with the death anim.
+            {
+                int ct = corpseTypeOf(u.type);
+                // Retail gib rule (icd 0x512610): deathType = the killing blow's
+                // FBI damagetype; 3 (explosion) makes Killed refuse the corpse
+                // and EXPLODE every piece. An unfinished conjure never leaves a
+                // corpse (corpseType forced 0 at 0x5127f5).
+                bool gib = u.deathType == 3 || u.underConstruction;
+                if (ct >= 0 && !gib) {
+                    int d30 = featTypes_[size_t(ct)].decomposeTicks;
+                    // decomposetime 0 = never rots (building wrecks linger until
+                    // reclaimed, like retail).
+                    u.corpseUntil = d30 > 0 ? 4.0f + float(d30) / 30.0f : 1e9f;
+                } else {
+                    u.corpseUntil = 4.0f;
+                }
+                // A dead structure frees its nav footprint -- unless its wreck
+                // BLOCKS (arakeep_dead blocking=1; a destroyed wall's ARAWALL
+                // feature likewise), which keeps the cells occupied until the
+                // wreck is reclaimed or rots. (Fixes a long-standing gap:
+                // destroyed buildings never unblocked at all.)
+                if (u.type->isStructure()) {
+                    bool wreckBlocks =
+                        u.corpseUntil > 4.0f &&
+                        ct >= 0 && featTypes_[size_t(ct)].blocking;
+                    if (wreckBlocks) {
+                        u.corpseBlocks = true;
+                    } else {
+                        blockFootprint(nav_, *u.type, u.x, u.z, false);
+                        invalidateFlows(int(u.x) / 16 - u.type->footX / 2,
+                                        int(u.z) / 16 - u.type->footZ / 2,
+                                        u.type->footX, u.type->footZ);
+                    }
+                }
+            }
             u.deadFor = 0; u.orders.clear(); u.speed = 0; continue;
         }
 

@@ -193,7 +193,7 @@ public:
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
                               mapView_.map().height, mapView_.map().seaLevel,
                               &mapView_.map().features);
-            tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_);
+            tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_, &registry_);
             try {
                 auto ota = vtdf(mapSibling(".ota"));
                 const auto* gh = ota.child("globalheader");
@@ -303,7 +303,7 @@ public:
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
                               mapView_.map().height, mapView_.map().seaLevel,
                               &mapView_.map().features);
-            tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_);
+            tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_, &registry_);
             std::string crtPath = mapSibling(".crt");
             auto placements = vhas(crtPath) ? tak::crt::load(vread(crtPath))
                                             : std::vector<tak::crt::Placement>{};
@@ -430,7 +430,7 @@ public:
         world_.setTerrain(mapView_.map().heights, mapView_.map().width,
                           mapView_.map().height, mapView_.map().seaLevel,
                           &mapView_.map().features);
-        tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_);
+        tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_, &registry_);
         loadFeatures();
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
 
@@ -1026,6 +1026,7 @@ private:
     // At max veterancy, a unit with a `veteranmodel` swaps its mesh for the
     // fancier promoted 3DO (same piece structure, so the COB/anim carries over).
     void maybeSwapVeteranModel(const UnitR& u);
+    void maybeSwapCorpseModel(const UnitR& u);
 
     // Client-side per-unit setup (model + COB animation VM). Takes id+type only (not a
     // Unit/UnitR) so it is callable from either the sim path (spawn) or the render path
@@ -1949,6 +1950,7 @@ private:
         const FeatArt* burnArt = nullptr;   // seqnameburn playback (lazy, on ignition)
         uint8_t burnVis = 0; // sim says burning: draw burnArt + emit smoke
         int simType = -2;    // last-seen sim FeatType index (-2 = not yet synced)
+        int simId = -1;      // cell-derived sim feature id (matches World's ids)
         float lastSmoke = 0; // animClock_ of the last smoke puff
         bool tree = false;   // category=trees (eligible for the wind-sway option)
         bool mana = false;   // category=mana (deposit cluster: kept walkable/buildable)
@@ -1957,6 +1959,7 @@ private:
                              // static "Standing Stones" (animating=0) are decoration.
     };
     std::vector<FeatureInst> features_;
+    std::unordered_set<int> featInstIds_;   // sim ids with a visual inst (dynamic adds)
     std::vector<std::pair<float, float>> manaSpots_;   // Sacred Stone deposits
 
     struct FeatArt {
@@ -2579,7 +2582,6 @@ private:
     float briefTimer_ = 0;
     std::string notice_;
     float noticeTimer_ = 0;
-    std::set<int> corpsed_;
     float animClock_ = 0;
     float trigTimer_ = 0;
 };

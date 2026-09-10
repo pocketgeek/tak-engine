@@ -42,6 +42,10 @@ struct Weapon {
     float minRange = 0;      // minrange: can't hit targets closer than this
     bool noAir = false;      // noairweapon: cannot target flying units
     float manaCost = 0;      // manapershot: mana drained from the firer per shot
+    // FBI damagetype: 1 normal, 2 fire, 3 explosion (gibs -- Killed deathType 3
+    // EXPLODEs every piece and leaves no corpse), 4 paralyzer (retail icd
+    // 0x531bbd; "monster" and friends map to non-gib codes).
+    int dmgType = 1;
     // Status effect this weapon inflicts (freeze/petrify/paralyze), 0 = none.
     enum class Status { None, Frozen, Stoned, Paralyzed } status = Status::None;
     float statusDur = 0;     // seconds the inflicted status lasts
@@ -173,6 +177,9 @@ public:
     // Parse <prefix>/<builder>/<buildable>.tdf into the build tree.
     void loadBuildTree(const hpi::Vfs& vfs, const std::string& prefix);
     const UnitType* find(const std::string& id) const;
+    // Full type table in deterministic (name-sorted) order -- corpse interning
+    // walks it so every peer builds identical FeatType indices.
+    const std::map<std::string, UnitType>& types() const { return types_; }
     const std::vector<std::string>& buildable(const std::string& builderId) const;
     // Mobile, armed combat units of a faction `side` ("ARA".."CRE"), in a fixed
     // (name-sorted) order so every peer builds the same stress-test army. Excludes
@@ -230,6 +237,12 @@ struct Unit {
     float buildStuckT = 0;          // seconds a builder has approached its site with no progress
     float buildStuckD = 1e30f;      // best (closest) squared dist to the build site so far
     float deadFor = -1;    // >= 0 once dead; counts up for death animation
+    float corpseUntil = 4;   // deadFor when the body is gone (4 = right after the
+                             // death anim; corpse types extend by decomposetime)
+    float overkill = 0;      // damage past the killing blow (retail severity input)
+    uint8_t deathType = 1;   // damagetype of the killing blow (3 = explosion/gib)
+    bool corpseBlocks = false;   // dead structure still occupies its nav footprint
+                                 // (blocking wreck / neutral wall) until retired
     // --- extended runtime state --------------------------------------------
     float mana = 0;        // personal mana pool (casters), capped at type->maxMana
     int   xp = 0;          // accumulated experience from kills
@@ -307,6 +320,12 @@ struct FeatType {
     float energy = 0;        // reclaim yield of this stage
     int  fx = 1, fz = 1;
     bool blocking = false;
+    // Corpse defs (features/corpses/*_dead.tdf): how long the body lies there
+    // and whether a priest can raise it (retail decomposetime / resurrectable).
+    int  decomposeTicks = 0; // TDF decomposetime * 30 (0 = never rots)
+    bool resurrectable = false;
+    bool reclaimable = false;
+    std::string object;      // TDF object= (3D corpse mesh; client visual)
 };
 
 struct Feature {
@@ -569,6 +588,12 @@ public:
     const Feature* feature(int id) const;                 // by id, nullptr if none
     const Feature* featureAt(float x, float z) const;     // by cell (viewer burn/art sync)
     void setFeatureTypes(std::vector<FeatType> t) { featTypes_ = std::move(t); }
+    // Unit type -> its corpse feature def (index into featTypes_, -1 = none).
+    void mapCorpse(const UnitType* t, int featType) { corpseType_[t] = featType; }
+    int corpseTypeOf(const UnitType* t) const {
+        auto it = corpseType_.find(t);
+        return it == corpseType_.end() ? -1 : it->second;
+    }
     // Drop all registered features (setupMatch rebuilds authoritatively -- the
     // client ctor may have pre-registered the launch map's via registerMapFeatures).
     void clearFeatures() { features_.clear(); featureIdx_.clear(); }
@@ -882,6 +907,7 @@ private:
     std::vector<std::pair<float, float>> manaSpots_;
     std::vector<Feature> features_;             // reclaimable map features
     std::vector<FeatType> featTypes_;           // per-type burn data (setup-time, static)
+    std::unordered_map<const UnitType*, int> corpseType_;   // unit -> corpse FeatType
     // Burn RNG: retail rolls spread on its game LCG (icd 0x535cc0, Lehmer 16807);
     // ours is identical on every peer -- draws happen only in deterministic sim
     // paths, and the state is folded into stateHash.

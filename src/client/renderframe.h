@@ -49,6 +49,8 @@ struct UnitR {
     const tak::sim::UnitType* repeatType = nullptr;
     bool moving_ = false, walking_ = false;   // cached u.moving()/u.walking()
     float speed = 0;                           // px/s (diagnostic use)
+    bool corpsePhase = false;                  // dead, death anim done, body still lies
+    uint8_t deathType = 1;                     // killing blow damagetype (3 = gib)
     bool justFired = false;                    // one-tick: fired a weapon this tick
     int justBuilt = 0;                         // one-tick: unit id produced this tick, else 0
     bool disco = false, headbang = false;      // cached world_.disco/headbangActive(player)

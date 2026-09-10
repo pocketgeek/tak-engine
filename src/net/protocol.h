@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 31;       // 31: feature burning (fire spread sim)
+constexpr uint32_t kNetVersion = 32;       // 32: retail corpse model (wrecks/resurrect)
                                            // 28: retail melee = footprint adjacency
                                            // 26: benchmark level 6 (Extra Absurd)
                                            // 25: GameOptions.benchmark carries an INTENSITY

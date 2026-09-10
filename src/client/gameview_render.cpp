@@ -106,7 +106,7 @@
         }
         for (const UnitR* _up : front().live) {
             const UnitR& r = *_up;   // this tick's snapshot (front().live mirrors world_.units())
-            if (r.deadFor >= 4.0f || r.embarked()) continue;
+            if ((r.deadFor >= 4.0f && !r.corpsePhase) || r.embarked()) continue;
             // Unregistered (e.g. a type whose model failed to load): not drawable,
             // and every render path does unitType_.at(u.id) -- skip it here so none
             // of them throw (a throw in the parallel projection aborts the process).
@@ -1553,7 +1553,7 @@
         // Ground shadow (FBI shadowart, from shadows.gaf): drawn under the model
         // at the unit's ground point, nudged for the sun; a flyer's shadow sits
         // further out and stays on the ground while the model rides its altitude.
-        if (u.type && !u.underConstruction) {
+        if (u.type && !u.underConstruction && !u.corpsePhase) {   // corpses: noshadow
             if (const ShadowTex* sh = shadowFor(u.type->shadowArt)) {
                 float alt = anim ? anim->altitude : 0.0f;
                 float sox = (6.0f + alt * 0.5f) * zm, soy = (3.0f + alt * 0.25f) * zm;
@@ -1862,6 +1862,8 @@
         inst.x = x;
         inst.z = z;
         inst.name = key;
+        inst.simId = (int(z) / 16) * mapView_.map().width + int(x) / 16;
+        featInstIds_.insert(inst.simId);
         // Mana deposits ("Sacred Stone", category=Mana) are the spots you build
         // lodestones ON, so they must stay buildable (walkable) — never block
         // the nav grid for them, or canPlace rejects the deposit itself.
@@ -1937,10 +1939,18 @@
                 spawnBurst(fi.x, fi.z, 1, 240, 140, 40, 14, 1.8f, 0, 6);
             }
         }
+        // Features the SIM created mid-game (corpses) get a visual instance on
+        // first sight. No nav blocking here -- the sim owns corpse blocking.
+        for (const auto& sf : world_.features()) {
+            if (!sf.alive || sf.type < 0 || featInstIds_.count(sf.id)) continue;
+            addFeature(world_.featureTypes()[size_t(sf.type)].name, sf.x, sf.z, false);
+            featInstIds_.insert(sf.id);   // even on art failure: don't retry every frame
+        }
     }
 
     void GameView::loadFeatures() {
         features_.clear();   // full rebuild -- safe to call again on a map change
+        featInstIds_.clear();
         const auto& names = mapView_.map().featureNames;
         if (names.empty()) return;
         loadFeatureDefs();

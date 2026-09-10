@@ -172,7 +172,10 @@ struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx
                  int reclaimable = 0; float energy = 0;
                  // Burning chain (see World::tickBurning).
                  bool flamable = false; bool hasBurnAnim = false;
-                 int spreadChance = 0; int sparkTicks = 0; std::string burnt; };
+                 int spreadChance = 0; int sparkTicks = 0; std::string burnt;
+                 // Corpse lifecycle (features/corpses).
+                 int decomposeTicks = 0; bool resurrectable = false;
+                 std::string object; };
 
 std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
     std::unordered_map<std::string, FeatDef> defs;
@@ -204,6 +207,10 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     d.sparkTicks = int(node.numberOr("sparktime", 0) * 30);
                     d.burnt = node.valueOr("featureburnt", "");
                     std::transform(d.burnt.begin(), d.burnt.end(), d.burnt.begin(), ::tolower);
+                    d.decomposeTicks = int(node.numberOr("decomposetime", 0) * 30);
+                    d.resurrectable = node.numberOr("resurrectable", 0) != 0;
+                    d.object = node.valueOr("object", "");
+                    std::transform(d.object.begin(), d.object.end(), d.object.begin(), ::tolower);
                     defs[k] = d;
                 }
             } catch (const std::exception&) {}
@@ -232,6 +239,10 @@ struct FeatTypeInterner {
         t.energy = di->second.energy;
         t.fx = di->second.fx; t.fz = di->second.fz;
         t.blocking = di->second.blocking != 0;
+        t.decomposeTicks = di->second.decomposeTicks;
+        t.resurrectable = di->second.resurrectable;
+        t.reclaimable = di->second.reclaimable != 0;
+        t.object = di->second.object;
         table.push_back(std::move(t));
         table[size_t(idx)].burntType = intern(di->second.burnt);
         return idx;
@@ -243,10 +254,11 @@ struct FeatTypeInterner {
 // exactly as setupMatch's placement loop does -- for the client's LOCAL harness
 // and mission paths, which build their worlds without setupMatch. Nav blocking
 // is NOT done here (those paths already block via their own feature placement).
-void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs& vfs) {
-    if (map.featureNames.empty()) return;
+void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs& vfs,
+                         const TypeRegistry* reg) {
     auto defs = loadFeatureDefs(vfs);
     FeatTypeInterner types(defs);
+    if (!map.featureNames.empty())
     for (int cz = 0; cz < map.height; ++cz)
         for (int cx = 0; cx < map.width; ++cx) {
             uint16_t v = map.features[size_t(cz) * map.width + cx];
@@ -263,6 +275,12 @@ void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs&
                                  types.intern(key));
             }
         }
+    if (reg)
+        for (const auto& [tid, ut] : reg->types())
+            if (!ut.corpse.empty()) {
+                int ci = types.intern(ut.corpse);
+                if (ci >= 0) world.mapCorpse(&ut, ci);
+            }
     world.setFeatureTypes(std::move(types.table));
 }
 
@@ -326,6 +344,13 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 }
             }
     }
+    // Corpse defs: every unit type's FBI corpse= feature (and its chains) joins
+    // the table so death can mint corpse records without art/def lookups later.
+    for (const auto& [tid, ut] : reg.types())
+        if (!ut.corpse.empty()) {
+            int ci = featTypeIdx(ut.corpse);
+            if (ci >= 0) world.mapCorpse(&ut, ci);
+        }
     world.setFeatureTypes(std::move(types.table));
     // The buildable spot is the glowing Sacred Stone centre, not the ring of
     // static Standing Stones (both are category=mana). Fallback: a deposit with

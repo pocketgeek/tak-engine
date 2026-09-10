@@ -84,7 +84,8 @@ std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
 // camera). Every peer that calls this with the same config gets the same world.
 // Register the map's obstacle features (+ burn-type table) into a world built
 // WITHOUT setupMatch (client local-harness / mission / scenario paths).
-void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs& vfs);
+void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs& vfs,
+                         const TypeRegistry* reg = nullptr);
 
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
                                                 const MatchConfig& cfg);
