@@ -28,6 +28,12 @@ public:
     // backing box that truly wraps the text instead of sitting below it.
     void vbounds(const std::string& text, float scale, float& topOff, float& h) const;
 
+    // Free the glyph textures (gpuvram-accounted). Called at session teardown so
+    // the VRAM budget doesn't leak across menu->game->menu loops; the font is
+    // unusable afterwards until reconstructed. (Not a destructor: Font objects
+    // are copy-assigned when the GUI loads, so an owning dtor would double-free.)
+    void destroyGlyphs();
+
     void draw(SDL_Renderer* ren, const std::string& text, float x, float y,
               float scale = 1, SDL_Color tint = {255, 255, 255, 255}) const;
 

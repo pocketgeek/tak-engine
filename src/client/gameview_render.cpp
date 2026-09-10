@@ -1033,6 +1033,50 @@
         sprites_.clear();
     }
 
+    void GameView::destroyGpuTextures() {
+        invalidateRenderTargets();   // sprite pages + colour atlases + impostor atlas
+        auto kill = [](SDL_Texture*& t) { if (t) { gpuvram::destroy(t); t = nullptr; } };
+        for (auto& [n, frames] : textures_)
+            for (SDL_Texture* t : frames) if (t) gpuvram::destroy(t);
+        textures_.clear();
+        for (auto& [n, frames] : buildFx_)
+            for (SDL_Texture* t : frames) if (t) gpuvram::destroy(t);
+        buildFx_.clear();
+        for (auto& row : guiTex_)
+            for (SDL_Texture* t : row) if (t) gpuvram::destroy(t);
+        guiTex_.clear();
+        for (auto& b : orderBtns_)
+            for (SDL_Texture*& t : b.frames) kill(t);
+        orderBtns_.clear();
+        for (auto& [n, t] : icons_) if (t) gpuvram::destroy(t);
+        icons_.clear();
+        for (auto& [n, t] : modelIcons_) if (t) gpuvram::destroy(t);
+        modelIcons_.clear();
+        for (auto& [n, t] : weaponIcons_) if (t) gpuvram::destroy(t);
+        weaponIcons_.clear();
+        for (auto& [n, s] : shadowTex_) if (s.tex) gpuvram::destroy(s.tex);
+        shadowTex_.clear();
+        // FeatArt: .tex ALIASES frames[0] (see featureArtFor) -- destroy the
+        // frames + shadow only; FeatureInst merely borrows these pointers.
+        features_.clear();
+        for (auto& [n, a] : featureArt_) {
+            for (SDL_Texture* t : a.frames) if (t) gpuvram::destroy(t);
+            if (a.shadow) gpuvram::destroy(a.shadow);
+        }
+        featureArt_.clear();
+        for (auto& [n, ea] : effectAnims_)
+            for (auto& f : ea.frames) if (f.tex) gpuvram::destroy(f.tex);
+        effectAnims_.clear();
+        explosionsLoaded_ = false;
+        kill(fogTex_);
+        kill(panelTex_);
+        kill(botTex_);
+        kill(mapPreviewTex_);
+        hudFont_.destroyGlyphs();
+        bigFont_.destroyGlyphs();
+        statFont_.destroyGlyphs();
+    }
+
     void GameView::buildAtlasLayout() {
         atlasLaidOut_ = true;
         struct Item { const std::string* name; int w, h; };

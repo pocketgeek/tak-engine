@@ -29,6 +29,7 @@ inline uint32_t g_backoffUntil = 0;              // SDL_GetTicks() until which b
 
 inline size_t bytes() { return g_bytes; }
 inline size_t cap()   { return g_cap; }
+inline size_t count() { return g_size.size(); }   // tracked textures (teardown-leak check)
 inline void   setCap(size_t b) { g_cap = b; if (g_floor > b) g_floor = b; }
 inline bool   wouldFit(size_t add) { return g_bytes + add <= g_cap; }
 

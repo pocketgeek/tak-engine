@@ -15,6 +15,9 @@
 #  include <libproc.h>
 #  include <unistd.h>
 #  include <sys/resource.h>
+#  include <mach/mach_time.h>
+#  include <CoreFoundation/CoreFoundation.h>
+#  include <IOKit/IOKitLib.h>
 #else   // Linux / other /proc systems
 #  include <cstdio>
 #  include <cstring>
@@ -62,7 +65,16 @@ Sample sample(long pid) {
     rusage_info_v2 ri{};
     // proc_pid_rusage works for a same-user process without task_for_pid privileges.
     if (proc_pid_rusage(p, RUSAGE_INFO_V2, reinterpret_cast<rusage_info_t*>(&ri)) == 0) {
-        s.cpuSeconds = double(ri.ri_user_time + ri.ri_system_time) / 1e9;   // ns -> seconds
+        // ri_user_time / ri_system_time are in MACH ABSOLUTE TIME units, not ns
+        // (Apple QA1398). Intel Macs have a 1/1 timebase, so /1e9 happened to
+        // work there; Apple Silicon's is 125/3 (24MHz ticks), which made CPU%
+        // read ~42x too low. Convert via mach_timebase_info (constant per boot).
+        static const double tickToSec = [] {
+            mach_timebase_info_data_t tb{};
+            mach_timebase_info(&tb);
+            return tb.denom ? double(tb.numer) / double(tb.denom) / 1e9 : 1e-9;
+        }();
+        s.cpuSeconds = double(ri.ri_user_time + ri.ri_system_time) * tickToSec;
         s.rssBytes = size_t(ri.ri_resident_size);
         s.ok = true;
     }
@@ -232,6 +244,43 @@ bool intelGpuSample(GpuSample& g) {
 
 GpuSample gpuSample() {
     GpuSample g;
+#if defined(__APPLE__)
+    // No public PER-PROCESS GPU stat exists on Apple Silicon (Metal has no
+    // utilization query; IOReport is private). The accelerator driver does
+    // publish device-wide utilization in its IORegistry PerformanceStatistics
+    // dictionary ("Device Utilization %" -- what iStat-style tools read), so
+    // report that, flagged systemWide for the overlay label. Undocumented but
+    // long-stable; if absent, ok stays false and the overlay shows N/A.
+    io_iterator_t iter = IO_OBJECT_NULL;
+    if (IOServiceGetMatchingServices(/*main port*/ 0,
+                                     IOServiceMatching("IOAccelerator"),
+                                     &iter) == KERN_SUCCESS) {
+        io_object_t obj;
+        while (!g.ok && (obj = IOIteratorNext(iter))) {
+            CFMutableDictionaryRef props = nullptr;
+            if (IORegistryEntryCreateCFProperties(obj, &props, kCFAllocatorDefault, 0) ==
+                    KERN_SUCCESS && props) {
+                auto stats = (CFDictionaryRef)CFDictionaryGetValue(
+                    props, CFSTR("PerformanceStatistics"));
+                if (stats && CFGetTypeID(stats) == CFDictionaryGetTypeID()) {
+                    auto num = (CFNumberRef)CFDictionaryGetValue(
+                        stats, CFSTR("Device Utilization %"));
+                    int v = -1;
+                    if (num && CFGetTypeID(num) == CFNumberGetTypeID() &&
+                        CFNumberGetValue(num, kCFNumberIntType, &v) && v >= 0) {
+                        g.utilPct = double(v);
+                        g.systemWide = true;
+                        g.ok = true;
+                    }
+                }
+                CFRelease(props);
+            }
+            IOObjectRelease(obj);
+        }
+        IOObjectRelease(iter);
+    }
+    return g;
+#else
     // NVIDIA (any OS with the driver in PATH): one nvidia-smi CSV line.
 #if defined(_WIN32)
     const char* nv = "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name "
@@ -281,6 +330,7 @@ GpuSample gpuSample() {
     if (intelGpuSample(g)) return g;
 #endif
     return g;
+#endif   // !__APPLE__
 }
 
 }  // namespace tak::proc

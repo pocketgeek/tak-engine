@@ -850,7 +850,11 @@
                 // keep their continuous flight threads running, so don't reset.
                 if (it != anims_.end() && !u.walking()) {
                     auto& fa = it->second;
-                    if (!fa.flying) { fa.vm->reset(); fa.vm->setStatic(0, 0); }
+                    // Reset only walk-cycle units: for ships etc. the reset would
+                    // permanently kill the Create ambients (MotionControl, wakes,
+                    // flag) that nothing restarts -- the Ark froze after its first
+                    // AA shot because of exactly this.
+                    if (!fa.flying && fa.hasWalk) { fa.vm->reset(); fa.vm->setStatic(0, 0); }
                     fa.vm->start("FireWeapon") || fa.vm->start("attack1") ||
                         fa.vm->start("fire") || fa.vm->start("MeleeAttack");
                     fa.walking = false;
@@ -931,8 +935,6 @@
                     a.vm->start("land") || a.vm->start("restore_x");   // landed pose
                 }
             } else if (a.hasWalk) {
-                // No-walk movers (ships/wheeled vehicles) fall through: their Create
-                // ambient loop runs untouched -- resetting the VM here would wipe it.
                 bool m = u.walking();
                 if (m != a.walking) {
                     a.walking = m;
@@ -945,6 +947,17 @@
                     // The walk script is single-pass; the engine re-invokes it
                     // each cycle while the unit keeps moving.
                     a.vm->start("walk") || a.vm->start("walk_legs");
+                }
+            } else if (u.type->maxVel > 0) {
+                // No-walk movers (ships, wheeled vehicles): retail drives these via
+                // the MoveRate engine callin. The Ark's MotionControl ambient (from
+                // Create) polls the static that MoveRate sets and runs the rowing /
+                // sail / rudder loops -- without the callin the hull glides with
+                // frozen oars. NO reset here: the Create ambients must keep running.
+                bool m = u.walking();
+                if (m != a.walking) {
+                    a.walking = m;
+                    a.vm->start("MoveRate", {m ? 100 : 0});
                 }
             }
             // Mobile builders: the conjure/build animation while actively working a
@@ -1182,6 +1195,12 @@
                                  : 0;                                  // loops on it, so ambient
                                                                        // anims/emit-sfx hold off
                                                                        // until the building is up)
+                    case 29:                                           // CURRENT_SPEED (% of max:
+                        return su->type->maxVel > 0                    // ship MotionControl picks
+                                   ? int32_t(std::clamp(               // slowrow/row/fastrow at
+                                         su->speed / su->type->maxVel * 100.0f,  // 25/75)
+                                         0.0f, 100.0f))
+                                   : 0;
                     default: return 0;
                 }
             };

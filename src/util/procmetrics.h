@@ -33,6 +33,9 @@ struct GpuSample {
     size_t memUsed = 0;     // device VRAM used (all processes), bytes; 0 if unknown
     size_t memTotal = 0;    // total device VRAM, bytes; 0 if unknown
     std::string name;       // adapter name if known
+    bool systemWide = false;// utilPct covers the WHOLE device, not this process
+                            // (macOS: IOAccelerator "Device Utilization %" --
+                            // Apple has no public per-process GPU stat)
     bool ok = false;        // false = no GPU stats source on this system
 };
 GpuSample gpuSample();

@@ -72,3 +72,9 @@ void Font::draw(SDL_Renderer* ren, const std::string& text, float x, float y,
 }
 
 float Font::advance(const Glyph& g) { return g.w > 0 ? float(g.w + 2) : 4.0f; }
+
+void Font::destroyGlyphs() {
+    for (auto& g : glyphs_)
+        if (g.tex) { gpuvram::destroy(g.tex); g.tex = nullptr; }
+    ok_ = false;
+}

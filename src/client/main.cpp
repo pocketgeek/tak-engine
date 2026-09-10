@@ -1307,6 +1307,16 @@ int main(int argc, char** argv) {
     // to the menu or exit the app.
     killLocalServer();
     mp.reset();
+    // Destroy the session's views NOW (not at scope end below): the renderer is
+    // reused across sessions, so their GPU textures must be freed before the next
+    // session budgets against gpuvram. The log line is the leak canary -- healthy
+    // teardown leaves single-digit MiB (menu-owned art only); before the teardown
+    // fixes it climbed by hundreds of MiB per benchmark until terrain chunks
+    // could no longer upload (map stuck at the low-res underlay).
+    gameView.reset();
+    mapView.reset();
+    std::fprintf(stderr, "gpu: %zu MiB in %zu textures tracked after session teardown (cap %zu MiB)\n",
+                 gpuvram::bytes() >> 20, gpuvram::count(), gpuvram::cap() >> 20);
     // Clear the in-game minimum-window-size constraint (set per game at the build-icon
     // sizing above). Leaving it on the persistent window makes the returned menu's
     // surface re-negotiation-prone on Wayland (see the Options click-death bug).

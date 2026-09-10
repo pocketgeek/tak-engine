@@ -25,6 +25,10 @@ MapView::~MapView() {
     }
     chunkCv_.notify_all();
     if (chunkWorker_.joinable()) chunkWorker_.join();
+    // Free the chunk textures: the renderer outlives the session, so skipping
+    // this leaked the whole map's 512px chunk set (and its gpuvram budget) on
+    // every menu->game->menu loop.
+    for (auto& [k, t] : chunks_) if (t) gpuvram::destroy(t);
 }
 
 void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {

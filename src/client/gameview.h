@@ -134,7 +134,12 @@ public:
     // client and the server's referee derive identical positions.
     std::vector<std::pair<float, float>> parseStartPositions() const;
 
-    ~GameView() { stopSimThread(); resetMinimap(); }   // join the sim worker + minimap crunch before members die
+    // Join the sim worker + minimap crunch before members die, then free every
+    // GPU texture we own: the SDL_Renderer outlives the session (menu -> game ->
+    // menu loops reuse it), so anything not destroyed here leaks REAL VRAM and
+    // gpuvram budget across sessions -- a few benchmark runs used to pin the
+    // budget and starve terrain-chunk uploads (map stuck at the low-res underlay).
+    ~GameView() { stopSimThread(); resetMinimap(); destroyGpuTextures(); }
 
     GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,
              const std::string& installRoot, tak::hpi::OverridePolicy policy,
@@ -1208,6 +1213,10 @@ public:
     // render-target-backed cache so the pre-pass re-bakes them cleanly next frame.
     // Surface-backed caches (shadows, build FX) keep their pixels and are untouched.
     void invalidateRenderTargets();
+    // Session-teardown release of EVERY GPU texture GameView owns (unit frames,
+    // atlases, sprite pages, GUI/HUD art, icons, shadows, feature art, effects,
+    // fog, fonts). See the dtor comment: the renderer outlives the session.
+    void destroyGpuTextures();
 private:
     // Release the sprite-sheet pages (they're 64MB of VRAM each). Called when
     // sprite mode turns off -- on a card shared with a huge desktop the memory
