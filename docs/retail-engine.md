@@ -121,3 +121,22 @@ and select `slowrow`/`row`/`fastrow` from **`GET_UNIT_VALUE 29`** (current
 speed, thresholds 25/75 ⇒ percent of max). `TurnDirection(deg)` steers the
 rudder/sail trim; `WindChange` orients sails/flags (FBI `wind=1`). Resetting
 such a unit's VM kills the Create ambients permanently — nothing restarts them.
+
+## Headless in-game screenshots (dev harness)
+
+`--shot` alone captures the LOBBY and exits: it forces the dummy video driver and
+the menu path shoots before the game starts. To capture a real in-game frame use
+the auto-lobby driver plus a delayed capture, all with the DEBUG binary:
+
+```sh
+TAK_MPAUTO=4 TAK_SHOT_MS=35000 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  ./build-dbg/takclient game "Inner Circle" --data <install> --shot out.png
+```
+
+- `TAK_MPAUTO=4` drives the lobby the way `--mpai` does, but through the
+  INTERACTIVE (rendering) loop instead of the headless one. Without it the client
+  sits at NOT READY forever and the shot is a lobby frame.
+- `TAK_SHOT_MS=<ms>` delays the capture by wall-clock ms (default is 3 frames).
+- Add `TAK_STRESS=1` to spawn each AI at ~95% of the unit cap for instant mass
+  combat -- the quickest way to see projectile art, beams and storms on screen.
+- No real window is needed; the dummy driver renders correctly.
