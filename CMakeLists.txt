@@ -69,6 +69,7 @@ add_library(tak-formats
   src/net/conn.cpp
   src/net/client.cpp
   src/util/png.cpp
+  src/util/appicon.cpp
   src/util/jpeg.cpp
   src/terrain/terrain.cpp
 )
@@ -108,6 +109,9 @@ target_link_libraries(detmath_test PRIVATE tak-formats)
 
 add_executable(sim_driver_equiv_test tools/sim_driver_equiv_test.cpp)
 target_link_libraries(sim_driver_equiv_test PRIVATE tak-formats)
+
+add_executable(makeicons tools/makeicons.cpp)
+target_link_libraries(makeicons PRIVATE tak-formats)
 
 add_executable(gaftool tools/gaftool.cpp)
 target_link_libraries(gaftool PRIVATE tak-formats)
@@ -281,6 +285,19 @@ if(UNIX AND NOT APPLE)
   if(TARGET takclient)
     install(TARGETS takclient RUNTIME DESTINATION bin)
   endif()
+  if(TARGET cartographer)
+    install(TARGETS cartographer RUNTIME DESTINATION bin)
+  endif()
+
+  # Desktop integration: the procedurally-drawn app icons (res/icons, generated
+  # by `makeicons`) + .desktop launchers so the apps show a proper icon.
+  install(FILES res/icons/takclient.png    DESTINATION share/icons/hicolor/256x256/apps RENAME tak-client.png)
+  install(FILES res/icons/cartographer.png DESTINATION share/icons/hicolor/256x256/apps RENAME tak-cartographer.png)
+  install(FILES res/icons/takserver.png    DESTINATION share/icons/hicolor/256x256/apps RENAME tak-server.png)
+  install(FILES res/linux/tak-client.desktop
+                res/linux/tak-cartographer.desktop
+                res/linux/tak-server.desktop
+          DESTINATION share/applications)
 
   set(CPACK_PACKAGE_NAME "tak-engine")
   set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")

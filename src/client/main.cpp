@@ -33,6 +33,7 @@
 #include "terrain/terrain.h"
 #include "tnt/tnt.h"
 #include "tnt/mapgen.h"
+#include "util/appicon.h"
 #include "util/png.h"
 #include "version.h"
 #include "client/cursors.h"
@@ -534,6 +535,14 @@ int main(int argc, char** argv) {
     SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, winW, winH,
                                        SDL_WINDOW_RESIZABLE);
+    {   // Application icon: the crown badge (src/util/appicon).
+        std::vector<uint8_t> ic = tak::appicon::render(tak::appicon::Kind::Client, 64);
+        if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
+                ic.data(), 64, 64, 32, 64 * 4, SDL_PIXELFORMAT_RGBA32)) {
+            SDL_SetWindowIcon(win, s);
+            SDL_FreeSurface(s);
+        }
+    }
     if (win && settings.fullscreen)
         SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
     Uint32 renFlags = SDL_RENDERER_SOFTWARE;

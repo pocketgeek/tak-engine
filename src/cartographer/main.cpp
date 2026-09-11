@@ -19,6 +19,7 @@
 #include "cartographer/triggers.h"
 #include "cartographer/units.h"
 #include "client/mapview.h"
+#include "util/appicon.h"
 #include "terrain/terrain.h"
 #include "util/jpeg.h"
 #include "hpi/hpi.h"
@@ -139,6 +140,14 @@ int main(int argc, char** argv) {
     SDL_Window* win = SDL_CreateWindow(
         ("Cartographer -- " + mapName).c_str(), SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, 1280 * kUIScale, 800 * kUIScale, SDL_WINDOW_RESIZABLE);
+    {   // Application icon: the compass-rose badge (src/util/appicon).
+        std::vector<uint8_t> ic = tak::appicon::render(tak::appicon::Kind::Cartographer, 64);
+        if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
+                ic.data(), 64, 64, 32, 64 * 4, SDL_PIXELFORMAT_RGBA32)) {
+            SDL_SetWindowIcon(win, s);
+            SDL_FreeSurface(s);
+        }
+    }
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC);
     if (!ren) ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
     // Draw everything at kUIScale: the logical canvas stays 1280x800-ish while
