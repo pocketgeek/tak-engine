@@ -42,6 +42,30 @@ inline SDL_Rect drawField(SDL_Renderer* ren, int x, int y, int w,
     return box;
 }
 
+// A labelled dropdown box: draws the label above and a value box with a "v"
+// marker on the right. `open` highlights it (its list is showing). Returns the
+// box rect so the caller can hit-test the click that opens/closes the list.
+inline SDL_Rect drawChoice(SDL_Renderer* ren, int x, int y, int w,
+                           const std::string& label, const std::string& value,
+                           bool open) {
+    drawText(ren, label, x, y, 1, 190, 195, 205);
+    SDL_Rect box{x, y + 10, w, 16};
+    SDL_SetRenderDrawColor(ren, open ? 40 : 24, open ? 44 : 26, open ? 60 : 34, 255);
+    SDL_RenderFillRect(ren, &box);
+    SDL_SetRenderDrawColor(ren, open ? 255 : 90, open ? 210 : 92, open ? 90 : 104, 255);
+    SDL_RenderDrawRect(ren, &box);
+    drawText(ren, value, x + 4, y + 14, 1, 230, 235, 245);
+    // Dropdown marker: a filled down-pointing triangle at the right edge, drawn as
+    // stacked narrowing rows (SDL has no filled-triangle primitive).
+    SDL_SetRenderDrawColor(ren, 210, 215, 225, 255);
+    int ax = x + w - 12, ay = y + 15;
+    for (int r = 0; r < 4; ++r) {
+        SDL_Rect row{ax + r, ay + r, 8 - 2 * r, 1};
+        SDL_RenderFillRect(ren, &row);
+    }
+    return box;
+}
+
 // A button; draws it and returns its rect (caller hit-tests clicks).
 inline SDL_Rect drawButton(SDL_Renderer* ren, int x, int y, int w, int h,
                            const std::string& label, bool primary) {

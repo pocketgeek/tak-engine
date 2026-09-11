@@ -39,6 +39,12 @@ struct Weapon {
     float edge = 1;          // edgeeffectiveness: damage fraction at the aoe edge
     float aimTol = 0.1f;     // aimtolerance in radians: how close to on-target to fire
     bool ballistic = false;  // FBI weapon type = Ballistic (lobbed arc, not flat)
+    // FBI weapon type = "Line of Sight": a sustained hitscan beam (the drake's
+    // Fire Breath), NOT a lobbed shot. Damage lands instantly along the sightline
+    // and the flame stream is a client-side emitter driven by emitTime -- there is
+    // no traveling projectile object.
+    bool beam = false;
+    float emitTime = 0;      // emittime (seconds): how long the flame/beam is emitted
     float minRange = 0;      // minrange: can't hit targets closer than this
     bool noAir = false;      // noairweapon: cannot target flying units
     float manaCost = 0;      // manapershot: mana drained from the firer per shot

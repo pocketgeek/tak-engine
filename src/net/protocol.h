@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 39;       // 39: a builder mid-job doesn't auto-acquire/wander off
+constexpr uint32_t kNetVersion = 40;       // 40: fire breath is a Line-of-Sight beam (instant hit, FBI range, no 170 cap)
+                                           // 39: a builder mid-job doesn't auto-acquire/wander off
                                            // 38: self-destruct is a 5s toggled countdown (Ctrl+Shift+D)
                                            // 37: don't auto-acquire/keep attacking undamageable targets
                                            // 36: in-sim .crt scenario trigger runner + forced-defeat

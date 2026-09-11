@@ -46,7 +46,7 @@ constexpr int kStatusH = 22;  // bottom status strip
 // space and scaled up by this factor via SDL_RenderSetScale, so every panel,
 // glyph, and dialog doubles uniformly on hi-DPI displays. Input coordinates are
 // divided back down to logical space at the event source.
-constexpr int kUIScale = 2;
+constexpr int kUIScale = 4;
 
 // A fresh map for the New dialog / --new launch: either a flat ground stamp or
 // procedural terrain from the engine's map generator (the "~gen1~" generator the
@@ -550,6 +550,15 @@ int main(int argc, char** argv) {
     Modal modal = M_NONE;
     std::string mf[kMaxFields];              // field buffers
     bool mfNumeric[kMaxFields] = {};
+    // A field with a non-null choice list is a dropdown (click opens the list),
+    // not a typed text box. Used by the New Map dialog for size/world selection.
+    const std::vector<std::string>* mfChoices[kMaxFields] = {};
+    int mDropOpen = -1;                       // which field's dropdown list is open (-1 none)
+    std::vector<SDL_Rect> mDropRects;         // hit rects of the open list's rows
+    SDL_Rect mRandom{};                       // New Map: the RANDOM button rect
+    // Dropdown option lists (New Map): map sizes in units, and the four worlds.
+    const std::vector<std::string> kSizeOpts = {"8", "16", "24", "32", "48", "64"};
+    const std::vector<std::string> kWorldOpts = {"aramon", "veruna", "taros", "zhon", "creon"};
     const char* mLabel[kMaxFields] = {};
     std::string mTitle;
     int mN = 0;                              // active field count
@@ -584,6 +593,8 @@ int main(int argc, char** argv) {
     };
     auto openModal = [&](Modal m, int unitIdx = -1) {
         mfocus = 0; editUnit = unitIdx;
+        mDropOpen = -1;
+        for (auto& c : mfChoices) c = nullptr;   // default: plain text fields
         if (m == M_SCENARIO) {
             mTitle = "SCENARIO PROPERTIES"; mN = 2;
             mLabel[0] = "SCENARIO NAME"; mf[0] = scenario.missionName;        mfNumeric[0] = false;
@@ -593,12 +604,18 @@ int main(int argc, char** argv) {
             mLabel[0] = "WIDTH (UNITS)";  mf[0] = std::to_string(mapView.map().width / 32);  mfNumeric[0] = true;
             mLabel[1] = "HEIGHT (UNITS)"; mf[1] = std::to_string(mapView.map().height / 32); mfNumeric[1] = true;
         } else if (m == M_NEW) {
-            mTitle = "NEW MAP"; mN = 5;
-            mLabel[0] = "MAP NAME";       mf[0] = "Untitled";  mfNumeric[0] = false;
-            mLabel[1] = "WIDTH (UNITS)";  mf[1] = "8";         mfNumeric[1] = true;
-            mLabel[2] = "HEIGHT (UNITS)"; mf[2] = "8";         mfNumeric[2] = true;
-            mLabel[3] = "WORLD (aramon/veruna/taros/zhon)"; mf[3] = world; mfNumeric[3] = false;
-            mLabel[4] = "RANDOM TERRAIN? (Y/N)"; mf[4] = "N";  mfNumeric[4] = false;
+            // Name is typed; size + world are dropdowns. RANDOM is a separate
+            // button (drawn in the render pass) that generates procedural terrain
+            // for the chosen size/world and jumps straight to it.
+            mTitle = "NEW MAP"; mN = 4;
+            mLabel[0] = "MAP NAME";  mf[0] = "Untitled"; mfNumeric[0] = false;
+            mLabel[1] = "WIDTH";     mf[1] = "8";  mfChoices[1] = &kSizeOpts;
+            mLabel[2] = "HEIGHT";    mf[2] = "8";  mfChoices[2] = &kSizeOpts;
+            std::string w0 = world;
+            std::transform(w0.begin(), w0.end(), w0.begin(), ::tolower);
+            if (std::find(kWorldOpts.begin(), kWorldOpts.end(), w0) == kWorldOpts.end())
+                w0 = "aramon";
+            mLabel[3] = "WORLD";     mf[3] = w0;   mfChoices[3] = &kWorldOpts;
         } else if (m == M_UNIT && unitIdx >= 0 && unitIdx < int(units.size())) {
             const auto& u = units[size_t(unitIdx)];
             mTitle = "UNIT PROPERTIES"; mN = 6;
@@ -614,6 +631,44 @@ int main(int argc, char** argv) {
         modal = m;
         SDL_StartTextInput();
     };
+    // Build a fresh map from the New Map dialog's fields and switch to it. `random`
+    // picks procedural terrain (the RANDOM button) vs a flat stamp (CREATE). On
+    // failure it pops a message and leaves the current map untouched; on success it
+    // closes the dialog. Shared by the CREATE and RANDOM buttons.
+    auto applyNewMap = [&](bool random) {
+        std::string nm = mf[0].empty() ? "Untitled" : mf[0];
+        int wu = std::clamp(std::atoi(mf[1].c_str()), 1, 64);
+        int hu = std::clamp(std::atoi(mf[2].c_str()), 1, 64);
+        std::string wld = mf[3];
+        std::transform(wld.begin(), wld.end(), wld.begin(), ::tolower);
+        if (wld.empty()) wld = "aramon";
+        sections.scan(vfs, wld);
+        features.scan(vfs, wld);
+        FreshMap fm = buildFreshMap(vfs, sections, mapView.compositor(), wld, wu, hu, random);
+        if (fm.map.width == 0) {
+            SDL_StopTextInput();
+            openMessage("NEW MAP", "Could not build a map for world '" + wld +
+                        "'. Try aramon, veruna, taros or zhon.");
+            return;
+        }
+        mapView.editMap() = std::move(fm.map);
+        mapView.tilesEdited();
+        mapView.setOffset(0, 0);
+        world = wld;
+        scenario = tak::tnt::Scenario{};
+        scenario.kingdom = wld; scenario.sizeW = wu; scenario.sizeH = hu;
+        scenario.missionName = nm;
+        scenario.starts = std::move(fm.starts);
+        mapName = nm;
+        units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();
+        selected = sections.list().empty() ? -1 : 0;
+        selectedFeat = features.list().empty() ? -1 : 0;
+        paletteScroll = 0;
+        edited = true;
+        SDL_SetWindowTitle(win, ("Cartographer -- " + mapName).c_str());
+        dirty = false;
+        modal = M_NONE; SDL_StopTextInput();
+    };
     auto applyModal = [&]() {
         if (modal == M_SCENARIO) {
             scenario.missionName = mf[0];
@@ -628,40 +683,8 @@ int main(int argc, char** argv) {
             mapView.tilesEdited();
             edited = true; dirty = true;
         } else if (modal == M_NEW) {
-            std::string nm = mf[0].empty() ? "Untitled" : mf[0];
-            int wu = std::clamp(std::atoi(mf[1].c_str()), 1, 64);
-            int hu = std::clamp(std::atoi(mf[2].c_str()), 1, 64);
-            std::string wld = mf[3];
-            std::transform(wld.begin(), wld.end(), wld.begin(), ::tolower);
-            if (wld.empty()) wld = "aramon";
-            bool random = !mf[4].empty() && (mf[4][0] == 'y' || mf[4][0] == 'Y' || mf[4][0] == '1');
-            // Rescan the section/feature palettes for the chosen world, then build
-            // the map (flat stamp or procedural terrain).
-            sections.scan(vfs, wld);
-            features.scan(vfs, wld);
-            FreshMap fm = buildFreshMap(vfs, sections, mapView.compositor(), wld, wu, hu, random);
-            if (fm.map.width == 0) {
-                SDL_StopTextInput();
-                openMessage("NEW MAP", "Could not build a map for world '" + wld +
-                            "'. Try aramon, veruna, taros or zhon.");
-                return;   // leaves the message box up; the current map is untouched
-            }
-            mapView.editMap() = std::move(fm.map);
-            mapView.tilesEdited();
-            mapView.setOffset(0, 0);
-            world = wld;
-            scenario = tak::tnt::Scenario{};
-            scenario.kingdom = wld; scenario.sizeW = wu; scenario.sizeH = hu;
-            scenario.missionName = nm;
-            scenario.starts = std::move(fm.starts);
-            mapName = nm;
-            units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();
-            selected = sections.list().empty() ? -1 : 0;
-            selectedFeat = features.list().empty() ? -1 : 0;
-            paletteScroll = 0;
-            edited = true; dirty = true;
-            SDL_SetWindowTitle(win, ("Cartographer -- " + mapName).c_str());
-            dirty = false;
+            applyNewMap(false);   // CREATE = flat stamp; closes on success
+            return;               // (RANDOM is handled at its button click)
         } else if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size())) {
             auto& u = units[size_t(editUnit)];
             u.player  = std::clamp(std::atoi(mf[0].c_str()), 0, 7);
@@ -688,13 +711,14 @@ int main(int argc, char** argv) {
         const auto& defs = isAction ? cart::actionDefs() : cart::conditionDefs();
         int op = std::clamp(r->opcode, 0, int(defs.size()) - 1);
         const auto& params = defs[size_t(op)].params;
-        editRule = r; mfocus = 0;
+        editRule = r; mfocus = 0; mDropOpen = -1;
         mN = std::min(int(params.size()), kMaxFields);
         mTitle = (isAction ? "ACTION: " : "CONDITION: ") + cart::formatRule(isAction, *r);
         for (int i = 0; i < mN; ++i) {
             mLabel[i] = cart::paramLabel(params[size_t(i)]);
             mf[i] = r->slot[size_t(i)];
             mfNumeric[i] = false;   // slots hold ASCII (numbers, names, flags)
+            mfChoices[i] = nullptr; // rule slots are typed, not dropdowns
         }
         modal = M_RULE;
         if (mN > 0) SDL_StartTextInput();
@@ -833,23 +857,51 @@ int main(int argc, char** argv) {
                     }
                     continue;
                 }
-                if (e.type == SDL_TEXTINPUT && mN > 0) {
+                if (e.type == SDL_TEXTINPUT && mN > 0 && !mfChoices[mfocus]) {
                     for (const char* c = e.text.text; *c; ++c)
                         if (!mfNumeric[mfocus] || (*c >= '0' && *c <= '9')) mf[mfocus] += *c;
                 } else if (e.type == SDL_KEYDOWN) {
                     SDL_Keycode k = e.key.keysym.sym;
-                    if (k == SDLK_BACKSPACE && mN > 0 && !mf[mfocus].empty()) mf[mfocus].pop_back();
-                    else if (k == SDLK_TAB) mfocus = (mfocus + 1) % std::max(1, mN);
+                    if (k == SDLK_BACKSPACE && mN > 0 && !mfChoices[mfocus] && !mf[mfocus].empty())
+                        mf[mfocus].pop_back();
+                    else if (k == SDLK_TAB) { mfocus = (mfocus + 1) % std::max(1, mN); mDropOpen = -1; }
+                    else if ((k == SDLK_LEFT || k == SDLK_RIGHT) && mN > 0 && mfChoices[mfocus]) {
+                        // Cycle a focused dropdown field with the arrow keys.
+                        const auto& opts = *mfChoices[mfocus];
+                        int cur = 0;
+                        for (int j = 0; j < int(opts.size()); ++j)
+                            if (opts[size_t(j)] == mf[mfocus]) { cur = j; break; }
+                        cur = (cur + (k == SDLK_RIGHT ? 1 : int(opts.size()) - 1)) % int(opts.size());
+                        mf[mfocus] = opts[size_t(cur)];
+                    }
                     else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) applyModal();
-                    else if (k == SDLK_ESCAPE) { modal = M_NONE; SDL_StopTextInput(); }
+                    else if (k == SDLK_ESCAPE) {
+                        if (mDropOpen >= 0) mDropOpen = -1;   // first Esc closes an open list
+                        else { modal = M_NONE; SDL_StopTextInput(); }
+                    }
                 } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                            e.button.button == SDL_BUTTON_LEFT) {
                     int mx = e.button.x, my = e.button.y;
-                    bool onField = false;
+                    // An open dropdown list eats the next click: a row selects, any
+                    // click closes it (so a stray click just dismisses the list).
+                    if (mDropOpen >= 0) {
+                        for (size_t i = 0; i < mDropRects.size(); ++i)
+                            if (cart::pointIn(mx, my, mDropRects[i])) {
+                                mf[mDropOpen] = (*mfChoices[mDropOpen])[i]; break;
+                            }
+                        mDropOpen = -1;
+                        continue;
+                    }
+                    if (cart::pointIn(mx, my, mOK)) { applyModal(); continue; }
+                    if (modal == M_NEW && cart::pointIn(mx, my, mRandom)) { applyNewMap(true); continue; }
+                    if (cart::pointIn(mx, my, mCancel)) { modal = M_NONE; SDL_StopTextInput(); continue; }
+                    // A choice field opens its dropdown; a text field takes focus.
                     for (int i = 0; i < mN; ++i)
-                        if (cart::pointIn(mx, my, mBox[i])) { mfocus = i; onField = true; }
-                    if (!onField && cart::pointIn(mx, my, mOK)) applyModal();
-                    else if (!onField && cart::pointIn(mx, my, mCancel)) { modal = M_NONE; SDL_StopTextInput(); }
+                        if (cart::pointIn(mx, my, mBox[i])) {
+                            if (mfChoices[i]) { mDropOpen = i; mfocus = i; }
+                            else mfocus = i;
+                            break;
+                        }
                 }
                 continue;
             }
@@ -1466,12 +1518,43 @@ int main(int argc, char** argv) {
             SDL_Rect ct = cart::drawPanel(ren, w, h, 320, ph, mTitle);
             if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size()))
                 cart::drawText(ren, units[size_t(editUnit)].type, ct.x, ct.y - 16, 1, 200, 200, 200);
-            for (int i = 0; i < mN; ++i)
-                mBox[i] = cart::drawField(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
-                                          mf[i], mfocus == i);
-            mOK = cart::drawButton(ren, ct.x + ct.w - 150, ct.y + ct.h - 20, 70, 18, "OK", true);
+            for (int i = 0; i < mN; ++i) {
+                if (mfChoices[i])
+                    mBox[i] = cart::drawChoice(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
+                                               mf[i], mDropOpen == i);
+                else
+                    mBox[i] = cart::drawField(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
+                                              mf[i], mfocus == i);
+            }
+            // New Map gets a RANDOM shortcut (procedural terrain, jump straight in).
+            if (modal == M_NEW) {
+                mOK = cart::drawButton(ren, ct.x, ct.y + ct.h - 20, 74, 18, "CREATE", true);
+                mRandom = cart::drawButton(ren, ct.x + 80, ct.y + ct.h - 20, 74, 18, "RANDOM", false);
+            } else {
+                mOK = cart::drawButton(ren, ct.x + ct.w - 150, ct.y + ct.h - 20, 70, 18, "OK", true);
+                mRandom = {};
+            }
             mCancel = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18,
                                        "CANCEL", false);
+            // Open dropdown list, drawn LAST so it overlays the fields below it.
+            mDropRects.clear();
+            if (mDropOpen >= 0 && mDropOpen < mN && mfChoices[mDropOpen]) {
+                const auto& opts = *mfChoices[mDropOpen];
+                const SDL_Rect& anchor = mBox[mDropOpen];
+                constexpr int kRowH = 14;
+                SDL_Rect list{anchor.x, anchor.y + anchor.h, anchor.w,
+                              kRowH * int(opts.size()) + 2};
+                SDL_SetRenderDrawColor(ren, 28, 30, 40, 255); SDL_RenderFillRect(ren, &list);
+                SDL_SetRenderDrawColor(ren, 150, 200, 120, 255); SDL_RenderDrawRect(ren, &list);
+                for (size_t i = 0; i < opts.size(); ++i) {
+                    SDL_Rect r{list.x + 1, list.y + 1 + int(i) * kRowH, list.w - 2, kRowH};
+                    if (opts[i] == mf[mDropOpen]) {
+                        SDL_SetRenderDrawColor(ren, 60, 80, 50, 255); SDL_RenderFillRect(ren, &r);
+                    }
+                    cart::drawText(ren, opts[i], r.x + 4, r.y + 3, 1, 225, 230, 240);
+                    mDropRects.push_back(r);
+                }
+            }
         }
 
         // Use Only checklist overlay: scrollable unit-type list, click to toggle.

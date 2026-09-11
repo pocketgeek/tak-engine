@@ -52,6 +52,27 @@ bool Vm::start(const std::string& script, const std::vector<int32_t>& args) {
     return true;
 }
 
+int32_t Vm::call(const std::string& script, const std::vector<int32_t>& args) {
+    lastLocals_.clear();
+    lastReturn_ = 0;
+    int idx = file_->scriptIndex(script);
+    if (idx < 0) return 0;
+    Thread t;
+    t.pc = file_->scripts[size_t(idx)].entry;
+    t.locals = args;
+    t.locals.resize(std::max<size_t>(args.size(), 16), 0);
+    // Query call-ins are straight-line (no SLEEP/WAIT); run() executes to RETURN
+    // in one slice. Bound the loop and stop if a script yields (pc unchanged after
+    // a slice = SLEEP/WAIT), so a caller can never hang on a non-query script.
+    for (int guard = 0; guard < 64 && !t.dead; ++guard) {
+        uint32_t before = t.pc;
+        run(t);
+        if (!t.dead && t.pc == before) break;
+    }
+    lastLocals_ = t.locals;
+    return lastReturn_;
+}
+
 void Vm::setStatic(size_t i, int32_t v) {
     if (i >= statics_.size()) statics_.resize(i + 1, 0);
     statics_[i] = v;
@@ -237,12 +258,13 @@ void Vm::run(Thread& t) {
                 t.pc += 3; break;
             }
             case 0x10064000: t.pc = uint32_t(arg(0)); break;                  // JUMP
-            case 0x10065000:                                                  // RETURN
-                pop(t);
-                if (t.callStack.empty()) { t.dead = true; return; }
+            case 0x10065000: {                                                // RETURN
+                int32_t rv = pop(t);
+                if (t.callStack.empty()) { lastReturn_ = rv; t.dead = true; return; }
                 t.pc = t.callStack.back();
                 t.callStack.pop_back();
                 break;
+            }
             case 0x10066000:                                                  // JUMP_IF_FALSE
                 if (pop(t) == 0) t.pc = uint32_t(arg(0));
                 else t.pc += 2;
