@@ -257,6 +257,24 @@ int main(int argc, char** argv) {
                 }
                 return std::pair<int, bool>{pulses, died};
             };
+            // shotart: this Earthquake is DELIVERED -- a visible shot flies to the
+            // aim point first and only then does the 3s channel start, so the first
+            // damage lands later than a conjured-in-place spell would.
+            check(!acolyte->weapons[0].shotArt.empty(), "arapries W1 carries shotart");
+            {
+                sim::World w; freshWorld(w);
+                int caster = w.spawn(acolyte, 1000, 1000, 0, 0);
+                int victim = w.spawn(prey, 1000, 1200, 0, 1);   // 200px: a real flight
+                if (auto* c = w.unit(caster)) c->mana = c->type->maxMana;
+                w.setWeapon(caster, 0);
+                w.attack(caster, victim, false);
+                bool sawShot = false;
+                for (int i = 0; i < 240; ++i) {
+                    w.tick(1.0f / 30.0f);
+                    if (!w.projectiles().empty()) { sawShot = true; break; }
+                }
+                check(sawShot, "it launches a visible delivery shot");
+            }
             auto [quakePulses, quakeDied] = pulseCount(0, 8.0f);
             check(quakePulses > 1 || quakeDied, "the Earthquake PULSES (not one tap)",
                   std::to_string(quakePulses) + " damage ticks");

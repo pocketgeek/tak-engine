@@ -575,8 +575,12 @@
             // sequence (weaponart -> anims/<name>_4444.taf): cannonballs, fireballs,
             // iceballs, meteors, lightning balls. Ours drew every one of them as the
             // same yellow streak. Same loader the explosion/flame effects use.
-            if (p.wsrc && !p.wsrc->weaponArt.empty()) {
-                if (const EffectAnim* ea = effectFor(p.wsrc->weaponArt)) {
+            const std::string& shotSprite = p.wsrc ? (p.wsrc->weaponArt.empty()
+                                                          ? p.wsrc->shotArt
+                                                          : p.wsrc->weaponArt)
+                                                   : std::string();
+            if (p.wsrc && !shotSprite.empty()) {
+                if (const EffectAnim* ea = effectFor(shotSprite)) {
                     // Ballistic shots arc; flat shots ride just above the ground.
                     bool bal = p.wsrc->ballistic;
                     float peak = bal ? std::min(95.0f, p.flight * 55.0f)

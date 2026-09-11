@@ -305,6 +305,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 wp.spinRate = float(w->numberOr("spinheading", 0)) * float(kCobAngle);
                 // shadowgaf is always "shadows"; shadowart names the sequence in it.
                 wp.shadowArt = lower(w->valueOr("shadowart", ""));
+                wp.shotArt = lower(w->valueOr("shotart", ""));
                 {
                     std::string lm = lower(w->valueOr("lightmap", ""));
                     wp.lightMap = lm == "small" ? 1 : lm == "medium" ? 2
@@ -1592,6 +1593,30 @@ void World::fire(Unit& u, Unit& target, int slot) {
         e.w = &w;
         e.x = target.x; e.z = target.z;
         e.player = u.player; e.fromId = u.id;
+        // shotart: this spell is DELIVERED. A visible shot flies to the aim point
+        // first and the channel only starts when it lands, so the Acolyte lobs its
+        // Earthquake rather than conjuring it under your feet. The shot is purely
+        // cosmetic -- targetId 0 means it collides with nothing and simply expires
+        // on arrival; the PendingEffect below carries all the actual damage.
+        float deliver = 0.0f;
+        if (!w.shotArt.empty() && w.projVel > 0) {
+            float sdx = target.x - u.x, sdz = target.z - u.z;
+            float sdist = std::max(detmath::len(sdx, sdz), 1e-3f);
+            float svel = w.projVel * kTick / 30.0f;
+            deliver = sdist / svel;
+            Projectile s;
+            s.x = u.x; s.z = u.z;
+            s.vx = sdx / sdist * svel;
+            s.vz = sdz / sdist * svel;
+            s.wsrc = &w;
+            s.targetId = 0;              // cosmetic: hits nothing, just flies
+            s.fromPlayer = u.player;
+            s.fromId = u.id;
+            s.fx = w.fx;
+            s.life = deliver;
+            s.flight = deliver;
+            projectiles_.push_back(s);
+        }
         switch (w.remote) {
             case Weapon::RemoteKind::Earthquake:
                 // Pulses every `shakeduration` from impact, right through buildup
@@ -1627,6 +1652,9 @@ void World::fire(Unit& u, Unit& target, int slot) {
                 e.endAt = w.buildUp + w.decay;
                 break;
         }
+        // The channel clock starts when the shot LANDS, not when it is thrown.
+        e.at += deliver;
+        e.endAt += deliver;
         pendingEffects_.push_back(e);
         return;
     }

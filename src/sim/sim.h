@@ -109,6 +109,12 @@ struct Weapon {
     uint8_t outer[3] = {120, 170, 255};    // outercolor
     float spinRate = 0;       // spinheading: shot spins as it flies (rad/sec)
     std::string shadowArt;    // shadowart: sequence in shadowgaf (always "shadows")
+    // shotart: a Remote Effect that is DELIVERED rather than conjured in place --
+    // a visible shot flies to the aim point at weaponvelocity and only starts the
+    // spell's channel when it lands. Exactly one shipped weapon (the Acolyte's
+    // Earthquake) uses it, which is also the only reason its weaponvelocity is
+    // read at all; for the other 22 Remote Effects it is dead data.
+    std::string shotArt;
     int lightMap = 0;         // lightmap: ground light pool, 1 small 2 medium 3 large
     // A wandering storm's own three-part animation: the spin-up, the roaming loop,
     // and the dissipation. Without these a tornado is invisible.
