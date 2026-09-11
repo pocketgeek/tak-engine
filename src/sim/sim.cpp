@@ -2131,9 +2131,15 @@ void World::rebuildOccupancy() {
         if (u.type->canFly || u.type->isStructure()) continue;   // structures are in nav_
         if (u.underConstruction) continue;
         if (u.speed != 0.0f) continue;   // only a parked body blocks (see sim.h)
-        int cx = int(u.x) / 16, cz = int(u.z) / 16;
-        if (cx < 0 || cz < 0 || cx >= occW_ || cz >= occH_) continue;
-        occ_[size_t(cz) * size_t(occW_) + size_t(cx)] = u.id;
+        // Stamp the whole footprint, centre-anchored to match NavGrid::fits.
+        int f = footCells(u.type);
+        int cx = int(u.x) / 16 - f / 2, cz = int(u.z) / 16 - f / 2;
+        for (int j = 0; j < f; ++j)
+            for (int i = 0; i < f; ++i) {
+                int x = cx + i, z = cz + j;
+                if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
+                occ_[size_t(z) * size_t(occW_) + size_t(x)] = u.id;
+            }
     }
 }
 
@@ -3874,8 +3880,8 @@ void World::tick(float dt) {
                     // never stalls on a cell its own path routed it through.
                     if (!(g.empty() || g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type))))
                         return false;
-                    // ...and units are solid: a parked body holds its cell.
-                    return cellFree(nx, nz, u.id);
+                    // ...and units are solid: a parked body holds its cells.
+                    return cellFree(nx, nz, u.id, footCells(u.type));
                 };
                 // A unit that stays inside its own cell is never tested -- retail
                 // does the same (it only checks on a cell crossing), and without it
@@ -3937,7 +3943,7 @@ void World::tick(float dt) {
                         auto free = [&](float nx, float nz) {
                             return (g.empty() ||
                                     g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type))) &&
-                                   cellFree(nx, nz, u.id);
+                                   cellFree(nx, nz, u.id, footCells(u.type));
                         };
                         float px = detmath::cos(u.heading), pz = -detmath::sin(u.heading);
                         // Which way to dodge. `id & 1` alone makes two units of the
@@ -4123,7 +4129,9 @@ void World::tick(float dt) {
     constexpr float kSep = 16.0f;
     auto ok = [&](const Unit& u, float nx, float nz) {
         const NavGrid& g = navFor(u.type);
-        return g.empty() || g.walkable(int(nx) / 16, int(nz) / 16);
+        // fits(), not walkable(): a separation push must not shove a body onto ground
+        // its footprint doesn't fit on. Identical at foot==1.
+        return g.empty() || g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type));
     };
     // Density cap: in a MASSIVE battle (units piled far denser than they separate),
     // the 3x3 neighbourhood of a cell can hold hundreds of units, making this O(n^2)
@@ -4132,7 +4140,17 @@ void World::tick(float dt) {
     // the pathological case while normal/moderate battles (below the threshold) keep the
     // exact all-pairs behaviour. Deterministic (crowd count + fixed grid order).
     uint32_t liveSep = 0;
-    for (const auto& u : units_) if (u.alive() && u.type) ++liveSep;
+    // Widest live mover, so the neighbour query covers the widest pair that can
+    // form. While every mover is one cell this is 1 and the radius below is exactly
+    // kSep -- which keeps the density cap's visit order, and therefore the hash,
+    // identical to before footprints existed.
+    int maxFoot = 1;
+    for (const auto& u : units_) {
+        if (!u.alive() || !u.type) continue;
+        ++liveSep;
+        if (u.type->canMove && !u.type->canFly && !u.type->isStructure())
+            maxFoot = std::max(maxFoot, footCells(u.type));
+    }
     int sepCap = liveSep > 4000 ? 24 : 0;   // 0 = uncapped
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& a = units_[i];
@@ -4143,17 +4161,22 @@ void World::tick(float dt) {
         // footprint. Buildings never separate.
         if (!a.alive() || a.embarked() || !a.type || !a.type->canMove ||
             a.type->isStructure() || a.type->canFly) continue;
-        forEachNearCapped(a.x, a.z, kSep, sepCap, [&](int j) {
+        forEachNearCapped(a.x, a.z, float(footCells(a.type) + maxFoot) * 8.0f,
+                          sepCap, [&](int j) {
             if (size_t(j) <= i) return;   // handle each pair once, and skip self
             Unit& b = units_[size_t(j)];
             if (!b.alive() || b.embarked() || !b.type || !b.type->canMove ||
                 b.type->isStructure() || b.type->canFly) return;
             float dx = b.x - a.x, dz = b.z - a.z;
             float d2 = dx * dx + dz * dz;
-            if (d2 >= kSep * kSep) return;
+            // Per-PAIR spacing: two bodies want their footprints not to overlap, so
+            // the radius is half of each, in px. Identical to kSep while every mover
+            // is one cell (8 + 8 = 16), and grows correctly once they aren't.
+            float want = float(footCells(a.type) + footCells(b.type)) * 8.0f;
+            if (d2 >= want * want) return;
             if (d2 < 1e-6f) { b.x += 1.0f; return; }   // exactly stacked: nudge
             float d = std::sqrt(d2);
-            float push = (kSep - d) * 0.5f;
+            float push = (want - d) * 0.5f;
             dx /= d; dz /= d;
             float axn = a.x - dx * push, azn = a.z - dz * push;
             float bxn = b.x + dx * push, bzn = b.z + dz * push;
@@ -4174,13 +4197,17 @@ void World::tick(float dt) {
         const NavGrid& g = navFor(u.type);
         if (g.empty()) continue;
         int cx = int(u.x) / 16, cz = int(u.z) / 16;
-        if (g.walkable(cx, cz)) continue;
+        // fits(), not walkable(): a big unit standing where only its centre cell is
+        // clear is still stuck. Identical at foot==1. The search radius scales with
+        // the body, because a 4x4 needs to travel further to find a legal spot.
+        int uf = footCells(u.type);
+        if (g.fits(cx, cz, uf)) continue;
         float bestD = 1e18f, tx = u.x, tz = u.z;
         bool found = false;
-        for (int r = 1; r <= 4 && !found; ++r)
+        for (int r = 1; r <= 4 + (uf - 1) && !found; ++r)   // 4 at foot 1, wider for a big body
             for (int dz = -r; dz <= r; ++dz)
                 for (int dx = -r; dx <= r; ++dx) {
-                    if (!g.walkable(cx + dx, cz + dz)) continue;
+                    if (!g.fits(cx + dx, cz + dz, uf)) continue;
                     float wx = (cx + dx) * 16 + 8.0f, wz = (cz + dz) * 16 + 8.0f;
                     float d = (wx - u.x) * (wx - u.x) + (wz - u.z) * (wz - u.z);
                     if (d < bestD) { bestD = d; tx = wx; tz = wz; found = true; }

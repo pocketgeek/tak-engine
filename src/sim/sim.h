@@ -1184,12 +1184,23 @@ private:
     void rebuildOccupancy();
     // Is (nx,nz) free of a parked body other than `selfId`? True when solidity is
     // off (no grid) or the cell is outside it.
-    bool cellFree(float nx, float nz, int selfId) const {
+    // Is the footprint rect at (nx,nz) free of a parked body other than `selfId`?
+    // `foot` is the unit's footprint in cells; at foot==1 this is the single-cell
+    // test it replaced, byte for byte.
+    bool cellFree(float nx, float nz, int selfId, int foot = 1) const {
         if (occW_ <= 0) return true;
         int cx = int(nx) / 16, cz = int(nz) / 16;
-        if (cx < 0 || cz < 0 || cx >= occW_ || cz >= occH_) return true;
-        int32_t o = occ_[size_t(cz) * size_t(occW_) + size_t(cx)];
-        return o == 0 || o == selfId;
+        // Centre-anchored, matching NavGrid::fits and blockFootprint, so a unit's
+        // nav footprint and its occupancy footprint are the same rect.
+        cx -= foot / 2; cz -= foot / 2;
+        for (int j = 0; j < foot; ++j)
+            for (int i = 0; i < foot; ++i) {
+                int x = cx + i, z = cz + j;
+                if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
+                int32_t o = occ_[size_t(z) * size_t(occW_) + size_t(x)];
+                if (o != 0 && o != selfId) return false;
+            }
+        return true;
     }
 
     std::vector<int> gHead_, gNext_;
