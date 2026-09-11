@@ -789,7 +789,11 @@
         // (renderGui) and the bottom InfoPanel chrome (drawPanel) are PLAYER-only: a
         // spectator isn't a player and gets neither, just the minimap and the F4 board.
         SDL_SetRenderDrawColor(ren_, 16, 14, 12, 255);
-        SDL_FRect panelStrip{float(mvw), 0, float(winW - mvw), float(winH) - barH()};
+        // The strip normally stops short to leave room for the player's bottom
+        // InfoPanel bar; a spectator has no bottom bar, so it must reach the
+        // bottom edge (else a barH()-tall gap shows under the right panel).
+        float stripH = spectating_ ? float(winH) : float(winH) - barH();
+        SDL_FRect panelStrip{float(mvw), 0, float(winW - mvw), stripH};
         SDL_RenderFillRectF(ren_, &panelStrip);
         drawMinimap(winW, winH);
         if (!spectating_) {
