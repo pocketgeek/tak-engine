@@ -30,7 +30,8 @@ struct KeyChord {
 
 // Every rebindable action. Order here is the display order in the config screen.
 enum class Act {
-    Move, Attack, FightMove, Patrol, Guard, Stop, CycleWeapon, NextUnit, TrackSelection,
+    Move, Attack, FightMove, Patrol, Guard, Stop, Heal, Load, Unload, ClearOrders,
+    CycleWeapon, NextUnit, TrackSelection,
     ToggleCloak, ToggleGate,
     SelectAll, SelectSameType, SelectOnScreen, SelectMonarch,
     SelectBuilders, SelectFactory, SelectMelee, SelectMagic, SelectBoats,

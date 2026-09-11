@@ -2228,6 +2228,18 @@
             case tak::Act::Attack:    pendingCmd_ = 'a'; return true;
             case tak::Act::Patrol:    pendingCmd_ = 'p'; return true;
             case tak::Act::Guard:     pendingCmd_ = 'g'; return true;
+            case tak::Act::Heal:      pendingCmd_ = 'r'; return true;   // repair a damaged friendly
+            case tak::Act::Load:      pendingCmd_ = 'l'; return true;   // click a unit to carry
+            case tak::Act::Unload:    pendingCmd_ = 'u'; return true;   // click the drop destination
+            case tak::Act::ClearOrders:                       // clear the whole order queue
+                for (int id : selection_) {
+                    tak::net::Command c;
+                    c.kind = tak::net::Cmd::Stop;
+                    c.unitId = id;
+                    issue(c);
+                }
+                pendingCmd_ = 0;
+                return true;
             case tak::Act::CycleWeapon:                       // cycle active weapon
                 if (const auto* u = multiWeaponSel()) {
                     int n = int(u->type->weapons.size());
