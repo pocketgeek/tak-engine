@@ -529,7 +529,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
 }
 
 bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
-                  const std::string& stem, int& humanOut) {
+                  const std::string& stem, int& humanOut, MissionSetup* out) {
     const std::string base = "missions/" + stem;
     // The .cob is OPTIONAL: 11 of the 74 shipped missions (takmission05_dh --
     // chapter 5 of Book of Darien! -- 07/23/28/40_ph/dh and takx07/10/12/14/15/17)
@@ -569,8 +569,12 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
         s.team = def.find("opponent") != std::string::npos ? 1 : 0;
         for (int f = 0; f < 5; ++f) if (def.find(kingdoms[f]) != std::string::npos) s.faction = f;
         slots.push_back(s);
-        bool ai = def.find("strategic") != std::string::npos || def.find("passive") != std::string::npos;
+        bool strategic = def.find("strategic") != std::string::npos;
+        bool ai = strategic || def.find("passive") != std::string::npos;
         if (!ai && !foundHuman) { human = slot; foundHuman = true; }
+        // Only a STRATEGIC player gets a brain. A "passive neutral" is scenery --
+        // villagers, wildlife, props -- and must stay inert.
+        if (strategic && out) out->aiSlots.push_back(slot);
     }
     if (slots.empty()) { slots.push_back(MatchSlot{}); otaToWorld[1] = 0; }   // at least the human
     auto mapPlayer = [&](int otaP) {
@@ -623,6 +627,33 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                         if (!im->empty()) initialOrders.push_back({id, *im});
                 }
             }
+
+    // Where each player's forces actually are, so an AI can march on a real base
+    // instead of a start position a mission never declares. The centroid of a
+    // slot's placed units is the closest thing a mission has to a "start".
+    if (out) {
+        if (const tdf::Node* md = gh->child("map data"))
+            {
+                out->aiProfile = md->valueOr("aiprofile", "");
+                std::transform(out->aiProfile.begin(), out->aiProfile.end(),
+                               out->aiProfile.begin(), ::tolower);
+            }
+        if (out->aiProfile == "default") out->aiProfile.clear();
+        out->slotPos.assign(size_t(kMaxPlayers), {0.0f, 0.0f});
+        std::vector<int> n(size_t(kMaxPlayers), 0);
+        for (const auto& u : world.units()) {
+            if (!u.alive() || !u.type) continue;
+            if (u.player < 0 || u.player >= kMaxPlayers) continue;
+            out->slotPos[size_t(u.player)].first += u.x;
+            out->slotPos[size_t(u.player)].second += u.z;
+            ++n[size_t(u.player)];
+        }
+        for (size_t i = 0; i < out->slotPos.size(); ++i)
+            if (n[i] > 0) {
+                out->slotPos[i].first /= float(n[i]);
+                out->slotPos[i].second /= float(n[i]);
+            }
+    }
 
     // Attach + start the in-sim "god" script (its spawns/triggers run from World::tick).
     // A data-only mission has no cob: MissionScript still runs the .ota conditions and

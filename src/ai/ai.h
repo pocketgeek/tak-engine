@@ -33,7 +33,7 @@ struct Profile {
 // Parse ai/default.txt from the runtime VFS (base + IP merged). One file covers
 // every faction. Never throws; a missing file yields an empty profile (the AI
 // then builds nothing).
-Profile loadProfile(const tak::hpi::Vfs& vfs);
+Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name = "default");
 
 // Opponent skill, loosely modelled on retail's easy/normal/hard. It scales HOW the
 // AI plays (economy pace, army size before it commits, aggression, reaction rate)

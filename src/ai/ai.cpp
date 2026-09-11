@@ -10,10 +10,16 @@
 
 namespace tak::ai {
 
-Profile loadProfile(const tak::hpi::Vfs& vfs) {
+Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name) {
     Profile prof;
-    if (!vfs.has("ai/default.txt")) return prof;
-    auto b = vfs.read("ai/default.txt");
+    // Campaign missions name their own build profile in the .ota (`aiprofile=`),
+    // and retail ships a dozen of them (ai/mission18.txt, ai/takx07.txt...) tuned
+    // for that mission's opposition. Fall back to default.txt when the named one
+    // is absent -- most missions just say DEFAULT.
+    std::string path = "ai/" + name + ".txt";
+    if (name.empty() || !vfs.has(path)) path = "ai/default.txt";
+    if (!vfs.has(path)) return prof;
+    auto b = vfs.read(path);
     std::istringstream f(std::string(b.begin(), b.end()));
     std::string kw, unit;
     int v;

@@ -94,7 +94,18 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
 // placed units and player slots from the mission `.ota`, and the in-sim MissionScript
 // (attached + started). Returns false if the mission bundle isn't found; sets humanOut
 // to the human player index. See docs/campaign-design.md.
+// What a mission needs beyond the world itself: which player slots the server
+// should run a skirmish AI for, where each slot's forces are, and which build
+// profile to give them. EVERY shipped mission marks at least one player
+// "strategic opponent" -- without an AI those bases never build or counterattack
+// and the mission plays as a static set-piece.
+struct MissionSetup {
+    std::vector<int> aiSlots;                        // world slots to drive with AI
+    std::vector<std::pair<float, float>> slotPos;    // per-slot centroid of placed units
+    std::string aiProfile;                           // .ota aiprofile= (ai/<name>.txt)
+};
+
 bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
-                  const std::string& stem, int& humanOut);
+                  const std::string& stem, int& humanOut, MissionSetup* out = nullptr);
 
 }  // namespace tak::sim

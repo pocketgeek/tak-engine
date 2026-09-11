@@ -426,10 +426,24 @@ void MissionScript::evalConditions(World& w, float) {
                 met = c.armed && !enemyOfTypeAlive(c.type);
                 break;
             case Cond::VictoryTimerRunsOut: met = clock_ >= c.a; break;
-            case Cond::CommanderKilled:
+            case Cond::CommanderKilled: {
+                // Losing your MONARCH, not your last soldier. 15 missions use this,
+                // and treating it as "all units dead" meant a mission whose whole
+                // premise is protecting its hero only ended when the last straggler
+                // fell. Arms once the commander has actually been placed.
+                bool alive = false;
+                for (const auto& u : w.units())
+                    if (u.alive() && u.type && u.type->commander && u.player == human_) {
+                        alive = true;
+                        break;
+                    }
+                if (alive) c.armed = true;
+                met = c.armed && !alive;
+                break;
+            }
             case Cond::AllUnitsKilled:
                 if (humanHasAnyMobile()) c.armed = true;
-                met = c.armed && !humanHasAnyMobile();   // TODO commander-specific
+                met = c.armed && !humanHasAnyMobile();
                 break;
             case Cond::DeathTimerRunsOut:   met = clock_ >= c.a; break;
             case Cond::AllUnitsKilledOfType: {

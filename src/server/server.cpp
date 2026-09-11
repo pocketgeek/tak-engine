@@ -246,6 +246,14 @@ private:
     bool relayHashSet_ = false;
     bool haveData_ = false, haveCb_ = false;
     tak::ai::Profile aiProfile_;
+    // Per-mission build profiles (ai/<name>.txt), cached by name -- a Controller
+    // holds a reference to its Profile, so these must outlive the room.
+    std::map<std::string, tak::ai::Profile> missionProfiles_;
+    const tak::ai::Profile& missionProfile(const tak::hpi::Vfs& vfs, const std::string& name) {
+        auto it = missionProfiles_.find(name);
+        if (it != missionProfiles_.end()) return it->second;
+        return missionProfiles_.emplace(name, tak::ai::loadProfile(vfs, name)).first->second;
+    }
     std::vector<std::string> aiNames_;   // retail's gamedata/ainames.tdf pool
 
     static std::vector<std::string> loadAiNames(const tak::hpi::Vfs& vfs) {
@@ -736,14 +744,41 @@ void Server::tryStart(Client& c) {
         r->ref = std::make_unique<tak::sim::World>();
         r->ref->setVisPlayer(-1);   // headless referee: no fog pass
         if (isMission) {
-            // Mission enemies are script-driven, so no skirmish AI controllers here.
             // The client builds the SAME world (setupMission is deterministic), so the
             // referee and every peer stay in lockstep.
             int human = 0;
-            if (!tak::sim::setupMission(*r->ref, *r->reg, ds->vfs, r->mission, human)) {
+            tak::sim::MissionSetup ms;
+            if (!tak::sim::setupMission(*r->ref, *r->reg, ds->vfs, r->mission, human, &ms)) {
                 std::fprintf(stderr, "takserver: mission '%s' not found; no referee sim\n",
                              r->mission.c_str());
                 r->ref.reset();
+            } else {
+                // Give every "strategic opponent" a brain. The mission script places
+                // and choreographs units, but nothing made those bases BUILD or
+                // counterattack -- every one of the shipped missions declares at
+                // least one strategic player, so they all played as static
+                // set-pieces. The AI lives server-side and emits ordinary commands
+                // into the tick stream, exactly as it does for a skirmish, so
+                // lockstep is unaffected. A "passive neutral" gets nothing: it is
+                // scenery. Mana income is deliberately NOT multiplied here -- a
+                // mission is balanced around its placements, not a skirmish curve.
+                const tak::ai::Profile& prof =
+                    ms.aiProfile.empty() ? aiProfile_
+                                         : missionProfile(ds->vfs, ms.aiProfile);
+                for (int slot : ms.aiSlots) {
+                    std::vector<std::pair<float, float>> enemyStarts;
+                    for (size_t j = 0; j < ms.slotPos.size(); ++j) {
+                        if (int(j) == slot || r->ref->allied(slot, int(j))) continue;
+                        if (ms.slotPos[j].first == 0.0f && ms.slotPos[j].second == 0.0f) continue;
+                        enemyStarts.push_back(ms.slotPos[j]);
+                    }
+                    r->ai.emplace_back(slot, *r->reg, prof, 0x7a6b0000u + r->id + uint32_t(slot),
+                                       tak::ai::Difficulty::Normal, std::move(enemyStarts));
+                }
+                if (!ms.aiSlots.empty())
+                    std::fprintf(stderr, "takserver: mission '%s' -- %zu strategic AI player(s)%s\n",
+                                 r->mission.c_str(), ms.aiSlots.size(),
+                                 ms.aiProfile.empty() ? "" : (" profile=" + ms.aiProfile).c_str());
             }
         } else {
             int maxSlot = 0;
