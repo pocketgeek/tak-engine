@@ -278,6 +278,31 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 wp.ballistic = lower(w->valueOr("type", "")) == "ballistic";
                 wp.soundHit = lower(w->valueOr("soundhitclass",
                                                w->valueOr("soundhit", "")));
+                // Projectile art (display only).
+                wp.weaponArt = lower(w->valueOr("weaponart", ""));
+                wp.shotModel = lower(w->valueOr("model", ""));
+                if (auto dot = wp.shotModel.rfind(".3do"); dot != std::string::npos)
+                    wp.shotModel.erase(dot);          // some FBIs spell the extension
+                wp.nimbus = w->numberOr("nimbus", 0) != 0;
+                {
+                    // innercolor/middlecolor/outercolor are "R G B" triples that
+                    // tint a lightning bolt's core, body and halo.
+                    auto rgb = [&](const char* key, uint8_t out[3]) {
+                        const std::string* v = w->value(key);
+                        if (!v) return false;
+                        int c[3] = {255, 255, 255};
+                        std::sscanf(v->c_str(), "%d %d %d", &c[0], &c[1], &c[2]);
+                        for (int i = 0; i < 3; ++i)
+                            out[i] = uint8_t(std::clamp(c[i], 0, 255));
+                        return true;
+                    };
+                    bool a = rgb("innercolor", wp.inner);
+                    bool b = rgb("middlecolor", wp.middle);
+                    bool c = rgb("outercolor", wp.outer);
+                    wp.hasBoltColor = a || b || c;
+                }
+                // spinheading is in COB angle units per second.
+                wp.spinRate = float(w->numberOr("spinheading", 0)) * float(kCobAngle);
                 wp.explosionClass = lower(w->valueOr("explosionclass", ""));
                 wp.waterExplosionClass = lower(w->valueOr("waterexplosionclass", ""));
                 wp.radiusArt[0] = lower(w->valueOr("radiusart0", ""));

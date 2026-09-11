@@ -690,6 +690,27 @@
         // Weapon impacts this tick: play each weapon's soundhitclass, picking the
         // material-specific variant from the struck unit's bodytype (flesh/armor/..).
         if (newTick_) for (const auto& h : frameHits()) {
+            // Instant-hit weapons (FBI type = Line of Sight) spawn no projectile, so
+            // nothing was ever drawn for them -- the Aramon King's Thunder, the Creon
+            // tasers, the Zhon lightning and a dozen more fired completely INVISIBLY.
+            // Draw the shot itself: a bolt struck from the firer to the victim, in
+            // the weapon's own inner/middle/outer colours where it declares them.
+            if (h.weapon && h.weapon->beam && !h.weapon->melee &&
+                (noFog_ || cellVisibleR(h.x, h.z))) {
+                BeamFx b;
+                b.x1 = h.fromX; b.z1 = h.fromZ;
+                b.x2 = h.x;     b.z2 = h.z;
+                b.alt1 = unitAltById(h.weapon ? 0 : 0) * 0.0f;   // set below
+                b.lightning = h.weapon->fx == tak::sim::WeaponFx::Lightning;
+                for (int i = 0; i < 3; ++i) {
+                    b.inner[i] = h.weapon->inner[i];
+                    b.middle[i] = h.weapon->middle[i];
+                    b.outer[i] = h.weapon->outer[i];
+                }
+                b.alt1 = flyerAltAt(b.x1, b.z1) * 0.8f;
+                b.alt2 = flyerAltAt(b.x2, b.z2) * 0.8f;
+                beams_.push_back(b);
+            }
             if (h.weapon && !h.weapon->soundHit.empty()) {
                 const std::string& body = h.target ? h.target->bodyType : std::string("default");
                 const std::string* wav = soundClasses_.pick(h.weapon->soundHit, body, salt_++);

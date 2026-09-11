@@ -443,6 +443,50 @@
 
         // Projectiles: drawn per weapon family (only where visible).
         float zm = mapView_.zoom();
+        // Hitscan flashes first, behind the shots. A Line-of-Sight weapon applies
+        // its damage instantly and spawns no projectile, so this bolt IS the shot:
+        // without it the King's Thunder, the Creon tasers and the Zhon lightning
+        // all fire invisibly. Lightning zig-zags; other beams draw straight.
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
+        for (const auto& b : beams_) {
+            constexpr float kBeamLife = 0.16f;
+            float f = std::clamp(1.0f - b.age / kBeamLife, 0.0f, 1.0f);
+            if (f <= 0.0f) continue;
+            if (!cellVisibleR(b.x2, b.z2) && !noFog_) continue;
+            auto sx = [&](float x, float z) {
+                return (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
+            };
+            auto sy = [&](float x, float z, float alt) {
+                return (z - mapView_.offY()) * zm - 12 * zm - terrainLift(x, z) * zm - alt * zm;
+            };
+            float ax = sx(b.x1, b.z1), ay = sy(b.x1, b.z1, b.alt1);
+            float bx = sx(b.x2, b.z2), by = sy(b.x2, b.z2, b.alt2);
+            // Three passes -- outer halo, middle body, hot core -- so a weapon's
+            // own colours read the way retail's layered bolt does.
+            struct Pass { const uint8_t* c; float wob; int reps; };
+            const Pass passes[3] = {{b.outer, 3.4f, 3}, {b.middle, 1.8f, 2}, {b.inner, 0.7f, 1}};
+            int segs = b.lightning ? 7 : 1;
+            for (const Pass& ps : passes) {
+                SDL_SetRenderDrawColor(ren_, ps.c[0], ps.c[1], ps.c[2], Uint8(230 * f));
+                for (int rep = 0; rep < ps.reps; ++rep) {
+                    float px = ax, py = ay;
+                    for (int s = 1; s <= segs; ++s) {
+                        float t2 = float(s) / float(segs);
+                        float nx = ax + (bx - ax) * t2, ny = ay + (by - ay) * t2;
+                        if (b.lightning && s < segs) {
+                            int j = (s * 7919 + rep * 131 + int(b.age * 2000)) % 11 - 5;
+                            float dx = bx - ax, dy = by - ay;
+                            float dl = std::max(std::sqrt(dx * dx + dy * dy), 1e-3f);
+                            nx += -dy / dl * float(j) * ps.wob;
+                            ny += dx / dl * float(j) * ps.wob;
+                        }
+                        SDL_RenderDrawLineF(ren_, px, py, nx, ny);
+                        px = nx; py = ny;
+                    }
+                }
+            }
+        }
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         for (const auto& p : front().projectiles) {
             if (!cellVisibleR(p.x, p.z)) continue;
             float t = std::clamp(p.age / std::max(p.flight, 0.05f), 0.0f, 1.0f);
@@ -451,6 +495,51 @@
             // lift), so a drake's breath leaves its mouth and arcs to the ground.
             float palt = (unitAltById(p.fromId) * (1 - t) + unitAltById(p.targetId) * t)
                          * 0.8f * zm;
+            // A shot with a real mesh (arrows, spears, boulders) is drawn as that
+            // mesh, yawed along its flight so an arrow actually points where it is
+            // going. Models face -heading, like every other mover.
+            if (p.wsrc && !p.wsrc->shotModel.empty()) {
+                bool bal = p.wsrc->ballistic;
+                float peak = bal ? std::min(95.0f, p.flight * 55.0f)
+                                 : std::min(18.0f, p.flight * 12.0f);
+                float h = 8 + 4 * peak * t * (1 - t);
+                drawShotModel(p.wsrc->shotModel, p.fromPlayer, p.x, p.z,
+                              h * zm + palt, -std::atan2(p.vx, p.vz));
+                continue;
+            }
+            // Authored projectile art. Retail draws most shots as a real sprite
+            // sequence (weaponart -> anims/<name>_4444.taf): cannonballs, fireballs,
+            // iceballs, meteors, lightning balls. Ours drew every one of them as the
+            // same yellow streak. Same loader the explosion/flame effects use.
+            if (p.wsrc && !p.wsrc->weaponArt.empty()) {
+                if (const EffectAnim* ea = effectFor(p.wsrc->weaponArt)) {
+                    // Ballistic shots arc; flat shots ride just above the ground.
+                    bool bal = p.wsrc->ballistic;
+                    float peak = bal ? std::min(95.0f, p.flight * 55.0f)
+                                     : std::min(18.0f, p.flight * 12.0f);
+                    float h = 8 + 4 * peak * t * (1 - t);
+                    float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
+                    float sy = (p.z - mapView_.offY()) * zm - h * zm
+                               - terrainLift(p.x, p.z) * zm - palt;
+                    const auto& fr = ea->frames[size_t(int(p.age * 20.0f)) % ea->frames.size()];
+                    float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
+                    SDL_FRect dst{sx - fw * 0.5f, sy - fh * 0.5f, fw, fh};
+                    // nimbus: an additive glow riding under the sprite.
+                    if (p.wsrc->nimbus) {
+                        SDL_SetTextureAlphaMod(fr.tex, 90);
+                        SDL_FRect g{sx - fw, sy - fh, fw * 2, fh * 2};
+                        SDL_RenderCopyF(ren_, fr.tex, nullptr, &g);
+                        SDL_SetTextureAlphaMod(fr.tex, 255);
+                    }
+                    if (p.wsrc->spinRate != 0.0f)
+                        SDL_RenderCopyExF(ren_, fr.tex, nullptr, &dst,
+                                          double(p.age * p.wsrc->spinRate * 57.2957795f),
+                                          nullptr, SDL_FLIP_NONE);
+                    else
+                        SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
+                    continue;
+                }
+            }
             if (p.fx == tak::sim::WeaponFx::Lightning) {
                 // Flat, fast, jagged blue-white bolt from source toward target.
                 float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
@@ -2519,6 +2608,8 @@
     }
 
     void GameView::updateEffects(float dt) {
+        for (auto& b : beams_) b.age += dt;
+        std::erase_if(beams_, [](const BeamFx& b) { return b.age > 0.16f; });
         for (auto& e : effects_) e.age += dt;
         std::erase_if(effects_, [](const EffectInst& e) {
             if (!e.anim || e.anim->frames.empty()) return true;

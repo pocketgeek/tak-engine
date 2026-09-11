@@ -135,7 +135,16 @@ Frame decodeFrame(const std::vector<uint8_t>& d, uint32_t off, const Palette& pa
     fr.xoff = h.xoff;
     fr.yoff = h.yoff;
     fr.rgba.assign(size_t(h.w) * h.h * 4, 0);
-    need(d, h.dataPtr, uint64_t(h.numSubframes) * 4, "subframe pointers");
+    // Some shipped TAFs carry junk in the HIGH byte of the subframe-count field --
+    // the cannonball sprites (cannbsm/cannbmed/cannblg), the hurricane loop and the
+    // big dust cloud all read 65280 (0xFF00) where a healthy frame reads 0, while
+    // their ordinary single-frame data pointer is perfectly valid. Retail clearly
+    // ignores it; reading the count strictly made us throw away the art for 23
+    // weapons plus a storm effect. No real GAF composites hundreds of subframes, so
+    // an implausible count means "not a composite" -- decode the plain frame.
+    if (h.numSubframes > 255 ||
+        uint64_t(h.dataPtr) + uint64_t(h.numSubframes) * 4 > d.size())
+        return decodeSingle(d, h, pal);
     for (uint16_t i = 0; i < h.numSubframes; ++i) {
         Frame sub = decodeFrame(d, u32(&d[h.dataPtr + i * 4]), pal);
         int ox = h.xoff - sub.xoff;

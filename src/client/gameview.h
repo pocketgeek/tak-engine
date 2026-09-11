@@ -994,6 +994,43 @@ private:
 
     // Draw a translucent, faintly blue ghost of a building where it will be
     // built later (a queued or not-yet-started site).
+    // Draw a projectile that ships a real 3DO mesh (FBI `model`): arrows, spears,
+    // daggers, boulders, harpoons, the egg bomb -- 39 weapons, every one of which
+    // was a generic yellow streak before. Same projection as a ghost, but solid,
+    // lifted by the shot's altitude and yawed along its flight.
+    void drawShotModel(const std::string& name, int player, float x, float z,
+                       float altPx, float facing) {
+        const tak::tdo::Model* model = ghostModel(name);
+        if (!model) return;
+        tris_.clear();
+        SDL_Texture* atlas = atlasFor(colorSlot_[player & 7]);
+        collect(tris_, atlas, model->root, Xform{}, nullptr, facing, player);
+        if (tris_.empty()) return;
+        std::stable_sort(tris_.begin(), tris_.end(),
+                         [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        float zm = mapView_.zoom();
+        float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
+        float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm - altPx;
+        triBatch_.clear();
+        SDL_Texture* cur = nullptr;
+        auto flush = [&] {
+            if (!triBatch_.empty())
+                SDL_RenderGeometry(ren_, cur, triBatch_.data(),
+                                   int(triBatch_.size()), nullptr, 0);
+            triBatch_.clear();
+        };
+        for (auto& t : tris_) {
+            if (t.tex != cur) { flush(); cur = t.tex; }
+            for (int i = 0; i < 3; ++i) {
+                SDL_Vertex v = t.v[i];
+                v.position.x = v.position.x * zm + ax;
+                v.position.y = v.position.y * zm + ay;
+                triBatch_.push_back(v);
+            }
+        }
+        flush();
+    }
+
     void drawGhostAt(const tak::sim::UnitType* type, float x, float z,
                      bool invalid = false) {
         const tak::tdo::Model* model = ghostModel(type->id);
@@ -2444,6 +2481,18 @@ private:
     void voice(int unitId, const std::string& event);
 
     // --- GAF/TAF impact effects (gamedata/explosions -> data/anims/*.taf) ------
+    // A hitscan shot's visible flash: instant-hit weapons (Line of Sight) spawn no
+    // projectile, so this is the ONLY thing drawn for them. Lives ~0.15s and fades.
+    struct BeamFx {
+        float x1 = 0, z1 = 0, x2 = 0, z2 = 0;
+        float alt1 = 0, alt2 = 0;
+        uint8_t inner[3] = {255, 255, 255};
+        uint8_t middle[3] = {200, 230, 255};
+        uint8_t outer[3] = {120, 170, 255};
+        bool lightning = false;   // jagged bolt vs a clean beam
+        float age = 0;
+    };
+    std::vector<BeamFx> beams_;
     struct EFrame { SDL_Texture* tex = nullptr; int w = 0, h = 0, ax = 0, ay = 0; };
     struct EffectAnim { std::vector<EFrame> frames; };
     std::map<std::string, std::vector<std::string>> explosionClasses_;  // class -> anim names

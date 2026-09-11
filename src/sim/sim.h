@@ -95,6 +95,19 @@ struct Weapon {
     enum class Status { None, Frozen, Stoned, Paralyzed } status = Status::None;
     float statusDur = 0;     // seconds the inflicted status lasts
     std::string soundHit;    // soundhitclass: impact-sound class (arrow/sword/cannon..)
+    // Projectile ART (display only -- never hashed, like explosionClass below).
+    // Retail draws a shot as authored art: a GAF/TAF sprite (weaponart, 60
+    // weapons), or a real 3DO mesh (model, 39 -- arrows, spears, boulders), with
+    // an optional glow (nimbus) and a ground shadow. Without these every shot in
+    // the game is the same hand-drawn streak.
+    std::string weaponArt;    // weaponart: anims/<name>_4444.taf sprite sequence
+    std::string shotModel;    // model: objects3d/<name>.3do projectile mesh
+    bool  nimbus = false;     // nimbus: additive glow around the shot
+    bool  hasBoltColor = false;
+    uint8_t inner[3] = {255, 255, 255};    // innercolor: lightning bolt core
+    uint8_t middle[3] = {200, 230, 255};   // middlecolor
+    uint8_t outer[3] = {120, 170, 255};    // outercolor
+    float spinRate = 0;       // spinheading: shot spins as it flies (rad/sec)
     std::string explosionClass;       // explosionclass: impact effect (gamedata/explosions)
     std::string waterExplosionClass;  // waterexplosionclass: impact effect over water
     // Area-effect shockwave rings emitted at this weapon's impact.
