@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 35;       // 35: structures exempt from separation/unstick
+constexpr uint32_t kNetVersion = 36;       // 36: in-sim .crt scenario trigger runner + forced-defeat
+                                           // 35: structures exempt from separation/unstick
                                            // 28: retail melee = footprint adjacency
                                            // 26: benchmark level 6 (Extra Absurd)
                                            // 25: GameOptions.benchmark carries an INTENSITY

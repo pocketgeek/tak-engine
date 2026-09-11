@@ -538,6 +538,7 @@ struct Player {
 constexpr int kMaxPlayers = 8;
 
 class MissionScript;   // src/sim/mission.h -- optional campaign "god" script + win/lose
+class ScenarioScript;  // src/sim/scenario.h -- optional .crt per-player trigger runner
 
 // Benchmark staged-spawn plan: a set of units to spawn at a scheduled tick. Built once in
 // setupMatch (deterministically -- so the client sim and the referee build the identical
@@ -751,6 +752,14 @@ public:
     void setMission(std::unique_ptr<MissionScript> m);
     MissionScript* mission() { return mission_.get(); }
     int missionOutcome() const;   // 0 none/running / +1 victory / -1 defeat
+
+    // Scenario (.crt) trigger runner: an optional in-sim per-player rule engine
+    // (src/sim/scenario.h). Ticked inside tick() and folded into stateHash().
+    void setScenario(std::unique_ptr<ScenarioScript> s);
+    ScenarioScript* scenario() { return scenario_.get(); }
+    // Force a player to count as defeated regardless of its unit count (a
+    // scenario Victory/Defeat action); respected by updateOutcome, hashed.
+    void forceDefeat(int player);
     // Fog of war for the local player over 16px cells: 0 hidden, 1 explored, 2 visible.
     const std::vector<uint8_t>& visibility() const { return vis_; }
     uint32_t visGeneration() const { return visGen_; }   // bumps on each fog recompute
@@ -933,7 +942,9 @@ private:
     bool sightClear(int ux, int uz, float eyeH, int tx, int tz) const;
     std::vector<Unit> units_;
     std::unique_ptr<MissionScript> mission_;   // optional campaign mission runner
-    std::vector<int> justDied_;                // unit ids that died this tick (mission hook)
+    std::unique_ptr<ScenarioScript> scenario_; // optional .crt trigger runner
+    std::vector<uint8_t> forcedDefeat_;        // scenario Victory/Defeat: forced-defeated slots
+    std::vector<int> justDied_;                // unit ids that died this tick (mission/scenario hook)
     std::vector<std::pair<float, float>> manaSpots_;
     std::vector<Feature> features_;             // reclaimable map features
     std::vector<FeatType> featTypes_;           // per-type burn data (setup-time, static)

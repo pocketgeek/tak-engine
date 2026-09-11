@@ -61,6 +61,7 @@ add_library(tak-formats
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
   src/sim/mission.cpp
+  src/sim/scenario.cpp
   src/campaign/campaign.cpp
   src/crt/crt.cpp
   src/gui/gui.cpp

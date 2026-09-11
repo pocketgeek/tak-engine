@@ -3,6 +3,7 @@
 #include "hpi/hpi.h"
 #include "sim/detmath.h"
 #include "sim/mission.h"
+#include "sim/scenario.h"
 #include "tdf/tdf.h"
 
 #include <algorithm>
@@ -2712,7 +2713,7 @@ void World::tick(float dt) {
     // unit-index order), so lockstep peers stay in sync.
     pathBudget_ = 24;
     for (auto& u : units_) { u.justFired = false; u.justBuilt = 0; }
-    if (mission_) justDied_.clear();   // deaths this tick, fed to the mission runner below
+    if (mission_ || scenario_) justDied_.clear();   // deaths this tick, fed to mission/scenario below
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
     clock_ += dt;    // wall-clock since the match started (for god timing)
     // Cosmetic disco emote countdown (Shift+D). Deterministic across peers but not
@@ -2950,7 +2951,7 @@ void World::tick(float dt) {
                     k->veteran = std::min(10, k->xp);
                 }
             }
-            if (mission_) justDied_.push_back(u.id);
+            if (mission_ || scenario_) justDied_.push_back(u.id);
             // Corpse window: the body lies reclaimable (and, if its corpse def
             // says so, resurrectable) until decomposetime runs out. Gibbed
             // (overkill >= maxHp -- placeholder severity rule pending the icd
@@ -3058,7 +3059,7 @@ void World::tick(float dt) {
         if (u.embarked()) {                  // riding a transport
             Unit* t = unit(u.inTransport);
             if (t && t->alive()) { u.x = t->x; u.z = t->z; }
-            else { if (mission_) justDied_.push_back(u.id); u.deadFor = 0; }  // transport lost with all hands
+            else { if (mission_ || scenario_) justDied_.push_back(u.id); u.deadFor = 0; }  // transport lost with all hands
             continue;
         }
         // Frozen / petrified / paralyzed: the unit is inert this tick.
@@ -3448,6 +3449,12 @@ void World::tick(float dt) {
         for (int id : justDied_) mission_->unitDied(*this, id);
         mission_->step(*this, dt);
     }
+    // Scenario (.crt) trigger runner: same lockstep contract as the mission
+    // runner -- built identically on every peer, ticked here, hashed below.
+    if (scenario_) {
+        for (int id : justDied_) scenario_->unitDied(*this, id);
+        scenario_->step(*this, dt);
+    }
 }
 
 uint64_t World::stateHash() const {
@@ -3529,6 +3536,8 @@ uint64_t World::stateHash() const {
     mix(fWork);
     mix(uint64_t(burnRng_));   // burn-RNG stream position must agree
     if (mission_) mission_->foldHash(h);   // mission triggers/vars/outcome are lockstep state
+    if (scenario_) scenario_->foldHash(h); // scenario flags/timers/outcome are lockstep state
+    for (uint8_t d : forcedDefeat_) { h ^= (d + 1u); h *= 1099511628211ULL; }
     return h;
 }
 
@@ -3541,6 +3550,16 @@ void World::setMission(std::unique_ptr<MissionScript> m) {
     if (mission_) mission_->start(*this);   // queue the Start script (runs on the first tick)
 }
 int World::missionOutcome() const { return mission_ ? mission_->outcome() : 0; }
+
+void World::setScenario(std::unique_ptr<ScenarioScript> s) {
+    scenario_ = std::move(s);
+    if (scenario_) scenario_->start(*this);
+}
+void World::forceDefeat(int player) {
+    if (player < 0) return;
+    if (int(forcedDefeat_.size()) <= player) forcedDefeat_.resize(size_t(player) + 1, 0);
+    forcedDefeat_[size_t(player)] = 1;
+}
 
 int World::updateOutcome() {
     // A player is defeated when it has no living units. Compute per-player
@@ -3563,7 +3582,8 @@ int World::updateOutcome() {
         // identically on every peer + the referee, so win/defeat agree in lockstep.
         bool monarchDead = !monarchExpendable_ && hadMonarch_[size_t(p)] &&
                            monarchByPlayer[size_t(p)] == 0;
-        players_[size_t(p)].defeated = (aliveByPlayer[size_t(p)] == 0) || monarchDead;
+        bool forced = p < int(forcedDefeat_.size()) && forcedDefeat_[size_t(p)];
+        players_[size_t(p)].defeated = (aliveByPlayer[size_t(p)] == 0) || monarchDead || forced;
         players_[size_t(p)].unitCount = aliveByPlayer[size_t(p)];   // re-sync the cap count
     }
 

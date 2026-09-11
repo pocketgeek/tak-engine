@@ -437,6 +437,11 @@
         if (world_.godsEnabled())
             for (int t = 0; t < world_.numPlayers(); ++t)
                 if (world_.godReady(t)) summonGod(t);
+        // Scenario (.crt) "Display" actions: surface the sim runner's messages as
+        // HUD notices for the viewing player. Drained on the sim thread (same as
+        // scenario step, so no race on its queue); postNotice defers to main.
+        if (auto* sc = world_.scenario())
+            for (auto& m : sc->drainMessages()) postNotice(m.text, 8);
         if (!spawnRules_.empty() || !messages_.empty()) scenClock2_ += dt;
         for (auto& sr : spawnRules_) {
             if (sr.atTime >= 0) {

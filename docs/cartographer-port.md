@@ -225,18 +225,26 @@ location="Anywhere"; text string = literal 256-byte string; flag = int index.
 Full 26+26 template list captured in the RE task output (session d39a8c26,
 task ac01eaf629a4e233d).
 
-### Engine gap: `.crt`/trigger RUNNER is NET-NEW (reader is now correct)
-`tak::crt::parse` now reads the full record (positions, per-unit stats, rules,
-regions) correctly — fixing a real engine bug where the scenario loader read
-placements from zero offsets (wrong player, dropped units). The engine's
-scenario branch (`gameview.h`) spawns units at the corrected cells and now
-honours each unit's facing angle. Still net-new: (1) APPLYING per-unit stats
-(health/veteran/armor/weapon) to the spawned sim unit — needs sim setters +
-a kNetVersion bump since it touches hashed state; (2) a real rule EVALUATOR for
-the 26+26 opcodes (the engine's current `loadTriggers` view is a heuristic flat
-stream; the proven typed model — separate condition/action opcode spaces per
-group — is the migration target). `src/sim/mission.cpp` remains the separate
-CAMPAIGN runner (COB god-script + OTA keys).
+### Engine: `.crt` scenario RUNNER is now in the sim (DONE, kNetVersion 36)
+`tak::crt::parse` reads the full record; the engine's scenario branch spawns the
+placed units at the corrected cells, APPLYING each unit's health% and veteran,
+and honouring its facing angle. The 26+26 trigger opcodes now run in the sim:
+`src/sim/scenario.{h,cpp}` (`ScenarioScript`) mirrors `MissionScript` — built on
+every peer, ticked in `World::tick`, folded into `stateHash`, so flag/timer
+state, spawns, and win/lose stay in lockstep. Rules are EDGE-triggered (fire
+once on the rising edge of "all conditions true", the retail model); conditions
+cover gametime/timers/flags/control-counts-in-region/opponents-left/resources/
+kills+losses/random, actions cover flags/timers/create/destroy/own/heal/damage/
+move/resources/victory+defeat(me|teammates|opponents)/display. Victory/Defeat
+force per-player defeat via `World::forceDefeat` (respected by `updateOutcome`,
+hashed); "Display" actions surface as HUD notices for the viewing player.
+Verified: deterministic (stateHash reproduces + cross-build golden), edge-timing
+correct (a "set countdown timer to N" fires once then counts down), victory
+defeats opponents. `src/sim/mission.cpp` remains the separate CAMPAIGN runner.
+
+Remaining (minor): "Move all" uses a plain move order; kill/loss credit is by
+last-hitter; and the old client-side heuristic trigger code in gameview is now
+dormant (superseded, left as a no-op) pending a cleanup pass.
 
 ### Command ID -> handler VAs (for follow-up RE)
 ScenProps 0x401890 · UseOnly 0x401910 · zoom 0x401990/a10/a90/b10 · 12.5%

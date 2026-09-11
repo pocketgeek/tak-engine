@@ -24,6 +24,7 @@
 #include "net/lockstep.h"
 #include "ai/ai.h"          // Difficulty <-> aiLevel + incomeMultFor (header-only helpers)
 #include "sim/matchsetup.h"
+#include "sim/scenario.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
 #include "tdo/tdo.h"
@@ -305,129 +306,42 @@ public:
                               &mapView_.map().features);
             tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_, &registry_);
             std::string crtPath = mapSibling(".crt");
-            auto placements = vhas(crtPath) ? tak::crt::load(vread(crtPath))
-                                            : std::vector<tak::crt::Placement>{};
-            std::printf("scenario: %zu placements\n", placements.size());
+            tak::crt::Scenario scen = vhas(crtPath) ? tak::crt::parse(vread(crtPath))
+                                                    : tak::crt::Scenario{};
+            std::printf("scenario: %zu placements, %zu regions\n",
+                        scen.units.size(), scen.regions.size());
             float cx = 0, cz = 0;
             int n = 0;
-            for (const auto& p : placements) {
-                std::string id = p.name;
+            for (const auto& u : scen.units) {
+                std::string id = u.objectName;
                 std::transform(id.begin(), id.end(), id.begin(), ::tolower);
-                int player = std::clamp(p.player, 0, 3);
-                // .crt stores facing in degrees (shipped maps use 180 = due
-                // south, which is the old hard-coded heading); honour per-unit
-                // angles now that the record is read correctly.
-                float heading = p.angle * 3.14159265f / 180.0f;
-                if (spawn(id, p.x, p.z, heading, player) >= 0 && player == 0) {
-                    cx += p.x; cz += p.z; ++n;
+                int player = std::clamp(u.player, 0, 3);
+                float wx = float(u.x) * 16.0f + 8.0f, wz = float(u.z) * 16.0f + 8.0f;
+                // .crt facing is degrees (shipped maps use 180 = due south).
+                float heading = float(u.angle) * 3.14159265f / 180.0f;
+                int uid = spawn(id, wx, wz, heading, player);
+                if (uid >= 0) {
+                    if (tak::sim::Unit* su = world_.unit(uid)) {   // apply the .crt stats
+                        if (su->type)
+                            su->hp = su->type->maxHp * float(std::clamp(u.health, 0, 100)) / 100.0f;
+                        su->veteran = std::clamp(u.veteran, 0, 10);
+                    }
+                    if (player == 0) { cx += wx; cz += wz; ++n; }
                 }
             }
             if (n) mapView_.setOffset(cx / float(n) - 640 / 0.9f,
                                       cz / float(n) - 400 / 0.9f);
             loadFeatures();
 
-            // Skirmish victory rule from the map's trigger section: a scoring
-            // unit type, a scoring region, and a time limit.
-            auto trig = vhas(crtPath) ? tak::crt::loadTriggers(vread(crtPath))
-                                      : tak::crt::Triggers{};
-            // Scoring rule comes from an op-13 record (score-count of a unit
-            // type in a region); the time limit is the first op-1 timer that
-            // follows it. Maps without op 13 (pure last-alive arenas) get no
-            // scoring rule.
-            bool sawScore = false;
-            for (const auto& rec : trig.records) {
-                if (!sawScore && rec.op() == 13 && rec.slots.size() == 2) {
-                    std::string lo = rec.slots[0];
-                    std::transform(lo.begin(), lo.end(), lo.begin(), ::tolower);
-                    scenUnit_ = registry_.find(lo);
-                    if (!scenUnit_) continue;
-                    bool found = false;
-                    for (const auto& r : trig.regions)
-                        if (r.name == rec.slots[1]) {
-                            scenRegion_ = r;
-                            found = true;
-                        }
-                    if (!found) {   // e.g. 'Anywhere': the whole map
-                        scenRegion_.name = rec.slots[1];
-                        scenRegion_.x1 = 0;
-                        scenRegion_.z1 = 0;
-                        scenRegion_.x2 = mapView_.map().width;
-                        scenRegion_.z2 = mapView_.map().height;
-                    }
-                    sawScore = true;
-                } else if (sawScore && scenTime_ <= 0 && rec.op() == 1 &&
-                           rec.slots.size() == 1 &&
-                           rec.slots[0].find_first_not_of("0123456789") ==
-                               std::string::npos) {
-                    int v = std::atoi(rec.slots[0].c_str());
-                    if (v >= 60 && v <= 7200) scenTime_ = float(v);
-                }
-            }
-            if (scenUnit_ && scenTime_ > 0 && !scenRegion_.name.empty())
-                std::printf("scenario rule: most %s in '%s' after %.0fs\n",
-                            scenUnit_->name.c_str(), scenRegion_.name.c_str(),
-                            scenTime_);
-
-            // Trigger-record rules: timed spawns (op 1 sets the time
-            // context, following op 7s spawn then), maintain-count
-            // respawns (op 16 then op 7s), and timed player messages.
-            auto regionOf = [&](const std::string& nm) -> const tak::crt::Region* {
-                for (const auto& r : trig.regions)
-                    if (r.name == nm) return &r;
-                return nullptr;
-            };
-            float timeCtx = 0;
-            int maintainN = 0;
-            std::string maintainType, maintainRegion;
-            for (const auto& rec : trig.records) {
-                int op = rec.op();
-                if (op == 1 && rec.slots.size() == 1 &&
-                    rec.slots[0].find_first_not_of("0123456789") == std::string::npos) {
-                    timeCtx = float(std::atoi(rec.slots[0].c_str()));
-                    maintainN = 0;
-                } else if (op == 16 && rec.slots.size() == 3) {
-                    maintainN = std::atoi(rec.slots[0].c_str());
-                    maintainType = rec.slots[1];
-                    maintainRegion = rec.slots[2];
-                } else if (op == 7 && rec.slots.size() == 2) {
-                    std::string ty = rec.slots[0];
-                    std::transform(ty.begin(), ty.end(), ty.begin(), ::tolower);
-                    const auto* rg = regionOf(rec.slots[1]);
-                    if (!registry_.find(ty) || !rg) continue;
-                    SpawnRule sr;
-                    sr.type = ty;
-                    sr.x = float(rg->x1 + rg->x2) * 8;
-                    sr.z = float(rg->z1 + rg->z2) * 8;
-                    // Spawns into a "Player N" zone belong to that player.
-                    sr.player = 3;
-                    if (rec.slots[1].size() >= 8 &&
-                        (rec.slots[1][0] == 'P' || rec.slots[1][0] == 'p'))
-                        sr.player = std::clamp(rec.slots[1].back() - '1', 0, 3);
-                    if (maintainN > 0) {
-                        sr.maintainCount = maintainN;
-                        std::string mt = maintainType;
-                        std::transform(mt.begin(), mt.end(), mt.begin(), ::tolower);
-                        sr.maintainType = mt;
-                        if (const auto* mr = regionOf(maintainRegion)) sr.maintainRect = *mr;
-                        else {
-                            sr.maintainRect.x1 = 0;
-                            sr.maintainRect.z1 = 0;
-                            sr.maintainRect.x2 = mapView_.map().width;
-                            sr.maintainRect.z2 = mapView_.map().height;
-                        }
-                    } else {
-                        sr.atTime = timeCtx;
-                    }
-                    spawnRules_.push_back(std::move(sr));
-                } else if (rec.slots.size() == 2 &&
-                           rec.slots[0].rfind("Player", 0) == 0 &&
-                           rec.slots[1].size() > 10) {
-                    messages_.push_back({timeCtx, rec.slots[1]});
-                }
-            }
-            if (!spawnRules_.empty())
-                std::printf("scenario: %zu trigger spawn rules, %zu messages\n",
-                            spawnRules_.size(), messages_.size());
+            // The .crt's per-player trigger rules run in the SIM (lockstep +
+            // hashed) via ScenarioScript, replacing the old client-side heuristic:
+            // conditions/actions (spawn, victory/defeat, flags, timers, messages)
+            // are evaluated in World::tick and folded into stateHash. Display
+            // actions surface as HUD notices (drained in simStep).
+            if (!scen.players.empty() || !scen.regions.empty())
+                world_.setScenario(std::make_unique<tak::sim::ScenarioScript>(
+                    scen, registry_, localPlayer_, world_.numPlayers(),
+                    mapView_.map().width, mapView_.map().height));
             return;
         }
 
