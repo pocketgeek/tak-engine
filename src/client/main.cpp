@@ -608,12 +608,9 @@ int main(int argc, char** argv) {
     // fall through to the front-end. Any key / click / window-close skips it. Menu
     // launches only, and never for a headless screenshot run.
     //
-    // LOGO ONLY. intro.bik is NOT played here: retail plays it from a separate call
-    // site (icd 0x4a51a4) inside a menu/state routine, guarded by an "already
-    // played" flag it sets straight afterwards (0x62d680) -- not from the startup
-    // path, and not alongside the logo. It is also a 16MB cinematic, so running it
-    // on every launch is wrong regardless of where retail puts it. If it should be
-    // reachable, it wants a first-run check or a menu entry, not this.
+    // LOGO ONLY. intro.bik belongs on the PlayStory door, not here -- retail
+    // dispatches on that gadget name and plays it there, once per launch (see
+    // MainMenu::run). Playing both back to back at startup was wrong.
     if (fromMenu && shot.empty()) tak::MainMenu::playIntro(ren, dataRoot);
     std::string menuConnectError;   // failed MP connect -> shown when the menu reopens
     for (;;) {

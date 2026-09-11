@@ -959,6 +959,22 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     d_->settingsMenu_ = true;
                 }
                 else if (c == Choice::Campaign && settings) {
+                    // The story intro plays HERE, on the PlayStory door itself, the
+                    // first time it is opened in a session -- which is exactly what
+                    // retail does (KINGDOMS.icd 0x4a5120 dispatches on the gadget
+                    // name "PlayStory" and plays Movies\intro.bik behind a flag it
+                    // sets straight after, 0x62d680). That flag is a plain global
+                    // with one reader and one writer and is never persisted, so
+                    // retail replays the intro once per LAUNCH, not once ever.
+                    static bool introPlayed = false;
+                    if (!introPlayed) {
+                        introPlayed = true;
+                        // Hush the front-end track under the movie's own audio, the
+                        // same way the campaign briefing movie does.
+                        if (music) music->setVolume(0, 0);
+                        playIntro(d_->ren, d_->install, "intro.bik");
+                        if (music) music->setVolume(settings->masterVol, settings->bgmVol);
+                    }
                     // Open the campaign / mission picker in place; a picked mission
                     // returns Choice::Campaign (handled by the campaign_ router above).
                     d_->campaign_ = std::make_unique<CampaignScreen>(d_->ren, d_->vfs, *settings);
