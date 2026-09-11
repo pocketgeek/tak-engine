@@ -2163,6 +2163,59 @@
                 }
                 return true;
             }
+            // Category selects: all owned units matching a predicate (workers, army,
+            // navy, casters, flyers, ...). Any-weapon checks scan the weapons list.
+            case tak::Act::SelectBuilders:
+                selectOwned([](const UnitR& u){ return u.type->isBuilder; });
+                return true;
+            case tak::Act::SelectFactory:
+                selectOwned([](const UnitR& u){ return u.type->isBuilder && u.type->isStructure(); });
+                return true;
+            case tak::Act::SelectMelee:
+                selectOwned([](const UnitR& u){
+                    if (!u.type->canMove) return false;
+                    for (const auto& w : u.type->weapons) if (w.melee) return true;
+                    return false;
+                });
+                return true;
+            case tak::Act::SelectMagic:   // casters carry a personal mana pool
+                selectOwned([](const UnitR& u){ return u.type->maxMana > 0 && u.type->canMove; });
+                return true;
+            case tak::Act::SelectBoats:
+                selectOwned([](const UnitR& u){
+                    return u.type->domain == tak::sim::UnitType::Domain::Water;
+                });
+                return true;
+            case tak::Act::SelectBallistic:
+                selectOwned([](const UnitR& u){
+                    for (const auto& w : u.type->weapons) if (w.ballistic) return true;
+                    return false;
+                });
+                return true;
+            case tak::Act::SelectTroops:   // mobile armed, no navy, not the Monarch
+                selectOwned([](const UnitR& u){
+                    if (!u.type->canMove || u.type->commander) return false;
+                    if (u.type->domain == tak::sim::UnitType::Domain::Water) return false;
+                    for (const auto& w : u.type->weapons) if (w.damage > 0) return true;
+                    return false;
+                });
+                return true;
+            case tak::Act::SelectArmed:    // anything with a weapon except the Monarch
+                selectOwned([](const UnitR& u){
+                    if (u.type->commander) return false;
+                    for (const auto& w : u.type->weapons) if (w.damage > 0) return true;
+                    return false;
+                });
+                return true;
+            case tak::Act::SelectOnScreenType: {   // on-screen units of the selected type
+                const auto* first = selection_.empty() ? nullptr : frameUnitP(selection_.front());
+                const auto* t = first ? first->type : nullptr;
+                if (t) selectOwned([this, t](const UnitR& u){ return u.type == t && onScreen(u); });
+                return true;
+            }
+            case tak::Act::SelectFlying:
+                selectOwned([](const UnitR& u){ return u.type->canFly; });
+                return true;
             default: break;
         }
         if (ctrl) return false;   // other CTRL combos fall through to the map view
@@ -2191,6 +2244,28 @@
                 }
                 pendingCmd_ = 0;
                 return true;
+            case tak::Act::ToggleCloak: {   // cloak on if any selected cloaker is off
+                bool anyOn = false, anyCloaker = false;
+                for (int id : selection_)
+                    if (const auto* u = frameUnitP(id); u && u->type && u->type->canCloak) {
+                        anyCloaker = true;
+                        if (u->cloakOn) anyOn = true;
+                    }
+                if (anyCloaker) issuePerUnit(tak::net::Cmd::Cloak, anyOn ? 0 : 1);
+                pendingCmd_ = 0;
+                return true;
+            }
+            case tak::Act::ToggleGate: {   // open/close: toggle active on gates (onoffable)
+                bool anyActive = false, anyGate = false;
+                for (int id : selection_)
+                    if (const auto* u = frameUnitP(id); u && u->type && u->type->onOffable) {
+                        anyGate = true;
+                        if (u->active) anyActive = true;
+                    }
+                if (anyGate) issuePerUnit(tak::net::Cmd::SetActive, anyActive ? 0 : 1);
+                pendingCmd_ = 0;
+                return true;
+            }
             case tak::Act::TrackSelection:                    // track/untrack selection
                 trackSel_ = !trackSel_;
                 if (trackSel_) centerOnSelection();
