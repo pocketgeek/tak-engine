@@ -905,6 +905,7 @@ public:
         projectiles_.clear();
         hits_.clear();
         flowCache_.clear();
+        aiFlowCache_.clear();
         features_.clear();
         featureIdx_.clear();
         // Every other kind of live cross-tick sim state has to go too, or a rejoin
@@ -1160,6 +1161,13 @@ private:
     // every building placed, cancelled, reclaimed, or decayed).
     void invalidateFlows(int cx, int cz, int w, int h);
     mutable std::map<long long, FlowField> flowCache_;
+    // A SEPARATE cache for non-sim queries (pathExists, which only the server-side
+    // AI calls). Keeping it apart is not an optimisation, it is a correctness
+    // requirement: the AI runs on ONE peer, so letting its questions insert into and
+    // evict from the sim's memo made cache membership differ between peers. That was
+    // invisible while the sim cache never reached its cap and desynced the referee
+    // inside 60 ticks once it did.
+    mutable std::map<long long, FlowField> aiFlowCache_;
 
     // Uniform spatial hash over mobile units, rebuilt each tick, so the
     // separation and combat-acquisition passes are O(n) instead of O(n^2).

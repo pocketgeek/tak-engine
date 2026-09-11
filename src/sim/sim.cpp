@@ -1077,11 +1077,16 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1,
 // against a multi-ms build.
 static constexpr size_t kFlowCap = 512;
 
+// Eviction must be a pure function of what the cache HOLDS, never of the order a
+// peer happened to touch it in. `used` is stamped only by the deterministic
+// per-tick want-scan (prefetchFlows), and ties break on the key -- so two peers
+// holding the same entries evict the same entry, which is what makes membership
+// safe to depend on.
 static void evictFlowLru(std::map<long long, FlowField>& cache) {
     while (cache.size() >= kFlowCap) {
         auto oldest = cache.begin();
         for (auto i = std::next(cache.begin()); i != cache.end(); ++i)
-            if (i->second.used < oldest->second.used) oldest = i;
+            if (i->second.used < oldest->second.used) oldest = i;   // map order breaks ties
         cache.erase(oldest);
     }
 }
@@ -1095,22 +1100,25 @@ bool World::flowKeyFor(const UnitType* type, float gx, float gz, FlowKey& out) c
     // domain and a footprint yet walk different maps (GROUND4 and GROUND5 are both
     // 4x4 ground with different MaxSlope). Keying on domain let them share one flow
     // field built on the wrong grid.
-    // Keyed on DOMAIN + footprint, deliberately, even though passability is now
-    // per movement class. Two classes could in principle share a domain and a
-    // footprint while walking different maps, and then share a field built on the
-    // wrong grid -- but in the shipped data no such pair exists: every class that
-    // has units is distinguished by its footprint within its domain (GROUND2 2x2,
-    // GROUND3 3x3, GROUND4 4x4, HOVER2 2x2, HOVER3 3x3, WATER2..5). GROUND5 and
-    // GHOST, the two that would collide with GROUND4, field no units at all.
+    // Keyed on the movement class's LIMITS, not its domain: two classes can share a
+    // domain and a footprint while walking different maps (GROUND4 and GROUND5 are
+    // both 4x4 ground with different MaxSlope), and a shared key would hand one of
+    // them a field built on the other's grid. The limit values are a pure function
+    // of the shipped data, so the key is identical on every peer.
     //
-    // A finer key is NOT a free improvement, and this is the trap: it multiplies the
-    // key space, which pushes the 512-field cache over its cap, which makes eviction
-    // live -- and evictFlowLru breaks ties on a `used` stamp that reflects each
-    // peer's own access history. Under stress that desynced the referee inside 60
-    // ticks. Making the cache peer-deterministic under pressure is the real fix and
-    // is worth doing before any mod needs a finer key; until then this stays coarse
-    // and correct rather than fine and fragile.
-    int domain = type ? int(type->domain) : 0;
+    // This was backed out once: a finer key multiplies the key space, which pushes
+    // the field cache over its cap and makes eviction live -- and eviction used to
+    // depend on each peer's own access order, which desynced the referee inside 60
+    // ticks. That is fixed at the source now (the AI has its own cache and `used` is
+    // stamped only by the deterministic want-scan), so the key can be correct.
+    int domain = 0;
+    if (type) {
+        int band = int(type->domain);                            // 2 bits
+        int ms = std::clamp(int(type->maxSlope), 0, 255);        // 8
+        int mws = std::clamp(int(type->maxWaterSlope), 0, 255);  // 8
+        int mwd = std::clamp(int(type->maxWaterDepth), 0, 255);  // 8
+        domain = (band << 24) | (ms << 16) | (mws << 8) | mwd;
+    }
     // Footprint-class the field: a 4x4 unit and a 1x1 unit want different fields
     // (the big one can't cross the same 1-cell gaps), but all units of a size share.
     int foot = type ? std::clamp(std::max(type->footX, type->footZ), 1, 15) : 1;
@@ -1137,10 +1145,8 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const 
     FlowKey k;
     if (!flowKeyFor(type, gx, gz, k)) return nullptr;
     auto it = flowCache_.find(k.key);
-    if (it != flowCache_.end()) {
-        it->second.used = tickCounter_;
-        return it->second.ready() ? &it->second : nullptr;
-    }
+    if (it != flowCache_.end())
+        return it->second.ready() ? &it->second : nullptr;   // reads never restamp
     evictFlowLru(flowCache_);
     FlowField ff;
     if (g_phase) { auto _b0=std::chrono::steady_clock::now(); ff.build(*k.grid, k.bx, k.bz, k.foot);
@@ -1167,7 +1173,13 @@ void World::prefetchFlows() {
     auto want = [&](const UnitType* t, float gx, float gz) {
         FlowKey k;
         if (!flowKeyFor(t, gx, gz, k)) return;
-        if (flowCache_.count(k.key)) return;
+        // Stamp what the SIM wants this tick. This is the only writer of `used`, and
+        // the scan below is a pure function of sim state walked in unit-index order,
+        // so the stamps -- and therefore eviction -- are identical on every peer.
+        if (auto hit = flowCache_.find(k.key); hit != flowCache_.end()) {
+            hit->second.used = tickCounter_;
+            return;
+        }
         for (const auto& m : misses)
             if (m.key == k.key) return;
         misses.push_back(k);
@@ -1181,6 +1193,9 @@ void World::prefetchFlows() {
             if (const Unit* t = unit(o.targetId); t && t->alive())
                 want(u.type, t->x, t->z);
     }
+    // NOTE: the want-scan above has already stamped every cached field the sim wants
+    // this tick, so this early-out must come AFTER it -- returning before the scan
+    // would leave stamps stale and eviction arbitrary.
     if (misses.size() < 2) return;   // 0/1: the inline flowFor path handles it
     auto _b0 = std::chrono::steady_clock::now();
     for (const auto& m : misses) m.grid->ensureClearance();   // workers must only read
@@ -1217,11 +1232,17 @@ void World::prefetchFlows() {
 }
 
 void World::invalidateFlows(int cx, int cz, int w, int h) {
+    // The AI's cache holds fields over the same terrain, so it goes stale the same
+    // way. It is server-only and never read by the sim, so a blunt clear is fine.
+    if (!aiFlowCache_.empty()) aiFlowCache_.clear();
     for (auto it = flowCache_.begin(); it != flowCache_.end();) {
         long long hi = it->first / 100000000LL;
-        int domain = int(hi / 16), foot = int(hi % 16);
-        // Only nav_ (Ground) ever changes after setup; other domains' fields hold.
-        if (domain != int(UnitType::Domain::Ground)) { ++it; continue; }
+        int foot = int(hi % 16);
+        // NO domain skip any more. Obstacles used to be stamped into the ground grid
+        // alone, so only ground fields could go stale; they now live in one overlay
+        // that every movement class reads, so a building invalidates water and hover
+        // fields too. (The old skip also decoded the key's high half as a small
+        // domain id, which the class-limit key is not.)
         // A failed build (no fitting goal) may succeed after an unblock: retry it.
         if (!it->second.ready()) { it = flowCache_.erase(it); continue; }
         // Pad by the footprint reach (+1 for the freshly-connectable frontier): a
@@ -1278,9 +1299,27 @@ void World::order(int unitId, float x, float z, bool queue) {
     u->orders.push_back({x, z, 0});
 }
 
+// Reachability for the AI. Deliberately does NOT go through flowFor: this is a
+// non-sim question asked on one peer only, and it must leave the sim's flow memo
+// exactly as it found it (see aiFlowCache_).
 bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float fz) const {
-    const FlowField* ff = flowFor(type, gx, gz);
-    return ff && ff->reachable(fx, fz);
+    FlowKey k;
+    if (!flowKeyFor(type, gx, gz, k)) return false;
+    // Prefer a field the sim already built -- reading one is free and cannot perturb
+    // it. Only fall back to the AI's own cache when the sim hasn't got it.
+    if (auto it = flowCache_.find(k.key); it != flowCache_.end())
+        return it->second.ready() && it->second.reachable(fx, fz);
+    auto it = aiFlowCache_.find(k.key);
+    if (it == aiFlowCache_.end()) {
+        evictFlowLru(aiFlowCache_);
+        FlowField ff;
+        ff.build(*k.grid, k.bx, k.bz, k.foot);
+        ff.used = tickCounter_;
+        it = aiFlowCache_.emplace(k.key, std::move(ff)).first;
+    } else {
+        it->second.used = tickCounter_;
+    }
+    return it->second.ready() && it->second.reachable(fx, fz);
 }
 
 void World::loadInto(int unitId, int transportId) {

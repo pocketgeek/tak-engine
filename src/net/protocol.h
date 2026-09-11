@@ -17,7 +17,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 54;       // 54: one nav grid per MOVEMENT CLASS, and one
+constexpr uint32_t kNetVersion = 55;       // 55: the server-side AI no longer shares the sim's
+                                           // flow-field cache (it was desyncing the referee);
+                                           // flow key is per movement CLASS again
+                                           // 54: one nav grid per MOVEMENT CLASS, and one
                                            // shared obstacle overlay (buildings used to block
                                            // the ground grid only -- hover walked through them)
                                            // 53: mobile units get their REAL footprint from
