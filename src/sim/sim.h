@@ -45,6 +45,28 @@ struct Weapon {
     // no traveling projectile object.
     bool beam = false;
     float emitTime = 0;      // emittime (seconds): how long the flame/beam is emitted
+    // The rest of the retail weapon-class model (FBI `type=`), beyond
+    // melee/ballistic/line-of-sight:
+    //   Guided       -- a homing projectile that steers at `turnRate` (20 weapons:
+    //                   Tracking Arrow, Ball Lightning, dragon fireballs).
+    //   Remote Effect-- the effect materialises AT THE TARGET POINT after
+    //                   `buildUp`, then fades over `decay` (23: Earthquakes,
+    //                   monarch waves, god spells, Area Mind Control).
+    //   Wandering    -- a roaming storm entity that drifts for `duration`
+    //                   (4: Tornado, Fire/Water Vortex, Hurricane).
+    enum class Kind { Normal, Guided, Remote, Wandering } kind = Kind::Normal;
+    float turnRate = 0;      // guided: steering rate, radians/sec (FBI deg/s)
+    float buildUp = 0;       // builduptime: channel before the effect lands
+    float decay = 0;         // decaytime: fade after it lands
+    float duration = 0;      // wandering: seconds the storm roams
+    float maxVariation = 0;  // wandering: heading wobble per variationtime (radians)
+    float variationTime = 0; // wandering: seconds between heading changes
+    bool  unitsOnly = false; // unitsonly: the effect skips features (trees/props)
+    // subtype=mindcontrol: converts eligible targets to the firer's side instead of
+    // damaging them. The [DAMAGE] table is the ELIGIBILITY filter -- retail zeroes
+    // the categories that cannot be charmed (monarch/god/dragon/fort/factory/naval/
+    // lodestone), so damageVs(t) > 0 means "convertible".
+    bool  mindControl = false;
     float minRange = 0;      // minrange: can't hit targets closer than this
     bool noAir = false;      // noairweapon: cannot target flying units
     float manaCost = 0;      // manapershot: mana drained from the firer per shot
@@ -855,6 +877,8 @@ public:
 private:
     void tickCombat(Unit& u, float dt);
     void fire(Unit& u, Unit& target, int slot);
+    // Convert a unit to another player (contact charm + mind-control weapons).
+    void captureUnit(Unit& t, int newPlayer);
     // Apply a weapon's damage at (hx,hz): the direct hit on `primary` plus, if
     // the weapon has areaofeffect, splash on other enemies of `fromPlayer` scaled
     // from full at the centre to `edge` at the rim. Per-category damage per victim.
@@ -996,6 +1020,24 @@ private:
     // tick -- always empty at tick end, so it needs no hashing.
     struct DeathBlast { const Weapon* w; float x, z; int player, fromId; };
     std::vector<DeathBlast> deathBlasts_;
+    // Remote Effect (FBI type=Remote Effect): the effect materialises at the AIMED
+    // GROUND POINT after `builduptime`, then applies its damage/status/conversion
+    // once over areaofeffect. Earthquakes, monarch waves, god spells, Area Mind
+    // Control. Lives across ticks, so it IS hashed.
+    struct PendingEffect { const Weapon* w; float x, z; int player, fromId; float at; };
+    std::vector<PendingEffect> pendingEffects_;
+    // Wandering (FBI type=wandering): a storm entity that roams for `duration`,
+    // drifting at weaponvelocity and wobbling its heading every `variationtime`.
+    // Damages everything it passes on a fixed cadence. Hashed.
+    struct Storm {
+        const Weapon* w = nullptr;
+        float x = 0, z = 0, heading = 0;
+        int player = 0, fromId = 0;
+        float left = 0;      // seconds of roaming left
+        float nextVary = 0;  // seconds until the next heading wobble
+        float nextHit = 0;   // seconds until the next damage application
+    };
+    std::vector<Storm> storms_;
     std::vector<Player> players_ = []{
         std::vector<Player> v(4);
         for (int i = 0; i < 4; ++i) v[size_t(i)].team = i;

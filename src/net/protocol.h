@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 41;       // 41: [EXPLODEAS] death blasts, totalallowed unique cap,
+constexpr uint32_t kNetVersion = 42;       // 42: weapon classes -- guided homing, Remote Effect,
+                                           // wandering storms, mind control, unitsonly
+                                           // 41: [EXPLODEAS] death blasts, totalallowed unique cap,
                                            // data-only missions (.cob optional) + InitialMission/ManaPercentage
                                            // 40: fire breath is a Line-of-Sight beam (instant hit, FBI range, no 170 cap)
                                            // 39: a builder mid-job doesn't auto-acquire/wander off

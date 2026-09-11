@@ -231,6 +231,26 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 // emittime instead. (emittime is in 30Hz frames.)
                 wp.beam = lower(w->valueOr("type", "")) == "line of sight";
                 wp.emitTime = float(w->numberOr("emittime", 0)) / 30.0f;
+                // The remaining retail weapon classes. `type` is authoritative;
+                // subtype adds the mind-control behaviour on top of either a
+                // line-of-sight shot (Individual) or a Remote Effect (Area).
+                {
+                    std::string ty = lower(w->valueOr("type", ""));
+                    if (ty == "guided") wp.kind = Weapon::Kind::Guided;
+                    else if (ty == "remote effect") wp.kind = Weapon::Kind::Remote;
+                    else if (ty == "wandering") wp.kind = Weapon::Kind::Wandering;
+                    // turnrate is in degrees/second (a guided shot at 180 flips its
+                    // heading in a second, which matches the shipped 120..600 range
+                    // against 250-1200 px/s speeds).
+                    wp.turnRate = float(w->numberOr("turnrate", 0)) * (kPi / 180.0f);
+                    wp.buildUp = float(w->numberOr("builduptime", 0));
+                    wp.decay = float(w->numberOr("decaytime", 0));
+                    wp.duration = float(w->numberOr("duration", 0));
+                    wp.maxVariation = float(w->numberOr("maxvariation", 0)) * (kPi / 180.0f);
+                    wp.variationTime = float(w->numberOr("variationtime", 0));
+                    wp.unitsOnly = w->numberOr("unitsonly", 0) != 0;
+                    wp.mindControl = lower(w->valueOr("subtype", "")) == "mindcontrol";
+                }
                 // aimtolerance is in COB angle units; convert to radians. Ballistic
                 // weapons lob an arc (viewer draws it); soundhitclass = impact sound.
                 wp.aimTol = float(w->numberOr("aimtolerance",
@@ -1360,6 +1380,19 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     // Damage + status one victim, honouring veterancy, auras and immunities.
     auto hurt = [&](Unit& e, float scale) {
         if (e.stonedFor > 0) return;   // petrified units are impervious
+        // subtype=mindcontrol (the Taros Mind Mage's Individual + Area Mind
+        // Control): the shot CONVERTS the victim instead of hurting it. Retail
+        // encodes eligibility in the weapon's own [DAMAGE] table -- it zeroes
+        // monarch/god/dragon/fort/factory/naval/lodestone -- so "damage > 0
+        // against this category" is exactly "can be charmed", which damageVs()
+        // already computes. Conversion is permanent, like contact capture.
+        if (w.mindControl) {
+            if (w.damageVs(e.type) <= 0.0f) return;   // immune category
+            if (e.type->cantBeCaptured) return;
+            if (atUnitCap(fromPlayer)) return;        // no room on the new side
+            captureUnit(e, fromPlayer);
+            return;
+        }
         if (benchmarkMode() && e.type && e.type->commander) return;   // benchmark: Monarchs are invincible
         // base × attacker-attack (↑) ÷ victim-armour (↓); armour = veterancy × aura.
         float armour = std::max(e.vetMul() * e.armBuff, 0.01f);
@@ -1408,7 +1441,11 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     // -- swapped to its `featuredead` stage (npcwreck chains) or removed.
     // Deterministic in every peer's sim (state + RNG hashed). Must run BEFORE
     // the aoe<=0 early-out below.
-    if (!featTypes_.empty() && terW_ > 0) {
+    // unitsonly=1: the effect touches UNITS only, never the scenery. Retail sets it
+    // on the big area spells (Earthen/Wind Wave, Death Aura, Energy Blast, both
+    // Mind Controls) precisely so a 500px nuke doesn't also level every forest and
+    // mana-bearing prop inside it.
+    if (!featTypes_.empty() && terW_ > 0 && !w.unitsOnly) {
         float r = std::max(w.aoe * 0.5f, 8.0f);
         int icx = int(hx) / 16, icz = int(hz) / 16;
         int rc = int(r) / 16 + 1;
@@ -1469,6 +1506,29 @@ void World::fire(Unit& u, Unit& target, int slot) {
     float rl = w.reload / std::max(u.vetMul(), 0.01f);
     u.reloads[slot] = rl;
     u.justFired = true;
+    // Remote Effect: nothing travels. The spell materialises at the AIMED GROUND
+    // POINT and lands after builduptime -- so walking aside doesn't dodge an
+    // Earthquake, you have to leave its (up to 500px) radius. decaytime is the
+    // visual fade after the hit.
+    if (w.kind == Weapon::Kind::Remote) {
+        pendingEffects_.push_back({&w, target.x, target.z, u.player, u.id, w.buildUp});
+        return;
+    }
+    // Wandering: spawn a roaming storm at the aim point. It drifts for `duration`,
+    // grinding whatever it passes over, instead of landing one tap.
+    if (w.kind == Weapon::Kind::Wandering) {
+        Storm s;
+        s.w = &w;
+        s.x = target.x; s.z = target.z;
+        s.player = u.player; s.fromId = u.id;
+        // Start it drifting away from the caster, then let the wobble take over.
+        s.heading = detmath::atan2(target.x - u.x, target.z - u.z);
+        s.left = w.duration > 0 ? w.duration : 6.0f;
+        s.nextVary = w.variationTime > 0 ? w.variationTime : 2.0f;
+        s.nextHit = 0.0f;             // bite immediately on arrival
+        storms_.push_back(s);
+        return;
+    }
     if (w.melee || w.beam || w.projVel <= 0) {
         // Instant hit: a melee swing, a hitscan bolt, or a Line-of-Sight beam (the
         // drake's Fire Breath -- a sustained flame emission, not a lobbed shot). The
@@ -1711,14 +1771,26 @@ void World::tickCombat(Unit& u, float dt) {
         !allied(u.player, target->player)) {
         u.captureProg += dt;
         if (u.captureProg > 3.0f || target->hp < target->type->maxHp * 0.25f) {
-            target->player = u.player;
-            target->orders.clear();
-            target->hp = std::max(target->hp, target->type->maxHp * 0.5f);
-            target->lastHitBy = 0;
+            captureUnit(*target, u.player);
             u.captureProg = 0;
             u.orders.erase(u.orders.begin());   // done with this one
         }
     }
+}
+
+// Switch a unit's allegiance: contact charm (cancapture) and mind-control weapons
+// both land here, so a converted unit behaves identically either way -- it drops
+// its old orders, comes up at half health if it was nearly dead, and forgets who
+// last hit it (so the new owner isn't credited a kill on its own unit).
+void World::captureUnit(Unit& t, int newPlayer) {
+    if (!t.type || t.player == newPlayer) return;
+    t.player = newPlayer;
+    t.orders.clear();
+    t.hp = std::max(t.hp, t.type->maxHp * 0.5f);
+    t.lastHitBy = 0;
+    t.squad = 0;             // no longer in its old owner's control group
+    t.buildQueue.clear();    // and not still producing for them
+    t.buildProgress = 0;
 }
 
 void World::rebuildGrid() {
@@ -2863,6 +2935,26 @@ void World::tick(float dt) {
 
     // Projectiles.
     for (auto& p : projectiles_) {
+        // Guided (FBI type=Guided): steer toward the target's CURRENT position,
+        // clamped to the weapon's turnrate, so a homing shot (Tracking Arrow, Ball
+        // Lightning, the dragons' fireballs) chases a target that keeps walking
+        // instead of flying through where it used to be. Retail's answer to kiting;
+        // without it these 576-9000 damage shots simply missed anything mobile.
+        // A homer whose target is gone just flies on straight and fizzles.
+        if (p.wsrc && p.wsrc->kind == Weapon::Kind::Guided && p.wsrc->turnRate > 0) {
+            if (const Unit* gt = unit(p.targetId); gt && gt->alive() && !gt->embarked()) {
+                float speed = detmath::len(p.vx, p.vz);
+                if (speed > 0.01f) {
+                    float cur = detmath::atan2(p.vx, p.vz);
+                    float want = detmath::atan2(gt->x - p.x, gt->z - p.z);
+                    float d = angleDiff(want, cur);
+                    float maxTurn = p.wsrc->turnRate * dt;
+                    float nh = cur + std::clamp(d, -maxTurn, maxTurn);
+                    p.vx = detmath::sin(nh) * speed;
+                    p.vz = detmath::cos(nh) * speed;
+                }
+            }
+        }
         float ox = p.x, oz = p.z;        // segment start (before this step)
         p.x += p.vx * dt;
         p.z += p.vz * dt;
@@ -3402,6 +3494,57 @@ void World::tick(float dt) {
         }
     }
 
+    // Remote Effect spells channelling toward their landing point. The effect is
+    // pinned to the ground where it was aimed, so it lands whether or not the
+    // original target moved -- you dodge an Earthquake by leaving its radius, not
+    // by taking a step. Ticked before the death-blast drain so a kill it causes is
+    // swept next tick like any other.
+    for (size_t i = 0; i < pendingEffects_.size();) {
+        PendingEffect& e = pendingEffects_[i];
+        e.at -= dt;
+        if (e.at <= 0.0f) {
+            const PendingEffect done = e;
+            pendingEffects_.erase(pendingEffects_.begin() + std::ptrdiff_t(i));
+            if (done.w) applyHit(*done.w, done.x, done.z, done.player, done.fromId, nullptr);
+        } else {
+            ++i;
+        }
+    }
+    // Wandering storms: drift, wobble, and grind whatever they pass over.
+    for (size_t i = 0; i < storms_.size();) {
+        Storm& s = storms_[i];
+        s.left -= dt;
+        if (s.left <= 0.0f || !s.w) {
+            storms_.erase(storms_.begin() + std::ptrdiff_t(i));
+            continue;
+        }
+        // Heading wobble every variationtime, up to maxvariation either way. Uses
+        // the sim's deterministic Lehmer RNG (the same one feature-burn spread
+        // rolls on), so every peer wanders identically.
+        s.nextVary -= dt;
+        if (s.nextVary <= 0.0f) {
+            s.nextVary += s.w->variationTime > 0 ? s.w->variationTime : 2.0f;
+            if (s.w->maxVariation > 0) {
+                int span = std::max(1, int(s.w->maxVariation * 2000.0f));
+                s.heading += float(burnRand(span)) / 1000.0f - s.w->maxVariation;
+            }
+        }
+        float vel = s.w->projVel > 0 ? s.w->projVel : 50.0f;
+        s.x += detmath::sin(s.heading) * vel * dt;
+        s.z += detmath::cos(s.heading) * vel * dt;
+        s.x = std::clamp(s.x, 0.0f, float(terW_) * 16.0f);
+        s.z = std::clamp(s.z, 0.0f, float(terH_) * 16.0f);
+        // Damage cadence: a storm bites once a second rather than every tick --
+        // its FBI damage is a per-bite figure (the Tornado's 50 over 9 bites is a
+        // steady grind; a god vortex's 12500 is a wall of death you must flee).
+        s.nextHit -= dt;
+        if (s.nextHit <= 0.0f) {
+            s.nextHit += 1.0f;
+            const Storm hit = s;   // applyHit can reallocate/kill; copy what we need
+            applyHit(*hit.w, hit.x, hit.z, hit.player, hit.fromId, nullptr);
+        }
+        ++i;
+    }
     // Drain the [EXPLODEAS] death blasts queued by the sweep above. Done here, after
     // the loop, because applyHit can kill further units (chain-detonating a pack of
     // Kamikaze Rats) and must not mutate units_ while it is being walked. A blast may
@@ -3588,6 +3731,22 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(p.fromPlayer)));
         mixf(p.x);
         mixf(p.z);
+    }
+    // Remote Effect spells mid-channel and wandering storms mid-roam are live sim
+    // state that outlives a tick, so a divergence in either must show up here.
+    mix(uint64_t(pendingEffects_.size()));
+    for (const auto& e : pendingEffects_) {
+        mix(uint64_t(uint32_t(e.player)));
+        mixf(e.x); mixf(e.z); mixf(e.at);
+    }
+    mix(uint64_t(storms_.size()));
+    for (const auto& s : storms_) {
+        mix(uint64_t(uint32_t(s.player)));
+        mixf(s.x); mixf(s.z); mixf(s.heading); mixf(s.left);
+        // The cadence timers decide WHEN the next bite and heading roll happen, and
+        // a roll advances the shared burn RNG -- fold them so a drift in either
+        // surfaces here rather than as a mystery divergence several seconds later.
+        mixf(s.nextVary); mixf(s.nextHit);
     }
     for (const auto& t : players_) {
         mixf(t.mana);
