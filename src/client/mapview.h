@@ -31,6 +31,8 @@ namespace tak::hpi { class Vfs; }
 class MapView {
 public:
     MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& mapPath);
+    // Construct directly from an in-memory map (e.g. the editor's fresh/blank map).
+    MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, tak::tnt::Map map);
     ~MapView();
 
     // Swap in a different map (discarding cached chunk textures). The compositor's

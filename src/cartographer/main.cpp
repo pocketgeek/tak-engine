@@ -32,6 +32,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
@@ -77,13 +78,17 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "data: using the local directory %s\n", dataRoot.c_str());
         }
     }
-    if (dataRoot.empty() || (mapName.empty() && newW <= 0)) {
+    if (dataRoot.empty()) {
         std::fprintf(stderr,
-            "Cartographer (TA:Kingdoms map editor) -- phase 2\n"
+            "Cartographer -- TA:Kingdoms map editor\n"
             "usage: cartographer \"<map name>\" [--data <retail-install-dir>]\n"
             "         (--data is optional when run from inside a game folder)\n"
-            "         [--out <dir>]        Ctrl+S save destination (default .)\n"
-            "         [--save <file.tnt>]  headless: save the map and exit\n");
+            "         [--out <dir>]        Ctrl+S / Ctrl+B save destination (default .)\n"
+            "         [--new WxH --world <w>]  start a blank map (or press N in-editor)\n"
+            "         [--save <file.tnt>]  headless: save loose .tnt/.ota/.crt and exit\n"
+            "         [--bundle <file.kmp>] headless: save a packed .kmp map and exit\n"
+            "in-editor: Tab tools, 1-5 zoom, G grid, N new, P/R/U/C/T/K scenario menu,\n"
+            "           Ctrl+S save loose, Ctrl+B save .kmp\n");
         return 2;
     }
 
@@ -111,9 +116,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "mount %s: %s\n", dataRoot.c_str(), e.what());
         return 1;
     }
-    // --new WxH: build a fresh flat map for --world and save it (headless). The
-    // in-editor New dialog arrives with the widget layer; this is the create path.
-    if (newW > 0 && newH > 0) {
+    // --new WxH --save: build a fresh flat map for --world and save it headless.
+    // Without --save, --new instead opens the editor on the fresh map (built
+    // below), same as pressing N in-editor; --new --bundle exits via that path.
+    if (newW > 0 && newH > 0 && !exportPath.empty()) {
         cart::SectionLibrary nsections;
         nsections.scan(vfs, newWorld);
         tak::terrain::Compositor ncomp(vfs);
@@ -146,33 +152,49 @@ int main(int argc, char** argv) {
     }
 
     // Resolve the map name to its .tnt VFS path (Maps/<name>.tnt or a .kmp's
-    // kmap/<name>.tnt), same resolution the game uses.
+    // kmap/<name>.tnt), same resolution the game uses. An empty name (or --new
+    // without --save) starts a fresh blank map instead -- mapPath stays empty so
+    // there are no sibling scenario files to load.
     std::string mapPath;
-    for (const auto& [name, path] : tak::hpi::listMaps(vfs)) {
-        std::string lo = name;
-        for (char& c : lo) c = char(std::tolower((unsigned char)c));
-        std::string want = mapName;
-        for (char& c : want) c = char(std::tolower((unsigned char)c));
-        if (lo == want) { mapPath = path; break; }
-    }
-    if (mapPath.empty()) {
-        std::fprintf(stderr, "map '%s' not found in %s\n", mapName.c_str(), dataRoot.c_str());
-        return 1;
-    }
-
-    MapView mapView(ren, vfs, mapPath);
-    mapView.setBilinear(true);
-
-    // Load the companion .ota scenario (metadata + start positions) so a Save
-    // round-trips the whole map, not just terrain. Missing/parse-fail = defaults.
     tak::tnt::Scenario scenario;
-    {
+    std::unique_ptr<MapView> mapViewPtr;
+    if (!mapName.empty()) {
+        for (const auto& [name, path] : tak::hpi::listMaps(vfs)) {
+            std::string lo = name;
+            for (char& c : lo) c = char(std::tolower((unsigned char)c));
+            std::string want = mapName;
+            for (char& c : want) c = char(std::tolower((unsigned char)c));
+            if (lo == want) { mapPath = path; break; }
+        }
+        if (mapPath.empty()) {
+            std::fprintf(stderr, "map '%s' not found in %s\n", mapName.c_str(), dataRoot.c_str());
+            return 1;
+        }
+        mapViewPtr = std::make_unique<MapView>(ren, vfs, mapPath);
+        // Companion .ota (metadata + start positions), so a Save round-trips the
+        // whole map. Missing/parse-fail = defaults.
         std::string otaPath = mapPath.substr(0, mapPath.rfind('.')) + ".ota";
         try {
             auto b = vfs.read(otaPath);
             scenario = tak::tnt::Scenario::parse(std::string(b.begin(), b.end()));
         } catch (const std::exception&) { /* no .ota: keep defaults */ }
+    } else {
+        int fw = newW > 0 ? newW : 8, fh = newH > 0 ? newH : 8;
+        cart::SectionLibrary ns; ns.scan(vfs, newWorld);
+        tak::terrain::Compositor nc(vfs);
+        tak::tnt::Map fresh = cart::newBlankMap(vfs, ns, nc, newWorld, fw, fh);
+        if (fresh.width == 0) {
+            std::fprintf(stderr, "new: no terrain sections for world '%s'\n", newWorld.c_str());
+            return 1;
+        }
+        mapName = "Untitled";
+        scenario.kingdom = newWorld; scenario.sizeW = fw; scenario.sizeH = fh;
+        scenario.missionName = mapName;
+        mapViewPtr = std::make_unique<MapView>(ren, vfs, std::move(fresh));
+        SDL_SetWindowTitle(win, "Cartographer -- Untitled");
     }
+    MapView& mapView = *mapViewPtr;
+    mapView.setBilinear(true);
     std::fprintf(stderr,
                  "cartographer: editing '%s' (%s), %dx%d blocks; scenario '%s' "
                  "kingdom=%s, %zu start positions\n",
@@ -464,8 +486,8 @@ int main(int argc, char** argv) {
         return -1;
     };
 
-    // --- Modal dialogs (Scenario Properties, Resize, Unit/Rule props, Message) -
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM };
+    // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW };
     static constexpr int kMaxFields = 6;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -513,6 +535,12 @@ int main(int argc, char** argv) {
             mTitle = "RESIZE MAP"; mN = 2;
             mLabel[0] = "WIDTH (UNITS)";  mf[0] = std::to_string(mapView.map().width / 32);  mfNumeric[0] = true;
             mLabel[1] = "HEIGHT (UNITS)"; mf[1] = std::to_string(mapView.map().height / 32); mfNumeric[1] = true;
+        } else if (m == M_NEW) {
+            mTitle = "NEW MAP"; mN = 4;
+            mLabel[0] = "MAP NAME";       mf[0] = "Untitled";  mfNumeric[0] = false;
+            mLabel[1] = "WIDTH (UNITS)";  mf[1] = "8";         mfNumeric[1] = true;
+            mLabel[2] = "HEIGHT (UNITS)"; mf[2] = "8";         mfNumeric[2] = true;
+            mLabel[3] = "WORLD (aramon/veruna/taros/zhon)"; mf[3] = world; mfNumeric[3] = false;
         } else if (m == M_UNIT && unitIdx >= 0 && unitIdx < int(units.size())) {
             const auto& u = units[size_t(unitIdx)];
             mTitle = "UNIT PROPERTIES"; mN = 6;
@@ -541,6 +569,39 @@ int main(int argc, char** argv) {
             scenario.sizeW = wu; scenario.sizeH = hu;
             mapView.tilesEdited();
             edited = true;
+        } else if (modal == M_NEW) {
+            std::string nm = mf[0].empty() ? "Untitled" : mf[0];
+            int wu = std::clamp(std::atoi(mf[1].c_str()), 1, 64);
+            int hu = std::clamp(std::atoi(mf[2].c_str()), 1, 64);
+            std::string wld = mf[3];
+            std::transform(wld.begin(), wld.end(), wld.begin(), ::tolower);
+            if (wld.empty()) wld = "aramon";
+            // Rescan the section/feature palettes for the chosen world, then build
+            // a fresh flat map. If the world has no sections, keep the current map.
+            sections.scan(vfs, wld);
+            features.scan(vfs, wld);
+            tak::tnt::Map fresh = cart::newBlankMap(vfs, sections, mapView.compositor(),
+                                                    wld, wu, hu);
+            if (fresh.width == 0) {
+                SDL_StopTextInput();
+                openMessage("NEW MAP", "No terrain sections found for world '" + wld +
+                            "'. Try aramon, veruna, taros or zhon.");
+                return;   // leaves the message box up; the current map is untouched
+            }
+            mapView.editMap() = std::move(fresh);
+            mapView.tilesEdited();
+            mapView.setOffset(0, 0);
+            world = wld;
+            scenario = tak::tnt::Scenario{};
+            scenario.kingdom = wld; scenario.sizeW = wu; scenario.sizeH = hu;
+            scenario.missionName = nm;
+            mapName = nm;
+            units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();
+            selected = sections.list().empty() ? -1 : 0;
+            selectedFeat = features.list().empty() ? -1 : 0;
+            paletteScroll = 0;
+            edited = true;
+            SDL_SetWindowTitle(win, ("Cartographer -- " + mapName).c_str());
         } else if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size())) {
             auto& u = units[size_t(editUnit)];
             u.player  = std::clamp(std::atoi(mf[0].c_str()), 0, 7);
@@ -802,6 +863,8 @@ int main(int argc, char** argv) {
                 tool = tool == TERRAIN ? FEATURES : TERRAIN;
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_k) {
                 clearArm = !clearArm;    // Edit -> Clear Area (drag a box)
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_n) {
+                openModal(M_NEW);        // File -> New Map
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_p) {
                 openModal(M_SCENARIO);   // Scenario -> Properties
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_r) {

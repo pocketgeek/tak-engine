@@ -19,6 +19,12 @@ MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string&
     queueAllSections();
 }
 
+MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, tak::tnt::Map map)
+    : ren_(ren), map_(std::move(map)), comp_(vfs) {
+    secWorker_ = std::thread([this] { sectionWorkerLoop(); });
+    queueAllSections();
+}
+
 MapView::~MapView() {
     {
         std::lock_guard<std::mutex> lk(secMu_);
