@@ -23,7 +23,8 @@ const std::vector<HotkeyDef>& hotkeyDefs() {
         {Act::SelectAll,      "select.all",         "SELECT ALL",      "SELECTION", {SDLK_a, HK_CTRL}},
         {Act::SelectSameType, "select.sametype",    "SELECT SAME TYPE","SELECTION", {SDLK_z, HK_CTRL}},
         {Act::SelectOnScreen, "select.onscreen",    "SELECT ON SCREEN","SELECTION", {SDLK_u, HK_CTRL}},
-        {Act::SelfDestruct,   "unit.selfdestruct",  "SELF-DESTRUCT",   "SELECTION", {SDLK_d, HK_CTRL}},
+        {Act::SelectMonarch,  "select.monarch",     "SELECT MONARCH",  "SELECTION", {SDLK_m, HK_CTRL}},
+        {Act::SelfDestruct,   "unit.selfdestruct",  "SELF-DESTRUCT",   "SELECTION", {SDLK_d, HK_CTRL | HK_SHIFT}},
 
         {Act::ToggleCounts,   "view.counts",        "UNIT COUNTS",     "VIEW",      {SDLK_F4, 0}},
         {Act::Disco,          "emote.disco",        "DISCO",           "EMOTES",    {SDLK_d, HK_SHIFT}},

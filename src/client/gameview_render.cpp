@@ -681,6 +681,22 @@
                                int(shadowBatch_.size()), nullptr, 0);
         }
 
+        // Self-destruct countdown: a pulsing red number over each armed unit.
+        if (hudFont_.ok())
+            for (const UnitR* _up : front().live) {
+                const UnitR& u = *_up;
+                if (!u.alive() || u.embarked() || !u.type || u.selfDestructT < 0) continue;
+                if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
+                float sx = (u.x - mapView_.offX()) * zm - uLiftX(u) * zm;
+                float sy = (u.z - mapView_.offY()) * zm - 44 * zm - uLiftY(u) * zm;
+                if (sx < -20 || sx > mvw + 20 || sy < -20 || sy > winH + 20) continue;
+                char b[8];
+                std::snprintf(b, sizeof b, "%d", int(std::ceil(u.selfDestructT)));
+                bool bright = (u.selfDestructT - std::floor(u.selfDestructT)) > 0.5f;
+                SDL_Color c{255, uint8_t(bright ? 200 : 60), 40, 255};
+                hudFont_.draw(ren_, b, sx - 5, sy, 2.2f, c);
+            }
+
         // Control-squad marker: retail-style bright-green number centred BELOW the
         // unit (under where the selection ring/bar sits), "<N>F" for a formation.
         // The number is the recall key (squad 10 shows as "0"). Skipped when zoomed
@@ -2198,6 +2214,17 @@
             if (!b || !bt) return true;   // consume the click even if it can't act
             uint16_t mod = SDL_GetModState();
             bool ctrl = (mod & KMOD_CTRL) != 0, shift = (mod & KMOD_SHIFT) != 0;
+            // Ctrl+left-click = infinite production (RepeatTrain), FIRST so it also
+            // works for a mobile conjurer (a beast tamer): the sim spawns each new
+            // unit beside the producer and re-queues, no manual placement needed.
+            if (lmb && ctrl && !shift) {
+                tak::net::Command c;
+                c.kind = tak::net::Cmd::RepeatTrain;
+                c.unitId = b->id;
+                std::snprintf(c.type, sizeof c.type, "%s", bt->id.c_str());
+                issue(c);
+                return true;
+            }
             if (isStructure(bt) || !isStructure(b->type)) {
                 if (lmb) placing_ = bt;   // manual placement (buildings / mobile conjurers)
                 return true;
@@ -2205,12 +2232,8 @@
             tak::net::Command c;
             c.unitId = b->id;
             std::snprintf(c.type, sizeof c.type, "%s", bt->id.c_str());
-            if (lmb && ctrl && !shift) {
-                c.kind = tak::net::Cmd::RepeatTrain;
-            } else {
-                c.kind = lmb ? tak::net::Cmd::Train : tak::net::Cmd::Unqueue;
-                c.targetId = (ctrl && shift) ? 10 : shift ? 5 : 1;
-            }
+            c.kind = lmb ? tak::net::Cmd::Train : tak::net::Cmd::Unqueue;
+            c.targetId = (ctrl && shift) ? 10 : shift ? 5 : 1;
             issue(c);
             return true;
         }

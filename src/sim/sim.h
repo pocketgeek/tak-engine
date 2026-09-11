@@ -267,6 +267,7 @@ struct Unit {
     float frozenFor = 0;   // >0 = frozen solid (can't act); counts down
     float stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
     float paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
+    float selfDestructT = -1;// >=0 = self-destruct countdown (s) armed; -1 = not
     bool  cloaked = false; // currently invisible to enemies
     bool  cloakOn = true;  // canCloak units: player wants to cloak (gates auto-cloak)
     bool  active = true;   // onoffable units: false = powered down

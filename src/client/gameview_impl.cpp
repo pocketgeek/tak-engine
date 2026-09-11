@@ -568,6 +568,7 @@
             s.underConstruction = u.underConstruction; s.buildBegun = u.buildBegun;
             s.cloaked = u.cloaked; s.cloakOn = u.cloakOn; s.active = u.active;
             s.frozenFor = u.frozenFor; s.stonedFor = u.stonedFor; s.paralyzedFor = u.paralyzedFor;
+            s.selfDestructT = u.selfDestructT;
             s.buildSiteId = u.buildSiteId; s.reclaimId = u.reclaimId; s.repairId = u.repairId;
             s.buildProgress = u.buildProgress;
             s.buildQueue = u.buildQueue; s.orders = u.orders; s.buildOrders = u.buildOrders;
@@ -2099,18 +2100,24 @@
             case tak::Act::SelfDestruct: {   // self-destruct the selected unit(s)
                 // Through the command path (Cmd::Destroy), not a direct hp write --
                 // a local mutation would silently desync a networked game.
+                // Cmd::Destroy TOGGLES a 5s countdown; if any selected unit is
+                // already counting down, this press cancels instead of arming.
                 int n = 0;
+                bool anyArmed = false;
                 for (int id : selection_)
                     if (auto* su = frameUnitP(id))
                         if (su->alive() && su->player == localPlayer_) {
+                            if (su->selfDestructT >= 0.0f) anyArmed = true;
                             tak::net::Command c;
                             c.kind = tak::net::Cmd::Destroy;
                             c.unitId = id;
                             issue(c);
                             ++n;
                         }
-                notice_ = "DESTRUCT " + std::to_string(n);
-                noticeTimer_ = 2;
+                if (n) {
+                    notice_ = anyArmed ? "SELF-DESTRUCT CANCELLED" : "SELF-DESTRUCT IN 5...";
+                    noticeTimer_ = 2;
+                }
                 return true;
             }
             case tak::Act::Disco:
@@ -2144,6 +2151,18 @@
             case tak::Act::SelectOnScreen:
                 selectOwned([this](const UnitR& u){ return onScreen(u); });
                 return true;
+            case tak::Act::SelectMonarch: {   // select the Monarch and track it
+                const auto* m = playerMonarchId_ >= 0 ? frameUnitP(playerMonarchId_) : nullptr;
+                if (m && m->alive()) {
+                    selection_ = {playerMonarchId_};
+                    trackSel_ = true;
+                    centerOnSelection();
+                    voice(playerMonarchId_, "select");
+                } else {
+                    notice_ = "NO MONARCH"; noticeTimer_ = 2;
+                }
+                return true;
+            }
             default: break;
         }
         if (ctrl) return false;   // other CTRL combos fall through to the map view

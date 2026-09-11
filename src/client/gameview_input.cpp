@@ -235,10 +235,13 @@
             // Screen-space marquee: a unit is boxed by where it's DRAWN (terrain lift
             // + flyer altitude), not its flat ground cell -- else a lifted/airborne
             // unit (e.g. the flying Monarch) escapes a box drawn around its sprite.
+            uint16_t selMod = SDL_GetModState();
+            bool addSel = (selMod & KMOD_SHIFT) != 0;   // Shift: add to the selection
+            bool subSel = (selMod & KMOD_CTRL) != 0;    // Ctrl:  remove from it
             float sx0 = std::min(dragX0_, dragX1_), sx1 = std::max(dragX0_, dragX1_);
             float sy0 = std::min(dragY0_, dragY1_), sy1 = std::max(dragY0_, dragY1_);
             bool isClick = (sx1 - sx0) < 6 && (sy1 - sy0) < 6;
-            selection_.clear();
+            std::vector<int> matched;
             if (isClick) {
                 // Pick the unit nearest the cursor in SCREEN space (matching the
                 // render lift + flyer altitude), so a unit on a lifted wall top or a
@@ -256,20 +259,45 @@
                     float d = 0;
                     if (unitUnderCursor(u, ccx, ccy, &d) && d < best) { best = d; hit = u.id; }
                 }
-                if (hit >= 0) {
-                    selection_.push_back(hit);
-                    voice(hit, "select");
-                }
+                if (hit >= 0) matched.push_back(hit);
             } else {
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
                     if (u.alive() && u.player == localPlayer_ && !u.underConstruction) {
                         SDL_FPoint p = unitScreen(frameUnit(u.id));
                         if (p.x >= sx0 && p.x <= sx1 && p.y >= sy0 && p.y <= sy1)
-                            selection_.push_back(u.id);
+                            matched.push_back(u.id);
                     }
                 }
+                // Army filter: if a box caught any mobile ATTACKING unit, drop
+                // buildings and builders -- dragging over a base picks the army,
+                // not the workers/structures. (Click-select is exempt.)
+                bool hasCombat = false;
+                for (int id : matched)
+                    if (const auto* u = frameUnitP(id); u && u->type)
+                        if (u->type->canMove && !u->type->isBuilder && u->type->weapon.damage > 0) {
+                            hasCombat = true; break;
+                        }
+                if (hasCombat)
+                    matched.erase(std::remove_if(matched.begin(), matched.end(), [&](int id) {
+                        const auto* u = frameUnitP(id);
+                        return u && u->type && (u->type->isStructure() || u->type->isBuilder);
+                    }), matched.end());
             }
+            // Combine with the existing selection per the modifier.
+            if (subSel) {
+                for (int id : matched)
+                    selection_.erase(std::remove(selection_.begin(), selection_.end(), id),
+                                     selection_.end());
+            } else if (addSel) {
+                for (int id : matched)
+                    if (std::find(selection_.begin(), selection_.end(), id) == selection_.end())
+                        selection_.push_back(id);
+            } else {
+                selection_ = std::move(matched);
+            }
+            if (!addSel && !subSel && isClick && selection_.size() == 1)
+                voice(selection_.front(), "select");
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.button == SDL_BUTTON_RIGHT && !selection_.empty()) {
             float wx, wz;

@@ -39,6 +39,7 @@ struct UnitR {
     bool underConstruction = false, buildBegun = false;
     bool cloaked = false, cloakOn = true, active = true;
     float frozenFor = 0, stonedFor = 0, paralyzedFor = 0;
+    float selfDestructT = -1;   // >=0 = self-destruct countdown (seconds) armed
     int buildSiteId = 0, reclaimId = 0, repairId = 0;
     float buildProgress = 0;
     std::vector<const tak::sim::UnitType*> buildQueue;

@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 37;       // 37: don't auto-acquire/keep attacking undamageable targets
+constexpr uint32_t kNetVersion = 38;       // 38: self-destruct is a 5s toggled countdown (Ctrl+Shift+D)
+                                           // 37: don't auto-acquire/keep attacking undamageable targets
                                            // 36: in-sim .crt scenario trigger runner + forced-defeat
                                            // 35: structures exempt from separation/unstick
                                            // 28: retail melee = footprint adjacency

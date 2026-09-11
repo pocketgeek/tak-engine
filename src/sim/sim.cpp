@@ -1265,12 +1265,12 @@ void World::stop(int unitId) {
 }
 
 void World::destroy(int unitId) {
-    // Self-destruct: drop hp to zero and let the normal death processing in
-    // tick() handle the rest (kill credit is skipped -- lastHitBy is cleared).
+    // Self-destruct: TOGGLE a 5s countdown. Arming a live unit starts the timer;
+    // pressing again while it counts down cancels it. Expiry (in tick) drops hp
+    // to zero with an explosion death; kill credit is skipped.
     Unit* u = unit(unitId);
     if (!u || !u->alive()) return;
-    u->hp = 0;
-    u->lastHitBy = 0;
+    u->selfDestructT = (u->selfDestructT < 0.0f) ? 5.0f : -1.0f;
 }
 
 void World::setWeapon(int unitId, int slot) {
@@ -3046,6 +3046,13 @@ void World::tick(float dt) {
         if (u.frozenFor > 0) u.frozenFor = std::max(0.0f, u.frozenFor - dt);
         if (u.stonedFor > 0) u.stonedFor = std::max(0.0f, u.stonedFor - dt);
         if (u.paralyzedFor > 0) u.paralyzedFor = std::max(0.0f, u.paralyzedFor - dt);
+        if (u.selfDestructT >= 0.0f) {   // armed self-destruct: tick down, then blow up
+            u.selfDestructT -= dt;
+            if (u.selfDestructT <= 0.0f) {
+                u.selfDestructT = -1.0f;
+                u.hp = 0; u.lastHitBy = 0; u.deathType = 3;   // explosion death (gib)
+            }
+        }
         if (u.type->healTime > 0 && u.hp < u.type->maxHp)
             u.hp = std::min(u.type->maxHp, u.hp + dt / u.type->healTime);
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
@@ -3511,6 +3518,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(u.alive() ? 1 : 0));
         mix(uint64_t(u.veteran));
         mixf(u.reloads[0]);
+        mixf(u.selfDestructT);   // self-destruct countdown drives a deterministic death
         // Stance / cloak-intent / active gate auto-acquire, cloaking and firing, so a
         // divergence in them must fault directly rather than diffusing into positions.
         mix(uint64_t(uint32_t(u.stance)));
