@@ -17,7 +17,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 50;       // 50: missed ballistic shells crater where they
+constexpr uint32_t kNetVersion = 51;       // 51: units are solid -- a parked body blocks a
+                                           // move; blocked units clamp-and-slow instead of
+                                           // stopping; separation spacing 13 -> 16px
+                                           // 50: missed ballistic shells crater where they
                                            // land; target leading + dontleadtargets;
                                            // lobbers ignore the line-of-sight gate;
                                            // all four walls block nav (isStructure)

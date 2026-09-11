@@ -889,6 +889,87 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --- units are solid --------------------------------------------------
+    // The dangerous change in this area is not "does blocking work" but "does an
+    // army still move". Test both, and test the corridor case that deadlocks first.
+    std::printf("[units are solid]\n");
+    {
+        const sim::UnitType* sw = reg.find("arasword");
+        if (sw) {
+            // (a) A parked body blocks: walk one unit into a stationary one and
+            //     assert it cannot pass through.
+            {
+                sim::World w;
+                sim::MatchConfig cfg;
+                cfg.vfs = &vfs; cfg.mapPath = kMap;
+                cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+                sim::setupMatch(w, reg, cfg);
+                int blocker = w.spawn(sw, 700, 600, 0, 0);
+                int walker = w.spawn(sw, 640, 600, 0, 0);
+                for (int i = 0; i < 30 * 10; ++i) w.tick(1.0f / 30.0f);   // settle
+                w.order(walker, 800, 600, false);                          // straight through
+                for (int i = 0; i < 30 * 10; ++i) w.tick(1.0f / 30.0f);
+                const sim::Unit* b = w.unit(blocker);
+                const sim::Unit* m = w.unit(walker);
+                // The discriminating assertion: the walker was sent to x=800, PAST
+                // the blocker at 700. With only separation it shoulders through and
+                // arrives; solid, it is still on the near side or squeezing round.
+                check(m->x < 800.0f - 40.0f,
+                      "a parked body actually stops a walker (not just spaces it)",
+                      "walker x=" + std::to_string(int(m->x)) +
+                          " blocker x=" + std::to_string(int(b->x)));
+            }
+            // (b) An army still moves. 24 units ordered across open ground must
+            //     nearly all arrive -- this is the regression that matters.
+            {
+                sim::World w;
+                sim::MatchConfig cfg;
+                cfg.vfs = &vfs; cfg.mapPath = kMap;
+                cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+                sim::setupMatch(w, reg, cfg);
+                std::vector<int> army;
+                for (int j = 0; j < 4; ++j)
+                    for (int i = 0; i < 6; ++i)
+                        army.push_back(w.spawn(sw, 600.0f + float(i) * 20.0f,
+                                               600.0f + float(j) * 20.0f, 0, 0));
+                for (int id : army) w.order(id, 900, 700, false);
+                for (int i = 0; i < 30 * 40; ++i) w.tick(1.0f / 30.0f);
+                int arrived = 0;
+                for (int id : army) {
+                    const sim::Unit* u = w.unit(id);
+                    float dx = u->x - 900.0f, dz = u->z - 700.0f;
+                    if (std::sqrt(dx * dx + dz * dz) < 120.0f) ++arrived;
+                }
+                check(arrived >= int(army.size()) * 3 / 4,
+                      "an army of 24 still reaches its destination",
+                      std::to_string(arrived) + "/" + std::to_string(army.size()));
+            }
+            // (c) Two columns marching THROUGH each other must not lock. This is
+            //     deadlock mode #1, and the reason occupancy records only parked
+            //     bodies -- two moving units can never block one another.
+            {
+                sim::World w;
+                sim::MatchConfig cfg;
+                cfg.vfs = &vfs; cfg.mapPath = kMap;
+                cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+                sim::setupMatch(w, reg, cfg);
+                std::vector<int> east, west;
+                for (int i = 0; i < 6; ++i) {
+                    east.push_back(w.spawn(sw, 620.0f + float(i) * 18.0f, 660, 0, 0));
+                    west.push_back(w.spawn(sw, 880.0f - float(i) * 18.0f, 660, 0, 0));
+                }
+                for (int id : east) w.order(id, 900, 660, false);
+                for (int id : west) w.order(id, 600, 660, false);
+                for (int i = 0; i < 30 * 40; ++i) w.tick(1.0f / 30.0f);
+                int through = 0;
+                for (int id : east) if (w.unit(id)->x > 820.0f) ++through;
+                for (int id : west) if (w.unit(id)->x < 680.0f) ++through;
+                check(through >= 8, "two columns pass through each other",
+                      std::to_string(through) + "/12 got past");
+            }
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

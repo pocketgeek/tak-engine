@@ -2090,6 +2090,27 @@ void World::captureUnit(Unit& t, int newPlayer) {
     t.buildProgress = 0;
 }
 
+// Stamp every PARKED ground unit into the occupancy layer. O(n), one cell each:
+// our movers are all one nav cell, and this deliberately does NOT go through
+// NavGrid::block, whose clearance DP and flow invalidation would be ruinous at a
+// per-tick cadence. Rebuilt wholesale in unit-index order so the last writer on a
+// contested cell is the same on every peer.
+void World::rebuildOccupancy() {
+    occW_ = terW_;
+    occH_ = terH_;
+    if (occW_ <= 0 || occH_ <= 0) { occ_.clear(); occW_ = occH_ = 0; return; }
+    occ_.assign(size_t(occW_) * size_t(occH_), 0);
+    for (const auto& u : units_) {
+        if (!u.alive() || u.embarked() || !u.type) continue;
+        if (u.type->canFly || u.type->isStructure()) continue;   // structures are in nav_
+        if (u.underConstruction) continue;
+        if (u.speed != 0.0f) continue;   // only a parked body blocks (see sim.h)
+        int cx = int(u.x) / 16, cz = int(u.z) / 16;
+        if (cx < 0 || cz < 0 || cx >= occW_ || cz >= occH_) continue;
+        occ_[size_t(cz) * size_t(occW_) + size_t(cx)] = u.id;
+    }
+}
+
 void World::rebuildGrid() {
     gCell_ = 32.0f;
     float minx = 1e30f, minz = 1e30f, maxx = -1e30f, maxz = -1e30f;
@@ -3412,6 +3433,7 @@ void World::tick(float dt) {
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
     rebuildGrid();   // spatial hash for this tick (combat acquire + separation)
+    rebuildOccupancy();   // who is parked where: units are solid (see sim.h)
 
     // Auto-acquire re-scan period, widened with the crowd: target acquisition is the
     // dominant sim cost in a huge battle (each idle armed unit scans its neighbourhood
@@ -3824,16 +3846,29 @@ void World::tick(float dt) {
                 auto free = [&](float nx, float nz) {
                     // Footprint-aware, and the SAME grid the pathfinder used, so a unit
                     // never stalls on a cell its own path routed it through.
-                    return g.empty() || g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type));
+                    if (!(g.empty() || g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type))))
+                        return false;
+                    // ...and units are solid: a parked body holds its cell.
+                    return cellFree(nx, nz, u.id);
                 };
-                if (free(u.x + mx, u.z + mz)) { u.x += mx; u.z += mz; }
+                // A unit that stays inside its own cell is never tested -- retail
+                // does the same (it only checks on a cell crossing), and without it
+                // a body pressed against a blocker could not even shuffle in place.
+                bool sameCell = int((u.x + mx) / 16) == int(u.x / 16) &&
+                                int((u.z + mz) / 16) == int(u.z / 16);
+                if (sameCell || free(u.x + mx, u.z + mz)) { u.x += mx; u.z += mz; }
                 else if (free(u.x + mx, u.z)) { u.x += mx; }
                 else if (free(u.x, u.z + mz)) { u.z += mz; }
                 else {
                     // Fully blocked (a wall dead-ahead the straight path clipped):
                     // stop and repath around it toward the final destination, so
                     // the unit routes around instead of wedging permanently.
-                    u.speed = 0;
+                    // Retail does NOT stop a blocked unit dead -- it clamps the move
+                    // and caps speed (0.5x on the first refusal, 0.4x once it has
+                    // been refused twice running), so the unit keeps pressing and
+                    // resumes the instant the way clears. Stopping outright is what
+                    // turns a momentary jam into a permanent one.
+                    u.speed = std::min(u.speed, u.type->maxVel * 0.4f);
                     u.repathLeft -= dt;
                     if (!g.empty() && u.repathLeft <= 0 &&
                         u.orders.front().targetId == 0) {
@@ -3874,10 +3909,18 @@ void World::tick(float dt) {
                         u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
                         const NavGrid& g = navFor(u.type);
                         auto free = [&](float nx, float nz) {
-                            return g.empty() || g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type));
+                            return (g.empty() ||
+                                    g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type))) &&
+                                   cellFree(nx, nz, u.id);
                         };
                         float px = detmath::cos(u.heading), pz = -detmath::sin(u.heading);
-                        float s = (u.id & 1) ? 1.0f : -1.0f;
+                        // Which way to dodge. `id & 1` alone makes two units of the
+                        // same parity meeting head-on pick the SAME side and collide
+                        // again -- the exact failure solidity would otherwise turn
+                        // into a permanent corridor lock. Fold in the tick so a pair
+                        // that keeps re-colliding eventually picks opposite sides,
+                        // and the choice stays deterministic.
+                        float s = ((u.id ^ int(tickCounter_ >> 5)) & 1) ? 1.0f : -1.0f;
                         for (float d : {20.0f, 34.0f}) {
                             if (free(u.x + px * s * d, u.z + pz * s * d)) {
                                 u.x += px * s * d * 0.5f; u.z += pz * s * d * 0.5f; break;
@@ -4043,7 +4086,15 @@ void World::tick(float dt) {
     }
     tickAbilities(dt);   // reclaim / resurrect corpses (uses the fresh grid)
     tickAuras(dt);       // AdjustArmor/Attack stat auras (uses the fresh grid)
-    constexpr float kSep = 13.0f;
+    // One nav cell. 13px packed ~1.75 bodies into every 16px cell, which is what
+    // made dense fights compress into piles retail would not allow -- a retail
+    // ground unit holds a 2x2-cell (32px) box exclusively. 16 keeps the settled
+    // spacing consistent with one-unit-per-cell occupancy without going all the way
+    // to retail's footprint sizes, which our movers do not carry (see the note in
+    // the commit: our 125 mobile ground units default to a 1x1 footprint because we
+    // read MaxSlope from moveinfo.tdf but not FootprintX/Z). Melee still reaches:
+    // meleeInRange passes two point-footprint units at |dx|,|dz| < 24.
+    constexpr float kSep = 16.0f;
     auto ok = [&](const Unit& u, float nx, float nz) {
         const NavGrid& g = navFor(u.type);
         return g.empty() || g.walkable(int(nx) / 16, int(nz) / 16);

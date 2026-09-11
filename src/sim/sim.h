@@ -1103,6 +1103,7 @@ private:
     // Uniform spatial hash over mobile units, rebuilt each tick, so the
     // separation and combat-acquisition passes are O(n) instead of O(n^2).
     void rebuildGrid();
+    // (rebuildOccupancy declared with occ_ below)
     // Call fn(int unitIndex) for every mobile unit whose cell lies within
     // `radius` of (x,z). Iterates cells in a fixed order, so it is deterministic.
     template <class F>
@@ -1145,6 +1146,36 @@ private:
             }
         }
     }
+    // Unit solidity. Retail stamps every ground unit into an exclusive per-cell
+    // occupancy layer and REFUSES a move whose destination footprint overlaps
+    // another unit's cell (KINGDOMS.icd 0x507d10) -- units are hard-solid, and
+    // body-blocking a bridge is a real tactic. Ours passed through each other
+    // entirely; the only unit-vs-unit force was the separation relaxation, which
+    // resolves overlap after the fact and cannot stop anyone.
+    //
+    // ONE DELIBERATE SIMPLIFICATION: we record only STATIONARY units. Retail's
+    // hard test blocks on any occupant, but its steering layer (0x509020) rates a
+    // parked unit impassable and a MOVING one merely expensive, so crowds flow
+    // through each other's wake; it affords that with continuous short-hop
+    // replanning, randomised repath delays and an age-weighted per-player path
+    // budget that we do not have. Blocking only on parked units keeps what a
+    // player notices -- a wall of bodies stops you -- while making a head-on
+    // corridor lock between two marching units impossible by construction.
+    // Rebuilt wholesale once a tick in unit-index order, so it is deterministic;
+    // it is derived state and is not itself hashed.
+    std::vector<int32_t> occ_;      // 16px cells -> occupying unit id (0 = free)
+    int occW_ = 0, occH_ = 0;
+    void rebuildOccupancy();
+    // Is (nx,nz) free of a parked body other than `selfId`? True when solidity is
+    // off (no grid) or the cell is outside it.
+    bool cellFree(float nx, float nz, int selfId) const {
+        if (occW_ <= 0) return true;
+        int cx = int(nx) / 16, cz = int(nz) / 16;
+        if (cx < 0 || cz < 0 || cx >= occW_ || cz >= occH_) return true;
+        int32_t o = occ_[size_t(cz) * size_t(occW_) + size_t(cx)];
+        return o == 0 || o == selfId;
+    }
+
     std::vector<int> gHead_, gNext_;
     int gW_ = 0, gH_ = 0;
     float gCell_ = 32.0f, gOx_ = 0, gOz_ = 0;
