@@ -1392,6 +1392,34 @@
         for (auto& [id, a] : anims_) {
             if (a.vm) vmTick_.push_back(a.vm.get());
             a.fireT += dt; a.smokeT += dt;   // age since last emit (fire fades if it stops)
+            // Flyer attitude. A retail flyer rolls into its turn and pitches into a
+            // climb or dive, scaled per unit by bankscale/pitchscale; ours flew
+            // perfectly level through everything. Derived from how the unit is
+            // ACTUALLY moving (heading change and altitude change per second) and
+            // eased, so it leans in and levels out instead of snapping.
+            if (!a.flying || dt <= 0.0f) continue;
+            const UnitR* fu = frameUnitP(id);
+            if (!fu || !fu->type) continue;
+            if (fu->type->bankScale <= 0 && fu->type->pitchScale <= 0) continue;
+            if (!a.attitudeInit) {
+                a.attitudeInit = true;
+                a.prevHeading = fu->heading;
+                a.prevAlt = a.altitude;
+            }
+            constexpr float kTau = 6.2831853f;
+            float dh = fu->heading - a.prevHeading;
+            while (dh > kTau / 2) dh -= kTau;
+            while (dh < -kTau / 2) dh += kTau;
+            a.prevHeading = fu->heading;
+            float dAlt = a.altitude - a.prevAlt;
+            a.prevAlt = a.altitude;
+            // Targets: turn rate (rad/s) and climb rate, each scaled and capped so a
+            // hard turn banks hard but never rolls past a believable limit.
+            float wantBank = std::clamp(dh / dt * fu->type->bankScale * 0.35f, -0.9f, 0.9f);
+            float wantPitch = std::clamp(dAlt / dt * fu->type->pitchScale * 0.010f, -0.5f, 0.5f);
+            float ease = std::clamp(dt * 4.0f, 0.0f, 1.0f);
+            a.bank += (wantBank - a.bank) * ease;
+            a.pitch += (wantPitch - a.pitch) * ease;
         }
         pool_.parallelFor(vmTick_.size(), [&](size_t b, size_t e) {
             for (size_t i = b; i < e; ++i) vmTick_[i]->tick(dt);

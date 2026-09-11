@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 46;       // 46: mission VO hook + deadly water (waterdoesdamage)
+constexpr uint32_t kNetVersion = 47;       // 47: Standby_wander wildlife roam (hashed movement)
+                                           // 46: mission VO hook + deadly water (waterdoesdamage)
                                            // 45: Msg::SetPause (player-requested pause) + mission order verbs
                                            // 44: mission GET table + escort/protect win-lose conditions
                                            // 43: storm ids folded into the hash (viewer draws storms)

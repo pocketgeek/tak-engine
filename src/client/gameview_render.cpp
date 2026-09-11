@@ -1627,6 +1627,16 @@
         Xform base;
         if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
             base.t[1] = anim ? anim->altitude : u.type->cruiseAlt;
+        // Bank and pitch the whole model (bankscale/pitchscale). Composed on the
+        // BASE, before the piece tree, so the animation's own piece rotations ride
+        // on top of the attitude rather than fighting it. Piece X and Y are negated
+        // at the script boundary for the mirrored basis; this is a body attitude, not
+        // a script rotation, so it goes in directly.
+        if (anim && (anim->bank != 0.0f || anim->pitch != 0.0f)) {
+            float att[3] = {anim->pitch, 0.0f, anim->bank};
+            float alt = base.t[1];
+            base = Xform{}.then(0.0f, alt, 0.0f, att);
+        }
         // Flyers face -heading exactly like ground movers (no flyer facing branch).
         float facing = (u.type && (u.type->canMove || u.type->canFly)) ? -ih : 0.0f;
         // Disco emote: a dancing monarch spins, bobs and hue-cycles. Local wall-time

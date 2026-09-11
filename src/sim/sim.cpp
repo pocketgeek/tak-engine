@@ -206,6 +206,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 t.minWaterDepth = mci->second.minWaterDepth;
             }
             t.cruiseAlt = float(info->numberOr("cruisealt", 0)) / 4;
+            t.bankScale = float(info->numberOr("bankscale", 0));
+            t.wanders = lower(info->valueOr("defaultmissiontype", "")) == "standby_wander";
+            t.pitchScale = float(info->numberOr("pitchscale", 0));
             // One weapon block -> a Weapon. Shared by WEAPON1..3 and by
             // [EXPLODEAS] (the death blast), which is the same block shape.
             auto parseWeapon = [](const tdf::Node* w) {
@@ -3449,7 +3452,20 @@ void World::tick(float dt) {
             u.hp = std::min(u.type->maxHp, u.hp + dt / u.type->healTime);
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
             u.mana = std::min(u.type->maxMana, u.mana + u.type->manaRegen * dt);
-        if (u.orders.empty()) { u.homeX = u.x; u.homeZ = u.z; }   // leash anchor
+        // A WANDERER keeps its spawn point as home -- that anchor is what stops its
+        // stroll turning into a migration.
+        if (u.orders.empty() && !u.type->wanders) { u.homeX = u.x; u.homeZ = u.z; }
+        // Wildlife and villagers roam. Retail gives them Standby_wander and they
+        // amble; ours stood like statues on every campaign and scenario map. An idle
+        // wanderer strolls every ~8 seconds, staggered by id so a herd doesn't move
+        // as one, rolled on the sim's deterministic RNG -- and always to a point
+        // near HOME, so they mill about their patch instead of drifting off it.
+        if (u.type->wanders && u.orders.empty() && !u.underConstruction &&
+            u.type->maxVel > 0 && (uint32_t(u.id) + tickCounter_) % 240 == 0) {
+            float ang = float(burnRand(628)) / 100.0f;
+            float r = float(burnRand(96));
+            order(u.id, u.homeX + detmath::sin(ang) * r, u.homeZ + detmath::cos(ang) * r, false);
+        }
 
         // Cloaking: drains player mana; an enemy within mincloakdistance forces a
         // decloak, and so does running dry of mana.

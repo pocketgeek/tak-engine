@@ -824,6 +824,12 @@ private:
         bool flying = false;
         bool airborne = false;   // true while the flight animation should run
         float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
+        // Flyer attitude (bankscale/pitchscale): a smoothed roll into the turn and
+        // pitch into the climb, derived from how the unit is actually moving. Retail
+        // flyers visibly lean; ours flew dead level through every turn and dive.
+        float prevHeading = 0, prevAlt = 0;
+        float bank = 0, pitch = 0;
+        bool attitudeInit = false;
         int flyGate = 8;         // static index that this unit's `fly` gates on
         int moveGate = 0;        // static index this unit's `walk` gates on (see walkGateOf)
         bool hasWalk = false;    // has a walk/walk_legs/tread script (vs a Create-ambient mover)

@@ -179,6 +179,13 @@ struct UnitType {
     std::vector<std::string> categories;
     float sight = 180;        // px (FBI sightdistance)
     bool canFly = false;
+    // bankscale / pitchscale: how hard this flyer rolls into a turn and pitches
+    // into a climb or dive. Display-only (53 and 33 units carry them).
+    float bankScale = 0, pitchScale = 0;
+    // defaultmissiontype = Standby_wander: cows, deer, wolves, boar, peasants and
+    // villagers drift around instead of standing still. 16 types, and the missions
+    // place hundreds of them.
+    bool  wanders = false;
     float cruiseAlt = 0;      // world units above ground when flying
     enum class Domain { Ground, Water, Hover };
     Domain domain = Domain::Ground;   // from FBI movementclass prefix
