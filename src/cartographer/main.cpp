@@ -276,6 +276,7 @@ int main(int argc, char** argv) {
     // features, units, starts, scenario props, use-only, triggers), cleared on a
     // successful save. Broader than `edited` (which only gates minimap regen).
     bool dirty = false;
+    bool wantNew = false;   // deferred "open New Map" after a discard confirmation
     // Save the map as loose <stem>.tnt + <stem>.ota. Loose Maps/<name>.* is
     // read directly by the engine VFS, so a saved map is immediately playable.
     auto saveMap = [&](const std::string& tntPath) -> bool {
@@ -767,7 +768,11 @@ int main(int argc, char** argv) {
                 e.motion.xrel /= kUIScale; e.motion.yrel /= kUIScale;
             }
             if (e.type == SDL_QUIT) {
-                if (dirty) { modal = M_QUITSAVE; SDL_StopTextInput(); } else running = false;
+                if (dirty) {
+                    // Close any transient overlay so the quit prompt gets input.
+                    useOnlyOpen = false; scriptOpen = false; pickOpen = false;
+                    modal = M_QUITSAVE; SDL_StopTextInput();
+                } else running = false;
                 continue;
             }
             // The Use Only checklist overlay swallows input while up.
@@ -797,8 +802,15 @@ int main(int argc, char** argv) {
                 // Save-before-exit prompt: SAVE / DON'T SAVE / CANCEL.
                 if (modal == M_QUITSAVE) {
                     auto saveThenQuit = [&]() {
-                        if (saveMap(outDir + "/" + mapName + ".tnt")) dirty = false;
-                        running = false; modal = M_NONE;
+                        // Only exit if the save actually succeeded -- otherwise
+                        // keep the editor alive and say so, so a failed write
+                        // (read-only dir, disk full) can't silently lose work.
+                        if (saveMap(outDir + "/" + mapName + ".tnt")) {
+                            dirty = false; running = false; modal = M_NONE;
+                        } else {
+                            openMessage("SAVE FAILED",
+                                        "Could not write the map; your changes were NOT saved.");
+                        }
                     };
                     if (e.type == SDL_KEYDOWN) {
                         SDL_Keycode k = e.key.keysym.sym;
@@ -894,10 +906,10 @@ int main(int argc, char** argv) {
                         scrGroup = gs.empty() ? -1 : std::min(scrGroup, int(gs.size()) - 1);
                         scrCondSel = scrActSel = -1;
                     } else if (cart::pointIn(mx, my, rAddCond)) {
-                        if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; }
+                        if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; dirty = true; }
                         pickOpen = true; pickAction = false; pickScroll = 0;
                     } else if (cart::pointIn(mx, my, rAddAct)) {
-                        if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; }
+                        if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; dirty = true; }
                         pickOpen = true; pickAction = true; pickScroll = 0;
                     } else if (cart::pointIn(mx, my, rDelCond) && g && scrCondSel >= 0 &&
                                scrCondSel < int(g->conditions.size())) {
@@ -928,11 +940,18 @@ int main(int argc, char** argv) {
                 continue;
             }
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
-                if (dirty) { modal = M_QUITSAVE; SDL_StopTextInput(); } else running = false;
+                if (dirty) {
+                    // Close any transient overlay so the quit prompt gets input.
+                    useOnlyOpen = false; scriptOpen = false; pickOpen = false;
+                    modal = M_QUITSAVE; SDL_StopTextInput();
+                } else running = false;
             } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
                      e.key.keysym.sym == SDLK_s) {
                 bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
-                if (saveMap(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt")) dirty = false;
+                // Shift+S writes a "-edit" side copy; only a save of the canonical
+                // map file clears the unsaved-changes flag.
+                if (saveMap(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt") && !shift)
+                    dirty = false;
             } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
                        e.key.keysym.sym == SDLK_b) {
                 // Ctrl+B: save the finished map as a single .kmp bundle.
@@ -947,7 +966,10 @@ int main(int argc, char** argv) {
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_k) {
                 clearArm = !clearArm;    // Edit -> Clear Area (drag a box)
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_n) {
-                openModal(M_NEW);        // File -> New Map
+                // File -> New Map. Guard unsaved edits (New replaces the whole map).
+                if (dirty) openConfirm("NEW MAP", "Discard unsaved changes and start "
+                                       "a new map?", [&]() { wantNew = true; });
+                else openModal(M_NEW);
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_p) {
                 openModal(M_SCENARIO);   // Scenario -> Properties
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_r) {
@@ -1131,6 +1153,10 @@ int main(int argc, char** argv) {
                 mapView.input(e);
             }
         }
+
+        // A confirmed New (discarding unsaved edits) opens the dialog now, after
+        // the confirm's applyModal has closed itself.
+        if (wantNew) { wantNew = false; openModal(M_NEW); }
 
         mapView.ensureChunks(canvasW, canvasH);
 
