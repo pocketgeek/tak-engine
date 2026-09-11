@@ -218,27 +218,41 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Wandering: the Weather Witch's Tornado must roam and grind over time,
-        // not deal one tap. Check it damages across multiple separate bites.
+        // Wandering: the Tornado is a MOVING HAZARD, not a targeted strike -- it is
+        // born in front of the caster, drifts along the launch heading and weaves
+        // hard sideways (maxvariation is px/tick and dwarfs the drift), grinding
+        // whatever it touches every tick. So seed the area it will cross and check
+        // it chews through units over time rather than dealing one tap.
         const sim::UnitType* witch = reg.find("tarwitch");
         if (witch && prey && !witch->weapons.empty() &&
             witch->weapons[0].kind == sim::Weapon::Kind::Wandering) {
             sim::World w; freshWorld(w);
             int caster = w.spawn(witch, 1000, 1000, 0, 0);
-            int victim = w.spawn(prey, 1000, 1100, 0, 1);
             if (auto* c = w.unit(caster)) c->mana = c->type->maxMana;
-            w.attack(caster, victim, false);
-            float hp0 = w.unit(victim)->hp;
-            int hits = 0; float last = hp0;
-            for (int i = 0; i < 900; ++i) {
+            // A dense field across the whole region a 9-second tornado can reach
+            // (it drifts ~400px forward and wanders hundreds of px sideways), so the
+            // check does not depend on the exact RNG path.
+            std::vector<int> crowd;
+            for (int gz = 0; gz < 11; ++gz)
+                for (int gx = 0; gx < 11; ++gx)
+                    crowd.push_back(w.spawn(prey, 900.0f + gx * 45.0f,
+                                            1100.0f + gz * 45.0f, 0, 1));
+            float total0 = 0;
+            for (int id : crowd) if (auto* u = w.unit(id)) total0 += u->hp;
+            w.attack(caster, crowd[12], false);
+            int ticksWithDamage = 0;
+            float last = total0;
+            for (int i = 0; i < 600; ++i) {
                 w.tick(1.0f / 30.0f);
-                const sim::Unit* v = w.unit(victim);
-                if (!v || !v->alive()) { ++hits; break; }
-                if (v->hp < last - 0.01f) { ++hits; last = v->hp; }
+                float now = 0;
+                for (int id : crowd) if (const sim::Unit* u = w.unit(id); u && u->alive()) now += u->hp;
+                if (now < last - 0.01f) ++ticksWithDamage;
+                last = now;
             }
-            check(hits > 0, "the tornado damaged its victim");
-            check(hits > 1, "and it GRINDS (multiple bites, not one tap)",
-                  std::to_string(hits) + " bites");
+            check(last < total0, "the tornado chewed through the crowd it crossed",
+                  "lost " + std::to_string(int(total0 - last)) + " HP");
+            check(ticksWithDamage > 5, "and it GRINDS continuously (many damage ticks)",
+                  std::to_string(ticksWithDamage) + " ticks dealt damage");
         }
 
         // Mind control: the Mind Mage converts an eligible enemy; a Monarch is immune.
@@ -273,7 +287,7 @@ int main(int argc, char** argv) {
                 const sim::Unit* v = w.unit(royal);
                 if (v && v->alive() && v->player == 0) { stolen = true; break; }
             }
-            check(!stolen, "a Monarch resists mind control (damage-table immunity)");
+            check(!stolen, "a Monarch resists mind control (commander gate)");
         }
 
         // Area Mind Control (Remote Effect + mindcontrol, aoe 250) should convert

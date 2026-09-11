@@ -246,7 +246,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     wp.buildUp = float(w->numberOr("builduptime", 0));
                     wp.decay = float(w->numberOr("decaytime", 0));
                     wp.duration = float(w->numberOr("duration", 0));
-                    wp.maxVariation = float(w->numberOr("maxvariation", 0)) * (kPi / 180.0f);
+                    // maxvariation is NOT an angle: it is the wander jitter's
+                    // half-width in PIXELS PER TICK (2..8 across the shipped
+                    // storms, which dwarfs their 45..80 px/s drift -- that is what
+                    // makes the path genuinely wander rather than curve).
+                    wp.maxVariation = float(w->numberOr("maxvariation", 0));
                     wp.variationTime = float(w->numberOr("variationtime", 0));
                     wp.unitsOnly = w->numberOr("unitsonly", 0) != 0;
                     wp.mindControl = lower(w->valueOr("subtype", "")) == "mindcontrol";
@@ -1387,9 +1391,22 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         // against this category" is exactly "can be charmed", which damageVs()
         // already computes. Conversion is permanent, like contact capture.
         if (w.mindControl) {
-            if (w.damageVs(e.type) <= 0.0f) return;   // immune category
+            // Retail's charm roll (icd 0x52da10), gates in this exact order so the
+            // RNG stream can never diverge between peers. Note the [DAMAGE] table is
+            // the ACQUISITION filter -- it decides what you may TARGET -- so a
+            // Monarch caught inside an area charm is stopped by the commander gate
+            // here, not by its zeroed damage row.
+            if (e.embarked()) return;                 // safe inside a transport
+            if (e.type->commander) return;            // Monarchs are never charmed
             if (e.type->cantBeCaptured) return;
+            if (e.hp <= 0) return;
             if (atUnitCap(fromPlayer)) return;        // no room on the new side
+            // Chance rises with the victim's veterancy -- a green unit is ~80%, a
+            // 10-star veteran is capped at 99%. Scaled by the area falloff so the
+            // rim of an Area Mind Control is less reliable than its centre.
+            int chance = std::min(99, (int(e.veteran) + 16) * 5);
+            if (burnRand(100) >= int(float(chance) * std::clamp(scale, 0.0f, 1.0f)))
+                return;                               // it shrugged the spell off
             captureUnit(e, fromPlayer);
             return;
         }
@@ -1517,15 +1534,21 @@ void World::fire(Unit& u, Unit& target, int slot) {
     // Wandering: spawn a roaming storm at the aim point. It drifts for `duration`,
     // grinding whatever it passes over, instead of landing one tap.
     if (w.kind == Weapon::Kind::Wandering) {
+        // The storm is born just IN FRONT OF THE CASTER facing the aim point -- it
+        // is not delivered to the target. It then drifts along that launch heading
+        // for good (a storm never re-aims), weaving as it goes, so the caster is
+        // aiming a slow moving hazard rather than placing one.
         Storm s;
+        float dx = target.x - u.x, dz = target.z - u.z;
+        float dl = std::max(detmath::len(dx, dz), 1e-3f);
+        s.dirX = dx / dl; s.dirZ = dz / dl;
         s.w = &w;
-        s.x = target.x; s.z = target.z;
+        s.x = u.x + s.dirX * 32.0f;
+        s.z = u.z + s.dirZ * 32.0f;
         s.player = u.player; s.fromId = u.id;
-        // Start it drifting away from the caster, then let the wobble take over.
-        s.heading = detmath::atan2(target.x - u.x, target.z - u.z);
+        s.arm = w.buildUp;            // wind-up: visible and moving, but harmless
         s.left = w.duration > 0 ? w.duration : 6.0f;
-        s.nextVary = w.variationTime > 0 ? w.variationTime : 2.0f;
-        s.nextHit = 0.0f;             // bite immediately on arrival
+        s.nextVary = 0.0f;            // roll the first wander offset immediately
         storms_.push_back(s);
         return;
     }
@@ -1551,7 +1574,13 @@ void World::fire(Unit& u, Unit& target, int slot) {
     p.fromPlayer = u.player;
     p.fromId = u.id;
     p.fx = w.fx;
-    p.life = dist / vel + 0.5f;
+    // Fuel. A dumb shot only needs to reach where it was aimed. A GUIDED one is
+    // fuelled from the weapon's RANGE instead (retail fixes its expiry tick at
+    // launch as one full range of travel), so a homer that has to curve after a
+    // fleeing target doesn't run dry halfway -- fuelling it from the launch
+    // distance would make the chase it exists for fizzle. Out of fuel is a dud
+    // either way: no damage, no splash.
+    p.life = (w.kind == Weapon::Kind::Guided ? std::max(w.range, dist) : dist) / vel + 0.5f;
     p.flight = dist / vel;
     projectiles_.push_back(p);
 }
@@ -1784,6 +1813,18 @@ void World::tickCombat(Unit& u, float dt) {
 // last hit it (so the new owner isn't credited a kill on its own unit).
 void World::captureUnit(Unit& t, int newPlayer) {
     if (!t.type || t.player == newPlayer) return;
+    // Move the unit between the two owners' live counts NOW, the way spawn() does.
+    // The counts only re-sync from a full walk at end of tick, so without this an
+    // area mind control -- which converts a whole blob inside ONE applyHit -- reads
+    // the same stale count for every victim and can carry its new owner far past
+    // the lobby unit cap.
+    if (t.alive()) {
+        if (t.player >= 0 && t.player < int(players_.size()) &&
+            players_[size_t(t.player)].unitCount > 0)
+            players_[size_t(t.player)].unitCount--;
+        if (newPlayer >= 0 && newPlayer < int(players_.size()))
+            players_[size_t(newPlayer)].unitCount++;
+    }
     t.player = newPlayer;
     t.orders.clear();
     t.hp = std::max(t.hp, t.type->maxHp * 0.5f);
@@ -3510,39 +3551,44 @@ void World::tick(float dt) {
             ++i;
         }
     }
-    // Wandering storms: drift, wobble, and grind whatever they pass over.
+    // Wandering storms: drift along the launch heading, weave, and grind whatever
+    // they touch. The FBI `damage` is a PER-TICK rate, not a per-hit figure -- the
+    // Tornado's 50 is 1500/sec inside its small radius (it wears a unit down over
+    // its 9 seconds), while a god vortex's 12500 is simply death to stand in, which
+    // its `monarch = 0.01` row scales back so a Monarch has a few seconds to escape.
     for (size_t i = 0; i < storms_.size();) {
         Storm& s = storms_[i];
-        s.left -= dt;
-        if (s.left <= 0.0f || !s.w) {
-            storms_.erase(storms_.begin() + std::ptrdiff_t(i));
-            continue;
-        }
-        // Heading wobble every variationtime, up to maxvariation either way. Uses
-        // the sim's deterministic Lehmer RNG (the same one feature-burn spread
-        // rolls on), so every peer wanders identically.
+        if (!s.w) { storms_.erase(storms_.begin() + std::ptrdiff_t(i)); continue; }
+        // Wander offset: NOT an angle. maxvariation is a jitter half-width in
+        // pixels per tick, applied PERPENDICULAR to the launch direction (x gets
+        // |dirZ|, z gets |dirX|), so the storm weaves across its own path while
+        // still advancing. Re-rolled every variationtime on the sim's Lehmer RNG,
+        // so every peer weaves identically.
         s.nextVary -= dt;
         if (s.nextVary <= 0.0f) {
             s.nextVary += s.w->variationTime > 0 ? s.w->variationTime : 2.0f;
-            if (s.w->maxVariation > 0) {
-                int span = std::max(1, int(s.w->maxVariation * 2000.0f));
-                s.heading += float(burnRand(span)) / 1000.0f - s.w->maxVariation;
+            float mv = s.w->maxVariation;
+            if (mv > 0) {
+                float vx = mv * std::abs(s.dirZ), vz = mv * std::abs(s.dirX);
+                s.jitX = (float(burnRand(2001)) / 1000.0f - 1.0f) * vx;
+                s.jitZ = (float(burnRand(2001)) / 1000.0f - 1.0f) * vz;
             }
         }
         float vel = s.w->projVel > 0 ? s.w->projVel : 50.0f;
-        s.x += detmath::sin(s.heading) * vel * dt;
-        s.z += detmath::cos(s.heading) * vel * dt;
+        s.x += s.dirX * vel * dt + s.jitX;
+        s.z += s.dirZ * vel * dt + s.jitZ;
         s.x = std::clamp(s.x, 0.0f, float(terW_) * 16.0f);
         s.z = std::clamp(s.z, 0.0f, float(terH_) * 16.0f);
-        // Damage cadence: a storm bites once a second rather than every tick --
-        // its FBI damage is a per-bite figure (the Tornado's 50 over 9 bites is a
-        // steady grind; a god vortex's 12500 is a wall of death you must flee).
-        s.nextHit -= dt;
-        if (s.nextHit <= 0.0f) {
-            s.nextHit += 1.0f;
-            const Storm hit = s;   // applyHit can reallocate/kill; copy what we need
-            applyHit(*hit.w, hit.x, hit.z, hit.player, hit.fromId, nullptr);
-        }
+        // builduptime is a harmless wind-up: the storm is already visible and
+        // moving, which is the only warning a victim gets to walk out of its path.
+        if (s.arm > 0.0f) { s.arm -= dt; ++i; continue; }
+        s.left -= dt;
+        if (s.left <= 0.0f) { storms_.erase(storms_.begin() + std::ptrdiff_t(i)); continue; }
+        const Storm hit = s;   // applyHit walks/kills units_; copy what we need
+        static const bool kStormLog = std::getenv("TAK_STORMLOG") != nullptr;
+        if (kStormLog) std::fprintf(stderr, "storm t=%u at %.0f,%.0f jit=%.1f,%.1f left=%.1f\n",
+                                    tickCounter_, hit.x, hit.z, hit.jitX, hit.jitZ, hit.left);
+        applyHit(*hit.w, hit.x, hit.z, hit.player, hit.fromId, nullptr);
         ++i;
     }
     // Drain the [EXPLODEAS] death blasts queued by the sweep above. Done here, after
@@ -3742,11 +3788,11 @@ uint64_t World::stateHash() const {
     mix(uint64_t(storms_.size()));
     for (const auto& s : storms_) {
         mix(uint64_t(uint32_t(s.player)));
-        mixf(s.x); mixf(s.z); mixf(s.heading); mixf(s.left);
-        // The cadence timers decide WHEN the next bite and heading roll happen, and
-        // a roll advances the shared burn RNG -- fold them so a drift in either
-        // surfaces here rather than as a mystery divergence several seconds later.
-        mixf(s.nextVary); mixf(s.nextHit);
+        mixf(s.x); mixf(s.z); mixf(s.left); mixf(s.arm);
+        // The wander offset and its timer decide the whole path, and each re-roll
+        // advances the shared burn RNG -- fold them so a drift surfaces here rather
+        // than as a mystery divergence seconds later.
+        mixf(s.jitX); mixf(s.jitZ); mixf(s.nextVary);
     }
     for (const auto& t : players_) {
         mixf(t.mana);

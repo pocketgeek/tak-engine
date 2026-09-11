@@ -62,10 +62,12 @@ struct Weapon {
     float maxVariation = 0;  // wandering: heading wobble per variationtime (radians)
     float variationTime = 0; // wandering: seconds between heading changes
     bool  unitsOnly = false; // unitsonly: the effect skips features (trees/props)
-    // subtype=mindcontrol: converts eligible targets to the firer's side instead of
-    // damaging them. The [DAMAGE] table is the ELIGIBILITY filter -- retail zeroes
-    // the categories that cannot be charmed (monarch/god/dragon/fort/factory/naval/
-    // lodestone), so damageVs(t) > 0 means "convertible".
+    // subtype=mindcontrol: converts targets to the firer's side instead of damaging
+    // them, on a veterancy-scaled probability roll. The [DAMAGE] table is the
+    // ACQUISITION filter -- retail zeroes the categories you may not TARGET
+    // (monarch/god/dragon/fort/factory/naval/lodestone) -- while what actually
+    // protects a unit caught inside an AREA charm is the commander / cantbecaptured
+    // / in-transport gate at the impact itself.
     bool  mindControl = false;
     float minRange = 0;      // minrange: can't hit targets closer than this
     bool noAir = false;      // noairweapon: cannot target flying units
@@ -708,6 +710,16 @@ public:
         flowCache_.clear();
         features_.clear();
         featureIdx_.clear();
+        // Every other kind of live cross-tick sim state has to go too, or a rejoin
+        // replays tick 0 with leftovers from before the drop: a storm still roaming
+        // (or a spell still channelling) would deal damage the referee never dealt
+        // AND advance the shared RNG on this peer alone -- an instant desync. The
+        // RNG itself is re-seeded for the same reason: replaying from a mid-match
+        // stream position diverges from a referee that started fresh.
+        pendingEffects_.clear();
+        storms_.clear();
+        deathBlasts_.clear();
+        burnRng_ = 0x54414B21;
         nextId_ = 1;
         tickCounter_ = 0;
         clock_ = 0;
@@ -1031,11 +1043,13 @@ private:
     // Damages everything it passes on a fixed cadence. Hashed.
     struct Storm {
         const Weapon* w = nullptr;
-        float x = 0, z = 0, heading = 0;
+        float x = 0, z = 0;
+        float dirX = 0, dirZ = 1;   // FIXED launch direction: a storm never re-aims
+        float jitX = 0, jitZ = 0;   // current per-tick wander offset (px/tick)
         int player = 0, fromId = 0;
-        float left = 0;      // seconds of roaming left
-        float nextVary = 0;  // seconds until the next heading wobble
-        float nextHit = 0;   // seconds until the next damage application
+        float arm = 0;       // builduptime: it drifts but does not bite yet
+        float left = 0;      // seconds of roaming left (duration)
+        float nextVary = 0;  // seconds until the next wander re-roll
     };
     std::vector<Storm> storms_;
     std::vector<Player> players_ = []{
