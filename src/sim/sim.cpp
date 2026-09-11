@@ -220,13 +220,17 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     wp.fx = WeaponFx::Lightning;
                 else if (wtag.find("fire") != std::string::npos ||
                          wtag.find("flame") != std::string::npos ||
-                         wtag.find("breath") != std::string::npos) {
+                         wtag.find("breath") != std::string::npos)
                     wp.fx = WeaponFx::Fire;
-                    // Fire "breath" is a short-range emission, not a long shot;
-                    // cap the range so the drake closes in instead of breathing
-                    // from across the map.
-                    wp.range = std::min(wp.range, 170.0f);
-                }
+                // FBI weapon type = "Line of Sight" is a sustained hitscan beam
+                // (the Gold Dragon's Fire Breath: range 600, emittime 45). It is
+                // NOT a lobbed projectile -- earlier code capped every fire weapon's
+                // range to 170px on the false premise that a breath is a short
+                // emission, which forced the drake to dive to point-blank and spit a
+                // single slow comet. Use the FBI range and drive the flame from
+                // emittime instead. (emittime is in 30Hz frames.)
+                wp.beam = lower(w->valueOr("type", "")) == "line of sight";
+                wp.emitTime = float(w->numberOr("emittime", 0)) / 30.0f;
                 // aimtolerance is in COB angle units; convert to radians. Ballistic
                 // weapons lob an arc (viewer draws it); soundhitclass = impact sound.
                 wp.aimTol = float(w->numberOr("aimtolerance",
@@ -1449,8 +1453,11 @@ void World::fire(Unit& u, Unit& target, int slot) {
     float rl = w.reload / std::max(u.vetMul(), 0.01f);
     u.reloads[slot] = rl;
     u.justFired = true;
-    if (w.melee || w.projVel <= 0) {
-        // Instant hit (melee swing / hitscan bolt): apply damage + splash now.
+    if (w.melee || w.beam || w.projVel <= 0) {
+        // Instant hit: a melee swing, a hitscan bolt, or a Line-of-Sight beam (the
+        // drake's Fire Breath -- a sustained flame emission, not a lobbed shot). The
+        // damage lands now along the sightline; the flame stream itself is a
+        // client-side visual driven by emitTime, so no traveling projectile spawns.
         applyHit(w, target.x, target.z, u.player, u.id, &target);
         return;
     }

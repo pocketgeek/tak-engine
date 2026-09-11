@@ -49,6 +49,16 @@ public:
     // Start a script by name with integer args; returns false if unknown.
     bool start(const std::string& script, const std::vector<int32_t>& args = {});
 
+    // Run a script SYNCHRONOUSLY to completion and return its top-level RETURN
+    // value (0 if the script is absent or yields without returning). This is for
+    // the engine "query" call-ins -- QueryWeapon / SweetSpot -- which are
+    // straight-line scripts that just compute and return a model piece index.
+    // After the call, lastLocals() holds the script's final locals, for call-ins
+    // that write an out-param local instead of returning a value. Client-side
+    // only (the animation VM is never hashed), so this cannot affect lockstep.
+    int32_t call(const std::string& script, const std::vector<int32_t>& args = {});
+    const std::vector<int32_t>& lastLocals() const { return lastLocals_; }
+
     // Engine hooks (mission scripting). Defaults: return 0 / ignore.
     std::function<int32_t(int sub, const std::vector<int32_t>&)> onMapCommand;
     std::function<int32_t(int32_t valId, const std::vector<int32_t>&)> onGet;
@@ -100,6 +110,8 @@ private:
 
     std::shared_ptr<const File> file_;
     std::vector<int32_t> statics_;
+    int32_t lastReturn_ = 0;              // top-level RETURN value of the last call()
+    std::vector<int32_t> lastLocals_;     // final locals of the last call() (out-params)
     std::vector<PieceState> pieces_;
     std::vector<Thread> threads_;
     std::vector<Thread> pending_;

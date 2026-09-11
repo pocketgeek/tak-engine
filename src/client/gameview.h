@@ -829,9 +829,22 @@ private:
         bool hasWalk = false;    // has a walk/walk_legs/tread script (vs a Create-ambient mover)
         bool hasAim = false;     // has an AimWeapon script (turret/torso target tracking)
         int aimTarget = 0;       // unit id the last AimWeapon start tracked (0 = none)
+        int fireSlot = 0;        // multi-weapon: alternate FireWeapon's weapon index so
+                                 // both crews (e.g. araat's two bows) loose over time
         float aimNext = 0;       // animClock_ time of the next aim refresh
         bool hasFlinch = false;  // has a HitByWeapon script (damage flinch)
         bool hasWind = false;    // has a WindChange script (flags/sails)
+        bool hasFlightSM = false;// has BeginFlight/BeginLanding: drive the drake's VTOL
+                                 // state machine (Create ambients + statics) instead of
+                                 // the generic reset()+fly/land flyer path
+        bool hasActivate = false;// onOffable + has Activate: watch u.active for door swing
+        bool hasGateDoors = false;// onOffable + has `open`: a gate -> auto-open on proximity
+        bool hasQueryWeapon = false;  // has QueryWeapon: resolve the muzzle emit piece
+        bool flyAmbient = false; // canFly airship driven by Create ambients (MotionControl /
+                                 // rotor loops), NO fly/land state machine: run Create + a
+                                 // moving signal (setSFXoccupy/MoveRate), never reset()
+        bool active = true;      // last active/door-open state (onoffable/gate swing edge)
+        float gateNext = 0;      // animClock_ of the next gate proximity rescan (stagger)
         int windStamp = 0;       // last windGen_ this unit received (0 = never)
         bool hasMelee = false;   // has MoveWatcher/MeleeControl: the COB drives its own
                                  // gait retail-style (Create ambients poll GET 29/28/34
@@ -1054,6 +1067,12 @@ private:
         bool hasAim = false;      // has an AimWeapon script
         bool hasFlinch = false;   // has a HitByWeapon script
         bool hasWind = false;     // has a WindChange script
+        bool hasFlightSM = false; // has BeginFlight/BeginLanding (drake VTOL state machine)
+        bool hasActivate = false; // has an Activate script (onOffable door/power toggle)
+        bool hasQueryWeapon = false;  // has QueryWeapon (muzzle emit piece out-param)
+        bool hasFly = false;      // has a `fly` script
+        bool hasMotionControl = false;  // has MotionControl (airship gait ambient)
+        bool hasOpen = false;     // has an `open` door-swing script (gate)
     };
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };
@@ -1372,6 +1391,52 @@ private:
         }
         for (const auto& c : o.children)
             collect(out, atlas, c, xf, anim, heading, player, mirror, false);
+    }
+
+    // Walk the piece tree (exactly as collect(), but transform-only) to the named
+    // piece and return its model-space origin M = the composed translation. Used to
+    // place effects at a weapon's emit piece (QueryWeapon) or a unit's SweetSpot.
+    bool pieceModelOrigin(const tak::tdo::Object& o, const Anim* anim,
+                          const Xform& parent, const std::string& want, float out[3]) const {
+        const tak::cob::PieceState* ps = pieceFor(anim, o.name);
+        float rr[3];
+        Xform xf = parent.then(o.x + (ps ? ps->move[0] : 0),
+                               o.y + (ps ? ps->move[1] : 0),
+                               o.z + (ps ? ps->move[2] : 0),
+                               scriptRot(ps, rr));
+        std::string on = o.name;
+        std::transform(on.begin(), on.end(), on.begin(), ::tolower);
+        if (on == want) { out[0] = xf.t[0]; out[1] = xf.t[1]; out[2] = xf.t[2]; return true; }
+        for (const auto& c : o.children)
+            if (pieceModelOrigin(c, anim, xf, want, out)) return true;
+        return false;
+    }
+
+    // Resolve a model piece to a WORLD effect position (x,z,alt) for THIS unit, matching
+    // the model's on-screen projection: a piece's model origin projects to screen offset
+    // (rx,-ry) under facing=-heading + gTilt (see collect()), which corresponds to placing
+    // an effect at (u.x+rx, u.z, altitude+ry). Returns false if the model/piece is absent
+    // (caller falls back to the unit centre). pieceName must be lowercase.
+    bool pieceWorldFx(const UnitR& u, const Anim& a, const std::string& pieceName,
+                      float& outX, float& outZ, float& outAlt) {
+        auto vt = visuals_.find(u.type ? u.type->id : std::string());
+        if (vt == visuals_.end() || !u.type) return false;
+        float m[3];
+        if (!pieceModelOrigin(vt->second.model.root, &a, Xform{}, pieceName, m)) return false;
+        float facing = (u.type->canMove || u.type->canFly) ? -u.heading : 0.0f;
+        float cy = std::cos(facing), sy = std::sin(facing);
+        float ct = std::cos(gTilt), st = std::sin(gTilt);
+        float rx = m[0] * cy + m[2] * sy;
+        float rz = -m[0] * sy + m[2] * cy;
+        // Fold the unit's flight altitude into the SAME tilt scaling the renderer
+        // uses: collect() puts altitude in base.t[1], so the model lifts a piece by
+        // (localY+altitude)*cos(tilt). Adding raw altitude at x1.0 here would float
+        // the effect ~0.25*altitude above the drake's actual on-screen mouth/body.
+        float ry = (m[1] + unitAltById(u.id)) * ct + rz * st;
+        outX = u.x + rx;
+        outZ = u.z;
+        outAlt = ry;
+        return true;
     }
 
     void drawRing(float wx, float wz, float r);

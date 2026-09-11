@@ -723,9 +723,29 @@
                 if (h.weapon->shakeMag > 0 && cellVisibleR(h.x, h.z))
                     triggerShake(h.weapon->shakeMag, h.weapon->shakeDur);
             }
-            if (h.target && h.target->bodyType == "flesh")
-                spawnBurst(h.x, h.z, 5, h.target->blood[0], h.target->blood[1],
-                           h.target->blood[2], 26, 1.8f, 0);
+            if (h.target && h.target->bodyType == "flesh") {
+                // Spray blood from the victim's SweetSpot (its body centre) rather
+                // than the ground hit point -- retail asks the COB for that piece
+                // (SweetSpot -> out-param local 0) and homes hit effects to it.
+                float bx = h.x, bz = h.z, ba = flyerAltAt(h.x, h.z) * 0.8f;
+                if (h.victimId && (noFog_ || cellVisibleR(h.x, h.z)))
+                    if (auto vi = anims_.find(h.victimId); vi != anims_.end() &&
+                        vi->second.vm && vi->second.pieceNames)
+                        if (const UnitR* v = frameUnitP(h.victimId); v && v->type) {
+                            vi->second.vm->call("SweetSpot", {0});
+                            const auto& ll = vi->second.vm->lastLocals();
+                            int pc = ll.empty() ? -1 : ll[0];
+                            if (pc >= 0 && pc < int(vi->second.pieceNames->size())) {
+                                float sx, sz, sa;
+                                if (pieceWorldFx(*v, vi->second,
+                                                 (*vi->second.pieceNames)[size_t(pc)], sx, sz, sa)) {
+                                    bx = sx; bz = sz; ba = sa;
+                                }
+                            }
+                        }
+                spawnBurst(bx, bz, 5, h.target->blood[0], h.target->blood[1],
+                           h.target->blood[2], 26, 1.8f, 0, ba);
+            }
             // Damage flinch (retail HitByWeapon callin): args are
             // (damageType, cos*400, sin*400, damage) -- the scripts themselves
             // gate on damage>10 and skip damageType 4 (paralyze), so status
@@ -862,15 +882,71 @@
                     sounds_.playWorld("lightng" + std::to_string(1 + (salt_++ % 3)), u.x, u.z);
                 else
                     sounds_.playWorld("bow2", u.x, u.z);
-                // Muzzle flash: a quick bright puff at the weapon, just ahead of
-                // the unit along its facing (skip melee swings).
-                if (!w.melee) {
-                    float fx = u.x + std::sin(u.heading) * 11.0f;
-                    float fz = u.z + std::cos(u.heading) * 11.0f;
+                // Muzzle world point. Retail asks the COB which piece a weapon fires
+                // from -- QueryWeapon writes the emit-piece index to its out-param
+                // local 0 (e.g. the tower's emitCan, the drake's emitjim mouth anchor)
+                // -- and spawns the flash/emit there. We resolve that piece to a world
+                // position via the model tree; without QueryWeapon (or on failure) we
+                // fall back to a point just ahead of the unit along its facing.
+                float fx = u.x + std::sin(u.heading) * 11.0f;
+                float fz = u.z + std::cos(u.heading) * 11.0f;
+                float falt = unitAltById(u.id) * 0.8f;   // flyer-effect lift (as death/unitScreen)
+                // Muzzle/beam visuals are culled off-screen anyway, and the QueryWeapon
+                // COB query + model-tree walk aren't free -- skip them for fogged/off-
+                // screen shooters so a big off-screen battle doesn't tax the main thread.
+                bool vis = noFog_ || cellVisibleR(u.x, u.z);
+                if (vis && !w.melee && it != anims_.end() && it->second.hasQueryWeapon &&
+                    it->second.vm && it->second.pieceNames) {
+                    auto& fa = it->second;
+                    fa.vm->call("QueryWeapon", {0, 0});   // local0=piece OUT (seed 0), local1=weaponNum
+                    const auto& ll = fa.vm->lastLocals();
+                    int piece = ll.empty() ? -1 : ll[0];
+                    if (piece >= 0 && piece < int(fa.pieceNames->size())) {
+                        float wx, wz, wa;
+                        if (pieceWorldFx(u, fa, (*fa.pieceNames)[size_t(piece)], wx, wz, wa)) {
+                            fx = wx; fz = wz; falt = wa;
+                        }
+                    }
+                }
+                // Muzzle flash: a quick bright puff at the weapon (skip melee swings).
+                if (vis && !w.melee) {
                     Uint8 mr = 255, mg = 235, mb = 150;   // arrow/generic = warm
                     if (w.fx == Fx::Lightning) { mr = 200; mg = 225; mb = 255; }
                     else if (w.fx == Fx::Fire) { mr = 255; mg = 150; mb = 60; }
-                    spawnBurst(fx, fz, 4, mr, mg, mb, 14, 1.4f, 0);
+                    spawnBurst(fx, fz, 4, mr, mg, mb, 14, 1.4f, 0, falt);
+                }
+                // Fire Breath (a Line-of-Sight beam): a sustained flame STREAM from
+                // the dragon's mouth (the QueryWeapon emit piece) to its target, not a
+                // single traveling puff. The sim already applied the beam's damage this
+                // tick (see World::fire); this is the emitter-only visual. Retail emits
+                // for `emittime`; we lay a run of flame sprites along the sightline with
+                // growing start delay so the flame reads as sweeping outward, plus a hot
+                // gout at the mouth. Re-fires each reload (~3s), a breath pulse.
+                if (vis && w.beam && w.fx == Fx::Fire) {
+                    float ex = u.x + std::sin(u.heading) * w.range;
+                    float ez = u.z + std::cos(u.heading) * w.range;
+                    float talt = 0.0f;
+                    int tgt = (!u.orders.empty() && u.orders.front().targetId)
+                                  ? u.orders.front().targetId : 0;
+                    if (const UnitR* t = tgt ? frameUnitP(tgt) : nullptr) {
+                        ex = t->x; ez = t->z; talt = unitAltById(t->id);
+                    }
+                    float dx = ex - fx, dz = ez - fz;   // from the muzzle to the target
+                    float dl = std::max(std::sqrt(dx * dx + dz * dz), 1.0f);
+                    dx /= dl; dz /= dl;
+                    int steps = std::clamp(int(dl / 22.0f), 4, 24);
+                    float sweep = std::max(w.emitTime, 0.6f);   // stream reach-out time
+                    for (int s = 0; s < steps; ++s) {
+                        float f = steps > 1 ? s / float(steps - 1) : 0.0f;
+                        float d = f * dl;   // from the muzzle (0) out to the target (dl)
+                        float wob = ((s * 811 + int(salt_) * 7) % 9 - 4) * 2.4f;
+                        float px = fx + dx * d - dz * wob;
+                        float pz = fz + dz * d + dx * wob;
+                        float alt = falt + (talt - falt) * f;   // descend to the target's height
+                        spawnEffectAnim("flame", px, pz, sweep * f * 0.5f, 0.0f, 1, alt);
+                    }
+                    spawnBurst(fx, fz, 8, 255, 210, 90, 20, 2.0f, 0, falt);
+                    salt_++;
                 }
                 // Play the unit's own firing animation while standing. Flyers
                 // keep their continuous flight threads running, so don't reset.
@@ -885,8 +961,19 @@
                         fa.vm->reset();
                         fa.vm->setStatic(0, 0);
                     }
-                    fa.vm->start("FireWeapon") || fa.vm->start("attack1") ||
-                        fa.vm->start("fire") || fa.vm->start("MeleeAttack");
+                    // Multi-weapon units branch FireWeapon on arg0 = the weapon index
+                    // (araat: attack_1 vs attack_2, i.e. which archer looses). The sim
+                    // doesn't tell us which weapon fired, so alternate so both crews fire
+                    // over time. Single-weapon units keep the argless call (arg0=0).
+                    int nw = u.type ? int(u.type->weapons.size()) : 1;
+                    if (nw > 1) {
+                        fa.vm->start("FireWeapon", {fa.fireSlot}) || fa.vm->start("attack1") ||
+                            fa.vm->start("fire") || fa.vm->start("MeleeAttack");
+                        fa.fireSlot = (fa.fireSlot + 1) % nw;
+                    } else {
+                        fa.vm->start("FireWeapon") || fa.vm->start("attack1") ||
+                            fa.vm->start("fire") || fa.vm->start("MeleeAttack");
+                    }
                     fa.walking = false;
                     fa.firing = true;
                 }
@@ -960,20 +1047,52 @@
                 // Run the flight animation whenever she is airborne (always, in
                 // practice, since idle only settles to a low hover).
                 bool air = a.altitude > std::max(cruise, 1.0f) * 0.3f;
-                // The flyer `fly` script gates its whole body/wing animation on
-                // a static whose index differs per unit (zonhunt=8, zongod and
-                // zonharp=7); a.flyGate is read from the bytecode. Setting the
-                // wrong index leaves `fly` inert — the unit sits in its wings-
-                // spread rest pose (a T-pose) and never picks up the fly-pose
-                // body turn, so it reads static and backward.
-                if (air) {
+                if (a.hasFlightSM) {
+                    // Drake VTOL state machine: retail's engine only ever calls
+                    // BeginFlight (takeoff) and BeginLanding (descent), plus
+                    // setSFXoccupy to report active/occupied. The Create-started
+                    // FlightControl loop then plays launch->fly->soar itself, gated
+                    // on airborne(static7) and active(static5); RestoreWatcher eases
+                    // back to rest on halt. No reset() -- the loops must keep running.
+                    if (air != a.airborne) {
+                        a.airborne = air;
+                        if (air) {
+                            a.vm->start("setSFXoccupy", {5});   // active -> flap
+                            a.vm->start("BeginFlight");         // takeoff: launch then fly
+                        } else {
+                            a.vm->start("BeginLanding");        // descent -> land thread
+                            a.vm->start("setSFXoccupy", {0});   // inactive -> settle/restore
+                        }
+                    }
+                } else if (a.flyAmbient) {
+                    // Ambient airship: its Create-started MotionControl / rotor loops run
+                    // continuously (never reset). Feed it only the moving/occupy signal so
+                    // MotionControl picks fly vs restore: setSFXoccupy(creaeri) / MoveRate
+                    // (verball, tarship). Gate on airborne so it animates while aloft.
+                    if (air != a.airborne) {
+                        a.airborne = air;
+                        int r = air ? 5 : 0;
+                        a.vm->start("setSFXoccupy", {r});
+                        a.vm->start("MoveRate", {r});
+                    }
+                } else if (air) {
+                    // The flyer `fly` script gates its whole body/wing animation on
+                    // a static whose index differs per unit (zonhunt=8, zongod and
+                    // zonharp=7); a.flyGate is read from the bytecode. Setting the
+                    // wrong index leaves `fly` inert — the unit sits in its wings-
+                    // spread rest pose (a T-pose) and never picks up the fly-pose
+                    // body turn, so it reads static and backward.
                     if (!a.airborne) {
                         a.airborne = true;
                         a.vm->reset();
                         a.vm->setStatic(a.flyGate, 1);   // gate that "fly" animates on
                         a.vm->start("fly");
                     } else if (a.vm->threadCount() == 0) {
-                        a.vm->start("fly");       // keep the beat looping
+                        // Keep the airborne pose looping. While conjuring, loop `build`
+                        // (retail's BuildControl loops it) instead of `fly`, else the
+                        // one-shot build plays once and the flyer freezes mid-air for
+                        // the rest of the job.
+                        a.vm->start(a.building ? "build" : "fly");
                     }
                 } else if (a.airborne) {
                     a.airborne = false;
@@ -1047,7 +1166,17 @@
                         while (rel > kTau / 2) rel -= kTau;
                         while (rel < -kTau / 2) rel += kTau;
                         int32_t h16 = 32768 + int32_t(rel * (65536.0f / kTau));
-                        bool ok = a.vm->start("AimWeapon", {h16, 0, 1});
+                        // Multi-weapon turrets (araat: two independent bows) branch
+                        // AimWeapon on arg2 = the weapon index -- aim EACH so both crews
+                        // track the target; a single AimWeapon left the other bow static.
+                        // Single-weapon units keep the historical arg2=1 (they ignore it).
+                        int nw = int(u.type->weapons.size());
+                        bool ok;
+                        if (nw > 1)
+                            for (int ws = 0; ws < nw && ws < 3; ++ws)
+                                ok = a.vm->start("AimWeapon", {h16, 0, ws});
+                        else
+                            ok = a.vm->start("AimWeapon", {h16, 0, 1});
                         static const bool kAimLog = tak::devEnv("TAK_AIMLOG") != nullptr;
                         if (kAimLog)
                             std::fprintf(stderr, "aim u%d tgt%d rel=%.2f h16=%d ok=%d\n",
@@ -1055,7 +1184,12 @@
                     }
                 } else if (a.aimTarget) {
                     a.aimTarget = 0;
-                    a.vm->start("TargetCleared", {1});
+                    int nw = int(u.type->weapons.size());
+                    if (nw > 1)
+                        for (int ws = 0; ws < nw && ws < 3; ++ws)
+                            a.vm->start("TargetCleared", {ws});
+                    else
+                        a.vm->start("TargetCleared", {1});
                 }
             }
             // Wind delivery (retail WindChange(speed, heading)): the script TURNs
@@ -1071,13 +1205,13 @@
                 a.vm->start("WindChange", {int32_t(windSpeed_),
                                            int32_t(w * (65536.0f / kTau))});
             }
-            // Mobile builders: the conjure/build animation while actively working a
-            // site (constructing, repairing, or reclaiming). Retail drives this via
-            // the COB StartBuilding/StopBuilding hooks -- StartBuilding raises the
-            // script's own "am building" gate and kicks the startbuild pose loop,
-            // StopBuilding clears it. Flyers are excluded: their hover loop owns the
-            // VM (they already animate while conjuring mid-air).
-            if (u.type->isBuilder && !isStructure(u.type) && !a.flying) {
+            // Builders: the conjure/build animation while actively working a site
+            // (constructing, repairing, or reclaiming). Retail drives this via the COB
+            // StartBuilding/StopBuilding hooks -- StartBuilding raises the script's own
+            // "am building" gate, StopBuilding clears it. This now covers FLYING builders
+            // too (arafly/zonhunt via their FlightControl, tarpries via a direct `build`),
+            // which used to just flap in place while conjuring.
+            if (u.type->isBuilder && !isStructure(u.type)) {
                 // One-shot per JOB, not a loop: the retail build scripts are a single
                 // pose performance (zonhand's whip swing + PLAY_SOUND crack, ~4s of
                 // keyframes, then RETURN) after which the builder HOLDS the final
@@ -1092,11 +1226,22 @@
                 if (working != a.building || (working && workId != a.workId)) {
                     a.building = working;
                     a.workId = working ? workId : 0;
-                    if (working) {
-                        a.vm->start("StartBuilding") || a.vm->start("startbuild");
+                    if (!a.flying) {
+                        // Ground builder.
+                        if (working) a.vm->start("StartBuilding") || a.vm->start("startbuild");
+                        else {
+                            a.vm->start("StopBuilding");
+                            a.vm->start("restore_x") || a.vm->start("RestoreAfterDelay");
+                        }
+                    } else if (a.hasFlightSM) {
+                        // SM flyer (arafly/zonhunt): StartBuilding sets the build static
+                        // and the Create-run FlightControl plays `build`; no reset.
+                        a.vm->start(working ? "StartBuilding" : "StopBuilding");
                     } else {
-                        a.vm->start("StopBuilding");
-                        a.vm->start("restore_x") || a.vm->start("RestoreAfterDelay");
+                        // Generic flyer builder (tarpries): no FlightControl loop, so the
+                        // flight re-kick above loops `build` while a.building (matching
+                        // retail's BuildControl). Just flip the state + set the COB gate.
+                        a.vm->start(working ? "StartBuilding" : "StopBuilding");
                     }
                 }
             }
@@ -1108,14 +1253,65 @@
                 bool busy = !u.buildQueue.empty();
                 if (busy != a.producing) {
                     a.producing = busy;
-                    a.vm->reset();
+                    // Do NOT reset() the VM here. A building's Create script starts
+                    // persistent ambient threads (flag wave, SmokeControl,
+                    // DamageFlameControl); reset() clears every thread, so after a
+                    // factory produced even once its flags/smoke stopped for the rest
+                    // of the game -- the same regression the ship/MeleeControl movers
+                    // already guard against. The production hook is a self-contained
+                    // pose loop that coexists with those ambients.
+                    //
+                    // Name order matters. `startbuild` is the Aramon (and most-faction)
+                    // spelling; `start_building` is the Veruna factory (vercastl)
+                    // spelling. OpenYard/CloseYard are deliberately NOT in the chain:
+                    // they are value-only stubs (they set the pathfinding yard flags
+                    // 18/19 but MOVE no piece), so on a unit that defines both they
+                    // return true and MASK the real door animation. Activate is the
+                    // last-resort producer hook.
                     if (busy) {
-                        a.vm->start("startbuild") || a.vm->start("OpenYard") ||
+                        a.vm->start("startbuild") || a.vm->start("start_building") ||
                             a.vm->start("Activate");
                     } else {
-                        a.vm->start("stopbuild") || a.vm->start("CloseYard") ||
+                        a.vm->start("stopbuild") || a.vm->start("stop_building") ||
                             a.vm->start("Deactivate");
                     }
+                }
+            }
+            // On/off structures: the doors/power state swing via the COB Activate/
+            // Deactivate scripts (RequestState->Go->[open + hide doors + OpenYard], and
+            // the reverse). OpenYard/CloseYard alone move NO piece, so they are not the
+            // hook. A GATE auto-opens on friendly footprint occupancy (retail 0x40a020):
+            // it is purely cosmetic for us -- the gate's passage cells ('c' in the
+            // yardmap) are never blocked, so units pass regardless -- so we drive it
+            // CLIENT-side (no hashed state) from the render frame rather than the sim.
+            // Non-gate onoffables follow the sim's u.active (the O/ToggleGate order).
+            if (u.type && u.type->onOffable && a.hasActivate) {
+                if (a.hasGateDoors) {
+                    // Rescan a few times a second (not the O(units) sweep every tick).
+                    if (animClock_ >= a.gateNext) {
+                        a.gateNext = animClock_ + 0.2f;
+                        float halfW = u.type->footX * 8.0f + 24.0f;   // half-extent + margin
+                        float halfD = u.type->footZ * 8.0f + 24.0f;
+                        bool wantOpen = false;
+                        for (const UnitR* op : front().live) {
+                            // isStructure (maxVel<=0), NOT !canMove: walls set canmove=1
+                            // with no velocity, and a wall abuts every gate -- the canMove
+                            // test would latch the gate open forever (CLAUDE.md gotcha).
+                            if (op == &u || !op->type || isStructure(op->type)) continue;
+                            if (op->player != u.player) continue;
+                            if (std::abs(op->x - u.x) < halfW && std::abs(op->z - u.z) < halfD) {
+                                wantOpen = true;
+                                break;
+                            }
+                        }
+                        if (wantOpen != a.active) {
+                            a.active = wantOpen;
+                            a.vm->start(wantOpen ? "Activate" : "Deactivate");
+                        }
+                    }
+                } else if (u.active != a.active) {
+                    a.active = u.active;
+                    a.vm->start(u.active ? "Activate" : "Deactivate");
                 }
             }
             // (The VM itself is advanced in the parallel pass below.)
@@ -1331,10 +1527,17 @@
                 cc.moveGate = walkGateOf(*cc.file);
                 cc.hasWalk = hasWalkCycle(*cc.file);
                 cc.hasMelee = cc.file->scriptIndex("MoveWatcher") >= 0 ||
-                              cc.file->scriptIndex("MeleeControl") >= 0;
+                              cc.file->scriptIndex("MeleeControl") >= 0 ||
+                              cc.file->scriptIndex("DemonControl") >= 0;   // tarcan (Rictus)
                 cc.hasAim = cc.file->scriptIndex("AimWeapon") >= 0;
                 cc.hasFlinch = cc.file->scriptIndex("HitByWeapon") >= 0;
                 cc.hasWind = cc.file->scriptIndex("WindChange") >= 0;
+                cc.hasFlightSM = cc.file->scriptIndex("BeginFlight") >= 0;
+                cc.hasActivate = cc.file->scriptIndex("Activate") >= 0;
+                cc.hasQueryWeapon = cc.file->scriptIndex("QueryWeapon") >= 0;
+                cc.hasFly = cc.file->scriptIndex("fly") >= 0;
+                cc.hasMotionControl = cc.file->scriptIndex("MotionControl") >= 0;
+                cc.hasOpen = cc.file->scriptIndex("open") >= 0;
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
             a.pieceNames = &ci->second.pieceNames;
@@ -1345,6 +1548,21 @@
             a.hasAim = ci->second.hasAim;
             a.hasFlinch = ci->second.hasFlinch;
             a.hasWind = ci->second.hasWind;
+            a.hasFlightSM = ci->second.hasFlightSM;
+            a.hasActivate = ci->second.hasActivate;
+            a.hasGateDoors = type && type->onOffable && ci->second.hasOpen;
+            a.hasQueryWeapon = ci->second.hasQueryWeapon;
+            // Airships with no fly/land state machine (creaeri rotors, verball/tarship
+            // MotionControl): driven entirely by their Create ambients. The generic
+            // flyGate+reset+fly/land path freezes them (no `fly`/`land` to drive, and
+            // reset() would kill the ambients).
+            a.flyAmbient = type && type->canFly && !ci->second.hasFlightSM &&
+                           (!ci->second.hasFly || ci->second.hasMotionControl);
+            // Seed the door/active latch. A gate starts CLOSED (Create leaves its
+            // doors shut) so proximity opens it; other onoffable units mirror the
+            // sim's initial u.active (= activateWhenBuilt) so a unit built inactive
+            // doesn't fire a spurious Deactivate the first frame it's seen.
+            a.active = a.hasGateDoors ? false : (type ? type->activateWhenBuilt : true);
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             // TA COB unit-state queries answered from the sim.
             int unitId = id;
@@ -1419,11 +1637,23 @@
             // (which also reads as facing the wrong way).
             if (type && type->canFly) {
                 a.flying = true;   // starts grounded; the update loop flies her
-                a.flyGate = flyGateOf(*a.vm);
-                // Start in the folded landed pose, not the wings-spread rest
-                // pose, so a flyer that spawns idle and never takes off (e.g. the
-                // Monarch at game start) doesn't sit in a T-pose.
-                a.vm->start("land");
+                if (a.hasFlightSM || a.flyAmbient) {
+                    // Drake / dragon / gryphon / harpy / roc / wisp (BeginFlight VTOL
+                    // state machine), and the ambient airships (creaeri / verball /
+                    // tarship). Their Create HIDEs the veteran-detail LOD pieces
+                    // (*_5/*_10 -- else every rookie renders them doubled over the base
+                    // mesh) and starts the ambient loops (FlightControl / MotionControl /
+                    // StatusControl / rotor+smoke). Drive them by their engine edges
+                    // below; DON'T use flyGate/fly/land and NEVER reset() (that kills the
+                    // loops and freezes the model).
+                    a.vm->start("Create");
+                } else {
+                    a.flyGate = flyGateOf(*a.vm);
+                    // Start in the folded landed pose, not the wings-spread rest
+                    // pose, so a flyer that spawns idle and never takes off (e.g. the
+                    // Monarch at game start) doesn't sit in a T-pose.
+                    a.vm->start("land");
+                }
             } else if (isStructure(type) || !a.hasWalk || a.hasMelee) {
                 // Buildings: run the COB constructor so ambient loops start (e.g. the
                 // Keep's Create kicks off its flag/smoke scripts, the Sacred Fire's
