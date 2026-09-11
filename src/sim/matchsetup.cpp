@@ -319,6 +319,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         map = tak::tnt::Map::load(vfs.read(cfg.mapPath), cfg.mapPath);
     }
     world.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
+    // One nav grid per distinct movement-limit tuple, as retail bakes one per class.
+    // After setTerrain (it needs the heights) and before anything blocks a cell.
+    world.buildNavClasses(reg);
     world.clearFeatures();   // authoritative rebuild (the client ctor pre-registers)
 
     // Features: block nav footprints, and gather mana-deposit positions. Iterate
@@ -348,7 +351,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 // (blocking=1) block; only the glowy Sacred Stone centre stays clear.
                 if (!di->second.glowy && (!di->second.mana || di->second.blocking != 0)) {
                     int fx = di->second.fx, fz = di->second.fz;
-                    world.nav().block(int(x) / 16 - fx / 2, int(z) / 16 - fz / 2, fx, fz, true);
+                    world.blockCells(int(x) / 16 - fx / 2, int(z) / 16 - fz / 2, fx, fz, true);
                 }
                 // Reclaimable obstacle features (trees/rocks/houses) enter the sim so
                 // a mobile builder can clear them for mana -- and flamable ones so
@@ -403,7 +406,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // every deposit buildable by carving the 2x2 lodestone footprint clear at each
     // spot (must match the viewer's loadFeatures so SP and MP agree).
     for (const auto& [sx, sz] : manaSpots)
-        world.nav().block(int(sx) / 16 - 1, int(sz) / 16 - 1, 2, 2, false);
+        world.blockCells(int(sx) / 16 - 1, int(sz) / 16 - 1, 2, 2, false);
 
     // Players + teams.
     world.setPlayerCount(int(cfg.slots.size()));
@@ -536,7 +539,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         // isStructure (maxVel <= 0), not canMove: see the note in World::startBuild --
         // two of the four walls set canmove=1 and would otherwise block nothing.
         if (!u.type || !u.type->isStructure()) continue;
-        blockFootprint(world.nav(), *u.type, u.x, u.z, true);
+        world.blockFoot(*u.type, u.x, u.z, true);
     }
     return assigned;
 }

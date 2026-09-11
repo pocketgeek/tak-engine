@@ -17,7 +17,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 53;       // 53: mobile units get their REAL footprint from
+constexpr uint32_t kNetVersion = 54;       // 54: one nav grid per MOVEMENT CLASS, and one
+                                           // shared obstacle overlay (buildings used to block
+                                           // the ground grid only -- hover walked through them)
+                                           // 53: mobile units get their REAL footprint from
                                            // the movement class (2x2..5x5, and a 7x7 Trebuchet)
                                            // 52: retail terrain passability -- a cell is
                                            // blocked on its OWN quad's height spread, not on

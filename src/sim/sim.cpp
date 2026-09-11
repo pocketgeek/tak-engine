@@ -66,6 +66,7 @@ void TypeRegistry::loadMoveInfo(const hpi::Vfs& vfs, const std::string& path) {
             m.footX = int(c.numberOr("FootprintX", 0));
             m.footZ = int(c.numberOr("FootprintZ", 0));
             m.maxSlope = float(c.numberOr("MaxSlope", 255));
+            m.maxWaterSlope = float(c.numberOr("MaxWaterSlope", 255));
             m.maxWaterDepth = float(c.numberOr("MaxWaterDepth", 255));
             m.minWaterDepth = float(c.numberOr("MinWaterDepth", 0));
             moveClasses_[name] = m;
@@ -214,6 +215,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // source of slope/water limits; most FBIs don't carry their own).
             if (auto mci = moveClasses_.find(mc); mci != moveClasses_.end()) {
                 t.maxSlope = mci->second.maxSlope;
+                t.maxWaterSlope = mci->second.maxWaterSlope;
                 t.maxWaterDepth = mci->second.maxWaterDepth;
                 t.minWaterDepth = mci->second.minWaterDepth;
                 // The movement class WINS over the FBI, which is retail's precedence
@@ -603,6 +605,14 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
         hover.maxSlope = 30; hover.maxWaterSlope = 255;
         hover.maxWaterDepth = 10000; hover.minWaterDepth = -10000;
         navHover_ = NavGrid(heights, w, h, seaLevel, hover);
+        // One obstacle overlay, shared by every grid. Buildings, blocking features
+        // and wrecks go here rather than into a single grid's cells.
+        obst_.assign(size_t(w) * size_t(h), 0);
+        nav_.setObstacles(&obst_);
+        navWater_.setObstacles(&obst_);
+        navHover_.setObstacles(&obst_);
+        navClasses_.clear();
+        navIdx_.clear();
     }
     // Occlusion block: a wall's baked-relief art leans its top up-and-north over
     // the low ground behind it (the 2.5D projection), so a unit that stops on that
@@ -840,7 +850,7 @@ void NavGrid::rebuildClearance() const {
     clear_.assign(size_t(w_) * size_t(h_), 0);
     for (int z = h_ - 1; z >= 0; --z)
         for (int x = w_ - 1; x >= 0; --x) {
-            if (!cells_[size_t(z) * w_ + x]) continue;   // blocked -> 0
+            if (!walkable(x, z)) continue;   // blocked (cells_ or the overlay) -> 0
             uint16_t r  = (x + 1 < w_)               ? clear_[size_t(z) * w_ + x + 1]     : 0;
             uint16_t u  = (z + 1 < h_)               ? clear_[size_t(z + 1) * w_ + x]     : 0;
             uint16_t ru = (x + 1 < w_ && z + 1 < h_) ? clear_[size_t(z + 1) * w_ + x + 1] : 0;
@@ -862,7 +872,7 @@ void NavGrid::updateClearanceRect(int cx, int cz, int w, int h) const {
     for (int z = z1; z >= z0; --z)
         for (int x = x1; x >= x0; --x) {
             uint16_t v = 0;
-            if (cells_[size_t(z) * w_ + x]) {
+            if (walkable(x, z)) {
                 uint16_t r  = (x + 1 < w_)               ? clear_[size_t(z) * w_ + x + 1]     : 0;
                 uint16_t u  = (z + 1 < h_)               ? clear_[size_t(z + 1) * w_ + x]     : 0;
                 uint16_t ru = (x + 1 < w_ && z + 1 < h_) ? clear_[size_t(z + 1) * w_ + x + 1] : 0;
@@ -1081,6 +1091,25 @@ bool World::flowKeyFor(const UnitType* type, float gx, float gz, FlowKey& out) c
     if (grid.empty()) return false;
     int cx = std::clamp(int(gx) / 16, 0, grid.width() - 1);
     int cz = std::clamp(int(gz) / 16, 0, grid.height() - 1);
+    // Key on the GRID, not the domain: with per-class grids two types can share a
+    // domain and a footprint yet walk different maps (GROUND4 and GROUND5 are both
+    // 4x4 ground with different MaxSlope). Keying on domain let them share one flow
+    // field built on the wrong grid.
+    // Keyed on DOMAIN + footprint, deliberately, even though passability is now
+    // per movement class. Two classes could in principle share a domain and a
+    // footprint while walking different maps, and then share a field built on the
+    // wrong grid -- but in the shipped data no such pair exists: every class that
+    // has units is distinguished by its footprint within its domain (GROUND2 2x2,
+    // GROUND3 3x3, GROUND4 4x4, HOVER2 2x2, HOVER3 3x3, WATER2..5). GROUND5 and
+    // GHOST, the two that would collide with GROUND4, field no units at all.
+    //
+    // A finer key is NOT a free improvement, and this is the trap: it multiplies the
+    // key space, which pushes the 512-field cache over its cap, which makes eviction
+    // live -- and evictFlowLru breaks ties on a `used` stamp that reflects each
+    // peer's own access history. Under stress that desynced the referee inside 60
+    // ticks. Making the cache peer-deterministic under pressure is the real fix and
+    // is worth doing before any mod needs a finer key; until then this stays coarse
+    // and correct rather than fine and fragile.
     int domain = type ? int(type->domain) : 0;
     // Footprint-class the field: a 4x4 unit and a 1x1 unit want different fields
     // (the big one can't cross the same 1-cell gaps), but all units of a size share.
@@ -2127,6 +2156,80 @@ void World::captureUnit(Unit& t, int newPlayer) {
 // NavGrid::block, whose clearance DP and flow invalidation would be ruinous at a
 // per-tick cadence. Rebuilt wholesale in unit-index order so the last writer on a
 // contested cell is the same on every peer.
+void World::blockCells(int cx, int cz, int w, int h, bool blocked) {
+    if (obst_.empty() || terW_ <= 0) return;
+    int x0 = std::max(0, cx), z0 = std::max(0, cz);
+    int x1 = std::min(terW_ - 1, cx + w - 1), z1 = std::min(terH_ - 1, cz + h - 1);
+    bool any = false;
+    for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) {
+            uint8_t& o = obst_[size_t(z) * size_t(terW_) + size_t(x)];
+            if (o != (blocked ? 1 : 0)) { o = blocked ? 1 : 0; any = true; }
+        }
+    if (!any) return;
+    // Every grid reads the same overlay, so they all need their clearance redone
+    // over the touched band. markDirty is cheap; the DP is lazy.
+    nav_.markClearanceDirty();
+    navWater_.markClearanceDirty();
+    navHover_.markClearanceDirty();
+    for (auto& g : navClasses_) g.markClearanceDirty();
+}
+
+void World::blockFoot(const UnitType& t, float x, float z, bool blocked) {
+    int cx = int(x) / 16 - t.footX / 2, cz = int(z) / 16 - t.footZ / 2;
+    if (t.yardMap.empty()) { blockCells(cx, cz, t.footX, t.footZ, blocked); return; }
+    for (int j = 0; j < t.footZ; ++j)
+        for (int i = 0; i < t.footX; ++i) {
+            char c = t.yardMap[size_t(j) * t.footX + i];
+            if (c == 'o' || c == 'O') blockCells(cx + i, cz + j, 1, 1, blocked);
+        }
+}
+
+void World::buildNavClasses(const TypeRegistry& reg) {
+    navClasses_.clear();
+    navIdx_.clear();
+    if (heights_.empty() || terW_ <= 0) return;
+    // Collapse the registry's types onto their distinct limit tuples. Ordered by the
+    // tuple so the table is built identically on every peer regardless of map order.
+    auto tupleOf = [](const UnitType& t) {
+        NavGrid::Limits l;
+        l.maxSlope = int(t.maxSlope);
+        l.maxWaterSlope = int(t.maxWaterSlope);
+        // Domain decides the sense of the water band, exactly as the three legacy
+        // grids did: a ground unit may wade only so deep, a boat needs a minimum
+        // depth to float, a hoverer ignores both.
+        if (t.domain == UnitType::Domain::Water) {
+            l.maxWaterDepth = 10000;
+            l.minWaterDepth = int(t.minWaterDepth > 0 ? t.minWaterDepth : 13);
+        } else if (t.domain == UnitType::Domain::Hover) {
+            l.maxWaterDepth = 10000;
+            l.minWaterDepth = -10000;
+        } else {
+            l.maxWaterDepth = int(t.maxWaterDepth > 0 ? t.maxWaterDepth : 20);
+            l.minWaterDepth = -10000;
+        }
+        return l;
+    };
+    auto key = [](const NavGrid::Limits& l) {
+        return std::make_tuple(l.maxSlope, l.maxWaterSlope, l.maxWaterDepth, l.minWaterDepth);
+    };
+    std::map<std::tuple<int, int, int, int>, int> seen;
+    for (const auto& [id, t] : reg.types()) {
+        if (t.canFly) continue;             // flyers ignore the ground entirely
+        NavGrid::Limits l = tupleOf(t);
+        auto k = key(l);
+        auto it = seen.find(k);
+        if (it == seen.end()) {
+            it = seen.emplace(k, int(navClasses_.size())).first;
+            navClasses_.push_back(NavGrid(heights_, terW_, terH_, seaLevel_, l));
+        }
+        navIdx_[&t] = it->second;
+    }
+    // Obstacles are NOT baked in: every grid reads the one shared overlay, so a
+    // building blocked before or after this call is seen by all of them.
+    for (auto& g : navClasses_) { g.setObstacles(&obst_); g.setRoads(&roads_); }
+}
+
 void World::rebuildOccupancy() {
     occW_ = terW_;
     occH_ = terH_;
@@ -2269,7 +2372,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     // blocking neither pathing nor line of sight while Aramon's and Creon's did.
     // (The CLAUDE.md gotcha, biting for real.)
     if (type->isStructure()) {
-        blockFootprint(nav_, *type, x, z, true);
+        blockFoot(*type, x, z, true);
         invalidateFlows(int(x) / 16 - type->footX / 2, int(z) / 16 - type->footZ / 2,
                         type->footX, type->footZ);
     }
@@ -2303,7 +2406,7 @@ void World::cancelBuilds(int builderId) {
         // it so its marker/ghost doesn't linger.
         if (site && site->underConstruction && !site->buildBegun) {
             if (site->type && site->type->isStructure()) {
-                blockFootprint(nav_, *site->type, site->x, site->z, false);
+                blockFoot(*site->type, site->x, site->z, false);
                 invalidateFlows(int(site->x) / 16 - site->type->footX / 2,
                                 int(site->z) / 16 - site->type->footZ / 2,
                                 site->type->footX, site->type->footZ);
@@ -2373,7 +2476,7 @@ void World::swapFeature(Feature& f, int newType) {
     f.burn = 0;
     f.dmg = 0;
     if (f.blocks)   // old stage's footprint frees first
-        nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
+        blockCells(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
                    f.fx, f.fz, false);
     if (newType < 0) { f.alive = false; f.blocks = false; f.type = -1; return; }
     const FeatType& nt = featTypes_[size_t(newType)];
@@ -2381,7 +2484,7 @@ void World::swapFeature(Feature& f, int newType) {
     f.fx = nt.fx; f.fz = nt.fz;
     f.blocks = nt.blocking;
     if (f.blocks)
-        nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
+        blockCells(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
                    f.fx, f.fz, true);
     f.manaYield = nt.energy;
     f.work = f.workFull = std::max(nt.energy, 60.0f);
@@ -2528,7 +2631,7 @@ void World::tickReclaim(Unit& b, float dt) {
             c->deadFor = 1000.0f;   // consumed
             if (c->corpseBlocks) {
                 c->corpseBlocks = false;
-                blockFootprint(nav_, *c->type, c->x, c->z, false);
+                blockFoot(*c->type, c->x, c->z, false);
                 invalidateFlows(int(c->x) / 16 - c->type->footX / 2,
                                 int(c->z) / 16 - c->type->footZ / 2,
                                 c->type->footX, c->type->footZ);
@@ -2563,7 +2666,7 @@ void World::tickReclaim(Unit& b, float dt) {
     if (f.work <= 0) {
         f.alive = false;
         if (f.blocks) {   // free the ground cells it occupied (setupMatch blocked nav_)
-            nav_.block(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2, f.fx, f.fz, false);
+            blockCells(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2, f.fx, f.fz, false);
             invalidateFlows(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2, f.fx, f.fz);
         }
         advance();
@@ -2668,7 +2771,7 @@ void World::tickConstruction(Unit& b, float dt) {
             // blocked footprint don't linger.
             if (!site->buildBegun) {
                 if (site->type && site->type->isStructure()) {
-                    blockFootprint(nav_, *site->type, site->x, site->z, false);
+                    blockFoot(*site->type, site->x, site->z, false);
                     invalidateFlows(int(site->x) / 16 - site->type->footX / 2,
                                     int(site->z) / 16 - site->type->footZ / 2,
                                     site->type->footX, site->type->footZ);
@@ -2735,7 +2838,7 @@ void World::decayConstruction(Unit& u, float dt) {
     u.hp -= rate * dt;
     if (u.hp > 0) return;
     if (u.type->isStructure()) {
-        blockFootprint(nav_, *u.type, u.x, u.z, false);
+        blockFoot(*u.type, u.x, u.z, false);
         invalidateFlows(int(u.x) / 16 - u.type->footX / 2, int(u.z) / 16 - u.type->footZ / 2,
                         u.type->footX, u.type->footZ);
     }
@@ -2915,7 +3018,7 @@ void World::tickAbilities(float dt) {
         c.deadFor = 1000.0f;
         if (c.corpseBlocks) {
             c.corpseBlocks = false;
-            blockFootprint(nav_, *c.type, c.x, c.z, false);
+            blockFoot(*c.type, c.x, c.z, false);
         }
     };
     struct Revive { const UnitType* type; float x, z; int player; bool animate; };
@@ -3532,12 +3635,12 @@ void World::tick(float dt) {
             if (u.deadFor >= 4.0f && u.deadFor - dt < 4.0f &&
                 u.deadFor < u.corpseUntil &&
                 (u.type->corpseAdjX != 0 || u.type->corpseAdjZ != 0)) {
-                if (u.corpseBlocks) blockFootprint(nav_, *u.type, u.x, u.z, false);
+                if (u.corpseBlocks) blockFoot(*u.type, u.x, u.z, false);
                 u.x = std::clamp(u.x + float(u.type->corpseAdjX) * 16.0f,
                                  8.0f, float(terW_) * 16.0f - 8.0f);
                 u.z = std::clamp(u.z + float(u.type->corpseAdjZ) * 16.0f,
                                  8.0f, float(terH_) * 16.0f - 8.0f);
-                if (u.corpseBlocks) blockFootprint(nav_, *u.type, u.x, u.z, true);
+                if (u.corpseBlocks) blockFoot(*u.type, u.x, u.z, true);
             }
             // The body decomposed (or was never a corpse): fully gone. Records
             // explicitly retired at 1000 stay put.
@@ -3545,7 +3648,7 @@ void World::tick(float dt) {
                 u.deadFor = 1000.0f;
                 if (u.corpseBlocks) {   // blocking wreck finally clears the ground
                     u.corpseBlocks = false;
-                    blockFootprint(nav_, *u.type, u.x, u.z, false);
+                    blockFoot(*u.type, u.x, u.z, false);
                     invalidateFlows(int(u.x) / 16 - u.type->footX / 2,
                                     int(u.z) / 16 - u.type->footZ / 2,
                                     u.type->footX, u.type->footZ);
@@ -3643,7 +3746,7 @@ void World::tick(float dt) {
                     if (wreckBlocks) {
                         u.corpseBlocks = true;
                     } else {
-                        blockFootprint(nav_, *u.type, u.x, u.z, false);
+                        blockFoot(*u.type, u.x, u.z, false);
                         invalidateFlows(int(u.x) / 16 - u.type->footX / 2,
                                         int(u.z) / 16 - u.type->footZ / 2,
                                         u.type->footX, u.type->footZ);

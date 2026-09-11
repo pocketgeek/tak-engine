@@ -268,6 +268,7 @@ struct UnitType {
                               // parser defaults it to 16.16 0x13333 (~1.2) -- icd
                               // 0x4bfc5e -- so EVERY ground unit gains on roads.
     float maxWaterDepth = 0;  // deepest water a ground unit may wade into
+    float maxWaterSlope = 255;   // MaxWaterSlope: the slope limit below the waterline
     float maxSlope = 255;     // steepest cell height-spread the unit may cross
     float minWaterDepth = 0;  // shallowest water a water unit needs (from MOVEINFO)
     float radar = 0;          // radardistance: fog-reveal radius (separate from sight)
@@ -327,6 +328,7 @@ struct MoveClass {
     // KINGDOMS.icd 0x4c0e54 and falls back to the FBI only for a unit with no class.
     int footX = 0, footZ = 0;
     float maxSlope = 255;
+    float maxWaterSlope = 255;   // the limit used when the cell's low corner is wet
     float maxWaterDepth = 255;
     float minWaterDepth = 0;
 };
@@ -574,7 +576,19 @@ public:
     NavGrid(const std::vector<uint8_t>& heights, int w, int h, int sea, const Limits& lim);
 
     bool walkable(int cx, int cz) const {
-        return cx >= 0 && cz >= 0 && cx < w_ && cz < h_ && cells_[size_t(cz) * w_ + cx];
+        if (cx < 0 || cz < 0 || cx >= w_ || cz >= h_) return false;
+        size_t i = size_t(cz) * size_t(w_) + size_t(cx);
+        if (obst_ && (*obst_)[i]) return false;   // shared obstacle overlay
+        return cells_[i] != 0;
+    }
+    // Obstacles -- buildings, blocking features, wrecks, the wall-occlusion pass --
+    // block EVERY movement class equally, so they live in one overlay shared by all
+    // the grids rather than being stamped into each. Before this they were stamped
+    // into the ground grid alone, which is why hover units used to path straight
+    // through buildings. `obst` must outlive the grid and match its dimensions.
+    void setObstacles(const std::vector<uint8_t>* obst) {
+        obst_ = (obst && obst->size() == size_t(w_) * size_t(h_)) ? obst : nullptr;
+        clearDirty_ = true;
     }
     // Does a `foot`-cell-across unit fit CENTRED on (cx,cz)? (foot<=1 == walkable.)
     // Backed by a lazily-built clearance grid, so O(1). Footprint-aware pathing and
@@ -594,6 +608,7 @@ public:
     // costlier, so marches drift onto highways -- the retail steering area-rater
     // scores road cells 7 vs 6 (icd 0x508527). `roads` must outlive the grid and
     // match its dimensions (World::roads_; null = no preference).
+    void markClearanceDirty() { clearDirty_ = true; }
     void setRoads(const std::vector<uint8_t>* roads) {
         roads_ = (roads && roads->size() == size_t(w_) * size_t(h_)) ? roads : nullptr;
     }
@@ -634,7 +649,8 @@ private:
     void updateClearanceRect(int cx, int cz, int w, int h) const;
     mutable std::vector<uint16_t> clear_;
     mutable bool clearDirty_ = true;
-    const std::vector<uint8_t>* roads_ = nullptr;   // see setRoads
+    const std::vector<uint8_t>* roads_ = nullptr;
+    const std::vector<uint8_t>* obst_ = nullptr;   // shared obstacle overlay   // see setRoads
     int w_ = 0, h_ = 0;
 };
 
@@ -756,11 +772,35 @@ public:
     void setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel,
                     const std::vector<uint16_t>* features = nullptr);
     NavGrid& nav() { return nav_; }
+    // Passability is a function of the unit's MOVEMENT CLASS, not its domain:
+    // retail bakes one grid per class at map load and its path search reads that
+    // (KINGDOMS.icd 0x4e0940 builds them, 0x4139d0 queries them). A Catapult's
+    // MaxSlope of 15 really is a different map from a Swordsman's 30. We bake one
+    // grid per distinct LIMIT TUPLE rather than per class, which is the same thing
+    // with the duplicates collapsed -- the shipped classes reduce to a handful.
+    // `navClasses_` is filled by buildNavClasses() right after setTerrain.
     const NavGrid& navFor(const UnitType* t) const {
+        if (t) {
+            auto it = navIdx_.find(t);
+            if (it != navIdx_.end()) return navClasses_[size_t(it->second)];
+        }
+        // No class table (a bare test world, or a type registered after the map):
+        // fall back to the three legacy domain grids.
         if (t && t->domain == UnitType::Domain::Water) return navWater_;
         if (t && t->domain == UnitType::Domain::Hover) return navHover_;
         return nav_;
     }
+    // Build one nav grid per distinct movement-limit tuple across the registry's
+    // types. Call after setTerrain. Deterministic: grids are keyed and ordered by
+    // the tuple itself, so every peer builds the same table in the same order.
+    void buildNavClasses(const class TypeRegistry& reg);
+    // Block/clear a rectangle for EVERY movement class at once (a building, a
+    // blocking feature, a wreck). Writes the shared overlay and dirties the
+    // clearance on every grid, so a new class grid built later inherits it.
+    void blockCells(int cx, int cz, int w, int h, bool blocked);
+    // Same, for a unit type's footprint (honours its yardmap like blockFootprint).
+    void blockFoot(const UnitType& t, float x, float z, bool blocked);
+    const std::vector<uint8_t>& obstacles() const { return obst_; }
     // Queue production of `typeId` at a builder building.
     void train(int builderId, const UnitType* type, int count = 1);   // queue `count`
     void dequeue(int builderId, const UnitType* type, int count);     // un-queue `count`
@@ -1184,6 +1224,14 @@ private:
     // corridor lock between two marching units impossible by construction.
     // Rebuilt wholesale once a tick in unit-index order, so it is deterministic;
     // it is derived state and is not itself hashed.
+    // Per-movement-class nav. navClasses_ holds one grid per distinct limit tuple;
+    // navIdx_ maps a type to its grid. Derived from terrain + the registry, so it is
+    // not hashed -- but it MUST be identical on every peer, which it is: the table
+    // is built in a deterministic order from the same data.
+    std::vector<uint8_t> obst_;   // shared obstacle overlay (see NavGrid::setObstacles)
+    std::vector<NavGrid> navClasses_;
+    std::unordered_map<const UnitType*, int> navIdx_;
+
     std::vector<int32_t> occ_;      // 16px cells -> occupying unit id (0 = free)
     int occW_ = 0, occH_ = 0;
     void rebuildOccupancy();

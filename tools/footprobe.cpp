@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <set>
 #include <cstdlib>
 #include "hpi/hpi.h"
 #include "sim/sim.h"
@@ -92,6 +93,13 @@ int main(int argc, char** argv) {
         // Largest connected component of legal footprint placements, as a % of the
         // map, measured on the REAL nav grid -- the number that decides whether a
         // unit of that size can actually get anywhere.
+        // How many distinct movement-class grids did this registry reduce to?
+        {
+            std::set<const void*> grids;
+            for (const auto& [id, t] : reg.types())
+                if (!t.canFly) grids.insert((const void*)&w.navFor(&t));
+            std::printf("  %zu distinct class grids\n", grids.size());
+        }
         const sim::NavGrid& g = w.nav();
         std::printf("%-24s ", m.c_str());
         for (int n = 1; n <= 5; ++n) {
