@@ -1493,7 +1493,13 @@ void World::tickCombat(Unit& u, float dt) {
     // Auto-acquire: idle armed units engage the nearest enemy in reach;
     // attack-movers and patrollers interrupt their route to fight. A PASSIVE unit
     // (stance 2, hold fire) never auto-acquires -- it only fights when ordered.
-    bool acquiring = u.stance != 2 &&
+    // A builder mid-job -- constructing a site, repairing, reclaiming, holding
+    // queued builds, or producing from a queue -- stays on task: it does NOT
+    // auto-acquire a nearby enemy and wander off to fight while it should build.
+    bool busyBuilding = u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0 ||
+                        !u.buildOrders.empty() ||
+                        (u.type->canMove && !u.buildQueue.empty());   // mobile conjurer producing
+    bool acquiring = !busyBuilding && u.stance != 2 &&
                      (u.orders.empty() ||
                       (u.orders.front().targetId == 0 &&
                        (u.orders.front().attackMove || u.orders.front().patrol)) ||
