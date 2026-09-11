@@ -589,6 +589,8 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     cfg.gods = false;
     cfg.unitCap = int(gh->numberOr("maxunits", 500));
     setupMatch(world, reg, cfg);       // terrain + features + player teams
+    if (gh->numberOr("waterdoesdamage", 0) != 0)
+        world.setWaterDamage(float(gh->numberOr("waterdamage", 0)));
 
     // Placed units from [Map Data][units].
     int spawned = 0;

@@ -65,6 +65,15 @@ MissionScript::MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node
         return getValue(*world_, valId, a);
     };
     vm_->onSetUnitValue = [this](int32_t valId, int32_t v) { setUnitValue(valId, v); };
+    // Scripted story VO. Eight of the shipped mission cobs play a line at a beat
+    // (an alchemist's death, a dragon's arrival, Monsara's cry) and we dropped all
+    // of them on the floor -- the mission VM had no sound hook at all. The sim
+    // cannot play audio, so record the request and let the viewer act on it.
+    vm_->onPlaySound = [this](int32_t nameIdx) {
+        if (!world_) return;
+        const std::string& n = cob_.name(size_t(nameIdx < 0 ? 0 : nameIdx));
+        if (!n.empty()) world_->requestSound(n);
+    };
     parseConditions(header);
 }
 

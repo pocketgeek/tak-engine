@@ -1834,6 +1834,7 @@ public:
     // override the room's setting for that mission.
     bool missionFullVision_ = false, missionPreMapped_ = false;
     uint32_t shakeSeqSeen_ = 0;   // last mission ScreenShake sequence acted on
+    uint32_t soundSeqSeen_ = 0;   // last mission PLAY_SOUND sequence acted on
 private:
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
     int playerMonarchId_ = -1, aiMonarchId_ = -1;

@@ -15,6 +15,10 @@ namespace hpi { class Vfs; }
 struct CampaignMission {
     std::string stem;       // "takmission01_mt" -- the bundle stem (missionname)
     std::string otaFile;    // "takmission01_mt.ota" (missionfile, informational)
+    // The chapter's real name, from translate/missions.tdf (base) or
+    // translate/ipmissions.tdf (Iron Plague): "All Hell Broken Loose". Empty when
+    // the stem has no entry, and the UI then falls back to "MISSION n".
+    std::string title;
 };
 
 struct Campaign {

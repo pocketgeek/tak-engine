@@ -67,6 +67,8 @@ void CampaignScreen::layout(int winW, int winH) {
         Row r;
         r.mission = i;
         r.playable = true;
+        if (size_t(i) < camps_[size_t(tab_)].missions.size())
+            r.title = camps_[size_t(tab_)].missions[size_t(i)].title;
         r.rect = {listClip_.x, y, listClip_.w, rowH - 4 * u_};
         rows_.push_back(r);
         y += rowH;
@@ -166,8 +168,10 @@ void CampaignScreen::render(int winW, int winH) {
                 SDL_SetRenderDrawColor(ren_, 210, 180, 90, 255);
                 SDL_RenderDrawRectF(ren_, &r.rect);
             }
-            char label[32];
+            char label[64];
             if (alt) std::snprintf(label, sizeof label, "ALT ENDING");
+            else if (!r.title.empty())
+                std::snprintf(label, sizeof label, "%d. %s", r.mission + 1, r.title.c_str());
             else std::snprintf(label, sizeof label, "MISSION %d", r.mission + 1);
             SDL_Color col = completed ? SDL_Color{140, 200, 150, 255}
                           : suggested ? SDL_Color{240, 225, 170, 255}

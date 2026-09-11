@@ -1,6 +1,7 @@
 #include "campaign/campaign.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include <cctype>
 
 #include "hpi/hpi.h"
@@ -103,7 +104,33 @@ std::vector<std::string> loadObjectives(const hpi::Vfs& vfs, const std::string& 
     return out;
 }
 
+// Chapter titles. Retail ships them in translate/missions.tdf (base) and
+// translate/ipmissions.tdf (Iron Plague) as one section per mission stem, with a
+// value per language. The campaign picker showed the raw stem instead, so every
+// row read "takmission01_mt" rather than "All Hell Broken Loose". English only for
+// now -- the other languages are right there in the file when we localise the UI.
+static std::unordered_map<std::string, std::string> chapterTitles(const hpi::Vfs& vfs) {
+    std::unordered_map<std::string, std::string> out;
+    for (const char* path : {"translate/missions.tdf", "translate/ipmissions.tdf"}) {
+        if (!vfs.has(path)) continue;
+        try {
+            auto b = vfs.read(path);
+            tdf::Node root = tdf::parseText(std::string(b.begin(), b.end()), path);
+            for (const auto& [key, node] : root.children) {
+                const std::string* en = node.value("english");
+                if (!en || en->empty()) continue;
+                std::string k = key;
+                std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+                if (k == "chapter") continue;   // the word "Chapter" itself
+                out.emplace(k, *en);
+            }
+        } catch (const std::exception&) {}
+    }
+    return out;
+}
+
 std::vector<Campaign> loadCampaigns(const hpi::Vfs& vfs) {
+    const auto titles = chapterTitles(vfs);
     std::vector<Campaign> camps;
     for (const std::string& p : vfs.list("camps/")) {
         if (p.size() < 4) continue;
@@ -111,7 +138,14 @@ std::vector<Campaign> loadCampaigns(const hpi::Vfs& vfs) {
         for (char& c : ext) c = char(std::tolower((unsigned char)c));
         if (ext != ".tdf") continue;
         Campaign c;
-        if (loadCampaign(vfs, p, c)) camps.push_back(std::move(c));
+        if (loadCampaign(vfs, p, c)) {
+            for (auto& m : c.missions) {
+                std::string k = m.stem;
+                std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+                if (auto it = titles.find(k); it != titles.end()) m.title = it->second;
+            }
+            camps.push_back(std::move(c));
+        }
     }
     std::stable_sort(camps.begin(), camps.end(), [](const Campaign& a, const Campaign& b) {
         int ra = rankOf(a.id), rb = rankOf(b.id);

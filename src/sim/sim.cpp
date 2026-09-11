@@ -3437,6 +3437,14 @@ void World::tick(float dt) {
                 u.hp = 0; u.lastHitBy = 0; u.deathType = 3;   // explosion death (gib)
             }
         }
+        // Deadly water (.ota waterdoesdamage): a ground unit standing in it is
+        // burned down. Flyers are over it, not in it; ships and amphibians belong
+        // there, so anything that can cross water is exempt.
+        if (waterDamage_ > 0 && !u.type->canFly && u.type->maxWaterDepth <= 0 &&
+            isWater(u.x, u.z)) {
+            u.hp -= waterDamage_ * dt;
+            if (u.hp <= 0) { u.overkill = std::max(u.overkill, -u.hp); u.deathType = 1; }
+        }
         if (u.type->healTime > 0 && u.hp < u.type->maxHp)
             u.hp = std::min(u.type->maxHp, u.hp + dt / u.type->healTime);
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana)

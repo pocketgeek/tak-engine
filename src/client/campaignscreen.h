@@ -40,7 +40,10 @@ public:
     const std::string& pickedCampaign() const { return pickedCampaign_; }
 
 private:
-    struct Row { SDL_FRect rect{}; int mission = -1; bool playable = false; };
+    struct Row {
+        SDL_FRect rect{}; int mission = -1; bool playable = false;
+        std::string title;   // chapter name from translate/missions.tdf ("" = none)
+    };
     void layout(int winW, int winH);
 
     SDL_Renderer* ren_;

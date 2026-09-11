@@ -736,6 +736,9 @@ public:
                 if (!roads_[size_t(z0 + dz) * terW_ + size_t(x0 + dx)]) return false;
         return true;
     }
+    // .ota waterdoesdamage/waterdamage: on two Iron Plague missions the water is
+    // lethal, which is the whole point of their terrain. Damage is per second.
+    void setWaterDamage(float perSec) { waterDamage_ = perSec; }
     bool isWater(float x, float z) const {
         if (depth_.empty()) return false;
         int cx = int(x) / 16, cz = int(z) / 16;
@@ -951,6 +954,12 @@ public:
     // it is deterministic because the script that bumps it runs in lockstep.
     struct ShakeReq { float mag = 0, dur = 0; uint32_t seq = 0; };
     const ShakeReq& shakeRequest() const { return shakeReq_; }
+    // A mission script's PLAY_SOUND (scripted story VO). Viewer-only, same edge
+    // protocol as the shake: the sim cannot play audio, so it records what was
+    // asked for and the client acts on the sequence change.
+    struct SoundReq { std::string name; uint32_t seq = 0; };
+    const SoundReq& soundRequest() const { return soundReq_; }
+    void requestSound(std::string n) { soundReq_.name = std::move(n); ++soundReq_.seq; }
     void requestShake(float mag, float dur) {
         shakeReq_.mag = mag; shakeReq_.dur = dur; ++shakeReq_.seq;
     }
@@ -1098,6 +1107,8 @@ private:
     std::vector<Projectile> projectiles_;
     std::vector<HitFx> hits_;
     ShakeReq shakeReq_;
+    float waterDamage_ = 0;   // .ota waterdamage when waterdoesdamage=1
+    SoundReq soundReq_;
     // [EXPLODEAS] blasts queued during the death sweep and applied just after it
     // (applyHit mutates units_, which the sweep is walking). Transient within one
     // tick -- always empty at tick end, so it needs no hashing.

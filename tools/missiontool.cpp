@@ -54,7 +54,8 @@ int main(int argc, char** argv) {
             std::printf("%-28s (%s)  %d missions%s%s\n", c.title.c_str(), c.id.c_str(), c.count(),
                         c.altFinal.empty() ? "" : "  +alt ending: ", c.altFinal.c_str());
             for (int i = 0; i < c.count(); ++i)
-                std::printf("    %2d. %s\n", i + 1, c.missions[size_t(i)].stem.c_str());
+                std::printf("    %2d. %-18s %s\n", i + 1, c.missions[size_t(i)].stem.c_str(),
+                            c.missions[size_t(i)].title.c_str());
         }
         return 0;
     }

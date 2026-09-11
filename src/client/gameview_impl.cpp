@@ -711,6 +711,17 @@
         if (newTick_) {
             const auto& sr = world_.shakeRequest();
             if (sr.seq != shakeSeqSeen_) { shakeSeqSeen_ = sr.seq; triggerShake(sr.mag, sr.dur); }
+            // Scripted mission VO. The name is a bare wav ("monsara1.wav"); play it
+            // unpositioned, as narration rather than a world sound. A few of the
+            // named lines are simply absent from this install -- skip those.
+            const auto& qr = world_.soundRequest();
+            if (qr.seq != soundSeqSeen_) {
+                soundSeqSeen_ = qr.seq;
+                std::string n = qr.name;
+                std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+                if (auto dot = n.rfind(".wav"); dot != std::string::npos) n.erase(dot);
+                if (!n.empty() && sounds_.has(n)) sounds_.play(n);
+            }
         }
         if (newTick_) for (const auto& h : frameHits()) {
             // Instant-hit weapons (FBI type = Line of Sight) spawn no projectile, so
