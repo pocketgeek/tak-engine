@@ -551,6 +551,22 @@ class NavGrid {
 public:
     NavGrid() = default;
     NavGrid(const std::vector<uint8_t>& heights, int w, int h, int cliff = 20);
+    // Retail's passability rule (KINGDOMS.icd 0x508660 ClassifyCell). The TNT height
+    // bytes are a CORNER LATTICE at 16-unit spacing, not per-cell centre values, so
+    // cell (x,z)'s surface is the quad between corners (x,z) and (x+1,z+1). Retail
+    // caches that quad's MAX and MIN (cell+5 / cell+6, written by 0x50ed60) and
+    // blocks a cell when:
+    //   MIN  <  sea - maxWaterDepth   (deepest point deeper than the class allows)
+    //   MAX  >  sea - minWaterDepth   (shallowest point shallower than it needs)
+    //   MAX - MIN > (MIN < sea ? maxWaterSlope : maxSlope)
+    // This is a WITHIN-cell spread. Our old rule asked whether a NEIGHBOUR rises
+    // above us, which blocks the cells at the FOOT of every slope and severs ramps
+    // -- on Inner Circle that cost two thirds of the map's connectivity.
+    struct Limits {
+        int maxSlope = 255, maxWaterSlope = 255;
+        int maxWaterDepth = 10000, minWaterDepth = -10000;   // retail's ctor defaults
+    };
+    NavGrid(const std::vector<uint8_t>& heights, int w, int h, int sea, const Limits& lim);
 
     bool walkable(int cx, int cz) const {
         return cx >= 0 && cz >= 0 && cx < w_ && cz < h_ && cells_[size_t(cz) * w_ + cx];

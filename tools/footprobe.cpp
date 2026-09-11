@@ -89,25 +89,36 @@ int main(int argc, char** argv) {
                 std::printf("f%d=%5.1f%% ", n, r1 ? 100.0 * double(reach(n)) / double(r1) : 0.0);
             std::printf("(f1 cells=%ld)\n", r1);
         };
-        // Where does the REAL grid block more than terrain alone? Features, building
-        // footprints and the wall-occlusion pass all block on top of the cliff rule.
-        {
-            const sim::NavGrid& g = w.nav();
-            long terrOnly = 0, real = 0, extra = 0;
-            for (int z = 0; z < H; ++z)
-                for (int x = 0; x < W; ++x) {
-                    bool t = ruleA(x, z, 20) && !wet(x, z);
-                    bool r = g.walkable(x, z);
-                    terrOnly += t; real += r; extra += (t && !r);
+        // Largest connected component of legal footprint placements, as a % of the
+        // map, measured on the REAL nav grid -- the number that decides whether a
+        // unit of that size can actually get anywhere.
+        const sim::NavGrid& g = w.nav();
+        std::printf("%-24s ", m.c_str());
+        for (int n = 1; n <= 5; ++n) {
+            std::vector<uint8_t> seen(size_t(W) * size_t(H), 0);
+            long best = 0;
+            for (int z0 = 0; z0 < H; ++z0)
+                for (int x0 = 0; x0 < W; ++x0) {
+                    size_t s0 = size_t(z0) * size_t(W) + size_t(x0);
+                    if (seen[s0] || !g.fits(x0, z0, n)) continue;
+                    std::vector<int> q{int(s0)}; seen[s0] = 1; long cnt = 0;
+                    for (size_t hh = 0; hh < q.size(); ++hh) {
+                        int c0 = q[hh]; ++cnt;
+                        int x = c0 % W, z = c0 / W;
+                        const int dx[4]{1,-1,0,0}, dz[4]{0,0,1,-1};
+                        for (int k = 0; k < 4; ++k) {
+                            int nx = x + dx[k], nz = z + dz[k];
+                            if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                            if (!g.fits(nx, nz, n)) continue;
+                            size_t id = size_t(nz) * size_t(W) + size_t(nx);
+                            if (seen[id]) continue; seen[id] = 1; q.push_back(int(id));
+                        }
+                    }
+                    best = std::max(best, cnt);
                 }
-            std::printf("%s  terrain-walkable=%ld  nav-walkable=%ld  blocked-beyond-terrain=%ld (%.1f%%)\n",
-                        m.c_str(), terrOnly, real, extra,
-                        terrOnly ? 100.0 * double(extra) / double(terrOnly) : 0.0);
+            std::printf("f%d=%5.1f%% ", n, 100.0 * double(best) / double(size_t(W) * size_t(H)));
         }
-        measure("ours: 3x3 nbr, thr20", ruleA, 20);
-        measure("ours rule, thr30",     ruleA, 30);
-        measure("retail: 2x2 cell, 30", ruleB, 30);
-        measure("retail 2x2, thr15",    ruleB, 15);
+        std::printf("\n");
     }
     return 0;
 }

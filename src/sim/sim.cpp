@@ -576,24 +576,28 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
             if ((*features)[i] == 0xFFFB) { roads_[i] = 1; any = true; }
         if (!any) roads_.clear();   // no roads on this map: skip the per-tick test
     }
-    // Ground: no cliffs, water at most ankle deep (moveinfo MaxWaterDepth ~20).
-    nav_ = NavGrid(heights, w, h, 20);
-    for (int z = 0; z < h; ++z)
-        for (int x = 0; x < w; ++x)
-            if (seaLevel - int(heights[size_t(z) * w + x]) > 20)
-                nav_.block(x, z, 1, 1, true);
-    // Water: needs depth (moveinfo MinWaterDepth ~13); slope irrelevant.
-    navWater_ = NavGrid(heights, w, h, 255);
-    for (int z = 0; z < h; ++z)
-        for (int x = 0; x < w; ++x)
-            if (seaLevel - int(heights[size_t(z) * w + x]) < 13)
-                navWater_.block(x, z, 1, 1, true);
-    // Hover: land without cliffs, or any water.
-    navHover_ = NavGrid(heights, w, h, 20);
-    for (int z = 0; z < h; ++z)
-        for (int x = 0; x < w; ++x)
-            if (seaLevel - int(heights[size_t(z) * w + x]) > 0)
-                navHover_.block(x, z, 1, 1, false);
+    // Passability, retail's rule (see NavGrid::Limits). One grid per DOMAIN still,
+    // with each domain's limits taken from the movement class that dominates it in
+    // the shipped data: GROUND2/GROUND3 (67+20 of the 125 movers) for ground,
+    // WATER* for water, HOVER2 for hover. Per-CLASS grids -- so a Catapult's
+    // MaxSlope 15 differs from a Swordsman's 30 -- are the next step; this leg is
+    // about the rule's SHAPE, which is where the connectivity was being lost.
+    {
+        NavGrid::Limits ground;      // GROUND2 / GROUND3
+        ground.maxSlope = 30; ground.maxWaterSlope = 30;
+        ground.maxWaterDepth = 20; ground.minWaterDepth = -10000;
+        nav_ = NavGrid(heights, w, h, seaLevel, ground);
+
+        NavGrid::Limits water;       // WATER* declare no limits: retail's defaults,
+        water.maxSlope = 255; water.maxWaterSlope = 255;   // except they must be IN
+        water.maxWaterDepth = 10000; water.minWaterDepth = 13;   // water to float.
+        navWater_ = NavGrid(heights, w, h, seaLevel, water);
+
+        NavGrid::Limits hover;       // HOVER2: crosses land and water alike
+        hover.maxSlope = 30; hover.maxWaterSlope = 255;
+        hover.maxWaterDepth = 10000; hover.minWaterDepth = -10000;
+        navHover_ = NavGrid(heights, w, h, seaLevel, hover);
+    }
     // Occlusion block: a wall's baked-relief art leans its top up-and-north over
     // the low ground behind it (the 2.5D projection), so a unit that stops on that
     // ground is drawn hidden "behind the wall". Block those cells for land units so
@@ -891,6 +895,27 @@ NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int cliff)
                     hi = std::max(hi, int(heights[size_t(nz) * w + nx]));
                 }
             if (hi - self > cliff) cells_[size_t(z) * w + x] = 0;
+        }
+}
+
+NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int sea,
+                 const Limits& lim)
+    : w_(w), h_(h) {
+    cells_.assign(size_t(w) * h, 1);
+    auto H = [&](int x, int z) {
+        return int(heights[size_t(std::min(z, h - 1)) * size_t(w) + size_t(std::min(x, w - 1))]);
+    };
+    for (int z = 0; z < h; ++z)
+        for (int x = 0; x < w; ++x) {
+            // The cell's own quad, anchored down-right -- retail's exact sample set.
+            int a = H(x, z), b = H(x + 1, z), c = H(x, z + 1), d = H(x + 1, z + 1);
+            int lo = std::min(std::min(a, b), std::min(c, d));
+            int hi = std::max(std::max(a, b), std::max(c, d));
+            bool blocked = false;
+            if (lo < sea - lim.maxWaterDepth) blocked = true;          // too deep
+            else if (hi > sea - lim.minWaterDepth) blocked = true;     // too shallow
+            else if (hi - lo > (lo < sea ? lim.maxWaterSlope : lim.maxSlope)) blocked = true;
+            if (blocked) cells_[size_t(z) * w + x] = 0;
         }
 }
 

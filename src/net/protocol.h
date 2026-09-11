@@ -17,7 +17,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 51;       // 51: units are solid -- a parked body blocks a
+constexpr uint32_t kNetVersion = 52;       // 52: retail terrain passability -- a cell is
+                                           // blocked on its OWN quad's height spread, not on
+                                           // whether a neighbour rises above it (which severed
+                                           // every ramp)
+                                           // 51: units are solid -- a parked body blocks a
                                            // move; blocked units clamp-and-slow instead of
                                            // stopping; separation spacing 13 -> 16px
                                            // 50: missed ballistic shells crater where they
