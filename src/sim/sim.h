@@ -54,7 +54,11 @@ struct Weapon {
     //                   monarch waves, god spells, Area Mind Control).
     //   Wandering    -- a roaming storm entity that drifts for `duration`
     //                   (4: Tornado, Fire/Water Vortex, Hurricane).
-    enum class Kind { Normal, Guided, Remote, Wandering } kind = Kind::Normal;
+    //   Dropped    -- a bomb RELEASED from a flyer: it falls to the ground under
+    //                 the release point (retail looks up the terrain height right
+    //                 there and drives it down under gravity), so the bomber has to
+    //                 overfly its target instead of shooting from range.
+    enum class Kind { Normal, Guided, Remote, Wandering, Dropped } kind = Kind::Normal;
     // Remote Effect splits further by subtype, and the split changes the damage
     // CADENCE completely (retail has a C++ subclass per variant):
     //   Plain      -- one area hit when the channel completes.

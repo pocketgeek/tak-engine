@@ -33,6 +33,11 @@ static thread_local long g_flowN = 0, g_pathN = 0;
 namespace {
 
 constexpr float kPi = 3.14159265358979f;
+// How long a released bomb takes to reach the ground from a flyer's cruise
+// altitude. Retail drives it down under gravity from the terrain height it looks
+// up at the release point; our projectiles are 2-D, so the fall is a fixed window
+// after which the bomb detonates where it has drifted to.
+constexpr float kBombFall = 0.8f;
 constexpr float kTick = 30.0f;               // FBI per-tick values -> per-second
 constexpr float kCobAngle = 2 * kPi / 65536.0f;
 
@@ -258,6 +263,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     wp.mindControl = st == "mindcontrol";
                     // Which Remote Effect subclass this is (retail dispatches on
                     // subtype); it decides the damage cadence, not just the visuals.
+                    // subtype=Dropped rides on a Ballistic weapon but is its own
+                    // retail class: the bomb is let go, not launched.
+                    if (st == "dropped") wp.kind = Weapon::Kind::Dropped;
                     if (st == "earthquake") wp.remote = Weapon::RemoteKind::Earthquake;
                     else if (st == "hailstorm") wp.remote = Weapon::RemoteKind::Hailstorm;
                     else if (st == "mindcontrol") wp.remote = Weapon::RemoteKind::MindCtl;
@@ -1613,6 +1621,28 @@ void World::fire(Unit& u, Unit& target, int slot) {
         applyHit(w, target.x, target.z, u.player, u.id, &target);
         return;
     }
+    // Dropped: the bomb is RELEASED, not fired. It leaves the bomber with only the
+    // bomber's own forward drift and falls onto the ground beneath -- so it lands
+    // where the bomber IS, and a bomber has to overfly its target (see the release
+    // gate in tickCombat). Detonates on landing wherever it ended up, hit or miss.
+    if (w.kind == Weapon::Kind::Dropped) {
+        Projectile b;
+        b.x = u.x;
+        b.z = u.z;
+        float dv = w.projVel * kTick / 30.0f;   // a slow release speed, not a shot
+        b.vx = detmath::sin(u.heading) * dv;
+        b.vz = detmath::cos(u.heading) * dv;
+        b.damage = w.damage;
+        b.wsrc = &w;
+        b.targetId = target.id;
+        b.fromPlayer = u.player;
+        b.fromId = u.id;
+        b.fx = w.fx;
+        b.life = kBombFall;      // time to fall from cruise altitude
+        b.flight = kBombFall;    // the viewer arcs it down over the same window
+        projectiles_.push_back(b);
+        return;
+    }
     Projectile p;
     p.x = u.x;
     p.z = u.z;
@@ -1766,6 +1796,12 @@ void World::tickCombat(Unit& u, float dt) {
                    ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
     const Weapon* sel = slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
     float best = sel ? sel->range : u.type->maxRange();
+    // A bomber does not shoot from range -- it flies OVER and lets go, because the
+    // bomb lands beneath the release point. Its effective reach is therefore how
+    // close it must be for the blast to still cover the target, which makes it
+    // close to overhead and turns its FBI `range` into an approach cue.
+    if (sel && sel->kind == Weapon::Kind::Dropped)
+        best = std::max(sel->aoe * 0.5f, 48.0f);
     // Range is to the target's footprint EDGE, not its centre. A building's centre is
     // deep inside a blocked footprint, so a centre-distance check leaves a short-range
     // attacker grinding the edge (never "in range") or a flyer buried inside it. For a
@@ -1844,8 +1880,13 @@ void World::tickCombat(Unit& u, float dt) {
     // within aimtolerance, has a clear shot, and (unless noairweapon) may hit air.
     if (sel && !(sel->noAir && target->type && target->type->canFly) &&
         (sel->melee || los) && u.reloads[slot] <= 0 &&
-        (sel->melee ? adj : dist <= sel->range + pad) &&
-        dist >= sel->minRange && std::abs(diff) < std::max(sel->aimTol, 0.03f))
+        (sel->melee ? adj : dist <= (sel->kind == Weapon::Kind::Dropped ? best : sel->range) + pad) &&
+        dist >= sel->minRange &&
+        // A bomb is let go, not aimed: a bomber releases once it is over the target
+        // rather than having to line its nose up first (which a hovering flyer with
+        // momentum can rarely hold inside a 5-degree window anyway).
+        (sel->kind == Weapon::Kind::Dropped ||
+         std::abs(diff) < std::max(sel->aimTol, 0.03f)))
         fire(u, *target, slot);
     // cancapture: a charmer converts the target after sustained contact (~3s) or
     // once it is worn down, rather than killing it.
@@ -3055,7 +3096,10 @@ void World::tick(float dt) {
         p.life -= dt;
         p.age += dt;
         Unit* t = unit(p.targetId);
-        if (t && t->alive() && !t->embarked()) {
+        // A falling bomb is ABOVE everything until it lands, so it takes no
+        // in-flight collision -- it detonates once, on the ground, below.
+        bool bomb = p.wsrc && p.wsrc->kind == Weapon::Kind::Dropped;
+        if (!bomb && t && t->alive() && !t->embarked()) {
             // Distance from the target to the segment travelled this tick, so a
             // fast projectile (e.g. the totem's lightning, ~50px/tick) can't
             // skip past the small hit radius between ticks.
@@ -3081,6 +3125,25 @@ void World::tick(float dt) {
                 p.life = -1;
             }
         }
+    }
+    // A released bomb detonates the moment it reaches the ground, wherever it has
+    // drifted to -- unlike a fired shot, which is a dud if it runs out of life.
+    // Whatever it lands ON takes the direct hit: several bombs carry no
+    // areaofeffect at all (tarbeak's Egg Bomb), and a splash-only detonation would
+    // make those deal nothing whatsoever.
+    for (size_t bi = 0; bi < projectiles_.size(); ++bi) {
+        const Projectile bp = projectiles_[bi];
+        if (bp.life > 0 || !bp.wsrc || bp.wsrc->kind != Weapon::Kind::Dropped) continue;
+        Unit* under = nullptr;
+        float bestD = 1e30f;
+        forEachNear(bp.x, bp.z, 40.0f, [&](int idx) {
+            Unit& e = units_[size_t(idx)];
+            if (!e.alive() || e.embarked() || !e.type || allied(e.player, bp.fromPlayer)) return;
+            float dx = e.x - bp.x, dz = e.z - bp.z;
+            float d = dx * dx + dz * dz;
+            if (d < bestD) { bestD = d; under = &e; }
+        });
+        applyHit(*bp.wsrc, bp.x, bp.z, bp.fromPlayer, bp.fromId, under);
     }
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 

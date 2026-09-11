@@ -15,6 +15,8 @@
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <utility>
@@ -361,6 +363,50 @@ int main(int argc, char** argv) {
             }
             check(flipped >= 2, "Area Mind Control converts a GROUP",
                   std::to_string(flipped) + " of 3 flipped");
+        }
+    }
+
+    // ---- 2d. dropped bombs ---------------------------------------------------
+    std::printf("[dropped bombs]\n");
+    {
+        // tarbeak's Egg Bomb is subtype=Dropped: released from the flyer and falls
+        // onto the ground beneath, so the bomber must OVERFLY its target rather
+        // than shooting from its nominal 200px range.
+        const sim::UnitType* bomber = reg.find("tarbeak");
+        const sim::UnitType* prey = reg.find("arasword");
+        if (!bomber || !prey || bomber->weapons.empty()) std::printf("  (missing defs; skipped)\n");
+        else {
+            int slot = -1;
+            for (size_t i = 0; i < bomber->weapons.size(); ++i)
+                if (bomber->weapons[i].kind == sim::Weapon::Kind::Dropped) { slot = int(i); break; }
+            check(slot >= 0, "tarbeak carries a Dropped weapon");
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+            int b = w.spawn(bomber, 1000, 1000, 0, 0);
+            int v = w.spawn(prey, 1000, 1500, 0, 1);   // 500px away: well beyond a drop
+            if (auto* bu = w.unit(b)) bu->mana = bomber->maxMana;
+            w.attack(b, v, false);
+            float hp0 = w.unit(v)->hp;
+            bool hurt = false; float closest = 1e9f;
+            for (int i = 0; i < 1800; ++i) {
+                w.tick(1.0f / 30.0f);
+                const sim::Unit* bb = w.unit(b);
+                const sim::Unit* vv = w.unit(v);
+                if (!vv) break;
+                if (bb && vv) {
+                    float d = std::sqrt((bb->x - vv->x) * (bb->x - vv->x) +
+                                        (bb->z - vv->z) * (bb->z - vv->z));
+                    closest = std::min(closest, d);
+                }
+                if (!vv->alive() || vv->hp < hp0) { hurt = true; break; }
+            }
+            check(closest < 120.0f, "the bomber closed to overhead rather than sniping",
+                  "closest " + std::to_string(int(closest)) + "px");
+            check(hurt, "and its dropped bomb damaged the target below");
         }
     }
 
