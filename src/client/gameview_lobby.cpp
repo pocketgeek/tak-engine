@@ -686,6 +686,20 @@
             else
                 blockText(fb, x, y + 6, 2.0f, {205, 210, 225, 255});
         }
+        y += 34;
+        {
+            // Retail's "Random Start Locations" room option: shuffle which map start
+            // each slot gets, so spawns can't be memorised on a familiar map.
+            std::string rb = std::string("START LOCATIONS: ") +
+                             (room.opts.randomStarts ? "RANDOM" : "FIXED");
+            if (host)
+                lbBtn(x, y, 420, 26, rb, true, [this] {
+                    auto o = mpRoom().opts;
+                    o.randomStarts = o.randomStarts ? 0 : 1;
+                    mp_->setGameOptions(o); });
+            else
+                blockText(rb, x, y + 6, 2.0f, {205, 210, 225, 255});
+        }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
         if (!singlePlayer_) {
             float chx = winW - 300.0f, chy = 78, chw = 280;

@@ -475,6 +475,7 @@ void Server::writeSlots(Writer& w, Room& r) {
     w.u8(r.opts.overridePolicy);
     w.u8(r.opts.speed); w.u8(r.opts.speedUnlock); w.u32(r.opts.unitCap); w.u8(r.opts.monarchExpendable);
     w.u8(r.opts.stressTest); w.u8(r.opts.fogExplored); w.u8(r.opts.benchmark);
+    w.u8(r.opts.randomStarts);
     w.u32(r.hostId);
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = r.slots[i];
@@ -530,6 +531,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             o.stressTest = r.u8() ? 1 : 0;
             o.fogExplored = r.u8() ? 1 : 0;
             o.benchmark = r.u8();
+            o.randomStarts = r.u8() ? 1 : 0;
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
@@ -796,6 +798,8 @@ void Server::tryStart(Client& c) {
             cfg.monarchExpendable = r->opts.monarchExpendable != 0;
             cfg.stressTest = r->opts.stressTest != 0;
             cfg.benchmark = r->opts.benchmark;
+            cfg.randomStarts = r->opts.randomStarts != 0;
+            cfg.startSeed = 0x7a6b0000u + r->id;   // the seed sent in GameStarting
             cfg.slots.resize(size_t(maxSlot + 1));
             for (int i = 0; i <= maxSlot; ++i) {
                 const auto& s = r->slots[i];
@@ -933,6 +937,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             o.stressTest = rd.u8() ? 1 : 0;
             o.fogExplored = rd.u8() ? 1 : 0;
             o.benchmark = rd.u8();
+            o.randomStarts = rd.u8() ? 1 : 0;
             if (!rd.ok) return;
             if (o.speed < 1) o.speed = 1;
             if (o.speed > 40) o.speed = 40;   // clamp 0.1x .. 4.0x
@@ -975,6 +980,17 @@ void Server::gameMsg(Client& c, const Frame& f) {
                 }
             }
             c.loaded = true;
+            // Tell the room who just finished loading, so everyone else's loading
+            // screen can fill that player's bar instead of sitting at "waiting".
+            {
+                int slot = -1;
+                for (int i = 0; i < kMaxSlots; ++i)
+                    if (r->slotClient[i] == int(c.id)) { slot = i; break; }
+                if (slot >= 0) {
+                    Writer ps; ps.u8(uint8_t(slot)); ps.u8(2 /*loaded*/); ps.u32(0);
+                    broadcastRoom(*r, Msg::PlayerStatus, ps);
+                }
+            }
             break;
         }
         case Msg::LeaveGame: leaveRoom(c, "left"); break;

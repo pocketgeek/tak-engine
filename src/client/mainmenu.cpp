@@ -354,6 +354,10 @@ struct MainMenu::Impl {
             {"PlayComputer", "machine", Choice::SinglePlayer},
             {"PlayStory",    "girl",    Choice::Campaign},
             {"PlayPlayer",   "knight",  Choice::Multiplayer},
+            // The fourth door. Its gadget is in mainmenu.gui and its hover videos
+            // ship as SNORT4..7.BIK; we simply never wired it up, so the credits
+            // were unreachable from the front end.
+            {"Credits",      "snort",   Choice::Credits},
         };
         for (auto& s : specs) {
             const gui::Gadget* g = gui.find(s.gadget);
@@ -982,7 +986,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         // hardware-cursor option the OS tracks the pointer (smooth under load); otherwise
         // hide the OS arrow and draw our own into the frame.
         if (d_->cursors_.ok()) {
-            int sc = settings ? settings->cursorScale : 4;
+            int sc = settings ? settings->cursorScale : 1;
             if (settings && settings->hardwareCursor &&
                 d_->cursors_.applyHardware(CursorId::Normal, sc)) {
                 SDL_ShowCursor(SDL_ENABLE);

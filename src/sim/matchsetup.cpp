@@ -442,6 +442,17 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             spots.push_back({cx + detmath::cos(a) * radius, cz + detmath::sin(a) * radius});
         }
     }
+    // Random Start Locations: shuffle the spot list before slots are assigned to it.
+    // A Fisher-Yates on a small seeded LCG -- integer-only and order-stable, so every
+    // peer and the referee land on the same arrangement.
+    if (cfg.randomStarts && spots.size() > 1) {
+        uint32_t rs = cfg.startSeed ? cfg.startSeed : 0x54414B53u;
+        for (size_t i = spots.size() - 1; i > 0; --i) {
+            rs = rs * 1103515245u + 12345u;
+            size_t j = size_t((rs >> 16) % uint32_t(i + 1));
+            std::swap(spots[i], spots[j]);
+        }
+    }
     while (int(spots.size()) < used) {
         float a = float(spots.size()) / float(std::max(used, 1)) * 6.2831853f;
         spots.push_back({cx + detmath::cos(a) * 300, cz + detmath::sin(a) * 300});

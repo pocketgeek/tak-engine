@@ -6,6 +6,7 @@
 // This class does protocol only -- it never touches the sim; the viewer applies
 // the bundle's commands and advances the World.
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -96,6 +97,11 @@ public:
     bool starting() const { return state_ == State::Starting; }
     const RoomView& startRoom() const { return room_; }   // final slots
     uint32_t startSeed() const { return startSeed_; }
+    // Has this slot reported its map/data loaded? Broadcast by the server as each
+    // peer reports in, so the loading screen can show who the game is waiting on.
+    bool slotLoaded(int slot) const {
+        return slot >= 0 && slot < kMaxSlots && slotLoaded_[size_t(slot)];
+    }
     uint32_t gameId() const { return room_.id; }
     uint64_t resumeToken() const { return resumeToken_; }
     // `dataHash` = this client's gameplay-data fingerprint at the ROOM's tier
@@ -147,6 +153,7 @@ private:
 
     uint64_t dataHash_ = 0;      // local gameplay-data fingerprint (sent in Hello)
     uint32_t startSeed_ = 0;
+    std::array<bool, kMaxSlots> slotLoaded_{};   // per-slot "reported Loaded"
     uint64_t resumeToken_ = 0;
     bool rejoin_ = false;
     bool expectingRejoin_ = false;

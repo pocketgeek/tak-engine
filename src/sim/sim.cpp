@@ -511,6 +511,7 @@ int World::spawn(const UnitType* type, float x, float z, float heading, int play
         player = 0;
     }
     players_[size_t(player)].unitCount++;   // keep the cap count exact within a tick
+    players_[size_t(player)].built++;        // end-of-game "Units" column
     u.player = player;
     u.type = type;
     u.x = x;
@@ -3325,6 +3326,8 @@ void World::tick(float dt) {
             continue;
         }
         if (u.hp <= 0) {
+            if (u.player >= 0 && u.player < int(players_.size()))
+                players_[size_t(u.player)].losses++;   // end-of-game "Losses" column
             // Award the destroyed unit's experiencepoints to the killer, then set
             // its veteran level = accumulatedXP / the killer's OWN experiencepoints,
             // capped at 10 (retail KINGDOMS.icd). No HP-pool change — veterancy
@@ -4116,7 +4119,10 @@ int World::updateOutcome() {
         bool monarchDead = !monarchExpendable_ && hadMonarch_[size_t(p)] &&
                            monarchByPlayer[size_t(p)] == 0;
         bool forced = p < int(forcedDefeat_.size()) && forcedDefeat_[size_t(p)];
+        bool wasDefeated = players_[size_t(p)].defeated;
         players_[size_t(p)].defeated = (aliveByPlayer[size_t(p)] == 0) || monarchDead || forced;
+        // Stamp the moment of elimination once, for the end-of-game "Time" column.
+        if (!wasDefeated && players_[size_t(p)].defeated) players_[size_t(p)].defeatedAt = clock_;
         players_[size_t(p)].unitCount = aliveByPlayer[size_t(p)];   // re-sync the cap count
     }
 

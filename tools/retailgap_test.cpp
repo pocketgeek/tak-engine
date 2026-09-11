@@ -613,6 +613,41 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --- Random Start Locations -------------------------------------------
+    // Retail's room option. Two requirements: the same seed must reproduce the
+    // same arrangement on every peer (lockstep), and a different seed must
+    // actually move somebody (otherwise the option does nothing).
+    std::printf("[random start locations]\n");
+    {
+        auto startsFor = [&](bool rnd, uint32_t seed) {
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs;
+            cfg.mapPath = kMap;
+            cfg.randomStarts = rnd;
+            cfg.startSeed = seed;
+            cfg.slots.resize(4);
+            for (int i = 0; i < 4; ++i) { cfg.slots[size_t(i)].used = true;
+                                          cfg.slots[size_t(i)].faction = i % 5;
+                                          cfg.slots[size_t(i)].team = uint8_t(i); }
+            return sim::setupMatch(w, reg, cfg);
+        };
+        auto fixedA = startsFor(false, 111), fixedB = startsFor(false, 222);
+        check(fixedA == fixedB, "fixed starts ignore the seed");
+        auto randA = startsFor(true, 111), randA2 = startsFor(true, 111);
+        check(randA == randA2, "the same seed reproduces the same arrangement");
+        auto randB = startsFor(true, 999);
+        bool moved = randA != fixedA || randB != fixedA;
+        check(moved, "a shuffled match doesn't just hand back the fixed order");
+        bool sameSet = true;
+        {
+            auto a = fixedA, b = randA;
+            std::sort(a.begin(), a.end()); std::sort(b.begin(), b.end());
+            sameSet = a == b;
+        }
+        check(sameSet, "the shuffle permutes the map's starts, it doesn't invent them");
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

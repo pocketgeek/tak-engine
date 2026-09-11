@@ -16,6 +16,19 @@
         manageMusic();
         discoSound();     // fire the disco track from a monarch when its player starts dancing
         headbangSound();  // ...and the metal track on headbang
+        // The loading plate owns the screen from world setup until the first tick,
+        // so the wait on the other players isn't a frozen lobby frame. It presents
+        // itself, so return before the world is drawn over it.
+        if (loadScreen_) {
+            if (netTick_ > 0 || replayMode_ || !mp_ || loadScreen_->headless())
+                loadScreen_.reset();
+            else {
+                for (int i = 0; i < 8; ++i)
+                    if (mp_->slotLoaded(i)) loadScreen_->setSlotDone(i);
+                loadScreen_->draw();   // main owns the present + the AA resolve
+                return;
+            }
+        }
         if (inLobbyPhase()) {
             // The lobby always lays out at its design size (kLobbyW x kLobbyH logical)
             // and is scaled to fit + centred in the window -- so it shows fully at any
@@ -1193,6 +1206,7 @@
             if (canReturnToMenu_) btn("MAIN MENU", [this] { menuRequested_ = true; });
             btn("QUIT", [this] { quitRequested_ = true; });
         }
+        drawUnitInfo(winW, winH);   // retail Unit Info dialog, above the HUD
         if (benchStatsShown_) renderBenchmarkStats(winW, winH);   // benchmark results, above the frozen game
         if (options_) options_->render(winW, winH);   // topmost of all
         if (hotkeysScreen_) hotkeysScreen_->render(winW, winH);   // above Options
@@ -1296,6 +1310,8 @@
         modelIcons_.clear();
         for (auto& [n, t] : weaponIcons_) if (t) gpuvram::destroy(t);
         weaponIcons_.clear();
+        kill(unitInfoBg_); kill(unitInfoOk_); kill(unitInfoIcon_);
+        unitInfoIconFor_.clear();
         for (auto& [n, s] : shadowTex_) if (s.tex) gpuvram::destroy(s.tex);
         shadowTex_.clear();
         // FeatArt: .tex ALIASES frames[0] (see featureArtFor) -- destroy the

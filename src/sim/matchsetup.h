@@ -44,6 +44,11 @@ struct MatchConfig {
     bool monarchExpendable = true;  // false = losing your Monarch loses the game
     bool stressTest = false;        // spawn each player at ~95% of the unit cap in combat
                                     // units at setup (SP all-AI load test)
+    // Random Start Locations: shuffle which start position each slot takes, so a
+    // map's spawns can't be memorised. Deterministic (seeded below), so every peer
+    // and the referee produce the same assignment.
+    bool randomStarts = false;
+    uint32_t startSeed = 0;   // match seed the shuffle draws from
     int benchmark = 0;              // benchmark INTENSITY: 0=off, 1=Low..5=Absurd. Builds a
                                     // deterministic ramp (1 unit/faction every 1/spawnsPerSec
                                     // seconds for 60s), executed by World::tick.

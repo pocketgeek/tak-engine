@@ -250,6 +250,32 @@
         size_t n = 0; for (auto& u : world_.units()) if (u.alive() && u.type) ++n; return n;
     }
 
+    // Build the end-of-game statistics table from the last render frame. Rows follow
+    // slot order so the table reads the same for everyone in a multiplayer game; a
+    // player still standing when the game ended is timed at the full match length.
+    tak::ResultStats GameView::resultStats() const {
+        tak::ResultStats st;
+        const Frame& f = front();
+        st.matchSec = int(f.gameTick / 30);
+        static const char* kSides[5] = {"ara", "tar", "ver", "zon", "cre"};
+        for (int i = 0; i < 5; ++i) if (side_ == kSides[i]) st.faction = i;
+        for (int p = 0; p < f.numPlayers && p < int(f.players.size()); ++p) {
+            const PlayerR& pr = f.players[size_t(p)];
+            tak::ResultRow row;
+            row.name = !playerName_[p & 7].empty() ? playerName_[p & 7]
+                                                   : "PLAYER " + std::to_string(p + 1);
+            row.colorSlot = colorSlot_[p & 7];
+            row.built = pr.built;
+            row.kills = pr.kills;
+            row.losses = pr.losses;
+            row.defeated = pr.defeated;
+            row.isLocal = (p == localPlayer_) && !spectating_;
+            row.timeSec = pr.defeatedAt >= 0 ? int(pr.defeatedAt) : st.matchSec;
+            st.rows.push_back(std::move(row));
+        }
+        return st;
+    }
+
     void GameView::navyDemo() {
         struct S { const char* t; float x, z; int player; };
         const S fleet[] = {
@@ -609,6 +635,7 @@
             PlayerR& r = fb.players[size_t(p)];
             r.mana = pl.mana; r.storage = pl.storage; r.income = pl.income;
             r.godFavor = pl.godFavor; r.kills = pl.kills; r.unitCount = pl.unitCount;
+            r.built = pl.built; r.losses = pl.losses; r.defeatedAt = pl.defeatedAt;
             r.team = pl.team; r.defeated = pl.defeated; r.godSummoned = pl.godSummoned;
             r.discoLeft = pl.discoLeft; r.headbangLeft = pl.headbangLeft;
         }
@@ -2424,6 +2451,7 @@
         // Act via the user's hotkey config (src/client/hotkeys) and dispatch.
         switch (hotkeys_.match(int32_t(key), mod)) {
             case tak::Act::ToggleCounts: showCounts_ = !showCounts_; return true;
+            case tak::Act::UnitInfo: toggleUnitInfo(); return true;
             case tak::Act::SelfDestruct: {   // self-destruct the selected unit(s)
                 // Through the command path (Cmd::Destroy), not a direct hp write --
                 // a local mutation would silently desync a networked game.

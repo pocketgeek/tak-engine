@@ -14,6 +14,7 @@
 #include "campaign/campaign.h"
 #include "client/briefingscreen.h"
 #include "client/resultscreen.h"
+#include "client/loadscreen.h"
 #include "cob/vm.h"
 #include "crt/crt.h"
 #include "gaf/gaf.h"
@@ -605,6 +606,12 @@ public:
 
     uint64_t worldHashPublic() const { return world_.stateHash(); }
     int missionOutcomePublic() const { return world_.missionOutcome(); }
+    // Did this game resolve, and how? +1 win, -1 loss, 0 still running. Unlike
+    // missionOutcomePublic this also covers a skirmish/MP last-team-standing result.
+    int outcomePublic() const { return outcome_; }
+    // The end-of-game statistics table, in slot order. Read from the render frame
+    // (not live world_), so it is safe to call after the sim thread has stopped.
+    tak::ResultStats resultStats() const;
     size_t aliveUnits() const;
 
     // Drive one iteration of the multiplayer lobby + game. autoMode: 0 = don't
@@ -1511,6 +1518,9 @@ public:
 private:
     bool crusades_ = false; // which balance registry_ currently holds
     std::string side_ = "ara";
+    // Retail loading screen. Alive from the start of world setup until the first
+    // tick lands, so the plate covers both our own load and the wait on peers.
+    std::unique_ptr<tak::LoadScreen> loadScreen_;
     std::string aiSide_ = "tar";   // single-player: the AI opponent's faction
     // Faction name -> wire index (0 ara, 1 tar, 2 ver, 3 zon, 4 cre).
     static uint8_t facIdx(const std::string& s) {
@@ -2164,6 +2174,19 @@ private:
 
     // Draw a thin fill gauge (HP/mana) at a bar gadget's .gui position.
     void drawGauge(const char* name, float frac, SDL_Color c);
+
+    // Retail's Unit Info dialog (guis/unitinfo.gui): portrait + the three mobility
+    // stats for the hovered conjure icon, else the first selected unit. Does not
+    // pause -- retail's didn't either. See client/gameview_unitinfo.cpp.
+    const tak::sim::UnitType* unitInfoSubject() const;
+    void toggleUnitInfo();
+    void drawUnitInfo(int winW, int winH);
+    const tak::sim::UnitType* unitInfoType_ = nullptr;   // null = dialog closed
+    SDL_Texture* unitInfoBg_ = nullptr;
+    SDL_Texture* unitInfoOk_ = nullptr;
+    SDL_Texture* unitInfoIcon_ = nullptr;
+    std::string unitInfoIconFor_;      // which type unitInfoIcon_ was baked for
+    SDL_FRect unitInfoOkRect_{0, 0, 0, 0};
 
     // Retail bottom InfoPanel bar: chrome (InfoPanel + EndCap) plus the selected
     // unit's portrait/name/HP/mana at the .gui positions. Returns false (so drawPanel

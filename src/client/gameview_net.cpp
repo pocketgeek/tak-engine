@@ -21,10 +21,27 @@
     }
 
     void GameView::startMpGame(const tak::net::RoomView& room, uint32_t seed) {
-        (void)seed;
         int maxSlot = 0;
         for (int i = 0; i < tak::net::kMaxSlots; ++i)
             if (room.slots[i].type == 1 || room.slots[i].type == 2) maxSlot = i;
+        // Retail's loading screen covers the whole start: everything below blocks the
+        // render loop for a second or more, and the wait on the other players after it.
+        loadScreen_ = std::make_unique<tak::LoadScreen>(
+            ren_, vfs_, room.mission.empty() ? room.mapId : room.mission, settings_);
+        {
+            std::array<std::string, 8> names{};
+            for (int i = 0; i <= maxSlot && i < 8; ++i) {
+                if (room.slots[i].type != 1 && room.slots[i].type != 2) continue;
+                names[size_t(i)] = !room.slots[i].name.empty()
+                                       ? room.slots[i].name
+                                       : (room.slots[i].type == 2 ? "COMPUTER" : "PLAYER");
+                // An AI slot has nothing to load and never reports in, so its bar is
+                // full from the start -- only humans are worth waiting on.
+                if (room.slots[i].type == 2) loadScreen_->setSlotDone(i);
+            }
+            loadScreen_->setPlayers(names, room.mySlot);
+        }
+        loadScreen_->step("MOUNTING GAME DATA", 5);
         // Build the world through the SHARED setup so the server's referee sim and
         // every client produce a bit-identical world (and hash). Client-only bits
         // (colours, camera, local player, panel) stay here.
@@ -47,6 +64,7 @@
         if (!room.mission.empty()) {
             mapPath_ = "missions/" + room.mission + ".tnt";
             resetMinimap();   // its thread reads the map being swapped
+            loadScreen_->step("LOADING TERRAIN", 30);
             mapView_.reload(vfs_, mapPath_);
             int human = 0;
             tak::sim::MissionSetup ms;
@@ -75,8 +93,10 @@
                              room.mission.c_str(), missionAllowed_.size());
             const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
             if (room.mySlot >= 0) side_ = sides[room.slots[room.mySlot].faction % 5];
+            loadScreen_->step("LOADING INTERFACE", 90);
             loadPanel(side_);
             loadGui(side_);
+            loadScreen_->step("WAITING FOR PLAYERS", 100);
             for (auto& u : world_.units())
                 if (u.player == localPlayer_ && u.type) {
                     mapView_.setOffset(u.x - 640 / 0.9f, u.z - 400 / 0.9f);
@@ -91,7 +111,9 @@
         // different map's sim -- phantom water, a monarch out in it, and misaligned fog.
         if (std::string rp = tak::hpi::findMap(vfs_, room.mapId); !rp.empty()) mapPath_ = rp;
         resetMinimap();   // its thread reads the map being swapped
+        loadScreen_->step("LOADING TERRAIN", 30);
         mapView_.reload(vfs_, mapPath_);
+        loadScreen_->step("BUILDING THE WORLD", 65);
         tak::sim::MatchConfig cfg;
         cfg.vfs = &vfs_;
         cfg.mapPath = mapPath_;
@@ -100,6 +122,8 @@
         cfg.monarchExpendable = room.opts.monarchExpendable != 0;
         cfg.stressTest = room.opts.stressTest != 0;
         cfg.benchmark = room.opts.benchmark;
+        cfg.randomStarts = room.opts.randomStarts != 0;
+        cfg.startSeed = seed;   // same seed the referee shuffles with
         if (room.opts.benchmark) benchmarkLevel_ = room.opts.benchmark;   // for the results label
         cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
@@ -140,8 +164,10 @@
             if (u.player == localPlayer_ && u.type) { playerMonarchId_ = u.id; builderId_ = u.id; break; }
         const char* sides[5] = {"ara", "tar", "ver", "zon", "cre"};
         side_ = sides[room.slots[localPlayer_].faction % 5];
+        loadScreen_->step("LOADING INTERFACE", 90);
         loadPanel(side_);
         loadGui(side_);
+        loadScreen_->step("WAITING FOR PLAYERS", 100);
         if (!spots.empty())
             mapView_.setOffset(spots[0].first - 640 / 0.9f, spots[0].second - 400 / 0.9f);
     }

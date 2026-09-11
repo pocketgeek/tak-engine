@@ -176,7 +176,7 @@ bool BriefingScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, const std::stri
 
         if (cursors.ok()) {
             int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
-            cursors.draw(ren, CursorId::Normal, mx, my, settings ? settings->cursorScale : 4);
+            cursors.draw(ren, CursorId::Normal, mx, my, settings ? settings->cursorScale : 1);
         }
         // Debug: TAK_SHOT_BRIEFING captures one frame for tests, then begins.
         if (const char* sp = tak::devEnv("TAK_SHOT_BRIEFING")) {

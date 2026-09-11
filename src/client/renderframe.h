@@ -69,6 +69,8 @@ struct UnitR {
 struct PlayerR {
     float mana = 0, storage = 0, income = 0, godFavor = 0;
     int kills = 0, unitCount = 0, team = 0;
+    int built = 0, losses = 0;      // end-of-game scoreboard counters
+    float defeatedAt = -1;          // world clock at elimination (-1 = still in)
     bool defeated = false, godSummoned = false;
     float discoLeft = 0, headbangLeft = 0;
 };

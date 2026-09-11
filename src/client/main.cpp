@@ -528,6 +528,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         vfs = tak::hpi::mountRetailRoot(dataRoot, pol);
+        gInstallRoot = dataRoot;   // the loading screen reads Movies/Gui from here
     }
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
@@ -573,11 +574,39 @@ int main(int argc, char** argv) {
     int aaW = 0, aaH = 0;
     tak::MenuMusic menuMusic;   // persists across menu -> lobby so the track doesn't restart
     menuMusic.setVolume(settings.masterVol, settings.bgmVol);
+    // TAK_SHOT_RESULT=<png> [TAK_SHOT_RESULT_SIDE=0..4] [TAK_SHOT_RESULT_LOSE=1]:
+    // render the end-of-game plate with a sample table and exit. Playing a whole match
+    // out just to look at the screen isn't practical, so this is how its layout gets
+    // verified against the retail art.
+    if (const char* rs = tak::devEnv("TAK_SHOT_RESULT"); rs && *rs) {
+        tak::ResultStats st;
+        st.matchSec = 17 * 60 + 42;
+        if (const char* sd = tak::devEnv("TAK_SHOT_RESULT_SIDE")) st.faction = std::atoi(sd);
+        const char* names[4] = {"Curtis", "Bruce", "Ludwin", "Pat"};
+        for (int i = 0; i < 4; ++i) {
+            tak::ResultRow r;
+            r.name = names[i];
+            r.colorSlot = i;
+            r.built = 120 - i * 23;
+            r.kills = 48 - i * 11;
+            r.losses = 31 + i * 9;
+            r.isLocal = (i == 0);
+            r.defeated = (i >= 2);
+            r.timeSec = r.defeated ? 600 + i * 90 : st.matchSec;
+            st.rows.push_back(std::move(r));
+        }
+        bool victory = tak::devEnv("TAK_SHOT_RESULT_LOSE") == nullptr;
+        tak::ResultScreen::run(ren, vfs, victory, "MISSION 7", false, &settings, nullptr, &st);
+        SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
+        return 0;
+    }
     // Retail intro: play the logo movie once at startup (scaled to the window), then
     // fall through to the front-end. Any key / click / window-close skips it. Menu
     // launches only, and never for a headless screenshot run.
-    if (fromMenu && shot.empty())
-        tak::MainMenu::playIntro(ren, dataRoot);
+    if (fromMenu && shot.empty()) {
+        tak::MainMenu::playIntro(ren, dataRoot);              // logo.bik, when present
+        tak::MainMenu::playIntro(ren, dataRoot, "intro.bik"); // the retail intro
+    }
     std::string menuConnectError;   // failed MP connect -> shown when the menu reopens
     for (;;) {
     if (tak::termRequested()) { quitApp = true; break; }   // SIGTERM/SIGINT between sessions
@@ -635,6 +664,12 @@ int main(int argc, char** argv) {
             if (choice == tak::MainMenu::Choice::Benchmark) {
                 benchmarkLevel = menu.chosenBenchmarkLevel();
                 if (benchmarkLevel < 1 || benchmarkLevel > tak::sim::kBenchLevels) benchmarkLevel = 3;   // safety default = High
+            }
+            // The credits door rolls the credits and returns to the menu, rather
+            // than being a way out of the app.
+            if (choice == tak::MainMenu::Choice::Credits) {
+                tak::MainMenu::playIntro(ren, dataRoot, "credits.bik");
+                continue;
             }
         }
         if (!shot.empty()) { SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
@@ -1270,6 +1305,20 @@ int main(int argc, char** argv) {
                 else if (mapView) mapView->finishChunks();
                 if (!shotArmed) {
                     shotArmed = true;
+                    // TAK_SHOT_PRESS=<SDL key name> taps one key before the capture, so
+                    // a harness run can shoot an overlay (Unit Info, the F4 scoreboard)
+                    // instead of only the plain game view.
+                    static bool pressSent = false;
+                    if (const char* kn = tak::devEnv("TAK_SHOT_PRESS"); kn && !pressSent) {
+                        pressSent = true;
+                        if (SDL_Keycode kc = SDL_GetKeyFromName(kn); kc != SDLK_UNKNOWN) {
+                            SDL_Event ev{};
+                            ev.type = SDL_KEYDOWN;
+                            ev.key.keysym.sym = kc;
+                            SDL_PushEvent(&ev);
+                        }
+                        shotArmed = false;   // let the key land, then arm on the next pass
+                    }
                 } else {
                     screenshot(ren, w, h, shot);
                     running = false;
@@ -1304,6 +1353,7 @@ int main(int argc, char** argv) {
                 saveSettings(settings);
             break;
         }
+        tak::ResultStats st = gameView->resultStats();   // read before the sim is freed
         killLocalServer(); mp.reset(); gameView.reset();   // free the mission before the movie/modal
         if (oc > 0) {
             // Cinematics on victory: a per-mission "post<stem>" cutscene (retail ships
@@ -1317,10 +1367,20 @@ int main(int argc, char** argv) {
             menuMusic.setVolume(settings.masterVol, settings.bgmVol);
         }
         tak::ResultChoice rc = tak::ResultScreen::run(ren, vfs, oc > 0, title,
-                                                      oc > 0 && !nextStem.empty(), &settings, &menuMusic);
+                                                      oc > 0 && !nextStem.empty(), &settings,
+                                                      &menuMusic, &st);
         if (rc == tak::ResultChoice::Next)       { pendingCampaign = nextStem;     pendingCampaignId = campaignId; }
         else if (rc == tak::ResultChoice::Retry) { pendingCampaign = campaignStem; pendingCampaignId = campaignId; }
         // Menu -> pendingCampaign stays empty -> the outer loop re-shows the front-end.
+    } else if (campaignStem.empty() && gameView && !quitApp && fromMenu &&
+               gameView->outcomePublic() != 0) {
+        // Skirmish / multiplayer: retail shows the same victory/defeat plate here,
+        // with the match's statistics table. No next mission and nothing to retry,
+        // so both buttons come back to the front end.
+        int oc = gameView->outcomePublic();
+        tak::ResultStats st = gameView->resultStats();
+        killLocalServer(); mp.reset(); gameView.reset();
+        tak::ResultScreen::run(ren, vfs, oc > 0, "", false, &settings, &menuMusic, &st);
     }
     // Session ended: tear down any single-player local server, then either loop back
     // to the menu or exit the app.

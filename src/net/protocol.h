@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 47;       // 47: Standby_wander wildlife roam (hashed movement)
+constexpr uint32_t kNetVersion = 48;       // 48: Random Start Locations (seeded start-spot shuffle)
+                                           // 47: Standby_wander wildlife roam (hashed movement)
                                            // 46: mission VO hook + deadly water (waterdoesdamage)
                                            // 45: Msg::SetPause (player-requested pause) + mission order verbs
                                            // 44: mission GET table + escort/protect win-lose conditions
@@ -142,6 +143,10 @@ struct GameOptions {
     // moment they leave sight), 1 = EXPLORED (seen terrain stays dimmed-visible),
     // 2 = FULL VISION (no fog at all: the whole map and every unit are visible).
     // Host-set in the room.
+    // Random Start Locations: 0 = fixed (slot N always takes the map's Nth start,
+    // so players memorise spawns), 1 = the starts are shuffled for the match.
+    // Deterministic -- derived from the match seed, so every peer agrees.
+    uint8_t randomStarts = 0;
     uint8_t fogExplored = 1;
     // Benchmark INTENSITY: 0=off, 1=Low..6=Extra Absurd -- an all-AI perf run with a spawn ramp
     // (see MatchConfig::benchmark). Deterministic, so it IS part of the hashed sim.

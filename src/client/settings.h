@@ -44,7 +44,7 @@ struct Settings {
     float mouseZoomSpeed  = 1.0f;  // wheel-zoom sensitivity; 0.25..4.0
     float edgeScrollSpeed = 1.0f;  // edge-scroll rate;       0.25..4.0
     bool  edgeScroll      = true;  // pan when the cursor is at a screen edge
-    int   cursorScale     = 4;     // custom mouse-cursor size multiplier; 1..8 (4 = default)
+    int   cursorScale     = 1;     // custom mouse-cursor size multiplier; 1..8 (1 = retail size)
     bool  hardwareCursor  = false; // OS-tracked cursor: stays smooth when the game hitches
     bool  smoothMotion    = true;  // interpolate unit motion between 30Hz sim ticks (glide, not step)
 

@@ -604,6 +604,12 @@ struct Player {
     float godFavor = 0;
     bool  godSummoned = false;
     int   kills = 0;     // enemy units this player has destroyed (F4 overlay)
+    // End-of-game scoreboard counters (retail's victory/defeat screen columns).
+    // Derived from hashed events and incremented in exactly one place each, so they
+    // stay identical on every peer without being folded into stateHash -- same
+    // treatment as `kills` above.
+    int   built = 0;     // units this player has put into the field
+    int   losses = 0;    // this player's units destroyed
     // Live unit count, refreshed every tick by updateOutcome (and bumped by spawn
     // within a tick). Derived from units_, so it is deterministic but NOT hashed;
     // drives the unit-cap check and could feed the F4 overlay.
@@ -615,6 +621,7 @@ struct Player {
     // enter stateHash (see docs/multiplayer-design.md).
     int   team = 0;
     bool  defeated = false;   // no living units; set by the sim's win check
+    float defeatedAt = -1;    // world clock when `defeated` first went true (-1 = still in)
     // Cosmetic "disco" emote (Shift+D): seconds this player's monarchs keep
     // dancing. Set by a lockstep Cmd::Disco so every peer agrees on the timing,
     // but it drives client-side eye-candy only and is NOT folded into stateHash

@@ -181,7 +181,7 @@
         }
         bool fightTint = false;
         tak::CursorId c = desiredCursor(fightTint);
-        int sc = settings_ ? settings_->cursorScale : 4;
+        int sc = settings_ ? settings_->cursorScale : 1;
         SDL_Color tint = fightTint ? kFightMoveTint : SDL_Color{255, 255, 255, 255};
 
         // HARDWARE cursor: hand the sprite to the OS, which tracks the pointer position
