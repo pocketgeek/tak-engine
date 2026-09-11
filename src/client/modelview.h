@@ -18,9 +18,14 @@
 
 class ModelView {
 public:
+    // `staticMask` seeds the VM's static slots: bit i sets static i to 1. Walk and
+    // attack scripts routinely open with a gate on an "am I moving" static, and
+    // WHICH slot differs per unit (crechie wants static1 set and static3 clear,
+    // vermer static2), so a single fixed seed makes some scripts look dead when
+    // they are only gated. Default 1 = just static 0, the old behaviour.
     ModelView(SDL_Renderer* ren, const std::string& path, const std::string& texDir,
               const std::string& palettePath, const std::string& cobPath,
-              const std::string& anim);
+              const std::string& anim, uint32_t staticMask = 1);
 
     void input(const SDL_Event& e);
     void draw(int winW, int winH, float dt);

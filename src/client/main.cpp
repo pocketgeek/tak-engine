@@ -381,6 +381,9 @@ int main(int argc, char** argv) {
         }
     }
     std::string shot, cobPath, anim, joinAddr, side = "ara", aiSide = "tar";
+    // model mode: --statics <bitmask> seeds the VM's static slots (bit i -> static i).
+    // Walk/attack scripts gate on an "am I moving" static whose SLOT differs per unit.
+    uint32_t staticMask = 1;
     std::string serverHost, playerName, dataRoot, overridesArg;
     int serverPort = 7677, mpHeadless = 0;
     std::string missionStem;   // --mpmission <stem>: headless campaign-mission host
@@ -409,6 +412,7 @@ int main(int argc, char** argv) {
         if (a == "--shot" && i + 1 < argc) shot = argv[++i];
         else if (a == "--cob" && i + 1 < argc) cobPath = argv[++i];
         else if (a == "--anim" && i + 1 < argc) anim = argv[++i];
+        else if (a == "--statics" && i + 1 < argc) staticMask = uint32_t(std::stoul(argv[++i]));
         else if (a == "--time" && i + 1 < argc) startTime = std::stof(argv[++i]);
         else if (a == "--demo") demo = true;
         else if (a == "--trace") trace = true;
@@ -900,7 +904,7 @@ int main(int argc, char** argv) {
             modelView = std::make_unique<ModelView>(ren, args[0],
                                                     args.size() > 1 ? args[1] : "",
                                                     args.size() > 2 ? args[2] : "",
-                                                    cobPath, anim);
+                                                    cobPath, anim, staticMask);
             if (startTime > 0) modelView->advance(startTime);
         } else {
             std::fprintf(stderr, "bad arguments\n");
