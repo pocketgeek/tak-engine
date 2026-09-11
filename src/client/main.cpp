@@ -1313,6 +1313,38 @@ int main(int argc, char** argv) {
                     // TAK_SHOT_PRESS=<SDL key name> taps one key before the capture, so
                     // a harness run can shoot an overlay (Unit Info, the F4 scoreboard)
                     // instead of only the plain game view.
+                    // TAK_SHOT_CLICKS="x,y;x,y" taps those points, one per armed pass,
+                    // before the capture -- enough to walk a menu into the state worth
+                    // photographing (the lobby's map picker needs two clicks).
+                    static size_t clickIdx = 0;
+                    if (const char* cl = tak::devEnv("TAK_SHOT_CLICKS")) {
+                        std::vector<std::pair<int, int>> pts;
+                        std::string acc(cl);
+                        size_t p0 = 0;
+                        while (p0 <= acc.size()) {
+                            size_t e = acc.find(';', p0);
+                            std::string one = acc.substr(p0, e == std::string::npos ? std::string::npos : e - p0);
+                            size_t c = one.find(',');
+                            if (c != std::string::npos)
+                                pts.push_back({std::atoi(one.c_str()), std::atoi(one.c_str() + c + 1)});
+                            if (e == std::string::npos) break;
+                            p0 = e + 1;
+                        }
+                        if (clickIdx < pts.size()) {
+                            SDL_Event ev{};
+                            ev.type = SDL_MOUSEMOTION;
+                            ev.motion.x = pts[clickIdx].first; ev.motion.y = pts[clickIdx].second;
+                            SDL_PushEvent(&ev);
+                            ev.type = SDL_MOUSEBUTTONDOWN;
+                            ev.button.button = SDL_BUTTON_LEFT;
+                            ev.button.x = pts[clickIdx].first; ev.button.y = pts[clickIdx].second;
+                            SDL_PushEvent(&ev);
+                            ev.type = SDL_MOUSEBUTTONUP;
+                            SDL_PushEvent(&ev);
+                            ++clickIdx;
+                            shotArmed = false;   // let it land, then try again next pass
+                        }
+                    }
                     static bool pressSent = false;
                     if (const char* kn = tak::devEnv("TAK_SHOT_PRESS"); kn && !pressSent) {
                         pressSent = true;

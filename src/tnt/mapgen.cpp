@@ -710,8 +710,10 @@ std::string friendlyLabel(const Params& pin) {
     Params p = sanitize(pin);
     static const char* kNames[kMapTypes] = {"Aramon", "Taros", "Veruna", "Zhon", "Creon"};
     int u = p.widthCells / 32, v = p.heightCells / 32;
-    return "Random " + std::to_string(u) + "x" + std::to_string(v) + " \xC2\xB7 " +
-           std::to_string(int(p.players)) + "P \xC2\xB7 " + kNames[p.mapType];
+    // ASCII only: the lobby draws this with the 5x7 block font, which has no glyph
+    // for a middot and would render each byte of one as a blank.
+    return "Random " + std::to_string(u) + "x" + std::to_string(v) + " " +
+           std::to_string(int(p.players)) + "P " + kNames[p.mapType];
 }
 
 }  // namespace tak::mapgen

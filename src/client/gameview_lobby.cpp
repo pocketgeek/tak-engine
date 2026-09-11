@@ -18,6 +18,17 @@
         return (id >= 0 && size_t(id) < geomIndex_.size()) ? geomIndex_[size_t(id)] : -1;
     }
 
+namespace {
+// What to SHOW for a map id. A generated map's id is a "~gen1~<hex>" recipe -- the
+// whole parameter block in hex -- which is unreadable in a lobby row. Decode it to
+// the label mapgen already provides ("Random 16x16 4P Aramon"); a real map's id is
+// its name and passes through.
+std::string mapDisplayName(const std::string& id) {
+    if (!tak::mapgen::isGeneratedMapId(id)) return id;
+    return tak::mapgen::friendlyLabel(tak::mapgen::decodeMapId(id));
+}
+}  // namespace
+
     void GameView::drawLobby(int winW, int winH) {
         lobbyHots_.clear();
         // Map-picker geometry is only live while the create screen is shown; clear it
@@ -90,7 +101,7 @@
             SDL_SetRenderDrawColor(ren_, hot ? 46 : 30, hot ? 52 : 34, hot ? 72 : 44, 255);
             SDL_RenderFillRectF(ren_, &row);
             blockText(g.name, x + 8, y + 8, 1.8f, {225, 228, 236, 255});
-            blockText(g.mapId, x + 220, y + 8, 1.6f, {180, 185, 195, 255});
+            blockText(mapDisplayName(g.mapId), x + 220, y + 8, 1.6f, {180, 185, 195, 255});
             char pc[32]; std::snprintf(pc, sizeof pc, "%d/%d", g.players, g.capacity);
             blockText(pc, x + w - 200, y + 8, 1.8f, {200, 205, 215, 255});
             if (g.passworded)
@@ -296,7 +307,7 @@
             lbField(x, y, 260, "GAME NAME", createName_, 1); y += 46;
             lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 46;
         }
-        blockText(std::string("MAP: ") + mpMapId_, x, y, 1.8f, {180, 185, 195, 255}); y += 30;
+        blockText(std::string("MAP: ") + mapDisplayName(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 30;
         lbBtn(x, y, 170, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
               [this] { createCrusades_ = !createCrusades_; }); y += 34;
         lbBtn(x, y, 170, 26, createGods_ ? "GODS: ON" : "GODS: OFF", true,
@@ -456,26 +467,32 @@
         // ---- random-map params panel (replaces the list) --------------------------
         static const char* kTypeName[tak::mapgen::kMapTypes] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
         static const int kSizes[] = {8, 12, 16, 20, 24};   // section-units (x32 cells) per side
-        float px = lx, py = hy + 50;
-        lbBtn(px, py, 300, 24, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
+        // One rhythm for the whole panel: every control is kRowH tall and every gap
+        // is kGap. The rows used to step by 30, 30, 36 and then 44, so the buttons
+        // sat tighter than the sliders and the run of sliders drifted out of line
+        // with everything above it.
+        const float kRowH = 24, kGap = 8, kBtnW = 300;
+        const float kSliderH = 32;   // label (11) + 7 + bar (14)
+        float px = lx, py = hy + 46;   // aligns with the map list's box top
+        lbBtn(px, py, kBtnW, kRowH, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
               true, [this] { genParams_.mapType = uint8_t((genParams_.mapType + 1) % tak::mapgen::kMapTypes);
-                             applyGenParams(); }); py += 30;
+                             applyGenParams(); }); py += kRowH + kGap;
         int curU = genParams_.widthCells / 32;
         char szl[48]; std::snprintf(szl, sizeof szl, "SIZE:  %d x %d", curU, curU);
-        lbBtn(px, py, 300, 24, szl, true, [this] {
+        lbBtn(px, py, kBtnW, kRowH, szl, true, [this] {
             int u = genParams_.widthCells / 32, ni = 0;
             for (int k = 0; k < 5; ++k) if (kSizes[k] == u) ni = (k + 1) % 5;
             genParams_.widthCells = genParams_.heightCells = uint16_t(kSizes[ni] * 32);
             applyGenParams();
-        }); py += 30;
+        }); py += kRowH + kGap;
         char pl[32]; std::snprintf(pl, sizeof pl, "PLAYERS:  %d", int(genParams_.players));
-        lbBtn(px, py, 300, 24, pl, true, [this] {
+        lbBtn(px, py, kBtnW, kRowH, pl, true, [this] {
             genParams_.players = uint8_t(genParams_.players >= 8 ? 2 : genParams_.players + 1);
             applyGenParams();
-        }); py += 36;
+        }); py += kRowH + kGap * 2;   // a wider break between the pickers and the sliders
         auto slider = [&](int idx, const char* label, uint8_t val) {
             blockText(label, px, py, 1.6f, {180, 185, 195, 255});
-            float bx = px, by = py + 18, bw = 300, bh = 14;
+            float bx = px, by = py + 18, bw = kBtnW, bh = 14;
             genSliderRect_[idx] = {bx, by, bw, bh};
             SDL_FRect bar{bx, by, bw, bh};
             SDL_SetRenderDrawColor(ren_, 30, 34, 46, 255); SDL_RenderFillRectF(ren_, &bar);
@@ -487,14 +504,14 @@
             SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &bar);
             char pc[8]; std::snprintf(pc, sizeof pc, "%d%%", int(val) * 100 / 255);
             blockText(pc, bx + bw + 8, py + 16, 1.5f, {160, 165, 180, 255});
-            py += 44;
+            py += kSliderH + kGap;
         };
         slider(0, "TREES", genParams_.treeDensity);
         slider(1, "ROCKS", genParams_.rockDensity);
         slider(2, "MANA SPOTS", genParams_.manaDensity);
         slider(3, "WATER", genParams_.waterDensity);
         slider(4, "HILLS  (plateaus & ramps)", genParams_.reliefDensity);
-        lbBtn(px, py, 140, 24, "RE-ROLL SEED", true, [this] {
+        lbBtn(px, py, 140, kRowH, "RE-ROLL SEED", true, [this] {
             genParams_.seed = genParams_.seed * 6364136223846793005ULL + 1442695040888963407ULL;
             applyGenParams();
         });
@@ -526,7 +543,7 @@
         const auto& room = mp_->room();
         float x = 40, y = 78;
         blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
-        blockText(std::string("MAP  ") + room.mapId, x + winW - 320, y + 4, 1.8f, {180, 185, 195, 255});
+        blockText(std::string("MAP  ") + mapDisplayName(room.mapId), x + winW - 320, y + 4, 1.8f, {180, 185, 195, 255});
         // Override tier for this game (joiners adopt it; FULL needs matching gameplay files).
         static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
         blockText(std::string("OVERRIDES  ") + kTier[room.opts.overridePolicy & 3],
