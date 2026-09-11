@@ -841,13 +841,6 @@
             if (!netError_.empty())
                 hudBanner("NETWORK: " + netError_, 150, 2.0f, {255, 140, 120, 255}, winW);
         }
-        if (scenUnit_ && scenTime_ > 0 && outcome_ == 0 && hudFont_.ok()) {
-            char sb[96];
-            int rem = int(scenTime_ - scenClock_);
-            std::snprintf(sb, sizeof sb, "%s IN %s: %d:%02d", scenUnit_->name.c_str(),
-                          scenRegion_.name.c_str(), rem / 60, rem % 60);
-            hudBanner(sb, 46, 1.5f, {255, 220, 140, 255}, winW, 12);
-        }
         if (pendingCmd_ && hudFont_.ok()) {
             const char* msg = pendingCmd_ == 'a'   ? "ATTACK: CLICK TARGET"
                               : pendingCmd_ == 'f' ? "FIGHT-MOVE: CLICK DESTINATION"

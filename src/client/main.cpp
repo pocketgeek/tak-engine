@@ -398,7 +398,7 @@ int main(int argc, char** argv) {
     // in release builds.
     [[maybe_unused]] float marchX = 0, marchZ = 0;
     [[maybe_unused]] bool doMarch = false, testbuild = false, misstest = false,
-        creon = false, hilltest = false, guardtest = false, lodetest = false,
+        creon = false, guardtest = false, lodetest = false,
         soundtest = false;
     bool crusades = false;
     float lookX = 0, lookZ = 0;
@@ -418,7 +418,6 @@ int main(int argc, char** argv) {
         else if (a == "--mission") missionFlag = true;
         else if (a == "--misstest") misstest = true;
         else if (a == "--creon") creon = true;
-        else if (a == "--hilltest") hilltest = true;
         else if (a == "--side" && i + 1 < argc) side = argv[++i];
         else if (a == "--aiside" && i + 1 < argc) aiSide = argv[++i];
         else if (a == "--color" && i + 1 < argc) playerColor = std::atoi(argv[++i]);
@@ -490,7 +489,7 @@ int main(int argc, char** argv) {
     bool localHarness = false;
 #ifndef NDEBUG
     localHarness = demo || scenario || missionFlag || navy || amphib || firetest ||
-                   facetest || hilltest || guardtest || lodetest || keytest ||
+                   facetest || guardtest || lodetest || keytest ||
                    soundtest || misstest || creon || testbuild ||
                    (tak::devEnv("TAK_FFA") != nullptr);
 #endif
@@ -844,7 +843,6 @@ int main(int argc, char** argv) {
                 if (navy) gameView->navyDemo();
                 if (misstest) gameView->missionTest();
                 if (creon) gameView->creonDemo();
-                if (hilltest) gameView->hillTest();
                 if (guardtest) gameView->guardTest();
                 if (lodetest) { gameView->lodeUnit = lodeUnitName; gameView->lodeTest(); }
                 if (firetest) gameView->fireTest();

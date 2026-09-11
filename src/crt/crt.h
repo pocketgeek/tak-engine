@@ -84,38 +84,4 @@ Scenario parse(const std::vector<uint8_t>& d);
 // record bytes is zero-filled. parse(write(s)) == s for the fields above.
 std::vector<uint8_t> write(const Scenario& s);
 
-// ---- Legacy engine-facing views (thin adapters over parse) ----------------
-
-// A single placement, in the shape the engine's scenario loader consumes.
-// Coordinates are map PIXELS (cells * 16). Also carries the full RE'd fields
-// for callers that want to apply per-unit stats.
-struct Placement {
-    std::string name;            // unit type (objectName)
-    float x = 0, z = 0;          // map pixels
-    int player = 0;
-    int health = 100, armor = 100, weapon = 100, veteran = 0;
-    float angle = 0;             // degrees
-    std::string uniqueName;
-};
-
-// Placements from a .crt buffer (empty if not a valid .crt).
-std::vector<Placement> load(const std::vector<uint8_t>& d);
-
-// One trigger record in the legacy flat-stream view: the opcode plus the
-// non-empty operand slots, in order.
-struct TrigRecord {
-    std::vector<int32_t> ints;        // {opcode}
-    std::vector<std::string> slots;   // non-empty operand slots
-    int32_t op() const { return ints.empty() ? 0 : ints.back(); }
-};
-
-// Rules (conditions+actions, all players, in file order) plus the regions, in
-// the flat shape the engine's scenario-rule reader consumes.
-struct Triggers {
-    std::vector<TrigRecord> records;
-    std::vector<Region> regions;
-};
-
-Triggers loadTriggers(const std::vector<uint8_t>& d);
-
 } // namespace tak::crt

@@ -272,17 +272,6 @@
         mapView_.setOffset(1500 - 640 / 0.9f, 1380 - 400 / 0.9f);
     }
 
-    void GameView::hillTest() {
-        // Player 0 gets 2 scoring units in the region, player 1 gets 1.
-        if (!scenUnit_ || scenRegion_.name.empty()) return;
-        float cx = float(scenRegion_.x1 + scenRegion_.x2) * 8;
-        float cz = float(scenRegion_.z1 + scenRegion_.z2) * 8;
-        spawn(scenUnit_->id, cx - 20, cz, 0, 0);
-        spawn(scenUnit_->id, cx + 20, cz, 0, 0);
-        spawn(scenUnit_->id, cx, cz + 30, 0, 1);
-        scenClock_ = scenTime_ - 12;   // fast-forward the timer for testing
-    }
-
     void GameView::creonDemo() {
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         const char* squad[] = {"cregod",  "creiron", "creauto", "creauto",
@@ -442,58 +431,6 @@
         // scenario step, so no race on its queue); postNotice defers to main.
         if (auto* sc = world_.scenario())
             for (auto& m : sc->drainMessages()) postNotice(m.text, 8);
-        if (!spawnRules_.empty() || !messages_.empty()) scenClock2_ += dt;
-        for (auto& sr : spawnRules_) {
-            if (sr.atTime >= 0) {
-                if (!sr.done && scenClock2_ >= sr.atTime) {
-                    sr.done = true;
-                    spawn(sr.type, sr.x, sr.z, 0, sr.player);
-                    if (hudFont_.ok()) postNotice("A POWER AWAKENS", 5);
-                }
-            } else if (sr.maintainCount > 0) {
-                sr.cooldown -= dt;
-                if (sr.cooldown > 0) continue;
-                sr.cooldown = 5;
-                int have = 0;
-                for (auto& u : world_.units()) {
-                    if (!u.alive() || !u.type || u.type->id != sr.maintainType) continue;
-                    int cx = int(u.x) / 16, cz = int(u.z) / 16;
-                    if (cx >= sr.maintainRect.x1 && cz >= sr.maintainRect.z1 &&
-                        cx <= sr.maintainRect.x2 && cz <= sr.maintainRect.z2)
-                        ++have;
-                }
-                if (have < sr.maintainCount) spawn(sr.type, sr.x, sr.z, 0, sr.player);
-            }
-        }
-        for (auto& m : messages_) {
-            if (m.first >= 0 && scenClock2_ >= m.first) {
-                postNotice(m.second, 8);
-                m.first = -1;
-            }
-        }
-        if (scenUnit_ && scenTime_ > 0 && outcome_ == 0) {
-            scenClock_ += dt;
-            if (scenClock_ >= scenTime_) {
-                int counts[4] = {0, 0, 0, 0};
-                for (auto& u : world_.units()) {
-                    if (!u.alive() || !u.type || u.type != scenUnit_) continue;
-                    int cx = int(u.x) / 16, cz = int(u.z) / 16;
-                    if (cx >= scenRegion_.x1 && cz >= scenRegion_.z1 &&
-                        cx <= scenRegion_.x2 && cz <= scenRegion_.z2 && u.player < 4)
-                        ++counts[u.player];
-                }
-                int best = 0;
-                for (int i = 1; i < 4; ++i)
-                    if (counts[i] > counts[best]) best = i;
-                bool tie = false;
-                for (int i = 0; i < 4; ++i)
-                    if (i != best && counts[i] == counts[best]) tie = true;
-                std::printf("scenario result: %d %d %d %d -> %s\n", counts[0],
-                            counts[1], counts[2], counts[3],
-                            tie ? "tie" : (best == localPlayer_ ? "win" : "loss"));
-                outcome_ = (!tie && best == localPlayer_) ? 1 : -1;
-            }
-        }
         if (missionVm_) {
             missionVm_->tick(dt);
             // Engine sweep: armed regions fire TriggerHit per player unit

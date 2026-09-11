@@ -639,8 +639,6 @@ public:
 
     void navyDemo();
 
-    void hillTest();
-
     void creonDemo();
 
     void missionTest();
@@ -1731,22 +1729,6 @@ private:
 public:
     bool noFog_ = false;
 private:
-    struct SpawnRule {
-        std::string type;
-        float x = 0, z = 0;
-        float atTime = -1;        // >= 0: spawn once at this time
-        int maintainCount = 0;    // > 0: respawn while count(maintainType) < N
-        std::string maintainType;
-        tak::crt::Region maintainRect;
-        int player = 3;
-        bool done = false;
-        float cooldown = 0;
-    };
-    std::vector<SpawnRule> spawnRules_;
-    std::vector<std::pair<float, std::string>> messages_;
-    const tak::sim::UnitType* scenUnit_ = nullptr;
-    tak::crt::Region scenRegion_;
-    float scenTime_ = 0, scenClock_ = 0, scenClock2_ = 0;
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
     int playerMonarchId_ = -1, aiMonarchId_ = -1;
     const tak::sim::UnitType* placing_ = nullptr;

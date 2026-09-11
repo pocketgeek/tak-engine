@@ -242,9 +242,11 @@ Verified: deterministic (stateHash reproduces + cross-build golden), edge-timing
 correct (a "set countdown timer to N" fires once then counts down), victory
 defeats opponents. `src/sim/mission.cpp` remains the separate CAMPAIGN runner.
 
-Remaining (minor): "Move all" uses a plain move order; kill/loss credit is by
-last-hitter; and the old client-side heuristic trigger code in gameview is now
-dormant (superseded, left as a no-op) pending a cleanup pass.
+The old client-side heuristic trigger code was removed (the superseded
+`loadTriggers`/`Triggers`/`TrigRecord`/`Placement`/`load` in tak::crt, the
+gameview spawn-rule/scoring/message machinery, and the `--hilltest` harness);
+tak::crt is now just the typed `parse`/`write`. Minor remaining: "Move all"
+uses a plain move order; kill/loss credit is by last-hitter.
 
 ### Command ID -> handler VAs (for follow-up RE)
 ScenProps 0x401890 · UseOnly 0x401910 · zoom 0x401990/a10/a90/b10 · 12.5%
