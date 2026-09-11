@@ -17,6 +17,8 @@
 
 #include <cstdio>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace tak;
 
@@ -216,6 +218,50 @@ int main(int argc, char** argv) {
                 const sim::Unit* v = w.unit(victim);
                 check(v && (!v->alive() || v->hp < hp0), "the remote effect landed on its target");
             }
+        }
+
+        // Remote Effect SUBCLASSES: the cadence differs per subtype.
+        // arapries: W1 Earthquake (pulses every shakeduration=1s through its
+        // buildup 3 + decay 3), W2 Hail Shower (rains particlespersecond=5 times a
+        // second for duration=2.5), W3 Turn To Stone.
+        if (acolyte && prey && acolyte->weapons.size() >= 3) {
+            check(acolyte->weapons[0].remote == sim::Weapon::RemoteKind::Earthquake,
+                  "arapries W1 is the Earthquake subclass");
+            check(acolyte->weapons[1].remote == sim::Weapon::RemoteKind::Hailstorm,
+                  "arapries W2 is the Hailstorm subclass");
+            // THE BUG FIX: "Hail Shower" used to trip a name-substring freeze
+            // heuristic, and our freeze is an instant statue death -- so a 70-damage
+            // shower silently annihilated everything in a 200-wide radius.
+            check(acolyte->weapons[1].status == sim::Weapon::Status::None,
+                  "Hail Shower is NOT a freeze weapon (it used to instant-kill)");
+            check(acolyte->weapons[2].status == sim::Weapon::Status::Stoned,
+                  "Turn To Stone still petrifies (subtype=turntostone)");
+
+            // Drive each and count how many distinct ticks dealt damage: a plain
+            // one-shot would show exactly 1, these must pulse.
+            auto pulseCount = [&](int slot, float seconds) {
+                sim::World w; freshWorld(w);
+                int caster = w.spawn(acolyte, 1000, 1000, 0, 0);
+                int victim = w.spawn(prey, 1000, 1040, 0, 1);   // inside aoe/2 = 100
+                if (auto* c = w.unit(caster)) c->mana = c->type->maxMana;
+                w.setWeapon(caster, slot);
+                w.attack(caster, victim, false);
+                int pulses = 0; float last = w.unit(victim)->hp; bool died = false;
+                for (int i = 0; i < int(seconds * 30); ++i) {
+                    w.tick(1.0f / 30.0f);
+                    const sim::Unit* v = w.unit(victim);
+                    if (!v || !v->alive()) { died = true; break; }
+                    if (v->hp < last - 0.01f) { ++pulses; last = v->hp; }
+                }
+                return std::pair<int, bool>{pulses, died};
+            };
+            auto [quakePulses, quakeDied] = pulseCount(0, 8.0f);
+            check(quakePulses > 1 || quakeDied, "the Earthquake PULSES (not one tap)",
+                  std::to_string(quakePulses) + " damage ticks");
+            auto [hailPulses, hailDied] = pulseCount(1, 8.0f);
+            check(hailPulses > 3, "the Hail Shower RAINS many small hits",
+                  std::to_string(hailPulses) + " damage ticks");
+            check(!hailDied, "and its victim survives it (70 dmg x ~13 < 2500 HP)");
         }
 
         // Wandering: the Tornado is a MOVING HAZARD, not a targeted strike -- it is

@@ -253,7 +253,15 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     wp.maxVariation = float(w->numberOr("maxvariation", 0));
                     wp.variationTime = float(w->numberOr("variationtime", 0));
                     wp.unitsOnly = w->numberOr("unitsonly", 0) != 0;
-                    wp.mindControl = lower(w->valueOr("subtype", "")) == "mindcontrol";
+                    wp.particlesPerSec = float(w->numberOr("particlespersecond", 0));
+                    std::string st = lower(w->valueOr("subtype", ""));
+                    wp.mindControl = st == "mindcontrol";
+                    // Which Remote Effect subclass this is (retail dispatches on
+                    // subtype); it decides the damage cadence, not just the visuals.
+                    if (st == "earthquake") wp.remote = Weapon::RemoteKind::Earthquake;
+                    else if (st == "hailstorm") wp.remote = Weapon::RemoteKind::Hailstorm;
+                    else if (st == "mindcontrol") wp.remote = Weapon::RemoteKind::MindCtl;
+                    else if (st == "turntofrozen") wp.remote = Weapon::RemoteKind::Freeze;
                 }
                 // aimtolerance is in COB angle units; convert to radians. Ballistic
                 // weapons lob an arc (viewer draws it); soundhitclass = impact sound.
@@ -285,20 +293,19 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 // Status-effect weapons (Creon freeze, medusa/paralyzer, petrify),
                 // inferred from the hit-effect / damagetype / name.
                 {
+                    // Freeze and petrify come from the SUBTYPE, never from the name.
+                    // Retail selects them by subtype=turntofrozen/turntostone (6
+                    // weapons, all named accordingly), and a name-substring
+                    // heuristic also swept up the three HAILSTORMS -- "Hail Shower",
+                    // "Ice Storm", "Ice Storms" -- which do not freeze. Because our
+                    // freeze is an instant statue death, that quietly turned the
+                    // Acolyte's 70-damage Hail Shower into a 200-radius instant kill.
+                    std::string st = lower(w->valueOr("subtype", ""));
                     std::string s = hwe + " " + lower(w->valueOr("damagetype", "")) +
                                     " " + lower(w->valueOr("soundhitclass", "")) + " " +
                                     lower(wp.name);
-                    if (s.find("freeze") != std::string::npos ||
-                        s.find("frost") != std::string::npos ||
-                        s.find("hail") != std::string::npos)
-                        wp.status = Weapon::Status::Frozen;
-                    // "turn to stone", not bare "stone": the Stone Giant's
-                    // Flying Stones (boulders) and Divine Lodestone must NOT
-                    // petrify -- with statue deaths that would be lethal.
-                    else if (s.find("petrif") != std::string::npos ||
-                             s.find("turn to stone") != std::string::npos ||
-                             s.find("medusa") != std::string::npos)
-                        wp.status = Weapon::Status::Stoned;
+                    if (st == "turntofrozen") wp.status = Weapon::Status::Frozen;
+                    else if (st == "turntostone") wp.status = Weapon::Status::Stoned;
                     else if (s.find("paraly") != std::string::npos)
                         wp.status = Weapon::Status::Paralyzed;
                     if (wp.status != Weapon::Status::None)
@@ -1492,23 +1499,30 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     if (w.aoe <= 0) return;
     // Splash the surrounding enemies, scaled from full at the centre to `edge`
     // at the rim (so an area weapon actually hits a crowd, per its FBI aoe).
-    const float aoe = w.aoe;
+    // Retail's splash radius is areaofeffect/2, and the falloff is QUADRATIC:
+    //   frac = (1 - d/r)^2 * (1 - edge) + edge
+    // We used the full aoe as the radius with a linear ramp, which made every
+    // splash weapon in the game twice as wide as retail and far too strong at the
+    // rim -- and it disagreed with our own FEATURE pass below, which already halved
+    // it. Both halves of applyHit now use the same radius.
+    const float r = w.aoe * 0.5f;
     int splashed = 0;
-    forEachNear(hx, hz, aoe, [&](int idx) {
+    forEachNear(hx, hz, r, [&](int idx) {
         Unit& e = units_[size_t(idx)];
         if (!e.alive() || e.embarked() || !e.type || allied(e.player, fromPlayer)) return;
         if (&e == primary) return;   // already took the direct hit
         float dx = e.x - hx, dz = e.z - hz;
         float d = std::sqrt(dx * dx + dz * dz);
-        if (d > aoe) return;
-        float scale = 1.0f - (d / aoe) * (1.0f - w.edge);
+        if (d >= r) return;
+        float t = 1.0f - d / r;
+        float scale = t * t * (1.0f - w.edge) + w.edge;
         hurt(e, scale);
         ++splashed;
     });
     static const bool kLog = std::getenv("TAK_SPLASHLOG") != nullptr;
     if (splashed && kLog)
         std::fprintf(stderr, "splash %s aoe=%.0f hit %d extra\n",
-                     w.name.c_str(), aoe, splashed);
+                     w.name.c_str(), r, splashed);
 }
 
 void World::fire(Unit& u, Unit& target, int slot) {
@@ -1528,7 +1542,46 @@ void World::fire(Unit& u, Unit& target, int slot) {
     // Earthquake, you have to leave its (up to 500px) radius. decaytime is the
     // visual fade after the hit.
     if (w.kind == Weapon::Kind::Remote) {
-        pendingEffects_.push_back({&w, target.x, target.z, u.player, u.id, w.buildUp});
+        PendingEffect e;
+        e.w = &w;
+        e.x = target.x; e.z = target.z;
+        e.player = u.player; e.fromId = u.id;
+        switch (w.remote) {
+            case Weapon::RemoteKind::Earthquake:
+                // Pulses every `shakeduration` from impact, right through buildup
+                // AND decay -- for the drake's Earthquake the single pulse actually
+                // lands inside the decay window.
+                e.period = std::max(w.shakeDur, 0.1f);
+                e.at = e.period;
+                e.endAt = w.buildUp + w.decay;
+                break;
+            case Weapon::RemoteKind::Hailstorm: {
+                // The rain: buildup/decay don't apply. It starts falling shortly
+                // after the cast and pulses particlespersecond times a second for
+                // `duration` -- so the Acolyte's Hail Shower is ~12 small hits, not
+                // one 70-damage tap.
+                float pps = w.particlesPerSec > 0 ? w.particlesPerSec : 5.0f;
+                e.period = 1.0f / pps;
+                e.at = 20.0f / 30.0f;                     // retail's ~20-tick lead-in
+                e.endAt = 20.0f / 30.0f + std::max(w.duration, e.period);
+                break;
+            }
+            case Weapon::RemoteKind::MindCtl:
+            case Weapon::RemoteKind::Freeze:
+                // One sweep when the channel completes -- and killing the caster
+                // mid-channel ABORTS it, which is real counterplay against a Mind
+                // Mage winding up an area charm.
+                e.at = w.buildUp;
+                e.endAt = w.buildUp + w.decay;
+                e.casterGated = true;
+                break;
+            case Weapon::RemoteKind::Plain:
+            default:
+                e.at = w.buildUp;
+                e.endAt = w.buildUp + w.decay;
+                break;
+        }
+        pendingEffects_.push_back(e);
         return;
     }
     // Wandering: spawn a roaming storm at the aim point. It drifts for `duration`,
@@ -3542,14 +3595,27 @@ void World::tick(float dt) {
     // swept next tick like any other.
     for (size_t i = 0; i < pendingEffects_.size();) {
         PendingEffect& e = pendingEffects_[i];
-        e.at -= dt;
-        if (e.at <= 0.0f) {
-            const PendingEffect done = e;
-            pendingEffects_.erase(pendingEffects_.begin() + std::ptrdiff_t(i));
-            if (done.w) applyHit(*done.w, done.x, done.z, done.player, done.fromId, nullptr);
-        } else {
-            ++i;
+        // A charm/freeze channel dies with its caster: kill the Mind Mage during
+        // its wind-up and nothing is converted.
+        if (e.casterGated) {
+            const Unit* c = e.fromId ? unit(e.fromId) : nullptr;
+            if (!c || !c->alive()) {
+                pendingEffects_.erase(pendingEffects_.begin() + std::ptrdiff_t(i));
+                continue;
+            }
         }
+        e.at -= dt;
+        e.endAt -= dt;
+        bool pulse = e.at <= 0.0f;
+        if (pulse) {
+            if (e.period > 0.0f) e.at += e.period;
+            else e.at = 1e9f;          // single-pulse: never again
+        }
+        bool done = e.endAt <= 0.0f;
+        const PendingEffect cur = e;   // applyHit walks/kills units_; copy first
+        if (done) pendingEffects_.erase(pendingEffects_.begin() + std::ptrdiff_t(i));
+        else ++i;
+        if (pulse && cur.w) applyHit(*cur.w, cur.x, cur.z, cur.player, cur.fromId, nullptr);
     }
     // Wandering storms: drift along the launch heading, weave, and grind whatever
     // they touch. The FBI `damage` is a PER-TICK rate, not a per-hit figure -- the

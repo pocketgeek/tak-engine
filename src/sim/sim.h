@@ -55,6 +55,17 @@ struct Weapon {
     //   Wandering    -- a roaming storm entity that drifts for `duration`
     //                   (4: Tornado, Fire/Water Vortex, Hurricane).
     enum class Kind { Normal, Guided, Remote, Wandering } kind = Kind::Normal;
+    // Remote Effect splits further by subtype, and the split changes the damage
+    // CADENCE completely (retail has a C++ subclass per variant):
+    //   Plain      -- one area hit when the channel completes.
+    //   Earthquake -- pulses every `shakeduration`, through buildup AND decay.
+    //   Hailstorm  -- ignores buildup/decay; pulses `particlespersecond` times a
+    //                 second for `duration` (the rain).
+    //   MindCtl /  -- one conversion/freeze sweep at the end of the channel, and
+    //   Freeze        the whole spell ABORTS if its caster dies mid-channel.
+    enum class RemoteKind { Plain, Earthquake, Hailstorm, MindCtl, Freeze };
+    RemoteKind remote = RemoteKind::Plain;
+    float particlesPerSec = 0;   // particlespersecond: hailstorm pulse rate
     float turnRate = 0;      // guided: steering rate, radians/sec (FBI deg/s)
     float buildUp = 0;       // builduptime: channel before the effect lands
     float decay = 0;         // decaytime: fade after it lands
@@ -1036,7 +1047,15 @@ private:
     // GROUND POINT after `builduptime`, then applies its damage/status/conversion
     // once over areaofeffect. Earthquakes, monarch waves, god spells, Area Mind
     // Control. Lives across ticks, so it IS hashed.
-    struct PendingEffect { const Weapon* w; float x, z; int player, fromId; float at; };
+    struct PendingEffect {
+        const Weapon* w = nullptr;
+        float x = 0, z = 0;
+        int player = 0, fromId = 0;
+        float at = 0;        // seconds until the next pulse
+        float endAt = 0;     // seconds until the effect expires
+        float period = 0;    // seconds between pulses (<=0 = a single pulse)
+        bool casterGated = false;   // dies with its caster (mind control / freeze)
+    };
     std::vector<PendingEffect> pendingEffects_;
     // Wandering (FBI type=wandering): a storm entity that roams for `duration`,
     // drifting at weaponvelocity and wobbling its heading every `variationtime`.
