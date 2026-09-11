@@ -422,9 +422,13 @@ int main(int argc, char** argv) {
                 }
                 if (!vv->alive() || vv->hp < hp0) { hurt = true; break; }
             }
-            check(closest < 120.0f, "the bomber closed to overhead rather than sniping",
+            // Retail does NOT require an overflight: Dropped reverts to the plain
+            // 2D range test and the bomb's velocity is solved so it arrives over
+            // the aim point as it lands. So it releases inside its FBI range (200)
+            // and the bomb glides in.
+            check(closest < 220.0f, "the bomber closed to within its release range",
                   "closest " + std::to_string(int(closest)) + "px");
-            check(hurt, "and its dropped bomb damaged the target below");
+            check(hurt, "and its dropped bomb glided onto the target");
         }
     }
 
@@ -466,15 +470,48 @@ int main(int argc, char** argv) {
                 return std::pair<int, float>{n, manaLeft};
             };
             auto [autoN, autoMana] = runFight(false);
-            check(autoN > 1, "Elsin mixes his weapons instead of only casting Lightning",
-                  std::to_string(autoN) + " of 3 weapons used");
-            check(autoMana < king->maxMana * 0.5f, "and he actually spends mana on them",
-                  std::to_string(int(autoMana)) + " left of " + std::to_string(int(king->maxMana)));
-            // A player pick must still be obeyed.
+            // Elsin carries weaponswitching, so retail holds him on ONE weapon --
+            // the one the player picked (WEAPON1 by default). An earlier pass here
+            // had the sim auto-pick the biggest usable weapon, which made every
+            // Monarch, dragon and caster markedly stronger than retail.
+            check(king->weaponSwitching, "araking carries weaponswitching");
+            check(autoN == 1, "Elsin holds ONE weapon (the player's pick), like retail",
+                  std::to_string(autoN) + " of 3 used");
+            (void)autoMana;
             auto [manualN, manualMana] = runFight(true);
-            check(manualN == 1, "a player's Ctrl+W pick overrides the auto-selection",
+            check(manualN == 1, "and a Ctrl+W pick is still obeyed",
                   std::to_string(manualN) + " weapon used");
             (void)manualMana;
+        }
+
+        // A multi-weapon unit WITHOUT weaponswitching fires every weapon
+        // independently -- retail's AA/ground turrets really do work both barrels.
+        const sim::UnitType* tower = reg.find("araat");
+        if (tower && prey && tower->weapons.size() > 1) {
+            check(!tower->weaponSwitching, "araat has NO weaponswitching (fires all)");
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+            int t = w.spawn(tower, 1000, 1000, 0, 0);
+            if (auto* tu = w.unit(t)) tu->mana = tower->maxMana;
+            for (int i = 0; i < 20; ++i) w.spawn(prey, 1000.0f + (i % 5) * 25, 1120.0f + (i / 5) * 25, 0, 1);
+            bool used[3] = {false, false, false};
+            float prev[3] = {0, 0, 0};
+            for (int i = 0; i < 900; ++i) {
+                w.tick(1.0f / 30.0f);
+                const sim::Unit* tu = w.unit(t);
+                if (!tu) break;
+                for (size_t sl = 0; sl < tower->weapons.size() && sl < 3; ++sl) {
+                    if (tu->reloads[sl] > prev[sl] + 0.01f) used[sl] = true;
+                    prev[sl] = tu->reloads[sl];
+                }
+            }
+            int n = 0; for (bool b2 : used) if (b2) ++n;
+            check(n > 1, "araat fires BOTH of its weapons independently",
+                  std::to_string(n) + " weapons fired");
         }
     }
 

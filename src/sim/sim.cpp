@@ -174,6 +174,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.cloakCostMove = float(info->numberOr("cloakcostmoving", t.cloakCost));
             t.minCloakDist = float(info->numberOr("mincloakdistance", 0));
             t.attractsGods = info->numberOr("attractsgods", 0) != 0;
+            t.weaponSwitching = info->numberOr("weaponswitching", 0) != 0;
             t.onOffable = info->numberOr("onoffable", 0) != 0;
             t.activateWhenBuilt = info->numberOr("activatewhenbuilt", 1) != 0;
             t.cantBeStoned = info->numberOr("cantbestoned", 0) != 0;
@@ -1696,9 +1697,15 @@ void World::fire(Unit& u, Unit& target, int slot) {
         Projectile b;
         b.x = u.x;
         b.z = u.z;
-        float dv = w.projVel * kTick / 30.0f;   // a slow release speed, not a shot
-        b.vx = detmath::sin(u.heading) * dv;
-        b.vz = detmath::cos(u.heading) * dv;
+        // Retail solves the release velocity so the bomb arrives over the aim point
+        // exactly as it finishes falling: vel = (aim - release) / fallTicks, with
+        // ZERO vertical speed. weaponvelocity is never read here and neither is the
+        // flyer's heading -- release point and timing do not change where the bomb
+        // lands. (It LOOKS like inherited momentum only because a closing bomber is
+        // already pointed at its target.)
+        float bdx = target.x - u.x, bdz = target.z - u.z;
+        b.vx = bdx / kBombFall;
+        b.vz = bdz / kBombFall;
         b.damage = w.damage;
         b.wsrc = &w;
         b.targetId = target.id;
@@ -1858,49 +1865,23 @@ void World::tickCombat(Unit& u, float dt) {
     float dist = std::sqrt(dx * dx + dz * dz);
     int slot = u.type->weapons.empty()
                    ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
-    // Automatic weapon selection. Retail scores every weapon it could use against
-    // this target as roughly (distance^2 + noise) / damageVs(target) and takes the
-    // cheapest -- skipping any weapon that does NO damage to the target's category
-    // -- which in practice means "the hardest-hitting weapon you can actually use
-    // right now" (icd 0x4129b6, the fire-at-will scan). We had no selection at all:
-    // a multi-weapon unit always fired slot 0, so Elsin spent whole battles casting
-    // Lightning while his Meteor and Earthen Wave -- and his entire mana pool --
-    // went untouched. 34 shipped units carry more than one weapon.
-    // The player's own pick (Ctrl+W) switches weaponAuto off and is then obeyed.
-    if (u.weaponAuto && u.type->weapons.size() > 1) {
-        float bestScore = -1.0f;
-        for (size_t i = 0; i < u.type->weapons.size(); ++i) {
-            const Weapon& c = u.type->weapons[i];
-            if (c.damageVs(target->type) <= 0.0f) continue;            // can't hurt it
-            if (c.noAir && target->type && target->type->canFly) continue;
-            if (dist > c.range || dist < c.minRange) continue;          // out of its band
-            if (c.manaCost > 0 && u.type->maxMana > 0 && u.mana < c.manaCost) continue;
-            if (u.reloads[i] > 0) continue;                             // still reloading
-            float score = c.damageVs(target->type);
-            if (score > bestScore) { bestScore = score; slot = int(i); }
-        }
-        // Nothing usable from here yet (still closing, or everything is reloading):
-        // approach on the LONGEST-ranged weapon that could work, so a caster whose
-        // reach lives in a later slot -- Elsin's Meteor outranges his Lightning --
-        // walks to the right distance instead of closing past it.
-        if (bestScore < 0) {
-            float far = -1.0f;
-            for (size_t i = 0; i < u.type->weapons.size(); ++i) {
-                const Weapon& c = u.type->weapons[i];
-                if (c.damageVs(target->type) <= 0.0f) continue;
-                if (c.noAir && target->type && target->type->canFly) continue;
-                if (c.range > far) { far = c.range; slot = int(i); }
-            }
-        }
-    }
+    // Which weapon(s) this unit fights with. Retail splits multi-weapon units in
+    // two, on the FBI `weaponswitching` flag (unitdef+0x264 bit 26):
+    //   weaponswitching=1 (24 units, incl. every Monarch and dragon) -- ONE active
+    //     weapon at a time, chosen by the PLAYER from the command panel and held
+    //     until switched. There is no cleverness: it starts on WEAPON1 and stays
+    //     there. (An earlier pass here had the sim auto-pick the biggest usable
+    //     weapon, which made these units markedly stronger than retail.)
+    //   no flag (10 units: araat, aragod, arasiege, creaeri, cregod, creiron,
+    //     targod, verat, verball, vergod) -- every weapon fires INDEPENDENTLY, each
+    //     with its own reload, its own range band and its own mana check, so an
+    //     AA/ground turret really does work both barrels at once.
+    // (`fireatwillrandom` is unrelated to this -- it randomises TARGET choice.)
+    bool allWeapons = !u.type->weaponSwitching && u.type->weapons.size() > 1;
+    // Approach on the reach this unit actually fights at: the selected weapon for a
+    // switcher, the longest of them when they all fire.
     const Weapon* sel = slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
-    float best = sel ? sel->range : u.type->maxRange();
-    // A bomber does not shoot from range -- it flies OVER and lets go, because the
-    // bomb lands beneath the release point. Its effective reach is therefore how
-    // close it must be for the blast to still cover the target, which makes it
-    // close to overhead and turns its FBI `range` into an approach cue.
-    if (sel && sel->kind == Weapon::Kind::Dropped)
-        best = std::max(sel->aoe * 0.5f, 48.0f);
+    float best = allWeapons ? u.type->maxRange() : (sel ? sel->range : u.type->maxRange());
     // Range is to the target's footprint EDGE, not its centre. A building's centre is
     // deep inside a blocked footprint, so a centre-distance check leaves a short-range
     // attacker grinding the edge (never "in range") or a flyer buried inside it. For a
@@ -1975,18 +1956,30 @@ void World::tickCombat(Unit& u, float dt) {
     float diff = angleDiff(want, u.heading);
     float maxTurn = u.type->turnRate * dt;
     u.heading += std::clamp(diff, -maxTurn, maxTurn);
-    // Fire the selected weapon when the target is in its [minrange, range] band,
-    // within aimtolerance, has a clear shot, and (unless noairweapon) may hit air.
-    if (sel && !(sel->noAir && target->type && target->type->canFly) &&
-        (sel->melee || los) && u.reloads[slot] <= 0 &&
-        (sel->melee ? adj : dist <= (sel->kind == Weapon::Kind::Dropped ? best : sel->range) + pad) &&
-        dist >= sel->minRange &&
-        // A bomb is let go, not aimed: a bomber releases once it is over the target
-        // rather than having to line its nose up first (which a hovering flyer with
-        // momentum can rarely hold inside a 5-degree window anyway).
-        (sel->kind == Weapon::Kind::Dropped ||
-         std::abs(diff) < std::max(sel->aimTol, 0.03f)))
-        fire(u, *target, slot);
+    // Fire a weapon when the target is in ITS [minrange, range] band, within its
+    // aimtolerance, with a clear shot, and (unless noairweapon) legal against air.
+    // Each weapon is gated on its own terms, because a non-switching unit runs all
+    // of them at once and they rarely share a range band.
+    auto tryFire = [&](int sl) {
+        const Weapon& sw = u.type->weapons[size_t(sl)];
+        if (sw.noAir && target->type && target->type->canFly) return;
+        if (!(sw.melee || los)) return;
+        if (u.reloads[size_t(sl)] > 0) return;
+        if (sw.melee ? !adj : dist > sw.range + pad) return;
+        if (dist < sw.minRange) return;
+        // A bomb is let go, not aimed -- retail's Dropped weapon overrides its aim
+        // virtual with a no-op, so the bomber is always considered on target (which
+        // a hovering flyer with momentum could otherwise almost never satisfy).
+        if (sw.kind != Weapon::Kind::Dropped &&
+            std::abs(diff) >= std::max(sw.aimTol, 0.03f)) return;
+        fire(u, *target, sl);
+    };
+    if (!u.type->weapons.empty()) {
+        if (allWeapons)
+            for (int sl = 0; sl < int(u.type->weapons.size()); ++sl) tryFire(sl);
+        else if (sel)
+            tryFire(slot);
+    }
     // cancapture: a charmer converts the target after sustained contact (~3s) or
     // once it is worn down, rather than killing it.
     if (u.type->canCapture && target->type && !target->type->cantBeCaptured &&

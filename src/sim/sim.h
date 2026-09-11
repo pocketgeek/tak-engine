@@ -217,6 +217,9 @@ struct UnitType {
     float cloakCostMove = 0;      // cloakcostmoving: mana/sec while cloaked and moving
     float minCloakDist = 0;       // mincloakdistance: an enemy this close forces uncloak
     bool  attractsGods = false;   // attractsgods: priest channels god favour
+    // weaponswitching: this unit carries ONE active weapon at a time, picked by the
+    // player. Without it, a multi-weapon unit fires every weapon independently.
+    bool  weaponSwitching = false;
     bool  onOffable = false;      // onoffable: can be toggled active/inactive
     bool  activateWhenBuilt = true;   // activatewhenbuilt (default on)
     bool  cantBeStoned = false, cantBeFrozen = false;
