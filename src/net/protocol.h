@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 36;       // 36: in-sim .crt scenario trigger runner + forced-defeat
+constexpr uint32_t kNetVersion = 37;       // 37: don't auto-acquire/keep attacking undamageable targets
+                                           // 36: in-sim .crt scenario trigger runner + forced-defeat
                                            // 35: structures exempt from separation/unstick
                                            // 28: retail melee = footprint adjacency
                                            // 26: benchmark level 6 (Extra Absurd)

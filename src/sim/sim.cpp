@@ -1498,12 +1498,18 @@ void World::tickCombat(Unit& u, float dt) {
                       (u.orders.front().targetId == 0 &&
                        (u.orders.front().attackMove || u.orders.front().patrol)) ||
                       u.orders.front().guard);
-    // Can any of this unit's weapons engage enemy `e`? (noairweapon gates flyers.)
+    // Can any of this unit's weapons deal real damage to `e`? (noairweapon gates
+    // flyers.) Requiring damage > 0 stops an army from piling onto -- and firing
+    // forever at -- a building/target its weapons cannot scratch (a per-category
+    // damage.<cat>=0 override), which never dies so the attack order never clears.
+    auto canDamage = [&](const Unit& e) {
+        for (const auto& wp : u.type->weapons)
+            if (!(e.type->canFly && wp.noAir) && wp.damageVs(e.type) > 0.0f) return true;
+        return false;
+    };
     auto canTarget = [&](const Unit& e) {
         if (e.cloaked) return false;   // cloaked units are invisible to auto-acquire
-        for (const auto& wp : u.type->weapons)
-            if (!(e.type->canFly && wp.noAir)) return true;
-        return false;
+        return canDamage(e);
     };
     // Auto-acquisition is staggered across ticks by unit id: an idle armed unit
     // rescans for a target every kAcqStride ticks (~0.13s at 30Hz), not every
@@ -1566,6 +1572,17 @@ void World::tickCombat(Unit& u, float dt) {
 
     Unit* target = unit(u.orders.front().targetId);
     if (!target || !target->alive()) {
+        u.orders.erase(u.orders.begin());
+        return;
+    }
+    // Give up a target this unit can neither damage NOR capture, instead of
+    // firing at it forever -- it will never die or convert. Covers a converter
+    // (0-damage charm weapon) ordered onto a cantBeCaptured building, and any
+    // unit whose weapons all do 0 to the target's category. Capturable targets
+    // are exempt: a charmer keeps contact until the capture branch converts it.
+    bool canConvert = u.type->canCapture && target->type &&
+                      !target->type->cantBeCaptured && !allied(u.player, target->player);
+    if (target->type && !canDamage(*target) && !canConvert) {
         u.orders.erase(u.orders.begin());
         return;
     }
