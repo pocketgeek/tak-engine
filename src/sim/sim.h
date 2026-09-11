@@ -287,6 +287,10 @@ struct Unit {
     float hp = 100;
     float reloads[3] = {0, 0, 0};  // per weapon slot
     int   weaponSlot = 0;          // active weapon (0=primary); player-selectable
+    // True until the player picks a weapon with Ctrl+W. While set, the sim chooses
+    // the best usable weapon per target the way retail's fire-at-will scan does;
+    // once the player has chosen, their pick is obeyed.
+    bool  weaponAuto = true;
     float repathLeft = 0;   // chase steering repath countdown
     float stuckFor = 0;     // seconds wanting to move but making no progress
     float stuckX = 0, stuckZ = 0;   // position when the stuck timer last reset

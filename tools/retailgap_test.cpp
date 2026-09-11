@@ -410,6 +410,56 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- 2e. automatic weapon selection --------------------------------------
+    std::printf("[auto weapon selection]\n");
+    {
+        // Elsin carries Lightning (250px, free, 950), Meteor (400px, 200 mana,
+        // 2000) and Earthen Wave (120px, 900 mana, 5000). The sim used to fire slot
+        // 0 forever, so he cast Lightning all game and never spent a point of mana.
+        const sim::UnitType* king = reg.find("araking");
+        const sim::UnitType* prey = reg.find("arasword");
+        if (!king || !prey || king->weapons.size() < 3) std::printf("  (missing defs; skipped)\n");
+        else {
+            auto runFight = [&](bool manualSlot0) {
+                sim::World w;
+                sim::MatchConfig cfg;
+                cfg.vfs = &vfs; cfg.mapPath = kMap;
+                cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+                cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+                sim::setupMatch(w, reg, cfg);
+                int c = w.spawn(king, 1000, 1000, 0, 0);
+                if (auto* u = w.unit(c)) u->mana = king->maxMana;
+                if (manualSlot0) w.setWeapon(c, 0);      // player takes control
+                for (int i = 0; i < 40; ++i)
+                    w.spawn(prey, 1000.0f + (i % 8) * 30, 1150.0f + (i / 8) * 30, 0, 1);
+                bool used[3] = {false, false, false};
+                float prev[3] = {0, 0, 0};
+                for (int t = 0; t < 900; ++t) {
+                    w.tick(1.0f / 30.0f);
+                    const sim::Unit* u = w.unit(c);
+                    if (!u) break;
+                    for (int sl = 0; sl < 3; ++sl) {
+                        if (u->reloads[sl] > prev[sl] + 0.01f) used[sl] = true;
+                        prev[sl] = u->reloads[sl];
+                    }
+                }
+                int n = 0; for (bool b : used) if (b) ++n;
+                float manaLeft = w.unit(c) ? w.unit(c)->mana : -1;
+                return std::pair<int, float>{n, manaLeft};
+            };
+            auto [autoN, autoMana] = runFight(false);
+            check(autoN > 1, "Elsin mixes his weapons instead of only casting Lightning",
+                  std::to_string(autoN) + " of 3 weapons used");
+            check(autoMana < king->maxMana * 0.5f, "and he actually spends mana on them",
+                  std::to_string(int(autoMana)) + " left of " + std::to_string(int(king->maxMana)));
+            // A player pick must still be obeyed.
+            auto [manualN, manualMana] = runFight(true);
+            check(manualN == 1, "a player's Ctrl+W pick overrides the auto-selection",
+                  std::to_string(manualN) + " weapon used");
+            (void)manualMana;
+        }
+    }
+
     // ---- 3. data-only mission + InitialMission ------------------------------
     std::printf("[data-only mission (.cob optional) + InitialMission]\n");
     {

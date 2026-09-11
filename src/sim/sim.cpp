@@ -1336,7 +1336,10 @@ void World::setWeapon(int unitId, int slot) {
     Unit* u = unit(unitId);
     if (!u || !u->type) return;
     int n = int(u->type->weapons.size());
-    if (n > 0) u->weaponSlot = std::clamp(slot, 0, n - 1);
+    if (n > 0) {
+        u->weaponSlot = std::clamp(slot, 0, n - 1);
+        u->weaponAuto = false;   // the player has taken the choice over
+    }
 }
 
 void World::setStance(int unitId, int stance) {
@@ -1789,11 +1792,43 @@ void World::tickCombat(Unit& u, float dt) {
     }
     float dx = target->x - u.x, dz = target->z - u.z;
     float dist = std::sqrt(dx * dx + dz * dz);
-    // Only the player-selected weapon fires (retail auto-fires the primary; the
-    // player picks secondary/tertiary via its command button). Approach to that
-    // weapon's range, not the longest.
     int slot = u.type->weapons.empty()
                    ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
+    // Automatic weapon selection. Retail scores every weapon it could use against
+    // this target as roughly (distance^2 + noise) / damageVs(target) and takes the
+    // cheapest -- skipping any weapon that does NO damage to the target's category
+    // -- which in practice means "the hardest-hitting weapon you can actually use
+    // right now" (icd 0x4129b6, the fire-at-will scan). We had no selection at all:
+    // a multi-weapon unit always fired slot 0, so Elsin spent whole battles casting
+    // Lightning while his Meteor and Earthen Wave -- and his entire mana pool --
+    // went untouched. 34 shipped units carry more than one weapon.
+    // The player's own pick (Ctrl+W) switches weaponAuto off and is then obeyed.
+    if (u.weaponAuto && u.type->weapons.size() > 1) {
+        float bestScore = -1.0f;
+        for (size_t i = 0; i < u.type->weapons.size(); ++i) {
+            const Weapon& c = u.type->weapons[i];
+            if (c.damageVs(target->type) <= 0.0f) continue;            // can't hurt it
+            if (c.noAir && target->type && target->type->canFly) continue;
+            if (dist > c.range || dist < c.minRange) continue;          // out of its band
+            if (c.manaCost > 0 && u.type->maxMana > 0 && u.mana < c.manaCost) continue;
+            if (u.reloads[i] > 0) continue;                             // still reloading
+            float score = c.damageVs(target->type);
+            if (score > bestScore) { bestScore = score; slot = int(i); }
+        }
+        // Nothing usable from here yet (still closing, or everything is reloading):
+        // approach on the LONGEST-ranged weapon that could work, so a caster whose
+        // reach lives in a later slot -- Elsin's Meteor outranges his Lightning --
+        // walks to the right distance instead of closing past it.
+        if (bestScore < 0) {
+            float far = -1.0f;
+            for (size_t i = 0; i < u.type->weapons.size(); ++i) {
+                const Weapon& c = u.type->weapons[i];
+                if (c.damageVs(target->type) <= 0.0f) continue;
+                if (c.noAir && target->type && target->type->canFly) continue;
+                if (c.range > far) { far = c.range; slot = int(i); }
+            }
+        }
+    }
     const Weapon* sel = slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
     float best = sel ? sel->range : u.type->maxRange();
     // A bomber does not shoot from range -- it flies OVER and lets go, because the
@@ -3889,7 +3924,10 @@ uint64_t World::stateHash() const {
         }
         mix(uint64_t(u.alive() ? 1 : 0));
         mix(uint64_t(u.veteran));
-        mixf(u.reloads[0]);
+        // All three reload timers, not just the primary: they now decide WHICH
+        // weapon the auto-selector fires, so a drift in any of them would change
+        // behaviour.
+        for (float rl : u.reloads) mixf(rl);
         mixf(u.selfDestructT);   // self-destruct countdown drives a deterministic death
         // Stance / cloak-intent / active gate auto-acquire, cloaking and firing, so a
         // divergence in them must fault directly rather than diffusing into positions.
