@@ -270,6 +270,8 @@ void MpClient::setGameOptions(const GameOptions& o) {
     send(Msg::SetGameOptions, w);
 }
 
+void MpClient::setPause(bool want) { Writer w; w.u8(want ? 1 : 0); send(Msg::SetPause, w); }
+
 void MpClient::kick(int slot) { Writer w; w.u8(uint8_t(slot)); send(Msg::Kick, w); }
 
 void MpClient::chat(const std::string& text) { Writer w; w.str(text); send(Msg::Chat, w); }

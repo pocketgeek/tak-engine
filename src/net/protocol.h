@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 44;       // 44: mission GET table + escort/protect win-lose conditions
+constexpr uint32_t kNetVersion = 45;       // 45: Msg::SetPause (player-requested pause) + mission order verbs
+                                           // 44: mission GET table + escort/protect win-lose conditions
                                            // 43: storm ids folded into the hash (viewer draws storms)
                                            // 42: weapon classes -- guided homing, Remote Effect,
                                            // wandering storms, mind control, unitsonly
@@ -84,6 +85,9 @@ enum class Msg : uint8_t {
     SetGameOptions,     // C->S (host): full GameOptions (lobby: rebroadcast; in-game: speed)
     SpeedUpdate,        // S->C: game speed changed in-game (speed byte) -> client re-paces
     MissionOutcome,     // S->C: campaign mission won/lost (int8: +1 victory, -1 defeat)
+    SetPause,           // C->S (host/only-human): u8 want -- pause or resume the game.
+                        // Distinct from the drop-driven pause above: it never expires,
+                        // because nobody is disconnected and nothing should forfeit.
 };
 
 // A slot in a game's setup. type: 0=open, 1=human, 2=ai, 3=closed.

@@ -707,6 +707,11 @@
                     spawnEffectAnim(tr.w->wanderEnd, tr.x, tr.z);
             stormsSeen_ = std::move(live);
         }
+        // A mission script asking for a camera shake: fire on the sequence edge.
+        if (newTick_) {
+            const auto& sr = world_.shakeRequest();
+            if (sr.seq != shakeSeqSeen_) { shakeSeqSeen_ = sr.seq; triggerShake(sr.mag, sr.dur); }
+        }
         if (newTick_) for (const auto& h : frameHits()) {
             // Instant-hit weapons (FBI type = Line of Sight) spawn no projectile, so
             // nothing was ever drawn for them -- the Aramon King's Thunder, the Creon
@@ -790,6 +795,7 @@
                 spawnBurst(bx, bz, 5, h.target->blood[0], h.target->blood[1],
                            h.target->blood[2], 26, 1.8f, 0, ba);
             }
+            // (mission ScreenShake is handled once per tick, below the hit loop)
             // Damage flinch (retail HitByWeapon callin): args are
             // (damageType, cos*400, sin*400, damage) -- the scripts themselves
             // gate on damage>10 and skip damageType 4 (paralyze), so status
@@ -2316,7 +2322,15 @@
         bool alt = (mod & KMOD_ALT) != 0;
 
         // Pause toggle works without a selection.
-        if (key == SDLK_PAUSE) { paused_ = !paused_; return true; }
+        if (key == SDLK_PAUSE) {
+            paused_ = !paused_;
+            // In a net game (which single-player also is -- it runs a private local
+            // server) the sim is driven by delivered ticks, not by update(), so a
+            // local flag froze only the animation while the game carried on. Ask the
+            // SERVER to stop issuing ticks; every peer then freezes together.
+            if (isNet() && mp_) mp_->setPause(paused_);
+            return true;
+        }
         // +/- (and keypad +/-) step game speed over -10..+10 (0 = normal).
         if (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS ||
             key == SDLK_MINUS || key == SDLK_KP_MINUS) {

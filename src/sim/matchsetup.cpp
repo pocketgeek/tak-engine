@@ -593,6 +593,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     // Placed units from [Map Data][units].
     int spawned = 0;
     std::vector<std::pair<int, std::string>> initialOrders;   // (unit id, InitialMission)
+    std::unordered_map<std::string, int> idents;              // Ident= -> unit id
     if (const tdf::Node* md = gh->child("map data"))
         if (const tdf::Node* units = md->child("units"))
             for (const auto& key : units->childOrder) {
@@ -625,6 +626,14 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                     // applied by the script once the world is built.
                     if (const std::string* im = u.value("initialmission"))
                         if (!im->empty()) initialOrders.push_back({id, *im});
+                    // Ident=<name>: 275 placed units are named, and a bodyguard's
+                    // `g <name>` clause resolves against these.
+                    if (const std::string* idn = u.value("ident"))
+                        if (!idn->empty()) {
+                            std::string k = *idn;
+                            std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+                            idents[k] = id;
+                        }
                 }
             }
 
@@ -632,6 +641,12 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     // instead of a start position a mission never declares. The centroid of a
     // slot's placed units is the closest thing a mission has to a "start".
     if (out) {
+        // Fog: retail presents some missions fully revealed (lineofsight=0, 6 of
+        // them) and others with the terrain already mapped but units still hidden
+        // (mapping=1, 30). Both start blacked out for us, which changes how a
+        // scripted reveal reads and hides set-pieces the designer meant you to see.
+        out->fullVision = gh->numberOr("lineofsight", 1) == 0;
+        out->preMapped = gh->numberOr("mapping", 0) != 0;
         if (const tdf::Node* md = gh->child("map data"))
             {
                 out->aiProfile = md->valueOr("aiprofile", "");
@@ -662,6 +677,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     if (vfs.has(base + ".cob")) cobBytes = vfs.read(base + ".cob");
     auto ms = std::make_unique<MissionScript>(std::move(cobBytes), *gh, reg, human, stem, otaToWorld);
     ms->setInitialOrders(std::move(initialOrders));
+    ms->setIdents(std::move(idents));
     world.setMission(std::move(ms));
     humanOut = human;
     std::fprintf(stderr, "setupMission: %s -- %d placed units, human=player%d\n",

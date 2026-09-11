@@ -946,6 +946,14 @@ public:
                    float fromX = 0, fromZ = 0;  // attacker pos (viewer flinch direction)
                    float damage = 0; };         // pre-armour damage vs the victim
     const std::vector<HitFx>& hits() const { return hits_; }
+    // A mission script asking for a camera shake (the ScreenShake map command).
+    // Viewer-only: the sequence number is what the client watches for an edge, and
+    // it is deterministic because the script that bumps it runs in lockstep.
+    struct ShakeReq { float mag = 0, dur = 0; uint32_t seq = 0; };
+    const ShakeReq& shakeRequest() const { return shakeReq_; }
+    void requestShake(float mag, float dur) {
+        shakeReq_.mag = mag; shakeReq_.dur = dur; ++shakeReq_.seq;
+    }
     void clearHits() { hits_.clear(); }
 
 private:
@@ -1089,6 +1097,7 @@ private:
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
     std::vector<Projectile> projectiles_;
     std::vector<HitFx> hits_;
+    ShakeReq shakeReq_;
     // [EXPLODEAS] blasts queued during the death sweep and applied just after it
     // (applyHit mutates units_, which the sweep is walking). Transient within one
     // tick -- always empty at tick end, so it needs no hashing.

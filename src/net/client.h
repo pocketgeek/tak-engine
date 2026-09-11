@@ -76,6 +76,10 @@ public:
     // Host: change room options. In the lobby the server rebroadcasts them; in-game
     // only `speed` takes effect (re-cadences the sim), if speedUnlock was set.
     void setGameOptions(const GameOptions& opts);
+    // Ask the server to pause/resume a running game (host only; in single-player
+    // the host is the only human). The server stops issuing ticks, so every peer
+    // freezes on the same tick -- a real pause, not a local one.
+    void setPause(bool want);
     // Current game speed in tenths (10 = 1.0x), tracking in-game SpeedUpdate broadcasts.
     uint8_t gameSpeed() const { return gameSpeed_; }
     // Campaign mission result the server reported: 0 = running, +1 = victory, -1 = defeat.

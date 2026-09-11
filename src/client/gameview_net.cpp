@@ -49,7 +49,10 @@
             resetMinimap();   // its thread reads the map being swapped
             mapView_.reload(vfs_, mapPath_);
             int human = 0;
-            tak::sim::setupMission(world_, registry_, vfs_, room.mission, human);
+            tak::sim::MissionSetup ms;
+            tak::sim::setupMission(world_, registry_, vfs_, room.mission, human, &ms);
+            missionFullVision_ = ms.fullVision;
+            missionPreMapped_ = ms.preMapped;
             loadFeatures();
             // Per-mission unit restriction: missions/<stem>.tdf lists the unit ids this
             // mission allows; the human's conjure menu is filtered to it (UI only).
@@ -125,7 +128,10 @@
         // client-only presentation
         localPlayer_ = room.mySlot < 0 ? 0 : room.mySlot;
         world_.setVisPlayer(localPlayer_);
-        world_.setFogExplored(room.opts.fogExplored == 1);   // lobby fog-of-war memory (display-only)
+        world_.setFogExplored(room.opts.fogExplored == 1 || missionPreMapped_);
+        // A mission overrides the room's fog rule with its own: lineofsight=0 plays
+        // revealed, mapping=1 starts the terrain explored. Display-only either way.
+        if (missionFullVision_) noFog_ = true;
         if (room.opts.fogExplored == 2) noFog_ = true;       // FULL VISION: no fog at all --
                                                              // same spectator path, so the
                                                              // wasted-visibility work is skipped too

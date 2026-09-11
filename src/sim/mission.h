@@ -114,6 +114,12 @@ private:
     struct PendingSpawn { const UnitType* type = nullptr; int player = 0; float x = 0, z = 0, at = 0; };
     std::vector<PendingSpawn> pendingSpawns_;
     std::vector<std::pair<int, std::string>> initialOrders_;   // .ota InitialMission=, applied at start
+    // Named units: the .ota's per-unit Ident= field and the order language's `i`
+    // verb both register here, and a `g NAME` clause guards whatever they name.
+    std::unordered_map<std::string, int> idents_;
+public:
+    void setIdents(std::unordered_map<std::string, int> m) { idents_ = std::move(m); }
+private:
 
     float clock_ = 0;         // mission time (s), for timer conditions
     int outcome_ = 0;         // 0 / +1 / -1

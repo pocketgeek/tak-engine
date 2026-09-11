@@ -81,6 +81,23 @@ void MissionScript::start(World& w) {
     // The placed units' own order queues run first, so the NPC choreography is in
     // place before the god script's Start fires. A data-only mission (no cob) has
     // no VM -- these queues and the .ota conditions ARE the whole mission.
+    // Two passes: register every name first, because a bodyguard's `g NAME` clause
+    // routinely refers to a unit whose own `i NAME` clause comes later in the file.
+    for (const auto& [id, orders] : initialOrders_) {
+        size_t p = 0;
+        while ((p = orders.find('i', p)) != std::string::npos) {
+            bool start = p == 0 || orders[p - 1] == ',' || orders[p - 1] == ' ';
+            if (start && p + 1 < orders.size() && orders[p + 1] == ' ') {
+                size_t a = orders.find_first_not_of(' ', p + 1);
+                size_t b = orders.find_first_of(", ", a);
+                if (a != std::string::npos) {
+                    std::string nm = orders.substr(a, b == std::string::npos ? b : b - a);
+                    if (!nm.empty()) idents_.emplace(lower(nm), id);
+                }
+            }
+            ++p;
+        }
+    }
     for (const auto& [id, orders] : initialOrders_) applyOrders(w, id, orders);
     initialOrders_.clear();
     if (vm_) vm_->start("Start");
@@ -141,7 +158,15 @@ int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32
     if (ieq(verb, "readvalue"))    { auto it = vars_.find(lower(rest)); return it != vars_.end() ? it->second : 0; }
     if (ieq(verb, "capture"))      { if (!a.empty()) if (Unit* u = w.unit(a[0])) u->player = a.size() >= 2 ? a[1] : human_; return 0; }
     if (ieq(verb, "kill"))         { if (!a.empty()) if (Unit* u = w.unit(a[0])) u->hp = 0; return 0; }
-    if (ieq(verb, "screenshake"))  return 0;   // cosmetic (TODO: viewer hook)
+    if (ieq(verb, "screenshake")) {
+        // Dramatic beats -- quakes, collapses -- asked for a shake and got nothing.
+        // Purely cosmetic, but it is the script's only way to punctuate a scripted
+        // moment. Args (when given) are magnitude and duration.
+        float mag = !a.empty() ? float(a[0]) : 3.0f;
+        float dur = a.size() > 1 ? float(a[1]) / 30.0f : 1.5f;
+        w.requestShake(mag > 0 ? mag : 3.0f, dur > 0 ? dur : 1.5f);
+        return 0;
+    }
     return 0;
 }
 
@@ -242,6 +267,24 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders)
             w.setStance(unitId, int(a));
         } else if (c == 'v') {                            // v F: movement scalar (not modelled)
             num();
+        } else if (c == 'i') {                            // i NAME: name this unit
+            // The third most common verb (679 uses). It registers the unit under a
+            // name that other units' `g` clauses -- and the .ota's own Ident= field
+            // -- refer to, which is how a mission wires up bodyguards.
+            std::string nm = word();
+            if (!nm.empty()) idents_[lower(nm)] = unitId;
+        } else if (c == 'g') {                            // g NAME: guard that unit
+            std::string nm = word();
+            auto it = idents_.find(lower(nm));
+            if (it != idents_.end() && it->second != unitId) {
+                w.guard(unitId, it->second, queue);
+                queue = true;
+            }
+        } else if (c == 'c') {                            // c: cloak (no operand)
+            w.setCloak(unitId, true);
+        } else if (c == 'u') {                            // u X Y: unload cargo there
+            float x = num(), y = num();
+            w.unloadAt(unitId, cellToWorld(x), cellToWorld(y));
         } else {
             word();                                       // skip unrecognised token's operands
         }

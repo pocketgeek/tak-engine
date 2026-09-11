@@ -1830,6 +1830,10 @@ private:
     bool trace_ = false;
 public:
     bool noFog_ = false;
+    // A campaign mission's own fog rules (.ota lineofsight / mapping), which
+    // override the room's setting for that mission.
+    bool missionFullVision_ = false, missionPreMapped_ = false;
+    uint32_t shakeSeqSeen_ = 0;   // last mission ScreenShake sequence acted on
 private:
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
     int playerMonarchId_ = -1, aiMonarchId_ = -1;

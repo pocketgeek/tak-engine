@@ -103,6 +103,8 @@ struct MissionSetup {
     std::vector<int> aiSlots;                        // world slots to drive with AI
     std::vector<std::pair<float, float>> slotPos;    // per-slot centroid of placed units
     std::string aiProfile;                           // .ota aiprofile= (ai/<name>.txt)
+    bool fullVision = false;   // .ota lineofsight=0: the mission is played revealed
+    bool preMapped = false;    // .ota mapping=1: terrain starts explored (units still fogged)
 };
 
 bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,

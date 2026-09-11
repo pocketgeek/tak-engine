@@ -96,6 +96,10 @@ struct Client {
     uint32_t ackTick = 0;   // latest tick this client reported a hash for (flow control)
 };
 
+// pausePlayer sentinel for a player-REQUESTED pause: distinct from any real slot,
+// so the disconnect budget sweep and the rejoin-resume path both ignore it.
+static constexpr int kPauseByRequest = -2;
+
 struct Room {
     uint32_t id = 0;
     std::string name, password, mapId;
@@ -895,6 +899,28 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (cid >= 0 && uint32_t(cid) != c.id) {
                 auto it = clients_.find(uint32_t(cid));
                 if (it != clients_.end()) { leaveRoom(*it->second, "kicked"); it->second->conn.send(Msg::Bye, Writer{}); }
+            }
+            break;
+        }
+        case Msg::SetPause: {
+            // A player asking to pause. Only the host may (in single-player the host
+            // IS the only human), and only in a running game. Unlike the drop-driven
+            // pause this one has NO budget: nobody has disconnected, so nothing should
+            // forfeit -- pausePlayer stays at the sentinel so the budget sweep and the
+            // rejoin-resume both skip it.
+            if (!r || !r->running || r->hostId != c.id) return;
+            Reader rd(f.payload.data(), f.payload.size());
+            bool want = rd.u8() != 0;
+            if (want && !r->paused) {
+                r->paused = true; r->pausePlayer = kPauseByRequest; r->pauseStartMs = nowMs();
+                Writer pw; pw.u8(1); pw.u8(0);
+                broadcastRoom(*r, Msg::Pause, pw);
+                std::fprintf(stderr, "game %u: paused by request\n", r->id);
+            } else if (!want && r->paused && r->pausePlayer == kPauseByRequest) {
+                r->paused = false; r->pausePlayer = -1; r->nextTickMs = nowMs();
+                Writer rw; rw.u8(1); rw.u8(0);
+                broadcastRoom(*r, Msg::Resume, rw);
+                std::fprintf(stderr, "game %u: resumed by request\n", r->id);
             }
             break;
         }
