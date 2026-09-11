@@ -533,7 +533,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // Block the (structure) footprints just spawned. Monarchs move, so this is a
     // no-op today, but it mirrors the client and covers any non-mover spawns.
     for (auto& u : world.units()) {
-        if (!u.type || u.type->canMove) continue;
+        // isStructure (maxVel <= 0), not canMove: see the note in World::startBuild --
+        // two of the four walls set canmove=1 and would otherwise block nothing.
+        if (!u.type || !u.type->isStructure()) continue;
         blockFootprint(world.nav(), *u.type, u.x, u.z, true);
     }
     return assigned;

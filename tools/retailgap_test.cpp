@@ -760,6 +760,135 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --- missed shots land; lobbers shoot over walls ----------------------
+    std::printf("[ballistic: fields + lobbing]\n");
+    {
+        auto wpn = [&](const char* id, int slot) -> const sim::Weapon* {
+            const sim::UnitType* t = reg.find(id);
+            if (!t || int(t->weapons.size()) <= slot) return nullptr;
+            return &t->weapons[size_t(slot)];
+        };
+        if (const sim::Weapon* w = wpn("arapult", 0)) {
+            check(w->lobPreferred, "the Aramon catapult lobs");
+            check(std::abs(w->gravityAdj - 4.25f) < 0.01f,
+                  "and carries its own gravityadjustment",
+                  std::to_string(w->gravityAdj));
+            check(w->aoe > 0, "its cannonball has a blast radius");
+        }
+        if (const sim::Weapon* w = wpn("arabow", 0))
+            check(!w->lobPreferred, "an archer does not lob");
+        if (const sim::UnitType* t = reg.find("vermort"))
+            check(t->lobs(), "the Veruna mortar lobs (exempt from the LoS gate)");
+        if (const sim::UnitType* t = reg.find("arabow"))
+            check(!t->lobs(), "an archer is not");
+        // dontleadtargets ships only on Dropped bombs, whose weaponvelocity is a
+        // fall parameter -- leading on it would throw the aim point off the map.
+        int noLead = 0;
+        for (const auto& [id, t] : reg.types())
+            for (const auto& w : t.weapons)
+                if (w.noLead) ++noLead;
+        check(noLead > 0, "dontleadtargets reaches the registry",
+              std::to_string(noLead) + " weapon blocks");
+    }
+    // A missed splash shell must crater. Fire a catapult, wait for the shell to be
+    // in the air, then move the target out from under it -- the shell must still
+    // land where it was aimed and splash whatever is standing there.
+    // Every faction's wall must actually block. Two of the four declare canmove=1
+    // with no velocity, so a canMove gate left them blocking nothing at all.
+    std::printf("[walls block, all four factions]\n");
+    {
+        for (const char* id : {"arawall", "crewall", "verwall", "tarwall"}) {
+            const sim::UnitType* t = reg.find(id);
+            if (!t) continue;
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs;
+            cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            sim::setupMatch(w, reg, cfg);
+            // Find open ground rather than assuming a cell: Inner Circle is mostly
+            // blocked terrain and a hardcoded cell tests nothing.
+            int cx = -1, cz = -1;
+            for (int j = 30; j < 70 && cx < 0; ++j)
+                for (int i = 30; i < 70; ++i)
+                    if (w.nav().walkable(i, j) && w.nav().walkable(i + 1, j) &&
+                        w.nav().walkable(i, j + 1) && w.nav().walkable(i + 1, j + 1)) {
+                        cx = i; cz = j; break;
+                    }
+            if (cx < 0) { check(false, "found open ground to build a wall on"); continue; }
+            float wx = float(cx) * 16 + 8 + 16, wz = float(cz) * 16 + 8 + 16;
+            bool before = w.nav().walkable(cx, cz);
+            w.spawn(t, wx, wz, 0, 0);
+            sim::blockFootprint(w.nav(), *t, wx, wz, true);
+            bool after = w.nav().walkable(cx, cz);
+            check(before && !after, "the wall blocks its footprint",
+                  std::string(id) + " (canmove=" + (t->canMove ? "1" : "0") + ")");
+        }
+    }
+    std::printf("[a missed shell craters]\n");
+    {
+        const sim::UnitType* pult = reg.find("arapult");
+        const sim::UnitType* vic = reg.find("arasword");
+        if (pult && vic) {
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs;
+            cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+            int gun = w.spawn(pult, 600, 900, 0, 0);
+            int mark = w.spawn(vic, 900, 900, 0, 1);
+            int bystander = w.spawn(vic, 916, 900, 0, 1);   // beside the aim point
+            float by0 = w.unit(bystander)->hp;
+            w.attack(gun, mark, false);
+            bool flew = false, moved = false;
+            for (int i = 0; i < 30 * 20; ++i) {
+                w.tick(1.0f / 30.0f);
+                if (!moved && !w.projectiles().empty()) {
+                    flew = true;
+                    // Yank the target well clear, so the shell cannot connect.
+                    sim::Unit* m = w.unit(mark);
+                    m->x = 600; m->z = 1400;
+                    moved = true;
+                }
+            }
+            check(flew, "the catapult actually fired");
+            float by1 = w.unit(bystander)->hp;
+            check(by1 < by0, "the shell still lands and splashes the aim point",
+                  std::to_string(int(by0)) + " -> " + std::to_string(int(by1)));
+        }
+    }
+    // ...but a shot that CONNECTS must not also crater on the same tick (the
+    // life<=0 expiry and the direct hit can coincide -- that is what `spent` guards).
+    std::printf("[a hit does not double-dip]\n");
+    {
+        const sim::UnitType* pult = reg.find("arapult");
+        const sim::UnitType* vic = reg.find("araking");   // tough enough to survive
+        if (pult && vic) {
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs;
+            cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+            int gun = w.spawn(pult, 600, 1100, 0, 0);
+            int sitting = w.spawn(vic, 900, 1100, 0, 1);   // stationary: no lead, direct hit
+            float hp0 = w.unit(sitting)->hp;
+            w.attack(gun, sitting, false);
+            // Long enough for exactly one shell to be fired and to land, but well
+            // inside the 6.5s reload so a second can't confuse the total.
+            for (int i = 0; i < 30 * 6; ++i) w.tick(1.0f / 30.0f);
+            float lost = hp0 - w.unit(sitting)->hp;
+            const sim::Weapon& cw = pult->weapons[0];
+            float once = cw.damageVs(vic);
+            check(lost <= once * 1.60f,
+                  "one shell deals about one shell's damage, not two",
+                  std::to_string(int(lost)) + " vs " + std::to_string(int(once)));
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

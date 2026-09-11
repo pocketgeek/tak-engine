@@ -92,7 +92,21 @@ struct Weapon {
     // / in-transport gate at the impact itself.
     bool  mindControl = false;
     float minRange = 0;      // minrange: can't hit targets closer than this
-    bool noAir = false;      // noairweapon: cannot target flying units
+    bool noAir = false;
+    // dontleadtargets: aim at the target's CURRENT position instead of extrapolating
+    // where it will be. Retail leads a moving unit by default; this flag skips it.
+    // All four shipped users are Dropped bombs, whose weaponvelocity is a fall
+    // parameter rather than a flight speed -- leading on it would throw the aim
+    // point hundreds of cells away.
+    bool noLead = false;
+    // BallisticWeapon's own two fields (KINGDOMS.icd 0x52bb70 parses exactly these).
+    // gravityadjustment is a plain multiplier on world gravity for this weapon's
+    // arc; lobpreferred picks the HIGH root of the ballistic quadratic instead of
+    // the low one, which is what lets a mortar drop its shell behind a wall.
+    // We have no projectile Y yet, so only lobPreferred changes behaviour today --
+    // see the note at the line-of-sight gate in tickCombat.
+    float gravityAdj = 1.0f;
+    bool lobPreferred = false;      // noairweapon: cannot target flying units
     float manaCost = 0;      // manapershot: mana drained from the firer per shot
     // FBI damagetype: 1 normal, 2 fire, 3 explosion (gibs -- Killed deathType 3
     // EXPLODEs every piece and leaves no corpse), 4 paralyzer (retail icd
@@ -291,6 +305,16 @@ struct UnitType {
         float r = 0;
         for (const auto& w : weapons) r = std::max(r, w.range);
         return r;
+    }
+    // Does this unit lob? A lobbing weapon takes the high ballistic arc, which is
+    // precisely how a mortar or catapult puts its shell behind a wall -- so a
+    // lobber is exempt from the line-of-sight gate that makes other ranged units
+    // refuse to fire through an obstacle. Seven units carry one: the Aramon
+    // Grenadier and Catapult, the Creon Bomb Sprinkler, Sage and Submersible, and
+    // the Veruna Mortar and Catapult.
+    bool lobs() const {
+        for (const auto& w : weapons) if (w.lobPreferred) return true;
+        return false;
     }
 };
 
@@ -511,6 +535,11 @@ struct Projectile {
     float life = 0;        // seconds left before it fizzles
     float age = 0;         // seconds since launch
     float flight = 1;      // expected seconds to target (for the render arc)
+    // Set the moment a shot registers its direct hit. `life = -1` doubles as the
+    // erase predicate, and `life -= dt` runs BEFORE the hit test, so on the final
+    // tick a projectile can both connect and expire -- without this flag the
+    // expiry-detonation below would crater on top of a hit that already landed.
+    bool spent = false;
     int fromId = 0;        // firing unit id (for kill attribution / veterancy)
     const Weapon* wsrc = nullptr;   // source weapon (splash + per-category damage)
     WeaponFx fx = WeaponFx::Arrow;   // how the viewer draws it

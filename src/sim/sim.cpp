@@ -234,6 +234,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 wp.subSteps = wp.projVel > 0.0f
                                   ? int((wp.projVel + 479.0f) / 480.0f) : 1;
                 if (wp.subSteps < 1) wp.subSteps = 1;
+                wp.noLead = w->numberOr("dontleadtargets", 0) != 0;
+                wp.gravityAdj = float(w->numberOr("gravityadjustment", 1.0));
+                wp.lobPreferred = w->numberOr("lobpreferred", 0) != 0;
                 wp.melee = lower(w->valueOr("type", "")) == "melee";
                 // Visual family: FBI hweffect is authoritative (it names the hit
                 // effect); fall back to subtype/damagetype/name when it is absent.
@@ -1598,6 +1601,29 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                      w.name.c_str(), r, splashed);
 }
 
+// Retail leads a MOVING unit target: the aim point is the target's centre plus its
+// velocity times a fraction of the flight time (icd 0x51aa50). The fraction is the
+// fixed-point literal 0xCCCC/65536, so retail deliberately under-leads by 20% --
+// shots land slightly behind a runner rather than perfectly on it, which is what
+// makes a siege shell miss a moving blob and crater instead.
+// A ground-point target, a melee swing and a hitscan beam never lead; nor does a
+// weapon carrying `dontleadtargets`.
+static constexpr float kLeadFrac = float(0xCCCC) / 65536.0f;   // 0.79998779296875
+
+static void leadAim(const Unit& shooter, const Unit& tgt, const Weapon& w,
+                    float& ax, float& az) {
+    ax = tgt.x;
+    az = tgt.z;
+    if (w.noLead || w.melee || w.beam || w.projVel <= 0.0f || tgt.speed == 0.0f) return;
+    // Distance is the PRE-lead one, matching retail: a single pass, no iteration.
+    float d = detmath::len(tgt.x - shooter.x, tgt.z - shooter.z);
+    float t = kLeadFrac * d / w.projVel;
+    // Velocity from heading x speed is exact -- it is literally what the mover
+    // integrates each tick.
+    ax += detmath::sin(tgt.heading) * tgt.speed * t;
+    az += detmath::cos(tgt.heading) * tgt.speed * t;
+}
+
 void World::fire(Unit& u, Unit& target, int slot) {
     const Weapon& w = u.type->weapons[size_t(slot)];
     // manapershot: a caster spends personal mana to fire; if it can't pay, the
@@ -1745,7 +1771,12 @@ void World::fire(Unit& u, Unit& target, int slot) {
     Projectile p;
     p.x = u.x;
     p.z = u.z;
-    float dx = target.x - u.x, dz = target.z - u.z;
+    // Aim where the target WILL be, not where it is (see leadAim). The projectile
+    // keeps targetId so the swept proximity test still resolves a direct hit; what
+    // changes is that a shot at a runner now lands behind it and detonates there.
+    float aimX = target.x, aimZ = target.z;
+    leadAim(u, target, w, aimX, aimZ);
+    float dx = aimX - u.x, dz = aimZ - u.z;
     float dist = std::max(std::sqrt(dx * dx + dz * dz), 1e-3f);
     float vel = w.projVel * kTick / 30.0f;   // weaponvelocity is already px/s-ish
     p.vx = dx / dist * vel;
@@ -1762,7 +1793,12 @@ void World::fire(Unit& u, Unit& target, int slot) {
     // fleeing target doesn't run dry halfway -- fuelling it from the launch
     // distance would make the chase it exists for fizzle. Out of fuel is a dud
     // either way: no damage, no splash.
-    p.life = (w.kind == Weapon::Kind::Guided ? std::max(w.range, dist) : dist) / vel + 0.5f;
+    // A dumb shot is fuelled to EXACTLY its aim point, because that is where it now
+    // detonates: the old half-second of slack would put an arapult's crater ~375px
+    // (23 cells) beyond where the shell was drawn landing. A GUIDED one keeps the
+    // slack and is fuelled from the weapon's RANGE instead.
+    p.life = w.kind == Weapon::Kind::Guided ? (std::max(w.range, dist) / vel + 0.5f)
+                                            : (dist / vel);
     p.flight = dist / vel;
     projectiles_.push_back(p);
 }
@@ -1835,6 +1871,7 @@ void World::tickCombat(Unit& u, float dt) {
         // corners). Melee/flyers acquire regardless.
         bool ranged = u.type->maxRange() > 64.0f && !u.type->canFly;
         int uFoot = std::max(u.type->footX, u.type->footZ) / 2;
+        const bool lobber = u.type->lobs();   // shoots OVER obstacles: skip the LoS gate
         forEachNear(u.x, u.z, ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
             if (!e.alive() || e.embarked() || allied(e.player, u.player) || !e.type) return;
@@ -1845,7 +1882,7 @@ void World::tickCombat(Unit& u, float dt) {
             float dx = e.x - u.x, dz = e.z - u.z;
             float d = dx * dx + dz * dz;
             if (d >= bestD) return;
-            if (ranged && !e.type->canFly &&
+            if (ranged && !e.type->canFly && !lobber &&
                 !nav_.losBetween(u.x, u.z, e.x, e.z, uFoot,
                                  std::max(e.type->footX, e.type->footZ) / 2))
                 return;                         // no clear shot: don't acquire it
@@ -1924,8 +1961,12 @@ void World::tickCombat(Unit& u, float dt) {
                meleeInRange(u.type, target->type, dx, dz);
     // Ranged units need a clear line to shoot; a wall between them means close
     // in / reposition rather than firing through it (melee & flyers are exempt).
+    // A lobbing weapon arcs over what is in the way, which is the whole point of a
+    // mortar. Our projectiles are still 2D, so this is an approximation of retail's
+    // high-arc solve rather than the mechanism: it lets a lobber shoot over a cliff
+    // it could not genuinely clear. Ported faithfully, the arc would decide.
     bool needLoS = best > 64.0f && !u.type->canFly &&
-                   target->type && !target->type->canFly;
+                   target->type && !target->type->canFly && !u.type->lobs();
     // LoS gates ONLY in-range firing and in-range repositioning; an out-of-range
     // chaser advances regardless (the `dist > best*0.95` move test below
     // short-circuits before `los` is read, and the fire gate is never reached out of
@@ -2164,7 +2205,11 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
     site->hp = type->maxHp * 0.05f;
     // Auto-join: a conjured MOBILE unit inherits the builder's squad (a building never does).
     if (bsquad && !type->isStructure()) site->squad = bsquad;
-    if (!type->canMove) {
+    // Key off maxVel, NOT the FBI canmove flag: verwall and tarwall both declare
+    // canmove=1 with no velocity, so a canMove gate left Veruna and Taros walls
+    // blocking neither pathing nor line of sight while Aramon's and Creon's did.
+    // (The CLAUDE.md gotcha, biting for real.)
+    if (type->isStructure()) {
         blockFootprint(nav_, *type, x, z, true);
         invalidateFlows(int(x) / 16 - type->footX / 2, int(z) / 16 - type->footZ / 2,
                         type->footX, type->footZ);
@@ -2198,7 +2243,7 @@ void World::cancelBuilds(int builderId) {
         // A site that never actually started building is just a ghost — remove
         // it so its marker/ghost doesn't linger.
         if (site && site->underConstruction && !site->buildBegun) {
-            if (site->type && !site->type->canMove) {
+            if (site->type && site->type->isStructure()) {
                 blockFootprint(nav_, *site->type, site->x, site->z, false);
                 invalidateFlows(int(site->x) / 16 - site->type->footX / 2,
                                 int(site->z) / 16 - site->type->footZ / 2,
@@ -2563,7 +2608,7 @@ void World::tickConstruction(Unit& b, float dt) {
             // Drop an un-started ghost site (as cancelBuilds does) so its marker and
             // blocked footprint don't linger.
             if (!site->buildBegun) {
-                if (site->type && !site->type->canMove) {
+                if (site->type && site->type->isStructure()) {
                     blockFootprint(nav_, *site->type, site->x, site->z, false);
                     invalidateFlows(int(site->x) / 16 - site->type->footX / 2,
                                     int(site->z) / 16 - site->type->footZ / 2,
@@ -2630,7 +2675,7 @@ void World::decayConstruction(Unit& u, float dt) {
                  : u.type->maxHp * 0.95f / std::max(u.type->buildTime, 0.01f);
     u.hp -= rate * dt;
     if (u.hp > 0) return;
-    if (!u.type->canMove) {
+    if (u.type->isStructure()) {
         blockFootprint(nav_, *u.type, u.x, u.z, false);
         invalidateFlows(int(u.x) / 16 - u.type->footX / 2, int(u.z) / 16 - u.type->footZ / 2,
                         u.type->footX, u.type->footZ);
@@ -3317,6 +3362,7 @@ void World::tick(float dt) {
                     }
                 }
                 p.life = -1;
+                p.spent = true;   // connected: don't also crater at expiry
             }
         }
     }
@@ -3325,18 +3371,42 @@ void World::tick(float dt) {
     // Whatever it lands ON takes the direct hit: several bombs carry no
     // areaofeffect at all (tarbeak's Egg Bomb), and a splash-only detonation would
     // make those deal nothing whatsoever.
+    // ...and so does an ordinary BALLISTIC shell that missed. A retail ballistic
+    // projectile has no lifetime at all: it flies its arc under gravity and always
+    // comes down, and the terrain impact runs the ordinary area-damage path with no
+    // hit unit (KINGDOMS.icd 0x52a6f3 -> 0x529c10). Ours simply vanished, so every
+    // missed siege shell -- 32 ballistic weapon blocks with a real blast radius,
+    // the catapults, trebuchets and mortars -- dealt nothing whatsoever.
+    // A guided or hitscan shot that runs out is still a silent dud, which is retail
+    // too: those DO carry a range-derived expiry that kills them without damage.
     for (size_t bi = 0; bi < projectiles_.size(); ++bi) {
         const Projectile bp = projectiles_[bi];
-        if (bp.life > 0 || !bp.wsrc || bp.wsrc->kind != Weapon::Kind::Dropped) continue;
+        if (bp.spent || bp.life > 0 || !bp.wsrc) continue;
+        bool dropped = bp.wsrc->kind == Weapon::Kind::Dropped;
+        // Ballistic = the plain arcing shot: not guided, not a hitscan beam, not melee.
+        bool ballistic = bp.wsrc->kind == Weapon::Kind::Normal &&
+                         !bp.wsrc->beam && !bp.wsrc->melee;
+        // Splash weapons only. Retail also strikes whatever feature sits in the
+        // impact cell even for a shot with no areaofeffect, but our applyHit damages
+        // that centre cell unconditionally -- so porting it literally would have
+        // every stray arrow chopping and igniting forests. Deliberate divergence.
+        if (!dropped && !(ballistic && bp.wsrc->aoe > 0.0f)) continue;
+        // A bomb is let go over its target, so whatever it lands on takes the DIRECT
+        // hit -- several bombs carry no areaofeffect at all and a splash-only
+        // detonation would deal nothing. A missed shell has no such victim: retail's
+        // terrain impact carries no hit unit, and a unit genuinely standing there
+        // would have been caught by the in-flight test instead.
         Unit* under = nullptr;
-        float bestD = 1e30f;
-        forEachNear(bp.x, bp.z, 40.0f, [&](int idx) {
-            Unit& e = units_[size_t(idx)];
-            if (!e.alive() || e.embarked() || !e.type || allied(e.player, bp.fromPlayer)) return;
-            float dx = e.x - bp.x, dz = e.z - bp.z;
-            float d = dx * dx + dz * dz;
-            if (d < bestD) { bestD = d; under = &e; }
-        });
+        if (dropped) {
+            float bestD = 1e30f;
+            forEachNear(bp.x, bp.z, 40.0f, [&](int idx) {
+                Unit& e = units_[size_t(idx)];
+                if (!e.alive() || e.embarked() || !e.type || allied(e.player, bp.fromPlayer)) return;
+                float dx = e.x - bp.x, dz = e.z - bp.z;
+                float d = dx * dx + dz * dz;
+                if (d < bestD) { bestD = d; under = &e; }
+            });
+        }
         applyHit(*bp.wsrc, bp.x, bp.z, bp.fromPlayer, bp.fromId, under);
     }
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
@@ -3626,7 +3696,8 @@ void World::tick(float dt) {
                 // Don't sit still with no shot: a ranged unit whose line to the
                 // target is blocked keeps moving to get around the wall.
                 bool needLoS = u.type->maxRange() > 64.0f && !u.type->canFly &&
-                               t->type && !t->type->canFly && u.type->canMove;
+                               t->type && !t->type->canFly && u.type->canMove &&
+                               !u.type->lobs();
                 return !needLoS ||
                        nav_.losBetween(u.x, u.z, t->x, t->z,
                                        std::max(u.type->footX, u.type->footZ) / 2,

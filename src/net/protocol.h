@@ -17,7 +17,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 49;       // 49: cosmetic-lows sim batch -- turninplacerate +
+constexpr uint32_t kNetVersion = 50;       // 50: missed ballistic shells crater where they
+                                           // land; target leading + dontleadtargets;
+                                           // lobbers ignore the line-of-sight gate;
+                                           // all four walls block nav (isStructure)
+                                           // 49: cosmetic-lows sim batch -- turninplacerate +
                                            // retail turn/brake coupling, transportdistance,
                                            // [AdjustJoy] repair aura + retail aura falloff,
                                            // guided sub-step speed-up
