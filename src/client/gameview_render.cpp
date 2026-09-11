@@ -263,7 +263,7 @@
             const auto& u = *it.u;
             // Soft blob batches for every mobile ground unit, special or not (a
             // special unit's own body still draws whole in pass 2).
-            if (u.alive() && u.type && u.type->canMove && !u.type->canFly) {
+            if (u.alive() && castsBlobShadow(u.type)) {
                 float sx = (u.x - mapView_.offX()) * zm0 - terrainLiftX(u.x, u.z) * zm0;
                 float sy = (u.z - mapView_.offY()) * zm0 + 2 * zm0
                            - terrainLift(u.x, u.z) * zm0;
@@ -290,6 +290,7 @@
                 if (gslot < 0) continue;
                 const UnitGeom& g = geomPool_[size_t(gslot)];
                 if (special(u, g) || !u.type || u.underConstruction) continue;
+                if (!castsShadow(u.type)) continue;   // noshadow / floater / building
                 // Impostor-sized units are too small for a ground shadow to read.
                 if (impAtlas_ && !g.runs.empty() && g.runs[0].first == impAtlas_) continue;
                 const ShadowTex* sh = shadowFor(u.type->shadowArt);
@@ -489,9 +490,13 @@
         // all fire invisibly. Lightning zig-zags; other beams draw straight.
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
         for (const auto& b : beams_) {
-            constexpr float kBeamLife = 0.16f;
-            float f = std::clamp(1.0f - b.age / kBeamLife, 0.0f, 1.0f);
-            if (f <= 0.0f) continue;
+            // The bolt is drawn muzzle -> travelling head, so a long shot visibly
+            // reaches out rather than appearing whole. Retail's colour ramp is flat,
+            // so hold full strength and fade only over the last quarter -- an even
+            // fade over a one-second bolt reads as a fizzle rather than a strike.
+            float t = std::clamp(b.age / std::max(b.life, 1e-3f), 0.0f, 1.0f);
+            if (t >= 1.0f) continue;
+            float f = 1.0f - std::max(0.0f, (t - 0.75f) / 0.25f);
             if (!cellVisibleR(b.x2, b.z2) && !noFog_) continue;
             auto sx = [&](float x, float z) {
                 return (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
@@ -500,12 +505,17 @@
                 return (z - mapView_.offY()) * zm - 12 * zm - terrainLift(x, z) * zm - alt * zm;
             };
             float ax = sx(b.x1, b.z1), ay = sy(b.x1, b.z1, b.alt1);
-            float bx = sx(b.x2, b.z2), by = sy(b.x2, b.z2, b.alt2);
+            float fullx = sx(b.x2, b.z2), fully = sy(b.x2, b.z2, b.alt2);
+            float bx = ax + (fullx - ax) * t, by = ay + (fully - ay) * t;
             // Three passes -- outer halo, middle body, hot core -- so a weapon's
             // own colours read the way retail's layered bolt does.
             struct Pass { const uint8_t* c; float wob; int reps; };
             const Pass passes[3] = {{b.outer, 3.4f, 3}, {b.middle, 1.8f, 2}, {b.inner, 0.7f, 1}};
-            int segs = b.lightning ? 7 : 1;
+            // Jag count follows the DRAWN length, so a stub isn't over-zigzagged
+            // while it is still reaching out (retail sizes its jag vertices from
+            // screen length the same way).
+            float blen = std::sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+            int segs = b.lightning ? std::clamp(int(blen / 24.0f), 2, 10) : 1;
             for (const Pass& ps : passes) {
                 SDL_SetRenderDrawColor(ren_, ps.c[0], ps.c[1], ps.c[2], Uint8(230 * f));
                 for (int rep = 0; rep < ps.reps; ++rep) {
@@ -1573,6 +1583,10 @@
         float ix, iz, ih; interpPose(u, ix, iz, ih);
         float ax = (ix - mapView_.offX()) * zm - terrainLiftX(ix, iz) * zm;
         float ay = (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm;
+        // FBI waterline: a wading god or a floating hull sits BELOW the water
+        // surface, so the sink is added where the terrain lift is subtracted.
+        // Zero on land and for every type that carries neither canhover nor floater.
+        ay += waterSink(u.type, ix, iz) * zm;
         // Sprite sheet: draw a moving/idle unit as one animated quad from the baked
         // locomotion cycle. Attack/death poses keep the full 3D model (rare).
         if (spritesEnabled_) {
@@ -1711,6 +1725,7 @@
                   : u.underConstruction ? std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f)
                                         : birthP;
         Uint8 alpha = Uint8(p * 255.0f);
+        const bool spectral = u.type && u.type->ghost && !conjuring;
         float vetGold = (!conjuring && u.veteran >= 4)
                             ? float(std::min(u.veteran, 10) - 3) / 7.0f * 0.5f : 0.0f;
         SDL_Texture* cur = nullptr;
@@ -1744,6 +1759,11 @@
                     v.color.g = Uint8(int(v.color.g) + int((int(discoCol.g) - int(v.color.g)) * discoMix));
                     v.color.b = Uint8(int(v.color.b) + int((int(discoCol.b) - int(v.color.b)) * discoMix));
                 }
+                // FBI ghost: a spectral body is see-through. Retail switches the
+                // renderer to its translucent blend mode for these; we scale vertex
+                // alpha instead, which lands in the same place through our painter.
+                // Its exact fraction comes from a per-palette .alp table we do not copy.
+                if (spectral) v.color.a = Uint8(int(v.color.a) * 55 / 100);
                 g.verts.push_back(v);
             }
         }
@@ -1792,7 +1812,7 @@
         // Ground shadow (FBI shadowart, from shadows.gaf): drawn under the model
         // at the unit's ground point, nudged for the sun; a flyer's shadow sits
         // further out and stays on the ground while the model rides its altitude.
-        if (u.type && !u.underConstruction && !u.corpsePhase) {   // corpses: noshadow
+        if (u.type && !u.underConstruction && !u.corpsePhase && castsShadow(u.type)) {
             if (const ShadowTex* sh = shadowFor(u.type->shadowArt)) {
                 float alt = anim ? anim->altitude : 0.0f;
                 float sox = (6.0f + alt * 0.5f) * zm, soy = (3.0f + alt * 0.25f) * zm;
@@ -2703,7 +2723,7 @@
 
     void GameView::updateEffects(float dt) {
         for (auto& b : beams_) b.age += dt;
-        std::erase_if(beams_, [](const BeamFx& b) { return b.age > 0.16f; });
+        std::erase_if(beams_, [](const BeamFx& b) { return b.age > b.life; });
         for (auto& e : effects_) e.age += dt;
         std::erase_if(effects_, [](const EffectInst& e) {
             if (!e.anim || e.anim->frames.empty()) return true;
@@ -2801,9 +2821,17 @@
                 std::fprintf(stderr, "particles: %zu live (peak)\n", peak);
             }
         }
+        // Wind pushes SMOKE only (retail's standard smoke/steam effects add the wind
+        // vector to the position each tick; sparks and debris are ballistic). It goes
+        // into the POSITION, not the velocity -- the damping two lines down would
+        // otherwise eat it within a second.
+        float windPx = windSpeed_ * (8.0f * 30.0f / 65536.0f) * dt;
+        float windDX = std::sin(windHeading_) * windPx;
+        float windDZ = std::cos(windHeading_) * windPx;
         for (auto& p : particles_) {
             p.life -= dt;
             p.x += p.vx * dt; p.z += p.vz * dt;
+            if (p.kind == 1) { p.x += windDX; p.z += windDZ; }
             p.alt += p.valt * dt;
             p.valt -= (p.kind == 1 ? 6.0f : 90.0f) * dt;   // smoke floats, sparks fall
             p.vx *= 0.92f; p.vz *= 0.92f;

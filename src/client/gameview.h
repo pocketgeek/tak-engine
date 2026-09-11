@@ -1713,6 +1713,10 @@ private:
     // smoothly across a slope. Lazily initialises the modal ground reference and
     // reads the tunable scales / debug flag from the environment.
     float heightAbove(float wx, float wz);
+    float rawHeight(float wx, float wz);   // unclamped bilinear height (waterline sink)
+    // Screen-Y sink for a wading (canhover) or floating (floater) unit standing in
+    // water, from FBI `waterline`. Zero on land and for every other unit.
+    float waterSink(const tak::sim::UnitType* t, float wx, float wz);
     const void* hMemoMap_ = nullptr;   // heightAbove 1-entry memo (see above)
     float hMemoX_ = 0, hMemoZ_ = 0, hMemoV_ = 0;
     // Screen-space displacement of a world point's surface from its flat grid cell,
@@ -1724,6 +1728,20 @@ private:
     // move. NOTE: the FBI `canmove` flag is unreliable -- some buildings (the Keep,
     // arakeep) set canmove=1 with NO velocity -- so key off maxVel, not type->canMove.
     static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= 0.0f; }
+    // Retail's shadow rule, and ONLY retail's: it skips the whole shadow block for
+    // FBI `noshadow` (KINGDOMS.icd 0x4ec8d8) and, independently, for every `floater`
+    // (0x4ecac0) -- which is why five ships carry a shadowart they never show.
+    // Buildings are NOT excluded here: two of them (npcflag, vermort) declare a
+    // shadow sprite and retail draws it.
+    static bool castsShadow(const tak::sim::UnitType* t) {
+        return t && !t->noShadow && !t->floater;
+    }
+    // The soft blob is OUR invention for units with no shadow sprite, so it carries
+    // an extra rule retail has no equivalent for: only actual movers get one. Keyed
+    // off maxVel because the FBI `canmove` flag is set on 13 buildings too.
+    static bool castsBlobShadow(const tak::sim::UnitType* t) {
+        return castsShadow(t) && !isStructure(t) && !t->canFly;
+    }
     // EVERYTHING on the map lifts onto the terrain relief by the same rule -- mobile
     // units, buildings, AND the feature decals (mana deposits, trees) -- so a mana
     // deposit sits at the height its heightmap claims and a lodestone/units built on
@@ -2118,7 +2136,11 @@ private:
     // 'K'/'k' = cloak on/off; 'N'/'F' = active on/off (all immediate toggles).
     std::vector<std::pair<int, char>> guiActiveButtons() const;
 
-    std::vector<std::pair<SDL_FRect, char>> guiBtnRects_;   // hit list, filled by renderGui
+    std::vector<std::pair<SDL_FRect, char>> guiBtnRects_;
+    // Press flash: which command button was last clicked and when, so a push button
+    // shows retail's Pressed face for a moment even though we dispatch on mouse-down.
+    char guiPressed_ = 0;
+    uint32_t guiPressedMs_ = 0;   // hit list, filled by renderGui
 
     // Draw the command panel chrome + buttons + idle crystal ball. Falls back to the
     // old vertical order column if no .gui loaded.
@@ -2520,6 +2542,11 @@ private:
     struct BeamFx {
         float x1 = 0, z1 = 0, x2 = 0, z2 = 0;
         float alt1 = 0, alt2 = 0;
+        // Retail treats a Line-of-Sight shot as a VIRTUAL projectile: the damage is
+        // instant, but the bolt is drawn from the muzzle out to a head travelling at
+        // weaponvelocity, and it expires when that head reaches the victim. So the
+        // lifetime is per-shot (distance / velocity), not a fixed flash.
+        float life = 0.16f;
         uint8_t inner[3] = {255, 255, 255};
         uint8_t middle[3] = {200, 230, 255};
         uint8_t outer[3] = {120, 170, 255};
@@ -2588,6 +2615,12 @@ private:
     };
     // Ambient wind (retail WindChange callin): a slow random walk, re-sent to
     // every unit with the script whenever it shifts. Purely cosmetic, per-client.
+    // Ambient wind. Display-only (it drives the COB WindChange call-in on flags and
+    // sails, plus smoke drift) and never hashed. The range is the MAP's: retail reads
+    // minwindspeed/maxwindspeed from the .ota, defaulting to 100/2000.
+    float windMin_ = 100.0f, windMax_ = 2000.0f;
+    std::string windFrom_;   // mapPath_ the range above was read for ("" = not yet)
+    void loadMapWind();      // lazily read min/maxwindspeed from the map's .ota
     float windHeading_ = 0.8f, windSpeed_ = 150;
     float windNext_ = 0;   // animClock_ time of the next shift
     int windGen_ = 1;      // bumped per shift; Anim.windStamp tracks delivery

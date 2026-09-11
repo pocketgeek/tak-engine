@@ -108,6 +108,10 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // FBI turnrate is COB angle units per tick.
             float tr = float(info->numberOr("turnrate", 500));
             t.turnRate = tr * kCobAngle * kTick;
+            // See the header: retail defaults this to 0; we default it to turnrate so
+            // a unit that omits the key can still turn on the spot.
+            t.turnInPlaceRate = float(info->numberOr("turninplacerate", tr))
+                                * kCobAngle * kTick;
             t.maxHp = float(info->numberOr("maxdamage", 100));
             t.isBuilder = info->numberOr("builder", 0) != 0;
             t.commander = info->numberOr("commander", 0) != 0;   // the Monarch
@@ -137,6 +141,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // transportsize, which is what we compare); else the plain count.
             t.transportCap = int(info->numberOr("transportsizecapacity",
                                                 info->numberOr("transportcapacity", 0)));
+            t.transportDist = float(info->numberOr("transportdistance", 0));
             t.buildDist = float(info->numberOr("builddistance", 0));
             t.soundClass = lower(info->valueOr("soundcategory",
                                                info->valueOr("soundclass", "")));
@@ -149,6 +154,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.canAnimate = info->numberOr("cananimate", 0) != 0;
             t.animName_ = lower(info->valueOr("animatetype", ""));
             t.shadowArt = lower(info->valueOr("shadowart", ""));
+            t.noShadow = info->numberOr("noshadow", 0) != 0;
+            t.floater = info->numberOr("floater", 0) != 0;
+            t.canHover = info->numberOr("canhover", 0) != 0;
+            t.ghost = info->numberOr("ghost", 0) != 0;
+            t.waterline = int(info->numberOr("waterline", 0));
             t.veteranModel = lower(info->valueOr("veteranmodel", ""));
             t.bodyType = lower(info->valueOr("bodytype", "default"));
             // Extended stats.
@@ -217,6 +227,13 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 wp.range = float(w->numberOr("range", 0));
                 wp.reload = float(w->numberOr("reloadtime", 1));
                 wp.projVel = float(w->numberOr("weaponvelocity", 0));
+                // See Weapon::subSteps. Integer ceil: no shipped weaponvelocity is a
+                // multiple of 480, so this is bit-identical to retail's fixed-point
+                // chain on every shipped weapon (a mod landing exactly on 480n would
+                // differ by one sub-step).
+                wp.subSteps = wp.projVel > 0.0f
+                                  ? int((wp.projVel + 479.0f) / 480.0f) : 1;
+                if (wp.subSteps < 1) wp.subSteps = 1;
                 wp.melee = lower(w->valueOr("type", "")) == "melee";
                 // Visual family: FBI hweffect is authoritative (it names the hit
                 // effect); fall back to subtype/damagetype/name when it is absent.
@@ -1252,7 +1269,11 @@ void World::tickTransport(Unit& u, float dt) {
         float dx = t->x - u.x, dz = t->z - u.z;
         o.x = t->x;
         o.z = t->z;
-        if (dx * dx + dz * dz < 70 * 70) {
+        // The pickup radius is the TRANSPORT's own transportdistance, not a constant.
+        // Fall back to the old 70 when a type declares none, so a modded transport
+        // without the key still works rather than never completing a load.
+        float tr = t->type->transportDist > 0 ? t->type->transportDist : 70.0f;
+        if (dx * dx + dz * dz <= tr * tr) {
             u.inTransport = t->id;
             t->cargo.push_back(u.id);
             u.orders.clear();
@@ -1954,12 +1975,16 @@ void World::tickCombat(Unit& u, float dt) {
         }
         return;   // movement handled by the normal move logic
     }
-    // In range: stop and face the target.
+    // In range: stop and face the target. Retail brakes to a halt FIRST and only
+    // then pivots, at turninplacerate rather than the moving turn rate (icd
+    // 0x4d9b65), so a unit doesn't spin on the spot while it is still sliding.
     u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
     float want = detmath::atan2(dx, dz);
     float diff = angleDiff(want, u.heading);
-    float maxTurn = u.type->turnRate * dt;
-    u.heading += std::clamp(diff, -maxTurn, maxTurn);
+    if (u.speed <= 0.0f) {
+        float maxTurn = u.type->turnInPlaceRate * dt;
+        u.heading += std::clamp(diff, -maxTurn, maxTurn);
+    }
     // Fire a weapon when the target is in ITS [minrange, range] band, within its
     // aimtolerance, with a clear shot, and (unless noairweapon) legal against air.
     // Each weapon is gated on its own terms, because a non-switching unit runs all
@@ -2423,8 +2448,9 @@ void World::tickReclaim(Unit& b, float dt) {
     b.orders.clear();
     b.speed = 0;
     float want = detmath::atan2(dx, dz);   // face the feature (deterministic)
-    float turn = std::clamp(angleDiff(want, b.heading), -b.type->turnRate * dt,
-                            b.type->turnRate * dt);
+    // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
+    float turn = std::clamp(angleDiff(want, b.heading), -b.type->turnInPlaceRate * dt,
+                            b.type->turnInPlaceRate * dt);
     b.heading += turn;
     float d = std::min(f.work, kReclaimRate * dt);
     f.work -= d;
@@ -2474,8 +2500,9 @@ void World::tickRepair(Unit& b, float dt) {
     b.orders.clear();
     b.speed = 0;
     float want = detmath::atan2(dx, dz);
-    b.heading += std::clamp(angleDiff(want, b.heading), -b.type->turnRate * dt,
-                            b.type->turnRate * dt);
+    // Stopped: pivot at turninplacerate, not the moving turn rate.
+    b.heading += std::clamp(angleDiff(want, b.heading), -b.type->turnInPlaceRate * dt,
+                            b.type->turnInPlaceRate * dt);
     float total = t->type->buildTime / std::max(b.type->workerTime, 0.01f);
     Player& tm = players_[size_t(b.player)];
     float cost = t->type->buildCost * dt / std::max(total, 0.01f);
@@ -2563,8 +2590,9 @@ void World::tickConstruction(Unit& b, float dt) {
     // Face what we're building/conjuring: turn toward the site at the unit's turn
     // rate (a building has turnRate 0, so it simply doesn't rotate).
     float want = detmath::atan2(dx, dz);
-    float turn = std::clamp(angleDiff(want, b.heading), -b.type->turnRate * dt,
-                            b.type->turnRate * dt);
+    // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
+    float turn = std::clamp(angleDiff(want, b.heading), -b.type->turnInPlaceRate * dt,
+                            b.type->turnInPlaceRate * dt);
     b.heading += turn;
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
     // Record the current build rate so an interrupted conjure decays at this speed.
@@ -2661,7 +2689,64 @@ void World::setRepeat(int builderId, const UnitType* type) {
     }
 }
 
+// [AdjustJoy]: a passive repair aura, not morale. Once a second an emitter counts the
+// eligible units in its radius, then repairs each DAMAGED one at build power
+// `adjustment * falloff / N`, paying its own owner's mana at the target's
+// buildcost/buildtime rate (KINGDOMS.icd 0x51d3e0 -> 0x51f7b0 -> 0x429d90). Dividing
+// by the full count -- damaged or not -- is what stops it being absurd in a crowd.
+void World::tickHealAuras() {
+    for (size_t i = 0; i < units_.size(); ++i) {
+        Unit& s = units_[i];
+        if (!s.alive() || s.embarked() || !s.type || s.type->auras.empty() ||
+            s.underConstruction || !s.active || s.incapacitated())
+            continue;
+        for (const Aura& a : s.type->auras) {
+            if (a.kind != Aura::Kind::Joy || a.radius <= 0 || a.amount <= 0) continue;
+            float r2 = a.radius * a.radius;
+            // A target must be alive, fully built, on the right side, and not the
+            // emitter itself. Pass 1 counts them all; pass 2 heals the damaged ones.
+            auto eligible = [&](const Unit& e, float d2) {
+                return e.alive() && !e.embarked() && e.type && e.id != s.id &&
+                       !e.underConstruction && d2 <= r2 &&
+                       (!allied(e.player, s.player)) == a.affectsEnemy;
+            };
+            int n = 0;
+            forEachNear(s.x, s.z, a.radius, [&](int idx) {
+                const Unit& e = units_[size_t(idx)];
+                float dx = e.x - s.x, dz = e.z - s.z;
+                if (eligible(e, dx * dx + dz * dz)) ++n;
+            });
+            if (n == 0) continue;
+            Player& tm = players_[size_t(s.player)];
+            forEachNear(s.x, s.z, a.radius, [&](int idx) {
+                Unit& e = units_[size_t(idx)];
+                float dx = e.x - s.x, dz = e.z - s.z;
+                float d2 = dx * dx + dz * dz;
+                if (!eligible(e, d2)) return;
+                if (e.hp >= e.type->maxHp) return;   // retail heals only the damaged
+                float power = a.amount * a.falloff(std::sqrt(d2)) / float(n);
+                float prog = power / std::max(e.type->buildTime, 0.01f);
+                // Deliberate divergence: retail bills the whole pulse even when only a
+                // sliver of it lands, so topping off one unit can drain a player's
+                // pool. Charge for the repair actually done instead.
+                float need = 1.0f - e.hp / std::max(e.type->maxHp, 1.0f);
+                prog = std::min(prog, need);
+                float cost = e.type->buildCost * prog;
+                if (cost > tm.mana) {   // short on mana: heal proportionally less
+                    prog *= tm.mana / std::max(cost, 1e-6f);
+                    cost = tm.mana;
+                }
+                tm.mana -= cost;
+                e.hp = std::min(e.type->maxHp, e.hp + e.type->maxHp * prog);
+            });
+        }
+    }
+}
+
 void World::tickAuras(float dt) {
+    // The heal aura runs at its own 1 Hz cadence, hoisted above the crowd stride
+    // below so a big battle can never swallow its tick.
+    if (tickCounter_ % 30 == 0) tickHealAuras();
     // Projecting every aura through a dense crowd every tick is the top sim cost in a
     // massive battle (~50ms at 30k units). Buffs change slowly -- they take ~0.5s to
     // fade -- so above a crowd threshold refresh them every kAuraStride ticks instead
@@ -2696,9 +2781,10 @@ void World::tickAuras(float dt) {
                 float dx = e.x - s.x, dz = e.z - s.z;
                 float d2 = dx * dx + dz * dz;
                 if (d2 > r2) return;
-                // edgeeffectiveness: full at centre, (amount blended toward 1 by edge) at rim.
-                float t = std::sqrt(d2) / a.radius;
-                float amt = 1.0f + (a.amount - 1.0f) * (1.0f - t * (1.0f - a.edge));
+                // Retail's falloff is edge-at-the-CENTRE, full-at-the-RIM (see the
+                // Aura comment); we had it the other way round, so a Shaman's +20%
+                // was strongest where it should have been weakest.
+                float amt = 1.0f + (a.amount - 1.0f) * a.falloff(std::sqrt(d2));
                 float& buff = a.kind == Aura::Kind::Armor ? e.armBuff : e.atkBuff;
                 buff = a.affectsEnemy ? std::min(buff, amt) : std::max(buff, amt);
             });
@@ -3180,7 +3266,19 @@ void World::tick(float dt) {
                     float want = detmath::atan2(gt->x - p.x, gt->z - p.z);
                     float d = angleDiff(want, cur);
                     float maxTurn = p.wsrc->turnRate * dt;
-                    float nh = cur + std::clamp(d, -maxTurn, maxTurn);
+                    float nh;
+                    if (std::abs(d) <= maxTurn) {
+                        // Correction complete: retail SNAPS onto the bearing and, in
+                        // the same store, rebuilds the velocity from the per-sub-step
+                        // speed -- which its mover then applies once per sub-step. The
+                        // shot really does accelerate to subSteps x nominal while it
+                        // is tracking, and stays there: the clamped branch below only
+                        // rotates the vector, preserving whatever magnitude it has.
+                        nh = want;
+                        speed = p.wsrc->projVel * float(p.wsrc->subSteps);
+                    } else {
+                        nh = cur + (d > 0 ? maxTurn : -maxTurn);
+                    }
                     p.vx = detmath::sin(nh) * speed;
                     p.vz = detmath::cos(nh) * speed;
                 }
@@ -3620,7 +3718,19 @@ void World::tick(float dt) {
                         target *= u.type->waterMult;
                 }
             }
-            if (std::abs(diff) > 0.8f) target *= 0.3f;
+            // Retail couples turning to braking (icd 0x4da4ce): it works out how far
+            // the unit will travel while it finishes the turn it still owes, and
+            // brakes when the remaining distance is inside twice that arc -- so a
+            // sharp corner slows you down in proportion to how sharp it is, instead
+            // of our old flat "over 0.8 rad, drop to 30%" cliff.
+            float turnRate = std::max(u.type->turnRate, 1e-4f);
+            float arcDist = u.speed * std::abs(diff) / turnRate;
+            if (dist < 2.0f * arcDist) target = 0;
+            // Retail's stop-distance test measures to a DIFFERENT path point than the
+            // arc test does, and we have only one `dist` (to the current order point).
+            // Feeding it both tests unguarded would stop the unit at every A* node, so
+            // the stop test stays on the final leg, where our `dist` means what its
+            // does.
             bool last = u.orders.size() == 1;
             if (last) {
                 float stopDist = u.speed * u.speed / (2 * u.type->brake);

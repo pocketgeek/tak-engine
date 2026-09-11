@@ -648,6 +648,118 @@ int main(int argc, char** argv) {
         check(sameSet, "the shuffle permutes the map's starts, it doesn't invent them");
     }
 
+    // --- Tier-4 "cosmetic lows" ------------------------------------------
+    // Several of these are display-only, but they all start with an FBI field that
+    // must actually reach UnitType/Weapon -- which is the part that silently rots.
+    std::printf("[cosmetic lows: FBI fields reach the registry]\n");
+    {
+        auto ut = [&](const char* id) { return reg.find(id); };
+        if (const auto* wall = ut("arawall"))
+            check(wall->noShadow, "arawall carries noshadow");
+        if (const auto* harp = ut("verharp"))
+            check(harp->floater, "verharp is a floater (retail draws it no shadow)");
+        if (const auto* god = ut("aragod")) {
+            check(god->canHover, "aragod wades (canhover)");
+            check(god->waterline == 40, "and sinks to its waterline",
+                  "waterline=" + std::to_string(god->waterline));
+        }
+        if (const auto* gg = ut("cregod"))
+            check(gg->ghost, "the Ghost of Garacaius is a ghost (translucent)");
+        // Shadow suppression is the render rule those flags feed.
+        if (const auto* wall = ut("arawall"))
+            check(!(wall->maxVel > 0) || !wall->noShadow, "a wall is a structure anyway");
+        if (const auto* trans = ut("aratrans"))
+            check(int(trans->transportDist) == 419,
+                  "aratrans loads from its own transportdistance, not a constant 70",
+                  std::to_string(int(trans->transportDist)) + "px");
+        // turninplacerate: present on most movers, and our default falls back to
+        // turnrate rather than retail's 0 (which would freeze a pivot entirely).
+        if (const auto* sw = ut("arasword"))
+            check(sw->turnInPlaceRate > 0, "a swordsman can pivot on the spot",
+                  std::to_string(sw->turnInPlaceRate));
+        // AdjustJoy is a repair aura; the Acolyte is the headline carrier.
+        if (const auto* pr = ut("arapries")) {
+            int joy = 0;
+            for (const auto& a : pr->auras)
+                if (a.kind == sim::Aura::Kind::Joy && a.radius > 0) ++joy;
+            check(joy == 1, "the Acolyte carries one AdjustJoy aura");
+            for (const auto& a : pr->auras)
+                if (a.kind == sim::Aura::Kind::Joy) {
+                    // Retail's falloff is weakest at the emitter, full at the rim.
+                    check(a.falloff(0.0f) < a.falloff(a.radius),
+                          "the aura is weaker at the centre than at the rim",
+                          std::to_string(a.falloff(0.0f)) + " -> " +
+                              std::to_string(a.falloff(a.radius)));
+                }
+        }
+    }
+    // The repair aura, end to end: a damaged unit next to an Acolyte heals, and the
+    // Acolyte's owner pays for it.
+    std::printf("[AdjustJoy repair aura]\n");
+    {
+        const sim::UnitType* pri = reg.find("arapries");
+        const sim::UnitType* vic = reg.find("arasword");
+        if (pri && vic) {
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs;
+            cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            sim::setupMatch(w, reg, cfg);
+            int pid = w.spawn(pri, 600, 600, 0, 0);
+            int vid = w.spawn(vic, 660, 600, 0, 0);   // well inside radius 200
+            (void)pid;
+            sim::Unit* v = w.unit(vid);
+            v->hp = v->type->maxHp * 0.25f;
+            float hp0 = v->hp;
+            float mana0 = w.player(0).mana;
+            for (int i = 0; i < 60; ++i) w.tick(1.0f / 30.0f);   // 2s = two 1Hz pulses
+            float hp1 = w.unit(vid)->hp;
+            check(hp1 > hp0, "a damaged ally next to an Acolyte is repaired",
+                  std::to_string(int(hp0)) + " -> " + std::to_string(int(hp1)));
+            check(w.player(0).mana < mana0, "and the Acolyte's owner pays the mana",
+                  std::to_string(int(mana0)) + " -> " + std::to_string(int(w.player(0).mana)));
+            // An undamaged unit must not be touched (and must still count toward N).
+            int fid = w.spawn(vic, 640, 620, 0, 0);
+            float full0 = w.unit(fid)->hp;
+            for (int i = 0; i < 60; ++i) w.tick(1.0f / 30.0f);
+            check(w.unit(fid)->hp <= full0 + 0.01f, "an undamaged ally is left alone");
+        }
+    }
+
+    // The turn/brake coupling replaced a flat "big turn -> 30% speed" cliff with
+    // retail's arc-distance rule. The risk is a unit that brakes forever and never
+    // arrives, so test arrival on a straight run AND on a right-angle dogleg.
+    std::printf("[turn/brake coupling]\n");
+    {
+        const sim::UnitType* sw = reg.find("arasword");
+        if (sw) {
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs;
+            cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            sim::setupMatch(w, reg, cfg);
+            // heading 0 faces +Z and pi/2 faces +X, so ordering a unit due +X gives
+            // an aligned start or a 90-degree departure depending on which we spawn
+            // with. Same corridor for both, so terrain can't explain a difference.
+            auto runTo = [&](float sz, float head, float secs) {
+                int id = w.spawn(sw, 600, sz, head, 0);
+                w.order(id, 900, sz, false);
+                for (int i = 0; i < int(secs * 30); ++i) w.tick(1.0f / 30.0f);
+                const sim::Unit* u = w.unit(id);
+                float dx = u->x - 900.0f, dz = u->z - sz;
+                return std::sqrt(dx * dx + dz * dz);
+            };
+            float aligned = runTo(600, 1.5707963f, 20.0f);
+            check(aligned < 48.0f, "a 300px run with an aligned start arrives",
+                  std::to_string(int(aligned)) + "px short");
+            float turning = runTo(640, 0.0f, 20.0f);
+            check(turning < 48.0f, "and so does a 90-degree departure",
+                  std::to_string(int(turning)) + "px short");
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

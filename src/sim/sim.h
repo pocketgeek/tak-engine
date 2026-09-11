@@ -71,6 +71,13 @@ struct Weapon {
     RemoteKind remote = RemoteKind::Plain;
     float particlesPerSec = 0;   // particlespersecond: hailstorm pulse rate
     float turnRate = 0;      // guided: steering rate, radians/sec (FBI deg/s)
+    // Retail splits a projectile's per-tick travel into sub-steps so no sub-step is
+    // longer than one 16px cell, which is how its swept collision stays honest
+    // (KINGDOMS.icd 0x531ccb: subSteps = ceil(unitsPerTick/16), threshold 480 px/s).
+    // It matters here because a guided shot that SNAPS onto its target rebuilds its
+    // velocity from the per-sub-step speed and then has that vector applied once per
+    // sub-step -- so a correcting homer really does fly subSteps x nominal.
+    int subSteps = 1;
     float buildUp = 0;       // builduptime: channel before the effect lands
     float decay = 0;         // decaytime: fade after it lands
     float duration = 0;      // wandering: seconds the storm roams
@@ -138,15 +145,27 @@ struct Weapon {
     float damageVs(const UnitType* t) const;
 };
 
-// A stat aura from an [AdjustArmor]/[AdjustAttack]/[AdjustJoy] weapon block: the
-// unit continuously scales nearby units' armour or attack (multiplier) — friends
-// up (affectsenemy=0) or enemies down (affectsenemy=1) — falling to `edge` at the rim.
+// An aura from an [AdjustArmor]/[AdjustAttack]/[AdjustJoy] block under [UNITINFO].
+// Armor/Attack continuously scale nearby units' armour or attack; JOY IS NOT MORALE
+// -- it is a passive repair aura (retail's tag for it routes straight into the shared
+// build/repair routine), which is why it is the most common of the three.
+// Friends (affectsenemy=0) or enemies (affectsenemy=1), never both.
 struct Aura {
     enum class Kind { Armor, Attack, Joy } kind = Kind::Armor;
-    float amount = 1;        // multiplier (Armor/Attack); additive morale (Joy)
+    float amount = 1;        // multiplier (Armor/Attack); build-power/sec (Joy)
     bool  affectsEnemy = false;
     float radius = 0;
-    float edge = 1;          // edgeeffectiveness at the radius edge
+    // edgeeffectiveness. The name is misleading and the retail opcodes are
+    // unambiguous (KINGDOMS.icd 0x51f636/0x51f730/0x51f858): the strength factor is
+    // `edge + (1 - edge) * dist/radius`, i.e. the aura is WEAKEST at the emitter and
+    // reaches full strength at the rim -- not the other way round. Designers worked
+    // around it by shipping edge=1 (flat) where they wanted no falloff at all.
+    float edge = 1;
+    // The retail falloff factor at `dist` from the emitter.
+    float falloff(float dist) const {
+        float t = radius > 0 ? dist / radius : 0.0f;
+        return edge + (1.0f - edge) * t;
+    }
 };
 
 struct UnitType {
@@ -157,6 +176,13 @@ struct UnitType {
     float accel = 15;      // px/s^2
     float brake = 15;      // px/s^2
     float turnRate = 6;    // rad/s
+    // FBI turninplacerate: the pivot rate used when the unit is STOPPED and merely
+    // turning to face something, which retail keeps separate from the turn rate it
+    // uses while moving (KINGDOMS.icd 0x4d91b0 picks between the two on an in-place
+    // flag). Retail's parse default is 0, which would leave the 39 ground movers that
+    // omit the key unable to pivot at all -- so default to turnRate instead and let an
+    // explicit 0 stand.
+    float turnInPlaceRate = 6;
     float maxHp = 100;
     bool canMove = false;
     bool isBuilder = false;
@@ -191,6 +217,11 @@ struct UnitType {
     Domain domain = Domain::Ground;   // from FBI movementclass prefix
     bool canTransport = false;
     int transportCap = 0;     // units carried (FBI transportcapacity)
+    // FBI transportdistance: the px radius inside which this transport absorbs a
+    // unit that is boarding it. Raw world units == our px (retail stores it as a
+    // plain 16-bit with no scaling, the same family as sightdistance/builddistance),
+    // so a barge reaches ~419px where we used one hardcoded 70 for every transport.
+    float transportDist = 0;
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     std::string bodyType = "default";   // FBI bodytype (flesh/armor/wood/..) = hit-sound material
     std::string corpse;       // FBI corpse feature name
@@ -201,6 +232,19 @@ struct UnitType {
     const UnitType* animateType = nullptr;   // animatetype=<unit>, resolved post-load
     std::string animName_;                   // raw animatetype value (loadDir fixup)
     std::string shadowArt;    // FBI shadowart: shadow sprite name in shadows.gaf
+    // Display-only render flags (never hashed; the sim has no Y axis at all).
+    bool noShadow = false;    // FBI noshadow: casts no ground shadow (walls, spectres)
+    bool floater = false;     // FBI floater: rides the water surface. Retail skips the
+                              // shadow for these too, independently of noshadow, which
+                              // is why five ships carry a shadowart they never show.
+    bool canHover = false;    // FBI canhover: wades rather than being blocked by water
+    bool ghost = false;       // FBI ghost: a spectral body, drawn translucent. Three
+                              // units carry it (Ghost of Garacaius, Ghost Ship, Risen
+                              // Wolf) and all three also set noshadow.
+    int  waterline = 0;       // FBI waterline: height units the model sits BELOW the
+                              // water surface. Retail sets the object's Y to
+                              // max(terrainHeight, waterLevel - waterline), so a god
+                              // wades in up to its waist and a hull sits in the water.
     std::string veteranModel; // veteranmodel: 3DO the unit swaps to at max veterancy
     // --- extended FBI stats -------------------------------------------------
     float healTime = 0;       // healtime: seconds per HP regenerated (0 = no regen)
@@ -1000,6 +1044,7 @@ private:
     void tickReclaim(Unit& b, float dt);
     void tickAbilities(float dt);   // reclaim / resurrect on nearby corpses
     void tickAuras(float dt);       // AdjustArmor/Attack stat auras
+    void tickHealAuras();           // AdjustJoy passive repair aura (1 Hz)
     void updateVisibility();
 
     // Return a flow field toward world (gx,gz) over `type`'s nav grid, built and

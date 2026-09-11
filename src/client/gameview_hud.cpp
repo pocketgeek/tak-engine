@@ -906,8 +906,17 @@
         };
         bool mobile = front->type->maxVel > 0;        // inverse of isStructure()
         bool armed = !front->type->weapons.empty();
-        if (mobile) { add("MOVE", 'm'); add("PATROL", 'p'); add("GUARD", 'g'); }
-        if (armed) add("ATTACK", 'a');
+        // The five order slots sit at fixed .gui positions that nothing else uses, so
+        // retail keeps them on screen and swaps in the Disabled face when the order
+        // doesn't apply (Gadget slot 0). Emitting them as UPPERCASE marks them
+        // unavailable: the draw picks the disabled art and they stay unclickable.
+        // The context slots below OVERLAP each other (HEAL/LOAD share one rect, CLEAR/
+        // UNLOAD another, cloak/power a third), so those must stay hidden, never
+        // blanked -- retail hides those the same way.
+        add("MOVE", mobile ? 'm' : 'M');
+        add("PATROL", mobile ? 'p' : 'P');
+        add("GUARD", mobile ? 'g' : 'G');
+        add("ATTACK", armed ? 'a' : 'A');
         add("STOP", 's');
         // Context orders: reclaim (a mobile reclaiming builder), and transport
         // load/unload. CLEAR and UNLOAD share a .gui slot (599,213) but a unit is
@@ -976,7 +985,9 @@
             const auto& g = gui_.gadgets[idx];
             auto& tex = guiTex_[idx];
             SDL_FRect r = guiCmdRect(g);
-            guiBtnRects_.push_back({r, cmd});
+            // A disabled slot draws but never takes a click (uppercase = unavailable).
+            if (!(cmd == 'M' || cmd == 'P' || cmd == 'G' || cmd == 'A'))
+                guiBtnRects_.push_back({r, cmd});
             bool hot = mouseX_ >= r.x && mouseX_ <= r.x + r.w && mouseY_ >= r.y &&
                        mouseY_ <= r.y + r.h;
             bool active = false;
@@ -991,12 +1002,19 @@
             else if (cmd == 'F') active = selFront && !selFront->active;
             else if (cmd != 's')
                 active = pendingCmd_ == cmd;
-            // Frame semantics differ by button family (both list imgs = frames 0,1,2):
-            //  - order buttons: 0 = empty, 1 = glyph normal, 2 = glyph hilite;
-            //  - radio/toggle buttons (stance/cloak/active): 1 = SELECTED (gold),
-            //    2 = normal (dim). So the lit face swaps between the two.
+            // Retail's Gadget image slots are NOT (normal, hover, grey). Its per-class
+            // slot-name table reads {"Disabled", "Pressed", "Unpressed"} for both the
+            // Button and RadioButton classes, so:
+            //   slot 0 = Disabled (the empty socket), 1 = Pressed, 2 = Unpressed (idle).
+            // Button's constructor sets state 2, mouse-down sets 1 and mouse-up sets 2
+            // back. We had 1 and 2 the other way round for push buttons, so every order
+            // button sat permanently in its pushed-in face and "lit up" to its normal
+            // one on hover. Toggles were already right: a selected radio shows Pressed.
             bool toggle = cmd == 'O' || cmd == 'D' || cmd == 'H' || cmd == 'K' ||
                           cmd == 'k' || cmd == 'N' || cmd == 'F';
+            // An UPPERCASE order letter is the same order, marked unavailable for this
+            // selection: draw the Disabled face and stay unclickable.
+            bool disabled = cmd == 'M' || cmd == 'P' || cmd == 'G' || cmd == 'A';
             auto tx = [&](int i) -> SDL_Texture* {
                 return i >= 0 && i < int(tex.size()) ? tex[size_t(i)] : nullptr;
             };
@@ -1016,12 +1034,19 @@
                               {200, 190, 160, 255});
                 }
             } else {
-                SDL_Texture* lit = toggle ? (tx(1) ? tx(1) : tx(2)) : (tx(2) ? tx(2) : tx(1));
-                SDL_Texture* dim = toggle ? (tx(2) ? tx(2) : tx(1))
-                                          : (tx(1) ? tx(1) : tx(0));
-                SDL_Texture* t = (active || hot) ? lit : dim;
+                // A push button is Pressed while it is armed (waiting for you to
+                // click a target) or during the click flash; a toggle is Pressed while
+                // it is the selected option. Hover no longer changes the face -- it
+                // only raises the tooltip, as in retail.
+                bool held = active ||
+                            (cmd == guiPressed_ && SDL_GetTicks() - guiPressedMs_ < 120);
+                int slot = disabled ? 0 : (held ? 1 : 2);
+                SDL_Texture* t = tx(slot);
+                if (!t) t = tx(held ? 2 : 1);   // art missing that face: use the other
+                if (!t) t = tx(0);
                 if (t) SDL_RenderCopyF(ren_, t, nullptr, &r);
-                if (active && (!t || t == dim)) {   // emphasise when there's no lit face
+                // Armed with no distinct pressed face: fall back to the gold outline.
+                if (active && (!t || slot != 1)) {
                     SDL_SetRenderDrawColor(ren_, 255, 220, 90, 255);
                     SDL_RenderDrawRectF(ren_, &r);
                 }
@@ -1106,6 +1131,12 @@
         for (auto& [r, cmd] : guiBtnRects_) {
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
             playClickTone();
+            // Retail pushes the button in on mouse-DOWN and releases it on UP, firing
+            // the command there. We dispatch on down (changing that would also change
+            // how dragging off a button cancels it), so latch a short press flash
+            // instead -- the same visible feedback without moving the dispatch.
+            guiPressed_ = cmd;
+            guiPressedMs_ = SDL_GetTicks();
             if (cmd == 's') {
                 for (int id : selection_) {
                     tak::net::Command c;

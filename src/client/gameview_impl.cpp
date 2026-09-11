@@ -756,7 +756,11 @@
             // tasers, the Zhon lightning and a dozen more fired completely INVISIBLY.
             // Draw the shot itself: a bolt struck from the firer to the victim, in
             // the weapon's own inner/middle/outer colours where it declares them.
+            // Fire breath is a Line-of-Sight weapon too, but retail's flame class
+            // draws an emitter, not a bolt -- and we already draw its flame. Excluding
+            // it here stops a drake's breath coming with a spurious lightning streak.
             if (h.weapon && h.weapon->beam && !h.weapon->melee &&
+                h.weapon->fx != tak::sim::WeaponFx::Fire &&
                 (noFog_ || cellVisibleR(h.x, h.z))) {
                 BeamFx b;
                 b.x1 = h.fromX; b.z1 = h.fromZ;
@@ -770,6 +774,13 @@
                 }
                 b.alt1 = flyerAltAt(b.x1, b.z1) * 0.8f;
                 b.alt2 = flyerAltAt(b.x2, b.z2) * 0.8f;
+                // Lifetime = flight time of the virtual shot. Clamped so a zero or
+                // silly weaponvelocity can't leave a bolt on screen for a minute.
+                float bdx = b.x2 - b.x1, bdz = b.z2 - b.z1;
+                float bdist = std::sqrt(bdx * bdx + bdz * bdz);
+                b.life = h.weapon->projVel > 0.0f
+                             ? std::clamp(bdist / h.weapon->projVel, 0.05f, 1.5f)
+                             : 0.16f;
                 beams_.push_back(b);
             }
             // A wandering storm grinds EVERY TICK, so routing its hits through the
@@ -859,10 +870,18 @@
         syncBurningFeatures();
         // Ambient wind: a slow random walk; each shift bumps windGen_ and the
         // per-unit loop below re-sends WindChange to flags/sails as they differ.
+        loadMapWind();
         if (animClock_ >= windNext_) {
-            windNext_ = animClock_ + 20.0f + float(salt_++ % 20);
-            windHeading_ += (float(salt_++ % 200) - 100.0f) / 100.0f;
-            windSpeed_ = 50.0f + float(salt_++ % 250);
+            // Retail's wind tick (KINGDOMS.icd 0x525170): the next shift lands in
+            // 90..360 ticks (3..12s at 30Hz), the speed is re-rolled anywhere in the
+            // map's range, and the direction random-walks +-0x2000 (+-45 degrees) --
+            // but only when the new speed is non-zero. Ours re-oriented on a 20-40s
+            // timer over a hardcoded 50..300, so shipped flags and sails turned about
+            // four times too slowly and never reached a gale.
+            windNext_ = animClock_ + 3.0f + float(salt_++ % 10);
+            windSpeed_ = windMin_ + (windMax_ - windMin_) * (float(salt_++ % 1024) / 1024.0f);
+            if (windSpeed_ > 0.0f)
+                windHeading_ += (float(salt_++ % 256) / 256.0f - 0.5f) * (6.2831853f / 4.0f);
             ++windGen_;
         }
         // (No world_.clearHits() here: World::tick already clears hits_ at the start of the
@@ -2066,6 +2085,59 @@
         return playerColors_[(s >= 0 && s < 10) ? s : 0];
     }
 
+    // Raw bilinear heightmap value at a world point -- NOT shifted by the ground
+    // reference and NOT clamped at zero, so water cells report their true (low)
+    // height. heightAbove() below is this minus the reference, floored at 0; only
+    // the waterline sink needs the unclamped value.
+    // The map's wind range, from the .ota [GlobalHeader]. Lazy and keyed on the map
+    // path, so it follows a lobby map swap, a mission and a replay alike. A generated
+    // map has no .ota, which leaves retail's own defaults standing -- exactly what
+    // retail does for the 31 shipped maps that omit the keys.
+    void GameView::loadMapWind() {
+        if (windFrom_ == mapPath_) return;
+        windFrom_ = mapPath_;
+        windMin_ = 100.0f;
+        windMax_ = 2000.0f;
+        std::string ota = mapSibling(".ota");
+        if (!vhas(ota)) return;
+        try {
+            auto b = vread(ota);
+            tak::tdf::Node r = tak::tdf::parseText(std::string(b.begin(), b.end()), ota);
+            if (const tak::tdf::Node* gh = r.child("globalheader")) {
+                windMin_ = float(gh->numberOr("minwindspeed", 100));
+                windMax_ = float(gh->numberOr("maxwindspeed", 2000));
+                if (windMax_ < windMin_) std::swap(windMin_, windMax_);
+            }
+        } catch (const std::exception&) {}
+    }
+
+    float GameView::rawHeight(float wx, float wz) {
+        const auto& m = mapView_.map();
+        if (m.heights.empty() || m.width <= 0) return 0.0f;
+        float gx = (wx - 8.0f) / 16.0f, gz = (wz - 8.0f) / 16.0f;
+        int x0 = std::clamp(int(std::floor(gx)), 0, m.width - 1);
+        int z0 = std::clamp(int(std::floor(gz)), 0, m.height - 1);
+        int x1 = std::min(x0 + 1, m.width - 1), z1 = std::min(z0 + 1, m.height - 1);
+        float fx = std::clamp(gx - float(x0), 0.0f, 1.0f);
+        float fz = std::clamp(gz - float(z0), 0.0f, 1.0f);
+        auto H = [&](int x, int z) { return float(m.heights[size_t(z) * m.width + x]); };
+        return H(x0, z0) * (1 - fx) * (1 - fz) + H(x1, z0) * fx * (1 - fz) +
+               H(x0, z1) * (1 - fx) * fz + H(x1, z1) * fx * fz;
+    }
+
+    // Retail anchors a wading or floating unit at max(terrainHeight, waterLevel -
+    // waterline) (KINGDOMS.icd 0x51b220 for canhover, 0x4dad78 for floater), so the
+    // model sinks up to `waterline` height units and no further once the seabed
+    // rises to meet it. Our sim has no Y, so this is a pure screen-Y offset, added
+    // where terrainLift is subtracted.
+    float GameView::waterSink(const tak::sim::UnitType* t, float wx, float wz) {
+        if (!t || t->waterline <= 0 || !(t->canHover || t->floater)) return 0.0f;
+        const auto& m = mapView_.map();
+        if (m.heights.empty()) return 0.0f;
+        float depth = float(m.seaLevel) - rawHeight(wx, wz);
+        return std::clamp(depth, 0.0f, float(t->waterline)) * kHeightScale_;
+    }
+
     float GameView::heightAbove(float wx, float wz) {
         const auto& m = mapView_.map();
         if (m.heights.empty() || m.width <= 0) return 0.0f;
@@ -2121,8 +2193,11 @@
             alt = (it != anims_.end()) ? it->second.altitude : u.type->cruiseAlt;
         }
         float ix, iz, ih; interpPose(u, ix, iz, ih);   // match the gliding model position
+        // The waterline sink moves the drawn body, so selection/marquee picking has
+        // to follow it or a wading god can't be clicked where you see it.
         return {(ix - mapView_.offX()) * zm - terrainLiftX(ix, iz) * zm,
-                (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm - alt * 0.8f * zm - 12.0f * zm};
+                (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm
+                    + waterSink(u.type, ix, iz) * zm - alt * 0.8f * zm - 12.0f * zm};
     }
 
     const SDL_FRect& GameView::unitHitBox(const tak::sim::UnitType* type) {

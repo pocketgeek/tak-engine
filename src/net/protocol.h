@@ -17,7 +17,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 48;       // 48: Random Start Locations (seeded start-spot shuffle)
+constexpr uint32_t kNetVersion = 49;       // 49: cosmetic-lows sim batch -- turninplacerate +
+                                           // retail turn/brake coupling, transportdistance,
+                                           // [AdjustJoy] repair aura + retail aura falloff,
+                                           // guided sub-step speed-up
+                                           // 48: Random Start Locations (seeded start-spot shuffle)
                                            // 47: Standby_wander wildlife roam (hashed movement)
                                            // 46: mission VO hook + deadly water (waterdoesdamage)
                                            // 45: Msg::SetPause (player-requested pause) + mission order verbs
