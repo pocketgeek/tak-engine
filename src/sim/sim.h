@@ -163,6 +163,13 @@ struct UnitType {
     std::vector<Aura> auras;   // stat auras projected onto nearby units
     Weapon weapon;            // primary (WEAPON1); damage 0 = unarmed
     std::vector<Weapon> weapons;   // all slots (WEAPON1..3)
+    // [EXPLODEAS]: a weapon fired at the unit's OWN position the moment it dies
+    // (Kamikaze Rat's 320-radius blast, Grenadier/Fire Demon/Balloon death pops).
+    Weapon explodeAs;
+    bool hasExplodeAs = false;
+    // totalallowed: per-player cap on LIVE units of this type (dragons/gods/
+    // juggernaut carry 1). 0 = unlimited.
+    int totalAllowed = 0;
     float maxRange() const {
         float r = 0;
         for (const auto& w : weapons) r = std::max(r, w.range);
@@ -720,6 +727,19 @@ public:
         return unitCap_ > 0 && player >= 0 && player < int(players_.size()) &&
                players_[size_t(player)].unitCount >= unitCap_;
     }
+    // FBI `totalallowed`: a per-player cap on LIVE units of one type (the five
+    // dragons, the five gods and the Aerial Juggernaut ship 1). Retail refuses to
+    // finish a conjure that would exceed it, so a player fields only one. Counts
+    // units under construction too, so queuing two dragons can't sneak both out.
+    bool atTypeCap(int player, const UnitType* t) const {
+        if (!t || t->totalAllowed <= 0) return false;
+        int n = 0;
+        for (const auto& u : units_)
+            if (u.alive() && u.type == t && u.player == player &&
+                ++n >= t->totalAllowed)
+                return true;
+        return false;
+    }
     static constexpr float kGodFavorNeeded = 3000.0f;
     bool godReady(int t) const {
         return godsEnabled_ && !players_[size_t(t)].godSummoned &&
@@ -971,6 +991,11 @@ private:
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
     std::vector<Projectile> projectiles_;
     std::vector<HitFx> hits_;
+    // [EXPLODEAS] blasts queued during the death sweep and applied just after it
+    // (applyHit mutates units_, which the sweep is walking). Transient within one
+    // tick -- always empty at tick end, so it needs no hashing.
+    struct DeathBlast { const Weapon* w; float x, z; int player, fromId; };
+    std::vector<DeathBlast> deathBlasts_;
     std::vector<Player> players_ = []{
         std::vector<Player> v(4);
         for (int i = 0; i < 4; ++i) v[size_t(i)].team = i;

@@ -531,7 +531,13 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
 bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                   const std::string& stem, int& humanOut) {
     const std::string base = "missions/" + stem;
-    if (!vfs.has(base + ".tnt") || !vfs.has(base + ".ota") || !vfs.has(base + ".cob")) {
+    // The .cob is OPTIONAL: 11 of the 74 shipped missions (takmission05_dh --
+    // chapter 5 of Book of Darien! -- 07/23/28/40_ph/dh and takx07/10/12/14/15/17)
+    // are pure DATA missions with no god script at all; they run entirely on the
+    // .ota win/lose conditions and the placed units' InitialMission order queues,
+    // both of which we implement. Requiring a cob dead-ended the campaign at
+    // chapter 5.
+    if (!vfs.has(base + ".tnt") || !vfs.has(base + ".ota")) {
         std::fprintf(stderr, "setupMission: '%s' not found\n", stem.c_str());
         return false;
     }
@@ -582,6 +588,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
 
     // Placed units from [Map Data][units].
     int spawned = 0;
+    std::vector<std::pair<int, std::string>> initialOrders;   // (unit id, InitialMission)
     if (const tdf::Node* md = gh->child("map data"))
         if (const tdf::Node* units = md->child("units"))
             for (const auto& key : units->childOrder) {
@@ -597,13 +604,34 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                 int id = world.spawn(t, x, z, ang, player);
                 if (id >= 0) {
                     ++spawned;
-                    if (auto* su = world.unit(id))
+                    if (auto* su = world.unit(id)) {
                         su->hp = su->type->maxHp * float(u.numberOr("healthpercentage", 100)) / 100.0f;
+                        // ManaPercentage: enemy casters open a mission with the mana
+                        // the designer gave them (usually 0 -- they must recharge
+                        // before casting), not a full pool.
+                        if (su->type->maxMana > 0 && u.value("manapercentage"))
+                            su->mana = su->type->maxMana *
+                                       float(u.numberOr("manapercentage", 100)) / 100.0f;
+                    }
+                    // InitialMission: the per-unit order queue in the SAME mini-language
+                    // the god script's SetMission uses (move/patrol/attack/stance/wait/
+                    // ambush/reinforce). 4416 placed units across the shipped missions
+                    // carry one -- it IS the NPC choreography (patrol routes, ambush
+                    // holds, the mission-9 alchemist's scripted walk). Queued here and
+                    // applied by the script once the world is built.
+                    if (const std::string* im = u.value("initialmission"))
+                        if (!im->empty()) initialOrders.push_back({id, *im});
                 }
             }
 
     // Attach + start the in-sim "god" script (its spawns/triggers run from World::tick).
-    world.setMission(std::make_unique<MissionScript>(vfs.read(base + ".cob"), *gh, reg, human, stem, otaToWorld));
+    // A data-only mission has no cob: MissionScript still runs the .ota conditions and
+    // applies the InitialMission queues, it just has no bytecode VM.
+    std::vector<uint8_t> cobBytes;
+    if (vfs.has(base + ".cob")) cobBytes = vfs.read(base + ".cob");
+    auto ms = std::make_unique<MissionScript>(std::move(cobBytes), *gh, reg, human, stem, otaToWorld);
+    ms->setInitialOrders(std::move(initialOrders));
+    world.setMission(std::move(ms));
     humanOut = human;
     std::fprintf(stderr, "setupMission: %s -- %d placed units, human=player%d\n",
                  stem.c_str(), spawned, human);

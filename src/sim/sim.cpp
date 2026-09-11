@@ -200,9 +200,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 t.minWaterDepth = mci->second.minWaterDepth;
             }
             t.cruiseAlt = float(info->numberOr("cruisealt", 0)) / 4;
-            for (int slot = 1; slot <= 3; ++slot) {
-                const auto* w = root.child("WEAPON" + std::to_string(slot));
-                if (!w) continue;
+            // One weapon block -> a Weapon. Shared by WEAPON1..3 and by
+            // [EXPLODEAS] (the death blast), which is the same block shape.
+            auto parseWeapon = [](const tdf::Node* w) {
                 Weapon wp;
                 wp.name = w->valueOr("name", "");
                 wp.range = float(w->numberOr("range", 0));
@@ -291,9 +291,25 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                         if (k != "default")
                             wp.dmgVs[k] = float(std::atof(v.c_str()));
                 }
+                return wp;
+            };
+            for (int slot = 1; slot <= 3; ++slot) {
+                const auto* w = root.child("WEAPON" + std::to_string(slot));
+                if (!w) continue;
+                Weapon wp = parseWeapon(w);
                 if (wp.damage > 0) t.weapons.push_back(wp);
             }
             if (!t.weapons.empty()) t.weapon = t.weapons[0];
+            // [EXPLODEAS]: the weapon a unit detonates at its own position when it
+            // dies -- the Kamikaze Rat's whole purpose (areaofeffect 203, 8000
+            // damage), plus the Grenadier, Fire Demon, Balloon, crebomb, creshoc.
+            if (const auto* ea = root.child("EXPLODEAS")) {
+                t.explodeAs = parseWeapon(ea);
+                t.hasExplodeAs = t.explodeAs.damage > 0;
+            }
+            // totalallowed: per-player cap on live units of this type (the five
+            // dragons, the five gods and the Aerial Juggernaut all carry 1).
+            t.totalAllowed = int(info->numberOr("totalallowed", 0));
             // Stat auras: [AdjustArmor]/[AdjustAttack]/[AdjustJoy] blocks under
             // UNITINFO make the unit a continuous buff/debuff field on nearby units.
             {
@@ -1810,6 +1826,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z) {
         b->underConstruction)
         return 0;
     if (atUnitCap(b->player)) return 0;   // at the unit cap: can't start a new build
+    if (atTypeCap(b->player, type)) return 0;   // totalallowed: already fielding one
     if (!canPlace(type, x, z)) return 0;
     int8_t bsquad = b->squad;   // capture before spawn may realloc units_
     int id = spawn(type, x, z, 3.14159f, b->player);
@@ -2683,6 +2700,10 @@ void World::tickProduction(Unit& u, float dt) {
     // At the per-player unit cap: hold the finished unit inside the building (no mana
     // spent) until a slot frees, rather than popping the queue and spawning it.
     if (atUnitCap(u.player)) return;
+    // Same for the FBI totalallowed cap (one dragon/god/juggernaut per player): hold
+    // the finished unit until the one already fielded dies, instead of spawning a
+    // second. The mana is already spent, so it emerges the moment a slot frees.
+    if (atTypeCap(u.player, t)) return;
     // Finished: the conjured unit emerges just south of the footprint and walks to
     // a rally point. Hold it until that tile is clear so a repeat/queued build
     // doesn't stack units on top of each other -- but never wait forever (2.5s cap)
@@ -2982,6 +3003,15 @@ void World::tick(float dt) {
                 }
             }
             if (mission_ || scenario_) justDied_.push_back(u.id);
+            // [EXPLODEAS]: the unit detonates its own death weapon where it stands
+            // (Kamikaze Rat, Grenadier, Fire Demon, Balloon...). Credit the blast to
+            // the dying unit's OWNER so it can't hurt its own side (applyHit skips
+            // allies) and so kills count for the player who built it. Deferred to a
+            // queue: applyHit walks units_ and can kill others, and we are mid-sweep
+            // over units_ -- draining after the loop keeps that safe and keeps the
+            // order deterministic (sweep order, which is id order).
+            if (u.type->hasExplodeAs)
+                deathBlasts_.push_back({&u.type->explodeAs, u.x, u.z, u.player, u.id});
             // Corpse window: the body lies reclaimable (and, if its corpse def
             // says so, resurrectable) until decomposetime runs out. Gibbed
             // (overkill >= maxHp -- placeholder severity rule pending the icd
@@ -3371,6 +3401,17 @@ void World::tick(float dt) {
             u.goalStuckD = 1e30f; u.goalStuckT = 0;
         }
     }
+
+    // Drain the [EXPLODEAS] death blasts queued by the sweep above. Done here, after
+    // the loop, because applyHit can kill further units (chain-detonating a pack of
+    // Kamikaze Rats) and must not mutate units_ while it is being walked. A blast may
+    // queue more blasts; the index walk picks those up in the same tick, capped so a
+    // pathological chain can't spin forever. Fully deterministic (id-ordered).
+    for (size_t i = 0; i < deathBlasts_.size() && i < 4096; ++i) {
+        const DeathBlast b = deathBlasts_[i];
+        if (b.w) applyHit(*b.w, b.x, b.z, b.player, b.fromId, nullptr);
+    }
+    deathBlasts_.clear();
 
     if (g_phase) _sep0 = std::chrono::steady_clock::now();
     // Separation: push overlapping mobile units apart. The spatial hash limits

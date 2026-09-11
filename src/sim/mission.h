@@ -40,6 +40,13 @@ public:
 
     bool ok() const { return vm_ != nullptr; }
 
+    // Per-placed-unit `InitialMission=` order queues from the .ota, applied at start()
+    // in the same mini-language SetMission uses. This is the shipped missions' NPC
+    // choreography (patrol routes, ambush holds, timed reinforcement waves).
+    void setInitialOrders(std::vector<std::pair<int, std::string>> o) {
+        initialOrders_ = std::move(o);
+    }
+
     void start(World& w);              // run the "Start" script once (initial spawns/triggers)
     void step(World& w, float dt);     // tick the VM, sweep triggers, evaluate conditions
     void unitBuilt(World& w, int id);  // a unit finished building -> UnitCreated(id, 0)
@@ -106,6 +113,7 @@ private:
     // (x,z) once the mission clock reaches `at`.
     struct PendingSpawn { const UnitType* type = nullptr; int player = 0; float x = 0, z = 0, at = 0; };
     std::vector<PendingSpawn> pendingSpawns_;
+    std::vector<std::pair<int, std::string>> initialOrders_;   // .ota InitialMission=, applied at start
 
     float clock_ = 0;         // mission time (s), for timer conditions
     int outcome_ = 0;         // 0 / +1 / -1

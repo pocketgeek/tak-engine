@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "sim/mission.h"
 
 #include "sim/sim.h"
@@ -43,10 +44,17 @@ MissionScript::MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node
                              const TypeRegistry& reg, int humanPlayer, std::string origin,
                              std::vector<int> playerMap)
     : reg_(reg), human_(humanPlayer), origin_(std::move(origin)), playerMap_(std::move(playerMap)) {
+    if (cobBytes.empty()) {
+        // Data-only mission (11 of the 74 shipped ones ship no .cob): no god script.
+        // The .ota conditions + the placed units' InitialMission queues drive it.
+        parseConditions(header);
+        return;
+    }
     try {
         cob_ = cob::load(cobBytes, origin_);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "mission: cob load failed (%s): %s\n", origin_.c_str(), e.what());
+        parseConditions(header);   // still honour the .ota win/lose rules
         return;
     }
     vm_ = std::make_unique<cob::Vm>(cob_, /*deterministicRand=*/true);   // hashed: mission RAND must be lockstep-identical
@@ -67,16 +75,20 @@ const UnitType* MissionScript::findType(const std::string& name) const {
 // ---- lifecycle -------------------------------------------------------------
 
 void MissionScript::start(World& w) {
-    if (!vm_ || started_) return;
+    if (started_) return;
     started_ = true;
     world_ = &w;
-    vm_->start("Start");
+    // The placed units' own order queues run first, so the NPC choreography is in
+    // place before the god script's Start fires. A data-only mission (no cob) has
+    // no VM -- these queues and the .ota conditions ARE the whole mission.
+    for (const auto& [id, orders] : initialOrders_) applyOrders(w, id, orders);
+    initialOrders_.clear();
+    if (vm_) vm_->start("Start");
 }
 
 void MissionScript::step(World& w, float dt) {
-    if (!vm_) return;
     world_ = &w;
-    vm_->tick(dt);
+    if (vm_) vm_->tick(dt);
     clock_ += dt;
     // Timed reinforcements (SetMission "b TYPE H X Y") that have come due.
     for (size_t k = 0; k < pendingSpawns_.size();) {
