@@ -970,6 +970,36 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Mobile units take their footprint from the movement class, not their own FBI:
+    // 125 of 152 movers declare no footprintx at all, and not one is 1x1.
+    std::printf("[movementclass footprints]\n");
+    {
+        struct Want { const char* id; int f; const char* cls; };
+        const Want want[] = {
+            {"arasword", 2, "GROUND2"}, {"araarch", 2, "GROUND2"},
+            {"arapult",  4, "GROUND4"},
+            // The Trebuchet declares footprintx=7 in its own FBI and has NO
+            // movement class -- the one case where the FBI is the source, and a
+            // reminder that footprints are not capped by the class table.
+            {"aratre",   7, "(own FBI)"},
+        };
+        for (const auto& wt : want)
+            if (const sim::UnitType* t = reg.find(wt.id))
+                check(t->footX == wt.f && t->footZ == wt.f,
+                      "a mover inherits its class footprint",
+                      std::string(wt.id) + " " + std::to_string(t->footX) + "x" +
+                          std::to_string(t->footZ) + " (want " + wt.cls + ")");
+        int ones = 0, movers = 0;
+        for (const auto& [id, t] : reg.types()) {
+            if (t.maxVel <= 0 || t.canFly) continue;
+            ++movers;
+            if (t.footX <= 1) ++ones;
+        }
+        check(movers > 100 && ones == 0,
+              "no mobile ground/water unit is left at 1x1",
+              std::to_string(ones) + " of " + std::to_string(movers) + " still 1x1");
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

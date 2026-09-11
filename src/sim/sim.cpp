@@ -63,6 +63,8 @@ void TypeRegistry::loadMoveInfo(const hpi::Vfs& vfs, const std::string& path) {
             std::string name = lower(c.valueOr("Name", ""));
             if (name.empty()) continue;
             MoveClass m;
+            m.footX = int(c.numberOr("FootprintX", 0));
+            m.footZ = int(c.numberOr("FootprintZ", 0));
             m.maxSlope = float(c.numberOr("MaxSlope", 255));
             m.maxWaterDepth = float(c.numberOr("MaxWaterDepth", 255));
             m.minWaterDepth = float(c.numberOr("MinWaterDepth", 0));
@@ -214,6 +216,10 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 t.maxSlope = mci->second.maxSlope;
                 t.maxWaterDepth = mci->second.maxWaterDepth;
                 t.minWaterDepth = mci->second.minWaterDepth;
+                // The movement class WINS over the FBI, which is retail's precedence
+                // and is safe here: no shipped unit declares both.
+                if (mci->second.footX > 0) t.footX = mci->second.footX;
+                if (mci->second.footZ > 0) t.footZ = mci->second.footZ;
             }
             t.cruiseAlt = float(info->numberOr("cruisealt", 0)) / 4;
             t.bankScale = float(info->numberOr("bankscale", 0));

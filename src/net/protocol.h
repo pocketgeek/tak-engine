@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 52;       // 52: retail terrain passability -- a cell is
+constexpr uint32_t kNetVersion = 53;       // 53: mobile units get their REAL footprint from
+                                           // the movement class (2x2..5x5, and a 7x7 Trebuchet)
+                                           // 52: retail terrain passability -- a cell is
                                            // blocked on its OWN quad's height spread, not on
                                            // whether a neighbour rises above it (which severed
                                            // every ramp)

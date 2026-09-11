@@ -321,6 +321,11 @@ struct UnitType {
 // A pathfinding movement class from gamedata/MOVEINFO.tdf: per-class terrain
 // limits that a unit inherits via its FBI `movementclass`.
 struct MoveClass {
+    // FootprintX/Z: the real source of a MOBILE unit's size. 125 of our 152 movers
+    // carry no footprintx in their own FBI at all -- it comes from here, and not one
+    // of them is 1x1 (2x2 through 5x5). Retail copies these into the unit def at
+    // KINGDOMS.icd 0x4c0e54 and falls back to the FBI only for a unit with no class.
+    int footX = 0, footZ = 0;
     float maxSlope = 255;
     float maxWaterDepth = 255;
     float minWaterDepth = 0;
