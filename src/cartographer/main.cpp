@@ -22,6 +22,7 @@
 #include "terrain/terrain.h"
 #include "util/jpeg.h"
 #include "hpi/hpi.h"
+#include "tnt/mapgen.h"
 #include "tnt/ota.h"
 #include "util/png.h"
 
@@ -41,6 +42,36 @@ namespace {
 constexpr int kMenuH = 22;    // top menu-bar strip
 constexpr int kStatusH = 22;  // bottom status strip
 
+// A fresh map for the New dialog / --new launch: either a flat ground stamp or
+// procedural terrain from the engine's map generator (the "~gen1~" generator the
+// lobby uses -- coastlines, relief, trees/rocks/mana, and start positions).
+struct FreshMap {
+    tak::tnt::Map map;
+    std::vector<tak::tnt::StartPos> starts;   // only for random terrain
+};
+FreshMap buildFreshMap(const tak::hpi::Vfs& vfs, cart::SectionLibrary& sections,
+                       tak::terrain::Compositor& comp, const std::string& world,
+                       int wUnits, int hUnits, bool random) {
+    FreshMap out;
+    if (random) {
+        tak::mapgen::Params gp;
+        static const char* kW[] = {"aramon", "taros", "veruna", "zhon", "creon"};
+        gp.mapType = tak::mapgen::Aramon;
+        for (uint8_t i = 0; i < 5; ++i) if (world == kW[i]) gp.mapType = i;
+        gp.widthCells = uint16_t(wUnits * 32);
+        gp.heightCells = uint16_t(hUnits * 32);
+        gp.players = 4;
+        gp.seed = uint64_t(SDL_GetPerformanceCounter());   // new layout each call
+        auto res = tak::mapgen::generate(tak::mapgen::sanitize(gp), vfs);
+        out.map = std::move(res.map);
+        int n = 1;
+        for (auto& [sx, sz] : res.starts) out.starts.push_back({n++, sx, sz});
+    } else {
+        out.map = cart::newBlankMap(vfs, sections, comp, world, wUnits, hUnits);
+    }
+    return out;
+}
+
 void fillRect(SDL_Renderer* r, int x, int y, int w, int h, Uint8 cr, Uint8 cg, Uint8 cb) {
     SDL_SetRenderDrawColor(r, cr, cg, cb, 255);
     SDL_Rect rc{x, y, w, h};
@@ -52,6 +83,7 @@ void fillRect(SDL_Renderer* r, int x, int y, int w, int h, Uint8 cr, Uint8 cg, U
 int main(int argc, char** argv) {
     std::string dataRoot, mapName, outDir = ".", exportPath, bundlePath, stampName, newWorld = "aramon", shotPath;
     int stampBX = 0, stampBY = 0, newW = 0, newH = 0;
+    bool randomTerrain = false;   // --random: generate procedural terrain for --new
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--data" && i + 1 < argc) dataRoot = argv[++i];
@@ -65,6 +97,7 @@ int main(int argc, char** argv) {
             std::sscanf(argv[++i], "%dx%d", &newW, &newH);
         }
         else if (a == "--world" && i + 1 < argc) newWorld = argv[++i];
+        else if (a == "--random") randomTerrain = true;   // --new: procedural terrain
         else if (a == "--shot" && i + 1 < argc) shotPath = argv[++i];   // render 1 frame -> PNG
         else if (a[0] != '-') mapName = a;
     }
@@ -84,7 +117,8 @@ int main(int argc, char** argv) {
             "usage: cartographer \"<map name>\" [--data <retail-install-dir>]\n"
             "         (--data is optional when run from inside a game folder)\n"
             "         [--out <dir>]        Ctrl+S / Ctrl+B save destination (default .)\n"
-            "         [--new WxH --world <w>]  start a blank map (or press N in-editor)\n"
+            "         [--new WxH --world <w> [--random]]  start a blank/random map\n"
+            "                                 (or press N in-editor)\n"
             "         [--save <file.tnt>]  headless: save loose .tnt/.ota/.crt and exit\n"
             "         [--bundle <file.kmp>] headless: save a packed .kmp map and exit\n"
             "in-editor: Tab tools, 1-5 zoom, G grid, N new, P/R/U/C/T/K scenario menu,\n"
@@ -182,15 +216,16 @@ int main(int argc, char** argv) {
         int fw = newW > 0 ? newW : 8, fh = newH > 0 ? newH : 8;
         cart::SectionLibrary ns; ns.scan(vfs, newWorld);
         tak::terrain::Compositor nc(vfs);
-        tak::tnt::Map fresh = cart::newBlankMap(vfs, ns, nc, newWorld, fw, fh);
-        if (fresh.width == 0) {
-            std::fprintf(stderr, "new: no terrain sections for world '%s'\n", newWorld.c_str());
+        FreshMap fm = buildFreshMap(vfs, ns, nc, newWorld, fw, fh, randomTerrain);
+        if (fm.map.width == 0) {
+            std::fprintf(stderr, "new: could not build terrain for world '%s'\n", newWorld.c_str());
             return 1;
         }
         mapName = "Untitled";
         scenario.kingdom = newWorld; scenario.sizeW = fw; scenario.sizeH = fh;
         scenario.missionName = mapName;
-        mapViewPtr = std::make_unique<MapView>(ren, vfs, std::move(fresh));
+        scenario.starts = std::move(fm.starts);
+        mapViewPtr = std::make_unique<MapView>(ren, vfs, std::move(fm.map));
         SDL_SetWindowTitle(win, "Cartographer -- Untitled");
     }
     MapView& mapView = *mapViewPtr;
@@ -536,11 +571,12 @@ int main(int argc, char** argv) {
             mLabel[0] = "WIDTH (UNITS)";  mf[0] = std::to_string(mapView.map().width / 32);  mfNumeric[0] = true;
             mLabel[1] = "HEIGHT (UNITS)"; mf[1] = std::to_string(mapView.map().height / 32); mfNumeric[1] = true;
         } else if (m == M_NEW) {
-            mTitle = "NEW MAP"; mN = 4;
+            mTitle = "NEW MAP"; mN = 5;
             mLabel[0] = "MAP NAME";       mf[0] = "Untitled";  mfNumeric[0] = false;
             mLabel[1] = "WIDTH (UNITS)";  mf[1] = "8";         mfNumeric[1] = true;
             mLabel[2] = "HEIGHT (UNITS)"; mf[2] = "8";         mfNumeric[2] = true;
             mLabel[3] = "WORLD (aramon/veruna/taros/zhon)"; mf[3] = world; mfNumeric[3] = false;
+            mLabel[4] = "RANDOM TERRAIN? (Y/N)"; mf[4] = "N";  mfNumeric[4] = false;
         } else if (m == M_UNIT && unitIdx >= 0 && unitIdx < int(units.size())) {
             const auto& u = units[size_t(unitIdx)];
             mTitle = "UNIT PROPERTIES"; mN = 6;
@@ -576,25 +612,26 @@ int main(int argc, char** argv) {
             std::string wld = mf[3];
             std::transform(wld.begin(), wld.end(), wld.begin(), ::tolower);
             if (wld.empty()) wld = "aramon";
+            bool random = !mf[4].empty() && (mf[4][0] == 'y' || mf[4][0] == 'Y' || mf[4][0] == '1');
             // Rescan the section/feature palettes for the chosen world, then build
-            // a fresh flat map. If the world has no sections, keep the current map.
+            // the map (flat stamp or procedural terrain).
             sections.scan(vfs, wld);
             features.scan(vfs, wld);
-            tak::tnt::Map fresh = cart::newBlankMap(vfs, sections, mapView.compositor(),
-                                                    wld, wu, hu);
-            if (fresh.width == 0) {
+            FreshMap fm = buildFreshMap(vfs, sections, mapView.compositor(), wld, wu, hu, random);
+            if (fm.map.width == 0) {
                 SDL_StopTextInput();
-                openMessage("NEW MAP", "No terrain sections found for world '" + wld +
+                openMessage("NEW MAP", "Could not build a map for world '" + wld +
                             "'. Try aramon, veruna, taros or zhon.");
                 return;   // leaves the message box up; the current map is untouched
             }
-            mapView.editMap() = std::move(fresh);
+            mapView.editMap() = std::move(fm.map);
             mapView.tilesEdited();
             mapView.setOffset(0, 0);
             world = wld;
             scenario = tak::tnt::Scenario{};
             scenario.kingdom = wld; scenario.sizeW = wu; scenario.sizeH = hu;
             scenario.missionName = nm;
+            scenario.starts = std::move(fm.starts);
             mapName = nm;
             units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();
             selected = sections.list().empty() ? -1 : 0;
