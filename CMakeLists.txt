@@ -123,7 +123,9 @@ add_executable(missiontool tools/missiontool.cpp)
 target_link_libraries(missiontool PRIVATE tak-formats)
 
 add_executable(retailgap_test tools/retailgap_test.cpp)
+    add_executable(footprobe tools/footprobe.cpp)
 target_link_libraries(retailgap_test PRIVATE tak-formats)
+target_link_libraries(footprobe PRIVATE tak-formats)
 
 # aitool bundles the AI (src/ai, otherwise server-only) so we can tune it headless.
 add_executable(aitool tools/aitool.cpp src/ai/ai.cpp)

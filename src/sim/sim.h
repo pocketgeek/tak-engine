@@ -1196,6 +1196,14 @@ private:
     uint32_t visGen_ = 0;
     float visTimer_ = 0;
     std::vector<uint8_t> heights_;   // raw TNT heightmap, for fog line-of-sight
+public:
+    // Terrain accessors for offline analysis tools (tools/footprobe): the raw
+    // heightmap and its dimensions. Read-only; nothing in the sim uses these.
+    const std::vector<uint8_t>& mapHeights() const { return heights_; }
+    int mapW() const { return terW_; }
+    int mapH() const { return terH_; }
+    int mapSea() const { return seaLevel_; }
+private:
     int hW_ = 0, hH_ = 0;
     // True if the ground at cell (tx,tz) is visible from a unit at cell (ux,uz):
     // no intervening terrain rises above the eye->target sight line. Local display
@@ -1279,6 +1287,7 @@ private:
     std::vector<uint8_t> depth_;   // water depth (sea level - height), 0 on land
     std::vector<uint8_t> roads_;   // 1 = road cell (feature-plane 0xFFFB); may be empty
     int terW_ = 0, terH_ = 0;
+    int seaLevel_ = 0;   // heights below this are water (kept for tools/analysis)
     // A cell passable for `t`, honouring its maxSlope / maxWaterDepth on top of
     // the shared domain nav grid.
     bool passable(const UnitType* t, int cx, int cz) const {

@@ -563,6 +563,7 @@ Unit* World::unit(int id) {
 
 void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel,
                        const std::vector<uint16_t>* features) {
+    seaLevel_ = seaLevel;
     heights_ = heights;   // keep raw heights for fog line-of-sight
     hW_ = w; hH_ = h;
     // Road cells: the retail map format marks them as 0xFFFB in the feature
