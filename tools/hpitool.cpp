@@ -10,6 +10,8 @@
 #include <fstream>
 #include <cctype>
 #include <iostream>
+#include <iterator>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -21,7 +23,9 @@ static int usage() {
                  "       hpitool merge <hpi-dir> <outdir>   "
                  "# all *.hpi/*.ufo, retail precedence (newest wins)\n"
                  "       hpitool where <hpi-dir> <internal-path>  "
-                 "# show which archive wins a path\n";
+                 "# show which archive wins a path\n"
+                 "       hpitool pack <indir> <out.hpi>     "
+                 "# pack a dir into an HPI (round-trip checked)\n";
     return 2;
 }
 
@@ -108,6 +112,33 @@ int main(int argc, char** argv) {
         } else if (cmd == "where" && argc >= 4) {
             tak::hpi::MountSet ms(argv[2]);
             std::cout << argv[3] << " -> " << ms.sourceOf(argv[3]) << "\n";
+        } else if (cmd == "pack" && argc >= 4) {
+            // hpitool pack <indir> <out.hpi> -- pack every file under <indir>
+            // into an uncompressed HPI (internal path = path relative to indir),
+            // then reparse it and verify the contents round-trip byte-exact.
+            fs::path indir = argv[2];
+            std::vector<tak::hpi::PackFile> files;
+            for (auto& de : fs::recursive_directory_iterator(indir)) {
+                if (!de.is_regular_file()) continue;
+                std::string rel = fs::relative(de.path(), indir).generic_string();
+                std::ifstream f(de.path(), std::ios::binary);
+                std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)),
+                                          std::istreambuf_iterator<char>());
+                files.push_back({rel, std::move(data)});
+            }
+            auto bytes = tak::hpi::pack(files);
+            { std::ofstream o(argv[3], std::ios::binary);
+              o.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size())); }
+            tak::hpi::Archive ar(argv[3]);
+            bool ok = true;
+            for (const auto& pf : files) {
+                const tak::hpi::Entry* e = ar.find(pf.path);
+                if (!e || ar.read(*e) != pf.data) { ok = false;
+                    std::cerr << "  MISMATCH " << pf.path << "\n"; }
+            }
+            std::cout << "packed " << files.size() << " files -> " << argv[3] << " ("
+                      << bytes.size() << " bytes); " << (ok ? "ROUNDTRIP OK" : "ROUNDTRIP FAILED") << "\n";
+            return ok ? 0 : 1;
         } else {
             return usage();
         }

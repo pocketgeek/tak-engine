@@ -123,7 +123,19 @@ the **tile/section palette + brush tools**, the **height tools**, the
     parameters (fields labelled by param kind). Saves through tak::crt::write in
     the .crt -- verified: Ulin's Folly's 30 rules load, render correctly ("I
     control more than 2 ARAAT at hill"), and save back byte-identical.]
-6. Land Lasso + Clear Area; Recent files; polish to 1:1.
+6. Land Lasso + Clear Area; the .kmp bundle writer; polish to 1:1. ✅
+   [Clear Area (key K): arm, drag a box, confirm -> removes units + clears the
+    feature plane inside. Land Lasso (Ctrl+L): land-paint vs object-mode toggle.
+    .kmp bundle: SHARED tak::hpi::pack writes an HPI holding kmap/<name>/
+    <name>.{tnt,ota,crt,txt}(+.tdf) -- the retail distributable-map format the
+    engine mounts directly (Ctrl+B, or headless --bundle). Verified: a bundled
+    map loads through the engine's real path (MountSet -> findMap -> Map::load ->
+    28 units); hpitool pack round-trips. Recent Files is N/A -- the editor opens
+    maps by name via the VFS, not a file-open dialog.]
+
+The Cartographer port is FEATURE-COMPLETE: all editor tools, the full Scenario
+menu, and the .kmp writer. Remaining work is engine-side (playing scenario maps:
+apply .crt unit stats + a typed trigger evaluator) and cosmetic polish.
 
 ## Deep RE findings (tools + triggers, confirmed from the binary)
 

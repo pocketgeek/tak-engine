@@ -43,6 +43,19 @@ struct Entry {
     uint32_t date = 0;            // time_t
 };
 
+// One file to place into a packed archive. `path` is the internal,
+// '/'-separated location (e.g. "kmap/My Map/My Map.tnt").
+struct PackFile {
+    std::string path;
+    std::vector<uint8_t> data;
+};
+
+// Build an HPI-v2 archive (as read by Archive, above) holding `files`, with the
+// directory tree derived from their paths. Files and the directory/name blocks
+// are stored uncompressed (the format's raw variant). `date` stamps each file
+// entry (a time_t; 0 = unset). This is how the map editor writes a .kmp bundle.
+std::vector<uint8_t> pack(const std::vector<PackFile>& files, uint32_t date = 0);
+
 class Archive {
 public:
     explicit Archive(const std::filesystem::path& file);

@@ -251,6 +251,116 @@ const Entry* Archive::find(const std::string& path) const {
     return nullptr;
 }
 
+namespace {
+
+// Directory tree assembled from the pack paths (subdirs sorted for a
+// deterministic archive; files kept in insertion order).
+struct PackDir {
+    std::string name;
+    std::map<std::string, PackDir> subs;
+    std::vector<std::pair<std::string, const std::vector<uint8_t>*>> files;
+};
+
+void put32(std::vector<uint8_t>& b, size_t off, uint32_t v) {
+    b[off] = uint8_t(v); b[off + 1] = uint8_t(v >> 8);
+    b[off + 2] = uint8_t(v >> 16); b[off + 3] = uint8_t(v >> 24);
+}
+void push32(std::vector<uint8_t>& b, uint32_t v) {
+    b.push_back(uint8_t(v)); b.push_back(uint8_t(v >> 8));
+    b.push_back(uint8_t(v >> 16)); b.push_back(uint8_t(v >> 24));
+}
+
+} // namespace
+
+std::vector<uint8_t> pack(const std::vector<PackFile>& files, uint32_t date) {
+    constexpr uint32_t kHeader = 28;   // HAPI + version + 5 u32 fields
+
+    // 1. Build the directory tree from the '/'-separated paths.
+    PackDir root;
+    for (const auto& f : files) {
+        PackDir* d = &root;
+        size_t i = 0;
+        while (true) {
+            size_t slash = f.path.find('/', i);
+            std::string part = f.path.substr(i, slash == std::string::npos ? std::string::npos : slash - i);
+            if (slash == std::string::npos) { d->files.push_back({part, &f.data}); break; }
+            PackDir& sub = d->subs[part];
+            sub.name = part;
+            d = &sub;
+            i = slash + 1;
+        }
+    }
+
+    // 2. Lay out file data (raw, concatenated) and record each file's start.
+    std::vector<uint8_t> fileData;
+    std::map<const std::vector<uint8_t>*, uint32_t> fileStart;
+    for (const auto& f : files) {
+        fileStart[&f.data] = kHeader + uint32_t(fileData.size());
+        fileData.insert(fileData.end(), f.data.begin(), f.data.end());
+    }
+
+    // 3. Name block: NUL-terminated strings, deduped; offset 0 = "" (root name).
+    std::vector<uint8_t> nameBlock;
+    nameBlock.push_back(0);
+    std::map<std::string, uint32_t> nameOff{{"", 0}};
+    auto intern = [&](const std::string& s) -> uint32_t {
+        auto it = nameOff.find(s);
+        if (it != nameOff.end()) return it->second;
+        uint32_t off = uint32_t(nameBlock.size());
+        nameBlock.insert(nameBlock.end(), s.begin(), s.end());
+        nameBlock.push_back(0);
+        nameOff[s] = off;
+        return off;
+    };
+
+    // 4. Directory block: root's 20-byte entry at offset 0, then each dir's
+    //    subdir array (20 bytes each) + file array (24 bytes each), referenced
+    //    by offset. Serialize depth-first, allocating arrays as we go.
+    std::vector<uint8_t> dir(20, 0);
+    std::function<void(const PackDir&, uint32_t)> ser = [&](const PackDir& node, uint32_t entryOff) {
+        uint32_t subOff = uint32_t(dir.size());
+        dir.resize(subOff + node.subs.size() * 20);
+        uint32_t fileOff = uint32_t(dir.size());
+        dir.resize(fileOff + node.files.size() * 24);
+        put32(dir, entryOff + 0, intern(node.name));
+        put32(dir, entryOff + 4, subOff);
+        put32(dir, entryOff + 8, uint32_t(node.subs.size()));
+        put32(dir, entryOff + 12, fileOff);
+        put32(dir, entryOff + 16, uint32_t(node.files.size()));
+        int i = 0;
+        for (const auto& [fn, data] : node.files) {
+            uint32_t f = fileOff + uint32_t(i) * 24;
+            put32(dir, f + 0, intern(fn));
+            put32(dir, f + 4, fileStart[data]);
+            put32(dir, f + 8, uint32_t(data->size()));
+            put32(dir, f + 12, 0);          // compressedSize 0 = stored raw
+            put32(dir, f + 16, date);
+            ++i;                            // f+20..24 left zero
+        }
+        int s = 0;
+        for (const auto& [sn, sub] : node.subs) { ser(sub, subOff + uint32_t(s) * 20); ++s; }
+    };
+    ser(root, 0);
+
+    // 5. Assemble: header | file data | name block | dir block.
+    uint32_t nameBlockOff = kHeader + uint32_t(fileData.size());
+    uint32_t dirBlockOff = nameBlockOff + uint32_t(nameBlock.size());
+    std::vector<uint8_t> out;
+    out.reserve(dirBlockOff + dir.size());
+    const char* magic = "HAPI";
+    out.insert(out.end(), magic, magic + 4);
+    push32(out, 0x00020000);
+    push32(out, dirBlockOff);
+    push32(out, uint32_t(dir.size()));
+    push32(out, nameBlockOff);
+    push32(out, uint32_t(nameBlock.size()));
+    push32(out, kHeader);                   // dataStart
+    out.insert(out.end(), fileData.begin(), fileData.end());
+    out.insert(out.end(), nameBlock.begin(), nameBlock.end());
+    out.insert(out.end(), dir.begin(), dir.end());
+    return out;
+}
+
 HeaderInfo inspect(const std::filesystem::path& archive) {
     std::ifstream in(archive, std::ios::binary);
     if (!in) throw std::runtime_error("cannot open " + archive.string());

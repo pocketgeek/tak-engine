@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -48,13 +49,14 @@ void fillRect(SDL_Renderer* r, int x, int y, int w, int h, Uint8 cr, Uint8 cg, U
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string dataRoot, mapName, outDir = ".", exportPath, stampName, newWorld = "aramon", shotPath;
+    std::string dataRoot, mapName, outDir = ".", exportPath, bundlePath, stampName, newWorld = "aramon", shotPath;
     int stampBX = 0, stampBY = 0, newW = 0, newH = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--data" && i + 1 < argc) dataRoot = argv[++i];
         else if (a == "--out" && i + 1 < argc) outDir = argv[++i];   // Save destination
         else if (a == "--save" && i + 1 < argc) exportPath = argv[++i];  // headless export+exit
+        else if (a == "--bundle" && i + 1 < argc) bundlePath = argv[++i];  // headless: write a .kmp + exit
         else if (a == "--stamp" && i + 3 < argc) {   // headless: stamp <name> <bx> <by>
             stampName = argv[++i]; stampBX = std::atoi(argv[++i]); stampBY = std::atoi(argv[++i]);
         }
@@ -245,6 +247,38 @@ int main(int argc, char** argv) {
         return ok;
     };
 
+    // Save the finished map as a single .kmp bundle: an HPI archive holding
+    // kmap/<name>/<name>.{tnt,ota,crt,txt} (+ .tdf when restricted), the retail
+    // distributable-map format the engine mounts directly.
+    auto saveBundle = [&](const std::string& kmpPath) -> bool {
+        if (edited) {
+            std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
+            cart::generateMinimaps(mapView.editMap(), mapView.compositor(),
+                                   cart::loadWorldPalette(vfs, wld));
+        }
+        std::string base = mapName.empty() ? "new" : mapName;
+        std::string dir = "kmap/" + base + "/";
+        auto bytesOf = [](const std::string& s) {
+            return std::vector<uint8_t>(s.begin(), s.end());
+        };
+        std::vector<tak::hpi::PackFile> pf;
+        pf.push_back({dir + base + ".tnt", mapView.map().save()});
+        if (!useOnly.empty()) {
+            std::vector<std::string> types(useOnly.begin(), useOnly.end());
+            pf.push_back({dir + base + ".tdf", bytesOf(cart::writeUseOnly(types))});
+            scenario.useOnlyUnits = base + ".tdf";
+        } else {
+            scenario.useOnlyUnits.clear();
+        }
+        pf.push_back({dir + base + ".ota", bytesOf(scenario.write())});
+        pf.push_back({dir + base + ".crt", cart::saveScenario(scen, units)});
+        pf.push_back({dir + base + ".txt", bytesOf(scenario.missionDescription.empty()
+                                                       ? scenario.missionName
+                                                       : scenario.missionDescription)});
+        std::vector<uint8_t> kmp = tak::hpi::pack(pf);
+        return writeFile(kmpPath, kmp.data(), kmp.size());
+    };
+
     // Section-prefab palette for this map's world (falls back to aramon).
     cart::SectionLibrary sections;
     std::string world = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
@@ -291,6 +325,12 @@ int main(int argc, char** argv) {
     // / convert path, also how the save is regression-tested).
     if (!exportPath.empty()) {
         bool ok = saveMap(exportPath);
+        SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
+        return ok ? 0 : 1;
+    }
+    // Headless one-shot: --bundle <file.kmp> writes the packed map and exits.
+    if (!bundlePath.empty()) {
+        bool ok = saveBundle(bundlePath);
         SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
         return ok ? 0 : 1;
     }
@@ -404,6 +444,8 @@ int main(int argc, char** argv) {
         edited = true;
     };
     int draggingStart = -1;           // index into scenario.starts while dragging
+    bool clearArm = false, clearDrag = false;   // Clear Area drag-box (screen px)
+    int clx0 = 0, cly0 = 0, clx1 = 0, cly1 = 0;
     // Canvas mouse -> map cell (16px). Returns false if off the canvas/map.
     auto mouseCell = [&](int mx, int my, int& cx, int& cz) -> bool {
         if (mx < kPaletteW) return false;
@@ -423,8 +465,9 @@ int main(int argc, char** argv) {
     };
 
     // --- Modal dialogs (Scenario Properties, Resize, Unit/Rule props, Message) -
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM };
     static constexpr int kMaxFields = 6;
+    std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
     std::string mf[kMaxFields];              // field buffers
     bool mfNumeric[kMaxFields] = {};
@@ -453,6 +496,12 @@ int main(int argc, char** argv) {
         }
         flush();
         mTitle = title; modal = M_MESSAGE; mN = 0; mfocus = 0;
+    };
+    // A yes/no confirmation that runs `action` on OK (used by Clear Area).
+    auto openConfirm = [&](const std::string& title, const std::string& text,
+                           std::function<void()> action) {
+        openMessage(title, text);
+        modal = M_CONFIRM; confirmAction = std::move(action);
     };
     auto openModal = [&](Modal m, int unitIdx = -1) {
         mfocus = 0; editUnit = unitIdx;
@@ -506,6 +555,9 @@ int main(int argc, char** argv) {
             for (int i = 0; i < mN; ++i) editRule->slot[i] = mf[i];
             for (int i = mN; i < 5; ++i) editRule->slot[i].clear();
             editRule = nullptr;
+        } else if (modal == M_CONFIRM) {
+            if (confirmAction) confirmAction();
+            confirmAction = nullptr;
         }
         modal = M_NONE; SDL_StopTextInput();
     };
@@ -738,6 +790,18 @@ int main(int argc, char** argv) {
                      e.key.keysym.sym == SDLK_s) {
                 bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
                 saveMap(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt");
+            } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
+                       e.key.keysym.sym == SDLK_b) {
+                // Ctrl+B: save the finished map as a single .kmp bundle.
+                bool ok = saveBundle(outDir + "/" + mapName + ".kmp");
+                openMessage("SAVE BUNDLE", ok ? ("Saved " + mapName + ".kmp")
+                                              : "Could not write the .kmp bundle.");
+            } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
+                       e.key.keysym.sym == SDLK_l) {
+                // Land Lasso: toggle between land (terrain-stamp) and object mode.
+                tool = tool == TERRAIN ? FEATURES : TERRAIN;
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_k) {
+                clearArm = !clearArm;    // Edit -> Clear Area (drag a box)
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_p) {
                 openModal(M_SCENARIO);   // Scenario -> Properties
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_r) {
@@ -802,7 +866,10 @@ int main(int argc, char** argv) {
                 }
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_LEFT && e.button.x >= kPaletteW) {
-                if (tool == TERRAIN) {
+                if (clearArm) {   // Clear Area: begin the drag box
+                    clearDrag = true;
+                    clx0 = clx1 = e.button.x; cly0 = cly1 = e.button.y;
+                } else if (tool == TERRAIN) {
                     stampAtMouse(e.button.x, e.button.y, canvasW, canvasH);
                 } else if (tool == FEATURES) {
                     placeFeature(e.button.x, e.button.y, false);
@@ -850,9 +917,44 @@ int main(int argc, char** argv) {
                 if (hit >= 0) { units.erase(units.begin() + hit); unitsEdited = true; }
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 draggingStart = -1; draggingUnit = -1;
+                if (clearDrag) {   // Clear Area: confirm, then remove units + features
+                    clearDrag = false;
+                    int a0, b0, a1, b1;
+                    if (mouseCell(std::min(clx0, clx1), std::min(cly0, cly1), a0, b0) &&
+                        mouseCell(std::max(clx0, clx1), std::max(cly0, cly1), a1, b1)) {
+                        int lox = std::min(a0, a1), hix = std::max(a0, a1);
+                        int loz = std::min(b0, b1), hiz = std::max(b0, b1);
+                        int nUnits = 0;
+                        for (const auto& u : units) {
+                            int ux = int(u.x / 16.0f), uz = int(u.z / 16.0f);
+                            if (ux >= lox && ux <= hix && uz >= loz && uz <= hiz) ++nUnits;
+                        }
+                        int cells = (hix - lox + 1) * (hiz - loz + 1);
+                        openConfirm("CLEAR AREA",
+                                    "Remove all units and features in this area?  (" +
+                                        std::to_string(nUnits) + " unit(s), " +
+                                        std::to_string(cells) + " cells)",
+                                    [&units, &mapView, &edited, &unitsEdited,
+                                     lox, hix, loz, hiz]() {
+                            auto& m = mapView.editMap();
+                            for (int z = loz; z <= hiz; ++z)
+                                for (int x = lox; x <= hix; ++x)
+                                    m.features[size_t(z) * m.width + x] = 0xFFFF;
+                            units.erase(std::remove_if(units.begin(), units.end(),
+                                [&](const cart::PlacedUnit& u) {
+                                    int ux = int(u.x / 16.0f), uz = int(u.z / 16.0f);
+                                    return ux >= lox && ux <= hix && uz >= loz && uz <= hiz;
+                                }), units.end());
+                            mapView.tilesEdited(); edited = true; unitsEdited = true;
+                        });
+                    }
+                    clearArm = false;
+                }
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK) &&
                        e.motion.x >= kPaletteW) {
-                if (tool == TERRAIN) {
+                if (clearDrag) {   // Clear Area: grow the box
+                    clx1 = e.motion.x; cly1 = e.motion.y;
+                } else if (tool == TERRAIN) {
                     stampAtMouse(e.motion.x, e.motion.y, canvasW, canvasH);   // drag-paint
                 } else if (tool == FEATURES) {
                     placeFeature(e.motion.x, e.motion.y, false);   // drag-place features
@@ -1059,7 +1161,17 @@ int main(int argc, char** argv) {
         else
             status += "   STARTS: " + std::to_string(scenario.starts.size());
         if (!useOnly.empty()) status += "   USEONLY: " + std::to_string(useOnly.size());
+        if (clearArm) status += "   CLEAR AREA: drag a box (K cancels)";
         cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
+
+        // Clear Area drag box (screen-space rectangle).
+        if (clearDrag) {
+            SDL_Rect box{std::min(clx0, clx1), std::min(cly0, cly1),
+                         std::abs(clx1 - clx0), std::abs(cly1 - cly0)};
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(ren, 230, 90, 80, 60); SDL_RenderFillRect(ren, &box);
+            SDL_SetRenderDrawColor(ren, 240, 120, 100, 220); SDL_RenderDrawRect(ren, &box);
+        }
 
         // Scripting (trigger) overlay: per-player rule groups + their
         // conditions and actions. Drawn under the picker / param modal.
@@ -1145,14 +1257,20 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Message box (Check Map result): wrapped text + a single OK.
-        if (modal == M_MESSAGE) {
+        // Message box (Check Map result) / confirmation: wrapped text + OK
+        // (message) or OK + CANCEL (confirm).
+        if (modal == M_MESSAGE || modal == M_CONFIRM) {
             int ph = 66 + int(mMsg.size()) * 12;
             SDL_Rect ct = cart::drawPanel(ren, w, h, 360, ph, mTitle);
             for (size_t i = 0; i < mMsg.size(); ++i)
                 cart::drawText(ren, mMsg[i], ct.x, ct.y + int(i) * 12, 1, 225, 228, 236);
-            mOK = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18, "OK", true);
-            mCancel = {};   // no cancel on a message box
+            if (modal == M_CONFIRM) {
+                mOK = cart::drawButton(ren, ct.x + ct.w - 150, ct.y + ct.h - 20, 70, 18, "OK", true);
+                mCancel = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18, "CANCEL", false);
+            } else {
+                mOK = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18, "OK", true);
+                mCancel = {};   // no cancel on a message box
+            }
         } else if (modal != M_NONE) {
             // N-field dialog; height fits the field count.
             int ph = 70 + mN * 40;
