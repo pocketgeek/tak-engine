@@ -543,6 +543,76 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- 4. campaign conditions + the mission GET table ----------------------
+    std::printf("[campaign win/lose conditions]\n");
+    {
+        auto runMission = [&](const char* stem, sim::World& w) {
+            int human = 0;
+            return sim::setupMission(w, reg, vfs, stem, human);
+        };
+        auto tickM = [&](sim::World& w, float sec) {
+            for (int i = 0; i < int(sec * 30); ++i) {
+                w.tick(1.0f / 30.0f);
+                if (w.missionOutcome()) break;
+            }
+        };
+        // takmission28_dh is an escort: NPCDERN must cross Z=11 (victory) and losing
+        // every Dern is defeat. Neither condition was parsed, so it could not be
+        // won OR lost. (It is also one of the 11 missions that ship no .cob.)
+        const sim::UnitType* dern = reg.find("npcdern");
+        {
+            sim::World w;
+            if (runMission("takmission28_dh", w) && dern) {
+                tickM(w, 2.0f);
+                check(w.missionOutcome() == 0, "escort mission does not resolve at the start");
+                for (auto& u : w.units())
+                    if (u.type == dern) if (auto* p = w.unit(u.id)) p->hp = 0;
+                tickM(w, 3.0f);
+                check(w.missionOutcome() < 0, "losing every escorted unit is a DEFEAT");
+            }
+        }
+        {
+            sim::World w;
+            if (runMission("takmission28_dh", w) && dern) {
+                tickM(w, 2.0f);
+                int moved = 0;
+                for (auto& u : w.units())
+                    if (u.alive() && u.type == dern)
+                        if (auto* p = w.unit(u.id)) { p->z = 5 * 16.0f; ++moved; }
+                tickM(w, 2.0f);
+                check(moved > 0 && w.missionOutcome() > 0,
+                      "getting it across the line is a VICTORY");
+            }
+        }
+        // takmission11_dh: the human plays Taros and must keep TARPRIE2 alive.
+        {
+            sim::World w;
+            const sim::UnitType* pr = reg.find("tarprie2");
+            if (runMission("takmission11_dh", w) && pr) {
+                tickM(w, 2.0f);   // let the condition arm (it must not fire at t=0)
+                for (auto& u : w.units())
+                    if (u.type == pr) if (auto* p = w.unit(u.id)) p->hp = 0;
+                tickM(w, 3.0f);
+                check(w.missionOutcome() < 0, "AllUnitsKilledOfType protects YOUR units");
+            }
+        }
+        // takmission04_ph wins on GET(5, player1) < 5 -- a living-unit count. While
+        // the GET table returned 0 for everything, that read as 0 < 5 and the
+        // mission declared victory almost immediately.
+        {
+            sim::World w;
+            if (runMission("takmission04_ph", w)) {
+                int alive = 0;
+                for (const auto& u : w.units()) if (u.alive()) ++alive;
+                tickM(w, 5.0f);
+                check(alive > 5 && w.missionOutcome() <= 0,
+                      "a unit-count victory no longer fires instantly",
+                      std::to_string(alive) + " units alive, outcome=" +
+                          std::to_string(w.missionOutcome()));
+            }
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

@@ -260,12 +260,45 @@ void MissionScript::doSetAttribute(World& w, const std::string& sub, int unitId,
 
 // ---- GET / SET -------------------------------------------------------------
 
-int32_t MissionScript::getValue(World& w, int32_t valId, const std::vector<int32_t>&) {
-    if (valId == 7) {   // the context unit's type id
-        if (Unit* u = w.unit(getUnitContext_)) return typeHash(u->type);
-        return 0;
+int32_t MissionScript::getValue(World& w, int32_t valId, const std::vector<int32_t>& a) {
+    // The mission GET table. Scripts call GET(valId, a1..a4) 135 times across the
+    // shipped missions and we answered only id 7, returning 0 for everything else --
+    // which silently mis-resolved real missions: takmission04 read a player's unit
+    // count as 0 and declared victory the instant anything died, takmission09 never
+    // recognised Heket's death, and takmission22's POW counter never advanced.
+    int32_t a1 = a.empty() ? 0 : a[0];
+    switch (valId) {
+        case 5: {
+            // Living units belonging to an .ota player (the script uses .ota player
+            // numbers, so map them into our compacted slots the way placements do).
+            int player = a1;
+            if (a1 >= 1 && a1 < int(playerMap_.size()) && playerMap_[size_t(a1)] >= 0)
+                player = playerMap_[size_t(a1)];
+            int n = 0;
+            for (const auto& u : w.units())
+                if (u.alive() && u.type && u.player == player) ++n;
+            return n;
+        }
+        case 7:    // the context unit's type (GET_UNIT_VALUE form)
+            if (Unit* u = w.unit(getUnitContext_)) return typeHash(u->type);
+            return 0;
+        case 30:   // a named unit's TYPE -- compared against the getUtype command,
+                   // so it must hash identically
+            if (Unit* u = w.unit(a1)) return typeHash(u->type);
+            return 0;
+        case 35:   // a unit's X cell (paired with 36 and compared to cell constants)
+            if (Unit* u = w.unit(a1)) return int32_t(u->x) / 16;
+            return 0;
+        case 36:   // a unit's Z cell
+            if (Unit* u = w.unit(a1)) return int32_t(u->z) / 16;
+            return 0;
+        case 40:   // a global counter, tested against 2500 to gate a late VO line;
+                   // elapsed mission TICKS is the only reading that fits (~83s).
+            return int32_t(clock_ * 30.0f);
+        default:
+            // id 31 (one use, semantics unclear) and anything else: 0.
+            return 0;
     }
-    return 0;   // valId 30 (roster index) etc. -> TODO
 }
 
 void MissionScript::setUnitValue(int32_t valId, int32_t value) {
@@ -334,6 +367,21 @@ void MissionScript::parseConditions(const tak::tdf::Node& h) {
     if (has("CommanderKilled"))    add(Cond::CommanderKilled, false, nullptr, 0, 0, 0, 0);
     if (has("AllUnitsKilled"))     add(Cond::AllUnitsKilled, false, nullptr, 0, 0, 0, 0);
     if (has("DeathTimerRunsOut"))  add(Cond::DeathTimerRunsOut, false, nullptr, std::strtof(str("DeathTimerRunsOut").c_str(), nullptr), 0, 0, 0);
+    // The escort/protect family. These are the most common conditions we did not
+    // parse at all: AllUnitsKilledOfType alone appears in 21 of the 74 missions, so
+    // the wagon-escort and protect-the-NPC missions could neither be won nor lost.
+    //   AllUnitsKilledOfType=<T>      -- DEFEAT once every unit of T is dead. The
+    //     type is always something on YOUR side (the escorted NPC, or your own
+    //     troops in a mission where you play that kingdom).
+    //   UnitTypePassesX/Z=<T>,<v>     -- VICTORY when a unit of T crosses the cell
+    //     line v. Which SIDE counts as "across" depends on where it started, so the
+    //     starting side is captured when the condition arms.
+    //   UnitTypeKilled=<T>,<n>        -- DEFEAT once n units of T have died.
+    if (has("AllUnitsKilledOfType"))
+        add(Cond::AllUnitsKilledOfType, false, findType(str("AllUnitsKilledOfType")), 0, 0, 0, 0);
+    if (has("UnitTypePassesX")) { args(str("UnitTypePassesX"), ty, a); add(Cond::UnitTypePassesX, true, findType(ty), a[0], 0, 0, 0); }
+    if (has("UnitTypePassesZ")) { args(str("UnitTypePassesZ"), ty, a); add(Cond::UnitTypePassesZ, true, findType(ty), a[0], 0, 0, 0); }
+    if (has("UnitTypeKilled"))  { args(str("UnitTypeKilled"), ty, a); add(Cond::UnitTypeKilled, false, findType(ty), a[0], 0, 0, 0); }
 }
 
 void MissionScript::evalConditions(World& w, float) {
@@ -384,7 +432,46 @@ void MissionScript::evalConditions(World& w, float) {
                 met = c.armed && !humanHasAnyMobile();   // TODO commander-specific
                 break;
             case Cond::DeathTimerRunsOut:   met = clock_ >= c.a; break;
-            default: break;   // KillEnemyCommander / passes-X etc. -> TODO
+            case Cond::AllUnitsKilledOfType: {
+                bool any = false;
+                for (const auto& u : w.units())
+                    if (u.alive() && u.type == c.type) { any = true; break; }
+                if (any) c.armed = true;          // don't lose before it has spawned
+                met = c.armed && !any;
+                break;
+            }
+            case Cond::UnitTypeKilled: {
+                // Count the dead of this type. Dead units linger as corpse records,
+                // so counting them directly is both simple and replay-stable.
+                int dead = 0;
+                for (const auto& u : w.units())
+                    if (!u.alive() && u.type == c.type) ++dead;
+                met = dead >= int(c.a);
+                break;
+            }
+            case Cond::UnitTypePassesX:
+            case Cond::UnitTypePassesZ: {
+                bool isX = c.kind == Cond::UnitTypePassesX;
+                float line = cellToWorld(c.a);
+                // Arm on the first sighting and remember which side of the line the
+                // escort started on; the objective is to reach the OTHER side.
+                if (!c.armed) {
+                    for (const auto& u : w.units())
+                        if (u.alive() && u.type == c.type) {
+                            c.armed = true;
+                            c.b = ((isX ? u.x : u.z) < line) ? -1.0f : 1.0f;
+                            break;
+                        }
+                    break;   // never satisfied on the tick it arms
+                }
+                for (const auto& u : w.units()) {
+                    if (!u.alive() || u.type != c.type) continue;
+                    float p = isX ? u.x : u.z;
+                    if (c.b < 0 ? p >= line : p <= line) { met = true; break; }
+                }
+                break;
+            }
+            default: break;   // KillEnemyCommander -> TODO
         }
         if (met) { outcome_ = c.victory ? 1 : -1; return; }
     }
@@ -396,7 +483,11 @@ void MissionScript::foldHash(uint64_t& h) const {
     auto mix = [&](uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
     mix(uint64_t(int64_t(outcome_)));
     for (const Region& r : regions_) mix(r.armed ? 1u : 0u);
-    for (const Cond& c : conds_) mix(c.armed ? 1u : 0u);
+    // Both the armed flag and the captured crossing side are live condition state.
+    for (const Cond& c : conds_) {
+        mix(c.armed ? 1u : 0u);
+        mix(uint64_t(int64_t(c.b * 4.0f)));
+    }
     mix(uint64_t(pendingSpawns_.size()));   // timed reinforcements still pending
     for (const auto& s : pendingSpawns_) {
         uint32_t at; std::memcpy(&at, &s.at, 4); mix(at);
