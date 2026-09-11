@@ -85,6 +85,7 @@ struct Frame {
     int visW = 0, visH = 0;
     uint32_t visGen = 0;
     std::vector<tak::sim::Projectile> projectiles;
+    std::vector<tak::sim::World::Storm> storms;   // roaming wandering-weapon hazards
     std::vector<tak::sim::World::HitFx> hits;   // weapon impacts this tick (cosmeticStep FX)
     int winningTeam = -1;                // world_.winningTeam() (victory overlay)
     uint32_t gameTick = 0;               // world_.tickCount() (benchmark timing)

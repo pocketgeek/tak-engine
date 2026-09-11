@@ -443,6 +443,33 @@
 
         // Projectiles: drawn per weapon family (only where visible).
         float zm = mapView_.zoom();
+        // Wandering storms. These are roaming hazards with their own three-part
+        // animation (wanderstartart while it spins up, wanderloopart while it
+        // roams); without it a Tornado or a god's vortex tears through an army
+        // completely invisibly. Drawn before the shots so units read on top of it.
+        for (const auto& st : front().storms) {
+            if (!st.w) continue;
+            if (!noFog_ && !cellVisibleR(st.x, st.z)) continue;
+            bool spinUp = st.arm > 0.0f;
+            const std::string& artName = spinUp && !st.w->wanderStart.empty()
+                                             ? st.w->wanderStart : st.w->wanderLoop;
+            if (artName.empty()) continue;
+            const EffectAnim* ea = effectFor(artName);
+            if (!ea || ea->frames.empty()) continue;
+            // The loop cycles; the spin-up plays through once and holds its last
+            // frame until the storm arms.
+            float phase = spinUp ? (st.w->buildUp - st.arm) : st.left;
+            size_t fi = size_t(std::max(0.0f, phase) * 20.0f);
+            fi = spinUp ? std::min(fi, ea->frames.size() - 1) : fi % ea->frames.size();
+            const auto& fr = ea->frames[fi];
+            float sx = (st.x - mapView_.offX()) * zm - terrainLiftX(st.x, st.z) * zm;
+            float sy = (st.z - mapView_.offY()) * zm - terrainLift(st.x, st.z) * zm;
+            float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
+            // Anchored at the storm's FOOT: these sprites are tall columns whose
+            // anchor sits near the base, so the funnel stands on the ground.
+            SDL_FRect dst{sx - float(fr.ax) * zm, sy - float(fr.ay) * zm, fw, fh};
+            SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
+        }
         // Hitscan flashes first, behind the shots. A Line-of-Sight weapon applies
         // its damage instantly and spawns no projectile, so this bolt IS the shot:
         // without it the King's Thunder, the Creon tasers and the Zhon lightning
@@ -495,6 +522,43 @@
             // lift), so a drake's breath leaves its mouth and arcs to the ground.
             float palt = (unitAltById(p.fromId) * (1 - t) + unitAltById(p.targetId) * t)
                          * 0.8f * zm;
+            // Ground shadow (shadowgaf/shadowart, 218 weapons) and light pool
+            // (lightmap, 36): both sit on the GROUND under the shot, not at its
+            // altitude, which is what sells the shot as being up in the air.
+            if (p.wsrc) {
+                float gx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
+                float gy = (p.z - mapView_.offY()) * zm - terrainLift(p.x, p.z) * zm;
+                if (p.wsrc->lightMap > 0) {
+                    // A soft additive pool tinted by the shot's own family, so a
+                    // fireball throws warm light on the ground as it passes.
+                    float r = (10.0f + 8.0f * float(p.wsrc->lightMap)) * zm;
+                    Uint8 lr = 255, lg = 230, lb = 160;
+                    if (p.fx == tak::sim::WeaponFx::Lightning) { lr = 190; lg = 215; lb = 255; }
+                    else if (p.fx == tak::sim::WeaponFx::Fire) { lr = 255; lg = 160; lb = 70; }
+                    SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
+                    for (int ring = 3; ring >= 1; --ring) {
+                        float rr = r * float(ring) / 3.0f;
+                        SDL_SetRenderDrawColor(ren_, lr, lg, lb, Uint8(26));
+                        SDL_FRect q{gx - rr, gy - rr * 0.5f, rr * 2, rr};
+                        SDL_RenderFillRectF(ren_, &q);
+                    }
+                    SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+                }
+                if (!p.wsrc->shadowArt.empty()) {
+                    // shadowgaf is always "shadows"; effectFor's "file:sequence"
+                    // form picks the named sequence out of it.
+                    if (const EffectAnim* sh = effectFor("shadows:" + p.wsrc->shadowArt)) {
+                        const auto& fr = sh->frames[size_t(int(p.age * 12.0f)) % sh->frames.size()];
+                        // effectFor caches its textures additively for glowing
+                        // effects; a shadow has to DARKEN instead.
+                        SDL_SetTextureBlendMode(fr.tex, SDL_BLENDMODE_BLEND);
+                        SDL_SetTextureAlphaMod(fr.tex, 110);
+                        float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
+                        SDL_FRect dst{gx - fw * 0.5f, gy - fh * 0.5f, fw, fh};
+                        SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
+                    }
+                }
+            }
             // A shot with a real mesh (arrows, spears, boulders) is drawn as that
             // mesh, yawed along its flight so an arrow actually points where it is
             // going. Models face -heading, like every other mover.

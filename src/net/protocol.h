@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 42;       // 42: weapon classes -- guided homing, Remote Effect,
+constexpr uint32_t kNetVersion = 43;       // 43: storm ids folded into the hash (viewer draws storms)
+                                           // 42: weapon classes -- guided homing, Remote Effect,
                                            // wandering storms, mind control, unitsonly
                                            // 41: [EXPLODEAS] death blasts, totalallowed unique cap,
                                            // data-only missions (.cob optional) + InitialMission/ManaPercentage

@@ -108,6 +108,11 @@ struct Weapon {
     uint8_t middle[3] = {200, 230, 255};   // middlecolor
     uint8_t outer[3] = {120, 170, 255};    // outercolor
     float spinRate = 0;       // spinheading: shot spins as it flies (rad/sec)
+    std::string shadowArt;    // shadowart: sequence in shadowgaf (always "shadows")
+    int lightMap = 0;         // lightmap: ground light pool, 1 small 2 medium 3 large
+    // A wandering storm's own three-part animation: the spin-up, the roaming loop,
+    // and the dissipation. Without these a tornado is invisible.
+    std::string wanderStart, wanderLoop, wanderEnd;
     std::string explosionClass;       // explosionclass: impact effect (gamedata/explosions)
     std::string waterExplosionClass;  // waterexplosionclass: impact effect over water
     // Area-effect shockwave rings emitted at this weapon's impact.
@@ -750,6 +755,7 @@ public:
         // stream position diverges from a referee that started fresh.
         pendingEffects_.clear();
         storms_.clear();
+        stormSeq_ = 0;
         deathBlasts_.clear();
         burnRng_ = 0x54414B21;
         nextId_ = 1;
@@ -901,6 +907,21 @@ public:
 
     std::vector<Unit>& units() { return units_; }
     const std::vector<Unit>& units() const { return units_; }
+    // A wandering storm (FBI type=wandering): a roaming hazard the VIEWER must
+    // draw, so its state is public like a projectile's. `id` is stable for the
+    // storm's life so the viewer can play its spin-up, loop and dissipation art.
+    struct Storm {
+        const Weapon* w = nullptr;
+        float x = 0, z = 0;
+        float dirX = 0, dirZ = 1;   // FIXED launch direction: a storm never re-aims
+        float jitX = 0, jitZ = 0;   // current per-tick wander offset (px/tick)
+        int player = 0, fromId = 0;
+        int id = 0;
+        float arm = 0;       // builduptime: it drifts but does not bite yet
+        float left = 0;      // seconds of roaming left (duration)
+        float nextVary = 0;  // seconds until the next wander re-roll
+    };
+    const std::vector<Storm>& storms() const { return storms_; }
     const std::vector<Projectile>& projectiles() const { return projectiles_; }
     Unit* unit(int id);
     const Unit* unit(int id) const {
@@ -1081,17 +1102,8 @@ private:
     // Wandering (FBI type=wandering): a storm entity that roams for `duration`,
     // drifting at weaponvelocity and wobbling its heading every `variationtime`.
     // Damages everything it passes on a fixed cadence. Hashed.
-    struct Storm {
-        const Weapon* w = nullptr;
-        float x = 0, z = 0;
-        float dirX = 0, dirZ = 1;   // FIXED launch direction: a storm never re-aims
-        float jitX = 0, jitZ = 0;   // current per-tick wander offset (px/tick)
-        int player = 0, fromId = 0;
-        float arm = 0;       // builduptime: it drifts but does not bite yet
-        float left = 0;      // seconds of roaming left (duration)
-        float nextVary = 0;  // seconds until the next wander re-roll
-    };
     std::vector<Storm> storms_;
+    int stormSeq_ = 0;        // id source, so the viewer can track a storm's life
     std::vector<Player> players_ = []{
         std::vector<Player> v(4);
         for (int i = 0; i < 4; ++i) v[size_t(i)].team = i;

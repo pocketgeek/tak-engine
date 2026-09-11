@@ -303,6 +303,16 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 }
                 // spinheading is in COB angle units per second.
                 wp.spinRate = float(w->numberOr("spinheading", 0)) * float(kCobAngle);
+                // shadowgaf is always "shadows"; shadowart names the sequence in it.
+                wp.shadowArt = lower(w->valueOr("shadowart", ""));
+                {
+                    std::string lm = lower(w->valueOr("lightmap", ""));
+                    wp.lightMap = lm == "small" ? 1 : lm == "medium" ? 2
+                                : lm == "large" ? 3 : 0;
+                }
+                wp.wanderStart = lower(w->valueOr("wanderstartart", ""));
+                wp.wanderLoop = lower(w->valueOr("wanderloopart", ""));
+                wp.wanderEnd = lower(w->valueOr("wanderendart", ""));
                 wp.explosionClass = lower(w->valueOr("explosionclass", ""));
                 wp.waterExplosionClass = lower(w->valueOr("waterexplosionclass", ""));
                 wp.radiusArt[0] = lower(w->valueOr("radiusart0", ""));
@@ -1635,6 +1645,7 @@ void World::fire(Unit& u, Unit& target, int slot) {
         s.x = u.x + s.dirX * 32.0f;
         s.z = u.z + s.dirZ * 32.0f;
         s.player = u.player; s.fromId = u.id;
+        s.id = ++stormSeq_;
         s.arm = w.buildUp;            // wind-up: visible and moving, but harmless
         s.left = w.duration > 0 ? w.duration : 6.0f;
         s.nextVary = 0.0f;            // roll the first wander offset immediately
@@ -3977,6 +3988,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(e.player)));
         mixf(e.x); mixf(e.z); mixf(e.at);
     }
+    mix(uint64_t(uint32_t(stormSeq_)));
     mix(uint64_t(storms_.size()));
     for (const auto& s : storms_) {
         mix(uint64_t(uint32_t(s.player)));

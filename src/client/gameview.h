@@ -2493,6 +2493,10 @@ private:
         float age = 0;
     };
     std::vector<BeamFx> beams_;
+    // Live wandering storms by id, so a new one can announce itself and a
+    // vanished one can leave its dissipation art behind.
+    struct StormTrack { float x = 0, z = 0; const tak::sim::Weapon* w = nullptr; };
+    std::unordered_map<int, StormTrack> stormsSeen_;
     struct EFrame { SDL_Texture* tex = nullptr; int w = 0, h = 0, ax = 0, ay = 0; };
     struct EffectAnim { std::vector<EFrame> frames; };
     std::map<std::string, std::vector<std::string>> explosionClasses_;  // class -> anim names

@@ -613,6 +613,7 @@
             r.discoLeft = pl.discoLeft; r.headbangLeft = pl.headbangLeft;
         }
         fb.projectiles = world_.projectiles();   // sim push_back/erase each tick -> must copy
+        fb.storms = world_.storms();             // ditto: the viewer draws these
         fb.hits = world_.hits();                  // weapon impacts this tick (cleared next tick)
         fb.winningTeam = world_.winningTeam();
         fb.gameTick = world_.tickCount();
@@ -689,6 +690,23 @@
         lastCosmeticGen_ = front().gen;
         // Weapon impacts this tick: play each weapon's soundhitclass, picking the
         // material-specific variant from the struck unit's bodytype (flesh/armor/..).
+        // A storm announces itself ONCE when it is cast and leaves its dissipation
+        // art where it dies. The sim only hands us the LIVE storms each tick, so
+        // track ids: an id we have not seen is a new cast, an id that vanished has
+        // just blown itself out.
+        if (newTick_) {
+            std::unordered_map<int, StormTrack> live;
+            for (const auto& st : front().storms) {
+                auto prev = stormsSeen_.find(st.id);
+                if (prev == stormsSeen_.end() && st.w && !st.w->soundHit.empty())
+                    sounds_.playWorld(st.w->soundHit, st.x, st.z);
+                live.emplace(st.id, StormTrack{st.x, st.z, st.w});
+            }
+            for (const auto& [id, tr] : stormsSeen_)
+                if (!live.count(id) && tr.w && !tr.w->wanderEnd.empty())
+                    spawnEffectAnim(tr.w->wanderEnd, tr.x, tr.z);
+            stormsSeen_ = std::move(live);
+        }
         if (newTick_) for (const auto& h : frameHits()) {
             // Instant-hit weapons (FBI type = Line of Sight) spawn no projectile, so
             // nothing was ever drawn for them -- the Aramon King's Thunder, the Creon
@@ -711,6 +729,11 @@
                 b.alt2 = flyerAltAt(b.x2, b.z2) * 0.8f;
                 beams_.push_back(b);
             }
+            // A wandering storm grinds EVERY TICK, so routing its hits through the
+            // ordinary impact path meant 30 generic dust bursts and 30 hit sounds a
+            // second, each one a dozen-plus particles. The storm's own animation and
+            // its one-shot cast sound carry it instead.
+            if (h.weapon && h.weapon->kind == tak::sim::Weapon::Kind::Wandering) continue;
             if (h.weapon && !h.weapon->soundHit.empty()) {
                 const std::string& body = h.target ? h.target->bodyType : std::string("default");
                 const std::string* wav = soundClasses_.pick(h.weapon->soundHit, body, salt_++);
