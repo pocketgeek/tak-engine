@@ -41,6 +41,11 @@ namespace {
 
 constexpr int kMenuH = 22;    // top menu-bar strip
 constexpr int kStatusH = 22;  // bottom status strip
+// UI magnification. The whole editor is drawn in a fixed logical coordinate
+// space and scaled up by this factor via SDL_RenderSetScale, so every panel,
+// glyph, and dialog doubles uniformly on hi-DPI displays. Input coordinates are
+// divided back down to logical space at the event source.
+constexpr int kUIScale = 2;
 
 // A fresh map for the New dialog / --new launch: either a flat ground stamp or
 // procedural terrain from the engine's map generator (the "~gen1~" generator the
@@ -133,9 +138,12 @@ int main(int argc, char** argv) {
     }
     SDL_Window* win = SDL_CreateWindow(
         ("Cartographer -- " + mapName).c_str(), SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED, 1280, 800, SDL_WINDOW_RESIZABLE);
+        SDL_WINDOWPOS_CENTERED, 1280 * kUIScale, 800 * kUIScale, SDL_WINDOW_RESIZABLE);
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC);
     if (!ren) ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
+    // Draw everything at kUIScale: the logical canvas stays 1280x800-ish while
+    // the window is that many times larger, so the UI is magnified uniformly.
+    if (ren) SDL_RenderSetScale(ren, float(kUIScale), float(kUIScale));
     if (!win || !ren) {
         std::fprintf(stderr, "window/renderer: %s\n", SDL_GetError());
         return 1;
@@ -264,6 +272,10 @@ int main(int argc, char** argv) {
     // unedited save stays byte-identical to the source; an edited one gets a
     // fresh overview reflecting the paint).
     bool edited = false;
+    // Unsaved-changes flag for the exit prompt. Set by every edit (terrain,
+    // features, units, starts, scenario props, use-only, triggers), cleared on a
+    // successful save. Broader than `edited` (which only gates minimap regen).
+    bool dirty = false;
     // Save the map as loose <stem>.tnt + <stem>.ota. Loose Maps/<name>.* is
     // read directly by the engine VFS, so a saved map is immediately playable.
     auto saveMap = [&](const std::string& tntPath) -> bool {
@@ -360,7 +372,7 @@ int main(int argc, char** argv) {
                 const tak::tnt::Map* sec = sections.load(vfs, s.path);
                 if (sec && cart::stampSection(mapView.editMap(), *sec, bx, by)) {
                     mapView.tilesEdited();
-                    edited = true;
+                    edited = true; dirty = true;
                     return true;
                 }
             }
@@ -458,7 +470,7 @@ int main(int argc, char** argv) {
         int snapY = (blkY / sec->blocksY) * sec->blocksY;
         if (cart::stampSection(mapView.editMap(), *sec, snapX, snapY)) {
             mapView.tilesEdited();
-            edited = true;
+            edited = true; dirty = true;
         }
         (void)w; (void)h;
     };
@@ -491,14 +503,14 @@ int main(int argc, char** argv) {
         auto& mp = mapView.editMap();
         if (cx < 0 || cz < 0 || cx >= mp.width || cz >= mp.height) return;
         size_t ci = size_t(cz) * mp.width + cx;
-        if (erase) { mp.features[ci] = 0xFFFF; edited = true; return; }
+        if (erase) { mp.features[ci] = 0xFFFF; edited = true; dirty = true; return; }
         const std::string& name = features.list()[size_t(selectedFeat)].name;
         uint16_t idx = 0xFFFF;   // intern the feature name into the map's table
         for (size_t i = 0; i < mp.featureNames.size(); ++i)
             if (mp.featureNames[i] == name) { idx = uint16_t(i); break; }
         if (idx == 0xFFFF) { mp.featureNames.push_back(name); idx = uint16_t(mp.featureNames.size() - 1); }
         mp.features[ci] = idx;
-        edited = true;
+        edited = true; dirty = true;
     };
     int draggingStart = -1;           // index into scenario.starts while dragging
     bool clearArm = false, clearDrag = false;   // Clear Area drag-box (screen px)
@@ -522,7 +534,7 @@ int main(int argc, char** argv) {
     };
 
     // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE };
     static constexpr int kMaxFields = 6;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -535,7 +547,7 @@ int main(int argc, char** argv) {
     int editUnit = -1;                       // UNITS: index being edited (M_UNIT)
     tak::crt::Rule* editRule = nullptr;      // M_RULE: rule whose params are edited
     std::vector<std::string> mMsg;           // M_MESSAGE: wrapped text lines
-    SDL_Rect mBox[kMaxFields]{}, mOK{}, mCancel{};   // render-computed hit rects
+    SDL_Rect mBox[kMaxFields]{}, mOK{}, mCancel{}, mQuit{};   // render-computed hit rects
     // Pop a message box (word-wrapped to ~46 cols) — used by Check Map.
     auto openMessage = [&](const std::string& title, const std::string& text) {
         mMsg.clear();
@@ -595,7 +607,7 @@ int main(int argc, char** argv) {
     auto applyModal = [&]() {
         if (modal == M_SCENARIO) {
             scenario.missionName = mf[0];
-            scenario.missionDescription = mf[1];
+            scenario.missionDescription = mf[1]; dirty = true;
         } else if (modal == M_RESIZE) {
             int wu = std::max(1, std::atoi(mf[0].c_str()));
             int hu = std::max(1, std::atoi(mf[1].c_str()));
@@ -604,7 +616,7 @@ int main(int argc, char** argv) {
                             cart::loadWorldPalette(vfs, wld), wu, hu);
             scenario.sizeW = wu; scenario.sizeH = hu;
             mapView.tilesEdited();
-            edited = true;
+            edited = true; dirty = true;
         } else if (modal == M_NEW) {
             std::string nm = mf[0].empty() ? "Untitled" : mf[0];
             int wu = std::clamp(std::atoi(mf[1].c_str()), 1, 64);
@@ -637,8 +649,9 @@ int main(int argc, char** argv) {
             selected = sections.list().empty() ? -1 : 0;
             selectedFeat = features.list().empty() ? -1 : 0;
             paletteScroll = 0;
-            edited = true;
+            edited = true; dirty = true;
             SDL_SetWindowTitle(win, ("Cartographer -- " + mapName).c_str());
+            dirty = false;
         } else if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size())) {
             auto& u = units[size_t(editUnit)];
             u.player  = std::clamp(std::atoi(mf[0].c_str()), 0, 7);
@@ -648,11 +661,11 @@ int main(int argc, char** argv) {
             u.veteran = std::clamp(std::atoi(mf[4].c_str()), 0, 9);
             int a = std::atoi(mf[5].c_str()) % 360; if (a < 0) a += 360;
             u.angle = float(a);
-            unitsEdited = true;
+            unitsEdited = true; dirty = true;
         } else if (modal == M_RULE && editRule) {
             for (int i = 0; i < mN; ++i) editRule->slot[i] = mf[i];
             for (int i = mN; i < 5; ++i) editRule->slot[i].clear();
-            editRule = nullptr;
+            editRule = nullptr; dirty = true;
         } else if (modal == M_CONFIRM) {
             if (confirmAction) confirmAction();
             confirmAction = nullptr;
@@ -733,16 +746,30 @@ int main(int argc, char** argv) {
         mapView.setZoom(0.3f);          // fit-ish view for the shot
         mapView.finishChunks();         // wait for the terrain to decode+upload
     }
+    // A bare launch (no map named, no --new size) opens on the blank map with
+    // the New Map dialog already up, so the first thing is "what shall we make?".
+    if (mapPath.empty() && newW == 0 && shotPath.empty()) openModal(M_NEW);
     bool running = true;
     while (running) {
         int w, h;
         SDL_GetRendererOutputSize(ren, &w, &h);
+        w /= kUIScale; h /= kUIScale;   // physical -> logical (SDL_RenderSetScale)
         int canvasH = h - kMenuH - kStatusH;
         int canvasW = w - kPaletteW;
 
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) { running = false; continue; }
+            // Map input from physical window pixels into the logical draw space.
+            if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                e.button.x /= kUIScale; e.button.y /= kUIScale;
+            } else if (e.type == SDL_MOUSEMOTION) {
+                e.motion.x /= kUIScale; e.motion.y /= kUIScale;
+                e.motion.xrel /= kUIScale; e.motion.yrel /= kUIScale;
+            }
+            if (e.type == SDL_QUIT) {
+                if (dirty) { modal = M_QUITSAVE; SDL_StopTextInput(); } else running = false;
+                continue;
+            }
             // The Use Only checklist overlay swallows input while up.
             if (useOnlyOpen) {
                 if (e.type == SDL_MOUSEWHEEL) {
@@ -754,12 +781,12 @@ int main(int argc, char** argv) {
                 } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     int mx = e.button.x, my = e.button.y;
                     if (cart::pointIn(mx, my, uoDone)) useOnlyOpen = false;
-                    else if (cart::pointIn(mx, my, uoClear)) useOnly.clear();
+                    else if (cart::pointIn(mx, my, uoClear)) { useOnly.clear(); dirty = true; }
                     else if (cart::pointIn(mx, my, uoList)) {
                         int row = (my - uoList.y + useOnlyScroll) / 14;
                         if (row >= 0 && row < int(unitTypes.size())) {
                             const std::string& t = unitTypes[size_t(row)];
-                            if (useOnly.count(t)) useOnly.erase(t); else useOnly.insert(t);
+                            if (useOnly.count(t)) useOnly.erase(t); else useOnly.insert(t); dirty = true;
                         }
                     }
                 }
@@ -767,6 +794,24 @@ int main(int argc, char** argv) {
             }
             // A modal dialog swallows all input while up.
             if (modal != M_NONE) {
+                // Save-before-exit prompt: SAVE / DON'T SAVE / CANCEL.
+                if (modal == M_QUITSAVE) {
+                    auto saveThenQuit = [&]() {
+                        if (saveMap(outDir + "/" + mapName + ".tnt")) dirty = false;
+                        running = false; modal = M_NONE;
+                    };
+                    if (e.type == SDL_KEYDOWN) {
+                        SDL_Keycode k = e.key.keysym.sym;
+                        if (k == SDLK_ESCAPE) modal = M_NONE;                    // cancel
+                        else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) saveThenQuit();
+                    } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                        int mx = e.button.x, my = e.button.y;
+                        if (cart::pointIn(mx, my, mOK)) saveThenQuit();
+                        else if (cart::pointIn(mx, my, mQuit)) { running = false; modal = M_NONE; }
+                        else if (cart::pointIn(mx, my, mCancel)) modal = M_NONE;
+                    }
+                    continue;
+                }
                 if (e.type == SDL_TEXTINPUT && mN > 0) {
                     for (const char* c = e.text.text; *c; ++c)
                         if (!mfNumeric[mfocus] || (*c >= '0' && *c <= '9')) mf[mfocus] += *c;
@@ -808,8 +853,8 @@ int main(int argc, char** argv) {
                                 tak::crt::Rule r; r.opcode = row;
                                 for (size_t i = 0; i < defs[size_t(row)].params.size() && i < 5; ++i)
                                     r.slot[i] = cart::defaultParam(defs[size_t(row)].params[i]);
-                                if (pickAction) { g->actions.push_back(r); scrActSel = int(g->actions.size()) - 1; }
-                                else { g->conditions.push_back(r); scrCondSel = int(g->conditions.size()) - 1; }
+                                if (pickAction) { g->actions.push_back(r); scrActSel = int(g->actions.size()) - 1; dirty = true; }
+                                else { g->conditions.push_back(r); scrCondSel = int(g->conditions.size()) - 1; dirty = true; }
                                 pickOpen = false;
                             }
                         }
@@ -821,7 +866,7 @@ int main(int argc, char** argv) {
                 if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
                     scriptOpen = false;
                 } else if (e.type == SDL_MOUSEWHEEL) {
-                    int mx, my; SDL_GetMouseState(&mx, &my);
+                    int mx, my; SDL_GetMouseState(&mx, &my); mx /= kUIScale; my /= kUIScale;
                     if (cart::pointIn(mx, my, rRuleList)) {
                         int maxS = std::max(0, int(gs.size()) * kRow - rRuleList.h);
                         scrRuleScroll = std::clamp(scrRuleScroll - e.wheel.y * 36, 0, maxS);
@@ -843,9 +888,9 @@ int main(int argc, char** argv) {
                         scrPlayer = (scrPlayer + 1) % 9; scrGroup = scen.players[size_t(scrPlayer)].empty() ? -1 : 0;
                         scrCondSel = scrActSel = -1; scrRuleScroll = scrCondScroll = scrActScroll = 0;
                     } else if (cart::pointIn(mx, my, rAddRule)) {
-                        gs.push_back({}); scrGroup = int(gs.size()) - 1; scrCondSel = scrActSel = -1;
+                        gs.push_back({}); scrGroup = int(gs.size()) - 1; scrCondSel = scrActSel = -1; dirty = true;
                     } else if (cart::pointIn(mx, my, rDelRule) && g) {
-                        gs.erase(gs.begin() + scrGroup);
+                        gs.erase(gs.begin() + scrGroup); dirty = true;
                         scrGroup = gs.empty() ? -1 : std::min(scrGroup, int(gs.size()) - 1);
                         scrCondSel = scrActSel = -1;
                     } else if (cart::pointIn(mx, my, rAddCond)) {
@@ -856,10 +901,10 @@ int main(int argc, char** argv) {
                         pickOpen = true; pickAction = true; pickScroll = 0;
                     } else if (cart::pointIn(mx, my, rDelCond) && g && scrCondSel >= 0 &&
                                scrCondSel < int(g->conditions.size())) {
-                        g->conditions.erase(g->conditions.begin() + scrCondSel); scrCondSel = -1;
+                        g->conditions.erase(g->conditions.begin() + scrCondSel); scrCondSel = -1; dirty = true;
                     } else if (cart::pointIn(mx, my, rDelAct) && g && scrActSel >= 0 &&
                                scrActSel < int(g->actions.size())) {
-                        g->actions.erase(g->actions.begin() + scrActSel); scrActSel = -1;
+                        g->actions.erase(g->actions.begin() + scrActSel); scrActSel = -1; dirty = true;
                     } else if (cart::pointIn(mx, my, rRuleList)) {
                         int row = (my - rRuleList.y + scrRuleScroll) / kRow;
                         if (row >= 0 && row < int(gs.size())) {
@@ -882,16 +927,17 @@ int main(int argc, char** argv) {
                 }
                 continue;
             }
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)
-                running = false;
-            else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                if (dirty) { modal = M_QUITSAVE; SDL_StopTextInput(); } else running = false;
+            } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
                      e.key.keysym.sym == SDLK_s) {
                 bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
-                saveMap(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt");
+                if (saveMap(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt")) dirty = false;
             } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
                        e.key.keysym.sym == SDLK_b) {
                 // Ctrl+B: save the finished map as a single .kmp bundle.
                 bool ok = saveBundle(outDir + "/" + mapName + ".kmp");
+                if (ok) dirty = false;
                 openMessage("SAVE BUNDLE", ok ? ("Saved " + mapName + ".kmp")
                                               : "Could not write the .kmp bundle.");
             } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
@@ -949,7 +995,7 @@ int main(int argc, char** argv) {
                     }
                 }
             } else if (e.type == SDL_MOUSEWHEEL) {
-                int mxp, myp; SDL_GetMouseState(&mxp, &myp);
+                int mxp, myp; SDL_GetMouseState(&mxp, &myp); mxp /= kUIScale; myp /= kUIScale;
                 if (mxp < kPaletteW) {   // scroll the palette (tool-dependent count)
                     if (tool == UNITS) {
                         int maxS = std::max(0, int(unitTypes.size()) * 14 - canvasH);
@@ -987,7 +1033,7 @@ int main(int argc, char** argv) {
                         u.x = cx * 16.0f + 8; u.z = cz * 16.0f + 8;
                         units.push_back(u);
                         draggingUnit = int(units.size()) - 1;
-                        unitsEdited = true;
+                        unitsEdited = true; dirty = true;
                     }
                 } else {   // STARTS: grab an existing marker, else place a new one
                     int hit = startAt(e.button.x, e.button.y);
@@ -999,14 +1045,14 @@ int main(int argc, char** argv) {
                             used = false;
                             for (auto& s : scenario.starts) if (s.number == num) used = true;
                         }
-                        scenario.starts.push_back({num - 1, cx, cz});
+                        scenario.starts.push_back({num - 1, cx, cz}); dirty = true;
                         draggingStart = int(scenario.starts.size()) - 1;
                     }
                 }
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_RIGHT && tool == STARTS) {
                 int hit = startAt(e.button.x, e.button.y);   // right-click deletes a start
-                if (hit >= 0) scenario.starts.erase(scenario.starts.begin() + hit);
+                if (hit >= 0) { scenario.starts.erase(scenario.starts.begin() + hit); dirty = true; }
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_RIGHT && tool == FEATURES &&
                        e.button.x >= kPaletteW) {
@@ -1014,7 +1060,7 @@ int main(int argc, char** argv) {
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_RIGHT && tool == UNITS) {
                 int hit = unitAt(e.button.x, e.button.y);   // right-click deletes a unit
-                if (hit >= 0) { units.erase(units.begin() + hit); unitsEdited = true; }
+                if (hit >= 0) { units.erase(units.begin() + hit); unitsEdited = true; dirty = true; }
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 draggingStart = -1; draggingUnit = -1;
                 if (clearDrag) {   // Clear Area: confirm, then remove units + features
@@ -1034,7 +1080,7 @@ int main(int argc, char** argv) {
                                     "Remove all units and features in this area?  (" +
                                         std::to_string(nUnits) + " unit(s), " +
                                         std::to_string(cells) + " cells)",
-                                    [&units, &mapView, &edited, &unitsEdited,
+                                    [&units, &mapView, &edited, &unitsEdited, &dirty,
                                      lox, hix, loz, hiz]() {
                             auto& m = mapView.editMap();
                             for (int z = loz; z <= hiz; ++z)
@@ -1045,7 +1091,7 @@ int main(int argc, char** argv) {
                                     int ux = int(u.x / 16.0f), uz = int(u.z / 16.0f);
                                     return ux >= lox && ux <= hix && uz >= loz && uz <= hiz;
                                 }), units.end());
-                            mapView.tilesEdited(); edited = true; unitsEdited = true;
+                            mapView.tilesEdited(); edited = true; unitsEdited = true; dirty = true;
                         });
                     }
                     clearArm = false;
@@ -1063,13 +1109,13 @@ int main(int argc, char** argv) {
                     if (mouseCell(e.motion.x, e.motion.y, cx, cz)) {
                         units[size_t(draggingUnit)].x = cx * 16.0f + 8;
                         units[size_t(draggingUnit)].z = cz * 16.0f + 8;
-                        unitsEdited = true;
+                        unitsEdited = true; dirty = true;
                     }
                 } else if (draggingStart >= 0) {
                     int cx, cz;   // drag a start marker to a new cell
                     if (mouseCell(e.motion.x, e.motion.y, cx, cz)) {
                         scenario.starts[size_t(draggingStart)].xpos = cx;
-                        scenario.starts[size_t(draggingStart)].zpos = cz;
+                        scenario.starts[size_t(draggingStart)].zpos = cz; dirty = true;
                     }
                 }
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_RMASK)) {
@@ -1248,7 +1294,7 @@ int main(int argc, char** argv) {
         }
 
         // Status bar: cursor cell, tool, zoom, start count.
-        int mxg, myg; SDL_GetMouseState(&mxg, &myg);
+        int mxg, myg; SDL_GetMouseState(&mxg, &myg); mxg /= kUIScale; myg /= kUIScale;
         int ccx, ccz;
         std::string coord = mouseCell(mxg, myg, ccx, ccz)
             ? "( " + std::to_string(ccx) + ", " + std::to_string(ccz) + " )" : "";
@@ -1357,9 +1403,17 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Save-before-exit prompt: SAVE / DON'T SAVE / CANCEL.
+        if (modal == M_QUITSAVE) {
+            SDL_Rect ct = cart::drawPanel(ren, w, h, 380, 92, "UNSAVED CHANGES");
+            cart::drawText(ren, "Save changes before exiting?", ct.x, ct.y, 1, 225, 228, 236);
+            mOK = cart::drawButton(ren, ct.x, ct.y + ct.h - 20, 60, 18, "SAVE", true);
+            mQuit = cart::drawButton(ren, ct.x + 66, ct.y + ct.h - 20, 78, 18, "DISCARD", false);
+            mCancel = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18, "CANCEL", false);
+        }
         // Message box (Check Map result) / confirmation: wrapped text + OK
         // (message) or OK + CANCEL (confirm).
-        if (modal == M_MESSAGE || modal == M_CONFIRM) {
+        else if (modal == M_MESSAGE || modal == M_CONFIRM) {
             int ph = 66 + int(mMsg.size()) * 12;
             SDL_Rect ct = cart::drawPanel(ren, w, h, 360, ph, mTitle);
             for (size_t i = 0; i < mMsg.size(); ++i)
