@@ -92,6 +92,11 @@ constexpr int kMaxSlots = 8;               // players per game (= max map start 
 constexpr int kServerHz = 30;              // sim/tick rate
 constexpr int kHashPeriod = 30;            // ticks between StateHash reports; the
                                            // referee hashes only these ticks too
+// Commands one client may land in one tick. The server enforces it as flood
+// protection and DISCARDS the excess, so the client has to know it too and spread
+// a bigger batch over several ticks -- otherwise ordering a large selection
+// silently loses everything past the cap. Shared here so the two cannot drift.
+constexpr int kCmdCapPerTick = 64;
 
 // Message kinds. Lobby and game messages share one stream per connection.
 enum class Msg : uint8_t {

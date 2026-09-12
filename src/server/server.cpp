@@ -66,7 +66,9 @@ constexpr uint64_t kTimeoutMs = 15000;    // drop a silent seated player after t
 // merely hitching. Give spectators a much longer grace so a transient stall doesn't
 // tear the connection down (the client's own self-timeout below is widened to match).
 constexpr uint64_t kSpectatorTimeoutMs = 120000;
-constexpr int kCmdCapPerTick = 64;        // per-client command cap per tick
+// per-client command cap per tick lives in protocol.h: the CLIENT has to know it
+// too, so it can spread a big batch instead of having the excess discarded here.
+using tak::net::kCmdCapPerTick;
 // The server never runs more than this many ticks ahead of the slowest seated human
 // player: a player whose machine can't sustain the game speed gracefully SLOWS the
 // whole match to what it can handle (the actual speed drops below the requested one)

@@ -175,7 +175,20 @@
     bool GameView::mpStep() {
         if (!mp_->poll()) { netError_ = mp_->error().empty() ? "disconnected" : mp_->error(); return false; }
         if (mp_->desynced()) { netError_ = mp_->desyncReason(); return false; }
-        if (!outbox_.empty()) { mp_->sendCommands(outbox_); outbox_.clear(); }
+        if (!outbox_.empty()) {
+            // The server takes at most kCmdCapPerTick commands from one client per
+            // tick and DISCARDS the rest, so send at most that many and keep the
+            // remainder for the next step. Flushing the whole outbox lost everything
+            // past the cap without a word: ordering a selection bigger than 64 --
+            // a self-destruct, a move, an attack -- silently only moved the first 64.
+            // Spreading them costs a tick or two; dropping them was just wrong.
+            const size_t n = std::min(outbox_.size(), size_t(tak::net::kCmdCapPerTick));
+            if (n == outbox_.size()) { mp_->sendCommands(outbox_); outbox_.clear(); }
+            else {
+                mp_->sendCommands({outbox_.begin(), outbox_.begin() + n});
+                outbox_.erase(outbox_.begin(), outbox_.begin() + n);
+            }
+        }
         // Decide once whether to run the sim on its own worker thread. On for interactive
         // net games (the whole point -- keeps world_.tick off the render thread); off for the
         // headless harness/replay (inline, byte-identical + deterministic) unless
