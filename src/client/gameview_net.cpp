@@ -385,6 +385,11 @@
                 benchmarkMode_ = true;                         // (forces watch + 8 AI + cap 8 + Ulasem below)
             }
             if (const char* uc = tak::devEnv("TAK_UNITCAP")) o.unitCap = uint16_t(std::atoi(uc));
+            // TAK_FOG=0|1|2 forces the room's fog rule (not explored / explored /
+            // full vision) so the setting can be tested end to end without driving
+            // the lobby by hand.
+            if (const char* fg = tak::devEnv("TAK_FOG"))
+                o.fogExplored = uint8_t(std::clamp(std::atoi(fg), 0, 2));
             // TAK_MP_WATCH: host creates the game as a spectator (no slot) so every
             // slot can be an AI -- an all-AI game to watch.
             if (benchmarkMode_) o.benchmark = uint8_t(benchmarkLevel_);   // menu Benchmark: intensity level
