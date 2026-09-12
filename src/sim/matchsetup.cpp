@@ -41,7 +41,15 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             if (owns(c.unitId)) { redirect(); world.attackMove(c.unitId, c.x, c.z, c.queue); }
             break;
         case Cmd::Patrol:
-            if (owns(c.unitId)) { world.cancelBuilds(c.unitId); world.patrol(c.unitId, c.x, c.z); }
+            // Shift-patrol ADDS a waypoint to the route. patrol() builds a fresh
+            // two-point loop and was the only thing wired up, so a queued patrol
+            // silently replaced the route instead of extending it -- patrolTo has
+            // existed for this the whole time, used only by mission scripts.
+            if (owns(c.unitId)) {
+                world.cancelBuilds(c.unitId);
+                if (c.queue) world.patrolTo(c.unitId, c.x, c.z, true);
+                else world.patrol(c.unitId, c.x, c.z);
+            }
             break;
         case Cmd::Stop:
             if (owns(c.unitId)) { world.cancelBuilds(c.unitId); world.stop(c.unitId); }
@@ -65,7 +73,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
                     const auto& menu = reg.buildable(b->type->id);
                     if (std::find(menu.begin(), menu.end(), site->type->id) != menu.end()) {
                         redirect();
-                        world.assist(c.unitId, c.targetId);
+                        world.assist(c.unitId, c.targetId, c.queue);
                     }
                 }
             }

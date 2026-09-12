@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 57;       // 57: account login (SCRAM-SHA-256) sits
+constexpr uint32_t kNetVersion = 58;       // 58: order queues survive a repath; Patrol,
+                                           // Repair and Assist honour their queue flag
+                                           // 57: account login (SCRAM-SHA-256) sits
                                            // between the Hello and the Welcome
                                            // 56: canPlace honours the yardmap -- a '.' cell
                                            // is not part of the footprint and is not tested

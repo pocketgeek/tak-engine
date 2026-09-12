@@ -32,6 +32,7 @@ void check(bool ok, const char* what, const std::string& detail = "") {
                 detail.empty() ? "" : " -- ", detail.c_str());
     if (!ok) ++failures;
 }
+float detmathLen(float dx, float dz) { return std::sqrt(dx * dx + dz * dz); }
 void tick(sim::World& w, float seconds) {
     const float dt = 1.0f / 30.0f;
     for (int i = 0; i < int(seconds / dt); ++i) w.tick(dt);
@@ -1051,6 +1052,75 @@ int main(int argc, char** argv) {
                 check(!w.canPlace(keep, wx, wz),
                       "a blocked footprint cell still denies it");
             }
+        }
+    }
+
+    // ---- queued orders on ordinary mobile units -----------------------------
+    // A single player order can expand into a whole A* path, so the order queue
+    // interleaves pathfinding waypoints with the goals the player actually asked
+    // for. Anything that treats orders.back() as "the destination" therefore
+    // deletes every leg the player lined up behind the current one.
+    {
+        auto freshWorld = [&](sim::World& w) {
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+        };
+        const sim::UnitType* sword = reg.find("arasword");
+        check(sword && sword->canMove, "arasword is a plain mobile non-builder");
+        if (sword && sword->canMove) {
+            // Two queued legs: out to A, then on to B. The unit must visit A
+            // BEFORE B -- not cut straight to the last one.
+            sim::World w; freshWorld(w);
+            const float sx = 1000, sz = 1000;
+            const float ax = 1000, az = 1400;     // leg 1: due south
+            const float bx = 1400, bz = 1400;     // leg 2: then east
+            int id = w.spawn(sword, sx, sz, 0, 0);
+            w.order(id, ax, az, false);
+            size_t afterFirst = w.unit(id)->orders.size();
+            w.order(id, bx, bz, true);            // QUEUED behind it
+            check(w.unit(id)->orders.size() > afterFirst,
+                  "a queued move appends to the queue instead of replacing it");
+
+            bool reachedA = false, reachedBBeforeA = false;
+            for (int i = 0; i < 30 * 90 && !reachedBBeforeA; ++i) {
+                w.tick(1.0f / 30.0f);
+                const sim::Unit* u = w.unit(id);
+                if (!u || !u->alive()) break;
+                float da = detmathLen(u->x - ax, u->z - az);
+                float db = detmathLen(u->x - bx, u->z - bz);
+                if (da < 40) reachedA = true;
+                if (db < 40) { if (!reachedA) reachedBBeforeA = true; break; }
+                if (reachedA && db < 40) break;
+            }
+            check(reachedA, "the unit walks the FIRST queued leg");
+            check(!reachedBBeforeA, "and does not skip straight to the last one");
+
+            // THE REGRESSION. The progress-based unstick measures progress
+            // against orders.back() -- the LAST queued leg. Send a unit out and
+            // then back, and walking the first leg moves it AWAY from the last
+            // one, so after ~2s it looks permanently stuck: the watchdog fires,
+            // A*-paths straight to the final leg, and the outbound leg is gone.
+            sim::World w2; freshWorld(w2);
+            const float homeX = 448, homeZ = 2624;   // open ground with a real A* route
+            const float outX = 848, outZ = 2624;     // leg 1: east, AWAY from...
+            const float backX = homeX, backZ = homeZ; // leg 2: ...back where we began
+            int id2 = w2.spawn(sword, homeX, homeZ, 0, 0);
+            w2.order(id2, outX, outZ, false);
+            w2.order(id2, backX, backZ, true);
+            bool visitedOut = false;
+            for (int i = 0; i < 30 * 90; ++i) {
+                w2.tick(1.0f / 30.0f);
+                const sim::Unit* u = w2.unit(id2);
+                if (!u || !u->alive()) break;
+                if (detmathLen(u->x - outX, u->z - outZ) < 48) { visitedOut = true; break; }
+                if (u->orders.empty()) break;       // finished without ever going out
+            }
+            check(visitedOut,
+                  "an out-and-back queue walks the outbound leg (the unstick watchdog "
+                  "must not mistake it for being stuck against the RETURN leg)");
         }
     }
 

@@ -1265,12 +1265,41 @@ static int footCells(const UnitType* t) {
     return t ? std::clamp(std::max(t->footX, t->footZ), 1, 15) : 1;
 }
 
+void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
+    if (u.orders.empty() || path.empty()) return;
+    const size_t end = currentLeg(u.orders);
+    const Order tmpl = u.orders[end];        // keep attack-move / patrol / flags
+    std::vector<Order> next;
+    next.reserve(path.size() + u.orders.size() - end - 1);
+    for (size_t i = 0; i < path.size(); ++i) {
+        Order o = path[i];
+        o.attackMove = tmpl.attackMove;
+        o.patrol = tmpl.patrol;
+        o.goal = (i + 1 == path.size());
+        next.push_back(o);
+    }
+    next.insert(next.end(), u.orders.begin() + long(end) + 1, u.orders.end());
+    u.orders.swap(next);
+    u.goalStuckD = 1e30f;                    // new leg -> the tracker starts over
+    u.goalStuckT = 0;
+}
+
+void World::dropLeg(Unit& u) {
+    if (u.orders.empty()) return;
+    const size_t end = currentLeg(u.orders);
+    u.orders.erase(u.orders.begin(), u.orders.begin() + long(end) + 1);
+    u.goalStuckD = 1e30f;
+    u.goalStuckT = 0;
+}
+
 void World::order(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || !u->type->canMove) return;
     if (!queue) u->orders.clear();
+    auto markGoal = [&] { if (!u->orders.empty()) u->orders.back().goal = true; };
     if (u->type->canFly) {
         u->orders.push_back({x, z, 0});
+        markGoal();
         return;
     }
     // Ground/water units steer by a shared flow field toward the goal, so a
@@ -1286,6 +1315,7 @@ void World::order(int unitId, float x, float z, bool queue) {
         Order o;
         o.x = x; o.z = z; o.flow = ff->reachable(u->x, u->z);
         u->orders.push_back(o);
+        markGoal();
         return;
     }
     const NavGrid& grid = navFor(u->type);
@@ -1293,10 +1323,12 @@ void World::order(int unitId, float x, float z, bool queue) {
         auto path = grid.findPath(u->x, u->z, x, z, footCells(u->type));
         if (!path.empty()) {
             for (const auto& o : path) u->orders.push_back(o);
+            markGoal();
             return;
         }
     }
     u->orders.push_back({x, z, 0});
+    markGoal();
 }
 
 // Reachability for the AI. Deliberately does NOT go through flowFor: this is a
@@ -2483,7 +2515,13 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
     Unit* b = unit(builderId);
     if (!b || !type) return;
     if (!queue) b->buildOrders.clear();   // fresh order clears the pending queue
-    if (b->buildSiteId == 0 && b->buildOrders.empty())
+    // "Free" has to mean free of MOVE orders too, not just of build jobs. A build
+    // queued behind a move used to take the idle-builder branch and start at once
+    // -- and startBuild issues its approach with queue=false, which wiped the move
+    // the player had just given. Queued work waits its turn.
+    const bool busy = b->buildSiteId != 0 || !b->buildOrders.empty() ||
+                      (queue && !b->orders.empty());
+    if (!busy)
         startBuild(builderId, type, x, z);          // builder is free: start now
     else if (canPlace(type, x, z))
         b->buildOrders.push_back({type, x, z});     // busy: queue behind it
@@ -2514,7 +2552,7 @@ void World::cancelBuilds(int builderId) {
     }
 }
 
-void World::assist(int builderId, int siteId) {
+void World::assist(int builderId, int siteId, bool queue) {
     Unit* b = unit(builderId);
     Unit* site = unit(siteId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
@@ -2527,7 +2565,7 @@ void World::assist(int builderId, int siteId) {
     // this builder's rate (buildTime / workerTime) from the site's current HP.
     b->buildSiteId = siteId;
     b->buildStuckT = 0; b->buildStuckD = 1e30f;   // fresh job: reset the reach watchdog
-    order(builderId, site->x, site->z + float(site->type->footZ) * 8 + 24, false);
+    order(builderId, site->x, site->z + float(site->type->footZ) * 8 + 24, queue);
 }
 
 void World::addFeature(int id, float x, float z, float manaYield, float work,
@@ -2748,7 +2786,7 @@ void World::tickReclaim(Unit& b, float dt) {
     float reach = 24.0f + 8.0f * float(std::max(f.fx, f.fz)) +
                   (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
     if (dx * dx + dz * dz > reach * reach) return;   // still walking there
-    b.orders.clear();
+    dropLeg(b);          // consume the APPROACH leg only; keep anything queued behind
     b.speed = 0;
     float want = detmath::atan2(dx, dz);   // face the feature (deterministic)
     // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
@@ -2770,7 +2808,6 @@ void World::tickReclaim(Unit& b, float dt) {
 }
 
 void World::repair(int builderId, int targetId, bool queue) {
-    (void)queue;
     Unit* b = unit(builderId);
     Unit* t = unit(targetId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove) return;
@@ -2778,7 +2815,7 @@ void World::repair(int builderId, int targetId, bool queue) {
         !allied(t->player, b->player) || t->hp >= t->type->maxHp)
         return;
     b->repairId = targetId;
-    order(builderId, t->x, t->z, false);   // walk to it; tickRepair takes over
+    order(builderId, t->x, t->z, queue);   // walk to it; tickRepair takes over
 }
 
 // A builder repairs a damaged friendly: restores HP at the same rate it would build
@@ -2800,7 +2837,7 @@ void World::tickRepair(Unit& b, float dt) {
         if (b.orders.empty()) order(b.id, t->x, t->z, false);   // (re)walk toward it
         return;
     }
-    b.orders.clear();
+    dropLeg(b);          // ditto: the approach is done, the queue behind it is not
     b.speed = 0;
     float want = detmath::atan2(dx, dz);
     // Stopped: pivot at turninplacerate, not the moving turn rate.
@@ -2888,7 +2925,7 @@ void World::tickConstruction(Unit& b, float dt) {
     }
     b.buildStuckT = 0; b.buildStuckD = 1e30f;          // in range: reset the watchdog
     site->buildBegun = true;   // in range: the site starts materialising now
-    b.orders.clear();
+    dropLeg(b);          // ditto -- this is what wiped "build here, then move there"
     b.speed = 0;
     // Face what we're building/conjuring: turn toward the site at the unit's turn
     // rate (a building has turnRate 0, so it simply doesn't rotate).
@@ -4021,7 +4058,11 @@ void World::tick(float dt) {
             if (u.squad < 0 && o.targetId == 0) {
                 if (FormAgg* f = formOf(u); f && f->n > 1) {
                     float cx = float(f->sx / f->n), cz = float(f->sz / f->n);
-                    float gx = u.orders.back().x, gz = u.orders.back().z;
+                    // "Behind the centre" is measured against the leg the group is
+                    // walking NOW -- against the last QUEUED leg a straggler check
+                    // would compare everyone to a point nobody is heading for yet.
+                    const Order& legEnd = u.orders[currentLeg(u.orders)];
+                    float gx = legEnd.x, gz = legEnd.z;
                     float uToGoal = detmath::len(u.x - gx, u.z - gz);
                     float cToGoal = detmath::len(cx - gx, cz - gz);
                     if (uToGoal <= cToGoal + kFormBehind) target = std::min(target, f->slowest);
@@ -4110,7 +4151,11 @@ void World::tick(float dt) {
                     if (!g.empty() && u.repathLeft <= 0 &&
                         u.orders.front().targetId == 0) {
                         u.repathLeft = 0.5f;
-                        float tx = u.orders.back().x, tz = u.orders.back().z;
+                        // The CURRENT leg's endpoint, not orders.back() -- that is
+                        // the last thing the player queued, and routing to it here
+                        // deleted every leg in front of it.
+                        const Order& legEnd = u.orders[currentLeg(u.orders)];
+                        float tx = legEnd.x, tz = legEnd.z;
                         // The flow field (built for this goal) already holds the
                         // reachable set. If this unit can't reach the goal, give up
                         // rather than run a full-grid A* that scans the whole map
@@ -4119,14 +4164,11 @@ void World::tick(float dt) {
                         const FlowField* ff = flowFor(u.type, tx, tz);
                         bool onWalkable = g.walkable(int(u.x) / 16, int(u.z) / 16);
                         if (ff && onWalkable && !ff->reachable(u.x, u.z)) {
-                            u.orders.clear();
+                            dropLeg(u);      // give up THIS leg; honour the rest
                         } else if (pathBudget_ > 0) {
                             --pathBudget_;
                             auto _p0=std::chrono::steady_clock::now(); auto path = g.findPath(u.x, u.z, tx, tz, footCells(u.type)); if(g_phase){ g_pathMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_p0).count(); ++g_pathN; }
-                            if (!path.empty()) {
-                                u.orders.clear();
-                                for (const auto& wp : path) u.orders.push_back(wp);
-                            }
+                            if (!path.empty()) replaceLeg(u, path);
                         }
                     }
                 }
@@ -4174,18 +4216,16 @@ void World::tick(float dt) {
                         // garbage on others, which is exactly how this surfaced as an
                         // 8-AI server crash. A unit with no order has nothing to repath.
                         if (!g.empty() && !u.orders.empty() && u.orders.front().targetId == 0) {
-                            float tx = u.orders.back().x, tz = u.orders.back().z;
+                            const Order& legEnd = u.orders[currentLeg(u.orders)];
+                            float tx = legEnd.x, tz = legEnd.z;
                             const FlowField* ff = flowFor(u.type, tx, tz);
                             bool onWalkable = g.walkable(int(u.x) / 16, int(u.z) / 16);
                             if (ff && onWalkable && !ff->reachable(u.x, u.z)) {
-                                u.orders.clear();   // unreachable -> give up, no A*
+                                dropLeg(u);     // unreachable leg -> skip it, keep the queue
                             } else if (pathBudget_ > 0) {
                                 --pathBudget_;
                                 auto _p0=std::chrono::steady_clock::now(); auto path = g.findPath(u.x, u.z, tx, tz, footCells(u.type)); if(g_phase){ g_pathMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_p0).count(); ++g_pathN; }
-                                if (!path.empty()) {
-                                    u.orders.clear();
-                                    for (const auto& wp : path) u.orders.push_back(wp);
-                                }
+                                if (!path.empty()) replaceLeg(u, path);
                             }
                         }
                     }
@@ -4205,7 +4245,13 @@ void World::tick(float dt) {
             bool pointMove = fo.targetId == 0 && !fo.load && !fo.unload &&
                              fo.wait <= 0.0f && !fo.waitAttack;
             if (pointMove) {
-                float gx = u.orders.back().x, gz = u.orders.back().z;
+                // Progress is measured against the leg being walked NOW. Against
+                // orders.back() an out-and-back queue looks permanently stuck on
+                // its outbound leg -- it IS moving away from the final one -- so
+                // this fired after 2s, A*-routed straight to the last leg, and
+                // deleted the leg the player was watching the unit walk.
+                const Order& legEnd = u.orders[currentLeg(u.orders)];
+                float gx = legEnd.x, gz = legEnd.z;
                 float gd = (u.x - gx) * (u.x - gx) + (u.z - gz) * (u.z - gz);
                 if (gd < u.goalStuckD - 400.0f) {        // >20px closer -> real progress
                     u.goalStuckD = gd; u.goalStuckT = 0;
@@ -4216,10 +4262,7 @@ void World::tick(float dt) {
                         const NavGrid& g = navFor(u.type);
                         if (!g.empty()) {
                             auto path = g.findPath(u.x, u.z, gx, gz, footCells(u.type));
-                            if (!path.empty()) {
-                                u.orders.clear();
-                                for (const auto& wp : path) u.orders.push_back(wp);
-                            }
+                            if (!path.empty()) replaceLeg(u, path);
                         }
                     }
                 }

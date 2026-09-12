@@ -378,6 +378,12 @@ struct Order {
     bool flow = false;         // steer by the shared flow field toward (x,z)
     float wait = 0;            // >0: hold position, counting down (SetMission "w N")
     bool waitAttack = false;   // hold until an enemy is in sight, then release (SetMission "wa")
+    // Last waypoint of the order the PLAYER actually gave. One order can expand
+    // into a whole A* path, so the queue interleaves pathfinding waypoints with
+    // real goals; this marks where each issued order ends. Display-only in the
+    // sense that it changes no movement maths -- but the repath paths need it to
+    // tell "the rest of this leg" from "everything queued behind it".
+    bool goal = false;
 };
 
 // A queued construction: build `type` at (x, z) when the builder gets to it.
@@ -824,7 +830,7 @@ public:
     // Latch a mobile builder onto an existing construction site to resume/assist
     // conjuring it (e.g. reviving a decaying site). Resumes at THIS builder's
     // rate from the site's current HP. The caller checks the build tree.
-    void assist(int builderId, int siteId);
+    void assist(int builderId, int siteId, bool queue = false);
     // Cosmetic emote: make `player`'s monarchs dance for 10s (Cmd::Disco). Not
     // hashed -- purely for the viewer. discoActive() gates the client animation.
     void startDisco(int player);
@@ -1048,6 +1054,26 @@ public:
     // toward (x,z) (crowd-friendly); flyers and unreachable goals fall back to
     // A* waypoints.
     void order(int unitId, float x, float z, bool queue);
+
+    // ---- order-queue helpers ------------------------------------------------
+    // One issued order can expand into a whole A* path, so Unit::orders mixes
+    // pathfinding waypoints with the goals the player actually asked for. These
+    // two exist because the repath/unstick paths used to read orders.back() as
+    // "the destination" -- which is the LAST QUEUED leg, not the current one --
+    // and then clear the whole queue, silently deleting everything the player had
+    // lined up behind it.
+
+    // Index of the last waypoint of the leg being worked on right now. Falls back
+    // to the whole queue for unmarked orders (mission scripts, older saves).
+    static size_t currentLeg(const std::vector<Order>& o) {
+        for (size_t i = 0; i < o.size(); ++i) if (o[i].goal) return i;
+        return o.empty() ? 0 : o.size() - 1;
+    }
+    // Swap the current leg's waypoints for `path`, keeping the leg's own flags
+    // and every order queued behind it.
+    static void replaceLeg(Unit& u, const std::vector<Order>& path);
+    // Drop the current leg entirely and move on to whatever was queued behind it.
+    static void dropLeg(Unit& u);
     void attackMove(int unitId, float x, float z, bool queue);
     // Can a unit of `type` at (fx,fz) actually reach goal (gx,gz)? (flow-field
     // connectivity). Lets the AI pick a REACHABLE target instead of one that's
