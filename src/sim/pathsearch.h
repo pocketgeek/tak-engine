@@ -91,6 +91,7 @@ struct PathSearch {
     PathCell org;                 // +0xf0 / +0xf4, the cardinal march origin
     PathCell curA, curB;          // +0xf8/+0xfc and +0x100/+0x104, twin traces
     int dirA = 0, dirB = 0;       // +0x108 / +0x10c
+    bool started = false;         // both cursors have taken a step
     int best = 0;                 // +0xcc, closest approach so far
     int nOccupied = 0;            // +0xd8
     int nGround = 0;              // +0xdc

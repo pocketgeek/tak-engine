@@ -209,6 +209,7 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
             if (s < kCellThreshold) {          // blocked -> start both traces
                 curA = org; curB = org;
                 dirA = d; dirB = d;
+                started = false;
                 phase = Phase::Trace;
                 break;
             }
@@ -232,6 +233,16 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
                 if (dist < best) best = dist;
                 if (onGoalLine(org, curA)) { org = curA; phase = Phase::CardMarch; break; }
             }
+            // The traces give up when they MEET (icd 0x414ec7 compares cursor B's
+            // cell and direction against cursor A's): two cursors going opposite
+            // ways round the same outline can only coincide if the outline is
+            // closed, so there is no way through. Comparing each cursor with its
+            // own start instead -- which is what I had -- lets a trace wander most
+            // of the map before it notices, which is what burned the visit limit.
+            if (started && curA.x == curB.x && curA.z == curB.z && dirA == dirB) {
+                phase = Phase::Failed;
+                return Result::Failed;
+            }
             const bool okB = traceStep(score, curB, dirB, -1);
             if (okB) {
                 if (atGoal(curB)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
@@ -239,6 +250,7 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
                 if (dist < best) best = dist;
                 if (onGoalLine(org, curB)) { org = curB; phase = Phase::CardMarch; break; }
             }
+            started = true;
             if (!okA && !okB) {
                 if (g_pathDbg) std::fprintf(stderr,
                     "  search gave up: both traces boxed in at A(%d,%d) B(%d,%d) visited=%d\n",

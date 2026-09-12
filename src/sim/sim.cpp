@@ -1052,6 +1052,7 @@ void World::order(int unitId, float x, float z, bool queue) {
 // goal a couple of cells away is not worth a search -- the straight segment
 // already covers it.
 void World::requestPath(Unit& u, float x, float z) {
+    if (!pathService_) return;
     if (!u.type || u.type->canFly || u.type->isStructure()) return;
     const NavGrid& g = navFor(u.type);
     if (g.empty()) return;
@@ -3737,7 +3738,7 @@ void World::tick(float dt) {
     // Retail's pathfinder: one integer work budget split across every pending
     // request, each search resuming where it left off (icd 0x416430). Runs
     // after occupancy so a search scores exactly what the mover will see.
-    paths_.tick(
+    if (pathService_) paths_.tick(
         [&](int unitId, int cx, int cz) {
             const Unit* u = unit(unitId);
             return u && u->type ? cellScore(u->type, cx, cz, unitId)
@@ -3759,6 +3760,27 @@ void World::tick(float dt) {
             }
             replaceLeg(*u, path);
         });
+
+    // Re-request, the way retail's navigator re-anchors instead of asking once.
+    // A search is capped at (w+h)*20 cell visits (icd 0x414797), so a long haul
+    // legitimately fails -- but the unit is meanwhile walking its straight
+    // segment, and from closer in the same search succeeds. Without this a unit
+    // that failed once never routes at all, which is most of a big map.
+    //
+    // Staggered by unit id so the queue does not spike on one tick, and driven
+    // off the tick counter, so it stays identical on every peer.
+    if (pathService_ && !nav_.empty()) {
+        for (auto& u : units_) {
+            if (!u.alive() || u.embarked() || !u.type) continue;
+            if (u.type->canFly || u.type->isStructure() || !u.type->canMove) continue;
+            if (u.orders.empty()) continue;
+            const Order& leg = u.orders[currentLeg(u.orders)];
+            if (leg.targetId != 0) continue;          // chasing, not travelling
+            if (paths_.pending(u.id)) continue;       // a search is already running
+            if ((tickCounter_ + uint32_t(u.id)) % kPathRetryTicks != 0) continue;
+            requestPath(u, leg.x, leg.z);
+        }
+    }
 
     // Auto-acquire re-scan period, widened with the crowd: target acquisition is the
     // dominant sim cost in a huge battle (each idle armed unit scans its neighbourhood

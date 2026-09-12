@@ -490,6 +490,43 @@ enormously for us: a faithful port is deterministic by construction and safe
 for lockstep, provided the budget is a match-replicated constant and requests
 are visited in a fixed (player, unit id) order.
 
+### Port status (2026-09-12)
+
+Landed and unwired-by-default. `World::setPathService(true)` turns it on.
+
+Working: the scheduler (budget / (A + 5*B), deterministic visit order), the
+cell scoring, the request/complete plumbing into `replaceLeg`, the init and
+march phases, the twin-trace structure, the breadcrumb route reconstruction,
+and the real visit limit `(w+h)*20` from `0x414797`. Synthetic grids all pass,
+including a wall with a gap.
+
+NOT working, and why it is off by default:
+
+  * On a real map the search succeeds only for SOME distances. From one corner
+    of Inner Circle: 5 and 10 cells arrive, 20 fails, 30 and 40 arrive, 60+ all
+    fail on the visit limit. That pattern is not a budget problem -- failures
+    burn the whole 7680-visit allowance without getting anywhere.
+  * Successful routes come back with 64 waypoints -- the clamp -- for a 30-cell
+    path that should need a handful of corners. The trace is wandering.
+  * Cost with it enabled: 23.2ms/tick against a 19.5ms baseline on the 8-AI
+    benchmark, ~4ms of it in the search. Paying that for mostly-failing
+    searches is not a trade worth making yet.
+
+Two candidate causes, neither confirmed:
+
+  * Both cursors lay breadcrumbs into ONE map, so the backtrack can hop between
+    the two traces and produce a path that is not a path. Retail marks from both
+    cursors too (`0x414d44` for A, `0x414f07` for B), so this may be a red
+    herring -- or retail's route builder at `0x414450` may do something the
+    naive backtrack does not.
+  * The sweep order or handedness in `traceStep` may still be off, so a cursor
+    hugs the wrong side and wanders instead of rounding the obstacle.
+
+Fixing the termination test to match `0x414ec7` -- the traces give up when the
+two cursors MEET, rather than when either returns to its own start -- was
+correct RE and changed none of these numbers, which is itself a clue that the
+problem is upstream of termination.
+
 ### Port plan
 
 1. `PathService` owning a request queue, replacing nothing at first -- run it

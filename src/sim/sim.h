@@ -1319,6 +1319,10 @@ private:
     // through this, so it sees exactly what the mover will.
     int cellScore(const UnitType* t, int cx, int cz, int selfId) const;
 
+    // Enable retail's background pathfinder for this world (default off).
+    void setPathService(bool on) { pathService_ = on; if (!on) paths_.clear(); }
+    bool pathService() const { return pathService_; }
+
     void requestPath(Unit& u, float x, float z);
     void rebuildOccupancy();
     // How deep would `u`'s body sit inside another mobile body if it stood at
@@ -1466,6 +1470,15 @@ private:
                                  // (deterministic: derived from the live-unit count)
     int pathBudget_ = 0;         // A* repaths still allowed this tick (crowd throttle)
     PathService paths_;          // retail's request queue + budget scheduler
+    // OFF by default until the search is reliable enough to earn its keep. With
+    // it on, an 8-AI benchmark costs 23.2ms/tick against 19.5 baseline (~4ms of
+    // "other") while most searches still fail their visit limit and fall back to
+    // straight-line steering -- cost without benefit. Flip it on per-World to
+    // work on the search; see docs/retail-engine.md.
+    bool pathService_ = false;
+    // How often a travelling unit re-asks for a route when it has none. Retail's
+    // navigator re-anchors on a similar cadence rather than searching once.
+    static constexpr uint32_t kPathRetryTicks = 30;
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
     std::vector<uint8_t> slope_;   // local height spread
