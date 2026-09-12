@@ -1181,20 +1181,11 @@ bool World::flowKeyFor(const UnitType* type, float gx, float gz, FlowKey& out) c
 }
 
 const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const {
-    // RETAIL NAV experiment (TAK_RETAILNAV=1, OFF by default): no unit gets a flow
-    // field at all, so movement is retail's -- steer straight at the goal, and let the
-    // blocked/stuck watchdogs buy a path only when something really blocks
-    // (docs/retail-engine.md: retail's PathNavigator keeps a two-point segment
-    // [position, goal] and has no search).
-    // ONE choke point on purpose: gating the mover alone left prefetchFlows building
-    // for every CHASER, and gating order() as well still left the repath reachability
-    // probes -- both measured WORSE than doing nothing. Cut it here and nothing can
-    // obtain a field.
-    // DANGER: this changes hashed sim behaviour, so every peer in a game must agree.
-    // Set it for the client AND the server (single-player launches its own server,
-    // which inherits the environment). Mismatched peers desync.
-    static const bool kRetailNav = std::getenv("TAK_RETAILNAV") != nullptr;
-    if (kRetailNav) return nullptr;
+    // Flow fields are retired: retail has no global pathfinder, and ours was the
+    // dominant sim cost (docs/retail-engine.md, ff59d68). Nothing gets a field. The
+    // machinery below is dead and comes out next; kept for one commit so the
+    // behaviour flip is reviewable on its own.
+    return nullptr;
     FlowKey k;
     if (!flowKeyFor(type, gx, gz, k)) return nullptr;
     auto it = flowCache_.find(k.key);
@@ -1235,8 +1226,7 @@ const FlowField* World::flowForNow(const FlowKey& k) const {
 // cached too (same not-ready semantics as flowFor). A single miss just builds
 // synchronously here -- no thread is worth one build.
 void World::prefetchFlows() {
-    static const bool kRetailNav = std::getenv("TAK_RETAILNAV") != nullptr;
-    if (kRetailNav) return;
+    return;   // retired with flowFor(); see above
     std::vector<FlowKey> misses;
     // Anything a consumer asked for mid-tick and was refused (see flowFor) is built
     // here, in the same parallel batch, before this tick's movers run.
@@ -1405,14 +1395,11 @@ void World::order(int unitId, float x, float z, bool queue) {
     // crowd sent to the same point spreads and flows around obstacles instead of
     // funnelling single-file into a corner. Only fall back to A* waypoints when
     // no field can be built or the goal is unreachable from here.
-    // RETAIL NAV (experiment): never build or consult a field when ordering. Retail
-    // pushes the goal straight in and steers at it (docs/retail-engine.md); the
-    // blocked/stuck watchdogs pay for a path only when something really blocks.
-    // NB the first attempt at this experiment only skipped the flow override in the
-    // MOVER, which left prefetchFlows still building every field and measured WORSE
-    // (builds 6997 -> 8172, A* +55%) -- the production side has to go too.
-    static const bool kRetailNav = std::getenv("TAK_RETAILNAV") != nullptr;
-    if (kRetailNav) {
+    // RETAIL NAV: push the goal straight in and steer at it. Retail's PathNavigator
+    // keeps a two-point segment [current position, goal], re-anchored every ~6 ticks,
+    // and performs no search of any kind (docs/retail-engine.md). The blocked/stuck
+    // watchdogs buy a path only when something really is in the way.
+    {
         Order o;
         o.x = x; o.z = z; o.flow = false;
         u->orders.push_back(o);
@@ -4385,15 +4372,9 @@ void World::tick(float dt) {
                 continue;
             }
             float want = detmath::atan2(dx, dz);
-            // RETAIL NAV (experiment, TAK_RETAILNAV=1): steer straight at the goal and
-            // let the blocked/stuck watchdogs pay for a path only when something is
-            // actually in the way. This is what the retail engine does -- its
-            // PathNavigator keeps a two-point segment [current position, goal],
-            // re-anchored every ~6 ticks, and has no search of any kind
-            // (docs/retail-engine.md). `want` above is already that heading; the flow
-            // override below is ours.
-            static const bool kRetailNav = std::getenv("TAK_RETAILNAV") != nullptr;
-            if (o.flow && !kRetailNav) {
+            // `want` above IS retail's heading: steer straight at the goal. The flow
+            // override below is ours and is now unreachable (o.flow is never set).
+            if (o.flow) {
                 // Steer along the shared flow field; near the goal (or in an
                 // unreachable pocket) the field goes flat and we home straight in.
                 const FlowField* ff = flowFor(u.type, o.x, o.z);
