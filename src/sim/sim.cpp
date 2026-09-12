@@ -2572,7 +2572,16 @@ void World::rebuildOccupancy() {
         if (!u.alive() || u.embarked() || !u.type) continue;
         if (u.type->canFly || u.type->isStructure()) continue;   // structures are in nav_
         if (u.underConstruction) continue;
-        if (u.speed != 0.0f) continue;   // only a parked body blocks (see sim.h)
+        // EVERY mobile body blocks, moving or parked -- which is what retail does
+        // (080d288's own RE: "every mobile unit is stamped into an exclusive per-cell
+        // occupancy layer"). We shipped a parked-only simplification, and the cost
+        // showed up in play as units SHOVING each other: a moving body blocked
+        // nobody, so two movers overlapped freely and the separation pass spent every
+        // tick pushing them apart to (footA+footB)*8 px. Two systems enforcing
+        // spacing at different resolutions, fighting. With occupancy authoritative,
+        // the mover simply refuses the overlapping step (and clamps+slows rather than
+        // stopping, the escape valve ported alongside it), so separation becomes the
+        // rare de-overlap it should always have been.
         // Stamp the whole footprint, centre-anchored to match NavGrid::fits.
         int f = footCells(u.type);
         int cx = int(u.x) / 16 - f / 2, cz = int(u.z) / 16 - f / 2;
