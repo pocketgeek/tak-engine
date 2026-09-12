@@ -531,6 +531,46 @@ and the termination test are now confirmed to match, so if there is a remaining
 divergence it is inside the trace's stepping, and it would show up as route
 quality rather than as failure.
 
+### The unstick pass is gone, and what is still broken (2026-09-12)
+
+Retail has no "unstick" pass, and neither do we any more. Ours nudged any ground
+unit standing on a blocked cell toward the nearest walkable one, to rescue
+bodies "spawned by a building, shoved by a crowd, or clipped a corner" -- and
+two of those three causes were our own (the crowd-shoving one was the separation
+pass, also deleted). Worse, the nudge moved a unit every tick, which reads as
+progress, which reset the wedged timer, so a unit that could not reach its goal
+never gave up.
+
+Three real bugs fell out of chasing a unit that walked for ever without
+arriving, and all three are fixed:
+
+  * **The no-headway test compared SQUARED distances** and subtracted 400 for
+    "20px closer". At 2900px the squared distance is ~8.6 million, so a
+    sub-pixel gain cleared the bar and the timer never accumulated at range.
+    Now linear.
+  * **A clipped route threw the destination away.** `replaceLeg` marks the last
+    waypoint of the installed path as the leg's goal, so a route cut off at the
+    64-waypoint limit replaced the player's destination with wherever the route
+    happened to stop. The unit walked to each route's end, asked for another, and
+    shuffled between them. The true goal is now appended when a route falls
+    short.
+  * **The final waypoint was snapped to the exact goal unconditionally**, even
+    for a clipped route, sending the unit charging at a distant point through
+    whatever lay between. Now only when the route really reached the goal cell.
+
+STILL BROKEN, and the next thing to fix: a unit can circle between two routes
+to the same destination indefinitely. It is never noticed because `replaceLeg`
+resets the no-headway tracker and the pathfinder re-routes the same leg about
+once a second, so the tracker cannot build up. Preserving it when the
+destination is unchanged is the obvious fix and is wrong -- units briefly held
+up in a crowd then accumulate across re-routes and abandon good orders, halving
+"two columns pass through each other" to 6 of 12. What is wanted is probably a
+separate per-destination timer that re-routing does not touch.
+
+The repro is a unit spawned on a blocked cell and ordered to the far corner of
+Inner Circle: 1873px of travel in 60s, no arrival, no stop. Down from 2426px
+before these fixes, which is progress and not a solution.
+
 ### Port plan
 
 1. `PathService` owning a request queue, replacing nothing at first -- run it

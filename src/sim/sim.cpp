@@ -1003,6 +1003,16 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
     }
     next.insert(next.end(), u.orders.begin() + long(end) + 1, u.orders.end());
     u.orders.swap(next);
+    // KNOWN LIMITATION. This resets the no-headway tracker, and the pathfinder
+    // re-routes the same leg about once a second, so the tracker cannot build up
+    // while a unit is being re-routed -- which is why a unit circling between
+    // routes to the same place is never noticed and never gives up. Preserving
+    // the tracker when the destination is unchanged looks like the fix and is
+    // not: units held up briefly in a crowd then accumulate across re-routes and
+    // abandon perfectly good orders (it halves "two columns pass through each
+    // other", 6 of 12 instead of 12). The real answer is probably a separate
+    // per-destination timer that re-routing does not touch, rather than reusing
+    // this one. See docs/retail-engine.md.
     u.goalStuckD = 1e30f;                    // new leg -> the tracker starts over
     u.goalStuckT = 0;
 }
@@ -3733,14 +3743,38 @@ void World::tick(float dt) {
             if (!u || !u->alive() || u->orders.empty()) return;
             // Only the leg this search was issued for; anything queued behind
             // it stays untouched.
+            // Snap the final waypoint to the caller's exact goal ONLY when the
+            // route actually reached the goal cell. A route clipped at the
+            // 64-waypoint limit stops short, and pointing its last waypoint at
+            // the distant goal sends the unit charging straight at whatever lies
+            // between -- it gets blocked, re-asks, gets another clipped route,
+            // and ping-pongs. Measured: a unit oscillating between two points
+            // 2426px of travel later, having never arrived.
+            const bool reachedGoal =
+                !route.empty() && route.back().x == int(gx) / 16 &&
+                route.back().z == int(gz) / 16;
             std::vector<Order> path;
             path.reserve(route.size());
             for (size_t i = 0; i < route.size(); ++i) {
                 Order o;
                 o.x = float(route[i].x) * 16.0f + 8.0f;
                 o.z = float(route[i].z) * 16.0f + 8.0f;
-                if (i + 1 == route.size()) { o.x = gx; o.z = gz; }   // exact goal
+                if (i + 1 == route.size() && reachedGoal) { o.x = gx; o.z = gz; }
                 path.push_back(o);
+            }
+            // A route clipped at 64 waypoints stops short of where the player
+            // actually sent the unit, and replaceLeg marks the LAST waypoint as
+            // the leg's goal -- so installing a clipped route silently threw the
+            // real destination away. The unit then walked to the end of each
+            // clipped route, asked for another, and shuffled between them for
+            // ever: measured 2426px of travel in 60s, never arriving, and the
+            // no-headway watchdog never fired because from its point of view the
+            // unit kept reaching its goal. Keep the destination on the end.
+            if (!reachedGoal) {
+                Order last;
+                last.x = gx;
+                last.z = gz;
+                path.push_back(last);
             }
             replaceLeg(*u, path);
         });
@@ -4333,8 +4367,16 @@ void World::tick(float dt) {
                 // deleted the leg the player was watching the unit walk.
                 const Order& legEnd = u.orders[currentLeg(u.orders)];
                 float gx = legEnd.x, gz = legEnd.z;
-                float gd = (u.x - gx) * (u.x - gx) + (u.z - gz) * (u.z - gz);
-                if (gd < u.goalStuckD - 400.0f) {        // >20px closer -> real progress
+                // LINEAR distance, not squared. This compared squared distances
+                // and subtracted 400 for "20px closer" -- which only means 20px
+                // when the goal is a few tens of pixels away. At 2900px the
+                // squared distance is ~8.6 million, so a sub-pixel gain cleared
+                // the bar, the tracker reset, and the no-headway timer could
+                // never build up at all. A unit circling between two routes
+                // 2900px from its goal therefore never gave up: measured 2426px
+                // of travel in 60s with no arrival and no stop.
+                float gd = detmath::len(u.x - gx, u.z - gz);
+                if (gd < u.goalStuckD - 20.0f) {         // >20px closer -> real progress
                     u.goalStuckD = gd; u.goalStuckT = 0;
                 } else {
                     u.goalStuckT += dt;
@@ -4369,11 +4411,23 @@ void World::tick(float dt) {
                     // last one a unit grinding slowly along a wall gets its order
                     // cancelled -- measured, a trip that reaches 97% of the way by
                     // pressing was being abandoned at 53%.
-                    if (u.goalStuckT > kGoalGiveUpSecs && u.stuckFor > 0.9f) {
-                        auto it = pathRetryAt_.find(u.id);
-                        if (it != pathRetryAt_.end() && tickCounter_ < it->second)
-                            dropLeg(u);
-                    }
+                    // "Wedged" has two shapes. Pressed against something and
+                    // barely moving is one (stuckFor). The other is standing on
+                    // ground the unit does not fit on at all: the unstick pass
+                    // then nudges it toward legal ground every tick, that nudge
+                    // counts as movement and keeps resetting stuckFor, and the
+                    // unit wanders for ever while never reaching anything --
+                    // measured 2426px of wandering in 60s with no arrival.
+                    // No extra conditions. Not getting closer for this long IS
+                    // the signal, whatever the unit is doing meanwhile -- wedged
+                    // against rock, or circling between two routes that each
+                    // lead back to the other. Earlier versions demanded the unit
+                    // be wedged, or standing off the grid, or to have had a
+                    // search fail; a unit oscillating on perfectly legal ground
+                    // is none of those, and wandered 2426px in 60s without ever
+                    // arriving. Retail stops: ordered at a mountain it walks as
+                    // close as it can and comes to rest.
+                    if (u.goalStuckT > kGoalGiveUpSecs) dropLeg(u);
                 }
             } else {
                 u.goalStuckD = 1e30f; u.goalStuckT = 0;
@@ -4545,43 +4599,21 @@ void World::tick(float dt) {
     // nothing now pushes the pair apart. Retail behaves the same way. Units
     // getting stuck the way retail's did is the intended outcome here, not a
     // regression to fix by reintroducing a push.
-    // Unstick: any ground unit that ends up inside a blocked cell (spawned by a
-    // building, shoved by a crowd, or clipped a corner) is nudged toward the
-    // nearest walkable cell so it can never wedge permanently.
-    for (auto& u : units_) {
-        // Same isStructure guard as separation: a canmove=1 building sits on
-        // its own blocked footprint, so the unstick would march it away.
-        if (!u.alive() || u.embarked() || !u.type || !u.type->canMove ||
-            u.type->isStructure() || u.type->canFly)
-            continue;
-        const NavGrid& g = navFor(u.type);
-        if (g.empty()) continue;
-        int cx = int(u.x) / 16, cz = int(u.z) / 16;
-        // fits(), not walkable(): a big unit standing where only its centre cell is
-        // clear is still stuck. Identical at foot==1. The search radius scales with
-        // the body, because a 4x4 needs to travel further to find a legal spot.
-        int uf = footCells(u.type);
-        if (g.fits(cx, cz, uf)) continue;
-        float bestD = 1e18f, tx = u.x, tz = u.z;
-        bool found = false;
-        for (int r = 1; r <= 4 + (uf - 1) && !found; ++r)   // 4 at foot 1, wider for a big body
-            for (int dz = -r; dz <= r; ++dz)
-                for (int dx = -r; dx <= r; ++dx) {
-                    if (!g.fits(cx + dx, cz + dz, uf)) continue;
-                    float wx = (cx + dx) * 16 + 8.0f, wz = (cz + dz) * 16 + 8.0f;
-                    float d = (wx - u.x) * (wx - u.x) + (wz - u.z) * (wz - u.z);
-                    if (d < bestD) { bestD = d; tx = wx; tz = wz; found = true; }
-                }
-        if (found) {
-            float dx = tx - u.x, dz = tz - u.z;
-            float dl = std::sqrt(dx * dx + dz * dz);
-            if (dl > 1e-3f) {
-                float step = std::min(dl, 40.0f * dt + 3.0f);
-                u.x += dx / dl * step;
-                u.z += dz / dl * step;
-            }
-        }
-    }
+    // There was an "unstick" pass here, deleted 2026-09-12. It nudged any ground
+    // unit standing on a blocked cell toward the nearest walkable one, to rescue
+    // bodies "spawned by a building, shoved by a crowd, or clipped a corner".
+    //
+    // Retail has no such thing, and the three failure modes that comment lists
+    // were ours: the crowd-shoving one was the separation pass, itself deleted
+    // earlier today. What the nudge did do was move a unit every tick, which
+    // reads as progress, which reset the wedged timer, which meant a unit that
+    // could not reach its goal never gave up -- measured, one wandered 2426px in
+    // 60 seconds and was still going. Take the nudge away and the same unit
+    // settles after 3.9s having moved 30px.
+    //
+    // The risk taken knowingly: a unit that does end up on illegal ground now
+    // stays there rather than being walked off it. The mover's own solidity is
+    // what should keep it from happening in the first place.
     // Win/defeat is derived from unit state on every sim (clients + referee),
     // so all peers agree on the tick a team is eliminated / the game is won.
     updateOutcome();

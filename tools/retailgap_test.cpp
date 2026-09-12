@@ -28,6 +28,28 @@ using namespace tak;
 namespace {
 int failures = 0;
 const char* kMap = "maps/Inner Circle.tnt";   // any shipped map; we only need terrain
+
+// Nudge a spawn point onto ground the unit actually fits on. Fixtures used to
+// pick round numbers and rely on the sim's "unstick" pass to walk a unit off
+// whatever rock it landed on; that pass is gone (retail has none), so a fixture
+// that spawns on a cliff now simply has a unit that cannot move.
+static void legalSpot(const tak::sim::World& w, const tak::sim::UnitType* t,
+                      float& x, float& z) {
+    const tak::sim::NavGrid& g = w.navFor(t);
+    if (g.empty() || !t) return;
+    const int foot = std::max(1, std::max(t->footX, t->footZ));
+    const int cx = int(x) / 16, cz = int(z) / 16;
+    if (g.fits(cx, cz, foot)) return;
+    for (int r = 1; r <= 24; ++r)
+        for (int dz = -r; dz <= r; ++dz)
+            for (int dx = -r; dx <= r; ++dx)
+                if (std::abs(dx) == r || std::abs(dz) == r)
+                    if (g.fits(cx + dx, cz + dz, foot)) {
+                        x = float(cx + dx) * 16 + 8;
+                        z = float(cz + dz) * 16 + 8;
+                        return;
+                    }
+}
 void check(bool ok, const char* what, const std::string& detail = "") {
     std::printf("  [%s] %s%s%s\n", ok ? "PASS" : "FAIL", what,
                 detail.empty() ? "" : " -- ", detail.c_str());
@@ -295,7 +317,9 @@ int main(int argc, char** argv) {
         if (witch && prey && !witch->weapons.empty() &&
             witch->weapons[0].kind == sim::Weapon::Kind::Wandering) {
             sim::World w; freshWorld(w);
-            int caster = w.spawn(witch, 1000, 1000, 0, 0);
+            float wx = 1000, wz = 1000;
+            legalSpot(w, witch, wx, wz);
+            int caster = w.spawn(witch, wx, wz, 0, 0);
             if (auto* c = w.unit(caster)) c->mana = c->type->maxMana;
             // A dense field across the whole region a 9-second tornado can reach
             // (it drifts ~400px forward and wanders hundreds of px sideways), so the
@@ -1093,9 +1117,10 @@ int main(int argc, char** argv) {
             // Two queued legs: out to A, then on to B. The unit must visit A
             // BEFORE B -- not cut straight to the last one.
             sim::World w; freshWorld(w);
-            const float sx = 1000, sz = 1000;
-            const float ax = 1000, az = 1400;     // leg 1: due south
-            const float bx = 1400, bz = 1400;     // leg 2: then east
+            float sx = 1000, sz = 1000;
+            legalSpot(w, sword, sx, sz);
+            const float ax = sx, az = sz + 400;       // leg 1: due south
+            const float bx = sx + 400, bz = sz + 400; // leg 2: then east
             int id = w.spawn(sword, sx, sz, 0, 0);
             w.order(id, ax, az, false);
             size_t afterFirst = w.unit(id)->orders.size();

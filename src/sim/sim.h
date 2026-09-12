@@ -1488,7 +1488,7 @@ private:
     // walks as close as it can and comes to rest, with no long grind first --
     // so this is short. It is paired with a wedged test (stuckFor), which is
     // what keeps a unit that is merely crawling from being cut off.
-    static constexpr float kGoalGiveUpSecs = 3.0f;
+    static constexpr float kGoalGiveUpSecs = 20.0f;
     std::map<int, uint32_t> pathRetryAt_;
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
