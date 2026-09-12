@@ -1474,9 +1474,14 @@ private:
     PathService paths_;          // retail's request queue + budget scheduler
     // Enabled by setupMatch; a bare test World leaves it off.
     bool pathService_ = false;
-    // How often a travelling unit re-asks for a route when it has none. Retail's
-    // navigator re-anchors on a similar cadence rather than searching once.
-    static constexpr uint32_t kPathRetryTicks = 30;
+    // How often a travelling unit re-asks for a route. Retail's figure, not a
+    // guess: 0x4e545b re-requests only once the tick counter has passed the
+    // stamp at navigator+0x110 by 0x78 -- 120 ticks -- and only when the path
+    // did NOT fail (it tests the failed/detour bits first and does nothing at
+    // all if either is set). We were re-asking every 30, four times retail's
+    // rate, which is what kept units churning through fresh routes instead of
+    // settling on one.
+    static constexpr uint32_t kPathRetryTicks = 120;
     // A search that failed once from roughly here will fail again -- the terrain
     // has not changed. Sit out this many ticks before asking again, so a unit
     // stuck against a maze stops burning the whole budget on doomed searches and

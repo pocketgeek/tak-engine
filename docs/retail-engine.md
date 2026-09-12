@@ -558,18 +558,26 @@ arriving, and all three are fixed:
     for a clipped route, sending the unit charging at a distant point through
     whatever lay between. Now only when the route really reached the goal cell.
 
-STILL BROKEN, and the next thing to fix: a unit can circle between two routes
-to the same destination indefinitely. It is never noticed because `replaceLeg`
-resets the no-headway tracker and the pathfinder re-routes the same leg about
-once a second, so the tracker cannot build up. Preserving it when the
-destination is unchanged is the obvious fix and is wrong -- units briefly held
-up in a crowd then accumulate across re-routes and abandon good orders, halving
-"two columns pass through each other" to 6 of 12. What is wanted is probably a
-separate per-destination timer that re-routing does not touch.
+RESOLVED, and my first reading of it was wrong. Appending the destination fixed
+the circling; what looked like a livelock afterwards was a 60-SECOND HARNESS
+CUTOFF being misread. The unit was converging the whole time -- distance to goal
+falling 3282 -> 3220 -> 3126 -> 3023 -> 2931 -> 2861 -> 2741 -- and I read "1873px
+travelled, no arrival" as evidence of circling when it was evidence of walking.
+Run the same case for 300s and it ARRIVES: 124.3s, 5181px travelled, from a unit
+spawned inside rock to the far corner of a 192x192 map.
 
-The repro is a unit spawned on a blocked cell and ordered to the far corner of
-Inner Circle: 1873px of travel in 60s, no arrival, no stop. Down from 2426px
-before these fixes, which is progress and not a solution.
+The lesson worth keeping: total distance travelled is not a stuck-detector. Plot
+distance TO THE GOAL over time, or the harness will lie to you.
+
+The retry cadence is also now retail's rather than a guess. `0x4e545b`
+re-requests only once the tick counter has passed the stamp at navigator+0x110
+by `0x78` -- 120 ticks -- and only when the path did NOT fail, testing the
+failed/detour bits first and doing nothing at all if either is set. We had been
+re-asking every 30 ticks, four times retail's rate.
+
+Still not attempted: nothing here needs a per-destination timer. I proposed one
+while the circling was still unexplained; it was a fix for a bug that turned out
+not to exist.
 
 ### Port plan
 
