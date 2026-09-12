@@ -256,6 +256,37 @@ result is used somewhere not yet traced), or retail genuinely wedged as much
 as we do and the difference we think we remember is not there. Resolving that
 needs the rest of 0x4dba80's control flow read properly, not more guessing.
 
+## Why the graded score cannot be adopted piecemeal (2026-09-12)
+
+Attempted and reverted; recording it so the next attempt starts from the real
+obstacle rather than rediscovering it.
+
+Retail's configuration is three things that only work together:
+  1. PARKED bodies impassable, MOVING bodies merely expensive (graded score).
+  2. The step test scores the body's whole footprint RECT, not one cell.
+  3. No separation pass at all -- bodies share space briefly and nothing shoves.
+
+Ours currently has hard-blocking movers and a full-footprint separation push.
+Implementing (1) and (2) is straightforward and passes every test: an
+`areaScore()` returning -1 impassable / 4 passable / 6 ground / 7 road,
+thresholded at 4, with occupancy stamping only parked bodies.
+
+(3) is where it stops. Demoting separation to de-overlap lets a walker
+interpenetrate a parked body -- measured closest approach 13px where the
+footprints should touch at 32px. The cause is in our mover: it skips the step
+test entirely while a unit stays INSIDE ITS OWN CELL, so sub-cell motion is
+unchecked and a unit can creep into a neighbour between cell transitions. The
+full-radius separation push was silently providing that containment.
+
+So the blocker for retail-faithful collision is SUB-CELL collision handling,
+not the score. Retail does not need separation because its refusal happens on
+the rect at whatever resolution the mover steps at; ours only happens on cell
+entry. Until the mover tests every step rather than every cell crossing,
+removing separation trades visible shoving for units sinking into each other.
+
+Order for the next attempt: sub-cell step testing first, then (1) and (2),
+then delete separation and confirm the interpenetration probe stays clean.
+
 ## Headless in-game screenshots (dev harness)
 
 `--shot` alone captures the LOBBY and exits: it forces the dummy video driver and
