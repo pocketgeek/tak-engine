@@ -643,35 +643,17 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
         navClasses_.clear();
         navIdx_.clear();
     }
-    // Occlusion block: a wall's baked-relief art leans its top up-and-north over
-    // the low ground behind it (the 2.5D projection), so a unit that stops on that
-    // ground is drawn hidden "behind the wall". Block those cells for land units so
-    // they can't settle there -- the flat wall TOP has no higher cell to its south,
-    // so it stays walkable (a reachable rampart). This mirrors the renderer's
-    // occlusion exactly (modal ground height as the reference, ~1.1 px of northward
-    // projection per height unit, scanning south = toward the camera).
-    {
-        long hist[256] = {0};
-        for (uint8_t v : heights) hist[v]++;
-        int ref = 0;
-        for (int i = 1; i < 256; ++i) if (hist[i] > hist[ref]) ref = i;
-        const float kProj = 1.1f;
-        for (int z = 0; z < h; ++z)
-            for (int x = 0; x < w; ++x) {
-                int hu = heights[size_t(z) * w + x];
-                for (int d = 1; d <= 7; ++d) {
-                    int nz = z + d;
-                    if (nz >= h) break;
-                    int hw = heights[size_t(nz) * w + x];
-                    if (hw <= hu + 24) continue;   // not a wall relative to this cell
-                    if (float(hw - ref) * kProj > float(d) * 16.0f) {
-                        nav_.block(x, z, 1, 1, true);
-                        navHover_.block(x, z, 1, 1, true);
-                        break;
-                    }
-                }
-            }
-    }
+    // There was an "occlusion block" pass here, deleted 2026-09-12. It blocked the
+    // ground immediately north of a tall wall, because the wall's baked-relief art
+    // leans over that ground in the 2.5D projection and a unit standing there is
+    // drawn hidden behind the wall. It was a NAV fix for a RENDERER problem, it is
+    // not something retail does, and it was expensive: 4554 of 36864 cells on Inner
+    // Circle, 12% of the map. It had also been silently inert since 9b037c6
+    // (per-class grids, 2026-09-11) because it wrote the legacy grids' own cells,
+    // which nothing reads any more -- and switching it back on strands an army:
+    // 2 of 24 units reach their destination, against 24 of 24 without it.
+    // If units drawn behind walls becomes a visible annoyance again, fix it in the
+    // renderer, not by making a seventh of the map impassable.
     nav_.setRoads(&roads_);   // ground domain only: marches prefer highways
     // 0xFFFC cells are hard blockers (retail rates them impassable for every
     // movement domain AND rejects building placement on them -- icd 0x508190 /
@@ -679,11 +661,20 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     if (features && features->size() == size_t(w) * size_t(h))
         for (int z = 0; z < h; ++z)
             for (int x = 0; x < w; ++x)
-                if ((*features)[size_t(z) * w + x] == 0xFFFC) {
-                    nav_.block(x, z, 1, 1, true);
-                    navWater_.block(x, z, 1, 1, true);
-                    navHover_.block(x, z, 1, 1, true);
-                }
+                if ((*features)[size_t(z) * w + x] == 0xFFFC)
+                    // The SHARED overlay, not each grid's own cells. block() writes
+                    // cells_, and buildNavClasses() -- which runs after setTerrain and
+                    // builds the grids navFor() actually hands every unit in a real
+                    // match -- constructs its grids from heights alone. Stamping the
+                    // legacy grids published this to nobody from 9b037c6 onward, and
+                    // these are the cells under castle wall, gate and dock art: units
+                    // walked straight through them. 2538 cells on Inner Circle.
+                    obst_[size_t(z) * size_t(w) + size_t(x)] = 1;
+    // The overlay changed after setObstacles(), so clearance derived from it is
+    // stale. The per-class grids are built after this point and start clean.
+    nav_.markClearanceDirty();
+    navWater_.markClearanceDirty();
+    navHover_.markClearanceDirty();
     // Per-cell slope (max 3x3 height spread) and water depth, for per-unit
     // maxSlope / maxWaterDepth checks on top of the shared domain grids.
     terW_ = w; terH_ = h;
