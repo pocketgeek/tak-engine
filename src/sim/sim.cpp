@@ -4054,7 +4054,8 @@ void World::tick(float dt) {
         // body, after this unit's own sweep has already gone by, so its kill waits
         // for the next tick and regen gets to run first. Without the guard a
         // regenerating unit healed straight back off zero and never died at all,
-        // which is nearly every unit: 209 of the 213 shipped FBIs have healtime > 0.
+        // which is nearly every unit: of the 202 types this registry loads from a
+        // retail install, 200 have healtime > 0 (only aranull and npcwagon do not).
         // That is why Ctrl+Shift+D self-destruct appeared to do nothing.
         if (u.type->healTime > 0 && u.hp > 0 && u.hp < u.type->maxHp)
             u.hp = std::min(u.type->maxHp, u.hp + dt / u.type->healTime);
