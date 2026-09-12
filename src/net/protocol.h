@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 62;       // 62: unitstandorders gates the stance
+constexpr uint32_t kNetVersion = 63;       // 63: a build queued behind movement rides
+                                           // the move queue and blocks it while it builds
+                                           // 62: unitstandorders gates the stance
                                            // 61: idle flyers look for a landable spot
                                            // 60: standing orders split into retail's
                                            // move + fire axes, seeded per unit type

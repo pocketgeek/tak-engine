@@ -416,6 +416,13 @@ struct Order {
     // sense that it changes no movement maths -- but the repath paths need it to
     // tell "the rest of this leg" from "everything queued behind it".
     bool goal = false;
+    // A build the player queued behind other orders. Builds used to live in a
+    // SEPARATE list (Unit::buildOrders), which meant they could never interleave
+    // with moves -- "go here, build that, go there" was inexpressible, and the
+    // order line could not draw them either. A build that is queued behind
+    // outstanding orders now rides in this queue like everything else, and starts
+    // when it comes due.
+    const UnitType* buildType = nullptr;
     // This target was picked by auto-acquisition, not asked for by the player.
     // The move standing order gates only AUTO engagement: a Defensive unit told
     // explicitly to attack something across the map still walks over and does it.
@@ -877,7 +884,13 @@ public:
     int queuedCount(int builderId, const UnitType* type) const;
     // Mobile builder constructs a building at (x, z). Returns the new
     // building's id, or 0 if the site is invalid.
-    int startBuild(int builderId, const UnitType* type, float x, float z);
+    // How startBuild gets the builder to the site:
+    //   Replace -- the usual fresh order: walk there, dropping whatever it was doing.
+    //   None    -- it is already standing in position (a queued build that has just
+    //              come due), so issuing an approach would only disturb the queue.
+    enum class Approach { Replace, None };
+    int startBuild(int builderId, const UnitType* type, float x, float z,
+                   Approach approach = Approach::Replace);
     // Build now if the builder is free, else queue it (shift-click). A
     // non-queued order replaces any pending queue.
     void queueBuild(int builderId, const UnitType* type, float x, float z, bool queue);
@@ -1410,6 +1423,11 @@ private:
     // and equally part of the lockstep contract: every peer runs the identical
     // acquisition in the identical order, so it advances in lockstep too.
     uint32_t fireRng_ = 0x4649524Eu;   // 'FIRN'
+    // Builders whose queued build order has come due this tick. startBuild spawns
+    // the site, which can REALLOCATE units_, so it must never be called while the
+    // per-unit loop holds a Unit& -- that reference dangles the moment it returns.
+    // Collected in unit order (deterministic) and drained after the loop.
+    std::vector<int> buildDue_;
     uint32_t fireRand(uint32_t n) {    // retail's rand(n): 0 when n < 2
         fireRng_ = uint32_t((uint64_t(fireRng_) * 16807ULL) % 0x7FFFFFFFULL);
         return n < 2 ? 0u : fireRng_ % n;

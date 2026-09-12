@@ -450,9 +450,15 @@
         // Ghosts of the local player's queued (shift) build orders.
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
-            if (u.alive() && u.player == localPlayer_)
-                for (const auto& bo : u.buildOrders)
-                    if (bo.type) drawGhostAt(bo.type, bo.x, bo.z);
+            if (!u.alive() || u.player != localPlayer_) continue;
+            for (const auto& bo : u.buildOrders)
+                if (bo.type) drawGhostAt(bo.type, bo.x, bo.z);
+            // ...and the ones queued INTO the order list, which is where a build
+            // goes when it was queued behind movement (see World::queueBuild). The
+            // order sits at the builder's approach point, so step back to the site.
+            for (const auto& o : u.orders)
+                if (o.buildType)
+                    drawGhostAt(o.buildType, o.x, o.z - float(o.buildType->footZ) * 8 - 24);
         }
 
         // Projectiles: drawn per weapon family (only where visible).
@@ -2942,6 +2948,30 @@
                     }
                 }
                 px = qx; pz = qz;                          // advance either way
+            }
+            // Builds queued with no movement between them live in the separate
+            // build list, and they run after everything above -- so the line
+            // carries on through them. Retail had one list and drew MobileBuild
+            // orders in it like any other; this is the same picture out of two.
+            for (const auto& bo : up->buildOrders) {
+                if (!bo.type) continue;
+                float qx = bo.x, qz = bo.z;
+                float dx = qx - px, dz = qz - pz;
+                float len = std::sqrt(dx * dx + dz * dz);
+                if (len >= 1.0f) {
+                    float ux = dx / len, uz = dz / len;
+                    int bead = 0;
+                    for (float t = 0; t < len && bead < kTrailBeads; t += kSpacing, ++bead) {
+                        float wx = px + ux * t, wz = pz + uz * t;
+                        float sx = (wx - mapView_.offX()) * zm - terrainLiftX(wx, wz) * zm;
+                        float sy = (wz - mapView_.offY()) * zm - terrainLift(wx, wz) * zm;
+                        if (sx < -16 || sx > float(mvw) + 16 || sy < -16 || sy > float(winH) + 16)
+                            continue;
+                        cursors_.drawFrame(ren_, tak::CursorId::PathIcon,
+                                           size_t(bead) % frames, int(sx), int(sy), scale);
+                    }
+                }
+                px = qx; pz = qz;
             }
         }
     }

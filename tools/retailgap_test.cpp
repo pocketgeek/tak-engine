@@ -1355,6 +1355,55 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- moves and builds queue as ONE sequence ------------------------------
+    // Builds used to live in a separate list, so "go here, build that, go there"
+    // ran as "go here, go there, (never build)" -- the build sat in the other
+    // queue with nothing left to drain it.
+    {
+        sim::TypeRegistry breg;
+        breg.loadMoveInfo(vfs, "gamedata/moveinfo.tdf");
+        breg.loadDir(vfs, "units/");
+        breg.loadBuildTree(vfs, "canbuild/");
+        const sim::UnitType* mon = breg.find("zonhunt");   // the Zhon monarch; a flyer
+        const auto& menu = breg.buildable("zonhunt");
+        check(mon && mon->isBuilder && !menu.empty(), "zonhunt is a builder with a menu");
+        if (mon && !menu.empty()) {
+            const sim::UnitType* bt = breg.find(menu[0]);
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, breg, cfg);
+            w.player(0).mana = 100000;
+            int id = w.spawn(mon, 800, 2600, 0, 0);
+            w.order(id, 1100, 2600, false);             // move
+            w.queueBuild(id, bt, 1150, 2700, true);     // ...then build
+            w.order(id, 1400, 2600, true);              // ...then move again
+            check(w.unit(id)->orders.size() == 3,
+                  "move + build + move is ONE queue of three",
+                  std::to_string(w.unit(id)->orders.size()) + " entries");
+
+            bool built = false, sawSite = false;
+            for (int i = 0; i < 30 * 60; ++i) {
+                w.tick(1.0f / 30.0f);
+                const sim::Unit* u = w.unit(id);
+                if (!u) break;
+                if (u->buildSiteId != 0) sawSite = true;
+            }
+            for (const auto& un : w.units())
+                if (un.alive() && un.type == bt && !un.underConstruction) built = true;
+            check(sawSite, "the queued build actually starts");
+            check(built, "and finishes");
+            const sim::Unit* u = w.unit(id);
+            check(u && u->x > 1350.0f,
+                  "and THEN the builder goes on to the move queued behind it",
+                  u ? "ended at x=" + std::to_string(int(u->x)) : "gone");
+            check(u && u->orders.empty() && u->buildOrders.empty(),
+                  "with nothing left stuck in either queue");
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
