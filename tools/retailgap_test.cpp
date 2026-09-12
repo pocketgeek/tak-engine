@@ -1519,6 +1519,51 @@ int main(int argc, char** argv) {
                 check(u && !u->alive(), (std::string(c.label) + " (" + c.t->id + ") is DEAD").c_str(),
                       u ? ("hp=" + std::to_string(u->hp)) : "gone");
             }
+            // A self-destruct next to a friendly healer must still kill. alive()
+            // reads deadFor, not hp, so a unit sitting at zero hp still looks alive
+            // to every heal path until the death sweep runs -- and the AdjustJoy
+            // aura pulses AFTER that loop, so it used to resurrect the corpse.
+            const sim::UnitType* healer = nullptr;
+            for (const auto& [tid, t] : reg.types())
+                for (const auto& a : t.auras)
+                    if (a.kind == sim::Aura::Kind::Joy && a.radius > 0 && a.amount > 0) {
+                        if (!healer) healer = &t;
+                    }
+            if (!healer) std::printf("  (no AdjustJoy emitter in the data; aura case skipped)\n");
+            else {
+                // The aura pulses at 1 Hz, so the resurrection only bites when the
+                // countdown expires ON a pulse tick. Sweep every phase so one case
+                // is guaranteed to line up -- otherwise this passes by luck and
+                // tests nothing (it did, until the phase sweep was added).
+                int survived = 0;
+                std::string worst;
+                for (int phase = 0; phase < 30; ++phase) {
+                    sim::World w;
+                    sim::MatchConfig cfg;
+                    cfg.vfs = &vfs;
+                    cfg.mapPath = kMap;
+                    cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+                    cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+                    sim::setupMatch(w, reg, cfg);
+                    w.spawn(healer, 500, 500, 0, 0);              // the aura emitter
+                    int vid = w.spawn(regen, 520, 500, 0, 0);     // well inside its radius
+                    if (vid <= 0 || !w.unit(vid)) break;
+                    for (int i = 0; i < phase; ++i) w.tick(1.0f / 30.0f);
+                    w.destroy(vid);
+                    tick(w, 8.0f);
+                    const sim::Unit* v = w.unit(vid);
+                    if (!v || v->alive()) {
+                        ++survived;
+                        if (worst.empty())
+                            worst = "phase " + std::to_string(phase) +
+                                    (v ? " hp=" + std::to_string(v->hp) : " gone");
+                    }
+                }
+                check(survived == 0, "self-destruct inside a friendly heal aura still kills",
+                      survived ? (std::to_string(survived) + "/30 survived, first at " + worst)
+                               : (std::string("healer=") + healer->id + ", all 30 phases"));
+            }
+
             // Pressing again while it counts down cancels, and the unit lives.
             sim::World w;
             sim::MatchConfig cfg;

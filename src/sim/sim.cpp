@@ -2302,6 +2302,9 @@ void World::tickCombat(Unit& u, float dt) {
 // last hit it (so the new owner isn't credited a kill on its own unit).
 void World::captureUnit(Unit& t, int newPlayer) {
     if (!t.type || t.player == newPlayer) return;
+    // Already dead, just not swept yet (alive() reads deadFor, which tick() sets):
+    // capturing would raise it back to half health and steal a corpse.
+    if (t.hp <= 0) return;
     // Move the unit between the two owners' live counts NOW, the way spawn() does.
     // The counts only re-sync from a full walk at end of tick, so without this an
     // area mind control -- which converts a whole blob inside ONE applyHit -- reads
@@ -2943,8 +2946,12 @@ void World::tickRepair(Unit& b, float dt) {
         if (!b.orders.empty() && b.orders.front().repairTarget) b.orders.erase(b.orders.begin());
     };
     if (!b.type) { endRepair(); return; }
-    if (!t || !t->alive() || !t->type || t->underConstruction || t->embarked() ||
-        !allied(t->player, b.player) || t->hp >= t->type->maxHp) {
+    // `t->hp <= 0` is NOT covered by alive(): that reads deadFor, which is only set
+    // by the death sweep in tick(). A unit whose hp has already reached zero this
+    // tick still looks alive here, and tickRepair runs BEFORE the sweep -- so
+    // without this a builder repairs a unit back off zero and it never dies.
+    if (!t || !t->alive() || !t->type || t->hp <= 0 || t->underConstruction ||
+        t->embarked() || !allied(t->player, b.player) || t->hp >= t->type->maxHp) {
         endRepair();
         return;
     }
@@ -3184,6 +3191,11 @@ void World::tickHealAuras() {
                 float d2 = dx * dx + dz * dz;
                 if (!eligible(e, d2)) return;
                 if (e.hp >= e.type->maxHp) return;   // retail heals only the damaged
+                // ... and never anything already at zero: alive() reads deadFor, so a
+                // unit killed this tick still looks alive until the sweep in tick()
+                // runs, and the aura pulse fires AFTER that loop. Healing it here
+                // resurrects it (a self-destruct inside a friendly aura never died).
+                if (e.hp <= 0) return;
                 float power = a.amount * a.falloff(std::sqrt(d2)) / float(n);
                 float prog = power / std::max(e.type->buildTime, 0.01f);
                 // Deliberate divergence: retail bills the whole pulse even when only a
@@ -4035,13 +4047,15 @@ void World::tick(float dt) {
             u.hp -= waterDamage_ * dt;
             if (u.hp <= 0) { u.overkill = std::max(u.overkill, -u.hp); u.deathType = 1; }
         }
-        // `u.hp > 0` matters: the death sweep at the TOP of this loop already ran
-        // for this unit this tick, so anything that zeroes hp below it (the
-        // self-destruct expiry) is not noticed until the next tick --
-        // and regen sits in between. Without the guard a regenerating unit healed
-        // straight back off zero and never died, which is nearly every unit: 209 of
-        // the 213 shipped FBIs have healtime > 0. That is why Ctrl+Shift+D
-        // self-destruct appeared to do nothing.
+        // `u.hp > 0` matters because of WHERE hp gets zeroed, not by how much.
+        // Every other death path puts hp <= 0 outside this loop body, so the sweep
+        // at the top (3912) catches it and `continue`s -- never reaching this line.
+        // The self-destruct expiry a few lines up is the one that fires INSIDE the
+        // body, after this unit's own sweep has already gone by, so its kill waits
+        // for the next tick and regen gets to run first. Without the guard a
+        // regenerating unit healed straight back off zero and never died at all,
+        // which is nearly every unit: 209 of the 213 shipped FBIs have healtime > 0.
+        // That is why Ctrl+Shift+D self-destruct appeared to do nothing.
         if (u.type->healTime > 0 && u.hp > 0 && u.hp < u.type->maxHp)
             u.hp = std::min(u.type->maxHp, u.hp + dt / u.type->healTime);
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
