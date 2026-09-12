@@ -1098,6 +1098,7 @@ const World::CompGrid* World::components(const NavGrid& g, int foot) const {
     return &cg;
 }
 
+
 // Reachability: can a body of this type get from (fx,fz) to (gx,gz) at all? The AI
 // scores targets with it and the movement watchdogs use it to give up on a leg
 // rather than run a full-grid A* that would scan the map before failing.
@@ -1120,23 +1121,36 @@ bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float
         if (cx < 0 || cz < 0 || cx >= w || cz >= h) return -1;
         return cg->label[size_t(cz) * size_t(w) + size_t(cx)];
     };
-    int32_t from = labelAt(fx, fz);
-    if (from < 0) return false;           // the asker itself does not fit where it is
-    int32_t to = labelAt(gx, gz);
-    if (to < 0) {
-        // A goal the unit cannot occupy resolves to the nearest cell it can,
-        // spiralling out, so asking about a spot on a wall still answers usefully.
-        int gcx = std::clamp(int(gx) / 16, 0, w - 1);
-        int gcz = std::clamp(int(gz) / 16, 0, h - 1);
-        for (int r = 1; r < 24 && to < 0; ++r)
-            for (int j = -r; j <= r && to < 0; ++j)
-                for (int i = -r; i <= r && to < 0; ++i) {
+    // Nearest label to a point whose own cell has none: spiral out to the first cell
+    // a body of this size fits in. Used for BOTH ends -- see below.
+    auto nearestLabel = [&](float wx, float wz) -> int32_t {
+        int cx = std::clamp(int(wx) / 16, 0, w - 1);
+        int cz = std::clamp(int(wz) / 16, 0, h - 1);
+        for (int r = 1; r < 24; ++r)
+            for (int j = -r; j <= r; ++j)
+                for (int i = -r; i <= r; ++i) {
                     if (std::max(std::abs(i), std::abs(j)) != r) continue;
-                    int nx = gcx + i, nz = gcz + j;
+                    int nx = cx + i, nz = cz + j;
                     if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
                     int32_t l = cg->label[size_t(nz) * size_t(w) + size_t(nx)];
-                    if (l >= 0) to = l;
+                    if (l >= 0) return l;
                 }
+        return -1;
+    };
+    // The asker may not FIT where it stands -- shoved by a crowd, clipped into a
+    // corner, squeezed past a building -- while still being on walkable ground. That
+    // is a transient position, not a verdict about the goal, so resolve it to the
+    // nearest cell the body does fit exactly as the goal is resolved below. Returning
+    // false here instead made the movement watchdogs read "goal unreachable" and DROP
+    // the order, so a unit that got briefly wedged abandoned its march for good.
+    int32_t from = labelAt(fx, fz);
+    if (from < 0) from = nearestLabel(fx, fz);
+    if (from < 0) return false;
+    int32_t to = labelAt(gx, gz);
+    if (to < 0) {
+        // A goal the unit cannot occupy resolves to the nearest cell it can, so
+        // asking about a spot on a wall still answers usefully.
+        to = nearestLabel(gx, gz);
     }
     return to >= 0 && to == from;
 }
