@@ -1640,6 +1640,30 @@ int main(int argc, char** argv) {
                                : (std::string("healer=") + healer->id + ", all 30 phases"));
             }
 
+            // It LEAVES YOUR COMMAND rather than blowing up: no wreck behind it,
+            // and nobody is credited with a kill. Retail's self-destruct mission
+            // applies damage type 5, which is neither the explosion type (3, the
+            // one that gibs) nor anything a weapon in the shipped data carries.
+            {
+                sim::World w;
+                sim::MatchConfig cfg;
+                cfg.vfs = &vfs;
+                cfg.mapPath = kMap;
+                cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+                cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+                sim::setupMatch(w, reg, cfg);
+                const size_t feats0 = w.features().size();
+                int id = w.spawn(regen, 500, 500, 0, 0);
+                w.destroy(id);
+                for (int i = 0; i < 30 * 8; ++i) w.tick(1.0f / 30.0f);
+                const sim::Unit* u = w.unit(id);
+                check(!u || !u->alive(), "the countdown does end the unit");
+                check(w.features().size() == feats0,
+                      "...and it leaves no wreck -- it fades, it does not die",
+                      "features " + std::to_string(feats0) + " -> " +
+                          std::to_string(w.features().size()));
+            }
+
             // Pressing again while it counts down cancels, and the unit lives.
             sim::World w;
             sim::MatchConfig cfg;

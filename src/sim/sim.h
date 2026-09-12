@@ -324,6 +324,11 @@ struct UnitType {
     bool  cantBeStoned = false, cantBeFrozen = false;
     bool  cantBeCaptured = false, cantBeTransported = false;
     int   transportSize = 1;      // transportsize: transport slots this unit occupies
+    // selfdestructcountdown: seconds between arming a self-destruct and the unit
+    // going. Retail stores it in three bits (icd 0x4c09e8 masks & 7 into
+    // UnitType+0x264 bits 21..23), so the range really is 0..7, and a type that
+    // does not declare it goes immediately.
+    int   selfDestructCountdown = 0;
     uint8_t blood[3] = {150, 30, 10};   // bloodcolor1 (r,g,b) for hit/death spray
     std::vector<Aura> auras;   // stat auras projected onto nearby units
     Weapon weapon;            // primary (WEAPON1); damage 0 = unarmed
@@ -480,6 +485,12 @@ struct Unit {
                              // death anim; corpse types extend by decomposetime)
     float overkill = 0;      // damage past the killing blow (retail severity input)
     uint8_t deathType = 1;   // damagetype of the killing blow (3 = explosion/gib)
+    // Retail's self-destruct damage type (icd: the SelfDestruct mission applies
+    // 30000 of type 5, and 0x5126a9 gives 5 its own branch in the death
+    // handler). Kept as a named constant because it is NOT an FBI damagetype a
+    // weapon can carry -- nothing in the shipped data uses 5 -- it is the engine
+    // marking "this unit quit" rather than "this unit was killed".
+    static constexpr uint8_t kDeathSelfDestruct = 5;
     uint8_t severity = 0;    // retail Killed severity ((overkill% + 1s-ago HP%)/2)
     uint8_t hpPct1s = 100;   // HP% sampled every 30 ticks (previous sample -- the
     uint8_t hpPctCur = 100;  //  retail unit+0x111/+0x110 pair severity reads)

@@ -190,6 +190,10 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.roadMult = float(info->numberOr("roadmultiplier", 1.2));
             t.maxWaterDepth = float(info->numberOr("maxwaterdepth", 0));
             t.maxSlope = float(info->numberOr("maxslope", 255));
+            // Retail keeps this in 3 bits (icd 0x4c09e8: `& 7`, shifted into
+            // UnitType+0x264 bits 21..23), so 0..7 seconds is the whole range.
+            t.selfDestructCountdown =
+                std::clamp(int(info->numberOr("selfdestructcountdown", 0)), 0, 7);
             t.radar = float(info->numberOr("radardistance", 0));
             t.noVeteran = info->numberOr("noveteran", 0) != 0;
             t.maxMana = float(info->numberOr("maxmana", 0));
@@ -1391,12 +1395,24 @@ void World::stop(int unitId) {
 }
 
 void World::destroy(int unitId) {
-    // Self-destruct: TOGGLE a 5s countdown. Arming a live unit starts the timer;
-    // pressing again while it counts down cancels it. Expiry (in tick) drops hp
-    // to zero with an explosion death; kill credit is skipped.
+    // Self-destruct: TOGGLE the countdown. Arming a live unit starts the timer;
+    // pressing again while it counts down cancels it. On expiry (in tick) the
+    // unit leaves your command -- it fades, without an explosion, without a
+    // wreck, and without giving anyone kill credit.
+    //
+    // The length comes from the type's `selfdestructcountdown` when it declares
+    // one, which is how retail sources it (icd 0x4c09e8 packs it into three bits
+    // of UnitType+0x264, and the mission at 0x4017e0 counts it down one step a
+    // second). NOTHING in the shipped data sets that key -- base game and Iron
+    // Plague alike -- so retail would act on it immediately, while the game as
+    // played clearly gives you a countdown to change your mind in. Five seconds
+    // is that observed behaviour, used whenever a type is silent.
     Unit* u = unit(unitId);
-    if (!u || !u->alive()) return;
-    u->selfDestructT = (u->selfDestructT < 0.0f) ? 5.0f : -1.0f;
+    if (!u || !u->alive() || !u->type) return;
+    const float len = u->type->selfDestructCountdown > 0
+                          ? float(u->type->selfDestructCountdown)
+                          : 5.0f;
+    u->selfDestructT = (u->selfDestructT < 0.0f) ? len : -1.0f;
 }
 
 void World::setWeapon(int unitId, int slot) {
@@ -3989,6 +4005,12 @@ void World::tick(float dt) {
                 // unconditionally.
                 bool gib = (u.deathType == 3 || u.underConstruction) &&
                            u.corpseStatue < 0;
+                // A self-destructed unit leaves nothing: it is not gibbed (that
+                // is the explosion type) and it does not lie there as a wreck
+                // either -- it fades. Statues still place, as they do for every
+                // other death.
+                if (u.deathType == Unit::kDeathSelfDestruct && u.corpseStatue < 0)
+                    ct = -1;
                 if (ct >= 0 && !gib) {
                     if (u.corpseStatue < 0 && isWater(u.x, u.z)) {
                         // Retail water graves sink and fade in seconds, never
@@ -4039,7 +4061,18 @@ void World::tick(float dt) {
             u.selfDestructT -= dt;
             if (u.selfDestructT <= 0.0f) {
                 u.selfDestructT = -1.0f;
-                u.hp = 0; u.lastHitBy = 0; u.deathType = 3;   // explosion death (gib)
+                // NOT an explosion. Retail's self-destruct mission (icd
+                // 0x4017e0, the handler behind SelfDestruct /
+                // UNITMISSIONCODE_SELFDESTRUCT) ends by applying 30000 damage of
+                // DAMAGE TYPE 5 to the unit itself. Type 5 is not the explosion
+                // type -- 3 is, and 3 is the one that gibs -- and it takes its
+                // own branch in the death handler (0x5126a9), distinct from
+                // every other type, setting a flag none of them set.
+                //
+                // What the player sees, reported from retail: the unit does not
+                // blow up. It quietly leaves your command and fades, with no
+                // wreck left behind.
+                u.hp = 0; u.lastHitBy = 0; u.deathType = Unit::kDeathSelfDestruct;
             }
         }
         // Deadly water (.ota waterdoesdamage): a ground unit standing in it is

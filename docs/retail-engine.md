@@ -737,6 +737,39 @@ Known and accepted: a follower can still end up overlapping its leader if that
 leader stops, and nothing now pushes them apart. Retail behaves the same way.
 Do not reintroduce a push to "fix" it.
 
+## Self-destruct: the unit quits, it does not explode (2026-09-12)
+
+Ctrl+Shift+D in retail does not kill a unit the way a weapon does. It leaves
+your command and fades, with no explosion and no wreck.
+
+The mission is `SelfDestruct` / `UNITMISSIONCODE_SELFDESTRUCT`, whose handler is
+at `0x4017e0` -- found through the command table at `0x5eb650`, which pairs
+those two name strings with it. What it does:
+
+  * On the first run it seeds a countdown at mission `+0x52` from the unit
+    TYPE's `selfdestructcountdown`, tagged `0xF0000000` so a zero count is still
+    distinguishable from "not started". Retail packs that key into three bits of
+    `UnitType+0x264` (`0x4c09e8` masks it `& 7` and shifts it 21), so its whole
+    range is 0..7.
+  * Each run decrements and reschedules itself 30 ticks out (`0x4d6a10` sets
+    `+0xa = now + arg`), so the countdown steps once a second.
+  * At zero it flags `+0x4e` and reschedules a random 0..14 ticks later; that
+    next run applies **30000 damage of TYPE 5** to the unit itself, via the
+    damage entry at `0x51a140`.
+
+Type 5 is the interesting part. It is not 3, and 3 is the explosion type -- the
+one that makes the death handler refuse a corpse and blow every piece apart. And
+in that handler type 5 takes its OWN branch (`0x5126a9`), setting a flag in the
+death event that no other damage type sets. Nothing in the shipped data gives
+any weapon damage type 5; it is the engine's way of marking "this unit quit"
+rather than "this unit was killed".
+
+**`selfdestructcountdown` is never set in the shipped data** -- not by any of the
+155 base-game FBIs, nor by Iron Plague's. So retail as shipped would act on it
+immediately, yet the game as played gives you a countdown to change your mind
+in. We read the key when a type declares one and otherwise use five seconds,
+which is the observed behaviour.
+
 ## Dynamic analysis: emulating icd routines (2026-09-12)
 
 Static reading gets a routine's shape; it does not tell you whether YOUR port
