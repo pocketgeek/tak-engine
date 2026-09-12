@@ -10,9 +10,7 @@ int pathDist(PathCell a, PathCell b) {
 }
 
 int pathDirFromDelta(int dx, int dz) {
-    // The tables are in rotational order, so the direction is just the octant.
-    // Ties resolve the way retail's own cardinal pick does (icd 0x414ae9): x
-    // dominates, and a pure-z delta chooses north for <= 0.
+    // Octant, using the rotational order of the direction tables.
     if (dx == 0 && dz == 0) return 0;
     if (std::abs(dx) > 2 * std::abs(dz)) return dx < 0 ? 2 : 6;
     if (std::abs(dz) > 2 * std::abs(dx)) return dz <= 0 ? 0 : 4;
@@ -20,20 +18,136 @@ int pathDirFromDelta(int dx, int dz) {
     return dz <= 0 ? 7 : 5;
 }
 
+// Cardinal direction toward a delta (icd 0x414ae9): x dominates, ties go north.
+static int cardinalToward(int dx, int dz) {
+    if (dx < 0) return 2;
+    if (dx > 0) return 6;
+    return dz <= 0 ? 0 : 4;
+}
+
+void PathSearch::reset(int mapW, int mapH) {
+    w_ = mapW;
+    h_ = mapH;
+    flag_.assign(size_t(w_) * size_t(h_), 0);
+    from_.assign(size_t(w_) * size_t(h_), 0);
+    phase = Phase::Init;
+    best = 0;
+    visited = 0;
+    work = 0;
+    nOccupied = nGround = nRoad = 0;
+    out.clear();
+}
+
+// Lay a breadcrumb: remember how we entered `c`, and flag it seen. Mirrors
+// icd 0x414b57..0x414b9d -- the bitmap write plus the 4-byte per-cell record
+// whose second byte is the incoming direction.
+void PathSearch::mark(PathCell c, int d, int score) {
+    if (!inside(c)) return;
+    const size_t i = size_t(c.z) * size_t(w_) + size_t(c.x);
+    // FIRST VISIT WINS. Overwriting the incoming direction on a revisit turns
+    // the parent map into a graph with cycles, and the backtrack then walks a
+    // little loop for ever instead of reaching the start -- observed as a
+    // 4-cell cycle repeated to the 64-waypoint clamp. Retail's separate bitmap
+    // at +0x2c is exactly this guard.
+    if (flag_[i] & kSeen) return;
+    from_[i] = uint8_t(d);
+    flag_[i] = uint8_t(flag_[i] | kSeen | (score == 5 ? kScore5 : 0));
+}
+
+bool PathSearch::atGoal(PathCell c) const {
+    if (!inside(c)) return false;
+    return (flag_[size_t(c.z) * size_t(w_) + size_t(c.x)] & kGoal) != 0;
+}
+
+// Walk the breadcrumbs back from the goal and hand out the corners in travel
+// order (icd 0x414450 does the same over its own 0x218-byte buffer). Only
+// direction CHANGES become waypoints -- a straight run needs no intermediate
+// points -- and the navigator caps the list at 64 (0x4e4ea0).
+void PathSearch::buildRoute() {
+    out.clear();
+    if (!inside(goal)) return;
+    std::vector<PathCell> rev;
+    std::vector<uint8_t> walked(flag_.size(), 0);
+    PathCell c = goal;
+    int lastDir = -1;
+    for (int guard = 0; guard < 8192; ++guard) {
+        if (c.x == start.x && c.z == start.z) break;
+        const size_t i = size_t(c.z) * size_t(w_) + size_t(c.x);
+        if (!(flag_[i] & kSeen)) break;
+        if (walked[i]) break;          // belt and braces against a cycle
+        walked[i] = 1;
+        const int d = from_[i] & 7;
+        if (d != lastDir) { rev.push_back(c); lastDir = d; }
+        PathCell p{c.x - kDirX[d], c.z - kDirZ[d]};
+        if (!inside(p) || (p.x == c.x && p.z == c.z)) break;
+        c = p;
+    }
+    if (rev.empty() || rev.front().x != goal.x || rev.front().z != goal.z)
+        rev.insert(rev.begin(), goal);
+    for (auto it = rev.rbegin(); it != rev.rend(); ++it)
+        if (out.empty() || out.back().x != it->x || out.back().z != it->z)
+            out.push_back(*it);
+    if (out.size() > 64) out.resize(64);
+}
+
+// Has `c` landed back on the straight line from `org` to the goal? Retail
+// normalises the signs so the goal delta is positive, then accepts a cell that
+// is either along the first leg or at the far x with z in range
+// (icd 0x414dc4..0x414df4). This is the M-line re-crossing test that tells a
+// bug algorithm it has finished going around.
+bool PathSearch::onGoalLine(PathCell org, PathCell c) const {
+    int gx = goal.x - org.x, gz = goal.z - org.z;
+    int cx = c.x - org.x, cz = c.z - org.z;
+    if (gx < 0) { gx = -gx; cx = -cx; }
+    if (gz < 0) { gz = -gz; cz = -cz; }
+    if (cz == 0 && cx > 0 && cx <= gx) return true;
+    if (cx == gx && cz > 0 && cz <= gz) return true;
+    return false;
+}
+
+// One step of a boundary trace. `rot` is +1 for the cursor sweeping one way
+// round the obstacle and -1 for its twin: retail runs BOTH at once (icd
+// 0x414c52 rotates by -2/-3, 0x414e23 by +2/+3) and takes whichever regains
+// the goal line first, which is what lets it round a wall from either end.
+bool PathSearch::traceStep(const std::function<int(int, int)>& score,
+                           PathCell& c, int& d, int rot) {
+    const int limit = (d + 3 * rot) & 7;
+    int probe = (d + 2 * rot) & 7;
+    for (;;) {
+        const PathCell n{c.x + kDirX[probe], c.z + kDirZ[probe]};
+        const int s = score(n.x, n.z);
+        ++visited;
+        if (s >= kCellThreshold) {
+            c = n;
+            d = probe;
+            mark(c, probe, s);
+            return true;
+        }
+        probe = (probe - rot) & 7;
+        if (probe == limit) return false;   // swept the circle: boxed in
+    }
+}
+
 PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
                                     int quantum) {
+    if (w_ <= 0) return Result::Failed;     // reset() was never called
     for (;;) {
-        // Out of quantum: suspend with state intact (icd 0x415028 returns -2,
-        // which the caller records as "still pending" rather than a failure).
-        if (work >= quantum) return Result::Suspended;
-        if (visited > visitLimit) return Result::Failed;   // +0xe4 vs +0xe8
+        if (work >= quantum) return Result::Suspended;   // icd 0x415028, -2
+        if (visited > visitLimit) { phase = Phase::Failed; return Result::Failed; }
 
         switch (phase) {
         case Phase::Init: {
+            if (!inside(start) || !inside(goal)) {
+                phase = Phase::Failed;
+                return Result::Failed;
+            }
             best = pathDist(start, goal);
             cur = start;
-            if (best == 0) { phase = Phase::Done; return Result::Arrived; }
-            // Retail refuses to search out of an illegal cell (icd 0x414733).
+            org = start;
+            // The goal carries the terminal flag both marches test for
+            // (icd 0x414b9f / 0x414d8f test bit 0x4).
+            flag_[size_t(goal.z) * size_t(w_) + size_t(goal.x)] |= kGoal;
+            if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             if (score(start.x, start.z) < kCellThreshold) {
                 phase = Phase::Failed;
                 return Result::Failed;
@@ -42,106 +156,78 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
             break;
         }
 
+        // State 1 (icd 0x414833): the OCTANT march, run once from the true
+        // start. It counts what it crosses and gives up on the third occupied
+        // cell; ordinary ground is counted but only capped once the road run
+        // has also reached 3 (0x4148d7..0x4148fa).
         case Phase::March: {
             work += kWorkMarch;
-            int d = pathDirFromDelta(goal.x - cur.x, goal.z - cur.z);
-            PathCell n{cur.x + kDirX[d], cur.z + kDirZ[d]};
+            const int d = pathDirFromDelta(goal.x - cur.x, goal.z - cur.z);
+            const PathCell n{cur.x + kDirX[d], cur.z + kDirZ[d]};
             ++visited;
             const int s = score(n.x, n.z);
-            // Below the threshold the way is shut; at exactly 4 a body is
-            // standing there -- passable, but retail only tolerates three such
-            // cells before it stops bulling through and goes around. Ordinary
-            // ground is counted the same way; road (7) is free.
-            // Mirrors icd 0x4148b2..0x414900 exactly. Note that ORDINARY GROUND
-            // is only counted, never capped -- the cap on it applies solely once
-            // the road run has also reached 3. Capping ordinary ground (which I
-            // did first) makes the march give up after three steps of open
-            // field, and nothing arrives anywhere.
             bool giveUp = false;
             if (s < kCellThreshold) {
-                giveUp = true;                          // 0x4148b2
-            } else if (s == kCellOccupied) {            // 0x4148ba
+                giveUp = true;
+            } else if (s == kCellOccupied) {
                 if (nOccupied >= 3) giveUp = true; else ++nOccupied;
-            } else if (s == kCellRoad) {                // 0x4148d7
+            } else if (s == kCellRoad) {
                 if (nRoad >= 3) { if (nGround >= 3) giveUp = true; }
                 else ++nRoad;
             } else {
-                ++nGround;                              // 0x4148fa
+                ++nGround;
             }
-            if (giveUp) {
-                traceOrigin = cur;          // +0xf0 / +0xf4
-                phase = Phase::TraceInit;
-                break;
-            }
+            if (giveUp) { org = cur; phase = Phase::CardMarch; break; }
             cur = n;
+            mark(cur, d, s);
+            if (atGoal(cur)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             const int dist = pathDist(cur, goal);
             if (dist < best) best = dist;
-            if (best == 0) {                // icd 0x4149f4
-                out.push_back(cur);
-                phase = Phase::Done;
-                return Result::Arrived;
-            }
             break;
         }
 
-        case Phase::TraceInit: {
+        // State 2 (icd 0x414a6a): the CARDINAL march from the current origin,
+        // laying breadcrumbs, until something blocks it.
+        case Phase::CardMarch: {
             work += kWorkTraceInit;
-            // The trace starts on the cardinal direction that points at the
-            // goal (icd 0x414ae9): x dominates, else north/south.
-            const int dx = goal.x - traceOrigin.x;
-            const int dz = goal.z - traceOrigin.z;
-            dir = dx < 0 ? 2 : dx > 0 ? 6 : (dz <= 0 ? 0 : 4);
-            cur = traceOrigin;
-            traceStart = traceOrigin;
-            traceStartDir = dir;
-            traced = false;
-            phase = Phase::Trace;
+            const int d = cardinalToward(goal.x - org.x, goal.z - org.z);
+            const PathCell n{org.x + kDirX[d], org.z + kDirZ[d]};
+            const int s = score(n.x, n.z);
+            ++visited;
+            if (s < kCellThreshold) {          // blocked -> start both traces
+                curA = org; curB = org;
+                dirA = d; dirB = d;
+                phase = Phase::Trace;
+                break;
+            }
+            org = n;
+            mark(org, d, s);
+            if (atGoal(org)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
+            const int dist = pathDist(org, goal);
+            if (dist < best) best = dist;
             break;
         }
 
+        // State 3 (icd 0x414c25): the twin traces. Whichever cursor regains the
+        // origin-to-goal line first becomes the new march origin
+        // (0x414fde / 0x414ff8 both drop back into state 2).
         case Phase::Trace: {
             work += kWorkTraceStep;
-            // Sweep from 90 degrees left of the current heading, rotating one
-            // step at a time, and take the first cell that clears the
-            // threshold (icd 0x414c52..0x414cee). That is a left-hand wall
-            // follow; the sweep ending where it began means we are boxed in.
-            const int limit = (dir - 3) & 7;
-            int d = (dir - 2) & 7;
-            bool moved = false;
-            for (;;) {
-                PathCell n{cur.x + kDirX[d], cur.z + kDirZ[d]};
-                if (score(n.x, n.z) >= kCellThreshold) {
-                    // Closed loop: back at the start cell facing the start way.
-                    if (traced && n.x == traceStart.x && n.z == traceStart.z &&
-                        d == traceStartDir) {
-                        phase = Phase::Failed;
-                        return Result::Failed;
-                    }
-                    cur = n;
-                    dir = d;
-                    traced = true;
-                    ++visited;
-                    moved = true;
-                    break;
-                }
-                d = (d + 1) & 7;
-                if (d == limit) break;      // swept the full circle: no way out
+            const bool okA = traceStep(score, curA, dirA, +1);
+            if (okA) {
+                if (atGoal(curA)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
+                const int dist = pathDist(curA, goal);
+                if (dist < best) best = dist;
+                if (onGoalLine(org, curA)) { org = curA; phase = Phase::CardMarch; break; }
             }
-            if (!moved) { phase = Phase::Failed; return Result::Failed; }
-            // APPROXIMATION, NOT RETAIL: leave the obstacle as soon as the
-            // detour beats the march's closest approach. The original marks
-            // every traced cell in a bitmap with flag bytes and applies a
-            // geometric test against the trace origin (icd 0x414d44 onward).
-            // This is the one piece still to port, and it is why a wall with a
-            // gap in it is not yet routed around.
-            const int dist = pathDist(cur, goal);
-            if (dist < best) {
-                best = dist;
-                out.push_back(cur);
-                if (best == 0) { phase = Phase::Done; return Result::Arrived; }
-                phase = Phase::March;
-                return Result::Waypoint;
+            const bool okB = traceStep(score, curB, dirB, -1);
+            if (okB) {
+                if (atGoal(curB)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
+                const int dist = pathDist(curB, goal);
+                if (dist < best) best = dist;
+                if (onGoalLine(org, curB)) { org = curB; phase = Phase::CardMarch; break; }
             }
+            if (!okA && !okB) { phase = Phase::Failed; return Result::Failed; }
             break;
         }
 

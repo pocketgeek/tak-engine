@@ -4,8 +4,8 @@
 //
 // It is NOT an A*. There is no open list, no priority queue and no cost-to-goal
 // ordering anywhere in the original. It marches straight at the goal and, when
-// something blocks it, traces the outline of the obstacle until the detour has
-// improved on its closest approach -- a "bug" algorithm. See
+// something blocks it, traces the obstacle's outline from BOTH sides at once
+// until one of them regains the origin-to-goal line -- a "bug" algorithm. See
 // docs/retail-engine.md for the full disassembly notes; addresses in the
 // comments below are the icd entry points the code mirrors.
 //
@@ -13,14 +13,19 @@
 // budget is an integer too (retail's default is 12000 units), so a match runs
 // identically on every peer. No timers, no floats: safe for lockstep.
 //
-// INCOMPLETE -- NOT WIRED INTO THE SIM YET. Init and march match the original
-// closely. The TRACE phase does not: retail keeps a per-cell visited bitmap
-// plus flag bytes (icd 0x414d44..0x414d92) and exits the trace on a GEOMETRIC
-// test against the trace origin (0x414d98 onward), where this uses the cruder
-// "did the detour beat our closest approach". That difference is why a wall
-// with a gap in it is not yet routed around. Finish that disassembly before
-// wiring this up -- shipping the approximation under retail's name is exactly
-// the mistake to avoid.
+// Three phases, mirroring the original's state machine at +0x60:
+//   1  OCTANT march from the true start, counting the quality of what it
+//      crosses and giving up on the third occupied cell (icd 0x414833).
+//   2  CARDINAL march from the current origin, laying a breadcrumb in every
+//      cell it enters, until something blocks it (0x414a6a).
+//   3  TWIN boundary traces, counter-rotating, running at the same time; the
+//      first one to regain the straight line from the origin to the goal
+//      becomes the new origin and hands back to phase 2 (0x414c25, with the
+//      M-line test at 0x414dc4 and the hand-offs at 0x414fde / 0x414ff8).
+// Reaching a cell flagged as the goal ends the search, and the route is
+// reconstructed by walking the breadcrumbs back (0x414450).
+//
+// NOT WIRED INTO THE SIM YET -- this is the algorithm and its test only.
 
 #include <cstdint>
 #include <functional>
@@ -63,7 +68,8 @@ struct PathCell {
 // One resumable search. step() burns work until the quantum runs out, then
 // returns Suspended with every field intact for the next tick.
 struct PathSearch {
-    enum class Phase : uint8_t { Init, March, TraceInit, Trace, Done, Failed };
+  public:
+    enum class Phase : uint8_t { Init, March, CardMarch, Trace, Done, Failed };
     enum class Result : uint8_t {
         Arrived,     // icd 0: the goal was reached
         Waypoint,    // icd -1: a point was emitted, more to do
@@ -80,25 +86,48 @@ struct PathSearch {
 
     // Resumable state. Field comments give the icd offset each one mirrors.
     Phase phase = Phase::Init;
-    PathCell cur;                 // +0xd0 / +0xd4
-    PathCell traceOrigin;         // +0xf0 / +0xf4, where the march gave up
-    PathCell traceStart;          // +0x100 / +0x104, closed-loop detection
-    int dir = 0;                  // +0x108
-    int traceStartDir = -1;       // +0x10c
-    bool traced = false;          // +0x110
+    PathCell cur;                 // +0xd0 / +0xd4, the octant march cursor
+    PathCell org;                 // +0xf0 / +0xf4, the cardinal march origin
+    PathCell curA, curB;          // +0xf8/+0xfc and +0x100/+0x104, twin traces
+    int dirA = 0, dirB = 0;       // +0x108 / +0x10c
     int best = 0;                 // +0xcc, closest approach so far
     int nOccupied = 0;            // +0xd8
     int nGround = 0;              // +0xdc
     int nRoad = 0;                // +0xe0
     int visited = 0;              // +0xe4
-    int visitLimit = 4096;        // +0xe8
+    int visitLimit = 20000;       // +0xe8
     int work = 0;                 // +0x48, against the quantum in +0x165
 
-    std::vector<PathCell> out;    // waypoints emitted so far
+    std::vector<PathCell> out;    // the finished route, in travel order
+
+    // Per-cell scratch: retail's bitmap at +0x2c and the 4-byte record at
+    // +0x1c, whose second byte is the direction the search entered the cell
+    // from. That is a parent map -- it is how the route is reconstructed.
+    static constexpr uint8_t kGoal = 0x4;     // icd tests bit 0x4 to stop
+    static constexpr uint8_t kSeen = 0x8;
+    static constexpr uint8_t kScore5 = 0x40;
+
+    // Size the scratch to the map and clear the search. Call once per request.
+    void reset(int mapW, int mapH);
 
     // `score` answers retail's per-cell query for this unit. One call runs until
     // `quantum` work units are spent; call again next tick to continue.
     Result step(const std::function<int(int, int)>& score, int quantum);
+
+private:
+    int w_ = 0, h_ = 0;
+    std::vector<uint8_t> flag_;
+    std::vector<uint8_t> from_;
+
+    bool inside(PathCell c) const {
+        return c.x >= 0 && c.z >= 0 && c.x < w_ && c.z < h_;
+    }
+    void mark(PathCell c, int d, int score);
+    bool atGoal(PathCell c) const;
+    void buildRoute();
+    bool onGoalLine(PathCell org, PathCell c) const;
+    bool traceStep(const std::function<int(int, int)>& score,
+                   PathCell& c, int& d, int rot);
 };
 
 // Chebyshev distance in cells. Retail's 0x413e50 returns a distance the search

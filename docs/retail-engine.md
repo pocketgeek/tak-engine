@@ -447,13 +447,31 @@ step, and score the destination with `0x4139d0`:
 Reaching the goal (`+0xcc == 0`) writes the cell to `+0x34/+0x36` and returns
 -1, which the caller treats as "a waypoint was produced, keep going".
 
-**States 2 and 3 -- boundary trace** (7 and 9 work per step). Walk the obstacle
-outline with the 8-direction tables `0x5f304c` / `0x5f3054`, rotating the
-direction at `+0x108` by one (`inc`, `& 7`) and by two (90 degrees), scoring
-each candidate against the same threshold of 4. The trace gives up when it
-returns to its start cell facing its start direction (`+0x100/+0x104/+0x10c`
-plus the flag at `+0x110`). `+0xcc` keeps the closest approach achieved, which
-is how the search knows whether the detour made progress.
+**State 2 -- cardinal march** (7 work per step). NOT a trace setup, which is
+how I first read it. From the current origin `+0xf0/+0xf4` it steps one cell in
+the cardinal direction toward the goal, and on each cell it lays a BREADCRUMB:
+a bit in the map at `+0x2c`, and a 4-byte record at `+0x1c` whose second byte
+is the direction it entered from. Reaching a cell flagged `0x4` -- the goal --
+ends the whole search. When the next cell is blocked it starts the traces.
+
+**State 3 -- TWIN boundary traces** (9 work per step). Retail runs two cursors
+at once, `+0xf8/+0xfc` and `+0x100/+0x104`, with directions `+0x108` and
+`+0x10c`, sweeping in OPPOSITE senses: `0x414c52` rotates by -2/-3 and
+`0x414e23` by +2/+3. Each probes with the 8-direction tables against the usual
+threshold 4 and lays the same breadcrumbs. Whichever cursor first regains the
+straight line from the origin to the goal wins: `0x414fde` and `0x414ff8` copy
+that cursor's cell into `+0xf0/+0xf4` and drop back to state 2. The M-line test
+itself is at `0x414dc4..0x414df4` -- normalise the signs so the goal delta is
+positive, then accept a cell lying along the first leg or at the far x with z
+in range. Running both hands at once is what lets it round a wall from whichever
+end is nearer.
+
+**The route is reconstructed from the breadcrumbs**, not accumulated as it
+goes: `0x414450` walks back from the goal through the per-cell direction bytes.
+That per-cell "first visit wins" discipline is load-bearing -- overwrite the
+direction on a revisit and the parent map grows cycles, which in our port
+produced a 4-cell loop repeated out to the 64-waypoint clamp while still
+reporting success.
 
 **Two limits.** Work accumulates in `+0x48` and the step returns once it
 crosses the per-request cap in `+0x165`, resuming next frame with all state

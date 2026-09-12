@@ -2,6 +2,7 @@
 // only thing under test is the algorithm.
 #include "sim/pathsearch.h"
 
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -32,6 +33,7 @@ struct Grid {
 static PathSearch::Result run(const Grid& g, PathCell s, PathCell e,
                               PathSearch& ps, int budgetPerTick, int maxTicks,
                               int* ticks) {
+    ps.reset(int(g.rows[0].size()), int(g.rows.size()));
     ps.start = s; ps.goal = e; ps.cur = s;
     auto sc = [&](int x, int z) { return g.score(x, z); };
     PathSearch::Result r = PathSearch::Result::Suspended;
@@ -71,15 +73,26 @@ int main() {
                 "....#....."}};
         PathSearch ps; int t = 0;
         auto r = run(g, {0, 0}, {9, 0}, ps, 12000, 200, &t);
-        // KNOWN GAP, not a regression: the trace phase is still the crude
-        // "beat the closest approach" stand-in rather than retail's bitmap +
-        // geometric exit test, and a wall with a hole in it is exactly what
-        // that cannot solve. This will flip to a hard check once the trace is
-        // ported; until then it reports without failing the suite.
-        std::printf("  [%s] a wall with a gap is routed around (KNOWN GAP: "
-                    "trace phase not yet ported) -- ticks=%d waypoints=%zu\n",
-                    r == PathSearch::Result::Arrived ? "PASS" : "TODO",
-                    t, ps.out.size());
+        check(r == PathSearch::Result::Arrived,
+              "a wall with a gap is routed around",
+              "ticks=" + std::to_string(t) +
+                  " waypoints=" + std::to_string(ps.out.size()));
+        // "Arrived" is not enough on its own: the first cut of the breadcrumb
+        // backtrack reported success while handing back a 4-cell cycle repeated
+        // to the 64-waypoint clamp. Check the route is actually a route.
+        bool sane = !ps.out.empty() &&
+                    ps.out.back().x == 9 && ps.out.back().z == 0 &&
+                    ps.out.size() <= 16;
+        for (size_t i = 1; sane && i < ps.out.size(); ++i) {
+            int dx = ps.out[i].x - ps.out[i - 1].x;
+            int dz = ps.out[i].z - ps.out[i - 1].z;
+            // consecutive corners must be joined by a straight run
+            if (!(dx == 0 || dz == 0 || std::abs(dx) == std::abs(dz))) sane = false;
+        }
+        std::string got;
+        for (auto& c : ps.out)
+            got += "(" + std::to_string(c.x) + "," + std::to_string(c.z) + ")";
+        check(sane, "...and the route it hands back is a real path", got);
     }
 
     std::printf("[a body in the way -- the Monarch case]\n");
