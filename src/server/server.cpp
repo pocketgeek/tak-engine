@@ -1397,9 +1397,21 @@ void Server::closeTick(Room& r) {
     }
     // Server-hosted AI: each controller observes the referee world (state after
     // tick-1) and appends its orders to this tick's bundle, exactly like a client.
-    if (r.ref)
+    if (r.ref) {
+        static const bool kAiPhase = std::getenv("TAK_AIPHASE") != nullptr;
+        auto _a0 = std::chrono::steady_clock::now();
         for (auto& ctl : r.ai)
             ctl.tick(*r.ref, r.tick, [&r](const Command& c) { r.pending.push_back(c); });
+        if (kAiPhase) {
+            double ms = std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - _a0).count();
+            static double thr = std::getenv("TAK_AIPHASE_MS")
+                                    ? atof(std::getenv("TAK_AIPHASE_MS")) : 8.0;
+            if (ms > thr)
+                std::fprintf(stderr, "AIPHASE tick=%u ai=%.1fms controllers=%zu\n",
+                             r.tick, ms, r.ai.size());
+        }
+    }
 
     // Server input delay: client commands scheduled for THIS tick (received
     // srvDelay ticks ago) join the bundle now.
