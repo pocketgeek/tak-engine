@@ -43,6 +43,11 @@ const std::vector<HotkeyDef>& hotkeyDefs() {
         {Act::SelfDestruct,   "unit.selfdestruct",  "SELF-DESTRUCT",   "SELECTION", {SDLK_d, HK_CTRL | HK_SHIFT}},
 
         {Act::ToggleCounts,   "view.counts",        "UNIT COUNTS",     "VIEW",      {SDLK_F4, 0}},
+        // Retail: `TAB = fsr;` in gamedata/keys.tdf, commented "Full-screen radar
+        // toggle". The command is registered twice in the binary, as the console
+        // alias "fsr" (handler 0x427f40) and as "FullScreenRadar" (0x48e8c0);
+        // both flip one bool and nothing else.
+        {Act::FullScreenRadar,"view.fullradar",     "FULL-SCREEN MAP", "VIEW",      {SDLK_TAB, 0}},
         // Retail ships "UnitInfo" unbound (it's only in translate/customkeys.tdf as a
         // rebindable function), so the default key is ours to pick.
         {Act::UnitInfo,       "view.unitinfo",      "UNIT INFO",       "VIEW",      {SDLK_F1, 0}},

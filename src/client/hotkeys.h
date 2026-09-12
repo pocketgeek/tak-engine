@@ -37,7 +37,7 @@ enum class Act {
     SelectBuilders, SelectFactory, SelectMelee, SelectMagic, SelectBoats,
     SelectBallistic, SelectTroops, SelectArmed, SelectOnScreenType, SelectFlying,
     SelfDestruct,
-    ToggleCounts, UnitInfo, Disco, Headbang,
+    ToggleCounts, UnitInfo, FullScreenRadar, Disco, Headbang,
     Count
 };
 

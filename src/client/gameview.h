@@ -2068,6 +2068,15 @@ private:
     SDL_FRect guiBarRect(const tak::gui::Gadget& g) const;
 
     SDL_FRect minimapRect(int winW, int winH) const;
+    // Retail's full-screen radar (TAB). It is the SAME radar, drawn at a bigger
+    // rect: the setter (icd 0x4f9ce0) flips one bool and recomputes the radar
+    // rectangle from the 126x126 corner box to the whole world viewport, then
+    // rebuilds the map picture and the blips. The world is still painted
+    // underneath, the side and bottom HUD panels stay put, and the simulation
+    // keeps running -- the tick driver never reads the flag. Because every use of
+    // the radar goes through minimapRect(), enlarging that rect gives the drawing,
+    // the camera click and the order click all at once, exactly as it does there.
+    bool fsRadar_ = false;
 
     // Build the minimap WITHOUT stalling the first frame: averaging every block
     // decodes every terrain tile on the map (hundreds of ms cold), so the crunch

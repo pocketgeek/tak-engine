@@ -343,8 +343,19 @@
     }
 
     SDL_FRect GameView::minimapRect(int winW, int winH) const {
-        (void)winH;
         float aspect = float(mapView_.map().blocksY) / float(mapView_.map().blocksX);
+        if (fsRadar_) {
+            // Retail sets the rect to exactly the world viewport (0, 0,
+            // screenW-128, screenH-48) so the command panel and the bottom bar
+            // stay visible. We fit the map's aspect INSIDE that viewport and
+            // centre it rather than stretching to fill: retail's corner box is
+            // square while ours already honours the map's shape, and stretching a
+            // 2:1 map to a 16:9 viewport would distort every distance on it.
+            float vw = float(mapViewW(winW)), vh = float(winH) - barH();
+            float w = vw, h = vw * aspect;
+            if (h > vh) { h = vh; w = vh / aspect; }
+            return {(vw - w) * 0.5f, (vh - h) * 0.5f, w, h};
+        }
         return {float(winW) - miniSize() - 10, 10, float(miniSize()), float(miniSize()) * aspect};
     }
 
@@ -391,7 +402,13 @@
         (void)winW;
         if (!miniTex_) buildMinimap();
         SDL_FRect r = minimapRect(winW, winH);
-        SDL_FRect frame{r.x - 2, r.y - 2, r.w + 4, r.h + 4};
+        // Full-screen: black out the WHOLE world viewport first. Retail's radar
+        // rect simply is the viewport, so no world shows around it; ours fits the
+        // map's aspect inside, which would leave the terrain peeking through the
+        // letterbox margins and read as a window rather than a map.
+        SDL_FRect frame = fsRadar_
+            ? SDL_FRect{0, 0, float(mapViewW(winW)), float(winH) - barH()}
+            : SDL_FRect{r.x - 2, r.y - 2, r.w + 4, r.h + 4};
         SDL_SetRenderDrawColor(ren_, 30, 30, 40, 255);
         SDL_RenderFillRectF(ren_, &frame);
         if (miniTex_) SDL_RenderCopyF(ren_, miniTex_, nullptr, &r);

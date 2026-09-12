@@ -2598,6 +2598,16 @@
         switch (hotkeys_.match(int32_t(key), mod)) {
             case tak::Act::ToggleCounts: showCounts_ = !showCounts_; return true;
             case tak::Act::UnitInfo: toggleUnitInfo(); return true;
+            case tak::Act::FullScreenRadar:
+                // A VIEW action, so it belongs here and not in the order switch
+                // below -- that one returns early when nothing is selected, and
+                // the full-screen map is exactly what you want with an empty
+                // selection. Toggle only: retail's handler ignores its argument
+                // list entirely and there is no dismiss-on-click or -on-Escape
+                // path, so TAB again is the only way out there too.
+                fsRadar_ = !fsRadar_;
+                pendingCmd_ = 0;
+                return true;
             case tak::Act::SelfDestruct: {   // self-destruct the selected unit(s)
                 // Through the command path (Cmd::Destroy), not a direct hp write --
                 // a local mutation would silently desync a networked game.
