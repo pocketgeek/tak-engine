@@ -1274,6 +1274,16 @@ private:
     // (domain, foot, quantized goal block). False if the domain grid is empty.
     struct FlowKey { long long key; const NavGrid* grid; float bx, bz; int foot; };
     bool flowKeyFor(const UnitType* type, float gx, float gz, FlowKey& out) const;
+    const FlowField* flowForNow(const FlowKey& k) const;   // build + memo a field immediately
+    // Fields a consumer asked for mid-tick and did not get. flowFor() no longer
+    // builds on a cache miss: a full-map Dijkstra on the sim thread, one at a time,
+    // is what turned a chase into a multi-second freeze (132 inline builds measured
+    // at 88ms each, vs 7.7ms each when the SAME work goes through prefetchFlows'
+    // worker pool). The key is recorded here instead and built by the next tick's
+    // prefetch, in parallel with everything else that missed. Deterministic: the
+    // requests are appended in the sim's own traversal order, so every peer defers
+    // and builds exactly the same set.
+    mutable std::vector<FlowKey> pendingFlows_;
     void prefetchFlows();   // batch-build this tick's missing fields on threads
     // Targeted flow invalidation after a GROUND nav edit in the cell rect
     // (cx, cz, w, h): water/hover grids never change post-setup so their fields

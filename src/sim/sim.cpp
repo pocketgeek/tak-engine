@@ -1175,6 +1175,19 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const 
     auto it = flowCache_.find(k.key);
     if (it != flowCache_.end())
         return it->second.ready() ? &it->second : nullptr;   // reads never restamp
+    // MISS: do not build here. Building inline costs a full-map Dijkstra on the sim
+    // thread while everything else waits; defer to the next tick's prefetch, which
+    // builds the whole batch across worker threads. The caller already copes with a
+    // null field (it is the same path as a field still building) and gets the field
+    // a tick later. See pendingFlows_.
+    for (const auto& p : pendingFlows_)
+        if (p.key == k.key) return nullptr;
+    pendingFlows_.push_back(k);
+    return nullptr;
+}
+
+// Retained for the paths that legitimately need a field NOW (prefetch fallback).
+const FlowField* World::flowForNow(const FlowKey& k) const {
     evictFlowLru(flowCache_);
     FlowField ff;
     if (g_phase) { auto _b0=std::chrono::steady_clock::now(); ff.build(*k.grid, k.bx, k.bz, k.foot);
@@ -1198,6 +1211,11 @@ const FlowField* World::flowFor(const UnitType* type, float gx, float gz) const 
 // synchronously here -- no thread is worth one build.
 void World::prefetchFlows() {
     std::vector<FlowKey> misses;
+    // Anything a consumer asked for mid-tick and was refused (see flowFor) is built
+    // here, in the same parallel batch, before this tick's movers run.
+    for (const auto& p : pendingFlows_)
+        if (flowCache_.find(p.key) == flowCache_.end()) misses.push_back(p);
+    pendingFlows_.clear();
     auto want = [&](const UnitType* t, float gx, float gz) {
         FlowKey k;
         if (!flowKeyFor(t, gx, gz, k)) return;
@@ -1224,7 +1242,7 @@ void World::prefetchFlows() {
     // NOTE: the want-scan above has already stamped every cached field the sim wants
     // this tick, so this early-out must come AFTER it -- returning before the scan
     // would leave stamps stale and eviction arbitrary.
-    if (misses.size() < 2) return;   // 0/1: the inline flowFor path handles it
+    if (misses.empty()) return;   // nothing to build (flowFor never builds inline now)
     auto _b0 = std::chrono::steady_clock::now();
     for (const auto& m : misses) m.grid->ensureClearance();   // workers must only read
     std::vector<FlowField> built(misses.size());
