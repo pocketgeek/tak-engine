@@ -3968,7 +3968,17 @@ void World::tick(float dt) {
         // full-map flow-field builds per tick (the dominant cost at 10k+ units), at the
         // price of homing onto a coarser goal centre before steering to the exact order
         // point -- imperceptible at that scale. Deterministic (live count).
-        flowQuantShift_ = std::clamp<uint32_t>(1 + live / 3000, 1, 3);
+        // The old ramp (live/3000) only left the FINEST block above 3000 units, so an
+        // ordinary 8-player skirmish never reached it and paid a full-map Dijkstra for
+        // nearly every distinct goal. Flow was 68% of ALL stalled time on the server,
+        // and the server could not hold 30Hz because of it. Measured server-side over
+        // a 120s 8-player game, matched at <=2000 units:
+        //     shift 1   215.4s stalled   156.6s flow   5210 builds   median 122ms
+        //     shift 2   150.5s stalled    96.7s flow   3163 builds   median  99ms
+        //     shift 3    53.8s stalled    35.3s flow   1085 builds   median  87ms
+        // Ramp to the coarse block at counts people actually play at. A small skirmish
+        // keeps the fine one, where it is cheap and the final approach is most visible.
+        flowQuantShift_ = std::clamp<uint32_t>(1 + live / 375, 1, 3);
     }
 
     prefetchFlows();   // batch-build this tick's missing flow fields on threads
