@@ -423,6 +423,75 @@ was itself wrong: it is the search. It is not reached FROM the mover, which is
 what I tested; it is reached from the scheduler, and its output is handed to
 the navigator that the mover then follows.
 
+### The search algorithm in detail, and the port plan (2026-09-12)
+
+`0x4146e0` is a two-phase incremental "bug" search over the 16px cell grid,
+driven by a state machine at `+0x60`.
+
+**State 0 -- init.** `0x413e50(start)` gives distance to the goal, kept as the
+running BEST in `+0xcc`; zero means already there. Score the start cell with
+`0x4139d0`; below 4 it gives up immediately. Otherwise seed `+0xd0/+0xd4` with
+the start cell and go to state 1.
+
+**State 1 -- greedy march** (8 work per step). Take the delta from the current
+cell to the goal, convert it to one of 8 compass directions with `0x415040`,
+step, and score the destination with `0x4139d0`:
+
+  * `< 4` -- blocked. Record the current cell as the trace origin in
+    `+0xf0/+0xf4` and switch to state 2.
+  * `== 4` -- passable but occupied. Bump `+0xd8`; on the 3rd, switch to
+    tracing as above.
+  * `== 7` -- road. Bump `+0xe0`.
+  * otherwise -- ordinary ground. Bump `+0xdc`; on the 3rd, switch to tracing.
+
+Reaching the goal (`+0xcc == 0`) writes the cell to `+0x34/+0x36` and returns
+-1, which the caller treats as "a waypoint was produced, keep going".
+
+**States 2 and 3 -- boundary trace** (7 and 9 work per step). Walk the obstacle
+outline with the 8-direction tables `0x5f304c` / `0x5f3054`, rotating the
+direction at `+0x108` by one (`inc`, `& 7`) and by two (90 degrees), scoring
+each candidate against the same threshold of 4. The trace gives up when it
+returns to its start cell facing its start direction (`+0x100/+0x104/+0x10c`
+plus the flag at `+0x110`). `+0xcc` keeps the closest approach achieved, which
+is how the search knows whether the detour made progress.
+
+**Two limits.** Work accumulates in `+0x48` and the step returns once it
+crosses the per-request cap in `+0x165`, resuming next frame with all state
+intact. Separately `+0xe4` counts cells visited and bails against `+0xe8`.
+
+**Return protocol** (consumed by `0x415b10`): `0` done, `-1` a waypoint was
+emitted at `+0x34/+0x36` (the caller charges a further 30 work and appends it),
+`-2` failed.
+
+**The budget is an INTEGER, not wall-clock.** `0x41617b` seeds both `+0x221`
+and `+0x225` with `0x2ee0` = 12000 work units per frame, and the quality
+setting scales it by a percentage. Nothing here reads a timer. That matters
+enormously for us: a faithful port is deterministic by construction and safe
+for lockstep, provided the budget is a match-replicated constant and requests
+are visited in a fixed (player, unit id) order.
+
+### Port plan
+
+1. `PathService` owning a request queue, replacing nothing at first -- run it
+   alongside the current mover behind a flag.
+2. Per-tick scheduler: count pending requests, `quantum = budget / (A + 5*B)`,
+   visit in deterministic order. Budget from match config, default 12000.
+3. `PathSearch` as a resumable struct: state, current cell, trace origin and
+   direction, best distance, the three cell-quality counters, work counter.
+   Costs 8 / 7 / 9 / 30 exactly as above.
+4. Cell scoring reuses our existing per-class `NavGrid` + `bodyPenetration`
+   occupancy, mapped onto retail's grades: impassable / 4 occupied / 6 ground
+   / 7 road, threshold 4.
+5. Navigator side: extend orders to carry up to 64 waypoints with pop-on-
+   arrival, and install the straight two-point segment while a request is
+   outstanding -- which is exactly today's behaviour, so this is the fallback
+   path we already have.
+6. Retire `pathBudget_` and the inline A* once 1-5 are in and the Monarch
+   harness passes.
+
+Determinism gates at every step: `tools/check-determinism.sh` plus the `--mpai`
+hash must be reproducible, and the state hash only changes when intended.
+
 ### Earlier unresolved note, kept for the record
 
 By direct-call graph, that whole route cluster is reachable only from
