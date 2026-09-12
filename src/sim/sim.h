@@ -393,6 +393,11 @@ struct Order {
     // sense that it changes no movement maths -- but the repath paths need it to
     // tell "the rest of this leg" from "everything queued behind it".
     bool goal = false;
+    // Tick this order was issued, for the order-line beads: retail phases the
+    // trail by (now - orderCreationTick) so each segment's dots crawl toward the
+    // destination independently (icd 0x4d5747 reading order+0x5e). Display only --
+    // never read by the simulation, never hashed.
+    uint32_t issuedTick = 0;
 };
 
 // A queued construction: build `type` at (x, z) when the builder gets to it.

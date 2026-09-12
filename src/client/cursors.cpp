@@ -38,6 +38,7 @@ const char* seqName(CursorId c) {
         case CursorId::Green:     return "cursorgrn";
         case CursorId::Red:       return "cursorred";
         case CursorId::Hourglass: return "cursorhourglass";
+        case CursorId::PathIcon:  return "pathicon";
         default:                  return "";
     }
 }
@@ -88,6 +89,19 @@ bool CursorSet::load(SDL_Renderer* ren, const hpi::Vfs& vfs) {
     // Need at least the normal pointer to justify taking over from the OS cursor.
     ok_ = !anims_[size_t(CursorId::Normal)].empty();
     return ok_;
+}
+
+void CursorSet::drawFrame(SDL_Renderer* ren, CursorId c, size_t frame, int x, int y,
+                          int scale, SDL_Color tint) const {
+    if (!ok_ || !ren || size_t(c) >= anims_.size()) return;
+    const auto& frames = anims_[size_t(c)];
+    if (frames.empty()) return;
+    if (scale < 1) scale = 1;
+    const Frame& f = frames[frame % frames.size()];
+    SDL_SetTextureColorMod(f.tex, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(f.tex, tint.a);
+    SDL_Rect dst{ x - f.hx * scale, y - f.hy * scale, f.w * scale, f.h * scale };
+    SDL_RenderCopy(ren, f.tex, nullptr, &dst);
 }
 
 void CursorSet::draw(SDL_Renderer* ren, CursorId c, int mouseX, int mouseY, int scale, SDL_Color tint) {

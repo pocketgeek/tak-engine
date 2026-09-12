@@ -794,6 +794,8 @@
                 for (const auto& o : u.orders)   // move-order rings (few)
                     if (o.targetId == 0) drawRing(o.x, o.z, 4);
             }
+            drawOrderTrails(mvw, winH);
+
             // Attack-target indicator: RED brackets on any enemy a selected unit is
             // ordered to attack, so you can see what you've told them to hit.
             const SDL_Color red{245, 70, 60, 255};
@@ -2871,3 +2873,75 @@
         }
     }
 
+    // ---- the order line ------------------------------------------------------
+    // Retail (icd 0x4d5700) strings `pathicon` beads along each leg of a selected
+    // unit's order list at a FIXED 48-world-unit spacing, starting the comb at
+    // ((tick - orderIssuedTick) % 30) * 48/30 -- so the whole line slides exactly
+    // one spacing per second toward the destination, and each order's line crawls
+    // on its own phase. The first leg runs from the unit itself to its first
+    // order, a leg shorter than a pixel gets no beads, and the bead is blitted
+    // with no colour remap (no player colour).
+    //
+    // Two retail details deliberately kept: an ATTACK order gets no line at all --
+    // retail's per-order-kind descriptor flags the 17 attack/pickup/unload kinds
+    // as end-marker-only -- and only the first few selected units get beads, which
+    // is what keeps a 200-unit selection from turning the map into soup.
+    //
+    // One deliberately dropped: retail drew the whole overlay only while SHIFT was
+    // physically held (0x4fcc46 polls GetAsyncKeyState(VK_SHIFT)). Here the line is
+    // simply on for the current selection, which is what makes a queue visible at
+    // the moment you build it.
+    //
+    // Ownership is gated even though retail did not bother: our click-select has no
+    // owner filter, and the render snapshot carries every unit's orders, so drawing
+    // trails for anything but our own units would hand the player a readout of
+    // enemy intent.
+    void GameView::drawOrderTrails(int mvw, int winH) {
+        if (selection_.empty() || !cursors_.ok()) return;
+        const float zm = mapView_.zoom();
+        const float kSpacing = 48.0f;          // world units, straight off retail
+        // At low zoom the beads would overlap into a smear (48 world units is only
+        // 12 screen px at 0.25x), so stop drawing rather than draw mush -- the same
+        // call the waypoint rings already make.
+        if (kSpacing * zm < 10.0f) return;
+        const int scale = std::clamp(int(zm + 0.5f), 1, 3);
+        const size_t frames = std::max<size_t>(1, cursors_.frameCount(tak::CursorId::PathIcon));
+        const uint32_t tick = front().gameTick;
+        int drawn = 0;
+        for (int selId : selection_) {
+            if (drawn >= kTrailUnits) break;
+            const UnitR* up = frameUnitP(selId);
+            if (!up || !up->alive() || !up->type) continue;
+            if (up->player != localPlayer_) continue;      // never leak enemy intent
+            if (up->orders.empty()) continue;
+            ++drawn;
+            float px = up->x, pz = up->z;                  // running position
+            for (const auto& o : up->orders) {
+                // Only the ends of the player's own orders are line vertices; the
+                // A* waypoints between them are the navigator's business, exactly
+                // as retail's order list held goals and not path nodes.
+                if (!o.goal) continue;
+                const float qx = o.x, qz = o.z;
+                const bool beads = o.targetId == 0;        // attack orders: marker only
+                if (beads) {
+                    float dx = qx - px, dz = qz - pz;
+                    float len = std::sqrt(dx * dx + dz * dz);
+                    if (len >= 1.0f) {
+                        float ux = dx / len, uz = dz / len;
+                        float phase = float((tick - o.issuedTick) % 30u) * kSpacing / 30.0f;
+                        int bead = 0;
+                        for (float t = phase; t < len && bead < kTrailBeads; t += kSpacing, ++bead) {
+                            float wx = px + ux * t, wz = pz + uz * t;
+                            float sx = (wx - mapView_.offX()) * zm - terrainLiftX(wx, wz) * zm;
+                            float sy = (wz - mapView_.offY()) * zm - terrainLift(wx, wz) * zm;
+                            if (sx < -16 || sx > float(mvw) + 16 || sy < -16 || sy > float(winH) + 16)
+                                continue;
+                            cursors_.drawFrame(ren_, tak::CursorId::PathIcon,
+                                               size_t(bead) % frames, int(sx), int(sy), scale);
+                        }
+                    }
+                }
+                px = qx; pz = qz;                          // advance either way
+            }
+        }
+    }

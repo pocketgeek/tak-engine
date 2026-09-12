@@ -532,6 +532,10 @@ public:
     // Contextual right-click order, extracted so the reclaim right-drag can defer to
     // it on a plain click: transport unload/load, assist/guard, attack, or move.
     void rightClickOrder(float wx, float wz, bool queue);
+    // Retail's order line: beads strung between a selected unit's queued orders.
+    void drawOrderTrails(int mvw, int winH);
+    static constexpr int kTrailUnits = 3;    // retail beaded only its few "focus" units
+    static constexpr int kTrailBeads = 96;   // per leg, so a map-long order can't run away
 
     // A mobile, reclaim-capable builder of ours is selected (drives the right-drag).
     bool haveReclaimer();
@@ -638,6 +642,14 @@ public:
     uint32_t netTick() const { return netTick_; }
     tak::sim::World& worldRef() { return world_; }
     void selectOnly(int id) { if (spectating_) return; selection_.clear(); selection_.push_back(id); }
+
+#ifndef NDEBUG
+    // Harness hook: select one of the local player's mobile units and hand it a
+    // short queue of moves, so a screenshot run can photograph the order line
+    // without having to synthesise shift+right-clicks at guessed coordinates.
+    // Returns the unit id, or 0 if there was nothing to order.
+    int debugQueueDemo();
+#endif
     const std::string& netError() const { return netError_; }
 
     void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }

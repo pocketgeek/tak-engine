@@ -19,10 +19,14 @@ namespace hpi { class Vfs; }
 
 // The wired retail cursor set. Names map to cursors.gaf sequences in cursors.cpp. The
 // shipped-but-never-selected placeholders (capture/teleport/pickup/resurrect/reanimate,
-// all 1-frame clones of the normal arrow) and the non-pointer `pathicon` are omitted.
+// all 1-frame clones of the normal arrow) are omitted.
+// PathIcon is not a pointer at all: it is the bead retail strings along a selected
+// unit's order line (icd 0x4d5700). It rides here because it lives in the same GAF,
+// under the same palette, and wants the same per-frame textures.
 enum class CursorId {
     Normal, Select, Move, Attack, Airstrike, TooFar, Patrol, Defend,
     Repair, Load, Unload, Reclaim, Revive, FindSite, Green, Red, Hourglass,
+    PathIcon,
     Count
 };
 
@@ -55,6 +59,18 @@ public:
     // missing or the platform rejected the cursor (e.g. size cap) -- the caller should
     // then fall back to draw() and hide the OS arrow.
     bool applyHardware(CursorId c, int scale, SDL_Color tint = SDL_Color{255, 255, 255, 255});
+
+    // Draw one specific frame at (x,y), WITHOUT touching the pointer's animation
+    // state. draw() restarts the animation whenever the cursor id changes, so using
+    // it to stamp dozens of path beads per frame would reset the real pointer's
+    // animation every time. Retail picks the bead's frame from the game tick and
+    // steps it once per bead along the line, so the caller supplies the index.
+    void drawFrame(SDL_Renderer* ren, CursorId c, size_t frame, int x, int y,
+                   int scale = 1, SDL_Color tint = SDL_Color{255, 255, 255, 255}) const;
+    // How many frames `c` has (0 if it did not load).
+    size_t frameCount(CursorId c) const {
+        return size_t(c) < anims_.size() ? anims_[size_t(c)].size() : 0;
+    }
 
     // Free the cached SDL_Cursors and restore the default OS arrow. Call when turning
     // hardware mode off (so the software path can hide the arrow and draw its own).

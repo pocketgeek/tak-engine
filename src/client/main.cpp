@@ -1423,6 +1423,20 @@ int main(int argc, char** argv) {
                         }
                     }
                     static bool pressSent = false;
+#ifndef NDEBUG
+                    // TAK_SHOT_TRAIL=1 queues a short move chain on one owned unit so
+                    // the order line has something to draw. The orders have to round-trip
+                    // through the server and come back in a bundle before they show up in
+                    // a render snapshot, so hold the capture for a good number of passes:
+                    // 30 was not enough and produced an empty picture that looked exactly
+                    // like a broken feature.
+                    static int trailWait = -1;
+                    if (tak::devEnv("TAK_SHOT_TRAIL") && gameView && trailWait != 0) {
+                        if (trailWait < 0) trailWait = gameView->debugQueueDemo() ? 120 : 0;
+                        else --trailWait;
+                        if (trailWait > 0) shotArmed = false;
+                    }
+#endif
                     if (const char* kn = tak::devEnv("TAK_SHOT_PRESS"); kn && !pressSent) {
                         pressSent = true;
                         if (SDL_Keycode kc = SDL_GetKeyFromName(kn); kc != SDLK_UNKNOWN) {

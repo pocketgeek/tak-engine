@@ -493,3 +493,28 @@
         }
     }
 
+#ifndef NDEBUG
+    int GameView::debugQueueDemo() {
+        const UnitR* pick = nullptr;
+        for (const UnitR* up : front().live)
+            if (up && up->alive() && up->type && up->type->canMove &&
+                up->player == localPlayer_ && !up->type->isStructure()) { pick = up; break; }
+        if (!pick) return 0;
+        selectOnly(pick->id);
+        // An L-shaped queue: out, across, and back -- three legs, so the picture
+        // shows the beads turning corners and not just one straight run.
+        const float legs[3][2] = {{pick->x + 260, pick->z + 40},
+                                  {pick->x + 260, pick->z + 300},
+                                  {pick->x - 60,  pick->z + 300}};
+        for (int i = 0; i < 3; ++i) {
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Move;
+            c.unitId = pick->id;
+            c.x = legs[i][0];
+            c.z = legs[i][1];
+            c.queue = uint8_t(i == 0 ? 0 : 1);
+            issue(c);
+        }
+        return pick->id;
+    }
+#endif

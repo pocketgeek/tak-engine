@@ -1298,7 +1298,11 @@ void World::order(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || !u->type->canMove) return;
     if (!queue) u->orders.clear();
-    auto markGoal = [&] { if (!u->orders.empty()) u->orders.back().goal = true; };
+    auto markGoal = [&] {
+        if (u->orders.empty()) return;
+        u->orders.back().goal = true;
+        u->orders.back().issuedTick = tickCounter_;
+    };
     if (u->type->canFly) {
         u->orders.push_back({x, z, 0});
         markGoal();
@@ -1570,6 +1574,8 @@ void World::attack(int unitId, int targetId, bool queue) {
     if (!u || !u->alive() || !u->type || u->type->weapon.damage <= 0) return;
     if (!queue) u->orders.clear();
     u->orders.push_back({0, 0, targetId});
+    u->orders.back().goal = true;                 // an attack order IS its own leg
+    u->orders.back().issuedTick = tickCounter_;
 }
 
 float Weapon::damageVs(const UnitType* t) const {
