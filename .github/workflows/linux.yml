@@ -113,7 +113,10 @@ jobs:
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DTAK_STATIC_FFMPEG=ON -DTAK_STATIC_LIBS=ON \
             -DTAK_DISTRO_TAG=${{ matrix.tag }}
-          cmake --build build --target takclient takserver   # the package ships only these two
+          # Every target the Linux install() rules reference, or cpack fails at
+          # package time with "file INSTALL cannot find build/<target>" -- which is
+          # exactly how 0.6.0 broke when cartographer joined those rules.
+          cmake --build build --target takclient takserver cartographer
 
       - name: Package (.deb)
         if: matrix.family == 'deb'
