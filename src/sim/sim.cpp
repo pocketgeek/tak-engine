@@ -1260,10 +1260,24 @@ void World::prefetchFlows() {
 }
 
 void World::invalidateFlows(int cx, int cz, int w, int h) {
-    // The AI's cache holds fields over the same terrain, so it goes stale the same
-    // way. It is server-only and never read by the sim, so a blunt clear is fine.
-    if (!aiFlowCache_.empty()) aiFlowCache_.clear();
-    for (auto it = flowCache_.begin(); it != flowCache_.end();) {
+    // Both caches hold fields over the same terrain and go stale the same way, so
+    // both get the SAME selective test. The AI's used to be wiped wholesale -- "it is
+    // server-only, a blunt clear is fine" -- which is true for correctness and very
+    // much not for cost: every building placement threw away every field the AI had,
+    // and pathExists() rebuilds one as a full-map Dijkstra on the next miss. With
+    // several AI players laying out their bases that is a steady stream of whole-map
+    // rebuilds from the first minute of a match, scaling with AI COUNT rather than
+    // unit count. Keeping the fields a walkability edit cannot have changed costs one
+    // touchesReachable() call each and leaves the AI's memo intact.
+    evictStaleFlows(aiFlowCache_, cx, cz, w, h);
+    evictStaleFlows(flowCache_, cx, cz, w, h);
+}
+
+// Drop every field in `cache` that a walkability edit over the given cell rect could
+// have changed, and keep the rest. Shared by the sim's memo and the AI's.
+void World::evictStaleFlows(std::map<long long, FlowField>& cache,
+                            int cx, int cz, int w, int h) {
+    for (auto it = cache.begin(); it != cache.end();) {
         long long hi = it->first / 100000000LL;
         int foot = int(hi % 16);
         // NO domain skip any more. Obstacles used to be stamped into the ground grid
@@ -1272,7 +1286,7 @@ void World::invalidateFlows(int cx, int cz, int w, int h) {
         // fields too. (The old skip also decoded the key's high half as a small
         // domain id, which the class-limit key is not.)
         // A failed build (no fitting goal) may succeed after an unblock: retry it.
-        if (!it->second.ready()) { it = flowCache_.erase(it); continue; }
+        if (!it->second.ready()) { it = cache.erase(it); continue; }
         // Pad by the footprint reach (+1 for the freshly-connectable frontier): a
         // walkability change can only alter fits()/adjacency within that band. If no
         // reachable cell of the field lies inside, neither blocking (nothing routed
@@ -1282,7 +1296,7 @@ void World::invalidateFlows(int cx, int cz, int w, int h) {
         int pad = foot + 1;
         if (it->second.touchesReachable(cx - pad, cz - pad,
                                         cx + w - 1 + pad, cz + h - 1 + pad))
-            it = flowCache_.erase(it);
+            it = cache.erase(it);
         else
             ++it;
     }

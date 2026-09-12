@@ -1282,6 +1282,9 @@ private:
     // clear-everything (which forced a burst of full-map Dijkstra rebuilds on
     // every building placed, cancelled, reclaimed, or decayed).
     void invalidateFlows(int cx, int cz, int w, int h);
+    // Selective flow-cache eviction over an edited cell rect; shared by the sim memo
+    // and the AI's (see invalidateFlows).
+    void evictStaleFlows(std::map<long long, FlowField>& cache, int cx, int cz, int w, int h);
     mutable std::map<long long, FlowField> flowCache_;
     // A SEPARATE cache for non-sim queries (pathExists, which only the server-side
     // AI calls). Keeping it apart is not an optimisation, it is a correctness
