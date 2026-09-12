@@ -325,10 +325,10 @@ struct UnitType {
     bool  cantBeCaptured = false, cantBeTransported = false;
     int   transportSize = 1;      // transportsize: transport slots this unit occupies
     // selfdestructcountdown: seconds between arming a self-destruct and the unit
-    // going. Retail stores it in three bits (icd 0x4c09e8 masks & 7 into
-    // UnitType+0x264 bits 21..23), so the range really is 0..7, and a type that
-    // does not declare it goes immediately.
-    int   selfDestructCountdown = 0;
+    // leaving. Three bits in retail (icd 0x4c09e8 masks & 7 into UnitType+0x264
+    // bits 21..23), so 0..7. Defaults to 2, which is what the parser leaves when
+    // a type omits the key (0x4c0a1f) -- and no shipped type declares it.
+    int   selfDestructCountdown = 2;
     uint8_t blood[3] = {150, 30, 10};   // bloodcolor1 (r,g,b) for hit/death spray
     std::vector<Aura> auras;   // stat auras projected onto nearby units
     Weapon weapon;            // primary (WEAPON1); damage 0 = unarmed

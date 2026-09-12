@@ -192,8 +192,12 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.maxSlope = float(info->numberOr("maxslope", 255));
             // Retail keeps this in 3 bits (icd 0x4c09e8: `& 7`, shifted into
             // UnitType+0x264 bits 21..23), so 0..7 seconds is the whole range.
+            // Default 2, not 0: when the key is absent retail's parser clears
+            // bit 23 and sets bit 22 of the three-bit field (icd 0x4c0a1f),
+            // which leaves 2. No shipped FBI declares the key, so 2 is what
+            // every unit in the game actually uses.
             t.selfDestructCountdown =
-                std::clamp(int(info->numberOr("selfdestructcountdown", 0)), 0, 7);
+                std::clamp(int(info->numberOr("selfdestructcountdown", 2)), 0, 7);
             t.radar = float(info->numberOr("radardistance", 0));
             t.noVeteran = info->numberOr("noveteran", 0) != 0;
             t.maxMana = float(info->numberOr("maxmana", 0));
@@ -1400,19 +1404,20 @@ void World::destroy(int unitId) {
     // unit leaves your command -- it fades, without an explosion, without a
     // wreck, and without giving anyone kill credit.
     //
-    // The length comes from the type's `selfdestructcountdown` when it declares
-    // one, which is how retail sources it (icd 0x4c09e8 packs it into three bits
-    // of UnitType+0x264, and the mission at 0x4017e0 counts it down one step a
-    // second). NOTHING in the shipped data sets that key -- base game and Iron
-    // Plague alike -- so retail would act on it immediately, while the game as
-    // played clearly gives you a countdown to change your mind in. Three seconds
-    // is that observed behaviour -- timed against retail -- used whenever a type
-    // is silent.
+    // The length is the type's `selfdestructcountdown` in SECONDS. Retail packs
+    // it into three bits of UnitType+0x264 (0x4c09e8 masks it & 7, shifts 21)
+    // and the mission at 0x4017e0 steps it once a second.
+    //
+    // Nothing in the shipped data declares that key -- not one of the 558 FBIs
+    // across every archive -- which is exactly why the DEFAULT matters, and the
+    // default is not zero. When the key is absent the parser clears bit 23 and
+    // sets bit 22 (0x4c0a1f), leaving the field at 2. Emulating the mission
+    // confirms it: at 2 it reschedules twice at 30 ticks, expires, and applies
+    // its 30000 damage on the run after -- two seconds, which is what the game
+    // gives you. See tools/re/emuself.py.
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
-    const float len = u->type->selfDestructCountdown > 0
-                          ? float(u->type->selfDestructCountdown)
-                          : 3.0f;
+    const float len = float(u->type->selfDestructCountdown);
     u->selfDestructT = (u->selfDestructT < 0.0f) ? len : -1.0f;
 }
 

@@ -764,11 +764,26 @@ death event that no other damage type sets. Nothing in the shipped data gives
 any weapon damage type 5; it is the engine's way of marking "this unit quit"
 rather than "this unit was killed".
 
-**`selfdestructcountdown` is never set in the shipped data** -- not by any of the
-155 base-game FBIs, nor by Iron Plague's. So retail as shipped would act on it
-immediately, yet the game as played gives you a countdown to change your mind
-in. We read the key when a type declares one and otherwise use three seconds,
-timed against retail.
+**`selfdestructcountdown` is never set in the shipped data** -- not one of the
+558 FBIs across every archive declares it. Which makes the DEFAULT the only
+value that matters, and the default is not zero: when the key is absent the
+parser clears bit 23 and sets bit 22 of the three-bit field (`0x4c0a1f`),
+leaving **2**. Every unit in the game therefore has a two-second countdown.
+
+Running the mission settles it rather than arguing from the disassembly
+(`tools/re/emuself.py`, hooking the reschedule, damage and rand calls):
+
+    selfdestructcountdown = 0
+      run 0 -> ret=5   expired=0   ('damage', 30000, 5)
+
+    selfdestructcountdown = 2
+      run 0 -> ret=1   1 left      ('reschedule', 30)
+      run 1 -> ret=1   0 left      ('reschedule', 30)
+      run 2 -> ret=1   expired=1   ('reschedule', 0)
+      run 3 -> ret=5               ('damage', 30000, 5)
+
+Two reschedules of 30 ticks, then the damage: two seconds, which is what the
+game gives you. At 0 it fires on the spot, so the default is doing real work.
 
 Retail also announces it in the message feed -- "Leaving your command" -- which
 is the phrase that gives the whole thing away: the unit is not dying, it is
