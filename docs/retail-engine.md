@@ -725,28 +725,33 @@ now all arrive. Hours of re-reading the disassembly had not found this; the
 emulator found it in one run, because it could show what the original DOES
 rather than what it looks like it should do.
 
-### The cost of it working
+### The cost of it working, and the budget
 
-8-AI benchmark, 3600 ticks: 39.6ms/tick at ~1940 units, against a ~19.5ms
-baseline. That is over the 33ms a 30Hz tick has, at the top benchmark intensity.
+At retail's own budget of 12000 work units a tick, the 8-AI benchmark costs
+42.2ms/tick at ~2040 units against a ~19.5ms baseline -- over the 33ms a 30Hz
+tick has.
 
-Two things are mixed together in that number and they should not be conflated:
+I first put that down to units which used to wedge now marching, and reasoned
+that budget-capped searches could not account for 20ms. That was wrong, and one
+run settled it: at a budget of 1500 the same benchmark costs 23.5ms at ~2010
+units. The searches ARE the cost. A work unit is not a cell query -- a trace
+step charges 9 and can probe up to seven directions -- so query count runs well
+ahead of the budget.
 
-  * The searches themselves are budgeted -- 12000 work units a tick, split
-    across every pending request -- so they cannot account for 20ms.
-  * Units that used to WEDGE now march. A stuck unit is nearly free; a moving
-    one costs collision tests, occupancy churn and combat contact. Much of the
-    increase is the sim doing work it previously skipped because nothing could
-    get anywhere.
+**Routing does not suffer for it.** Measured at 12000, 3000 and 1500 on Inner
+Circle, the percentage of the distance closed is identical for 40-, 80- and
+160-cell goals. The budget decides how FAST a search finishes, not whether it
+can: the unit walks its straight segment meanwhile and the route lands a few
+ticks later either way.
 
-Two micro-fixes are in and neither moved it much, which is itself evidence the
-cost is downstream of the pathfinder rather than in it: the per-cell scratch is
-generation-stamped instead of cleared (it was zeroing ~110KB per request), and
-the retry sweep does its cheap tests before the O(orders) `currentLeg` scan.
+So `setupMatch` runs at 1500. That is 12.5% of retail's default and sits well
+inside the 5%..1000% band retail's own quality setting covers (`0x4252e0`), so
+it is a supported configuration rather than a deviation.
 
-Not yet tried, in rough order of promise: lowering the work budget (retail
-exposes exactly this as a quality setting scaling the 12000), capping installed
-route length below 64, and profiling the mover against a 64-deep order queue.
+Two micro-fixes are also in, neither of which moved the number much: the
+per-cell scratch is generation-stamped instead of cleared (it was zeroing ~110KB
+per request), and the retry sweep does its cheap tests before the O(orders)
+`currentLeg` scan.
 
 ## Headless in-game screenshots (dev harness)
 

@@ -820,6 +820,8 @@ public:
     // Enable retail's background pathfinder for this world (default off).
     void setPathService(bool on) { pathService_ = on; if (!on) paths_.clear(); }
     bool pathService() const { return pathService_; }
+    // Path search work units per tick, shared across all pending requests.
+    void setPathBudget(int b) { paths_.setBudget(b); }
 
     // Passability is a function of the unit's MOVEMENT CLASS, not its domain:
     // retail bakes one grid per class at map load and its path search reads that

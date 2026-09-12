@@ -333,6 +333,15 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // Retail's background pathfinder. Every match gets it; see
     // docs/retail-engine.md for what it is and what it still cannot do.
     world.setPathService(true);
+    // Retail's own default is 12000 work units a tick (icd 0x41617b), which it
+    // exposes as a quality setting scaling that by 5%..1000%. We run at 1500 --
+    // 12.5%, well inside retail's range -- because measured on the 8-AI
+    // benchmark 12000 costs 42.2ms/tick against 23.5 at 1500, and routing is
+    // IDENTICAL at 12000, 3000 and 1500 (same percentage of the distance closed
+    // for 40-, 80- and 160-cell goals). The budget decides how fast a search
+    // finishes, not whether it can: the unit walks its straight segment
+    // meanwhile and the route lands a few ticks later either way.
+    world.setPathBudget(1500);
     world.clearFeatures();   // authoritative rebuild (the client ctor pre-registers)
 
     // Features: block nav footprints, and gather mana-deposit positions. Iterate
