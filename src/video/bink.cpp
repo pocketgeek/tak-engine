@@ -33,6 +33,7 @@ struct BinkVideo::Impl {
     int stream = -1;
     int w = 0, h = 0;
     double fps = 30.0;
+    int frames = 0;        // total frames (0 = the container did not say)
     bool eofSent = false;
 
     // ---- audio (optional) -----------------------------------------------------
@@ -174,6 +175,12 @@ bool BinkVideo::open(std::vector<uint8_t> data) {
     d_->h = d_->ctx->height;
     AVRational r = st->avg_frame_rate.num ? st->avg_frame_rate : st->r_frame_rate;
     d_->fps = (r.num && r.den) ? double(r.num) / double(r.den) : 30.0;
+    // Total frames: the stream's own count when it has one, else derive it from
+    // the duration. Bink files from the retail install carry nb_frames.
+    d_->frames = int(st->nb_frames);
+    if (d_->frames <= 0 && st->duration > 0 && st->time_base.den > 0)
+        d_->frames = int(double(st->duration) * av_q2d(st->time_base) * d_->fps);
+    if (d_->frames < 0) d_->frames = 0;
     d_->frame = av_frame_alloc();
     d_->pkt = av_packet_alloc();
     if (!d_->frame || !d_->pkt || d_->w <= 0 || d_->h <= 0) { close(); return false; }
@@ -221,6 +228,7 @@ void BinkVideo::close() { d_->teardown(); d_->data.clear(); }
 int BinkVideo::width() const { return d_->w; }
 int BinkVideo::height() const { return d_->h; }
 double BinkVideo::fps() const { return d_->fps; }
+int BinkVideo::frameCount() const { return d_->frames; }
 int BinkVideo::audioRate() const { return d_->aRate; }
 int BinkVideo::audioChannels() const { return d_->aCh; }
 void BinkVideo::drainAudio(std::vector<uint8_t>& pcm) {
@@ -290,6 +298,7 @@ void BinkVideo::rewind() {
 
 struct BinkVideo::Impl {};
 BinkVideo::BinkVideo() = default;
+int BinkVideo::frameCount() const { return 0; }
 BinkVideo::~BinkVideo() = default;
 BinkVideo::BinkVideo(BinkVideo&&) noexcept = default;
 BinkVideo& BinkVideo::operator=(BinkVideo&&) noexcept = default;

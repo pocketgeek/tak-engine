@@ -198,8 +198,28 @@ void LoadScreen::draw() {
     // The clip goes in the arch first; the stone plate then draws over it, so the
     // rounded aperture masks the rectangular video exactly the way retail's did.
     if (movieTex_ && movie_.isOpen()) {
+        // The clip is driven by BOTH the wall clock and the load progress, taking
+        // whichever is further along:
+        //   * wall clock, so it plays at its own speed while there is time;
+        //   * progress, so a FAST load still shows the whole arc of the clip
+        //     instead of its first second. The screen only advances the movie when
+        //     it is drawn, and a load fires as few as four step() calls, so a quick
+        //     start used to get about four frames of video.
+        // It never runs backwards, so the two can only ever pull it forward.
         double fps = movie_.fps() > 1 ? movie_.fps() : 15.0;
         int want = int(double(SDL_GetTicks64() - movieStartMs_) * fps / 1000.0);
+        if (int total = movie_.frameCount(); total > 1) {
+            int byPct = int(double(std::clamp(pct_, 0, 100)) / 100.0 * double(total - 1));
+            want = std::max(want, byPct);
+        }
+        // Decoding is forward-only, so catching up on a big jump costs real time.
+        // Measured on the shipped Loadscreen.bik (422x351, 234 frames, 20fps =
+        // 11.7s of video): 0.39 ms/frame, the whole clip in 91 ms. 96 frames is
+        // therefore ~37 ms of catch-up in the worst draw, and four step() calls
+        // can cover the entire clip -- while still bounding the cost if someone
+        // drops a much longer video in.
+        constexpr int kMaxCatchUp = 96;
+        if (want > movieFrame_ + kMaxCatchUp) want = movieFrame_ + kMaxCatchUp;
         while (movieFrame_ < want) {
             if (!movie_.nextFrame(movieRgba_)) { movie_.rewind(); movieStartMs_ = SDL_GetTicks64();
                                                  movieFrame_ = -1; want = 0; continue; }

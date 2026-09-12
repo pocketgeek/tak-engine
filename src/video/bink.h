@@ -38,6 +38,11 @@ public:
     int width() const;
     int height() const;
     double fps() const;   // frames per second (from the stream; ~30 for the doors)
+    // Total frames, or 0 if the container does not say. Lets a caller drive
+    // playback position from something other than wall-clock -- the loading
+    // screen ties it to load progress, so a fast load still shows the whole clip
+    // instead of its first second.
+    int frameCount() const;
 
     // Decode the next frame into `rgba` (resized to width*height*4, RGBA8888).
     // Returns false at end-of-stream (call rewind() to loop). Audio packets demuxed
