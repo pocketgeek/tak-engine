@@ -408,6 +408,22 @@ static bool roomActive(const Room& r) {
     return aiPresent && !r.spectators.empty();
 }
 
+// True while SOMEBODY is still connected to the room -- a live seated player or a
+// spectator. A HELD slot does not count: holding it is what lets a player rejoin,
+// but if every other human has gone too then nobody is left watching, and the room
+// would otherwise keep its referee sim and AIs running for the whole drop grace
+// (or until the auto-pause budget ran out and it resumed at full speed) with not a
+// single client attached. Games are meant to stop when the last human leaves, so a
+// room that empties is torn down immediately rather than ticking on unattended.
+// Note this deliberately gives up the rejoin window when the LAST player drops:
+// there is nobody for a paused game to be unfair to, and a ghost game costs the
+// server a sim + AI per room.
+static bool roomOccupied(const Room& r) {
+    for (int i = 0; i < kMaxSlots; ++i)
+        if (r.slotClient[i] >= 0) return true;
+    return !r.spectators.empty();
+}
+
 void Server::writeReplay(Room& r) {
     if (replayDir_.empty() || r.log.empty()) return;
     // Self-contained replay: header (format, map, options, final slot table,
@@ -1576,10 +1592,13 @@ int Server::run() {
         }
         // Tear down abandoned running games (everyone left/forfeited): write the
         // replay, then erase.
-        std::vector<uint32_t> doneRooms;
-        for (auto& [rid, r] : rooms_)
-            if (r.running && !roomActive(r)) doneRooms.push_back(rid);
-        for (uint32_t rid : doneRooms) {
+        std::vector<std::pair<uint32_t, const char*>> doneRooms;
+        for (auto& [rid, r] : rooms_) {
+            if (!r.running) continue;
+            if (!roomOccupied(r)) doneRooms.push_back({rid, "last player left"});
+            else if (!roomActive(r)) doneRooms.push_back({rid, "all players gone"});
+        }
+        for (auto& [rid, why] : doneRooms) {
             Room& r = rooms_.at(rid);
             writeReplay(r);
             // Detach any lingering spectators before the room vanishes: reset their
@@ -1591,7 +1610,7 @@ int Server::run() {
                 it->second->state = Client::Lobby;
                 it->second->roomId = 0; it->second->slot = -1;
             }
-            std::fprintf(stderr, "game %u ended (all players gone)\n", rid);
+            std::fprintf(stderr, "game %u ended (%s)\n", rid, why);
             rooms_.erase(rid);
         }
         // Close ticks for running, unpaused rooms whose deadline passed -- but never

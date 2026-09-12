@@ -61,3 +61,6 @@ compile_commands.json
 # Locally-built vendored static deps: minimal FFmpeg (tools/build-ffmpeg-bink.sh) and
 # zlib/libjpeg/SDL2 (tools/build-static-deps.sh). Build output -- never committed.
 third_party/
+
+# Server-local account store (no passwords in it, but it is server state).
+takserver-accounts.conf
