@@ -1405,13 +1405,14 @@ void World::destroy(int unitId) {
     // of UnitType+0x264, and the mission at 0x4017e0 counts it down one step a
     // second). NOTHING in the shipped data sets that key -- base game and Iron
     // Plague alike -- so retail would act on it immediately, while the game as
-    // played clearly gives you a countdown to change your mind in. Five seconds
-    // is that observed behaviour, used whenever a type is silent.
+    // played clearly gives you a countdown to change your mind in. Three seconds
+    // is that observed behaviour -- timed against retail -- used whenever a type
+    // is silent.
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
     const float len = u->type->selfDestructCountdown > 0
                           ? float(u->type->selfDestructCountdown)
-                          : 5.0f;
+                          : 3.0f;
     u->selfDestructT = (u->selfDestructT < 0.0f) ? len : -1.0f;
 }
 

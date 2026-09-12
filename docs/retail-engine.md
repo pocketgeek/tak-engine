@@ -767,8 +767,17 @@ rather than "this unit was killed".
 **`selfdestructcountdown` is never set in the shipped data** -- not by any of the
 155 base-game FBIs, nor by Iron Plague's. So retail as shipped would act on it
 immediately, yet the game as played gives you a countdown to change your mind
-in. We read the key when a type declares one and otherwise use five seconds,
-which is the observed behaviour.
+in. We read the key when a type declares one and otherwise use three seconds,
+timed against retail.
+
+Retail also announces it in the message feed -- "Leaving your command" -- which
+is the phrase that gives the whole thing away: the unit is not dying, it is
+resigning. That string is in neither the binary nor any shipped TDF (searched
+both, including every translate/*.tdf), so it is presumably assembled at
+runtime or lives somewhere still unfound. We post the same line into the
+in-game chat overlay when one of the player's own units goes, driven purely off
+the render frame: the client watches units that were counting down and reports
+the ones that vanish, so nothing about it is hashed or sent over the wire.
 
 ## Dynamic analysis: emulating icd routines (2026-09-12)
 

@@ -70,6 +70,30 @@
             if (!chatTyping_) for (auto& g : gameChat_) g.age += cdt;
             if (gameChat_.size() > 16) gameChat_.erase(gameChat_.begin(), gameChat_.end() - 16);
         }
+        // Self-destruct: a unit does not blow up, it walks out on you. Announce
+        // the ones that go, as retail does in its message feed. Watch the units
+        // that were counting down last frame and report whichever are no longer
+        // alive -- the sim needs no help for this, and nothing here is hashed.
+        {
+            std::vector<std::pair<int, std::string>> stillCounting;
+            for (const auto& [id, name] : sdWatch_) {
+                const UnitR* u = frameUnitP(id);
+                if (u && u->alive() && u->selfDestructT >= 0) {
+                    stillCounting.emplace_back(id, name);
+                } else if (!u || !u->alive()) {
+                    gameChat_.push_back({name, "Leaving your command", 0});
+                }
+                // cancelled (alive, countdown cleared): say nothing
+            }
+            for (const auto& u : front().units) {
+                if (!u.alive() || u.selfDestructT < 0 || u.player != localPlayer_) continue;
+                bool known = false;
+                for (const auto& [id, n] : stillCounting) if (id == u.id) { known = true; break; }
+                if (!known)
+                    stillCounting.emplace_back(u.id, u.type ? u.type->name : std::string("Unit"));
+            }
+            sdWatch_.swap(stillCounting);
+        }
         // Camera shake: nudge the map offset by a decaying oscillation for this
         // frame, so the whole world jolts; the offset is restored at the end so
         // the camera and UI stay put. shakemagnitude ~3 => a few px of jolt.
