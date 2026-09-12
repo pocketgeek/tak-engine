@@ -2374,11 +2374,68 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
                     return false;                                           // land base needs land
                 }
             }
+    } else if (!type->yardMap.empty()) {
+        // Honour the yardmap: a '.' cell is NOT part of the footprint and retail
+        // runs no test on it at all (its per-cell mask is zero). We were testing
+        // every cell of the bounding box, so a tree under one of the Keep's TWO
+        // leading '.' rows -- 14 of its 84 cells -- denied a placement retail
+        // allows. blockFootprint already honoured the yardmap, so nav and
+        // placement disagreed about the same building.
+        for (int j = 0; j < type->footZ; ++j)
+            for (int i = 0; i < type->footX; ++i) {
+                char c = type->yardMap[size_t(j) * type->footX + i];
+                if (c == '.' || c == ' ') continue;
+                if (!grid.walkable(cx + i, cz + j)) return false;
+            }
     } else {
         for (int j = 0; j < type->footZ; ++j)
             for (int i = 0; i < type->footX; ++i)
                 if (!grid.walkable(cx + i, cz + j)) return false;
     }
+    for (const auto& u : units_) {
+        if (!u.alive()) continue;
+        float dx = u.x - x, dz = u.z - z;
+        float min = 16.0f * float(std::max(type->footX, type->footZ)) / 2 + 12;
+        if (dx * dx + dz * dz < min * min) return false;
+    }
+    return true;
+}
+
+bool World::clearableForPlacement(const UnitType* type, float x, float z,
+                                  std::vector<int>& out) const {
+    out.clear();
+    if (!type || type->maxVel > 0.0f) return false;   // buildings only
+    if (canPlace(type, x, z)) return true;            // nothing in the way already
+    const NavGrid& grid = navFor(type);
+    if (grid.empty()) return false;
+    int cx = int(x) / 16 - type->footX / 2, cz = int(z) / 16 - type->footZ / 2;
+    // Which live features could be cleared, indexed by the cells they cover.
+    auto featureAt = [&](int gx, int gz) -> const Feature* {
+        for (const auto& f : features_) {
+            if (!f.alive || !f.blocks || f.work <= 0.0f) continue;   // not reclaimable
+            int fx0 = int(f.x) / 16 - f.fx / 2, fz0 = int(f.z) / 16 - f.fz / 2;
+            if (gx >= fx0 && gx < fx0 + f.fx && gz >= fz0 && gz < fz0 + f.fz) return &f;
+        }
+        return nullptr;
+    };
+    bool anyBlocked = false;
+    for (int j = 0; j < type->footZ; ++j)
+        for (int i = 0; i < type->footX; ++i) {
+            if (!type->yardMap.empty()) {
+                char c = type->yardMap[size_t(j) * type->footX + i];
+                if (c == '.' || c == ' ') continue;   // not part of the footprint
+            }
+            int gx = cx + i, gz = cz + j;
+            if (grid.walkable(gx, gz)) continue;                 // clear already
+            if (!grid.terrainWalkable(gx, gz)) return false;     // the GROUND says no
+            const Feature* f = featureAt(gx, gz);
+            if (!f) return false;   // an obstacle that isn't a clearable doodad
+            anyBlocked = true;
+            if (std::find(out.begin(), out.end(), f->id) == out.end()) out.push_back(f->id);
+        }
+    if (!anyBlocked) return false;   // blocked by something the cell walk didn't see
+    // A unit standing on the site still refuses, exactly as canPlace does -- clearing
+    // doodads can't move a body, and retail refuses here too.
     for (const auto& u : units_) {
         if (!u.alive()) continue;
         float dx = u.x - x, dz = u.z - z;

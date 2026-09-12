@@ -575,6 +575,12 @@ public:
     };
     NavGrid(const std::vector<uint8_t>& heights, int w, int h, int sea, const Limits& lim);
 
+    // Terrain-only walkability: ignores the shared obstacle overlay. Used to tell a
+    // cell blocked by a clearable doodad apart from one blocked by the ground itself.
+    bool terrainWalkable(int cx, int cz) const {
+        if (cx < 0 || cz < 0 || cx >= w_ || cz >= h_) return false;
+        return cells_[size_t(cz) * size_t(w_) + size_t(cx)] != 0;
+    }
     bool walkable(int cx, int cz) const {
         if (cx < 0 || cz < 0 || cx >= w_ || cz >= h_) return false;
         size_t i = size_t(cz) * size_t(w_) + size_t(cx);
@@ -827,6 +833,13 @@ public:
     void startHeadbang(int player);
     bool headbangActive(int player) const;
     bool canPlace(const UnitType* type, float x, float z) const;
+    // Would the site be placeable if the clearable doodads on it were gone? Fills
+    // `out` with their feature ids, nearest-first is the caller's job. Returns false
+    // when anything ELSE blocks -- terrain, a unit, a building, an unreclaimable
+    // feature -- because those are refusals retail makes too and we keep. Read-only:
+    // this is a query for the UI, and it changes no sim state.
+    bool clearableForPlacement(const UnitType* type, float x, float z,
+                               std::vector<int>& out) const;
     // Mana deposit ("Sacred Stone") spots, in world px. Lodestones (onMana)
     // can only be built on one, but only when the map actually has any.
     void setManaSpots(std::vector<std::pair<float, float>> spots) {

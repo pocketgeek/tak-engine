@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 55;       // 55: the server-side AI no longer shares the sim's
+constexpr uint32_t kNetVersion = 56;       // 56: canPlace honours the yardmap -- a '.' cell
+                                           // is not part of the footprint and is not tested
+                                           // 55: the server-side AI no longer shares the sim's
                                            // flow-field cache (it was desyncing the referee);
                                            // flow key is per movement CLASS again
                                            // 54: one nav grid per MOVEMENT CLASS, and one

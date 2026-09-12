@@ -22,6 +22,16 @@ compile_commands.json
 /missions/
 /Movies/
 /Cay.tnt/
+/features/
+/gamedata/
+/objects3d/
+/palettes/
+/scripts/
+/textures/
+/units/
+/bitmaps/
+/fonts/
+/canbuild/
 /Keys.TDF
 /sdlaudio.raw
 *.gaf
@@ -33,6 +43,19 @@ compile_commands.json
 *.icd
 *.gp3
 *.ufo
+*.tdf
+*.fbi
+*.pcx
+*.gui
+*.pal
+*.shd
+*.lht
+*.gry
+*.blu
+*.alp
+*.gao
+*.gao2
+*.pco
 !overrides/click.hpi
 
 # Locally-built vendored static deps: minimal FFmpeg (tools/build-ffmpeg-bink.sh) and

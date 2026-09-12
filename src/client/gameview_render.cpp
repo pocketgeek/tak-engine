@@ -2664,6 +2664,12 @@
         float wx, wz;
         pickWorld(mouseX_, mouseY_, wx, wz);
         bool ok = canPlaceLocked(placing_, wx, wz);
+        // A site blocked only by clearable doodads isn't a refusal any more -- the
+        // click sends the builder to clear it first -- so don't red-wash it. The
+        // notice tells the player what the click will actually do.
+        std::vector<int> clearFeats;
+        if (!ok && clearableAt(placing_, wx, wz, clearFeats) && !clearFeats.empty())
+            ok = true;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         drawGhostAt(placing_, wx, wz, !ok);
         // Small name tag above the ghost so the player still sees what's queued.

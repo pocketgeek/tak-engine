@@ -1000,6 +1000,60 @@ int main(int argc, char** argv) {
               std::to_string(ones) + " of " + std::to_string(movers) + " still 1x1");
     }
 
+    // A '.' cell is not part of a building's footprint: retail runs no test on it.
+    // The Keep has two full rows of them, so a tree parked there used to deny a
+    // placement retail allows.
+    std::printf("[yardmap-aware placement]\n");
+    {
+        const sim::UnitType* keep = reg.find("arakeep");
+        if (keep && !keep->yardMap.empty()) {
+            int dots = 0;
+            for (char c : keep->yardMap) if (c == '.' || c == ' ') ++dots;
+            check(dots > 0, "the Keep's yardmap has non-footprint cells",
+                  std::to_string(dots) + " of " +
+                      std::to_string(keep->footX * keep->footZ));
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            sim::setupMatch(w, reg, cfg);
+            // Find open ground the Keep fits on, then block one cell that the
+            // yardmap marks '.' and assert the placement still stands.
+            int bx = -1, bz = -1;
+            for (int z = 20; z < 90 && bx < 0; ++z)
+                for (int x = 20; x < 90; ++x) {
+                    float wx = float(x) * 16 + 8, wz = float(z) * 16 + 8;
+                    if (w.canPlace(keep, wx, wz)) { bx = x; bz = z; break; }
+                }
+            if (bx < 0) { check(false, "found somewhere the Keep fits"); }
+            else {
+                // Locate a '.' cell in the yardmap and block exactly that world cell.
+                int dotI = -1, dotJ = -1;
+                for (int j = 0; j < keep->footZ && dotI < 0; ++j)
+                    for (int i = 0; i < keep->footX; ++i)
+                        if (keep->yardMap[size_t(j) * keep->footX + i] == '.') {
+                            dotI = i; dotJ = j; break;
+                        }
+                int ox = bx - keep->footX / 2, oz = bz - keep->footZ / 2;
+                w.blockCells(ox + dotI, oz + dotJ, 1, 1, true);
+                float wx = float(bx) * 16 + 8, wz = float(bz) * 16 + 8;
+                check(w.canPlace(keep, wx, wz),
+                      "a blocked '.' cell does not deny the placement",
+                      "cell " + std::to_string(dotI) + "," + std::to_string(dotJ));
+                // ...but a blocked 'o' cell must still deny it.
+                int solidI = -1, solidJ = -1;
+                for (int j = 0; j < keep->footZ && solidI < 0; ++j)
+                    for (int i = 0; i < keep->footX; ++i) {
+                        char c = keep->yardMap[size_t(j) * keep->footX + i];
+                        if (c != '.' && c != ' ') { solidI = i; solidJ = j; break; }
+                    }
+                w.blockCells(ox + solidI, oz + solidJ, 1, 1, true);
+                check(!w.canPlace(keep, wx, wz),
+                      "a blocked footprint cell still denies it");
+            }
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

@@ -206,6 +206,16 @@
                 std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
                 issue(c);
                 placing_ = nullptr;
+            } else if (!selection_.empty()) {
+                // Blocked only by clearable doodads: send the builder to reclaim them
+                // and queue the build behind. Anything else still refuses, as retail
+                // does. See issueClearThenBuild.
+                std::vector<int> feats;
+                if (clearableAt(placing_, wx, wz, feats) && !feats.empty()) {
+                    int bid = selectedBuilder() ? selectedBuilder()->id : selection_.front();
+                    issueClearThenBuild(bid, placing_, wx, wz, feats, false);
+                    placing_ = nullptr;
+                }
             }
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
                    buildDrag_) {
@@ -355,6 +365,57 @@
     bool GameView::canPlaceLocked(const tak::sim::UnitType* type, float x, float z) {
         std::lock_guard<std::mutex> lk(simMutex_);
         return world_.canPlace(type, x, z);
+    }
+
+    bool GameView::clearableAt(const tak::sim::UnitType* type, float x, float z,
+                               std::vector<int>& outFeatures) {
+        std::lock_guard<std::mutex> lk(simMutex_);
+        return world_.clearableForPlacement(type, x, z, outFeatures);
+    }
+
+    // Clear-then-build. Retail refuses a site blocked by a tree outright -- red ghost,
+    // dead click -- and expects you to reclaim it by hand first. This is OUR
+    // convenience on top, and it is deliberately a CLIENT MACRO: it emits nothing but
+    // the existing Reclaim and Build commands, in that order, so the simulation still
+    // does exactly what retail's does and the lockstep stream stays ordinary. The
+    // builder walks the doodads down (earning their mana, as any reclaim does) and
+    // then lays the foundation.
+    void GameView::issueClearThenBuild(int builderId, const tak::sim::UnitType* type,
+                                       float x, float z, const std::vector<int>& feats,
+                                       bool queue) {
+        if (!type || feats.empty()) return;
+        // Nearest doodad first, so the builder works inward instead of criss-crossing.
+        std::vector<std::pair<float, int>> order;
+        const UnitR* b = frameUnitP(builderId);
+        for (int fid : feats) {
+            float fx = x, fz = z;
+            for (const auto& f : world_.features())
+                if (f.id == fid) { fx = f.x; fz = f.z; break; }
+            float dx = fx - (b ? b->x : x), dz = fz - (b ? b->z : z);
+            order.push_back({dx * dx + dz * dz, fid});
+        }
+        std::sort(order.begin(), order.end());
+        bool first = true;
+        for (auto& [d, fid] : order) {
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Reclaim;
+            c.unitId = builderId;
+            c.targetId = fid;
+            c.queue = uint8_t((first && !queue) ? 0 : 1);   // first replaces unless queuing
+            issue(c);
+            first = false;
+        }
+        tak::net::Command bc;
+        bc.kind = tak::net::Cmd::Build;
+        bc.unitId = builderId;
+        bc.x = x;
+        bc.z = z;
+        bc.queue = 1;   // always behind the clearing
+        std::snprintf(bc.type, sizeof bc.type, "%s", type->id.c_str());
+        issue(bc);
+        notice_ = "CLEARING " + std::to_string(order.size());
+        noticeTimer_ = 2;
+        voice(builderId, "move");
     }
 
     const UnitR* GameView::selectedBuilder() {

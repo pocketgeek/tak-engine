@@ -1844,6 +1844,17 @@ private:
     // read. Placement-UX only and rare (a ghost while positioning a building), so the brief
     // wait for the current tick is invisible; uncontended and cheap when inline.
     bool canPlaceLocked(const tak::sim::UnitType* type, float x, float z);
+    // A site blocked ONLY by clearable features: collect those features' ids, so the
+    // placement can queue reclaims ahead of the build instead of being refused.
+    // Returns false when anything else blocks (terrain, a unit, a building, an
+    // indestructible feature) -- those are refusals retail makes too and we keep.
+    bool clearableAt(const tak::sim::UnitType* type, float x, float z,
+                     std::vector<int>& outFeatures);
+    // Queue reclaims for `feats`, then the build. Pure client macro: it emits only
+    // the existing Reclaim and Build commands, so the SIM is untouched and stays
+    // byte-for-byte what retail does.
+    void issueClearThenBuild(int builderId, const tak::sim::UnitType* type,
+                             float x, float z, const std::vector<int>& feats, bool queue);
     // HUD notice setter that is safe to call from the sim worker: the worker's sim events
     // (god summon, scenario/mission messages) defer into a pending slot that the main thread
     // applies in mpStep, so notice_ (a std::string draw() reads every frame) and noticeTimer_

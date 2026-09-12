@@ -215,7 +215,12 @@
         // Build/conjure placement: green when it fits, red when blocked (matches the ghost).
         if (placing_ && mouseX_ >= 0) {
             float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
-            return canPlaceLocked(placing_, wx, wz) ? tak::CursorId::Green : tak::CursorId::Red;
+            if (canPlaceLocked(placing_, wx, wz)) return tak::CursorId::Green;
+            // Clearable doodads: the click works (it clears first), so keep it green.
+            std::vector<int> feats;
+            if (clearableAt(placing_, wx, wz, feats) && !feats.empty())
+                return tak::CursorId::Green;
+            return tak::CursorId::Red;
         }
         // Right-drag "clear this area": show the broom only once the pointer has moved
         // enough to actually be a box (the same 6px threshold that tells a right-CLICK
