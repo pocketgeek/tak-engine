@@ -115,7 +115,7 @@
             // on top of, so bias their sort key back to keep them painted
             // under the building rather than over it.
             float key = f.mana ? f.z - 24.0f : f.z;
-            items.push_back({key, nullptr, &f});
+            items.push_back({key, nullptr, &f, 0});
         }
         for (const UnitR* _up : front().live) {
             const UnitR& r = *_up;   // this tick's snapshot (front().live mirrors world_.units())
@@ -141,13 +141,24 @@
             // the top edge can still show its lower body. Cull on the LIFTED anchor
             // (where the unit is actually drawn), else a unit lifted onto the screen
             // from just below the edge on high ground vanishes.
-            float sx = (r.x - mapView_.offX()) * zm0 - terrainLiftX(r.x, r.z) * zm0;
-            float sy = (r.z - mapView_.offY()) * zm0 - terrainLift(r.x, r.z) * zm0;
+            float sx = (r.x - mapView_.offX()) * zm0 - uLiftX(r) * zm0;
+            float sy = (r.z - mapView_.offY()) * zm0 - uLiftY(r) * zm0;
             if (sx < -160 || sx > mvw + 160 || sy < -260 || sy > winH + 120) continue;
-            items.push_back({r.z, &r, nullptr});
+            // Airborne units go in the late layer (see PaintItem). A flyer that has
+            // LANDED is on the ground and sorts normally -- which is retail's gate
+            // too, since its occupancy flips when it puts down.
+            int layer = 0;
+            if (r.type && r.type->canFly) {
+                auto ait = anims_.find(r.id);
+                bool aloft = ait == anims_.end() || ait->second.altitude > 1.0f;
+                if (aloft) layer = 1;
+            }
+            items.push_back({r.z, &r, nullptr, layer});
         }
-        std::stable_sort(items.begin(), items.end(),
-                  [](const Item& a, const Item& b) { return a.z < b.z; });
+        std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+            if (a.layer != b.layer) return a.layer < b.layer;   // ground, then air
+            return a.z < b.z;
+        });
 
         // Project every visible unit's model in parallel before drawing. This is
         // the heavy per-frame CPU work (matrix-transforming each unit's model tree
@@ -1586,8 +1597,13 @@
         // Interpolated pose so the unit glides between 30Hz sim ticks (lift computed at the
         // interpolated spot so it stays seated on the terrain as it moves).
         float ix, iz, ih; interpPose(u, ix, iz, ih);
-        float ax = (ix - mapView_.offX()) * zm - terrainLiftX(ix, iz) * zm;
-        float ay = (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm;
+        // A flyer holds its height above the coarse dilated datum, not the relief
+        // directly beneath it -- see flyerGround.
+        const bool flying = u.type && u.type->canFly;
+        float liftX = flying ? flyerGround(ix, iz) * kHeightScaleX_ : terrainLiftX(ix, iz);
+        float liftY = flying ? flyerGround(ix, iz) * kHeightScale_ : terrainLift(ix, iz);
+        float ax = (ix - mapView_.offX()) * zm - liftX * zm;
+        float ay = (iz - mapView_.offY()) * zm - liftY * zm;
         // FBI waterline: a wading god or a floating hull sits BELOW the water
         // surface, so the sink is added where the terrain lift is subtracted.
         // Zero on land and for every type that carries neither canhover nor floater.

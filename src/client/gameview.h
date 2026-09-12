@@ -1115,7 +1115,15 @@ private:
     // copies across the pool, then replay the draw ops. Keeps depth order exact.
     std::vector<SDL_Vertex> bodyVerts_;
     struct FeatureInst;   // defined below; DrawOp only needs the pointer type
-    struct PaintItem { float z; const UnitR* u; const FeatureInst* f; };
+    // `layer` puts AIRBORNE units in a pass of their own, after every feature.
+    // Retail paints the world as bucketed z rows -- ground units interleaved with
+    // tall features -- and then makes a SECOND full sweep over every row for the
+    // units whose occupancy is not GROUND (icd: pass 1 gate 0x4fc9f3 requires
+    // unit[0x130]&3 == 1, pass 2 at 0x4fcbd3 requires != 1). A flying unit
+    // therefore paints over every tree and rock and cannot be occluded by feature
+    // clutter. Sorting by z alone, as we did, let any tree with a larger z draw
+    // over a flyer at any altitude -- which is what "flying under trees" was.
+    struct PaintItem { float z; const UnitR* u; const FeatureInst* f; int layer = 0; };
     std::vector<PaintItem> paintItems_;   // per-frame painter list (capacity reused)
     std::unordered_set<int> targetSet_;   // per-frame attack-target ids (reused)
     // Parsed COB scripts shared per unit type (see registerUnit).
@@ -1734,6 +1742,24 @@ private:
     // Screen-space displacement of a world point's surface from its flat grid cell,
     // baked into the tile art by the tilted 2.5D view: up (Y) AND sideways (X).
     float terrainLift(float wx, float wz) { return heightAbove(wx, wz) * kHeightScale_; }
+    // ---- the datum a FLYER holds its altitude above --------------------------
+    // Retail does not fly over the per-pixel heightmap. It precomputes, at map
+    // load, one byte per 128x128-world-unit sector holding the MAXIMUM terrain
+    // height in that sector (floored at sea level), then max-DILATES that grid
+    // 3x3 -- so the value a flyer reads is the highest ground within a 384x384
+    // window (icd 0x50e740; grid at world+0x19f18, sector index (x>>23,z>>23)).
+    // Its navigator then aims at that value + cruisealt (0x4e42aa / 0x524b89) and
+    // a servo walks the unit's Y toward it a step per tick rather than snapping.
+    //
+    // The visible difference is the whole point: over the real heightmap a flyer
+    // twitches with every bump it crosses, which is what "the altitude visibly
+    // changes with terrain height" was. Over a dilated maximum it climbs once,
+    // smoothly, to clear the highest thing anywhere near it, and stays there.
+    float flyerGround(float wx, float wz);
+    void buildFlyerGround();
+    std::vector<uint8_t> flyGround_;         // 3x3-dilated per-sector max height
+    int flyGroundW_ = 0, flyGroundH_ = 0;    // sectors
+    const void* flyGroundMap_ = nullptr;     // which map it was built for
     float terrainLiftX(float wx, float wz) { return heightAbove(wx, wz) * kHeightScaleX_; }
     // The terrain-relief lift is for MOBILE units standing on painted slopes. A
     // A "structure" (building) for render/build purposes = one that can't actually
@@ -1746,7 +1772,13 @@ private:
     // Buildings are NOT excluded here: two of them (npcflag, vermort) declare a
     // shadow sprite and retail draws it.
     static bool castsShadow(const tak::sim::UnitType* t) {
-        return t && !t->noShadow && !t->floater;
+        // canfly is retail's third exclusion and it is absolute: when a drawable is
+        // built (icd 0x4ee340-0x4ee372) the shadow art is installed only if the
+        // noshadow bit is clear AND UnitDef+0x260 bit 11 (canfly) is clear. So a
+        // flying unit never casts one, even though 24 of the 27 flying types
+        // declare `shadowgaf = shadows` in their FBI -- exactly the same shape as
+        // the five ships that carry a shadowart they never show.
+        return t && !t->noShadow && !t->floater && !t->canFly;
     }
     // The soft blob is OUR invention for units with no shadow sprite, so it carries
     // an extra rule retail has no equivalent for: only actual movers get one. Keyed
@@ -1760,8 +1792,16 @@ private:
     // it stack right on top instead of the decal being flat while units float above.
     float uLiftY(const tak::sim::Unit& u) { return terrainLift(u.x, u.z); }
     float uLiftX(const tak::sim::Unit& u) { return terrainLiftX(u.x, u.z); }
-    float uLiftY(const UnitR& u) { return terrainLift(u.x, u.z); }   // snapshot overloads
-    float uLiftX(const UnitR& u) { return terrainLiftX(u.x, u.z); }
+    // Snapshot overloads. A FLYER rides the coarse dilated datum, not the relief
+    // under its nose -- see flyerGround.
+    float uLiftY(const UnitR& u) {
+        if (u.type && u.type->canFly) return flyerGround(u.x, u.z) * kHeightScale_;
+        return terrainLift(u.x, u.z);
+    }
+    float uLiftX(const UnitR& u) {
+        if (u.type && u.type->canFly) return flyerGround(u.x, u.z) * kHeightScaleX_;
+        return terrainLiftX(u.x, u.z);
+    }
 
     // A unit's current render altitude (flyers rise to cruiseAlt; 0 for ground
     // units or units with no live anim). Used to lift a flyer's projectiles/effects

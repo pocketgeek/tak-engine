@@ -2170,6 +2170,58 @@
         return v;
     }
 
+    // Retail's flyer datum, built once per map (icd 0x50e740). One byte per
+    // 128x128-world-unit sector = the MAX terrain height over its 8x8 block of
+    // 16-unit cells, floored at the water datum; then a 3x3 max dilation, first
+    // along X then along Z, so the value a flyer reads is the highest ground
+    // within 384x384 world units of it. Cheap: a few hundred bytes, computed on
+    // the first query after a map change.
+    void GameView::buildFlyerGround() {
+        const auto& m = mapView_.map();
+        flyGroundMap_ = &m;
+        flyGround_.clear();
+        flyGroundW_ = flyGroundH_ = 0;
+        if (m.heights.empty() || m.width <= 0 || m.height <= 0) return;
+        heightAbove(0, 0);                       // force heightRef_ to be resolved
+        const int kCells = 8;                    // 8 cells of 16 units = one 128-unit sector
+        flyGroundW_ = (m.width + kCells - 1) / kCells;
+        flyGroundH_ = (m.height + kCells - 1) / kCells;
+        std::vector<uint8_t> maxv(size_t(flyGroundW_) * size_t(flyGroundH_), 0);
+        for (int z = 0; z < m.height; ++z)
+            for (int x = 0; x < m.width; ++x) {
+                int h = int(m.heights[size_t(z) * m.width + x]) - heightRef_;
+                if (h < 0) h = 0;                // below the water datum reads as flat
+                uint8_t& dst = maxv[size_t(z / kCells) * size_t(flyGroundW_) + size_t(x / kCells)];
+                if (h > int(dst)) dst = uint8_t(h > 255 ? 255 : h);
+            }
+        // 3x3 max dilation, separably: along X, then along Z in place.
+        std::vector<uint8_t> tmp = maxv;
+        for (int z = 0; z < flyGroundH_; ++z)
+            for (int x = 0; x < flyGroundW_; ++x) {
+                uint8_t v = maxv[size_t(z) * size_t(flyGroundW_) + size_t(x)];
+                if (x > 0) v = std::max(v, maxv[size_t(z) * size_t(flyGroundW_) + size_t(x - 1)]);
+                if (x + 1 < flyGroundW_) v = std::max(v, maxv[size_t(z) * size_t(flyGroundW_) + size_t(x + 1)]);
+                tmp[size_t(z) * size_t(flyGroundW_) + size_t(x)] = v;
+            }
+        flyGround_.assign(tmp.begin(), tmp.end());
+        for (int z = 0; z < flyGroundH_; ++z)
+            for (int x = 0; x < flyGroundW_; ++x) {
+                uint8_t v = tmp[size_t(z) * size_t(flyGroundW_) + size_t(x)];
+                if (z > 0) v = std::max(v, tmp[size_t(z - 1) * size_t(flyGroundW_) + size_t(x)]);
+                if (z + 1 < flyGroundH_) v = std::max(v, tmp[size_t(z + 1) * size_t(flyGroundW_) + size_t(x)]);
+                flyGround_[size_t(z) * size_t(flyGroundW_) + size_t(x)] = v;
+            }
+    }
+
+    float GameView::flyerGround(float wx, float wz) {
+        const auto& m = mapView_.map();
+        if (&m != flyGroundMap_) buildFlyerGround();
+        if (flyGround_.empty()) return 0.0f;
+        int sx = std::clamp(int(wx / 128.0f), 0, flyGroundW_ - 1);
+        int sz = std::clamp(int(wz / 128.0f), 0, flyGroundH_ - 1);
+        return float(flyGround_[size_t(sz) * size_t(flyGroundW_) + size_t(sx)]);
+    }
+
     float GameView::unitAltById(int id) const {
         auto it = anims_.find(id);
         return it != anims_.end() ? it->second.altitude : 0.0f;
