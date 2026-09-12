@@ -2260,17 +2260,15 @@
 
     SDL_FPoint GameView::unitScreen(const UnitR& u) {
         float zm = mapView_.zoom();
-        float alt = 0.0f;
-        if (u.type && u.type->canFly) {
-            auto it = anims_.find(u.id);
-            alt = (it != anims_.end()) ? it->second.altitude : u.type->cruiseAlt;
-        }
         float ix, iz, ih; interpPose(u, ix, iz, ih);   // match the gliding model position
-        // The waterline sink moves the drawn body, so selection/marquee picking has
-        // to follow it or a wading god can't be clicked where you see it.
-        return {(ix - mapView_.offX()) * zm - terrainLiftX(ix, iz) * zm,
-                (iz - mapView_.offY()) * zm - terrainLift(ix, iz) * zm
-                    + waterSink(u.type, ix, iz) * zm - alt * 0.8f * zm - 12.0f * zm};
+        // uLiftX/uLiftY, NOT terrainLift: a flyer rides the coarse dilated datum,
+        // and picking has to use the same one the body is drawn with or you click
+        // where the unit is not. The waterline sink moves the drawn body too, so
+        // this follows that as well -- else a wading god can't be clicked where you
+        // see it.
+        return {(ix - mapView_.offX()) * zm - uLiftX(u) * zm,
+                (iz - mapView_.offY()) * zm - uLiftY(u) * zm
+                    + waterSink(u.type, ix, iz) * zm - altLift(u) * zm - 12.0f * zm};
     }
 
     const SDL_FRect& GameView::unitHitBox(const tak::sim::UnitType* type) {

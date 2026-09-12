@@ -1812,6 +1812,23 @@ private:
         if (u.type && u.type->canFly) return flyerDatum(u) * kHeightScaleX_;
         return terrainLiftX(u.x, u.z);
     }
+    // Screen-space height a flying unit is lifted by its own altitude. ONE
+    // definition, because there used to be three: the body applied altitude as a
+    // model-space translation, the distant impostor used alt*0.8 in screen space,
+    // and unitScreen (which drives picking and the marquee) used alt*0.8 on top of
+    // the per-pixel terrain lift rather than the flyer datum. A flyer was drawn in
+    // one place, boxed in a second and clicked in a third.
+    float altLift(const UnitR& u) {
+        if (!u.type || !u.type->canFly) return 0.0f;
+        auto it = anims_.find(u.id);
+        float alt = it != anims_.end() ? it->second.altitude : u.type->cruiseAlt;
+        // cos(gTilt), because that is what the MODEL projection does with it: the
+        // renderer lifts a piece by (localY + altitude) * cos(tilt) (see the effect
+        // anchor below, which already uses the same factor). unitScreen and the
+        // distant impostor had a hand-tuned 0.8 instead, so picking and the sprite
+        // disagreed by ~6% of the altitude even before the datum change.
+        return alt * std::cos(gTilt);
+    }
     // The SMOOTHED datum for this flyer (Anim::groundY), falling back to the raw
     // sector value for a unit with no live anim yet.
     float flyerDatum(const UnitR& u) {

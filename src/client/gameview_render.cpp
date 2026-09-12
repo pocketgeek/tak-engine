@@ -780,7 +780,8 @@
                 if (!up || !up->alive() || !up->type) continue;
                 const UnitR& u = *up;
                 float cx = (u.x - mapView_.offX()) * zms - uLiftX(u) * zms;
-                float cy = (u.z - mapView_.offY()) * zms - uLiftY(u) * zms;
+                float cy = (u.z - mapView_.offY()) * zms - uLiftY(u) * zms
+                           - altLift(u) * zms;   // box the flying body, not the ground
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
                 // Size the brackets to the unit's footprint (world half-extent =
                 // foot cells * 8) so a building is boxed at its real size, not a single
@@ -1603,7 +1604,7 @@
         float liftX = flying ? flyerDatum(u) * kHeightScaleX_ : terrainLiftX(ix, iz);
         float liftY = flying ? flyerDatum(u) * kHeightScale_ : terrainLift(ix, iz);
         float ax = (ix - mapView_.offX()) * zm - liftX * zm;
-        float ay = (iz - mapView_.offY()) * zm - liftY * zm;
+        float ay = (iz - mapView_.offY()) * zm - liftY * zm - altLift(u) * zm;
         // FBI waterline: a wading god or a floating hull sits BELOW the water
         // surface, so the sink is added where the terrain lift is subtracted.
         // Zero on land and for every type that carries neither canhover nor floater.
@@ -1634,7 +1635,7 @@
                 if (r.w > 2 && r.h > 2) {   // else falls to full model
                     float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
                     float qx = ax + bb.x * zm;
-                    float qy = ay + bb.y * zm - alt * 0.8f * zm;
+                    float qy = ay + bb.y * zm;   // ay already carries the altitude lift
                     float inv = 1.0f / float(sprAtlasDim_);
                     pushQuadUV(g.verts, qx, qy, bb.w * zm, bb.h * zm,
                                float(r.x) * inv, float(r.y) * inv,
@@ -1661,7 +1662,7 @@
                 const SDL_FRect& bb = imp.bbox[f];
                 float alt = g.canFly ? (anim ? anim->altitude : u.type->cruiseAlt) : 0.0f;
                 float qx = ax + bb.x * zm;
-                float qy = ay + bb.y * zm - alt * 0.8f * zm;   // ~lift a flyer's sprite
+                float qy = ay + bb.y * zm;   // ay already carries the altitude lift
                 float inv = 1.0f / float(impAtlasDim_);
                 pushQuadUV(g.verts, qx, qy, bb.w * zm, bb.h * zm,
                            float(r.x) * inv, float(r.y) * inv,
@@ -1676,8 +1677,9 @@
 
         scratch.clear();
         Xform base;
-        if (u.type && u.type->canFly && u.type->cruiseAlt > 0)
-            base.t[1] = anim ? anim->altitude : u.type->cruiseAlt;
+        // (Altitude is applied to the screen anchor above, not here: a model-space
+        // translate did not agree with the impostor's screen-space one, so a flyer
+        // visibly jumped height as it crossed the LOD threshold.)
         // Bank and pitch the whole model (bankscale/pitchscale). Composed on the
         // BASE, before the piece tree, so the animation's own piece rotations ride
         // on top of the attitude rather than fighting it. Piece X and Y are negated
