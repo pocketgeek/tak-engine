@@ -3398,7 +3398,27 @@ void World::tick(float dt) {
     // blocked/stuck watchdogs en masse, and hundreds of path searches in one tick
     // stall the sim. Deferred units retry a later tick. Deterministic (fixed budget,
     // unit-index order), so lockstep peers stay in sync.
-    pathBudget_ = 24;
+    // RETAIL FIDELITY: zero. Retail has no pathfinder at all -- its PathNavigator
+    // keeps a two-point segment [position, goal] and searches for nothing
+    // (docs/retail-engine.md) -- so neither do we. A* repathing was ours.
+    //
+    // Know what this costs before changing it back. Measured, 30 units sent the
+    // length of a map:
+    //                    Angvir's Maze   Athri Cay   Inner Circle
+    //     budget 24         15/30          22/30        24/30
+    //     budget  0          0/30          21/30         0/30
+    // At zero, every unit keeps its order (they no longer give up, see the
+    // pathExists fix) but the whole group wedges ~31% along and never moves again:
+    // straight-line steering slides along a wall and never commits to moving AWAY
+    // from the goal, so concave geometry traps it for good.
+    //
+    // That is WORSE than retail, not equal to it. Retail units wedged occasionally;
+    // ours wedge universally, because we copied retail's absence of a search without
+    // yet matching its local avoidance (the mover's clamp-and-slide, and the ~6-tick
+    // re-anchor of the segment). The fix is to improve the mover until units stop
+    // needing a search -- at which point this zero costs nothing -- NOT to put the
+    // budget back. Deliberate call: be faithful now, sharpen the steering later.
+    pathBudget_ = 0;
     for (auto& u : units_) { u.justFired = false; u.justBuilt = 0; }
     if (mission_ || scenario_) justDied_.clear();   // deaths this tick, fed to mission/scenario below
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
