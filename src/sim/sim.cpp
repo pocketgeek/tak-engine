@@ -999,6 +999,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
         o.attackMove = tmpl.attackMove;
         o.patrol = tmpl.patrol;
         o.goal = (i + 1 == path.size());
+        if (o.goal) { o.clickX = tmpl.clickX; o.clickZ = tmpl.clickZ; }
         next.push_back(o);
     }
     next.insert(next.end(), u.orders.begin() + long(end) + 1, u.orders.end());
@@ -1058,6 +1059,7 @@ void World::order(int unitId, float x, float z, bool queue) {
     //
     // Deterministic: a fixed outward scan in a fixed order, and it only moves a
     // goal that was already impossible.
+    const float clickX = x, clickZ = z;   // what the player aimed at
     {
         const NavGrid& g = navFor(u->type);
         const int foot = footCells(u->type);
@@ -1082,6 +1084,8 @@ void World::order(int unitId, float x, float z, bool queue) {
     // two-point segment is the interim, not the mechanism -- exactly what this
     // engine did permanently until the search was ported.
     u->orders.push_back({x, z, 0});
+    u->orders.back().clickX = clickX;
+    u->orders.back().clickZ = clickZ;
     markGoal();
     // Only ask for a route when this order is the one the unit is about to
     // WALK. Requests are keyed by unit id, so asking for a queued order cancels

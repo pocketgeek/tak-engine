@@ -3056,8 +3056,17 @@
                 else if (o.targetId)        marker = tak::CursorId::Attack;
                 else if (o.patrol)          marker = tak::CursorId::Patrol;
                 if (haveMarker) {
-                    float mx = (qx - mapView_.offX()) * zm - terrainLiftX(qx, qz) * zm;
-                    float my = (qz - mapView_.offY()) * zm - terrainLift(qx, qz) * zm;
+                    // Draw the marker where the PLAYER CLICKED, not where the
+                    // unit will end up. order() snaps a destination the unit
+                    // cannot stand on -- a click on a mountain -- to the nearest
+                    // cell it fits in, and without this the marker visibly jumps
+                    // off the cursor to the spot the engine picked. The bead
+                    // trail still runs to the real destination, since that is
+                    // the route the unit walks.
+                    const float kx = o.clickX != 0.0f ? o.clickX : qx;
+                    const float kz = o.clickZ != 0.0f ? o.clickZ : qz;
+                    float mx = (kx - mapView_.offX()) * zm - terrainLiftX(kx, kz) * zm;
+                    float my = (kz - mapView_.offY()) * zm - terrainLift(kx, kz) * zm;
                     if (mx > -40 && mx < float(mvw) + 40 && my > -40 && my < float(winH) + 40) {
                         size_t n = std::max<size_t>(1, cursors_.frameCount(marker));
                         cursors_.drawFrame(ren_, marker, size_t(tick / 3) % n,

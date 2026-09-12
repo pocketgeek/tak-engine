@@ -442,6 +442,16 @@ struct Order {
     // destination independently (icd 0x4d5747 reading order+0x5e). Display only --
     // never read by the simulation, never hashed.
     uint32_t issuedTick = 0;
+    // Where the player actually CLICKED, when that differs from x/z. order()
+    // snaps a destination the unit cannot stand on to the nearest cell it fits
+    // in, so x/z is where the unit will END UP -- but the on-map marker belongs
+    // under the cursor the player aimed at, not on the spot the engine chose.
+    // Display only: never folded into stateHash, never steered on.
+    //
+    // Declared LAST on purpose. Order is built with aggregate initialisers like
+    // {x, z, targetId}; a field inserted after x/z silently becomes the third
+    // one and every such call site starts setting the wrong member.
+    float clickX = 0, clickZ = 0;
 };
 
 struct Unit {
