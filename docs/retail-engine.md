@@ -512,7 +512,23 @@ NOT working, and why it is off by default:
     benchmark, ~4ms of it in the search. Paying that for mostly-failing
     searches is not a trade worth making yet.
 
-Two candidate causes, neither confirmed:
+Diagnosed further (same day), with the terrain printed alongside the result:
+
+  * The FAILURES are mostly legitimate. The 20-cell case on Inner Circle has a
+    nested, mazey obstacle field between start and goal, and a march-plus-
+    wall-follow cannot solve nested obstacles. Retail's own `(w+h)*20` limit
+    would abandon it too, so "fails and falls back to straight-line" may simply
+    be what retail does there. Judging our port by whether it always finds a
+    route is the wrong test.
+  * The SUCCESSES are the real problem. The 30-cell route comes back as
+    `(15,15) (17,15) ... (79,15)` -- wandering out to x=92 for a goal at
+    (34,34). That is not a broken backtrack: it is the trace's ACTUAL path,
+    faithfully reconstructed. The breadcrumb chain from the goal leads back
+    through everywhere the cursors wandered, so a wandering trace produces a
+    wandering route, and the 64-entry clamp then truncates the goal end off it.
+
+So the open question is narrower than it looked: why do our cursors wander so
+far compared with retail's? Candidates:
 
   * Both cursors lay breadcrumbs into ONE map, so the backtrack can hop between
     the two traces and produce a path that is not a path. Retail marks from both
