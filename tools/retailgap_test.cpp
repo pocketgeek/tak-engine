@@ -1482,6 +1482,61 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- self-destruct actually kills -------------------------------------
+    // Ctrl+Shift+D arms a 5s countdown whose expiry zeroes hp. The death sweep
+    // runs EARLIER in the same per-unit tick than the expiry, so the kill is only
+    // noticed next tick -- and healtime regen runs a few lines AFTER the expiry.
+    // A regenerating unit therefore healed straight back off zero and survived,
+    // which is nearly every unit: 209 of 213 shipped FBIs have healtime > 0.
+    std::printf("[self-destruct]\n");
+    {
+        const sim::UnitType* regen = nullptr;
+        const sim::UnitType* norgen = nullptr;
+        for (const auto& [tid, t] : reg.types()) {
+            if (t.maxVel <= 0) continue;                  // movers only: easy to spawn
+            if (!regen && t.healTime > 0) regen = &t;
+            if (!norgen && t.healTime <= 0) norgen = &t;
+        }
+        if (!regen) std::printf("  (no regenerating unit type; skipped)\n");
+        else {
+            struct Case { const sim::UnitType* t; const char* label; };
+            std::vector<Case> cases{{regen, "a REGENERATING unit"}};
+            if (norgen) cases.push_back({norgen, "a non-regenerating unit"});
+            for (const auto& c : cases) {
+                sim::World w;
+                sim::MatchConfig cfg;
+                cfg.vfs = &vfs;
+                cfg.mapPath = kMap;
+                cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+                cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+                sim::setupMatch(w, reg, cfg);
+                int id = w.spawn(c.t, 500, 500, 0, 0);
+                if (id <= 0 || !w.unit(id)) continue;
+                w.destroy(id);
+                check(w.unit(id)->selfDestructT > 0.0f, (std::string(c.label) + ": countdown armed").c_str());
+                tick(w, 8.0f);   // 5s countdown + slack
+                const sim::Unit* u = w.unit(id);
+                check(u && !u->alive(), (std::string(c.label) + " (" + c.t->id + ") is DEAD").c_str(),
+                      u ? ("hp=" + std::to_string(u->hp)) : "gone");
+            }
+            // Pressing again while it counts down cancels, and the unit lives.
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs;
+            cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+            int id = w.spawn(regen, 500, 500, 0, 0);
+            w.destroy(id);
+            tick(w, 1.0f);
+            w.destroy(id);                     // cancel
+            check(w.unit(id)->selfDestructT < 0.0f, "a second press cancels the countdown");
+            tick(w, 8.0f);
+            check(w.unit(id) && w.unit(id)->alive(), "and the cancelled unit survives");
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

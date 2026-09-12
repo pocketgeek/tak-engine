@@ -4035,7 +4035,14 @@ void World::tick(float dt) {
             u.hp -= waterDamage_ * dt;
             if (u.hp <= 0) { u.overkill = std::max(u.overkill, -u.hp); u.deathType = 1; }
         }
-        if (u.type->healTime > 0 && u.hp < u.type->maxHp)
+        // `u.hp > 0` matters: the death sweep at the TOP of this loop already ran
+        // for this unit this tick, so anything that zeroes hp below it (the
+        // self-destruct expiry) is not noticed until the next tick --
+        // and regen sits in between. Without the guard a regenerating unit healed
+        // straight back off zero and never died, which is nearly every unit: 209 of
+        // the 213 shipped FBIs have healtime > 0. That is why Ctrl+Shift+D
+        // self-destruct appeared to do nothing.
+        if (u.type->healTime > 0 && u.hp > 0 && u.hp < u.type->maxHp)
             u.hp = std::min(u.type->maxHp, u.hp + dt / u.type->healTime);
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
             u.mana = std::min(u.type->maxMana, u.mana + u.type->manaRegen * dt);
