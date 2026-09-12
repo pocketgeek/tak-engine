@@ -248,20 +248,25 @@ bool BinkVideo::nextFrame(std::vector<uint8_t>& rgba) {
                 fw, fh, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
             if (!d_->sws) { av_frame_unref(d_->frame); return false; }
             // COLOUR RANGE: swscale's default, which expands the 16..235 the stream
-            // is tagged with out to 0..255. That is correct here, and the proof is
-            // the clip's OWN EDGE. The menu videos carry background parchment that
-            // has to continue the static art behind them, so adjacent pixels across
-            // the video's border must match. Measured on the title clip's left edge:
-            //     expanding      art 243.6 | video 242.1  -> seam -1.5  (invisible)
-            //     not expanding  art 243.6 | video 225.4  -> seam -18.2 (a visible step)
-            // Anything that reads the range wrongly shows up as a rectangle around
-            // every clip, and only one setting makes that rectangle disappear.
+            // is tagged with out to 0..255. Three independent measurements agree:
+            //   * FFmpeg reports color_range=tv on these clips.
+            //   * Least-squares fitting a free affine YCbCr->RGB decode against the
+            //     retail art recovers a luma gain of ~1.16 -- i.e. 255/219.
+            //   * Over 12k NEUTRAL pixels (no chroma to confound it) where a door
+            //     clip overlaps MainBG 1:1, mean error is 4.1 expanding vs 11.2 not.
+            //     Re-fitting a residual gamma on top lands at 0.97, i.e. nothing.
             //
-            // Do not "fix" this from a histogram. The decoded luma sits inside
+            // Do not "fix" this from a histogram, and do not re-litigate it from how
+            // a clip LOOKS against the static art. The decoded luma sits inside
             // 16..235, which argues for full-range content, and a single dark frame
-            // can dip to 12, which argues the other way. Both are inconclusive and I
-            // changed this twice on them before measuring the seam. The seam is the
-            // test; it is cheap, and it is unambiguous.
+            // can dip to 12, which argues the other way; both are inconclusive, and I
+            // changed this twice on them. A seam across a clip's border is not a test
+            // either -- I used one and it pointed the right way for the wrong reason.
+            // Bink is lossy, so a clip is NEVER a pixel match for art painted behind
+            // it: thin high-contrast detail comes back low (the menu's carved gold
+            // loses ~24 luma) while flat neutrals land within ~2. A clip that looks
+            // wrong over the background is evidence about the CLIP, not the decode.
+            // Only compare neutrals, and only at 1:1 with alignment confirmed.
             // sws SIMD over-writes past a tightly-packed row when the width isn't
             // aligned (odd door widths like 155/221), so scale into a properly
             // aligned + padded image, then copy the rows out tightly (pitch fw*4).

@@ -420,7 +420,17 @@ struct MainMenu::Impl {
         // the closest thing to a reference for how bright a door should look.
         static const bool kNoDoorVid = tak::devEnv("TAK_NODOORVID") != nullptr;
         for (auto& d : doors) {
-            if (d.videoOk && d.vtex && !kNoDoorVid) {
+            // A door with no gui art of its own has nothing to show at rest: the gui
+            // gives the other three a GAF state image (singlemachine/bodgirl/
+            // multiknight) but gives Credits three empty image refs, and MainBG
+            // already has that door's carved "K" painted into it. So its resting
+            // look IS the background, and clip 4 -- a Bink-compressed copy of the
+            // same carving -- must not be pinned over it. Measured against MainBG at
+            // 1:1, SNORT4's thin gold strokes come back 24 luma short (neutrals match
+            // to ~2), which is exactly the rectangle that cut through the letter.
+            // The hover clips still play; only the idle still is suppressed.
+            const bool idleNoArt = (d.state == DoorState::Idle && !d.gaf);
+            if (d.videoOk && d.vtex && !kNoDoorVid && !idleNoArt) {
                 // Like the buttons, the door video is authored bigger than its gui
                 // hotspot and anchored at the gadget origin -- draw it at native size,
                 // NOT stretched to the (smaller) hotspot. Stretching squished it badly:
