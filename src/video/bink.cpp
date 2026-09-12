@@ -1,8 +1,6 @@
 #include <cstdio>
 #include "video/bink.h"
 
-#include "client/dev.h"
-
 #include <algorithm>
 #include <cstring>
 
@@ -249,30 +247,21 @@ bool BinkVideo::nextFrame(std::vector<uint8_t>& rgba) {
                 d_->sws, fw, fh, AVPixelFormat(d_->frame->format),
                 fw, fh, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
             if (!d_->sws) { av_frame_unref(d_->frame); return false; }
-            // COLOUR RANGE. Bink's YUV is FULL-range: its values already span the
-            // display range, so no expansion is wanted. FFmpeg tags the stream
-            // AVCOL_RANGE_MPEG and swscale's default therefore stretches 16..235
-            // out to 0..255 -- which is precisely "the dark stuff is too dark and
-            // the light stuff is too light", the symptom that identified this.
-            // Expansion adds contrast at both ends: shadows crush toward black and
-            // highlights blow toward white.
+            // COLOUR RANGE: swscale's default, which expands the 16..235 the stream
+            // is tagged with out to 0..255. That is correct here, and the proof is
+            // the clip's OWN EDGE. The menu videos carry background parchment that
+            // has to continue the static art behind them, so adjacent pixels across
+            // the video's border must match. Measured on the title clip's left edge:
+            //     expanding      art 243.6 | video 242.1  -> seam -1.5  (invisible)
+            //     not expanding  art 243.6 | video 225.4  -> seam -18.2 (a visible step)
+            // Anything that reads the range wrongly shows up as a rectangle around
+            // every clip, and only one setting makes that rectangle disappear.
             //
-            // I got here the long way and it is worth writing down why, because the
-            // obvious measurement misleads. The decoded luma of every shipped clip
-            // sits inside 16..235 (below-16 is 0.003%-0.06% of pixels), which LOOKS
-            // like limited-range material -- but a full-range encode of dark-ish
-            // content that simply never reaches the extremes looks identical in a
-            // histogram. Absence of 0 and 255 does not prove the range, and I
-            // reverted a correct fix once on exactly that reasoning.
-            //
-            // TAK_BINK_LIMITED=1 restores swscale's default for an A/B in a debug
-            // build; it is deliberately not a user-facing option.
-            {
-                const int* coef = sws_getCoefficients(SWS_CS_ITU601);
-                const int srcRange = tak::devEnv("TAK_BINK_LIMITED") ? 0 : 1;
-                sws_setColorspaceDetails(d_->sws, coef, srcRange,
-                                         coef, /*dstRange=*/1, 0, 1 << 16, 1 << 16);
-            }
+            // Do not "fix" this from a histogram. The decoded luma sits inside
+            // 16..235, which argues for full-range content, and a single dark frame
+            // can dip to 12, which argues the other way. Both are inconclusive and I
+            // changed this twice on them before measuring the seam. The seam is the
+            // test; it is cheap, and it is unambiguous.
             // sws SIMD over-writes past a tightly-packed row when the width isn't
             // aligned (odd door widths like 155/221), so scale into a properly
             // aligned + padded image, then copy the rows out tightly (pitch fw*4).
