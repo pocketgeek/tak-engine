@@ -805,8 +805,8 @@
                         pushQuad(shadowBatch_, px - th * 0.5f,
                                  std::min(py, py - sy * Ly), th, Ly, grn);
                     }
-                for (const auto& o : u.orders)   // move-order rings (few)
-                    if (o.targetId == 0) drawRing(o.x, o.z, 4);
+                // (Order markers are drawn by drawOrderTrails -- retail puts the
+                // order kind's own animated CURSOR at each waypoint, not a ring.)
             }
             drawOrderTrails(mvw, winH);
 
@@ -2925,14 +2925,23 @@
         if (kSpacing * zm < 10.0f) return;
         const int scale = std::clamp(int(zm + 0.5f), 1, 3);
         const size_t frames = std::max<size_t>(1, cursors_.frameCount(tak::CursorId::PathIcon));
+        // Retail shows the order line only while SHIFT is physically held -- the
+        // whole overlay pass is behind a GetAsyncKeyState(VK_SHIFT) test at
+        // 0x4fcc46. The beads are the part that reads as clutter when a big
+        // selection is standing still, so they take the gate; the end markers stay
+        // on, since they are what makes a selection's orders legible at a glance.
+        const bool shiftHeld = (SDL_GetModState() & KMOD_SHIFT) != 0;
         const uint32_t tick = front().gameTick;
         int drawn = 0;
         for (int selId : selection_) {
-            if (drawn >= kTrailUnits) break;
             const UnitR* up = frameUnitP(selId);
             if (!up || !up->alive() || !up->type) continue;
             if (up->player != localPlayer_) continue;      // never leak enemy intent
             if (up->orders.empty()) continue;
+            // Retail beads only its few "focus" units but puts an END MARKER on
+            // every selected unit's orders (the dots flag is per unit; the marker
+            // is not), so the caps differ on purpose.
+            const bool beads = drawn < kTrailUnits && shiftHeld;
             ++drawn;
             float px = up->x, pz = up->z;                  // running position
             for (const auto& o : up->orders) {
@@ -2941,8 +2950,8 @@
                 // as retail's order list held goals and not path nodes.
                 if (!o.goal) continue;
                 const float qx = o.x, qz = o.z;
-                const bool beads = o.targetId == 0;        // attack orders: marker only
-                if (beads) {
+                const bool line = o.targetId == 0;         // attack orders: marker only
+                if (beads && line) {
                     float dx = qx - px, dz = qz - pz;
                     float len = std::sqrt(dx * dx + dz * dz);
                     if (len >= 1.0f) {
@@ -2958,6 +2967,32 @@
                             cursors_.drawFrame(ren_, tak::CursorId::PathIcon,
                                                size_t(bead) % frames, int(sx), int(sy), scale);
                         }
+                    }
+                }
+                // The end marker: retail draws the order kind's OWN animated mouse
+                // cursor at the waypoint (icd 0x4d5930 indexes a per-order-kind
+                // cursor table at g[0x174e8]), stepping the frame from the game
+                // tick. A queued move therefore shows an animated CursorMove where
+                // it is going, patrol shows CursorPatrol, attack CursorAttack, and
+                // so on. We drew a small green ring instead, which is nothing
+                // retail ever put on the map.
+                tak::CursorId marker = tak::CursorId::Move;
+                bool haveMarker = true;
+                if (o.buildType)            haveMarker = false;   // the site ghost says it
+                else if (o.reclaimFeat)     marker = tak::CursorId::Reclaim;
+                else if (o.repairTarget)    marker = tak::CursorId::Repair;
+                else if (o.load)            marker = tak::CursorId::Load;
+                else if (o.unload)          marker = tak::CursorId::Unload;
+                else if (o.guard)           marker = tak::CursorId::Defend;
+                else if (o.targetId)        marker = tak::CursorId::Attack;
+                else if (o.patrol)          marker = tak::CursorId::Patrol;
+                if (haveMarker) {
+                    float mx = (qx - mapView_.offX()) * zm - terrainLiftX(qx, qz) * zm;
+                    float my = (qz - mapView_.offY()) * zm - terrainLift(qx, qz) * zm;
+                    if (mx > -40 && mx < float(mvw) + 40 && my > -40 && my < float(winH) + 40) {
+                        size_t n = std::max<size_t>(1, cursors_.frameCount(marker));
+                        cursors_.drawFrame(ren_, marker, size_t(tick / 3) % n,
+                                           int(mx), int(my), scale);
                     }
                 }
                 px = qx; pz = qz;                          // advance either way
