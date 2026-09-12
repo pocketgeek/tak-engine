@@ -423,6 +423,16 @@ struct Order {
     // The order sits at the builder's working position; the site is footZ*8+24
     // north of it.
     const UnitType* buildType = nullptr;
+    // This order is a RECLAIM: consume feature `reclaimFeat` (negative = a corpse
+    // record). Reclaims used to live in Unit::reclaimQueue, a THIRD parallel list
+    // with the same defect the build list had -- nothing drained it unless a
+    // reclaim was already running, so an area reclaim queued behind anything else
+    // sat there forever. One queue, like everything else.
+    int reclaimFeat = 0;
+    // This order is a REPAIR: mend unit `repairTarget`. repairId was a single int,
+    // so a second queued repair simply overwrote the first and it was lost. Same
+    // shape as the build and reclaim lists, same fix.
+    int repairTarget = 0;
     // This target was picked by auto-acquisition, not asked for by the player.
     // The move standing order gates only AUTO engagement: a Defensive unit told
     // explicitly to attack something across the map still walks over and does it.
@@ -521,7 +531,6 @@ struct Unit {
     // memory-lean and the faster choice; front-pops become erase(begin()). Element
     // order (all that stateHash folds in) is preserved, so lockstep is byte-identical.
     int reclaimId = 0;                 // builder: feature being reclaimed (0 = none)
-    std::vector<int> reclaimQueue;     // builder: queued area-reclaim feature ids
     int repairId = 0;                  // builder: damaged friendly being repaired (0 = none)
     int inTransport = 0;   // id of carrying transport, 0 = none
     std::vector<int> cargo;
@@ -1139,6 +1148,13 @@ public:
     // Does this unit still have construction queued (anywhere in its orders)?
     static bool hasQueuedBuild(const Unit& u) {
         for (const Order& o : u.orders) if (o.buildType) return true;
+        return false;
+    }
+    // Any construction OR reclaim still queued -- the "this builder is on a job"
+    // test that several places need.
+    static bool hasQueuedWork(const Unit& u) {
+        for (const Order& o : u.orders)
+            if (o.buildType || o.reclaimFeat || o.repairTarget) return true;
         return false;
     }
     void attackMove(int unitId, float x, float z, bool queue);

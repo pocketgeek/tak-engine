@@ -1436,6 +1436,52 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- an area reclaim queues like anything else ---------------------------
+    {
+        sim::TypeRegistry breg;
+        breg.loadMoveInfo(vfs, "gamedata/moveinfo.tdf");
+        breg.loadDir(vfs, "units/");
+        breg.loadBuildTree(vfs, "canbuild/");
+        const sim::UnitType* mon = breg.find("zonhunt");
+        const auto& menu = breg.buildable("zonhunt");
+        if (mon && !menu.empty()) {
+            const sim::UnitType* bt = breg.find(menu[0]);
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, breg, cfg);
+            w.player(0).mana = 200000;
+            int id = w.spawn(mon, 800, 2600, 0, 0);
+            std::vector<int> feats;
+            for (const auto& f : w.features()) {
+                if (!f.alive || f.work <= 0) continue;
+                float dx = f.x - 900, dz = f.z - 2700;
+                if (dx * dx + dz * dz < 600 * 600) feats.push_back(f.id);
+                if (feats.size() >= 3) break;
+            }
+            check(feats.size() == 3, "three reclaimable features near the builder");
+            if (feats.size() == 3) {
+                // A build first, then the area reclaim queued behind it -- the exact
+                // shape that used to leave the reclaims parked forever, because the
+                // old reclaimQueue only ever drained from inside tickReclaim and so
+                // never started unless a reclaim was ALREADY running.
+                w.queueBuild(id, bt, 1000, 2700, false);
+                for (int fid : feats) w.reclaim(id, fid, true);
+                int queued = 0;
+                for (const auto& o : w.unit(id)->orders) if (o.reclaimFeat) ++queued;
+                check(queued == 3, "all three reclaims are in the ONE order queue",
+                      std::to_string(queued) + " queued");
+                for (int i = 0; i < 30 * 150; ++i) w.tick(1.0f / 30.0f);
+                int left = 0;
+                for (int fid : feats) { const auto* f = w.feature(fid); if (f && f->alive) ++left; }
+                check(left == 0, "and every one of them gets reclaimed",
+                      std::to_string(left) + " still standing");
+            }
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

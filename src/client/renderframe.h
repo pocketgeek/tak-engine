@@ -50,8 +50,13 @@ struct UnitR {
         for (const auto& o : orders) if (o.buildType) return true;
         return false;
     }
+    // Construction OR reclaim still queued.
+    bool hasQueuedWork() const {
+        for (const auto& o : orders)
+            if (o.buildType || o.reclaimFeat || o.repairTarget) return true;
+        return false;
+    }
     std::vector<int> cargo;
-    std::vector<int> reclaimQueue;   // builder's queued area-reclaim feature ids
     const tak::sim::UnitType* repeatType = nullptr;
     bool moving_ = false, walking_ = false;   // cached u.moving()/u.walking()
     float speed = 0;                           // px/s (diagnostic use)

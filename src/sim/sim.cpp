@@ -2007,7 +2007,7 @@ void World::tickCombat(Unit& u, float dt) {
     // queued builds, or producing from a queue -- stays on task: it does NOT
     // auto-acquire a nearby enemy and wander off to fight while it should build.
     bool busyBuilding = u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0 ||
-                        hasQueuedBuild(u) ||
+                        hasQueuedWork(u) ||
                         (u.type->canMove && !u.buildQueue.empty());   // mobile conjurer producing
     // Auto-acquisition belongs to the FIRE order: only Fire At Will goes looking.
     // Hold Fire and Return Fire both wait to be handed a target (an explicit attack
@@ -2642,10 +2642,12 @@ void World::cancelBuilds(int builderId) {
     // Drop every pending build from the order queue (see queueBuild): a fresh
     // move/attack/stop cancels queued construction.
     b->orders.erase(std::remove_if(b->orders.begin(), b->orders.end(),
-                                   [](const Order& o) { return o.buildType != nullptr; }),
+                                   [](const Order& o) {
+                                       return o.buildType != nullptr || o.reclaimFeat != 0 ||
+                                              o.repairTarget != 0;
+                                   }),
                     b->orders.end());
     b->reclaimId = 0;            // a fresh move/attack/stop drops any reclaim job
-    b->reclaimQueue.clear();
     b->repairId = 0;             // ...and any repair job
     if (b->buildSiteId) {
         Unit* site = unit(b->buildSiteId);
@@ -2815,34 +2817,26 @@ void World::reclaim(int builderId, int featureId, bool queue) {
         if (!f || !f->alive) return;
         tx = f->x; tz = f->z;
     }
-    if (b->reclaimId == 0 && b->reclaimQueue.empty() && !queue) {
-        b->reclaimId = featureId;
-        order(builderId, tx, tz, false);   // walk to it; tickReclaim takes over
-    } else {
-        b->reclaimQueue.push_back(featureId);
-    }
+    // A reclaim is an ORDER, in the sequence the player gave it -- the same fix the
+    // build queue needed. It used to go to a separate reclaimQueue that only ever
+    // drained from inside tickReclaim, so unless a reclaim was ALREADY running
+    // nothing started it: an area reclaim queued behind a move or a build sat
+    // there for the rest of the game.
+    if (!queue) b->orders.clear();
+    Order o;
+    o.x = tx; o.z = tz;
+    o.goal = true;
+    o.issuedTick = tickCounter_;
+    o.reclaimFeat = featureId;
+    b->orders.push_back(o);
 }
 
 void World::tickReclaim(Unit& b, float dt) {
     auto advance = [&] {
-        // Pull the next still-valid target off the queue, or go idle.
-        // Negative ids are corpses (dead-unit records), positive are features.
+        // The job is over. Retire its order; the next one (which may be another
+        // reclaim) simply becomes current.
         b.reclaimId = 0;
-        while (!b.reclaimQueue.empty()) {
-            int nid = b.reclaimQueue.front();
-            b.reclaimQueue.erase(b.reclaimQueue.begin());
-            if (nid < 0) {
-                const Unit* nc = unit(-nid);
-                if (nc && nc->type && !nc->alive() && nc->deadFor < nc->corpseUntil) {
-                    b.reclaimId = nid;
-                    order(b.id, nc->x, nc->z, false);
-                    break;
-                }
-            } else {
-                const Feature* nf = feature(nid);
-                if (nf && nf->alive) { b.reclaimId = nid; order(b.id, nf->x, nf->z, false); break; }
-            }
-        }
+        if (!b.orders.empty() && b.orders.front().reclaimFeat) b.orders.erase(b.orders.begin());
     };
     if (b.reclaimId < 0) {
         // Ordered corpse reclaim: walk to the body/wreck and consume it. Yields
@@ -2899,7 +2893,9 @@ void World::tickReclaim(Unit& b, float dt) {
     float reach = 24.0f + 8.0f * float(std::max(f.fx, f.fz)) +
                   (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
     if (dx * dx + dz * dz > reach * reach) return;   // still walking there
-    dropLeg(b);          // consume the APPROACH leg only; keep anything queued behind
+    // Never the RECLAIM order itself -- that entry IS the job, and it is what
+    // holds the queue back until the feature is gone (advance() retires it).
+    if (b.orders.empty() || !b.orders.front().reclaimFeat) dropLeg(b);
     b.speed = 0;
     float want = detmath::atan2(dx, dz);   // face the feature (deterministic)
     // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
@@ -2927,8 +2923,14 @@ void World::repair(int builderId, int targetId, bool queue) {
     if (!t || !t->alive() || !t->type || t->id == b->id || t->underConstruction ||
         !allied(t->player, b->player) || t->hp >= t->type->maxHp)
         return;
-    b->repairId = targetId;
-    order(builderId, t->x, t->z, queue);   // walk to it; tickRepair takes over
+    // An order, in sequence, like construction and reclaim.
+    if (!queue) b->orders.clear();
+    Order o;
+    o.x = t->x; o.z = t->z;
+    o.goal = true;
+    o.issuedTick = tickCounter_;
+    o.repairTarget = targetId;
+    b->orders.push_back(o);
 }
 
 // A builder repairs a damaged friendly: restores HP at the same rate it would build
@@ -2936,10 +2938,14 @@ void World::repair(int builderId, int targetId, bool queue) {
 // HP restored -- pauses if the mana runs out.
 void World::tickRepair(Unit& b, float dt) {
     Unit* t = unit(b.repairId);
-    if (!b.type) { b.repairId = 0; return; }
+    auto endRepair = [&] {
+        b.repairId = 0;
+        if (!b.orders.empty() && b.orders.front().repairTarget) b.orders.erase(b.orders.begin());
+    };
+    if (!b.type) { endRepair(); return; }
     if (!t || !t->alive() || !t->type || t->underConstruction || t->embarked() ||
         !allied(t->player, b.player) || t->hp >= t->type->maxHp) {
-        b.repairId = 0;
+        endRepair();
         return;
     }
     float dx = t->x - b.x, dz = t->z - b.z;
@@ -2950,7 +2956,8 @@ void World::tickRepair(Unit& b, float dt) {
         if (b.orders.empty()) order(b.id, t->x, t->z, false);   // (re)walk toward it
         return;
     }
-    dropLeg(b);          // ditto: the approach is done, the queue behind it is not
+    // ...but never the REPAIR order itself: that entry is the job.
+    if (b.orders.empty() || !b.orders.front().repairTarget) dropLeg(b);
     b.speed = 0;
     float want = detmath::atan2(dx, dz);
     // Stopped: pivot at turninplacerate, not the moving turn rate.
@@ -2962,7 +2969,7 @@ void World::tickRepair(Unit& b, float dt) {
     if (tm.mana < cost) return;   // can't afford: pause the repair
     tm.mana -= cost;
     t->hp = std::min(t->type->maxHp, t->hp + t->type->maxHp * dt / std::max(total, 0.01f));
-    if (t->hp >= t->type->maxHp) b.repairId = 0;
+    if (t->hp >= t->type->maxHp) endRepair();   // mended: on to the next order
 }
 
 void World::startDisco(int player) {
@@ -3044,7 +3051,7 @@ void World::tickConstruction(Unit& b, float dt) {
     // Drop the APPROACH leg, but never the queued build order itself: that entry
     // IS the job, and it is what holds the rest of the queue back until the
     // building is finished (popBuildOrder retires it when the job ends).
-    if (b.orders.empty() || !b.orders.front().buildType) dropLeg(b);
+    if (b.orders.empty() || !b.orders.front().buildType) dropLeg(b);   // never the build order
     b.speed = 0;
     // Face what we're building/conjuring: turn toward the site at the unit's turn
     // rate (a building has turnRate 0, so it simply doesn't rotate).
@@ -4085,6 +4092,12 @@ void World::tick(float dt) {
         // version called it inline and read the order queue out of freed memory.
         if (!u.orders.empty() && u.orders.front().buildType && u.buildSiteId == 0)
             buildDue_.push_back(u.id);
+        // Reclaim needs no deferral: consuming a feature spawns nothing, so
+        // nothing can reallocate units_ underneath us.
+        if (!u.orders.empty() && u.orders.front().reclaimFeat && u.reclaimId == 0)
+            u.reclaimId = u.orders.front().reclaimFeat;
+        if (!u.orders.empty() && u.orders.front().repairTarget && u.repairId == 0)
+            u.repairId = u.orders.front().repairTarget;
 
         if (!u.orders.empty() && (u.orders.front().load || u.orders.front().unload))
             tickTransport(u, dt);
@@ -4153,7 +4166,8 @@ void World::tick(float dt) {
             // instead of every unit fighting for the exact same point.
             float arrive = o.flow ? 16.0f : 3.0f;
             if (dist < arrive) {
-                if (o.buildType) continue;   // the site is claimed below, not here
+                if (o.buildType || o.reclaimFeat || o.repairTarget)
+                    continue;   // the job is claimed above; its order blocks the queue
                 if (o.targetId == 0) {
                     Order done = o;
                     u.orders.erase(u.orders.begin());
@@ -4405,7 +4419,7 @@ void World::tick(float dt) {
         // time round. Without this a flyer settles wherever it happened to stop --
         // over water, or on the roof of a building.
         if (u.type->canFly && u.type->vtolStandby && u.alive() && u.orders.empty() &&
-            u.buildSiteId == 0 && !hasQueuedBuild(u) && u.reclaimId == 0 &&
+            u.buildSiteId == 0 && !hasQueuedWork(u) && u.reclaimId == 0 &&
             u.repairId == 0 && !u.embarked()) {
             const NavGrid& g = navFor(u.type);
             auto landable = [&](float x, float z) {

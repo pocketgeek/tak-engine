@@ -598,7 +598,7 @@
             s.buildSiteId = u.buildSiteId; s.reclaimId = u.reclaimId; s.repairId = u.repairId;
             s.buildProgress = u.buildProgress;
             s.buildQueue = u.buildQueue; s.orders = u.orders;
-            s.cargo = u.cargo; s.reclaimQueue = u.reclaimQueue; s.repeatType = u.repeatType;
+            s.cargo = u.cargo; s.repeatType = u.repeatType;
             s.moving_ = u.moving(); s.walking_ = u.walking();
             s.corpsePhase = !u.alive() && u.deadFor < u.corpseUntil &&
                             u.deadFor >= (u.corpseStatue >= 0 ? 0.0f : 4.0f);
@@ -1167,7 +1167,7 @@
                 // touches down only when truly idle) exactly as it does while building.
                 bool busy = u.walking() || !u.orders.empty() ||
                             u.buildSiteId != 0 || u.hasQueuedBuild() ||
-                            u.reclaimId != 0 || !u.reclaimQueue.empty() || u.repairId != 0;
+                            u.reclaimId != 0 || u.hasQueuedWork() || u.repairId != 0;
                 float target = busy ? cruise : 0.0f;
                 float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise
                 a.altitude += std::clamp(target - a.altitude, -step, step);
@@ -2514,7 +2514,7 @@
         if (u->underConstruction) return "UNDER CONSTRUCTION";
         if (!u->active) return "INACTIVE";
         if (u->repairId != 0) return "REPAIRING";
-        if (u->reclaimId != 0 || !u->reclaimQueue.empty()) return "RECLAIMING";
+        if (u->reclaimId != 0) return "RECLAIMING";
         if (u->buildSiteId != 0 || !u->buildQueue.empty()) return "CONJURING";
         if (!u->orders.empty()) {
             const auto& o = u->orders.front();
