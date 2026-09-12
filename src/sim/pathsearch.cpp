@@ -13,8 +13,12 @@ int pathDist(PathCell a, PathCell b) {
 }
 
 int pathDirFromDelta(int dx, int dz) {
-    // Octant, using the rotational order of the direction tables.
-    if (dx == 0 && dz == 0) return 0;
+    // Octant, using the rotational order of the direction tables. Verified
+    // against the original by emulating 0x415040 over 81 deltas: all agree.
+    // The zero delta is the one case worth spelling out -- the icd answers 5,
+    // not 0, and while the search should never ask for a direction to where it
+    // already is, matching costs nothing.
+    if (dx == 0 && dz == 0) return 5;
     if (std::abs(dx) > 2 * std::abs(dz)) return dx < 0 ? 2 : 6;
     if (std::abs(dz) > 2 * std::abs(dx)) return dz <= 0 ? 0 : 4;
     if (dx < 0) return dz <= 0 ? 1 : 3;

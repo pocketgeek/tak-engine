@@ -1469,7 +1469,6 @@ private:
     uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run
     uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
                                  // (deterministic: derived from the live-unit count)
-    int pathBudget_ = 0;         // A* repaths still allowed this tick (crowd throttle)
     PathService paths_;          // retail's request queue + budget scheduler
     // Enabled by setupMatch; a bare test World leaves it off.
     bool pathService_ = false;
@@ -1482,6 +1481,12 @@ private:
     // leaves it for units that can actually be helped. Deterministic: keyed by
     // unit id off the tick counter.
     static constexpr uint32_t kPathFailBackoff = 150;   // 5s
+    // How long a WEDGED unit keeps shoving at a goal it is not reaching before
+    // it settles. Retail stops promptly -- ordered at an unreachable mountain it
+    // walks as close as it can and comes to rest, with no long grind first --
+    // so this is short. It is paired with a wedged test (stuckFor), which is
+    // what keeps a unit that is merely crawling from being cut off.
+    static constexpr float kGoalGiveUpSecs = 3.0f;
     std::map<int, uint32_t> pathRetryAt_;
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.

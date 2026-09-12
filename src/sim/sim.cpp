@@ -28,8 +28,7 @@ bool gInstantBuild = false;
 // race-free and correctly attributed.
 static const bool g_phase = getenv("TAK_PHASE") != nullptr;
 static double g_visMs = 0, g_burnMs = 0, g_gridMs = 0;   // finer "other" split
-static thread_local double g_tcomb = 0, g_flowMs = 0, g_pathMs = 0;
-static thread_local long g_flowN = 0, g_pathN = 0;
+static thread_local double g_tcomb = 0;
 
 namespace {
 
@@ -2012,30 +2011,10 @@ void World::tickCombat(Unit& u, float dt) {
         Order& o = u.orders.front();
         o.x = target->x;
         o.z = target->z;
-        const NavGrid& grid = navFor(u.type);
-        if (!u.type->canFly && !grid.empty() && u.repathLeft <= 0) {
-            u.repathLeft = 0.7f;
-            // Same guards as the movement repath sites: charge the shared per-tick
-            // pathBudget_ (a chasing crowd otherwise aligns dozens of full A*s in
-            // one tick -- this was the last unguarded full-grid pathfinder), and
-            // give up early on a flow-unreachable target (an unreachable goal makes
-            // A* flood the unit's ENTIRE reachable region every 0.7s). Both checks
-            // are deterministic: fixed budget in unit-index order, and the flow
-            // memo is a pure function shared by every peer.
-            bool hopeless = grid.walkable(int(u.x) / 16, int(u.z) / 16) &&
-                            !pathExists(u.type, target->x, target->z, u.x, u.z);
-            if (!hopeless && pathBudget_ > 0) {
-                --pathBudget_;
-                auto _p0 = std::chrono::steady_clock::now();
-                auto path = grid.findPath(u.x, u.z, target->x, target->z, footCells(u.type));
-                if (g_phase) { g_pathMs += std::chrono::duration<double, std::milli>(
-                                   std::chrono::steady_clock::now() - _p0).count(); ++g_pathN; }
-                if (!path.empty()) {
-                    o.x = path.front().x;
-                    o.z = path.front().z;
-                }
-            }   // over budget or hopeless: keep steering at the target directly
-        }
+        // A chase target moves, so there is nothing worth pre-computing: steer
+        // straight at it and let the background pathfinder deal with whatever is
+        // in the way. This used to run a full-grid A* every 0.7s behind a shared
+        // per-tick budget; the budget is gone, and so is the A*.
         return;   // movement handled by the normal move logic
     }
     // In range: stop and face the target. Retail brakes to a halt FIRST and only
@@ -3492,7 +3471,7 @@ void World::tick(float dt) {
     }
     std::chrono::steady_clock::time_point _tk0, _sep0;
     if (g_phase) { _tk0 = std::chrono::steady_clock::now();
-                   g_tcomb = g_flowMs = g_pathMs = 0; g_flowN = g_pathN = 0;
+                   g_tcomb = 0;
                    g_visMs = g_burnMs = g_gridMs = 0; }
     // Cap A* repaths per tick: a big group that jams while moving can trip the
     // blocked/stuck watchdogs en masse, and hundreds of path searches in one tick
@@ -3518,7 +3497,6 @@ void World::tick(float dt) {
     // re-anchor of the segment). The fix is to improve the mover until units stop
     // needing a search -- at which point this zero costs nothing -- NOT to put the
     // budget back. Deliberate call: be faithful now, sharpen the steering later.
-    pathBudget_ = 0;
     for (auto& u : units_) { u.justFired = false; u.justBuilt = 0; }
     if (mission_ || scenario_) justDied_.clear();   // deaths this tick, fed to mission/scenario below
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
@@ -3783,6 +3761,12 @@ void World::tick(float dt) {
             const Order& leg = u.orders[currentLeg(u.orders)];
             if (leg.targetId != 0) continue;          // chasing, not travelling
             if (paths_.pending(u.id)) continue;       // a search is already running
+            // Deliberately NOT skipped when the unit is already moving: the
+            // periodic re-ask IS the mechanism. A search is capped at (w+h)*20
+            // cell visits, so one route rarely spans a long trip -- the unit
+            // follows what it got, asks again from further along, and chains its
+            // way there. Skipping progressing units to save budget dropped a
+            // journey from 97% of the way to 53%.
             if (auto it = pathRetryAt_.find(u.id);
                 it != pathRetryAt_.end() && tickCounter_ < it->second) continue;
             if ((tickCounter_ + uint32_t(u.id)) % kPathRetryTicks != 0) continue;
@@ -4265,13 +4249,8 @@ void World::tick(float dt) {
                         // before failing -- hundreds of units doing that is the sim
                         // stall. Only repath when reachable, and within the budget.
                         bool onWalkable = g.walkable(int(u.x) / 16, int(u.z) / 16);
-                        if (onWalkable && !pathExists(u.type, tx, tz, u.x, u.z)) {
+                        if (onWalkable && !pathExists(u.type, tx, tz, u.x, u.z))
                             dropLeg(u);      // give up THIS leg; honour the rest
-                        } else if (pathBudget_ > 0) {
-                            --pathBudget_;
-                            auto _p0=std::chrono::steady_clock::now(); auto path = g.findPath(u.x, u.z, tx, tz, footCells(u.type)); if(g_phase){ g_pathMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_p0).count(); ++g_pathN; }
-                            if (!path.empty()) replaceLeg(u, path);
-                        }
                     }
                 }
             }
@@ -4321,22 +4300,18 @@ void World::tick(float dt) {
                             const Order& legEnd = u.orders[currentLeg(u.orders)];
                             float tx = legEnd.x, tz = legEnd.z;
                             bool onWalkable = g.walkable(int(u.x) / 16, int(u.z) / 16);
-                            if (onWalkable && !pathExists(u.type, tx, tz, u.x, u.z)) {
+                            if (onWalkable && !pathExists(u.type, tx, tz, u.x, u.z))
                                 dropLeg(u);     // unreachable leg -> skip it, keep the queue
-                            } else if (pathBudget_ > 0) {
-                                --pathBudget_;
-                                auto _p0=std::chrono::steady_clock::now(); auto path = g.findPath(u.x, u.z, tx, tz, footCells(u.type)); if(g_phase){ g_pathMs += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_p0).count(); ++g_pathN; }
-                                if (!path.empty()) replaceLeg(u, path);
-                            }
                         }
                     }
                 }
             }
         }
 
-        // Progress-based unstick: a ground unit heading to a POINT (move / fight-move,
-        // targetId == 0) that hasn't gotten meaningfully closer to it for ~2s is
-        // force-repathed with A* -- flow steering can dead-end at a terrain chokepoint
+        // Progress-based give-up: a ground unit heading to a POINT (move /
+        // fight-move, targetId == 0) that has not gotten meaningfully closer for
+        // a long time re-asks the background pathfinder, and eventually abandons
+        // the leg
         // or in the unit's own base without ever tripping the fully-blocked path, so a
         // lone scout could sit forever. The A* route (which we know exists when the
         // goal is reachable) replaces the order and steers it around. Fliers and
@@ -4358,13 +4333,41 @@ void World::tick(float dt) {
                     u.goalStuckD = gd; u.goalStuckT = 0;
                 } else {
                     u.goalStuckT += dt;
-                    if (u.goalStuckT > 2.0f && pathBudget_ > 0) {
-                        u.goalStuckT = 0; u.goalStuckD = gd; --pathBudget_;
-                        const NavGrid& g = navFor(u.type);
-                        if (!g.empty()) {
-                            auto path = g.findPath(u.x, u.z, gx, gz, footCells(u.type));
-                            if (!path.empty()) replaceLeg(u, path);
-                        }
+                    // No headway toward the goal. Ask the background search
+                    // again from where we actually are -- the original request
+                    // was made from somewhere else and may have failed there.
+                    if (u.goalStuckT > 2.0f && pathService_ &&
+                        !paths_.pending(u.id) &&
+                        (tickCounter_ + uint32_t(u.id)) % kPathRetryTicks == 0)
+                        requestPath(u, gx, gz);
+
+                    // Still nothing after a long while: this leg cannot be
+                    // satisfied -- the goal is inside terrain, behind a barrier,
+                    // or down a corridor we cannot solve -- so stop shoving at
+                    // it and honour whatever the player queued behind it.
+                    //
+                    // OURS, not retail's: the original just keeps pressing
+                    // (0x4e545b does nothing at all once the path-failed bits
+                    // are set), and a unit wedged against a cliff stays there.
+                    // That reads as broken rather than characterful.
+                    // ...but only when the search has actually FAILED from here.
+                    // Time alone is not evidence: a unit following a long
+                    // wandering route legitimately goes many seconds without
+                    // getting nearer the goal, and dropping the leg then cuts a
+                    // journey short -- measured, it turned a 97%-of-the-way trip
+                    // into 53%. A live backoff entry means we tried to find a
+                    // route from here and could not, which is the real signal.
+                    // Three things must all hold, because each alone gives a
+                    // false positive: time (not getting closer), a live failure
+                    // backoff (we looked for a route from here and found none),
+                    // and actually being WEDGED rather than crawling. Without the
+                    // last one a unit grinding slowly along a wall gets its order
+                    // cancelled -- measured, a trip that reaches 97% of the way by
+                    // pressing was being abandoned at 53%.
+                    if (u.goalStuckT > kGoalGiveUpSecs && u.stuckFor > 0.9f) {
+                        auto it = pathRetryAt_.find(u.id);
+                        if (it != pathRetryAt_.end() && tickCounter_ < it->second)
+                            dropLeg(u);
                     }
                 }
             } else {
@@ -4584,11 +4587,11 @@ void World::tick(float dt) {
         static double thr = getenv("TAK_PHASE_MS") ? atof(getenv("TAK_PHASE_MS")) : 15.0;
         if (ttot > thr) {   // only report a stall (threshold tunable via TAK_PHASE_MS)
             int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
-            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f flow=%.1f(x%ld) path=%.1f(x%ld) vis=%.1f burn=%.1f grid=%.1f other=%.1f units=%d\n",
-                         ttot, g_tcomb, tsep, g_flowMs, g_flowN, g_pathMs, g_pathN,
-                         g_visMs, g_burnMs, g_gridMs,
-                         ttot - g_tcomb - tsep - g_flowMs - g_pathMs - g_visMs -
-                             g_burnMs - g_gridMs, alive);
+            // flow= and path= used to sit here; the flow fields and the inline
+            // A* are both gone, so the counters were always zero.
+            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f vis=%.1f burn=%.1f grid=%.1f other=%.1f units=%d\n",
+                         ttot, g_tcomb, tsep, g_visMs, g_burnMs, g_gridMs,
+                         ttot - g_tcomb - tsep - g_visMs - g_burnMs - g_gridMs, alive);
         }
     }
     // Campaign mission runner: feed this tick's build/death events into the "god"

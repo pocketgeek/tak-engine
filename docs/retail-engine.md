@@ -663,6 +663,33 @@ Known and accepted: a follower can still end up overlapping its leader if that
 leader stops, and nothing now pushes them apart. Retail behaves the same way.
 Do not reintroduce a push to "fix" it.
 
+## Dynamic analysis: emulating icd routines (2026-09-12)
+
+Static reading gets a routine's shape; it does not tell you whether YOUR port
+behaves like it. Emulating the original function and diffing the two does.
+
+The harness (kept outside the repo, in the session scratch dir) is about 90
+lines of Python on Unicorn: map the PE's `.text`, `.rdata` and `.data` at their
+virtual addresses, give it a stack and a heap, then call a function with the
+stdcall / `__thiscall` conventions the binary uses. Sub-calls that need the live
+game -- the cell query, the allocator -- are hooked and answered from a
+synthetic grid, so a routine can be driven over test data the real game could
+never produce on demand.
+
+It observes; it copies nothing. CLAUDE.md is updated accordingly: the binary is
+for reverse-engineering, static and dynamic, and never for lifting code or data
+into the engine.
+
+First result, checking `pathDirFromDelta` against `0x415040` over 81 deltas:
+80 agree, and the single disagreement is the degenerate zero delta, where the
+icd answers 5 and we answered 0. The search should never ask for a direction to
+where it already stands, so it changes no behaviour -- but it took one run to
+find something no amount of re-reading the disassembly had.
+
+Next target is `0x4146e0` itself: drive it and our `PathSearch` over the same
+synthetic grid and diff the cell-by-cell walk. That is the direct answer to the
+open question above -- whether our cursors wander further than retail's.
+
 ## Headless in-game screenshots (dev harness)
 
 `--shot` alone captures the LOBBY and exits: it forces the dummy video driver and

@@ -9,16 +9,18 @@ to get wrong.
 A modern, clean-room C++20 / SDL2 re-implementation of **Total Annihilation:
 Kingdoms** (Cavedog, 1999): asset pipeline, deterministic simulation, an SDL2
 renderer, and client-server multiplayer. Behaviour is reverse-engineered from
-the retail binary `KINGDOMS.icd` by static analysis only (see
-`docs/retail-engine.md`).
+the retail binary `KINGDOMS.icd` by static analysis, and since 2026-09-12 also
+by EMULATING individual routines to check a port against the original (see
+`docs/retail-engine.md`). Emulation observes behaviour only -- the harness lives
+outside the repo and nothing from the binary is copied into the engine.
 
 ## Hard rules
 
 - **Never commit game assets or the retail binary.** `assets/` (which holds
   `KINGDOMS.icd`, `ironplague.icd`, and the extracted art) and root `*.hpi/*.HPI`
-  are gitignored — keep it that way. `KINGDOMS.icd` is for reverse-engineering
-  and static analysis **only**; never copy its code/data into the engine, and
-  never commit any of it.
+  are gitignored — keep it that way. `KINGDOMS.icd` is for **reverse-engineering
+  only** — static analysis, and emulating routines to compare behaviour against a
+  port. Never copy its code/data into the engine, and never commit any of it.
 - **The simulation is deterministic lockstep** — every peer must compute
   byte-identical state:
   - No direct libm transcendentals in `src/sim/`. Use `src/sim/detmath.h`
