@@ -415,8 +415,12 @@ struct MainMenu::Impl {
         SDL_RenderClear(ren);
         float s, ox, oy; layout(winW, winH, s, ox, oy);
         if (bg) { SDL_FRect r{ox, oy, 640 * s, 480 * s}; SDL_RenderCopyF(ren, bg, nullptr, &r); }
+        // TAK_NODOORVID=1 forces the static GAF door art instead of the clips, so
+        // the two can be compared directly -- retail authored both, so the art is
+        // the closest thing to a reference for how bright a door should look.
+        static const bool kNoDoorVid = tak::devEnv("TAK_NODOORVID") != nullptr;
         for (auto& d : doors) {
-            if (d.videoOk && d.vtex) {
+            if (d.videoOk && d.vtex && !kNoDoorVid) {
                 // Like the buttons, the door video is authored bigger than its gui
                 // hotspot and anchored at the gadget origin -- draw it at native size,
                 // NOT stretched to the (smaller) hotspot. Stretching squished it badly:
