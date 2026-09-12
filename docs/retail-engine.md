@@ -290,16 +290,53 @@ test) was so convincingly "obstacle avoidance" that the shape was accepted as
 proof of purpose. Shape is not provenance. Establish the CALL PATH from the
 subsystem you care about before concluding a routine belongs to it.
 
-Still true, and unaffected: retail has no global path search -- no open list, no
-priority queue, no cost-to-goal heuristic (that conclusion rested on the mover
-and navigator themselves, not on this routine). Also unaffected: `0x4139d0` is a
-per-cell query rather than a search, so the old `sim.h` note calling it "its
-path search" remains wrong.
+Still true: `0x4139d0` is a per-cell query rather than a search, so the old
+`sim.h` note calling it "its path search" remains wrong.
 
-STILL OPEN: how a retail unit gets around a body parked in its path. The mover
-refuses and returns (`0x4dbe2c` sets flag `0x20` at navigator `+0x36`), and no
-mechanism that resolves this has been found yet. Do not implement anything here
-until one is, or until the decision is made deliberately to deviate.
+### What a second, top-down pass established (same day)
+
+Working DOWN from the navigator instead of up from a suggestive routine:
+
+  * **The navigator holds up to 64 waypoints, not two.** `0x4e4ea0` is its
+    point-list setter: it clamps the incoming count at `0x40` and block-copies
+    that many dwords into `+0xc`, storing the count at `+0x10c`. So the
+    "two-point segment `[position, goal]`" description -- which I restated as
+    recently as the retraction above -- is wrong as a statement about the
+    navigator. `movl $0x2,0x10c` at `0x4e5635` is just ONE caller installing
+    two points. The navigator is a general multi-waypoint follower, and the
+    mover's `pop_front(1)`-then-recurse (`0x4dbf36` / `0x4dbf7e`, vtable slot
+    11 = `0x4e50a0`) is it advancing along that list.
+  * **The mover's refusal flags are write-only.** Nothing in the binary reads
+    bit `0x20`, `0x100` or `0x200` of navigator `+0x36`. The mover clears
+    `0x07E0` on entry and sets them on refusal, and no consumer exists. They
+    are status, not control -- so the response to being blocked is entirely
+    inside the mover: clamp, slow (the `+0x30` budget against the global at
+    `[0x62d55c+0x19f44]`), return.
+  * **A real route producer exists** and feeds the navigator: `0x414450`,
+    `0x415040`, `0x415b10` and `0x416430` all call the setter above, and that
+    cluster contains the contour tracer retracted earlier. So the tracer IS
+    part of route production; it simply is not reached FROM the mover, which
+    is why the reachability test that produced the retraction was the wrong
+    test.
+
+### The part that is still unresolved -- do not build on it yet
+
+By direct-call graph, that whole route cluster is reachable only from
+`0x4261f0` -- which references the strings `"%s\screenshots"` and `"BIGSHOT"`
+and is the poster/screenshot handler -- and from `0x527360`, which has no
+callers and no pointers to it anywhere in the image. Function sizes along the
+chain are all 74..795 instructions, so this is not an artifact of merged
+boundaries, and the `0x4261f0 -> 0x526740` edge was confirmed by hand.
+
+A route generator wired only to the screenshot path is not a credible reading.
+The likely gap is that the graph follows direct `call 0xADDR` only and misses
+an indirect/vtable invocation from the order system. Until that path is found,
+HOW GAMEPLAY INVOKES THE ROUTE PRODUCER IS UNKNOWN, and with it the answer to
+what retail does when a body is parked in a unit's way.
+
+Three conclusions about this area have now been published and two retracted in
+a single day. The next claim here should come with a demonstrated call path
+from the order or unit tick, not from a routine's shape or from a partial graph.
 
 ## Retail-faithful body collision: sub-cell solidity (2026-09-12)
 
