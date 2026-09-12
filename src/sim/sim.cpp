@@ -167,6 +167,21 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // Extended stats.
             t.healTime = float(info->numberOr("healtime", 0));
             t.leash = float(info->numberOr("maneuverleashlength", 0));
+            // Standing orders, derived the way retail's parser does (icd 0x4c005d):
+            // standingunitorder is a front-end that expands into the two fields
+            // that actually drive behaviour, and its ABSENCE is a distinct case --
+            // the sentinel default 3 falls through to standingmoveorder /
+            // standingfireorder (both default 2), i.e. roam + fire at will.
+            {
+                int suo = int(info->numberOr("standingunitorder", 3));
+                if (suo == 2)      { t.defaultMove = 1; t.defaultFire = 2; }
+                else if (suo == 1) { t.defaultMove = 0; t.defaultFire = 2; }
+                else if (suo == 0) { t.defaultMove = 0; t.defaultFire = 0; }
+                else {
+                    t.defaultMove = uint8_t(int(info->numberOr("standingmoveorder", 2)) & 3);
+                    t.defaultFire = uint8_t(int(info->numberOr("standingfireorder", 2)) & 3);
+                }
+            }
             t.waterMult = float(info->numberOr("watermultiplier",
                                 info->numberOr("watermultipliser", 1)));
             // Exact key only: the icd's parser knows no typo fallback, so
@@ -533,6 +548,12 @@ std::vector<const UnitType*> TypeRegistry::combatUnits(const std::string& side) 
 int World::spawn(const UnitType* type, float x, float z, float heading, int player) {
     Unit u;
     u.id = nextId_++;
+    if (type) {                      // the type's standing orders are the unit's
+        u.moveState = type->defaultMove;
+        u.fireState = type->defaultFire;
+        // The displayed stance is whichever button retail would light up.
+        u.stance = u.fireState == 0 ? 2 : (u.moveState == 0 ? 1 : 0);
+    }
     // Clamp to a valid player slot: every players_[u.player] index downstream is
     // unchecked, so an out-of-range owner would read/write past the vector.
     if (player < 0 || player >= int(players_.size())) {
@@ -1549,6 +1570,16 @@ void World::setStance(int unitId, int stance) {
     Unit* u = unit(unitId);
     if (!u || !u->alive()) return;
     u->stance = std::clamp(stance, 0, 2);
+    // Retail's Standing_UnitOrder setter (icd 0x5198a0) writes the move AND fire
+    // fields together, and note what it CANNOT write: move 2, the unlimited-chase
+    // roam state. A unit that spawned roaming (its type sets no standingunitorder)
+    // gives that up permanently the first time the player touches these buttons.
+    // That is retail's behaviour, not an oversight of ours.
+    switch (u->stance) {
+        case 0: u->moveState = 1; u->fireState = 2; break;   // Offensive
+        case 1: u->moveState = 0; u->fireState = 2; break;   // Defensive
+        default: u->moveState = 0; u->fireState = 0; break;  // Passive
+    }
 }
 
 void World::setCloak(int unitId, bool on) {
@@ -1969,7 +2000,11 @@ void World::tickCombat(Unit& u, float dt) {
     bool busyBuilding = u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0 ||
                         !u.buildOrders.empty() ||
                         (u.type->canMove && !u.buildQueue.empty());   // mobile conjurer producing
-    bool acquiring = !busyBuilding && u.stance != 2 &&
+    // Auto-acquisition belongs to the FIRE order: only Fire At Will goes looking.
+    // Hold Fire and Return Fire both wait to be handed a target (an explicit attack
+    // order still works -- retail's hold-fire gate has a "forced" bypass for
+    // exactly that).
+    bool acquiring = !busyBuilding && u.fireState == 2 &&
                      (u.orders.empty() ||
                       (u.orders.front().targetId == 0 &&
                        (u.orders.front().attackMove || u.orders.front().patrol)) ||
@@ -1996,7 +2031,11 @@ void World::tickCombat(Unit& u, float dt) {
     // rescan less often -- the acquisition cost scales sub-linearly instead of O(n).
     bool acqTurn = (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
     if (acquiring && u.type->weapon.damage > 0 && acqTurn) {
-        float ar = u.type->maxRange() + 90;
+        // The +90 is approach margin: room to notice something and walk to it. A
+        // unit whose move order forbids leaving has no use for it -- it should
+        // acquire only what it can already shoot, or it would lock onto something
+        // it will never reach and then drop it again next tick.
+        float ar = u.type->maxRange() + (u.moveState == 0 ? 0.0f : 90.0f);
         int best = 0;
         float bestD = ar * ar;
         // fireatwillrandom: spread fire across whatever is in range instead of
@@ -2012,7 +2051,13 @@ void World::tickCombat(Unit& u, float dt) {
         // mean "advance and engage everything en route", so an army that has
         // travelled far from its spawn still acquires (incl. just-conjured foes).
         // An OFFENSIVE unit (stance 0) ignores its leash entirely and chases freely.
-        float leash2 = (u.stance != 0 && u.orders.empty() && u.type->leash > 0)
+        // ... while whether you may LEAVE to engage belongs to the move order:
+        //   0 = never (shoot what wanders into range, but hold the post),
+        //   1 = only within maneuverleashlength of where you were posted,
+        //   2 = no limit.
+        // The leash is measured from home, and an attack-move or patrol overrides
+        // it entirely -- those orders mean "advance and engage everything en route".
+        float leash2 = (u.moveState == 1 && u.orders.empty() && u.type->leash > 0)
                            ? u.type->leash * u.type->leash : 1e30f;
         // A ranged unit only auto-acquires enemies it can actually see, so it
         // doesn't charge a target hidden behind a wall (which caused pile-ups at
@@ -2057,7 +2102,10 @@ void World::tickCombat(Unit& u, float dt) {
             }
             bestD = d; best = e.id;
         });
-        if (best) u.orders.insert(u.orders.begin(), {0, 0, best});
+        if (best) {
+            u.orders.insert(u.orders.begin(), {0, 0, best});
+            u.orders.front().autoTarget = true;
+        }
     }
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
 
@@ -2148,12 +2196,18 @@ void World::tickCombat(Unit& u, float dt) {
         los = nav_.losBetween(u.x, u.z, target->x, target->z,
                               std::max(u.type->footX, u.type->footZ) / 2,
                               std::max(target->type->footX, target->type->footZ) / 2);
-    if (!u.type->canMove && dist > reach) {     // static units can't chase
+    // A static unit cannot chase -- and neither may one whose move standing order
+    // says hold position. Both drop an AUTO-acquired target that walks out of
+    // reach; an explicitly ordered attack is unaffected, because being told to go
+    // kill something is exactly the case the standing order does not govern.
+    const bool mayChase = u.type->canMove &&
+                          (u.moveState != 0 || !u.orders.front().autoTarget);
+    if (!mayChase && dist > reach) {
         u.orders.erase(u.orders.begin());
         return;
     }
     if ((sel && sel->melee) ? !adj
-                            : (dist > reach * 0.95f || (!los && u.type->canMove))) {
+                            : (dist > reach * 0.95f || (!los && mayChase))) {
         // Advance toward the target, steering around impassable terrain.
         u.repathLeft -= dt;
         Order& o = u.orders.front();
@@ -4586,7 +4640,11 @@ uint64_t World::stateHash() const {
         mixf(u.selfDestructT);   // self-destruct countdown drives a deterministic death
         // Stance / cloak-intent / active gate auto-acquire, cloaking and firing, so a
         // divergence in them must fault directly rather than diffusing into positions.
+        // Both standing orders drive behaviour, so both belong in the checksum --
+        // the displayed stance alone would hide a peer whose move/fire fields had
+        // drifted (they are set together, but only one of them is shown).
         mix(uint64_t(uint32_t(u.stance)));
+        mix(uint64_t(u.moveState) * 3 + uint64_t(u.fireState));
         mix(uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
         mix(uint64_t(uint32_t(u.repairId)));   // build-power target -> HP/mana divergence
         mix(uint64_t(uint32_t(int32_t(u.squad))));   // control squad: formation<0 drives movement

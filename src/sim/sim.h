@@ -263,6 +263,15 @@ struct UnitType {
     // --- extended FBI stats -------------------------------------------------
     float healTime = 0;       // healtime: seconds per HP regenerated (0 = no regen)
     float leash = 0;          // maneuverleashlength: max auto-chase distance (0 = unlimited)
+    // Per-type standing orders, derived exactly as retail's [UNITINFO] parser does
+    // (icd 0x4c005d). standingunitorder is a COMPOSITE front-end: 2 -> move 1 /
+    // fire 2, 1 -> move 0 / fire 2, 0 -> move 0 / fire 0. When the key is absent
+    // the parser's default is the sentinel 3, which falls through to
+    // standingmoveorder (default 2) and standingfireorder (default 2) -- Roam and
+    // Fire At Will. 147 of the 203 shipped units set standingunitorder; none sets
+    // either of the other two, so the 56 that do not are the only ones that roam.
+    uint8_t defaultMove = 2;
+    uint8_t defaultFire = 2;
     float waterMult = 1;      // watermultiplier: speed factor in shallow water
     float roadMult = 1.2f;    // roadmultiplier: on-road speed factor. Retail's FBI
                               // parser defaults it to 16.16 0x13333 (~1.2) -- icd
@@ -393,6 +402,10 @@ struct Order {
     // sense that it changes no movement maths -- but the repath paths need it to
     // tell "the rest of this leg" from "everything queued behind it".
     bool goal = false;
+    // This target was picked by auto-acquisition, not asked for by the player.
+    // The move standing order gates only AUTO engagement: a Defensive unit told
+    // explicitly to attack something across the map still walks over and does it.
+    bool autoTarget = false;
     // Tick this order was issued, for the order-line beads: retail phases the
     // trail by (now - orderCreationTick) so each segment's dots crawl toward the
     // destination independently (icd 0x4d5747 reading order+0x5e). Display only --
@@ -456,6 +469,20 @@ struct Unit {
     bool  cloaked = false; // currently invisible to enemies
     bool  cloakOn = true;  // canCloak units: player wants to cloak (gates auto-cloak)
     bool  active = true;   // onoffable units: false = powered down
+    // Retail keeps TWO independent standing orders, and the single "stance" the
+    // HUD shows is only a front-end that writes both (icd setter 0x5198a0):
+    //   Offensive -> move 1, fire 2      Defensive -> move 0, fire 2
+    //   Passive   -> move 0, fire 0
+    // moveState: 0 = never leave position to engage, 1 = engage within
+    // maneuverleashlength of where the unit was posted, 2 = engage with no limit.
+    //   NOTE 2 is unreachable from the stance buttons, exactly as in retail -- it
+    //   is the spawn default for a type that sets no standingunitorder, and
+    //   touching the buttons trades it away for good.
+    // fireState: 0 = hold fire (no auto-acquire, no retaliation -- an explicit
+    //   attack order still works), 1 = return fire (never self-acquires, but
+    //   shoots what it is handed and does hit back), 2 = fire at will.
+    uint8_t moveState = 2;
+    uint8_t fireState = 2;
     int   stance = 1;      // combat stance: 0=offensive (chase freely), 1=defensive
                            // (leashed, the default/legacy behaviour), 2=passive
                            // (hold fire: no auto-acquire, only fights when ordered)

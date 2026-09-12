@@ -1175,6 +1175,99 @@ int main(int argc, char** argv) {
               "the scatter is deterministic (identical across two identical runs)");
     }
 
+    // ---- standing orders: the stance buttons write TWO retail fields ---------
+    {
+        auto freshWorld = [&](sim::World& w) {
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+        };
+        // standingunitorder = 1 (Defensive): move 0 / fire 2.
+        const sim::UnitType* archer = reg.find("araarch");
+        check(archer && archer->defaultMove == 0 && archer->defaultFire == 2,
+              "araarch (standingunitorder=1) defaults to hold-position + fire-at-will");
+        // standingunitorder = 2 (Offensive): move 1 / fire 2 -- a LEASHED chase.
+        const sim::UnitType* knight = reg.find("araknigh");
+        check(knight && knight->defaultMove == 1 && knight->defaultFire == 2,
+              "araknigh (standingunitorder=2) defaults to a leashed chase");
+        // standingunitorder = 0 (Passive): move 0 / fire 0 -- holds fire entirely.
+        const sim::UnitType* spy = reg.find("araspy");
+        check(spy && spy->defaultMove == 0 && spy->defaultFire == 0,
+              "araspy (standingunitorder=0) defaults to holding fire");
+        // No key at all -> the sentinel path: roam + fire at will. Worth noting
+        // what this set turns out to be: almost every unit WITHOUT the key is a
+        // structure (Keep, Watch Tower, wall, Mana Amplifier...) plus a couple of
+        // flyers. So in retail essentially no mobile ground unit roams without a
+        // leash -- they are all either hold-position or leashed at 500.
+        const sim::UnitType* flyer = reg.find("arafly");
+        check(flyer && flyer->defaultMove == 2 && flyer->defaultFire == 2,
+              "arafly (no standingunitorder) defaults to unlimited roam");
+        const sim::UnitType* sword = reg.find("arasword");
+        check(sword && sword->defaultMove == 1,
+              "arasword (standingunitorder=2) is leashed, not roaming");
+
+        // A hold-position unit shoots what comes to it but never walks over.
+        if (archer && sword) {
+            sim::World w; freshWorld(w);
+            int a = w.spawn(archer, 1000, 2600, 0, 0);
+            check(w.unit(a)->moveState == 0 && w.unit(a)->fireState == 2,
+                  "the spawned archer carries its type's standing orders");
+            float far = float(archer->maxRange()) + 260.0f;
+            int prey = w.spawn(sword, 1000 + far, 2600, 0, 1);
+            (void)prey;
+            float startX = w.unit(a)->x;
+            for (int i = 0; i < 30 * 8; ++i) w.tick(1.0f / 30.0f);
+            const sim::Unit* au = w.unit(a);
+            check(au && std::fabs(au->x - startX) < 24.0f,
+                  "a hold-position archer does NOT walk to an out-of-range enemy",
+                  "moved " + std::to_string(au ? au->x - startX : 0.0f) + "px");
+
+            // A leashed unit advances on something inside its leash...
+            sim::World w2; freshWorld(w2);
+            int a2 = w2.spawn(sword, 1000, 2600, 0, 0);   // arasword: move 1, leash 500
+            w2.spawn(sword, 1300, 2600, 0, 1);            // 300px: inside the leash
+            check(w2.unit(a2)->moveState == 1, "the swordsman is leashed");
+            float sx2 = w2.unit(a2)->x;
+            for (int i = 0; i < 30 * 8; ++i) w2.tick(1.0f / 30.0f);
+            check(w2.unit(a2) && w2.unit(a2)->x - sx2 > 24.0f,
+                  "a leashed unit advances on an enemy inside its leash",
+                  "moved " + std::to_string(w2.unit(a2) ? w2.unit(a2)->x - sx2 : 0.0f) + "px");
+
+            // ...and stays put for one beyond it.
+            sim::World w4; freshWorld(w4);
+            int a4 = w4.spawn(sword, 1000, 2600, 0, 0);
+            w4.spawn(sword, 1000 + sword->leash + 220.0f, 2600, 0, 1);
+            float sx4 = w4.unit(a4)->x;
+            for (int i = 0; i < 30 * 8; ++i) w4.tick(1.0f / 30.0f);
+            check(w4.unit(a4) && std::fabs(w4.unit(a4)->x - sx4) < 24.0f,
+                  "but will not break its leash for one beyond it",
+                  "moved " + std::to_string(w4.unit(a4) ? w4.unit(a4)->x - sx4 : 0.0f) + "px");
+
+            // The Offensive button writes both fields.
+            sim::World w5; freshWorld(w5);
+            int a5 = w5.spawn(archer, 1000, 2600, 0, 0);
+            w5.setStance(a5, 0);
+            check(w5.unit(a5)->moveState == 1 && w5.unit(a5)->fireState == 2,
+                  "the Offensive button writes move=1 AND fire=2");
+
+            // Passive holds fire: no target is ever acquired.
+            sim::World w3; freshWorld(w3);
+            int a3 = w3.spawn(archer, 1000, 2600, 0, 0);
+            w3.spawn(sword, 1000 + 40, 2600, 0, 1);   // right next to it
+            w3.setStance(a3, 2);   // Passive
+            check(w3.unit(a3)->fireState == 0, "the Passive button writes fire=0");
+            bool acquired = false;
+            for (int i = 0; i < 30 * 5 && !acquired; ++i) {
+                w3.tick(1.0f / 30.0f);
+                const sim::Unit* u3 = w3.unit(a3);
+                if (u3 && !u3->orders.empty() && u3->orders.front().targetId) acquired = true;
+            }
+            check(!acquired, "a Passive unit never auto-acquires, even point blank");
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

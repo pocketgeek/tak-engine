@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 59;       // 59: fireatwillrandom scatters auto-acquired
+constexpr uint32_t kNetVersion = 60;       // 60: standing orders split into retail's
+                                           // move + fire axes, seeded per unit type
+                                           // 59: fireatwillrandom scatters auto-acquired
                                            // targets for the 16 missile-troop types
                                            // 58: order queues survive a repath; Patrol,
                                            // Repair and Assist honour their queue flag
