@@ -1650,7 +1650,7 @@ int Server::run() {
             }
         };
         bool parallel = due.size() >= 2;
-        for (Room* rp : due) if (rp->ref) rp->ref->setSerialFlow(parallel);
+        for (Room* rp : due) if (rp->ref) rp->ref->setSerialThreads(parallel);
         if (parallel)
             tickPool_.run(due.size(), [&](size_t i) { tickRoom(*due[i]); });
         else

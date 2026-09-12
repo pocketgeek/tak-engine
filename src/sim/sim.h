@@ -407,7 +407,6 @@ struct Order {
     bool attackMove = false;   // engage enemies encountered en route
     bool patrol = false;       // loop: completed orders re-queue at the back
     bool guard = false;        // follow friendly `targetId`, engage threats
-    bool flow = false;         // steer by the shared flow field toward (x,z)
     float wait = 0;            // >0: hold position, counting down (SetMission "w N")
     bool waitAttack = false;   // hold until an enemy is in sight, then release (SetMission "wa")
     // Last waypoint of the order the PLAYER actually gave. One order can expand
@@ -738,49 +737,6 @@ private:
 // Block/unblock a building's yardmap-aware footprint on a nav grid.
 void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked);
 
-// A flow field: a per-cell direction pointing along the shortest walkable path
-// toward a single goal, built by a wavefront (Dijkstra) out from the goal. Many
-// units heading to the same goal share one field, so a crowd spreads and flows
-// around obstacles instead of single-filing into a corner. Deterministic (built
-// purely from the nav grid), so it is safe under lockstep. Cells are 16px, same
-// as the NavGrid it is built from.
-class FlowField {
-public:
-    // Build the field over `nav` toward the goal at world (gx, gz), for a unit whose
-    // footprint is `foot` cells across (so the wavefront only crosses cells the unit
-    // fits in). If the goal cell is blocked it snaps to the nearest fitting cell.
-    // Returns false if the grid is empty or no fitting goal cell exists.
-    bool build(const NavGrid& nav, float gx, float gz, int foot = 1);
-    bool ready() const { return w_ > 0; }
-    // Unit direction at world (x, z); (0,0) at/near the goal, off-grid, or in an
-    // unreachable pocket (caller should then steer straight at the goal).
-    void dirAt(float x, float z, float& dx, float& dz) const;
-    // Was the goal cell reachable from (x,z)? (finite integration distance)
-    bool reachable(float x, float z) const;
-    // Any reachable cell inside the CELL rect [x0,x1]x[z0,z1] (inclusive, clamped)?
-    // Used by targeted flow invalidation: a nav edit whose padded rect touches no
-    // reachable cell of this field cannot alter it (the change lives in a pocket
-    // this field never routes through), so the field survives the edit.
-    bool touchesReachable(int x0, int z0, int x1, int z1) const {
-        if (w_ <= 0) return false;
-        x0 = std::max(x0, 0); z0 = std::max(z0, 0);
-        x1 = std::min(x1, w_ - 1); z1 = std::min(z1, h_ - 1);
-        for (int z = z0; z <= z1; ++z)
-            for (int x = x0; x <= x1; ++x)
-                if (dist_[size_t(z) * w_ + x] != 0xFFFF) return true;
-        return false;
-    }
-
-    uint32_t used = 0;   // tick of last use, for the flow-cache LRU eviction
-
-private:
-    int w_ = 0, h_ = 0, goal_ = -1;
-    std::vector<int8_t> dir_;      // per cell: best neighbour index 0-7, -1 = none
-                                   // (1 byte, not two floats -- keeps the LRU cache
-                                   // of fields small enough to hold every live goal)
-    std::vector<uint16_t> dist_;   // integration field (0xFFFF = unreachable)
-};
-
 struct Player {
     float mana = 500;
     float storage = 0;   // recomputed each tick from alive units
@@ -998,8 +954,6 @@ public:
         units_.clear();
         projectiles_.clear();
         hits_.clear();
-        flowCache_.clear();
-        aiFlowCache_.clear();
         features_.clear();
         featureIdx_.clear();
         // Every other kind of live cross-tick sim state has to go too, or a rejoin
@@ -1095,7 +1049,10 @@ public:
     // just oversubscribe. A lone game (SP, or the client's own sim) leaves it off and
     // keeps the intra-tick flow parallelism. Never affects results -- purely how the
     // (identical) flow builds are scheduled.
-    void setSerialFlow(bool s) { serialFlow_ = s; }
+    // The server ticks several games at once and puts the parallelism at the GAME
+    // level, so a room's sim must not spawn its own workers. Also honoured by the
+    // fog/visibility passes (it was serialFlow_ when flow fields honoured it too).
+    void setSerialThreads(bool s) { serialThreads_ = s; }
     // Deterministic digest of sim state, for lockstep sync checking.
     uint64_t stateHash() const;
 
@@ -1272,39 +1229,6 @@ private:
     // AI needs (on the server, where clients don't) cannot perturb sim state. The
     // cache is therefore mutable and this is a logical-const query. Single-threaded
     // per world (not safe to call off the sim thread). See docs/multiplayer-design.md.
-    const FlowField* flowFor(const UnitType* type, float gx, float gz) const;
-    // The flow memo's cache key + build inputs, shared by flowFor and the tick-top
-    // parallel prefetch so both derive the identical pure function of
-    // (domain, foot, quantized goal block). False if the domain grid is empty.
-    struct FlowKey { long long key; const NavGrid* grid; float bx, bz; int foot; };
-    bool flowKeyFor(const UnitType* type, float gx, float gz, FlowKey& out) const;
-    const FlowField* flowForNow(const FlowKey& k) const;   // build + memo a field immediately
-    // Fields a consumer asked for mid-tick and did not get. flowFor() no longer
-    // builds on a cache miss: a full-map Dijkstra on the sim thread, one at a time,
-    // is what turned a chase into a multi-second freeze (132 inline builds measured
-    // at 88ms each, vs 7.7ms each when the SAME work goes through prefetchFlows'
-    // worker pool). The key is recorded here instead and built by the next tick's
-    // prefetch, in parallel with everything else that missed. Deterministic: the
-    // requests are appended in the sim's own traversal order, so every peer defers
-    // and builds exactly the same set.
-    mutable std::vector<FlowKey> pendingFlows_;
-    void prefetchFlows();   // batch-build this tick's missing fields on threads
-    // Targeted flow invalidation after a GROUND nav edit in the cell rect
-    // (cx, cz, w, h): water/hover grids never change post-setup so their fields
-    // always survive, and a ground field survives when the rect -- padded by its
-    // footprint reach -- touches none of its reachable cells. Replaces the old
-    // clear-everything (which forced a burst of full-map Dijkstra rebuilds on
-    // every building placed, cancelled, reclaimed, or decayed).
-    void invalidateFlows(int cx, int cz, int w, int h);
-    // Selective flow-cache eviction over an edited cell rect; shared by the sim memo
-    // and the AI's (see invalidateFlows).
-    void evictStaleFlows(std::map<long long, FlowField>& cache, int cx, int cz, int w, int h);
-    mutable std::map<long long, FlowField> flowCache_;
-    // Connected components of the walkable set, per (grid, footprint). Reachability
-    // is a connectivity question, so it does not need a distance field: one flood
-    // fill answers it for EVERY goal on that grid until the terrain changes, where a
-    // FlowField answers it for one goal and costs a full Dijkstra. Display/AI only
-    // (pathExists is asked on one peer and never hashed), so this is not sim state.
     struct CompGrid { uint64_t ver = 0; int w = 0, h = 0; std::vector<int32_t> label; };
     mutable std::map<std::pair<const NavGrid*, int>, CompGrid> compCache_;
     const CompGrid* components(const NavGrid& g, int foot) const;
@@ -1314,7 +1238,6 @@ private:
     // evict from the sim's memo made cache membership differ between peers. That was
     // invisible while the sim cache never reached its cap and desynced the referee
     // inside 60 ticks once it did.
-    mutable std::map<long long, FlowField> aiFlowCache_;
 
     // Uniform spatial hash over mobile units, rebuilt each tick, so the
     // separation and combat-acquisition passes are O(n) instead of O(n^2).
@@ -1515,7 +1438,7 @@ private:
     }();
     int winningTeam_ = -1;
     bool monarchExpendable_ = true;      // default: Monarch is just a unit (net option overrides)
-    bool serialFlow_ = false;            // true = flow prefetch stays on this thread (server parallel-games mode)
+    bool serialThreads_ = false;
     std::vector<uint8_t> hadMonarch_;   // per-player: ever fielded a Monarch (for the loss rule)
     bool godsEnabled_ = false;
     int unitCap_ = 0;                 // per-player live-unit limit (0 = unlimited)
@@ -1526,8 +1449,6 @@ private:
     uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run
     uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
                                  // (deterministic: derived from the live-unit count)
-    uint32_t flowQuantShift_ = 1;// flow-goal block = 2^shift cells; coarsens with the
-                                 // crowd so a huge battle shares fewer distinct fields
     int pathBudget_ = 0;         // A* repaths still allowed this tick (crowd throttle)
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
