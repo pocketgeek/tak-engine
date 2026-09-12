@@ -272,6 +272,12 @@ struct UnitType {
     // either of the other two, so the 56 that do not are the only ones that roam.
     uint8_t defaultMove = 2;
     uint8_t defaultFire = 2;
+    // FBI defaultmissiontype = VTOL_standby: an idle flyer looks for somewhere to
+    // put down rather than settling wherever it happens to stop. Every one of the
+    // 27 flying types carries it (canfly and VTOL_standby are the same set), so it
+    // is really just "is an aircraft" -- parsed anyway, because that is what the
+    // behaviour is keyed on in retail (mission handler icd 0x417350).
+    bool vtolStandby = false;
     float waterMult = 1;      // watermultiplier: speed factor in shallow water
     float roadMult = 1.2f;    // roadmultiplier: on-road speed factor. Retail's FBI
                               // parser defaults it to 16.16 0x13333 (~1.2) -- icd
@@ -481,6 +487,7 @@ struct Unit {
     // fireState: 0 = hold fire (no auto-acquire, no retaliation -- an explicit
     //   attack order still works), 1 = return fire (never self-acquires, but
     //   shoots what it is handed and does hit back), 2 = fire at will.
+    uint16_t standbyTheta = 0;   // idle-flyer orbit phase (retail steps it ~-120 deg)
     uint8_t moveState = 2;
     uint8_t fireState = 2;
     int   stance = 1;      // combat stance: 0=offensive (chase freely), 1=defensive

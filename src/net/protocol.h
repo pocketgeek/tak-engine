@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 60;       // 60: standing orders split into retail's
+constexpr uint32_t kNetVersion = 61;       // 61: idle flyers look for a landable spot
+                                           // 60: standing orders split into retail's
                                            // move + fire axes, seeded per unit type
                                            // 59: fireatwillrandom scatters auto-acquired
                                            // targets for the 16 missile-troop types

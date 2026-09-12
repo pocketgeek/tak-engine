@@ -242,7 +242,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             }
             t.cruiseAlt = float(info->numberOr("cruisealt", 0)) / 4;
             t.bankScale = float(info->numberOr("bankscale", 0));
-            t.wanders = lower(info->valueOr("defaultmissiontype", "")) == "standby_wander";
+            {
+                std::string dmt = lower(info->valueOr("defaultmissiontype", ""));
+                t.wanders = dmt == "standby_wander";
+                t.vtolStandby = dmt == "vtol_standby";
+            }
             t.pitchScale = float(info->numberOr("pitchscale", 0));
             // One weapon block -> a Weapon. Shared by WEAPON1..3 and by
             // [EXPLODEAS] (the death blast), which is the same block shape.
@@ -4363,6 +4367,46 @@ void World::tick(float dt) {
             }
         } else if (u.orders.empty()) {
             u.goalStuckD = 1e30f; u.goalStuckT = 0;
+        }
+        // An idle aircraft looks for somewhere to put down. Retail's VTOL_Standby
+        // (icd 0x417350) hands off to VTOL_LandIfCan (0x416cd0), which tests the
+        // spot underneath and, if it will not do, samples TWELVE grid-snapped
+        // candidates through a window that grows from +/-64 to +/-240 world units,
+        // taking the first that is landable. Only if all twelve fail does it give
+        // up and orbit its anchor at radius 160, stepping about -120 degrees each
+        // time round. Without this a flyer settles wherever it happened to stop --
+        // over water, or on the roof of a building.
+        if (u.type->canFly && u.type->vtolStandby && u.alive() && u.orders.empty() &&
+            u.buildSiteId == 0 && u.buildOrders.empty() && u.reclaimId == 0 &&
+            u.repairId == 0 && !u.embarked()) {
+            const NavGrid& g = navFor(u.type);
+            auto landable = [&](float x, float z) {
+                if (g.empty()) return true;
+                int cx = int(x) / 16, cz = int(z) / 16;
+                return g.walkable(cx, cz) && cellFree(x, z, u.id, footCells(u.type));
+            };
+            if (!landable(u.x, u.z)) {
+                bool found = false;
+                // The window grows exactly as retail's does: 12 draws, centre
+                // 64..240, so a flyer boxed in by its own airfield keeps widening
+                // its search instead of giving up on the first miss.
+                for (int i = 0; i < 12 && !found; ++i) {
+                    float half = 64.0f + float(i) * 16.0f;
+                    float ox = float(int(fireRand(uint32_t(half * 2))) ) - half;
+                    float oz = float(int(fireRand(uint32_t(half * 2))) ) - half;
+                    float tx = u.x + ox, tz = u.z + oz;
+                    if (tx < 16 || tz < 16 || !landable(tx, tz)) continue;
+                    order(u.id, tx, tz, false);
+                    found = true;
+                }
+                if (!found) {
+                    // Nowhere to land: circle the spot instead of grinding on it.
+                    u.standbyTheta = uint16_t(u.standbyTheta - 21845);   // ~-120 deg
+                    float a = float(u.standbyTheta) * (2.0f * 3.14159265f / 65536.0f);
+                    order(u.id, u.x - detmath::sin(a) * 160.0f,
+                          u.z - detmath::cos(a) * 160.0f, false);
+                }
+            }
         }
     }
 

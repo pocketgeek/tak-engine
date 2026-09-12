@@ -1268,6 +1268,45 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- VTOL_standby: an idle flyer finds somewhere to put down -------------
+    {
+        const sim::UnitType* fly = reg.find("arafly");
+        check(fly && fly->canFly && fly->vtolStandby,
+              "arafly parses defaultmissiontype = VTOL_standby");
+        if (fly && fly->vtolStandby) {
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+            // Park it over a cell it could not land on (water or blocked).
+            float bx = 0, bz = 0; bool bad = false;
+            for (int z = 200; z < 3000 && !bad; z += 16)
+                for (int x = 200; x < 3000; x += 16)
+                    if (!w.navFor(fly).walkable(x / 16, z / 16)) {
+                        bx = float(x); bz = float(z); bad = true; break;
+                    }
+            check(bad, "the map has a cell no flyer could land on");
+            if (bad) {
+                int id = w.spawn(fly, bx, bz, 0, 0);
+                for (int i = 0; i < 30 * 20; ++i) w.tick(1.0f / 30.0f);
+                const sim::Unit* u = w.unit(id);
+                bool ok = u && w.navFor(fly).walkable(int(u->x) / 16, int(u->z) / 16);
+                check(ok, "an idle flyer relocates off a spot it cannot land on",
+                      u ? "ended at " + std::to_string(int(u->x)) + "," +
+                              std::to_string(int(u->z)) : "gone");
+                // And then it STAYS: the search must not re-trigger every tick and
+                // leave the thing shuffling for the rest of the game.
+                float sx = u ? u->x : 0, sz = u ? u->z : 0;
+                for (int i = 0; i < 30 * 10; ++i) w.tick(1.0f / 30.0f);
+                const sim::Unit* u2 = w.unit(id);
+                check(u2 && std::fabs(u2->x - sx) < 2.0f && std::fabs(u2->z - sz) < 2.0f,
+                      "...and then settles, instead of shuffling forever");
+            }
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
