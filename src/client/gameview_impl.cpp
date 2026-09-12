@@ -2306,6 +2306,57 @@
         return hitBoxes_.emplace(type->id, box).first->second;
     }
 
+    const GameView::RingBox& GameView::unitRingBox(const tak::sim::UnitType* type) {
+        auto it = ringBoxes_.find(type->id);
+        if (it != ringBoxes_.end()) return it->second;
+        RingBox rb;   // defaults cover a model that never loaded
+        auto vt = visuals_.find(type->id);
+        if (vt != visuals_.end()) {
+            float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+            bool any = false;
+            // Walk the rest pose accumulating MODEL-space bounds. Ground plates are
+            // skipped for the same reason collect() refuses to draw them: they are
+            // invisible spread-out polygons that would blow the ring out to nothing
+            // like the unit's size.
+            static const float kNoRot[3] = {0, 0, 0};   // rest pose: no COB rotation
+            auto walk = [&](auto&& self, const tak::tdo::Object& o, const Xform& parent,
+                            bool isRoot) -> void {
+                    Xform xf = parent.then(o.x, o.y, o.z, kNoRot);
+                    std::string on = o.name;
+                    std::transform(on.begin(), on.end(), on.begin(), ::tolower);
+                    auto ends = [&](const char* suf) {
+                        size_t n = std::strlen(suf);
+                        return on.size() >= n && on.compare(on.size() - n, n, suf) == 0;
+                    };
+                    bool plate = isRoot || ends("gp") || ends("null") || ends("off") ||
+                                 on.find("ground") != std::string::npos ||
+                                 on.find("gpoly") != std::string::npos ||
+                                 on.find("gpoint") != std::string::npos;
+                    if (!plate)
+                        for (const auto& p : o.primitives)
+                            for (uint16_t vi : p.indices) {
+                                size_t v = size_t(vi) * 3;
+                                if (v + 2 >= o.vertices.size()) continue;
+                                float w[3];
+                                xf.apply(o.vertices[v], o.vertices[v + 1], o.vertices[v + 2], w);
+                                for (int k = 0; k < 3; ++k) {
+                                    lo[k] = std::min(lo[k], w[k]);
+                                    hi[k] = std::max(hi[k], w[k]);
+                                }
+                                any = true;
+                            }
+                    for (const auto& c : o.children) self(self, c, xf, false);
+                };
+            walk(walk, vt->second.model.root, Xform{}, true);
+            if (any) {
+                rb.halfX = std::max(1.0f, (hi[0] - lo[0]) * 0.5f);
+                rb.halfZ = std::max(1.0f, (hi[2] - lo[2]) * 0.5f);
+                rb.midY = (lo[1] + hi[1]) * 0.5f;
+            }
+        }
+        return ringBoxes_.emplace(type->id, rb).first->second;
+    }
+
     void GameView::pickWorld(float sx, float sy, float& wx, float& wz) {
         float zm = mapView_.zoom();
         // Flat (no-lift) world position of the click.

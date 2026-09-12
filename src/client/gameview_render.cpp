@@ -767,50 +767,91 @@
         // -- both O(n^2) once a big army was selected, which tanked the frame.
         selSet_.clear();
         selSet_.insert(selection_.begin(), selection_.end());
-        // Selection brackets: iterate units once, batched into a single draw
-        // (viewport-culled, thin green quads).
+        // Selection rings: iterate units once, batched into a single draw
+        // (viewport-culled, thin quads).
         shadowBatch_.clear();
         if (!selSet_.empty()) {
-            const SDL_Color grn{70, 240, 90, 255};
             float zms = mapView_.zoom();
+            // Retail's selection indicator (0x4fd0d0) is not a bracket or a sprite --
+            // it is TWO counter-rotating dashed ellipses on the ground plane, at the
+            // model's mid height, coloured by health. Straight from the binary:
+            //   * angle = ((perUnitPhase + tick) << 14) / 30 BAM, so 16384/30 BAM a
+            //     tick = 120 ticks = 4s per revolution. One ring runs +A, the other
+            //     -A, hence counter-rotating.
+            //   * 6 dashes per ring at 0x2aaa BAM = 60.0 degrees apart, each dash an
+            //     0xccc BAM = 18.0 degree chord (retail computes 2 points per dash and
+            //     joins them, so they are chords, not arcs). 12 dashes, 24 points.
+            //   * radii = 1.2 (the double at 0x5f03f0) times the model bbox's x and z
+            //     half-extents; centre y = (min.y+max.y)/2.
+            // The ring does NOT turn with the unit: [unit+2] is a per-unit phase added
+            // to the tick, so neighbouring units are out of step with each other, but
+            // each ring stays axis-aligned in world space.
+            const float ct = std::cos(gTilt);
+            const float spin = float(SDL_GetTicks64() % 4000) / 4000.0f;   // 1 rev / 4s
             // Iterate the (few) selected ids, not the whole world -- frameUnitP(id)
             // is O(1). (A duplicate id would just redraw the same brackets in place.)
             for (int selId : selection_) {
                 const UnitR* up = frameUnitP(selId);
                 if (!up || !up->alive() || !up->type) continue;
                 const UnitR& u = *up;
-                // Box exactly what the click tests. The brackets used to be a
-                // footprint-sized box centred on the unit's ANCHOR -- which is at
-                // its feet -- so on anything with a tall sprite (a winged monarch,
-                // a dragon) half the box sat on empty ground below the creature
-                // while its head and wings were outside it entirely. The hit region
-                // is unitHitBox (the model's projected bounds), so use that: what
-                // you see selected is then what you can click.
+                // unitScreen puts the model's origin on screen (the +12 undoes its
+                // body bias, as the click test does) and already carries terrain lift
+                // and flyer altitude, so the ring tracks a unit up a cliff or in the
+                // air. Sizing comes from the MODEL bbox rather than unitHitBox, whose
+                // bounds are already projected and so cannot say how deep a unit is.
                 SDL_FPoint hp = unitScreen(u);
-                const SDL_FRect& hb = unitHitBox(u.type);
-                float hax = hp.x, hay = hp.y + 12.0f * zms;
-                float cx = hax + (hb.x + hb.w * 0.5f) * zms;
-                float cy = hay + (hb.y + hb.h * 0.5f) * zms;
-                if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
-                float rx = std::max(hb.w * zms * 0.5f, 9.0f);
-                float ry = std::max(hb.h * zms * 0.5f, 9.0f);
-                if (rx < 9.0f) {
-                    // Tiny on screen (a whole army zoomed out): one small marker
-                    // quad instead of eight bracket segments -- 8x less geometry.
+                const RingBox& rb = unitRingBox(u.type);
+                // The model origin on screen; +y in model space reads UP, so the ring
+                // floating at mid height sits midY*cos(tilt) above it.
+                float cx = hp.x, cy = hp.y + 12.0f * zms - rb.midY * ct * zms;
+                // Ground-plane offsets are NOT foreshortened: the terrain is a flat
+                // tile mosaic where world z maps to screen y 1:1 (pickWorld inverts
+                // exactly that), and retail's own projection is screenY = z - y/2 --
+                // also 1:1 in z. Only HEIGHT is squashed, by cos(tilt), which is what
+                // lifts the ring to mid height above.
+                float rx = 1.2f * rb.halfX * zms;
+                float ry = 1.2f * rb.halfZ * zms;
+                // Cull against the RING, not its centre: a big unit just off the edge
+                // still has half a ring inside the viewport.
+                if (cx + rx < 0 || cx - rx > mvw || cy + ry < 0 || cy - ry > winH) continue;
+                // Health ramp, exactly retail's two halves: full green -> yellow at
+                // half -> red at death, blue always 0.
+                int hp16 = std::max(0, int(u.hp)), mx = std::max(1, int(u.type->maxHp));
+                SDL_Color col{255, 255, 0, 255};
+                if (hp16 * 2 >= mx) {
+                    col.r = Uint8(std::min(255, 255 * (mx - hp16) / std::max(1, mx / 2)));
+                    col.g = 255;
+                } else {
+                    col.r = 255;
+                    col.g = Uint8(std::min(255, 255 * hp16 / std::max(1, mx / 2)));
+                }
+                if (rx < 6.0f || ry < 2.0f) {
+                    // Tiny on screen (a whole army zoomed out): the dashes would be
+                    // sub-pixel, so drop to one marker quad -- 12x less geometry.
                     float s = std::max(2.0f, rx * 0.6f);
-                    pushQuad(shadowBatch_, cx - s, cy - s * 0.65f, 2 * s, 2 * s * 0.65f, grn);
+                    pushQuad(shadowBatch_, cx - s, cy - s * 0.65f, 2 * s, 2 * s * 0.65f, col);
                     continue;
                 }
-                float Lx = std::max(3.0f, rx * 0.4f), Ly = std::max(3.0f, ry * 0.4f);
+                // Per-unit phase so neighbouring units are out of step, as retail's
+                // [unit+2] does.
+                float phase = float(selId * 37 % 360) / 360.0f;
                 float th = std::max(1.0f, 1.2f * zms);
-                for (int sx = -1; sx <= 1; sx += 2)
-                    for (int sy = -1; sy <= 1; sy += 2) {
-                        float px = cx + sx * rx, py = cy + sy * ry;
-                        pushQuad(shadowBatch_, std::min(px, px - sx * Lx), py - th * 0.5f,
-                                 Lx, th, grn);
-                        pushQuad(shadowBatch_, px - th * 0.5f,
-                                 std::min(py, py - sy * Ly), th, Ly, grn);
+                const float kTwoPi = 6.28318530718f;
+                const float kDash = kTwoPi * 18.0f / 360.0f;
+                for (int ring = 0; ring < 2; ++ring) {
+                    // One ring runs with the clock, the other against it.
+                    float a0 = (ring == 0 ? (spin + phase) : -(spin + phase)) * kTwoPi;
+                    float dash = (ring == 0 ? -kDash : kDash);
+                    float ox = (ring == 1 ? 1.0f : 0.0f);   // retail nudges ring 2 by 1px
+                    for (int k = 0; k < 6; ++k) {
+                        float t0 = a0 + float(k) * (kTwoPi / 6.0f);
+                        float t1 = t0 + dash;
+                        pushSeg(shadowBatch_,
+                                cx + ox + rx * std::cos(t0), cy - ry * std::sin(t0),
+                                cx + ox + rx * std::cos(t1), cy - ry * std::sin(t1),
+                                th, col);
                     }
+                }
                 // (Order markers are drawn by drawOrderTrails -- retail puts the
                 // order kind's own animated CURSOR at each waypoint, not a ring.)
             }

@@ -1202,6 +1202,11 @@ private:
     // click anywhere on the drawn unit (a tall building's roof, a body above its
     // feet) hits it -- computed lazily via unitHitBox(), cached here.
     std::map<std::string, SDL_FRect> hitBoxes_;
+    // Per-type MODEL-space extents (world units) for the retail selection ring:
+    // its radii come from the model's x/z half-extents and it floats at the model's
+    // mid height, none of which survives unitHitBox's projection into screen space.
+    struct RingBox { float halfX = 12.0f, halfZ = 12.0f, midY = 12.0f; };
+    std::map<std::string, RingBox> ringBoxes_;
     SDL_Texture* impAtlas_ = nullptr;
     int impAtlasDim_ = 4096, impCurX_ = 0, impCurY_ = 0, impShelfH_ = 0;
     // After a failed GPU texture allocation (VRAM pressure), pause every bake /
@@ -1313,6 +1318,20 @@ private:
                    br{{x + w, y + h}, c, {1, 1}}, bl{{x, y + h}, c, {0, 1}};
         b.push_back(tl); b.push_back(tr); b.push_back(br);
         b.push_back(tl); b.push_back(br); b.push_back(bl);
+    }
+    // Oriented segment: a quad of thickness `th` from (x0,y0) to (x1,y1). The
+    // selection ring's dashes are chords at arbitrary angles, so pushQuad's
+    // axis-aligned rect can't draw them.
+    static void pushSeg(std::vector<SDL_Vertex>& b, float x0, float y0, float x1,
+                        float y1, float th, SDL_Color c) {
+        float dx = x1 - x0, dy = y1 - y0;
+        float len = std::sqrt(dx * dx + dy * dy);
+        if (len < 1e-3f) return;
+        float nx = -dy / len * th * 0.5f, ny = dx / len * th * 0.5f;
+        SDL_Vertex a{{x0 + nx, y0 + ny}, c, {0, 0}}, d{{x1 + nx, y1 + ny}, c, {1, 0}},
+                   e{{x1 - nx, y1 - ny}, c, {1, 1}}, f{{x0 - nx, y0 - ny}, c, {0, 1}};
+        b.push_back(a); b.push_back(d); b.push_back(e);
+        b.push_back(a); b.push_back(e); b.push_back(f);
     }
     // Textured quad with explicit UV corners (for impostor billboards).
     static void pushQuadUV(std::vector<SDL_Vertex>& b, float x, float y, float w,
@@ -1860,6 +1879,9 @@ private:
     // Per-type on-screen sprite box (offset from the draw anchor, px @ zoom 1),
     // computed once by projecting the model over all facings and cached in hitBoxes_.
     const SDL_FRect& unitHitBox(const tak::sim::UnitType* type);
+
+    // Per-type model-space extents driving the selection ring, cached in ringBoxes_.
+    const RingBox& unitRingBox(const tak::sim::UnitType* type);
 
     // Height-aware picking: invert the render lift so a click on elevated terrain
     // (a wall/plateau top, drawn lifted UP on screen) resolves to the cell whose

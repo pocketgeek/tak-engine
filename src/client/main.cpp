@@ -1439,10 +1439,28 @@ int main(int argc, char** argv) {
 #endif
                     if (const char* kn = tak::devEnv("TAK_SHOT_PRESS"); kn && !pressSent) {
                         pressSent = true;
-                        if (SDL_Keycode kc = SDL_GetKeyFromName(kn); kc != SDLK_UNKNOWN) {
+                        // Accepts "ctrl+a" / "shift+f1" / "ctrl+shift+d" as well as a
+                        // bare key name: every SELECTION hotkey is Ctrl-modified, so
+                        // without this a harness run cannot select anything to shoot.
+                        std::string spec(kn);
+                        uint16_t mod = 0;
+                        for (;;) {
+                            size_t plus = spec.find('+');
+                            if (plus == std::string::npos) break;
+                            std::string p = spec.substr(0, plus);
+                            std::transform(p.begin(), p.end(), p.begin(),
+                                           [](unsigned char ch) { return char(std::tolower(ch)); });
+                            if (p == "ctrl") mod |= KMOD_LCTRL;
+                            else if (p == "shift") mod |= KMOD_LSHIFT;
+                            else if (p == "alt") mod |= KMOD_LALT;
+                            else break;
+                            spec.erase(0, plus + 1);
+                        }
+                        if (SDL_Keycode kc = SDL_GetKeyFromName(spec.c_str()); kc != SDLK_UNKNOWN) {
                             SDL_Event ev{};
                             ev.type = SDL_KEYDOWN;
                             ev.key.keysym.sym = kc;
+                            ev.key.keysym.mod = mod;
                             SDL_PushEvent(&ev);
                         }
                         shotArmed = false;   // let the key land, then arm on the next pass
