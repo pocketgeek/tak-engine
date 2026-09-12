@@ -319,7 +319,46 @@ Working DOWN from the navigator instead of up from a suggestive routine:
     is why the reachability test that produced the retraction was the wrong
     test.
 
-### The part that is still unresolved -- do not build on it yet
+### RESOLVED: retail HAS a pathfinder, reached through a singleton pointer
+
+The link is not a call at all, which is why a direct-call graph could never
+find it. It is a GLOBAL POINTER.
+
+  * `0x4e6060` does `new(0x22b)` and runs `0x415f80` on the result -- a
+    constructor, zeroing `+0x0..+0x28` -- then stores the object into the
+    global slot `[0x62d55c + 0x19e70]`. That is a SINGLETON of the
+    `0x414450 / 0x415040 / 0x415b10 / 0x416430` class, the same class that
+    owns the contour tracer at `0x4146e0`.
+  * The navigator's `setDestination` (vtable slot 1, `0x4e54e0`) loads that
+    same singleton at `0x4e5502` and calls `0x415f30` on it -- cancel/re-register
+    the pending request for this navigator. `0x416430` calls `0x415f30` too,
+    which is the completion side.
+  * The singleton installs results back into a navigator through `0x4e4ea0`,
+    the point-list setter that accepts up to 64 waypoints.
+  * When no route is available, `setDestination` falls back at `0x4e5632` to
+    `count = 2` -- the unit's own cell and the goal -- and that fallback is
+    SKIPPED when bit 0 of `+0x114` says a real route is already in hand.
+
+So the shape is: an asynchronous path request against a singleton pathfinder,
+a multi-waypoint route installed when it completes, and a straight two-point
+segment as the interim fallback.
+
+**This overturns "retail has no path search of any kind."** That claim was
+made earlier today, written into this file, and used to justify setting
+`pathBudget_ = 0` in our sim -- i.e. no route search at runtime, units steer
+straight at the goal. It is wrong. The earlier `sim.h` note, which said retail
+bakes per-class grids and "its path search reads that", was closer to the truth
+than the claim that replaced it.
+
+The two-point segment reading was not wrong, but it was the FALLBACK, not the
+mechanism -- observed at the one call site that installs it and generalised.
+
+Not yet established: what the search actually optimises, how requests are
+scheduled and throttled, and how the tracer participates. Those need their own
+pass. What IS established is that runtime routing exists, so our
+`pathBudget_ = 0` is a deviation from retail rather than fidelity to it.
+
+### Earlier unresolved note, kept for the record
 
 By direct-call graph, that whole route cluster is reachable only from
 `0x4261f0` -- which references the strings `"%s\screenshots"` and `"BIGSHOT"`
