@@ -1,6 +1,8 @@
 #include <cstdio>
 #include "video/bink.h"
 
+#include "client/dev.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -247,16 +249,30 @@ bool BinkVideo::nextFrame(std::vector<uint8_t>& rgba) {
                 d_->sws, fw, fh, AVPixelFormat(d_->frame->format),
                 fw, fh, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
             if (!d_->sws) { av_frame_unref(d_->frame); return false; }
-            // COLOUR RANGE. Measured across whole shipped clips, the decoded luma
-            // lives inside 16..235: below-16 is 0.003%-0.06% of pixels and
-            // above-235 is 0.000%-0.089%, which is the signature of LIMITED-range
-            // content with a little ringing, not full-range. FFmpeg's
-            // AVCOL_RANGE_MPEG tag is therefore right, and swscale's default
-            // (expand 16..235 to 0..255) is the standards-correct conversion.
+            // COLOUR RANGE. Bink's YUV is FULL-range: its values already span the
+            // display range, so no expansion is wanted. FFmpeg tags the stream
+            // AVCOL_RANGE_MPEG and swscale's default therefore stretches 16..235
+            // out to 0..255 -- which is precisely "the dark stuff is too dark and
+            // the light stuff is too light", the symptom that identified this.
+            // Expansion adds contrast at both ends: shadows crush toward black and
+            // highlights blow toward white.
             //
-            // An earlier version forced srcRange=full here on the strength of one
-            // frame whose luma dipped to 12. That is legal footroom, not evidence
-            // of full range, and the whole-clip histogram says otherwise.
+            // I got here the long way and it is worth writing down why, because the
+            // obvious measurement misleads. The decoded luma of every shipped clip
+            // sits inside 16..235 (below-16 is 0.003%-0.06% of pixels), which LOOKS
+            // like limited-range material -- but a full-range encode of dark-ish
+            // content that simply never reaches the extremes looks identical in a
+            // histogram. Absence of 0 and 255 does not prove the range, and I
+            // reverted a correct fix once on exactly that reasoning.
+            //
+            // TAK_BINK_LIMITED=1 restores swscale's default for an A/B in a debug
+            // build; it is deliberately not a user-facing option.
+            {
+                const int* coef = sws_getCoefficients(SWS_CS_ITU601);
+                const int srcRange = tak::devEnv("TAK_BINK_LIMITED") ? 0 : 1;
+                sws_setColorspaceDetails(d_->sws, coef, srcRange,
+                                         coef, /*dstRange=*/1, 0, 1 << 16, 1 << 16);
+            }
             // sws SIMD over-writes past a tightly-packed row when the width isn't
             // aligned (odd door widths like 155/221), so scale into a properly
             // aligned + padded image, then copy the rows out tightly (pitch fw*4).
