@@ -779,16 +779,21 @@
                 const UnitR* up = frameUnitP(selId);
                 if (!up || !up->alive() || !up->type) continue;
                 const UnitR& u = *up;
-                float cx = (u.x - mapView_.offX()) * zms - uLiftX(u) * zms;
-                float cy = (u.z - mapView_.offY()) * zms - uLiftY(u) * zms
-                           - altLift(u) * zms;   // box the flying body, not the ground
+                // Box exactly what the click tests. The brackets used to be a
+                // footprint-sized box centred on the unit's ANCHOR -- which is at
+                // its feet -- so on anything with a tall sprite (a winged monarch,
+                // a dragon) half the box sat on empty ground below the creature
+                // while its head and wings were outside it entirely. The hit region
+                // is unitHitBox (the model's projected bounds), so use that: what
+                // you see selected is then what you can click.
+                SDL_FPoint hp = unitScreen(u);
+                const SDL_FRect& hb = unitHitBox(u.type);
+                float hax = hp.x, hay = hp.y + 12.0f * zms;
+                float cx = hax + (hb.x + hb.w * 0.5f) * zms;
+                float cy = hay + (hb.y + hb.h * 0.5f) * zms;
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
-                // Size the brackets to the unit's footprint (world half-extent =
-                // foot cells * 8) so a building is boxed at its real size, not a single
-                // cell; a small floor keeps mobile units at the old marker size.
-                float halfX = std::max(std::max(u.type->footX, 1) * 8.0f, 11.0f);
-                float halfZ = std::max(std::max(u.type->footZ, 1) * 8.0f, 8.0f);
-                float rx = halfX * zms, ry = halfZ * zms;
+                float rx = std::max(hb.w * zms * 0.5f, 9.0f);
+                float ry = std::max(hb.h * zms * 0.5f, 9.0f);
                 if (rx < 9.0f) {
                     // Tiny on screen (a whole army zoomed out): one small marker
                     // quad instead of eight bracket segments -- 8x less geometry.
@@ -810,6 +815,27 @@
                 // order kind's own animated CURSOR at each waypoint, not a ring.)
             }
             drawOrderTrails(mvw, winH);
+
+#ifndef NDEBUG
+            // TAK_HITBOX=1: outline the box unitUnderCursor actually tests, so a
+            // "I can't click its head" report can be measured instead of guessed at.
+            if (tak::devEnv("TAK_HITBOX")) {
+                for (int selId : selection_) {
+                    const UnitR* hp = frameUnitP(selId);
+                    if (!hp || !hp->alive() || !hp->type) continue;
+                    SDL_FPoint p = unitScreen(*hp);
+                    const SDL_FRect& hb = unitHitBox(hp->type);
+                    float hax = p.x, hay = p.y + 12.0f * zms;
+                    SDL_FRect r{hax + hb.x * zms, hay + hb.y * zms,
+                                hb.w * zms, hb.h * zms};
+                    SDL_SetRenderDrawColor(ren_, 255, 40, 220, 255);
+                    SDL_RenderDrawRectF(ren_, &r);
+                    SDL_FRect a{p.x - 2, p.y - 2, 4, 4};   // the anchor itself
+                    SDL_SetRenderDrawColor(ren_, 255, 230, 0, 255);
+                    SDL_RenderFillRectF(ren_, &a);
+                }
+            }
+#endif
 
             // Attack-target indicator: RED brackets on any enemy a selected unit is
             // ordered to attack, so you can see what you've told them to hit.
