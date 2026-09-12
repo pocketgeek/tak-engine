@@ -118,8 +118,22 @@ struct PathSearch {
 
 private:
     int w_ = 0, h_ = 0;
+    // Per-cell scratch, GENERATION-STAMPED rather than cleared. reset() used to
+    // assign() both of these plus a third in buildRoute -- on a 192x192 map that
+    // is ~110KB zeroed for every request, and with a request queue running every
+    // tick it dominated the cost (26.2ms/tick against 19.5 baseline). Bumping a
+    // counter is O(1); a cell whose stamp is stale reads as empty.
+    uint32_t gen_ = 0;
+    std::vector<uint32_t> stamp_;
     std::vector<uint8_t> flag_;
     std::vector<uint8_t> from_;
+    std::vector<uint32_t> walkStamp_;   // buildRoute's cycle guard, same trick
+    uint32_t walkGen_ = 0;
+
+    bool seen(size_t i) const { return stamp_[i] == gen_; }
+    void touch(size_t i) {
+        if (stamp_[i] != gen_) { stamp_[i] = gen_; flag_[i] = 0; from_[i] = 0; }
+    }
 
     bool inside(PathCell c) const {
         return c.x >= 0 && c.z >= 0 && c.x < w_ && c.z < h_;

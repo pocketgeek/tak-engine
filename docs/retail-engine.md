@@ -686,9 +686,67 @@ icd answers 5 and we answered 0. The search should never ask for a direction to
 where it already stands, so it changes no behaviour -- but it took one run to
 find something no amount of re-reading the disassembly had.
 
-Next target is `0x4146e0` itself: drive it and our `PathSearch` over the same
-synthetic grid and diff the cell-by-cell walk. That is the direct answer to the
-open question above -- whether our cursors wander further than retail's.
+The harness lives in `tools/re/` (`emu.py` loads the image and calls into it;
+`emusearch.py` drives the path search over a synthetic grid).
+
+### What it found in the search, immediately
+
+Driving `0x4146e0` over a 24x12 grid with a wall across the path and one gap,
+hooking the cell query to answer from that grid, and logging every probe:
+
+    c(2,6)...c(7,6)   cardinal march east, blocked by the wall at x=8
+    A(7,5) B(8,7)     the cursors split; B steps diagonally into the gap row
+    A(7,4) B(9,6)     B is through and back on the goal line
+    c(10,6)...c(20,6) march resumes to the goal
+
+27 cell visits for the whole thing. The probe log then gave the exact rule:
+
+    A: probes 6 -> 7 -> 0  ACCEPT      (starts at the BLOCKED dir, rotates up)
+    B: probes 6 -> 5      ACCEPT       (starts at the BLOCKED dir, rotates down)
+    A next, dir=0: probes 6 -> 7 -> 0  (starts at dir-2, rotates up)
+    B next, dir=5: probes 7            (starts at dir+2, rotates down)
+
+So each cursor's FIRST probe begins on the direction that was just refused, and
+only afterwards does the +-2 offset apply. Our port seeded both cursors with the
+blocked direction, so their first probes opened at blocked+-2 and skipped
+straight past it -- turning a two-step detour into a long wander. Seeding
+`dirA = blocked-2` and `dirB = blocked+2` makes the offsets land on the blocked
+direction and fixes it.
+
+Measured before and after on Inner Circle, unit travelling toward a goal N cells
+away, as a percentage of the distance closed:
+
+    goal      +20    +40    +80   +160
+    before    70%    97%    19%     9%
+    after     95%    97%    78%    31%
+
+and searches that used to abandon at the visit limit (20, 60, 80, 120, 160 cells)
+now all arrive. Hours of re-reading the disassembly had not found this; the
+emulator found it in one run, because it could show what the original DOES
+rather than what it looks like it should do.
+
+### The cost of it working
+
+8-AI benchmark, 3600 ticks: 39.6ms/tick at ~1940 units, against a ~19.5ms
+baseline. That is over the 33ms a 30Hz tick has, at the top benchmark intensity.
+
+Two things are mixed together in that number and they should not be conflated:
+
+  * The searches themselves are budgeted -- 12000 work units a tick, split
+    across every pending request -- so they cannot account for 20ms.
+  * Units that used to WEDGE now march. A stuck unit is nearly free; a moving
+    one costs collision tests, occupancy churn and combat contact. Much of the
+    increase is the sim doing work it previously skipped because nothing could
+    get anywhere.
+
+Two micro-fixes are in and neither moved it much, which is itself evidence the
+cost is downstream of the pathfinder rather than in it: the per-cell scratch is
+generation-stamped instead of cleared (it was zeroing ~110KB per request), and
+the retry sweep does its cheap tests before the O(orders) `currentLeg` scan.
+
+Not yet tried, in rough order of promise: lowering the work budget (retail
+exposes exactly this as a quality setting scaling the 12000), capping installed
+route length below 64, and profiling the mover against a 64-deep order queue.
 
 ## Headless in-game screenshots (dev harness)
 

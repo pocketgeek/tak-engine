@@ -3758,18 +3758,23 @@ void World::tick(float dt) {
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.type->canFly || u.type->isStructure() || !u.type->canMove) continue;
             if (u.orders.empty()) continue;
+            // CHEAP TESTS FIRST. currentLeg() scans the order queue, and a unit
+            // carrying a fresh 64-waypoint route makes that scan 64 long -- doing
+            // it for every unit on every tick cost more than the searches it was
+            // scheduling (41.5ms/tick against 19.5 baseline, almost all of it
+            // here). The stagger already discards 29 ticks in 30.
+            if ((tickCounter_ + uint32_t(u.id)) % kPathRetryTicks != 0) continue;
+            if (paths_.pending(u.id)) continue;       // a search is already running
+            if (auto it = pathRetryAt_.find(u.id);
+                it != pathRetryAt_.end() && tickCounter_ < it->second) continue;
             const Order& leg = u.orders[currentLeg(u.orders)];
             if (leg.targetId != 0) continue;          // chasing, not travelling
-            if (paths_.pending(u.id)) continue;       // a search is already running
             // Deliberately NOT skipped when the unit is already moving: the
             // periodic re-ask IS the mechanism. A search is capped at (w+h)*20
             // cell visits, so one route rarely spans a long trip -- the unit
             // follows what it got, asks again from further along, and chains its
             // way there. Skipping progressing units to save budget dropped a
             // journey from 97% of the way to 53%.
-            if (auto it = pathRetryAt_.find(u.id);
-                it != pathRetryAt_.end() && tickCounter_ < it->second) continue;
-            if ((tickCounter_ + uint32_t(u.id)) % kPathRetryTicks != 0) continue;
             requestPath(u, leg.x, leg.z);
         }
     }

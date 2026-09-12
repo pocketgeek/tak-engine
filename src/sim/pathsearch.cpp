@@ -33,14 +33,22 @@ static int cardinalToward(int dx, int dz) {
 }
 
 void PathSearch::reset(int mapW, int mapH) {
+    const bool resized = (w_ != mapW || h_ != mapH);
     w_ = mapW;
     h_ = mapH;
     // icd 0x414797: (width + height) * 20. Retail abandons a search that wanders
     // this far and leaves the unit on its straight segment, so long or tangled
     // routes legitimately fail rather than costing unbounded work.
     visitLimit = (mapW + mapH) * 20;
-    flag_.assign(size_t(w_) * size_t(h_), 0);
-    from_.assign(size_t(w_) * size_t(h_), 0);
+    const size_t n = size_t(w_) * size_t(h_);
+    if (resized || stamp_.size() != n) {
+        stamp_.assign(n, 0);
+        walkStamp_.assign(n, 0);
+        flag_.assign(n, 0);
+        from_.assign(n, 0);
+        gen_ = walkGen_ = 0;
+    }
+    ++gen_;   // every cell is now stale, i.e. empty -- no clearing needed
     phase = Phase::Init;
     best = 0;
     visited = 0;
@@ -55,6 +63,7 @@ void PathSearch::reset(int mapW, int mapH) {
 void PathSearch::mark(PathCell c, int d, int score) {
     if (!inside(c)) return;
     const size_t i = size_t(c.z) * size_t(w_) + size_t(c.x);
+    touch(i);
     // FIRST VISIT WINS. Overwriting the incoming direction on a revisit turns
     // the parent map into a graph with cycles, and the backtrack then walks a
     // little loop for ever instead of reaching the start -- observed as a
@@ -67,7 +76,8 @@ void PathSearch::mark(PathCell c, int d, int score) {
 
 bool PathSearch::atGoal(PathCell c) const {
     if (!inside(c)) return false;
-    return (flag_[size_t(c.z) * size_t(w_) + size_t(c.x)] & kGoal) != 0;
+    const size_t i = size_t(c.z) * size_t(w_) + size_t(c.x);
+    return seen(i) && (flag_[i] & kGoal) != 0;
 }
 
 // Walk the breadcrumbs back from the goal and hand out the corners in travel
@@ -78,15 +88,15 @@ void PathSearch::buildRoute() {
     out.clear();
     if (!inside(goal)) return;
     std::vector<PathCell> rev;
-    std::vector<uint8_t> walked(flag_.size(), 0);
+    ++walkGen_;
     PathCell c = goal;
     int lastDir = -1;
     for (int guard = 0; guard < 8192; ++guard) {
         if (c.x == start.x && c.z == start.z) break;
         const size_t i = size_t(c.z) * size_t(w_) + size_t(c.x);
-        if (!(flag_[i] & kSeen)) break;
-        if (walked[i]) break;          // belt and braces against a cycle
-        walked[i] = 1;
+        if (!seen(i) || !(flag_[i] & kSeen)) break;
+        if (walkStamp_[i] == walkGen_) break;   // belt and braces against a cycle
+        walkStamp_[i] = walkGen_;
         const int d = from_[i] & 7;
         if (d != lastDir) { rev.push_back(c); lastDir = d; }
         PathCell p{c.x - kDirX[d], c.z - kDirZ[d]};
@@ -162,7 +172,11 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
             org = start;
             // The goal carries the terminal flag both marches test for
             // (icd 0x414b9f / 0x414d8f test bit 0x4).
-            flag_[size_t(goal.z) * size_t(w_) + size_t(goal.x)] |= kGoal;
+            {
+                const size_t gi = size_t(goal.z) * size_t(w_) + size_t(goal.x);
+                touch(gi);
+                flag_[gi] |= kGoal;
+            }
             if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             if (score(start.x, start.z) < kCellThreshold) {
                 phase = Phase::Failed;
@@ -212,7 +226,15 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
             ++visited;
             if (s < kCellThreshold) {          // blocked -> start both traces
                 curA = org; curB = org;
-                dirA = d; dirB = d;
+                // Seed so each cursor's FIRST probe lands on the direction that
+                // was just refused, then its own rule takes over. Emulating the
+                // original over this exact case shows both cursors probing the
+                // blocked heading first (6, then 7,0 one way and 5 the other);
+                // seeding both with the blocked direction instead makes them
+                // open at blocked+-2 and skip straight past it, which is how a
+                // two-step detour turned into a long wander.
+                dirA = (d - 2) & 7;            // probes from (dirA+2) == d
+                dirB = (d + 2) & 7;            // probes from (dirB-2) == d
                 started = false;
                 phase = Phase::Trace;
                 break;
@@ -272,7 +294,11 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
 
 void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
                           int mapH, float goalX, float goalZ, bool priority) {
-    Entry e;
+    // Reuse the entry already sitting under this unit id if there is one: its
+    // search still owns per-cell scratch the right size for this map, and
+    // reset() will only bump a generation counter rather than reallocate.
+    Entry& e = q_[unitId];
+    e.cap = 0;
     e.search.reset(mapW, mapH);
     e.search.unitId = unitId;
     e.search.start = start;
@@ -282,7 +308,6 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
     e.goalX = goalX;
     e.goalZ = goalZ;
     e.priority = priority;
-    q_[unitId] = std::move(e);
 }
 
 void PathService::cancel(int unitId) {
