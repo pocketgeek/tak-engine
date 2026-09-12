@@ -1385,7 +1385,11 @@ void World::dropLeg(Unit& u) {
 
 void World::order(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
-    if (!u || !u->alive() || !u->type || !u->type->canMove) return;
+    // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
+    // canmove=1 with no velocity (the CLAUDE.md gotcha). Gating on canMove let a
+    // BUILDING accept a move order -- it could not go anywhere, but the mover still
+    // turned its heading toward the goal, so you could spin a keep by right-clicking.
+    if (!u || !u->alive() || !u->type || u->type->isStructure()) return;
     if (!queue) u->orders.clear();
     auto markGoal = [&] {
         if (u->orders.empty()) return;
@@ -1617,7 +1621,11 @@ void World::tickTransport(Unit& u, float dt) {
 
 void World::attackMove(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
-    if (!u || !u->alive() || !u->type || !u->type->canMove) return;
+    // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
+    // canmove=1 with no velocity (the CLAUDE.md gotcha). Gating on canMove let a
+    // BUILDING accept a move order -- it could not go anywhere, but the mover still
+    // turned its heading toward the goal, so you could spin a keep by right-clicking.
+    if (!u || !u->alive() || !u->type || u->type->isStructure()) return;
     size_t before = queue ? u->orders.size() : 0;
     order(unitId, x, z, queue);
     for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].attackMove = true;
@@ -1625,7 +1633,11 @@ void World::attackMove(int unitId, float x, float z, bool queue) {
 
 void World::patrol(int unitId, float x, float z) {
     Unit* u = unit(unitId);
-    if (!u || !u->alive() || !u->type || !u->type->canMove) return;
+    // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
+    // canmove=1 with no velocity (the CLAUDE.md gotcha). Gating on canMove let a
+    // BUILDING accept a move order -- it could not go anywhere, but the mover still
+    // turned its heading toward the goal, so you could spin a keep by right-clicking.
+    if (!u || !u->alive() || !u->type || u->type->isStructure()) return;
     u->orders.clear();
     Order a;
     a.x = u->x; a.z = u->z; a.patrol = true; a.attackMove = true;
@@ -1637,7 +1649,11 @@ void World::patrol(int unitId, float x, float z) {
 
 void World::patrolTo(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
-    if (!u || !u->alive() || !u->type || !u->type->canMove) return;
+    // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
+    // canmove=1 with no velocity (the CLAUDE.md gotcha). Gating on canMove let a
+    // BUILDING accept a move order -- it could not go anywhere, but the mover still
+    // turned its heading toward the goal, so you could spin a keep by right-clicking.
+    if (!u || !u->alive() || !u->type || u->type->isStructure()) return;
     size_t before = queue ? u->orders.size() : 0;
     order(unitId, x, z, queue);
     // Mark every waypoint of this move as a looping, engage-en-route patrol leg; a
@@ -4338,7 +4354,17 @@ void World::tick(float dt) {
             // Flow-field orders complete a little short of the goal so a crowd
             // sharing one destination settles into a blob (spread by separation)
             // instead of every unit fighting for the exact same point.
-            float arrive = o.flow ? 16.0f : 3.0f;
+            // Retail move goals are AREAS -- NavGoalCircle / NavGoalRect / NavGoalRing
+            // in the RTTI, not points (docs/retail-engine.md). A FINAL goal therefore
+            // completes on a circle wide enough to hold a body: 16px, or the unit's own
+            // footprint if that is bigger, so a 4x4 trebuchet is not asked to stand on
+            // the same pixel a swordsman would. Intermediate A* waypoints keep the tight
+            // 3px so a route is actually followed.
+            // (This was `o.flow ? 16 : 3`, which quietly became 3 for EVERY unit once the
+            // retail-nav experiment stopped setting o.flow -- a whole group then fought
+            // over one pixel, which is exactly what it looked like.)
+            float foot = float(std::max(u.type->footX, u.type->footZ)) * 8.0f;
+            float arrive = o.goal ? std::max(16.0f, foot) : 3.0f;
             if (dist < arrive) {
                 if (o.buildType || o.reclaimFeat || o.repairTarget)
                     continue;   // the job is claimed above; its order blocks the queue
