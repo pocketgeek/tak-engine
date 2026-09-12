@@ -122,6 +122,68 @@ speed, thresholds 25/75 ⇒ percent of max). `TurnDirection(deg)` steers the
 rudder/sail trim; `WindChange` orients sails/flags (FBI `wind=1`). Resetting
 such a unit's VM kills the Create ambients permanently — nothing restarts them.
 
+## Movement: retail has NO global pathfinder (icd, 2026-09-12)
+
+Asked because our own movement had become the dominant sim cost. It turns out
+we diverged from retail badly here, and the divergence is what costs us.
+
+**No pathfinding class exists.** Of the 356 RTTI class names in the binary, the
+only movement-related ones are `Navigator`, `PathNavigator`,
+`RemotePathNavigator`, `VTOLNavigator`, `LocalVTOLNavigator`,
+`RemoteVTOLNavigator`, and the goal shapes `NavGoal`, `NavGoalCircle`,
+`NavGoalRect`, `NavGoalRing`, `NavGoalVTOL`, `NavGoalVTOLm`. There is no
+`PathFinder`, `Route`, `Waypoint`, `Region`, `Sector` or graph class of any
+kind. (`Local*`/`Remote*` is the lockstep prediction split.)
+
+**`PathNavigator` contains no search.** Its vftable is at `0x5f2a24`; every
+method is small (11-365 instructions) and nearly loop-free. The largest, slot 8
+`0x4e5700`, is a bit-stream serialiser (word/bit cursor, `1 << bit`, wrap at 32,
+grow buffer) -- navigator state being saved, not a solver.
+
+**The navigator object**, as read off slots 1 and 2:
+
+| offset  | meaning                                                        |
+|---------|----------------------------------------------------------------|
+| `+0x04` | the `NavGoal` (area goal: circle / rect / ring)                |
+| `+0x08` | unit                                                            |
+| `+0x08 + 4*i` | a SHORT array of 16-bit (x,z) points, i indexed by +0x10c |
+| `+0x10c`| how many points are live (tested against 2 and 3)              |
+| `+0x110`| tick stamp; cleared when older than `globalTick - 6`           |
+| `+0x114`| flag bits (bit0 = target valid, bit3, bit4)                    |
+
+**Per-tick update** is slot 2, `0x4e5150`: ask the goal via its vtable whether
+it is satisfied (`[goal+0x10]`, `[goal+0x2c]`), then
+
+```
+movsx edx, word [esi+0x12]   ; target z        movsx eax, word [unit+0x72] ; unit z
+movsx ecx, word [unit+0x6a]  ; unit x          sub / imul / imul / add     ; dx^2 + dz^2
+cmp   edx, 0x19              ; <= 25  ->  arrived (radius 5)
+```
+
+**Steering** is slot 1, `0x4e54e0`: fetch the goal point through the NavGoal
+vtable (`[goal+0x20]`), compute float deltas to it, and set the current target
+point, stamping `+0x110` with the tick. The stamp's 6-tick expiry is the whole
+re-plan cadence.
+
+**So retail steers each unit toward an AREA GOAL, keeping at most two or three
+intermediate points, refreshed about every 6 ticks.** No global search, no
+precomputed connectivity, nothing shared between units. That is why it ran
+hundreds of units on a 1999 Pentium, and it matches the TA-family feel: fluid
+local movement that occasionally wedges.
+
+**What we do instead** (and what it costs): full-map Dijkstra FLOW FIELDS per
+(domain, footprint, goal block), plus per-unit A*. Flow fields are OUR
+invention -- added 2026-09-03 to fix a crowd/corner jam -- not retail. Measured
+server-side on a 120s 8-player game they were 68% of all stalled time, and even
+after four rounds of optimisation (e3228e1 and before) they remain ~59%, with
+A* another ~23%. The crowd jam they were built to fix is very likely a symptom
+of OUR movement model (solid units + separation), which retail did not have in
+that form.
+
+NOT established: whether some free function (not a class) does a coarse global
+search somewhere. None was found, and the absence of any search-shaped routine
+in the navigator region is strong negative evidence, but it is not proof.
+
 ## Headless in-game screenshots (dev harness)
 
 `--shot` alone captures the LOBBY and exits: it forces the dummy video driver and
