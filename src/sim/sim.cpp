@@ -2185,34 +2185,89 @@ void World::buildNavClasses(const TypeRegistry& reg) {
     for (auto& g : navClasses_) { g.setObstacles(&obst_); g.setRoads(&roads_); }
 }
 
+float World::bodyPenetration(const Unit& u, float nx, float nz) const {
+    if (occW_ <= 0 || !u.type) return 0.0f;
+    const float hs = float(std::max(u.type->footX, u.type->footZ)) * 8.0f;
+    // occ_ stamps a body's whole footprint, so any unit we could overlap has a
+    // stamped cell within hs of us: |nx-o.x| < hs+ohs and its cells reach o.x
+    // +/- ohs, leaving the nearest one inside hs. One cell of slack for the
+    // truncation in int(nx)/16.
+    const int span = int(hs) / 16 + 2;
+    const int cx = int(nx) / 16, cz = int(nz) / 16;
+    float worst = 0.0f;
+    int32_t last = 0;
+    for (int j = -span; j <= span; ++j) {
+        int z = cz + j;
+        if (z < 0 || z >= occH_) continue;
+        const int32_t* row = &occ_[size_t(z) * size_t(occW_)];
+        for (int i = -span; i <= span; ++i) {
+            int x = cx + i;
+            if (x < 0 || x >= occW_) continue;
+            int32_t id = row[x];
+            // A footprint stamps a run of identical ids; skipping the repeat is
+            // most of the scan for anything bigger than a single cell.
+            if (id == 0 || id == u.id || id == last) continue;
+            last = id;
+            const Unit* o = unit(id);
+            if (!o || !o->type) continue;
+            // Retail grades passability rather than making it binary: a PARKED
+            // body is impassable, a MOVING one is merely expensive (its area
+            // score still clears the threshold every call site tests at). Two
+            // units walking the same lane must be able to interleave, or any
+            // crowd larger than the lane deadlocks -- measured 16 of 24 arriving
+            // when moving bodies blocked too. Moving-body spacing is the
+            // separation pass's job; it only has to de-overlap, not gate steps.
+            if (o->speed != 0.0f) continue;
+            float sep = hs + float(std::max(o->type->footX, o->type->footZ)) * 8.0f;
+            // Bodies we are ALREADY inside are not ours to arbitrate. Units spawn
+            // in tight ranks, a finished building lands under its builder, a push
+            // overlaps a pair -- and a rule phrased on the deepest overlap freezes
+            // the lot: nobody can reduce every overlap at once, so nobody moves,
+            // and each frozen (speed 0) body then blocks its neighbours in turn.
+            // De-overlapping is the separation pass's job. The mover's job is the
+            // narrower one: never enter a body you are currently clear of.
+            if (std::min(sep - std::fabs(u.x - o->x), sep - std::fabs(u.z - o->z)) > 0.0f)
+                continue;
+            float p = std::min(sep - std::fabs(nx - o->x), sep - std::fabs(nz - o->z));
+            if (p > worst) worst = p;
+        }
+    }
+    return worst;
+}
+
 void World::rebuildOccupancy() {
     occW_ = terW_;
     occH_ = terH_;
     if (occW_ <= 0 || occH_ <= 0) { occ_.clear(); occW_ = occH_ = 0; return; }
     occ_.assign(size_t(occW_) * size_t(occH_), 0);
-    for (const auto& u : units_) {
-        if (!u.alive() || u.embarked() || !u.type) continue;
-        if (u.type->canFly || u.type->isStructure()) continue;   // structures are in nav_
-        if (u.underConstruction) continue;
-        // EVERY mobile body blocks, moving or parked -- which is what retail does
-        // (080d288's own RE: "every mobile unit is stamped into an exclusive per-cell
-        // occupancy layer"). We shipped a parked-only simplification, and the cost
-        // showed up in play as units SHOVING each other: a moving body blocked
-        // nobody, so two movers overlapped freely and the separation pass spent every
-        // tick pushing them apart to (footA+footB)*8 px. Two systems enforcing
-        // spacing at different resolutions, fighting. With occupancy authoritative,
-        // the mover simply refuses the overlapping step (and clamps+slows rather than
-        // stopping, the escape valve ported alongside it), so separation becomes the
-        // rare de-overlap it should always have been.
-        // Stamp the whole footprint, centre-anchored to match NavGrid::fits.
-        int f = footCells(u.type);
-        int cx = int(u.x) / 16 - f / 2, cz = int(u.z) / 16 - f / 2;
-        for (int j = 0; j < f; ++j)
-            for (int i = 0; i < f; ++i) {
-                int x = cx + i, z = cz + j;
-                if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
-                occ_[size_t(z) * size_t(occW_) + size_t(x)] = u.id;
-            }
+    // Every mobile body is stamped, moving or parked, matching retail's "exclusive
+    // per-cell occupancy layer" (080d288's RE).
+    //
+    // MOVING BODIES ARE STAMPED SECOND -- i.e. a parked body wins a contested cell.
+    // A cell holds exactly one id, so whoever stamps last is the only one anybody
+    // can see there, and the mover now gates on PARKED bodies specifically (a
+    // moving one is merely expensive, per retail's graded area score). Let a mover
+    // overwrite a parked stamp and the parked body becomes invisible to the test
+    // that exists to respect it -- units would walk through precisely the bodies
+    // that are standing still, and only while someone happened to be passing.
+    // Two passes rather than one, in fixed unit order, so this stays deterministic.
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool wantParked = (pass == 1);
+        for (const auto& u : units_) {
+            if (!u.alive() || u.embarked() || !u.type) continue;
+            if (u.type->canFly || u.type->isStructure()) continue;   // structures are in nav_
+            if (u.underConstruction) continue;
+            if ((u.speed == 0.0f) != wantParked) continue;
+            // Stamp the whole footprint, centre-anchored to match NavGrid::fits.
+            int f = footCells(u.type);
+            int cx = int(u.x) / 16 - f / 2, cz = int(u.z) / 16 - f / 2;
+            for (int j = 0; j < f; ++j)
+                for (int i = 0; i < f; ++i) {
+                    int x = cx + i, z = cz + j;
+                    if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
+                    occ_[size_t(z) * size_t(occW_) + size_t(x)] = u.id;
+                }
+        }
     }
 }
 
@@ -4070,20 +4125,20 @@ void World::tick(float dt) {
                 u.x += mx; u.z += mz;
             } else {
                 const NavGrid& g = navFor(u.type);
+                // The old test was "is the destination CELL free", plus an escape
+                // hatch skipping it entirely while a unit stayed inside its own
+                // cell -- so between crossings a body crept into its neighbour
+                // unopposed, measured 13px in where footprints touch at 32.
                 auto free = [&](float nx, float nz) {
                     // Footprint-aware, and the SAME grid the pathfinder used, so a unit
                     // never stalls on a cell its own path routed it through.
                     if (!(g.empty() || g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type))))
                         return false;
-                    // ...and units are solid: a parked body holds its cells.
-                    return cellFree(nx, nz, u.id, footCells(u.type));
+                    // ...and units are solid, tested against the bodies themselves
+                    // rather than the cells they happen to be stamped into.
+                    return bodyPenetration(u, nx, nz) <= 0.0f;
                 };
-                // A unit that stays inside its own cell is never tested -- retail
-                // does the same (it only checks on a cell crossing), and without it
-                // a body pressed against a blocker could not even shuffle in place.
-                bool sameCell = int((u.x + mx) / 16) == int(u.x / 16) &&
-                                int((u.z + mz) / 16) == int(u.z / 16);
-                if (sameCell || free(u.x + mx, u.z + mz)) { u.x += mx; u.z += mz; }
+                if (free(u.x + mx, u.z + mz)) { u.x += mx; u.z += mz; }
                 else if (free(u.x + mx, u.z)) { u.x += mx; }
                 else if (free(u.x, u.z + mz)) { u.z += mz; }
                 else {
@@ -4138,7 +4193,7 @@ void World::tick(float dt) {
                         auto free = [&](float nx, float nz) {
                             return (g.empty() ||
                                     g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type))) &&
-                                   cellFree(nx, nz, u.id, footCells(u.type));
+                                   bodyPenetration(u, nx, nz) <= 0.0f;
                         };
                         float px = detmath::cos(u.heading), pz = -detmath::sin(u.heading);
                         // Which way to dodge. `id & 1` alone makes two units of the

@@ -256,10 +256,10 @@ result is used somewhere not yet traced), or retail genuinely wedged as much
 as we do and the difference we think we remember is not there. Resolving that
 needs the rest of 0x4dba80's control flow read properly, not more guessing.
 
-## Why the graded score cannot be adopted piecemeal (2026-09-12)
+## Retail-faithful body collision: sub-cell solidity (2026-09-12)
 
-Attempted and reverted; recording it so the next attempt starts from the real
-obstacle rather than rediscovering it.
+First attempt reverted, then landed once the real obstacle was named. Kept in
+full because the obstacle is the interesting part.
 
 Retail's configuration is three things that only work together:
   1. PARKED bodies impassable, MOVING bodies merely expensive (graded score).
@@ -284,8 +284,42 @@ the rect at whatever resolution the mover steps at; ours only happens on cell
 entry. Until the mover tests every step rather than every cell crossing,
 removing separation trades visible shoving for units sinking into each other.
 
-Order for the next attempt: sub-cell step testing first, then (1) and (2),
-then delete separation and confirm the interpenetration probe stays clean.
+### What landed
+
+Sub-cell step testing first, as that order implied.
+
+`World::bodyPenetration(u, nx, nz)` asks the same question in PIXEL space that
+`cellFree()` answered in 16px cells: how deep would this body sit inside another
+if it stood at (nx,nz)? It reads candidates out of `occ_` -- any body we could
+overlap has a stamped cell within our own half-extent, so the scan is a small
+fixed rect, and a footprint stamps a run of identical ids that dedupes away.
+The mover's `free()` is now `bodyPenetration(...) <= 0`, and the "unit stays
+inside its own cell, skip the test" hatch is gone.
+
+Two rules make that usable rather than a freeze:
+
+  * Only PARKED bodies are consulted. A moving one is merely expensive, which
+    is retail's graded score. Gate on movers too and any crowd wider than its
+    lane deadlocks -- measured 16 of 24 arriving where 24 of 24 should.
+  * A body you are ALREADY inside is skipped. Units spawn in tight ranks, a
+    building finishes under its builder; phrase the rule on the deepest overlap
+    and nobody can satisfy it, so nobody moves, and each frozen (speed 0) body
+    then blocks its neighbours in turn. De-overlapping stays separation's job.
+    The mover's job is the narrow one: never ENTER a body you are clear of.
+
+`rebuildOccupancy` also stamps in two passes, movers first, so a PARKED body
+wins a contested cell. A cell holds one id; let a mover overwrite a parked
+stamp and the parked body goes invisible to the test that exists to respect it.
+
+Measured: a walker sent straight through a parked body closes to exactly 32px,
+its footprint touching and never overlapping. With the cell hatch restored it
+reaches 6px in. That ablation is the evidence the hatch was the whole defect.
+
+Not done, deliberately: separation still runs. It now agrees with the mover
+(both settle at footprint contact) instead of fighting it, so it is no longer
+the source of shoving. Deleting it outright needs moving-vs-moving bodies to
+carry retail's cost-and-slow instead of being skipped -- that is the next step,
+and it is a behaviour change to make on its own, not smuggled in with this one.
 
 ## Headless in-game screenshots (dev harness)
 

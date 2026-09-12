@@ -1313,6 +1313,13 @@ private:
     std::vector<int32_t> occ_;      // 16px cells -> occupying unit id (0 = free)
     int occW_ = 0, occH_ = 0;
     void rebuildOccupancy();
+    // How deep would `u`'s body sit inside another mobile body if it stood at
+    // (nx,nz)? Pixels of overlap along the shallower axis; <= 0 means clear.
+    // cellFree() below answers at 16px cell resolution and so only changes its
+    // mind when a unit CROSSES a boundary -- between crossings a body creeps
+    // into its neighbour unopposed. This is the same question asked in pixel
+    // space, which is the resolution the mover actually steps at.
+    float bodyPenetration(const Unit& u, float nx, float nz) const;
     // Is (nx,nz) free of a parked body other than `selfId`? True when solidity is
     // off (no grid) or the cell is outside it.
     // Is the footprint rect at (nx,nz) free of a parked body other than `selfId`?

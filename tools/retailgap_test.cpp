@@ -910,7 +910,25 @@ int main(int argc, char** argv) {
                 int walker = w.spawn(sw, 640, 600, 0, 0);
                 for (int i = 0; i < 30 * 10; ++i) w.tick(1.0f / 30.0f);   // settle
                 w.order(walker, 800, 600, false);                          // straight through
-                for (int i = 0; i < 30 * 10; ++i) w.tick(1.0f / 30.0f);
+                // Sample every tick, not just the end: a single final position
+                // cannot tell "went around" from "went through and kept going",
+                // and that is exactly how a 13px interpenetration hid behind a
+                // passing end-state check once.
+                const float bx0 = w.unit(blocker)->x, bz0 = w.unit(blocker)->z;
+                const float touch =
+                    float(std::max(sw->footX, sw->footZ)) * 8.0f * 2.0f;   // px, centre to centre
+                float closest = 1e9f;
+                for (int i = 0; i < 30 * 10; ++i) {
+                    w.tick(1.0f / 30.0f);
+                    const sim::Unit* m2 = w.unit(walker);
+                    if (!m2 || !m2->alive()) break;
+                    closest = std::min(closest, std::max(std::fabs(m2->x - bx0),
+                                                         std::fabs(m2->z - bz0)));
+                }
+                check(closest >= touch - 1.0f,
+                      "a walker never penetrates a parked body's footprint",
+                      "closest approach " + std::to_string(int(closest)) +
+                          "px, footprints touch at " + std::to_string(int(touch)));
                 const sim::Unit* b = w.unit(blocker);
                 const sim::Unit* m = w.unit(walker);
                 // The discriminating assertion: the walker was sent to x=800, PAST
