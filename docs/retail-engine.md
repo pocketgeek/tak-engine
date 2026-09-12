@@ -358,6 +358,71 @@ scheduled and throttled, and how the tracer participates. Those need their own
 pass. What IS established is that runtime routing exists, so our
 `pathBudget_ = 0` is a deviation from retail rather than fidelity to it.
 
+### The pathfinder, end to end (2026-09-12)
+
+Complete architecture, established by following the singleton rather than the
+call graph. Addresses are entry points unless noted.
+
+**The object.** `[0x62d55c + 0x19e70]` holds a singleton, `new(0x22b)` +
+constructor `0x415f80`, created at `0x4e6060` and cleared at `0x4e60b6`.
+
+**Configuration** (`0x4252e0`): reads a setting, then
+`+0x221` = base work budget, `+0x225` = `base * clamp(pct, 5, 1000) / 100`,
+with two booleans at `+0x229` / `+0x22a` for the -2 / -1 / 0 special values.
+So pathfinding effort is a user-facing quality knob.
+
+**Per-frame scheduler** (`0x416430`): walks the request lists of all 10
+players, counting pending requests into two buckets -- `B` for those flagged at
+`+0x24e7`, `A` for the rest. If none, it bumps an idle counter at `+0x1a5` and
+returns. Otherwise the per-request quantum is
+
+    quantum = +0x225 / (A + 5*B)
+
+so a flagged request gets FIVE TIMES the share. It zeroes `+0x165`, which is
+the work cap the search meters itself against, then iterates the players.
+
+**Per-request step** (`0x415b10`): runs one search step and switches on it --
+`-2` = failed (sets `+0x5c`), `-1` = not finished (charges 30 to the work
+counter `+0x48`, expands, retries via `0x414450` / `0x415f10`), `0` = done,
+build the route and install it.
+
+**The search itself** (`0x4146e0`) is NOT A*. There is no open list, no
+priority queue and no cost-to-goal ordering anywhere in it. It is an
+incremental obstacle-boundary tracer:
+
+  * state machine at `+0x60` (0 = init, then 1..3);
+  * `0x413e50` returns distance to the goal, and `+0xcc` keeps the BEST
+    (minimum) distance reached so far -- the characteristic bookkeeping of a
+    "bug" algorithm that follows an obstacle outline and leaves it when it can
+    improve on its closest approach;
+  * movement uses the 8-direction tables `0x5f304c` / `0x5f3054`
+    (`dx = {0,-1,-1,-1,0,1,1,1}`, `dz = {-1,-1,0,1,1,1,0,-1}`, compass order)
+    with the direction at `+0x108` rotated and masked `& 7`;
+  * every candidate cell is scored by `0x4139d0` against the threshold 4;
+  * it terminates on returning to its start cell facing its start direction;
+  * it is time-sliced: work accumulates into `+0x48` and the step returns once
+    it passes the cap the scheduler wrote to `+0x165`, resuming next frame.
+
+**Hand-off to the navigator.** On success the route is installed through
+`0x4e4ea0`, which clamps at 64 waypoints. The navigator's `setDestination`
+(vtable slot 1, `0x4e54e0`) cancels/registers with the singleton via
+`0x415f30`, and installs a straight TWO-POINT segment -- own cell plus goal --
+at `0x4e5632` as the interim, skipping it when bit 0 of `+0x114` says a real
+route is already in hand. The mover walks the list, popping via slot 11
+(`0x4e50a0`).
+
+So: asynchronous, budgeted, incremental boundary-tracing search; straight-line
+movement until it returns; up to 64 waypoints when it does.
+
+**Two of my own claims this file carried are now settled.** "Retail has no path
+search of any kind" was wrong -- routing exists. But the observation behind it
+was right: there is no A*, no open list, no priority queue. Both halves matter,
+and conflating "no A*" with "no pathfinding" is what produced the error. And
+the retraction that said the tracer at `0x4146e0` is not in the movement path
+was itself wrong: it is the search. It is not reached FROM the mover, which is
+what I tested; it is reached from the scheduler, and its output is handed to
+the navigator that the mover then follows.
+
 ### Earlier unresolved note, kept for the record
 
 By direct-call graph, that whole route cluster is reachable only from
