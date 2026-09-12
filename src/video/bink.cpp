@@ -247,19 +247,16 @@ bool BinkVideo::nextFrame(std::vector<uint8_t>& rgba) {
                 d_->sws, fw, fh, AVPixelFormat(d_->frame->format),
                 fw, fh, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
             if (!d_->sws) { av_frame_unref(d_->frame); return false; }
-            // Bink stores FULL-RANGE YUV (0..255), but FFmpeg's decoder tags the
-            // stream AVCOL_RANGE_MPEG, so swscale's default treats it as limited
-            // (16..235) and EXPANDS it -- which crushes every shadow to 0 and
-            // leaves the clip visibly darker than the art around it. Measured on
-            // the shipped Loadscreen.bik: as limited, mean luma 67.7 over a range
-            // of 0..246 (clipped at black); as full, 75.6 over 16..228 (nothing
-            // clipped). The data itself settles it -- its luma dips to 12, below
-            // the 16 floor a genuine limited-range encode cannot go under.
-            {
-                const int* coef = sws_getCoefficients(SWS_CS_ITU601);
-                sws_setColorspaceDetails(d_->sws, coef, /*srcRange=*/1,
-                                         coef, /*dstRange=*/1, 0, 1 << 16, 1 << 16);
-            }
+            // COLOUR RANGE. Measured across whole shipped clips, the decoded luma
+            // lives inside 16..235: below-16 is 0.003%-0.06% of pixels and
+            // above-235 is 0.000%-0.089%, which is the signature of LIMITED-range
+            // content with a little ringing, not full-range. FFmpeg's
+            // AVCOL_RANGE_MPEG tag is therefore right, and swscale's default
+            // (expand 16..235 to 0..255) is the standards-correct conversion.
+            //
+            // An earlier version forced srcRange=full here on the strength of one
+            // frame whose luma dipped to 12. That is legal footroom, not evidence
+            // of full range, and the whole-clip histogram says otherwise.
             // sws SIMD over-writes past a tightly-packed row when the width isn't
             // aligned (odd door widths like 155/221), so scale into a properly
             // aligned + padded image, then copy the rows out tightly (pitch fw*4).
