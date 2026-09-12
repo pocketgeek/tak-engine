@@ -1106,6 +1106,15 @@ std::vector<Order> NavGrid::findPath(float wx0, float wz0, float wx1, float wz1,
 // generous cap holds every live goal block; the linear LRU scan is microseconds
 // against a multi-ms build.
 static constexpr size_t kFlowCap = 512;
+// Flow fields built per tick. Builds are cheap individually (~7ms) and run across a
+// worker pool, but a mass invalidation can leave ~180 of them missing at once, and
+// the tick waits for the whole batch: that is a 1.3s freeze made of work that is
+// individually fine. Cap the batch and let the remainder be rediscovered next tick;
+// a unit whose field has not arrived steers direct meanwhile, exactly as it already
+// does for a field that is still building. NOT a cap on flowFor -- that one no
+// longer builds at all; capping both is what made an earlier attempt worse, by
+// pushing work onto the serial path instead of spreading it on the parallel one.
+static constexpr size_t kFlowBuildsPerTick = 24;
 
 // Eviction must be a pure function of what the cache HOLDS, never of the order a
 // peer happened to touch it in. `used` is stamped only by the deterministic
@@ -1245,6 +1254,10 @@ void World::prefetchFlows() {
     // this tick, so this early-out must come AFTER it -- returning before the scan
     // would leave stamps stale and eviction arbitrary.
     if (misses.empty()) return;   // nothing to build (flowFor never builds inline now)
+    // Deterministic truncation: `misses` is discovered by walking units_ in index
+    // order and deduping, so every peer keeps the same prefix and defers the same
+    // tail.
+    if (misses.size() > kFlowBuildsPerTick) misses.resize(kFlowBuildsPerTick);
     auto _b0 = std::chrono::steady_clock::now();
     for (const auto& m : misses) m.grid->ensureClearance();   // workers must only read
     std::vector<FlowField> built(misses.size());
