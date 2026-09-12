@@ -256,6 +256,59 @@ result is used somewhere not yet traced), or retail genuinely wedged as much
 as we do and the difference we think we remember is not there. Resolving that
 needs the rest of 0x4dba80's control flow read properly, not more guessing.
 
+## Movement: retail's wall-follower (icd, 2026-09-12)
+
+This resolves a contradiction between two earlier RE passes. One concluded
+"retail has NO path search of any kind"; an older note in `sim.h` said retail
+"bakes one grid per class at map load and its path search reads that
+(0x4e0940 builds them, 0x4139d0 queries them)". Both were looking at real
+machinery and both described it wrongly.
+
+**There is no global path search.** No open list, no priority queue, no
+cost-to-goal heuristic exists anywhere in this code. That conclusion stands.
+
+**There IS a local wall-follower**, at `0x4140d4`..`0x414eb0`, and it is the
+piece we never had. When a unit is blocked it traces the boundary of the
+obstacle until it gets around it. The evidence is unambiguous:
+
+  * `0x5f304c` / `0x5f3054` are two 8-byte signed tables --
+    `dx = { 0,-1,-1,-1, 0, 1, 1, 1}`, `dz = {-1,-1, 0, 1, 1, 1, 0,-1}` --
+    the eight compass directions in ROTATIONAL order (N, NW, W, SW, S, SE, E,
+    NE). Indexed by a direction held at `+0x108` and always masked `& 7`.
+  * The direction is rotated one step at a time (`inc / and $7`) and by two
+    (`add $2` / `add $-2`, i.e. 90 degrees) -- turn-left / turn-right about the
+    obstacle.
+  * Each candidate cell is scored by `0x4139d0` and compared against 4, the
+    same threshold every other call site uses. `0x4139d0` is the per-cell
+    QUERY -- bounds check, then the `0x413c80` classifier (2/3/4 reason codes),
+    then the grid lookup. It is not itself a search; that is what the older
+    note got wrong.
+  * Termination (`0x414cf0`..`0x414d28`): the trace stores its start cell and
+    start direction at `+0x100/+0x104/+0x10c` plus a flag at `+0x110`, and
+    gives up when it arrives back at the same cell facing the same way. That
+    is the textbook closed-loop test of a wall-following "bug" algorithm.
+  * It is TIME-SLICED: each step adds 7 (state 2) or 9 (state 3) to a work
+    counter at `+0x48` and the routine returns once that passes the cap at
+    `+0x165`, resuming next tick. The phase lives in a state machine at `+0x60`.
+
+So retail's answer to "something is in my way" is neither a path search nor a
+steering trick: it walks the obstacle's outline, within a per-tick step budget,
+and gives up if the outline closes.
+
+**Correction to a claim made earlier the same day.** The `movl %ebx,0x10c(%esi)`
+write is this TRACER's saved start direction, not a navigator waypoint count,
+so "the navigator holds a waypoint list" was wrong. The navigator's own
+`movl $0x2,0x10c` at `0x4e5635` is the two-point segment the earlier pass
+described, and that reading stands.
+
+**Why this matters to us.** Our mover tries the direct step, then slides on x,
+then on z, then clamps and slows. Against a parked body directly in its path it
+re-aims at the goal every tick and never commits to going around. Measured on
+open ground with a ring of parked bodies at radius r, a unit travels almost
+exactly `r - 31` px and stops at footprint contact, for every r from 36 to 132
+-- it walks up to the blocker and dies there, with 70+ px of clear ground on
+either side. The wall-follower above is precisely the missing mechanism.
+
 ## Retail-faithful body collision: sub-cell solidity (2026-09-12)
 
 First attempt reverted, then landed once the real obstacle was named. Kept in
