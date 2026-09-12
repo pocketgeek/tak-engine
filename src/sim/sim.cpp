@@ -1053,6 +1053,7 @@ void World::order(int unitId, float x, float z, bool queue) {
 // already covers it.
 void World::requestPath(Unit& u, float x, float z) {
     if (!pathService_) return;
+    pathRetryAt_.erase(u.id);   // a new order deserves a fresh attempt
     if (!u.type || u.type->canFly || u.type->isStructure()) return;
     const NavGrid& g = navFor(u.type);
     if (g.empty()) return;
@@ -3746,7 +3747,12 @@ void World::tick(float dt) {
         },
         [&](int unitId, const std::vector<PathCell>& route, float gx, float gz) {
             Unit* u = unit(unitId);
-            if (!u || !u->alive() || u->orders.empty() || route.empty()) return;
+            if (route.empty()) {           // failed: back off before retrying
+                pathRetryAt_[unitId] = tickCounter_ + kPathFailBackoff;
+                return;
+            }
+            pathRetryAt_.erase(unitId);
+            if (!u || !u->alive() || u->orders.empty()) return;
             // Only the leg this search was issued for; anything queued behind
             // it stays untouched.
             std::vector<Order> path;
@@ -3777,6 +3783,8 @@ void World::tick(float dt) {
             const Order& leg = u.orders[currentLeg(u.orders)];
             if (leg.targetId != 0) continue;          // chasing, not travelling
             if (paths_.pending(u.id)) continue;       // a search is already running
+            if (auto it = pathRetryAt_.find(u.id);
+                it != pathRetryAt_.end() && tickCounter_ < it->second) continue;
             if ((tickCounter_ + uint32_t(u.id)) % kPathRetryTicks != 0) continue;
             requestPath(u, leg.x, leg.z);
         }

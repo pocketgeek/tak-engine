@@ -330,6 +330,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // One nav grid per distinct movement-limit tuple, as retail bakes one per class.
     // After setTerrain (it needs the heights) and before anything blocks a cell.
     world.buildNavClasses(reg);
+    // Retail's background pathfinder. Every match gets it; see
+    // docs/retail-engine.md for what it is and what it still cannot do.
+    world.setPathService(true);
     world.clearFeatures();   // authoritative rebuild (the client ctor pre-registers)
 
     // Features: block nav footprints, and gather mana-deposit positions. Iterate

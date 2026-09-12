@@ -490,58 +490,46 @@ enormously for us: a faithful port is deterministic by construction and safe
 for lockstep, provided the budget is a match-replicated constant and requests
 are visited in a fixed (player, unit id) order.
 
-### Port status (2026-09-12)
+### Port status (2026-09-12): ON by default
 
-Landed and unwired-by-default. `World::setPathService(true)` turns it on.
+`setupMatch` enables it. What it does, measured end to end on Inner Circle with
+the service off vs on, same start and goal:
 
-Working: the scheduler (budget / (A + 5*B), deterministic visit order), the
-cell scoring, the request/complete plumbing into `replaceLeg`, the init and
-march phases, the twin-trace structure, the breadcrumb route reconstruction,
-and the real visit limit `(w+h)*20` from `0x414797`. Synthetic grids all pass,
-including a wall with a gap.
+    goal + 40 cells:  35% of the way  ->  97% of the way
+    goal + 20 cells:  70%             ->  70%   (unchanged)
+    goal + 80 cells:  19%             ->  19%   (unchanged)
 
-NOT working, and why it is off by default:
+So it works where the search succeeds, and changes nothing where it fails --
+the unit keeps the straight segment it always had.
 
-  * On a real map the search succeeds only for SOME distances. From one corner
-    of Inner Circle: 5 and 10 cells arrive, 20 fails, 30 and 40 arrive, 60+ all
-    fail on the visit limit. That pattern is not a budget problem -- failures
-    burn the whole 7680-visit allowance without getting anywhere.
-  * Successful routes come back with 64 waypoints -- the clamp -- for a 30-cell
-    path that should need a handful of corners. The trace is wandering.
-  * Cost with it enabled: 23.2ms/tick against a 19.5ms baseline on the 8-AI
-    benchmark, ~4ms of it in the search. Paying that for mostly-failing
-    searches is not a trade worth making yet.
+**The failures are largely inherent, not bugs.** March-plus-wall-follow cannot
+solve NESTED obstacles, and the 20- and 80-cell cases on Inner Circle run into
+exactly that: a mazey field where the outline a cursor is following contains
+further obstacles. Retail's own `(w+h)*20` visit limit (`0x414797`) abandons
+those too. A bug algorithm is not a planner and was never going to be one.
 
-Diagnosed further (same day), with the terrain printed alongside the result:
+**Wandering routes are retail's too.** The 30-cell route comes back with 64
+corners looping well past the goal, which looked like a defect until reading
+`0x414450`: the original records a waypoint only on a direction change, exactly
+as we do, applies no smoothing, keeps the last 64 in a RING buffer (`& 0x3f`),
+and merely sets a "this route is a detour" flag on the unit when the step count
+exceeds the manhattan estimate. Retail tolerates wandering routes; so do we, and
+the unit still gets there -- 97% of the way on a route that wanders.
 
-  * The FAILURES are mostly legitimate. The 20-cell case on Inner Circle has a
-    nested, mazey obstacle field between start and goal, and a march-plus-
-    wall-follow cannot solve nested obstacles. Retail's own `(w+h)*20` limit
-    would abandon it too, so "fails and falls back to straight-line" may simply
-    be what retail does there. Judging our port by whether it always finds a
-    route is the wrong test.
-  * The SUCCESSES are the real problem. The 30-cell route comes back as
-    `(15,15) (17,15) ... (79,15)` -- wandering out to x=92 for a goal at
-    (34,34). That is not a broken backtrack: it is the trace's ACTUAL path,
-    faithfully reconstructed. The breadcrumb chain from the goal leads back
-    through everywhere the cursors wandered, so a wandering trace produces a
-    wandering route, and the 64-entry clamp then truncates the goal end off it.
+**Failure backoff matters more than it sounds.** A search that failed from
+roughly here will fail again, so a unit stuck against a maze sat re-requesting
+every 30 ticks and ate the whole budget. Backing off 150 ticks after a failure
+cut the benchmark from 23.2ms/tick to 22.1 while keeping the +40 result at 97%.
 
-So the open question is narrower than it looked: why do our cursors wander so
-far compared with retail's? Candidates:
+Cost: 22.1ms/tick at 2217 units against a ~19.5ms baseline at ~2000, so roughly
++1 to +2.5ms depending on how you weigh the unit-count difference. That buys
+units that actually arrive. The `--mpai` hash moves to 9179fe05b490297b,
+reproducible run to run, and the cross-compiler golden is untouched.
 
-  * Both cursors lay breadcrumbs into ONE map, so the backtrack can hop between
-    the two traces and produce a path that is not a path. Retail marks from both
-    cursors too (`0x414d44` for A, `0x414f07` for B), so this may be a red
-    herring -- or retail's route builder at `0x414450` may do something the
-    naive backtrack does not.
-  * The sweep order or handedness in `traceStep` may still be off, so a cursor
-    hugs the wrong side and wanders instead of rounding the obstacle.
-
-Fixing the termination test to match `0x414ec7` -- the traces give up when the
-two cursors MEET, rather than when either returns to its own start -- was
-correct RE and changed none of these numbers, which is itself a clue that the
-problem is upstream of termination.
+Still open: whether our cursors wander further than retail's. The route builder
+and the termination test are now confirmed to match, so if there is a remaining
+divergence it is inside the trace's stepping, and it would show up as route
+quality rather than as failure.
 
 ### Port plan
 

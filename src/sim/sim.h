@@ -810,6 +810,17 @@ public:
     void setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel,
                     const std::vector<uint16_t>* features = nullptr);
     NavGrid& nav() { return nav_; }
+
+    // Retail's per-cell query for one unit's movement class (icd 0x4139d0 ->
+    // 0x413c80): impassable below the threshold, 4 when a parked body holds the
+    // cell, 6 ordinary ground, 7 road. The pathfinder scores every candidate
+    // through this, so it sees exactly what the mover will.
+    int cellScore(const UnitType* t, int cx, int cz, int selfId) const;
+
+    // Enable retail's background pathfinder for this world (default off).
+    void setPathService(bool on) { pathService_ = on; if (!on) paths_.clear(); }
+    bool pathService() const { return pathService_; }
+
     // Passability is a function of the unit's MOVEMENT CLASS, not its domain:
     // retail bakes one grid per class at map load and its path search reads that
     // (KINGDOMS.icd 0x4e0940 builds them, 0x4139d0 queries them). A Catapult's
@@ -1313,16 +1324,6 @@ private:
 
     std::vector<int32_t> occ_;      // 16px cells -> occupying unit id (0 = free)
     int occW_ = 0, occH_ = 0;
-    // Retail's per-cell query for one unit's movement class (icd 0x4139d0 ->
-    // 0x413c80): impassable below the threshold, 4 when a parked body holds the
-    // cell, 6 ordinary ground, 7 road. The pathfinder scores every candidate
-    // through this, so it sees exactly what the mover will.
-    int cellScore(const UnitType* t, int cx, int cz, int selfId) const;
-
-    // Enable retail's background pathfinder for this world (default off).
-    void setPathService(bool on) { pathService_ = on; if (!on) paths_.clear(); }
-    bool pathService() const { return pathService_; }
-
     void requestPath(Unit& u, float x, float z);
     void rebuildOccupancy();
     // How deep would `u`'s body sit inside another mobile body if it stood at
@@ -1470,15 +1471,18 @@ private:
                                  // (deterministic: derived from the live-unit count)
     int pathBudget_ = 0;         // A* repaths still allowed this tick (crowd throttle)
     PathService paths_;          // retail's request queue + budget scheduler
-    // OFF by default until the search is reliable enough to earn its keep. With
-    // it on, an 8-AI benchmark costs 23.2ms/tick against 19.5 baseline (~4ms of
-    // "other") while most searches still fail their visit limit and fall back to
-    // straight-line steering -- cost without benefit. Flip it on per-World to
-    // work on the search; see docs/retail-engine.md.
+    // Enabled by setupMatch; a bare test World leaves it off.
     bool pathService_ = false;
     // How often a travelling unit re-asks for a route when it has none. Retail's
     // navigator re-anchors on a similar cadence rather than searching once.
     static constexpr uint32_t kPathRetryTicks = 30;
+    // A search that failed once from roughly here will fail again -- the terrain
+    // has not changed. Sit out this many ticks before asking again, so a unit
+    // stuck against a maze stops burning the whole budget on doomed searches and
+    // leaves it for units that can actually be helped. Deterministic: keyed by
+    // unit id off the tick counter.
+    static constexpr uint32_t kPathFailBackoff = 150;   // 5s
+    std::map<int, uint32_t> pathRetryAt_;
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
     std::vector<uint8_t> slope_;   // local height spread
