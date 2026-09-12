@@ -184,6 +184,57 @@ NOT established: whether some free function (not a class) does a coarse global
 search somewhere. None was found, and the absence of any search-shaped routine
 in the navigator region is strong negative evidence, but it is not proof.
 
+## Movement: the local steerer (icd, 2026-09-12, PARTIAL)
+
+Follow-on from the section above. Retail has no path search, so everything that
+gets a unit around an obstacle lives in the mover, and this is what that mover
+is built out of. Addresses are entry points; the direction-choosing logic that
+consumes them is only partly mapped, so treat the last section as a lead rather
+than a spec.
+
+**`0x507fb0` -- area rater.** Walks a RECTANGLE of map cells (14-byte records,
+stride `0xe`) in a nested row/column loop and takes the MINIMUM score over it:
+
+```
+test byte [esi+0xd], 0x80    ; per-cell flag (road)
+jne  keep                    ; road keeps the higher score
+cmp  dword [edi], 6          ; running minimum
+jle  keep
+mov  dword [edi], 6          ; ordinary ground clamps it to 6
+add  esi, 0xe                ; next cell
+```
+
+So ordinary ground scores 6 and road 7 -- the 1.2x road preference our
+NavGrid::setRoads comment already cites. The score is GRADED, not boolean.
+
+**`0x4db640` -- passability query.** Calls the rater, returns early if it comes
+back `-1` (impassable terrain), then walks the live-unit list checking flag
+`0x1000000` at `+0x130`. So one call answers "can a body of this size stand
+here, and what does it cost", terrain and occupancy together. This is where
+"a parked unit is impassable, a moving one merely expensive" is expressed: the
+occupant lowers the score rather than vetoing the cell.
+
+**The threshold is 4.** Every caller compares the result against it
+(`cmp eax, 4` / `jle` / `jl`), so the scale is: -1 impassable, below 4 refused,
+4..5 passable but costly, 6 ground, 7 road.
+
+**`0x4dba80` -- the mover.** Two uses of the query are clear:
+
+  * Forward probe: take the unit's heading from `+0x7e`, project one step of
+    `0x100000` through the sin/cos tables (`0x5360bf` / `0x5360f3`), and query
+    the resulting position. `cmp eax,4 / jle` -> blocked.
+  * A 3x3 neighbourhood scan: outer loop over x offset -1..+1, inner over z
+    offset -1..+1 in `0x100000` steps, querying each and bailing on the first
+    below threshold.
+
+NOT yet established: how the mover picks a NEW heading once the forward probe
+fails -- whether it scores the ring and steers at the best cell, or tries fixed
+alternates. That is the piece that decides whether a unit rounds an obstacle or
+grinds against it, and it is exactly what our mover is missing: ours walks
+straight at the goal and slides, so concave geometry traps it (measured: with
+A* disabled, 30 of 30 units wedge ~31% along Angvir's Maze and never move
+again, where retail wedged only occasionally).
+
 ## Headless in-game screenshots (dev harness)
 
 `--shot` alone captures the LOBBY and exits: it forces the dummy video driver and
