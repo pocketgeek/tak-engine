@@ -1047,6 +1047,35 @@ void World::order(int unitId, float x, float z, bool queue) {
     // crowd sent to the same point spreads and flows around obstacles instead of
     // funnelling single-file into a corner. Only fall back to A* waypoints when
     // no field can be built or the goal is unreachable from here.
+    // Snap the destination onto ground this unit can actually stand on. A click
+    // on a mountain is a click on a cell no ground unit fits in: without this the
+    // unit walks up to the cliff and shoves at it indefinitely, because the goal
+    // is never reached and nothing declares it unreachable -- the reachability
+    // test resolves an unstandable goal to the nearest walkable cell, which is
+    // usually on the unit's OWN side, so it reports "reachable" quite correctly
+    // and no watchdog fires. Retail behaves the way this makes us behave: ordered
+    // at a mountain, the unit walks as close as it can get and stops.
+    //
+    // Deterministic: a fixed outward scan in a fixed order, and it only moves a
+    // goal that was already impossible.
+    {
+        const NavGrid& g = navFor(u->type);
+        const int foot = footCells(u->type);
+        int cx = int(x) / 16, cz = int(z) / 16;
+        if (!g.empty() && !g.fits(cx, cz, foot)) {
+            bool found = false;
+            for (int r = 1; r <= 24 && !found; ++r)
+                for (int dz = -r; dz <= r && !found; ++dz)
+                    for (int dx = -r; dx <= r && !found; ++dx) {
+                        if (std::abs(dx) != r && std::abs(dz) != r) continue;
+                        if (!g.fits(cx + dx, cz + dz, foot)) continue;
+                        x = float(cx + dx) * 16.0f + 8.0f;
+                        z = float(cz + dz) * 16.0f + 8.0f;
+                        found = true;
+                    }
+        }
+    }
+
     // Retail pushes the straight goal in and starts steering at it IMMEDIATELY,
     // while a path request runs in the background; when the search returns, the
     // real route replaces the straight segment (docs/retail-engine.md). So the
@@ -1054,7 +1083,13 @@ void World::order(int unitId, float x, float z, bool queue) {
     // engine did permanently until the search was ported.
     u->orders.push_back({x, z, 0});
     markGoal();
-    requestPath(*u, x, z);
+    // Only ask for a route when this order is the one the unit is about to
+    // WALK. Requests are keyed by unit id, so asking for a queued order cancels
+    // the pending request for the leg in progress and then installs the queued
+    // destination's route into that leg -- the unit sets off for the last thing
+    // you queued and skips everything before it. Orders behind the current one
+    // get their route when they become current, via the retry sweep in tick().
+    if (!queue || u->orders.size() == 1) requestPath(*u, x, z);
 }
 
 // Queue a background path for `u` toward (x,z). Flyers ignore the ground, and a

@@ -579,6 +579,32 @@ Still not attempted: nothing here needs a per-destination timer. I proposed one
 while the circling was still unexplained; it was a fix for a bug that turned out
 not to exist.
 
+### Clicking somewhere unreachable (2026-09-12)
+
+Reported from play: a Monarch ordered at a mountain shoves at the cliff
+indefinitely. My harness said otherwise, because it was testing the wrong thing
+-- it ordered a unit at a goal whose whole neighbourhood was rock, and the
+reachability test correctly reported "unreachable" and dropped the leg.
+
+A click on a mountain is not that. It lands on a cell no ground unit fits in,
+but the reachability test resolves an unstandable goal to the nearest WALKABLE
+cell, which is normally on the unit's own side of the mountain -- so it answers
+"reachable", quite correctly, and nothing ever declares the order impossible.
+The unit then walks up to the rock and pushes.
+
+`order()` now snaps a destination the unit cannot stand on to the nearest cell
+it fits in, before the order is queued. The unit walks as close as it can get
+and ARRIVES, which is what retail does (observed in play: ordered at a mountain,
+retail's Monarch goes as near as it can and stops, with no pause first).
+
+That change exposed a second bug, this one entirely mine. Path requests are
+keyed by UNIT ID, so queueing a second move cancelled the pending request for
+the leg in progress and then installed the queued destination's route into that
+leg -- the unit set off for the last thing you queued and skipped everything
+before it. `order()` now only requests a route when the new order is the one
+about to be walked; orders behind it get theirs when they become current.
+"the unit walks the FIRST queued leg" is the test that catches it.
+
 ### Port plan
 
 1. `PathService` owning a request queue, replacing nothing at first -- run it

@@ -1119,8 +1119,31 @@ int main(int argc, char** argv) {
             sim::World w; freshWorld(w);
             float sx = 1000, sz = 1000;
             legalSpot(w, sword, sx, sz);
-            const float ax = sx, az = sz + 400;       // leg 1: due south
-            const float bx = sx + 400, bz = sz + 400; // leg 2: then east
+            // Both waypoints must be somewhere the unit can stand: order() now
+            // snaps an unstandable destination to the nearest cell that fits,
+            // and two waypoints on rock can snap to the same place, which makes
+            // "visited A before B" meaningless.
+            // Put the whole L-shaped route inside one open apron. Individually
+            // legal waypoints are not enough: they can sit in separate pockets
+            // with rock between, and then "walks the first leg" fails for
+            // reasons that have nothing to do with queueing.
+            {
+                const sim::NavGrid& g = w.navFor(sword);
+                bool placed = false;
+                for (int cz2 = 30; cz2 < g.height() - 30 && !placed; cz2 += 2)
+                    for (int cx2 = 30; cx2 < g.width() - 30 && !placed; cx2 += 2) {
+                        bool clear = true;
+                        for (int dz = 0; dz <= 26 && clear; ++dz)
+                            for (int dx = 0; dx <= 26 && clear; ++dx)
+                                if (!g.fits(cx2 + dx, cz2 + dz, 2)) clear = false;
+                        if (!clear) continue;
+                        sx = float(cx2) * 16 + 8;
+                        sz = float(cz2) * 16 + 8;
+                        placed = true;
+                    }
+            }
+            const float ax = sx, az = sz + 400;         // leg 1: due south
+            const float bx = sx + 400, bz = sz + 400;   // leg 2: then east
             int id = w.spawn(sword, sx, sz, 0, 0);
             w.order(id, ax, az, false);
             size_t afterFirst = w.unit(id)->orders.size();
