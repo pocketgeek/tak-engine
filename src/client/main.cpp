@@ -821,6 +821,7 @@ int main(int argc, char** argv) {
         // menu the player is still looking at. Signing in costs a round trip plus
         // a few hundred ms of deliberate password-stretching (on a worker thread),
         // so give it a generous ceiling and pump events meanwhile.
+        bool menuTimedOut = false;
         {
             const uint64_t deadline = SDL_GetTicks64() + 30000;
             while (!mp->handshakeSettled() && SDL_GetTicks64() < deadline) {
@@ -828,13 +829,21 @@ int main(int argc, char** argv) {
                 SDL_PumpEvents();          // keep the window responsive while we wait
                 SDL_Delay(5);
             }
-            if (!mp->handshakeSettled() && mp->error().empty())
+            if (!mp->handshakeSettled() && mp->error().empty()) {
+                // Say what actually happened. Letting this fall through to the
+                // socket close would report "the server closed the connection",
+                // which sends the player looking for a network fault that is not
+                // there.
                 mp->disconnect("login timed out");
+                menuTimedOut = true;
+            }
         }
         const bool loginRefused = mp->auth() == tak::net::MpClient::Auth::Failed;
-        if (loginRefused || mp->state() == tak::net::MpClient::State::Done) {
-            std::string why = mp->error().empty() ? std::string("the server closed the connection")
-                                                  : mp->error();
+        if (loginRefused || menuTimedOut || mp->state() == tak::net::MpClient::State::Done) {
+            std::string why =
+                menuTimedOut ? std::string("the server stopped responding while signing in")
+                : mp->error().empty() ? std::string("the server closed the connection")
+                                      : mp->error();
             std::fprintf(stderr, "server: %s\n", why.c_str());
             killLocalServer();
             if (fromMenu) {   // back to the sign-in panel with the reason in red

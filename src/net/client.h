@@ -207,6 +207,7 @@ private:
         std::vector<uint8_t> clientNonce, serverNonce, salt;
         uint32_t iters = 0;
         bool newAccount = false;     // the server said there is no such account yet
+        bool challenged = false;     // a challenge arrived; a second one is refused
         bool proofSent = false;
     } pend_;
     // PBKDF2 at the real work factor takes a few hundred milliseconds. Running it

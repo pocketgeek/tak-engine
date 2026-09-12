@@ -128,6 +128,10 @@ target_link_libraries(missiontool PRIVATE tak-formats)
 add_executable(authtest tools/authtest.cpp src/server/accounts.cpp)
 target_link_libraries(authtest PRIVATE tak-formats)
 
+# Drives a real MpClient against a deliberately hostile server.
+add_executable(authrogue tools/authrogue.cpp)
+target_link_libraries(authrogue PRIVATE tak-formats)
+
 add_executable(retailgap_test tools/retailgap_test.cpp)
     add_executable(footprobe tools/footprobe.cpp)
 target_link_libraries(retailgap_test PRIVATE tak-formats)

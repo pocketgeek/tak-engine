@@ -120,7 +120,14 @@ bool MpClient::poll() {
 void MpClient::failAuth(const std::string& why) {
     auth_ = Auth::Failed;
     if (err_.empty()) err_ = why;
+    // Settle the key-derivation worker before touching anything it writes. This
+    // can cost the tail of one PBKDF2 run, which is a fine price on a path that
+    // has already decided to hang up -- and the alternative is a live data race
+    // between the worker filling keys_ and us abandoning it.
+    if (derive_.joinable()) derive_.join();
     crypto::wipe(loginPass_);
+    crypto::wipe(keys_.clientKey.data(), keys_.clientKey.size());
+    crypto::wipe(keys_.serverKey.data(), keys_.serverKey.size());
     // Hang up rather than sit on a connection we can never use. The error is
     // already recorded, so the socket closing cannot overwrite why.
     conn_.closeNow();
@@ -150,6 +157,11 @@ void MpClient::sendAuthBegin() {
 
 void MpClient::onAuthChallenge(Reader& r) {
     if (auth_ != Auth::Pending) { failAuth("unexpected login challenge"); return; }
+    // Exactly one challenge per login. Without this a server (or anything posing
+    // as one) can send challenges in a loop: each spawns a fresh 600k-iteration
+    // derivation, and startDerive joins the previous worker ON THE CALLER'S
+    // THREAD -- so a handful of 60-byte frames freeze the client for seconds.
+    if (pend_.challenged) { failAuth("the server sent a second login challenge"); return; }
     pend_.newAccount = r.u8() != 0;
     pend_.salt = r.bytes();
     pend_.iters = r.u32();
@@ -167,6 +179,7 @@ void MpClient::onAuthChallenge(Reader& r) {
         std::string why;
         if (!auth::validPassword(loginPass_, &why)) { failAuth(why); return; }
     }
+    pend_.challenged = true;
     startDerive();
 }
 
@@ -178,9 +191,10 @@ void MpClient::startDerive() {
     uint32_t iters = pend_.iters;
     derive_ = std::thread([this, pass, salt, iters]() mutable {
         keys_ = auth::deriveKeys(pass, salt.data(), salt.size(), iters);
-        crypto::wipe(pass);
+        crypto::wipe(pass);                        // the lambda's copy
         deriveDone_.store(true, std::memory_order_release);   // publishes keys_
     });
+    crypto::wipe(pass);   // ...and the one we copied FROM, which the lambda cloned
 }
 
 void MpClient::pumpDerive() {
@@ -216,15 +230,32 @@ void MpClient::onAuthResult(Reader& r) {
     if (!r.ok) { failAuth("malformed login result"); return; }
 
     if (status != AuthStatus::Ok && status != AuthStatus::Created) {
+        // The failure statuses are the only ones a server may legitimately send
+        // before a challenge (Throttled / BadUsername / ServerError all come
+        // straight out of the AuthBegin handler), so they are answered here,
+        // ahead of the state guard below.
         failAuth(msg.empty() ? "the server refused the login" : msg);
         return;
     }
-    // Mutual authentication: only something that actually holds this account's
-    // ServerKey can produce this signature, so a machine posing as the server
-    // cannot talk us into believing it knows the account. Skipped on the
-    // registration path, where the account had no server key to sign with until
-    // a moment ago.
-    if (status == AuthStatus::Ok) {
+    // Only entertain a SUCCESS for an exchange we actually completed, and only
+    // the KIND of success we asked for. Without this, a machine posing as the
+    // server answers our AuthBegin with AuthResult{Ok} and never sends a
+    // challenge at all -- leaving pend_ empty and keys_ still zero-filled, so the
+    // signature it has to forge is HMAC over an all-zero key, which anyone can
+    // compute. Requiring proofSent also means the derivation thread was joined,
+    // so reading keys_ here is safe; it is otherwise a live data race against the
+    // worker when a challenge and a result arrive in the same TCP segment.
+    if (auth_ != Auth::Pending || !pend_.proofSent ||
+        pend_.newAccount != (status == AuthStatus::Created)) {
+        failAuth("the server answered a login we never made -- "
+                 "do not trust this connection");
+        return;
+    }
+    // Mutual authentication, on BOTH paths. Only something holding this account's
+    // ServerKey can produce this signature. Registration is included because the
+    // server signs with the key we just gave it -- an unsigned "account created"
+    // would otherwise be a free way to skip this check entirely.
+    {
         std::vector<uint8_t> am = auth::authMessage(loginUser_, pend_.clientNonce,
                                                     pend_.serverNonce, pend_.salt, pend_.iters);
         crypto::Digest want = auth::serverSignature(keys_.serverKey, am);
@@ -270,11 +301,19 @@ void MpClient::onFrame(const Frame& f) {
         case Msg::Welcome:
             myId_ = r.u32();
             name_ = r.str();
-            // A server that required an account has already told us who we are.
+            // A Welcome is NOT a login. If we came here with credentials, the
+            // only way in is a verified AuthResult -- otherwise a machine posing
+            // as the server could skip the whole exchange and answer our Hello
+            // with a bare Welcome, and we would happily play on a connection that
+            // proved nothing.
+            if (!loginUser_.empty() && auth_ != Auth::Ok && auth_ != Auth::Created) {
+                failAuth("the server let us in without checking the account -- "
+                         "do not trust this connection");
+                return;
+            }
             // The Welcome name is authoritative: names match case-insensitively,
             // so someone who typed "CURTIS" is signed in to "curtis" and should be
             // shown as its owner spelled it, not as they happened to type it.
-            if (auth_ == Auth::Pending) auth_ = Auth::Ok;
             if (auth_ != Auth::None && !name_.empty()) account_ = name_;
             state_ = State::Lobby;
             break;

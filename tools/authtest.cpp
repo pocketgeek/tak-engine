@@ -293,25 +293,52 @@ int main(int argc, char** argv) {
     // ---- 8. the brute-force throttle ---------------------------------------
     std::printf("login throttle\n");
     {
+        using T = srv::LoginThrottle;
         srv::LoginThrottle t;
         uint64_t now = 1000;
-        for (int i = 0; i < srv::LoginThrottle::kFreeAttempts; ++i) t.fail("bob", now);
-        check(t.lockedFor("bob", now) == 0, "the first 5 failures are not locked out");
-        t.fail("bob", now);
-        check(t.lockedFor("bob", now) == srv::LoginThrottle::kBaseLockMs,
-              "the 6th failure locks for 30s");
-        t.fail("bob", now);
-        check(t.lockedFor("bob", now) == srv::LoginThrottle::kBaseLockMs * 2,
-              "the 7th doubles it");
-        for (int i = 0; i < 20; ++i) t.fail("bob", now);
-        check(t.lockedFor("bob", now) == srv::LoginThrottle::kMaxLockMs,
-              "the lockout is capped");
-        check(t.lockedFor("alice", now) == 0, "another key is unaffected");
-        t.succeed("bob");
-        check(t.lockedFor("bob", now) == 0, "a successful login clears the lockout");
-        t.fail("carol", now);
-        t.expire(now + srv::LoginThrottle::kForgetMs + 1);
-        check(t.size() == 0, "a quiet key is eventually forgotten");
+        for (int i = 0; i < T::kAddress.freeAttempts; ++i) t.fail("ip:a", now, T::kAddress);
+        check(t.lockedFor("ip:a", now) == 0, "an address gets 5 free failures");
+        t.fail("ip:a", now, T::kAddress);
+        check(t.lockedFor("ip:a", now) == T::kAddress.baseLockMs,
+              "the 6th failure locks the address for 30s");
+        t.fail("ip:a", now, T::kAddress);
+        check(t.lockedFor("ip:a", now) == T::kAddress.baseLockMs * 2, "the 7th doubles it");
+        for (int i = 0; i < 20; ++i) t.fail("ip:a", now, T::kAddress);
+        check(t.lockedFor("ip:a", now) == T::kAddress.maxLockMs, "the lockout is capped");
+        check(t.lockedFor("ip:b", now) == 0, "another address is unaffected");
+        // The lockout expires on its own -- it is a delay, not a ban.
+        check(t.lockedFor("ip:a", now + T::kAddress.maxLockMs) == 0,
+              "the lockout lets go once it elapses");
+
+        // An ACCOUNT is far more forgiving, so knowing someone's name is not
+        // enough to hold them out of the game.
+        srv::LoginThrottle u;
+        for (int i = 0; i < T::kAddress.freeAttempts * 2; ++i) u.fail("user:bob", now, T::kAccount);
+        check(u.lockedFor("user:bob", now) == 0,
+              "10 failures do not lock an account (an address would be locked by now)");
+        for (int i = 0; i < 41; ++i) u.fail("user:bob", now, T::kAccount);
+        check(u.lockedFor("user:bob", now) > 0, "but sustained guessing does lock it");
+        check(u.lockedFor("user:bob", now) <= T::kAccount.maxLockMs,
+              "and an account lockout is short");
+        u.succeed("user:bob");
+        check(u.lockedFor("user:bob", now) == 0, "a successful login clears the account");
+
+        // succeed() must never be handed an address key: one valid account would
+        // otherwise wipe the guesser's own record between attempts at another.
+        srv::LoginThrottle v;
+        for (int i = 0; i < 6; ++i) v.fail("ip:c", now, T::kAddress);
+        v.succeed("user:whoever");
+        check(v.lockedFor("ip:c", now) > 0,
+              "signing in to one account does not clear the address's record");
+
+        srv::LoginThrottle w;
+        w.fail("ip:d", now, T::kAddress);
+        w.expire(now + T::kForgetMs + 1);
+        check(w.size() == 0, "a quiet key is eventually forgotten");
+        srv::LoginThrottle x;
+        for (int i = 0; i < 6; ++i) x.fail("ip:e", now, T::kAddress);
+        x.expire(now + 1);
+        check(x.size() == 1, "a currently-locked key is NOT forgotten early");
     }
 
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILURES" : "ALL PASS", failures,

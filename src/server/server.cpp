@@ -353,6 +353,25 @@ private:
     void onFrame(Client& c, const Frame& f);
     void handshake(Client& c, const Frame& f);
     void authMsg(Client& c, const Frame& f);
+    // The two keys every login attempt is measured against: the host doing the
+    // guessing, and the account being guessed at. See LoginThrottle for why they
+    // are policed differently.
+    std::string ipKeyFor(const Client& c) const { return "ip:" + c.peer; }
+    static std::string userKeyFor(const std::string& user) {
+        return "user:" + tak::auth::foldUsername(user);
+    }
+    // Milliseconds the caller must refuse for, or 0 to proceed.
+    uint64_t loginLocked(const Client& c, const std::string& user, uint64_t now) const {
+        return std::max(throttle_.lockedFor(ipKeyFor(c), now),
+                        throttle_.lockedFor(userKeyFor(user), now));
+    }
+    void sendThrottled(Client& c, uint64_t wait) {
+        sendAuthResult(c, AuthStatus::Throttled, nullptr,
+                       "too many failed sign-ins -- try again in " +
+                       std::to_string((wait + 999) / 1000) + "s");
+        std::fprintf(stderr, "client %u (%s) login throttled (%llums left)\n",
+                     c.id, c.peer.c_str(), (unsigned long long)wait);
+    }
     void sendWelcome(Client& c);
     void sendAuthResult(Client& c, AuthStatus st, const tak::crypto::Digest* sig,
                         const std::string& msg);
@@ -509,20 +528,10 @@ void Server::authMsg(Client& c, const Frame& f) {
         // account from many hosts nor many accounts from one host gets a free run.
         // The address is checked first and always, which is also what stops this
         // endpoint being used to sweep for which usernames exist.
-        const std::string ipKey = "ip:" + c.peer;
-        const std::string userKey = "user:" + tak::auth::foldUsername(user);
-        uint64_t wait = std::max(throttle_.lockedFor(ipKey, now), throttle_.lockedFor(userKey, now));
-        if (wait) {
-            sendAuthResult(c, AuthStatus::Throttled, nullptr,
-                           "too many failed sign-ins -- try again in " +
-                           std::to_string((wait + 999) / 1000) + "s");
-            std::fprintf(stderr, "client %u (%s) login throttled (%llums left)\n",
-                         c.id, c.peer.c_str(), (unsigned long long)wait);
-            return;
-        }
+        if (uint64_t wait = loginLocked(c, user, now)) { sendThrottled(c, wait); return; }
         std::string why;
         if (!tak::auth::validUsername(user, &why)) {
-            throttle_.fail(ipKey, now);
+            throttle_.fail(ipKeyFor(c), now, tak::srv::LoginThrottle::kAddress);
             sendAuthResult(c, AuthStatus::BadUsername, nullptr, why);
             return;
         }
@@ -573,6 +582,15 @@ void Server::authMsg(Client& c, const Frame& f) {
         }
         std::vector<uint8_t> proofBytes = r.bytes(tak::crypto::kHashLen);
         if (!r.ok) { sendReject(c, "malformed login proof"); c.conn.fail("bad auth"); return; }
+        // Check the lock HERE too, not just at AuthBegin. A guesser that opens a
+        // hundred connections first, collects a hundred challenges, and only then
+        // starts sending proofs would otherwise never meet the throttle at all --
+        // the one gate it passed was armed before any of its guesses were made.
+        if (uint64_t wait = loginLocked(c, c.pendAuth.user, now)) {
+            sendThrottled(c, wait);
+            c.pendAuth.challenged = false;
+            return;
+        }
         const tak::srv::Account* a = accounts_.find(c.pendAuth.user);
         if (!a) { sendAuthResult(c, AuthStatus::BadPassword, nullptr, "that account no longer exists"); return; }
 
@@ -581,10 +599,10 @@ void Server::authMsg(Client& c, const Frame& f) {
         std::vector<uint8_t> am = tak::auth::authMessage(c.pendAuth.user, c.pendAuth.clientNonce,
                                                     c.pendAuth.serverNonce, a->cred.salt,
                                                     a->cred.iters);
-        const std::string ipKey = "ip:" + c.peer, userKey = "user:" + tak::auth::foldUsername(c.pendAuth.user);
+        const std::string ipKey = ipKeyFor(c), userKey = userKeyFor(c.pendAuth.user);
         if (!tak::auth::verifyClientProof(a->cred, am, proof)) {
-            throttle_.fail(ipKey, now);
-            throttle_.fail(userKey, now);
+            throttle_.fail(ipKey, now, tak::srv::LoginThrottle::kAddress);
+            throttle_.fail(userKey, now, tak::srv::LoginThrottle::kAccount);
             sendAuthResult(c, AuthStatus::BadPassword, nullptr, "that password is not right");
             std::fprintf(stderr, "client %u (%s) failed sign-in for '%s'\n",
                          c.id, c.peer.c_str(), a->name.c_str());
@@ -593,7 +611,9 @@ void Server::authMsg(Client& c, const Frame& f) {
             c.pendAuth.challenged = false;
             return;
         }
-        throttle_.succeed(ipKey);
+        // Clear the ACCOUNT only. Clearing the address as well would hand anyone
+        // with one valid account a reset button for their own failure record,
+        // to be pressed between guesses at somebody else's.
         throttle_.succeed(userKey);
         tak::crypto::Digest sig = tak::auth::serverSignature(a->cred.serverKey, am);
         c.account = a->name;
@@ -616,6 +636,14 @@ void Server::authMsg(Client& c, const Frame& f) {
         std::vector<uint8_t> serverKey = r.bytes(tak::crypto::kHashLen);
         if (!r.ok) { sendReject(c, "malformed registration"); c.conn.fail("bad auth"); return; }
 
+        // Registration is the one unauthenticated operation that WRITES, and each
+        // one rewrites the whole account file on the tick thread -- so a flood is
+        // both a disk-filling attack and a way to stall every running game. Meter
+        // it per address on the same escalating curve as a failed password.
+        const std::string ipKey = ipKeyFor(c);
+        if (uint64_t wait = throttle_.lockedFor(ipKey, now)) { sendThrottled(c, wait); return; }
+        throttle_.fail(ipKey, now, tak::srv::LoginThrottle::kAddress);
+
         tak::auth::Credential cred;
         cred.iters = c.pendAuth.iters;
         cred.salt = c.pendAuth.salt;
@@ -636,7 +664,17 @@ void Server::authMsg(Client& c, const Frame& f) {
         }
         c.account = c.pendAuth.user;
         c.name = c.pendAuth.user;
-        sendAuthResult(c, AuthStatus::Created, nullptr, "new account created");
+        // Sign the result with the ServerKey we were just handed, exactly as on
+        // the sign-in path. The client can then demand a valid signature for BOTH
+        // outcomes instead of having to trust an unsigned "Created" -- which a
+        // machine posing as the server would otherwise use to skip the check.
+        std::vector<uint8_t> am = tak::auth::authMessage(c.pendAuth.user, c.pendAuth.clientNonce,
+                                                         c.pendAuth.serverNonce, c.pendAuth.salt,
+                                                         c.pendAuth.iters);
+        tak::crypto::Digest sig = tak::auth::serverSignature(cred.serverKey, am);
+        // A registration that got this far is not a failed attempt.
+        throttle_.succeed(userKeyFor(c.pendAuth.user));
+        sendAuthResult(c, AuthStatus::Created, &sig, "new account created");
         std::fprintf(stderr, "client %u (%s) created account '%s' (%zu total)\n",
                      c.id, c.peer.c_str(), c.name.c_str(), accounts_.size());
         sendWelcome(c);

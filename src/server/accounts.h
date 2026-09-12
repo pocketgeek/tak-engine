@@ -61,24 +61,37 @@ private:
 };
 
 // Brute-force throttle. Keyed by whatever the caller considers an identity --
-// the server feeds it both the account name and the peer address, so neither
-// hammering one account from many hosts nor many accounts from one host slips
-// through. Purely in-memory: a restart forgives everyone, which is the right
-// trade for a game server.
+// the server feeds it the peer address AND the account name, so neither many
+// accounts from one host nor one account from many hosts gets a free run.
+// Purely in-memory: a restart forgives everyone, which is the right trade for a
+// game server.
 class LoginThrottle {
 public:
-    // Failures allowed before the key is locked out at all.
-    static constexpr int kFreeAttempts = 5;
-    // First lockout, doubling with each further failure up to kMaxLockMs.
-    static constexpr uint64_t kBaseLockMs = 30 * 1000;
-    static constexpr uint64_t kMaxLockMs = 15 * 60 * 1000;
+    // How hard to clamp down, per kind of key. These differ on purpose.
+    struct Policy {
+        int freeAttempts;        // failures tolerated before locking at all
+        uint64_t baseLockMs;     // first lockout, doubling per further failure
+        uint64_t maxLockMs;      // ... up to this
+    };
+    // An ADDRESS is the thing actually doing the guessing, so it is clamped hard.
+    static constexpr Policy kAddress{5, 30 * 1000, 15 * 60 * 1000};
+    // An ACCOUNT is deliberately far more forgiving. A strict per-account lockout
+    // is a weapon: anyone who knows a name can hold its owner out of the game by
+    // failing five logins an hour. The account limit exists only to blunt guessing
+    // spread across many addresses, so it takes real persistence to trip and lets
+    // go quickly; the address limit is what stops an ordinary attacker.
+    static constexpr Policy kAccount{50, 60 * 1000, 5 * 60 * 1000};
+
     // A key that behaves for this long is forgotten entirely.
     static constexpr uint64_t kForgetMs = 60 * 60 * 1000;
 
     // Milliseconds the caller must refuse for, or 0 if the attempt may proceed.
     uint64_t lockedFor(const std::string& key, uint64_t nowMs) const;
 
-    void fail(const std::string& key, uint64_t nowMs);
+    void fail(const std::string& key, uint64_t nowMs, const Policy& p);
+    // Clear a key's record. Call this ONLY for account-scoped keys: clearing the
+    // address on success would let anyone holding one valid account wipe their
+    // own failure history between guesses at somebody else's.
     void succeed(const std::string& key);
 
     // Drops entries that have been quiet for kForgetMs, so a long-lived server

@@ -9,6 +9,7 @@
 #include <sstream>
 
 #ifndef _WIN32
+  #include <fcntl.h>
   #include <sys/stat.h>
   #include <unistd.h>
 #endif
@@ -130,6 +131,16 @@ bool AccountStore::load(const std::string& path, std::string* err) {
         // Unknown keys inside a block are ignored for the same forward-compat
         // reason as unknown sections.
     }
+    // getline stops on EOF *or* on a read error, and the loop above cannot tell
+    // them apart. A mid-file I/O error would otherwise look like a short but
+    // valid file -- the server would come up having silently forgotten every
+    // account after the bad byte, and hand those names to whoever asks for them
+    // next. Refuse instead.
+    if (in.bad()) {
+        if (err) *err = "error reading accounts file '" + path + "': " + std::strerror(errno);
+        byFold_.clear();
+        return false;
+    }
     return flush(err);
 }
 
@@ -137,48 +148,94 @@ bool AccountStore::save(std::string* err) const {
     if (path_.empty()) { if (err) *err = "no accounts file path set"; return false; }
     const std::string tmp = path_ + ".tmp";
     {
+        // Create the temp file OWNER-ONLY FROM THE START. Writing it with the
+        // default mask and chmod'ing afterwards leaves the verifiers readable by
+        // every account on the box for the duration of the write -- short, but a
+        // window that need not exist at all.
+        std::string text = kHeader;
+        for (const auto& [fold, a] : byFold_) {
+            text += "\n[account]\n";
+            text += "name = " + a.name + "\n";
+            text += "iters = " + std::to_string(a.cred.iters) + "\n";
+            text += "salt = " + crypto::toHex(a.cred.salt.data(), a.cred.salt.size()) + "\n";
+            text += "storedkey = " + crypto::toHex(a.cred.storedKey) + "\n";
+            text += "serverkey = " + crypto::toHex(a.cred.serverKey) + "\n";
+            text += "created = " + std::to_string(a.createdUnix) + "\n";
+            text += "lastlogin = " + std::to_string(a.lastLoginUnix) + "\n";
+            text += "logins = " + std::to_string(a.logins) + "\n";
+        }
+#ifndef _WIN32
+        int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+        if (fd < 0) {
+            if (err) *err = "cannot write '" + tmp + "': " + std::strerror(errno);
+            return false;
+        }
+        // An existing temp file keeps its old mode, so state it explicitly too.
+        if (::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+            if (err) *err = "cannot secure '" + tmp + "': " + std::strerror(errno);
+            ::close(fd); std::remove(tmp.c_str());
+            return false;
+        }
+        size_t off = 0;
+        while (off < text.size()) {
+            ssize_t n = ::write(fd, text.data() + off, text.size() - off);
+            if (n <= 0) {
+                if (errno == EINTR) continue;
+                if (err) *err = "error writing '" + tmp + "': " + std::strerror(errno);
+                ::close(fd); std::remove(tmp.c_str());
+                return false;
+            }
+            off += size_t(n);
+        }
+        // Get the bytes on the platter BEFORE the rename. Without this a crash
+        // can leave the rename durable and its contents not -- an empty accounts
+        // file where everyone's credentials used to be.
+        if (::fsync(fd) != 0 || ::close(fd) != 0) {
+            if (err) *err = "error flushing '" + tmp + "': " + std::strerror(errno);
+            std::remove(tmp.c_str());
+            return false;
+        }
+#else
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out) {
             if (err) *err = "cannot write '" + tmp + "': " + std::strerror(errno);
             return false;
         }
-        out << kHeader;
-        for (const auto& [fold, a] : byFold_) {
-            out << "\n[account]\n";
-            out << "name = " << a.name << "\n";
-            out << "iters = " << a.cred.iters << "\n";
-            out << "salt = " << crypto::toHex(a.cred.salt.data(), a.cred.salt.size()) << "\n";
-            out << "storedkey = " << crypto::toHex(a.cred.storedKey) << "\n";
-            out << "serverkey = " << crypto::toHex(a.cred.serverKey) << "\n";
-            out << "created = " << a.createdUnix << "\n";
-            out << "lastlogin = " << a.lastLoginUnix << "\n";
-            out << "logins = " << a.logins << "\n";
-        }
+        out << text;
         out.flush();
         if (!out) {
             if (err) *err = "error writing '" + tmp + "': " + std::strerror(errno);
-            out.close();
-            std::remove(tmp.c_str());
+            out.close(); std::remove(tmp.c_str());
             return false;
         }
+#endif
     }
-#ifndef _WIN32
-    // Owner-only, set before the rename so the file is never briefly world-readable.
-    ::chmod(tmp.c_str(), S_IRUSR | S_IWUSR);
-#endif
-    // rename() replaces atomically on POSIX; on Windows it fails if the target
-    // exists, so drop the old file first. That leaves a sliver where neither
-    // exists, which is why the temp file is written and flushed before we touch
-    // the original.
 #ifdef _WIN32
-    std::remove(path_.c_str());
-#endif
+    // Windows rename() refuses an existing target, so the old file has to move
+    // aside first -- but DELETING it was wrong: if the rename then failed we
+    // destroyed the accounts and the replacement both. Move it to a backup we can
+    // put back, and only drop the backup once the new file is in place.
+    const std::string bak = path_ + ".bak";
+    std::remove(bak.c_str());
+    bool hadOld = std::rename(path_.c_str(), bak.c_str()) == 0;
+    if (std::rename(tmp.c_str(), path_.c_str()) != 0) {
+        if (err) *err = "cannot replace '" + path_ + "': " + std::strerror(errno);
+        std::remove(tmp.c_str());
+        if (hadOld) std::rename(bak.c_str(), path_.c_str());   // put it back
+        return false;
+    }
+    if (hadOld) std::remove(bak.c_str());
+    return true;
+#else
+    // POSIX rename() replaces atomically: a concurrent reader sees either the
+    // whole old file or the whole new one, never a truncated mix.
     if (std::rename(tmp.c_str(), path_.c_str()) != 0) {
         if (err) *err = "cannot replace '" + path_ + "': " + std::strerror(errno);
         std::remove(tmp.c_str());
         return false;
     }
     return true;
+#endif
 }
 
 const Account* AccountStore::find(std::string_view user) const {
@@ -224,17 +281,17 @@ uint64_t LoginThrottle::lockedFor(const std::string& key, uint64_t nowMs) const 
     return nowMs < it->second.lockedUntilMs ? it->second.lockedUntilMs - nowMs : 0;
 }
 
-void LoginThrottle::fail(const std::string& key, uint64_t nowMs) {
+void LoginThrottle::fail(const std::string& key, uint64_t nowMs, const Policy& p) {
     Entry& e = keys_[key];
     if (e.lastMs && nowMs - e.lastMs > kForgetMs) e.fails = 0;   // long-quiet: start over
     ++e.fails;
     e.lastMs = nowMs;
-    if (e.fails > kFreeAttempts) {
-        // 30s, 60s, 120s, ... capped. Shift by the count PAST the free attempts.
-        int over = e.fails - kFreeAttempts - 1;
-        uint64_t lock = kBaseLockMs;
-        for (int i = 0; i < over && lock < kMaxLockMs; ++i) lock *= 2;
-        if (lock > kMaxLockMs) lock = kMaxLockMs;
+    if (e.fails > p.freeAttempts) {
+        // base, 2x, 4x, ... capped. Shift by the count PAST the free attempts.
+        int over = e.fails - p.freeAttempts - 1;
+        uint64_t lock = p.baseLockMs;
+        for (int i = 0; i < over && lock < p.maxLockMs; ++i) lock *= 2;
+        if (lock > p.maxLockMs) lock = p.maxLockMs;
         e.lockedUntilMs = nowMs + lock;
     }
 }
