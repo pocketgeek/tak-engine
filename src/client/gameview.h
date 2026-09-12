@@ -843,6 +843,16 @@ private:
         bool flying = false;
         bool airborne = false;   // true while the flight animation should run
         float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
+        // The ground datum this flyer is currently holding its altitude above,
+        // walked toward flyerGround() at a limited rate. Retail never snaps a
+        // flyer's Y: a servo in the flyer mover moves it max(1, speed/4) world
+        // units per 30Hz tick toward the commanded altitude. Without that the
+        // dilated sector datum is a STEP function -- it changes the instant the
+        // unit crosses a 128-unit sector boundary -- and the flyer teleports
+        // vertically at every boundary. That jump is the whole reason the servo
+        // exists.
+        float groundY = 0;
+        bool groundInit = false;
         // Flyer attitude (bankscale/pitchscale): a smoothed roll into the turn and
         // pitch into the climb, derived from how the unit is actually moving. Retail
         // flyers visibly lean; ours flew dead level through every turn and dive.
@@ -1795,12 +1805,19 @@ private:
     // Snapshot overloads. A FLYER rides the coarse dilated datum, not the relief
     // under its nose -- see flyerGround.
     float uLiftY(const UnitR& u) {
-        if (u.type && u.type->canFly) return flyerGround(u.x, u.z) * kHeightScale_;
+        if (u.type && u.type->canFly) return flyerDatum(u) * kHeightScale_;
         return terrainLift(u.x, u.z);
     }
     float uLiftX(const UnitR& u) {
-        if (u.type && u.type->canFly) return flyerGround(u.x, u.z) * kHeightScaleX_;
+        if (u.type && u.type->canFly) return flyerDatum(u) * kHeightScaleX_;
         return terrainLiftX(u.x, u.z);
+    }
+    // The SMOOTHED datum for this flyer (Anim::groundY), falling back to the raw
+    // sector value for a unit with no live anim yet.
+    float flyerDatum(const UnitR& u) {
+        auto it = anims_.find(u.id);
+        if (it != anims_.end() && it->second.groundInit) return it->second.groundY;
+        return flyerGround(u.x, u.z);
     }
 
     // A unit's current render altitude (flyers rise to cruiseAlt; 0 for ground

@@ -1600,8 +1600,8 @@
         // A flyer holds its height above the coarse dilated datum, not the relief
         // directly beneath it -- see flyerGround.
         const bool flying = u.type && u.type->canFly;
-        float liftX = flying ? flyerGround(ix, iz) * kHeightScaleX_ : terrainLiftX(ix, iz);
-        float liftY = flying ? flyerGround(ix, iz) * kHeightScale_ : terrainLift(ix, iz);
+        float liftX = flying ? flyerDatum(u) * kHeightScaleX_ : terrainLiftX(ix, iz);
+        float liftY = flying ? flyerDatum(u) * kHeightScale_ : terrainLift(ix, iz);
         float ax = (ix - mapView_.offX()) * zm - liftX * zm;
         float ay = (iz - mapView_.offY()) * zm - liftY * zm;
         // FBI waterline: a wading god or a floating hull sits BELOW the water

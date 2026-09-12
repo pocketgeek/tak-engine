@@ -1135,6 +1135,27 @@
                 continue;   // VM advanced in the parallel pass below
             }
             if (a.flying) {
+                // Walk the ground datum toward the sector value rather than
+                // snapping to it. The dilated datum is a step function -- it jumps
+                // the moment the unit crosses a 128-unit sector boundary -- so
+                // reading it directly makes a flyer hop vertically at every
+                // boundary. Retail's flyer mover never does that: its vertical
+                // servo moves Y at most max(1, speed/4) world units per 30Hz tick
+                // toward the commanded altitude, which turns those steps into a
+                // climb. Same rate here, converted to per-second.
+                float wantGround = flyerGround(u.x, u.z);
+                if (!a.groundInit) { a.groundY = wantGround; a.groundInit = true; }
+                else {
+                    // Retail's step is max(1, speed/4) world units per 30Hz TICK,
+                    // and its speed is per-tick too. Ours is px/SECOND, so the
+                    // conversion is max(1, (speed/30)/4) * 30 == max(30, speed/4)
+                    // units per second. Getting that wrong by the 30x makes the
+                    // servo cross the entire relief in a twentieth of a second,
+                    // i.e. it smooths nothing and the steps come straight back.
+                    float rate = std::max(30.0f, std::abs(u.speed) / 4.0f);
+                    float step = rate * dt;
+                    a.groundY += std::clamp(wantGround - a.groundY, -step, step);
+                }
                 // Take off when moving, settle back to the ground when idle.
                 float cruise = u.type ? u.type->cruiseAlt : 0.0f;
                 // Flyers cruise while doing anything — moving, or hovering to
