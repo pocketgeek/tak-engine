@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include "sim/pathsearch.h"
 #include <cstdint>
 #include <deque>
 #include <unordered_map>
@@ -1312,6 +1313,13 @@ private:
 
     std::vector<int32_t> occ_;      // 16px cells -> occupying unit id (0 = free)
     int occW_ = 0, occH_ = 0;
+    // Retail's per-cell query for one unit's movement class (icd 0x4139d0 ->
+    // 0x413c80): impassable below the threshold, 4 when a parked body holds the
+    // cell, 6 ordinary ground, 7 road. The pathfinder scores every candidate
+    // through this, so it sees exactly what the mover will.
+    int cellScore(const UnitType* t, int cx, int cz, int selfId) const;
+
+    void requestPath(Unit& u, float x, float z);
     void rebuildOccupancy();
     // How deep would `u`'s body sit inside another mobile body if it stood at
     // (nx,nz)? Pixels of overlap along the shallower axis; <= 0 means clear.
@@ -1457,6 +1465,7 @@ private:
     uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
                                  // (deterministic: derived from the live-unit count)
     int pathBudget_ = 0;         // A* repaths still allowed this tick (crowd throttle)
+    PathService paths_;          // retail's request queue + budget scheduler
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
     std::vector<uint8_t> slope_;   // local height spread

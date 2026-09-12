@@ -1,9 +1,12 @@
 #include "sim/pathsearch.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 
 namespace tak::sim {
+
+static const bool g_pathDbg = getenv("TAK_PATHDBG") != nullptr;
 
 int pathDist(PathCell a, PathCell b) {
     return std::max(std::abs(a.x - b.x), std::abs(a.z - b.z));
@@ -28,6 +31,10 @@ static int cardinalToward(int dx, int dz) {
 void PathSearch::reset(int mapW, int mapH) {
     w_ = mapW;
     h_ = mapH;
+    // icd 0x414797: (width + height) * 20. Retail abandons a search that wanders
+    // this far and leaves the unit on its straight segment, so long or tangled
+    // routes legitimately fail rather than costing unbounded work.
+    visitLimit = (mapW + mapH) * 20;
     flag_.assign(size_t(w_) * size_t(h_), 0);
     from_.assign(size_t(w_) * size_t(h_), 0);
     phase = Phase::Init;
@@ -133,7 +140,12 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
     if (w_ <= 0) return Result::Failed;     // reset() was never called
     for (;;) {
         if (work >= quantum) return Result::Suspended;   // icd 0x415028, -2
-        if (visited > visitLimit) { phase = Phase::Failed; return Result::Failed; }
+        if (visited > visitLimit) {
+            if (g_pathDbg) std::fprintf(stderr,
+                "  search gave up: visitLimit, phase=%d visited=%d work=%d best=%d cur=(%d,%d)\n",
+                int(phase), visited, work, best, cur.x, cur.z);
+            phase = Phase::Failed; return Result::Failed;
+        }
 
         switch (phase) {
         case Phase::Init: {
@@ -227,7 +239,12 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
                 if (dist < best) best = dist;
                 if (onGoalLine(org, curB)) { org = curB; phase = Phase::CardMarch; break; }
             }
-            if (!okA && !okB) { phase = Phase::Failed; return Result::Failed; }
+            if (!okA && !okB) {
+                if (g_pathDbg) std::fprintf(stderr,
+                    "  search gave up: both traces boxed in at A(%d,%d) B(%d,%d) visited=%d\n",
+                    curA.x, curA.z, curB.x, curB.z, visited);
+                phase = Phase::Failed; return Result::Failed;
+            }
             break;
         }
 
@@ -235,6 +252,54 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
         case Phase::Failed: return Result::Failed;
         }
     }
+}
+
+void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
+                          int mapH, float goalX, float goalZ, bool priority) {
+    Entry e;
+    e.search.reset(mapW, mapH);
+    e.search.unitId = unitId;
+    e.search.start = start;
+    e.search.goal = goal;
+    e.search.cur = start;
+    e.search.priority = priority;
+    e.goalX = goalX;
+    e.goalZ = goalZ;
+    e.priority = priority;
+    q_[unitId] = std::move(e);
+}
+
+void PathService::cancel(int unitId) {
+    q_.erase(unitId);
+}
+
+void PathService::tick(const std::function<int(int, int, int)>& score,
+                       const std::function<void(int, const std::vector<PathCell>&,
+                                                float, float)>& done) {
+    if (q_.empty()) return;
+    // Count the two classes exactly as the scheduler does, then split the
+    // budget: a flagged request is worth five ordinary ones (icd 0x4164fa).
+    int a = 0, b = 0;
+    for (const auto& [id, e] : q_) (e.priority ? b : a) += 1;
+    const int share = a + 5 * b;
+    if (share <= 0) return;
+    const int quantum = std::max(1, budget_ / share);
+
+    std::vector<int> finished;
+    for (auto& [id, e] : q_) {
+        e.cap += quantum * (e.priority ? 5 : 1);
+        auto sc = [&](int cx, int cz) { return score(id, cx, cz); };
+        const PathSearch::Result r = e.search.step(sc, e.cap);
+        if (r == PathSearch::Result::Arrived) {
+            done(id, e.search.out, e.goalX, e.goalZ);
+            finished.push_back(id);
+        } else if (r == PathSearch::Result::Failed) {
+            done(id, {}, e.goalX, e.goalZ);
+            finished.push_back(id);
+        }
+        // Suspended: keep the entry, resume next tick with its state intact.
+    }
+    for (int id : finished) q_.erase(id);
 }
 
 }   // namespace tak::sim

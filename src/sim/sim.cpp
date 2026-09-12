@@ -1038,12 +1038,28 @@ void World::order(int unitId, float x, float z, bool queue) {
     // crowd sent to the same point spreads and flows around obstacles instead of
     // funnelling single-file into a corner. Only fall back to A* waypoints when
     // no field can be built or the goal is unreachable from here.
-    // Retail pushes the goal straight in and steers at it: its PathNavigator keeps a
-    // two-point segment [current position, goal], re-anchored every ~6 ticks, and
-    // performs no search of any kind (docs/retail-engine.md). The blocked/stuck
-    // watchdogs buy a path only when something really is in the way.
+    // Retail pushes the straight goal in and starts steering at it IMMEDIATELY,
+    // while a path request runs in the background; when the search returns, the
+    // real route replaces the straight segment (docs/retail-engine.md). So the
+    // two-point segment is the interim, not the mechanism -- exactly what this
+    // engine did permanently until the search was ported.
     u->orders.push_back({x, z, 0});
     markGoal();
+    requestPath(*u, x, z);
+}
+
+// Queue a background path for `u` toward (x,z). Flyers ignore the ground, and a
+// goal a couple of cells away is not worth a search -- the straight segment
+// already covers it.
+void World::requestPath(Unit& u, float x, float z) {
+    if (!u.type || u.type->canFly || u.type->isStructure()) return;
+    const NavGrid& g = navFor(u.type);
+    if (g.empty()) return;
+    const PathCell from{int(u.x) / 16, int(u.z) / 16};
+    const PathCell to{int(x) / 16, int(z) / 16};
+    if (pathDist(from, to) < 3) { paths_.cancel(u.id); return; }
+    paths_.request(u.id, from, to, g.width(), g.height(), x, z,
+                   /*priority=*/u.type->commander);
 }
 
 // Label the connected components of the cells a `foot`-wide unit can occupy, using
@@ -2238,6 +2254,28 @@ float World::bodyPenetration(const Unit& u, float nx, float nz) const {
         }
     }
     return worst;
+}
+
+int World::cellScore(const UnitType* t, int cx, int cz, int selfId) const {
+    const NavGrid& g = navFor(t);
+    const int foot = footCells(t);
+    if (!g.empty() && !g.fits(cx, cz, foot)) return kCellImpassable;
+    if (occW_ > 0) {
+        // Only PARKED bodies hold a cell against a search, matching the mover:
+        // a unit under way is something to fall in behind, not a wall.
+        const int x0 = cx - foot / 2, z0 = cz - foot / 2;
+        for (int j = 0; j < foot; ++j)
+            for (int i = 0; i < foot; ++i) {
+                const int x = x0 + i, z = z0 + j;
+                if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
+                const int32_t o = occ_[size_t(z) * size_t(occW_) + size_t(x)];
+                if (o == 0 || o == selfId) continue;
+                const Unit* u = unit(o);
+                if (u && u->alive() && u->speed == 0.0f) return kCellOccupied;
+            }
+    }
+    if (!g.empty() && g.roadAt(cx, cz)) return kCellRoad;
+    return kCellGround;
 }
 
 void World::rebuildOccupancy() {
@@ -3695,6 +3733,32 @@ void World::tick(float dt) {
 
     rebuildGrid();   // spatial hash for this tick (combat acquire + separation)
     rebuildOccupancy();   // who is parked where: units are solid (see sim.h)
+
+    // Retail's pathfinder: one integer work budget split across every pending
+    // request, each search resuming where it left off (icd 0x416430). Runs
+    // after occupancy so a search scores exactly what the mover will see.
+    paths_.tick(
+        [&](int unitId, int cx, int cz) {
+            const Unit* u = unit(unitId);
+            return u && u->type ? cellScore(u->type, cx, cz, unitId)
+                                : int(kCellImpassable);
+        },
+        [&](int unitId, const std::vector<PathCell>& route, float gx, float gz) {
+            Unit* u = unit(unitId);
+            if (!u || !u->alive() || u->orders.empty() || route.empty()) return;
+            // Only the leg this search was issued for; anything queued behind
+            // it stays untouched.
+            std::vector<Order> path;
+            path.reserve(route.size());
+            for (size_t i = 0; i < route.size(); ++i) {
+                Order o;
+                o.x = float(route[i].x) * 16.0f + 8.0f;
+                o.z = float(route[i].z) * 16.0f + 8.0f;
+                if (i + 1 == route.size()) { o.x = gx; o.z = gz; }   // exact goal
+                path.push_back(o);
+            }
+            replaceLeg(*u, path);
+        });
 
     // Auto-acquire re-scan period, widened with the crowd: target acquisition is the
     // dominant sim cost in a huge battle (each idle armed unit scans its neighbourhood

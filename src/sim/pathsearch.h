@@ -29,6 +29,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <vector>
 
 namespace tak::sim {
@@ -95,7 +96,7 @@ struct PathSearch {
     int nGround = 0;              // +0xdc
     int nRoad = 0;                // +0xe0
     int visited = 0;              // +0xe4
-    int visitLimit = 20000;       // +0xe8
+    int visitLimit = 20000;       // +0xe8, set by reset() to (w+h)*20
     int work = 0;                 // +0x48, against the quantum in +0x165
 
     std::vector<PathCell> out;    // the finished route, in travel order
@@ -128,6 +129,44 @@ private:
     bool onGoalLine(PathCell org, PathCell c) const;
     bool traceStep(const std::function<int(int, int)>& score,
                    PathCell& c, int& d, int rot);
+};
+
+// The request queue and its per-tick budget scheduler (icd 0x416430).
+//
+// Retail counts every pending request across all players, splits one integer
+// work budget between them, and gives each a slice; flagged requests get five
+// times the share. Each search then runs until its slice is spent and resumes
+// next tick. Requests are keyed by unit id and visited in that order, so the
+// whole thing is deterministic and safe to run inside the lockstep sim.
+class PathService {
+  public:
+    void setBudget(int b) { budget_ = b > 0 ? b : kPathBudgetDefault; }
+    int budget() const { return budget_; }
+
+    // Queue a search. Replaces any request already outstanding for this unit.
+    void request(int unitId, PathCell start, PathCell goal, int mapW, int mapH,
+                 float goalX, float goalZ, bool priority);
+    void cancel(int unitId);
+    bool pending(int unitId) const { return q_.find(unitId) != q_.end(); }
+    size_t pendingCount() const { return q_.size(); }
+    void clear() { q_.clear(); }
+
+    // `score(unitId, cx, cz)` answers the per-cell query for that unit's
+    // movement class. `done(unitId, route, goalX, goalZ)` receives a finished
+    // route in travel order -- empty if the search failed.
+    void tick(const std::function<int(int, int, int)>& score,
+              const std::function<void(int, const std::vector<PathCell>&,
+                                       float, float)>& done);
+
+  private:
+    struct Entry {
+        PathSearch search;
+        int cap = 0;            // icd +0x165: grows by the quantum each tick
+        float goalX = 0, goalZ = 0;
+        bool priority = false;
+    };
+    int budget_ = kPathBudgetDefault;
+    std::map<int, Entry> q_;    // unit id order: deterministic
 };
 
 // Chebyshev distance in cells. Retail's 0x413e50 returns a distance the search
