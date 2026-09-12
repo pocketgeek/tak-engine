@@ -105,10 +105,12 @@ private:
     void dropViewport(const Control& c, int nOpts, float& y0, float& itemH, float& viewH);
 
     // True when every setting DEFAULTS would reset already equals its default value
-    // (playerName / lastMap are preserved by DEFAULTS, so they're excluded).
+    // (playerName / accountName / lastMap are preserved by DEFAULTS, so they're
+    // excluded).
     bool atDefaults() const {
         Settings d;
         d.playerName = s_.playerName;
+        d.accountName = s_.accountName;
         d.lastMap = s_.lastMap;
         d.hotkeys = s_.hotkeys;     // hotkeys have their own reset (Hotkeys screen)
         return s_ == d;

@@ -413,10 +413,12 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
         if (in(defaultsRect_, mx, my)) {                            // reset to defaults
             if (atDefaults()) return false;         // already default -> disabled, ignore
             std::string keepName = s_.playerName;   // not shown here -> preserve these
+            std::string keepAccount = s_.accountName;
             std::string keepMap = s_.lastMap;
             auto keepKeys = s_.hotkeys;             // hotkeys reset from their own screen
             s_ = Settings{};
             s_.playerName = keepName;
+            s_.accountName = keepAccount;
             s_.lastMap = keepMap;
             s_.hotkeys = std::move(keepKeys);
             dirty_ = true;

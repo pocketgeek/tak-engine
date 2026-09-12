@@ -45,6 +45,14 @@ public:
     // (e.g. "takmission01_mt") and the campaign id it belongs to; empty otherwise.
     const std::string& chosenMission() const;
     const std::string& chosenCampaign() const;
+    // After run() returns Choice::Multiplayer, the account the player signed in
+    // with. chosenPassword() is live only until the connect has used it -- call
+    // clearPassword() the moment it has, so it is not sitting in memory while the
+    // game runs. It is never written to disk (only the NAME is remembered).
+    const std::string& chosenAccount() const;
+    const std::string& chosenPassword() const;
+    void clearPassword();
+
     // After run() returns Choice::Benchmark, the picked intensity level (1=Low..5=Absurd).
     int chosenBenchmarkLevel() const;
 

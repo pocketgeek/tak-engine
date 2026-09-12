@@ -68,6 +68,8 @@ add_library(tak-formats
   src/net/protocol.cpp
   src/net/conn.cpp
   src/net/client.cpp
+  src/net/crypto.cpp
+  src/net/auth.cpp
   src/util/png.cpp
   src/util/appicon.cpp
   src/util/jpeg.cpp
@@ -83,7 +85,8 @@ target_compile_definitions(tak-formats PUBLIC TAK_VERSION="${PROJECT_VERSION}")
 # Windows sockets: src/net (in tak-formats) uses Winsock2 -- link ws2_32 so it
 # propagates to takclient and takserver. No-op on POSIX.
 if(WIN32)
-  target_link_libraries(tak-formats PUBLIC ws2_32)
+  # bcrypt: BCryptGenRandom, the OS CSPRNG behind crypto::randomBytes.
+  target_link_libraries(tak-formats PUBLIC ws2_32 bcrypt)
   # Fold the GCC/C++ runtime into each .exe so a Windows box needs no MinGW DLLs
   # (only SDL2/jpeg/zlib remain, shipped alongside). -static also pulls winpthread.
   add_link_options(-static-libgcc -static-libstdc++ -static)
@@ -121,6 +124,9 @@ target_link_libraries(tnttool PRIVATE tak-formats)
 
 add_executable(missiontool tools/missiontool.cpp)
 target_link_libraries(missiontool PRIVATE tak-formats)
+
+add_executable(authtest tools/authtest.cpp src/server/accounts.cpp)
+target_link_libraries(authtest PRIVATE tak-formats)
 
 add_executable(retailgap_test tools/retailgap_test.cpp)
     add_executable(footprobe tools/footprobe.cpp)
@@ -265,7 +271,7 @@ endif()
 
 # The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.
-add_executable(takserver src/server/server.cpp src/ai/ai.cpp)
+add_executable(takserver src/server/server.cpp src/server/accounts.cpp src/ai/ai.cpp)
 target_link_libraries(takserver PRIVATE tak-formats)
 
 add_executable(modeltool tools/modeltool.cpp)

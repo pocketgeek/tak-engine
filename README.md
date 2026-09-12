@@ -338,15 +338,46 @@ identical sim with only ~35-byte commands on the wire.
 
 ```sh
 # somewhere reachable (default port 7677):
-./build/takserver --port 7677 --data /path/to/tak_install
+./build/takserver --port 7677 --data /path/to/tak_install --accounts accounts.conf
 
 # each player — launch the client and join through the menu's Multiplayer door
-# (enter the server's host[:port] there, then browse/create/join in the lobby):
+# (pick the server, sign in with an account name and password, then browse/
+# create/join in the lobby):
 ./build/takclient --data /path/to/tak_install
 ```
 
 (A debug build can also connect straight from the command line, skipping the menu:
-`takclient game "<map>" --data <dir> --server <host> [--serverport N] [--name X]`.)
+`takclient game "<map>" --data <dir> --server <host> [--serverport N]
+[--user NAME --pass PASSWORD]`.)
+
+- **Accounts.** Players sign in with a name and a password; a name the server has
+  never seen is registered as you sign in, so there is no separate sign-up step.
+  The name is the player's identity in the lobby, in chat and on the scoreboard
+  — it replaces the free-text name a client used to be able to claim, so nobody
+  can pose as somebody else.
+
+  **The password is never transmitted and never stored.** Sign-in is
+  SCRAM-SHA-256 (RFC 5802/7677) over the game's own binary framing: the client
+  proves it knows the password against a fresh server nonce, so there is nothing
+  on the wire to capture and replay, and the server keeps only a random salt and
+  two SHA-256-derived verifiers. Stealing the account file does not let the thief
+  log in — that would take a SHA-256 preimage — it only permits an offline
+  guessing attack, which the 600,000-round PBKDF2 stretch is there to make
+  expensive. The server also proves it knows the account, so a machine posing as
+  the server cannot harvest anything. Repeated failures lock out the account and
+  the source address with an escalating delay (30s doubling to 15 min).
+
+  Accounts live in one plain-text file (`--accounts`, default
+  `takserver-accounts.conf`), written owner-read-only and rewritten atomically —
+  no database. New passwords must be at least 8 characters; names are 3-20
+  characters of letters, digits, `_`, `-` or `.`, unique case-insensitively.
+  `tools/authtest.cpp` checks the primitives against the published FIPS/RFC test
+  vectors and drives the exchange through replay, downgrade and stolen-file
+  attacks.
+
+  `--no-auth` serves anyone who connects, with no account at all; it is only for
+  a private or LAN server and should be paired with `--local` (bind loopback
+  only). That is exactly how single-player launches its private server.
 
 - **Referee sim.** With `--data`, the server also runs a referee simulation that
   hosts the AI players (so no host machine is loaded by them) and holds the

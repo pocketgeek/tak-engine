@@ -3,6 +3,8 @@
 
 #include "gaf/gaf.h"
 #include "gui/gui.h"
+#include "net/auth.h"
+#include "net/crypto.h"
 #include "util/png.h"
 #include "version.h"
 #include "video/bink.h"
@@ -470,6 +472,15 @@ struct MainMenu::Impl {
     SDL_FRect serverConnectRect{}, serverBackRect{};   // button hit-rects
     std::string serverError;                // shown in red after a failed connect
     std::string pendingConnectError;        // set via setConnectError before run()
+    // Account login. Servers require a name and password; an unused name is
+    // registered on the spot, so there is no separate sign-up screen (the server
+    // decides which of the two happened and says so). The password lives here
+    // only until main.cpp has used it, and is wiped the moment it has.
+    std::string loginUser, loginPass;
+    SDL_FRect loginUserRect{}, loginPassRect{};
+    // Which text field has the caret: 0 = none (the server list), 1 = the CUSTOM
+    // address box, 2 = username, 3 = password.
+    int field = 2;
 
     void openServerSelect(const Settings* settings) {
         serverItems.clear();
@@ -489,14 +500,35 @@ struct MainMenu::Impl {
             }
         serverSel = 0;
         serverError.clear();
+        // The name is remembered between sessions; the password never is.
+        if (settings && loginUser.empty()) loginUser = settings->accountName;
+        loginPass.clear();
+        field = loginUser.empty() ? 2 : 3;   // land on whichever still needs typing
         serverSelect = true;
+        SDL_StartTextInput();
     }
     bool serverCustom() const { return serverSel == int(serverItems.size()); }
-    void setServerSel(int i) {   // manage SDL text input across the CUSTOM boundary
+    void setServerSel(int i) {
         bool wasCustom = serverCustom();
         serverSel = std::clamp(i, 0, int(serverItems.size()));
-        if (serverCustom() && !wasCustom) SDL_StartTextInput();
-        if (!serverCustom() && wasCustom) SDL_StopTextInput();
+        // Picking CUSTOM puts the caret in the address box; leaving it hands the
+        // caret back to the account fields rather than dropping it entirely.
+        if (serverCustom() && !wasCustom) field = 1;
+        if (!serverCustom() && wasCustom && field == 1) field = 2;
+    }
+    // Tab order: the address box only participates while CUSTOM is selected.
+    void cycleField(int dir) {
+        const int lo = serverCustom() ? 1 : 2;
+        field = field < lo ? lo : field;
+        field = lo + ((field - lo + dir) % (4 - lo) + (4 - lo)) % (4 - lo);
+    }
+    std::string* activeField() {
+        switch (field) {
+            case 1: return serverCustom() ? &serverText : nullptr;
+            case 2: return &loginUser;
+            case 3: return &loginPass;
+            default: return nullptr;
+        }
     }
     std::string serverChoice() const {
         return serverCustom() ? serverText : serverItems[size_t(serverSel)];
@@ -524,6 +556,13 @@ struct MainMenu::Impl {
             {'Y',{0x07,0x08,0x70,0x08,0x07}},{'Z',{0x61,0x51,0x49,0x45,0x43}},
             {'.',{0x00,0x60,0x60,0x00,0x00}},{':',{0x00,0x36,0x36,0x00,0x00}},
             {'-',{0x08,0x08,0x08,0x08,0x08}},
+            // Account names allow '_', and the login messages need sentence
+            // punctuation; without these they render as gaps.
+            {'_',{0x40,0x40,0x40,0x40,0x40}},{',',{0x00,0x50,0x30,0x00,0x00}},
+            {'!',{0x00,0x00,0x5F,0x00,0x00}},{'\'',{0x00,0x00,0x03,0x00,0x00}},
+            {'?',{0x02,0x01,0x51,0x09,0x06}},{'(',{0x00,0x1C,0x22,0x41,0x00}},
+            {')',{0x00,0x41,0x22,0x1C,0x00}},{'/',{0x20,0x10,0x08,0x04,0x02}},
+            {'*',{0x14,0x08,0x3E,0x08,0x14}},{'+',{0x08,0x08,0x3E,0x08,0x08}},
         };
         auto it = F.find(c);
         return it == F.end() ? nullptr : it->second.data();
@@ -557,14 +596,23 @@ struct MainMenu::Impl {
         const int rows = int(serverItems.size()) + 1;   // + CUSTOM
         const float rowH = 40, pw = 560;
         const float errH = serverError.empty() ? 0 : 26;
-        float ph = 78 + errH + rows * rowH + (serverCustom() ? 56 : 0) + 64;
+        // + the two account fields (label + box each) and the sign-up hint line.
+        float ph = 78 + errH + rows * rowH + (serverCustom() ? 56 : 0) + 152 + 64;
         float x0 = (winW - pw) / 2, y0 = (winH - ph) / 2;
         SDL_SetRenderDrawColor(ren, 28, 30, 40, 245);
         SDL_FRect panel{x0, y0, pw, ph}; SDL_RenderFillRectF(ren, &panel);
         SDL_SetRenderDrawColor(ren, 150, 150, 175, 255); SDL_RenderDrawRectF(ren, &panel);
         blockText("CONNECT TO SERVER", x0 + 30, y0 + 24, 3.0f, {210, 205, 160, 255});
-        if (!serverError.empty())
-            blockText(serverError.substr(0, 42), x0 + 30, y0 + 54, 1.8f, {235, 120, 110, 255});
+        if (!serverError.empty()) {
+            // Server messages ("that password is not right") are sentences, so wrap
+            // rather than truncating mid-word at the panel edge.
+            std::string e = serverError.substr(0, 96);
+            size_t cut = e.size() > 46 ? e.rfind(' ', 46) : std::string::npos;
+            blockText(e.substr(0, cut == std::string::npos ? 46 : cut), x0 + 30, y0 + 50, 1.8f,
+                      {235, 120, 110, 255});
+            if (cut != std::string::npos)
+                blockText(e.substr(cut + 1), x0 + 30, y0 + 64, 1.8f, {235, 120, 110, 255});
+        }
         // Dropdown rows: the default server, remembered servers, then CUSTOM.
         serverRects.clear();
         float ry = y0 + 66 + errH;
@@ -599,6 +647,48 @@ struct MainMenu::Impl {
             serverBoxRect = box;
             ry += 56;
         }
+        // ---- account: name + password -------------------------------------
+        // One pair of fields does both jobs. A name the server has never seen is
+        // registered as you sign in, so there is no separate create-account step
+        // -- which also means the hint below has to say so, or a new player will
+        // sit here looking for a SIGN UP button that does not exist.
+        ry += 10;
+        auto textField = [&](const char* label, const std::string& text, bool mask,
+                             bool focused, SDL_FRect& out) {
+            blockText(label, x0 + 30, ry, 1.8f, {170, 178, 195, 255});
+            SDL_FRect box{x0 + 30, ry + 18, pw - 60, 42};
+            SDL_SetRenderDrawColor(ren, 16, 18, 26, 255);
+            SDL_RenderFillRectF(ren, &box);
+            SDL_SetRenderDrawColor(ren, focused ? 150 : 90, focused ? 175 : 100,
+                                   focused ? 225 : 130, 255);
+            SDL_RenderDrawRectF(ren, &box);
+            const float px = 2.8f, adv = 6 * px;
+            float tx = box.x + 12;
+            if (mask) {
+                // Draw the password as filled pips rather than glyphs: a real
+                // character would be readable over someone's shoulder, and the
+                // block font has no bullet.
+                SDL_SetRenderDrawColor(ren, 215, 220, 235, 255);
+                for (size_t i = 0; i < text.size(); ++i) {
+                    SDL_FRect pip{tx + float(i) * adv + 1, box.y + 17, px * 3, px * 3};
+                    SDL_RenderFillRectF(ren, &pip);
+                }
+            } else {
+                blockText(text, tx, box.y + 12, px, {230, 235, 245, 255});
+            }
+            if (focused && (SDL_GetTicks() / 500) % 2 == 0) {
+                float cx = tx + float(text.size()) * adv;
+                SDL_SetRenderDrawColor(ren, 230, 235, 245, 255);
+                SDL_FRect car{cx, box.y + 10, 3, 22}; SDL_RenderFillRectF(ren, &car);
+            }
+            out = box;
+            ry += 70;
+        };
+        textField("ACCOUNT NAME", loginUser, false, field == 2, loginUserRect);
+        textField("PASSWORD", loginPass, true, field == 3, loginPassRect);
+        blockText("A NEW NAME IS REGISTERED WHEN YOU SIGN IN", x0 + 30, ry - 2, 1.6f,
+                  {140, 152, 138, 255});
+        ry += 10;
         // CONNECT / BACK buttons (clicking a row only SELECTS -- connecting is
         // always an explicit action, so a stray click can't fire a connection).
         auto button = [&](float bx, const char* label, SDL_FRect& out, bool bright) {
@@ -755,6 +845,16 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             int m = std::atoi(tak::devEnv("TAK_SHOT_SERVER"));
             if (m == 2) d_->setServerSel(int(d_->serverItems.size()));   // CUSTOM view
             if (m == 3) d_->serverError = "COULD NOT CONNECT TO TAK.PGNET.US";
+            if (m == 4) {   // signed-in state: name filled, password part-typed
+                d_->loginUser = "curtis";
+                d_->loginPass = "hunter2hunter";
+                d_->field = 3;
+            }
+            if (m == 5) {   // the server refused the password
+                d_->loginUser = "curtis";
+                d_->serverError = "that password is not right";
+                d_->field = 3;
+            }
             d_->renderServerSelect(w, h);
         }
         d_->screenshot(w, h, shotPath);
@@ -811,31 +911,67 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 e.button.x = int(lx); e.button.y = int(ly);
             }
 
-            if (d_->serverSelect) {   // multiplayer: the server dropdown
+            if (d_->serverSelect) {   // multiplayer: server + account sign-in
                 auto connect = [&]() -> bool {
                     std::string sv = d_->serverChoice();
                     if (sv.empty()) return false;   // empty custom field: stay
+                    // Check the account locally before spending a round trip on it,
+                    // and say the same things the server would.
+                    std::string why;
+                    if (!tak::auth::validUsername(d_->loginUser, &why)) {
+                        d_->serverError = d_->loginUser.empty() ? "enter an account name" : why;
+                        d_->field = 2;
+                        return false;
+                    }
+                    if (d_->loginPass.empty()) {
+                        d_->serverError = "enter your password";
+                        d_->field = 3;
+                        return false;
+                    }
                     SDL_StopTextInput();
                     if (serverOut) *serverOut = sv;
                     return true;
                 };
-                if (e.type == SDL_TEXTINPUT && d_->serverCustom()) {
-                    for (const char* p = e.text.text; *p; ++p) {
+                if (e.type == SDL_TEXTINPUT) {
+                    std::string* f = d_->activeField();
+                    for (const char* p = e.text.text; f && *p; ++p) {
                         unsigned char ch = (unsigned char)*p;
-                        if (d_->serverText.size() < 64 &&
-                            (std::isalnum(ch) || ch == '.' || ch == ':' || ch == '-'))
-                            d_->serverText += char(ch);
+                        // Each field takes only what it can legitimately hold: an
+                        // address, an account name (auth.h's rules), or a password
+                        // (any printable character, since nothing parses it).
+                        if (d_->field == 1) {
+                            if (f->size() < 64 &&
+                                (std::isalnum(ch) || ch == '.' || ch == ':' || ch == '-'))
+                                *f += char(ch);
+                        } else if (d_->field == 2) {
+                            if (f->size() < tak::auth::kMaxUsername &&
+                                (std::isalnum(ch) || ch == '_' || ch == '-' || ch == '.'))
+                                *f += char(ch);
+                        } else {
+                            if (f->size() < tak::auth::kMaxPassword && ch >= 0x20 && ch < 0x7f)
+                                *f += char(ch);
+                        }
                     }
                 } else if (e.type == SDL_KEYDOWN) {
                     SDL_Keycode k = e.key.keysym.sym;
+                    const bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
                     if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
                         if (connect()) return Choice::Multiplayer;
                     }
+                    // UP/DOWN still walk the server list; TAB walks the text fields,
+                    // which is what a keyboard user reaches for between name and
+                    // password.
                     if (k == SDLK_UP) d_->setServerSel(d_->serverSel - 1);
-                    if (k == SDLK_DOWN || k == SDLK_TAB) d_->setServerSel(d_->serverSel + 1);
-                    if (k == SDLK_ESCAPE) { d_->serverSelect = false; SDL_StopTextInput(); }
-                    if (k == SDLK_BACKSPACE && d_->serverCustom() && !d_->serverText.empty())
-                        d_->serverText.pop_back();
+                    if (k == SDLK_DOWN) d_->setServerSel(d_->serverSel + 1);
+                    if (k == SDLK_TAB) d_->cycleField(shift ? -1 : 1);
+                    if (k == SDLK_ESCAPE) {
+                        d_->serverSelect = false;
+                        tak::crypto::wipe(d_->loginPass);
+                        SDL_StopTextInput();
+                    }
+                    if (k == SDLK_BACKSPACE) {
+                        if (std::string* f = d_->activeField(); f && !f->empty()) f->pop_back();
+                    }
                 } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     float mx = float(e.button.x), my = float(e.button.y);
                     auto in = [&](const SDL_FRect& r) {
@@ -845,13 +981,18 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     // Rows only SELECT; connecting is the explicit button (or ENTER).
                     for (size_t i = 0; i < d_->serverRects.size(); ++i)
                         if (in(d_->serverRects[i])) { d_->setServerSel(int(i)); break; }
-                    if (in(d_->serverBoxRect))
+                    if (in(d_->serverBoxRect)) {
                         d_->setServerSel(int(d_->serverItems.size()));   // focus the field
+                        d_->field = 1;
+                    }
+                    if (in(d_->loginUserRect)) d_->field = 2;
+                    if (in(d_->loginPassRect)) d_->field = 3;
                     if (in(d_->serverConnectRect)) {
                         if (connect()) return Choice::Multiplayer;
                     }
                     if (in(d_->serverBackRect)) {
                         d_->serverSelect = false;
+                        tak::crypto::wipe(d_->loginPass);
                         SDL_StopTextInput();
                     }
                 }
@@ -1019,6 +1160,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
 }
 
 const std::string& MainMenu::chosenMission() const { return d_->chosenMission_; }
+const std::string& MainMenu::chosenAccount() const { return d_->loginUser; }
+const std::string& MainMenu::chosenPassword() const { return d_->loginPass; }
+void MainMenu::clearPassword() { tak::crypto::wipe(d_->loginPass); }
+
 int MainMenu::chosenBenchmarkLevel() const { return d_->chosenBenchmark_; }
 const std::string& MainMenu::chosenCampaign() const { return d_->chosenCampaign_; }
 

@@ -52,6 +52,7 @@
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
 #include "client/settings.h"
+#include "net/crypto.h"
 #include "client/dev.h"
 #include "client/appquit.h"
 #include "client/mainmenu.h"
@@ -142,10 +143,13 @@ int pickFreePort() {
 }
 
 // Launch a takserver for a private single-player game. Returns true on success.
+// --no-auth because there is nobody to sign in AS (this server exists for one
+// player, on one machine), and --local so that concession stays on this machine:
+// an unauthenticated server must not be reachable from the network.
 bool spawnLocalServer(const std::string& serverBin, const std::string& dataRoot, int port) {
 #ifdef _WIN32
     std::string cmd = "\"" + serverBin + ".exe\" --port " + std::to_string(port) +
-                      " --data \"" + dataRoot + "\"";
+                      " --data \"" + dataRoot + "\" --no-auth --local";
     STARTUPINFOA si{}; si.cb = sizeof si;
     std::vector<char> mut(cmd.begin(), cmd.end()); mut.push_back('\0');
     if (!CreateProcessA(nullptr, mut.data(), nullptr, nullptr, FALSE, 0,
@@ -159,7 +163,8 @@ bool spawnLocalServer(const std::string& serverBin, const std::string& dataRoot,
     if (pid == 0) {
         std::string ps = std::to_string(port);
         execl(serverBin.c_str(), serverBin.c_str(), "--port", ps.c_str(),
-              "--data", dataRoot.c_str(), static_cast<char*>(nullptr));
+              "--data", dataRoot.c_str(), "--no-auth", "--local",
+              static_cast<char*>(nullptr));
         _exit(127);   // exec failed
     }
     gLocalPid = pid;
@@ -385,6 +390,9 @@ int main(int argc, char** argv) {
     // Walk/attack scripts gate on an "am I moving" static whose SLOT differs per unit.
     uint32_t staticMask = 1;
     std::string serverHost, playerName, dataRoot, overridesArg;
+    // Multiplayer account (menu-entered, or --user/--pass for the harnesses). The
+    // password is used once and wiped; it is never written to settings.
+    std::string loginUser, loginPass;
     int serverPort = 7677, mpHeadless = 0;
     std::string missionStem;   // --mpmission <stem>: headless campaign-mission host
     std::string cliCampaign;   // --campaign <stem>: launch straight into a mission (interactive)
@@ -452,6 +460,10 @@ int main(int argc, char** argv) {
         else if (a == "--server" && i + 1 < argc) serverHost = argv[++i];
         else if (a == "--serverport" && i + 1 < argc) serverPort = std::atoi(argv[++i]);
         else if (a == "--name" && i + 1 < argc) playerName = argv[++i];
+        // Sign in without the menu, for the headless harnesses. A server run with
+        // --no-auth (single-player, LAN) never asks, so these stay empty there.
+        else if (a == "--user" && i + 1 < argc) loginUser = argv[++i];
+        else if (a == "--pass" && i + 1 < argc) loginPass = argv[++i];
         // Headless multiplayer test drivers (auto-play through the server).
         else if (a == "--mphost") mpHeadless = 1;   // create a game, start it, play
         else if (a == "--mpjoin") mpHeadless = 2;   // join the first game, play
@@ -666,6 +678,15 @@ int main(int argc, char** argv) {
                 campaignStem = menu.chosenMission();
                 campaignId = menu.chosenCampaign();
             }
+            if (choice == tak::MainMenu::Choice::Multiplayer) {
+                // Take the account out of the menu while it is still alive, and
+                // wipe its copy of the password immediately -- it has no further
+                // use for it, and a secret should outlive its purpose by as little
+                // as possible.
+                loginUser = menu.chosenAccount();
+                loginPass = menu.chosenPassword();
+                menu.clearPassword();
+            }
             if (choice == tak::MainMenu::Choice::Benchmark) {
                 benchmarkLevel = menu.chosenBenchmarkLevel();
                 if (benchmarkLevel < 1 || benchmarkLevel > tak::sim::kBenchLevels) benchmarkLevel = 3;   // safety default = High
@@ -767,6 +788,14 @@ int main(int argc, char** argv) {
         }
         // A freshly-spawned local server takes a moment to mount + listen (~0.25s
         // warm); poll fast so single-player doesn't pay coarse-sleep quantization.
+        // Credentials for a server that requires an account. A local single-player
+        // server requires none (it is launched --no-auth --local), so this is empty
+        // there and the handshake never asks.
+        if (!loginUser.empty()) {
+            mp->setLogin(loginUser, loginPass);
+            playerName = loginUser;   // the account IS the multiplayer identity
+        }
+        tak::crypto::wipe(loginPass);
         bool ok = false;
         for (int attempt = 0; attempt < (gLocalServerUp ? 200 : 1) && !ok; ++attempt) {
             ok = mp->connect(serverHost, uint16_t(serverPort), playerName);
@@ -785,6 +814,45 @@ int main(int argc, char** argv) {
                 continue;
             }
             return 1;
+        }
+        // The TCP connect only queued the Hello. Settle the handshake HERE, before
+        // the game starts loading, or a refused login would surface as a mystery
+        // disconnect on the in-game lobby screen instead of as an answer in the
+        // menu the player is still looking at. Signing in costs a round trip plus
+        // a few hundred ms of deliberate password-stretching (on a worker thread),
+        // so give it a generous ceiling and pump events meanwhile.
+        {
+            const uint64_t deadline = SDL_GetTicks64() + 30000;
+            while (!mp->handshakeSettled() && SDL_GetTicks64() < deadline) {
+                if (!mp->poll()) break;
+                SDL_PumpEvents();          // keep the window responsive while we wait
+                SDL_Delay(5);
+            }
+            if (!mp->handshakeSettled() && mp->error().empty())
+                mp->disconnect("login timed out");
+        }
+        const bool loginRefused = mp->auth() == tak::net::MpClient::Auth::Failed;
+        if (loginRefused || mp->state() == tak::net::MpClient::State::Done) {
+            std::string why = mp->error().empty() ? std::string("the server closed the connection")
+                                                  : mp->error();
+            std::fprintf(stderr, "server: %s\n", why.c_str());
+            killLocalServer();
+            if (fromMenu) {   // back to the sign-in panel with the reason in red
+                menuConnectError = why;
+                mp.reset();
+                continue;
+            }
+            return 1;
+        }
+        if (mp->auth() == tak::net::MpClient::Auth::Created)
+            std::printf("created account '%s' on %s\n", mp->account().c_str(), serverHost.c_str());
+        if (!mp->account().empty()) {
+            playerName = mp->account();
+            // Remember the NAME for next time (never the password).
+            if (settings.accountName != mp->account()) {
+                settings.accountName = mp->account();
+                tak::saveSettings(settings);
+            }
         }
         std::printf("connected to %s:%d as '%s'\n", serverHost.c_str(), serverPort, playerName.c_str());
         // Remember a menu-picked server that connected successfully: move-to-front

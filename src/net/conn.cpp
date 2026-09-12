@@ -125,9 +125,12 @@ bool Conn::poll(Frame& out) {
     return true;
 }
 
-int listenOn(uint16_t port, std::string& err) {
+int listenOn(uint16_t port, std::string& err, bool loopbackOnly) {
     netStartup();
-    int fd = int(socket(AF_INET6, SOCK_STREAM, 0));
+    // Loopback-only goes straight to IPv4. A v6 socket bound to ::1 accepts only
+    // IPv6 loopback -- dual-stack mapping applies to the wildcard address, not to
+    // a specific one -- and every local client dials 127.0.0.1.
+    int fd = loopbackOnly ? -1 : int(socket(AF_INET6, SOCK_STREAM, 0));
     bool v6 = fd >= 0;
     if (!v6) fd = int(socket(AF_INET, SOCK_STREAM, 0));
     if (fd < 0) { err = "socket failed"; return -1; }
@@ -137,13 +140,17 @@ int listenOn(uint16_t port, std::string& err) {
         int off = 0;   // dual-stack: accept IPv4-mapped too
         setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&off), sizeof off);
         sockaddr_in6 a{};
-        a.sin6_family = AF_INET6; a.sin6_addr = in6addr_any; a.sin6_port = htons(port);
+        a.sin6_family = AF_INET6;
+        a.sin6_addr = loopbackOnly ? in6addr_loopback : in6addr_any;
+        a.sin6_port = htons(port);
         if (bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
             err = "bind failed"; sockClose(fd); return -1;
         }
     } else {
         sockaddr_in a{};
-        a.sin_family = AF_INET; a.sin_addr.s_addr = INADDR_ANY; a.sin_port = htons(port);
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(loopbackOnly ? INADDR_LOOPBACK : INADDR_ANY);
+        a.sin_port = htons(port);
         if (bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
             err = "bind failed"; sockClose(fd); return -1;
         }
@@ -151,6 +158,21 @@ int listenOn(uint16_t port, std::string& err) {
     if (listen(fd, 64) != 0) { err = "listen failed"; sockClose(fd); return -1; }
     sockSetNonBlock(fd);
     return fd;
+}
+
+std::string peerAddress(int fd) {
+    sockaddr_storage ss{};
+    socklen_t len = sizeof ss;
+    if (getpeername(fd, reinterpret_cast<sockaddr*>(&ss), &len) != 0) return "?";
+    char host[NI_MAXHOST];
+    if (getnameinfo(reinterpret_cast<sockaddr*>(&ss), len, host, sizeof host,
+                    nullptr, 0, NI_NUMERICHOST) != 0)
+        return "?";
+    // A dual-stack listener reports IPv4 peers as ::ffff:203.0.113.9; strip the
+    // prefix so one host cannot present as two different rate-limit keys.
+    std::string s(host);
+    if (s.rfind("::ffff:", 0) == 0 && s.find('.') != std::string::npos) s = s.substr(7);
+    return s;
 }
 
 }  // namespace tak::net

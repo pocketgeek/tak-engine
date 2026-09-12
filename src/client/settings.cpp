@@ -76,6 +76,7 @@ Settings loadSettings() {
         else if (key == "hardwareCursor")  s.hardwareCursor = asBool();
         else if (key == "smoothMotion")    s.smoothMotion = asBool();
         else if (key == "playerName")      s.playerName = val;
+        else if (key == "accountName")     s.accountName = val;
         else if (key == "audioDevice")     s.audioDevice = val;
         else if (key == "lastMap")         s.lastMap = val;
         else if (key == "knownServers") {  // comma-joined, most recent first
@@ -138,6 +139,7 @@ bool saveSettings(const Settings& s) {
     o << "hardwareCursor = " << (s.hardwareCursor ? 1 : 0) << "\n";
     o << "smoothMotion = " << (s.smoothMotion ? 1 : 0) << "\n";
     o << "playerName = " << s.playerName << "\n";
+    o << "accountName = " << s.accountName << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
     o << "lastMap = " << s.lastMap << "\n";
     if (!s.knownServers.empty()) {

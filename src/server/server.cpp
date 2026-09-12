@@ -37,6 +37,9 @@
 
 #include "ai/ai.h"
 #include "hpi/hpi.h"
+#include "net/auth.h"
+#include "net/crypto.h"
+#include "server/accounts.h"
 #include "tdf/tdf.h"
 #include "net/conn.h"
 #include "net/protocol.h"
@@ -87,7 +90,19 @@ struct Client {
     Conn conn;
     uint32_t id = 0;
     std::string name;
-    enum State { Handshake, Lobby, InGame } state = Handshake;
+    // Signing in: the exchange sits between the Hello and the Welcome, so a
+    // connection on a server that requires an account passes through Auth before
+    // it can do anything at all. See src/net/auth.h.
+    struct PendingAuth {
+        std::string user;                     // as typed, for display and transcript
+        std::vector<uint8_t> clientNonce, serverNonce, salt;
+        uint32_t iters = 0;
+        bool newAccount = false;              // no such account: this is a registration
+        bool challenged = false;              // guards against a second AuthBegin
+    } pendAuth;
+    std::string account;                      // set once signed in ("" = open server)
+    std::string peer = "?";                   // numeric address, for rate limiting
+    enum State { Handshake, Auth, Lobby, InGame } state = Handshake;
     uint32_t roomId = 0;
     int slot = -1;
     uint64_t lastRecvMs = 0;
@@ -214,6 +229,15 @@ private:
 class Server {
 public:
     void setReplayDir(const std::string& d) { replayDir_ = d; }
+    void setNoAuth() { requireAuth_ = false; }
+    void setLoopbackOnly() { loopbackOnly_ = true; }
+    // Load (or start) the account file. Returns false with `err` set if it exists
+    // but cannot be read -- starting anyway would mean running an open server
+    // while looking like a closed one.
+    bool loadAccounts(const std::string& path, std::string& err) {
+        return accounts_.load(path, &err);
+    }
+    size_t accountCount() const { return accounts_.size(); }
     Server(uint16_t port, const std::string& dataRoot) : port_(port), dataRoot_(dataRoot) {
         if (!dataRoot_.empty()) {
             // The referee reads the retail install directly, per the ROOM's override
@@ -236,6 +260,12 @@ public:
 private:
     uint16_t port_;
     std::string dataRoot_;
+    // Accounts. requireAuth_ is the default; --no-auth turns it off for a private
+    // or LAN server (single-player launches one of those).
+    bool requireAuth_ = true;
+    bool loopbackOnly_ = false;
+    tak::srv::AccountStore accounts_;
+    tak::srv::LoginThrottle throttle_;
     // A mounted data set at one override tier: the VFS, its base + Crusades
     // registries, and the gameplay-data fingerprint peers are held to.
     struct DataSet {
@@ -322,6 +352,10 @@ private:
 
     void onFrame(Client& c, const Frame& f);
     void handshake(Client& c, const Frame& f);
+    void authMsg(Client& c, const Frame& f);
+    void sendWelcome(Client& c);
+    void sendAuthResult(Client& c, AuthStatus st, const tak::crypto::Digest* sig,
+                        const std::string& msg);
     void lobbyMsg(Client& c, const Frame& f);
     void gameMsg(Client& c, const Frame& f);
 
@@ -431,11 +465,186 @@ void Server::handshake(Client& c, const Frame& f) {
         return;
     }
     if (!haveData_ && !relayHashSet_) { relayHash_ = dataHash; relayHashSet_ = true; }
+    if (requireAuth_) {
+        // The name in the Hello is only a suggestion and is discarded: on a server
+        // with accounts, who you are is the account you prove, not what you typed.
+        c.state = Client::Auth;
+        c.conn.send(Msg::AuthRequired);
+        return;
+    }
     c.name = name.empty() ? ("player" + std::to_string(c.id)) : name;
+    sendWelcome(c);
+}
+
+void Server::sendWelcome(Client& c) {
     c.state = Client::Lobby;
     Writer w; w.u32(c.id); w.str(c.name);
     c.conn.send(Msg::Welcome, w);
     std::fprintf(stderr, "client %u '%s' joined lobby\n", c.id, c.name.c_str());
+}
+
+void Server::sendAuthResult(Client& c, AuthStatus st, const tak::crypto::Digest* sig,
+                            const std::string& msg) {
+    Writer w;
+    w.u8(uint8_t(st));
+    if (sig) w.bytes(sig->data(), sig->size()); else w.bytes(nullptr, 0);
+    w.str(msg);
+    c.conn.send(Msg::AuthResult, w);
+}
+
+// The login exchange. Everything here runs BEFORE the client can reach the lobby,
+// so the only frames entertained are the three login ones; anything else drops
+// the connection rather than being queued up for later.
+void Server::authMsg(Client& c, const Frame& f) {
+    Reader r(f.payload.data(), f.payload.size());
+    const uint64_t now = nowMs();
+
+    if (f.kind == Msg::AuthBegin) {
+        if (c.pendAuth.challenged) { sendReject(c, "duplicate login"); c.conn.fail("dup auth"); return; }
+        std::string user = r.str();
+        std::vector<uint8_t> cnonce = r.bytes(tak::auth::kNonceLen);
+        if (!r.ok) { sendReject(c, "malformed login"); c.conn.fail("bad auth"); return; }
+
+        // Rate-limit on BOTH the name and the address, so neither hammering one
+        // account from many hosts nor many accounts from one host gets a free run.
+        // The address is checked first and always, which is also what stops this
+        // endpoint being used to sweep for which usernames exist.
+        const std::string ipKey = "ip:" + c.peer;
+        const std::string userKey = "user:" + tak::auth::foldUsername(user);
+        uint64_t wait = std::max(throttle_.lockedFor(ipKey, now), throttle_.lockedFor(userKey, now));
+        if (wait) {
+            sendAuthResult(c, AuthStatus::Throttled, nullptr,
+                           "too many failed sign-ins -- try again in " +
+                           std::to_string((wait + 999) / 1000) + "s");
+            std::fprintf(stderr, "client %u (%s) login throttled (%llums left)\n",
+                         c.id, c.peer.c_str(), (unsigned long long)wait);
+            return;
+        }
+        std::string why;
+        if (!tak::auth::validUsername(user, &why)) {
+            throttle_.fail(ipKey, now);
+            sendAuthResult(c, AuthStatus::BadUsername, nullptr, why);
+            return;
+        }
+
+        c.pendAuth = Client::PendingAuth{};
+        c.pendAuth.user = user;
+        c.pendAuth.clientNonce = std::move(cnonce);
+        try {
+            c.pendAuth.serverNonce = tak::crypto::randomVec(tak::auth::kNonceLen);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "takserver: %s\n", e.what());
+            sendAuthResult(c, AuthStatus::ServerError, nullptr, "the server cannot sign you in");
+            return;
+        }
+        const tak::srv::Account* a = accounts_.find(user);
+        if (a) {
+            c.pendAuth.newAccount = false;
+            c.pendAuth.salt = a->cred.salt;
+            c.pendAuth.iters = a->cred.iters;
+        } else {
+            // No such account. Say so -- the client offers to create it -- and hand
+            // over a fresh server-chosen salt for it to derive against. The salt is
+            // ours, not the client's, so a client cannot register with a weak or
+            // shared one.
+            c.pendAuth.newAccount = true;
+            c.pendAuth.iters = tak::auth::kPbkdf2Iters;
+            try {
+                c.pendAuth.salt = tak::crypto::randomVec(tak::auth::kSaltLen);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "takserver: %s\n", e.what());
+                sendAuthResult(c, AuthStatus::ServerError, nullptr, "the server cannot sign you in");
+                return;
+            }
+        }
+        c.pendAuth.challenged = true;
+        Writer w;
+        w.u8(c.pendAuth.newAccount ? 1 : 0);
+        w.bytes(c.pendAuth.salt);
+        w.u32(c.pendAuth.iters);
+        w.bytes(c.pendAuth.serverNonce);
+        c.conn.send(Msg::AuthChallenge, w);
+        return;
+    }
+
+    if (f.kind == Msg::AuthProof) {
+        if (!c.pendAuth.challenged || c.pendAuth.newAccount) {
+            sendReject(c, "unexpected login proof"); c.conn.fail("bad auth"); return;
+        }
+        std::vector<uint8_t> proofBytes = r.bytes(tak::crypto::kHashLen);
+        if (!r.ok) { sendReject(c, "malformed login proof"); c.conn.fail("bad auth"); return; }
+        const tak::srv::Account* a = accounts_.find(c.pendAuth.user);
+        if (!a) { sendAuthResult(c, AuthStatus::BadPassword, nullptr, "that account no longer exists"); return; }
+
+        tak::crypto::Digest proof{};
+        std::memcpy(proof.data(), proofBytes.data(), proof.size());
+        std::vector<uint8_t> am = tak::auth::authMessage(c.pendAuth.user, c.pendAuth.clientNonce,
+                                                    c.pendAuth.serverNonce, a->cred.salt,
+                                                    a->cred.iters);
+        const std::string ipKey = "ip:" + c.peer, userKey = "user:" + tak::auth::foldUsername(c.pendAuth.user);
+        if (!tak::auth::verifyClientProof(a->cred, am, proof)) {
+            throttle_.fail(ipKey, now);
+            throttle_.fail(userKey, now);
+            sendAuthResult(c, AuthStatus::BadPassword, nullptr, "that password is not right");
+            std::fprintf(stderr, "client %u (%s) failed sign-in for '%s'\n",
+                         c.id, c.peer.c_str(), a->name.c_str());
+            // Do NOT drop the connection: the client may simply have fumbled the
+            // password and can try again, which is what the throttle is for.
+            c.pendAuth.challenged = false;
+            return;
+        }
+        throttle_.succeed(ipKey);
+        throttle_.succeed(userKey);
+        tak::crypto::Digest sig = tak::auth::serverSignature(a->cred.serverKey, am);
+        c.account = a->name;
+        c.name = a->name;
+        std::string err;
+        if (!accounts_.noteLogin(a->name, &err))
+            std::fprintf(stderr, "takserver: could not record login: %s\n", err.c_str());
+        sendAuthResult(c, AuthStatus::Ok, &sig, "signed in");
+        std::fprintf(stderr, "client %u (%s) signed in as '%s'\n",
+                     c.id, c.peer.c_str(), c.name.c_str());
+        sendWelcome(c);
+        return;
+    }
+
+    if (f.kind == Msg::AuthRegister) {
+        if (!c.pendAuth.challenged || !c.pendAuth.newAccount) {
+            sendReject(c, "unexpected registration"); c.conn.fail("bad auth"); return;
+        }
+        std::vector<uint8_t> stored = r.bytes(tak::crypto::kHashLen);
+        std::vector<uint8_t> serverKey = r.bytes(tak::crypto::kHashLen);
+        if (!r.ok) { sendReject(c, "malformed registration"); c.conn.fail("bad auth"); return; }
+
+        tak::auth::Credential cred;
+        cred.iters = c.pendAuth.iters;
+        cred.salt = c.pendAuth.salt;
+        std::memcpy(cred.storedKey.data(), stored.data(), cred.storedKey.size());
+        std::memcpy(cred.serverKey.data(), serverKey.data(), cred.serverKey.size());
+
+        std::string err;
+        if (!accounts_.create(c.pendAuth.user, cred, &err)) {
+            // Either the name was taken in the moments since the challenge, or the
+            // file could not be written. Both are worth distinguishing to the player.
+            bool taken = accounts_.find(c.pendAuth.user) != nullptr;
+            sendAuthResult(c, taken ? AuthStatus::NameTaken : AuthStatus::ServerError, nullptr,
+                           taken ? "that name was just taken -- pick another" : err);
+            std::fprintf(stderr, "takserver: registration of '%s' failed: %s\n",
+                         c.pendAuth.user.c_str(), err.c_str());
+            c.pendAuth.challenged = false;
+            return;
+        }
+        c.account = c.pendAuth.user;
+        c.name = c.pendAuth.user;
+        sendAuthResult(c, AuthStatus::Created, nullptr, "new account created");
+        std::fprintf(stderr, "client %u (%s) created account '%s' (%zu total)\n",
+                     c.id, c.peer.c_str(), c.name.c_str(), accounts_.size());
+        sendWelcome(c);
+        return;
+    }
+
+    sendReject(c, "expected a login");
+    c.conn.fail("no login");
 }
 
 void Server::sendGameList(Client& c) {
@@ -1219,6 +1428,7 @@ void Server::onFrame(Client& c, const Frame& f) {
     if (f.kind == Msg::Bye) { c.conn.fail("bye"); return; }
     switch (c.state) {
         case Client::Handshake: handshake(c, f); break;
+        case Client::Auth: authMsg(c, f); break;
         case Client::Lobby: lobbyMsg(c, f); break;
         case Client::InGame: gameMsg(c, f); break;
     }
@@ -1226,10 +1436,16 @@ void Server::onFrame(Client& c, const Frame& f) {
 
 int Server::run() {
     std::string err;
-    listenFd_ = listenOn(port_, err);
+    listenFd_ = listenOn(port_, err, loopbackOnly_);
     if (listenFd_ < 0) { std::fprintf(stderr, "takserver: %s on port %u\n", err.c_str(), port_); return 1; }
-    std::fprintf(stderr, "takserver %s listening on port %u (protocol v%u)\n",
-                 tak::kVersion, port_, kNetVersion);
+    std::fprintf(stderr, "takserver %s listening on %s port %u (protocol v%u)\n",
+                 tak::kVersion, loopbackOnly_ ? "loopback" : "all interfaces", port_, kNetVersion);
+    if (requireAuth_)
+        std::fprintf(stderr, "takserver: accounts required -- %zu in %s\n",
+                     accounts_.size(), accounts_.path().c_str());
+    else
+        std::fprintf(stderr, "takserver: NO ACCOUNTS REQUIRED (--no-auth)%s\n",
+                     loopbackOnly_ ? "" : " -- anyone who can reach this port can play");
 
     // Hoisted out of the loop so their capacity persists across wakeups (this loop
     // runs at least at tick rate; rebuilding the contents is cheap, reallocating
@@ -1260,6 +1476,8 @@ int Server::run() {
         int n = TAK_POLL(pfds.data(), (unsigned)pfds.size(), timeout);
         if (n < 0) { if (sockInterrupted(sockErr())) continue; break; }
 
+        throttle_.expire(now);   // forget hosts that have long since behaved
+
         // Accept new connections.
         if (pfds[0].revents & POLLIN) {
             for (;;) {
@@ -1269,6 +1487,7 @@ int Server::run() {
                 auto c = std::make_unique<Client>();
                 c->id = nextClientId_++;
                 c->conn = Conn(fd);
+                c->peer = peerAddress(fd);
                 c->lastRecvMs = nowMs();
                 clients_[c->id] = std::move(c);
             }
@@ -1387,24 +1606,49 @@ int main(int argc, char** argv) {
     if (const char* b = std::getenv("TAK_PAUSE_BUDGET_MS")) kPauseBudgetMs = uint64_t(std::atoll(b));
     uint16_t port = 7677;
     std::string dataRoot, replayDir;
+    std::string accountsPath = "takserver-accounts.conf";
+    bool noAuth = false, loopbackOnly = false;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--port") && i + 1 < argc) port = uint16_t(std::atoi(argv[++i]));
         else if (!std::strcmp(argv[i], "--data") && i + 1 < argc) dataRoot = argv[++i];
         else if (!std::strcmp(argv[i], "--replaydir") && i + 1 < argc) replayDir = argv[++i];
+        else if (!std::strcmp(argv[i], "--accounts") && i + 1 < argc) accountsPath = argv[++i];
+        else if (!std::strcmp(argv[i], "--no-auth")) noAuth = true;
+        else if (!std::strcmp(argv[i], "--local")) loopbackOnly = true;
         else if (!std::strcmp(argv[i], "--version") || !std::strcmp(argv[i], "-v")) {
             std::printf("takserver (TAK engine) %s\n", tak::kVersion);
             return 0;
         }
         else if (!std::strcmp(argv[i], "--help")) {
-            std::printf("usage: takserver [--port N] [--data <retail-install-dir>] "
-                        "[--replaydir <dir>]\n"
+            std::printf("usage: takserver [--port N] [--data <retail-install-dir>]\n"
+                        "                 [--replaydir <dir>] [--accounts <file>]\n"
+                        "                 [--no-auth] [--local]\n"
                         "  --data enables the referee sim + server-hosted AI; without it the\n"
                         "  server is a pure relay (clients cross-check hashes among themselves).\n"
-                        "  --replaydir writes a .takrep replay file per finished game.\n");
+                        "  --replaydir writes a .takrep replay file per finished game.\n"
+                        "  --accounts is the account file (default takserver-accounts.conf).\n"
+                        "  Players sign in with a name and password; an unused name is\n"
+                        "  registered on the spot. No password is stored or transmitted --\n"
+                        "  see src/net/auth.h.\n"
+                        "  --no-auth serves anyone who connects, with no account at all. Only\n"
+                        "  for a private or LAN server; pair it with --local.\n"
+                        "  --local binds loopback only, so nothing off this machine connects.\n");
             return 0;
         }
     }
     Server s(port, dataRoot);
     if (!replayDir.empty()) s.setReplayDir(replayDir);
+    if (loopbackOnly) s.setLoopbackOnly();
+    if (noAuth) {
+        s.setNoAuth();
+    } else {
+        std::string err;
+        if (!s.loadAccounts(accountsPath, err)) {
+            // Refuse to start rather than come up looking like a server with
+            // accounts while actually having none of them.
+            std::fprintf(stderr, "takserver: %s\n", err.c_str());
+            return 1;
+        }
+    }
     return s.run();
 }

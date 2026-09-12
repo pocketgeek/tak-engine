@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 56;       // 56: canPlace honours the yardmap -- a '.' cell
+constexpr uint32_t kNetVersion = 57;       // 57: account login (SCRAM-SHA-256) sits
+                                           // between the Hello and the Welcome
+                                           // 56: canPlace honours the yardmap -- a '.' cell
                                            // is not part of the footprint and is not tested
                                            // 55: the server-side AI no longer shares the sim's
                                            // flow-field cache (it was desyncing the referee);
@@ -116,6 +118,27 @@ enum class Msg : uint8_t {
     SetPause,           // C->S (host/only-human): u8 want -- pause or resume the game.
                         // Distinct from the drop-driven pause above: it never expires,
                         // because nobody is disconnected and nothing should forfeit.
+    // account login (SCRAM-SHA-256; see src/net/auth.h). APPENDED, not slotted in
+    // beside Hello where they belong logically: these values are written into
+    // replay files, so renumbering the existing ones would break every replay
+    // ever recorded.
+    AuthRequired,       // S->C: this server wants an account -- sent INSTEAD of Welcome
+    AuthBegin,          // C->S: username, client nonce
+    AuthChallenge,      // S->C: does the account exist?, salt, iterations, server nonce
+    AuthProof,          // C->S: the client's proof  (existing account)
+    AuthRegister,       // C->S: StoredKey + ServerKey  (creating a new account)
+    AuthResult,         // S->C: status, server signature, message
+};
+
+// The outcome of a login, as carried by Msg::AuthResult.
+enum class AuthStatus : uint8_t {
+    Ok = 0,             // signed in to an existing account
+    Created = 1,        // no such account, so one was created -- and you are signed in
+    BadPassword = 2,    // the account exists and the proof did not check out
+    BadUsername = 3,    // the name breaks the naming rules (not "no such account")
+    Throttled = 4,      // too many failed attempts; the payload carries the wait in ms
+    NameTaken = 5,      // someone registered the name between challenge and register
+    ServerError = 6,    // the server could not save the account
 };
 
 // A slot in a game's setup. type: 0=open, 1=human, 2=ai, 3=closed.
@@ -199,6 +222,15 @@ struct Writer {
         u8(uint8_t(n)); u8(uint8_t(n >> 8));
         b.insert(b.end(), s.begin(), s.begin() + n);
     }
+    // Raw bytes, u16 length + payload -- nonces, salts and digests in the login
+    // handshake. Same framing as str(), but it carries values with embedded NULs.
+    void bytes(const void* p, size_t n) {
+        uint32_t m = uint32_t(n > 4096 ? 4096 : n);
+        u8(uint8_t(m)); u8(uint8_t(m >> 8));
+        const uint8_t* q = static_cast<const uint8_t*>(p);
+        b.insert(b.end(), q, q + m);
+    }
+    void bytes(const std::vector<uint8_t>& v) { bytes(v.data(), v.size()); }
     void cmd(const Command& c);
 };
 
@@ -226,6 +258,15 @@ struct Reader {
         uint32_t n = uint32_t(p[0]) | (uint32_t(p[1]) << 8); p += 2;
         if (n > 4096 || !avail(n)) { ok = false; return {}; }
         std::string s(reinterpret_cast<const char*>(p), n); p += n; return s;
+    }
+    // Counterpart to Writer::bytes. `want` (when non-zero) is the exact length
+    // the caller expects -- a digest is always 32 bytes, and accepting any other
+    // length would mean parsing an attacker-chosen size into a fixed buffer.
+    std::vector<uint8_t> bytes(size_t want = 0) {
+        if (!avail(2)) { ok = false; return {}; }
+        uint32_t n = uint32_t(p[0]) | (uint32_t(p[1]) << 8); p += 2;
+        if (n > 4096 || !avail(n) || (want && n != want)) { ok = false; return {}; }
+        std::vector<uint8_t> v(p, p + n); p += n; return v;
     }
     Command cmd();
 };

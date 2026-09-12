@@ -50,6 +50,9 @@ struct Settings {
 
     // ---- misc ----
     std::string playerName;        // default name for multiplayer
+    std::string accountName;       // last multiplayer account signed in with. The
+                                   // PASSWORD is deliberately not here and is never
+                                   // written to disk -- see src/net/auth.h.
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
     // Servers that connected successfully (most recent first, capped at 8). The
     // menu's CONNECT dropdown lists these under the default server.
@@ -93,7 +96,8 @@ struct Settings {
             && a.mouseZoomSpeed == b.mouseZoomSpeed && a.edgeScrollSpeed == b.edgeScrollSpeed
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
-            && a.playerName == b.playerName && a.lastMap == b.lastMap
+            && a.playerName == b.playerName && a.accountName == b.accountName
+            && a.lastMap == b.lastMap
             && a.knownServers == b.knownServers
             && a.audioDevice == b.audioDevice
             && a.hotkeys == b.hotkeys

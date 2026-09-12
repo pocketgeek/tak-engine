@@ -64,7 +64,14 @@ private:
 
 // Bind + listen on a port (IPv4+IPv6 via a dual-stack v6 socket where possible).
 // Returns the listening fd, or -1 with `err` set.
-int listenOn(uint16_t port, std::string& err);
+// Bind and listen. `loopbackOnly` restricts the socket to 127.0.0.1/::1, which is
+// what a private single-player server wants: nobody outside this machine has any
+// business reaching a server that asks for no login.
+int listenOn(uint16_t port, std::string& err, bool loopbackOnly = false);
+
+// Peer address of an accepted socket, as text ("203.0.113.9", "2001:db8::1"), or
+// "?" if it cannot be determined. Used to rate-limit login attempts per host.
+std::string peerAddress(int fd);
 
 // Set a socket non-blocking + TCP_NODELAY.
 void setupSocket(int fd);

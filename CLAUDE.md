@@ -59,9 +59,12 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   (A release `build/takclient --data <dir>` plays the same games through the menu.)
 - Headless determinism / smoke test — DEBUG binaries (the harness flags + `TAK_HEADLESS`
   are debug-only). The server needs `--data` to run the referee + AI, and enforces a
-  gameplay-data hash, so client and server must point at the same install. The server
-  takes a couple seconds to mount + load, so wait for its "listening" line before the client:
-  `./build-dbg/takserver --port 7677 --data <install> &` then
+  gameplay-data hash, so client and server must point at the same install. **A server
+  now requires an account login by default** — pass `--no-auth` for a harness run (or
+  give the client `--user NAME --pass PASSWORD`; an unused name registers itself). The
+  server takes a couple seconds to mount + load, so wait for its "listening" line
+  before the client:
+  `./build-dbg/takserver --port 7677 --data <install> --no-auth &` then
   `TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy ./build-dbg/takclient game "<map>" --data <install> --server 127.0.0.1 --serverport 7677 --mpai --time 60` —
   prints a state `hash=`. (Debug and release sims are bit-identical, so the hash matches a release run.)
 - Asset-inspection CLIs (in `tools/`, built into `build/`): `cobtool`,

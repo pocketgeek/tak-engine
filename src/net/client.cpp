@@ -4,6 +4,9 @@
 #include <chrono>
 #include <cstdlib>
 
+#include "net/auth.h"
+#include "net/crypto.h"
+
 namespace tak::net {
 
 namespace {
@@ -27,6 +30,16 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     send(Msg::Hello, w);
     lastRecvMs_ = nowMs();
     return true;
+}
+
+MpClient::~MpClient() {
+    if (derive_.joinable()) derive_.join();   // never outlive the key-derivation worker
+    crypto::wipe(loginPass_);
+}
+
+void MpClient::setLogin(const std::string& user, const std::string& password) {
+    loginUser_ = user;
+    loginPass_ = password;
 }
 
 void MpClient::disconnect(const std::string& reason) {
@@ -62,6 +75,7 @@ bool MpClient::poll() {
     }
     Frame f;
     while (conn_.poll(f)) { onFrame(f); if (!conn_.ok()) break; }
+    pumpDerive();          // the login's PBKDF2 finished on its worker: send the proof
     uint64_t now = nowMs();
     // Release any jitter-held bundles whose delay has elapsed.
     if (!jitterHeld_.empty()) {
@@ -87,6 +101,144 @@ bool MpClient::poll() {
     if (!conn_.flushWrite()) { if (err_.empty()) err_ = conn_.error(); state_ = State::Done; }
     if (!conn_.ok() && err_.empty()) { err_ = conn_.error(); state_ = State::Done; }
     return state_ != State::Done;
+}
+
+// ---- account login ---------------------------------------------------------
+//
+// The exchange, once the server answers our Hello with AuthRequired:
+//
+//   C->S  AuthBegin      username, client nonce
+//   S->C  AuthChallenge  does that account exist?, salt, iterations, server nonce
+//   C->S  AuthProof      proof of the password       (existing account)
+//     or  AuthRegister   the verifiers to store      (new account)
+//   S->C  AuthResult     outcome + the server's own signature
+//   S->C  Welcome        ... and we are in the lobby
+//
+// See src/net/auth.h for what each value is and why the password itself never
+// appears anywhere in it.
+
+void MpClient::failAuth(const std::string& why) {
+    auth_ = Auth::Failed;
+    if (err_.empty()) err_ = why;
+    crypto::wipe(loginPass_);
+    // Hang up rather than sit on a connection we can never use. The error is
+    // already recorded, so the socket closing cannot overwrite why.
+    conn_.closeNow();
+    state_ = State::Done;
+}
+
+void MpClient::sendAuthBegin() {
+    if (loginUser_.empty()) {
+        failAuth("this server requires an account -- sign in from the multiplayer menu");
+        return;
+    }
+    std::string why;
+    if (!auth::validUsername(loginUser_, &why)) { failAuth(why); return; }
+    try {
+        pend_ = PendingAuth{};
+        pend_.clientNonce = crypto::randomVec(auth::kNonceLen);
+    } catch (const std::exception& e) {
+        failAuth(std::string("cannot sign in: ") + e.what());
+        return;
+    }
+    auth_ = Auth::Pending;
+    Writer w;
+    w.str(loginUser_);
+    w.bytes(pend_.clientNonce);
+    send(Msg::AuthBegin, w);
+}
+
+void MpClient::onAuthChallenge(Reader& r) {
+    if (auth_ != Auth::Pending) { failAuth("unexpected login challenge"); return; }
+    pend_.newAccount = r.u8() != 0;
+    pend_.salt = r.bytes();
+    pend_.iters = r.u32();
+    pend_.serverNonce = r.bytes(auth::kNonceLen);
+    if (!r.ok || pend_.salt.empty()) { failAuth("malformed login challenge"); return; }
+    // A hostile server could ask for an absurd work factor to hang the client, or
+    // a trivial one to weaken the derivation. Neither is worth entertaining.
+    if (pend_.iters < 1000 || pend_.iters > 5000000) {
+        failAuth("the server asked for an unreasonable password work factor");
+        return;
+    }
+    if (pend_.newAccount) {
+        // Creating the account: hold the password to our own rules, not the
+        // server's, so a weak one is refused before it is ever committed to.
+        std::string why;
+        if (!auth::validPassword(loginPass_, &why)) { failAuth(why); return; }
+    }
+    startDerive();
+}
+
+void MpClient::startDerive() {
+    if (derive_.joinable()) derive_.join();
+    deriveDone_.store(false, std::memory_order_relaxed);
+    std::string pass = loginPass_;                 // the worker owns its own copy
+    std::vector<uint8_t> salt = pend_.salt;
+    uint32_t iters = pend_.iters;
+    derive_ = std::thread([this, pass, salt, iters]() mutable {
+        keys_ = auth::deriveKeys(pass, salt.data(), salt.size(), iters);
+        crypto::wipe(pass);
+        deriveDone_.store(true, std::memory_order_release);   // publishes keys_
+    });
+}
+
+void MpClient::pumpDerive() {
+    if (auth_ != Auth::Pending || pend_.proofSent) return;
+    if (!deriveDone_.load(std::memory_order_acquire)) return;
+    if (derive_.joinable()) derive_.join();
+    pend_.proofSent = true;
+    crypto::wipe(loginPass_);                      // done with it, for good
+
+    if (pend_.newAccount) {
+        // Registration. The server gets the two verifiers and nothing else -- it
+        // could not reconstruct the password from them if it wanted to.
+        auth::Credential c = auth::makeCredential(keys_, pend_.salt.data(),
+                                                  pend_.salt.size(), pend_.iters);
+        Writer w;
+        w.bytes(c.storedKey.data(), c.storedKey.size());
+        w.bytes(c.serverKey.data(), c.serverKey.size());
+        send(Msg::AuthRegister, w);
+    } else {
+        std::vector<uint8_t> am = auth::authMessage(loginUser_, pend_.clientNonce,
+                                                    pend_.serverNonce, pend_.salt, pend_.iters);
+        crypto::Digest proof = auth::clientProof(keys_, am);
+        Writer w;
+        w.bytes(proof.data(), proof.size());
+        send(Msg::AuthProof, w);
+    }
+}
+
+void MpClient::onAuthResult(Reader& r) {
+    auto status = AuthStatus(r.u8());
+    std::vector<uint8_t> sig = r.bytes();
+    std::string msg = r.str();
+    if (!r.ok) { failAuth("malformed login result"); return; }
+
+    if (status != AuthStatus::Ok && status != AuthStatus::Created) {
+        failAuth(msg.empty() ? "the server refused the login" : msg);
+        return;
+    }
+    // Mutual authentication: only something that actually holds this account's
+    // ServerKey can produce this signature, so a machine posing as the server
+    // cannot talk us into believing it knows the account. Skipped on the
+    // registration path, where the account had no server key to sign with until
+    // a moment ago.
+    if (status == AuthStatus::Ok) {
+        std::vector<uint8_t> am = auth::authMessage(loginUser_, pend_.clientNonce,
+                                                    pend_.serverNonce, pend_.salt, pend_.iters);
+        crypto::Digest want = auth::serverSignature(keys_.serverKey, am);
+        if (sig.size() != want.size() || !crypto::equalCT(sig.data(), want.data(), want.size())) {
+            failAuth("the server failed to prove it knows this account -- "
+                     "do not trust this connection");
+            return;
+        }
+    }
+    account_ = loginUser_;
+    auth_ = status == AuthStatus::Created ? Auth::Created : Auth::Ok;
+    crypto::wipe(keys_.clientKey.data(), keys_.clientKey.size());
+    crypto::wipe(keys_.serverKey.data(), keys_.serverKey.size());
+    // The server follows this with a Welcome, which moves us into the lobby.
 }
 
 static void readSlots(Reader& r, RoomView& v) {
@@ -118,8 +270,17 @@ void MpClient::onFrame(const Frame& f) {
         case Msg::Welcome:
             myId_ = r.u32();
             name_ = r.str();
+            // A server that required an account has already told us who we are.
+            // The Welcome name is authoritative: names match case-insensitively,
+            // so someone who typed "CURTIS" is signed in to "curtis" and should be
+            // shown as its owner spelled it, not as they happened to type it.
+            if (auth_ == Auth::Pending) auth_ = Auth::Ok;
+            if (auth_ != Auth::None && !name_.empty()) account_ = name_;
             state_ = State::Lobby;
             break;
+        case Msg::AuthRequired: sendAuthBegin(); break;
+        case Msg::AuthChallenge: onAuthChallenge(r); break;
+        case Msg::AuthResult: onAuthResult(r); break;
         case Msg::Reject:
             err_ = r.str();
             state_ = State::Done;

@@ -7,11 +7,14 @@
 // the bundle's commands and advances the World.
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include "net/auth.h"
 #include "net/conn.h"
 #include "net/protocol.h"
 
@@ -45,6 +48,31 @@ public:
 
     bool connect(const std::string& host, uint16_t port, const std::string& name);
     void disconnect(const std::string& reason = "bye");
+    ~MpClient();
+
+    // ---- account login -----------------------------------------------------
+    // Credentials for a server that requires an account. Set BEFORE connect().
+    // The password is used to derive the login keys and then wiped: it is not
+    // kept, and it never goes on the wire in any form (see src/net/auth.h).
+    // Against a server that asks for no account these are simply unused.
+    void setLogin(const std::string& user, const std::string& password);
+
+    enum class Auth {
+        None,       // the server never asked -- an open server (LAN, single-player)
+        Pending,    // asked; the exchange (or the slow key derivation) is in flight
+        Ok,         // signed in to an existing account
+        Created,    // there was no such account, so one was made; signed in on it
+        Failed,     // refused -- error() says why, in words fit to show the player
+    };
+    Auth auth() const { return auth_; }
+    // True once the handshake has settled either way, so a caller can pump poll()
+    // until the answer is in rather than guessing at a delay.
+    bool handshakeSettled() const {
+        return state_ != State::Connecting || auth_ == Auth::Failed;
+    }
+    // The account we are signed in as -- empty on a server that asks for none.
+    // This, not the local settings name, is who the player is in a lobby.
+    const std::string& account() const { return account_; }
 
     // Pump the socket: read frames, dispatch, flush writes. Call every frame.
     // Returns false once the connection is gone (see error()).
@@ -136,6 +164,12 @@ public:
 
 private:
     void onFrame(const Frame& f);
+    void sendAuthBegin();            // Hello answered with AuthRequired -> start SCRAM
+    void onAuthChallenge(Reader& r);
+    void onAuthResult(Reader& r);
+    void startDerive();              // spin the PBKDF2 off this thread
+    void pumpDerive();               // ... and send the proof once it lands
+    void failAuth(const std::string& why);
     void send(Msg kind, const Writer& w) { conn_.send(kind, w); }
     void send(Msg kind) { conn_.send(kind); }
 
@@ -164,6 +198,23 @@ private:
     bool desynced_ = false;
     std::string desyncReason_;
     uint64_t lastRecvMs_ = 0, lastPingMs_ = 0;
+
+    // ---- account login state ------------------------------------------------
+    std::string loginUser_, loginPass_;
+    Auth auth_ = Auth::None;
+    std::string account_;
+    struct PendingAuth {
+        std::vector<uint8_t> clientNonce, serverNonce, salt;
+        uint32_t iters = 0;
+        bool newAccount = false;     // the server said there is no such account yet
+        bool proofSent = false;
+    } pend_;
+    // PBKDF2 at the real work factor takes a few hundred milliseconds. Running it
+    // on the caller's thread would stall the front-end mid-login, so it goes to a
+    // worker and poll() picks the result up.
+    std::thread derive_;
+    std::atomic<bool> deriveDone_{false};
+    auth::Keys keys_;
 
     // Artificial receive jitter for testing (TAK_NET_JITTER_MS): hold each bundle
     // then release it after a random 0..N ms delay, modelling uneven server->client
