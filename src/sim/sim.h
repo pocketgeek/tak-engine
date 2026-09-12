@@ -685,7 +685,10 @@ public:
     // costlier, so marches drift onto highways -- the retail steering area-rater
     // scores road cells 7 vs 6 (icd 0x508527). `roads` must outlive the grid and
     // match its dimensions (World::roads_; null = no preference).
-    void markClearanceDirty() { clearDirty_ = true; }
+    void markClearanceDirty() { clearDirty_ = true; ++version_; }
+    // Bumped on every walkability edit (own cells or the shared overlay), so caches
+    // derived from this grid can tell when they have gone stale.
+    uint64_t version() const { return version_; }
     void setRoads(const std::vector<uint8_t>* roads) {
         roads_ = (roads && roads->size() == size_t(w_) * size_t(h_)) ? roads : nullptr;
     }
@@ -726,6 +729,7 @@ private:
     void updateClearanceRect(int cx, int cz, int w, int h) const;
     mutable std::vector<uint16_t> clear_;
     mutable bool clearDirty_ = true;
+    uint64_t version_ = 1;
     const std::vector<uint8_t>* roads_ = nullptr;
     const std::vector<uint8_t>* obst_ = nullptr;   // shared obstacle overlay   // see setRoads
     int w_ = 0, h_ = 0;
@@ -1296,6 +1300,14 @@ private:
     // and the AI's (see invalidateFlows).
     void evictStaleFlows(std::map<long long, FlowField>& cache, int cx, int cz, int w, int h);
     mutable std::map<long long, FlowField> flowCache_;
+    // Connected components of the walkable set, per (grid, footprint). Reachability
+    // is a connectivity question, so it does not need a distance field: one flood
+    // fill answers it for EVERY goal on that grid until the terrain changes, where a
+    // FlowField answers it for one goal and costs a full Dijkstra. Display/AI only
+    // (pathExists is asked on one peer and never hashed), so this is not sim state.
+    struct CompGrid { uint64_t ver = 0; int w = 0, h = 0; std::vector<int32_t> label; };
+    mutable std::map<std::pair<const NavGrid*, int>, CompGrid> compCache_;
+    const CompGrid* components(const NavGrid& g, int foot) const;
     // A SEPARATE cache for non-sim queries (pathExists, which only the server-side
     // AI calls). Keeping it apart is not an optimisation, it is a correctness
     // requirement: the AI runs on ONE peer, so letting its questions insert into and

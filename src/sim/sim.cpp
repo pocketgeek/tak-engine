@@ -19,6 +19,7 @@
 
 namespace tak::sim {
 
+
 bool gInstantBuild = false;
 
 // TAK_PHASE sim profiler globals (zero cost when unset). The accumulators are
@@ -855,6 +856,7 @@ void NavGrid::block(int cx, int cz, int w, int h, bool blocked) {
         for (int x = cx; x < cx + w; ++x)
             if (x >= 0 && z >= 0 && x < w_ && z < h_)
                 cells_[size_t(z) * w_ + x] = blocked ? 0 : 1;
+    ++version_;   // walkability changed: component caches over this grid are stale
     // Footprint clearance depends on the walkability grid. When it has already been
     // built, refresh just the affected rect (values are clamped at kClearMax, so a
     // cell change can influence clearance at most kClearMax cells down-left) instead
@@ -1395,6 +1397,49 @@ void World::order(int unitId, float x, float z, bool queue) {
     markGoal();
 }
 
+// Label the connected components of the cells a `foot`-wide unit can occupy, using
+// exactly FlowField::build's adjacency (8-neighbour, fits(), no diagonal corner-cut)
+// so "same component" means precisely what "the field reached it" meant. Rebuilt
+// only when the grid's walkability version moves; one fill serves every goal.
+const World::CompGrid* World::components(const NavGrid& g, int foot) const {
+    if (g.empty()) return nullptr;
+    auto& cg = compCache_[{&g, foot}];
+    if (cg.ver == g.version() && cg.w == g.width() && cg.h == g.height()) return &cg;
+    g.ensureClearance();
+    const int w = g.width(), h = g.height();
+    cg.ver = g.version(); cg.w = w; cg.h = h;
+    cg.label.assign(size_t(w) * size_t(h), -1);
+    static const int dcx[8] = {1, -1, 0, 0, 1, 1, -1, -1};
+    static const int dcz[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+    std::vector<int> stack;
+    int32_t next = 0;
+    for (int z0 = 0; z0 < h; ++z0)
+        for (int x0 = 0; x0 < w; ++x0) {
+            size_t seed = size_t(z0) * size_t(w) + size_t(x0);
+            if (cg.label[seed] != -1 || !g.fits(x0, z0, foot)) continue;
+            const int32_t id = next++;
+            cg.label[seed] = id;
+            stack.push_back(int(seed));
+            while (!stack.empty()) {
+                int idx = stack.back(); stack.pop_back();
+                int cx = idx % w, cz = idx / w;
+                for (int k = 0; k < 8; ++k) {
+                    int nx = cx + dcx[k], nz = cz + dcz[k];
+                    if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
+                    if (!g.fits(nx, nz, foot)) continue;
+                    if (k >= 4 && (!g.fits(cx + dcx[k], cz, foot) ||
+                                   !g.fits(cx, cz + dcz[k], foot)))
+                        continue;                    // no diagonal corner-cutting
+                    size_t ni = size_t(nz) * size_t(w) + size_t(nx);
+                    if (cg.label[ni] != -1) continue;
+                    cg.label[ni] = id;
+                    stack.push_back(int(ni));
+                }
+            }
+        }
+    return &cg;
+}
+
 // Reachability for the AI. Deliberately does NOT go through flowFor: this is a
 // non-sim question asked on one peer only, and it must leave the sim's flow memo
 // exactly as it found it (see aiFlowCache_).
@@ -1405,17 +1450,39 @@ bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float
     // it. Only fall back to the AI's own cache when the sim hasn't got it.
     if (auto it = flowCache_.find(k.key); it != flowCache_.end())
         return it->second.ready() && it->second.reachable(fx, fz);
-    auto it = aiFlowCache_.find(k.key);
-    if (it == aiFlowCache_.end()) {
-        evictFlowLru(aiFlowCache_);
-        FlowField ff;
-        ff.build(*k.grid, k.bx, k.bz, k.foot);
-        ff.used = tickCounter_;
-        it = aiFlowCache_.emplace(k.key, std::move(ff)).first;
-    } else {
-        it->second.used = tickCounter_;
+    // Otherwise answer from connectivity, not from a distance field. Building a
+    // FlowField here cost a full-map Dijkstra (~40ms) to extract a single yes/no --
+    // and it was the ENTIRE per-second AI hitch: measured ai=40.7ms of which
+    // pathExists=40.7ms for one build. The component labelling costs one flood fill
+    // per grid+footprint, is reused for every goal, and survives until the terrain
+    // actually changes.
+    const CompGrid* cg = components(*k.grid, k.foot);
+    if (!cg || cg->label.empty()) return false;
+    const int w = cg->w, h = cg->h;
+    auto labelAt = [&](float wx, float wz) -> int32_t {
+        int cx = int(wx) / 16, cz = int(wz) / 16;
+        if (cx < 0 || cz < 0 || cx >= w || cz >= h) return -1;
+        return cg->label[size_t(cz) * size_t(w) + size_t(cx)];
+    };
+    int32_t from = labelAt(fx, fz);
+    if (from < 0) return false;           // the asker itself does not fit where it is
+    int32_t to = labelAt(k.bx, k.bz);
+    if (to < 0) {
+        // Same snap FlowField::build does: a goal the unit cannot occupy resolves to
+        // the nearest cell it can, spiralling out, so a click on a wall still routes.
+        int gcx = std::clamp(int(k.bx) / 16, 0, w - 1);
+        int gcz = std::clamp(int(k.bz) / 16, 0, h - 1);
+        for (int r = 1; r < 24 && to < 0; ++r)
+            for (int j = -r; j <= r && to < 0; ++j)
+                for (int i = -r; i <= r && to < 0; ++i) {
+                    if (std::max(std::abs(i), std::abs(j)) != r) continue;
+                    int nx = gcx + i, nz = gcz + j;
+                    if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
+                    int32_t l = cg->label[size_t(nz) * size_t(w) + size_t(nx)];
+                    if (l >= 0) to = l;
+                }
     }
-    return it->second.ready() && it->second.reachable(fx, fz);
+    return to >= 0 && to == from;
 }
 
 void World::loadInto(int unitId, int transportId) {
