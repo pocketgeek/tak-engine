@@ -2210,14 +2210,28 @@ float World::bodyPenetration(const Unit& u, float nx, float nz) const {
             last = id;
             const Unit* o = unit(id);
             if (!o || !o->type) continue;
-            // Retail grades passability rather than making it binary: a PARKED
-            // body is impassable, a MOVING one is merely expensive (its area
-            // score still clears the threshold every call site tests at). Two
-            // units walking the same lane must be able to interleave, or any
-            // crowd larger than the lane deadlocks -- measured 16 of 24 arriving
-            // when moving bodies blocked too. Moving-body spacing is the
-            // separation pass's job; it only has to de-overlap, not gate steps.
-            if (o->speed != 0.0f) continue;
+            // Retail's occupancy rule, read off 0x4db640 (the unit half of the
+            // passability query) at 0x4db767-0x4db7c9. An occupant is IGNORED --
+            // the step passes straight through it -- only when all three hold:
+            //   1. it is genuinely under way (retail tests a live movement
+            //      object at its +8, and bails to "blocked" when there is none),
+            //   2. it is not slower than us ([[+8]+0x20] >= our own),
+            //   3. its heading (+0x7e) is within 0x4000 of ours -- 90 degrees.
+            // Anything else falls to 0x4db893, which returns 2; the threshold at
+            // every call site is 4, so the step is refused.
+            //
+            // Phrased in English: you may close up behind someone going your way
+            // who is not slower than you. Head-on traffic blocks. Slower traffic
+            // ahead of you blocks. Parked blocks. This is the rule that lets
+            // retail run with no separation pass at all -- overlap barely forms,
+            // and the single case that creates it (following a faster leader)
+            // unwinds itself as the leader pulls away.
+            //
+            // Ignoring EVERY mover, which is what stood here, is far looser than
+            // retail and is precisely what made a de-overlap pass necessary.
+            if (o->speed > 0.0f && o->speed >= u.speed &&
+                std::fabs(angleDiff(o->heading, u.heading)) <= kPi * 0.5f)
+                continue;
             float sep = hs + float(std::max(o->type->footX, o->type->footZ)) * 8.0f;
             // Bodies we are ALREADY inside are not ours to arbitrate. Units spawn
             // in tight ranks, a finished building lands under its builder, a push
@@ -4425,73 +4439,19 @@ void World::tick(float dt) {
     }
     tickAbilities(dt);   // reclaim / resurrect corpses (uses the fresh grid)
     tickAuras(dt);       // AdjustArmor/Attack stat auras (uses the fresh grid)
-    // One nav cell. 13px packed ~1.75 bodies into every 16px cell, which is what
-    // made dense fights compress into piles retail would not allow -- a retail
-    // ground unit holds a 2x2-cell (32px) box exclusively. 16 keeps the settled
-    // spacing consistent with one-unit-per-cell occupancy without going all the way
-    // to retail's footprint sizes, which our movers do not carry (see the note in
-    // the commit: our 125 mobile ground units default to a 1x1 footprint because we
-    // read MaxSlope from moveinfo.tdf but not FootprintX/Z). Melee still reaches:
-    // meleeInRange passes two point-footprint units at |dx|,|dz| < 24.
-    constexpr float kSep = 16.0f;
-    auto ok = [&](const Unit& u, float nx, float nz) {
-        const NavGrid& g = navFor(u.type);
-        // fits(), not walkable(): a separation push must not shove a body onto ground
-        // its footprint doesn't fit on. Identical at foot==1.
-        return g.empty() || g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type));
-    };
-    // Density cap: in a MASSIVE battle (units piled far denser than they separate),
-    // the 3x3 neighbourhood of a cell can hold hundreds of units, making this O(n^2)
-    // within the pile. The separation push is dominated by the nearest few, so above a
-    // crowd threshold each unit interacts with at most kSepCap neighbours -- bounding
-    // the pathological case while normal/moderate battles (below the threshold) keep the
-    // exact all-pairs behaviour. Deterministic (crowd count + fixed grid order).
-    uint32_t liveSep = 0;
-    // Widest live mover, so the neighbour query covers the widest pair that can
-    // form. While every mover is one cell this is 1 and the radius below is exactly
-    // kSep -- which keeps the density cap's visit order, and therefore the hash,
-    // identical to before footprints existed.
-    int maxFoot = 1;
-    for (const auto& u : units_) {
-        if (!u.alive() || !u.type) continue;
-        ++liveSep;
-        if (u.type->canMove && !u.type->canFly && !u.type->isStructure())
-            maxFoot = std::max(maxFoot, footCells(u.type));
-    }
-    int sepCap = liveSep > 4000 ? 24 : 0;   // 0 = uncapped
-    for (size_t i = 0; i < units_.size(); ++i) {
-        Unit& a = units_[i];
-        // isStructure(), NOT canmove: the Keep/castle/smith family ships
-        // canmove=1 with zero velocity, and a canmove gate let fresh spawns
-        // (e.g. a resurrection at a corpse beside a building) SHOVE the
-        // building -- which the unstick pass then walked right off its
-        // footprint. Buildings never separate.
-        if (!a.alive() || a.embarked() || !a.type || !a.type->canMove ||
-            a.type->isStructure() || a.type->canFly) continue;
-        forEachNearCapped(a.x, a.z, float(footCells(a.type) + maxFoot) * 8.0f,
-                          sepCap, [&](int j) {
-            if (size_t(j) <= i) return;   // handle each pair once, and skip self
-            Unit& b = units_[size_t(j)];
-            if (!b.alive() || b.embarked() || !b.type || !b.type->canMove ||
-                b.type->isStructure() || b.type->canFly) return;
-            float dx = b.x - a.x, dz = b.z - a.z;
-            float d2 = dx * dx + dz * dz;
-            // Per-PAIR spacing: two bodies want their footprints not to overlap, so
-            // the radius is half of each, in px. Identical to kSep while every mover
-            // is one cell (8 + 8 = 16), and grows correctly once they aren't.
-            float want = float(footCells(a.type) + footCells(b.type)) * 8.0f;
-            if (d2 >= want * want) return;
-            if (d2 < 1e-6f) { b.x += 1.0f; return; }   // exactly stacked: nudge
-            float d = std::sqrt(d2);
-            float push = (want - d) * 0.5f;
-            dx /= d; dz /= d;
-            float axn = a.x - dx * push, azn = a.z - dz * push;
-            float bxn = b.x + dx * push, bzn = b.z + dz * push;
-            if (ok(a, axn, azn)) { a.x = axn; a.z = azn; }
-            if (ok(b, bxn, bzn)) { b.x = bxn; b.z = bzn; }
-        });
-    }
-
+    // NO SEPARATION PASS. Retail has none, and with the occupancy rule above
+    // ported faithfully it has nothing left to do: a body cannot step into a
+    // parked one, nor into a mover that is slower or coming the other way, so
+    // the overlaps this used to clean up no longer form. What it did form was
+    // its own problem -- it enforced spacing at a different resolution from the
+    // mover, and the two fighting is what read in play as units shoving each
+    // other around.
+    //
+    // The known cost, accepted deliberately: a unit may still tuck in behind a
+    // faster leader and end up overlapping it if that leader then stops, and
+    // nothing now pushes the pair apart. Retail behaves the same way. Units
+    // getting stuck the way retail's did is the intended outcome here, not a
+    // regression to fix by reintroducing a push.
     // Unstick: any ground unit that ends up inside a blocked cell (spawned by a
     // building, shoved by a crowd, or clipped a corner) is nudged toward the
     // nearest walkable cell so it can never wedge permanently.

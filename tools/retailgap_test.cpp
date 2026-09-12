@@ -1160,8 +1160,18 @@ int main(int argc, char** argv) {
             cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
             cfg.slots[0].team = 0; cfg.slots[1].team = 1;
             sim::setupMatch(w, reg, cfg);
-            for (int i = 0; i < 12; ++i) w.spawn(sh, 900.0f + float(i) * 20, 2500, 0, 0);
-            for (int i = 0; i < 8; ++i) w.spawn(prey, 950.0f + float(i) * 22, 2760, 0, 1);
+            // Two ranks rather than one long line, spaced so no body starts
+            // inside another (a footprint is 32px; the old 20/22px pitch spawned
+            // them INTERPENETRATING). That used to be invisible because the
+            // separation pass shoved them apart over the first few ticks, so the
+            // spread this test reads was partly an artifact of that shoving
+            // rather than of the acquisition rule it is about. Retail does not
+            // spawn bodies inside each other; neither should the fixture. The
+            // block keeps roughly the old footprint so the range picture holds.
+            for (int i = 0; i < 12; ++i)
+                w.spawn(sh, 900.0f + float(i % 6) * 36, 2500.0f + float(i / 6) * 36, 0, 0);
+            for (int i = 0; i < 8; ++i)
+                w.spawn(prey, 950.0f + float(i % 4) * 36, 2760.0f + float(i / 4) * 36, 0, 1);
             for (int i = 0; i < 10; ++i) w.tick(1.0f / 30.0f);
             std::map<int, int> tally;
             for (const auto& u : w.units()) {

@@ -315,11 +315,37 @@ Measured: a walker sent straight through a parked body closes to exactly 32px,
 its footprint touching and never overlapping. With the cell hatch restored it
 reaches 6px in. That ablation is the evidence the hatch was the whole defect.
 
-Not done, deliberately: separation still runs. It now agrees with the mover
-(both settle at footprint contact) instead of fighting it, so it is no longer
-the source of shoving. Deleting it outright needs moving-vs-moving bodies to
-carry retail's cost-and-slow instead of being skipped -- that is the next step,
-and it is a behaviour change to make on its own, not smuggled in with this one.
+### The occupancy predicate, and why retail needs no separation pass
+
+Read off `0x4db640` -- the unit half of the passability query -- at
+`0x4db767..0x4db7c9`. For each unit found in the target rect it decides whether
+that unit blocks. An occupant is IGNORED, letting the step pass straight
+through, only when ALL THREE hold:
+
+  1. it is genuinely under way -- retail dereferences a movement object at its
+     `+8` and bails to "blocked" (`0x4db8d4`) when there is none;
+  2. it is not slower than us -- `[[+8]+0x20]` compared against a computed floor
+     AND against our own `[[+8]+0x20]`;
+  3. its heading (`+0x7e`) is within `0x4000` of ours, i.e. 90 degrees.
+
+Anything else falls through to `0x4db893`, which returns 2. The threshold at
+every call site is 4, so that is a refusal. The return set is: 0 and 2 blocked,
+4 blocked, and the terrain score (6 ground / 7 road) when no occupant objected.
+
+In English: **you may close up behind someone going your way who is not slower
+than you.** Head-on traffic blocks. Slower traffic ahead of you blocks. Parked
+blocks.
+
+That single rule is why retail ships no separation pass and no "don't come to
+rest inside another body" check. Overlap barely forms, and the one case that
+does create it -- tucking in behind a faster leader -- unwinds itself as the
+leader pulls away. Ours now implements the predicate and the separation pass is
+DELETED. Two systems enforcing spacing at different resolutions, which is what
+we had, is what read in play as units shoving each other around.
+
+Known and accepted: a follower can still end up overlapping its leader if that
+leader stops, and nothing now pushes them apart. Retail behaves the same way.
+Do not reintroduce a push to "fix" it.
 
 ## Headless in-game screenshots (dev harness)
 
