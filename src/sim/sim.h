@@ -282,6 +282,15 @@ struct UnitType {
     float cloakCost = 0;          // cloakcost: mana/sec while cloaked and idle
     float cloakCostMove = 0;      // cloakcostmoving: mana/sec while cloaked and moving
     float minCloakDist = 0;       // mincloakdistance: an enemy this close forces uncloak
+    // FBI fireatwillrandom (icd: UnitDef+0x264 bit 24, parsed at 0x4c0a3a; its ONLY
+    // reader is the auto-target scorer at 0x4129bc). Retail scores each candidate
+    // n = dist^2 / damageVsTarget and keeps the lowest of rand(n)/2 + rand(n); this
+    // flag swaps the numerator for INT_MAX, which dwarfs any real squared distance,
+    // so the pick stops preferring what is NEAREST and becomes a random draw
+    // weighted by damage. Set on the 16 missile troops (every faction's archers,
+    // the Crossbowman, Musketeer and Cannoneer): a rank of them sprays a crowd
+    // instead of every last one focusing the same closest body.
+    bool fireAtWillRandom = false;
     bool  attractsGods = false;   // attractsgods: priest channels god favour
     // weaponswitching: this unit carries ONE active weapon at a time, picked by the
     // player. Without it, a multi-weapon unit fires every weapon independently.
@@ -1350,6 +1359,14 @@ private:
     // ours is identical on every peer -- draws happen only in deterministic sim
     // paths, and the state is folded into stateHash.
     uint32_t burnRng_ = 0x54414B21;
+    // Target-scatter RNG for fireatwillrandom. Same Lehmer generator as burnRng_
+    // and equally part of the lockstep contract: every peer runs the identical
+    // acquisition in the identical order, so it advances in lockstep too.
+    uint32_t fireRng_ = 0x4649524Eu;   // 'FIRN'
+    uint32_t fireRand(uint32_t n) {    // retail's rand(n): 0 when n < 2
+        fireRng_ = uint32_t((uint64_t(fireRng_) * 16807ULL) % 0x7FFFFFFFULL);
+        return n < 2 ? 0u : fireRng_ % n;
+    }
     int burnRand(int n) {
         burnRng_ = uint32_t((uint64_t(burnRng_) * 16807ULL) % 0x7FFFFFFFULL);
         return n > 0 ? int(burnRng_ % uint32_t(n)) : 0;

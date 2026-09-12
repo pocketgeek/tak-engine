@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 58;       // 58: order queues survive a repath; Patrol,
+constexpr uint32_t kNetVersion = 59;       // 59: fireatwillrandom scatters auto-acquired
+                                           // targets for the 16 missile-troop types
+                                           // 58: order queues survive a repath; Patrol,
                                            // Repair and Assist honour their queue flag
                                            // 57: account login (SCRAM-SHA-256) sits
                                            // between the Hello and the Welcome

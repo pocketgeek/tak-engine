@@ -186,6 +186,8 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.cloakCost = float(info->numberOr("cloakcost", 0));
             t.cloakCostMove = float(info->numberOr("cloakcostmoving", t.cloakCost));
             t.minCloakDist = float(info->numberOr("mincloakdistance", 0));
+            // Boolean in retail too: the parser does `and eax,1`.
+            t.fireAtWillRandom = (int(info->numberOr("fireatwillrandom", 0)) & 1) != 0;
             t.attractsGods = info->numberOr("attractsgods", 0) != 0;
             t.weaponSwitching = info->numberOr("weaponswitching", 0) != 0;
             t.onOffable = info->numberOr("onoffable", 0) != 0;
@@ -1991,6 +1993,14 @@ void World::tickCombat(Unit& u, float dt) {
         float ar = u.type->maxRange() + 90;
         int best = 0;
         float bestD = ar * ar;
+        // fireatwillrandom: spread fire across whatever is in range instead of
+        // every unit converging on the nearest body. Only while AUTO-acquiring --
+        // an explicit attack order still goes exactly where it was pointed, which
+        // is retail's gate too (its scorer is reached only from the fire-at-will
+        // path, and every shipped unit is fire-at-will by default since no FBI
+        // sets standingfireorder).
+        const bool scatter = u.type->fireAtWillRandom;
+        float bestScore = 1e30f;
         // maneuverleashlength limits how far an IDLE defender will chase from its
         // post. It must NOT apply while attack-moving/patrolling — those orders
         // mean "advance and engage everything en route", so an army that has
@@ -2013,11 +2023,32 @@ void World::tickCombat(Unit& u, float dt) {
             if (hx * hx + hz * hz > leash2) return;   // outside the leash
             float dx = e.x - u.x, dz = e.z - u.z;
             float d = dx * dx + dz * dz;
-            if (d >= bestD) return;
+            // A scatter-firing unit still only considers what is in RANGE (retail
+            // gathers by radius the same way), but inside that set it no longer
+            // prefers the nearest -- so the early-out on distance is skipped.
+            if (!scatter && d >= bestD) return;
+            if (d >= ar * ar) return;
             if (ranged && !e.type->canFly && !lobber &&
                 !nav_.losBetween(u.x, u.z, e.x, e.z, uFoot,
                                  std::max(e.type->footX, e.type->footZ) / 2))
                 return;                         // no clear shot: don't acquire it
+            if (scatter) {
+                // Retail's scorer, with the flag's substitution in place: n is
+                // INT_MAX/damage instead of dist^2/damage, and the winner is the
+                // lowest of rand(n)/2 + rand(n). Dividing by damage keeps the
+                // draw biased toward whatever this weapon hits hardest, which is
+                // the half of the original scoring the flag does NOT remove.
+                float dmg = 0;
+                for (const auto& wp : u.type->weapons)
+                    if (!(e.type->canFly && wp.noAir))
+                        dmg = std::max(dmg, wp.damageVs(e.type));
+                if (dmg <= 0) return;
+                uint32_t n = uint32_t(float(0x7FFFFFFF) / dmg);
+                float score = float(fireRand(n)) / 2.0f + float(fireRand(n));
+                if (score >= bestScore) return;
+                bestScore = score; best = e.id;
+                return;
+            }
             bestD = d; best = e.id;
         });
         if (best) u.orders.insert(u.orders.begin(), {0, 0, best});
@@ -2070,7 +2101,8 @@ void World::tickCombat(Unit& u, float dt) {
     //     targod, verat, verball, vergod) -- every weapon fires INDEPENDENTLY, each
     //     with its own reload, its own range band and its own mana check, so an
     //     AA/ground turret really does work both barrels at once.
-    // (`fireatwillrandom` is unrelated to this -- it randomises TARGET choice.)
+    // (`fireatwillrandom` is unrelated to this -- it scatters auto-acquired TARGET
+    // choice; see UnitType::fireAtWillRandom.)
     bool allWeapons = !u.type->weaponSwitching && u.type->weapons.size() > 1;
     // Approach on the reach this unit actually fights at: the selected weapon for a
     // switcher, the longest of them when they all fire.

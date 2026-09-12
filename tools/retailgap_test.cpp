@@ -16,6 +16,7 @@
 #include "sim/sim.h"
 
 #include <algorithm>
+#include <map>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -1122,6 +1123,56 @@ int main(int argc, char** argv) {
                   "an out-and-back queue walks the outbound leg (the unstick watchdog "
                   "must not mistake it for being stuck against the RETURN leg)");
         }
+    }
+
+    // ---- fireatwillrandom: missile troops spread their fire ------------------
+    // Retail scores auto-acquired candidates n = dist^2/damage and keeps the
+    // lowest of rand(n)/2 + rand(n); the flag swaps dist^2 for INT_MAX, so the
+    // pick stops preferring the nearest body. A rank of archers should therefore
+    // cover noticeably more of a crowd than the same number of swordsmen.
+    {
+        auto rank = [&](const char* who, int& distinct, int& maxOnOne) {
+            const sim::UnitType* sh = reg.find(who);
+            const sim::UnitType* prey = reg.find("arasword");
+            distinct = maxOnOne = 0;
+            if (!sh || !prey) return;
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+            for (int i = 0; i < 12; ++i) w.spawn(sh, 900.0f + float(i) * 20, 2500, 0, 0);
+            for (int i = 0; i < 8; ++i) w.spawn(prey, 950.0f + float(i) * 22, 2760, 0, 1);
+            for (int i = 0; i < 10; ++i) w.tick(1.0f / 30.0f);
+            std::map<int, int> tally;
+            for (const auto& u : w.units()) {
+                if (!u.alive() || u.player != 0 || u.orders.empty()) continue;
+                if (int t = u.orders.front().targetId) tally[t]++;
+            }
+            distinct = int(tally.size());
+            for (auto& [t, n] : tally) maxOnOne = std::max(maxOnOne, n);
+        };
+        const sim::UnitType* archer = reg.find("araarch");
+        check(archer && archer->fireAtWillRandom, "araarch parses fireatwillrandom");
+        const sim::UnitType* sword = reg.find("arasword");
+        check(sword && !sword->fireAtWillRandom, "arasword does not carry it");
+        int aDistinct = 0, aMax = 0, sDistinct = 0, sMax = 0;
+        rank("araarch", aDistinct, aMax);
+        rank("arasword", sDistinct, sMax);
+        check(aDistinct > sDistinct,
+              "12 archers cover more of an 8-strong crowd than 12 swordsmen",
+              "archers " + std::to_string(aDistinct) + " targets vs swordsmen " +
+                  std::to_string(sDistinct));
+        check(aMax <= sMax,
+              "and pile onto one body no harder than the swordsmen do",
+              "archers " + std::to_string(aMax) + " on one vs swordsmen " +
+                  std::to_string(sMax));
+        // The scatter is deterministic: same world, same draws, same answer.
+        int d2 = 0, m2 = 0;
+        rank("araarch", d2, m2);
+        check(d2 == aDistinct && m2 == aMax,
+              "the scatter is deterministic (identical across two identical runs)");
     }
 
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
