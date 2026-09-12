@@ -227,37 +227,34 @@ occupant lowers the score rather than vetoing the cell.
     offset -1..+1 in `0x100000` steps, querying each and bailing on the first
     below threshold.
 
-**Blocked -> ask the GOAL for a point.** When the forward probe fails the mover
-sets one of two refusal states (flags `0x100` / `0x200` at navigator `+0x36`,
-each accumulating a per-type value from `UnitType+0x249` into `+0x30` -- the
-clamp-and-slow we already ported in 080d288), runs the 3x3 scan, and then does
-this:
+**Blocked -> re-read own waypoints, clamp, slow.** When the forward probe fails
+the mover sets one of two refusal states (flags `0x100` / `0x200` at navigator
+`+0x36`, each accumulating a per-type value from `UnitType+0x249` into `+0x30`
+-- the clamp-and-slow already ported in 080d288), runs the 3x3 scan, and then
+calls navigator vtable slot 3 with `(outBuf, 3)`:
 
 ```
-lea  eax, [ebp-0x48]
-push 3
-push eax
-mov  ecx, [edi]          ; the NavGoal
-mov  edx, [ecx]          ; its vtable
-call [edx+0xc]           ; NavGoal virtual, slot 3, (outBuf, 3)
-cmp  ...                 ; same point as last time? -> nothing to do
-sub  ecx, [esi+0x70]     ; dz from the unit
-sub  eax, [esi+0x68]     ; dx
-fsqrt                    ; distance -> new heading
+mov  ebx, [ebp+0xc]              ; arg2 = 3, how many points wanted
+mov  eax, [ecx+0x10c]            ; the waypoint COUNT
+cmp  esi, eax / lea edi,[eax-1]  ; clamp the index to count-1
+movsx eax, word [ecx+edi*4+0xc]  ; point[i].x, the same 16-bit array
+shl  eax, 0x10                   ; -> 16.16 world units
+movsx eax, word [ecx+edi*4+0xe]  ; point[i].z
 ```
 
-So the NavGoal is ACTIVE, not passive geometry. A blocked unit asks its goal
-for a point and steers at what comes back, which is why NavGoalCircle / Rect /
-Ring are classes with behaviour rather than a struct: an AREA goal can hand
-back a different point when the current one is refused. That is retail's
-avoidance, and it is what our mover lacks -- ours holds one fixed point and
-slides against whatever is in the way, so concave geometry traps it (measured:
-with A* disabled, 30 of 30 units wedge ~31% along Angvir's Maze and never move
-again, where retail wedged only occasionally).
+That is an ACCESSOR: it exports the navigator's own two-point segment as world
+coordinates. `Navigator`'s base version is `ret 8`, a stub, and all four
+NavGoal shapes share an unrelated `mov eax,1; ret`. So the goal object is NOT
+consulted here and is not an active participant -- an earlier revision of this
+document said it was, on a misread of which object the vtable belonged to.
 
-NOT yet established: what slot 3 returns for each NavGoal shape, and what the
-argument `3` selects. That is the next thing to read, and it is the whole
-algorithm -- everything else above is plumbing around it.
+CONCLUSION SO FAR, and it is uncomfortable: no distinct obstacle-avoidance
+algorithm has been found. What retail has is the graded passability score, the
+forward probe, the 3x3 scan, and clamp-and-slow -- all of which we now have.
+Either the avoidance is subtler than these pieces suggest (the 3x3 scan's
+result is used somewhere not yet traced), or retail genuinely wedged as much
+as we do and the difference we think we remember is not there. Resolving that
+needs the rest of 0x4dba80's control flow read properly, not more guessing.
 
 ## Headless in-game screenshots (dev harness)
 
