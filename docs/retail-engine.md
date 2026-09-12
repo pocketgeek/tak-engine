@@ -461,7 +461,9 @@ intact. Separately `+0xe4` counts cells visited and bails against `+0xe8`.
 
 **Return protocol** (consumed by `0x415b10`): `0` done, `-1` a waypoint was
 emitted at `+0x34/+0x36` (the caller charges a further 30 work and appends it),
-`-2` failed.
+`-2` OUT OF QUANTUM -- suspend and resume next frame. An earlier note in this
+file called `-2` "failed"; it is not. `0x415028` returns it from the work-cap
+check, and the caller's `+0x5c` is a still-pending marker, not an error.
 
 **The budget is an INTEGER, not wall-clock.** `0x41617b` seeds both `+0x221`
 and `+0x225` with `0x2ee0` = 12000 work units per frame, and the quality

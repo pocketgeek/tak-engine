@@ -58,6 +58,7 @@ add_library(tak-formats
   src/cob/cob.cpp
   src/cob/vm.cpp
   src/sim/sim.cpp
+  src/sim/pathsearch.cpp
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
   src/sim/mission.cpp
@@ -133,8 +134,10 @@ add_executable(authrogue tools/authrogue.cpp)
 target_link_libraries(authrogue PRIVATE tak-formats)
 
 add_executable(retailgap_test tools/retailgap_test.cpp)
+add_executable(pathsearch_test tools/pathsearch_test.cpp)
     add_executable(footprobe tools/footprobe.cpp)
 target_link_libraries(retailgap_test PRIVATE tak-formats)
+target_link_libraries(pathsearch_test PRIVATE tak-formats)
 target_link_libraries(footprobe PRIVATE tak-formats)
 
 # aitool bundles the AI (src/ai, otherwise server-only) so we can tune it headless.
