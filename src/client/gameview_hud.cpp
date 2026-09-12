@@ -941,8 +941,10 @@
             if (int(front->cargo.size()) < front->type->transportCap) add("LOAD", 'l');
             if (!front->cargo.empty()) add("UNLOAD", 'u');
         }
-        // Combat stance radio (any mobile armed unit): offensive/defensive/passive.
-        if (mobile && armed) {
+        // Combat stance radio: offensive/defensive/passive. Gated on the FBI's
+        // unitstandorders, which is what retail's panel consults -- not on a
+        // mobile-and-armed guess that only happens to agree on the shipped data.
+        if (mobile && armed && front->type->canSetStance) {
             add("Offensive", 'O');
             add("Defensive", 'D');
             add("Passive", 'H');

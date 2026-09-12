@@ -278,6 +278,14 @@ struct UnitType {
     // is really just "is an aircraft" -- parsed anyway, because that is what the
     // behaviour is keyed on in retail (mission handler icd 0x417350).
     bool vtolStandby = false;
+    // FBI unitstandorders (icd UnitDef+0x264 bit 2, default 1): whether this type
+    // has a combat stance at all. Retail's command-panel query (0x4affac) reads the
+    // stance only when the bit is set and greys the three buttons out otherwise.
+    // 62 shipped types clear it -- the Keep, Mana Amplifier, Temple of Anu, cows,
+    // peasants, beggars. Every one of them turns out to be unarmed, so gating on
+    // "mobile and armed" happened to give the same answer; this is the flag retail
+    // actually consults, so a unit that breaks that coincidence still behaves.
+    bool canSetStance = true;
     float waterMult = 1;      // watermultiplier: speed factor in shallow water
     float roadMult = 1.2f;    // roadmultiplier: on-road speed factor. Retail's FBI
                               // parser defaults it to 16.16 0x13333 (~1.2) -- icd

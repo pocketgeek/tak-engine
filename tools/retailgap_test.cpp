@@ -1307,6 +1307,54 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- unitstandorders: which types have a stance at all -------------------
+    {
+        const sim::UnitType* keep = reg.find("arakeep");
+        const sim::UnitType* cow = reg.find("lifcow");
+        const sim::UnitType* sword = reg.find("arasword");
+        check(keep && !keep->canSetStance, "the Keep has no combat stance");
+        check(cow && !cow->canSetStance, "nor does a cow");
+        check(sword && sword->canSetStance, "an ordinary soldier does");
+
+        // The sim refuses to set one, not just the HUD -- a modified client must
+        // not be able to hand a stance to something retail would not offer it for.
+        if (cow) {
+            sim::World w;
+            sim::MatchConfig cfg;
+            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+            cfg.slots[0].team = 0; cfg.slots[1].team = 1;
+            sim::setupMatch(w, reg, cfg);
+            int c = w.spawn(cow, 1000, 2600, 0, 0);
+            int before = w.unit(c)->stance;
+            w.setStance(c, before == 0 ? 2 : 0);
+            check(w.unit(c)->stance == before, "and the sim refuses to change it");
+        }
+
+        // The gate is NOT cosmetic, which is worth pinning down: three shipped
+        // types are mobile AND armed yet have no stance -- npcbeg2, npcfarm2 and
+        // npcpeas2, the armed variants of the civilian Beggar/Farmer/Peasant (230
+        // damage apiece). Retail greys their buttons out; a "mobile and armed"
+        // guess would have offered them. Their weapons are declared as a [WEAPON1]
+        // SECTION rather than a weapon1= key, which is exactly why a quick grep
+        // over the FBIs makes them look unarmed.
+        std::vector<std::string> armedWithoutStance;
+        for (const auto& [id, t] : reg.types())
+            if (!t.canSetStance && t.maxVel > 0 && t.weapon.damage > 0)
+                armedWithoutStance.push_back(id);
+        std::sort(armedWithoutStance.begin(), armedWithoutStance.end());
+        std::string joined;
+        for (const auto& n : armedWithoutStance) joined += (joined.empty() ? "" : ",") + n;
+        check(joined == "npcbeg2,npcfarm2,npcpeas2",
+              "the armed civilians are the types the stance gate actually changes",
+              "got [" + joined + "]");
+        for (const char* id : {"npcbeg2", "npcfarm2", "npcpeas2"}) {
+            const sim::UnitType* t = reg.find(id);
+            check(t && !t->canSetStance && t->weapon.damage > 0,
+                  "armed civilian with no stance", id);
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

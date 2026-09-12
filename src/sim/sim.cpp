@@ -242,6 +242,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             }
             t.cruiseAlt = float(info->numberOr("cruisealt", 0)) / 4;
             t.bankScale = float(info->numberOr("bankscale", 0));
+            t.canSetStance = int(info->numberOr("unitstandorders", 1)) != 0;
             {
                 std::string dmt = lower(info->valueOr("defaultmissiontype", ""));
                 t.wanders = dmt == "standby_wander";
@@ -1573,6 +1574,10 @@ void World::setWeapon(int unitId, int slot) {
 void World::setStance(int unitId, int stance) {
     Unit* u = unit(unitId);
     if (!u || !u->alive()) return;
+    // A type with no stance cannot be given one. The HUD already hides the buttons;
+    // this is the authoritative half, so a modified client cannot set a stance on
+    // something retail would not offer it for.
+    if (u->type && !u->type->canSetStance) return;
     u->stance = std::clamp(stance, 0, 2);
     // Retail's Standing_UnitOrder setter (icd 0x5198a0) writes the move AND fire
     // fields together, and note what it CANNOT write: move 2, the unlimited-chase
