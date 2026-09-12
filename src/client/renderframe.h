@@ -7,7 +7,7 @@
 // client/main.cpp; kept at global scope so its unqualified use sites there are
 // unchanged.
 
-#include "sim/sim.h"   // tak::sim::UnitType / Order / BuildOrder / Projectile / World::HitFx
+#include "sim/sim.h"   // tak::sim::UnitType / Order / Projectile / World::HitFx
 
 #include <array>
 #include <cstdint>
@@ -44,7 +44,12 @@ struct UnitR {
     float buildProgress = 0;
     std::vector<const tak::sim::UnitType*> buildQueue;
     std::vector<tak::sim::Order> orders;
-    std::vector<tak::sim::BuildOrder> buildOrders;
+    // Construction still pending anywhere in the queue (builds are ordinary
+    // orders now, so this is just "is one of them a build").
+    bool hasQueuedBuild() const {
+        for (const auto& o : orders) if (o.buildType) return true;
+        return false;
+    }
     std::vector<int> cargo;
     std::vector<int> reclaimQueue;   // builder's queued area-reclaim feature ids
     const tak::sim::UnitType* repeatType = nullptr;

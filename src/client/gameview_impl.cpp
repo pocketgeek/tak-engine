@@ -597,7 +597,7 @@
             s.selfDestructT = u.selfDestructT;
             s.buildSiteId = u.buildSiteId; s.reclaimId = u.reclaimId; s.repairId = u.repairId;
             s.buildProgress = u.buildProgress;
-            s.buildQueue = u.buildQueue; s.orders = u.orders; s.buildOrders = u.buildOrders;
+            s.buildQueue = u.buildQueue; s.orders = u.orders;
             s.cargo = u.cargo; s.reclaimQueue = u.reclaimQueue; s.repeatType = u.repeatType;
             s.moving_ = u.moving(); s.walking_ = u.walking();
             s.corpsePhase = !u.alive() && u.deadFor < u.corpseUntil &&
@@ -1145,7 +1145,7 @@
                 // repairing, not just conjuring -- so a flyer hovers over the job (and
                 // touches down only when truly idle) exactly as it does while building.
                 bool busy = u.walking() || !u.orders.empty() ||
-                            u.buildSiteId != 0 || !u.buildOrders.empty() ||
+                            u.buildSiteId != 0 || u.hasQueuedBuild() ||
                             u.reclaimId != 0 || !u.reclaimQueue.empty() || u.repairId != 0;
                 float target = busy ? cruise : 0.0f;
                 float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise

@@ -416,12 +416,12 @@ struct Order {
     // sense that it changes no movement maths -- but the repath paths need it to
     // tell "the rest of this leg" from "everything queued behind it".
     bool goal = false;
-    // A build the player queued behind other orders. Builds used to live in a
-    // SEPARATE list (Unit::buildOrders), which meant they could never interleave
-    // with moves -- "go here, build that, go there" was inexpressible, and the
-    // order line could not draw them either. A build that is queued behind
-    // outstanding orders now rides in this queue like everything else, and starts
-    // when it comes due.
+    // This order is a BUILD: put `buildType` down here. Builds used to live in a
+    // separate list, which meant they could never interleave with moves -- "go
+    // here, build that, go there" was inexpressible -- and the order line could
+    // not draw them. They are ordinary queue entries now, as they are in retail.
+    // The order sits at the builder's working position; the site is footZ*8+24
+    // north of it.
     const UnitType* buildType = nullptr;
     // This target was picked by auto-acquisition, not asked for by the player.
     // The move standing order gates only AUTO engagement: a Defensive unit told
@@ -432,12 +432,6 @@ struct Order {
     // destination independently (icd 0x4d5747 reading order+0x5e). Display only --
     // never read by the simulation, never hashed.
     uint32_t issuedTick = 0;
-};
-
-// A queued construction: build `type` at (x, z) when the builder gets to it.
-struct BuildOrder {
-    const UnitType* type = nullptr;
-    float x = 0, z = 0;
 };
 
 struct Unit {
@@ -526,7 +520,6 @@ struct Unit {
     // when empty, unlike std::deque's eager ~576-byte control block -- is both the
     // memory-lean and the faster choice; front-pops become erase(begin()). Element
     // order (all that stateHash folds in) is preserved, so lockstep is byte-identical.
-    std::vector<BuildOrder> buildOrders;   // builder: queued (shift) builds
     int reclaimId = 0;                 // builder: feature being reclaimed (0 = none)
     std::vector<int> reclaimQueue;     // builder: queued area-reclaim feature ids
     int repairId = 0;                  // builder: damaged friendly being repaired (0 = none)
@@ -1143,6 +1136,11 @@ public:
     static void replaceLeg(Unit& u, const std::vector<Order>& path);
     // Drop the current leg entirely and move on to whatever was queued behind it.
     static void dropLeg(Unit& u);
+    // Does this unit still have construction queued (anywhere in its orders)?
+    static bool hasQueuedBuild(const Unit& u) {
+        for (const Order& o : u.orders) if (o.buildType) return true;
+        return false;
+    }
     void attackMove(int unitId, float x, float z, bool queue);
     // Can a unit of `type` at (fx,fz) actually reach goal (gx,gz)? (flow-field
     // connectivity). Lets the AI pick a REACHABLE target instead of one that's

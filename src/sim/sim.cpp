@@ -2007,7 +2007,7 @@ void World::tickCombat(Unit& u, float dt) {
     // queued builds, or producing from a queue -- stays on task: it does NOT
     // auto-acquire a nearby enemy and wander off to fight while it should build.
     bool busyBuilding = u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0 ||
-                        !u.buildOrders.empty() ||
+                        hasQueuedBuild(u) ||
                         (u.type->canMove && !u.buildQueue.empty());   // mobile conjurer producing
     // Auto-acquisition belongs to the FIRE order: only Fire At Will goes looking.
     // Hold Fire and Return Fire both wait to be handed a target (an explicit attack
@@ -2617,42 +2617,30 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
 void World::queueBuild(int builderId, const UnitType* type, float x, float z, bool queue) {
     Unit* b = unit(builderId);
     if (!b || !type) return;
-    if (!queue) b->buildOrders.clear();   // fresh order clears the pending queue
-    // Where a queued build goes depends on what the builder is already doing, and
-    // getting this wrong is what made "move, then build, then move" impossible:
-    //   * outstanding MOVE orders -> the build joins THAT queue, so it happens in
-    //     the sequence the player clicked it in, and the orders behind it survive;
-    //   * already building (a site or a pending build list) -> the old build list,
-    //     which is the chain that drains as each site finishes;
-    //   * otherwise the builder is free and it starts now.
-    // Builds used to always take the second path, so they could never interleave
-    // with movement -- every build ran after every move, whatever order you gave.
-    const bool hasMoves = !b->orders.empty();
-    const bool building = b->buildSiteId != 0 || !b->buildOrders.empty();
-    if (!building && !(queue && hasMoves)) {
-        startBuild(builderId, type, x, z);          // builder is free: start now
-    } else if (canPlace(type, x, z)) {
-        if (queue && hasMoves && !building) {
-            Order o;
-            // Park it where startBuild would walk to, so arriving at this order
-            // means "in position to build" rather than "standing on the site".
-            o.x = x; o.z = z + float(type->footZ) * 8 + 24;
-            o.goal = true;
-            o.issuedTick = tickCounter_;
-            o.buildType = type;
-            b->orders.push_back(o);
-        } else {
-            b->buildOrders.push_back({type, x, z});
-        }
-    }
+    if (!canPlace(type, x, z)) return;
+    // ONE queue. A build is an order like any other and lives in Unit::orders, in
+    // the position the player clicked it -- which is what makes "move here, build
+    // that, move there" mean what it says, and what lets the order line draw it.
+    // Retail works the same way: its order list holds MobileBuild orders alongside
+    // the moves, and the order-line iterator (icd 0x4d6340) dispatches per kind.
+    // A non-queued build replaces the lot, exactly as a non-queued move does.
+    if (!queue) b->orders.clear();
+    Order o;
+    // Park it where the builder must stand to work, so arriving at this order
+    // means "in position to build" rather than "standing on the site".
+    o.x = x;
+    o.z = z + float(type->footZ) * 8 + 24;
+    o.goal = true;
+    o.issuedTick = tickCounter_;
+    o.buildType = type;
+    b->orders.push_back(o);
 }
 
 void World::cancelBuilds(int builderId) {
     Unit* b = unit(builderId);
     if (!b) return;
-    b->buildOrders.clear();
-    // ...and any build queued INTO the order list (see queueBuild): a fresh order
-    // cancels pending construction wherever it is parked.
+    // Drop every pending build from the order queue (see queueBuild): a fresh
+    // move/attack/stop cancels queued construction.
     b->orders.erase(std::remove_if(b->orders.begin(), b->orders.end(),
                                    [](const Order& o) { return o.buildType != nullptr; }),
                     b->orders.end());
@@ -3047,13 +3035,7 @@ void World::tickConstruction(Unit& b, float dt) {
             }
             b.buildSiteId = 0;
             popBuildOrder(b);
-            // Advance to the next queued build (startBuild may realloc units_).
-            while (Unit* nb = unit(bid)) {
-                if (nb->buildOrders.empty()) break;
-                BuildOrder o = nb->buildOrders.front();
-                nb->buildOrders.erase(nb->buildOrders.begin());
-                if (startBuild(bid, o.type, o.x, o.z) != 0) break;
-            }
+            
         }
         return;
     }
@@ -3089,14 +3071,7 @@ void World::tickConstruction(Unit& b, float dt) {
         int bid = b.id;
         b.buildSiteId = 0;
         popBuildOrder(b);
-        // Kick off the next queued build (skipping any whose spot is now taken).
-        // startBuild may reallocate units_, so re-fetch by id each pass.
-        while (Unit* nb = unit(bid)) {
-            if (nb->buildOrders.empty()) break;
-            BuildOrder o = nb->buildOrders.front();
-            nb->buildOrders.erase(nb->buildOrders.begin());
-            if (startBuild(bid, o.type, o.x, o.z) != 0) break;
-        }
+        
     }
 }
 
@@ -4101,6 +4076,16 @@ void World::tick(float dt) {
         }
         // Frozen / petrified / paralyzed: the unit is inert this tick.
         if (u.incapacitated()) { u.speed = 0; continue; }
+        // A build order that has reached the front claims its ground NOW, before
+        // the builder has walked anywhere. Waiting until arrival would leave the
+        // spot unreserved for the whole walk, so two builders sent to the same
+        // place would both pass canPlace and one would arrive to find it taken.
+        // The actual startBuild happens after this loop: it spawns the site, which
+        // can reallocate units_ and leave every Unit& here dangling -- an earlier
+        // version called it inline and read the order queue out of freed memory.
+        if (!u.orders.empty() && u.orders.front().buildType && u.buildSiteId == 0)
+            buildDue_.push_back(u.id);
+
         if (!u.orders.empty() && (u.orders.front().load || u.orders.front().unload))
             tickTransport(u, dt);
         else if (g_phase) { auto _c0=std::chrono::steady_clock::now(); tickCombat(u, dt); g_tcomb += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_c0).count(); }
@@ -4168,17 +4153,7 @@ void World::tick(float dt) {
             // instead of every unit fighting for the exact same point.
             float arrive = o.flow ? 16.0f : 3.0f;
             if (dist < arrive) {
-                if (o.buildType) {
-                    // In position for a queued build. Note it and start it AFTER the
-                    // loop: startBuild spawns the site, which can reallocate units_
-                    // and leave this `u` dangling -- the first version of this did
-                    // exactly that and read the queue back out of freed memory.
-                    // The order stays at the front either way, so it blocks the
-                    // queue until tickConstruction retires the job: that is what
-                    // makes "build this, THEN go there" wait for the building.
-                    if (u.buildSiteId == 0) buildDue_.push_back(u.id);
-                    continue;
-                }
+                if (o.buildType) continue;   // the site is claimed below, not here
                 if (o.targetId == 0) {
                     Order done = o;
                     u.orders.erase(u.orders.begin());
@@ -4430,7 +4405,7 @@ void World::tick(float dt) {
         // time round. Without this a flyer settles wherever it happened to stop --
         // over water, or on the roof of a building.
         if (u.type->canFly && u.type->vtolStandby && u.alive() && u.orders.empty() &&
-            u.buildSiteId == 0 && u.buildOrders.empty() && u.reclaimId == 0 &&
+            u.buildSiteId == 0 && !hasQueuedBuild(u) && u.reclaimId == 0 &&
             u.repairId == 0 && !u.embarked()) {
             const NavGrid& g = navFor(u.type);
             auto landable = [&](float x, float z) {

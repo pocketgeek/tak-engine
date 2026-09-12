@@ -1399,8 +1399,40 @@ int main(int argc, char** argv) {
             check(u && u->x > 1350.0f,
                   "and THEN the builder goes on to the move queued behind it",
                   u ? "ended at x=" + std::to_string(int(u->x)) : "gone");
-            check(u && u->orders.empty() && u->buildOrders.empty(),
-                  "with nothing left stuck in either queue");
+            check(u && u->orders.empty(),
+                  "with nothing left stuck in the queue");
+
+            // And the pure-build chain: three buildings, no movement between them.
+            // Pinned BEFORE the queues were merged, so the merge cannot quietly
+            // break the case that already worked.
+            sim::World w2;
+            sim::setupMatch(w2, breg, cfg);
+            w2.player(0).mana = 200000;
+            int m2 = w2.spawn(mon, 800, 2600, 0, 0);
+            const float sites[3][2] = {{1000, 2700}, {1120, 2700}, {1240, 2700}};
+            for (int i = 0; i < 3; ++i)
+                w2.queueBuild(m2, bt, sites[i][0], sites[i][1], i != 0);
+            int done = 0;
+            for (int i = 0; i < 30 * 180; ++i) {
+                w2.tick(1.0f / 30.0f);
+                done = 0;
+                for (const auto& un : w2.units())
+                    if (un.alive() && un.type == bt && !un.underConstruction) ++done;
+                if (done == 3) break;
+            }
+            check(done == 3, "three buildings queued back to back all get built",
+                  std::to_string(done) + " of 3");
+            const sim::Unit* mu = w2.unit(m2);
+            // Not "orders empty": zonhunt is a flyer, and once the last building
+            // is up it is standing on a cell that building now blocks, so the
+            // VTOL standby correctly issues a move to somewhere it CAN land.
+            check(mu && !sim::World::hasQueuedBuild(*mu) && mu->buildSiteId == 0,
+                  "and the builder ends with no construction left queued",
+                  mu ? "orders=" + std::to_string(mu->orders.size()) +
+                           " site=" + std::to_string(mu->buildSiteId) +
+                           (mu->orders.empty() ? "" :
+                            (mu->orders.front().buildType ? " front=BUILD" : " front=move"))
+                     : "gone");
         }
     }
 
