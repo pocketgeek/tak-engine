@@ -776,7 +776,11 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             o.unitCap = clampUnitCap(uint16_t(r.u32()));
             o.monarchExpendable = r.u8() ? 1 : 0;
             o.stressTest = r.u8() ? 1 : 0;
-            o.fogExplored = r.u8() ? 1 : 0;
+            // THREE-state, not a bool: 0 = not explored, 1 = explored, 2 = full
+            // vision. Decoding it as `? 1 : 0` silently folded FULL VISION back to
+            // EXPLORED, so the room's fog button cycled through a setting the
+            // server threw away -- it looked like the button did nothing.
+            o.fogExplored = std::min<uint8_t>(r.u8(), 2);
             o.benchmark = r.u8();
             o.randomStarts = r.u8() ? 1 : 0;
             int cap = int(r.u8());
@@ -1182,7 +1186,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             o.overridePolicy = rd.u8(); o.speed = rd.u8(); o.speedUnlock = rd.u8();
             o.unitCap = clampUnitCap(uint16_t(rd.u32())); o.monarchExpendable = rd.u8() ? 1 : 0;
             o.stressTest = rd.u8() ? 1 : 0;
-            o.fogExplored = rd.u8() ? 1 : 0;
+            o.fogExplored = std::min<uint8_t>(rd.u8(), 2);   // 0/1/2, see CreateGame
             o.benchmark = rd.u8();
             o.randomStarts = rd.u8() ? 1 : 0;
             if (!rd.ok) return;

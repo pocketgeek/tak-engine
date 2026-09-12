@@ -335,6 +335,16 @@ std::string mapDisplayName(const std::string& id) {
         // may differ) / FULL (gameplay overrides allowed but every player must
         // have the same ones). The host's own launch tier caps it (you can't offer
         // FULL if you didn't mount your gameplay overrides).
+        // Fog of war: a room rule, so it is picked here and not only after the
+        // room exists. Display-only (never hashed) -- every peer applies the same
+        // rule, so it stays fair. Same three states the room button cycles.
+        {
+            static const char* kFogName[3] = {"NOT EXPLORED", "EXPLORED", "FULL VISION"};
+            lbBtn(x, y, 240, 26,
+                  std::string("FOG OF WAR: ") + kFogName[std::min<int>(createFog_, 2)], true,
+                  [this] { createFog_ = uint8_t((createFog_ + 1) % 3); });
+            y += 34;
+        }
         static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
         lbBtn(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
               [this] { createOverride_ = uint8_t((createOverride_ + 1) % 3); }); y += 44;
@@ -346,6 +356,7 @@ std::string mapDisplayName(const std::string& id) {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0; o.gods = createGods_ ? 1 : 0;
             o.overridePolicy = createOverride_;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
+            o.fogExplored = std::min<uint8_t>(createFog_, 2);
             // Stress test only applies to an all-AI spectate game.
             o.stressTest = (singlePlayer_ && spSpectate_ && createStressTest_) ? 1 : 0;
             // SP spectate: create as a spectator (no slot) so every slot can be an AI;

@@ -1658,6 +1658,11 @@ private:
     float lobbyOffX_ = 0, lobbyOffY_ = 0;   // lobby centre offset (logical units; set in render)
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false, createGods_ = false;
+    // Fog of war, chosen at CREATE time (0 = not explored, 1 = explored,
+    // 2 = full vision). It is a room setting like the rest, so it belongs where
+    // the room is set up -- the host could previously only change it after the
+    // game already existed. Default matches GameOptions::fogExplored.
+    uint8_t createFog_ = 1;
     bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
     bool createStressTest_ = false;   // SP spectate: spawn ~95% of each AI's unit cap at start
     // One selectable map plus the attributes the picker can sort by, read once from
