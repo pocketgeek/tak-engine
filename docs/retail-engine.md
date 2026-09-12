@@ -227,13 +227,37 @@ occupant lowers the score rather than vetoing the cell.
     offset -1..+1 in `0x100000` steps, querying each and bailing on the first
     below threshold.
 
-NOT yet established: how the mover picks a NEW heading once the forward probe
-fails -- whether it scores the ring and steers at the best cell, or tries fixed
-alternates. That is the piece that decides whether a unit rounds an obstacle or
-grinds against it, and it is exactly what our mover is missing: ours walks
-straight at the goal and slides, so concave geometry traps it (measured: with
-A* disabled, 30 of 30 units wedge ~31% along Angvir's Maze and never move
+**Blocked -> ask the GOAL for a point.** When the forward probe fails the mover
+sets one of two refusal states (flags `0x100` / `0x200` at navigator `+0x36`,
+each accumulating a per-type value from `UnitType+0x249` into `+0x30` -- the
+clamp-and-slow we already ported in 080d288), runs the 3x3 scan, and then does
+this:
+
+```
+lea  eax, [ebp-0x48]
+push 3
+push eax
+mov  ecx, [edi]          ; the NavGoal
+mov  edx, [ecx]          ; its vtable
+call [edx+0xc]           ; NavGoal virtual, slot 3, (outBuf, 3)
+cmp  ...                 ; same point as last time? -> nothing to do
+sub  ecx, [esi+0x70]     ; dz from the unit
+sub  eax, [esi+0x68]     ; dx
+fsqrt                    ; distance -> new heading
+```
+
+So the NavGoal is ACTIVE, not passive geometry. A blocked unit asks its goal
+for a point and steers at what comes back, which is why NavGoalCircle / Rect /
+Ring are classes with behaviour rather than a struct: an AREA goal can hand
+back a different point when the current one is refused. That is retail's
+avoidance, and it is what our mover lacks -- ours holds one fixed point and
+slides against whatever is in the way, so concave geometry traps it (measured:
+with A* disabled, 30 of 30 units wedge ~31% along Angvir's Maze and never move
 again, where retail wedged only occasionally).
+
+NOT yet established: what slot 3 returns for each NavGoal shape, and what the
+argument `3` selects. That is the next thing to read, and it is the whole
+algorithm -- everything else above is plumbing around it.
 
 ## Headless in-game screenshots (dev harness)
 
