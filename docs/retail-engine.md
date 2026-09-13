@@ -810,6 +810,36 @@ paraphrases of missions retail names differently:
     CLOAK        -> "Cloaking"          (we said CLOAKED)
     SEEKATTACK   -> "Seeking to attack" (we said ADVANCING)
 
+## Retail does not sort 3DO primitives -- it z-buffers them (2026-09-12)
+
+The open question from the projection work, settled: there is no primitive sort
+to copy, because retail resolves visibility per pixel.
+
+  * The binary imports the Glide depth API outright -- `_grDepthBufferMode@4`,
+    `_grDepthBufferFunction@4`, `_grDepthMask@4`, `_grDepthRange@8`,
+    `_grDepthBiasLevel@4`, `_grLfbConstantDepth@4`, alongside `_grBufferClear@12`
+    and `_grRenderBuffer@4`. That is a hardware depth buffer, configured and
+    written, in the 3dfx path (the install ships glide2x/glide3x and a
+    ChooseRenderer.exe to pick it).
+  * The DirectDraw path wants one too: the error text
+    "...because there is no hardware support for zbuffer blting. (NOZBUFFERHW)"
+    is a capability complaint about z-buffered blitting, not about sorting.
+
+Following the draw path corroborates it. `0x4eea20` is the piece-tree walk --
+it recurses over child/sibling, applies the 3x3 piece rotation to each vertex,
+and hands the result on. There is no depth comparison, no insertion into an
+ordered list, no swap loop anywhere in it.
+
+**So our triangle sort is not an approximation of retail's sort -- it is an
+approximation of retail's Z-BUFFER**, and no choice of sort weights can match it
+exactly, because a single key per triangle cannot express what a per-pixel test
+does for interpenetrating geometry.
+
+That reframes `kSortZ`/`kSortY`: they are not a retail constant we got wrong,
+they are our own stand-in for a depth buffer, and the honest way to close the
+gap is to render models through something that has one rather than to tune two
+numbers. Worth knowing before anyone spends time "fixing" them.
+
 ## The projection is a SHEAR, not a tilt (2026-09-12)
 
 `0x421dad` spells retail's world-to-screen transform out in seven instructions:
