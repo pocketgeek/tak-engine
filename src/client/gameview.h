@@ -1121,6 +1121,7 @@ private:
     };
     std::vector<const UnitR*> visUnits_;
     std::vector<SDL_Vertex> unitBatch_, shadowBatch_;   // cross-unit render batches
+    std::vector<Tri> shadowTris_;   // scratch for one unit's projected silhouette
     // Body pass assembled in parallel: plan offsets serially, scatter the vertex
     // copies across the pool, then replay the draw ops. Keeps depth order exact.
     std::vector<SDL_Vertex> bodyVerts_;
@@ -1404,9 +1405,16 @@ private:
 
     // Project model triangles relative to the unit anchor: yaw by heading,
     // fixed tilt so models read against TAK's painted top-down terrain.
+    // Light direction for projected shadows, as a per-unit-of-height offset in
+    // model space. A vertex at height y lands on the ground at
+    // (x + kShadowLX*y, 0, z + kShadowLZ*y), which is what makes the silhouette
+    // lean away from the unit instead of sitting under it as a disc.
+    static constexpr float kShadowLX = 0.55f;
+    static constexpr float kShadowLZ = 0.35f;
+
     void collect(std::vector<Tri>& out, SDL_Texture* atlas, const tak::tdo::Object& o,
                  const Xform& parent, const Anim* anim, float heading, int player,
-                 bool mirror = false, bool isRoot = true) {
+                 bool mirror = false, bool isRoot = true, bool shadow = false) {
         const tak::cob::PieceState* ps = pieceFor(anim, o.name);
         if (ps && !ps->visible) return;
         float rr[3];
@@ -1477,7 +1485,15 @@ private:
                     // Farthest first: depth from the camera goes as (z - 2y).
                     depth += rz * kSortZ - w[1] * kSortY;
                     px[k] = rx; py[k] = w[1]; pz[k] = rz;
-                    tri.v[k].position = {rx, -ry};
+                    if (shadow) {
+                        // Flatten onto the ground and lean by the light: the
+                        // silhouette of the unit, not a disc under it.
+                        const float sxs = rx + kShadowLX * w[1];
+                        const float szs = rz + kShadowLZ * w[1];
+                        tri.v[k].position = {sxs, -szs * kProjZ};
+                    } else {
+                        tri.v[k].position = {rx, -ry};
+                    }
                     static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
                     SDL_FPoint c = uv[idx[k] & 3];
                     tri.v[k].tex_coord = arect
@@ -1488,6 +1504,18 @@ private:
                                          : SDL_Color{170, 170, 180, 255};
                 }
                 if (!ok) continue;
+                if (shadow) {
+                    // No cull: a silhouette is the union of both faces, and
+                    // culling half of it punches holes in the shape.
+                    for (int k = 0; k < 3; ++k) {
+                        tri.v[k].color = SDL_Color{0, 0, 0, 60};
+                        tri.v[k].tex_coord = {0, 0};
+                    }
+                    tri.tex = nullptr;
+                    tri.depth = 0;
+                    out.push_back(tri);
+                    continue;
+                }
                 // BACKFACE CULL. Retail culls -- it imports grCullMode -- and
                 // without it both faces of a two-sided piece are drawn at almost
                 // the same depth, so which one wins is arbitrary and a cape
@@ -1516,7 +1544,7 @@ private:
             }
         }
         for (const auto& c : o.children)
-            collect(out, atlas, c, xf, anim, heading, player, mirror, false);
+            collect(out, atlas, c, xf, anim, heading, player, mirror, false, shadow);
     }
 
     // Walk the piece tree (exactly as collect(), but transform-only) to the named

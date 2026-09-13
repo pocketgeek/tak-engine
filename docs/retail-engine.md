@@ -875,41 +875,39 @@ one key per triangle cannot resolve. That is the real depth-buffer case, and it
 means taking models off `SDL_RenderGeometry` -- worth doing only if artifacts
 survive a correct key and a cull.
 
-## Unit shadows: the ground plate IS the shadow (2026-09-12)
+## Unit shadows are PROJECTED SILHOUETTES (2026-09-12)
 
 Reported: units have no shadows, and a retail screenshot shows a Monarch plainly
-casting one.
+casting one that follows its sword.
 
-The FBI route is real but only half the story. `0x4c12b0` parses `shadowgaf` and
-`shadowart` and sets the type's shadow sequence at `+0x288` ONLY if BOTH keys are
-present -- there is no default and no fallback -- and `0x4ee35e` draws that
-sprite when it exists. But `araking` declares no `shadowart` in any archive
-(checked all 16, including V3Rocket's copies), so the sprite path cannot be what
-shadows a Monarch.
+The FBI route is real but covers only part of the roster. `0x4c12b0` parses
+`shadowgaf` and `shadowart` and sets the type's shadow sequence at `+0x288` ONLY
+when BOTH keys are present -- no default, no fallback -- and `0x4ee35e` draws
+that sprite when it exists. But `araking` declares no `shadowart` in any of the
+16 archives, so the sprite path cannot be what shadows a Monarch. Of 94 mobile
+ground types, 72 declare a sprite and 22 -- Monarchs, gods, NPCs -- do not.
 
-The answer is in the model. Every TAK unit's root object is a GROUND PLATE -- a
-flat, untextured, 4-vertex quad lying in the y = 0 plane, sized to the unit:
+Those 22 are shadowed by PROJECTING THE MODEL: its triangles flattened onto the
+ground and leaned away by the light, so the silhouette carries the unit's actual
+shape, sword and cape included. That is what the screenshot shows and what a
+disc cannot reproduce.
 
-    araking   root 'AraGP'  +-17.6
-    arasword  root 'AraGP'  +-14.4
+Two wrong answers on the way, both worth naming:
 
-That quad is the shadow. We were SKIPPING it as a non-visual marker
-(`groundPlate` in `collect()`) and substituting a fixed 14x5 blob of our own
-invention, which at alpha 70 was effectively invisible and the wrong size for
-everything.
+  * A fixed 14x5 blob, our own invention, the same size for every unit and at
+    alpha 70 effectively invisible.
+  * The model's GROUND PLATE -- the flat untextured unit-sized quad every root
+    carries (`AraGP`, +-17.6 for a Monarch, +-14.4 for a swordsman). It looks
+    like the answer, it is unit-sized, and it is still wrong: a rectangle cannot
+    be a silhouette. It is a footprint marker, not a shadow.
 
-Counts that make the split clear: of the 94 mobile ground types, 72 declare a
-`shadowart` sprite and 22 do not -- Monarchs, gods, NPCs. Those 22 are not
-shadowless in retail, they are plated. So the plate is drawn where there is no
-sprite, and units with a sprite keep it rather than carrying two shadows.
+The projection is `(x + 0.55y, 0, z + 0.35y)`: those two constants are a
+GUESS fitted to the screenshot, not read out of the binary, and they are the
+part of this most likely to be wrong. Shadow triangles skip the backface cull --
+a silhouette is the union of both faces, and culling half of it punches holes.
 
-Flyers still cast nothing, which was already established: 24 of the 27 flying
-types declare `shadowgaf` they never show.
-
-Honest limit: that the plate is drawn AS a shadow is inferred from its geometry
-(flat, untextured, unit-sized, at the model's origin) plus the retail screenshot,
-not from finding the icd draw call for it. If a better reading turns up -- a
-projected silhouette, say -- this is the place to revisit.
+Cost: the model is walked a second time for the units that use it. Only the 22
+plateless types pay, since the 72 with a sprite keep the sprite.
 
 ## The projection is a SHEAR, not a tilt (2026-09-12)
 

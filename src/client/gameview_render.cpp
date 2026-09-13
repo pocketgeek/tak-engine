@@ -272,24 +272,39 @@
         for (const auto& it : items) {
             if (!it.u) continue;
             const auto& u = *it.u;
-            // The model's GROUND PLATE, drawn as the shadow. Sized from the
-            // quad the root carries (AraGP and friends) rather than the fixed
-            // 14x5 blob we used to invent: 17.6 for a Monarch, 14.4 for a
-            // swordsman. It is also why a Monarch HAS a shadow in retail while
-            // declaring no `shadowart` -- only 72 of 94 mobile ground types
-            // declare one, and the rest are not shadowless, they are plated.
+            // PROJECTED SILHOUETTE. The unit's own triangles, flattened onto
+            // the ground and leaned away from it by the light -- which is why a
+            // shadow follows a Monarch's sword and cape instead of sitting under
+            // him as a disc.
             //
-            // The plate lies in the y = 0 plane, so its screen footprint is just
-            // its own half-extents: z maps to screen y 1:1 (kProjZ) and the
-            // plate has no height to squash.
+            // Two earlier attempts are worth naming. A fixed 14x5 blob was our
+            // own invention, the same size for every unit. The model's ground
+            // plate (AraGP, a flat unit-sized quad at y=0) looked like a better
+            // answer and is not one: it can only ever be a rectangle, and a
+            // silhouette is not.
             if (u.alive() && castsBlobShadow(u.type)) {
-                const PlateBox& pb = unitPlateBox(u.type);
-                const float hx = pb.halfX > 0 ? pb.halfX : 7.0f;
-                const float hz = pb.halfZ > 0 ? pb.halfZ : 2.5f;
-                float sx = (u.x - mapView_.offX()) * zm0 - terrainLiftX(u.x, u.z) * zm0;
-                float sy = (u.z - mapView_.offY()) * zm0 - terrainLift(u.x, u.z) * zm0;
-                pushQuad(shadowBatch_, sx - hx * zm0, sy - hz * zm0,
-                         2 * hx * zm0, 2 * hz * zm0, SDL_Color{0, 0, 0, 70});
+                auto vt = visuals_.find(u.type->id);
+                if (vt != visuals_.end()) {
+                    const Anim* anim = nullptr;
+                    if (auto at = anims_.find(u.id); at != anims_.end())
+                        anim = &at->second;
+                    const float facing =
+                        (u.type->canMove || u.type->canFly) ? -u.heading : 0.0f;
+                    shadowTris_.clear();
+                    collect(shadowTris_, nullptr, vt->second.model.root, Xform{},
+                            anim, facing, u.player, false, true, /*shadow=*/true);
+                    const float sx = (u.x - mapView_.offX()) * zm0
+                                     - terrainLiftX(u.x, u.z) * zm0;
+                    const float sy = (u.z - mapView_.offY()) * zm0
+                                     - terrainLift(u.x, u.z) * zm0;
+                    for (const Tri& t : shadowTris_)
+                        for (int k = 0; k < 3; ++k) {
+                            SDL_Vertex v = t.v[k];
+                            v.position = {sx + v.position.x * zm0,
+                                          sy + v.position.y * zm0};
+                            shadowBatch_.push_back(v);
+                        }
+                }
             }
         }
         if (!shadowBatch_.empty())
