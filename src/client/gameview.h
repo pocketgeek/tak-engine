@@ -1850,11 +1850,15 @@ private:
         // the five ships that carry a shadowart they never show.
         return t && !t->noShadow && !t->floater && !t->canFly;
     }
-    // The soft blob is OUR invention for units with no shadow sprite, so it carries
-    // an extra rule retail has no equivalent for: only actual movers get one. Keyed
-    // off maxVel because the FBI `canmove` flag is set on 13 buildings too.
+    // The model's GROUND PLATE stands in for a unit with no FBI shadow sprite.
+    // Keyed off maxVel because the FBI `canmove` flag is set on 13 buildings too.
     static bool castsBlobShadow(const tak::sim::UnitType* t) {
-        return castsShadow(t) && !isStructure(t) && !t->canFly;
+        // Only where there is no FBI sprite to draw instead, or the unit would
+        // carry two shadows. 72 of the 94 mobile ground types declare a
+        // `shadowart`; the rest -- Monarchs, gods, NPCs -- fall back to the
+        // plate, which is why they are shadowed in retail all the same.
+        return castsShadow(t) && !isStructure(t) && !t->canFly &&
+               t->shadowArt.empty();
     }
     // EVERYTHING on the map lifts onto the terrain relief by the same rule -- mobile
     // units, buildings, AND the feature decals (mana deposits, trees) -- so a mana
@@ -1918,6 +1922,14 @@ private:
 
     // Per-type model-space extents driving the selection ring, cached in ringBoxes_.
     const RingBox& unitRingBox(const tak::sim::UnitType* type);
+    // Half-extent of the model's GROUND PLATE -- the flat untextured quad at
+    // y = 0 that every TAK unit's root carries (AraGP and friends). It is the
+    // unit's shadow: sized per unit (17.6 for a Monarch, 14.4 for a swordsman),
+    // which is why a Monarch has a shadow in retail despite declaring no
+    // `shadowart` in its FBI. Zero when the model has no such piece.
+    struct PlateBox { float halfX = 0, halfZ = 0; };
+    const PlateBox& unitPlateBox(const tak::sim::UnitType* type);
+    std::map<std::string, PlateBox> plateBoxes_;
 
     // Height-aware picking: invert the render lift so a click on elevated terrain
     // (a wall/plateau top, drawn lifted UP on screen) resolves to the cell whose

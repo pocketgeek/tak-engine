@@ -272,14 +272,24 @@
         for (const auto& it : items) {
             if (!it.u) continue;
             const auto& u = *it.u;
-            // Soft blob batches for every mobile ground unit, special or not (a
-            // special unit's own body still draws whole in pass 2).
+            // The model's GROUND PLATE, drawn as the shadow. Sized from the
+            // quad the root carries (AraGP and friends) rather than the fixed
+            // 14x5 blob we used to invent: 17.6 for a Monarch, 14.4 for a
+            // swordsman. It is also why a Monarch HAS a shadow in retail while
+            // declaring no `shadowart` -- only 72 of 94 mobile ground types
+            // declare one, and the rest are not shadowless, they are plated.
+            //
+            // The plate lies in the y = 0 plane, so its screen footprint is just
+            // its own half-extents: z maps to screen y 1:1 (kProjZ) and the
+            // plate has no height to squash.
             if (u.alive() && castsBlobShadow(u.type)) {
+                const PlateBox& pb = unitPlateBox(u.type);
+                const float hx = pb.halfX > 0 ? pb.halfX : 7.0f;
+                const float hz = pb.halfZ > 0 ? pb.halfZ : 2.5f;
                 float sx = (u.x - mapView_.offX()) * zm0 - terrainLiftX(u.x, u.z) * zm0;
-                float sy = (u.z - mapView_.offY()) * zm0 + 2 * zm0
-                           - terrainLift(u.x, u.z) * zm0;
-                pushQuad(shadowBatch_, sx - 7 * zm0, sy - 2.5f * zm0,
-                         14 * zm0, 5 * zm0, SDL_Color{0, 0, 0, 70});
+                float sy = (u.z - mapView_.offY()) * zm0 - terrainLift(u.x, u.z) * zm0;
+                pushQuad(shadowBatch_, sx - hx * zm0, sy - hz * zm0,
+                         2 * hx * zm0, 2 * hz * zm0, SDL_Color{0, 0, 0, 70});
             }
         }
         if (!shadowBatch_.empty())
