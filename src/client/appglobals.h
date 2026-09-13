@@ -6,23 +6,29 @@
 
 #include <string>
 
-// Triangle depth-sort weights INSIDE one model. Not a camera tilt, and not
-// retail's: we draw with SDL_RenderGeometry and no depth buffer, so overlapping
-// pieces of a model need an order, and these are the weights that order has
-// always used (they were cos/sin of a 0.72 rad "tilt" that the projection turned
-// out not to have -- see kProjY/kProjZ).
+// Triangle depth-sort weights INSIDE one model. We draw through
+// SDL_RenderGeometry with no depth buffer, so overlapping pieces of a model need
+// an order.
 //
-// Retail does not sort primitives at all: it Z-BUFFERS them. The binary imports
-// the Glide depth API (grDepthBufferMode/Function/Mask/Range/BiasLevel) and the
-// DirectDraw path complains about missing "zbuffer blting" support, while the
-// piece-tree walk at icd 0x4eea20 contains no depth comparison of any kind.
+// DERIVED FROM THE PROJECTION, not from a camera angle. screenY = z - y/2 means
+// points differing along (y,z) = (2,1) land on the same pixel -- that direction
+// IS the view ray -- so depth along it is proportional to 2y + z. Larger y is
+// higher and nearer the camera; larger z is further down-screen and also nearer.
+// Both terms therefore carry the SAME sign, and the sort (descending, farthest
+// first) wants the negation.
 //
-// So these are a stand-in for a depth buffer, not for a sort, and no values can
-// make them exact -- one key per triangle cannot do what a per-pixel test does
-// for interpenetrating geometry. Closing that gap means rendering models through
-// something with a depth buffer; it does not mean tuning these two numbers.
-inline constexpr float kSortZ = 0.7518f;
-inline constexpr float kSortY = 0.6594f;
+// The previous weights were the cosine and sine of a 0.72 rad "tilt" the
+// projection turns out not to have, and they gave y and z OPPOSITE signs -- so
+// every triangle pair that differed mainly in z was ordered backwards. That is
+// what made capes and other layered pieces tear.
+//
+// Retail does not sort at all: it z-buffers (Glide grDepthBuffer*, and the
+// DirectDraw path's "no hardware support for zbuffer blting" complaint; the
+// piece walk at icd 0x4eea20 has no depth compare in it). So this remains an
+// approximation of a depth buffer -- correct ordering between triangles, still
+// unable to resolve two that interpenetrate.
+inline constexpr float kSortY = 2.0f;   // weight on model Y in the view-ray depth
+inline constexpr float kSortZ = 1.0f;   // weight on model Z
 
 // Retail's 2.5D projection, straight off the instruction sequence at icd
 // 0x421dad:

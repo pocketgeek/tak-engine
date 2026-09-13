@@ -835,10 +835,24 @@ approximation of retail's Z-BUFFER**, and no choice of sort weights can match it
 exactly, because a single key per triangle cannot express what a per-pixel test
 does for interpenetrating geometry.
 
-That reframes `kSortZ`/`kSortY`: they are not a retail constant we got wrong,
-they are our own stand-in for a depth buffer, and the honest way to close the
-gap is to render models through something that has one rather than to tune two
-numbers. Worth knowing before anyone spends time "fixing" them.
+That reframes `kSortZ`/`kSortY`: they are our own stand-in for a depth buffer,
+not a retail constant. But a stand-in can still be WRONG, and ours was.
+
+The sort key has to be depth along the view ray, and the projection hands that
+over directly: `screenY = z - y/2` means points differing by `(y,z) = (2,1)`
+land on the same pixel, so that direction is the ray and depth along it is
+proportional to `2y + z`. Larger y is higher and nearer the camera; larger z is
+further down-screen and also nearer -- so both terms carry the SAME sign.
+
+The old weights were `cos`/`sin` of the 0.72 rad tilt, which gave y and z
+OPPOSITE signs. Every triangle pair separated mainly in z was ordered
+backwards, which is what tore layered pieces like a Monarch's cape. Now
+`-(2y + z)`, derived rather than fitted.
+
+What that still cannot fix is two triangles that interpenetrate: one key per
+triangle cannot express a per-pixel test. That case needs a real depth buffer,
+which means taking models off `SDL_RenderGeometry` -- worth doing only if
+artifacts survive a correct key.
 
 ## The projection is a SHEAR, not a tilt (2026-09-12)
 

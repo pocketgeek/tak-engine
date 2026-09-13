@@ -1473,7 +1473,9 @@ private:
                     // half of y. `ct`/`st` still order the triangles within a
                     // model, which is a sort key and not geometry.
                     float ry = w[1] * kProjY + rz * kProjZ;
-                    depth += rz * kSortZ - w[1] * kSortY;
+                    // Negated: the sort runs farthest-first, and 2y+z grows
+                    // toward the camera.
+                    depth -= w[1] * kSortY + rz * kSortZ;
                     tri.v[k].position = {rx, -ry};
                     static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
                     SDL_FPoint c = uv[idx[k] & 3];
