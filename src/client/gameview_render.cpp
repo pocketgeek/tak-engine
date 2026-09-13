@@ -458,6 +458,19 @@
         }
         profSubmitMs_ += (double(SDL_GetPerformanceCounter()) - _st0) / _ptFreq;
 
+        // Terrain that stands BETWEEN the camera and a unit, painted back over it.
+        // The mosaic is one flat layer drawn before everything else, so a unit
+        // standing north of a cliff is drawn on top of the face that should hide
+        // its feet -- it reads as floating in front of the rock, not behind it.
+        //
+        // Done as ONE extra pass over the occluding tiles, not per unit. The
+        // obvious per-unit version re-submits the whole tile batch behind a clip
+        // rect, and a clip rect bounds rasterising, not vertex work -- a few
+        // hundred units near a cliff would pay for the entire terrain a few
+        // hundred times a frame. This costs the cliff tiles once, whatever the
+        // unit count.
+        mapView_.drawOccluders(mvw, winH);
+
         // Ghosts of the local player's queued (shift) build orders.
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;

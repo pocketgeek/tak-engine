@@ -63,6 +63,14 @@ public:
     void setUnderlay(SDL_Texture* t) { underlay_ = t; }
 
     void draw(int winW, int winH);
+    // Re-draw the tiles that can stand in FRONT of something: a cell whose ground
+    // is well above the ground a little to its north, whose painted face
+    // therefore leans up-screen over that lower ground. Units are drawn between
+    // draw() and this, so those faces end up over a unit standing behind them --
+    // which is where it belongs. One pass over a small set of tiles: the cost
+    // tracks the cliffs on screen, not the number of units.
+    void drawOccluders(int winW, int winH);
+    bool blockOccludes(int bx, int by) const;
 
     // Bilinear terrain scaling (retail's video option). Applies to already-built
     // chunk textures immediately and to every chunk composited afterwards.
@@ -124,6 +132,9 @@ private:
     // Per-frame tile-quad batch, keyed by section texture; cached across frames
     // when the view is static (idle spectating rebuilds nothing).
     std::map<SDL_Texture*, std::vector<SDL_Vertex>> tileBatch_;
+    // Same shape, but only the quads whose cell stands proud of the ground to its
+    // north. Rebuilt alongside tileBatch_.
+    std::map<SDL_Texture*, std::vector<SDL_Vertex>> occBatch_;
     float builtOffX_ = 1e30f, builtOffY_ = 1e30f, builtZoom_ = -1;
     int builtW_ = -1, builtH_ = -1;
     bool tileBatchDirty_ = true;   // set when a section uploads / view changes
