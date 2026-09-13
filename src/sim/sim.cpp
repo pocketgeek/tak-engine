@@ -650,17 +650,41 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
         navClasses_.clear();
         navIdx_.clear();
     }
-    // There was an "occlusion block" pass here, deleted 2026-09-12. It blocked the
-    // ground immediately north of a tall wall, because the wall's baked-relief art
-    // leans over that ground in the 2.5D projection and a unit standing there is
-    // drawn hidden behind the wall. It was a NAV fix for a RENDERER problem, it is
-    // not something retail does, and it was expensive: 4554 of 36864 cells on Inner
-    // Circle, 12% of the map. It had also been silently inert since 9b037c6
-    // (per-class grids, 2026-09-11) because it wrote the legacy grids' own cells,
-    // which nothing reads any more -- and switching it back on strands an army:
-    // 2 of 24 units reach their destination, against 24 of 24 without it.
-    // If units drawn behind walls becomes a visible annoyance again, fix it in the
-    // renderer, not by making a seventh of the map impassable.
+    // Occlusion block: RETAIL NEVER LETS A UNIT STAND BEHIND TERRAIN. A tall
+    // cell's painted face leans up-screen over the lower ground to its north, so
+    // a unit stopping there would be drawn inside the rock; retail keeps it out
+    // of those cells rather than fixing the draw order. Block them.
+    //
+    // This pass existed before, was deleted this morning for blocking 12% of the
+    // map and stranding armies (2 of 24 arriving), and was right all along -- it
+    // was the PROJECTION CONSTANT that was wrong. It used 1.1 px of northward
+    // lean per height unit; retail's figure is 0.5, proven off 0x511140 and
+    // 0x426820 (screenY = z*16 - camY - height/2, and no X term at all). At more
+    // than twice the real lean it condemned more than twice the ground.
+    //
+    // Into the SHARED overlay, so the per-class grids see it -- the legacy grids
+    // are not what navFor() hands a unit in a real match.
+    {
+        long hist[256] = {0};
+        for (uint8_t v : heights) hist[v]++;
+        int ref = 0;
+        for (int i = 1; i < 256; ++i) if (hist[i] > hist[ref]) ref = i;
+        const float kProj = 0.5f;          // retail's lift, not the old 1.1
+        for (int z = 0; z < h; ++z)
+            for (int x = 0; x < w; ++x) {
+                int hu = heights[size_t(z) * w + x];
+                for (int d = 1; d <= 7; ++d) {
+                    int nz = z + d;
+                    if (nz >= h) break;
+                    int hw = heights[size_t(nz) * w + x];
+                    if (hw <= hu + 24) continue;   // not a wall relative to this cell
+                    if (float(hw - ref) * kProj > float(d) * 16.0f) {
+                        obst_[size_t(z) * size_t(w) + size_t(x)] = 1;
+                        break;
+                    }
+                }
+            }
+    }
     nav_.setRoads(&roads_);   // ground domain only: marches prefer highways
     // 0xFFFC cells are hard blockers (retail rates them impassable for every
     // movement domain AND rejects building placement on them -- icd 0x508190 /

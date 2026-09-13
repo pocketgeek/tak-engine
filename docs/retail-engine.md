@@ -839,6 +839,34 @@ retail smooths the lift across a slope exactly as our `heightAbove` does. And
 the cell record really is 14 bytes with the height at `+4`, which the same code
 shows twice over (`+0x4` and `+0x12` are the same field one cell apart).
 
+## Retail never lets a unit stand behind terrain (2026-09-12)
+
+A tall cell's painted face leans up-screen over the lower ground to its north,
+so a unit stopping there is drawn inside the rock. Retail does not fix that at
+draw time by painting the face back over the unit -- it keeps units OUT of those
+cells. The occlusion block is a movement rule, not a rendering one.
+
+This engine had that pass, and I deleted it earlier the same day for blocking
+12% of Inner Circle and stranding an army (2 of 24 arriving). It was right all
+along; the PROJECTION CONSTANT inside it was wrong. It leaned the face north by
+1.1 px per height unit, where retail's figure is 0.5 -- proven separately off
+`0x511140` and `0x426820`. At more than twice the real lean it condemned more
+than twice the ground:
+
+    Inner Circle     at 1.1: 4554 cells (12.4%)   at 0.5: 2294 (6.2%)
+    Two Castles      at 1.1: 7238 ( 4.9%)         at 0.5: 4325 (2.9%)
+    Angvir's Maze    at 1.1: 4458 ( 4.4%)         at 0.5: 2047 (2.0%)
+
+Restored at 0.5 and writing into the SHARED overlay -- the per-class grids are
+what `navFor()` actually hands a unit, and the legacy grids are not -- the army
+test passes 24 of 24, and routing is unchanged at 97/78/31% for 40/80/160-cell
+goals.
+
+Two lessons in one bug. A constant that is merely "a bit off" can look like a
+design being wrong: I concluded the whole pass was misconceived when it was one
+number. And a rendering constant turned out to belong to the movement rules,
+which is why it mattered twice over.
+
 ## Dynamic analysis: emulating icd routines (2026-09-12)
 
 Static reading gets a routine's shape; it does not tell you whether YOUR port
