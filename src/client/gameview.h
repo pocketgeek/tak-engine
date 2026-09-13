@@ -1733,10 +1733,6 @@ private:
     bool chatTyping_ = false;
     struct GameChat { std::string who, text; float age = 0; };
     std::vector<GameChat> gameChat_;
-    // Units of ours seen counting down to self-destruct last frame. When one
-    // disappears we announce it, the way retail puts "Leaving your command" in
-    // the message feed. Display only -- nothing here touches the sim.
-    std::vector<std::pair<int, std::string>> sdWatch_;
     uint64_t chatLastMs_ = 0;
     std::vector<std::pair<SDL_FRect, std::function<void()>>> lobbyHots_;
     int localPlayer_ = 0;

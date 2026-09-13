@@ -785,14 +785,30 @@ Running the mission settles it rather than arguing from the disassembly
 Two reschedules of 30 ticks, then the damage: two seconds, which is what the
 game gives you. At 0 it fires on the spot, so the default is doing real work.
 
-Retail also announces it in the message feed -- "Leaving your command" -- which
-is the phrase that gives the whole thing away: the unit is not dying, it is
-resigning. That string is in neither the binary nor any shipped TDF (searched
-both, including every translate/*.tdf), so it is presumably assembled at
-runtime or lives somewhere still unfound. We post the same line into the
-in-game chat overlay when one of the player's own units goes, driven purely off
-the render frame: the client watches units that were counting down and reports
-the ones that vanish, so nothing about it is hashed or sent over the wire.
+Retail also LABELS it, and the label is the whole explanation. The command table
+entry carries two strings, `SelfDestruct` and `UNITMISSIONCODE_SELFDESTRUCT`,
+and the second is a key into `translate/unitmissions.tdf` -- the table of what a
+unit is currently doing, the text the InfoPanel shows:
+
+    [UNITMISSIONCODE_SELFDESTRUCT]
+        English = Leaving Your Command;
+        German  = Einheit wird Aufgel"ost;
+        French  = Abandonne votre camp.;
+
+So the unit's status while the countdown runs is "Leaving Your Command". It is
+not a chat line or a notification -- it is the mission label, sitting where
+"Moving" or "Guarding" would. (I first put it in the chat overlay, which was
+wrong.)
+
+That table also corrects several of our other labels, which were plausible
+paraphrases of missions retail names differently:
+
+    RECLAIM      -> "Clearing"          (we said RECLAIMING)
+    RECLAIMAREA  -> "Clearing Area"
+    LOAD         -> "Loading"           (we said BOARDING)
+    BEINGBUILT   -> "Intangible Mass"   (we said UNDER CONSTRUCTION)
+    CLOAK        -> "Cloaking"          (we said CLOAKED)
+    SEEKATTACK   -> "Seeking to attack" (we said ADVANCING)
 
 ## Dynamic analysis: emulating icd routines (2026-09-12)
 
