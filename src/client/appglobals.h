@@ -6,9 +6,14 @@
 
 #include <string>
 
-// Isometric tilt factor for the world renderer (default 0.72). Read by GameView's
-// draw path; written once at startup by the debug `--tilt <f>` CLI flag.
-inline float gTilt = 0.72f;   // depth-sort tilt only (see kProjY/kProjZ)
+// Triangle depth-sort weights INSIDE one model. Not a camera tilt, and not
+// retail's: we draw with SDL_RenderGeometry and no depth buffer, so overlapping
+// pieces of a model need an order, and these are the weights that order has
+// always used (they were cos/sin of a 0.72 rad "tilt" that the projection turned
+// out not to have -- see kProjY/kProjZ). What retail's software renderer sorts
+// 3DO primitives by has NOT been established; when it is, this should follow it.
+inline constexpr float kSortZ = 0.7518f;
+inline constexpr float kSortY = 0.6594f;
 
 // Retail's 2.5D projection, straight off the instruction sequence at icd
 // 0x421dad:

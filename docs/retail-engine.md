@@ -835,8 +835,12 @@ governs models, the terrain relief, flyer altitude, the selection ring's mid
 height, and the hit box (derived from the same `collect()` walk, so it follows
 for free and stays consistent with what is drawn).
 
-`gTilt` survives only as the triangle depth-sort key inside a model, which is an
-ordering and not geometry.
+`gTilt` is gone entirely, along with the `--tilt` flag that tuned it: there is
+no camera angle here to tune. What remains is a triangle depth-sort key inside a
+model (`kSortZ`/`kSortY`, the old cos/sin values kept as plain weights), needed
+only because we draw without a depth buffer. What retail's software renderer
+sorts 3DO primitives by has NOT been established -- that is the open question
+here, and the constants say so.
 
 ## The terrain-height lift is height/2 (2026-09-12)
 

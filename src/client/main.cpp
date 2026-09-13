@@ -442,7 +442,6 @@ int main(int argc, char** argv) {
         else if (a == "--facetest") facetest = true;
         else if (a == "--soundtest") soundtest = true;
 
-        else if (a == "--tilt" && i + 1 < argc) gTilt = std::stof(argv[++i]);
         else if (a == "--winsize" && i + 2 < argc) {
             winW = std::atoi(argv[++i]);
             winH = std::atoi(argv[++i]);

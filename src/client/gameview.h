@@ -103,7 +103,7 @@
 #endif
 
 
-#include "client/appglobals.h"   // gTilt (shared with main.cpp)
+#include "client/appglobals.h"   // kProjY/kProjZ, kSortZ/kSortY
 
 class GameView {
 public:
@@ -1429,9 +1429,7 @@ private:
                            oname.find("ground") != std::string::npos ||
                            oname.find("gpoly") != std::string::npos ||
                            oname.find("gpoint") != std::string::npos;
-        const float tilt = gTilt;
         float cy = std::cos(heading), sy = std::sin(heading);
-        float ct = std::cos(tilt), st = std::sin(tilt);
         for (const auto& p : o.primitives) {
             if (groundPlate) break;
             if (p.indices.size() < 3) continue;
@@ -1475,7 +1473,7 @@ private:
                     // half of y. `ct`/`st` still order the triangles within a
                     // model, which is a sort key and not geometry.
                     float ry = w[1] * kProjY + rz * kProjZ;
-                    depth += rz * ct - w[1] * st;
+                    depth += rz * kSortZ - w[1] * kSortY;
                     tri.v[k].position = {rx, -ry};
                     static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
                     SDL_FPoint c = uv[idx[k] & 3];
@@ -1516,7 +1514,7 @@ private:
 
     // Resolve a model piece to a WORLD effect position (x,z,alt) for THIS unit, matching
     // the model's on-screen projection: a piece's model origin projects to screen offset
-    // (rx,-ry) under facing=-heading + gTilt (see collect()), which corresponds to placing
+    // (rx,-ry) under facing=-heading + the projection (see collect()), which corresponds to placing
     // an effect at (u.x+rx, u.z, altitude+ry). Returns false if the model/piece is absent
     // (caller falls back to the unit centre). pieceName must be lowercase.
     bool pieceWorldFx(const UnitR& u, const Anim& a, const std::string& pieceName,
