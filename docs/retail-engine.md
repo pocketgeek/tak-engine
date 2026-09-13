@@ -849,10 +849,31 @@ OPPOSITE signs. Every triangle pair separated mainly in z was ordered
 backwards, which is what tore layered pieces like a Monarch's cape. Now
 `-(2y + z)`, derived rather than fitted.
 
-What that still cannot fix is two triangles that interpenetrate: one key per
-triangle cannot express a per-pixel test. That case needs a real depth buffer,
-which means taking models off `SDL_RenderGeometry` -- worth doing only if
-artifacts survive a correct key.
+A correct key was still not enough, because we were not CULLING. Retail does --
+it imports `_grCullMode@4` -- and without it both faces of a two-sided piece are
+drawn at almost the same depth, so which one wins is arbitrary: a Monarch's cape
+came out as a patchwork of its own front and back. The cape is four segments,
+each carrying a front quad and a back quad (`capelogoA1`/`A2` and friends), which
+is exactly the shape that fails.
+
+The cull is tested against the VIEW DIRECTION, not a screen-space winding sign,
+because the transform negates y and may mirror x and reasoning about the
+resulting handedness is how sign errors get in. Two measurements settle the
+direction without guessing:
+
+  * 3DO polygons are wound so `(v1-v0) x (v2-v0)` points OUTWARD -- 88-97% of
+    primitives agree, across araking, arasword, tarnecro and zonhurt.
+  * With the cull as written, kept faces sit toward the camera and culled faces
+    away: mean offset along the view ray `+2.0..+2.9` for kept against
+    `-1.8..-3.4` for culled, at every facing. An inverted sign would swap those.
+
+56-65% of triangles survive, a little over half because flat pieces favour one
+side.
+
+What remains beyond this is two triangles that genuinely interpenetrate, which
+one key per triangle cannot resolve. That is the real depth-buffer case, and it
+means taking models off `SDL_RenderGeometry` -- worth doing only if artifacts
+survive a correct key and a cull.
 
 ## The projection is a SHEAR, not a tilt (2026-09-12)
 

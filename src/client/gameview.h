@@ -1459,6 +1459,7 @@ private:
                 tri.tex = tex;
                 float depth = 0;
                 bool ok = true;
+                float px[3], py[3], pz[3];   // rotated model space, for the facing test
                 for (int k = 0; k < 3; ++k) {
                     size_t vi = size_t(p.indices[idx[k]]) * 3;
                     if (vi + 2 >= o.vertices.size()) { ok = false; break; }
@@ -1476,6 +1477,7 @@ private:
                     // Negated: the sort runs farthest-first, and 2y+z grows
                     // toward the camera.
                     depth -= w[1] * kSortY + rz * kSortZ;
+                    px[k] = rx; py[k] = w[1]; pz[k] = rz;
                     tri.v[k].position = {rx, -ry};
                     static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
                     SDL_FPoint c = uv[idx[k] & 3];
@@ -1487,6 +1489,28 @@ private:
                                          : SDL_Color{170, 170, 180, 255};
                 }
                 if (!ok) continue;
+                // BACKFACE CULL. Retail culls -- it imports grCullMode -- and
+                // without it both faces of a two-sided piece are drawn at almost
+                // the same depth, so which one wins is arbitrary and a cape
+                // comes out as a patchwork of its own front and back.
+                //
+                // Tested against the VIEW DIRECTION rather than a screen-space
+                // winding sign, because the transform negates y and may mirror
+                // x, and reasoning about the resulting handedness is how sign
+                // errors get in. 3DO polygons are wound so (v1-v0)x(v2-v0)
+                // points outward -- measured over the shipped models, 88-97% of
+                // primitives agree -- and the camera lies along (y,z) = (2,1),
+                // the direction the projection collapses (see kProjY/kProjZ).
+                // Mirroring reflects the model and so flips the normal.
+                {
+                    const float ax = px[1] - px[0], ay = py[1] - py[0], az = pz[1] - pz[0];
+                    const float bx = px[2] - px[0], by = py[2] - py[0], bz = pz[2] - pz[0];
+                    const float ny = az * bx - ax * bz;      // normal Y
+                    const float nz = ax * by - ay * bx;      // normal Z
+                    float facing = ny * kSortY + nz * kSortZ;
+                    if (mirror) facing = -facing;
+                    if (facing <= 0.0f) continue;
+                }
                 tri.depth = depth / 3;
                 out.push_back(tri);
             }
