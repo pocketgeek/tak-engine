@@ -1470,8 +1470,11 @@ private:
                     float rx = wx * cy + w[2] * sy;
                     float rz = -wx * sy + w[2] * cy;
                     // TAK billboards lean back (+y and +z together); moving
-                    // away (+z) reads upward on screen, adding to height.
-                    float ry = w[1] * ct + rz * st;
+                    // away (+z) reads upward on screen, adding to height. The
+                    // coefficients are retail's own (icd 0x421dad): all of z,
+                    // half of y. `ct`/`st` still order the triangles within a
+                    // model, which is a sort key and not geometry.
+                    float ry = w[1] * kProjY + rz * kProjZ;
                     depth += rz * ct - w[1] * st;
                     tri.v[k].position = {rx, -ry};
                     static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
@@ -1524,14 +1527,13 @@ private:
         if (!pieceModelOrigin(vt->second.model.root, &a, Xform{}, pieceName, m)) return false;
         float facing = (u.type->canMove || u.type->canFly) ? -u.heading : 0.0f;
         float cy = std::cos(facing), sy = std::sin(facing);
-        float ct = std::cos(gTilt), st = std::sin(gTilt);
         float rx = m[0] * cy + m[2] * sy;
         float rz = -m[0] * sy + m[2] * cy;
         // Fold the unit's flight altitude into the SAME tilt scaling the renderer
         // uses: collect() puts altitude in base.t[1], so the model lifts a piece by
         // (localY+altitude)*cos(tilt). Adding raw altitude at x1.0 here would float
         // the effect ~0.25*altitude above the drake's actual on-screen mouth/body.
-        float ry = (m[1] + unitAltById(u.id)) * ct + rz * st;
+        float ry = (m[1] + unitAltById(u.id)) * kProjY + rz * kProjZ;
         outX = u.x + rx;
         outZ = u.z;
         outAlt = ry;
@@ -1856,12 +1858,12 @@ private:
         if (!u.type || !u.type->canFly) return 0.0f;
         auto it = anims_.find(u.id);
         float alt = it != anims_.end() ? it->second.altitude : u.type->cruiseAlt;
-        // cos(gTilt), because that is what the MODEL projection does with it: the
-        // renderer lifts a piece by (localY + altitude) * cos(tilt) (see the effect
-        // anchor below, which already uses the same factor). unitScreen and the
-        // distant impostor had a hand-tuned 0.8 instead, so picking and the sprite
-        // disagreed by ~6% of the altitude even before the datum change.
-        return alt * std::cos(gTilt);
+        // kProjY, because that is what the MODEL projection does with it: the
+        // renderer lifts a piece by (localY + altitude) * kProjY (the effect
+        // anchor uses the same factor). unitScreen and the distant impostor had a
+        // hand-tuned 0.8 instead, so picking and the sprite disagreed by ~6% of
+        // the altitude even before the datum change.
+        return alt * kProjY;
     }
     // The SMOOTHED datum for this flyer (Anim::groundY), falling back to the raw
     // sector value for a unit with no live anim yet.

@@ -786,7 +786,10 @@
             // The ring does NOT turn with the unit: [unit+2] is a per-unit phase added
             // to the tick, so neighbouring units are out of step with each other, but
             // each ring stays axis-aligned in world space.
-            const float ct = std::cos(gTilt);
+            // The ring floats at the model's mid height, so it uses the same
+            // vertical projection the model does: retail's half (icd 0x421dad),
+            // not the cosine of a tilt we invented.
+            const float ct = kProjY;
             const float spin = float(SDL_GetTicks64() % 4000) / 4000.0f;   // 1 rev / 4s
             // Iterate the (few) selected ids, not the whole world -- frameUnitP(id)
             // is O(1). (A duplicate id would just redraw the same brackets in place.)

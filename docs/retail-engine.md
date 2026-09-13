@@ -810,6 +810,34 @@ paraphrases of missions retail names differently:
     CLOAK        -> "Cloaking"          (we said CLOAKED)
     SEEKATTACK   -> "Seeking to attack" (we said ADVANCING)
 
+## The projection is a SHEAR, not a tilt (2026-09-12)
+
+`0x421dad` spells retail's world-to-screen transform out in seven instructions:
+
+    movswl 0x2(%esi),%ecx     ; x
+    sub    cameraX,%ecx       ; screenX = x - cameraX
+    movswl 0xa(%esi),%eax     ; z
+    movswl 0x6(%esi),%edx     ; y
+    sar    $1,%edx            ; y / 2
+    sub    %edx,%eax          ; z - y/2
+    sub    cameraY,%eax       ; screenY = z - y/2 - cameraY
+
+So screen Y takes ALL of z and HALF of y, and screen X takes no y at all.
+
+The important part is what that is NOT: 1.0 and 0.5 are not the cosine and sine
+of any angle, so the transform cannot be written as a tilt. We had modelled it
+as one for a long time -- `cos(gTilt)=0.75`, `sin(gTilt)=0.66` -- which is wrong
+in both terms at once, and wrong in a way no amount of tuning the angle could
+fix. `kProjY = 0.5` and `kProjZ = 1.0` replace it.
+
+This is the same halving as the terrain lift, which is the point: one projection
+governs models, the terrain relief, flyer altitude, the selection ring's mid
+height, and the hit box (derived from the same `collect()` walk, so it follows
+for free and stays consistent with what is drawn).
+
+`gTilt` survives only as the triangle depth-sort key inside a model, which is an
+ordering and not geometry.
+
 ## The terrain-height lift is height/2 (2026-09-12)
 
 Units are drawn lifted up-screen to sit on relief that is painted into flat
