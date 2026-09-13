@@ -839,32 +839,6 @@ retail smooths the lift across a slope exactly as our `heightAbove` does. And
 the cell record really is 14 bytes with the height at `+4`, which the same code
 shows twice over (`+0x4` and `+0x12` are the same field one cell apart).
 
-## Terrain in front of a unit must be drawn over it (2026-09-12)
-
-The mosaic is one flat layer drawn before everything, so a unit standing NORTH
-of a cliff -- behind it, from the camera -- was drawn on top of the face that
-should hide its feet. It read as floating in front of the rock.
-
-Fixed with one extra pass after the units: re-draw only the tiles that can stand
-in front of something, meaning a block whose ground is more than 24 above the
-lowest ground within six cells to its north, so its painted face leans up-screen
-over that lower ground.
-
-The obvious implementation is per unit -- find what occludes it, re-submit the
-tile batch behind a clip rect -- and it is a trap. A clip rect bounds
-RASTERISING, not vertex work, so every such unit pays for the whole terrain
-again; a few hundred units near a cliff would submit the entire mosaic a few
-hundred times a frame. The occluder pass instead costs a fixed slice of one
-terrain draw regardless of unit count. Measured share of blocks that qualify:
-
-    Inner Circle    1975 / 9216   21%
-    Two Castles     3898 / 36864  11%
-    Angvir's Maze   3458 / 25600  14%
-    Athri Cay       5060 / 57600   9%
-
-Known limitation: selection rings and health bars draw after this pass, so they
-stay visible over an occluding cliff where the unit itself is hidden.
-
 ## Dynamic analysis: emulating icd routines (2026-09-12)
 
 Static reading gets a routine's shape; it does not tell you whether YOUR port

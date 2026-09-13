@@ -131,36 +131,8 @@ void MapView::finishChunks() {
     }
 }
 
-// Does this 32px block stand proud of the ground a little to its NORTH? If so
-// its painted face leans up-screen over that lower ground, and anything standing
-// there belongs behind it. Cells are 16px, blocks are two cells wide.
-bool MapView::blockOccludes(int bx, int by) const {
-    if (map_.heights.empty()) return false;
-    const int cw = map_.width, ch = map_.height;
-    const int cx = bx * 2, cz = by * 2;
-    if (cx < 0 || cz < 2 || cx + 1 >= cw || cz >= ch) return false;
-    int hi = 0;
-    for (int dz = 0; dz < 2; ++dz)
-        for (int dx = 0; dx < 2; ++dx) {
-            const int x = std::min(cx + dx, cw - 1), z = std::min(cz + dz, ch - 1);
-            hi = std::max(hi, int(map_.heights[size_t(z) * cw + x]));
-        }
-    // Lowest ground within a few cells north -- the span the face can cover.
-    int lo = 255;
-    for (int k = 1; k <= 6; ++k) {
-        const int z = cz - k;
-        if (z < 0) break;
-        for (int dx = 0; dx < 2; ++dx) {
-            const int x = std::min(cx + dx, cw - 1);
-            lo = std::min(lo, int(map_.heights[size_t(z) * cw + x]));
-        }
-    }
-    return hi - lo > 24;      // same step the occlusion scan elsewhere uses
-}
-
 void MapView::rebuildTileBatch(int winW, int winH) {
     for (auto& [t, v] : tileBatch_) v.clear();   // keep per-texture capacity
-    for (auto& [t, v] : occBatch_) v.clear();
     const int mapW = map_.blocksX, mapH = map_.blocksY;
     // Visible block range, clamped to the map.
     int b0x = std::max(0, int(std::floor(offX_ / kBlock)));
@@ -197,11 +169,6 @@ void MapView::rebuildTileBatch(int winW, int winH) {
             SDL_Vertex bl{{x0, y1}, white, {u0, v1}};
             vb.push_back(tl); vb.push_back(tr); vb.push_back(br);
             vb.push_back(tl); vb.push_back(br); vb.push_back(bl);
-            if (blockOccludes(bx, by)) {
-                auto& ob = occBatch_[s.tex];
-                ob.push_back(tl); ob.push_back(tr); ob.push_back(br);
-                ob.push_back(tl); ob.push_back(br); ob.push_back(bl);
-            }
         }
     }
     builtOffX_ = offX_; builtOffY_ = offY_; builtZoom_ = zoom_;
@@ -229,15 +196,6 @@ void MapView::draw(int winW, int winH) {
         rebuildTileBatch(winW, winH);
 
     for (auto& [tex, verts] : tileBatch_)
-        if (tex && !verts.empty())
-            SDL_RenderGeometry(ren_, tex, verts.data(), int(verts.size()), nullptr, 0);
-}
-
-void MapView::drawOccluders(int winW, int winH) {
-    if (tileBatchDirty_ || offX_ != builtOffX_ || offY_ != builtOffY_ ||
-        zoom_ != builtZoom_ || winW != builtW_ || winH != builtH_)
-        rebuildTileBatch(winW, winH);
-    for (auto& [tex, verts] : occBatch_)
         if (tex && !verts.empty())
             SDL_RenderGeometry(ren_, tex, verts.data(), int(verts.size()), nullptr, 0);
 }
