@@ -1474,9 +1474,8 @@ private:
                     // half of y. `ct`/`st` still order the triangles within a
                     // model, which is a sort key and not geometry.
                     float ry = w[1] * kProjY + rz * kProjZ;
-                    // Negated: the sort runs farthest-first, and 2y+z grows
-                    // toward the camera.
-                    depth -= w[1] * kSortY + rz * kSortZ;
+                    // Farthest first: depth from the camera goes as (z - 2y).
+                    depth += rz * kSortZ - w[1] * kSortY;
                     px[k] = rx; py[k] = w[1]; pz[k] = rz;
                     tri.v[k].position = {rx, -ry};
                     static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
@@ -1499,15 +1498,16 @@ private:
                 // x, and reasoning about the resulting handedness is how sign
                 // errors get in. 3DO polygons are wound so (v1-v0)x(v2-v0)
                 // points outward -- measured over the shipped models, 88-97% of
-                // primitives agree -- and the camera lies along (y,z) = (2,1),
-                // the direction the projection collapses (see kProjY/kProjZ).
+                // primitives agree -- and the camera lies along (y,z) = (2,-1),
+                // the direction the projection collapses once collect()'s
+                // negation of ry is taken into account (see kProjY/kProjZ).
                 // Mirroring reflects the model and so flips the normal.
                 {
                     const float ax = px[1] - px[0], ay = py[1] - py[0], az = pz[1] - pz[0];
                     const float bx = px[2] - px[0], by = py[2] - py[0], bz = pz[2] - pz[0];
                     const float ny = az * bx - ax * bz;      // normal Y
                     const float nz = ax * by - ay * bx;      // normal Z
-                    float facing = ny * kSortY + nz * kSortZ;
+                    float facing = ny * kSortY - nz * kSortZ;   // dot with (0,+2,-1)
                     if (mirror) facing = -facing;
                     if (facing <= 0.0f) continue;
                 }

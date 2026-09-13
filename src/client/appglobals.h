@@ -10,25 +10,29 @@
 // SDL_RenderGeometry with no depth buffer, so overlapping pieces of a model need
 // an order.
 //
-// DERIVED FROM THE PROJECTION, not from a camera angle. screenY = z - y/2 means
-// points differing along (y,z) = (2,1) land on the same pixel -- that direction
-// IS the view ray -- so depth along it is proportional to 2y + z. Larger y is
-// higher and nearer the camera; larger z is further down-screen and also nearer.
-// Both terms therefore carry the SAME sign, and the sort (descending, farthest
-// first) wants the negation.
+// DERIVED FROM THE PROJECTION, not from a camera angle. collect() emits
+// position.y = -(kProjY*y + kProjZ*z) = -(0.5y + z), so two points land on the
+// same pixel when 0.5*dy + dz = 0, i.e. along (dy,dz) = (2,-1). THAT is the view
+// ray, and toward the camera is +y, -z: up is nearer, and model +z reads
+// up-screen, which is away.
 //
-// The previous weights were the cosine and sine of a 0.72 rad "tilt" the
-// projection turns out not to have, and they gave y and z OPPOSITE signs -- so
-// every triangle pair that differed mainly in z was ordered backwards. That is
-// what made capes and other layered pieces tear.
+// So depth from the camera goes as (z - 2y), and the sort runs descending,
+// farthest first.
+//
+// Getting here took two wrong turns worth remembering. The weights started as
+// cos/sin of a 0.72 rad "tilt" the projection does not have (ratio 1.14 instead
+// of 2). Then I "fixed" the SIGN as well, reasoning from retail's own
+// screenY = z - y/2 -- but our code negates ry, so our z runs the other way, and
+// flipping it put every z-separated pair in backwards order. The original signs
+// were right; only the magnitudes were wrong.
 //
 // Retail does not sort at all: it z-buffers (Glide grDepthBuffer*, and the
 // DirectDraw path's "no hardware support for zbuffer blting" complaint; the
 // piece walk at icd 0x4eea20 has no depth compare in it). So this remains an
 // approximation of a depth buffer -- correct ordering between triangles, still
 // unable to resolve two that interpenetrate.
-inline constexpr float kSortY = 2.0f;   // weight on model Y in the view-ray depth
-inline constexpr float kSortZ = 1.0f;   // weight on model Z
+inline constexpr float kSortY = 2.0f;   // weight on model Y along the view ray
+inline constexpr float kSortZ = 1.0f;   // weight on model Z (opposite sign to Y)
 
 // Retail's 2.5D projection, straight off the instruction sequence at icd
 // 0x421dad:
