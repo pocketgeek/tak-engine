@@ -1758,10 +1758,20 @@ private:
     // the elevation the tile art shows instead of the flat grid cell. Zero at the
     // map's ground level; water and flat ground are unaffected.
     int heightRef_ = -1;                          // map ground level (modal height)
-    float kHeightScale_ = 1.1f;                    // screen-Y lift per height unit (N, also occlusion + picking)
-    float kHeightScaleX_ = 0.0f;                   // screen-X lift per height unit (+X = west). Off by default:
-                                                   // a large value makes the diagonal picking march overshoot
-                                                   // thin N-S walls. Opt in / tune small via TAK_HSCALEX.
+    // Screen-Y lift per terrain height unit (also used by occlusion + picking).
+    // RETAIL'S VALUE IS 0.5, and it is not a guess: 0x511140 returns byte +4 of
+    // a cell record -- the terrain height -- and its caller at 0x426820 forms
+    //     screenY = (z << 4) - cameraY - (height >> 1)
+    //     screenX = (x << 4) - cameraX              <- no height term at all
+    // Confirmed by driving both under emulation (tools/re/emulift.py). We used
+    // 1.1 here, which is 2.2x too much: at height 120 that is 132px of lift
+    // against retail's 60, so a unit on raised ground was drawn most of four
+    // tiles too far up-screen and appeared to stand on terrain beside it.
+    float kHeightScale_ = 0.5f;
+    // Screen-X lift per height unit. Zero, and retail agrees: its screen X is
+    // (x << 4) - cameraX with no height term (0x426820). Tunable via TAK_HSCALEX
+    // for experiments only.
+    float kHeightScaleX_ = 0.0f;
     int kOccScan_ = 12;                            // cells to scan south for a wall
     // Height above ground at a world point, bilinearly sampled so lifts ramp
     // smoothly across a slope. Lazily initialises the modal ground reference and

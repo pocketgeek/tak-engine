@@ -810,6 +810,35 @@ paraphrases of missions retail names differently:
     CLOAK        -> "Cloaking"          (we said CLOAKED)
     SEEKATTACK   -> "Seeking to attack" (we said ADVANCING)
 
+## The terrain-height lift is height/2 (2026-09-12)
+
+Units are drawn lifted up-screen to sit on relief that is painted into flat
+tiles. We had been lifting `1.1` px per height unit, picked by eye. Retail's
+figure is **0.5**, and the arithmetic is explicit:
+
+  * `0x511140(point)` reads the point's cell through `0x50e600` and returns byte
+    `+4` of the 14-byte cell record -- the terrain height.
+  * Its caller `0x426820` forms
+        `screenY = (z << 4) - cameraY - (height >> 1)`
+        `screenX = (x << 4) - cameraX`
+    so the lift is height/2 in Y, and there is NO height term in X.
+
+`tools/re/emulift.py` drives both with a stubbed cell lookup to confirm which
+byte comes back, since that was the load-bearing assumption. At height 120 that
+is 60px of lift against the 132px we were applying -- a unit on raised ground
+sat most of four tiles too far up-screen, which is why it looked like it was
+standing on terrain beside it rather than on its own.
+
+Our `kHeightScaleX_` was already 0, which the same instruction sequence
+confirms is right.
+
+Two other details fall out of the same neighbourhood. `0x511170` is the
+BILINEAR sampler: it takes a sub-cell position (`sar $4` for the cell, `and
+$0xf` for the fraction), reads four neighbouring cells and interpolates -- so
+retail smooths the lift across a slope exactly as our `heightAbove` does. And
+the cell record really is 14 bytes with the height at `+4`, which the same code
+shows twice over (`+0x4` and `+0x12` are the same field one cell apart).
+
 ## Dynamic analysis: emulating icd routines (2026-09-12)
 
 Static reading gets a routine's shape; it does not tell you whether YOUR port
