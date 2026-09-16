@@ -121,7 +121,7 @@ public:
     void setIdents(std::unordered_map<std::string, int> m) { idents_ = std::move(m); }
 private:
 
-    float clock_ = 0;         // mission time (s), for timer conditions
+    int32_t clock_ = 0;       // mission time in TICKS, for timer conditions
     int outcome_ = 0;         // 0 / +1 / -1
     bool started_ = false;
 };

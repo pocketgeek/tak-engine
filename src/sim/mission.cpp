@@ -115,7 +115,7 @@ void MissionScript::start(World& w) {
 void MissionScript::step(World& w, float dt) {
     world_ = &w;
     if (vm_) vm_->tick(dt);
-    clock_ += dt;
+    ++clock_;
     // Timed reinforcements (SetMission "b TYPE H X Y") that have come due.
     for (size_t k = 0; k < pendingSpawns_.size();) {
         if (clock_ >= pendingSpawns_[k].at) {
@@ -268,7 +268,8 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders)
             std::string ty = word();
             float hh = num(), bx = num(), by = num();
             if (const UnitType* t = findType(ty))
-                pendingSpawns_.push_back({t, u->player, cellToWorld(bx), cellToWorld(by), clock_ + hh});
+                pendingSpawns_.push_back({t, u->player, cellToWorld(bx), cellToWorld(by),
+                                      clock_ + int32_t(hh * 30.0f)});
         } else if (c == 'o') {                            // o A [B]: combat stance
             float a = num();
             skipsp();
@@ -346,7 +347,7 @@ int32_t MissionScript::getValue(World& w, int32_t valId, const std::vector<int32
             return 0;
         case 40:   // a global counter, tested against 2500 to gate a late VO line;
                    // elapsed mission TICKS is the only reading that fits (~83s).
-            return int32_t(clock_ * 30.0f);
+            return clock_;   // already ticks
         default:
             // id 31 (one use, semantics unclear) and anything else: 0.
             return 0;
@@ -478,7 +479,7 @@ void MissionScript::evalConditions(World& w, float) {
                 if (enemyOfTypeAlive(c.type)) c.armed = true;
                 met = c.armed && !enemyOfTypeAlive(c.type);
                 break;
-            case Cond::VictoryTimerRunsOut: met = clock_ >= c.a; break;
+            case Cond::VictoryTimerRunsOut: met = clock_ >= int32_t(c.a * 30.0f); break;
             case Cond::CommanderKilled: {
                 // Losing your MONARCH, not your last soldier. 15 missions use this,
                 // and treating it as "all units dead" meant a mission whose whole
@@ -498,7 +499,7 @@ void MissionScript::evalConditions(World& w, float) {
                 if (humanHasAnyMobile()) c.armed = true;
                 met = c.armed && !humanHasAnyMobile();
                 break;
-            case Cond::DeathTimerRunsOut:   met = clock_ >= c.a; break;
+            case Cond::DeathTimerRunsOut:   met = clock_ >= int32_t(c.a * 30.0f); break;
             case Cond::AllUnitsKilledOfType: {
                 bool any = false;
                 for (const auto& u : w.units())

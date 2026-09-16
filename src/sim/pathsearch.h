@@ -34,6 +34,7 @@
 #include <functional>
 #include <map>
 #include <vector>
+#include "fixed.h"
 
 namespace tak::sim {
 
@@ -260,7 +261,7 @@ class PathService {
 
     // Queue a search. Replaces any request already outstanding for this unit.
     void request(int unitId, PathCell start, PathCell goal, int mapW, int mapH,
-                 float goalX, float goalZ, bool priority, bool useAStar = false);
+                 Fixed goalX, Fixed goalZ, bool priority, bool useAStar = false);
     void cancel(int unitId);
     bool pending(int unitId) const { return q_.find(unitId) != q_.end(); }
     size_t pendingCount() const { return q_.size(); }
@@ -276,7 +277,7 @@ class PathService {
     // route in travel order -- empty if the search failed.
     void tick(const std::function<int(int, int, int)>& score,
               const std::function<void(int, const std::vector<PathCell>&,
-                                       float, float)>& done);
+                                       Fixed, Fixed)>& done);
 
   private:
     // A queued request is just its parameters -- no per-cell scratch until it is
@@ -284,7 +285,7 @@ class PathService {
     struct Entry {
         PathCell start, goal;
         int mapW = 0, mapH = 0;
-        float goalX = 0, goalZ = 0;
+        Fixed goalX = Fixed(), goalZ = Fixed();
         bool priority = false;
         int slot = -1;          // index into pool_, or -1 while queued
         int cap = 0;            // icd +0x165: grows by the quantum each tick

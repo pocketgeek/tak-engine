@@ -494,7 +494,7 @@ void PathService::release(Entry& e) {
 }
 
 void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
-                          int mapH, float goalX, float goalZ, bool priority, bool useAStar) {
+                          int mapH, Fixed goalX, Fixed goalZ, bool priority, bool useAStar) {
     // A RE-REQUEST FOR THE SAME SEARCH LETS IT RUN. Everything below restarts the
     // search from scratch (cap = 0), which is right when the question changed and
     // ruinous when it did not: the sim re-asks every kPathRetryTicks (120 ticks, 4s)
@@ -553,7 +553,7 @@ void PathService::cancel(int unitId) {
 
 void PathService::tick(const std::function<int(int, int, int)>& score,
                        const std::function<void(int, const std::vector<PathCell>&,
-                                                float, float)>& done) {
+                                                Fixed, Fixed)>& done) {
     if (q_.empty()) return;
     if (pool_.empty()) {
         pool_.resize(kMaxActiveSearches);
@@ -634,7 +634,7 @@ void PathService::tick(const std::function<int(int, int, int)>& score,
         // matters). Collect the finished searches, finish walking the queue, release the
         // slots, and only then hand the routes over -- so a callback is free to queue
         // whatever it likes.
-        struct Finished { int id; std::vector<PathCell> route; float gx, gz; };
+        struct Finished { int id; std::vector<PathCell> route; Fixed gx, gz; };
         std::vector<Finished> finished;
         for (auto& [id, e] : q_) {
             if (e.slot < 0 || e.ranAt == tickNo_) continue;

@@ -105,9 +105,9 @@ bool ScenarioScript::evalCond(World& w, int player, const tak::crt::Rule& c) {
     const auto& s = c.slot;
     PState& ps = state_[size_t(player)];
     switch (c.opcode) {
-        case 0:  return clock_ == 0.0f;                         // Start of game
-        case 1:  return clock_ > float(toInt(s[0]));            // Gametime > v
-        case 2:  return clock_ < float(toInt(s[0]));            // Gametime < v
+        case 0:  return clock_ == 0;                         // Start of game
+        case 1:  return clock_ > toInt(s[0]) * 30;            // Gametime > v
+        case 2:  return clock_ < toInt(s[0]) * 30;            // Gametime < v
         case 3: { auto it = ps.timers.find(toInt(s[0]));   // Timer > v (unset => false)
                   return it != ps.timers.end() && it->second.value > float(toInt(s[1])); }
         case 4: { auto it = ps.timers.find(toInt(s[0]));   // Timer < v (unset => false)
@@ -266,7 +266,7 @@ void ScenarioScript::step(World& w, float dt) {
             }
         }
     }
-    clock_ += dt;
+    ++clock_;
     ++ticks_;
 }
 

@@ -81,7 +81,7 @@ private:
     std::vector<PState> state_;
     std::vector<tak::crt::Region> regions_;
     std::vector<Msg> pending_;
-    float clock_ = 0;
+    int32_t clock_ = 0;   // TICKS
     uint32_t ticks_ = 0;
     uint64_t rng_ = 0x9e3779b97f4a7c15ULL;   // deterministic stream for "Random"
     bool showClock_ = false;

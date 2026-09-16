@@ -1212,7 +1212,8 @@ void World::requestPath(Unit& u, float x, float z) {
     const PathCell from{u.x.floorInt() / 16, u.z.floorInt() / 16};
     const PathCell to{int(x) / 16, int(z) / 16};
     if (pathDist(from, to) < 3) { paths_.cancel(u.id); return; }
-    paths_.request(u.id, from, to, g.width(), g.height(), x, z,
+    paths_.request(u.id, from, to, g.width(), g.height(),
+                   Fixed::fromFloat(x), Fixed::fromFloat(z),
                    /*priority=*/u.type->commander,
                    /*useAStar=*/pathUseAStar_.count(u.id) != 0);
 }
@@ -4719,7 +4720,8 @@ void World::tick(float dt) {
             }
             return int(kCellImpassable);
         },
-        [&](int unitId, const std::vector<PathCell>& route, float gx, float gz) {
+        [&](int unitId, const std::vector<PathCell>& route, Fixed gxF, Fixed gzF) {
+            const float gx = gxF.toFloat(), gz = gzF.toFloat();
             Unit* u = unit(unitId);
             if (route.empty()) {           // failed: back off before retrying
                 pathRetryAt_[unitId] = tickCounter_ + kPathFailBackoff;
