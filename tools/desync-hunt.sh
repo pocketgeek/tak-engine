@@ -149,12 +149,27 @@ run_one() {
   # that does not, so it is forwarded explicitly.
   local srv_env=""
   case "$envs" in *TAK_GODS=1*) srv_env="TAK_GODS=1";; esac
-  # shellcheck disable=SC2086
-  env $srv_env $SERVER --port "$port" --data "$DATA" --no-auth --seed "$seed" >"$slog" 2>&1 &
-  local spid=$!
-  for _ in $(seq 120); do grep -q listening "$slog" 2>/dev/null && break; sleep 1; done
-  if ! grep -q listening "$slog" 2>/dev/null; then
-    echo "FAIL $name: server never came up" ; kill "$spid" 2>/dev/null; return 1
+  # RETRY THE BIND. A port left in TIME_WAIT by an earlier sweep, or any unrelated
+  # listener, used to cost the whole run: the server exited with "bind failed", no
+  # client log was ever written, and the case silently vanished from a sweep whose
+  # entire job is coverage. Walk a few ports before giving up.
+  local spid="" tries=0
+  while [ $tries -lt 5 ]; do
+    # shellcheck disable=SC2086
+    env $srv_env $SERVER --port "$port" --data "$DATA" --no-auth --seed "$seed" >"$slog" 2>&1 &
+    spid=$!
+    for _ in $(seq 120); do
+      grep -q listening "$slog" 2>/dev/null && break
+      grep -q "bind failed" "$slog" 2>/dev/null && break
+      sleep 1
+    done
+    grep -q listening "$slog" 2>/dev/null && break
+    kill "$spid" 2>/dev/null; wait "$spid" 2>/dev/null; spid=""
+    port=$((port + 100)); tries=$((tries + 1))
+  done
+  if [ -z "$spid" ] || ! grep -q listening "$slog" 2>/dev/null; then
+    echo "FAIL $name: server never came up" ; [ -n "$spid" ] && kill "$spid" 2>/dev/null
+    return 1
   fi
 
   # THE CLIENT MUST TAKE A PLAYER SLOT. Server::checkHashes counts SEATED HUMAN slots
@@ -232,8 +247,19 @@ else
 fi
 echo "note: benchmark cases (TAK_BENCH) run as spectators and compare NO hashes --"
 echo "      they cover flow control only; their result is not a determinism result."
+# CHECK EVERY EXPECTED RUN, not every log that happens to exist. This used to walk
+# "$OUT"/*.client.log, so a run whose SERVER never came up -- which never writes a
+# client log at all -- was invisible here: the sweep printed "no desyncs in any run"
+# and an empty failure list while one case had not executed. A determinism sweep that
+# quietly drops a case reports absence of evidence as evidence of absence.
 echo "runs that did not finish cleanly:"
-for f in "$OUT"/*.client.log; do
-  grep -q "err=none" "$f" 2>/dev/null || echo "  $(basename "$f")"
+for spec in "${RUNS[@]}"; do
+  rname="${spec%%|*}"
+  rlog="$OUT/$rname.client.log"
+  if [ ! -f "$rlog" ]; then
+    echo "  $rname -- NEVER RAN (no client log; see $rname.server.log)"
+  elif ! grep -q "err=none" "$rlog" 2>/dev/null; then
+    echo "  $rname -- did not end cleanly"
+  fi
 done
 echo "logs: $OUT"
