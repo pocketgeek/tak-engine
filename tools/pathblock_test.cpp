@@ -55,7 +55,7 @@ static float runWall(int thick) {
     for (int t = 0; t < thick; ++t)
         for (int k = 0; k < 40; ++k)
             w.spawn(&s, 600.0f + float(k) * 32.0f, 1000.0f + float(t) * 32.0f, 0, 1);
-    for (auto& u : w.units()) u.speed = 0.0f;
+    for (auto& u : w.units()) u.speed = tak::sim::Fixed();
     const int id = w.spawn(&s, 900, 500, 0, 0);
     w.order(id, 900, 1600, /*queue=*/false);
     float px = w.unit(id)->x, pz = w.unit(id)->z, travelled = 0;
@@ -145,7 +145,7 @@ int main() {
         w.setPathService(true);
         UnitType s = soldier();
         for (int k = 0; k < 6; ++k) w.spawn(&s, 1200.0f + float(k) * 24.0f, 1200.0f, 0, 1);
-        for (auto& u : w.units()) u.speed = 0.0f;
+        for (auto& u : w.units()) u.speed = tak::sim::Fixed();
         const int id = w.spawn(&s, 400, 400, 0, 0);
         w.order(id, 1200, 1200, false);
         bool close = false;

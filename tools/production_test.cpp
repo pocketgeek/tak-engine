@@ -154,8 +154,8 @@ static void rallyIsAdopted() {
     // heading toward its goal, so a structure in the mover is a spinning keep.
     check(f->orders.empty(), "the building's own order queue stays empty",
           std::to_string(f->orders.size()));
-    check(f->heading == 0.0f, "and its heading is untouched",
-          std::to_string(f->heading));
+    check(f->heading == tak::sim::Bam(0), "and its heading is untouched",
+          std::to_string(f->heading.v));
     // Setting a rally must not cancel what it is building.
     check(!f->buildQueue.empty(), "the production queue survives the rally order",
           std::to_string(f->buildQueue.size()) + " queued");

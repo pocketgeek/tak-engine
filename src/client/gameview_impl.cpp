@@ -736,11 +736,11 @@
                                     ? &pf.units[size_t(u.id)] : nullptr;
             if (u.alive() && prev &&
                 std::abs(u.x - prev->x) <= 200.0f && std::abs(u.z - prev->z) <= 200.0f) {
-                s.px = prev->x; s.pz = prev->z; s.ph = prev->heading;   // interpolate from last tick
-                s.x = u.x; s.z = u.z; s.heading = u.heading;
+                s.px = prev->x; s.pz = prev->z; s.ph = prev->heading;   // UnitR already holds radians
+                s.x = u.x; s.z = u.z; s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
                 s.seeded = true;
             } else {
-                s.x = u.x; s.z = u.z; s.heading = u.heading;
+                s.x = u.x; s.z = u.z; s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
                 s.px = s.x; s.pz = s.z; s.ph = s.heading;
                 s.seeded = u.alive();   // dead holds its pose (never interpolated)
             }

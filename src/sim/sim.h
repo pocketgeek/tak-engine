@@ -434,7 +434,7 @@ private:
 };
 
 struct Order {
-    float x = 0, z = 0;
+    Fixed x, z;   // goal, in the same fixed-point domain as Unit::x/z
     int targetId = 0;      // nonzero = attack (or board, if load) target
     bool load = false;     // board the friendly transport `targetId`
     bool unload = false;   // sail to (x,z) and disembark cargo
@@ -492,8 +492,16 @@ struct Unit {
     int player = 0;
     const UnitType* type = nullptr;
     Fixed x, z;   // FIXED-POINT: 16.16, 65536/px. See fixed.h.
-    float heading = 0;     // radians, 0 = +z
-    float speed = 0;       // px/s
+    // BINARY ANGLE, 65536 == 360 degrees, 0 = +z -- retail's own convention (navigator
+    // +0x7e, its 90-degree test against 0x4000). Wrapping is a mask, two angles added
+    // cannot drift, and there is no rounding for two libms to disagree about.
+    Bam heading;
+    // FIXED-POINT px/s. Retail's is too: its occupancy test compares two units' speeds
+    // with an integer cmp/jl (0x4db79e), and the scaling either side runs through a
+    // 64-bit shift-by-16 helper (0x5d3dc0) -- a 16.16 multiply, the same operation as
+    // Fixed::operator*. Speed feeds the step length, so leaving it float would have kept
+    // a float multiply in the middle of an otherwise integer displacement.
+    Fixed speed;
     float hp = 100;
     float reloads[3] = {0, 0, 0};  // per weapon slot
     int   weaponSlot = 0;          // active weapon (0=primary); player-selectable
@@ -1608,7 +1616,11 @@ private:
     // mind when a unit CROSSES a boundary -- between crossings a body creeps
     // into its neighbour unopposed. This is the same question asked in pixel
     // space, which is the resolution the mover actually steps at.
-    float bodyPenetration(const Unit& u, float nx, float nz) const;
+    // FIXED-POINT, like the positions it compares. Footprints are whole pixels and
+    // positions are exact, so the whole test is integer and the "are these two bodies
+    // touching" answer is the same on every machine by construction rather than by
+    // floating-point discipline.
+    Fixed bodyPenetration(const Unit& u, Fixed nx, Fixed nz) const;
     // Is (nx,nz) free of a parked body other than `selfId`? True when solidity is
     // off (no grid) or the cell is outside it.
     // Is the footprint rect at (nx,nz) free of a parked body other than `selfId`?

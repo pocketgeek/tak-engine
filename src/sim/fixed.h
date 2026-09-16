@@ -75,8 +75,15 @@ struct Fixed {
     constexpr Fixed operator/(Fixed o) const {
         return o.v == 0 ? raw(0) : raw(int32_t((int64_t(v) << kBits) / int64_t(o.v)));
     }
-    constexpr Fixed operator*(int i) const { return raw(v * int32_t(i)); }
-    constexpr Fixed operator/(int i) const { return i == 0 ? raw(0) : raw(v / int32_t(i)); }
+    // NO operator*(int) / operator/(int), and that is a scar. They existed as a
+    // convenience, and combined with the implicit conversion to float above they
+    // silently hijacked every float multiply: in `speed * dt`, float->int is a standard
+    // conversion while Fixed->float is a user-defined one, so the INT overload wins and
+    // dt (0.0333) truncates to 0. Every step became zero-length and the whole sim
+    // stopped moving -- crowdbench went to 0/32 across the board with the build green
+    // and the compiler emitting only an "ISO C++ says these are ambiguous" warning.
+    //
+    // Scaling by a whole number goes through fromInt, which cannot be misread.
 
     constexpr Fixed& operator+=(Fixed o) { v += o.v; return *this; }
     constexpr Fixed& operator-=(Fixed o) { v -= o.v; return *this; }
@@ -89,7 +96,7 @@ struct Fixed {
     constexpr bool operator>=(Fixed o) const { return v >= o.v; }
 };
 
-constexpr Fixed operator*(int i, Fixed f) { return f * i; }
+constexpr Fixed operator*(int i, Fixed f) { return Fixed::raw(f.v * int32_t(i)); }
 constexpr Fixed fxAbs(Fixed a) { return a.v < 0 ? -a : a; }
 constexpr Fixed fxMin(Fixed a, Fixed b) { return a.v < b.v ? a : b; }
 constexpr Fixed fxMax(Fixed a, Fixed b) { return a.v > b.v ? a : b; }
@@ -120,8 +127,24 @@ inline Fixed fxLen(Fixed a, Fixed b) {
 // with the mover comparing headings against 0x4000 for its 90-degree test), and it has
 // the property radians never will -- adding two angles cannot drift, and wrapping is
 // free rather than a fmod that has to agree across libms.
-using Bam = int32_t;
-constexpr Bam kBamFull = 65536, kBamHalf = 32768, kBamQuarter = 16384;
+// A DISTINCT TYPE, not an alias for int32_t. That was the first attempt, and it
+// compiled the whole heading conversion with ZERO errors -- because every float
+// radian silently truncated to an integer and the build stayed green while the sim
+// was nonsense. A struct with explicit conversions makes the compiler name every
+// site instead, which is the only reason a change of this size is reviewable.
+struct Bam {
+    int32_t v = 0;
+    constexpr Bam() = default;
+    constexpr explicit Bam(int32_t raw) : v(raw) {}
+    constexpr bool operator==(Bam o) const { return v == o.v; }
+    constexpr bool operator!=(Bam o) const { return v != o.v; }
+};
+constexpr int32_t kBamFullV = 65536, kBamHalfV = 32768, kBamQuarterV = 16384;
+constexpr Bam kBamFull{kBamFullV}, kBamHalf{kBamHalfV}, kBamQuarter{kBamQuarterV};
+// Wrap to [0, 360). Masking is exact -- this is what radians cannot do.
+constexpr Bam bamWrap(int32_t raw) { return Bam(raw & (kBamFullV - 1)); }
+constexpr Bam operator+(Bam a, Bam b) { return bamWrap(a.v + b.v); }
+constexpr Bam operator-(Bam a, Bam b) { return bamWrap(a.v - b.v); }
 
 // CORDIC, because it is the only way to get sin and cos with no float anywhere. Sixteen
 // rotations of shift-and-add drive the residual angle to zero; the table is atan(2^-i)
@@ -144,8 +167,8 @@ constexpr int32_t kCordicGain = 39797;   // 0.6072529351 in 16.16
 // other a line later.
 struct SinCos { Fixed s, c; };
 
-inline SinCos fxSinCos(Bam a) {
-    a &= (kBamFull - 1);                       // wrap: free, and exact
+inline SinCos fxSinCos(Bam ang) {
+    int32_t a = ang.v & (kBamFullV - 1);       // wrap: free, and exact
     // THE FOUR CARDINALS EXACTLY. CORDIC converges to about 6/65536 at 0 and 90, and
     // that residual is not harmless here: it is 0.0002px of sideways push per step, so
     // a unit ordered straight along an axis slides ~2px off its line over a five-minute
@@ -153,17 +176,17 @@ inline SinCos fxSinCos(Bam a) {
     // and drift is the entire reason positions became integers, so these are answered
     // outright rather than approximated.
     switch (a) {
-        case 0:                         return {Fixed(), Fixed::fromInt(1)};
-        case kBamQuarter:               return {Fixed::fromInt(1), Fixed()};
-        case kBamHalf:                  return {Fixed(), -Fixed::fromInt(1)};
-        case kBamHalf + kBamQuarter:    return {-Fixed::fromInt(1), Fixed()};
+        case 0:                            return {Fixed(), Fixed::fromInt(1)};
+        case kBamQuarterV:                 return {Fixed::fromInt(1), Fixed()};
+        case kBamHalfV:                    return {Fixed(), -Fixed::fromInt(1)};
+        case kBamHalfV + kBamQuarterV:     return {-Fixed::fromInt(1), Fixed()};
         default: break;
     }
     // Fold to the first quadrant and remember the signs, so the rotation only ever has
     // to cover 90 degrees where CORDIC converges.
     bool negS = false, negC = false;
-    if (a >= kBamHalf) { a -= kBamHalf; negS = !negS; negC = !negC; }
-    if (a >= kBamQuarter) { a = kBamHalf - a; negC = !negC; }
+    if (a >= kBamHalfV) { a -= kBamHalfV; negS = !negS; negC = !negC; }
+    if (a >= kBamQuarterV) { a = kBamHalfV - a; negC = !negC; }
     int64_t x = detail::kCordicGain, y = 0;
     int32_t z = a;
     for (int i = 0; i < 16; ++i) {
@@ -179,13 +202,42 @@ inline SinCos fxSinCos(Bam a) {
 inline Fixed fxSin(Bam a) { return fxSinCos(a).s; }
 inline Fixed fxCos(Bam a) { return fxSinCos(a).c; }
 
+// Shortest signed difference a-b, in (-180, +180] degrees. Exact and branch-free in
+// binary angles: mask to the circle, then fold the top half negative. The float version
+// this replaces needed a loop or an fmod to normalise, and could land either side of pi
+// depending on rounding.
+constexpr int32_t bamDiff(Bam a, Bam b) {
+    int32_t d = (a.v - b.v) & (kBamFullV - 1);
+    return d > kBamHalfV ? d - kBamFullV : d;
+}
+
+// atan2 as a binary angle, CORDIC in vectoring mode: rotate (x,y) onto the +x axis and
+// accumulate the angle it took. Same family as fxSinCos, same table, no float. Argument
+// order matches std::atan2.
+inline Bam fxAtan2(Fixed y, Fixed x) {
+    if (x.v == 0 && y.v == 0) return Bam(0);
+    int64_t vx = x.v, vy = y.v;
+    int32_t extra = 0;
+    // Fold into the right half-plane; vectoring converges only there.
+    if (vx < 0) {
+        if (vy >= 0) { const int64_t t = vx; vx = vy;  vy = -t; extra =  kBamQuarterV; }
+        else         { const int64_t t = vx; vx = -vy; vy =  t; extra = -kBamQuarterV; }
+    }
+    int32_t z = 0;
+    for (int i = 0; i < 16; ++i) {
+        const int64_t dx = vx >> i, dy = vy >> i;
+        if (vy > 0) { vx += dy; vy -= dx; z += detail::kCordicAtan[i]; }
+        else        { vx -= dy; vy += dx; z -= detail::kCordicAtan[i]; }
+    }
+    return bamWrap(z + extra);
+}
+
 // Boundary helpers: unit data, map files and the renderer all still speak radians.
 inline Bam bamFromRadians(float r) {
-    return Bam(std::lround(double(r) * (65536.0 / (2.0 * 3.14159265358979323846))))
-           & (kBamFull - 1);
+    return bamWrap(int32_t(std::lround(double(r) * (65536.0 / (2.0 * 3.14159265358979323846)))));
 }
 constexpr float radiansFromBam(Bam a) {
-    return float(double(a) * (2.0 * 3.14159265358979323846 / 65536.0));
+    return float(double(a.v) * (2.0 * 3.14159265358979323846 / 65536.0));
 }
 
 }  // namespace tak::sim

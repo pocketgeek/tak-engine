@@ -32,9 +32,9 @@ int main() {
     check((Fixed::fromInt(600) - Fixed::fromInt(568)).toFloat() == 32.0f,
           "a 32px footprint gap is exact (the tangency case)");
     // Half a cell, a quarter, an eighth: all the fractions a 16px grid produces.
-    check((Fixed::fromInt(1) / 2).toFloat() == 0.5f,   "1/2 px exact");
-    check((Fixed::fromInt(1) / 16).toFloat() == 0.0625f, "1/16 px exact");
-    check((Fixed::fromInt(16) / 16).toFloat() == 1.0f, "one cell / 16 is one pixel");
+    check(Fixed::raw(Fixed::kOne / 2).toFloat() == 0.5f,   "1/2 px exact");
+    check(Fixed::raw(Fixed::kOne / 16).toFloat() == 0.0625f, "1/16 px exact");
+    check(Fixed::raw(Fixed::fromInt(16).v / 16).toFloat() == 1.0f, "one cell / 16 is one pixel");
 
     // --- the wedge this type exists to prevent -------------------------------
     {
@@ -54,8 +54,8 @@ int main() {
 
     // --- rounding is the same on both signs ----------------------------------
     {
-        const Fixed a = Fixed::fromInt(3) / 2;     // +1.5
-        const Fixed b = -(Fixed::fromInt(3) / 2);  // -1.5
+        const Fixed a = Fixed::raw(Fixed::fromInt(3).v / 2);     // +1.5
+        const Fixed b = -Fixed::raw(Fixed::fromInt(3).v / 2);  // -1.5
         check(a.floorInt() == 1,  "floorInt(+1.5) == 1");
         check(b.floorInt() == -2, "floorInt(-1.5) == -2 (floors, not truncates)",
               "got " + std::to_string(b.floorInt()));
@@ -66,9 +66,9 @@ int main() {
     // --- multiply: int64 intermediate, no overflow before the shift ----------
     {
         const Fixed big = Fixed::fromInt(4000);          // beyond any map edge
-        const Fixed half = Fixed::fromInt(1) / 2;
+        const Fixed half = Fixed::raw(Fixed::kOne / 2);
         check((big * half).toFloat() == 2000.0f, "4000 * 0.5 == 2000 (no overflow)");
-        const Fixed step = Fixed::fromInt(70) / 30;      // 70px/s at 30Hz
+        const Fixed step = Fixed::raw(Fixed::fromInt(70).v / 30);      // 70px/s at 30Hz
         check(step.v > 0 && step.toFloat() > 2.3f && step.toFloat() < 2.34f,
               "a 70px/s step at 30Hz lands near 2.333px",
               std::to_string(step.toFloat()));
@@ -98,9 +98,9 @@ int main() {
     // --- integer trig: accuracy, and the identities that matter ---------------
     {
         double worst = 0;
-        for (Bam a = 0; a < kBamFull; a += 7) {          // 9363 angles
+        for (int32_t ai = 0; ai < kBamFullV; ai += 7) { const Bam a{ai};          // 9363 angles
             const SinCos sc = fxSinCos(a);
-            const double want = double(a) * (2.0 * 3.14159265358979323846 / 65536.0);
+            const double want = double(a.v) * (2.0 * 3.14159265358979323846 / 65536.0);
             worst = std::max(worst, std::fabs(sc.s.toFloat() - std::sin(want)));
             worst = std::max(worst, std::fabs(sc.c.toFloat() - std::cos(want)));
         }
@@ -111,8 +111,8 @@ int main() {
         // The quadrant folding is where a sign error hides, so pin the cardinals.
         // EXACT, not close. A residual here is a sideways push on every axis-aligned
         // step, and those are the common case.
-        check(fxSin(0).v == 0,                              "sin(0) is exactly 0");
-        check(fxCos(0) == Fixed::fromInt(1),                "cos(0) is exactly 1");
+        check(fxSin(Bam(0)).v == 0,                              "sin(0) is exactly 0");
+        check(fxCos(Bam(0)) == Fixed::fromInt(1),                "cos(0) is exactly 1");
         check(fxSin(kBamQuarter) == Fixed::fromInt(1),      "sin(90) is exactly 1");
         check(fxCos(kBamQuarter).v == 0,                    "cos(90) is exactly 0");
         check(fxSin(kBamHalf).v == 0,                       "sin(180) is exactly 0");
@@ -121,22 +121,23 @@ int main() {
         check(fxCos(kBamHalf + kBamQuarter).v == 0,         "cos(270) is exactly 0");
         // ...and a unit walking due east for a five-minute game gains no sideways drift.
         Fixed side;
-        for (int i = 0; i < 10000; ++i) side += fxSin(0) * Fixed::fromInt(2);
+        for (int i = 0; i < 10000; ++i) side += fxSin(Bam(0)) * Fixed::fromInt(2);
         check(side.v == 0, "10000 axis-aligned steps drift sideways by exactly nothing");
     }
     {
         // Wrapping is the property radians cannot give us: adding angles for ever
         // must not drift, and must land exactly back where it started.
-        Bam a = 12345;
-        for (int i = 0; i < 100000; ++i) a = (a + 999) & (kBamFull - 1);
-        check(a == ((12345 + 100000 * 999) & (kBamFull - 1)),
+        Bam a{12345};
+        for (int i = 0; i < 100000; ++i) a = a + Bam(999);
+        check(a == bamWrap(12345 + 100000 * 999),
               "100k angle additions wrap exactly, with no drift");
-        check(fxSin(5) == fxSin(5 + kBamFull), "sin is exactly periodic across a wrap");
+        check(fxSin(Bam(5)) == fxSin(bamWrap(5 + kBamFullV)),
+              "sin is exactly periodic across a wrap");
     }
     {
         // sin^2 + cos^2 == 1, the standard CORDIC gain check.
         double worstId = 0;
-        for (Bam a = 0; a < kBamFull; a += 101) {
+        for (int32_t ai = 0; ai < kBamFullV; ai += 101) { const Bam a{ai};
             const SinCos sc = fxSinCos(a);
             const double id = double(sc.s.toFloat()) * sc.s.toFloat()
                             + double(sc.c.toFloat()) * sc.c.toFloat();
@@ -144,6 +145,47 @@ int main() {
         }
         check(worstId < 5e-3, "sin^2 + cos^2 == 1 (the gain is right)",
               "worst " + std::to_string(worstId));
+    }
+
+    // --- angle difference: exact, and correct across the wrap ----------------
+    {
+        check(bamDiff(Bam(10), Bam(10)) == 0,                    "diff(a,a) == 0");
+        check(bamDiff(Bam(100), Bam(50)) == 50,                  "a simple difference");
+        check(bamDiff(Bam(50), Bam(100)) == -50,                 "and its negation");
+        // The case a float angleDiff gets wrong when rounding lands it past pi.
+        check(bamDiff(Bam(10), bamWrap(kBamFullV - 10)) == 20,        "across the zero wrap, the SHORT way");
+        check(bamDiff(bamWrap(kBamFullV - 10), Bam(10)) == -20,       "and back the other way");
+        check(bamDiff(Bam(0), kBamHalf) == kBamHalfV,        "exactly opposite resolves to +180");
+    }
+    // --- atan2, against libm, and round-tripped through sin/cos --------------
+    {
+        double worst = 0;
+        int checked = 0;
+        for (int yi = -2000; yi <= 2000; yi += 37)
+            for (int xi = -2000; xi <= 2000; xi += 37) {
+                if (xi == 0 && yi == 0) continue;
+                const Bam got = fxAtan2(Fixed::fromInt(yi), Fixed::fromInt(xi));
+                double want = std::atan2(double(yi), double(xi));
+                if (want < 0) want += 2.0 * 3.14159265358979323846;
+                double gotR = double(got.v) * (2.0 * 3.14159265358979323846 / 65536.0);
+                double d = std::fabs(gotR - want);
+                if (d > 3.14159265358979323846) d = 2.0 * 3.14159265358979323846 - d;
+                worst = std::max(worst, d); ++checked;
+            }
+        check(worst < 2e-3, "fxAtan2 within 2e-3 rad of libm over " + std::to_string(checked)
+                            + " points", "worst " + std::to_string(worst));
+    }
+    {
+        // The identity the mover relies on: aim at a point, step that way, arrive.
+        int bad = 0;
+        for (int i = 0; i < 360; i += 7) {
+            const Bam a = bamWrap(int32_t(int64_t(i) * kBamFullV / 360));
+            const SinCos sc = fxSinCos(a);
+            const Bam back = fxAtan2(sc.s, sc.c);
+            if (std::abs(bamDiff(back, a)) > 40) ++bad;   // 40/65536 = 0.2 degrees
+        }
+        check(bad == 0, "atan2(sin(a), cos(a)) round-trips to within 0.2 degrees",
+              bad ? std::to_string(bad) + " of 52 off" : "");
     }
 
     std::printf(failures ? "fixed_test: FAILURES\n" : "fixed_test: all passed\n");

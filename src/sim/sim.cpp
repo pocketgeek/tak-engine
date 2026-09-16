@@ -594,7 +594,7 @@ int World::spawn(const UnitType* type, float x, float z, float heading, int play
     u.type = type;
     u.x = Fixed::fromFloat(x);   // boundary: callers still speak float
     u.z = Fixed::fromFloat(z);
-    u.heading = heading;
+    u.heading = bamFromRadians(heading);   // boundary
     u.hp = type ? type->maxHp : 100;
     u.mana = type ? type->maxMana : 0;   // casters start with a full pool
     u.active = type ? type->activateWhenBuilt : true;
@@ -1088,7 +1088,7 @@ void World::order(int unitId, float x, float z, bool queue) {
     // BUILDING accept a move order -- it could not go anywhere, but the mover still
     // turned its heading toward the goal, so you could spin a keep by right-clicking.
     if (!u || !u->alive() || !u->type) return;
-    if (u->type->isStructure()) { setRally(*u, Order{x, z, 0}, queue); return; }
+    if (u->type->isStructure()) { setRally(*u, Order{Fixed::fromFloat(x), Fixed::fromFloat(z), 0}, queue); return; }
     // A NEW DESTINATION RETIRES AN ABANDONED ONE. order() does not go through
     // cancelPath, so clearing the rescue record only there left it live: the player
     // picks somewhere else, that move finishes, the retry delay expires, and the rescue
@@ -1102,7 +1102,7 @@ void World::order(int unitId, float x, float z, bool queue) {
         u->orders.back().issuedTick = tickCounter_;
     };
     if (u->type->canFly) {
-        u->orders.push_back({x, z, 0});
+        u->orders.push_back({Fixed::fromFloat(x), Fixed::fromFloat(z), 0});
         markGoal();
         return;
     }
@@ -1155,7 +1155,7 @@ void World::order(int unitId, float x, float z, bool queue) {
     // real route replaces the straight segment (docs/retail-engine.md). So the
     // two-point segment is the interim, not the mechanism -- exactly what this
     // engine did permanently until the search was ported.
-    u->orders.push_back({x, z, 0});
+    u->orders.push_back({Fixed::fromFloat(x), Fixed::fromFloat(z), 0});
     u->orders.back().clickX = clickX;
     u->orders.back().clickZ = clickZ;
     markGoal();
@@ -1680,15 +1680,15 @@ void World::unloadAt(int transportId, float x, float z) {
             // keeps everything queued behind the leg) and reaches the front once the
             // approach completes, where the tick dispatch hands it to tickTransport.
             Order mv;
-            mv.x = ax;
-            mv.z = az;
+            mv.x = Fixed::fromFloat(ax);
+            mv.z = Fixed::fromFloat(az);
             mv.goal = true;      // so currentLeg() picks THIS order as the leg to route
             t->orders.push_back(mv);
         }
     }
     Order o;
-    o.x = x;
-    o.z = z;
+    o.x = Fixed::fromFloat(x);
+    o.z = Fixed::fromFloat(z);
     o.unload = true;
     t->orders.push_back(o);
     // Route the approach with the same async boundary tracer every other move order
@@ -1775,7 +1775,7 @@ void World::tickTransport(Unit& u, float dt) {
             u.inTransport = t->id;
             t->cargo.push_back(u.id);
             u.orders.clear();
-            u.speed = 0;
+            u.speed = Fixed();
         }
         return;
     }
@@ -1812,7 +1812,7 @@ void World::attackMove(int unitId, float x, float z, bool queue) {
     // turned its heading toward the goal, so you could spin a keep by right-clicking.
     if (!u || !u->alive() || !u->type) return;
     if (u->type->isStructure()) {
-        Order o{x, z, 0};
+        Order o{Fixed::fromFloat(x), Fixed::fromFloat(z), 0};
         o.attackMove = true;
         setRally(*u, o, queue);
         return;
@@ -1850,8 +1850,8 @@ void World::patrol(int unitId, float x, float z) {
                 rz = u->z + dz / len * out;
             }
         }
-        Order b{x, z, 0};   b.patrol = true; b.attackMove = true;
-        Order a{rx, rz, 0}; a.patrol = true; a.attackMove = true;
+        Order b{Fixed::fromFloat(x), Fixed::fromFloat(z), 0};   b.patrol = true; b.attackMove = true;
+        Order a{Fixed::fromFloat(rx), Fixed::fromFloat(rz), 0}; a.patrol = true; a.attackMove = true;
         setRally(*u, b, /*queue=*/false);
         setRally(*u, a, /*queue=*/true);
         return;
@@ -1861,7 +1861,7 @@ void World::patrol(int unitId, float x, float z) {
     Order a;
     a.x = u->x; a.z = u->z; a.patrol = true; a.attackMove = true;
     Order b;
-    b.x = x; b.z = z; b.patrol = true; b.attackMove = true;
+    b.x = Fixed::fromFloat(x); b.z = Fixed::fromFloat(z); b.patrol = true; b.attackMove = true;
     u->orders.push_back(b);
     u->orders.push_back(a);
 }
@@ -1874,7 +1874,7 @@ void World::patrolTo(int unitId, float x, float z, bool queue) {
     // turned its heading toward the goal, so you could spin a keep by right-clicking.
     if (!u || !u->alive() || !u->type) return;
     if (u->type->isStructure()) {
-        Order o{x, z, 0};
+        Order o{Fixed::fromFloat(x), Fixed::fromFloat(z), 0};
         o.patrol = true;
         o.attackMove = true;
         setRally(*u, o, queue);
@@ -2015,13 +2015,13 @@ void World::attack(int unitId, int targetId, bool queue) {
     // itself -- and it may well have no weapon, so this is checked before the
     // weapon gate below.
     if (u->type->isStructure() && u->type->producesUnits()) {
-        Order o{0, 0, targetId};
+        Order o{Fixed(), Fixed(), targetId};
         setRally(*u, o, queue);
         return;
     }
     if (u->type->weapon.damage <= 0) return;
     if (!queue) u->orders.clear();
-    u->orders.push_back({0, 0, targetId});
+    u->orders.push_back({Fixed(), Fixed(), targetId});
     u->orders.back().goal = true;                 // an attack order IS its own leg
     u->orders.back().issuedTick = tickCounter_;
 }
@@ -2161,7 +2161,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             if (!immune) {
                 if (w.status == Weapon::Status::Paralyzed) {
                     e.paralyzedFor = std::max(e.paralyzedFor, w.statusDur);
-                    e.speed = 0;
+                    e.speed = Fixed();
                 } else {
                     // Retail petrify/freeze (icd 0x51a61a): HP zeroes INSTANTLY
                     // regardless of amount -- the victim dies on the spot and
@@ -2172,7 +2172,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                     if (freeze) e.frozenFor = 1.0f; else e.stonedFor = 1.0f;
                     e.hp = 0;
                     e.deathType = freeze ? 15 : 14;
-                    e.speed = 0;
+                    e.speed = Fixed();
                     static const bool kStatLog = std::getenv("TAK_BURNLOG") != nullptr;
                     if (kStatLog)
                         std::fprintf(stderr, "statue kill: %s %s at %.0f,%.0f\n",
@@ -2271,8 +2271,9 @@ static void leadAim(const Unit& shooter, const Unit& tgt, const Weapon& w,
     float t = kLeadFrac * d / w.projVel;
     // Velocity from heading x speed is exact -- it is literally what the mover
     // integrates each tick.
-    ax += detmath::sin(tgt.heading) * tgt.speed * t;
-    az += detmath::cos(tgt.heading) * tgt.speed * t;
+    const SinCos tsc = fxSinCos(tgt.heading);
+    ax += tsc.s.toFloat() * tgt.speed * t;
+    az += tsc.c.toFloat() * tgt.speed * t;
 }
 
 void World::fire(Unit& u, Unit& target, int slot) {
@@ -2583,7 +2584,7 @@ void World::tickCombat(Unit& u, float dt) {
             bestD = d; best = e.id;
         });
         if (best) {
-            u.orders.insert(u.orders.begin(), {0, 0, best});
+            u.orders.insert(u.orders.begin(), {Fixed(), Fixed(), best});
             u.orders.front().autoTarget = true;
         }
     }
@@ -2600,7 +2601,7 @@ void World::tickCombat(Unit& u, float dt) {
         o.z = t->z;
         float dx = t->x - u.x, dz = t->z - u.z;
         if (dx * dx + dz * dz <= 70 * 70)
-            u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
+            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
         return;   // movement walks toward o when out of reach
     }
 
@@ -2702,12 +2703,12 @@ void World::tickCombat(Unit& u, float dt) {
     // In range: stop and face the target. Retail brakes to a halt FIRST and only
     // then pivots, at turninplacerate rather than the moving turn rate (icd
     // 0x4d9b65), so a unit doesn't spin on the spot while it is still sliding.
-    u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
-    float want = detmath::atan2(dx, dz);
-    float diff = angleDiff(want, u.heading);
+    u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
+    const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
+    const int32_t diff = bamDiff(want, u.heading);
     if (u.speed <= 0.0f) {
-        float maxTurn = u.type->turnInPlaceRate * dt;
-        u.heading += std::clamp(diff, -maxTurn, maxTurn);
+        const int32_t maxTurn = bamFromRadians(u.type->turnInPlaceRate * dt).v;
+        u.heading = u.heading + Bam(std::clamp(diff, -maxTurn, maxTurn));
     }
     // Fire a weapon when the target is in ITS [minrange, range] band, within its
     // aimtolerance, with a clear shot, and (unless noairweapon) legal against air.
@@ -2877,16 +2878,18 @@ void World::buildNavClasses(const TypeRegistry& reg) {
     for (auto& g : navClasses_) { g.setObstacles(&obst_); g.setRoads(&roads_); }
 }
 
-float World::bodyPenetration(const Unit& u, float nx, float nz) const {
-    if (occW_ <= 0 || !u.type) return 0.0f;
-    const float hs = float(std::max(u.type->footX, u.type->footZ)) * 8.0f;
+Fixed World::bodyPenetration(const Unit& u, Fixed nx, Fixed nz) const {
+    if (occW_ <= 0 || !u.type) return Fixed();
+    // Half-extent in whole pixels: a footprint is an integer number of 16px cells, so
+    // this is exact and needs no rounding.
+    const Fixed hs = Fixed::fromInt(std::max(u.type->footX, u.type->footZ) * 8);
     // occ_ stamps a body's whole footprint, so any unit we could overlap has a
     // stamped cell within hs of us: |nx-o.x| < hs+ohs and its cells reach o.x
     // +/- ohs, leaving the nearest one inside hs. One cell of slack for the
     // truncation in int(nx)/16.
-    const int span = int(hs) / 16 + 2;
-    const int cx = int(nx) / 16, cz = int(nz) / 16;
-    float worst = 0.0f;
+    const int span = hs.floorInt() / 16 + 2;
+    const int cx = nx.floorInt() / 16, cz = nz.floorInt() / 16;
+    Fixed worst;
     int32_t last = 0;
     for (int j = -span; j <= span; ++j) {
         int z = cz + j;
@@ -2922,9 +2925,9 @@ float World::bodyPenetration(const Unit& u, float nx, float nz) const {
             // Ignoring EVERY mover, which is what stood here, is far looser than
             // retail and is precisely what made a de-overlap pass necessary.
             if (o->speed > 0.0f && o->speed >= u.speed &&
-                std::fabs(angleDiff(o->heading, u.heading)) <= kPi * 0.5f)
+                std::abs(bamDiff(o->heading, u.heading)) <= kBamQuarterV)
                 continue;
-            float sep = hs + float(std::max(o->type->footX, o->type->footZ)) * 8.0f;
+            const Fixed sep = hs + Fixed::fromInt(std::max(o->type->footX, o->type->footZ) * 8);
             // Bodies we are ALREADY inside are not ours to arbitrate. Units spawn
             // in tight ranks, a finished building lands under its builder, a push
             // overlaps a pair -- and a rule phrased on the deepest overlap freezes
@@ -2936,9 +2939,9 @@ float World::bodyPenetration(const Unit& u, float nx, float nz) const {
             // occupancy predicate, and the point of that change is that overlap
             // barely forms in the first place (see the note further up). Do not
             // re-read this as "something else will sort it out".
-            if (std::min(sep - std::fabs(u.x - o->x), sep - std::fabs(u.z - o->z)) > 0.0f)
+            if (fxMin(sep - fxAbs(u.x - o->x), sep - fxAbs(u.z - o->z)) > Fixed())
                 continue;
-            float p = std::min(sep - std::fabs(nx - o->x), sep - std::fabs(nz - o->z));
+            const Fixed p = fxMin(sep - fxAbs(nx - o->x), sep - fxAbs(nz - o->z));
             if (p > worst) worst = p;
         }
     }
@@ -3236,8 +3239,8 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
     Order o;
     // Park it where the builder must stand to work, so arriving at this order
     // means "in position to build" rather than "standing on the site".
-    o.x = x;
-    o.z = z + float(type->footZ) * 8 + 24;
+    o.x = Fixed::fromFloat(x);
+    o.z = Fixed::fromFloat(z + float(type->footZ) * 8 + 24);
     o.goal = true;
     o.issuedTick = tickCounter_;
     o.buildType = type;
@@ -3432,7 +3435,7 @@ void World::reclaim(int builderId, int featureId, bool queue) {
     // there for the rest of the game.
     if (!queue) b->orders.clear();
     Order o;
-    o.x = tx; o.z = tz;
+    o.x = Fixed::fromFloat(tx); o.z = Fixed::fromFloat(tz);
     o.goal = true;
     o.issuedTick = tickCounter_;
     o.reclaimFeat = featureId;
@@ -3465,7 +3468,7 @@ void World::tickReclaim(Unit& b, float dt) {
         float reach = 24.0f + 8.0f * float(std::max(c->type->footX, c->type->footZ)) +
                       (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
         if (dx * dx + dz * dz > reach * reach) return;   // still walking there
-        b.speed = 0;
+        b.speed = Fixed();
         int ct = c->corpseStatue >= 0 ? c->corpseStatue : corpseTypeOf(c->type);
         const FeatType* cd = ct >= 0 ? &featTypes_[size_t(ct)] : nullptr;
         float step = kReclaimRate * dt;
@@ -3501,12 +3504,12 @@ void World::tickReclaim(Unit& b, float dt) {
     // Never the RECLAIM order itself -- that entry IS the job, and it is what
     // holds the queue back until the feature is gone (advance() retires it).
     if (b.orders.empty() || !b.orders.front().reclaimFeat) dropLeg(b);
-    b.speed = 0;
-    float want = detmath::atan2(dx, dz);   // face the feature (deterministic)
+    b.speed = Fixed();
+    const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));   // face the feature
     // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
-    float turn = std::clamp(angleDiff(want, b.heading), -b.type->turnInPlaceRate * dt,
-                            b.type->turnInPlaceRate * dt);
-    b.heading += turn;
+    const int32_t bTurnMax = bamFromRadians(b.type->turnInPlaceRate * dt).v;
+    const int32_t turn = std::clamp(bamDiff(want, b.heading), -bTurnMax, bTurnMax);
+    b.heading = b.heading + Bam(turn);
     float d = std::min(f.work, kReclaimRate * dt);
     f.work -= d;
     players_[size_t(b.player)].mana +=
@@ -3567,11 +3570,11 @@ void World::tickRepair(Unit& b, float dt) {
     }
     // ...but never the REPAIR order itself: that entry is the job.
     if (b.orders.empty() || !b.orders.front().repairTarget) dropLeg(b);
-    b.speed = 0;
-    float want = detmath::atan2(dx, dz);
+    b.speed = Fixed();
+    const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
     // Stopped: pivot at turninplacerate, not the moving turn rate.
-    b.heading += std::clamp(angleDiff(want, b.heading), -b.type->turnInPlaceRate * dt,
-                            b.type->turnInPlaceRate * dt);
+    const int32_t bPivotMax = bamFromRadians(b.type->turnInPlaceRate * dt).v;
+    b.heading = b.heading + Bam(std::clamp(bamDiff(want, b.heading), -bPivotMax, bPivotMax));
     float total = t->type->buildTime / std::max(b.type->workerTime, 0.01f);
     Player& tm = players_[size_t(b.player)];
     float cost = t->type->buildCost * dt / std::max(total, 0.01f);
@@ -3657,14 +3660,14 @@ void World::tickConstruction(Unit& b, float dt) {
     // IS the job, and it is what holds the rest of the queue back until the
     // building is finished (popBuildOrder retires it when the job ends).
     if (b.orders.empty() || !b.orders.front().buildType) dropLeg(b);   // never the build order
-    b.speed = 0;
+    b.speed = Fixed();
     // Face what we're building/conjuring: turn toward the site at the unit's turn
     // rate (a building has turnRate 0, so it simply doesn't rotate).
-    float want = detmath::atan2(dx, dz);
+    const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
     // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
-    float turn = std::clamp(angleDiff(want, b.heading), -b.type->turnInPlaceRate * dt,
-                            b.type->turnInPlaceRate * dt);
-    b.heading += turn;
+    const int32_t bTurnMax = bamFromRadians(b.type->turnInPlaceRate * dt).v;
+    const int32_t turn = std::clamp(bamDiff(want, b.heading), -bTurnMax, bTurnMax);
+    b.heading = b.heading + Bam(turn);
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
     // Record the current build rate so an interrupted conjure decays at this speed.
     site->conjureRate = site->type->maxHp * 0.95f / std::max(total, 0.01f);
@@ -4909,9 +4912,11 @@ void World::tick(float dt) {
             path.reserve(useRoute.size());
             for (size_t i = 0; i < useRoute.size(); ++i) {
                 Order o;
-                o.x = float(useRoute[i].x) * 16.0f + 8.0f;
-                o.z = float(useRoute[i].z) * 16.0f + 8.0f;
-                if (i + 1 == useRoute.size() && reachedGoal) { o.x = gx; o.z = gz; }
+                // EXACT: a waypoint is a cell centre, a whole number of pixels. This is the
+                // value a parked body sits exactly tangent to, so build it exactly.
+                o.x = Fixed::fromInt(useRoute[i].x * 16 + 8);
+                o.z = Fixed::fromInt(useRoute[i].z * 16 + 8);
+                if (i + 1 == useRoute.size() && reachedGoal) { o.x = Fixed::fromFloat(gx); o.z = Fixed::fromFloat(gz); }
                 path.push_back(o);
             }
             // A route clipped at 64 waypoints stops short of where the player
@@ -4924,8 +4929,8 @@ void World::tick(float dt) {
             // unit kept reaching its goal. Keep the destination on the end.
             if (!reachedGoal) {
                 Order last;
-                last.x = gx;
-                last.z = gz;
+                last.x = Fixed::fromFloat(gx);
+                last.z = Fixed::fromFloat(gz);
                 path.push_back(last);
             }
             replaceLeg(*u, path);
@@ -5196,7 +5201,7 @@ void World::tick(float dt) {
             abandoned_.erase(u.id);
             pathDetours_.erase(u.id);
             pathUseAStar_.erase(u.id);
-            u.deadFor = 0; u.orders.clear(); u.speed = 0; continue;
+            u.deadFor = 0; u.orders.clear(); u.speed = Fixed(); continue;
         }
 
         // Retail 1-second HP-percent samples (unit+0x110/+0x111): the Killed
@@ -5293,7 +5298,7 @@ void World::tick(float dt) {
             continue;
         }
         // Frozen / petrified / paralyzed: the unit is inert this tick.
-        if (u.incapacitated()) { u.speed = 0; continue; }
+        if (u.incapacitated()) { u.speed = Fixed(); continue; }
         // Jam tracker DECAYS every tick and is topped up only while the mover is
         // genuinely stuck (see the fully-blocked branch). Decaying here rather than
         // clearing it inside the movement code makes it self-correcting: the mover has
@@ -5356,16 +5361,16 @@ void World::tick(float dt) {
         if (combatHold) continue;
 
         if (u.orders.empty()) {
-            u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
+            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
         } else if (u.orders.front().wait > 0.0f) {
             // SetMission "w N": hold position while the scripted wait counts down.
-            u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
+            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
             u.orders.front().wait -= dt;
             if (u.orders.front().wait <= 0.0f) u.orders.erase(u.orders.begin());
         } else if (u.orders.front().waitAttack) {
             // SetMission "wa": ambush -- hold until a non-allied unit is within sight,
             // then release to the next order (usually an attack).
-            u.speed = std::max(0.0f, u.speed - u.type->brake * dt);
+            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
             float sight = u.type->sight > 0 ? u.type->sight : 200.0f;
             // THROUGH THE SPATIAL GRID. This scanned every unit in the world, for every
             // ambushing unit, every tick -- O(n^2) in the number of ambushers, and a
@@ -5427,10 +5432,10 @@ void World::tick(float dt) {
                 }
                 continue;
             }
-            float want = detmath::atan2(dx, dz);
-            float diff = angleDiff(want, u.heading);
-            float maxTurn = u.type->turnRate * dt;
-            u.heading += std::clamp(diff, -maxTurn, maxTurn);
+            const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
+            const int32_t diff = bamDiff(want, u.heading);
+            const int32_t maxTurn = bamFromRadians(u.type->turnRate * dt).v;
+            u.heading = u.heading + Bam(std::clamp(diff, -maxTurn, maxTurn));
 
             // PROGRESS, NOT DISPLACEMENT, over a sliding window. See Unit::jamT.
             {
@@ -5519,18 +5524,26 @@ void World::tick(float dt) {
                 float stopDist = u.speed * u.speed / (2 * u.type->brake);
                 if (dist < stopDist) target = 0;
             }
-            if (u.speed < target)
-                u.speed = std::min(u.speed + u.type->accel * dt, target);
+            // The target is derived from unit data (float px/s) and the road/formation
+            // multipliers above; it crosses into fixed point once, here, and the ramp
+            // toward it is integer from then on.
+            const Fixed targetFx = Fixed::fromFloat(target);
+            if (u.speed < targetFx)
+                u.speed = fxMin(u.speed + Fixed::fromFloat(u.type->accel * dt), targetFx);
             else
-                u.speed = std::max(u.speed - u.type->brake * dt, target);
+                u.speed = fxMax(u.speed - Fixed::fromFloat(u.type->brake * dt), targetFx);
 
             // THE STEP IS FIXED-POINT. detmath still computes the direction in double
             // (it is bit-identical across builds by construction), but the displacement
             // is quantised to 1/65536 px before it is ever added to a position, so a
             // walk of ten thousand ticks accumulates exactly and cannot drift a unit
             // four hundredths of a pixel into a body it is meant to be clear of.
-            const Fixed mx = Fixed::fromFloat(detmath::sin(u.heading) * u.speed * dt);
-            const Fixed mz = Fixed::fromFloat(detmath::cos(u.heading) * u.speed * dt);
+            // INTEGER ALL THE WAY TO THE POSITION: a CORDIC sin/cos of a binary angle,
+            // scaled by a fixed-point step. No float touches the displacement now.
+            const SinCos sc = fxSinCos(u.heading);
+            const Fixed stepLen = Fixed::fromFloat(u.speed * dt);
+            const Fixed mx = sc.s * stepLen;
+            const Fixed mz = sc.c * stepLen;
             // Collide ground/water units with the nav grid so they can't walk
             // through walls and buildings (pathfinding routes around, but direct
             // steering in combat did not). Slide along a blocked axis.
@@ -5542,10 +5555,11 @@ void World::tick(float dt) {
                 // hatch skipping it entirely while a unit stayed inside its own
                 // cell -- so between crossings a body crept into its neighbour
                 // unopposed, measured 13px in where footprints touch at 32.
-                auto free = [&](float nx, float nz) {
+                auto free = [&](Fixed nx, Fixed nz) {
                     // Footprint-aware, and the SAME grid the pathfinder used, so a unit
                     // never stalls on a cell its own path routed it through.
-                    if (!(g.empty() || g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type))))
+                    if (!(g.empty() || g.fits(nx.floorInt() / 16, nz.floorInt() / 16,
+                                              footCells(u.type))))
                         return false;
                     // ...and units are solid, tested against the bodies themselves
                     // rather than the cells they happen to be stamped into.
@@ -5561,13 +5575,23 @@ void World::tick(float dt) {
                     // well under the 32px at which footprints meet, so it unwedges the
                     // tangent case without letting bodies sink into each other.
                     //
+                    // IT IS A TUNING VALUE ON A KNIFE EDGE, and worth knowing that before
+                    // touching it. 0.5 was right while the mover took its direction from
+                    // a double-precision Taylor sin; moving to CORDIC shifted approach
+                    // angles by a fraction of a degree and one wall geometry began
+                    // wedging again, while 1.0 wedges a different one. Re-derive it
+                    // against pathblock_test and crowdbench if the trig ever changes
+                    // again -- do not assume the old number still holds.
+                    //
                     // AND IT IS NOT A FLOAT WORKAROUND, which is what it was first taken
                     // for. Positions are fixed-point now, exact to 1/65536 px, and
                     // setting this to zero still collapses everything -- opposing columns
                     // 21/32 -> 1/32, the chokepoint 24/24 -> 3/24, pathblock_test back to
                     // 8 failures. The tangency is about whether a touch COUNTS as an
                     // overlap, not about how precisely the touch is represented.
-                    constexpr float kTouchSlack = 0.5f;
+                    // In fixed point: 0.75px is 49152 units of 1/65536, an exact integer
+                    // threshold rather than a float comparison two builds could straddle.
+                    const Fixed kTouchSlack = Fixed::raw((Fixed::kOne * 3) / 4);
                     return bodyPenetration(u, nx, nz) <= kTouchSlack;
                 };
                 // Track whether the unit ACTUALLY displaced, not whether it was told to.
@@ -5598,7 +5622,7 @@ void World::tick(float dt) {
                     // been refused twice running), so the unit keeps pressing and
                     // resumes the instant the way clears. Stopping outright is what
                     // turns a momentary jam into a permanent one.
-                    u.speed = std::min(u.speed, u.type->maxVel * 0.4f);
+                    u.speed = fxMin(u.speed, Fixed::fromFloat(u.type->maxVel * 0.4f));
                     u.repathLeft -= dt;
                     if (!g.empty() && u.repathLeft <= 0 &&
                         u.orders.front().targetId == 0) {
@@ -5640,12 +5664,14 @@ void World::tick(float dt) {
                     if (u.stuckFor > 1.0f) {
                         u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
                         const NavGrid& g = navFor(u.type);
-                        auto free = [&](float nx, float nz) {
+                        auto free = [&](Fixed nx, Fixed nz) {
                             return (g.empty() ||
-                                    g.fits(int(nx) / 16, int(nz) / 16, footCells(u.type))) &&
-                                   bodyPenetration(u, nx, nz) <= 0.0f;
+                                    g.fits(nx.floorInt() / 16, nz.floorInt() / 16,
+                                           footCells(u.type))) &&
+                                   bodyPenetration(u, nx, nz) <= Fixed();
                         };
-                        float px = detmath::cos(u.heading), pz = -detmath::sin(u.heading);
+                        const SinCos psc = fxSinCos(u.heading);
+                        float px = psc.c.toFloat(), pz = -psc.s.toFloat();
                         // Which way to dodge. `id & 1` alone makes two units of the
                         // same parity meeting head-on pick the SAME side and collide
                         // again -- the exact failure solidity would otherwise turn
@@ -6038,13 +6064,20 @@ void World::hashTrace() const {
     uint64_t aliveN = 0;
     for (const auto& u : units_) {
         if (u.alive()) ++aliveN;
-        hUnitPos  = fnv(fnv(fnv(hUnitPos, u.id), bits(u.x)), bits(u.z));
-        hUnitPos  = fnv(hUnitPos, bits(u.heading));
+        // THE RAW FIXED-POINT, not a float of it. u.x/u.z are Fixed now, and letting
+        // them convert through the scaffold operator hashed a float APPROXIMATION of
+        // the stored value -- lossy past 256px at 1/65536, so two units genuinely a
+        // fraction of a pixel apart could fold identically and a divergence would be
+        // invisible to the lockstep check that exists to catch it.
+        hUnitPos  = fnv(fnv(fnv(hUnitPos, u.id), uint64_t(uint32_t(u.x.v))),
+                        uint64_t(uint32_t(u.z.v)));
+        hUnitPos  = fnv(hUnitPos, uint64_t(uint32_t(u.heading.v)));
         hUnitHp   = fnv(fnv(hUnitHp, u.id), bits(u.hp));
         hUnitOrd  = fnv(fnv(hUnitOrd, u.id), u.orders.size());
         if (!u.orders.empty()) {
             const Order& o = u.orders.front();
-            hUnitOrd = fnv(fnv(fnv(hUnitOrd, uint32_t(o.targetId)), bits(o.x)), bits(o.z));
+            hUnitOrd = fnv(fnv(fnv(hUnitOrd, uint32_t(o.targetId)),
+                               uint64_t(uint32_t(o.x.v))), uint64_t(uint32_t(o.z.v)));
         }
         hUnitMisc = fnv(fnv(hUnitMisc, u.id), uint64_t(u.alive() ? 1 : 0));
         hUnitMisc = fnv(hUnitMisc, uint64_t(u.veteran));
@@ -6116,10 +6149,12 @@ uint64_t World::stateHash() const {
     for (const auto& u : units_) {
         mix(uint64_t(u.id));
         mix(uint64_t(u.player));
-        mixf(u.x);
-        mixf(u.z);
+        // Raw fixed-point -- see the note in hashTrace. A float conversion here would
+        // silently drop the low bits of the very state this checksum guards.
+        mix(uint64_t(uint32_t(u.x.v)));
+        mix(uint64_t(uint32_t(u.z.v)));
         mixf(u.hp);
-        mixf(u.heading);
+        mix(uint64_t(uint32_t(u.heading.v)));   // an angle is an integer now
         mix(uint64_t(u.orders.size()));
         // Order target + attack-move flag: two sims can hold the same order
         // COUNT while chasing different targets -- fold the head order in so a
@@ -6129,8 +6164,10 @@ uint64_t World::stateHash() const {
             const Order& o = u.orders.front();
             mix(uint64_t(uint32_t(o.targetId)));
             mix(uint64_t(o.attackMove ? 1 : 0));
-            mixf(o.x);
-            mixf(o.z);
+            // Raw fixed-point: a goal is in the same domain as a position, and folding
+            // a float of it would lose the low bits the mover actually steers to.
+            mix(uint64_t(uint32_t(o.x.v)));
+            mix(uint64_t(uint32_t(o.z.v)));
         }
         mix(uint64_t(u.alive() ? 1 : 0));
         mix(uint64_t(u.veteran));
