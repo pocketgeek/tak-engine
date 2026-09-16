@@ -44,7 +44,7 @@ static void check(bool cond, const char* what, const std::string& detail = {}) {
 static UnitType factoryType() {
     UnitType t{};
     t.name = "factory"; t.id = "factory";
-    t.maxVel = 0;                 // maxVel <= 0 => isStructure()
+    t.maxVel = tak::sim::Fixed::fromFloat(0.0f / 30.0f);                 // maxVel <= 0 => isStructure()
     t.maxHp = 5000;
     t.footX = 7; t.footZ = 12;
     t.isBuilder = true;
@@ -55,7 +55,7 @@ static UnitType factoryType() {
 static UnitType soldierType() {
     UnitType t{};
     t.name = "sol"; t.id = "sol";
-    t.maxVel = 60; t.turnRate = 10000;
+    t.maxVel = tak::sim::Fixed::fromFloat(60.0f / 30.0f); t.turnRate = 10000;
     t.maxHp = 100; t.canMove = true;
     t.buildTime = 1;
     t.footX = 2; t.footZ = 2;

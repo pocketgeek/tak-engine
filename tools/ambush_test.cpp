@@ -25,7 +25,7 @@ static void check(bool ok, const std::string& what, const std::string& detail = 
 static UnitType soldier() {
     UnitType t{};
     t.name = "sol"; t.id = "sol";
-    t.maxVel = 70; t.turnRate = 10000;
+    t.maxVel = tak::sim::Fixed::fromFloat(70.0f / 30.0f); t.turnRate = 10000;
     t.maxHp = 100; t.canMove = true;
     t.footX = 2; t.footZ = 2;
     t.sight = 200;
@@ -35,7 +35,7 @@ static UnitType soldier() {
 static UnitType tower() {
     UnitType t{};
     t.name = "twr"; t.id = "twr";
-    t.maxVel = 0;                      // isStructure() == maxVel <= 0
+    t.maxVel = tak::sim::Fixed::fromFloat(0.0f / 30.0f);                      // isStructure() == maxVel <= 0
     t.maxHp = 500;
     t.footX = 3; t.footZ = 3;
     return t;

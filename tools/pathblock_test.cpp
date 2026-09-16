@@ -36,7 +36,7 @@ static void check(bool cond, const std::string& what, const std::string& detail 
 static UnitType soldier() {
     UnitType t{};
     t.name = "sol"; t.id = "sol";
-    t.maxVel = 70; t.turnRate = 10000;
+    t.maxVel = tak::sim::Fixed::fromFloat(70.0f / 30.0f); t.turnRate = 10000;
     t.maxHp = 100; t.canMove = true;
     t.footX = 2; t.footZ = 2;
     return t;

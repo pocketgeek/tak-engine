@@ -36,12 +36,12 @@ struct UnitType;   // for Weapon::damageVs
 
 struct Weapon {
     std::string name;
-    float range = 0;         // px
+    int32_t range = 0;       // px (readInt)
     float reload = 1;        // seconds
-    float damage = 0;        // DAMAGE.default (base, used when no category matches)
+    int32_t damage = 0;      // DAMAGE.default (readInt; the dump prints it %i) (base, used when no category matches)
     float projVel = 0;       // px/s; 0 = instant (melee)
     bool melee = false;
-    float aoe = 0;           // areaofeffect radius (px); >0 = splash
+    int32_t aoe = 0;         // areaofeffect radius px (readInt); >0 = splash
     float edge = 1;          // edgeeffectiveness: damage fraction at the aoe edge
     float aimTol = 0.1f;     // aimtolerance in radians: how close to on-target to fire
     bool ballistic = false;  // FBI weapon type = Ballistic (lobbed arc, not flat)
@@ -200,18 +200,23 @@ struct UnitType {
     std::string id;        // lowercase objectname, e.g. "araarch"
     std::string name;      // display name, e.g. "Archer"
     std::string side;      // ARA/TAR/VER/ZON/CRE
-    float maxVel = 30;     // px/s
-    float accel = 15;      // px/s^2
-    float brake = 15;      // px/s^2
-    float turnRate = 6;    // rad/s
+    Fixed maxVel = Fixed::fromInt(1);                 // px/tick  (= 30 px/s)
+    Fixed accel = Fixed::fromFloat(15.0f / 900.0f);   // px/tick^2 (= 15 px/s^2)
+    Fixed brake = Fixed::fromFloat(15.0f / 900.0f);   // px/tick^2 (= 15 px/s^2)
+    // BAM PER TICK -- the raw FBI `turnrate`, which retail stores as an int and which
+    // is already in COB angle units, i.e. the same 65536-to-a-circle unit as Bam. We
+    // used to scale it to rad/s at load and call bamFromRadians(turnRate * dt) in the
+    // mover, which is the identity round trip: tr * kCobAngle * kTick * (1/30) back
+    // through bamFromRadians lands on tr again.
+    int32_t turnRate = 1092;   // ~6 rad/s
     // FBI turninplacerate: the pivot rate used when the unit is STOPPED and merely
     // turning to face something, which retail keeps separate from the turn rate it
     // uses while moving (KINGDOMS.icd 0x4d91b0 picks between the two on an in-place
     // flag). Retail's parse default is 0, which would leave the 39 ground movers that
     // omit the key unable to pivot at all -- so default to turnRate instead and let an
     // explicit 0 stand.
-    float turnInPlaceRate = 6;
-    float maxHp = 100;
+    int32_t turnInPlaceRate = 1092;   // bam/tick, as turnRate
+    int32_t maxHp = 100;        // maxdamage: readInt at +0x1be in retail
     bool canMove = false;
     bool isBuilder = false;
     // Can this type train units (and therefore hold a rally)? Set for any builder
@@ -222,8 +227,8 @@ struct UnitType {
     // Buildings vs mobile units: the reliable test is maxVel. The FBI `canmove`
     // flag is set on some buildings too (e.g. the Keep, or the Taros Hell), so a
     // canMove building would otherwise be mistaken for a mobile builder.
-    bool isStructure() const { return maxVel <= 0.0f; }
-    float buildDist = 0;    // FBI builddistance: how far a builder reaches to build
+    bool isStructure() const { return maxVel <= Fixed(); }
+    int32_t buildDist = 0;  // FBI builddistance (readInt): how far a builder reaches to build
     bool onMana = false;    // must be built on a mana deposit (yardmap 'S'), e.g. lodestones
     float buildCost = 0;    // mana
     float buildTime = 0;    // work units; seconds = buildTime / builder workerTime
@@ -236,7 +241,7 @@ struct UnitType {
     // matched against a weapon's per-category damage overrides.
     std::vector<std::string> categories;
     std::vector<int> catIds;    // `categories`, interned; same order (see Weapon::dmgVsIds)
-    float sight = 180;        // px (FBI sightdistance)
+    int32_t sight = 180;      // px (FBI sightdistance, readInt)
     bool canFly = false;
     // bankscale / pitchscale: how hard this flyer rolls into a turn and pitches
     // into a climb or dive. Display-only (53 and 33 units carry them).
@@ -245,7 +250,7 @@ struct UnitType {
     // villagers drift around instead of standing still. 16 types, and the missions
     // place hundreds of them.
     bool  wanders = false;
-    float cruiseAlt = 0;      // world units above ground when flying
+    int32_t cruiseAlt = 0;    // world units above ground when flying (readInt)
     enum class Domain { Ground, Water, Hover };
     Domain domain = Domain::Ground;   // from FBI movementclass prefix
     bool canTransport = false;
@@ -254,7 +259,7 @@ struct UnitType {
     // unit that is boarding it. Raw world units == our px (retail stores it as a
     // plain 16-bit with no scaling, the same family as sightdistance/builddistance),
     // so a barge reaches ~419px where we used one hardcoded 70 for every transport.
-    float transportDist = 0;
+    int32_t transportDist = 0;   // readInt
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     std::string bodyType = "default";   // FBI bodytype (flesh/armor/wood/..) = hit-sound material
     std::string corpse;       // FBI corpse feature name
@@ -281,7 +286,7 @@ struct UnitType {
     std::string veteranModel; // veteranmodel: 3DO the unit swaps to at max veterancy
     // --- extended FBI stats -------------------------------------------------
     float healTime = 0;       // healtime: seconds per HP regenerated (0 = no regen)
-    float leash = 0;          // maneuverleashlength: max auto-chase distance (0 = unlimited)
+    int32_t leash = 0;        // maneuverleashlength (readInt): max auto-chase distance (0 = unlimited)
     // Per-type standing orders, derived exactly as retail's [UNITINFO] parser does
     // (icd 0x4c005d). standingunitorder is a COMPOSITE front-end: 2 -> move 1 /
     // fire 2, 1 -> move 0 / fire 2, 0 -> move 0 / fire 0. When the key is absent
@@ -305,15 +310,15 @@ struct UnitType {
     // "mobile and armed" happened to give the same answer; this is the flag retail
     // actually consults, so a unit that breaks that coincidence still behaves.
     bool canSetStance = true;
-    float waterMult = 1;      // watermultiplier: speed factor in shallow water
-    float roadMult = 1.2f;    // roadmultiplier: on-road speed factor. Retail's FBI
+    Fixed waterMult = Fixed::fromInt(1);      // watermultiplier: speed factor in shallow water
+    Fixed roadMult = Fixed::raw(0x13333);     // roadmultiplier: on-road speed factor. Retail's FBI
                               // parser defaults it to 16.16 0x13333 (~1.2) -- icd
                               // 0x4bfc5e -- so EVERY ground unit gains on roads.
-    float maxWaterDepth = 0;  // deepest water a ground unit may wade into
-    float maxWaterSlope = 255;   // MaxWaterSlope: the slope limit below the waterline
-    float maxSlope = 255;     // steepest cell height-spread the unit may cross
-    float minWaterDepth = 0;  // shallowest water a water unit needs (from MOVEINFO)
-    float radar = 0;          // radardistance: fog-reveal radius (separate from sight)
+    int32_t maxWaterDepth = 0;   // deepest water a ground unit may wade into (readInt)
+    int32_t maxWaterSlope = 255; // MaxWaterSlope (readInt): the slope limit below the waterline
+    int32_t maxSlope = 255;   // steepest cell height-spread the unit may cross (readInt)
+    int32_t minWaterDepth = 0;   // shallowest water a water unit needs (readInt)
+    int32_t radar = 0;        // radardistance (readInt): fog-reveal radius (separate from sight)
     bool  noVeteran = false;  // noveteran: this unit can never gain veterancy
     float maxMana = 0;        // per-unit mana pool (casters); 0 = uses no personal mana
     float manaRegen = 0;      // manarechargerate: personal mana regained per second
@@ -323,7 +328,7 @@ struct UnitType {
     bool  canCloak = false;       // cancloak
     float cloakCost = 0;          // cloakcost: mana/sec while cloaked and idle
     float cloakCostMove = 0;      // cloakcostmoving: mana/sec while cloaked and moving
-    float minCloakDist = 0;       // mincloakdistance: an enemy this close forces uncloak
+    int32_t minCloakDist = 0;     // mincloakdistance (readInt): an enemy this close forces uncloak
     // FBI fireatwillrandom (icd: UnitDef+0x264 bit 24, parsed at 0x4c0a3a; its ONLY
     // reader is the auto-target scorer at 0x4129bc). Retail scores each candidate
     // n = dist^2 / damageVsTarget and keeps the lowest of rand(n)/2 + rand(n); this
@@ -364,7 +369,7 @@ struct UnitType {
     int totalAllowed = 0;
     float maxRange() const {
         float r = 0;
-        for (const auto& w : weapons) r = std::max(r, w.range);
+        for (const auto& w : weapons) r = std::max(r, float(w.range));
         return r;
     }
     // Does this unit lob? A lobbing weapon takes the high ballistic arc, which is
@@ -387,10 +392,10 @@ struct MoveClass {
     // of them is 1x1 (2x2 through 5x5). Retail copies these into the unit def at
     // KINGDOMS.icd 0x4c0e54 and falls back to the FBI only for a unit with no class.
     int footX = 0, footZ = 0;
-    float maxSlope = 255;
-    float maxWaterSlope = 255;   // the limit used when the cell's low corner is wet
-    float maxWaterDepth = 255;
-    float minWaterDepth = 0;
+    int32_t maxSlope = 255;
+    int32_t maxWaterSlope = 255;   // the limit used when the cell's low corner is wet
+    int32_t maxWaterDepth = 255;
+    int32_t minWaterDepth = 0;
 };
 
 class TypeRegistry {
@@ -577,7 +582,9 @@ struct Unit {
     bool corpseBlocks = false;   // dead structure still occupies its nav footprint
                                  // (blocking wreck / neutral wall) until retired
     // --- extended runtime state --------------------------------------------
-    float mana = 0;        // personal mana pool (casters), capped at type->maxMana
+    // DOUBLE, like Player::mana and for the same reason: retail's pools are 64-bit
+    // floating point (the affordability check at 0x46e85f subtracts one with `fsubl`).
+    double mana = 0;       // personal mana pool (casters), capped at type->maxMana
     int   xp = 0;          // accumulated experience from kills
     int   veteran = 0;     // veteran level (0..10); scales attack/armor/reload
     float atkBuff = 1;     // live attack multiplier from auras (decays to 1)
@@ -670,10 +677,10 @@ struct Unit {
     // at 10 => up to 2.0x). Scales attack up, armor up (less damage taken), and
     // reload down (faster). Verified against KINGDOMS.icd. See retail-engine-internals.
     float vetMul() const { return 1.0f + 0.10f * float(veteran); }
-    bool moving() const { return alive() && (speed > Fixed::fromFloat(1.0f) || !orders.empty()); }
+    bool moving() const { return alive() && (speed > Fixed::fromFloat(1.0f / 30.0f) || !orders.empty()); }
     // Actually translating (for the walk animation), vs standing with an
     // attack/queued order.
-    bool walking() const { return alive() && speed > Fixed::fromFloat(3.0f); }
+    bool walking() const { return alive() && speed > Fixed::fromFloat(3.0f / 30.0f); }
 };
 
 // A reclaimable map feature (tree, rock, house, wreckage, …). Positions and stats

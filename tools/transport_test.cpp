@@ -53,7 +53,7 @@ static constexpr float kRange = 150.0f;
 static UnitType boatType() {
     UnitType t{};
     t.name = "boat";
-    t.maxVel = 60;              // maxVel > 0 => not a structure
+    t.maxVel = tak::sim::Fixed::fromFloat(60.0f / 30.0f);              // maxVel > 0 => not a structure
     t.turnRate = 10000;
     t.transportCap = 4;
     t.transportDist = 70;
@@ -64,7 +64,7 @@ static UnitType boatType() {
 static UnitType footType() {
     UnitType t{};
     t.name = "foot";
-    t.maxVel = 30;
+    t.maxVel = tak::sim::Fixed::fromFloat(30.0f / 30.0f);
     t.turnRate = 10000;
     t.transportSize = 1;
     t.maxHp = 100;

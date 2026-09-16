@@ -150,9 +150,9 @@ void GameView::drawUnitInfo(int winW, int winH) {
         text("N\\A", g.valAcc, false);
         text("N\\A", g.valTurn, false);
     } else {
-        std::snprintf(buf, sizeof buf, "%.1f m/s", t->maxVel * 0.4f);
+        std::snprintf(buf, sizeof buf, "%.1f m/s", t->maxVel.toFloat() * 30.0f * 0.4f);
         text(buf, g.valVel, false);
-        std::snprintf(buf, sizeof buf, "%.2f m/s/s", t->accel * 0.4f / 30.0f);
+        std::snprintf(buf, sizeof buf, "%.2f m/s/s", t->accel.toFloat() * 900.0f * 0.4f / 30.0f);
         text(buf, g.valAcc, false);
         std::snprintf(buf, sizeof buf, "%.0f deg/s", t->turnRate * 57.2957795f);
         text(buf, g.valTurn, false);

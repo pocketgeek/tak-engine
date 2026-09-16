@@ -1406,7 +1406,7 @@
                     // each cycle while the unit keeps moving.
                     a.vm->start("walk") || a.vm->start("walk_legs");
                 }
-            } else if (u.type->maxVel > 0) {
+            } else if (u.type->maxVel > tak::sim::Fixed()) {
                 // No-walk movers (ships, wheeled vehicles): retail drives these via
                 // the MoveRate engine callin. The Ark's MotionControl ambient (from
                 // Create) polls the static that MoveRate sets and runs the rowing /
@@ -1530,7 +1530,7 @@
                     }
                 }
             }
-            // Buildings: yard/production anims. Detect via isStructure (maxVel<=0),
+            // Buildings: yard/production anims. Detect via isStructure (maxVel <= tak::sim::Fixed()),
             // NOT !canMove -- the Keep/Castle/Hell carry canmove=1 in their FBI, so
             // the old test skipped every factory and none of them ever animated
             // while training.
@@ -1579,7 +1579,7 @@
                         float halfD = u.type->footZ * 8.0f + 24.0f;
                         bool wantOpen = false;
                         for (const UnitR* op : front().live) {
-                            // isStructure (maxVel<=0), NOT !canMove: walls set canmove=1
+                            // isStructure (maxVel <= tak::sim::Fixed()), NOT !canMove: walls set canmove=1
                             // with no velocity, and a wall abuts every gate -- the canMove
                             // test would latch the gate open forever (CLAUDE.md gotcha).
                             if (op == &u || !op->type || isStructure(op->type)) continue;
@@ -1981,9 +1981,9 @@
                         return 1;
                     }
                     case 29:                                           // CURRENT_SPEED (% of max:
-                        return su->type->maxVel > 0                    // ship MotionControl picks
+                        return su->type->maxVel > tak::sim::Fixed()                    // ship MotionControl picks
                                    ? int32_t(std::clamp(               // slowrow/row/fastrow at
-                                         su->speed / su->type->maxVel * 100.0f,  // 25/75)
+                                         su->speed / std::max(su->type->maxVel.toFloat(), 0.001f) * 100.0f,  // 25/75)
                                          0.0f, 100.0f))
                                    : 0;
                     case 32: return su->veteran;                       // VETERAN LEVEL (StatusControl
@@ -2065,7 +2065,7 @@
             } else if (isStructure(type) || !a.hasWalk || a.hasMelee) {
                 // Buildings: run the COB constructor so ambient loops start (e.g. the
                 // Keep's Create kicks off its flag/smoke scripts, the Sacred Fire's
-                // its FireControl flicker). Detect via isStructure (maxVel<=0), NOT
+                // its FireControl flicker). Detect via isStructure (maxVel <= tak::sim::Fixed()), NOT
                 // !canMove -- the Keep and friends set canmove=1 with no velocity, so
                 // the old !canMove test skipped them and they never animated.
                 // Also mobile units with NO walk cycle (ships' oars, wheeled war-machines'

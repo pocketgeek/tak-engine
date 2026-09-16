@@ -1078,7 +1078,7 @@
             int i = guiIdx(nm);
             if (i >= 0) out.push_back({i, c});
         };
-        bool mobile = front->type->maxVel > 0;        // inverse of isStructure()
+        bool mobile = front->type->maxVel > tak::sim::Fixed();        // inverse of isStructure()
         bool armed = !front->type->weapons.empty();
         // The five order slots sit at fixed .gui positions that nothing else uses, so
         // retail keeps them on screen and swaps in the Disabled face when the order
@@ -1414,7 +1414,7 @@
                 if (u->buildSiteId) {
                     if (const auto* s = frameUnitP(u->buildSiteId); s && s->type) {
                         tName = s->type->name;
-                        tProg = s->hp / std::max(1.0f, s->type->maxHp);
+                        tProg = s->hp / std::max(1.0f, float(s->type->maxHp));
                     }
                 } else if (!u->buildQueue.empty() && u->buildQueue.front()) {
                     tName = u->buildQueue.front()->name;
@@ -1431,7 +1431,7 @@
                 if (u) {
                     SDL_Texture* ic = iconFor(u->type->id);
                     if (!ic) ic = modelIconTex(u->type->id, colorSlot_[localPlayer_ & 7],
-                                               u->type->maxVel > 0);
+                                               u->type->maxVel > tak::sim::Fixed());
                     if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &pr);
                 }
                 SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
@@ -1449,7 +1449,7 @@
                 SDL_FRect nr = place(t1);
                 blockText(u->type->name, nr.x, nr.y, tpx, {236, 226, 192, 255});
             }
-            bar(guiIdxLeft("HealthBar"), u ? u->hp / std::max(1.0f, u->type->maxHp) : 0.0f,
+            bar(guiIdxLeft("HealthBar"), u ? u->hp / std::max(1.0f, float(u->type->maxHp)) : 0.0f,
                 {210, 70, 60, 255});
             bar(guiIdxLeft("ManaBar"),
                 (u && u->type->maxMana > 0) ? u->mana / u->type->maxMana : 0.0f,

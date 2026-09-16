@@ -545,7 +545,7 @@ void GameView::autoplayStep() {
     {
         std::lock_guard<std::mutex> lk(simMutex_);
         for (const auto& u : world_.units())
-            if (u.alive() && u.type && int(u.player) == localPlayer_ && u.type->maxVel > 0 &&
+            if (u.alive() && u.type && int(u.player) == localPlayer_ && u.type->maxVel > tak::sim::Fixed() &&
                 !u.embarked() && !u.underConstruction)
                 mine.push_back(u.id);
     }

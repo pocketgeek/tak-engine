@@ -104,19 +104,18 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // 1 = mobile unit) is the authoritative mobility flag.
             t.canMove = info->numberOr("canmove", 0) != 0 &&
                         info->numberOr("bmcode", 1) != 0;
-            t.maxVel = float(info->numberOr("maxvelocity", 0)) * kTick;
+            t.maxVel = Fixed::fromFloat(float(info->numberOr("maxvelocity", 0)));
             // Velocity is px/tick (*kTick => px/s); acceleration and braking are
             // px/tick^2, so they need kTick^2. Using kTick left accel 30x too
             // small, so high-maxVel flyers never reached speed and all crawled.
-            t.accel = float(info->numberOr("acceleration", 0.5)) * kTick * kTick;
-            t.brake = float(info->numberOr("brakerate", 0.5)) * kTick * kTick;
+            t.accel = Fixed::fromFloat(float(info->numberOr("acceleration", 0.5)));
+            t.brake = Fixed::fromFloat(float(info->numberOr("brakerate", 0.5)));
             // FBI turnrate is COB angle units per tick.
             float tr = float(info->numberOr("turnrate", 500));
-            t.turnRate = tr * kCobAngle * kTick;
+            t.turnRate = int32_t(tr);   // bam/tick, exactly as the FBI holds it
             // See the header: retail defaults this to 0; we default it to turnrate so
             // a unit that omits the key can still turn on the spot.
-            t.turnInPlaceRate = float(info->numberOr("turninplacerate", tr))
-                                * kCobAngle * kTick;
+            t.turnInPlaceRate = int32_t(float(info->numberOr("turninplacerate", tr)));
             t.maxHp = float(info->numberOr("maxdamage", 100));
             t.isBuilder = info->numberOr("builder", 0) != 0;
             t.commander = info->numberOr("commander", 0) != 0;   // the Monarch
@@ -184,12 +183,14 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     t.defaultFire = uint8_t(int(info->numberOr("standingfireorder", 2)) & 3);
                 }
             }
-            t.waterMult = float(info->numberOr("watermultiplier",
-                                info->numberOr("watermultipliser", 1)));
+            t.waterMult = Fixed::fromFloat(float(info->numberOr("watermultiplier",
+                                info->numberOr("watermultipliser", 1))));
             // Exact key only: the icd's parser knows no typo fallback, so
             // verpult's "roadmultplier" never counted in retail either. The
             // retail default is ~1.2 (16.16 0x13333), NOT 1.0.
-            t.roadMult = float(info->numberOr("roadmultiplier", 1.2));
+            t.roadMult = info->value("roadmultiplier")
+                       ? Fixed::fromFloat(float(info->numberOr("roadmultiplier", 1.2)))
+                       : Fixed::raw(0x13333);
             t.maxWaterDepth = float(info->numberOr("maxwaterdepth", 0));
             t.maxSlope = float(info->numberOr("maxslope", 255));
             // Retail keeps this in 3 bits (icd 0x4c09e8: `& 7`, shifted into
@@ -2274,8 +2275,8 @@ static void leadAim(const Unit& shooter, const Unit& tgt, const Weapon& w,
     // Velocity from heading x speed is exact -- it is literally what the mover
     // integrates each tick.
     const SinCos tsc = fxSinCos(tgt.heading);
-    ax += tsc.s.toFloat() * tgt.speed.toFloat() * t;
-    az += tsc.c.toFloat() * tgt.speed.toFloat() * t;
+    ax += tsc.s.toFloat() * tgt.speed.toFloat() * kTick * t;
+    az += tsc.c.toFloat() * tgt.speed.toFloat() * kTick * t;
 }
 
 void World::fire(Unit& u, Unit& target, int slot) {
@@ -2451,7 +2452,7 @@ void World::fire(Unit& u, Unit& target, int slot) {
     // detonates: the old half-second of slack would put an arapult's crater ~375px
     // (23 cells) beyond where the shell was drawn landing. A GUIDED one keeps the
     // slack and is fuelled from the weapon's RANGE instead.
-    p.life = w.kind == Weapon::Kind::Guided ? (std::max(w.range, dist) / vel + 0.5f)
+    p.life = w.kind == Weapon::Kind::Guided ? (std::max(float(w.range), dist) / vel + 0.5f)
                                             : (dist / vel);
     p.flight = dist / vel;
     projectiles_.push_back(p);
@@ -2607,7 +2608,7 @@ void World::tickCombat(Unit& u, float dt) {
         o.z = t->z;
         float dx = (t->x - u.x).toFloat(), dz = (t->z - u.z).toFloat();
         if (dx * dx + dz * dz <= 70 * 70)
-            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
+            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
         return;   // movement walks toward o when out of reach
     }
 
@@ -2656,7 +2657,7 @@ void World::tickCombat(Unit& u, float dt) {
     // small margin for where nav actually halts at the edge (mirrors the builder reach
     // in tickConstruction). Mobile targets keep centre-distance, so unit-vs-unit combat
     // is unchanged.
-    float pad = target->type->maxVel <= 0.0f
+    float pad = target->type->maxVel <= Fixed()
                     ? 8.0f * float(std::max(target->type->footX, target->type->footZ)) + 24.0f
                     : 0.0f;
     float reach = best + pad;
@@ -2709,11 +2710,11 @@ void World::tickCombat(Unit& u, float dt) {
     // In range: stop and face the target. Retail brakes to a halt FIRST and only
     // then pivots, at turninplacerate rather than the moving turn rate (icd
     // 0x4d9b65), so a unit doesn't spin on the spot while it is still sliding.
-    u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
+    u.speed = fxMax(Fixed(), u.speed - u.type->brake);
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
     const int32_t diff = bamDiff(want, u.heading);
     if (u.speed.toFloat() <= 0.0f) {
-        const int32_t maxTurn = bamFromRadians(u.type->turnInPlaceRate * dt).v;
+        const int32_t maxTurn = u.type->turnInPlaceRate;
         u.heading = u.heading + Bam(std::clamp(diff, -maxTurn, maxTurn));
     }
     // Fire a weapon when the target is in ITS [minrange, range] band, within its
@@ -3150,7 +3151,7 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
 bool World::clearableForPlacement(const UnitType* type, float x, float z,
                                   std::vector<int>& out) const {
     out.clear();
-    if (!type || type->maxVel > 0.0f) return false;   // buildings only
+    if (!type || type->maxVel > Fixed()) return false;   // buildings only
     if (canPlace(type, x, z)) return true;            // nothing in the way already
     const NavGrid& grid = navFor(type);
     if (grid.empty()) return false;
@@ -3509,7 +3510,7 @@ void World::tickReclaim(Unit& b, float dt) {
     b.speed = Fixed();
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));   // face the feature
     // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
-    const int32_t bTurnMax = bamFromRadians(b.type->turnInPlaceRate * dt).v;
+    const int32_t bTurnMax = b.type->turnInPlaceRate;
     const int32_t turn = std::clamp(bamDiff(want, b.heading), -bTurnMax, bTurnMax);
     b.heading = b.heading + Bam(turn);
     float d = std::min(f.work, kReclaimRate * dt);
@@ -3575,7 +3576,7 @@ void World::tickRepair(Unit& b, float dt) {
     b.speed = Fixed();
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
     // Stopped: pivot at turninplacerate, not the moving turn rate.
-    const int32_t bPivotMax = bamFromRadians(b.type->turnInPlaceRate * dt).v;
+    const int32_t bPivotMax = b.type->turnInPlaceRate;
     b.heading = b.heading + Bam(std::clamp(bamDiff(want, b.heading), -bPivotMax, bPivotMax));
     float total = t->type->buildTime / std::max(b.type->workerTime, 0.01f);
     Player& tm = players_[size_t(b.player)];
@@ -3668,7 +3669,7 @@ void World::tickConstruction(Unit& b, float dt) {
     // rate (a building has turnRate 0, so it simply doesn't rotate).
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
     // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
-    const int32_t bTurnMax = bamFromRadians(b.type->turnInPlaceRate * dt).v;
+    const int32_t bTurnMax = b.type->turnInPlaceRate;
     const int32_t turn = std::clamp(bamDiff(want, b.heading), -bTurnMax, bTurnMax);
     b.heading = b.heading + Bam(turn);
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
@@ -3806,7 +3807,7 @@ void World::tickHealAuras() {
                 // Deliberate divergence: retail bills the whole pulse even when only a
                 // sliver of it lands, so topping off one unit can drain a player's
                 // pool. Charge for the repair actually done instead.
-                float need = 1.0f - e.hp.toFloat() / std::max(e.type->maxHp, 1.0f);
+                float need = 1.0f - e.hp.toFloat() / std::max(float(e.type->maxHp), 1.0f);
                 prog = std::min(prog, need);
                 float cost = e.type->buildCost * prog;
                 if (cost > tm.mana) {   // short on mana: heal proportionally less
@@ -5054,7 +5055,7 @@ void World::tick(float dt) {
         if (u.alive() && u.type && u.squad < 0)
             if (FormAgg* f = formOf(u)) {
                 f->sx += u.x.toFloat(); f->sz += u.z.toFloat(); ++f->n;
-                f->slowest = std::min(f->slowest, u.type->maxVel);
+                f->slowest = std::min(f->slowest, u.type->maxVel.toFloat());
             }
     for (auto& u : units_) {
         if (!u.alive() || !u.type || u.squad >= 0 || !u.orders.empty()) continue;
@@ -5135,7 +5136,7 @@ void World::tick(float dt) {
             {
                 // Retail severity (icd 0x512610): ((overkill% + HP% one second
                 // before death) / 2), clamped 1..100. Passed to the COB Killed.
-                float okPct = u.overkill.toFloat() * 100.0f / std::max(u.type->maxHp, 1.0f);
+                float okPct = u.overkill.toFloat() * 100.0f / std::max(float(u.type->maxHp), 1.0f);
                 u.severity = uint8_t(std::clamp((okPct + float(u.hpPct1s)) * 0.5f,
                                                 1.0f, 100.0f));
                 // Dying while petrified/frozen leaves the FBI stone=/frozen=
@@ -5213,7 +5214,7 @@ void World::tick(float dt) {
         // severity reads the PREVIOUS sample, i.e. your health ~1s before death.
         if (tickCounter_ % 30 == 0) {
             u.hpPct1s = u.hpPctCur;
-            u.hpPctCur = uint8_t(std::clamp(u.hp.toFloat() / std::max(u.type->maxHp, 1.0f)
+            u.hpPctCur = uint8_t(std::clamp(u.hp.toFloat() / std::max(float(u.type->maxHp), 1.0f)
                                             * 100.0f, 0.0f, 100.0f));
         }
         // Status timers count down; HP regenerates (healtime); mana recharges.
@@ -5260,7 +5261,7 @@ void World::tick(float dt) {
             u.hp = fxMin(Fixed::fromFloat(u.type->maxHp),
                          u.hp + Fixed::fromFloat(dt / u.type->healTime));
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
-            u.mana = std::min(u.type->maxMana, u.mana + u.type->manaRegen * dt);
+            u.mana = std::min(double(u.type->maxMana), u.mana + double(u.type->manaRegen) * double(dt));
         // A WANDERER keeps its spawn point as home -- that anchor is what stops its
         // stroll turning into a migration.
         if (u.orders.empty() && !u.type->wanders) { u.homeX = u.x; u.homeZ = u.z; }
@@ -5270,7 +5271,7 @@ void World::tick(float dt) {
         // as one, rolled on the sim's deterministic RNG -- and always to a point
         // near HOME, so they mill about their patch instead of drifting off it.
         if (u.type->wanders && u.orders.empty() && !u.underConstruction &&
-            u.type->maxVel > 0 && (uint32_t(u.id) + tickCounter_) % 240 == 0) {
+            u.type->maxVel > Fixed() && (uint32_t(u.id) + tickCounter_) % 240 == 0) {
             float ang = float(burnRand(628)) / 100.0f;
             float r = float(burnRand(96));
             order(u.id, u.homeX.toFloat() + detmath::sin(ang) * r,
@@ -5281,7 +5282,7 @@ void World::tick(float dt) {
         // decloak, and so does running dry of mana.
         if (u.type->canCloak && u.cloakOn) {
             bool enemyNear = false;
-            float md = std::max(u.type->minCloakDist, 1.0f);
+            float md = std::max(float(u.type->minCloakDist), 1.0f);
             forEachNear(u.x.toFloat(), u.z.toFloat(), md, [&](int idx) {
                 const Unit& e = units_[size_t(idx)];
                 if (e.alive() && !e.embarked() && !allied(e.player, u.player) && e.type) {
@@ -5289,7 +5290,7 @@ void World::tick(float dt) {
                     if (dx * dx + dz * dz <= md * md) enemyNear = true;
                 }
             });
-            float cost = (u.speed.toFloat() > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
+            float cost = (u.speed.toFloat() * kTick > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
             Player& tm = players_[size_t(u.player)];
             if (!enemyNear && tm.mana >= cost) { tm.mana -= cost; u.cloaked = true; }
             else u.cloaked = false;
@@ -5351,7 +5352,7 @@ void World::tick(float dt) {
                 // Pad by a structure target's footprint half-extent so "holding in
                 // range" agrees with tickCombat's fire gate (else a unit stopped at a
                 // building's edge gets dragged back into moving).
-                float pad = t->type->maxVel <= 0.0f
+                float pad = t->type->maxVel <= Fixed()
                     ? 8.0f * float(std::max(t->type->footX, t->type->footZ)) + 24.0f : 0.0f;
                 if (std::sqrt(dx * dx + dz * dz) > (u.type->maxRange() + pad) * 0.95f) return false;
                 // Don't sit still with no shot: a ranged unit whose line to the
@@ -5367,16 +5368,16 @@ void World::tick(float dt) {
         if (combatHold) continue;
 
         if (u.orders.empty()) {
-            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
+            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
         } else if (u.orders.front().wait > 0.0f) {
             // SetMission "w N": hold position while the scripted wait counts down.
-            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
+            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
             u.orders.front().wait -= dt;
             if (u.orders.front().wait <= 0.0f) u.orders.erase(u.orders.begin());
         } else if (u.orders.front().waitAttack) {
             // SetMission "wa": ambush -- hold until a non-allied unit is within sight,
             // then release to the next order (usually an attack).
-            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
+            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
             float sight = u.type->sight > 0 ? u.type->sight : 200.0f;
             // THROUGH THE SPATIAL GRID. This scanned every unit in the world, for every
             // ambushing unit, every tick -- O(n^2) in the number of ambushers, and a
@@ -5440,7 +5441,7 @@ void World::tick(float dt) {
             }
             const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
             const int32_t diff = bamDiff(want, u.heading);
-            const int32_t maxTurn = bamFromRadians(u.type->turnRate * dt).v;
+            const int32_t maxTurn = u.type->turnRate;
             u.heading = u.heading + Bam(std::clamp(diff, -maxTurn, maxTurn));
 
             // NO YIELD PASS. A stalled unit used to look for an opposing one in
@@ -5455,7 +5456,7 @@ void World::tick(float dt) {
             // yielded went on blocking the one it yielded to.
 
             // Brake into the waypoint if it's the last one; slow for big turns.
-            float target = u.type->maxVel;
+            Fixed target = u.type->maxVel;
             // Formation pacing: a pure-move member keeps to the group's slowest speed,
             // UNLESS it's behind the centre relative to the goal (a straggler), in which
             // case it sprints at its own speed to catch up (see the FormAgg pass above).
@@ -5469,28 +5470,28 @@ void World::tick(float dt) {
                     float gx = legEnd.x.toFloat(), gz = legEnd.z.toFloat();
                     float uToGoal = detmath::len(u.x.toFloat() - gx, u.z.toFloat() - gz);
                     float cToGoal = detmath::len(cx - gx, cz - gz);
-                    if (uToGoal <= cToGoal + kFormBehind) target = std::min(target, f->slowest);
+                    if (uToGoal <= cToGoal + kFormBehind) target = fxMin(target, Fixed::fromFloat(f->slowest));
                 }
             }
             // Terrain speed factors, retail-style (icd 0x51be12): ROAD first --
             // whole footprint on road cells -- else shallow WATER, never both
             // (a road bridge over the river keeps the road bonus).
             if (!u.type->canFly) {
-                if (u.type->roadMult != 1.0f &&
+                if (u.type->roadMult != Fixed::fromInt(1) &&
                     onRoad(u.x.toFloat(), u.z.toFloat(), u.type->footX, u.type->footZ)) {
-                    target *= u.type->roadMult;
+                    target = target * u.type->roadMult;
                     static const bool kRoadLog = std::getenv("TAK_ROADLOG") != nullptr;
                     if (kRoadLog) {
                         static int logged = 0;
                         if (logged < 5)
                             std::fprintf(stderr, "road boost: %s x%.2f (%d)\n",
-                                         u.type->id.c_str(), u.type->roadMult, ++logged);
+                                         u.type->id.c_str(), u.type->roadMult.toFloat(), ++logged);
                     }
-                } else if (u.type->waterMult != 1.0f && !depth_.empty()) {
+                } else if (u.type->waterMult != Fixed::fromInt(1) && !depth_.empty()) {
                     int cx = u.x.floorInt() / 16, cz = u.z.floorInt() / 16;
                     if (cx >= 0 && cz >= 0 && cx < terW_ && cz < terH_ &&
                         depth_[size_t(cz) * terW_ + cx] > 0)
-                        target *= u.type->waterMult;
+                        target = target * u.type->waterMult;
                 }
             }
             // Retail couples turning to braking (icd 0x4da4ce): it works out how far
@@ -5498,9 +5499,10 @@ void World::tick(float dt) {
             // brakes when the remaining distance is inside twice that arc -- so a
             // sharp corner slows you down in proportion to how sharp it is, instead
             // of our old flat "over 0.8 rad, drop to 30%" cliff.
-            float turnRate = std::max(u.type->turnRate, 1e-4f);
-            float arcDist = u.speed.toFloat() * std::abs(diff) / turnRate;
-            if (dist < 2.0f * arcDist) target = 0;
+            // back to rad/s for the arc test below
+            float turnRate = std::max(float(u.type->turnRate) * kCobAngle * kTick, 1e-4f);
+            float arcDist = u.speed.toFloat() * kTick * std::abs(diff) / turnRate;
+            if (dist < 2.0f * arcDist) target = Fixed();
             // Retail's stop-distance test measures to a DIFFERENT path point than the
             // arc test does, and we have only one `dist` (to the current order point).
             // Feeding it both tests unguarded would stop the unit at every route node, so
@@ -5508,17 +5510,17 @@ void World::tick(float dt) {
             // does.
             bool last = u.orders.size() == 1;
             if (last) {
-                float stopDist = u.speed.toFloat() * u.speed.toFloat() / (2 * u.type->brake);
-                if (dist < stopDist) target = 0;
+                const Fixed stopDist = (u.speed * u.speed) / (Fixed::fromInt(2) * u.type->brake);
+                if (Fixed::fromFloat(dist) < stopDist) target = Fixed();
             }
             // The target is derived from unit data (float px/s) and the road/formation
             // multipliers above; it crosses into fixed point once, here, and the ramp
             // toward it is integer from then on.
-            const Fixed targetFx = Fixed::fromFloat(target);
+            const Fixed targetFx = target;
             if (u.speed < targetFx)
-                u.speed = fxMin(u.speed + Fixed::fromFloat(u.type->accel * dt), targetFx);
+                u.speed = fxMin(u.speed + u.type->accel, targetFx);
             else
-                u.speed = fxMax(u.speed - Fixed::fromFloat(u.type->brake * dt), targetFx);
+                u.speed = fxMax(u.speed - u.type->brake, targetFx);
 
             // THE STEP IS FIXED-POINT. detmath still computes the direction in double
             // (it is bit-identical across builds by construction), but the displacement
@@ -5528,7 +5530,7 @@ void World::tick(float dt) {
             // INTEGER ALL THE WAY TO THE POSITION: a CORDIC sin/cos of a binary angle,
             // scaled by a fixed-point step. No float touches the displacement now.
             const SinCos sc = fxSinCos(u.heading);
-            const Fixed stepLen = Fixed::fromFloat(u.speed.toFloat() * dt);
+            const Fixed stepLen = u.speed;
             const Fixed mx = sc.s * stepLen;
             const Fixed mz = sc.c * stepLen;
             // Collide ground/water units with the nav grid so they can't walk
@@ -5606,7 +5608,7 @@ void World::tick(float dt) {
                     // been refused twice running), so the unit keeps pressing and
                     // resumes the instant the way clears. Stopping outright is what
                     // turns a momentary jam into a permanent one.
-                    u.speed = fxMin(u.speed, Fixed::fromFloat(u.type->maxVel * 0.4f));
+                    u.speed = fxMin(u.speed, Fixed::fromFloat(u.type->maxVel.toFloat() * 0.4f));
                     if (u.repathLeft > 0) --u.repathLeft;
                     if (!g.empty() && u.repathLeft <= 0 &&
                         u.orders.front().targetId == 0) {

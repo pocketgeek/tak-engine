@@ -693,7 +693,7 @@ int main(int argc, char** argv) {
             check(gg->ghost, "the Ghost of Garacaius is a ghost (translucent)");
         // Shadow suppression is the render rule those flags feed.
         if (const auto* wall = ut("arawall"))
-            check(!(wall->maxVel > 0) || !wall->noShadow, "a wall is a structure anyway");
+            check(!(wall->maxVel > sim::Fixed()) || !wall->noShadow, "a wall is a structure anyway");
         if (const auto* trans = ut("aratrans"))
             check(int(trans->transportDist) == 419,
                   "aratrans loads from its own transportdistance, not a constant 70",
@@ -1026,7 +1026,7 @@ int main(int argc, char** argv) {
                           std::to_string(t->footZ) + " (want " + wt.cls + ")");
         int ones = 0, movers = 0;
         for (const auto& [id, t] : reg.types()) {
-            if (t.maxVel <= 0 || t.canFly) continue;
+            if (t.maxVel <= sim::Fixed() || t.canFly) continue;
             ++movers;
             if (t.footX <= 1) ++ones;
         }
@@ -1407,7 +1407,7 @@ int main(int argc, char** argv) {
         // over the FBIs makes them look unarmed.
         std::vector<std::string> armedWithoutStance;
         for (const auto& [id, t] : reg.types())
-            if (!t.canSetStance && t.maxVel > 0 && t.weapon.damage > 0)
+            if (!t.canSetStance && t.maxVel > sim::Fixed() && t.weapon.damage > 0)
                 armedWithoutStance.push_back(id);
         std::sort(armedWithoutStance.begin(), armedWithoutStance.end());
         std::string joined;
@@ -1560,7 +1560,7 @@ int main(int argc, char** argv) {
         const sim::UnitType* regen = nullptr;
         const sim::UnitType* norgen = nullptr;
         for (const auto& [tid, t] : reg.types()) {
-            if (t.maxVel <= 0) continue;                  // movers only: easy to spawn
+            if (t.maxVel <= sim::Fixed()) continue;                  // movers only: easy to spawn
             if (!regen && t.healTime > 0) regen = &t;
             if (!norgen && t.healTime <= 0) norgen = &t;
         }

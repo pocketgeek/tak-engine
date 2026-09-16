@@ -2160,7 +2160,7 @@ private:
     // A "structure" (building) for render/build purposes = one that can't actually
     // move. NOTE: the FBI `canmove` flag is unreliable -- some buildings (the Keep,
     // arakeep) set canmove=1 with NO velocity -- so key off maxVel, not type->canMove.
-    static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= 0.0f; }
+    static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= tak::sim::Fixed(); }
     // Retail's shadow rule, and ONLY retail's: it skips the whole shadow block for
     // FBI `noshadow` (KINGDOMS.icd 0x4ec8d8) and, independently, for every `floater`
     // (0x4ecac0) -- which is why five ships carry a shadowart they never show.
@@ -3246,8 +3246,8 @@ private:
     // An impact effect scaled to the weapon: fire/lightning tinted, aoe-sized.
     void spawnImpact(const tak::sim::Weapon& w, float x, float z, float baseAlt = 0) {
         using Fx = tak::sim::WeaponFx;
-        float sc = 1.0f + std::min(w.aoe, 200.0f) / 40.0f;
-        int n = int(6 + std::min(w.aoe, 200.0f) / 6);
+        float sc = 1.0f + std::min(float(w.aoe), 200.0f) / 40.0f;
+        int n = int(6 + std::min(float(w.aoe), 200.0f) / 6);
         if (w.fx == Fx::Fire) {
             spawnBurst(x, z, n, 240, 130, 40, 34 * sc, 2.4f * sc, 0, baseAlt);
             spawnBurst(x, z, n / 2, 90, 80, 80, 20 * sc, 3.0f * sc, 1, baseAlt);   // smoke
