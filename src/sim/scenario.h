@@ -43,7 +43,9 @@ public:
 
     // Cosmetic display messages queued since the last drain (game time, target
     // player, text). Target -1 = All Players. NOT part of the hash.
-    struct Msg { float t = 0; int player = -1; std::string text; };
+    // `t` is the TICK the message was queued, matching Scenario::clock_. It was
+    // float, and clang rejected the narrowing that gcc accepted in silence.
+    struct Msg { int32_t t = 0; int player = -1; std::string text; };
     std::vector<Msg> drainMessages();
 
     bool showClock() const { return showClock_; }   // "Display gameclock" latched
