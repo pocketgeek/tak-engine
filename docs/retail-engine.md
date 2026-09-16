@@ -1572,35 +1572,29 @@ healTime, maxMana, manaRegen, cloakCostMove, projVel (weaponvelocity), reload
 None of this is a determinism hazard: type data is parsed once from identical
 bytes on every peer. It is a fidelity gap.
 
-### Converting the 16.16 group costs arrivals, and why is NOT yet known
+### RESOLVED (2026-09-16): converting only HALF the group is what cost arrivals
 
-An attempt is kept at docs/wip/movement-16.16.patch.txt. It stores the FBI value
-per tick in 16.16 exactly as retail does, which also deletes a round trip (we
-scaled by 30 at load and multiplied by dt every tick to undo it). The mover
-becomes fixed point end to end.
+An earlier attempt moved the movement constants to 16.16 per-tick and left
+turnRate as float rad/s. That cost crowdbench's opposing columns 32/32 -> 23/32,
+and a counter on the mover's refusal branch showed why the symptom appeared
+where it did: refusals went 56,650 -> 88,518 in opposing columns and
+5,571 -> 15,333 at the chokepoint, while uncongested scenarios were untouched.
 
-It does not ship, because crowdbench's opposing columns goes 32/32 -> 23/32
-(travel x0.99 -> x0.85), and the cause is not understood. What IS measured, with
-a counter on the mover's refusal branch:
+The cause was the half-conversion itself. `bamFromRadians(turnRate * dt)` is an
+identity round trip -- the FBI value is COB angle units, Bam is the same unit,
+so scaling to rad/s at load and back per tick returns the input -- but it goes
+through float in both directions. With speed per-tick and the turn still doing
+that round trip, the two disagreed at the step test.
 
-    scenario           refusals baseline -> converted
-    opposing columns       56,650 -> 88,518   (+56%)
-    chokepoint              5,571 -> 15,333   (+175%)
-    group order               129 -> 121
-    open field                 74 -> 71
+Converting turnRate to the stored integer removes the round trip, and opposing
+columns does not merely recover, it improves sharply: t50 65.6 -> 25.2 with
+searches 669 -> 230, all five scenarios at full arrival. The lesson is the
+general one for this port: a representation change that is an identity on paper
+still has to be carried all the way through, because the intermediate state is
+where the two conventions meet.
 
-So the conversion makes the STEP TEST refuse far more often in congested
-traffic, and uncongested movement is untouched. Units are not wedged; they sit
-at the 0.4x "refused twice running" cap and run out of clock. Ruled out as
-causes, by direct arithmetic against the baseline: the cap value (both resolve
-to 28 px/s), the acceleration ramp (84 ticks either way; the increments differ
-by 0.02%), the brake, stopDist, and the arc test. The next place to look is the
-step/penetration test itself, not the speed ramp -- log the penetration depth at
-refusal and compare distributions.
-
-Two unit bugs found and fixed while doing it, both worth knowing if this is
-picked up again: arcDist divided a per-tick speed by a per-second turn rate
-(understating the turn arc 30x, pinning everything at a crawl), and the
-UnitType struct defaults for accel/brake are px/s^2 values used only by
-synthetic test types -- replacing them with the FBI default of 0.5 made them 30x
-stronger and collapsed stopDist from ~26px to 0.87px.
+Both unit bugs found on the way are worth keeping: arcDist divided a per-tick
+speed by a per-second turn rate, and the UnitType struct defaults for
+accel/brake are px/s^2 values used only by synthetic test types -- replacing
+them with the FBI default of 0.5 made them 30x stronger and collapsed stopDist
+from ~26px to 0.87px.
