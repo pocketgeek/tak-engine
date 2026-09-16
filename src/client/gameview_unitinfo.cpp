@@ -154,7 +154,9 @@ void GameView::drawUnitInfo(int winW, int winH) {
         text(buf, g.valVel, false);
         std::snprintf(buf, sizeof buf, "%.2f m/s/s", t->accel.toFloat() * 900.0f * 0.4f / 30.0f);
         text(buf, g.valAcc, false);
-        std::snprintf(buf, sizeof buf, "%.0f deg/s", t->turnRate * 57.2957795f);
+        // turnRate is BAM per TICK: degrees/second = v * (360/65536) * 30.
+        std::snprintf(buf, sizeof buf, "%.0f deg/s",
+                      float(t->turnRate) * (360.0f / 65536.0f) * 30.0f);
         text(buf, g.valTurn, false);
     }
 

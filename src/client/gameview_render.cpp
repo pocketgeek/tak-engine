@@ -640,7 +640,8 @@
                     // shadowgaf is always "shadows"; effectFor's "file:sequence"
                     // form picks the named sequence out of it.
                     if (const EffectAnim* sh = effectFor("shadows:" + p.wsrc->shadowArt)) {
-                        const auto& fr = sh->frames[size_t(int(p.age * 12.0f)) % sh->frames.size()];
+                        // p.age is TICKS now; these animation rates are per SECOND.
+                        const auto& fr = sh->frames[size_t(int(float(p.age) / 30.0f * 12.0f)) % sh->frames.size()];
                         // effectFor caches its textures additively for glowing
                         // effects; a shadow has to DARKEN instead.
                         SDL_SetTextureBlendMode(fr.tex, SDL_BLENDMODE_BLEND);
@@ -656,8 +657,9 @@
             // going. Models face -heading, like every other mover.
             if (p.wsrc && !p.wsrc->shotModel.empty()) {
                 bool bal = p.wsrc->ballistic;
-                float peak = bal ? std::min(95.0f, p.flight * 55.0f)
-                                 : std::min(18.0f, p.flight * 12.0f);
+                const float flightSec = float(p.flight) / 30.0f;
+                float peak = bal ? std::min(95.0f, flightSec * 55.0f)
+                                 : std::min(18.0f, flightSec * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
                 drawShotModel(p.wsrc->shotModel, p.fromPlayer, p.x.toFloat(), p.z.toFloat(),
                               h * zm + palt, -std::atan2(p.vx.toFloat(), p.vz.toFloat()));
@@ -675,13 +677,14 @@
                 if (const EffectAnim* ea = effectFor(shotSprite)) {
                     // Ballistic shots arc; flat shots ride just above the ground.
                     bool bal = p.wsrc->ballistic;
-                    float peak = bal ? std::min(95.0f, p.flight * 55.0f)
-                                     : std::min(18.0f, p.flight * 12.0f);
+                    const float flightSec = float(p.flight) / 30.0f;
+                    float peak = bal ? std::min(95.0f, flightSec * 55.0f)
+                                     : std::min(18.0f, flightSec * 12.0f);
                     float h = 8 + 4 * peak * t * (1 - t);
                     float sx = (p.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(p.x.toFloat(), p.z.toFloat()) * zm;
                     float sy = (p.z.toFloat() - mapView_.offY()) * zm - h * zm
                                - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm - palt;
-                    const auto& fr = ea->frames[size_t(int(p.age * 20.0f)) % ea->frames.size()];
+                    const auto& fr = ea->frames[size_t(int(float(p.age) / 30.0f * 20.0f)) % ea->frames.size()];
                     float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
                     SDL_FRect dst{sx - fw * 0.5f, sy - fh * 0.5f, fw, fh};
                     // nimbus: an additive glow riding under the sprite.
@@ -716,7 +719,7 @@
                 SDL_SetRenderDrawColor(ren_, 210, 230, 255, 255);
                 for (int s = 1; s <= 4; ++s) {
                     float d = len * zm * s / 4.0f;
-                    float jitter = ((s * 1327 + int(p.age * 900)) % 7 - 3) * 1.6f * zm;
+                    float jitter = ((s * 1327 + int(float(p.age) / 30.0f * 900)) % 7 - 3) * 1.6f * zm;
                     float nx = sx + bx * d - bz * jitter;
                     float ny = sy + bz * d + bx * jitter - 12 * zm * s / 4.0f;
                     SDL_RenderDrawLineF(ren_, px, py, nx, ny);

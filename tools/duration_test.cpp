@@ -89,6 +89,15 @@ static int ticksToBuildOne(float workerTime, float buildTime, float buildCost,
     return -1;
 }
 
+// NOT COVERED HERE, and worth saying so rather than leaving a gap unmarked: the
+// projectile-lifetime fix (rounding flight time UP so the final segment is still
+// collision-tested) has no test. An attempt at one is in the history of this file
+// and was removed because the synthetic shooter never acquired a target -- auto
+// acquisition has gates (fire state, targeting, line of sight) that a hand-built
+// UnitType does not satisfy, and reverse-engineering them here was costing more
+// than the test was worth. The right home is retailgap_test, which already fires
+// weapons successfully using shipped data.
+
 int main() {
     std::printf("duration_test -- how long things take, and what they cost\n");
 

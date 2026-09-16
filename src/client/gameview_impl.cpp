@@ -728,7 +728,9 @@
             s.corpseFeat = u.corpseStatue >= 0 ? u.corpseStatue
                                                : world_.corpseTypeOf(u.type);
             s.corpseStatue = u.corpseStatue >= 0;
-            s.speed = u.speed.toFloat(); s.justFired = u.justFired; s.justBuilt = u.justBuilt;
+            // UnitR::speed is documented px/s and consumers (the flyer altitude servo,
+            // the MotionControl percentage) rely on that; the sim keeps px/TICK now.
+            s.speed = u.speed.toFloat() * 30.0f; s.justFired = u.justFired; s.justBuilt = u.justBuilt;
             s.disco = world_.discoActive(u.player);
             s.headbang = world_.headbangActive(u.player);
             s.alliedToLocal = alliedToLocal(u.player);
@@ -1986,7 +1988,7 @@
                     case 29:                                           // CURRENT_SPEED (% of max:
                         return su->type->maxVel > tak::sim::Fixed()                    // ship MotionControl picks
                                    ? int32_t(std::clamp(               // slowrow/row/fastrow at
-                                         su->speed / std::max(su->type->maxVel.toFloat(), 0.001f) * 100.0f,  // 25/75)
+                                         su->speed / std::max(su->type->maxVel.toFloat() * 30.0f, 0.001f) * 100.0f,  // 25/75)
                                          0.0f, 100.0f))
                                    : 0;
                     case 32: return su->veteran;                       // VETERAN LEVEL (StatusControl

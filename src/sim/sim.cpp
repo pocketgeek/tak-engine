@@ -2456,9 +2456,13 @@ void World::fire(Unit& u, Unit& target, int slot) {
     // detonates: the old half-second of slack would put an arapult's crater ~375px
     // (23 cells) beyond where the shell was drawn landing. A GUIDED one keeps the
     // slack and is fuelled from the weapon's RANGE instead.
-    p.life = int32_t(kTick * (w.kind == Weapon::Kind::Guided
+    // CEIL, not truncate. A dumb shot is fuelled to exactly its aim point, so a
+    // flight of 2.4 ticks rounded down to 2 expired one step short and the last
+    // segment -- the one that reaches the target -- was never collision-tested.
+    // Fast shots missed stationary targets and splash landed short.
+    p.life = int32_t(std::ceil(kTick * (w.kind == Weapon::Kind::Guided
                                   ? (std::max(float(w.range), dist) / vel + 0.5f)
-                                  : (dist / vel)));
+                                  : (dist / vel))));
     p.flight = int32_t(dist / vel * kTick + 0.5f);
     projectiles_.push_back(p);
 }
@@ -3523,7 +3527,10 @@ void World::tickReclaim(Unit& b, float dt) {
     const Fixed d = fxMin(f.work, Fixed::fromFloat(kReclaimRate / kTick));
     f.work -= d;
     players_[size_t(b.player)].mana +=
-        double(f.manaYield) * double((d / f.workFull).toFloat())
+        // DIVIDE IN DOUBLE. `(d / f.workFull)` in fixed point truncates the
+        // proportion every tick, and the remainder is never paid: a shipped
+        // 525-energy feature returned about 524.66 over a full reclaim.
+        double(f.manaYield) * (double(d.toFloat()) / double(f.workFull.toFloat()))
         * double(players_[size_t(b.player)].manaMult);   // drip (income-cheat scaled)
     if (f.work <= Fixed()) {
         f.alive = false;
