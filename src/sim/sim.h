@@ -539,14 +539,12 @@ struct Unit {
     float jamRefX = 0, jamRefZ = 0;   // the waypoint that distance refers to
     // Asymmetric yield (see the yield block in the mover): >0 while this unit is standing
     // aside to let an opposing one through, counting down.
-    float yieldT = 0;
     // ...and a cooldown after one, during which it cannot be asked to yield again.
     // Without it, "the lower id yields" starves the low ids outright: a unit facing a
     // stream of higher-id units is re-yielded the moment each hold expires and never
     // moves again. Measured -- opposing columns fell from 32/32 arriving to 20/32, with
     // the survivors travelling an almost perfect straight line, which is the shape of a
     // rule that works beautifully for whoever wins it.
-    float yieldCool = 0;
     float goalStuckT = 0;           // seconds a point-destination move has not gotten closer
     float goalStuckD = 1e30f;       // best (closest) squared distance to that goal so far
     float buildStuckT = 0;          // seconds a builder has approached its site with no progress
@@ -960,15 +958,12 @@ public:
     // cell against a search. See World::unitHoldsCell.
     static constexpr float kJamHoldsCell = 1.5f;
     static constexpr float kJamWindow = 1.0f;
-    static constexpr float kYieldHold = 1.2f;
-    static constexpr float kYieldCool = 4.0f;
     // How often a jammed unit LOOKS for someone to yield to. Once it is jammed, asking
     // every tick buys nothing: the yield it would issue has already been issued, and the
     // recipient carries a cooldown. The hold is 1.2s (36 ticks), so checking every 8 is
     // ample -- and in a 14k-unit melee the difference is 14k spatial queries a tick
     // against a couple of thousand. Staggered by unit id, the same way the path retry
     // sweep spreads its work, so the cost does not land on one tick.
-    static constexpr uint32_t kYieldScanTicks = 8;
     bool unitHoldsCell(const Unit& u) const;
     int cellScore(const UnitType* t, int cx, int cz, int selfId) const;
 

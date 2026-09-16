@@ -2957,6 +2957,17 @@ float World::bodyPenetration(const Unit& u, float nx, float nz) const {
 // re-plans itself into a worse jam -- which is why this deliberately does NOT treat
 // every moving unit as solid. Long enough that only a settled jam counts.
 bool World::unitHoldsCell(const Unit& u) const {
+    // STOPPED, and nothing else. The jamT clause that used to be here made a unit that
+    // was pressing against an obstruction count as PARKED after 1.5s -- and parked is
+    // the grade the mover refuses outright. Two columns meeting head-on therefore
+    // pressed for a second and a half and then turned into walls for each other, which
+    // is a deadlock our own model manufactured: retail grades a body that is moving at
+    // all as merely expensive, and only a stopped one as impassable.
+    //
+    // The old comment argued the opposite -- that `speed` cannot tell a jam from
+    // traffic, because the mover keeps a blocked unit's speed positive so it resumes
+    // the instant the way clears. That is true and it is the POINT: retail wants such a
+    // unit to stay passable so the crowd flows through itself.
     return u.speed == 0.0f || u.jamT >= kJamHoldsCell;
 }
 
@@ -5440,78 +5451,16 @@ void World::tick(float dt) {
                 }
             }
 
-            // ASYMMETRIC YIELD.
+            // NO YIELD PASS. A stalled unit used to look for an opposing one in
+            // front of it and make the lower id stand still while the higher passed.
+            // Retail has nothing of the sort: its mover, refused, clamps the step,
+            // slows (0.5x on the first refusal, 0.4x once refused twice running) and
+            // returns -- and the refusal flags it sets are write-only, so being blocked
+            // reaches no other system at all (docs/retail-engine.md). A blocked unit
+            // simply presses, and moves the instant the way clears.
             //
-            // Two units meeting head-on each try to walk through the other, and neither
-            // gives way, so both slide sideways for ever. The existing sideways dodge is
-            // SYMMETRIC -- both units dodge, each picking a side -- and making it fire
-            // more often measurably made things worse (arrival 32/32 -> 29/32 on opposing
-            // columns): two units stepping aside together is not a yield, it is more
-            // perturbation.
-            //
-            // A yield has to be one-sided. When a stalled unit finds an opposing one
-            // right in front of it, the LOWER unit id stands aside and the higher one
-            // proceeds. Lower-id-yields is a total order, so exactly one of any pair
-            // yields, on every peer, with no tie-break and no randomness.
-            //
-            // The hold is BOUNDED. A unit that yields until the way is clear can wait for
-            // ever if the other never passes, and a stranded unit is the one outcome this
-            // whole exercise treats as a regression.
-            if (u.yieldCool > 0.0f) u.yieldCool -= dt;
-            if (u.yieldT > 0.0f) {
-                u.yieldT -= dt;
-                u.speed = 0.0f;       // stand aside: let the other one through
-                if (u.yieldT <= 0.0f) {
-                    u.yieldCool = kYieldCool;   // ...and cannot be asked again just yet
-                    u.jamT = 0;                 // give the fresh attempt a clean slate
-                }
-                continue;
-            }
-            if (u.jamT >= kJamHoldsCell &&
-                (tickCounter_ + uint32_t(u.id)) % kYieldScanTicks == 0) {
-                const float ahead = float(std::max(u.type->footX, u.type->footZ)) * 16.0f;
-                const float fx = detmath::sin(u.heading), fz = detmath::cos(u.heading);
-                // THROUGH THE SPATIAL GRID, not a scan of every unit in the world. The
-                // scan that was here ran once per JAMMED unit over the whole army: O(n^2),
-                // invisible in a 32-unit benchmark and fatal at scale -- the 15k-unit
-                // stress run fell so far behind that the server dropped it at tick 151,
-                // where it had previously completed 2248 ticks. The grid answers the same
-                // question in the same fixed order, so the yield still resolves
-                // identically on every peer.
-                // THE LOWEST QUALIFYING ID, not the first the grid happens to hand back.
-                //
-                // The scan this replaced walked units_ FORWARDS and took the first
-                // qualifying candidate -- and units_ is in id order, so that was always
-                // the lowest-id one. forEachNear visits cells spatially and, within a
-                // cell, in reverse insertion order, so "first match" is the LATER-spawned
-                // unit. That is not merely a different choice: the candidate is then
-                // tested for its yield cooldown and the search stops either way, so
-                // picking a cooled-down unit means NOBODY yields where somebody would
-                // have. Taking the minimum id restores the original selection exactly
-                // while keeping the query local.
-                int giveId = -1;
-                forEachNear(u.x, u.z, ahead * 2.0f, [&](int idx) {
-                    const Unit& other = units_[size_t(idx)];
-                    if (giveId >= 0 && other.id >= giveId) return;   // already have a lower
-                    if (other.id >= u.id || !other.alive() || other.embarked()) return;
-                    if (!other.type || other.type->canFly || other.type->isStructure()) return;
-                    // Only yield to something we are nose-to-nose with: close, in front,
-                    // and coming the other way.
-                    const float rx = other.x - u.x, rz = other.z - u.z;
-                    if (rx * rx + rz * rz > ahead * ahead * 4.0f) return;
-                    if (rx * fx + rz * fz <= 0.0f) return;          // not in front
-                    const float ofx = detmath::sin(other.heading), ofz = detmath::cos(other.heading);
-                    if (fx * ofx + fz * ofz >= -0.5f) return;       // not opposed
-                    giveId = other.id;
-                });
-                // `giveId < u.id`, so THIS unit is the higher id -- it proceeds and the
-                // other one yields. Mark the other, not ourselves.
-                if (giveId >= 0) {
-                    Unit* give = unit(giveId);
-                    if (give && give->yieldT <= 0.0f && give->yieldCool <= 0.0f)
-                        give->yieldT = kYieldHold;
-                }
-            }
+            // Standing still was not even standing ASIDE: in a corridor the unit that
+            // yielded went on blocking the one it yielded to.
 
             // Brake into the waypoint if it's the last one; slow for big turns.
             float target = u.type->maxVel;
@@ -5595,14 +5544,39 @@ void World::tick(float dt) {
                         return false;
                     // ...and units are solid, tested against the bodies themselves
                     // rather than the cells they happen to be stamped into.
-                    return bodyPenetration(u, nx, nz) <= 0.0f;
+                    // A HAIR OF SLACK. A traced route runs on 16px cells, so the corner
+                    // waypoint past a parked body is EXACTLY tangent: footprints touch at
+                    // 32px and the margin is 0.000. Any drift at all -- a unit sitting at
+                    // 568.04 rather than 568 -- puts it 0.04px inside, and a strict test
+                    // then refuses every step alongside, for ever. Measured: that is the
+                    // wedge the sideways teleport existed to rescue.
+                    //
+                    // Retail is explicitly tolerant here ("bodies share space briefly and
+                    // nothing shoves"); a quarter pixel is far below anything visible and
+                    // well under the 32px at which footprints meet, so it unwedges the
+                    // tangent case without letting bodies sink into each other.
+                    constexpr float kTouchSlack = 0.5f;
+                    return bodyPenetration(u, nx, nz) <= kTouchSlack;
                 };
                 // Track whether the unit ACTUALLY displaced, not whether it was told to.
                 // Sliding along one axis still counts as headway; only the fully blocked
                 // branch below is a jam. See Unit::jamT.
+                // A SLIDE ONLY COUNTS IF IT ACTUALLY DISPLACES. Walking straight down a
+                // wall gives mx ~= 0, and the x-slide below then "succeeded" by moving
+                // the unit -0.0002px: not blocked, so the clamp/slow/repath branch never
+                // ran, jamT never rose from the mover, and the unit stood at full
+                // commanded speed for ever. It was invisible to every stuck-detector we
+                // have, which is precisely why a sideways teleport had to exist to
+                // rescue it.
+                //
+                // Measured on a unit squeezing past the end of a parked wall: full=0,
+                // xonly=1 (a no-op), zonly=0, every tick for the whole run.
+                // NO AXIS SLIDE. Retail's mover probes ONE point -- a step along its
+                // heading -- and on refusal sets a flag, adds a per-type value to its
+                // budget and RETURNS (0x4dbc17). It never decomposes the step, and the
+                // whole mover contains only two queries: the forward probe and the 3x3
+                // scan. There is no third to test an axis with.
                 if (free(u.x + mx, u.z + mz)) { u.x += mx; u.z += mz; }
-                else if (free(u.x + mx, u.z)) { u.x += mx; }
-                else if (free(u.x, u.z + mz)) { u.z += mz; }
                 else {
                     // Fully blocked (a wall dead-ahead the straight path clipped):
                     // stop and repath around it toward the final destination, so
@@ -5616,7 +5590,13 @@ void World::tick(float dt) {
                     u.repathLeft -= dt;
                     if (!g.empty() && u.repathLeft <= 0 &&
                         u.orders.front().targetId == 0) {
-                        u.repathLeft = 0.5f;
+                        // RETAIL'S CADENCE, not a guess. The navigator re-requests
+                        // only once the tick counter passes its stamp by 0x78 -- 120
+                        // ticks, four seconds -- and only when the path did not fail
+                        // (0x4e545b). Asking every half second is eight times that, and
+                        // it is what made a blocked unit stand there waiting for a new
+                        // route instead of pressing on the old one.
+                        u.repathLeft = 4.0f;
                         // The CURRENT leg's endpoint, not orders.back() -- that is
                         // the last thing the player queued, and routing to it here
                         // deleted every leg in front of it.
@@ -5672,19 +5652,13 @@ void World::tick(float dt) {
                         // hop that starts and ends clear can still cross a blocked cell in
                         // between, and this is a teleport rather than a steered move, so
                         // nothing else will catch that.
-                        const int footC = footCells(u.type);
-                        auto reachable = [&](float nx, float nz) {
-                            return free(nx, nz) &&
-                                   (g.empty() || g.segmentFits(u.x, u.z, nx, nz, footC));
-                        };
-                        for (float d : {10.0f, 17.0f}) {
-                            if (reachable(u.x + px * s * d, u.z + pz * s * d)) {
-                                u.x += px * s * d; u.z += pz * s * d; break;
-                            }
-                            if (reachable(u.x - px * s * d, u.z - pz * s * d)) {
-                                u.x -= px * s * d; u.z -= pz * s * d; break;
-                            }
-                        }
+                        // NO SIDEWAYS NUDGE. A stalled unit used to be TELEPORTED 10-17px
+                        // sideways from here. Retail does not dodge, does not teleport,
+                        // and the RE found no obstacle-avoidance algorithm in it at all:
+                        // "the response to being blocked is entirely inside the mover --
+                        // clamp, slow, return". What stays is the part that is about the
+                        // ORDER rather than the body: noticing a leg that cannot be
+                        // reached and dropping it.
                         // Guard emptiness: the fully-blocked branch above may have
                         // just u.orders.clear()'d this unit (gave up an unreachable
                         // goal), and back()/front() on an empty deque is undefined --
