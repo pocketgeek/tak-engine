@@ -4325,7 +4325,13 @@ void World::tickProduction(Unit& u, float dt) {
     // Ticks of work, as retail counts it: buildtime / workertime is SECONDS at
     // workertime 1 (emulated: 170/1 -> 5100 ticks -> 170s), so scale by kTick.
     const float totalSec = t->buildTime / std::max(u.type->workerTime, 0.01f);
-    const int32_t total = int32_t(std::max(totalSec, 0.01f) * kTick + 0.5f);
+    // AT LEAST ONE TICK. The 0.01f floor is in SECONDS and predates the tick
+    // conversion: 0.01s rounds to 0 ticks, `buildProgress < total` is then 0 < 0,
+    // and the whole accumulate branch -- which is where mana is checked and spent --
+    // is skipped, so a positive-cost unit pops out free. A fast factory reaches this
+    // (production_test builds with workertime 1000 against buildtime 1) and was
+    // silently doing exactly that.
+    const int32_t total = std::max(1, int32_t(totalSec * kTick + 0.5f));
     Player& tm = players_[size_t(u.player)];
     // Accumulate work (spending mana) until complete. Once complete, buildProgress
     // holds at `total` and grows only as a wait timer below.

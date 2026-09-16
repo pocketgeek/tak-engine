@@ -77,6 +77,42 @@ static void run(World& w, float seconds) {
 // ---------------------------------------------------------------------------
 // 1. A factory running flat out must not pile its output up on one spot.
 // ---------------------------------------------------------------------------
+// PRODUCTION MUST BE PAID FOR. Trivial, and it is here because it was NOT true
+// twice: both times the build duration rounded to ZERO ticks, so
+// `buildProgress < total` was 0 < 0 and the accumulate branch -- the only place
+// mana is checked and deducted -- never ran, and positive-cost units spawned with
+// an empty treasury.
+//
+// The assertion is "too poor to build produces nothing", not "mana went down".
+// Mana going down proves little here: a player's pool is clamped to its storage
+// cap every tick (max(storage, 100)), so it falls on its own with no production at
+// all -- which is exactly what a first version of this test measured, happily
+// passing against the bug it was written to catch.
+static void productionNeedsMana() {
+    std::printf("production is paid for:\n");
+    World& w = *makeWorld(128, 128);
+    UnitType fac = factoryType(), sol = soldierType();
+    sol.buildCost = 500;                 // the default is 0, i.e. free
+    fac.storage = 10000;                 // headroom, so the cap is not what limits us
+    const int fid = w.spawn(&fac, 1000, 1000, 0, 0);
+
+    w.player(0).mana = 0;                // cannot afford a single one
+    w.train(fid, &sol, 4);
+    run(w, 60.0f);
+    int made = 0;
+    for (const auto& u : w.units())
+        if (u.alive() && u.type && !u.type->isStructure()) ++made;
+    check(made == 0, "a player with no mana produces nothing",
+          std::to_string(made) + " unit(s) appeared");
+
+    w.player(0).mana = 4 * 500 + 10;     // now it can
+    run(w, 60.0f);
+    int made2 = 0;
+    for (const auto& u : w.units())
+        if (u.alive() && u.type && !u.type->isStructure()) ++made2;
+    check(made2 > 0, "...and with mana it does", std::to_string(made2) + " unit(s)");
+}
+
 static void outputDoesNotJam() {
     std::printf("a factory's output does not jam on one spot:\n");
     World& w = *makeWorld(128, 128);
@@ -203,6 +239,7 @@ static void rallyReplaces() {
 
 int main() {
     std::printf("production_test\n");
+    productionNeedsMana();
     outputDoesNotJam();
     rallyIsAdopted();
     rallyReplaces();
