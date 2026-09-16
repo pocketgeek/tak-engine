@@ -1608,3 +1608,52 @@ speed by a per-second turn rate, and the UnitType struct defaults for
 accel/brake are px/s^2 values used only by synthetic test types -- replacing
 them with the FBI default of 0.5 made them 30x stronger and collapsed stopDist
 from ~26px to 0.87px.
+
+## Two tests on how close our movement now is (2026-09-16)
+
+Asked how closely pathfinding matches retail, two things were flagged as ours
+rather than retail's. Both were measured rather than argued.
+
+### The route horizon already matches -- we were closer than claimed
+
+Retail's navigator holds at most two or three intermediate points and re-anchors
+about every 6 ticks (0x4e5150; the count at +0x10c is tested against 2 and 3).
+We install a route, which looked like a divergence. It is not: the string-pull
+collapses routes to almost nothing, and a histogram of what actually gets
+installed says
+
+    scenario            1 wp   2    3    4    9-16
+    opposing columns    100%   -    -    -    -
+    open field          100%   -    -    -    -
+    group order         100%   -    -    -    -
+    chokepoint           81%  19%   -    -    -
+    serpentine maze      44%  12%  23%  12%   8%
+
+so outside a synthetic maze essentially every installed "route" is a single
+waypoint plus the destination -- retail's shape, reached by a different road.
+Truncating the install to a 3-point horizon is a literal no-op: byte-identical
+crowdbench output, same search and work counts, because there is nothing to
+truncate. Do not "fix" this divergence; it is not one.
+
+### The A* fallback is inert on open ground and load-bearing in a maze
+
+Disabling the escalation entirely (kDetoursBeforeAStar effectively infinite)
+leaves four of five crowdbench scenarios BYTE-IDENTICAL -- it never fires there
+-- and the harness hash on Inner Circle is unchanged too. The maze is the whole
+of its effect:
+
+    serpentine        with A*   without
+    t50                  72.8     226.
+    travel              x1.89    x6.19
+    searches              263      747
+
+All twelve units still arrive without it, so this is path QUALITY, not
+correctness. And it is not hypothetical on real maps: instrumented over a 10
+minute 8-AI game on Ulasem Arena, the fallback escalated 37 times.
+
+What is NOT established is whether retail escalates at all. Nothing like it has
+been found in the binary, but that is absence of evidence: the tracer is a bug
+algorithm and would be just as bad in a maze, so "retail is bad here too" is the
+likelier reading. The reason it has not simply been deleted is that the measured
+cost is a 3x arrival time and a 6.19x path on the one layout that exercises it,
+and that trade deserves a decision rather than a default.
