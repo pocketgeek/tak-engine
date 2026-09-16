@@ -651,12 +651,28 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         }
         return false;                             // the map really is full
     };
-    // The Monarch is placed before any of this and was never reserved, so a snapped
-    // unit could be sent to stand on top of it. Claim its square up front.
-    auto claimMonarch = [&](const UnitType* t, float ux, float uz) {
+    // The Monarch needs the same treatment as everything else, and used only to have its
+    // square RESERVED so a snapped unit would not stand on it -- its own position was
+    // never checked. Every other body gets snapped to ground it can occupy; the Monarch
+    // was spawned at the raw start spot whatever was there.
+    //
+    // That matters most exactly where it is least visible. A real map's start positions
+    // are authored and fine, but the benchmark ignores them and spreads factions around a
+    // computed ring (cx + cos(a)*radius), and any game with more slots than the map has
+    // starts fills the shortfall from a second computed ring. Neither consults the
+    // terrain, so a Monarch could open the match standing in a lake or on a cliff face --
+    // and being unable to move, it stayed there.
+    //
+    // Keep the authored spot when the Monarch actually fits it, so valid maps place
+    // exactly as before; snap only when it does not.
+    auto placeMonarch = [&](const UnitType* t, float& ux, float& uz) {
         if (!t || t->canFly) return;
         const int foot = std::clamp(std::max(t->footX, t->footZ), 1, 15);
-        claimFoot(int(ux) / 16, int(uz) / 16, foot);
+        const NavGrid& g = world.navFor(t);
+        const int cx = int(ux) / 16, cz = int(uz) / 16;
+        if (!g.empty() && g.fits(cx, cz, foot) && claimFoot(cx, cz, foot))
+            return;                       // the spot is good: leave it untouched
+        snapSpawn(t, ux, uz);             // claims the cell it settles on
     };
 
     const int kBenchSpawns = benchmarkSpawns(cfg.benchmark);   // 0 when off
@@ -670,10 +686,14 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         if (!cfg.slots[i].used) continue;
         const UnitType* monarch = reg.find(kMonarchs[cfg.slots[i].faction % 5]);
         float mx = spots[size_t(spot)].first, mz = spots[size_t(spot)].second;
-        assigned.push_back({mx, mz});
         ++spot;
+        placeMonarch(monarch, mx, mz);   // onto ground it can stand on, and reserve it
+        // AFTER the snap, not before: this list is what the caller opens the camera on
+        // (and what the server records as the slot's position), so recording the raw
+        // spot would point the opening view at the lake the Monarch was just moved out
+        // of. Unchanged whenever the spot was already good, which is every real map.
+        assigned.push_back({mx, mz});
         world.spawn(monarch, mx, mz, 0, i);
-        claimMonarch(monarch, mx, mz);   // nothing else may be snapped onto it
         world.player(i).mana = cfg.startMana;
         // Resolve this player's god now, while the registry is in hand. The sim
         // summons it itself (World::summonReadyGods) and has no registry of its own;
