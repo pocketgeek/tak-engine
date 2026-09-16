@@ -691,9 +691,12 @@
                         SDL_RenderCopyF(ren_, fr.tex, nullptr, &g);
                         SDL_SetTextureAlphaMod(fr.tex, 255);
                     }
-                    if (p.wsrc->spinRate != 0.0f)
+                    if (p.wsrc->spinRate != 0)
                         SDL_RenderCopyExF(ren_, fr.tex, nullptr, &dst,
-                                          double(p.age * p.wsrc->spinRate * 57.2957795f),
+                                          // age is TICKS and spinRate is raw COB units per second:
+                                          // degrees = (ticks/30) * units * 360/65536.
+                                          double(double(p.age) / 30.0 * double(p.wsrc->spinRate)
+                                                 * 360.0 / 65536.0),
                                           nullptr, SDL_FLIP_NONE);
                     else
                         SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);

@@ -75,7 +75,7 @@ struct Weapon {
     //   Freeze        the whole spell ABORTS if its caster dies mid-channel.
     enum class RemoteKind { Plain, Earthquake, Hailstorm, MindCtl, Freeze };
     RemoteKind remote = RemoteKind::Plain;
-    float particlesPerSec = 0;   // particlespersecond: hailstorm pulse rate
+    int32_t particlesPerSec = 0; // particlespersecond (readInt): hailstorm pulse rate
     float turnRate = 0;      // guided: steering rate, radians/sec (FBI deg/s)
     // Retail splits a projectile's per-tick travel into sub-steps so no sub-step is
     // longer than one 16px cell, which is how its swept collision stays honest
@@ -87,7 +87,7 @@ struct Weapon {
     float buildUp = 0;       // builduptime: channel before the effect lands
     float decay = 0;         // decaytime: fade after it lands
     float duration = 0;      // wandering: seconds the storm roams
-    float maxVariation = 0;  // wandering: heading wobble per variationtime (radians)
+    int32_t maxVariation = 0;// maxvariation (readInt): wander half-width, px/tick
     float variationTime = 0; // wandering: seconds between heading changes
     bool  unitsOnly = false; // unitsonly: the effect skips features (trees/props)
     // subtype=mindcontrol: converts targets to the firer's side instead of damaging
@@ -97,7 +97,7 @@ struct Weapon {
     // protects a unit caught inside an AREA charm is the commander / cantbecaptured
     // / in-transport gate at the impact itself.
     bool  mindControl = false;
-    float minRange = 0;      // minrange: can't hit targets closer than this
+    int32_t minRange = 0;    // minrange (readInt): can't hit targets closer than this
     bool noAir = false;
     // dontleadtargets: aim at the target's CURRENT position instead of extrapolating
     // where it will be. Retail leads a moving unit by default; this flag skips it.
@@ -134,7 +134,7 @@ struct Weapon {
     uint8_t inner[3] = {255, 255, 255};    // innercolor: lightning bolt core
     uint8_t middle[3] = {200, 230, 255};   // middlecolor
     uint8_t outer[3] = {120, 170, 255};    // outercolor
-    float spinRate = 0;       // spinheading: shot spins as it flies (rad/sec)
+    int32_t spinRate = 0;     // spinheading (readInt): shot spins as it flies
     std::string shadowArt;    // shadowart: sequence in shadowgaf (always "shadows")
     // shotart: a Remote Effect that is DELIVERED rather than conjured in place --
     // a visible shot flies to the aim point at weaponvelocity and only starts the
@@ -154,7 +154,7 @@ struct Weapon {
     float ringDelay = 0.2f;     // ringdelay: seconds between successive rings
     float ringDur = 1.0f;       // ringduration: seconds each ring lasts
     int   spriteCount = 24;     // spritecount: sprites arranged around each ring
-    float shakeMag = 0;         // shakemagnitude: camera-shake intensity on impact
+    int32_t shakeMag = 0;       // shakemagnitude (readInt): camera-shake intensity
     float shakeDur = 0;         // shakeduration: seconds the shake lasts
     bool  fireStarter = false;  // firestarter: leaves ground fire at the impact
     // Per-target-category damage overrides (DAMAGE keys other than `default`),

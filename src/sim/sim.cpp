@@ -330,10 +330,10 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     // half-width in PIXELS PER TICK (2..8 across the shipped
                     // storms, which dwarfs their 45..80 px/s drift -- that is what
                     // makes the path genuinely wander rather than curve).
-                    wp.maxVariation = float(w->numberOr("maxvariation", 0));
+                    wp.maxVariation = int32_t(w->numberOr("maxvariation", 0));
                     wp.variationTime = float(w->numberOr("variationtime", 0));
                     wp.unitsOnly = w->numberOr("unitsonly", 0) != 0;
-                    wp.particlesPerSec = float(w->numberOr("particlespersecond", 0));
+                    wp.particlesPerSec = int32_t(w->numberOr("particlespersecond", 0));
                     std::string st = lower(w->valueOr("subtype", ""));
                     wp.mindControl = st == "mindcontrol";
                     // Which Remote Effect subclass this is (retail dispatches on
@@ -377,7 +377,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     wp.hasBoltColor = a || b || c;
                 }
                 // spinheading is in COB angle units per second.
-                wp.spinRate = float(w->numberOr("spinheading", 0)) * float(kCobAngle);
+                // RAW COB ANGLE UNITS, as retail stores it (readInt). Scaling by kCobAngle here
+                // -- which is 2*pi/65536, about 9.6e-5 -- truncated the whole field to zero
+                // the moment it became an int, silently stopping every shot from spinning.
+                // The conversion to degrees belongs at the renderer, which is the only reader.
+                wp.spinRate = int32_t(w->numberOr("spinheading", 0));
                 // shadowgaf is always "shadows"; shadowart names the sequence in it.
                 wp.shadowArt = lower(w->valueOr("shadowart", ""));
                 wp.shotArt = lower(w->valueOr("shotart", ""));
@@ -398,7 +402,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 wp.ringDelay = float(w->numberOr("ringdelay", 0.2));
                 wp.ringDur = float(w->numberOr("ringduration", 1.0));
                 wp.spriteCount = int(w->numberOr("spritecount", 24));
-                wp.shakeMag = float(w->numberOr("shakemagnitude", 0));
+                wp.shakeMag = int32_t(w->numberOr("shakemagnitude", 0));
                 wp.shakeDur = float(w->numberOr("shakeduration", 0));
                 wp.fireStarter = w->numberOr("firestarter", 0) != 0;
                 {
@@ -406,7 +410,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     wp.dmgType = dtp == "fire" ? 2 : dtp == "explosion" ? 3
                                : dtp == "paralyzer" ? 4 : 1;
                 }
-                wp.minRange = float(w->numberOr("minrange", 0));
+                wp.minRange = int32_t(w->numberOr("minrange", 0));
                 wp.noAir = w->numberOr("noairweapon", 0) != 0;
                 wp.manaCost = float(w->numberOr("manapershot", 0));
                 // Status-effect weapons (Creon freeze, medusa/paralyzer, petrify),
@@ -2338,7 +2342,7 @@ void World::fire(Unit& u, Unit& target, int slot) {
                 // after the cast and pulses particlespersecond times a second for
                 // `duration` -- so the Acolyte's Hail Shower is ~12 small hits, not
                 // one 70-damage tap.
-                float pps = w.particlesPerSec > 0 ? w.particlesPerSec : 5.0f;
+                float pps = w.particlesPerSec > 0 ? float(w.particlesPerSec) : 5.0f;
                 e.period = int32_t(kTick / pps + 0.5f);
                 e.at = 20;                                // retail's ~20-tick lead-in, exactly
                 e.endAt = 20 + std::max(int32_t(w.duration * kTick + 0.5f), e.period);
