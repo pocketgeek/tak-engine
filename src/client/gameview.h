@@ -2349,6 +2349,7 @@ private:
     // Actual-vs-requested game-speed meter (F4): measured from our own tick advance.
     uint64_t actualSpeedT0_ = 0, actualSpeedTick0_ = 0;
     float actualSpeed_ = 0.0f;
+    float actualSpeedReq_ = 0.0f;   // requested speed the average is currently tracking
     uint64_t lastSpecAckMs_ = 0;   // spectator flow-control heartbeat (see mpStep)
     uint64_t gameStartMs_ = 0;     // wall time the game/spectate began (F4 real-time elapsed)
     bool follow_ = false;

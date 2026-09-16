@@ -460,9 +460,19 @@
                 //
                 // Seeded from the first sample rather than ramping up from zero, so the
                 // display is honest immediately instead of climbing for two seconds.
+                // A CHANGE OF REQUESTED SPEED IS A DISCONTINUITY, NOT NOISE. Smoothing
+                // across it is wrong in both directions, and badly so downwards: after
+                // a host drops 4x to 1x the stored average is still ~4, and capping only
+                // the incoming sample leaves the row reading 3.2x for several seconds
+                // while playback is already sustaining exactly 1x. Restart the average
+                // from the first sample at the new speed instead. (Found by review.)
+                if (reqSp != actualSpeedReq_) { actualSpeed_ = 0.0f; actualSpeedReq_ = reqSp; }
                 actualSpeed_ = actualSpeed_ > 0.0f
                                    ? actualSpeed_ + (sample - actualSpeed_) * 0.25f
                                    : sample;
+                // Belt and braces: the average can only ever sit at or below the speed
+                // that was asked for, whatever route it took to get here.
+                actualSpeed_ = std::min(actualSpeed_, reqSp);
                 actualSpeedT0_ = na; actualSpeedTick0_ = netTick_;
             }
         }
