@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
                 if (!u.alive() || u.player != 1 || !u.type) continue;
                 if (u.underConstruction)
                     std::printf("      UC %s#%d hp=%.0f%% cost=%.0f btime=%.0f\n",
-                                u.type->id.c_str(), u.id, 100.f * u.hp / std::max(u.type->maxHp, 1.f),
+                                u.type->id.c_str(), u.id, 100.f * u.hp.toFloat() / std::max(u.type->maxHp, 1.f),
                                 u.type->buildCost, u.type->buildTime);
                 // Producer eligibility, mirroring Controller::tick's own test. A
                 // builder is only offered work when it is idle AND siteless, so a

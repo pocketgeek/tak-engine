@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
         int aId = w.spawn(victim, 520, 500, 0, 1);
         int bId = w.spawn(victim, 500, 530, 0, 1);
         int farId = w.spawn(victim, 500, 1200, 0, 1);   // well outside the blast
-        float aHp0 = w.unit(aId)->hp, farHp0 = w.unit(farId)->hp;
+        float aHp0 = w.unit(aId)->hp.toFloat(), farHp0 = w.unit(farId)->hp.toFloat();
         check(aHp0 > 0 && farHp0 > 0, "victims spawned alive");
 
         w.unit(ratId)->hp = sim::Fixed();    // the rat dies -> its EXPLODEAS should fire
@@ -103,9 +103,9 @@ int main(int argc, char** argv) {
         const sim::Unit* a = w.unit(aId);
         const sim::Unit* b = w.unit(bId);
         const sim::Unit* far = w.unit(farId);
-        check(a && (!a->alive() || a->hp < aHp0), "adjacent enemy took the blast");
-        check(b && (!b->alive() || b->hp < aHp0), "second adjacent enemy took the blast");
-        check(far && far->alive() && far->hp >= farHp0, "distant enemy untouched");
+        check(a && (!a->alive() || a->hp.toFloat() < aHp0), "adjacent enemy took the blast");
+        check(b && (!b->alive() || b->hp.toFloat() < aHp0), "second adjacent enemy took the blast");
+        check(far && far->alive() && far->hp.toFloat() >= farHp0, "distant enemy untouched");
     }
 
     // ---- 1b. weapon-class parse ------------------------------------------
@@ -200,10 +200,10 @@ int main(int argc, char** argv) {
                 // Jump the target 300px sideways: a straight shot now misses by far
                 // more than the hit radius.
                 if (auto* m = w.unit(mover)) { m->x = tak::sim::Fixed::fromInt(1300); m->orders.clear(); }
-                float hp0 = w.unit(mover)->hp;
+                float hp0 = w.unit(mover)->hp.toFloat();
                 for (int i = 0; i < 90; ++i) w.tick(1.0f / 30.0f);   // 3s < reload
                 const sim::Unit* m = w.unit(mover);
-                bool hurt = m && (!m->alive() || m->hp < hp0);
+                bool hurt = m && (!m->alive() || m->hp.toFloat() < hp0);
                 check(hurt, "the shot curved onto the dodging target",
                       hurt ? "" : "untouched -- homing did not engage");
             }
@@ -236,13 +236,13 @@ int main(int argc, char** argv) {
                 int victim = w.spawn(prey, 1000, 1150, 0, 1);
                 if (auto* c = w.unit(caster)) c->mana = c->type->maxMana;
                 w.attack(caster, victim, false);
-                float hp0 = w.unit(victim)->hp;
+                float hp0 = w.unit(victim)->hp.toFloat();
                 for (int i = 0; i < 600; ++i) {
                     w.tick(1.0f / 30.0f);
-                    if (const sim::Unit* v = w.unit(victim); v && (!v->alive() || v->hp < hp0)) break;
+                    if (const sim::Unit* v = w.unit(victim); v && (!v->alive() || v->hp.toFloat() < hp0)) break;
                 }
                 const sim::Unit* v = w.unit(victim);
-                check(v && (!v->alive() || v->hp < hp0), "the remote effect landed on its target");
+                check(v && (!v->alive() || v->hp.toFloat() < hp0), "the remote effect landed on its target");
             }
         }
 
@@ -272,12 +272,12 @@ int main(int argc, char** argv) {
                 if (auto* c = w.unit(caster)) c->mana = c->type->maxMana;
                 w.setWeapon(caster, slot);
                 w.attack(caster, victim, false);
-                int pulses = 0; float last = w.unit(victim)->hp; bool died = false;
+                int pulses = 0; float last = w.unit(victim)->hp.toFloat(); bool died = false;
                 for (int i = 0; i < int(seconds * 30); ++i) {
                     w.tick(1.0f / 30.0f);
                     const sim::Unit* v = w.unit(victim);
                     if (!v || !v->alive()) { died = true; break; }
-                    if (v->hp < last - 0.01f) { ++pulses; last = v->hp; }
+                    if (v->hp.toFloat() < last - 0.01f) { ++pulses; last = v->hp.toFloat(); }
                 }
                 return std::pair<int, bool>{pulses, died};
             };
@@ -330,14 +330,14 @@ int main(int argc, char** argv) {
                     crowd.push_back(w.spawn(prey, 900.0f + gx * 45.0f,
                                             1100.0f + gz * 45.0f, 0, 1));
             float total0 = 0;
-            for (int id : crowd) if (auto* u = w.unit(id)) total0 += u->hp;
+            for (int id : crowd) if (auto* u = w.unit(id)) total0 += u->hp.toFloat();
             w.attack(caster, crowd[12], false);
             int ticksWithDamage = 0;
             float last = total0;
             for (int i = 0; i < 600; ++i) {
                 w.tick(1.0f / 30.0f);
                 float now = 0;
-                for (int id : crowd) if (const sim::Unit* u = w.unit(id); u && u->alive()) now += u->hp;
+                for (int id : crowd) if (const sim::Unit* u = w.unit(id); u && u->alive()) now += u->hp.toFloat();
                 if (now < last - 0.01f) ++ticksWithDamage;
                 last = now;
             }
@@ -434,7 +434,7 @@ int main(int argc, char** argv) {
             int v = w.spawn(prey, 1000, 1500, 0, 1);   // 500px away: well beyond a drop
             if (auto* bu = w.unit(b)) bu->mana = bomber->maxMana;
             w.attack(b, v, false);
-            float hp0 = w.unit(v)->hp;
+            float hp0 = w.unit(v)->hp.toFloat();
             bool hurt = false; float closest = 1e9f;
             for (int i = 0; i < 1800; ++i) {
                 w.tick(1.0f / 30.0f);
@@ -446,7 +446,7 @@ int main(int argc, char** argv) {
                                         (bb->z.toFloat() - vv->z.toFloat()) * (bb->z.toFloat() - vv->z.toFloat()));
                     closest = std::min(closest, d);
                 }
-                if (!vv->alive() || vv->hp < hp0) { hurt = true; break; }
+                if (!vv->alive() || vv->hp.toFloat() < hp0) { hurt = true; break; }
             }
             // Retail does NOT require an overflight: Dropped reverts to the plain
             // 2D range test and the bomb's velocity is solved so it arrives over
@@ -737,19 +737,19 @@ int main(int argc, char** argv) {
             (void)pid;
             sim::Unit* v = w.unit(vid);
             v->hp = sim::Fixed::fromFloat(v->type->maxHp * 0.25f);
-            float hp0 = v->hp;
+            float hp0 = v->hp.toFloat();
             float mana0 = w.player(0).mana;
             for (int i = 0; i < 60; ++i) w.tick(1.0f / 30.0f);   // 2s = two 1Hz pulses
-            float hp1 = w.unit(vid)->hp;
+            float hp1 = w.unit(vid)->hp.toFloat();
             check(hp1 > hp0, "a damaged ally next to an Acolyte is repaired",
                   std::to_string(int(hp0)) + " -> " + std::to_string(int(hp1)));
             check(w.player(0).mana < mana0, "and the Acolyte's owner pays the mana",
                   std::to_string(int(mana0)) + " -> " + std::to_string(int(w.player(0).mana)));
             // An undamaged unit must not be touched (and must still count toward N).
             int fid = w.spawn(vic, 640, 620, 0, 0);
-            float full0 = w.unit(fid)->hp;
+            float full0 = w.unit(fid)->hp.toFloat();
             for (int i = 0; i < 60; ++i) w.tick(1.0f / 30.0f);
-            check(w.unit(fid)->hp <= full0 + 0.01f, "an undamaged ally is left alone");
+            check(w.unit(fid)->hp.toFloat() <= full0 + 0.01f, "an undamaged ally is left alone");
         }
     }
 
@@ -866,7 +866,7 @@ int main(int argc, char** argv) {
             int gun = w.spawn(pult, 600, 900, 0, 0);
             int mark = w.spawn(vic, 900, 900, 0, 1);
             int bystander = w.spawn(vic, 916, 900, 0, 1);   // beside the aim point
-            float by0 = w.unit(bystander)->hp;
+            float by0 = w.unit(bystander)->hp.toFloat();
             w.attack(gun, mark, false);
             bool flew = false, moved = false;
             for (int i = 0; i < 30 * 20; ++i) {
@@ -880,7 +880,7 @@ int main(int argc, char** argv) {
                 }
             }
             check(flew, "the catapult actually fired");
-            float by1 = w.unit(bystander)->hp;
+            float by1 = w.unit(bystander)->hp.toFloat();
             check(by1 < by0, "the shell still lands and splashes the aim point",
                   std::to_string(int(by0)) + " -> " + std::to_string(int(by1)));
         }
@@ -901,12 +901,12 @@ int main(int argc, char** argv) {
             sim::setupMatch(w, reg, cfg);
             int gun = w.spawn(pult, 600, 1100, 0, 0);
             int sitting = w.spawn(vic, 900, 1100, 0, 1);   // stationary: no lead, direct hit
-            float hp0 = w.unit(sitting)->hp;
+            float hp0 = w.unit(sitting)->hp.toFloat();
             w.attack(gun, sitting, false);
             // Long enough for exactly one shell to be fired and to land, but well
             // inside the 6.5s reload so a second can't confuse the total.
             for (int i = 0; i < 30 * 6; ++i) w.tick(1.0f / 30.0f);
-            float lost = hp0 - w.unit(sitting)->hp;
+            float lost = hp0 - w.unit(sitting)->hp.toFloat();
             const sim::Weapon& cw = pult->weapons[0];
             float once = cw.damageVs(vic);
             check(lost <= once * 1.60f,
@@ -1584,7 +1584,7 @@ int main(int argc, char** argv) {
                 tick(w, 8.0f);   // 5s countdown + slack
                 const sim::Unit* u = w.unit(id);
                 check(u && !u->alive(), (std::string(c.label) + " (" + c.t->id + ") is DEAD").c_str(),
-                      u ? ("hp=" + std::to_string(u->hp)) : "gone");
+                      u ? ("hp=" + std::to_string(u->hp.toFloat())) : "gone");
             }
             // A self-destruct next to a friendly healer must still kill. alive()
             // reads deadFor, not hp, so a unit sitting at zero hp still looks alive
@@ -1623,7 +1623,7 @@ int main(int argc, char** argv) {
                         ++survived;
                         if (worst.empty())
                             worst = "phase " + std::to_string(phase) +
-                                    (v ? " hp=" + std::to_string(v->hp) : " gone");
+                                    (v ? " hp=" + std::to_string(v->hp.toFloat()) : " gone");
                     }
                 }
                 check(survived == 0, "self-destruct inside a friendly heal aura still kills",

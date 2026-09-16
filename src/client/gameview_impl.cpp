@@ -704,7 +704,7 @@
             s.gen = fb.gen;
             fb.live.push_back(&s);   // compact live list (mirrors world_.units())
             s.id = u.id; s.type = u.type; s.player = u.player;
-            s.hp = u.hp; s.mana = u.mana; s.veteran = u.veteran;
+            s.hp = u.hp.toFloat(); s.mana = u.mana; s.veteran = u.veteran;
             s.deadFor = u.deadFor < 0 ? -1.0f : float(u.deadFor) / 30.0f;   // ticks -> seconds
             s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
             s.weaponSlot = u.weaponSlot;
@@ -864,8 +864,8 @@
             for (const auto& st : front().storms) {
                 auto prev = stormsSeen_.find(st.id);
                 if (prev == stormsSeen_.end() && st.w && !st.w->soundHit.empty())
-                    sounds_.playWorld(st.w->soundHit, st.x, st.z);
-                live.emplace(st.id, StormTrack{st.x, st.z, st.w});
+                    sounds_.playWorld(st.w->soundHit, st.x.toFloat(), st.z.toFloat());
+                live.emplace(st.id, StormTrack{st.x.toFloat(), st.z.toFloat(), st.w});
             }
             for (const auto& [id, tr] : stormsSeen_)
                 if (!live.count(id) && tr.w && !tr.w->wanderEnd.empty())

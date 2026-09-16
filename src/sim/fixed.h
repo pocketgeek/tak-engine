@@ -42,22 +42,19 @@ struct Fixed {
     static Fixed fromFloat(float f) { return raw(int32_t(std::lround(double(f) * kOne))); }
 
     constexpr float toFloat() const { return float(v) / float(kOne); }
-    // IMPLICIT TO FLOAT, AND THIS IS PORT SCAFFOLDING, not the end state.
+    // NO IMPLICIT CONVERSION TO FLOAT, and it is worth saying why this note exists
+    // rather than just the absence of an operator.
     //
-    // Converting Unit::x/z alone breaks 248 sites: 28 writes and the rest reads. The
-    // writes are what decide stored precision, so those stay explicit and get reviewed
-    // one at a time. The reads are float arithmetic that was float before this change
-    // and is no worse for it, so letting them convert silently is what makes a port of
-    // this size tractable at all.
+    // The commit that claimed to delete it (b60cd13) did convert all 484 call sites --
+    // that work was real -- but left the operator itself in place: it had been put
+    // back temporarily to bisect a hash difference and was never taken out again. So
+    // for six commits the port was finished and the guard was missing, and every site
+    // written in that window was free to convert silently. Removing it for real turned
+    // up 158 of them.
     //
-    // Be clear about what it does NOT buy: a float carries 24 bits of mantissa, and a
-    // coordinate near the far edge of a map needs 28 at this resolution, so a read is
-    // LOSSY out there. Determinism therefore arrives only where a path is converted to
-    // Fixed end to end -- the mover and the collision test. Everywhere still reading
-    // through here is exactly as portable as it was, which is to say it relies on
-    // detmath and -ffp-contract=off. Each converted path should drop its reads; when
-    // the last one goes, so does this operator.
-    constexpr operator float() const { return toFloat(); }
+    // What its absence costs is a compile error at every crossing, which is the entire
+    // point: a float reaching stored state has to be spelled fromFloat(), and a read
+    // has to be spelled toFloat(), so both are reviewable in a diff.
     // Truncates toward NEGATIVE infinity, like a floor, so cell indexing is correct
     // left of the origin. A bare v/kOne would round toward zero and put x=-0.5 in
     // cell 0 alongside x=+0.5.

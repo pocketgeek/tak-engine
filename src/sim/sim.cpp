@@ -2135,7 +2135,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             if (e.embarked()) return;                 // safe inside a transport
             if (e.type->commander) return;            // Monarchs are never charmed
             if (e.type->cantBeCaptured) return;
-            if (e.hp <= 0) return;
+            if (e.hp <= Fixed()) return;
             if (atUnitCap(fromPlayer)) return;        // no room on the new side
             // Chance rises with the victim's veterancy -- a green unit is ~80%, a
             // 10-star veteran is capped at 99%. Scaled by the area falloff so the
@@ -2151,7 +2151,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         float armour = std::max(e.vetMul() * e.armBuff, 0.01f);
         float dealt = w.damageVs(e.type) * atkMul / armour * scale;
         e.hp -= Fixed::fromFloat(dealt);
-        if (e.hp <= 0) {
+        if (e.hp <= Fixed()) {
             e.overkill = fxMax(e.overkill, -e.hp);          // retail severity input
             e.deathType = uint8_t(w.dmgType);                  // 3 = explosion -> gib
         }
@@ -2762,7 +2762,7 @@ void World::captureUnit(Unit& t, int newPlayer) {
     if (!t.type || t.player == newPlayer) return;
     // Already dead, just not swept yet (alive() reads deadFor, which tick() sets):
     // capturing would raise it back to half health and steal a corpse.
-    if (t.hp <= 0) return;
+    if (t.hp <= Fixed()) return;
     // Move the unit between the two owners' live counts NOW, the way spawn() does.
     // The counts only re-sync from a full walk at end of tick, so without this an
     // area mind control -- which converts a whole blob inside ONE applyHit -- reads
@@ -3414,7 +3414,7 @@ void World::reclaim(int builderId, int featureId, bool queue) {
         const Unit* c = unit(-featureId);
         // Accept anything dead or dying this tick whose def can be reclaimed
         // (the walk takes longer than the death anim anyway).
-        if (!c || c->id == builderId || !c->type || (c->alive() && c->hp > 0))
+        if (!c || c->id == builderId || !c->type || (c->alive() && c->hp > Fixed()))
             return;
         int ct = c->corpseStatue >= 0 ? c->corpseStatue : corpseTypeOf(c->type);
         if (ct < 0 || !featTypes_[size_t(ct)].reclaimable) return;
@@ -3458,7 +3458,7 @@ void World::tickReclaim(Unit& b, float dt) {
         if (c->alive()) {
             // hp<=0 = dying THIS tick (the death edge may run after us): hold
             // the job. A genuinely healthy target is an invalid order: drop it.
-            if (c->hp > 0) advance();
+            if (c->hp > Fixed()) advance();
             return;
         }
         // Body still mid-death-anim: stand by until it settles (statues settle
@@ -3476,10 +3476,10 @@ void World::tickReclaim(Unit& b, float dt) {
         const Fixed step = Fixed::fromFloat(kReclaimRate / kTick);
         // Proportional drip against the INITIAL work (= max(energy,60), set at
         // death). Shipped corpse defs all have energy 0, so this grants nothing.
-        if (cd && cd->energy > 0 && c->corpseWork > 0)
-            players_[size_t(b.player)].mana += Fixed::fromFloat(
-                cd->energy * fxMin(step, c->corpseWork).toFloat() /
-                std::max(cd->energy, 60.0f));
+        if (cd && cd->energy > 0 && c->corpseWork > Fixed())
+            players_[size_t(b.player)].mana +=
+                double(cd->energy) * double(fxMin(step, c->corpseWork).toFloat()) /
+                double(std::max(cd->energy, 60.0f));
         c->corpseWork -= step;
         if (c->corpseWork <= Fixed()) {
             c->deadFor = kRetiredTicks;   // consumed
@@ -3531,7 +3531,7 @@ void World::repair(int builderId, int targetId, bool queue) {
     Unit* t = unit(targetId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove) return;
     if (!t || !t->alive() || !t->type || t->id == b->id || t->underConstruction ||
-        !allied(t->player, b->player) || t->hp >= t->type->maxHp)
+        !allied(t->player, b->player) || t->hp >= Fixed::fromFloat(t->type->maxHp))
         return;
     // An order, in sequence, like construction and reclaim.
     if (!queue) b->orders.clear();
@@ -3553,12 +3553,12 @@ void World::tickRepair(Unit& b, float dt) {
         if (!b.orders.empty() && b.orders.front().repairTarget) b.orders.erase(b.orders.begin());
     };
     if (!b.type) { endRepair(); return; }
-    // `t->hp <= 0` is NOT covered by alive(): that reads deadFor, which is only set
+    // `t->hp <= Fixed()` is NOT covered by alive(): that reads deadFor, which is only set
     // by the death sweep in tick(). A unit whose hp has already reached zero this
     // tick still looks alive here, and tickRepair runs BEFORE the sweep -- so
     // without this a builder repairs a unit back off zero and it never dies.
-    if (!t || !t->alive() || !t->type || t->hp <= 0 || t->underConstruction ||
-        t->embarked() || !allied(t->player, b.player) || t->hp >= t->type->maxHp) {
+    if (!t || !t->alive() || !t->type || t->hp <= Fixed() || t->underConstruction ||
+        t->embarked() || !allied(t->player, b.player) || t->hp >= Fixed::fromFloat(t->type->maxHp)) {
         endRepair();
         return;
     }
@@ -3584,7 +3584,7 @@ void World::tickRepair(Unit& b, float dt) {
     tm.mana -= cost;
     t->hp = fxMin(Fixed::fromFloat(t->type->maxHp),
                   t->hp + Fixed::fromFloat(t->type->maxHp * dt / std::max(total, 0.01f)));
-    if (t->hp >= t->type->maxHp) endRepair();   // mended: on to the next order
+    if (t->hp >= Fixed::fromFloat(t->type->maxHp)) endRepair();   // mended: on to the next order
 }
 
 void World::startDisco(int player) {
@@ -3686,7 +3686,7 @@ void World::tickConstruction(Unit& b, float dt) {
         tm.mana -= cost;
         site->hp += Fixed::fromFloat(site->type->maxHp * 0.95f * dt / std::max(total, 0.01f));
     }
-    if (site->hp >= site->type->maxHp) {
+    if (site->hp >= Fixed::fromFloat(site->type->maxHp)) {
         site->hp = Fixed::fromFloat(site->type->maxHp);
         site->underConstruction = false;
         b.buildSiteId = 0;
@@ -3795,18 +3795,18 @@ void World::tickHealAuras() {
                 float dx = (e.x - s.x).toFloat(), dz = (e.z - s.z).toFloat();
                 float d2 = dx * dx + dz * dz;
                 if (!eligible(e, d2)) return;
-                if (e.hp >= e.type->maxHp) return;   // retail heals only the damaged
+                if (e.hp >= Fixed::fromFloat(e.type->maxHp)) return;   // retail heals only the damaged
                 // ... and never anything already at zero: alive() reads deadFor, so a
                 // unit killed this tick still looks alive until the sweep in tick()
                 // runs, and the aura pulse fires AFTER that loop. Healing it here
                 // resurrects it (a self-destruct inside a friendly aura never died).
-                if (e.hp <= 0) return;
+                if (e.hp <= Fixed()) return;
                 float power = a.amount * a.falloff(std::sqrt(d2)) / float(n);
                 float prog = power / std::max(e.type->buildTime, 0.01f);
                 // Deliberate divergence: retail bills the whole pulse even when only a
                 // sliver of it lands, so topping off one unit can drain a player's
                 // pool. Charge for the repair actually done instead.
-                float need = 1.0f - e.hp / std::max(e.type->maxHp, 1.0f);
+                float need = 1.0f - e.hp.toFloat() / std::max(e.type->maxHp, 1.0f);
                 prog = std::min(prog, need);
                 float cost = e.type->buildCost * prog;
                 if (cost > tm.mana) {   // short on mana: heal proportionally less
@@ -4567,7 +4567,7 @@ void World::tick(float dt) {
                 float speed = detmath::len(p.vx, p.vz);
                 if (speed > 0.01f) {
                     float cur = detmath::atan2(p.vx, p.vz);
-                    float want = detmath::atan2(gt->x.toFloat() - p.x, gt->z.toFloat() - p.z);
+                    float want = detmath::atan2((gt->x - p.x).toFloat(), (gt->z - p.z).toFloat());
                     float d = angleDiff(want, cur);
                     float maxTurn = p.wsrc->turnRate * dt;
                     float nh;
@@ -4601,7 +4601,7 @@ void World::tick(float dt) {
             // Distance from the target to the segment travelled this tick, so a
             // fast projectile (e.g. the totem's lightning, ~50px/tick) can't
             // skip past the small hit radius between ticks.
-            float sx = p.x - ox, sz = p.z - oz;
+            float sx = p.x.toFloat() - ox, sz = p.z.toFloat() - oz;
             float seg = sx * sx + sz * sz;
             float u = seg > 0 ? ((t->x.toFloat() - ox) * sx + (t->z.toFloat() - oz) * sz) / seg : 0.0f;
             u = std::clamp(u, 0.0f, 1.0f);
@@ -4615,7 +4615,7 @@ void World::tick(float dt) {
                 if (p.wsrc) applyHit(*p.wsrc, t->x.toFloat(), t->z.toFloat(), p.fromPlayer, p.fromId, t);
                 else if (!(benchmarkMode() && t->type && t->type->commander)) {
                     t->hp -= Fixed::fromFloat(p.damage);
-                    if (t->hp <= 0) {
+                    if (t->hp <= Fixed()) {
                         t->overkill = fxMax(t->overkill, -t->hp);
                         t->deathType = p.wsrc ? uint8_t(p.wsrc->dmgType) : 1;
                     }
@@ -4658,15 +4658,15 @@ void World::tick(float dt) {
         Unit* under = nullptr;
         if (dropped) {
             float bestD = 1e30f;
-            forEachNear(bp.x, bp.z, 40.0f, [&](int idx) {
+            forEachNear(bp.x.toFloat(), bp.z.toFloat(), 40.0f, [&](int idx) {
                 Unit& e = units_[size_t(idx)];
                 if (!e.alive() || e.embarked() || !e.type || allied(e.player, bp.fromPlayer)) return;
-                float dx = e.x.toFloat() - bp.x, dz = e.z.toFloat() - bp.z;
+                float dx = (e.x - bp.x).toFloat(), dz = (e.z - bp.z).toFloat();
                 float d = dx * dx + dz * dz;
                 if (d < bestD) { bestD = d; under = &e; }
             });
         }
-        applyHit(*bp.wsrc, bp.x, bp.z, bp.fromPlayer, bp.fromId, under);
+        applyHit(*bp.wsrc, bp.x.toFloat(), bp.z.toFloat(), bp.fromPlayer, bp.fromId, under);
     }
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
@@ -5094,7 +5094,7 @@ void World::tick(float dt) {
             }
             continue;
         }
-        if (u.hp <= 0) {
+        if (u.hp <= Fixed()) {
             if (u.player >= 0 && u.player < int(players_.size()))
                 players_[size_t(u.player)].losses++;   // end-of-game "Losses" column
             // Award the destroyed unit's experiencepoints to the killer, then set
@@ -5213,7 +5213,7 @@ void World::tick(float dt) {
         // severity reads the PREVIOUS sample, i.e. your health ~1s before death.
         if (tickCounter_ % 30 == 0) {
             u.hpPct1s = u.hpPctCur;
-            u.hpPctCur = uint8_t(std::clamp(u.hp / std::max(u.type->maxHp, 1.0f)
+            u.hpPctCur = uint8_t(std::clamp(u.hp.toFloat() / std::max(u.type->maxHp, 1.0f)
                                             * 100.0f, 0.0f, 100.0f));
         }
         // Status timers count down; HP regenerates (healtime); mana recharges.
@@ -5246,7 +5246,7 @@ void World::tick(float dt) {
             u.hp -= Fixed::fromFloat(waterDamage_ * dt);
             if (u.hp <= Fixed()) { u.overkill = fxMax(u.overkill, -u.hp); u.deathType = 1; }
         }
-        // `u.hp > 0` matters because of WHERE hp gets zeroed, not by how much.
+        // `u.hp > Fixed()` matters because of WHERE hp gets zeroed, not by how much.
         // Every other death path puts hp <= 0 outside this loop body, so the sweep
         // at the top (3912) catches it and `continue`s -- never reaching this line.
         // The self-destruct expiry a few lines up is the one that fires INSIDE the
@@ -5256,7 +5256,7 @@ void World::tick(float dt) {
         // which is nearly every unit: of the 202 types this registry loads from a
         // retail install, 200 have healtime > 0 (only aranull and npcwagon do not).
         // That is why Ctrl+Shift+D self-destruct appeared to do nothing.
-        if (u.type->healTime > 0 && u.hp > 0 && u.hp < u.type->maxHp)
+        if (u.type->healTime > 0 && u.hp > Fixed() && u.hp < Fixed::fromFloat(u.type->maxHp))
             u.hp = fxMin(Fixed::fromFloat(u.type->maxHp),
                          u.hp + Fixed::fromFloat(dt / u.type->healTime));
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
@@ -5641,7 +5641,7 @@ void World::tick(float dt) {
             // a crowd splits around an obstacle instead of piling up.
             if (!u.type->canFly) {
                 const Fixed moved = fxLen(u.x - u.stuckX, u.z - u.stuckZ);
-                if (moved > 11.0f) {
+                if (moved > Fixed::fromFloat(11.0f)) {
                     u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
                 } else {
                     ++u.stuckFor;
@@ -5894,7 +5894,7 @@ void World::tick(float dt) {
         const PendingEffect cur = e;   // applyHit walks/kills units_; copy first
         if (done) pendingEffects_.erase(pendingEffects_.begin() + std::ptrdiff_t(i));
         else ++i;
-        if (pulse && cur.w) applyHit(*cur.w, cur.x, cur.z, cur.player, cur.fromId, nullptr);
+        if (pulse && cur.w) applyHit(*cur.w, cur.x.toFloat(), cur.z.toFloat(), cur.player, cur.fromId, nullptr);
     }
     // Wandering storms: drift along the launch heading, weave, and grind whatever
     // they touch. The FBI `damage` is a PER-TICK rate, not a per-hit figure -- the
@@ -5935,7 +5935,7 @@ void World::tick(float dt) {
         if (kStormLog) std::fprintf(stderr, "storm t=%u at %.0f,%.0f jit=%.1f,%.1f left=%dt\n",
                                     tickCounter_, hit.x.toFloat(), hit.z.toFloat(),
                                     hit.jitX.toFloat(), hit.jitZ.toFloat(), hit.left);
-        applyHit(*hit.w, hit.x, hit.z, hit.player, hit.fromId, nullptr);
+        applyHit(*hit.w, hit.x.toFloat(), hit.z.toFloat(), hit.player, hit.fromId, nullptr);
         ++i;
     }
     // Drain the [EXPLODEAS] death blasts queued by the sweep above. Done here, after

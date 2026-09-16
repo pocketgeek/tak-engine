@@ -914,7 +914,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                         // the designer gave them (usually 0 -- they must recharge
                         // before casting), not a full pool.
                         if (su->type->maxMana > 0 && u.value("manapercentage"))
-                            su->mana = Fixed::fromFloat(su->type->maxMana *
+                            su->mana = (su->type->maxMana *
                                        float(u.numberOr("manapercentage", 100)) / 100.0f);
                     }
                     // InitialMission: the per-unit order queue in the SAME mini-language

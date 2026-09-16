@@ -532,7 +532,7 @@
         // completely invisibly. Drawn before the shots so units read on top of it.
         for (const auto& st : front().storms) {
             if (!st.w) continue;
-            if (!noFog_ && !cellVisibleR(st.x, st.z)) continue;
+            if (!noFog_ && !cellVisibleR(st.x.toFloat(), st.z.toFloat())) continue;
             bool spinUp = st.arm > 0.0f;
             const std::string& artName = spinUp && !st.w->wanderStart.empty()
                                              ? st.w->wanderStart : st.w->wanderLoop;
@@ -545,8 +545,8 @@
             size_t fi = size_t(std::max(0.0f, phase) * 20.0f);
             fi = spinUp ? std::min(fi, ea->frames.size() - 1) : fi % ea->frames.size();
             const auto& fr = ea->frames[fi];
-            float sx = (st.x - mapView_.offX()) * zm - terrainLiftX(st.x, st.z) * zm;
-            float sy = (st.z - mapView_.offY()) * zm - terrainLift(st.x, st.z) * zm;
+            float sx = (st.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(st.x.toFloat(), st.z.toFloat()) * zm;
+            float sy = (st.z.toFloat() - mapView_.offY()) * zm - terrainLift(st.x.toFloat(), st.z.toFloat()) * zm;
             float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
             // Anchored at the storm's FOOT: these sprites are tall columns whose
             // anchor sits near the base, so the funnel stands on the ground.
@@ -607,7 +607,7 @@
         }
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         for (const auto& p : front().projectiles) {
-            if (!cellVisibleR(p.x, p.z)) continue;
+            if (!cellVisibleR(p.x.toFloat(), p.z.toFloat())) continue;
             float t = std::clamp(p.age / std::max(p.flight, 0.05f), 0.0f, 1.0f);
             // Flyer shots: lift the whole trajectory by the altitude interpolated
             // from the firing unit down to the target (0.8x, matching the sprite
@@ -618,8 +618,8 @@
             // (lightmap, 36): both sit on the GROUND under the shot, not at its
             // altitude, which is what sells the shot as being up in the air.
             if (p.wsrc) {
-                float gx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
-                float gy = (p.z - mapView_.offY()) * zm - terrainLift(p.x, p.z) * zm;
+                float gx = (p.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(p.x.toFloat(), p.z.toFloat()) * zm;
+                float gy = (p.z.toFloat() - mapView_.offY()) * zm - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm;
                 if (p.wsrc->lightMap > 0) {
                     // A soft additive pool tinted by the shot's own family, so a
                     // fireball throws warm light on the ground as it passes.
@@ -659,7 +659,7 @@
                 float peak = bal ? std::min(95.0f, p.flight * 55.0f)
                                  : std::min(18.0f, p.flight * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
-                drawShotModel(p.wsrc->shotModel, p.fromPlayer, p.x, p.z,
+                drawShotModel(p.wsrc->shotModel, p.fromPlayer, p.x.toFloat(), p.z.toFloat(),
                               h * zm + palt, -std::atan2(p.vx, p.vz));
                 continue;
             }
@@ -678,9 +678,9 @@
                     float peak = bal ? std::min(95.0f, p.flight * 55.0f)
                                      : std::min(18.0f, p.flight * 12.0f);
                     float h = 8 + 4 * peak * t * (1 - t);
-                    float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
-                    float sy = (p.z - mapView_.offY()) * zm - h * zm
-                               - terrainLift(p.x, p.z) * zm - palt;
+                    float sx = (p.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(p.x.toFloat(), p.z.toFloat()) * zm;
+                    float sy = (p.z.toFloat() - mapView_.offY()) * zm - h * zm
+                               - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm - palt;
                     const auto& fr = ea->frames[size_t(int(p.age * 20.0f)) % ea->frames.size()];
                     float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
                     SDL_FRect dst{sx - fw * 0.5f, sy - fh * 0.5f, fw, fh};
@@ -702,8 +702,8 @@
             }
             if (p.fx == tak::sim::WeaponFx::Lightning) {
                 // Flat, fast, jagged blue-white bolt from source toward target.
-                float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
-                float sy = (p.z - mapView_.offY()) * zm - 12 * zm - terrainLift(p.x, p.z) * zm
+                float sx = (p.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(p.x.toFloat(), p.z.toFloat()) * zm;
+                float sy = (p.z.toFloat() - mapView_.offY()) * zm - 12 * zm - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm
                            - palt;
                 float len = 22.0f;
                 float bx = -p.vx, bz = -p.vz;
@@ -729,8 +729,8 @@
                 for (int s = 0; s < 5; ++s) {
                     float back = s * 6.0f;   // world px behind the tip
                     float wob = ((s * 811 + int(p.age * 1000)) % 5 - 2) * 2.0f;
-                    float fx = p.x + bx * back - bz * wob;
-                    float fz = p.z + bz * back + bx * wob;
+                    float fx = p.x.toFloat() + bx * back - bz * wob;
+                    float fz = p.z.toFloat() + bz * back + bx * wob;
                     float sx = (fx - mapView_.offX()) * zm - terrainLiftX(fx, fz) * zm;
                     float sy = (fz - mapView_.offY()) * zm - 12 * zm - terrainLift(fx, fz) * zm
                                - palt;
@@ -755,8 +755,8 @@
                 float peak = bal ? std::min(95.0f, p.flight * 55.0f)
                                  : std::min(18.0f, p.flight * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
-                float sx = (p.x - mapView_.offX()) * zm - terrainLiftX(p.x, p.z) * zm;
-                float sy = (p.z - mapView_.offY()) * zm - h * zm - terrainLift(p.x, p.z) * zm
+                float sx = (p.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(p.x.toFloat(), p.z.toFloat()) * zm;
+                float sy = (p.z.toFloat() - mapView_.offY()) * zm - h * zm - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm
                            - palt;
                 SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
                 SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.035f * zm,
