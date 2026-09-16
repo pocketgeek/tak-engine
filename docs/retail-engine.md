@@ -1542,3 +1542,65 @@ Nearby, for the record: buildcost (+0x20e), buildtime (+0x212) and workertime
 the representation is per field -- ints, floats and 16.16 sit side by side in one
 struct -- so the only reliable way to read one is to find where it is CONSUMED
 and look at the scale it is multiplied by.
+
+## Retail's own data types, field by field (2026-09-16)
+
+Asked which of our types still differ from retail's. The binary has FOUR TDF
+readers, not the three named above: `readInt @0x543190`, `readFloat @0x5431c0`,
+`readString @0x5432c0`, and `0x5431f0`, which parses into 16.16 FIXED POINT and
+stores the raw dword. That last one is how the movement constants are read --
+maxvelocity (+0x162), acceleration (+0x16a), brakerate, watermultiplier (+0x16e)
+and roadmultiplier (+0x172) -- and the debug dump reads them back with `fildl`
+scaled by 1/65536, confirming the format.
+
+Where we still differ:
+
+  * 16.16 in retail, float in ours: maxVel, accel, brake, roadMult, waterMult.
+  * INT in retail, float in ours: maxHp (maxdamage), sight (sightdistance),
+    radar, turnRate, turnInPlaceRate, buildDist, transportDist, minCloakDist,
+    leash (maneuverleashlength), cruiseAlt, maxSlope, maxWaterSlope,
+    maxWaterDepth, minWaterDepth; and on Weapon: range, damage, aoe
+    (areaofeffect). `damage` is corroborated by the dump's "%i" format.
+  * Narrower than retail: Unit::mana is a float where Player::mana is a double
+    and the affordability check at 0x46e85f uses `fsubl`.
+
+Already matching: storage/income (mogrium*), buildCost, buildTime, workerTime,
+healTime, maxMana, manaRegen, cloakCostMove, projVel (weaponvelocity), reload
+(reloadtime), edge (edgeeffectiveness), and the live aura multipliers
+(Adjustment, a float defaulting to 1.0 -- see the aura section).
+
+None of this is a determinism hazard: type data is parsed once from identical
+bytes on every peer. It is a fidelity gap.
+
+### Converting the 16.16 group costs arrivals, and why is NOT yet known
+
+An attempt is kept at docs/wip/movement-16.16.patch.txt. It stores the FBI value
+per tick in 16.16 exactly as retail does, which also deletes a round trip (we
+scaled by 30 at load and multiplied by dt every tick to undo it). The mover
+becomes fixed point end to end.
+
+It does not ship, because crowdbench's opposing columns goes 32/32 -> 23/32
+(travel x0.99 -> x0.85), and the cause is not understood. What IS measured, with
+a counter on the mover's refusal branch:
+
+    scenario           refusals baseline -> converted
+    opposing columns       56,650 -> 88,518   (+56%)
+    chokepoint              5,571 -> 15,333   (+175%)
+    group order               129 -> 121
+    open field                 74 -> 71
+
+So the conversion makes the STEP TEST refuse far more often in congested
+traffic, and uncongested movement is untouched. Units are not wedged; they sit
+at the 0.4x "refused twice running" cap and run out of clock. Ruled out as
+causes, by direct arithmetic against the baseline: the cap value (both resolve
+to 28 px/s), the acceleration ramp (84 ticks either way; the increments differ
+by 0.02%), the brake, stopDist, and the arc test. The next place to look is the
+step/penetration test itself, not the speed ramp -- log the penetration depth at
+refusal and compare distributions.
+
+Two unit bugs found and fixed while doing it, both worth knowing if this is
+picked up again: arcDist divided a per-tick speed by a per-second turn rate
+(understating the turn arc 30x, pinning everything at a crawl), and the
+UnitType struct defaults for accel/brake are px/s^2 values used only by
+synthetic test types -- replacing them with the FBI default of 0.5 made them 30x
+stronger and collapsed stopDist from ~26px to 0.87px.

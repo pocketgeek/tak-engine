@@ -1,0 +1,576 @@
+diff --git a/src/client/gameview.h b/src/client/gameview.h
+index 212dc7c..28d6b88 100644
+--- a/src/client/gameview.h
++++ b/src/client/gameview.h
+@@ -2160,7 +2160,7 @@ private:
+     // A "structure" (building) for render/build purposes = one that can't actually
+     // move. NOTE: the FBI `canmove` flag is unreliable -- some buildings (the Keep,
+     // arakeep) set canmove=1 with NO velocity -- so key off maxVel, not type->canMove.
+-    static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= 0.0f; }
++    static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= tak::sim::Fixed(); }
+     // Retail's shadow rule, and ONLY retail's: it skips the whole shadow block for
+     // FBI `noshadow` (KINGDOMS.icd 0x4ec8d8) and, independently, for every `floater`
+     // (0x4ecac0) -- which is why five ships carry a shadowart they never show.
+diff --git a/src/client/gameview_hud.cpp b/src/client/gameview_hud.cpp
+index da439ae..9375ac0 100644
+--- a/src/client/gameview_hud.cpp
++++ b/src/client/gameview_hud.cpp
+@@ -1078,7 +1078,7 @@
+             int i = guiIdx(nm);
+             if (i >= 0) out.push_back({i, c});
+         };
+-        bool mobile = front->type->maxVel > 0;        // inverse of isStructure()
++        bool mobile = front->type->maxVel > tak::sim::Fixed();        // inverse of isStructure()
+         bool armed = !front->type->weapons.empty();
+         // The five order slots sit at fixed .gui positions that nothing else uses, so
+         // retail keeps them on screen and swaps in the Disabled face when the order
+@@ -1431,7 +1431,7 @@
+                 if (u) {
+                     SDL_Texture* ic = iconFor(u->type->id);
+                     if (!ic) ic = modelIconTex(u->type->id, colorSlot_[localPlayer_ & 7],
+-                                               u->type->maxVel > 0);
++                                               u->type->maxVel > tak::sim::Fixed());
+                     if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &pr);
+                 }
+                 SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
+diff --git a/src/client/gameview_impl.cpp b/src/client/gameview_impl.cpp
+index 2e24f81..aeb5fed 100644
+--- a/src/client/gameview_impl.cpp
++++ b/src/client/gameview_impl.cpp
+@@ -1406,7 +1406,7 @@
+                     // each cycle while the unit keeps moving.
+                     a.vm->start("walk") || a.vm->start("walk_legs");
+                 }
+-            } else if (u.type->maxVel > 0) {
++            } else if (u.type->maxVel > tak::sim::Fixed()) {
+                 // No-walk movers (ships, wheeled vehicles): retail drives these via
+                 // the MoveRate engine callin. The Ark's MotionControl ambient (from
+                 // Create) polls the static that MoveRate sets and runs the rowing /
+@@ -1530,7 +1530,7 @@
+                     }
+                 }
+             }
+-            // Buildings: yard/production anims. Detect via isStructure (maxVel<=0),
++            // Buildings: yard/production anims. Detect via isStructure (maxVel <= tak::sim::Fixed()),
+             // NOT !canMove -- the Keep/Castle/Hell carry canmove=1 in their FBI, so
+             // the old test skipped every factory and none of them ever animated
+             // while training.
+@@ -1579,7 +1579,7 @@
+                         float halfD = u.type->footZ * 8.0f + 24.0f;
+                         bool wantOpen = false;
+                         for (const UnitR* op : front().live) {
+-                            // isStructure (maxVel<=0), NOT !canMove: walls set canmove=1
++                            // isStructure (maxVel <= tak::sim::Fixed()), NOT !canMove: walls set canmove=1
+                             // with no velocity, and a wall abuts every gate -- the canMove
+                             // test would latch the gate open forever (CLAUDE.md gotcha).
+                             if (op == &u || !op->type || isStructure(op->type)) continue;
+@@ -1981,9 +1981,9 @@
+                         return 1;
+                     }
+                     case 29:                                           // CURRENT_SPEED (% of max:
+-                        return su->type->maxVel > 0                    // ship MotionControl picks
++                        return su->type->maxVel > tak::sim::Fixed()                    // ship MotionControl picks
+                                    ? int32_t(std::clamp(               // slowrow/row/fastrow at
+-                                         su->speed / su->type->maxVel * 100.0f,  // 25/75)
++                                         su->speed / std::max(su->type->maxVel.toFloat(), 0.001f) * 100.0f,  // 25/75)
+                                          0.0f, 100.0f))
+                                    : 0;
+                     case 32: return su->veteran;                       // VETERAN LEVEL (StatusControl
+@@ -2065,7 +2065,7 @@
+             } else if (isStructure(type) || !a.hasWalk || a.hasMelee) {
+                 // Buildings: run the COB constructor so ambient loops start (e.g. the
+                 // Keep's Create kicks off its flag/smoke scripts, the Sacred Fire's
+-                // its FireControl flicker). Detect via isStructure (maxVel<=0), NOT
++                // its FireControl flicker). Detect via isStructure (maxVel <= tak::sim::Fixed()), NOT
+                 // !canMove -- the Keep and friends set canmove=1 with no velocity, so
+                 // the old !canMove test skipped them and they never animated.
+                 // Also mobile units with NO walk cycle (ships' oars, wheeled war-machines'
+diff --git a/src/client/gameview_net.cpp b/src/client/gameview_net.cpp
+index 911d899..70f926d 100644
+--- a/src/client/gameview_net.cpp
++++ b/src/client/gameview_net.cpp
+@@ -545,7 +545,7 @@ void GameView::autoplayStep() {
+     {
+         std::lock_guard<std::mutex> lk(simMutex_);
+         for (const auto& u : world_.units())
+-            if (u.alive() && u.type && int(u.player) == localPlayer_ && u.type->maxVel > 0 &&
++            if (u.alive() && u.type && int(u.player) == localPlayer_ && u.type->maxVel > tak::sim::Fixed() &&
+                 !u.embarked() && !u.underConstruction)
+                 mine.push_back(u.id);
+     }
+diff --git a/src/client/gameview_unitinfo.cpp b/src/client/gameview_unitinfo.cpp
+index 2d41278..c560692 100644
+--- a/src/client/gameview_unitinfo.cpp
++++ b/src/client/gameview_unitinfo.cpp
+@@ -150,9 +150,9 @@ void GameView::drawUnitInfo(int winW, int winH) {
+         text("N\\A", g.valAcc, false);
+         text("N\\A", g.valTurn, false);
+     } else {
+-        std::snprintf(buf, sizeof buf, "%.1f m/s", t->maxVel * 0.4f);
++        std::snprintf(buf, sizeof buf, "%.1f m/s", t->maxVel.toFloat() * 30.0f * 0.4f);
+         text(buf, g.valVel, false);
+-        std::snprintf(buf, sizeof buf, "%.2f m/s/s", t->accel * 0.4f / 30.0f);
++        std::snprintf(buf, sizeof buf, "%.2f m/s/s", t->accel.toFloat() * 900.0f * 0.4f / 30.0f);
+         text(buf, g.valAcc, false);
+         std::snprintf(buf, sizeof buf, "%.0f deg/s", t->turnRate * 57.2957795f);
+         text(buf, g.valTurn, false);
+diff --git a/src/sim/sim.cpp b/src/sim/sim.cpp
+index 9dab354..59596f9 100644
+--- a/src/sim/sim.cpp
++++ b/src/sim/sim.cpp
+@@ -40,7 +40,8 @@ constexpr float kPi = 3.14159265358979f;
+ // up at the release point; our projectiles are 2-D, so the fall is a fixed window
+ // after which the bomb detonates where it has drifted to.
+ constexpr float kBombFall = 0.8f;
+-constexpr float kTick = 30.0f;               // FBI per-tick values -> per-second
++constexpr float kTick = 30.0f;
++uint64_t g_refusals = 0;   // TEMP DIAGNOSTIC (TAK_REFUSELOG)
+ constexpr float kCobAngle = 2 * kPi / 65536.0f;
+ 
+ std::string lower(std::string s) {
+@@ -104,12 +105,12 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
+             // 1 = mobile unit) is the authoritative mobility flag.
+             t.canMove = info->numberOr("canmove", 0) != 0 &&
+                         info->numberOr("bmcode", 1) != 0;
+-            t.maxVel = float(info->numberOr("maxvelocity", 0)) * kTick;
++            t.maxVel = Fixed::fromFloat(float(info->numberOr("maxvelocity", 0)));
+             // Velocity is px/tick (*kTick => px/s); acceleration and braking are
+             // px/tick^2, so they need kTick^2. Using kTick left accel 30x too
+             // small, so high-maxVel flyers never reached speed and all crawled.
+-            t.accel = float(info->numberOr("acceleration", 0.5)) * kTick * kTick;
+-            t.brake = float(info->numberOr("brakerate", 0.5)) * kTick * kTick;
++            t.accel = Fixed::fromFloat(float(info->numberOr("acceleration", 0.5)));
++            t.brake = Fixed::fromFloat(float(info->numberOr("brakerate", 0.5)));
+             // FBI turnrate is COB angle units per tick.
+             float tr = float(info->numberOr("turnrate", 500));
+             t.turnRate = tr * kCobAngle * kTick;
+@@ -184,12 +185,14 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
+                     t.defaultFire = uint8_t(int(info->numberOr("standingfireorder", 2)) & 3);
+                 }
+             }
+-            t.waterMult = float(info->numberOr("watermultiplier",
+-                                info->numberOr("watermultipliser", 1)));
++            t.waterMult = Fixed::fromFloat(float(info->numberOr("watermultiplier",
++                                info->numberOr("watermultipliser", 1))));
+             // Exact key only: the icd's parser knows no typo fallback, so
+             // verpult's "roadmultplier" never counted in retail either. The
+             // retail default is ~1.2 (16.16 0x13333), NOT 1.0.
+-            t.roadMult = float(info->numberOr("roadmultiplier", 1.2));
++            t.roadMult = info->value("roadmultiplier")
++                       ? Fixed::fromFloat(float(info->numberOr("roadmultiplier", 1.2)))
++                       : Fixed::raw(0x13333);
+             t.maxWaterDepth = float(info->numberOr("maxwaterdepth", 0));
+             t.maxSlope = float(info->numberOr("maxslope", 255));
+             // Retail keeps this in 3 bits (icd 0x4c09e8: `& 7`, shifted into
+@@ -2274,8 +2277,8 @@ static void leadAim(const Unit& shooter, const Unit& tgt, const Weapon& w,
+     // Velocity from heading x speed is exact -- it is literally what the mover
+     // integrates each tick.
+     const SinCos tsc = fxSinCos(tgt.heading);
+-    ax += tsc.s.toFloat() * tgt.speed.toFloat() * t;
+-    az += tsc.c.toFloat() * tgt.speed.toFloat() * t;
++    ax += tsc.s.toFloat() * tgt.speed.toFloat() * kTick * t;
++    az += tsc.c.toFloat() * tgt.speed.toFloat() * kTick * t;
+ }
+ 
+ void World::fire(Unit& u, Unit& target, int slot) {
+@@ -2607,7 +2610,7 @@ void World::tickCombat(Unit& u, float dt) {
+         o.z = t->z;
+         float dx = (t->x - u.x).toFloat(), dz = (t->z - u.z).toFloat();
+         if (dx * dx + dz * dz <= 70 * 70)
+-            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
++            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
+         return;   // movement walks toward o when out of reach
+     }
+ 
+@@ -2656,7 +2659,7 @@ void World::tickCombat(Unit& u, float dt) {
+     // small margin for where nav actually halts at the edge (mirrors the builder reach
+     // in tickConstruction). Mobile targets keep centre-distance, so unit-vs-unit combat
+     // is unchanged.
+-    float pad = target->type->maxVel <= 0.0f
++    float pad = target->type->maxVel <= Fixed()
+                     ? 8.0f * float(std::max(target->type->footX, target->type->footZ)) + 24.0f
+                     : 0.0f;
+     float reach = best + pad;
+@@ -2709,7 +2712,7 @@ void World::tickCombat(Unit& u, float dt) {
+     // In range: stop and face the target. Retail brakes to a halt FIRST and only
+     // then pivots, at turninplacerate rather than the moving turn rate (icd
+     // 0x4d9b65), so a unit doesn't spin on the spot while it is still sliding.
+-    u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
++    u.speed = fxMax(Fixed(), u.speed - u.type->brake);
+     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
+     const int32_t diff = bamDiff(want, u.heading);
+     if (u.speed.toFloat() <= 0.0f) {
+@@ -3150,7 +3153,7 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
+ bool World::clearableForPlacement(const UnitType* type, float x, float z,
+                                   std::vector<int>& out) const {
+     out.clear();
+-    if (!type || type->maxVel > 0.0f) return false;   // buildings only
++    if (!type || type->maxVel > Fixed()) return false;   // buildings only
+     if (canPlace(type, x, z)) return true;            // nothing in the way already
+     const NavGrid& grid = navFor(type);
+     if (grid.empty()) return false;
+@@ -5054,7 +5057,7 @@ void World::tick(float dt) {
+         if (u.alive() && u.type && u.squad < 0)
+             if (FormAgg* f = formOf(u)) {
+                 f->sx += u.x.toFloat(); f->sz += u.z.toFloat(); ++f->n;
+-                f->slowest = std::min(f->slowest, u.type->maxVel);
++                f->slowest = std::min(f->slowest, u.type->maxVel.toFloat());
+             }
+     for (auto& u : units_) {
+         if (!u.alive() || !u.type || u.squad >= 0 || !u.orders.empty()) continue;
+@@ -5270,7 +5273,7 @@ void World::tick(float dt) {
+         // as one, rolled on the sim's deterministic RNG -- and always to a point
+         // near HOME, so they mill about their patch instead of drifting off it.
+         if (u.type->wanders && u.orders.empty() && !u.underConstruction &&
+-            u.type->maxVel > 0 && (uint32_t(u.id) + tickCounter_) % 240 == 0) {
++            u.type->maxVel > Fixed() && (uint32_t(u.id) + tickCounter_) % 240 == 0) {
+             float ang = float(burnRand(628)) / 100.0f;
+             float r = float(burnRand(96));
+             order(u.id, u.homeX.toFloat() + detmath::sin(ang) * r,
+@@ -5289,7 +5292,7 @@ void World::tick(float dt) {
+                     if (dx * dx + dz * dz <= md * md) enemyNear = true;
+                 }
+             });
+-            float cost = (u.speed.toFloat() > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
++            float cost = (u.speed.toFloat() * kTick > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
+             Player& tm = players_[size_t(u.player)];
+             if (!enemyNear && tm.mana >= cost) { tm.mana -= cost; u.cloaked = true; }
+             else u.cloaked = false;
+@@ -5351,7 +5354,7 @@ void World::tick(float dt) {
+                 // Pad by a structure target's footprint half-extent so "holding in
+                 // range" agrees with tickCombat's fire gate (else a unit stopped at a
+                 // building's edge gets dragged back into moving).
+-                float pad = t->type->maxVel <= 0.0f
++                float pad = t->type->maxVel <= Fixed()
+                     ? 8.0f * float(std::max(t->type->footX, t->type->footZ)) + 24.0f : 0.0f;
+                 if (std::sqrt(dx * dx + dz * dz) > (u.type->maxRange() + pad) * 0.95f) return false;
+                 // Don't sit still with no shot: a ranged unit whose line to the
+@@ -5367,16 +5370,16 @@ void World::tick(float dt) {
+         if (combatHold) continue;
+ 
+         if (u.orders.empty()) {
+-            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
++            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
+         } else if (u.orders.front().wait > 0.0f) {
+             // SetMission "w N": hold position while the scripted wait counts down.
+-            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
++            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
+             u.orders.front().wait -= dt;
+             if (u.orders.front().wait <= 0.0f) u.orders.erase(u.orders.begin());
+         } else if (u.orders.front().waitAttack) {
+             // SetMission "wa": ambush -- hold until a non-allied unit is within sight,
+             // then release to the next order (usually an attack).
+-            u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
++            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
+             float sight = u.type->sight > 0 ? u.type->sight : 200.0f;
+             // THROUGH THE SPATIAL GRID. This scanned every unit in the world, for every
+             // ambushing unit, every tick -- O(n^2) in the number of ambushers, and a
+@@ -5455,7 +5458,7 @@ void World::tick(float dt) {
+             // yielded went on blocking the one it yielded to.
+ 
+             // Brake into the waypoint if it's the last one; slow for big turns.
+-            float target = u.type->maxVel;
++            Fixed target = u.type->maxVel;
+             // Formation pacing: a pure-move member keeps to the group's slowest speed,
+             // UNLESS it's behind the centre relative to the goal (a straggler), in which
+             // case it sprints at its own speed to catch up (see the FormAgg pass above).
+@@ -5469,28 +5472,28 @@ void World::tick(float dt) {
+                     float gx = legEnd.x.toFloat(), gz = legEnd.z.toFloat();
+                     float uToGoal = detmath::len(u.x.toFloat() - gx, u.z.toFloat() - gz);
+                     float cToGoal = detmath::len(cx - gx, cz - gz);
+-                    if (uToGoal <= cToGoal + kFormBehind) target = std::min(target, f->slowest);
++                    if (uToGoal <= cToGoal + kFormBehind) target = fxMin(target, Fixed::fromFloat(f->slowest));
+                 }
+             }
+             // Terrain speed factors, retail-style (icd 0x51be12): ROAD first --
+             // whole footprint on road cells -- else shallow WATER, never both
+             // (a road bridge over the river keeps the road bonus).
+             if (!u.type->canFly) {
+-                if (u.type->roadMult != 1.0f &&
++                if (u.type->roadMult != Fixed::fromInt(1) &&
+                     onRoad(u.x.toFloat(), u.z.toFloat(), u.type->footX, u.type->footZ)) {
+-                    target *= u.type->roadMult;
++                    target = target * u.type->roadMult;
+                     static const bool kRoadLog = std::getenv("TAK_ROADLOG") != nullptr;
+                     if (kRoadLog) {
+                         static int logged = 0;
+                         if (logged < 5)
+                             std::fprintf(stderr, "road boost: %s x%.2f (%d)\n",
+-                                         u.type->id.c_str(), u.type->roadMult, ++logged);
++                                         u.type->id.c_str(), u.type->roadMult.toFloat(), ++logged);
+                     }
+-                } else if (u.type->waterMult != 1.0f && !depth_.empty()) {
++                } else if (u.type->waterMult != Fixed::fromInt(1) && !depth_.empty()) {
+                     int cx = u.x.floorInt() / 16, cz = u.z.floorInt() / 16;
+                     if (cx >= 0 && cz >= 0 && cx < terW_ && cz < terH_ &&
+                         depth_[size_t(cz) * terW_ + cx] > 0)
+-                        target *= u.type->waterMult;
++                        target = target * u.type->waterMult;
+                 }
+             }
+             // Retail couples turning to braking (icd 0x4da4ce): it works out how far
+@@ -5499,8 +5502,8 @@ void World::tick(float dt) {
+             // sharp corner slows you down in proportion to how sharp it is, instead
+             // of our old flat "over 0.8 rad, drop to 30%" cliff.
+             float turnRate = std::max(u.type->turnRate, 1e-4f);
+-            float arcDist = u.speed.toFloat() * std::abs(diff) / turnRate;
+-            if (dist < 2.0f * arcDist) target = 0;
++            float arcDist = u.speed.toFloat() * kTick * std::abs(diff) / turnRate;
++            if (dist < 2.0f * arcDist) target = Fixed();
+             // Retail's stop-distance test measures to a DIFFERENT path point than the
+             // arc test does, and we have only one `dist` (to the current order point).
+             // Feeding it both tests unguarded would stop the unit at every route node, so
+@@ -5508,17 +5511,17 @@ void World::tick(float dt) {
+             // does.
+             bool last = u.orders.size() == 1;
+             if (last) {
+-                float stopDist = u.speed.toFloat() * u.speed.toFloat() / (2 * u.type->brake);
+-                if (dist < stopDist) target = 0;
++                const Fixed stopDist = (u.speed * u.speed) / (Fixed::fromInt(2) * u.type->brake);
++                if (Fixed::fromFloat(dist) < stopDist) target = Fixed();
+             }
+             // The target is derived from unit data (float px/s) and the road/formation
+             // multipliers above; it crosses into fixed point once, here, and the ramp
+             // toward it is integer from then on.
+-            const Fixed targetFx = Fixed::fromFloat(target);
++            const Fixed targetFx = target;
+             if (u.speed < targetFx)
+-                u.speed = fxMin(u.speed + Fixed::fromFloat(u.type->accel * dt), targetFx);
++                u.speed = fxMin(u.speed + u.type->accel, targetFx);
+             else
+-                u.speed = fxMax(u.speed - Fixed::fromFloat(u.type->brake * dt), targetFx);
++                u.speed = fxMax(u.speed - u.type->brake, targetFx);
+ 
+             // THE STEP IS FIXED-POINT. detmath still computes the direction in double
+             // (it is bit-identical across builds by construction), but the displacement
+@@ -5528,7 +5531,7 @@ void World::tick(float dt) {
+             // INTEGER ALL THE WAY TO THE POSITION: a CORDIC sin/cos of a binary angle,
+             // scaled by a fixed-point step. No float touches the displacement now.
+             const SinCos sc = fxSinCos(u.heading);
+-            const Fixed stepLen = Fixed::fromFloat(u.speed.toFloat() * dt);
++            const Fixed stepLen = u.speed;
+             const Fixed mx = sc.s * stepLen;
+             const Fixed mz = sc.c * stepLen;
+             // Collide ground/water units with the nav grid so they can't walk
+@@ -5606,7 +5609,11 @@ void World::tick(float dt) {
+                     // been refused twice running), so the unit keeps pressing and
+                     // resumes the instant the way clears. Stopping outright is what
+                     // turns a momentary jam into a permanent one.
+-                    u.speed = fxMin(u.speed, Fixed::fromFloat(u.type->maxVel * 0.4f));
++                    {   // TEMP DIAGNOSTIC (TAK_REFUSELOG): how often is a step refused?
++                        static const bool kRefuseLog = std::getenv("TAK_REFUSELOG") != nullptr;
++                        if (kRefuseLog) ++g_refusals;
++                    }
++                    u.speed = fxMin(u.speed, Fixed::fromFloat(u.type->maxVel.toFloat() * 0.4f));
+                     if (u.repathLeft > 0) --u.repathLeft;
+                     if (!g.empty() && u.repathLeft <= 0 &&
+                         u.orders.front().targetId == 0) {
+@@ -6263,6 +6270,13 @@ uint64_t World::stateHash() const {
+ // type, so no other TU instantiates the unique_ptr<MissionScript> deleter.
+ World::World() = default;
+ World::~World() {
++    {   // TEMP DIAGNOSTIC
++        static const bool kRefuseLog = std::getenv("TAK_REFUSELOG") != nullptr;
++        if (kRefuseLog && g_refusals) {
++            std::fprintf(stderr, "REFUSALS %llu\n", (unsigned long long)g_refusals);
++            g_refusals = 0;
++        }
++    }
+     if (visRunning_) visWorker_.join();   // the fog worker outlives nothing
+ }
+ void World::setMission(std::unique_ptr<MissionScript> m) {
+diff --git a/src/sim/sim.h b/src/sim/sim.h
+index 3583b7d..9617361 100644
+--- a/src/sim/sim.h
++++ b/src/sim/sim.h
+@@ -200,9 +200,9 @@ struct UnitType {
+     std::string id;        // lowercase objectname, e.g. "araarch"
+     std::string name;      // display name, e.g. "Archer"
+     std::string side;      // ARA/TAR/VER/ZON/CRE
+-    float maxVel = 30;     // px/s
+-    float accel = 15;      // px/s^2
+-    float brake = 15;      // px/s^2
++    Fixed maxVel = Fixed::fromInt(1);                 // px/tick  (= 30 px/s)
++    Fixed accel = Fixed::fromFloat(15.0f / 900.0f);   // px/tick^2 (= 15 px/s^2)
++    Fixed brake = Fixed::fromFloat(15.0f / 900.0f);   // px/tick^2 (= 15 px/s^2)
+     float turnRate = 6;    // rad/s
+     // FBI turninplacerate: the pivot rate used when the unit is STOPPED and merely
+     // turning to face something, which retail keeps separate from the turn rate it
+@@ -222,7 +222,7 @@ struct UnitType {
+     // Buildings vs mobile units: the reliable test is maxVel. The FBI `canmove`
+     // flag is set on some buildings too (e.g. the Keep, or the Taros Hell), so a
+     // canMove building would otherwise be mistaken for a mobile builder.
+-    bool isStructure() const { return maxVel <= 0.0f; }
++    bool isStructure() const { return maxVel <= Fixed(); }
+     float buildDist = 0;    // FBI builddistance: how far a builder reaches to build
+     bool onMana = false;    // must be built on a mana deposit (yardmap 'S'), e.g. lodestones
+     float buildCost = 0;    // mana
+@@ -305,8 +305,8 @@ struct UnitType {
+     // "mobile and armed" happened to give the same answer; this is the flag retail
+     // actually consults, so a unit that breaks that coincidence still behaves.
+     bool canSetStance = true;
+-    float waterMult = 1;      // watermultiplier: speed factor in shallow water
+-    float roadMult = 1.2f;    // roadmultiplier: on-road speed factor. Retail's FBI
++    Fixed waterMult = Fixed::fromInt(1);      // watermultiplier: speed factor in shallow water
++    Fixed roadMult = Fixed::raw(0x13333);     // roadmultiplier: on-road speed factor. Retail's FBI
+                               // parser defaults it to 16.16 0x13333 (~1.2) -- icd
+                               // 0x4bfc5e -- so EVERY ground unit gains on roads.
+     float maxWaterDepth = 0;  // deepest water a ground unit may wade into
+@@ -670,10 +670,10 @@ struct Unit {
+     // at 10 => up to 2.0x). Scales attack up, armor up (less damage taken), and
+     // reload down (faster). Verified against KINGDOMS.icd. See retail-engine-internals.
+     float vetMul() const { return 1.0f + 0.10f * float(veteran); }
+-    bool moving() const { return alive() && (speed > Fixed::fromFloat(1.0f) || !orders.empty()); }
++    bool moving() const { return alive() && (speed > Fixed::fromFloat(1.0f / 30.0f) || !orders.empty()); }
+     // Actually translating (for the walk animation), vs standing with an
+     // attack/queued order.
+-    bool walking() const { return alive() && speed > Fixed::fromFloat(3.0f); }
++    bool walking() const { return alive() && speed > Fixed::fromFloat(3.0f / 30.0f); }
+ };
+ 
+ // A reclaimable map feature (tree, rock, house, wreckage, …). Positions and stats
+diff --git a/tools/ambush_test.cpp b/tools/ambush_test.cpp
+index f6a722b..55a0bcb 100644
+--- a/tools/ambush_test.cpp
++++ b/tools/ambush_test.cpp
+@@ -25,7 +25,7 @@ static void check(bool ok, const std::string& what, const std::string& detail =
+ static UnitType soldier() {
+     UnitType t{};
+     t.name = "sol"; t.id = "sol";
+-    t.maxVel = 70; t.turnRate = 10000;
++    t.maxVel = tak::sim::Fixed::fromFloat(70.0f / 30.0f); t.turnRate = 10000;
+     t.maxHp = 100; t.canMove = true;
+     t.footX = 2; t.footZ = 2;
+     t.sight = 200;
+@@ -35,7 +35,7 @@ static UnitType soldier() {
+ static UnitType tower() {
+     UnitType t{};
+     t.name = "twr"; t.id = "twr";
+-    t.maxVel = 0;                      // isStructure() == maxVel <= 0
++    t.maxVel = tak::sim::Fixed::fromFloat(0.0f / 30.0f);                      // isStructure() == maxVel <= 0
+     t.maxHp = 500;
+     t.footX = 3; t.footZ = 3;
+     return t;
+diff --git a/tools/crowdbench.cpp b/tools/crowdbench.cpp
+index 2336d73..6b33a3d 100644
+--- a/tools/crowdbench.cpp
++++ b/tools/crowdbench.cpp
+@@ -38,7 +38,7 @@ namespace {
+ UnitType soldier() {
+     UnitType t{};
+     t.name = "sol"; t.id = "sol";
+-    t.maxVel = 70; t.turnRate = 10000;
++    t.maxVel = tak::sim::Fixed::fromFloat(70.0f / 30.0f); t.turnRate = 10000;
+     t.maxHp = 100; t.canMove = true;
+     t.footX = 2; t.footZ = 2;
+     return t;
+diff --git a/tools/navincr_test.cpp b/tools/navincr_test.cpp
+index 2296ef1..5545d84 100644
+--- a/tools/navincr_test.cpp
++++ b/tools/navincr_test.cpp
+@@ -33,7 +33,7 @@ static void check(bool cond, const std::string& what, const std::string& detail
+ static UnitType mover(int foot) {
+     UnitType t{};
+     t.name = "m"; t.id = "m";
+-    t.maxVel = 70; t.turnRate = 10000; t.maxHp = 100; t.canMove = true;
++    t.maxVel = tak::sim::Fixed::fromFloat(70.0f / 30.0f); t.turnRate = 10000; t.maxHp = 100; t.canMove = true;
+     t.footX = foot; t.footZ = foot;
+     return t;
+ }
+diff --git a/tools/pathblock_test.cpp b/tools/pathblock_test.cpp
+index 9dcab4b..a78d014 100644
+--- a/tools/pathblock_test.cpp
++++ b/tools/pathblock_test.cpp
+@@ -36,7 +36,7 @@ static void check(bool cond, const std::string& what, const std::string& detail
+ static UnitType soldier() {
+     UnitType t{};
+     t.name = "sol"; t.id = "sol";
+-    t.maxVel = 70; t.turnRate = 10000;
++    t.maxVel = tak::sim::Fixed::fromFloat(70.0f / 30.0f); t.turnRate = 10000;
+     t.maxHp = 100; t.canMove = true;
+     t.footX = 2; t.footZ = 2;
+     return t;
+diff --git a/tools/production_test.cpp b/tools/production_test.cpp
+index 91edc4b..83e8054 100644
+--- a/tools/production_test.cpp
++++ b/tools/production_test.cpp
+@@ -44,7 +44,7 @@ static void check(bool cond, const char* what, const std::string& detail = {}) {
+ static UnitType factoryType() {
+     UnitType t{};
+     t.name = "factory"; t.id = "factory";
+-    t.maxVel = 0;                 // maxVel <= 0 => isStructure()
++    t.maxVel = tak::sim::Fixed::fromFloat(0.0f / 30.0f);                 // maxVel <= 0 => isStructure()
+     t.maxHp = 5000;
+     t.footX = 7; t.footZ = 12;
+     t.isBuilder = true;
+@@ -55,7 +55,7 @@ static UnitType factoryType() {
+ static UnitType soldierType() {
+     UnitType t{};
+     t.name = "sol"; t.id = "sol";
+-    t.maxVel = 60; t.turnRate = 10000;
++    t.maxVel = tak::sim::Fixed::fromFloat(60.0f / 30.0f); t.turnRate = 10000;
+     t.maxHp = 100; t.canMove = true;
+     t.buildTime = 1;
+     t.footX = 2; t.footZ = 2;
+diff --git a/tools/retailgap_test.cpp b/tools/retailgap_test.cpp
+index c42d40e..11a10d6 100644
+--- a/tools/retailgap_test.cpp
++++ b/tools/retailgap_test.cpp
+@@ -693,7 +693,7 @@ int main(int argc, char** argv) {
+             check(gg->ghost, "the Ghost of Garacaius is a ghost (translucent)");
+         // Shadow suppression is the render rule those flags feed.
+         if (const auto* wall = ut("arawall"))
+-            check(!(wall->maxVel > 0) || !wall->noShadow, "a wall is a structure anyway");
++            check(!(wall->maxVel > sim::Fixed()) || !wall->noShadow, "a wall is a structure anyway");
+         if (const auto* trans = ut("aratrans"))
+             check(int(trans->transportDist) == 419,
+                   "aratrans loads from its own transportdistance, not a constant 70",
+@@ -1026,7 +1026,7 @@ int main(int argc, char** argv) {
+                           std::to_string(t->footZ) + " (want " + wt.cls + ")");
+         int ones = 0, movers = 0;
+         for (const auto& [id, t] : reg.types()) {
+-            if (t.maxVel <= 0 || t.canFly) continue;
++            if (t.maxVel <= sim::Fixed() || t.canFly) continue;
+             ++movers;
+             if (t.footX <= 1) ++ones;
+         }
+@@ -1407,7 +1407,7 @@ int main(int argc, char** argv) {
+         // over the FBIs makes them look unarmed.
+         std::vector<std::string> armedWithoutStance;
+         for (const auto& [id, t] : reg.types())
+-            if (!t.canSetStance && t.maxVel > 0 && t.weapon.damage > 0)
++            if (!t.canSetStance && t.maxVel > sim::Fixed() && t.weapon.damage > 0)
+                 armedWithoutStance.push_back(id);
+         std::sort(armedWithoutStance.begin(), armedWithoutStance.end());
+         std::string joined;
+@@ -1560,7 +1560,7 @@ int main(int argc, char** argv) {
+         const sim::UnitType* regen = nullptr;
+         const sim::UnitType* norgen = nullptr;
+         for (const auto& [tid, t] : reg.types()) {
+-            if (t.maxVel <= 0) continue;                  // movers only: easy to spawn
++            if (t.maxVel <= sim::Fixed()) continue;                  // movers only: easy to spawn
+             if (!regen && t.healTime > 0) regen = &t;
+             if (!norgen && t.healTime <= 0) norgen = &t;
+         }
+diff --git a/tools/transport_test.cpp b/tools/transport_test.cpp
+index 00539f2..e3b8238 100644
+--- a/tools/transport_test.cpp
++++ b/tools/transport_test.cpp
+@@ -53,7 +53,7 @@ static constexpr float kRange = 150.0f;
+ static UnitType boatType() {
+     UnitType t{};
+     t.name = "boat";
+-    t.maxVel = 60;              // maxVel > 0 => not a structure
++    t.maxVel = tak::sim::Fixed::fromFloat(60.0f / 30.0f);              // maxVel > 0 => not a structure
+     t.turnRate = 10000;
+     t.transportCap = 4;
+     t.transportDist = 70;
+@@ -64,7 +64,7 @@ static UnitType boatType() {
+ static UnitType footType() {
+     UnitType t{};
+     t.name = "foot";
+-    t.maxVel = 30;
++    t.maxVel = tak::sim::Fixed::fromFloat(30.0f / 30.0f);
+     t.turnRate = 10000;
+     t.transportSize = 1;
+     t.maxHp = 100;
