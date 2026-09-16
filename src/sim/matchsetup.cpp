@@ -449,16 +449,28 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         world.setTeam(i, cfg.slots[i].team);
         world.player(i).manaMult = cfg.slots[i].manaMult;   // Absurd AI = 2x income
     }
-    // Gods: read the appear time from gods.tdf so every peer derives it the same.
-    float godSec = 1e9f;   // 1e9 => never manifests (gods off)
-    if (cfg.gods) {
-        try {
-            auto gb = vfs.read("gamedata/gods.tdf");
-            auto g = tak::tdf::parseText(std::string(gb.begin(), gb.end()), "gamedata/gods.tdf");
-            if (const auto* tm = g.child("TIMING"))
-                godSec = float(tm->numberOr("AppearTimeMin", 30.0)) * 60.0f;
-        } catch (const std::exception&) {}
-    }
+    // GODS DO NOT APPEAR IN MULTIPLAYER. This is a deliberate divergence, decided
+    // 2026-09-16 -- do not "restore fidelity" here without asking.
+    //
+    // Retail's routine at 0x519420 reads GameData\\Gods.tdf [TIMING] and rolls a
+    // GameChance (shipped: 0.1) for whether the game is god-based at all, then draws
+    // an appear time uniformly in AppearTimeMin..Max (shipped: 30..60 minutes, stored
+    // as a 16-bit second count at 0x64117a). A missing file falls back to the same
+    // 1-in-10 at 0x51953d. It was ported faithfully and then removed on purpose: a
+    // god turning up unannounced in one MP game out of ten, three quarters of an hour
+    // in, decides that game for reasons neither player chose.
+    //
+    // Nothing gates WHO gets one in retail either -- no favour to accumulate, no
+    // priest to keep alive (`attractsgods` is a real FBI key but the binary tests it
+    // only in drawing code, at 0x4ecfd3). So there is no partial version of this to
+    // keep: it either fires for everyone at a random time or it does not fire.
+    float godSec = 1e9f;   // 1e9 => never manifests
+#ifndef NDEBUG
+    // Harness escape hatch: a desync hunt that cannot turn gods on cannot find that
+    // class of bug. Must be set for EVERY peer in the run -- it is a shared input to
+    // a lockstep decision, and setting it on one side only will desync by design.
+    if (std::getenv("TAK_GODS")) godSec = 0.0f;
+#endif
     world.enableGods(godSec);
     world.setUnitCap(cfg.unitCap);
     world.setMonarchExpendable(cfg.monarchExpendable);
@@ -872,7 +884,6 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     cfg.vfs = &vfs;
     cfg.mapPath = base + ".tnt";
     cfg.slots = slots;                 // no used slots -> setupMatch spawns no monarchs
-    cfg.gods = false;
     cfg.unitCap = int(gh->numberOr("maxunits", 500));
     setupMatch(world, reg, cfg);       // terrain + features + player teams
     if (gh->numberOr("waterdoesdamage", 0) != 0)

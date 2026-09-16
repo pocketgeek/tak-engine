@@ -195,7 +195,6 @@ int testSimEquivalence(const std::string& mapArg, const std::string& dataRoot) {
     cfg.vfs = &vfs;
     cfg.mapPath = mapPath;
     cfg.slots = {{true, 0, 0}, {true, 1, 1}};   // 2 players, FFA
-    cfg.gods = false;
     cfg.startMana = 2800;
 
     tak::sim::World A, B;                        // separate instances -- never alias

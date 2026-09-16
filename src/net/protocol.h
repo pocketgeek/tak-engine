@@ -17,7 +17,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 80;       // 80: the SEARCH refuses to route through a
+constexpr uint32_t kNetVersion = 81;       // 81: gods are retail's -- a seeded 10%
+                                           //     GameChance roll and a random appear
+                                           //     time, no favour pool, no lobby option
+                                           // 80: the SEARCH refuses to route through a
                                            //     parked body (it is solid to the mover)
                                            // 79: route shortcuts respect parked bodies;
                                            //     spawn claims use the centred footprint
@@ -253,7 +256,6 @@ struct GameInfo {
 // Per-game settings chosen by the host.
 struct GameOptions {
     uint8_t crusades = 0;
-    uint8_t gods = 0;
     uint8_t forfeitSelfDestruct = 0;   // 0=units go inert on forfeit, 1=self-destruct
     // Override tier for this game (hpi::OverridePolicy): 0=none (pure retail),
     // 1=cosmetic (art/sound overrides allowed, never affect the sim), 2=full

@@ -39,7 +39,6 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     out.overridePolicy = h.overridePolicy;
     out.dataHash = h.dataHash;
     out.engineVersion = h.engineVersion;
-    out.cfg.gods = h.gods != 0;
     out.cfg.unitCap = uint16_t(h.unitCap);
     out.cfg.monarchExpendable = h.monarchExpendable != 0;
     out.cfg.stressTest = h.stressTest != 0;
@@ -119,7 +118,6 @@ std::string saveReplayFile(const std::string& dir, const tak::net::MpClient& mp,
     h.mission = room.mission;
     h.engineVersion = tak::kVersion;
     h.crusades = room.opts.crusades;
-    h.gods = room.opts.gods;
     h.forfeitSelfDestruct = room.opts.forfeitSelfDestruct;
     h.overridePolicy = room.opts.overridePolicy;
     h.unitCap = room.opts.unitCap;

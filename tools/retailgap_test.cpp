@@ -1892,34 +1892,40 @@ int main(int argc, char** argv) {
         cfg.slots[0].team = 0; cfg.slots[1].team = 1;
         cfg.slots[0].faction = 0; cfg.slots[1].faction = 1;
         cfg.slots[0].used = true; cfg.slots[1].used = true;   // else setupMatch skips them
-        cfg.gods = true;
         sim::setupMatch(w, reg, cfg);
-        check(w.godsEnabled(), "the match enabled gods");
+        // The roll may or may not have enabled gods for this seed -- that is retail's
+        // 10% GameChance. Force them on so the SUMMON path is what is under test.
+        w.enableGods(0.0f);
+        check(w.godsEnabled(), "gods are enabled");
         check(w.player(0).godType != nullptr,
               "setup resolved the player's god type (the sim cannot look it up)");
 
         const size_t before = w.units().size();
-        // Fill the favour directly rather than waiting for priests to channel it:
-        // the economy that FILLS it is not what broke.
-        w.enableGods(0.0f);
-        w.player(0).godFavor = 1e9f;
+        // Nothing to prime: retail gates the arrival on the clock alone, and the
+        // appear time above is 0, so the god is already due.
         check(w.godReady(0), "player 0 is ready for its god");
 
         tick(w, 0.2f);                       // nothing but World::tick runs here
 
         check(!w.godReady(0), "the readiness is consumed");
         check(w.player(0).godSummoned, "and the player is marked summoned");
-        check(w.units().size() == before + 1,
-              "ticking the world ALONE summoned the god",
+        // BOTH players, and that is the retail rule rather than a loose assertion.
+        // The arrival is gated on the clock alone (0x519420 decides IF and WHEN, and
+        // nothing after that decides WHO), so once the time comes every player with a
+        // god type gets one. This used to check `before + 1` and that only player 0
+        // was summoned, which held only because our favour pool gated the other one.
+        check(w.units().size() == before + 2,
+              "ticking the world ALONE summoned a god for BOTH players",
               std::to_string(before) + " -> " + std::to_string(w.units().size()));
-        bool isGod = false;
-        for (const auto& u : w.units())
-            if (u.alive() && u.player == 0 && u.type && u.type->id.size() > 3 &&
-                u.type->id.substr(u.type->id.size() - 3) == "god") isGod = true;
-        check(isGod, "and the new unit is player 0's god");
-        // The other player, with no favour, must NOT have one -- otherwise a test
-        // that counted units would pass on a sim that summoned indiscriminately.
-        check(!w.player(1).godSummoned, "a player without favour gets nothing");
+        auto hasGod = [&](int p) {
+            for (const auto& u : w.units())
+                if (u.alive() && u.player == p && u.type && u.type->id.size() > 3 &&
+                    u.type->id.substr(u.type->id.size() - 3) == "god") return true;
+            return false;
+        };
+        check(hasGod(0), "and the new unit is player 0's god");
+        check(w.player(1).godSummoned && hasGod(1),
+              "and player 1 got one too -- nothing gates WHO, only when");
     }
 
     // ---- canMove is not a structure test ------------------------------------

@@ -498,7 +498,6 @@ void Server::writeReplay(Room& r) {
     h.mission = r.mission;
     h.engineVersion = tak::kVersion;
     h.crusades = r.opts.crusades;
-    h.gods = r.opts.gods;
     h.forfeitSelfDestruct = r.opts.forfeitSelfDestruct;
     h.overridePolicy = r.opts.overridePolicy;
     h.unitCap = r.opts.unitCap;
@@ -820,7 +819,7 @@ void Server::writeSlots(Writer& w, Room& r, bool fromStart) {
     w.str(r.name);
     w.str(r.mapId);
     w.str(r.mission);
-    w.u8(r.opts.crusades); w.u8(r.opts.gods); w.u8(r.opts.forfeitSelfDestruct);
+    w.u8(r.opts.crusades); w.u8(r.opts.forfeitSelfDestruct);
     w.u8(r.opts.overridePolicy);
     w.u8(r.opts.speed); w.u8(r.opts.speedUnlock); w.u32(r.opts.unitCap); w.u8(r.opts.monarchExpendable);
     w.u8(r.opts.stressTest); w.u8(r.opts.fogExplored); w.u8(r.opts.benchmark);
@@ -877,7 +876,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
         case Msg::CreateGame: {
             Reader r(f.payload.data(), f.payload.size());
             std::string name = r.str(), pass = r.str(), mapId = r.str(), mission = r.str();
-            GameOptions o; o.crusades = r.u8(); o.gods = r.u8(); o.forfeitSelfDestruct = r.u8();
+            GameOptions o; o.crusades = r.u8(); o.forfeitSelfDestruct = r.u8();
             o.overridePolicy = r.u8();
             o.speed = r.u8(); o.speedUnlock = r.u8();
             if (o.speed < 1) o.speed = 10;
@@ -1229,7 +1228,6 @@ void Server::tryStart(Client& c) {
             tak::sim::MatchConfig cfg;
             cfg.vfs = &ds->vfs;
             cfg.mapPath = mapPath;
-            cfg.gods = r->opts.gods != 0;
             cfg.unitCap = r->opts.unitCap;
             cfg.monarchExpendable = r->opts.monarchExpendable != 0;
             cfg.stressTest = r->opts.stressTest != 0;
@@ -1369,7 +1367,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
         case Msg::SetGameOptions: {
             if (r->hostId != c.id) return;   // host only
             Reader rd(f.payload.data(), f.payload.size());
-            GameOptions o; o.crusades = rd.u8(); o.gods = rd.u8(); o.forfeitSelfDestruct = rd.u8();
+            GameOptions o; o.crusades = rd.u8(); o.forfeitSelfDestruct = rd.u8();
             o.overridePolicy = rd.u8(); o.speed = rd.u8(); o.speedUnlock = rd.u8();
             o.unitCap = clampUnitCap(uint16_t(rd.u32())); o.monarchExpendable = rd.u8() ? 1 : 0;
             o.stressTest = rd.u8() ? 1 : 0;

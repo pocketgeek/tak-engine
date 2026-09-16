@@ -333,7 +333,11 @@ struct UnitType {
     // the Crossbowman, Musketeer and Cannoneer): a rank of them sprays a crowd
     // instead of every last one focusing the same closest body.
     bool fireAtWillRandom = false;
-    bool  attractsGods = false;   // attractsgods: priest channels god favour
+    // attractsgods. A real retail key, but NOT a summoning input: the flag lands in
+    // bit 0 of the def's +0x268 and the binary tests it in exactly one place
+    // (0x4ecfd3), inside drawing code, to pick which marker a unit gets. Gods arrive
+    // on a timer regardless (see World::godReady). Kept because it is retail data.
+    bool  attractsGods = false;
     // weaponswitching: this unit carries ONE active weapon at a time, picked by the
     // player. Without it, a multi-weapon unit fires every weapon independently.
     bool  weaponSwitching = false;
@@ -888,13 +892,6 @@ struct Player {
     float manaMult = 1.0f;
     // God economy: priests (attractsgods) channel mana into favour; once it fills
     // after the gods' appear time, the faction's god can manifest (once).
-    // The LAST float in the hashed sim state, and deliberately so. Unlike every
-    // other field here there is no retail answer to match: searching the binary for
-    // favour/deity/godpower turns up only FavoriteUser and FavoriteCampaign, which
-    // are unrelated UI. The god-summon economy is ours. It accumulates the way mana
-    // does, and mana is the one pool retail itself keeps in floating point (see
-    // Player::mana), so float is the consistent choice rather than a leftover.
-    float godFavor = 0;
     bool  godSummoned = false;
     // The unit this player's god manifests as, resolved once at setup (matchsetup).
     // The sim summons it itself and therefore must not need a TypeRegistry to find
@@ -1194,13 +1191,16 @@ public:
                 return true;
         return false;
     }
-    static constexpr float kGodFavorNeeded = 3000.0f;
-    // Manifest the god of every player whose favour has filled. Called from tick(),
-    // so the referee and every client run it on the same step from the same state.
+    // Manifest the god of every player due one. Called from tick(), so the referee
+    // and every client run it on the same step from the same state.
     void summonReadyGods();
+    // TIME, and nothing else -- retail's whole condition. Its Gods.tdf routine
+    // (0x519420) rolls whether the game is god-based and when they arrive, and after
+    // that nothing gates the arrival: no resource to accumulate, no building to hold,
+    // no priest to keep alive. We used to require a favour pool to fill to 3000 off
+    // priest-channelled mana income; that was ours, not retail's, and it is gone.
     bool godReady(int t) const {
-        return godsEnabled_ && !players_[size_t(t)].godSummoned &&
-               clock_ >= godAppearTime_ && players_[size_t(t)].godFavor >= kGodFavorNeeded;
+        return godsEnabled_ && !players_[size_t(t)].godSummoned && clock_ >= godAppearTime_;
     }
 
     // Win/defeat, computed sim-side so every lockstep peer agrees on the same

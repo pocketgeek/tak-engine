@@ -173,8 +173,12 @@ public:
         if (crusades_)
             std::fprintf(stderr, "balance: Crusades (unitscb/canbuildcb)%s\n",
                          vfs_.list("unitscb").empty() ? " -- NOT FOUND" : "");
-        // God economy timing (gamedata/gods.tdf). TAK_GODTIME overrides the
-        // appear time (seconds) for testing; otherwise use AppearTimeMin minutes.
+        // DEV PATH ONLY -- this is the standalone viewer, which does not call
+        // setupMatch and so never runs retail's god roll (the 10% GameChance and the
+        // random 30-60min draw ported at matchsetup.cpp). It deliberately turns gods
+        // ON every time and uses AppearTimeMin flat, because a dev harness that has
+        // to lose a dice roll nine times out of ten to exercise gods is useless.
+        // TAK_GODTIME overrides the appear time in seconds. Not the real mechanic.
         try {
             auto g = vtdf("gamedata/gods.tdf");
             if (const auto* tm = g.child("TIMING")) {
@@ -2023,7 +2027,7 @@ private:
     float lobbyScale_ = 2.0f;               // lobby fit scale (set in render)
     float lobbyOffX_ = 0, lobbyOffY_ = 0;   // lobby centre offset (logical units; set in render)
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
-    bool createCrusades_ = false, createGods_ = false;
+    bool createCrusades_ = false;
     // Fog of war, chosen at CREATE time (0 = not explored, 1 = explored,
     // 2 = full vision). It is a room setting like the rest, so it belongs where
     // the room is set up -- the host could previously only change it after the

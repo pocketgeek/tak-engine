@@ -37,8 +37,8 @@ struct MatchConfig {
     const hpi::Vfs* vfs = nullptr;  // the retail-root read-path (shared by peers)
     std::string mapPath;            // VFS path to the map .tnt (.ota sibling = start pos)
     std::vector<MatchSlot> slots;   // index = player; sized to the player count
-    bool gods = false;
-    float godAppearSec = 1800;      // when gods may manifest (if enabled)
+    // No `gods` flag: retail decides with a 10% roll off Gods.tdf, not an option
+    // (see the port of 0x519420 in setupMatch). startSeed drives the draw.
     float startMana = 2800;
     int unitCap = 2000;             // per-player live-unit limit (0 = unlimited)
     bool monarchExpendable = true;  // false = losing your Monarch loses the game

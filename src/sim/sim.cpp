@@ -4457,7 +4457,6 @@ void World::tick(float dt) {
 
     // Economy: recompute income/storage, apply income.
     for (auto& tm : players_) { tm.income = 0; tm.storage = 0; }
-    std::vector<int> godPriests(players_.size(), 0);
     for (auto& u : units_) {
         // A unit under construction contributes no economy until it finishes -- a
         // half-built lodestone must not add its mana income or storage capacity yet.
@@ -4465,7 +4464,6 @@ void World::tick(float dt) {
         auto& tm = players_[size_t(u.player)];
         tm.income += u.type->income;
         tm.storage += u.type->storage;
-        if (u.type->attractsGods) godPriests[size_t(u.player)]++;
     }
     // Difficulty income cheat: scale the summed income so the boost flows through the
     // mana accrual below, allied surplus sharing, and god-favour alike. manaMult is 1
@@ -4498,14 +4496,6 @@ void World::tick(float dt) {
             }
         // Any pool left (every member capped) is wasted, as before.
     }
-    // God favour: a player's priests channel its mana income into favour while any
-    // is present; it fills toward kGodFavorNeeded, then godReady() lets the god come.
-    if (godsEnabled_)
-        for (size_t t = 0; t < players_.size(); ++t)
-            if (godPriests[t] > 0)
-                players_[t].godFavor = std::min(kGodFavorNeeded,
-                    players_[t].godFavor + std::max(players_[t].income, 20.0f) * dt);
-
     // ...and once it has filled, the god manifests. This has to happen HERE, in the
     // shared sim, and used to happen in the client instead (GameView::simStep polled
     // godReady() and called its own summonGod()). The referee never did it, so from
@@ -6101,7 +6091,7 @@ void World::hashTrace() const {
                      uint64_t(uint32_t(s.left)));
     uint64_t hPlayers = seed;
     for (const auto& t : players_)
-        hPlayers = fnv(fnv(fnv(hPlayers, bits64(t.mana)), bits(t.godFavor)), uint32_t(t.team));
+        hPlayers = fnv(fnv(hPlayers, bits64(t.mana)), uint32_t(t.team));
     uint64_t fAlive = 0, fWork = 0;
     for (const auto& f : features_)
         if (f.alive) { ++fAlive; fWork ^= (bits(f.work) << 1) ^ uint64_t(uint32_t(f.id)); }
@@ -6226,7 +6216,6 @@ uint64_t World::stateHash() const {
     }
     for (const auto& t : players_) {
         { uint64_t b; std::memcpy(&b, &t.mana, 8); mix(b); }   // double: fold all 8 bytes
-        mixf(t.godFavor);
         // Team assignment drives sim behaviour (splash/acquire/auras) but is set
         // from setup -- fold it in so a lobby/config mismatch faults immediately
         // as a desync instead of diverging mysteriously.

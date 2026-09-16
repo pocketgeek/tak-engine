@@ -79,7 +79,7 @@ struct UnitR {
 // Per-tick render snapshot of a sim Player (mirrors sim::Player's read field names, like
 // UnitR). Captured each tick so the HUD/scoreboard never reads live world_ players.
 struct PlayerR {
-    float mana = 0, storage = 0, income = 0, godFavor = 0;
+    float mana = 0, storage = 0, income = 0;
     int kills = 0, unitCount = 0, team = 0;
     int built = 0, losses = 0;      // end-of-game scoreboard counters
     float defeatedAt = -1;          // world clock at elimination (-1 = still in)

@@ -755,7 +755,7 @@
             const auto& pl = world_.player(p);
             PlayerR& r = fb.players[size_t(p)];
             r.mana = pl.mana; r.storage = pl.storage; r.income = pl.income;
-            r.godFavor = pl.godFavor; r.kills = pl.kills; r.unitCount = pl.unitCount;
+            r.kills = pl.kills; r.unitCount = pl.unitCount;
             r.built = pl.built; r.losses = pl.losses; r.defeatedAt = pl.defeatedAt;
             r.team = pl.team; r.defeated = pl.defeated; r.godSummoned = pl.godSummoned;
             r.discoLeft = pl.discoLeft; r.headbangLeft = pl.headbangLeft;

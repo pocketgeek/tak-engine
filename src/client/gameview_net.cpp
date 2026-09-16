@@ -141,7 +141,6 @@
         tak::sim::MatchConfig cfg;
         cfg.vfs = &vfs_;
         cfg.mapPath = mapPath_;
-        cfg.gods = room.opts.gods != 0;
         cfg.unitCap = room.opts.unitCap;
         cfg.monarchExpendable = room.opts.monarchExpendable != 0;
         cfg.stressTest = room.opts.stressTest != 0;
@@ -594,8 +593,7 @@ void GameView::autoplayStep() {
             // desync has already hidden once: summoning used to run only on the client,
             // so the referee's world ran a unit short from the first god onward. A
             // desync hunt that cannot turn gods on cannot find that class of bug.
-            o.gods = tak::devFlag("TAK_GODS") ? 1 : 0;
-            o.randomStarts = tak::devFlag("TAK_RANDOM_STARTS") ? 1 : 0;
+                o.randomStarts = tak::devFlag("TAK_RANDOM_STARTS") ? 1 : 0;
             o.monarchExpendable = tak::devFlag("TAK_MONARCH_EXPENDABLE") ? 1 : 0;
             o.forfeitSelfDestruct = tak::devFlag("TAK_FORFEIT_SELFDESTRUCT") ? 1 : 0;
             // TAK_FOG=0|1|2 forces the room's fog rule (not explored / explored /
