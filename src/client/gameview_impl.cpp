@@ -1198,7 +1198,7 @@
                     float dl = std::max(std::sqrt(dx * dx + dz * dz), 1.0f);
                     dx /= dl; dz /= dl;
                     int steps = std::clamp(int(dl / 22.0f), 4, 24);
-                    float sweep = std::max(w.emitTime, 0.6f);   // stream reach-out time
+                    float sweep = std::max(float(w.emitTime) / 30.0f, 0.6f);   // ticks -> seconds
                     for (int s = 0; s < steps; ++s) {
                         float f = steps > 1 ? s / float(steps - 1) : 0.0f;
                         float d = f * dl;   // from the muzzle (0) out to the target (dl)
@@ -1667,7 +1667,7 @@
             if (!a.flying || dt <= 0.0f) continue;
             const UnitR* fu = frameUnitP(id);
             if (!fu || !fu->type) continue;
-            if (fu->type->bankScale <= 0 && fu->type->pitchScale <= 0) continue;
+            if (fu->type->bankScale <= tak::sim::Fixed() && fu->type->pitchScale <= tak::sim::Fixed()) continue;
             if (!a.attitudeInit) {
                 a.attitudeInit = true;
                 a.prevHeading = fu->heading;
@@ -1682,8 +1682,8 @@
             a.prevAlt = a.altitude;
             // Targets: turn rate (rad/s) and climb rate, each scaled and capped so a
             // hard turn banks hard but never rolls past a believable limit.
-            float wantBank = std::clamp(dh / dt * fu->type->bankScale * 0.35f, -0.9f, 0.9f);
-            float wantPitch = std::clamp(dAlt / dt * fu->type->pitchScale * 0.010f, -0.5f, 0.5f);
+            float wantBank = std::clamp(dh / dt * fu->type->bankScale.toFloat() * 0.35f, -0.9f, 0.9f);
+            float wantPitch = std::clamp(dAlt / dt * fu->type->pitchScale.toFloat() * 0.010f, -0.5f, 0.5f);
             float ease = std::clamp(dt * 4.0f, 0.0f, 1.0f);
             a.bank += (wantBank - a.bank) * ease;
             a.pitch += (wantPitch - a.pitch) * ease;

@@ -50,7 +50,7 @@ struct Weapon {
     // and the flame stream is a client-side emitter driven by emitTime -- there is
     // no traveling projectile object.
     bool beam = false;
-    float emitTime = 0;      // emittime (seconds): how long the flame/beam is emitted
+    int32_t emitTime = 0;    // emittime (readInt): ticks the flame/beam is emitted
     // The rest of the retail weapon-class model (FBI `type=`), beyond
     // melee/ballistic/line-of-sight:
     //   Guided       -- a homing projectile that steers at `turnRate` (20 weapons:
@@ -182,7 +182,7 @@ struct Aura {
     enum class Kind { Armor, Attack, Joy } kind = Kind::Armor;
     float amount = 1;        // multiplier (Armor/Attack); build-power/sec (Joy)
     bool  affectsEnemy = false;
-    float radius = 0;
+    int32_t radius = 0;   // Radius (readInt in retail's aura block)
     // edgeeffectiveness. The name is misleading and the retail opcodes are
     // unambiguous (KINGDOMS.icd 0x51f636/0x51f730/0x51f858): the strength factor is
     // `edge + (1 - edge) * dist/radius`, i.e. the aura is WEAKEST at the emitter and
@@ -245,7 +245,8 @@ struct UnitType {
     bool canFly = false;
     // bankscale / pitchscale: how hard this flyer rolls into a turn and pitches
     // into a climb or dive. Display-only (53 and 33 units carry them).
-    float bankScale = 0, pitchScale = 0;
+    // 16.16 in retail: bankscale/pitchscale go through the fixed-point reader.
+    Fixed bankScale = Fixed(), pitchScale = Fixed();
     // defaultmissiontype = Standby_wander: cows, deer, wolves, boar, peasants and
     // villagers drift around instead of standing still. 16 types, and the missions
     // place hundreds of them.
@@ -450,7 +451,7 @@ struct Order {
     bool attackMove = false;   // engage enemies encountered en route
     bool patrol = false;       // loop: completed orders re-queue at the back
     bool guard = false;        // follow friendly `targetId`, engage threats
-    float wait = 0;            // >0: hold position, counting down (SetMission "w N")
+    int32_t wait = 0;          // >0: hold position, counting down in TICKS (SetMission "w N")
     bool waitAttack = false;   // hold until an enemy is in sight, then release (SetMission "wa")
     // Last waypoint of the order the PLAYER actually gave. One order can expand
     // into a whole route, so the queue interleaves pathfinding waypoints with

@@ -262,14 +262,14 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // gives 75. It also pulled every flyer's shadow four times too close,
             // since the shadow offset is alt/4 off the same number.
             t.cruiseAlt = float(info->numberOr("cruisealt", 0));
-            t.bankScale = float(info->numberOr("bankscale", 0));
+            t.bankScale = Fixed::fromFloat(float(info->numberOr("bankscale", 0)));
             t.canSetStance = int(info->numberOr("unitstandorders", 1)) != 0;
             {
                 std::string dmt = lower(info->valueOr("defaultmissiontype", ""));
                 t.wanders = dmt == "standby_wander";
                 t.vtolStandby = dmt == "vtol_standby";
             }
-            t.pitchScale = float(info->numberOr("pitchscale", 0));
+            t.pitchScale = Fixed::fromFloat(float(info->numberOr("pitchscale", 0)));
             // One weapon block -> a Weapon. Shared by WEAPON1..3 and by
             // [EXPLODEAS] (the death blast), which is the same block shape.
             auto parseWeapon = [](const tdf::Node* w) {
@@ -310,7 +310,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 // single slow comet. Use the FBI range and drive the flame from
                 // emittime instead. (emittime is in 30Hz frames.)
                 wp.beam = lower(w->valueOr("type", "")) == "line of sight";
-                wp.emitTime = float(w->numberOr("emittime", 0)) / 30.0f;
+                wp.emitTime = int32_t(w->numberOr("emittime", 0));   // already ticks in the FBI
                 // The remaining retail weapon classes. `type` is authoritative;
                 // subtype adds the mind-control behaviour on top of either a
                 // line-of-sight shot (Individual) or a Remote Effect (Area).
@@ -476,7 +476,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                         au.kind = ak.kind;
                         au.amount = float(a->numberOr("adjustment", 1));
                         au.affectsEnemy = a->numberOr("affectsenemy", 0) != 0;
-                        au.radius = float(a->numberOr("radius", 200));
+                        au.radius = int32_t(a->numberOr("radius", 200));
                         au.edge = float(a->numberOr("edgeeffectiveness", 1));
                         t.auras.push_back(au);
                     }
@@ -1905,7 +1905,7 @@ void World::orderWait(int unitId, float seconds, bool queue) {
     Order o;
     o.x = u->x;
     o.z = u->z;
-    o.wait = seconds > 0 ? seconds : 0.0f;
+    o.wait = seconds > 0 ? int32_t(seconds * kTick + 0.5f) : 0;
     u->orders.push_back(o);
 }
 
@@ -5375,10 +5375,10 @@ void World::tick(float dt) {
 
         if (u.orders.empty()) {
             u.speed = fxMax(Fixed(), u.speed - u.type->brake);
-        } else if (u.orders.front().wait > 0.0f) {
+        } else if (u.orders.front().wait > 0) {
             // SetMission "w N": hold position while the scripted wait counts down.
             u.speed = fxMax(Fixed(), u.speed - u.type->brake);
-            u.orders.front().wait -= dt;
+            --u.orders.front().wait;
             if (u.orders.front().wait <= 0.0f) u.orders.erase(u.orders.begin());
         } else if (u.orders.front().waitAttack) {
             // SetMission "wa": ambush -- hold until a non-allied unit is within sight,
@@ -5719,7 +5719,7 @@ void World::tick(float dt) {
         if (!u.type->canFly && !u.orders.empty()) {
             const Order& fo = u.orders.front();
             bool pointMove = fo.targetId == 0 && !fo.load && !fo.unload &&
-                             fo.wait <= 0.0f && !fo.waitAttack;
+                             fo.wait <= 0 && !fo.waitAttack;
             if (pointMove) {
                 // Progress is measured against the leg being walked NOW. Against
                 // orders.back() an out-and-back queue looks permanently stuck on
