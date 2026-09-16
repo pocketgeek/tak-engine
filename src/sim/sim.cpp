@@ -1159,8 +1159,8 @@ void World::order(int unitId, float x, float z, bool queue) {
     // two-point segment is the interim, not the mechanism -- exactly what this
     // engine did permanently until the search was ported.
     u->orders.push_back({Fixed::fromFloat(x), Fixed::fromFloat(z), 0});
-    u->orders.back().clickX = clickX;
-    u->orders.back().clickZ = clickZ;
+    u->orders.back().clickX = Fixed::fromFloat(clickX);
+    u->orders.back().clickZ = Fixed::fromFloat(clickZ);
     markGoal();
     // Only ask for a route when this order is the one the unit is about to
     // WALK. Requests are keyed by unit id, so asking for a queued order cancels
@@ -2212,7 +2212,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                 Feature& f = features_[it->second];
                 if (!f.alive || f.type < 0) continue;
                 if (!(dx == 0 && dz == 0)) {   // impact cell is struck regardless
-                    float fdx = f.x - hx, fdz = f.z - hz;
+                    float fdx = f.x.toFloat() - hx, fdz = f.z.toFloat() - hz;
                     if (fdx * fdx + fdz * fdz > r * r) continue;
                 }
                 const FeatType& ft = featTypes_[size_t(f.type)];
@@ -3158,8 +3158,8 @@ bool World::clearableForPlacement(const UnitType* type, float x, float z,
     // Which live features could be cleared, indexed by the cells they cover.
     auto featureAt = [&](int gx, int gz) -> const Feature* {
         for (const auto& f : features_) {
-            if (!f.alive || !f.blocks || f.work <= 0.0f) continue;   // not reclaimable
-            int fx0 = int(f.x) / 16 - f.fx / 2, fz0 = int(f.z) / 16 - f.fz / 2;
+            if (!f.alive || !f.blocks || f.work <= Fixed()) continue;   // not reclaimable
+            int fx0 = f.x.floorInt() / 16 - f.fx / 2, fz0 = f.z.floorInt() / 16 - f.fz / 2;
             if (gx >= fx0 && gx < fx0 + f.fx && gz >= fz0 && gz < fz0 + f.fz) return &f;
         }
         return nullptr;
@@ -3294,8 +3294,9 @@ void World::assist(int builderId, int siteId, bool queue) {
 void World::addFeature(int id, float x, float z, float manaYield, float work,
                        int fx, int fz, bool blocks, int type) {
     featureIdx_[id] = features_.size();
-    Feature f{id, x, z, fx, fz, manaYield,
-              std::max(work, 1.0f), std::max(work, 1.0f), blocks, true};
+    Feature f{id, Fixed::fromFloat(x), Fixed::fromFloat(z), fx, fz, manaYield,
+              Fixed::fromFloat(std::max(work, 1.0f)),
+              Fixed::fromFloat(std::max(work, 1.0f)), blocks, true};
     f.type = type;
     features_.push_back(f);
     bumpFeatGen();   // a new feature needs a visual instance
@@ -3335,7 +3336,7 @@ void World::swapFeature(Feature& f, int newType) {
     f.burn = 0;
     f.dmg = 0;
     if (f.blocks)   // old stage's footprint frees first
-        blockCells(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
+        blockCells(f.x.floorInt() / 16 - f.fx / 2, f.z.floorInt() / 16 - f.fz / 2,
                    f.fx, f.fz, false);
     if (newType < 0) { f.alive = false; f.blocks = false; f.type = -1; return; }
     const FeatType& nt = featTypes_[size_t(newType)];
@@ -3343,10 +3344,10 @@ void World::swapFeature(Feature& f, int newType) {
     f.fx = nt.fx; f.fz = nt.fz;
     f.blocks = nt.blocking;
     if (f.blocks)
-        blockCells(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2,
+        blockCells(f.x.floorInt() / 16 - f.fx / 2, f.z.floorInt() / 16 - f.fz / 2,
                    f.fx, f.fz, true);
     f.manaYield = nt.energy;
-    f.work = f.workFull = std::max(nt.energy, 60.0f);
+    f.work = f.workFull = Fixed::fromFloat(std::max(nt.energy, 60.0f));
 }
 
 void World::igniteFeature(Feature& f) {
@@ -3376,7 +3377,7 @@ void World::tickBurning() {
         // rand(100) < its own spreadchance. (Retail's downwind spark phase moves
         // <1 cell at shipped wind speeds -- omitted.)
         if (f.spreadIn > 0 && --f.spreadIn == 0) {
-            int cx = int(f.x) / 16, cz = int(f.z) / 16;
+            int cx = f.x.floorInt() / 16, cz = f.z.floorInt() / 16;
             for (int dz = -3; dz <= 3; ++dz)
                 for (int dx = -3; dx <= 3; ++dx) {
                     if (dx == 0 && dz == 0) continue;
@@ -3426,7 +3427,7 @@ void World::reclaim(int builderId, int featureId, bool queue) {
     } else {
         const Feature* f = feature(featureId);
         if (!f || !f->alive) return;
-        tx = f->x; tz = f->z;
+        tx = f->x.toFloat(); tz = f->z.toFloat();
     }
     // A reclaim is an ORDER, in the sequence the player gave it -- the same fix the
     // build queue needed. It used to go to a separate reclaimQueue that only ever
@@ -3499,7 +3500,7 @@ void World::tickReclaim(Unit& b, float dt) {
     if (it == featureIdx_.end()) { advance(); return; }
     Feature& f = features_[it->second];
     if (!f.alive) { advance(); return; }   // someone else got it (RECLAIMFAILED)
-    float dx = f.x - b.x.toFloat(), dz = f.z - b.z.toFloat();
+    float dx = (f.x - b.x).toFloat(), dz = (f.z - b.z).toFloat();
     float reach = 24.0f + 8.0f * float(std::max(f.fx, f.fz)) +
                   (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
     if (dx * dx + dz * dz > reach * reach) return;   // still walking there
@@ -3512,15 +3513,17 @@ void World::tickReclaim(Unit& b, float dt) {
     const int32_t bTurnMax = b.type->turnInPlaceRate;
     const int32_t turn = std::clamp(bamDiff(want, b.heading), -bTurnMax, bTurnMax);
     b.heading = b.heading + Bam(turn);
-    float d = std::min(f.work, kReclaimRate * dt);
+    // Per TICK, like the corpse drain: kReclaimRate is work/second.
+    const Fixed d = fxMin(f.work, Fixed::fromFloat(kReclaimRate / kTick));
     f.work -= d;
     players_[size_t(b.player)].mana +=
-        f.manaYield * (d / f.workFull) * players_[size_t(b.player)].manaMult;   // drip (income-cheat scaled)
-    if (f.work <= 0) {
+        double(f.manaYield) * double((d / f.workFull).toFloat())
+        * double(players_[size_t(b.player)].manaMult);   // drip (income-cheat scaled)
+    if (f.work <= Fixed()) {
         f.alive = false;
         bumpFeatGen();   // reclaimed away: stop drawing it
         if (f.blocks) {   // free the ground cells it occupied (setupMatch blocked nav_)
-            blockCells(int(f.x) / 16 - f.fx / 2, int(f.z) / 16 - f.fz / 2, f.fx, f.fz, false);
+            blockCells(f.x.floorInt() / 16 - f.fx / 2, f.z.floorInt() / 16 - f.fz / 2, f.fx, f.fz, false);
         }
         advance();
     }
@@ -4971,14 +4974,15 @@ void World::tick(float dt) {
             // dispersed yet, which is the ordinary case -- burned the single retry
             // without an order ever being issued. "One more look" became "one more
             // check". Wait another interval instead; kAbandonExpiry bounds the waiting.
-            if (!pathExists(u.type, rec.x, rec.z, u.x.toFloat(), u.z.toFloat())) {
+            if (!pathExists(u.type, rec.x.toFloat(), rec.z.toFloat(),
+                            u.x.toFloat(), u.z.toFloat())) {
                 rec.probeAt = tickCounter_;   // wait again -- but the EXPIRY still runs
                 continue;
             }
             ++rec.tries;
             const bool atk = rec.attackMove, pat = rec.patrol;
             abandonRetry_ = true;          // this one re-issue is not a new player order
-            order(u.id, rec.x, rec.z, /*queue=*/false);
+            order(u.id, rec.x.toFloat(), rec.z.toFloat(), /*queue=*/false);
             abandonRetry_ = false;
             // Restore what the order WAS. order() issues a plain move, so without this a
             // rescued attack-move would walk past enemies it was told to engage and a
@@ -5792,7 +5796,7 @@ void World::tick(float dt) {
                         if (wasLast && u.orders.empty()) {
                             auto& rec = abandoned_[u.id];
                             if (rec.tries < kAbandonRetries) {
-                                rec.x = ax; rec.z = az;
+                                rec.x = Fixed::fromFloat(ax); rec.z = Fixed::fromFloat(az);
                                 rec.attackMove = aAtk; rec.patrol = aPat;
                                 rec.atTick = tickCounter_;
                                 rec.probeAt = tickCounter_;
@@ -6107,7 +6111,7 @@ void World::hashTrace() const {
         hPlayers = fnv(fnv(hPlayers, bits64(t.mana)), uint32_t(t.team));
     uint64_t fAlive = 0, fWork = 0;
     for (const auto& f : features_)
-        if (f.alive) { ++fAlive; fWork ^= (bits(f.work) << 1) ^ uint64_t(uint32_t(f.id)); }
+        if (f.alive) { ++fAlive; fWork ^= (uint64_t(uint32_t(f.work.v)) << 1) ^ uint64_t(uint32_t(f.id)); }
     uint64_t hFeat = fnv(fnv(seed, fAlive), fWork);
     // The nav overlay + grid cells drive losBetween, which gates target acquisition --
     // but NEITHER is folded into stateHash, so a divergence here is invisible to the
@@ -6240,8 +6244,10 @@ uint64_t World::stateHash() const {
     for (const auto& f : features_)
         if (f.alive) {
             ++fAlive;
-            uint32_t w; std::memcpy(&w, &f.work, 4);
-            uint32_t dm; std::memcpy(&dm, &f.dmg, 4);
+            // Raw fixed-point / raw int -- not a float of either. work was a float
+            // whose BITS were folded; it is 16.16 now and dmg is an integer.
+            const uint32_t w = uint32_t(f.work.v);
+            const uint32_t dm = uint32_t(f.dmg);
             fWork ^= (uint64_t(w) << 1) ^ uint64_t(uint32_t(f.id)) ^
                      // burning/damage state: type swaps and timers are sim state
                      (uint64_t(uint32_t(f.type + 1)) << 17) ^

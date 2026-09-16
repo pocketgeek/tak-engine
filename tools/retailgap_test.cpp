@@ -1523,8 +1523,8 @@ int main(int argc, char** argv) {
             int id = w.spawn(mon, 800, 2600, 0, 0);
             std::vector<int> feats;
             for (const auto& f : w.features()) {
-                if (!f.alive || f.work <= 0) continue;
-                float dx = f.x - 900, dz = f.z - 2700;
+                if (!f.alive || f.work <= sim::Fixed()) continue;
+                float dx = f.x.toFloat() - 900, dz = f.z.toFloat() - 2700;
                 if (dx * dx + dz * dz < 600 * 600) feats.push_back(f.id);
                 if (feats.size() >= 3) break;
             }

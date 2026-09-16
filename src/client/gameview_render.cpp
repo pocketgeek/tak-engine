@@ -815,8 +815,8 @@
                 std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
                 if (useSimThread_) lk.lock();
                 for (const auto& f : world_.features())
-                    if (f.alive && f.x >= minx && f.x <= maxx && f.z >= minz && f.z <= maxz)
-                        boxFeats.push_back({f.x, f.z});
+                    if (f.alive && f.x.toFloat() >= minx && f.x.toFloat() <= maxx && f.z.toFloat() >= minz && f.z.toFloat() <= maxz)
+                        boxFeats.push_back({f.x.toFloat(), f.z.toFloat()});
             }
             for (const auto& f : boxFeats) {
                 float fsx = (f.x - mapView_.offX()) * zm - terrainLiftX(f.x, f.z) * zm;
@@ -1897,7 +1897,7 @@
                 std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
                 if (useSimThread_) lk.lock();
                 if (const auto* f = world_.feature(u.reclaimId))
-                    fc = {f->alive, f->x, f->z, f->fx, f->fz};
+                    fc = {f->alive, f->x.toFloat(), f->z.toFloat(), f->fx, f->fz};
             }
             const auto* feat = &fc;
             if (fc.ok) {
@@ -2282,7 +2282,7 @@
             for (const auto& sf : world_.features()) {
                 if (!sf.alive || sf.type < 0 || featInstIds_.count(sf.id)) continue;
                 if (size_t(sf.type) >= world_.featureTypes().size()) continue;
-                fresh.push_back({sf.id, sf.x, sf.z,
+                fresh.push_back({sf.id, sf.x.toFloat(), sf.z.toFloat(),
                                  world_.featureTypes()[size_t(sf.type)].name});
             }
         }
@@ -3039,8 +3039,8 @@
                     // off the cursor to the spot the engine picked. The bead
                     // trail still runs to the real destination, since that is
                     // the route the unit walks.
-                    const float kx = o.clickX != 0.0f ? o.clickX : qx;
-                    const float kz = o.clickZ != 0.0f ? o.clickZ : qz;
+                    const float kx = o.clickX.toFloat() != 0.0f ? o.clickX.toFloat() : qx;
+                    const float kz = o.clickZ.toFloat() != 0.0f ? o.clickZ.toFloat() : qz;
                     float mx = (kx - mapView_.offX()) * zm - terrainLiftX(kx, kz) * zm;
                     float my = (kz - mapView_.offY()) * zm - terrainLift(kx, kz) * zm;
                     if (mx > -40 && mx < float(mvw) + 40 && my > -40 && my < float(winH) + 40) {

@@ -120,7 +120,7 @@
                     if (useSimThread_) lk.lock();
                     for (const auto& f : world_.features()) {
                         if (!f.alive) continue;
-                        float dx = f.x - wx, dz = f.z - wz, d = dx * dx + dz * dz;
+                        float dx = f.x.toFloat() - wx, dz = f.z.toFloat() - wz, d = dx * dx + dz * dz;
                         float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
                         if (d < r * r && d < bestF) { bestF = d; fid = f.id; fhit = true; }
                     }
@@ -649,7 +649,7 @@
                 if (useSimThread_) lk.lock();
                 for (const auto& f : world_.features()) {
                     if (!f.alive) continue;
-                    float dx = f.x - wx, dz = f.z - wz, d = dx * dx + dz * dz;
+                    float dx = f.x.toFloat() - wx, dz = f.z.toFloat() - wz, d = dx * dx + dz * dz;
                     float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
                     if (d < r * r && d < bestF) { bestF = d; fid = f.id; fhit = true; }
                 }

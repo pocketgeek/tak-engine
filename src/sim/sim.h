@@ -493,7 +493,7 @@ struct Order {
     // Declared LAST on purpose. Order is built with aggregate initialisers like
     // {x, z, targetId}; a field inserted after x/z silently becomes the third
     // one and every such call site starts setting the wrong member.
-    float clickX = 0, clickZ = 0;
+    Fixed clickX = Fixed(), clickZ = Fixed();
 };
 
 struct Unit {
@@ -697,7 +697,7 @@ struct FeatType {
     int  spreadChance = 0;   // TDF spreadchance (percent)
     int  sparkTicks = 0;     // TDF sparktime * 30 (retail stores seconds*30)
     int  burntType = -1;     // TDF featureburnt -> index into the same table
-    float energy = 0;        // reclaim yield of this stage
+    float energy = 0;        // reclaim yield (TDF energy -- readFloat in retail too)
     int  fx = 1, fz = 1;
     bool blocking = false;
     // Corpse defs (features/corpses/*_dead.tdf): how long the body lies there
@@ -708,18 +708,19 @@ struct FeatType {
     bool isStone = false;    // TDF isstone=1 (statue: client tints it stone-gray)
     bool isFrozen = false;   // TDF isfrozen=1 (client tints it ice-blue)
     bool indestructible = false;
-    float hp = 0;            // TDF damage= (weapon damage the feature absorbs)
+    int32_t hp = 0;          // TDF damage= -- readInt in retail, so an int here too
     int  deadType = -1;      // TDF featuredead -> destroyed-replacement (placed neutral)
     std::string object;      // TDF object= (3D corpse mesh; client visual)
 };
 
 struct Feature {
     int   id = 0;          // cz*terrainWidth + cx: position-derived, peer-identical
-    float x = 0, z = 0;
+    Fixed x = Fixed(), z = Fixed();   // 16.16, the same world units as everything else
     int   fx = 1, fz = 1;  // footprint cells (for the nav unblock on removal)
     float manaYield = 0;   // total mana granted over a full reclaim (FBI `energy`)
-    float work = 0;        // remaining reclaim work; consumed to 0
-    float workFull = 1;    // initial work (for the proportional mana drip)
+    // Fixed: reclaim drains fractionally per tick, exactly as corpseWork does.
+    Fixed work = Fixed();      // remaining reclaim work; consumed to 0
+    Fixed workFull = Fixed::fromInt(1);   // initial work (for the proportional mana drip)
     bool  blocks = false;  // occupied the nav grid
     bool  alive = true;    // false once fully reclaimed (decal disappears)
     // Burning (retail mechanic, icd 0x494b40/0x495110/0x495300 -- ours runs
@@ -727,7 +728,9 @@ struct Feature {
     // event scheme). All hashed.
     int   type = -1;       // index into World's FeatType table (-1 = untyped)
     uint8_t burn = 0;      // 1 = burning
-    float dmg = 0;         // accumulated weapon damage (dies at FeatType.hp)
+    // INT, because both sides of the comparison are: weapon damage is readInt in
+    // retail and so is a feature's `damage` (its hit points).
+    int32_t dmg = 0;       // accumulated weapon damage (dies at FeatType.hp)
     int   spreadIn = 0;    // ticks until the single spread event (sparktime-derived)
     int   burnLeft = 0;    // ticks until burn-out (swap to burntType / die)
 };
@@ -1853,7 +1856,7 @@ private:
     // command -- a rescued attack-move stops engaging on the way, a rescued patrol stops
     // looping. Carry what the order was, not just where it pointed.
     struct AbandonedGoal {
-        float x = 0, z = 0;
+        Fixed x = Fixed(), z = Fixed();
         bool attackMove = false, patrol = false;
         // TWO timestamps, deliberately. `atTick` is when the goal was abandoned and
         // never moves, so the expiry below is measured from a fixed point. `probeAt` is

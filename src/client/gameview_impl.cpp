@@ -170,8 +170,8 @@
             std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
             if (useSimThread_) lk.lock();
             for (const auto& f : world_.features()) {
-                if (!f.alive || f.x < minx || f.x > maxx || f.z < minz || f.z > maxz) continue;
-                float dx = f.x - b->x, dz = f.z - b->z;
+                if (!f.alive || f.x.toFloat() < minx || f.x.toFloat() > maxx || f.z.toFloat() < minz || f.z.toFloat() > maxz) continue;
+                float dx = f.x.toFloat() - b->x, dz = f.z.toFloat() - b->z;
                 targets.push_back({dx * dx + dz * dz, f.id});
             }
         }
@@ -462,8 +462,8 @@
         for (const auto& ft : world_.features())
             if (ft.alive && ft.type >= 0 &&
                 world_.featureTypes()[size_t(ft.type)].flamable) {
-                float ddx = ft.x - cx, ddz = ft.z - cz;
-                if (ddx * ddx + ddz * ddz < 400 * 400) { tx = ft.x + 20; tz = ft.z; break; }
+                float ddx = ft.x.toFloat() - cx, ddz = ft.z.toFloat() - cz;
+                if (ddx * ddx + ddz * ddz < 400 * 400) { tx = ft.x.toFloat() + 20; tz = ft.z.toFloat(); break; }
             }
         int dr = spawn("tardrag", tx - 260, tz - 40, 1.57f, 1);
         int ar = spawn("araarch", tx, tz, -1.57f, 0);
