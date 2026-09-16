@@ -140,7 +140,17 @@ run_one() {
   # --seed varies per run: a fixed seed would test the same game every time, and the
   # point is coverage. It is still RECORDED here so any hit can be replayed exactly.
   local seed=$((1000 + idx))
-  $SERVER --port "$port" --data "$DATA" --no-auth --seed "$seed" >"$slog" 2>&1 &
+  # TAK_GODS MUST REACH THE SERVER TOO. Gods used to be a room option carried on the
+  # wire, so the referee learned them from the lobby; they are now decided inside
+  # setupMatch, which BOTH the referee and the client run independently. Setting the
+  # env on the client alone would enable gods in one sim and not the other -- a
+  # guaranteed desync manufactured by the harness, which would then be reported as a
+  # finding. Every other option here still travels as a room setting; this is the one
+  # that does not, so it is forwarded explicitly.
+  local srv_env=""
+  case "$envs" in *TAK_GODS=1*) srv_env="TAK_GODS=1";; esac
+  # shellcheck disable=SC2086
+  env $srv_env $SERVER --port "$port" --data "$DATA" --no-auth --seed "$seed" >"$slog" 2>&1 &
   local spid=$!
   for _ in $(seq 120); do grep -q listening "$slog" 2>/dev/null && break; sleep 1; done
   if ! grep -q listening "$slog" 2>/dev/null; then
