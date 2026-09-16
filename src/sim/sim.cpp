@@ -2412,7 +2412,6 @@ void World::fire(Unit& u, Unit& target, int slot) {
         float bdx = (target.x - u.x).toFloat(), bdz = (target.z - u.z).toFloat();
         b.vx = Fixed::fromFloat(bdx / kBombFall / kTick);   // px per TICK
         b.vz = Fixed::fromFloat(bdz / kBombFall / kTick);
-        b.damage = w.damage;
         b.wsrc = &w;
         b.targetId = target.id;
         b.fromPlayer = u.player;
@@ -2436,7 +2435,6 @@ void World::fire(Unit& u, Unit& target, int slot) {
     const float vel = w.projVel;             // weaponvelocity, px/s
     p.vx = Fixed::fromFloat(dx / dist * vel / kTick);   // px per TICK, as retail stores it
     p.vz = Fixed::fromFloat(dz / dist * vel / kTick);
-    p.damage = w.damage;
     p.wsrc = &w;
     p.targetId = target.id;
     p.fromPlayer = u.player;
@@ -4613,14 +4611,12 @@ void World::tick(float dt) {
             if (dx * dx + dz * dz < r * r) {
                 // Apply the impact: direct hit + area splash (per the weapon's
                 // FBI areaofeffect), using the grid from the previous rebuild.
-                if (p.wsrc) applyHit(*p.wsrc, t->x.toFloat(), t->z.toFloat(), p.fromPlayer, p.fromId, t);
-                else if (!(benchmarkMode() && t->type && t->type->commander)) {
-                    t->hp -= Fixed::fromFloat(p.damage);
-                    if (t->hp <= Fixed()) {
-                        t->overkill = fxMax(t->overkill, -t->hp);
-                        t->deathType = p.wsrc ? uint8_t(p.wsrc->dmgType) : 1;
-                    }
-                }
+                // A shot ALWAYS has its weapon: all three launch sites set wsrc, and
+                // damage is read from the weapon at impact (applyHit -> damageVs), which
+                // is also how retail does it -- it loads the def's damage field at the
+                // point of use in 76 places and snapshots it onto nothing. The
+                // Projectile::damage this branch used was a dead copy of w.damage.
+                applyHit(*p.wsrc, t->x.toFloat(), t->z.toFloat(), p.fromPlayer, p.fromId, t);
                 p.life = -1;
                 p.spent = true;   // connected: don't also crater at expiry
             }

@@ -741,7 +741,6 @@ struct Projectile {
     // renders it in px/s by scaling 30/65536 (the dump at 0x4fbf2a..0x4fbf4f:
     // imul of the two int components, fildll, then * 0x5f2d68 == 30/65536).
     Fixed vx = Fixed(), vz = Fixed();
-    float damage = 0;
     int targetId = 0;
     int fromPlayer = 0;
     // TICKS, like every other retail timer.
