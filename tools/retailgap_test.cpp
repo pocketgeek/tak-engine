@@ -199,7 +199,7 @@ int main(int argc, char** argv) {
             if (!w.projectiles().empty()) {
                 // Jump the target 300px sideways: a straight shot now misses by far
                 // more than the hit radius.
-                if (auto* m = w.unit(mover)) { m->x = 1300; m->orders.clear(); }
+                if (auto* m = w.unit(mover)) { m->x = tak::sim::Fixed::fromInt(1300); m->orders.clear(); }
                 float hp0 = w.unit(mover)->hp;
                 for (int i = 0; i < 90; ++i) w.tick(1.0f / 30.0f);   // 3s < reload
                 const sim::Unit* m = w.unit(mover);
@@ -604,7 +604,7 @@ int main(int argc, char** argv) {
                 int moved = 0;
                 for (auto& u : w.units())
                     if (u.alive() && u.type == dern)
-                        if (auto* p = w.unit(u.id)) { p->z = 5 * 16.0f; ++moved; }
+                        if (auto* p = w.unit(u.id)) { p->z = tak::sim::Fixed::fromInt(5 * 16); ++moved; }
                 tickM(w, 2.0f);
                 check(moved > 0 && w.missionOutcome() > 0,
                       "getting it across the line is a VICTORY");
@@ -875,7 +875,7 @@ int main(int argc, char** argv) {
                     flew = true;
                     // Yank the target well clear, so the shell cannot connect.
                     sim::Unit* m = w.unit(mark);
-                    m->x = 600; m->z = 1400;
+                    m->x = tak::sim::Fixed::fromInt(600); m->z = tak::sim::Fixed::fromInt(1400);
                     moved = true;
                 }
             }

@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
     // ---- WIN: drop the escorted NPC onto the objective radius ----
     int emen = findType(w, "npcemen");
     if (emen >= 0 && w.missionOutcome() == 0) {
-        if (auto* u = w.unit(emen)) { u->x = 130 * 16 + 8; u->z = 76 * 16 + 8; }
+        if (auto* u = w.unit(emen)) { u->x = tak::sim::Fixed::fromInt(130 * 16 + 8); u->z = tak::sim::Fixed::fromInt(76 * 16 + 8); }
         w.tick(1.0f / 30.0f);
         std::printf("WIN test  (NPCEMEN on objective): outcome=%d %s\n",
                     w.missionOutcome(), w.missionOutcome() == 1 ? "PASS" : "FAIL");
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 30; ++i) w3.tick(1.0f / 30.0f);   // run Start (arms triggers)
         int mover = findHumanMover(w3);
         if (mover >= 0) {
-            if (auto* u = w3.unit(mover)) { u->x = 130 * 16 + 8; u->z = 76 * 16 + 8; }
+            if (auto* u = w3.unit(mover)) { u->x = tak::sim::Fixed::fromInt(130 * 16 + 8); u->z = tak::sim::Fixed::fromInt(76 * 16 + 8); }
             for (int i = 0; i < 15; ++i) w3.tick(1.0f / 30.0f);   // fire TriggerHit -> squad spawns
             int bro = findType(w3, "arabroad");
             float x0 = 0, z0 = 0;

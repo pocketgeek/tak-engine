@@ -42,6 +42,22 @@ struct Fixed {
     static Fixed fromFloat(float f) { return raw(int32_t(std::lround(double(f) * kOne))); }
 
     constexpr float toFloat() const { return float(v) / float(kOne); }
+    // IMPLICIT TO FLOAT, AND THIS IS PORT SCAFFOLDING, not the end state.
+    //
+    // Converting Unit::x/z alone breaks 248 sites: 28 writes and the rest reads. The
+    // writes are what decide stored precision, so those stay explicit and get reviewed
+    // one at a time. The reads are float arithmetic that was float before this change
+    // and is no worse for it, so letting them convert silently is what makes a port of
+    // this size tractable at all.
+    //
+    // Be clear about what it does NOT buy: a float carries 24 bits of mantissa, and a
+    // coordinate near the far edge of a map needs 28 at this resolution, so a read is
+    // LOSSY out there. Determinism therefore arrives only where a path is converted to
+    // Fixed end to end -- the mover and the collision test. Everywhere still reading
+    // through here is exactly as portable as it was, which is to say it relies on
+    // detmath and -ffp-contract=off. Each converted path should drop its reads; when
+    // the last one goes, so does this operator.
+    constexpr operator float() const { return toFloat(); }
     // Truncates toward NEGATIVE infinity, like a floor, so cell indexing is correct
     // left of the origin. A bare v/kOne would round toward zero and put x=-0.5 in
     // cell 0 alongside x=+0.5.
@@ -94,6 +110,82 @@ inline Fixed fxLen(Fixed a, Fixed b) {
     const int64_t aa = int64_t(a.v) * int64_t(a.v);
     const int64_t bb = int64_t(b.v) * int64_t(b.v);
     return Fixed::raw(int32_t(isqrt64(uint64_t(aa + bb))));
+}
+
+// ---------------------------------------------------------------------------------
+// Angles, and integer trig.
+//
+// A BINARY ANGLE: 65536 == 360 degrees, held in int32 and wrapped by truncation, so
+// 0x4000 is a right angle. That is retail's own convention (heading at navigator +0x7e,
+// with the mover comparing headings against 0x4000 for its 90-degree test), and it has
+// the property radians never will -- adding two angles cannot drift, and wrapping is
+// free rather than a fmod that has to agree across libms.
+using Bam = int32_t;
+constexpr Bam kBamFull = 65536, kBamHalf = 32768, kBamQuarter = 16384;
+
+// CORDIC, because it is the only way to get sin and cos with no float anywhere. Sixteen
+// rotations of shift-and-add drive the residual angle to zero; the table is atan(2^-i)
+// in BAM and the constant is the accumulated gain. Both were computed in the open (see
+// the generator in the commit message) rather than read out of the retail binary, which
+// is for observation only.
+//
+// Accurate to about 1e-4 of full scale, which is finer than the 1/65536 px the result is
+// stored at, and -- the point of the exercise -- IDENTICAL on every machine, because it
+// is integer shifts and adds with no rounding mode to disagree about.
+namespace detail {
+constexpr int32_t kCordicAtan[16] = {
+    8192, 4836, 2555, 1297, 651, 326, 163, 81,
+    41, 20, 10, 5, 3, 1, 1, 0,
+};
+constexpr int32_t kCordicGain = 39797;   // 0.6072529351 in 16.16
+}  // namespace detail
+
+// sin and cos together: CORDIC produces both, and every caller that wants one wants the
+// other a line later.
+struct SinCos { Fixed s, c; };
+
+inline SinCos fxSinCos(Bam a) {
+    a &= (kBamFull - 1);                       // wrap: free, and exact
+    // THE FOUR CARDINALS EXACTLY. CORDIC converges to about 6/65536 at 0 and 90, and
+    // that residual is not harmless here: it is 0.0002px of sideways push per step, so
+    // a unit ordered straight along an axis slides ~2px off its line over a five-minute
+    // walk. Axis-aligned movement is the common case (waypoints sit on cell centres),
+    // and drift is the entire reason positions became integers, so these are answered
+    // outright rather than approximated.
+    switch (a) {
+        case 0:                         return {Fixed(), Fixed::fromInt(1)};
+        case kBamQuarter:               return {Fixed::fromInt(1), Fixed()};
+        case kBamHalf:                  return {Fixed(), -Fixed::fromInt(1)};
+        case kBamHalf + kBamQuarter:    return {-Fixed::fromInt(1), Fixed()};
+        default: break;
+    }
+    // Fold to the first quadrant and remember the signs, so the rotation only ever has
+    // to cover 90 degrees where CORDIC converges.
+    bool negS = false, negC = false;
+    if (a >= kBamHalf) { a -= kBamHalf; negS = !negS; negC = !negC; }
+    if (a >= kBamQuarter) { a = kBamHalf - a; negC = !negC; }
+    int64_t x = detail::kCordicGain, y = 0;
+    int32_t z = a;
+    for (int i = 0; i < 16; ++i) {
+        const int64_t dx = x >> i, dy = y >> i;
+        if (z >= 0) { const int64_t nx = x - dy; y = y + dx; x = nx; z -= detail::kCordicAtan[i]; }
+        else        { const int64_t nx = x + dy; y = y - dx; x = nx; z += detail::kCordicAtan[i]; }
+    }
+    SinCos r;
+    r.s = Fixed::raw(int32_t(negS ? -y : y));
+    r.c = Fixed::raw(int32_t(negC ? -x : x));
+    return r;
+}
+inline Fixed fxSin(Bam a) { return fxSinCos(a).s; }
+inline Fixed fxCos(Bam a) { return fxSinCos(a).c; }
+
+// Boundary helpers: unit data, map files and the renderer all still speak radians.
+inline Bam bamFromRadians(float r) {
+    return Bam(std::lround(double(r) * (65536.0 / (2.0 * 3.14159265358979323846))))
+           & (kBamFull - 1);
+}
+constexpr float radiansFromBam(Bam a) {
+    return float(double(a) * (2.0 * 3.14159265358979323846 / 65536.0));
 }
 
 }  // namespace tak::sim

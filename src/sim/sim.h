@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sim/fixed.h"
+
 #include <algorithm>
 #include <atomic>
 #include <thread>
@@ -489,7 +491,7 @@ struct Unit {
     int id = 0;
     int player = 0;
     const UnitType* type = nullptr;
-    float x = 0, z = 0;
+    Fixed x, z;   // FIXED-POINT: 16.16, 65536/px. See fixed.h.
     float heading = 0;     // radians, 0 = +z
     float speed = 0;       // px/s
     float hp = 100;

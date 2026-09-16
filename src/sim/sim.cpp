@@ -592,8 +592,8 @@ int World::spawn(const UnitType* type, float x, float z, float heading, int play
     players_[size_t(player)].built++;        // end-of-game "Units" column
     u.player = player;
     u.type = type;
-    u.x = x;
-    u.z = z;
+    u.x = Fixed::fromFloat(x);   // boundary: callers still speak float
+    u.z = Fixed::fromFloat(z);
     u.heading = heading;
     u.hp = type ? type->maxHp : 100;
     u.mana = type ? type->maxMana : 0;   // casters start with a full pool
@@ -1792,8 +1792,8 @@ void World::tickTransport(Unit& u, float dt) {
                 for (int i = -r; i <= r && c->inTransport; ++i) {
                     if (std::max(std::abs(i), std::abs(j)) != r) continue;
                     if (!nav_.walkable(cx + i, cz + j)) continue;
-                    c->x = float(cx + i) * 16 + 8;
-                    c->z = float(cz + j) * 16 + 8;
+                    c->x = Fixed::fromInt((cx + i) * 16 + 8);   // exact cell centre
+                    c->z = Fixed::fromInt((cz + j) * 16 + 8);
                     c->inTransport = 0;
                 }
     }
@@ -3045,8 +3045,8 @@ void World::rebuildGrid() {
     for (const auto& u : units_) {
         if (!inGrid(u)) continue;
         any = true;
-        minx = std::min(minx, u.x); maxx = std::max(maxx, u.x);
-        minz = std::min(minz, u.z); maxz = std::max(maxz, u.z);
+        minx = std::min(minx, float(u.x)); maxx = std::max(maxx, float(u.x));
+        minz = std::min(minz, float(u.z)); maxz = std::max(maxz, float(u.z));
     }
     if (!any) { gW_ = gH_ = 0; return; }
     gOx_ = minx - gCell_;
@@ -5070,10 +5070,10 @@ void World::tick(float dt) {
                 u.deadFor < u.corpseUntil &&
                 (u.type->corpseAdjX != 0 || u.type->corpseAdjZ != 0)) {
                 if (u.corpseBlocks) blockFoot(*u.type, u.x, u.z, false);
-                u.x = std::clamp(u.x + float(u.type->corpseAdjX) * 16.0f,
-                                 8.0f, float(terW_) * 16.0f - 8.0f);
-                u.z = std::clamp(u.z + float(u.type->corpseAdjZ) * 16.0f,
-                                 8.0f, float(terH_) * 16.0f - 8.0f);
+                u.x = Fixed::fromFloat(std::clamp(u.x + float(u.type->corpseAdjX) * 16.0f,
+                                 8.0f, float(terW_) * 16.0f - 8.0f));
+                u.z = Fixed::fromFloat(std::clamp(u.z + float(u.type->corpseAdjZ) * 16.0f,
+                                 8.0f, float(terH_) * 16.0f - 8.0f));
                 if (u.corpseBlocks) blockFoot(*u.type, u.x, u.z, true);
             }
             // The body decomposed (or was never a corpse): fully gone. Records
@@ -5524,8 +5524,13 @@ void World::tick(float dt) {
             else
                 u.speed = std::max(u.speed - u.type->brake * dt, target);
 
-            float mx = detmath::sin(u.heading) * u.speed * dt;
-            float mz = detmath::cos(u.heading) * u.speed * dt;
+            // THE STEP IS FIXED-POINT. detmath still computes the direction in double
+            // (it is bit-identical across builds by construction), but the displacement
+            // is quantised to 1/65536 px before it is ever added to a position, so a
+            // walk of ten thousand ticks accumulates exactly and cannot drift a unit
+            // four hundredths of a pixel into a body it is meant to be clear of.
+            const Fixed mx = Fixed::fromFloat(detmath::sin(u.heading) * u.speed * dt);
+            const Fixed mz = Fixed::fromFloat(detmath::cos(u.heading) * u.speed * dt);
             // Collide ground/water units with the nav grid so they can't walk
             // through walls and buildings (pathfinding routes around, but direct
             // steering in combat did not). Slide along a blocked axis.
@@ -5552,9 +5557,16 @@ void World::tick(float dt) {
                     // wedge the sideways teleport existed to rescue.
                     //
                     // Retail is explicitly tolerant here ("bodies share space briefly and
-                    // nothing shoves"); a quarter pixel is far below anything visible and
+                    // nothing shoves"); half a pixel is far below anything visible and
                     // well under the 32px at which footprints meet, so it unwedges the
                     // tangent case without letting bodies sink into each other.
+                    //
+                    // AND IT IS NOT A FLOAT WORKAROUND, which is what it was first taken
+                    // for. Positions are fixed-point now, exact to 1/65536 px, and
+                    // setting this to zero still collapses everything -- opposing columns
+                    // 21/32 -> 1/32, the chokepoint 24/24 -> 3/24, pathblock_test back to
+                    // 8 failures. The tangency is about whether a touch COUNTS as an
+                    // overlap, not about how precisely the touch is represented.
                     constexpr float kTouchSlack = 0.5f;
                     return bodyPenetration(u, nx, nz) <= kTouchSlack;
                 };

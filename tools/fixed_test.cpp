@@ -95,6 +95,57 @@ int main() {
               bad ? std::to_string(bad) + " wrong" : "");
     }
 
+    // --- integer trig: accuracy, and the identities that matter ---------------
+    {
+        double worst = 0;
+        for (Bam a = 0; a < kBamFull; a += 7) {          // 9363 angles
+            const SinCos sc = fxSinCos(a);
+            const double want = double(a) * (2.0 * 3.14159265358979323846 / 65536.0);
+            worst = std::max(worst, std::fabs(sc.s.toFloat() - std::sin(want)));
+            worst = std::max(worst, std::fabs(sc.c.toFloat() - std::cos(want)));
+        }
+        check(worst < 2e-3, "CORDIC sin/cos within 2e-3 of libm over 9363 angles",
+              "worst " + std::to_string(worst));
+    }
+    {
+        // The quadrant folding is where a sign error hides, so pin the cardinals.
+        // EXACT, not close. A residual here is a sideways push on every axis-aligned
+        // step, and those are the common case.
+        check(fxSin(0).v == 0,                              "sin(0) is exactly 0");
+        check(fxCos(0) == Fixed::fromInt(1),                "cos(0) is exactly 1");
+        check(fxSin(kBamQuarter) == Fixed::fromInt(1),      "sin(90) is exactly 1");
+        check(fxCos(kBamQuarter).v == 0,                    "cos(90) is exactly 0");
+        check(fxSin(kBamHalf).v == 0,                       "sin(180) is exactly 0");
+        check(fxCos(kBamHalf) == -Fixed::fromInt(1),        "cos(180) is exactly -1");
+        check(fxSin(kBamHalf + kBamQuarter) == -Fixed::fromInt(1), "sin(270) is exactly -1");
+        check(fxCos(kBamHalf + kBamQuarter).v == 0,         "cos(270) is exactly 0");
+        // ...and a unit walking due east for a five-minute game gains no sideways drift.
+        Fixed side;
+        for (int i = 0; i < 10000; ++i) side += fxSin(0) * Fixed::fromInt(2);
+        check(side.v == 0, "10000 axis-aligned steps drift sideways by exactly nothing");
+    }
+    {
+        // Wrapping is the property radians cannot give us: adding angles for ever
+        // must not drift, and must land exactly back where it started.
+        Bam a = 12345;
+        for (int i = 0; i < 100000; ++i) a = (a + 999) & (kBamFull - 1);
+        check(a == ((12345 + 100000 * 999) & (kBamFull - 1)),
+              "100k angle additions wrap exactly, with no drift");
+        check(fxSin(5) == fxSin(5 + kBamFull), "sin is exactly periodic across a wrap");
+    }
+    {
+        // sin^2 + cos^2 == 1, the standard CORDIC gain check.
+        double worstId = 0;
+        for (Bam a = 0; a < kBamFull; a += 101) {
+            const SinCos sc = fxSinCos(a);
+            const double id = double(sc.s.toFloat()) * sc.s.toFloat()
+                            + double(sc.c.toFloat()) * sc.c.toFloat();
+            worstId = std::max(worstId, std::fabs(id - 1.0));
+        }
+        check(worstId < 5e-3, "sin^2 + cos^2 == 1 (the gain is right)",
+              "worst " + std::to_string(worstId));
+    }
+
     std::printf(failures ? "fixed_test: FAILURES\n" : "fixed_test: all passed\n");
     return failures ? 1 : 0;
 }
