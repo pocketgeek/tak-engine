@@ -3594,7 +3594,7 @@ void World::startDisco(int player) {
     auto& p = players_[size_t(player)];
     // One emote at a time: ignore if this player is already dancing OR headbanging
     // (so you can't stack or restart them). Deterministic across peers.
-    if (p.discoLeft <= 0 && p.headbangLeft <= 0) p.discoLeft = 10.0f;
+    if (p.discoLeft <= 0 && p.headbangLeft <= 0) p.discoLeft = 10 * int32_t(kTick);
 }
 
 bool World::discoActive(int player) const {
@@ -3605,7 +3605,7 @@ bool World::discoActive(int player) const {
 void World::startHeadbang(int player) {
     if (player < 0 || player >= int(players_.size())) return;
     auto& p = players_[size_t(player)];
-    if (p.discoLeft <= 0 && p.headbangLeft <= 0) p.headbangLeft = 10.0f;
+    if (p.discoLeft <= 0 && p.headbangLeft <= 0) p.headbangLeft = 10 * int32_t(kTick);
 }
 
 bool World::headbangActive(int player) const {
@@ -4460,12 +4460,11 @@ void World::tick(float dt) {
     for (auto& u : units_) { u.justFired = false; u.justBuilt = 0; }
     if (mission_ || scenario_) justDied_.clear();   // deaths this tick, fed to mission/scenario below
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
-    clock_ += dt;    // wall-clock since the match started (for god timing)
     // Cosmetic disco emote countdown (Shift+D). Deterministic across peers but not
     // hashed -- drives client-side monarch dancing only.
     for (auto& tm : players_) {
-        if (tm.discoLeft > 0) tm.discoLeft = std::max(0.0f, tm.discoLeft - dt);
-        if (tm.headbangLeft > 0) tm.headbangLeft = std::max(0.0f, tm.headbangLeft - dt);
+        if (tm.discoLeft > 0) --tm.discoLeft;
+        if (tm.headbangLeft > 0) --tm.headbangLeft;
     }
 
     // Economy: recompute income/storage, apply income.
@@ -6309,7 +6308,7 @@ int World::updateOutcome() {
         bool wasDefeated = players_[size_t(p)].defeated;
         players_[size_t(p)].defeated = (aliveByPlayer[size_t(p)] == 0) || monarchDead || forced;
         // Stamp the moment of elimination once, for the end-of-game "Time" column.
-        if (!wasDefeated && players_[size_t(p)].defeated) players_[size_t(p)].defeatedAt = clock_;
+        if (!wasDefeated && players_[size_t(p)].defeated) players_[size_t(p)].defeatedAt = int32_t(tickCounter_);
         players_[size_t(p)].unitCount = aliveByPlayer[size_t(p)];   // re-sync the cap count
     }
 

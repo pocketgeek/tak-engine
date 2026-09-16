@@ -757,9 +757,12 @@
             PlayerR& r = fb.players[size_t(p)];
             r.mana = pl.mana; r.storage = pl.storage; r.income = pl.income;
             r.kills = pl.kills; r.unitCount = pl.unitCount;
-            r.built = pl.built; r.losses = pl.losses; r.defeatedAt = pl.defeatedAt;
+            r.built = pl.built; r.losses = pl.losses;
+            // sim keeps these in TICKS now; the scoreboard wants seconds.
+            r.defeatedAt = pl.defeatedAt < 0 ? -1.0f : float(pl.defeatedAt) / 30.0f;
             r.team = pl.team; r.defeated = pl.defeated; r.godSummoned = pl.godSummoned;
-            r.discoLeft = pl.discoLeft; r.headbangLeft = pl.headbangLeft;
+            r.discoLeft = float(pl.discoLeft) / 30.0f;
+            r.headbangLeft = float(pl.headbangLeft) / 30.0f;
         }
         fb.projectiles = world_.projectiles();   // sim push_back/erase each tick -> must copy
         fb.storms = world_.storms();             // ditto: the viewer draws these

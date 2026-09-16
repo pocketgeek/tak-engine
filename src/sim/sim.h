@@ -941,15 +941,15 @@ struct Player {
     // enter stateHash (see docs/multiplayer-design.md).
     int   team = 0;
     bool  defeated = false;   // no living units; set by the sim's win check
-    float defeatedAt = -1;    // world clock when `defeated` first went true (-1 = still in)
+    int32_t defeatedAt = -1;  // TICK when `defeated` first went true (-1 = still in)
     // Cosmetic "disco" emote (Shift+D): seconds this player's monarchs keep
     // dancing. Set by a lockstep Cmd::Disco so every peer agrees on the timing,
     // but it drives client-side eye-candy only and is NOT folded into stateHash
     // (like vis_).
-    float discoLeft = 0;
+    int32_t discoLeft = 0;    // ticks
     // Cosmetic "headbang" emote (Shift+H): seconds this player's monarchs headbang to
     // heavy metal. Same deal as discoLeft -- synced by Cmd::Headbang, not hashed.
-    float headbangLeft = 0;
+    int32_t headbangLeft = 0; // ticks
 };
 
 // Max simultaneous players/teams (the retail map ceiling is 8 start positions).
@@ -1164,7 +1164,6 @@ public:
         burnRng_ = 0x54414B21;
         nextId_ = 1;
         tickCounter_ = 0;
-        clock_ = 0;
         winningTeam_ = -1;
     }
     // Size the player table for a match (default 4 for single-player/scenarios).
@@ -1191,7 +1190,13 @@ public:
 
     // God economy (gamedata/Gods.tdf). Enable it, then a player whose god favour
     // fills after `appearSec` may manifest its god — the viewer polls godReady().
-    void enableGods(float appearSec) { godsEnabled_ = true; godAppearTime_ = appearSec; }
+    // TICKS. There is no separate wall clock any more: tickCounter_ already counts
+    // them, and clock_ was a second float accumulating dt alongside it for this one
+    // comparison.
+    void enableGods(float appearSec) {
+        godsEnabled_ = true;
+        godAppearTick_ = appearSec >= 1e8f ? INT64_MAX : int64_t(appearSec * 30.0f);
+    }
     bool godsEnabled() const { return godsEnabled_; }
 
     // Per-player unit limit: production and new builds stall a player once it has
@@ -1225,7 +1230,8 @@ public:
     // no priest to keep alive. We used to require a favour pool to fill to 3000 off
     // priest-channelled mana income; that was ours, not retail's, and it is gone.
     bool godReady(int t) const {
-        return godsEnabled_ && !players_[size_t(t)].godSummoned && clock_ >= godAppearTime_;
+        return godsEnabled_ && !players_[size_t(t)].godSummoned &&
+               int64_t(tickCounter_) >= godAppearTick_;
     }
 
     // Win/defeat, computed sim-side so every lockstep peer agrees on the same
@@ -1808,7 +1814,7 @@ private:
     std::vector<uint8_t> hadMonarch_;   // per-player: ever fielded a Monarch (for the loss rule)
     bool godsEnabled_ = false;
     int unitCap_ = 0;                 // per-player live-unit limit (0 = unlimited)
-    float godAppearTime_ = 1e9f, clock_ = 0;
+    int64_t godAppearTick_ = INT64_MAX;
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
     std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
     size_t benchCursor_ = 0;              // next unexecuted stage
