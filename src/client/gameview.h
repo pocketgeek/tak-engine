@@ -972,6 +972,25 @@ private:
         tak::tdo::Model model;
         PieceMeta meta;   // precomputed once; see collect()
     };
+    // THE ONLY WAY TO CREATE A visuals_ ENTRY. An entry whose PieceMeta was left
+    // default-constructed reports skip=false for every piece, and skip is what hides
+    // the flat ground plate every TAK model carries at its root (AraGP, zonnull,
+    // targround...). Draw a unit through such an entry and that plate is emitted --
+    // invisible in the body pass, where it lies flat on the terrain it coincides with,
+    // and a solid dark rectangle in the SHADOW pass, which composites it with MOD.
+    //
+    // That shipped: the build-icon path created the entry first via ghostModel, and
+    // registerUnit's "if (!visuals_.count(typeId))" then skipped building the tree for
+    // good. Any unit whose icon was drawn before its first instance spawned wore a
+    // square shadow -- reported on the Beast Handler, which sits in the Zhon conjure
+    // menu. Routing every site through here is what stops a fourth one being added.
+    tak::tdo::Model* loadVisual(const std::string& key) {
+        auto it = visuals_.find(key);
+        if (it != visuals_.end()) return &it->second.model;
+        Visual v{tak::tdo::load(vread("objects3d/" + key + ".3do")), {}};
+        buildPieceMeta(v.model.root, v.meta);   // fixed for the model's life
+        return &visuals_.emplace(key, std::move(v)).first->second.model;
+    }
     struct EffectAnim;   // defined below; Anim only needs the pointer type
     struct Anim {
         std::unique_ptr<tak::cob::Vm> vm;

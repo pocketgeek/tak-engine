@@ -1394,14 +1394,13 @@
     }
 
     const tak::tdo::Model* GameView::ghostModel(const std::string& typeId) {
-        auto it = visuals_.find(typeId);
-        if (it != visuals_.end()) return &it->second.model;
+        // Through loadVisual, which builds the PieceMeta tree. This used to insert the
+        // entry with meta{} and a comment saying collect() would compute the answers
+        // live -- true of the ghost's OWN draw, which passes no meta, but the entry it
+        // left behind is the one every later unit draw uses, and that one does pass it.
+        // See loadVisual: the square shadow on the Beast Handler was this.
         try {
-            // meta{} on purpose: a ghost preview has no cached PieceMeta tree, and
-            // collect() computes the same answers live for exactly this case. Spelled
-            // out rather than left to aggregate initialisation so it reads as intent.
-            visuals_[typeId] = {tak::tdo::load(vread("objects3d/" + typeId + ".3do")), {}};
-            return &visuals_[typeId].model;
+            return loadVisual(typeId);
         } catch (const std::exception&) {}
         return nullptr;
     }

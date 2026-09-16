@@ -1830,7 +1830,7 @@
         if (it == unitType_.end() || it->second == obj) return;
         if (!visuals_.count(obj)) {
             try {
-                visuals_[obj] = {tak::tdo::load(vread("objects3d/" + obj + ".3do")), {}};
+                loadVisual(obj);   // with its PieceMeta tree -- see loadVisual
             } catch (const std::exception&) { return; }   // no corpse mesh: keep pose
         }
         it->second = obj;
@@ -1843,7 +1843,7 @@
         if (it == unitType_.end() || it->second == vm) return;   // not drawn yet / done
         if (!visuals_.count(vm)) {
             try {
-                visuals_[vm] = {tak::tdo::load(vread("objects3d/" + vm + ".3do")), {}};
+                loadVisual(vm);   // with its PieceMeta tree -- see loadVisual
             } catch (const std::exception&) { return; }   // no promoted mesh: keep base
         }
         it->second = vm;   // draw the promoted mesh from now on
@@ -1853,9 +1853,7 @@
         const std::string& typeId = type->id;
         if (!visuals_.count(typeId)) {
             try {
-                Visual v{tak::tdo::load(vread("objects3d/" + typeId + ".3do")), {}};
-                buildPieceMeta(v.model.root, v.meta);   // fixed for the model's life
-                visuals_[typeId] = std::move(v);
+                loadVisual(typeId);
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "no model for %s: %s\n", typeId.c_str(), e.what());
                 return;
