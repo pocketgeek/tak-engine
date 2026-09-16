@@ -529,9 +529,11 @@ struct Unit {
     // the best usable weapon per target the way retail's fire-at-will scan does;
     // once the player has chosen, their pick is obeyed.
     bool  weaponAuto = true;
-    float repathLeft = 0;   // chase steering repath countdown
-    float stuckFor = 0;     // seconds wanting to move but making no progress
-    float stuckX = 0, stuckZ = 0;   // position when the stuck timer last reset
+    // TICKS and 16.16, like the rest of the sim -- these steer repaths and give-ups,
+    // so they decide hashed outcomes even though they are not themselves folded in.
+    int32_t repathLeft = 0; // chase steering repath countdown, in ticks
+    int32_t stuckFor = 0;   // ticks wanting to move but making no progress
+    Fixed stuckX = Fixed(), stuckZ = Fixed();   // position when the stuck timer last reset
     // Asymmetric yield (see the yield block in the mover): >0 while this unit is standing
     // aside to let an opposing one through, counting down.
     // ...and a cooldown after one, during which it cannot be asked to yield again.
@@ -540,12 +542,17 @@ struct Unit {
     // moves again. Measured -- opposing columns fell from 32/32 arriving to 20/32, with
     // the survivors travelling an almost perfect straight line, which is the shape of a
     // rule that works beautifully for whoever wins it.
-    float goalStuckT = 0;           // seconds a point-destination move has not gotten closer
-    float goalStuckD = 1e30f;       // best (closest) squared distance to that goal so far
-    float buildStuckT = 0;          // seconds a builder has approached its site with no progress
-    float buildStuckD = 1e30f;      // best (closest) squared dist to the build site so far
-    float deadFor = -1;    // >= 0 once dead; counts up for death animation
-    float corpseUntil = 4;   // deadFor when the body is gone (4 = right after the
+    int32_t goalStuckT = 0;         // ticks a point-destination move has not gotten closer
+    // LINEAR px, so it fits 16.16 (a map diagonal is ~11000px, well under 32768).
+    Fixed goalStuckD = Fixed::raw(INT32_MAX);  // best (closest) distance to that goal so far
+    int32_t buildStuckT = 0;        // ticks a builder has approached its site with no progress
+    // SQUARED px, which is why this one is NOT Fixed: 20px squared is 400, but a map
+    // diagonal squared is ~1.3e8 -- far past 16.16's 32768 ceiling. Exact int instead.
+    int32_t buildStuckD = INT32_MAX;// best (closest) squared dist to the build site so far
+    // TICKS. The death animation runs to 4s (kCorpseAnimTicks) and the body lingers
+    // to corpseUntil; kRetiredTicks marks a record explicitly retired.
+    int32_t deadFor = -1;  // >= 0 once dead; counts up for death animation
+    int32_t corpseUntil = 120;  // deadFor when the body is gone (120t = 4s, right after the
                              // death anim; corpse types extend by decomposetime)
     float overkill = 0;      // damage past the killing blow (retail severity input)
     uint8_t deathType = 1;   // damagetype of the killing blow (3 = explosion/gib)
@@ -562,8 +569,8 @@ struct Unit {
     float corpseWork = 60;   // ordered-reclaim work left in the body (kReclaimRate/s)
     int reviveTarget = 0;    // priest: dead unit id being channelled back (0 = none)
     int8_t reviveMode = 0;   // 1 = resurrect (own corpse), 2 = animate (raise ghoul)
-    float reviveLeft = 0;    // seconds of channel remaining
-    float reviveTotal = 1;   // full channel length (mana drains proportionally)
+    int32_t reviveLeft = 0;  // ticks of channel remaining
+    int32_t reviveTotal = 1; // full channel length in ticks (mana drains proportionally)
     bool corpseBlocks = false;   // dead structure still occupies its nav footprint
                                  // (blocking wreck / neutral wall) until retired
     // --- extended runtime state --------------------------------------------
@@ -617,8 +624,8 @@ struct Unit {
                            // formation (squad<0) moves at its slowest member's speed and
                            // its stragglers rejoin. Set via Cmd::SetSquad; folded in the hash.
     int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
-    float captureProg = 0; // canCapture units: seconds spent charming the current target
-    float homeX = 0, homeZ = 0;   // leash anchor (idle position) for auto-chase
+    int32_t captureProg = 0; // canCapture units: ticks spent charming the current target
+    Fixed homeX = Fixed(), homeZ = Fixed();   // leash anchor (idle position) for auto-chase
     bool  justFired = false;   // set for one tick when the weapon fires
     bool underConstruction = false;
     bool buildBegun = false;   // construction site: true once the builder arrived
@@ -1689,6 +1696,11 @@ private:
     float visTimer_ = 0;
     std::vector<uint8_t> heights_;   // raw TNT heightmap, for fog line-of-sight
 public:
+    // Corpse lifecycle, in ticks. Public because the RENDERER shares the contract:
+    // it decides the death-animation window and the corpse cull from the same
+    // numbers the sim counts with.
+    static constexpr int32_t kCorpseAnimTicks = 4 * 30;    // death anim, then the corpse
+    static constexpr int32_t kRetiredTicks = 1000 * 30;    // record explicitly retired
     // Terrain accessors for offline analysis tools (tools/footprobe): the raw
     // heightmap and its dimensions. Read-only; nothing in the sim uses these.
     const std::vector<uint8_t>& mapHeights() const { return heights_; }
@@ -1864,7 +1876,7 @@ private:
     // walks as close as it can and comes to rest, with no long grind first --
     // so this is short. It is paired with a wedged test (stuckFor), which is
     // what keeps a unit that is merely crawling from being cut off.
-    static constexpr float kGoalGiveUpSecs = 20.0f;
+    static constexpr int32_t kGoalGiveUpTicks = 20 * 30;   // 20s
     std::map<int, uint32_t> pathRetryAt_;
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.

@@ -600,8 +600,8 @@ int World::spawn(const UnitType* type, float x, float z, float heading, int play
     u.hp = Fixed::fromFloat(type ? type->maxHp : 100.0f);
     u.mana = type ? type->maxMana : 0;   // casters start with a full pool
     u.active = type ? type->activateWhenBuilt : true;
-    u.homeX = x;
-    u.homeZ = z;
+    u.homeX = Fixed::fromFloat(x);
+    u.homeZ = Fixed::fromFloat(z);
     units_.push_back(u);
     return u.id;
 }
@@ -1055,7 +1055,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
     // other", 6 of 12 instead of 12). The real answer is probably a separate
     // per-destination timer that re-routing does not touch, rather than reusing
     // this one. See docs/retail-engine.md.
-    u.goalStuckD = 1e30f;                    // new leg -> the tracker starts over
+    u.goalStuckD = Fixed::raw(INT32_MAX);    // new leg -> the tracker starts over
     u.goalStuckT = 0;
 }
 
@@ -1063,7 +1063,7 @@ void World::dropLeg(Unit& u) {
     if (u.orders.empty()) return;
     const size_t end = currentLeg(u.orders);
     u.orders.erase(u.orders.begin(), u.orders.begin() + long(end) + 1);
-    u.goalStuckD = 1e30f;
+    u.goalStuckD = Fixed::raw(INT32_MAX);
     u.goalStuckT = 0;
 }
 
@@ -2557,7 +2557,7 @@ void World::tickCombat(Unit& u, float dt) {
             if (!e.alive() || e.embarked() || allied(e.player, u.player) || !e.type) return;
             if (e.underConstruction) return;   // don't auto-react to a site still conjuring
             if (!canTarget(e)) return;
-            float hx = e.x.toFloat() - u.homeX, hz = e.z.toFloat() - u.homeZ;
+            float hx = (e.x - u.homeX).toFloat(), hz = (e.z - u.homeZ).toFloat();
             if (hx * hx + hz * hz > leash2) return;   // outside the leash
             float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
             float d = dx * dx + dz * dz;
@@ -2696,7 +2696,7 @@ void World::tickCombat(Unit& u, float dt) {
     if ((sel && sel->melee) ? !adj
                             : (dist > reach * 0.95f || (!los && mayChase))) {
         // Advance toward the target, steering around impassable terrain.
-        u.repathLeft -= dt;
+        if (u.repathLeft > 0) --u.repathLeft;
         Order& o = u.orders.front();
         o.x = target->x;
         o.z = target->z;
@@ -2744,8 +2744,9 @@ void World::tickCombat(Unit& u, float dt) {
     // once it is worn down, rather than killing it.
     if (u.type->canCapture && target->type && !target->type->cantBeCaptured &&
         !allied(u.player, target->player)) {
-        u.captureProg += dt;
-        if (u.captureProg > 3.0f || target->hp < target->type->maxHp * 0.25f) {
+        ++u.captureProg;
+        if (u.captureProg > 3 * int32_t(kTick) ||
+            target->hp < Fixed::fromFloat(target->type->maxHp * 0.25f)) {
             captureUnit(*target, u.player);
             u.captureProg = 0;
             u.orders.erase(u.orders.begin());   // done with this one
@@ -3218,7 +3219,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
     }
     b = unit(builderId);   // spawn may have reallocated units_
     b->buildSiteId = id;
-    b->buildStuckT = 0; b->buildStuckD = 1e30f;   // fresh job: reset the reach watchdog
+    b->buildStuckT = 0; b->buildStuckD = INT32_MAX;   // fresh job: reset the reach watchdog
     if (approach == Approach::Replace)
         order(builderId, x, z + float(type->footZ) * 8 + 24, false);
     return id;
@@ -3268,7 +3269,7 @@ void World::cancelBuilds(int builderId) {
                 blockFoot(*site->type, site->x.toFloat(), site->z.toFloat(), false);
             }
             site->underConstruction = false;
-            site->deadFor = 1000.0f;   // fully gone (painter skips deadFor>=4)
+            site->deadFor = kRetiredTicks;   // fully gone (painter skips the corpse window)
         }
         b->buildSiteId = 0;
     }
@@ -3462,7 +3463,7 @@ void World::tickReclaim(Unit& b, float dt) {
         }
         // Body still mid-death-anim: stand by until it settles (statues settle
         // instantly).
-        if (c->deadFor < (c->corpseStatue >= 0 ? 0.0f : 4.0f)) return;
+        if (c->deadFor < (c->corpseStatue >= 0 ? 0 : kCorpseAnimTicks)) return;
         float dx = (c->x - b.x).toFloat(), dz = (c->z - b.z).toFloat();
         float reach = 24.0f + 8.0f * float(std::max(c->type->footX, c->type->footZ)) +
                       (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
@@ -3479,7 +3480,7 @@ void World::tickReclaim(Unit& b, float dt) {
                 std::max(cd->energy, 60.0f));
         c->corpseWork -= step;
         if (c->corpseWork <= 0) {
-            c->deadFor = 1000.0f;   // consumed
+            c->deadFor = kRetiredTicks;   // consumed
             if (c->corpseBlocks) {
                 c->corpseBlocks = false;
                 blockFoot(*c->type, c->x.toFloat(), c->z.toFloat(), false);
@@ -3635,10 +3636,10 @@ void World::tickConstruction(Unit& b, float dt) {
         // it can't reach the site -- abandon it and pop the next queued build. Uses the
         // same fixed-dt / squared-distance idiom as the movement goalStuck watchdog, so
         // it stays deterministic (buildStuck* are non-hashed scratch, like goalStuck*).
-        if (gd < b.buildStuckD - 400.0f) {             // real progress: reset the timer
-            b.buildStuckD = gd; b.buildStuckT = 0;
-        } else if ((b.buildStuckT += dt) > 8.0f) {
-            b.buildStuckT = 0; b.buildStuckD = 1e30f;
+        if (gd < float(b.buildStuckD) - 400.0f) {      // real progress: reset the timer
+            b.buildStuckD = int32_t(gd); b.buildStuckT = 0;
+        } else if (++b.buildStuckT > 8 * int32_t(kTick)) {
+            b.buildStuckT = 0; b.buildStuckD = INT32_MAX;
             // Drop an un-started ghost site (as cancelBuilds does) so its marker and
             // blocked footprint don't linger.
             if (!site->buildBegun) {
@@ -3646,7 +3647,7 @@ void World::tickConstruction(Unit& b, float dt) {
                     blockFoot(*site->type, site->x.toFloat(), site->z.toFloat(), false);
                 }
                 site->underConstruction = false;
-                site->deadFor = 1000.0f;
+                site->deadFor = kRetiredTicks;
             }
             b.buildSiteId = 0;
             popBuildOrder(b);
@@ -3654,7 +3655,7 @@ void World::tickConstruction(Unit& b, float dt) {
         }
         return;
     }
-    b.buildStuckT = 0; b.buildStuckD = 1e30f;          // in range: reset the watchdog
+    b.buildStuckT = 0; b.buildStuckD = INT32_MAX;      // in range: reset the watchdog
     site->buildBegun = true;   // in range: the site starts materialising now
     // Drop the APPROACH leg, but never the queued build order itself: that entry
     // IS the job, and it is what holds the rest of the queue back until the
@@ -3939,11 +3940,11 @@ void World::tickAbilities(float dt) {
             bool animate = u.reviveMode == 2;
             const UnitType* out = animate ? u.type->animateType : c->type;
             float totalMana = out->buildCost * (animate ? 0.3f : 1.0f);
-            float inc = totalMana * dt / std::max(u.reviveTotal, 0.01f);
+            float inc = totalMana / float(std::max(u.reviveTotal, 1));
             Player& tm = players_[size_t(u.player)];
             if (tm.mana < inc) continue;   // starved: the channel stalls, not drops
             tm.mana -= inc;
-            u.reviveLeft -= dt;
+            --u.reviveLeft;
             if (u.reviveLeft <= 0) {
                 revives.push_back({out, c->x.toFloat(), c->z.toFloat(), u.player, animate});
                 retire(*c);
@@ -5057,12 +5058,12 @@ void World::tick(float dt) {
     for (auto& u : units_) {
         if (!u.type) continue;
         if (!u.alive()) {
-            u.deadFor += dt;
+            ++u.deadFor;
             // CorpseAdjustX/Z: the wreck art sits offset from the building's
             // centre (arakeep corpseadjustz=2). Shift the record -- and its nav
             // block -- once, the moment the death anim ends and the corpse
             // appears (retail places the corpse feature at the adjusted cell).
-            if (u.deadFor >= 4.0f && u.deadFor - dt < 4.0f &&
+            if (u.deadFor == kCorpseAnimTicks &&
                 u.deadFor < u.corpseUntil &&
                 (u.type->corpseAdjX != 0 || u.type->corpseAdjZ != 0)) {
                 if (u.corpseBlocks) blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
@@ -5074,8 +5075,8 @@ void World::tick(float dt) {
             }
             // The body decomposed (or was never a corpse): fully gone. Records
             // explicitly retired at 1000 stay put.
-            if (u.deadFor >= u.corpseUntil && u.deadFor < 999.0f) {
-                u.deadFor = 1000.0f;
+            if (u.deadFor >= u.corpseUntil && u.deadFor < kRetiredTicks - 30) {
+                u.deadFor = kRetiredTicks;
                 if (u.corpseBlocks) {   // blocking wreck finally clears the ground
                     u.corpseBlocks = false;
                     blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
@@ -5155,15 +5156,17 @@ void World::tick(float dt) {
                     if (u.corpseStatue < 0 && isWater(u.x.toFloat(), u.z.toFloat())) {
                         // Retail water graves sink and fade in seconds, never
                         // decompose, never get reclaimed (icd 0x512fbe).
-                        u.corpseUntil = 4.0f + 2.5f;
+                        u.corpseUntil = kCorpseAnimTicks + int32_t(2.5f * kTick);
                     } else {
                         int d30 = featTypes_[size_t(ct)].decomposeTicks;
                         // decomposetime 0 = never rots (building wrecks linger
                         // until reclaimed, like retail).
-                        u.corpseUntil = d30 > 0 ? 4.0f + float(d30) / 30.0f : 1e9f;
+                        // decomposeTicks is ALREADY a tick count, so this is now a
+                        // plain add rather than a round trip through seconds.
+                        u.corpseUntil = d30 > 0 ? kCorpseAnimTicks + d30 : INT32_MAX;
                     }
                 } else {
-                    u.corpseUntil = 4.0f;
+                    u.corpseUntil = kCorpseAnimTicks;
                 }
                 u.corpseWork = std::max(ct >= 0 ? featTypes_[size_t(ct)].energy : 0.0f,
                                         60.0f);   // ~0.5s minimum consume time
@@ -5249,7 +5252,7 @@ void World::tick(float dt) {
             u.mana = std::min(u.type->maxMana, u.mana + u.type->manaRegen * dt);
         // A WANDERER keeps its spawn point as home -- that anchor is what stops its
         // stroll turning into a migration.
-        if (u.orders.empty() && !u.type->wanders) { u.homeX = u.x.toFloat(); u.homeZ = u.z.toFloat(); }
+        if (u.orders.empty() && !u.type->wanders) { u.homeX = u.x; u.homeZ = u.z; }
         // Wildlife and villagers roam. Retail gives them Standby_wander and they
         // amble; ours stood like statues on every campaign and scenario map. An idle
         // wanderer strolls every ~8 seconds, staggered by id so a herd doesn't move
@@ -5259,7 +5262,8 @@ void World::tick(float dt) {
             u.type->maxVel > 0 && (uint32_t(u.id) + tickCounter_) % 240 == 0) {
             float ang = float(burnRand(628)) / 100.0f;
             float r = float(burnRand(96));
-            order(u.id, u.homeX + detmath::sin(ang) * r, u.homeZ + detmath::cos(ang) * r, false);
+            order(u.id, u.homeX.toFloat() + detmath::sin(ang) * r,
+                  u.homeZ.toFloat() + detmath::cos(ang) * r, false);
         }
 
         // Cloaking: drains player mana; an enemy within mincloakdistance forces a
@@ -5592,7 +5596,7 @@ void World::tick(float dt) {
                     // resumes the instant the way clears. Stopping outright is what
                     // turns a momentary jam into a permanent one.
                     u.speed = fxMin(u.speed, Fixed::fromFloat(u.type->maxVel * 0.4f));
-                    u.repathLeft -= dt;
+                    if (u.repathLeft > 0) --u.repathLeft;
                     if (!g.empty() && u.repathLeft <= 0 &&
                         u.orders.front().targetId == 0) {
                         // RETAIL'S CADENCE, not a guess. The navigator re-requests
@@ -5601,7 +5605,7 @@ void World::tick(float dt) {
                         // (0x4e545b). Asking every half second is eight times that, and
                         // it is what made a blocked unit stand there waiting for a new
                         // route instead of pressing on the old one.
-                        u.repathLeft = 4.0f;
+                        u.repathLeft = 4 * int32_t(kTick);
                         // The CURRENT leg's endpoint, not orders.back() -- that is
                         // the last thing the player queued, and routing to it here
                         // deleted every leg in front of it.
@@ -5625,13 +5629,13 @@ void World::tick(float dt) {
             // repathed to break the deadlock. Half the units nudge each way so
             // a crowd splits around an obstacle instead of piling up.
             if (!u.type->canFly) {
-                float moved = detmath::len(u.x.toFloat() - u.stuckX, u.z.toFloat() - u.stuckZ);
+                const Fixed moved = fxLen(u.x - u.stuckX, u.z - u.stuckZ);
                 if (moved > 11.0f) {
-                    u.stuckFor = 0; u.stuckX = u.x.toFloat(); u.stuckZ = u.z.toFloat();
+                    u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
                 } else {
-                    u.stuckFor += dt;
-                    if (u.stuckFor > 1.0f) {
-                        u.stuckFor = 0; u.stuckX = u.x.toFloat(); u.stuckZ = u.z.toFloat();
+                    ++u.stuckFor;
+                    if (u.stuckFor > int32_t(kTick)) {
+                        u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
                         const NavGrid& g = navFor(u.type);
                         auto free = [&](Fixed nx, Fixed nz) {
                             return (g.empty() ||
@@ -5713,15 +5717,15 @@ void World::tick(float dt) {
                 // never build up at all. A unit circling between two routes
                 // 2900px from its goal therefore never gave up: measured 2426px
                 // of travel in 60s with no arrival and no stop.
-                float gd = detmath::len(u.x.toFloat() - gx, u.z.toFloat() - gz);
-                if (gd < u.goalStuckD - 20.0f) {         // >20px closer -> real progress
+                const Fixed gd = fxLen(u.x - legEnd.x, u.z - legEnd.z);
+                if (gd < u.goalStuckD - Fixed::fromInt(20)) {   // >20px closer -> real progress
                     u.goalStuckD = gd; u.goalStuckT = 0;
                 } else {
-                    u.goalStuckT += dt;
+                    ++u.goalStuckT;
                     // No headway toward the goal. Ask the background search
                     // again from where we actually are -- the original request
                     // was made from somewhere else and may have failed there.
-                    if (u.goalStuckT > 2.0f && pathService_ &&
+                    if (u.goalStuckT > 2 * int32_t(kTick) && pathService_ &&
                         !paths_.pending(u.id) &&
                         (tickCounter_ + uint32_t(u.id)) % kPathRetryTicks == 0)
                         requestPath(u, gx, gz);
@@ -5767,7 +5771,7 @@ void World::tick(float dt) {
                     // is none of those, and wandered 2426px in 60s without ever
                     // arriving. Retail stops: ordered at a mountain it walks as
                     // close as it can and comes to rest.
-                    if (u.goalStuckT > kGoalGiveUpSecs) {
+                    if (u.goalStuckT > kGoalGiveUpTicks) {
                         // Remember where it was going BEFORE dropping, and only when this
                         // is the last thing it has to do: a unit with more orders queued
                         // carries on and needs no rescue. See World::abandoned_.
@@ -5788,10 +5792,10 @@ void World::tick(float dt) {
                     }
                 }
             } else {
-                u.goalStuckD = 1e30f; u.goalStuckT = 0;
+                u.goalStuckD = Fixed::raw(INT32_MAX); u.goalStuckT = 0;
             }
         } else if (u.orders.empty()) {
-            u.goalStuckD = 1e30f; u.goalStuckT = 0;
+            u.goalStuckD = Fixed::raw(INT32_MAX); u.goalStuckT = 0;
         }
         // An idle aircraft looks for somewhere to put down. Retail's VTOL_Standby
         // (icd 0x417350) hands off to VTOL_LandIfCan (0x416cd0), which tests the

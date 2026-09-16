@@ -704,7 +704,8 @@
             s.gen = fb.gen;
             fb.live.push_back(&s);   // compact live list (mirrors world_.units())
             s.id = u.id; s.type = u.type; s.player = u.player;
-            s.hp = u.hp; s.mana = u.mana; s.veteran = u.veteran; s.deadFor = u.deadFor;
+            s.hp = u.hp; s.mana = u.mana; s.veteran = u.veteran;
+            s.deadFor = u.deadFor < 0 ? -1.0f : float(u.deadFor) / 30.0f;   // ticks -> seconds
             s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
             s.weaponSlot = u.weaponSlot;
             s.underConstruction = u.underConstruction; s.buildBegun = u.buildBegun;
@@ -721,7 +722,7 @@
             s.cargo = u.cargo; s.repeatType = u.repeatType;
             s.moving_ = u.moving(); s.walking_ = u.walking();
             s.corpsePhase = !u.alive() && u.deadFor < u.corpseUntil &&
-                            u.deadFor >= (u.corpseStatue >= 0 ? 0.0f : 4.0f);
+                            u.deadFor >= (u.corpseStatue >= 0 ? 0 : tak::sim::World::kCorpseAnimTicks);
             s.deathType = u.deathType;
             s.severity = u.severity;
             s.corpseFeat = u.corpseStatue >= 0 ? u.corpseStatue
