@@ -18,7 +18,44 @@ FILES="src/sim/sim.cpp src/sim/sim.h src/sim/matchsetup.cpp src/sim/matchsetup.h
 # a longer identifier that merely ends in the name (e.g. myLog(), ::detmath::sin).
 PAT='(^|[^A-Za-z0-9_:])(std::)?(sin|cos|tan|atan2|atan|asin|acos|hypot|pow|exp|log)f?[[:space:]]*\('
 
-hits=$(grep -nE "$PAT" $FILES 2>/dev/null | grep -v 'detmath::')
+# COMMENTS ARE STRIPPED FIRST. The guard matches raw text, so a comment that merely
+# DESCRIBES the rule trips it -- which is not hypothetical in a codebase that documents
+# its math this heavily: "a computed ring (cx + cos(a)*radius)" took CI red on a commit
+# that touched no arithmetic at all. Stripping keeps line numbers (the comment body is
+# blanked, the line stays), so reported positions still point at real code.
+#
+# Both comment forms are handled, and stripping is deliberately conservative: anything
+# it cannot classify stays IN the text and is still matched. A guard that fails open
+# would be worse than the false positive it replaces.
+strip_comments() {
+    awk '
+    BEGIN { inblk = 0 }
+    {
+        line = $0; out = ""
+        while (length(line) > 0) {
+            if (inblk) {
+                p = index(line, "*/")
+                if (p == 0) { line = ""; break }
+                line = substr(line, p + 2); inblk = 0
+                continue
+            }
+            b = index(line, "/*"); l = index(line, "//")
+            if (l > 0 && (b == 0 || l < b)) { line = substr(line, 1, l - 1); break }
+            if (b == 0) break
+            out = out substr(line, 1, b - 1); line = substr(line, b + 2); inblk = 1
+        }
+        print out line
+    }' "$1"
+}
+
+hits=""
+for f in $FILES; do
+    [ -f "$f" ] || continue
+    h=$(strip_comments "$f" | grep -nE "$PAT" | grep -v 'detmath::' | sed "s|^|$f:|")
+    [ -n "$h" ] && hits="$hits$h
+"
+done
+hits=$(printf '%s' "$hits" | sed '/^$/d')
 if [ -n "$hits" ]; then
     echo "ERROR: the sim path calls a libm transcendental directly:"
     echo "$hits"
