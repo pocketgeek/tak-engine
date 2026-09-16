@@ -122,7 +122,17 @@ speed, thresholds 25/75 ⇒ percent of max). `TurnDirection(deg)` steers the
 rudder/sail trim; `WindChange` orients sails/flags (FBI `wind=1`). Resetting
 such a unit's VM kills the Create ambients permanently — nothing restarts them.
 
-## Movement: retail has NO global pathfinder (icd, 2026-09-12)
+## SUPERSEDED: "retail has NO global pathfinder" (icd, 2026-09-12)
+
+> **Read the RESOLVED section further down before believing this one.** The
+> conclusion here -- that retail does no global search -- was drawn from the
+> RTTI class list and the `Navigator` vtables, and it is WRONG. Retail does have
+> a pathfinder; it is reached through a singleton pointer rather than a call, so
+> a direct call-graph search could not see it. The open question this section
+> ends on ("whether some free function does a coarse global search") is the one
+> that turned out to be yes. The observations below about the navigator object
+> and its 6-tick target refresh are still accurate; only the headline is not.
+
 
 Asked because our own movement had become the dominant sim cost. It turns out
 we diverged from retail badly here, and the divergence is what costs us.
@@ -171,14 +181,14 @@ precomputed connectivity, nothing shared between units. That is why it ran
 hundreds of units on a 1999 Pentium, and it matches the TA-family feel: fluid
 local movement that occasionally wedges.
 
-**What we do instead** (and what it costs): full-map Dijkstra FLOW FIELDS per
-(domain, footprint, goal block), plus per-unit A*. Flow fields are OUR
-invention -- added 2026-09-03 to fix a crowd/corner jam -- not retail. Measured
-server-side on a 120s 8-player game they were 68% of all stalled time, and even
-after four rounds of optimisation (e3228e1 and before) they remain ~59%, with
-A* another ~23%. The crowd jam they were built to fix is very likely a symptom
-of OUR movement model (solid units + separation), which retail did not have in
-that form.
+**What we used to do instead, and no longer do.** This paragraph described
+full-map Dijkstra FLOW FIELDS per (domain, footprint, goal block) plus per-unit
+A*, flow fields being our own invention (added 2026-09-03 for a crowd/corner
+jam) and costing ~59% of server stalled time after four rounds of optimisation.
+THE FLOW FIELDS ARE GONE (cf316fb). The search is now a port of retail's own
+tracer -- see src/sim/pathsearch.h, which carries the icd entry points -- and
+the crowd jam they existed to paper over turned out to be a symptom of our
+movement model, which has since been replaced by retail's.
 
 NOT established: whether some free function (not a class) does a coarse global
 search somewhere. None was found, and the absence of any search-shaped routine
