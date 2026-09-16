@@ -666,11 +666,22 @@ struct Unit {
     std::vector<Order> rally;
     // Production (buildings with a build tree).
     std::vector<const UnitType*> buildQueue;
-    // 16.16 TICKS of work done on the queue front -- retail's own representation.
-    // Its build routine computes buildtime / (workertime/30) * 65536 and stores the
-    // result as an integer (0x406d11..0x406d2a, verified by emulation): a fixed-point
-    // tick count, so a partial tick of work is not lost the way an int would lose it.
-    Fixed buildProgress = Fixed();
+    // PLAIN TICKS, and deliberately not 16.16.
+    //
+    // Retail's build routine computes buildtime / (workertime/30) * 65536 and stores
+    // an integer (0x406d11..0x406d2a, emulated), which reads as a fixed-point tick
+    // count -- and this field was that. It overflows. The shipped VERMAGE has
+    // buildtime 100000 against a workertime of 10, i.e. 300,000 ticks, and 300000 <<
+    // 16 does not fit an int32: `total` came out NEGATIVE, `buildProgress < total`
+    // was false on the first tick, and the most expensive unit in the game finished
+    // instantly and free because the mana branch never ran. ZONHURT/ZONHUNT/TARNECRO
+    // at buildtime 22500 wrapped to about a 34th of their real cost.
+    //
+    // Nothing is lost by dropping the fraction: progress advances by exactly one tick
+    // per tick, so there is no partial tick to keep. It does mean my reading of that
+    // retail routine is incomplete -- whatever it stores at +0x52, it cannot be a
+    // 16.16 count of a 300,000-tick build either.
+    int32_t buildProgress = 0;
     int justBuilt = 0;         // unit id produced this tick (viewer hook), else 0
     const UnitType* repeatType = nullptr;   // infinite production: re-queue when idle
 

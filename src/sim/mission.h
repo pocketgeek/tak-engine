@@ -111,7 +111,10 @@ private:
 
     // A SetMission "b TYPE H X Y" timed reinforcement: spawn `type` for `player` at
     // (x,z) once the mission clock reaches `at`.
-    struct PendingSpawn { const UnitType* type = nullptr; int player = 0; float x = 0, z = 0, at = 0; };
+    // `at` is a TICK stamp, matching clock_; it was left float when the clock
+    // became integer.
+    struct PendingSpawn { const UnitType* type = nullptr; int player = 0;
+                          float x = 0, z = 0; int32_t at = 0; };
     std::vector<PendingSpawn> pendingSpawns_;
     std::vector<std::pair<int, std::string>> initialOrders_;   // .ota InitialMission=, applied at start
     // Named units: the .ota's per-unit Ident= field and the order language's `i`

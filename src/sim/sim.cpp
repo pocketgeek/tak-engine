@@ -1943,7 +1943,7 @@ void World::stop(int unitId) {
     // Stop also halts a conjurer: cancel the infinite loop and drain the queue.
     u->repeatType = nullptr;
     u->buildQueue.clear();
-    u->buildProgress = Fixed();
+    u->buildProgress = 0;
 }
 
 void World::destroy(int unitId) {
@@ -2787,7 +2787,7 @@ void World::captureUnit(Unit& t, int newPlayer) {
     t.lastHitBy = 0;
     t.squad = 0;             // no longer in its old owner's control group
     t.buildQueue.clear();    // and not still producing for them
-    t.buildProgress = Fixed();
+    t.buildProgress = 0;
 }
 
 // Stamp every PARKED ground unit into the occupancy layer. O(n), one cell each:
@@ -3736,7 +3736,7 @@ void World::dequeue(int builderId, const UnitType* type, int count) {
         for (int i = int(b->buildQueue.size()) - 1; i >= 0; --i)
             if (b->buildQueue[size_t(i)] == type) { idx = i; break; }
         if (idx < 0) break;
-        if (idx == 0) b->buildProgress = Fixed();   // canceling the in-progress front
+        if (idx == 0) b->buildProgress = 0;   // canceling the in-progress front
         b->buildQueue.erase(b->buildQueue.begin() + idx);
     }
     // If the queue no longer holds a type set to infinite-repeat, stop repeating it
@@ -3763,7 +3763,7 @@ void World::setRepeat(int builderId, const UnitType* type) {
         // ctrl+click the +++ icon again: stop now and clear what's pending.
         b->repeatType = nullptr;
         b->buildQueue.clear();
-        b->buildProgress = Fixed();
+        b->buildProgress = 0;
     } else {
         b->repeatType = type;
         if (b->buildQueue.empty()) b->buildQueue.push_back(type);   // kick it off
@@ -3983,9 +3983,11 @@ void World::tickAbilities(float dt) {
                 // 0x4201e9), mana drained over it; unit returns at 10% HP.
                 u.reviveTarget = c.id;
                 u.reviveMode = 1;
-                u.reviveTotal = u.reviveLeft =
+                // TICKS. This was seconds assigned straight into an int32 tick
+                // count, so a 170s resurrect became 170 ticks -- 5.7 seconds.
+                u.reviveTotal = u.reviveLeft = int32_t(
                     std::max(c.type->buildTime / std::max(u.type->workerTime, 0.01f),
-                             0.5f);
+                             0.5f) * kTick + 0.5f);
                 break;
             } else if (u.type->canAnimate && u.type->animateType &&
                        cd->resurrectable) {
@@ -3994,10 +3996,10 @@ void World::tickAbilities(float dt) {
                 // at 0.3x the work and FULL HP (retail 0x420257/0x4206ba).
                 u.reviveTarget = c.id;
                 u.reviveMode = 2;
-                u.reviveTotal = u.reviveLeft =
+                u.reviveTotal = u.reviveLeft = int32_t(
                     std::max(u.type->animateType->buildTime /
                                  std::max(u.type->workerTime, 0.01f) * 0.3f,
-                             0.5f);
+                             0.5f) * kTick + 0.5f);
                 break;
             } else if (u.type->canReclaim && cd->reclaimable) {
                 // Retail yield = the corpse def's energy -- 0 for every shipped
@@ -4323,7 +4325,7 @@ void World::tickProduction(Unit& u, float dt) {
     // Ticks of work, as retail counts it: buildtime / workertime is SECONDS at
     // workertime 1 (emulated: 170/1 -> 5100 ticks -> 170s), so scale by kTick.
     const float totalSec = t->buildTime / std::max(u.type->workerTime, 0.01f);
-    const Fixed total = Fixed::fromFloat(std::max(totalSec, 0.01f) * kTick);
+    const int32_t total = int32_t(std::max(totalSec, 0.01f) * kTick + 0.5f);
     Player& tm = players_[size_t(u.player)];
     // Accumulate work (spending mana) until complete. Once complete, buildProgress
     // holds at `total` and grows only as a wait timer below.
@@ -4334,7 +4336,7 @@ void World::tickProduction(Unit& u, float dt) {
             const double cost = double(t->buildCost) / double(std::max(totalSec, 0.01f) * kTick);
             if (tm.mana < cost) return;   // stalled: no mana
             tm.mana -= cost;
-            u.buildProgress += Fixed::fromInt(1);   // one tick of work
+            ++u.buildProgress;   // one tick of work
         }
         if (u.buildProgress < total) return;   // not done yet
     }
@@ -4357,11 +4359,11 @@ void World::tickProduction(Unit& u, float dt) {
     const float ex = u.x.toFloat(), ez = u.z.toFloat() + float(u.type->footZ) * 8 + 20;
     float sx = ex, sz = ez;
     const bool haveSpot = exitSpot(t, ex, ez, sx, sz);
-    if (!haveSpot && u.buildProgress < total + Fixed::fromFloat(2.5f * kTick)) {
-        u.buildProgress += Fixed::fromInt(1);   // nowhere to put it yet (no mana spent)
+    if (!haveSpot && u.buildProgress < total + int32_t(2.5f * kTick)) {
+        ++u.buildProgress;   // nowhere to put it yet (no mana spent)
         return;
     }
-    u.buildProgress = Fixed();
+    u.buildProgress = 0;
     u.buildQueue.erase(u.buildQueue.begin());
     int producerId = u.id, player = u.player;
     // spawn() may reallocate units_, invalidating `u`; capture the id and re-fetch.
