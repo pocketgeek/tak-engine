@@ -709,8 +709,12 @@
             s.weaponSlot = u.weaponSlot;
             s.underConstruction = u.underConstruction; s.buildBegun = u.buildBegun;
             s.cloaked = u.cloaked; s.cloakOn = u.cloakOn; s.active = u.active;
-            s.frozenFor = u.frozenFor; s.stonedFor = u.stonedFor; s.paralyzedFor = u.paralyzedFor;
-            s.selfDestructT = u.selfDestructT;
+            // The sim counts these in TICKS now (retail's representation); the HUD
+            // wants seconds, so the conversion happens here, at the render boundary.
+            s.frozenFor = float(u.frozenFor) / 30.0f;
+            s.stonedFor = float(u.stonedFor) / 30.0f;
+            s.paralyzedFor = float(u.paralyzedFor) / 30.0f;
+            s.selfDestructT = u.selfDestructT < 0 ? -1.0f : float(u.selfDestructT) / 30.0f;
             s.buildSiteId = u.buildSiteId; s.reclaimId = u.reclaimId; s.repairId = u.repairId;
             s.buildProgress = u.buildProgress;
             s.buildQueue = u.buildQueue; s.orders = u.orders;

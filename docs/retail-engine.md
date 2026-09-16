@@ -1479,3 +1479,29 @@ Two wrong answers to avoid repeating:
 This also explains the range problem from the porting side. Our Fixed is 16.16
 in an int32 and saturates at 32768; mana routinely runs far past that. Retail did
 not use fixed point here either, so matching it is not a compromise.
+
+## Timers are integer ticks, and how to tell a field's type (2026-09-15)
+
+Asked while converting the last of our sim floats: for each remaining field, is
+it a float, 16.16 fixed point, or an integer? Reading the load opcode answers
+half of it -- `flds`/`fldl` load a float, `fildl` loads an integer -- but what
+says which KIND of integer is the scale the engine multiplies by afterwards.
+Two constants, both .rdata doubles, decode nearly everything:
+
+    0x5f25d8 = 0.03333... = 1/30       -> a count of 30Hz TICKS
+    0x5eba78 = 1.52587890625e-05 = 1/65536 -> 16.16 FIXED POINT
+
+`tools/re/emufields.py` confirms both by emulation rather than by eye: it plants
+known values in a synthetic struct and runs the engine's own display sequences
+over them. A reload field holding 90 comes out as "3.000000" seconds; a position
+field holding 6586368 comes out as 100.5 px.
+
+So the weapon dump at 0x617770 ("Damage = %i, Reload Time = %f, ManaPerShot =
+%f") reads its reload from +0x9c as a 16-BIT INTEGER (`mov 0x9c(%esi),%cx`) and
+scales it by 1/30 purely to print it. Retail stores a cooldown as a tick count.
+The same shape covers the other countdowns.
+
+Worth noting what this does NOT say. The def also holds genuine floats --
+ManaRechargeRate is `readFloat` into +0x1a6 and MaxMana into +0x1a2, both stored
+with `fstps` -- so retail's type data mixes all three representations, while
+maxdamage at +0x1be is `readInt`. The rule is per field, not per struct.

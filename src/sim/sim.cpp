@@ -1959,7 +1959,7 @@ void World::destroy(int unitId) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
     const float len = float(u->type->selfDestructCountdown);
-    u->selfDestructT = (u->selfDestructT < 0.0f) ? len : -1.0f;
+    u->selfDestructT = (u->selfDestructT < 0) ? int32_t(len * kTick + 0.5f) : -1;
 }
 
 void World::setWeapon(int unitId, int slot) {
@@ -2162,7 +2162,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                 (w.status == Weapon::Status::Stoned && e.type->cantBeStoned);
             if (!immune) {
                 if (w.status == Weapon::Status::Paralyzed) {
-                    e.paralyzedFor = std::max(e.paralyzedFor, w.statusDur);
+                    e.paralyzedFor = std::max(e.paralyzedFor, int32_t(w.statusDur * kTick + 0.5f));
                     e.speed = Fixed();
                 } else {
                     // Retail petrify/freeze (icd 0x51a61a): HP zeroes INSTANTLY
@@ -2171,7 +2171,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                     // permanent, resurrectable back to life). The old temporary
                     // stoned/frozen debuff was our pre-RE guess.
                     bool freeze = w.status == Weapon::Status::Frozen;
-                    if (freeze) e.frozenFor = 1.0f; else e.stonedFor = 1.0f;
+                    if (freeze) e.frozenFor = int32_t(kTick); else e.stonedFor = int32_t(kTick);
                     e.hp = Fixed();
                     e.deathType = freeze ? 15 : 14;
                     e.speed = Fixed();
@@ -2287,8 +2287,8 @@ void World::fire(Unit& u, Unit& target, int slot) {
         u.mana -= w.manaCost;
     }
     // Veterans reload faster (retail divides the cooldown by the veteran multiplier).
-    float rl = w.reload / std::max(u.vetMul(), 0.01f);
-    u.reloads[slot] = rl;
+    const float rl = w.reload / std::max(u.vetMul(), 0.01f);
+    u.reloads[slot] = int32_t(rl * kTick + 0.5f);   // seconds -> ticks, as retail stores it
     u.justFired = true;
     // Remote Effect: nothing travels. The spell materialises at the AIMED GROUND
     // POINT and lands after builduptime -- so walking aside doesn't dodge an
@@ -2297,7 +2297,7 @@ void World::fire(Unit& u, Unit& target, int slot) {
     if (w.kind == Weapon::Kind::Remote) {
         PendingEffect e;
         e.w = &w;
-        e.x = target.x.toFloat(); e.z = target.z.toFloat();
+        e.x = target.x; e.z = target.z;
         e.player = u.player; e.fromId = u.id;
         // shotart: this spell is DELIVERED. A visible shot flies to the aim point
         // first and the channel only starts when it lands, so the Acolyte lobs its
@@ -2328,9 +2328,9 @@ void World::fire(Unit& u, Unit& target, int slot) {
                 // Pulses every `shakeduration` from impact, right through buildup
                 // AND decay -- for the drake's Earthquake the single pulse actually
                 // lands inside the decay window.
-                e.period = std::max(w.shakeDur, 0.1f);
+                e.period = int32_t(std::max(w.shakeDur, 0.1f) * kTick + 0.5f);
                 e.at = e.period;
-                e.endAt = w.buildUp + w.decay;
+                e.endAt = int32_t((w.buildUp + w.decay) * kTick + 0.5f);
                 break;
             case Weapon::RemoteKind::Hailstorm: {
                 // The rain: buildup/decay don't apply. It starts falling shortly
@@ -2338,9 +2338,9 @@ void World::fire(Unit& u, Unit& target, int slot) {
                 // `duration` -- so the Acolyte's Hail Shower is ~12 small hits, not
                 // one 70-damage tap.
                 float pps = w.particlesPerSec > 0 ? w.particlesPerSec : 5.0f;
-                e.period = 1.0f / pps;
-                e.at = 20.0f / 30.0f;                     // retail's ~20-tick lead-in
-                e.endAt = 20.0f / 30.0f + std::max(w.duration, e.period);
+                e.period = int32_t(kTick / pps + 0.5f);
+                e.at = 20;                                // retail's ~20-tick lead-in, exactly
+                e.endAt = 20 + std::max(int32_t(w.duration * kTick + 0.5f), e.period);
                 break;
             }
             case Weapon::RemoteKind::MindCtl:
@@ -2348,19 +2348,19 @@ void World::fire(Unit& u, Unit& target, int slot) {
                 // One sweep when the channel completes -- and killing the caster
                 // mid-channel ABORTS it, which is real counterplay against a Mind
                 // Mage winding up an area charm.
-                e.at = w.buildUp;
-                e.endAt = w.buildUp + w.decay;
+                e.at = int32_t(w.buildUp * kTick + 0.5f);
+                e.endAt = int32_t((w.buildUp + w.decay) * kTick + 0.5f);
                 e.casterGated = true;
                 break;
             case Weapon::RemoteKind::Plain:
             default:
-                e.at = w.buildUp;
-                e.endAt = w.buildUp + w.decay;
+                e.at = int32_t(w.buildUp * kTick + 0.5f);
+                e.endAt = int32_t((w.buildUp + w.decay) * kTick + 0.5f);
                 break;
         }
         // The channel clock starts when the shot LANDS, not when it is thrown.
-        e.at += deliver;
-        e.endAt += deliver;
+        e.at += int32_t(deliver * kTick + 0.5f);
+        e.endAt += int32_t(deliver * kTick + 0.5f);
         pendingEffects_.push_back(e);
         return;
     }
@@ -2376,13 +2376,13 @@ void World::fire(Unit& u, Unit& target, int slot) {
         float dl = std::max(detmath::len(dx, dz), 1e-3f);
         s.dirX = dx / dl; s.dirZ = dz / dl;
         s.w = &w;
-        s.x = u.x.toFloat() + s.dirX * 32.0f;
-        s.z = u.z.toFloat() + s.dirZ * 32.0f;
+        s.x = u.x + Fixed::fromFloat(s.dirX * 32.0f);
+        s.z = u.z + Fixed::fromFloat(s.dirZ * 32.0f);
         s.player = u.player; s.fromId = u.id;
         s.id = ++stormSeq_;
-        s.arm = w.buildUp;            // wind-up: visible and moving, but harmless
-        s.left = w.duration > 0 ? w.duration : 6.0f;
-        s.nextVary = 0.0f;            // roll the first wander offset immediately
+        s.arm = int32_t(w.buildUp * kTick + 0.5f);   // wind-up: visible, moving, harmless
+        s.left = int32_t((w.duration > 0 ? w.duration : 6.0f) * kTick + 0.5f);
+        s.nextVary = 0;               // roll the first wander offset immediately
         storms_.push_back(s);
         return;
     }
@@ -2470,8 +2470,12 @@ static bool meleeInRange(const UnitType* a, const UnitType* b, float dx, float d
 }
 
 void World::tickCombat(Unit& u, float dt) {
+    // One tick per tick. The referee always steps at exactly 1/kServerHz and game
+    // speed changes the CADENCE, not dt, so a tick is the sim's real unit of time
+    // and the countdown no longer depends on dt at all -- which is both retail's
+    // representation and one less float in the checksum.
     for (auto& r : u.reloads)
-        if (r > 0) r -= dt;
+        if (r > 0) --r;
     if (!u.active) return;   // onoffable unit powered down: no acquisition/fire
 
     // Auto-acquire: idle armed units engage the nearest enemy in reach;
@@ -5209,13 +5213,13 @@ void World::tick(float dt) {
                                             * 100.0f, 0.0f, 100.0f));
         }
         // Status timers count down; HP regenerates (healtime); mana recharges.
-        if (u.frozenFor > 0) u.frozenFor = std::max(0.0f, u.frozenFor - dt);
-        if (u.stonedFor > 0) u.stonedFor = std::max(0.0f, u.stonedFor - dt);
-        if (u.paralyzedFor > 0) u.paralyzedFor = std::max(0.0f, u.paralyzedFor - dt);
-        if (u.selfDestructT >= 0.0f) {   // armed self-destruct: tick down, then blow up
-            u.selfDestructT -= dt;
-            if (u.selfDestructT <= 0.0f) {
-                u.selfDestructT = -1.0f;
+        if (u.frozenFor > 0) --u.frozenFor;
+        if (u.stonedFor > 0) --u.stonedFor;
+        if (u.paralyzedFor > 0) --u.paralyzedFor;
+        if (u.selfDestructT >= 0) {   // armed self-destruct: tick down, then blow up
+            --u.selfDestructT;
+            if (u.selfDestructT <= 0) {
+                u.selfDestructT = -1;
                 // NOT an explosion. Retail's self-destruct mission (icd
                 // 0x4017e0, the handler behind SelfDestruct /
                 // UNITMISSIONCODE_SELFDESTRUCT) ends by applying 30000 damage of
@@ -5874,14 +5878,14 @@ void World::tick(float dt) {
                 continue;
             }
         }
-        e.at -= dt;
-        e.endAt -= dt;
-        bool pulse = e.at <= 0.0f;
+        --e.at;
+        --e.endAt;
+        bool pulse = e.at <= 0;
         if (pulse) {
-            if (e.period > 0.0f) e.at += e.period;
-            else e.at = 1e9f;          // single-pulse: never again
+            if (e.period > 0) e.at += e.period;
+            else e.at = INT32_MAX;     // single-pulse: never again
         }
-        bool done = e.endAt <= 0.0f;
+        bool done = e.endAt <= 0;
         const PendingEffect cur = e;   // applyHit walks/kills units_; copy first
         if (done) pendingEffects_.erase(pendingEffects_.begin() + std::ptrdiff_t(i));
         else ++i;
@@ -5900,30 +5904,32 @@ void World::tick(float dt) {
         // |dirZ|, z gets |dirX|), so the storm weaves across its own path while
         // still advancing. Re-rolled every variationtime on the sim's Lehmer RNG,
         // so every peer weaves identically.
-        s.nextVary -= dt;
-        if (s.nextVary <= 0.0f) {
-            s.nextVary += s.w->variationTime > 0 ? s.w->variationTime : 2.0f;
+        --s.nextVary;
+        if (s.nextVary <= 0) {
+            s.nextVary += int32_t((s.w->variationTime > 0 ? s.w->variationTime : 2.0f)
+                                  * kTick + 0.5f);
             float mv = s.w->maxVariation;
             if (mv > 0) {
                 float vx = mv * std::abs(s.dirZ), vz = mv * std::abs(s.dirX);
-                s.jitX = (float(burnRand(2001)) / 1000.0f - 1.0f) * vx;
-                s.jitZ = (float(burnRand(2001)) / 1000.0f - 1.0f) * vz;
+                s.jitX = Fixed::fromFloat((float(burnRand(2001)) / 1000.0f - 1.0f) * vx);
+                s.jitZ = Fixed::fromFloat((float(burnRand(2001)) / 1000.0f - 1.0f) * vz);
             }
         }
         float vel = s.w->projVel > 0 ? s.w->projVel : 50.0f;
-        s.x += s.dirX * vel * dt + s.jitX;
-        s.z += s.dirZ * vel * dt + s.jitZ;
-        s.x = std::clamp(s.x, 0.0f, float(terW_) * 16.0f);
-        s.z = std::clamp(s.z, 0.0f, float(terH_) * 16.0f);
+        s.x += Fixed::fromFloat(s.dirX * vel * dt) + s.jitX;
+        s.z += Fixed::fromFloat(s.dirZ * vel * dt) + s.jitZ;
+        s.x = fxMin(fxMax(s.x, Fixed()), Fixed::fromInt(terW_ * 16));
+        s.z = fxMin(fxMax(s.z, Fixed()), Fixed::fromInt(terH_ * 16));
         // builduptime is a harmless wind-up: the storm is already visible and
         // moving, which is the only warning a victim gets to walk out of its path.
-        if (s.arm > 0.0f) { s.arm -= dt; ++i; continue; }
-        s.left -= dt;
-        if (s.left <= 0.0f) { storms_.erase(storms_.begin() + std::ptrdiff_t(i)); continue; }
+        if (s.arm > 0) { --s.arm; ++i; continue; }
+        --s.left;
+        if (s.left <= 0) { storms_.erase(storms_.begin() + std::ptrdiff_t(i)); continue; }
         const Storm hit = s;   // applyHit walks/kills units_; copy what we need
         static const bool kStormLog = std::getenv("TAK_STORMLOG") != nullptr;
-        if (kStormLog) std::fprintf(stderr, "storm t=%u at %.0f,%.0f jit=%.1f,%.1f left=%.1f\n",
-                                    tickCounter_, hit.x, hit.z, hit.jitX, hit.jitZ, hit.left);
+        if (kStormLog) std::fprintf(stderr, "storm t=%u at %.0f,%.0f jit=%.1f,%.1f left=%dt\n",
+                                    tickCounter_, hit.x.toFloat(), hit.z.toFloat(),
+                                    hit.jitX.toFloat(), hit.jitZ.toFloat(), hit.left);
         applyHit(*hit.w, hit.x, hit.z, hit.player, hit.fromId, nullptr);
         ++i;
     }
@@ -6073,7 +6079,7 @@ void World::hashTrace() const {
         }
         hUnitMisc = fnv(fnv(hUnitMisc, u.id), uint64_t(u.alive() ? 1 : 0));
         hUnitMisc = fnv(hUnitMisc, uint64_t(u.veteran));
-        for (float rl : u.reloads) hUnitMisc = fnv(hUnitMisc, bits(rl));
+        for (int32_t rl : u.reloads) hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(rl)));
         hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(u.stance)));
         hUnitMisc = fnv(hUnitMisc, uint64_t(u.moveState) * 3 + uint64_t(u.fireState));
         hUnitMisc = fnv(hUnitMisc, uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
@@ -6085,10 +6091,14 @@ void World::hashTrace() const {
         hProj = fnv(fnv(fnv(hProj, uint32_t(p.fromPlayer)), uint64_t(uint32_t(p.x.v))), uint64_t(uint32_t(p.z.v)));
     uint64_t hEff = fnv(seed, pendingEffects_.size());
     for (const auto& e : pendingEffects_)
-        hEff = fnv(fnv(fnv(fnv(hEff, uint32_t(e.player)), bits(e.x)), bits(e.z)), bits(e.at));
+        hEff = fnv(fnv(fnv(fnv(hEff, uint32_t(e.player)),
+                           uint64_t(uint32_t(e.x.v))), uint64_t(uint32_t(e.z.v))),
+                   uint64_t(uint32_t(e.at)));
     uint64_t hStorm = fnv(fnv(seed, uint32_t(stormSeq_)), storms_.size());
     for (const auto& s : storms_)
-        hStorm = fnv(fnv(fnv(fnv(hStorm, uint32_t(s.player)), bits(s.x)), bits(s.z)), bits(s.left));
+        hStorm = fnv(fnv(fnv(fnv(hStorm, uint32_t(s.player)),
+                             uint64_t(uint32_t(s.x.v))), uint64_t(uint32_t(s.z.v))),
+                     uint64_t(uint32_t(s.left)));
     uint64_t hPlayers = seed;
     for (const auto& t : players_)
         hPlayers = fnv(fnv(fnv(hPlayers, bits64(t.mana)), bits(t.godFavor)), uint32_t(t.team));
@@ -6172,8 +6182,8 @@ uint64_t World::stateHash() const {
         // All three reload timers, not just the primary: they now decide WHICH
         // weapon the auto-selector fires, so a drift in any of them would change
         // behaviour.
-        for (float rl : u.reloads) mixf(rl);
-        mixf(u.selfDestructT);   // self-destruct countdown drives a deterministic death
+        for (int32_t rl : u.reloads) mix(uint64_t(uint32_t(rl)));   // ticks
+        mix(uint64_t(uint32_t(u.selfDestructT)));   // ticks; drives a deterministic death
         // Stance / cloak-intent / active gate auto-acquire, cloaking and firing, so a
         // divergence in them must fault directly rather than diffusing into positions.
         // Both standing orders drive behaviour, so both belong in the checksum --
@@ -6199,17 +6209,20 @@ uint64_t World::stateHash() const {
     mix(uint64_t(pendingEffects_.size()));
     for (const auto& e : pendingEffects_) {
         mix(uint64_t(uint32_t(e.player)));
-        mixf(e.x); mixf(e.z); mixf(e.at);
+        mix(uint64_t(uint32_t(e.x.v))); mix(uint64_t(uint32_t(e.z.v)));
+        mix(uint64_t(uint32_t(e.at)));   // ticks
     }
     mix(uint64_t(uint32_t(stormSeq_)));
     mix(uint64_t(storms_.size()));
     for (const auto& s : storms_) {
         mix(uint64_t(uint32_t(s.player)));
-        mixf(s.x); mixf(s.z); mixf(s.left); mixf(s.arm);
+        mix(uint64_t(uint32_t(s.x.v))); mix(uint64_t(uint32_t(s.z.v)));
+        mix(uint64_t(uint32_t(s.left))); mix(uint64_t(uint32_t(s.arm)));
         // The wander offset and its timer decide the whole path, and each re-roll
         // advances the shared burn RNG -- fold them so a drift surfaces here rather
         // than as a mystery divergence seconds later.
-        mixf(s.jitX); mixf(s.jitZ); mixf(s.nextVary);
+        mix(uint64_t(uint32_t(s.jitX.v))); mix(uint64_t(uint32_t(s.jitZ.v)));
+        mix(uint64_t(uint32_t(s.nextVary)));
     }
     for (const auto& t : players_) {
         { uint64_t b; std::memcpy(&b, &t.mana, 8); mix(b); }   // double: fold all 8 bytes

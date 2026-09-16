@@ -515,7 +515,11 @@ struct Unit {
     // which wrap to 3392 and -13824). Converting it broke production outright. Doing
     // mana in fixed point needs a 64-bit Fixed, which is a separate job.
     Fixed hp = Fixed::fromInt(100);
-    float reloads[3] = {0, 0, 0};  // per weapon slot
+    // TICKS, not seconds -- retail stores a reload as an integer count and only
+    // multiplies by 1/30 to PRINT it. Confirmed by emulating the display path
+    // (0x4fbfb2: mov 0x9c(%esi),%cx; fildl; fmull 0x5f25d8 where 0x5f25d8 == 1/30):
+    // a planted 90 renders as "3.000000" seconds. See docs/retail-engine.md.
+    int32_t reloads[3] = {0, 0, 0};  // per weapon slot, in ticks
     int   weaponSlot = 0;          // active weapon (0=primary); player-selectable
     // True until the player picks a weapon with Ctrl+W. While set, the sim chooses
     // the best usable weapon per target the way retail's fire-at-will scan does;
@@ -564,10 +568,12 @@ struct Unit {
     int   veteran = 0;     // veteran level (0..10); scales attack/armor/reload
     float atkBuff = 1;     // live attack multiplier from auras (decays to 1)
     float armBuff = 1;     // live armour multiplier from auras (decays to 1)
-    float frozenFor = 0;   // >0 = frozen solid (can't act); counts down
-    float stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
-    float paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
-    float selfDestructT = -1;// >=0 = self-destruct countdown (s) armed; -1 = not
+    // TICKS, all four -- see the note on `reloads`. Retail counts a timer in
+    // 30Hz ticks and scales by 1/30 only to display it (tools/re/emufields.py).
+    int32_t frozenFor = 0;   // >0 = frozen solid (can't act); counts down
+    int32_t stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
+    int32_t paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
+    int32_t selfDestructT = -1;// >=0 = self-destruct countdown (ticks) armed; -1 = not
     bool  cloaked = false; // currently invisible to enemies
     // OFF until ordered. Retail treats cloaking as a MISSION, not a spawn state:
     // translate/unitmissions.tdf carries CLOAK and DECLOAK as separate mission
@@ -882,6 +888,12 @@ struct Player {
     float manaMult = 1.0f;
     // God economy: priests (attractsgods) channel mana into favour; once it fills
     // after the gods' appear time, the faction's god can manifest (once).
+    // The LAST float in the hashed sim state, and deliberately so. Unlike every
+    // other field here there is no retail answer to match: searching the binary for
+    // favour/deity/godpower turns up only FavoriteUser and FavoriteCampaign, which
+    // are unrelated UI. The god-summon economy is ours. It accumulates the way mana
+    // does, and mana is the one pool retail itself keeps in floating point (see
+    // Player::mana), so float is the consistent choice rather than a leftover.
     float godFavor = 0;
     bool  godSummoned = false;
     // The unit this player's god manifests as, resolved once at setup (matchsetup).
@@ -1355,14 +1367,15 @@ public:
     // storm's life so the viewer can play its spin-up, loop and dissipation art.
     struct Storm {
         const Weapon* w = nullptr;
-        float x = 0, z = 0;
+        Fixed x = Fixed(), z = Fixed();   // 16.16 world units, as a unit's
         float dirX = 0, dirZ = 1;   // FIXED launch direction: a storm never re-aims
-        float jitX = 0, jitZ = 0;   // current per-tick wander offset (px/tick)
+        Fixed jitX = Fixed(), jitZ = Fixed();   // per-tick wander offset, in px
         int player = 0, fromId = 0;
         int id = 0;
-        float arm = 0;       // builduptime: it drifts but does not bite yet
-        float left = 0;      // seconds of roaming left (duration)
-        float nextVary = 0;  // seconds until the next wander re-roll
+        // TICKS -- see the note on Unit::reloads.
+        int32_t arm = 0;       // builduptime: it drifts but does not bite yet
+        int32_t left = 0;      // ticks of roaming left (duration)
+        int32_t nextVary = 0;  // ticks until the next wander re-roll
     };
     const std::vector<Storm>& storms() const { return storms_; }
     const std::vector<Projectile>& projectiles() const { return projectiles_; }
@@ -1739,11 +1752,12 @@ private:
     // Control. Lives across ticks, so it IS hashed.
     struct PendingEffect {
         const Weapon* w = nullptr;
-        float x = 0, z = 0;
+        Fixed x = Fixed(), z = Fixed();   // 16.16, the same world units as a unit
         int player = 0, fromId = 0;
-        float at = 0;        // seconds until the next pulse
-        float endAt = 0;     // seconds until the effect expires
-        float period = 0;    // seconds between pulses (<=0 = a single pulse)
+        // TICKS, like every other retail timer (tools/re/emufields.py).
+        int32_t at = 0;      // ticks until the next pulse
+        int32_t endAt = 0;   // ticks until the effect expires
+        int32_t period = 0;  // ticks between pulses (<=0 = a single pulse)
         bool casterGated = false;   // dies with its caster (mind control / freeze)
     };
     std::vector<PendingEffect> pendingEffects_;
