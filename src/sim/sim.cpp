@@ -1936,7 +1936,7 @@ void World::stop(int unitId) {
     // Stop also halts a conjurer: cancel the infinite loop and drain the queue.
     u->repeatType = nullptr;
     u->buildQueue.clear();
-    u->buildProgress = 0;
+    u->buildProgress = Fixed();
 }
 
 void World::destroy(int unitId) {
@@ -2152,7 +2152,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         float dealt = w.damageVs(e.type) * atkMul / armour * scale;
         e.hp -= Fixed::fromFloat(dealt);
         if (e.hp <= 0) {
-            e.overkill = std::max(e.overkill, -e.hp.toFloat());          // retail severity input
+            e.overkill = fxMax(e.overkill, -e.hp);          // retail severity input
             e.deathType = uint8_t(w.dmgType);                  // 3 = explosion -> gib
         }
         if (fromId) e.lastHitBy = fromId;
@@ -2781,7 +2781,7 @@ void World::captureUnit(Unit& t, int newPlayer) {
     t.lastHitBy = 0;
     t.squad = 0;             // no longer in its old owner's control group
     t.buildQueue.clear();    // and not still producing for them
-    t.buildProgress = 0;
+    t.buildProgress = Fixed();
 }
 
 // Stamp every PARKED ground unit into the occupancy layer. O(n), one cell each:
@@ -3471,15 +3471,17 @@ void World::tickReclaim(Unit& b, float dt) {
         b.speed = Fixed();
         int ct = c->corpseStatue >= 0 ? c->corpseStatue : corpseTypeOf(c->type);
         const FeatType* cd = ct >= 0 ? &featTypes_[size_t(ct)] : nullptr;
-        float step = kReclaimRate * dt;
+        // Per TICK. kReclaimRate is work/second and the sim steps at kTick, so this
+        // is an exact constant rather than a dt multiply.
+        const Fixed step = Fixed::fromFloat(kReclaimRate / kTick);
         // Proportional drip against the INITIAL work (= max(energy,60), set at
         // death). Shipped corpse defs all have energy 0, so this grants nothing.
         if (cd && cd->energy > 0 && c->corpseWork > 0)
             players_[size_t(b.player)].mana += Fixed::fromFloat(
-                cd->energy * std::min(step, c->corpseWork) /
+                cd->energy * fxMin(step, c->corpseWork).toFloat() /
                 std::max(cd->energy, 60.0f));
         c->corpseWork -= step;
-        if (c->corpseWork <= 0) {
+        if (c->corpseWork <= Fixed()) {
             c->deadFor = kRetiredTicks;   // consumed
             if (c->corpseBlocks) {
                 c->corpseBlocks = false;
@@ -3671,7 +3673,10 @@ void World::tickConstruction(Unit& b, float dt) {
     b.heading = b.heading + Bam(turn);
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
     // Record the current build rate so an interrupted conjure decays at this speed.
-    site->conjureRate = site->type->maxHp * 0.95f / std::max(total, 0.01f);
+    // hp per TICK, in the same fixed-point hp is kept in (it is subtracted from hp
+    // directly in decayConstruction).
+    site->conjureRate = Fixed::fromFloat(site->type->maxHp * 0.95f
+                                         / (std::max(total, 0.01f) * kTick));
     Player& tm = players_[size_t(b.player)];
     if (gInstantBuild) {
         site->hp = Fixed::fromFloat(site->type->maxHp);   // finishes this tick, free
@@ -3693,15 +3698,17 @@ void World::decayConstruction(Unit& u, float dt) {
     // No builder worked this conjure this tick: it "un-conjures", losing HP at the
     // rate it was last built, and vanishes at zero (no corpse -- it was never
     // finished). A site that never materialised falls back to its nominal rate.
-    float rate = u.conjureRate > 0 ? u.conjureRate
-                 : u.type->maxHp * 0.95f / std::max(u.type->buildTime, 0.01f);
-    u.hp -= Fixed::fromFloat(rate * dt);
-    if (u.hp > 0) return;
+    const Fixed rate = u.conjureRate > Fixed()
+                     ? u.conjureRate
+                     : Fixed::fromFloat(u.type->maxHp * 0.95f
+                                        / (std::max(u.type->buildTime, 0.01f) * kTick));
+    u.hp -= rate;
+    if (u.hp > Fixed()) return;
     if (u.type->isStructure()) {
         blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
     }
     u.underConstruction = false;
-    u.deadFor = 1000.0f;   // fully gone (painter skips deadFor>=4), no death anim
+    u.deadFor = kRetiredTicks;   // fully gone, no death anim
 }
 
 void World::train(int builderId, const UnitType* type, int count) {
@@ -3720,7 +3727,7 @@ void World::dequeue(int builderId, const UnitType* type, int count) {
         for (int i = int(b->buildQueue.size()) - 1; i >= 0; --i)
             if (b->buildQueue[size_t(i)] == type) { idx = i; break; }
         if (idx < 0) break;
-        if (idx == 0) b->buildProgress = 0;   // canceling the in-progress front
+        if (idx == 0) b->buildProgress = Fixed();   // canceling the in-progress front
         b->buildQueue.erase(b->buildQueue.begin() + idx);
     }
     // If the queue no longer holds a type set to infinite-repeat, stop repeating it
@@ -3747,7 +3754,7 @@ void World::setRepeat(int builderId, const UnitType* type) {
         // ctrl+click the +++ icon again: stop now and clear what's pending.
         b->repeatType = nullptr;
         b->buildQueue.clear();
-        b->buildProgress = 0;
+        b->buildProgress = Fixed();
     } else {
         b->repeatType = type;
         if (b->buildQueue.empty()) b->buildQueue.push_back(type);   // kick it off
@@ -3879,7 +3886,7 @@ void World::tickAbilities(float dt) {
         return ct >= 0 ? &featTypes_[size_t(ct)] : nullptr;
     };
     auto retire = [&](Unit& c) {
-        c.deadFor = 1000.0f;
+        c.deadFor = kRetiredTicks;
         if (c.corpseBlocks) {
             c.corpseBlocks = false;
             blockFoot(*c.type, c.x.toFloat(), c.z.toFloat(), false);
@@ -4304,7 +4311,10 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
 void World::tickProduction(Unit& u, float dt) {
     if (u.underConstruction || u.buildQueue.empty()) return;
     const UnitType* t = u.buildQueue.front();
-    float total = t->buildTime / std::max(u.type->workerTime, 0.01f);
+    // Ticks of work, as retail counts it: buildtime / workertime is SECONDS at
+    // workertime 1 (emulated: 170/1 -> 5100 ticks -> 170s), so scale by kTick.
+    const float totalSec = t->buildTime / std::max(u.type->workerTime, 0.01f);
+    const Fixed total = Fixed::fromFloat(std::max(totalSec, 0.01f) * kTick);
     Player& tm = players_[size_t(u.player)];
     // Accumulate work (spending mana) until complete. Once complete, buildProgress
     // holds at `total` and grows only as a wait timer below.
@@ -4312,10 +4322,10 @@ void World::tickProduction(Unit& u, float dt) {
         if (gInstantBuild) {
             u.buildProgress = total;   // finishes this tick, free
         } else {
-            float cost = t->buildCost * dt / std::max(total, 0.01f);
+            const double cost = double(t->buildCost) / double(std::max(totalSec, 0.01f) * kTick);
             if (tm.mana < cost) return;   // stalled: no mana
             tm.mana -= cost;
-            u.buildProgress += dt;
+            u.buildProgress += Fixed::fromInt(1);   // one tick of work
         }
         if (u.buildProgress < total) return;   // not done yet
     }
@@ -4338,11 +4348,11 @@ void World::tickProduction(Unit& u, float dt) {
     const float ex = u.x.toFloat(), ez = u.z.toFloat() + float(u.type->footZ) * 8 + 20;
     float sx = ex, sz = ez;
     const bool haveSpot = exitSpot(t, ex, ez, sx, sz);
-    if (!haveSpot && u.buildProgress < total + 2.5f) {
-        u.buildProgress += dt;   // nowhere to put it yet (no mana spent)
+    if (!haveSpot && u.buildProgress < total + Fixed::fromFloat(2.5f * kTick)) {
+        u.buildProgress += Fixed::fromInt(1);   // nowhere to put it yet (no mana spent)
         return;
     }
-    u.buildProgress = 0;
+    u.buildProgress = Fixed();
     u.buildQueue.erase(u.buildQueue.begin());
     int producerId = u.id, player = u.player;
     // spawn() may reallocate units_, invalidating `u`; capture the id and re-fetch.
@@ -4606,7 +4616,7 @@ void World::tick(float dt) {
                 else if (!(benchmarkMode() && t->type && t->type->commander)) {
                     t->hp -= Fixed::fromFloat(p.damage);
                     if (t->hp <= 0) {
-                        t->overkill = std::max(t->overkill, -t->hp.toFloat());
+                        t->overkill = fxMax(t->overkill, -t->hp);
                         t->deathType = p.wsrc ? uint8_t(p.wsrc->dmgType) : 1;
                     }
                 }
@@ -5125,7 +5135,7 @@ void World::tick(float dt) {
             {
                 // Retail severity (icd 0x512610): ((overkill% + HP% one second
                 // before death) / 2), clamped 1..100. Passed to the COB Killed.
-                float okPct = u.overkill * 100.0f / std::max(u.type->maxHp, 1.0f);
+                float okPct = u.overkill.toFloat() * 100.0f / std::max(u.type->maxHp, 1.0f);
                 u.severity = uint8_t(std::clamp((okPct + float(u.hpPct1s)) * 0.5f,
                                                 1.0f, 100.0f));
                 // Dying while petrified/frozen leaves the FBI stone=/frozen=
@@ -5168,8 +5178,9 @@ void World::tick(float dt) {
                 } else {
                     u.corpseUntil = kCorpseAnimTicks;
                 }
-                u.corpseWork = std::max(ct >= 0 ? featTypes_[size_t(ct)].energy : 0.0f,
-                                        60.0f);   // ~0.5s minimum consume time
+                u.corpseWork = Fixed::fromFloat(
+                    std::max(ct >= 0 ? featTypes_[size_t(ct)].energy : 0.0f,
+                             60.0f));   // ~0.5s minimum consume time
                 // A dead structure frees its nav footprint -- unless its wreck
                 // BLOCKS (arakeep_dead blocking=1; a destroyed wall's ARAWALL
                 // feature likewise), which keeps the cells occupied until the
@@ -5233,7 +5244,7 @@ void World::tick(float dt) {
         if (waterDamage_ > 0 && !u.type->canFly && u.type->maxWaterDepth <= 0 &&
             isWater(u.x.toFloat(), u.z.toFloat())) {
             u.hp -= Fixed::fromFloat(waterDamage_ * dt);
-            if (u.hp <= Fixed()) { u.overkill = std::max(u.overkill, -u.hp.toFloat()); u.deathType = 1; }
+            if (u.hp <= Fixed()) { u.overkill = fxMax(u.overkill, -u.hp); u.deathType = 1; }
         }
         // `u.hp > 0` matters because of WHERE hp gets zeroed, not by how much.
         // Every other death path puts hp <= 0 outside this loop body, so the sweep

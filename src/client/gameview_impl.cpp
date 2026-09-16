@@ -717,7 +717,7 @@
             s.paralyzedFor = float(u.paralyzedFor) / 30.0f;
             s.selfDestructT = u.selfDestructT < 0 ? -1.0f : float(u.selfDestructT) / 30.0f;
             s.buildSiteId = u.buildSiteId; s.reclaimId = u.reclaimId; s.repairId = u.repairId;
-            s.buildProgress = u.buildProgress;
+            s.buildProgress = u.buildProgress.toFloat() / 30.0f;   // ticks -> seconds
             s.buildQueue = u.buildQueue; s.orders = u.orders;
             s.cargo = u.cargo; s.repeatType = u.repeatType;
             s.moving_ = u.moving(); s.walking_ = u.walking();

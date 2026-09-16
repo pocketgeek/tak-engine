@@ -1505,3 +1505,40 @@ Worth noting what this does NOT say. The def also holds genuine floats --
 ManaRechargeRate is `readFloat` into +0x1a6 and MaxMana into +0x1a2, both stored
 with `fstps` -- so retail's type data mixes all three representations, while
 maxdamage at +0x1be is `readInt`. The rule is per field, not per struct.
+
+## Two more field types, and a build accumulator that is 16.16 TICKS (2026-09-16)
+
+Finishing the float sweep, two fields had no settled answer. Both were decided by
+running retail's own code (tools/re/emu.py), not by reading it.
+
+**Aura adjustments are genuine floats.** [AdjustArmor]/[AdjustAttack]/[AdjustJoy]
+parse at 0x4c1487 into 20-byte sub-objects on the unit def (+0x1c6, +0x1da,
++0x1ee) via 0x5182b0, whose layout is:
+
+    +0x04  Adjustment         readFloat, default 1.0   (fstps -- a float)
+    +0x08  Radius             readInt
+    +0x0c  EdgeEffectiveness  readFloat
+    +0x10  AffectsEnemy       readInt != 0
+
+Emulating the default-init at 0x518320 writes 0x3f800000 to +0x04 -- the IEEE
+pattern for 1.0f. A 16.16 one would be 0x00010000. So a live aura multiplier is
+a float in retail, which is what ours already were.
+
+**Build progress is 16.16, and it counts TICKS.** At 0x406ce1 the engine computes
+
+    buildtime / (workertime * (1/30)) * 65536
+
+and passes it through the ftol helper to store an INTEGER at +0x52. The 65536 is
+the giveaway: this is a fixed-point tick count, not a plain one, so a partial
+tick of work survives instead of being truncated away. Emulated to be sure:
+buildtime 170 / workertime 1 comes out as 5100 ticks = 170 seconds exactly, and
+170/2 gives 2550 = 85s.
+
+That also pins the units, which were ambiguous from our side: `buildtime` is
+SECONDS at workertime 1, and workertime divides it.
+
+Nearby, for the record: buildcost (+0x20e), buildtime (+0x212) and workertime
+(+0x21a) are all `readFloat` in the def. As with the rest of retail's type data,
+the representation is per field -- ints, floats and 16.16 sit side by side in one
+struct -- so the only reliable way to read one is to find where it is CONSUMED
+and look at the scale it is multiplied by.

@@ -554,7 +554,8 @@ struct Unit {
     int32_t deadFor = -1;  // >= 0 once dead; counts up for death animation
     int32_t corpseUntil = 120;  // deadFor when the body is gone (120t = 4s, right after the
                              // death anim; corpse types extend by decomposetime)
-    float overkill = 0;      // damage past the killing blow (retail severity input)
+    // Fixed: this is hp that went past zero, in the same units hp is now kept in.
+    Fixed overkill = Fixed();  // damage past the killing blow (retail severity input)
     uint8_t deathType = 1;   // damagetype of the killing blow (3 = explosion/gib)
     // Retail's self-destruct damage type (icd: the SelfDestruct mission applies
     // 30000 of type 5, and 0x5126a9 gives 5 its own branch in the death
@@ -566,7 +567,9 @@ struct Unit {
     uint8_t hpPct1s = 100;   // HP% sampled every 30 ticks (previous sample -- the
     uint8_t hpPctCur = 100;  //  retail unit+0x111/+0x110 pair severity reads)
     int corpseStatue = -1;   // FeatType override chosen at death (stone/frozen), -1 = corpse=
-    float corpseWork = 60;   // ordered-reclaim work left in the body (kReclaimRate/s)
+    // Fixed work units. Bounded by the corpse def's `energy` (shipped: small), so
+    // nowhere near 16.16's ceiling.
+    Fixed corpseWork = Fixed::fromInt(60);   // ordered-reclaim work left in the body
     int reviveTarget = 0;    // priest: dead unit id being channelled back (0 = none)
     int8_t reviveMode = 0;   // 1 = resurrect (own corpse), 2 = animate (raise ghoul)
     int32_t reviveLeft = 0;  // ticks of channel remaining
@@ -629,7 +632,7 @@ struct Unit {
     bool  justFired = false;   // set for one tick when the weapon fires
     bool underConstruction = false;
     bool buildBegun = false;   // construction site: true once the builder arrived
-    float conjureRate = 0;     // site: hp/sec the last builder added; drives decay
+    Fixed conjureRate = Fixed();  // site: hp/TICK the last builder added; drives decay
     bool  beingBuilt = false;  // site: transient -- a builder worked it this tick
     int buildSiteId = 0;   // builder: id of the building it is constructing
     // These queues hold at most a handful of entries and are edited only on order
@@ -651,7 +654,11 @@ struct Unit {
     std::vector<Order> rally;
     // Production (buildings with a build tree).
     std::vector<const UnitType*> buildQueue;
-    float buildProgress = 0;   // seconds of work done on queue front
+    // 16.16 TICKS of work done on the queue front -- retail's own representation.
+    // Its build routine computes buildtime / (workertime/30) * 65536 and stores the
+    // result as an integer (0x406d11..0x406d2a, verified by emulation): a fixed-point
+    // tick count, so a partial tick of work is not lost the way an int would lose it.
+    Fixed buildProgress = Fixed();
     int justBuilt = 0;         // unit id produced this tick (viewer hook), else 0
     const UnitType* repeatType = nullptr;   // infinite production: re-queue when idle
 
