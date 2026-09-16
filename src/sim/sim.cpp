@@ -346,10 +346,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     else if (st == "mindcontrol") wp.remote = Weapon::RemoteKind::MindCtl;
                     else if (st == "turntofrozen") wp.remote = Weapon::RemoteKind::Freeze;
                 }
-                // aimtolerance is in COB angle units; convert to radians. Ballistic
-                // weapons lob an arc (viewer draws it); soundhitclass = impact sound.
-                wp.aimTol = float(w->numberOr("aimtolerance",
-                                  w->numberOr("aimtolerence", 1024))) * float(kCobAngle);
+                // aimtolerance stays in COB angle units -- the same unit as Bam, and
+                // the same unit the firing test compares in. Ballistic weapons lob an
+                // arc (viewer draws it); soundhitclass = impact sound.
+                wp.aimTol = int32_t(w->numberOr("aimtolerance",
+                                    w->numberOr("aimtolerence", 1024)));
                 wp.ballistic = lower(w->valueOr("type", "")) == "ballistic";
                 wp.soundHit = lower(w->valueOr("soundhitclass",
                                                w->valueOr("soundhit", "")));
@@ -2736,7 +2737,7 @@ void World::tickCombat(Unit& u, float dt) {
         // virtual with a no-op, so the bomber is always considered on target (which
         // a hovering flyer with momentum could otherwise almost never satisfy).
         if (sw.kind != Weapon::Kind::Dropped &&
-            std::abs(diff) >= std::max(sw.aimTol, 0.03f)) return;
+            std::abs(diff) >= std::max(sw.aimTol, int32_t(0.03f / kCobAngle))) return;
         fire(u, *target, sl);
     };
     if (!u.type->weapons.empty()) {

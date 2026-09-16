@@ -43,7 +43,11 @@ struct Weapon {
     bool melee = false;
     int32_t aoe = 0;         // areaofeffect radius px (readInt); >0 = splash
     float edge = 1;          // edgeeffectiveness: damage fraction at the aoe edge
-    float aimTol = 0.1f;     // aimtolerance in radians: how close to on-target to fire
+    // RAW COB ANGLE UNITS, which is both what retail stores (AimTolerance is
+    // readInt) and what the comparison needs: the mover's `diff` is a bamDiff, so
+    // holding this in radians meant comparing an integer 0..32768 against ~0.1 and
+    // firing only when the heading matched EXACTLY.
+    int32_t aimTol = 1024;   // aimtolerance: how close to on-target to fire
     bool ballistic = false;  // FBI weapon type = Ballistic (lobbed arc, not flat)
     // FBI weapon type = "Line of Sight": a sustained hitscan beam (the drake's
     // Fire Breath), NOT a lobbed shot. Damage lands instantly along the sightline
