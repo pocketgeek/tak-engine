@@ -69,14 +69,21 @@ SPEED_DEFAULT="TAK_SPEED=40"
 # state where armies are large and the map is built out, which is where the nav stalls
 # lived and where a desync is likeliest to hide.
 #
-# HOW MUCH this buys is NOT the 1.5x a first pass suggested -- that assumed every early
-# finish was a Monarch death. Measured instead: Blood and Roses (the case that ended at
-# 4,027) runs 7,386 -> 7,971 ticks, +8%, and still concludes long before the clock, so
-# those games are ending mostly by elimination rather than sudden death. Inner Circle at
-# one seed showed no difference at all (identical hash), the option never having come
-# into play. Kept anyway because the direction is guaranteed: with it on a team dies only
-# when everything it owns is dead, a strict superset of the sudden-death condition, so a
-# run can only get longer or stay the same. Never shorter.
+# WHAT IT ACTUALLY BUYS, measured by running the whole sweep both ways (29 comparable
+# cases, same seeds): 662,663 -> 708,297 ticks, +6.9%. Ten runs got longer, fifteen were
+# unchanged, and FOUR got SHORTER. Most of the gain is two cases that stopped finishing
+# early at all -- cramped-stress 6,372 -> 36,000 and overrides-cosmetic 14,344 -> 36,000
+# -- which is the late-game coverage worth having.
+#
+# Two earlier guesses about this are recorded because both were wrong. A first pass put
+# it at 1.5x, having assumed every early finish was a Monarch death; most are
+# eliminations, so it was out by about seven times. The second guess was that a run could
+# never come out SHORTER, on the reasoning that eliminating a team only when everything it
+# owns is dead is a strict superset of sudden death. That is true of the ending condition
+# and false of the game: units that would have died with their Monarch keep fighting, so
+# every later decision and RNG draw differs and the run that results is a different game
+# -- four of them ended sooner. The claim to make is "more coverage on average", not
+# "never shorter".
 #
 # Two runs below deliberately set it back to 0: the monarch-death win condition is sim
 # logic in its own right (updateOutcome reading hadMonarch_), and a spectator whose game
