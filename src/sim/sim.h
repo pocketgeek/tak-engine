@@ -702,7 +702,10 @@ struct Feature {
 };
 
 struct Projectile {
-    float x = 0, z = 0;
+    // Position in the same 16.16 as a unit's: retail's world is 0x100000 per 16px
+    // cell, i.e. 65536 per pixel (docs/retail-engine.md), and a projectile is bounded
+    // by the map exactly as a unit is, so the range that rules mana out does not bite.
+    Fixed x = Fixed(), z = Fixed();
     float vx = 0, vz = 0;
     float damage = 0;
     int targetId = 0;
@@ -858,7 +861,18 @@ private:
 void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked);
 
 struct Player {
-    float mana = 500;
+    // DOUBLE, because that is what retail uses. Read off the end-of-game stats screen
+    // at 0x500586/0x5005ba, which loads "Mana Produced" and "Excess Mana" with `fldl`
+    // (64-bit) from +0x18/+0x20 and only calls the ftol helper at 0x5d3d54 to DISPLAY
+    // them as integers -- the stored accumulator is a double, the integer is the
+    // rendering. The accumulate is a double read-modify-write (faddl 0x18(%eax) /
+    // fstpl 0x18(%eax)), and the affordability check at 0x46e85f loads an integer cost
+    // with fildl and subtracts the pool with `fsubl 0xd1(%edi)`, also 64-bit.
+    //
+    // So mana is the one pool that is NOT fixed point, and that is not a compromise:
+    // the range that rules 16.16 out (it saturates at 32768, while mana routinely runs
+    // past it) is exactly why retail did not use fixed point here either.
+    double mana = 500;
     float storage = 0;   // recomputed each tick from alive units
     float income = 0;
     // Income multiplier (1.0 = normal). Only ever != 1 for an Absurd-difficulty AI,

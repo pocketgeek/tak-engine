@@ -2311,7 +2311,7 @@ void World::fire(Unit& u, Unit& target, int slot) {
             float svel = w.projVel * kTick / 30.0f;
             deliver = sdist / svel;
             Projectile s;
-            s.x = u.x.toFloat(); s.z = u.z.toFloat();
+            s.x = u.x; s.z = u.z;
             s.vx = sdx / sdist * svel;
             s.vz = sdz / sdist * svel;
             s.wsrc = &w;
@@ -2400,8 +2400,8 @@ void World::fire(Unit& u, Unit& target, int slot) {
     // gate in tickCombat). Detonates on landing wherever it ended up, hit or miss.
     if (w.kind == Weapon::Kind::Dropped) {
         Projectile b;
-        b.x = u.x.toFloat();
-        b.z = u.z.toFloat();
+        b.x = u.x;
+        b.z = u.z;
         // Retail solves the release velocity so the bomb arrives over the aim point
         // exactly as it finishes falling: vel = (aim - release) / fallTicks, with
         // ZERO vertical speed. weaponvelocity is never read here and neither is the
@@ -2423,8 +2423,8 @@ void World::fire(Unit& u, Unit& target, int slot) {
         return;
     }
     Projectile p;
-    p.x = u.x.toFloat();
-    p.z = u.z.toFloat();
+    p.x = u.x;
+    p.z = u.z;
     // Aim where the target WILL be, not where it is (see leadAim). The projectile
     // keeps targetId so the swept proximity test still resolves a direct hit; what
     // changes is that a shot at a runner now lands behind it and detonates there.
@@ -4489,8 +4489,8 @@ void World::tick(float dt) {
             }
         for (int i = 0; i < np && pool > 0; ++i)
             if (players_[size_t(i)].team == team) {
-                float give = std::min(cap(i) - players_[size_t(i)].mana, pool);
-                if (give > 0) { players_[size_t(i)].mana += give; pool -= give; }
+                double give = std::min(cap(i) - players_[size_t(i)].mana, double(pool));
+                if (give > 0) { players_[size_t(i)].mana += give; pool -= float(give); }
             }
         // Any pool left (every member capped) is wasted, as before.
     }
@@ -4583,9 +4583,9 @@ void World::tick(float dt) {
                 }
             }
         }
-        float ox = p.x, oz = p.z;        // segment start (before this step)
-        p.x += p.vx * dt;
-        p.z += p.vz * dt;
+        const float ox = p.x.toFloat(), oz = p.z.toFloat();   // segment start (before this step)
+        p.x += Fixed::fromFloat(p.vx * dt);
+        p.z += Fixed::fromFloat(p.vz * dt);
         p.life -= dt;
         p.age += dt;
         Unit* t = unit(p.targetId);
@@ -6038,6 +6038,10 @@ void World::hashTrace() const {
     // units genuinely a fraction of a pixel apart could produce the same checksum and a
     // real divergence would be invisible to the very check meant to catch it. That
     // happened three times in this file before it was noticed. Now it will not compile.
+    // mana is a double (retail's own width -- see Player::mana), so it needs all eight
+    // bytes folded. Narrowing it to a float to reuse bits() would throw away exactly the
+    // low-order state the checksum exists to compare.
+    auto bits64 = [](double d) { uint64_t b; std::memcpy(&b, &d, 8); return b; };
     auto bits = [](auto f) {
         static_assert(!std::is_same_v<std::decay_t<decltype(f)>, Fixed>,
                       "fold u.x.v -- the raw fixed-point -- not a float of it");
@@ -6078,7 +6082,7 @@ void World::hashTrace() const {
     }
     uint64_t hProj = fnv(seed, projectiles_.size());
     for (const auto& p : projectiles_)
-        hProj = fnv(fnv(fnv(hProj, uint32_t(p.fromPlayer)), bits(p.x)), bits(p.z));
+        hProj = fnv(fnv(fnv(hProj, uint32_t(p.fromPlayer)), uint64_t(uint32_t(p.x.v))), uint64_t(uint32_t(p.z.v)));
     uint64_t hEff = fnv(seed, pendingEffects_.size());
     for (const auto& e : pendingEffects_)
         hEff = fnv(fnv(fnv(fnv(hEff, uint32_t(e.player)), bits(e.x)), bits(e.z)), bits(e.at));
@@ -6087,7 +6091,7 @@ void World::hashTrace() const {
         hStorm = fnv(fnv(fnv(fnv(hStorm, uint32_t(s.player)), bits(s.x)), bits(s.z)), bits(s.left));
     uint64_t hPlayers = seed;
     for (const auto& t : players_)
-        hPlayers = fnv(fnv(fnv(hPlayers, bits(t.mana)), bits(t.godFavor)), uint32_t(t.team));
+        hPlayers = fnv(fnv(fnv(hPlayers, bits64(t.mana)), bits(t.godFavor)), uint32_t(t.team));
     uint64_t fAlive = 0, fWork = 0;
     for (const auto& f : features_)
         if (f.alive) { ++fAlive; fWork ^= (bits(f.work) << 1) ^ uint64_t(uint32_t(f.id)); }
@@ -6187,8 +6191,8 @@ uint64_t World::stateHash() const {
     mix(uint64_t(projectiles_.size()));
     for (const auto& p : projectiles_) {
         mix(uint64_t(uint32_t(p.fromPlayer)));
-        mixf(p.x);
-        mixf(p.z);
+        mix(uint64_t(uint32_t(p.x.v)));   // projectile position is fixed-point
+        mix(uint64_t(uint32_t(p.z.v)));
     }
     // Remote Effect spells mid-channel and wandering storms mid-roam are live sim
     // state that outlives a tick, so a divergence in either must show up here.
@@ -6208,7 +6212,7 @@ uint64_t World::stateHash() const {
         mixf(s.jitX); mixf(s.jitZ); mixf(s.nextVary);
     }
     for (const auto& t : players_) {
-        mixf(t.mana);
+        { uint64_t b; std::memcpy(&b, &t.mana, 8); mix(b); }   // double: fold all 8 bytes
         mixf(t.godFavor);
         // Team assignment drives sim behaviour (splash/acquire/auras) but is set
         // from setup -- fold it in so a lobby/config mismatch faults immediately

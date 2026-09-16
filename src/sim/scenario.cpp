@@ -223,7 +223,7 @@ void ScenarioScript::runAction(World& w, int player, int group, const tak::crt::
         case 16: w.player(player).storage = float(toInt(s[0])); break;         // resource limit
         case 17: w.player(player).mana = float(toInt(s[0])); break;            // resources = v
         case 18: w.player(player).mana += float(toInt(s[0])); break;           // add v
-        case 19: w.player(player).mana = std::max(0.0f, w.player(player).mana - float(toInt(s[0]))); break;
+        case 19: w.player(player).mana = std::max(0.0, w.player(player).mana - double(toInt(s[0]))); break;
         case 20: break;                                                        // resources normal (no-op)
         case 21: forceDefeatOthers(w, player); break;                          // Victory me + teammates
         case 22: forceDefeatTeam(w, player, true); break;                      // Defeat me + teammates

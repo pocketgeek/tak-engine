@@ -1443,3 +1443,39 @@ TAK_MPAUTO=4 TAK_SHOT_MS=35000 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
 - Add `TAK_STRESS=1` to spawn each AI at ~95% of the unit cap for instant mass
   combat -- the quickest way to see projectile art, beams and storms on screen.
 - No real window is needed; the dummy driver renders correctly.
+
+## Mana is a double, and the economy is floating point (2026-09-15)
+
+Asked while converting our remaining floats: is mana fixed point in retail, or an
+integer? Neither -- it is 64-bit floating point, and this was worth chasing
+because two plausible-sounding wrong answers came first.
+
+The evidence is the end-of-game stats screen. At 0x500586 and 0x5005ba the
+builder loads two values with `fldl` (a 64-bit load) from +0x18 and +0x20 of the
+player's stats object and passes each to the ftol helper at 0x5d3d54 before
+storing the result as the displayed integer. The labels resolve through
+0x617ca8 / 0x617cac to "Mana Produced" and "Excess Mana". So the STORED
+accumulator is a double and the integer is only the rendering.
+
+Two more sites agree:
+
+  * The accumulate is a double read-modify-write: `faddl 0x18(%eax)` followed by
+    `fstpl 0x18(%eax)` (0x425d5a, 0x429d45, 0x4cb61c, 0x4ea1cc).
+  * The affordability check at 0x46e85f loads an integer cost with `fildl` and
+    subtracts the pool with `fsubl 0xd1(%edi)` -- again 64-bit.
+
+Two wrong answers to avoid repeating:
+
+  * "Retail stores no float in its unit state" is true, but it was measured over
+    the mover/unit region only and says nothing about the economy. Binary-wide
+    there are 718 float stores to non-stack destinations.
+  * The player table at +0x2404 (stride 0x110) really is touched by 463 integer
+    movs and zero FP instructions -- but its first field is a POINTER, null-checked
+    and then dereferenced (0x9b(%ecx), 0xea(%edi)). Counting instructions against
+    a pointer table says nothing about the fields it points at. The stats copies
+    `total_mana` (+0x2c) and `mana_wasted` (+0x34) ARE integers, which is what
+    makes the wrong conclusion easy to reach: they are the snapshot, not the pool.
+
+This also explains the range problem from the porting side. Our Fixed is 16.16
+in an int32 and saturates at 32768; mana routinely runs far past that. Retail did
+not use fixed point here either, so matching it is not a compromise.
