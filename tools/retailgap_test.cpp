@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
         float aHp0 = w.unit(aId)->hp, farHp0 = w.unit(farId)->hp;
         check(aHp0 > 0 && farHp0 > 0, "victims spawned alive");
 
-        w.unit(ratId)->hp = 0;    // the rat dies -> its EXPLODEAS should fire
+        w.unit(ratId)->hp = sim::Fixed();    // the rat dies -> its EXPLODEAS should fire
         tick(w, 0.2f);
 
         const sim::Unit* a = w.unit(aId);
@@ -162,7 +162,7 @@ int main(int argc, char** argv) {
         int d1 = w.spawn(drag, 400, 400, 0, 0);
         check(w.atTypeCap(0, drag), "one live dragon -> player 0 is capped");
         check(!w.atTypeCap(1, drag), "the cap is PER PLAYER (player 1 free)");
-        if (auto* d = w.unit(d1)) d->hp = 0;   // it dies
+        if (auto* d = w.unit(d1)) d->hp = sim::Fixed();   // it dies
         tick(w, 0.2f);
         check(!w.atTypeCap(0, drag), "dragon died -> the slot frees again");
         const sim::UnitType* plain = reg.find("arasword");
@@ -592,7 +592,7 @@ int main(int argc, char** argv) {
                 tickM(w, 2.0f);
                 check(w.missionOutcome() == 0, "escort mission does not resolve at the start");
                 for (auto& u : w.units())
-                    if (u.type == dern) if (auto* p = w.unit(u.id)) p->hp = 0;
+                    if (u.type == dern) if (auto* p = w.unit(u.id)) p->hp = sim::Fixed();
                 tickM(w, 3.0f);
                 check(w.missionOutcome() < 0, "losing every escorted unit is a DEFEAT");
             }
@@ -617,7 +617,7 @@ int main(int argc, char** argv) {
             if (runMission("takmission11_dh", w) && pr) {
                 tickM(w, 2.0f);   // let the condition arm (it must not fire at t=0)
                 for (auto& u : w.units())
-                    if (u.type == pr) if (auto* p = w.unit(u.id)) p->hp = 0;
+                    if (u.type == pr) if (auto* p = w.unit(u.id)) p->hp = sim::Fixed();
                 tickM(w, 3.0f);
                 check(w.missionOutcome() < 0, "AllUnitsKilledOfType protects YOUR units");
             }
@@ -736,7 +736,7 @@ int main(int argc, char** argv) {
             int vid = w.spawn(vic, 660, 600, 0, 0);   // well inside radius 200
             (void)pid;
             sim::Unit* v = w.unit(vid);
-            v->hp = v->type->maxHp * 0.25f;
+            v->hp = sim::Fixed::fromFloat(v->type->maxHp * 0.25f);
             float hp0 = v->hp;
             float mana0 = w.player(0).mana;
             for (int i = 0; i < 60; ++i) w.tick(1.0f / 30.0f);   // 2s = two 1Hz pulses

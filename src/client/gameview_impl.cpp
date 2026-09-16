@@ -476,7 +476,7 @@
         // Ordered corpse-reclaim check: a builder is sent (negative target id)
         // to consume a fresh corpse -- the body must vanish when it arrives.
         int rcv = spawn("arasword", cx - 200, cz + 120, 0.0f, 0);
-        if (auto* rd = world_.unit(rcv)) rd->hp = 0;   // dies this tick, normal corpse
+        if (auto* rd = world_.unit(rcv)) rd->hp = tak::sim::Fixed();   // dies this tick, normal corpse
         int rcb = spawn("arabuild", cx - 250, cz + 160, 1.57f, 0);
         world_.reclaim(rcb, -rcv, false);
         // Animate check: an idle necromancer beside the (soon) archer corpse

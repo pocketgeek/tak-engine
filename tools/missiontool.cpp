@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
         tick(w2, 2.0f);
         int e2 = findType(w2, "npcemen");
         if (e2 >= 0 && w2.missionOutcome() == 0) {
-            if (auto* u = w2.unit(e2)) u->hp = 0;   // die -> World::tick fires UnitDestroyed
+            if (auto* u = w2.unit(e2)) u->hp = tak::sim::Fixed();   // die -> World::tick fires UnitDestroyed
             tick(w2, 1.0f);
             std::printf("LOSE test (NPCEMEN killed):       outcome=%d %s\n",
                         w2.missionOutcome(), w2.missionOutcome() == -1 ? "PASS" : "FAIL");

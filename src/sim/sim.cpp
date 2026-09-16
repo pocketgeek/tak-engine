@@ -597,7 +597,7 @@ int World::spawn(const UnitType* type, float x, float z, float heading, int play
     u.x = Fixed::fromFloat(x);   // boundary: callers still speak float
     u.z = Fixed::fromFloat(z);
     u.heading = bamFromRadians(heading);   // boundary
-    u.hp = type ? type->maxHp : 100;
+    u.hp = Fixed::fromFloat(type ? type->maxHp : 100.0f);
     u.mana = type ? type->maxMana : 0;   // casters start with a full pool
     u.active = type ? type->activateWhenBuilt : true;
     u.homeX = x;
@@ -2150,9 +2150,9 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         // base × attacker-attack (↑) ÷ victim-armour (↓); armour = veterancy × aura.
         float armour = std::max(e.vetMul() * e.armBuff, 0.01f);
         float dealt = w.damageVs(e.type) * atkMul / armour * scale;
-        e.hp -= dealt;
+        e.hp -= Fixed::fromFloat(dealt);
         if (e.hp <= 0) {
-            e.overkill = std::max(e.overkill, -e.hp);          // retail severity input
+            e.overkill = std::max(e.overkill, -e.hp.toFloat());          // retail severity input
             e.deathType = uint8_t(w.dmgType);                  // 3 = explosion -> gib
         }
         if (fromId) e.lastHitBy = fromId;
@@ -2172,7 +2172,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                     // stoned/frozen debuff was our pre-RE guess.
                     bool freeze = w.status == Weapon::Status::Frozen;
                     if (freeze) e.frozenFor = 1.0f; else e.stonedFor = 1.0f;
-                    e.hp = 0;
+                    e.hp = Fixed();
                     e.deathType = freeze ? 15 : 14;
                     e.speed = Fixed();
                     static const bool kStatLog = std::getenv("TAK_BURNLOG") != nullptr;
@@ -2772,7 +2772,7 @@ void World::captureUnit(Unit& t, int newPlayer) {
     }
     t.player = newPlayer;
     t.orders.clear();
-    t.hp = std::max(t.hp, t.type->maxHp * 0.5f);
+    t.hp = fxMax(t.hp, Fixed::fromFloat(t.type->maxHp * 0.5f));
     t.lastHitBy = 0;
     t.squad = 0;             // no longer in its old owner's control group
     t.buildQueue.clear();    // and not still producing for them
@@ -3202,7 +3202,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
     Unit* site = unit(id);
     site->underConstruction = true;
     site->beingBuilt = true;   // its builder owns it this tick (no instant decay)
-    site->hp = type->maxHp * 0.05f;
+    site->hp = Fixed::fromFloat(type->maxHp * 0.05f);
     // Auto-join: a conjured MOBILE unit inherits the builder's squad (a building never does).
     if (bsquad && !type->isStructure()) site->squad = bsquad;
     // Key off maxVel, NOT the FBI canmove flag: verwall and tarwall both declare
@@ -3470,9 +3470,9 @@ void World::tickReclaim(Unit& b, float dt) {
         // Proportional drip against the INITIAL work (= max(energy,60), set at
         // death). Shipped corpse defs all have energy 0, so this grants nothing.
         if (cd && cd->energy > 0 && c->corpseWork > 0)
-            players_[size_t(b.player)].mana +=
+            players_[size_t(b.player)].mana += Fixed::fromFloat(
                 cd->energy * std::min(step, c->corpseWork) /
-                std::max(cd->energy, 60.0f);
+                std::max(cd->energy, 60.0f));
         c->corpseWork -= step;
         if (c->corpseWork <= 0) {
             c->deadFor = 1000.0f;   // consumed
@@ -3575,7 +3575,8 @@ void World::tickRepair(Unit& b, float dt) {
     float cost = t->type->buildCost * dt / std::max(total, 0.01f);
     if (tm.mana < cost) return;   // can't afford: pause the repair
     tm.mana -= cost;
-    t->hp = std::min(t->type->maxHp, t->hp + t->type->maxHp * dt / std::max(total, 0.01f));
+    t->hp = fxMin(Fixed::fromFloat(t->type->maxHp),
+                  t->hp + Fixed::fromFloat(t->type->maxHp * dt / std::max(total, 0.01f)));
     if (t->hp >= t->type->maxHp) endRepair();   // mended: on to the next order
 }
 
@@ -3668,15 +3669,15 @@ void World::tickConstruction(Unit& b, float dt) {
     site->conjureRate = site->type->maxHp * 0.95f / std::max(total, 0.01f);
     Player& tm = players_[size_t(b.player)];
     if (gInstantBuild) {
-        site->hp = site->type->maxHp;   // finishes this tick, free
+        site->hp = Fixed::fromFloat(site->type->maxHp);   // finishes this tick, free
     } else {
         float cost = site->type->buildCost * dt / std::max(total, 0.01f);
         if (tm.mana < cost) return;
         tm.mana -= cost;
-        site->hp += site->type->maxHp * 0.95f * dt / std::max(total, 0.01f);
+        site->hp += Fixed::fromFloat(site->type->maxHp * 0.95f * dt / std::max(total, 0.01f));
     }
     if (site->hp >= site->type->maxHp) {
-        site->hp = site->type->maxHp;
+        site->hp = Fixed::fromFloat(site->type->maxHp);
         site->underConstruction = false;
         b.buildSiteId = 0;
         popBuildOrder(b);
@@ -3689,7 +3690,7 @@ void World::decayConstruction(Unit& u, float dt) {
     // finished). A site that never materialised falls back to its nominal rate.
     float rate = u.conjureRate > 0 ? u.conjureRate
                  : u.type->maxHp * 0.95f / std::max(u.type->buildTime, 0.01f);
-    u.hp -= rate * dt;
+    u.hp -= Fixed::fromFloat(rate * dt);
     if (u.hp > 0) return;
     if (u.type->isStructure()) {
         blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
@@ -3801,7 +3802,8 @@ void World::tickHealAuras() {
                     cost = tm.mana;
                 }
                 tm.mana -= cost;
-                e.hp = std::min(e.type->maxHp, e.hp + e.type->maxHp * prog);
+                e.hp = fxMin(Fixed::fromFloat(e.type->maxHp),
+                             e.hp + Fixed::fromFloat(e.type->maxHp * prog));
             });
         }
     }
@@ -3989,7 +3991,7 @@ void World::tickAbilities(float dt) {
         // Retail HP: resurrect returns the unit at 10% (min 1); an animated
         // creature rises at FULL health (icd 0x420666-0x4206ba).
         if (Unit* nu = unit(id))
-            if (!r.animate) nu->hp = std::max(nu->type->maxHp * 0.1f, 1.0f);
+            if (!r.animate) nu->hp = Fixed::fromFloat(std::max(nu->type->maxHp * 0.1f, 1.0f));
         static const bool kRevLog = std::getenv("TAK_BURNLOG") != nullptr;
         if (kRevLog)
             std::fprintf(stderr, "%s: %s for p%d at %.0f,%.0f\n",
@@ -4607,9 +4609,9 @@ void World::tick(float dt) {
                 // FBI areaofeffect), using the grid from the previous rebuild.
                 if (p.wsrc) applyHit(*p.wsrc, t->x.toFloat(), t->z.toFloat(), p.fromPlayer, p.fromId, t);
                 else if (!(benchmarkMode() && t->type && t->type->commander)) {
-                    t->hp -= p.damage;
+                    t->hp -= Fixed::fromFloat(p.damage);
                     if (t->hp <= 0) {
-                        t->overkill = std::max(t->overkill, -t->hp);
+                        t->overkill = std::max(t->overkill, -t->hp.toFloat());
                         t->deathType = p.wsrc ? uint8_t(p.wsrc->dmgType) : 1;
                     }
                 }
@@ -5225,7 +5227,7 @@ void World::tick(float dt) {
                 // What the player sees, reported from retail: the unit does not
                 // blow up. It quietly leaves your command and fades, with no
                 // wreck left behind.
-                u.hp = 0; u.lastHitBy = 0; u.deathType = Unit::kDeathSelfDestruct;
+                u.hp = Fixed(); u.lastHitBy = 0; u.deathType = Unit::kDeathSelfDestruct;
             }
         }
         // Deadly water (.ota waterdoesdamage): a ground unit standing in it is
@@ -5233,8 +5235,8 @@ void World::tick(float dt) {
         // there, so anything that can cross water is exempt.
         if (waterDamage_ > 0 && !u.type->canFly && u.type->maxWaterDepth <= 0 &&
             isWater(u.x.toFloat(), u.z.toFloat())) {
-            u.hp -= waterDamage_ * dt;
-            if (u.hp <= 0) { u.overkill = std::max(u.overkill, -u.hp); u.deathType = 1; }
+            u.hp -= Fixed::fromFloat(waterDamage_ * dt);
+            if (u.hp <= Fixed()) { u.overkill = std::max(u.overkill, -u.hp.toFloat()); u.deathType = 1; }
         }
         // `u.hp > 0` matters because of WHERE hp gets zeroed, not by how much.
         // Every other death path puts hp <= 0 outside this loop body, so the sweep
@@ -5247,7 +5249,8 @@ void World::tick(float dt) {
         // retail install, 200 have healtime > 0 (only aranull and npcwagon do not).
         // That is why Ctrl+Shift+D self-destruct appeared to do nothing.
         if (u.type->healTime > 0 && u.hp > 0 && u.hp < u.type->maxHp)
-            u.hp = std::min(u.type->maxHp, u.hp + dt / u.type->healTime);
+            u.hp = fxMin(Fixed::fromFloat(u.type->maxHp),
+                         u.hp + Fixed::fromFloat(dt / u.type->healTime));
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
             u.mana = std::min(u.type->maxMana, u.mana + u.type->manaRegen * dt);
         // A WANDERER keeps its spawn point as home -- that anchor is what stops its
@@ -6057,7 +6060,7 @@ void World::hashTrace() const {
         hUnitPos  = fnv(fnv(fnv(hUnitPos, u.id), uint64_t(uint32_t(u.x.v))),
                         uint64_t(uint32_t(u.z.v)));
         hUnitPos  = fnv(hUnitPos, uint64_t(uint32_t(u.heading.v)));
-        hUnitHp   = fnv(fnv(hUnitHp, u.id), bits(u.hp));
+        hUnitHp   = fnv(fnv(hUnitHp, u.id), uint64_t(uint32_t(u.hp.v)));
         hUnitOrd  = fnv(fnv(hUnitOrd, u.id), u.orders.size());
         if (!u.orders.empty()) {
             const Order& o = u.orders.front();
@@ -6144,7 +6147,7 @@ uint64_t World::stateHash() const {
         // silently drop the low bits of the very state this checksum guards.
         mix(uint64_t(uint32_t(u.x.v)));
         mix(uint64_t(uint32_t(u.z.v)));
-        mixf(u.hp);
+        mix(uint64_t(uint32_t(u.hp.v)));       // hp is fixed-point now
         mix(uint64_t(uint32_t(u.heading.v)));   // an angle is an integer now
         mix(uint64_t(u.orders.size()));
         // Order target + attack-move flag: two sims can hold the same order

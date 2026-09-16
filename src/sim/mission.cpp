@@ -166,7 +166,7 @@ int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32
     if (ieq(verb, "writevalue"))   { if (!a.empty()) vars_[lower(rest)] = a[0]; return 0; }
     if (ieq(verb, "readvalue"))    { auto it = vars_.find(lower(rest)); return it != vars_.end() ? it->second : 0; }
     if (ieq(verb, "capture"))      { if (!a.empty()) if (Unit* u = w.unit(a[0])) u->player = a.size() >= 2 ? a[1] : human_; return 0; }
-    if (ieq(verb, "kill"))         { if (!a.empty()) if (Unit* u = w.unit(a[0])) u->hp = 0; return 0; }
+    if (ieq(verb, "kill"))         { if (!a.empty()) if (Unit* u = w.unit(a[0])) u->hp = Fixed(); return 0; }
     if (ieq(verb, "screenshake")) {
         // Dramatic beats -- quakes, collapses -- asked for a shake and got nothing.
         // Purely cosmetic, but it is the script's only way to punctuate a scripted
@@ -253,7 +253,7 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders)
         } else if (c == 's') {                            // hand the unit to the human player
             u->player = human_;
         } else if (c == 'd') {                            // self-destruct / remove
-            u->hp = 0;
+            u->hp = Fixed();
         } else if (c == 'w') {                            // w N (wait N s) / wa (wait-for-attack)
             if (c2 == 'a') {
                 ++i;
@@ -304,7 +304,7 @@ void MissionScript::doSetAttribute(World& w, const std::string& sub, int unitId,
     Unit* u = w.unit(unitId);
     if (!u || !u->type) return;
     float f = float(pct) / 100.0f;
-    if (ieq(sub, "healthpercentage"))     u->hp = u->type->maxHp * f;
+    if (ieq(sub, "healthpercentage"))     u->hp = Fixed::fromFloat(u->type->maxHp * f);
     else if (ieq(sub, "manapercentage"))  u->mana = u->type->maxMana * f;
     else if (ieq(sub, "armorpercentage")) u->armBuff = f;      // live armour multiplier
     else if (ieq(sub, "attackpercentage")) u->atkBuff = f;

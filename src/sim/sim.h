@@ -502,7 +502,19 @@ struct Unit {
     // Fixed::operator*. Speed feeds the step length, so leaving it float would have kept
     // a float multiply in the middle of an otherwise integer displacement.
     Fixed speed;
-    float hp = 100;
+    // Fixed, not float: retail keeps no float in its unit state (docs/retail-engine.md).
+    //
+    // RANGE. Fixed is 16.16 in an int32, so it saturates at 32768 -- and the largest
+    // `maxdamage` in the 155 shipped FBIs is 29999, which fits with about 9% to spare.
+    // (That the shipped ceiling sits just under a 16-bit boundary is itself a hint at
+    // what retail stored.) A mod declaring more than 32767 hp would wrap, so this is a
+    // real limit, not a theoretical one.
+    //
+    // The economy pools are NOT Fixed for exactly this reason: `mana` accumulates
+    // without a cap and routinely passes 32768 (the tests alone set 200000 and 1e9,
+    // which wrap to 3392 and -13824). Converting it broke production outright. Doing
+    // mana in fixed point needs a 64-bit Fixed, which is a separate job.
+    Fixed hp = Fixed::fromInt(100);
     float reloads[3] = {0, 0, 0};  // per weapon slot
     int   weaponSlot = 0;          // active weapon (0=primary); player-selectable
     // True until the player picks a weapon with Ctrl+W. While set, the sim chooses

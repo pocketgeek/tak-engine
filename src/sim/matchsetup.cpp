@@ -898,13 +898,13 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                 if (id >= 0) {
                     ++spawned;
                     if (auto* su = world.unit(id)) {
-                        su->hp = su->type->maxHp * float(u.numberOr("healthpercentage", 100)) / 100.0f;
+                        su->hp = Fixed::fromFloat(su->type->maxHp * float(u.numberOr("healthpercentage", 100)) / 100.0f);
                         // ManaPercentage: enemy casters open a mission with the mana
                         // the designer gave them (usually 0 -- they must recharge
                         // before casting), not a full pool.
                         if (su->type->maxMana > 0 && u.value("manapercentage"))
-                            su->mana = su->type->maxMana *
-                                       float(u.numberOr("manapercentage", 100)) / 100.0f;
+                            su->mana = Fixed::fromFloat(su->type->maxMana *
+                                       float(u.numberOr("manapercentage", 100)) / 100.0f);
                     }
                     // InitialMission: the per-unit order queue in the SAME mini-language
                     // the god script's SetMission uses (move/patrol/attack/stance/wait/

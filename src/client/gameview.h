@@ -233,7 +233,7 @@ public:
                             ++n;
                             float hpp = float(u.numberOr("healthpercentage", 100));
                             if (auto* su = world_.unit(uid)) {
-                                su->hp *= hpp / 100.0f;
+                                su->hp = tak::sim::Fixed::fromFloat(su->hp.toFloat() * hpp / 100.0f);
                                 if (su->type->canMove &&
                                     su->type->domain ==
                                         tak::sim::UnitType::Domain::Ground)
@@ -337,7 +337,7 @@ public:
                 if (uid >= 0) {
                     if (tak::sim::Unit* su = world_.unit(uid)) {   // apply the .crt stats
                         if (su->type)
-                            su->hp = su->type->maxHp * float(std::clamp(u.health, 0, 100)) / 100.0f;
+                            su->hp = tak::sim::Fixed::fromFloat(su->type->maxHp * float(std::clamp(u.health, 0, 100)) / 100.0f);
                         su->veteran = std::clamp(u.veteran, 0, 10);
                     }
                     if (player == 0) { cx += wx; cz += wz; ++n; }
