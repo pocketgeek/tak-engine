@@ -4346,7 +4346,12 @@ void World::tickProduction(Unit& u, float dt) {
         if (gInstantBuild) {
             u.buildProgress = total;   // finishes this tick, free
         } else {
-            const double cost = double(t->buildCost) / double(std::max(totalSec, 0.01f) * kTick);
+            // DIVIDE BY THE SAME `total` THE BUILD ACTUALLY TAKES. This used to
+            // divide by the unclamped duration, so a build clamped up to one tick
+            // still charged as though it were spread over 0.3 of one: a 500-cost
+            // unit cost about 1667, and a player holding exactly its price could
+            // not afford it.
+            const double cost = double(t->buildCost) / double(total);
             if (tm.mana < cost) return;   // stalled: no mana
             tm.mana -= cost;
             ++u.buildProgress;   // one tick of work

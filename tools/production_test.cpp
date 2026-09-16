@@ -105,12 +105,17 @@ static void productionNeedsMana() {
     check(made == 0, "a player with no mana produces nothing",
           std::to_string(made) + " unit(s) appeared");
 
-    w.player(0).mana = 4 * 500 + 10;     // now it can
+    // EXACTLY one unit's price, and exactly one unit expected. Funding four and
+    // asserting "more than none" hid an overcharge: the per-tick cost divided by the
+    // UNCLAMPED duration, so a one-tick build billed a 500-cost unit about 1667 and a
+    // player holding its stated price could not afford it at all.
+    w.player(0).mana = 500;
     run(w, 60.0f);
     int made2 = 0;
     for (const auto& u : w.units())
         if (u.alive() && u.type && !u.type->isStructure()) ++made2;
-    check(made2 > 0, "...and with mana it does", std::to_string(made2) + " unit(s)");
+    check(made2 == 1, "...and a unit costs exactly its buildCost",
+          std::to_string(made2) + " unit(s) for exactly 500 mana");
 }
 
 static void outputDoesNotJam() {
