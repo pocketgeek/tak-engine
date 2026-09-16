@@ -256,6 +256,34 @@ result is used somewhere not yet traced), or retail genuinely wedged as much
 as we do and the difference we think we remember is not there. Resolving that
 needs the rest of 0x4dba80's control flow read properly, not more guessing.
 
+### RESOLVED (2026-09-16): retail genuinely wedges. There is no avoidance.
+
+The second reading was right, and the 3x3 scan's result goes nowhere.
+
+Follow the scan to its blocked exit. `0x4dbcf9` (`cmp eax,4` / `jl`) leaves the
+loop for `0x4dbe2c`, and that block is five instructions long: load the
+navigator, read `+0x36`, `and $0xff3f`, `or $0x20`, store it back, and RETURN.
+No position is touched, no route is requested, nothing is queued.
+
+So the scan's only product is bit `0x20` at navigator `+0x36` -- and nothing
+reads it. Every access to `+0x36` in the navigator's own address range
+(0x4db000-0x4e6000) was checked: the reads there are the mover's own
+clear-on-entry (`andw $0xf81f` at 0x4dbaa8) and its refusal writes. The three
+`test $0x20,%al` sites in the range are a different structure entirely --
+`0x13c(%edx,%eax,1)`, not a navigator field.
+
+That completes the picture the rest of this section describes. A blocked retail
+unit sets a status bit nobody consumes, clamps, slows (0.5x on the first
+refusal, 0.4x once refused twice), and presses on. It does not dodge, it does
+not sidestep, and it does not ask for a new route -- re-requests are on their
+own 120-tick cadence and only fire when the path did not fail.
+
+The practical consequence, for anyone tempted to add avoidance back: our own
+sideways-teleport "unstick" was not restoring a retail behaviour, it was
+inventing one, and it was hiding a real defect (a degenerate axis slide that
+displaced -0.0002px and so never registered as blocked). Both are gone as of
+10f1e1c. Head-on columns wedging is retail behaviour, not a regression.
+
 ## RETRACTED: the "wall-follower" is not in the movement path (2026-09-12)
 
 An earlier version of this section claimed that `0x4140d4`..`0x414eb0` is
@@ -667,6 +695,36 @@ what retail does when a body is parked in a unit's way.
 Three conclusions about this area have now been published and two retracted in
 a single day. The next claim here should come with a demonstrated call path
 from the order or unit tick, not from a routine's shape or from a partial graph.
+
+## Retail stores no float in its unit state (2026-09-16)
+
+Asked while porting our own positions to fixed point: which of our remaining
+float fields are float in retail? Answer: none of them are.
+
+Across the mover/unit region (0x4da000-0x4dffff) the FPU is used 275 times
+against 3556 integer ops, and the split of what it touches is decisive:
+
+    fildl  (load INTEGER, convert)   68
+    flds   (load float)              13
+    fldl   (load double)              7
+    fstps  (store float)              6
+    fistp  (store integer)            0
+
+Every one of the 6 float stores, and all but one of the float loads, is
+`%ebp`-relative -- stack locals and parameters, not struct fields. The single
+exception is `flds 0x5f2830`, a global constant. So retail's persistent unit
+state is integer throughout; the FPU is scratch for intermediate arithmetic and
+never writes a float back into a unit.
+
+Two fields confirmed directly rather than inferred:
+
+  * **Speed** is fixed-point. The occupancy test compares two units' speeds with
+    an integer `cmp`/`jl` (0x4db79e), and the scaling either side calls
+    `0x5d3dc0`, which is a 64-bit arithmetic shift invoked with `cl = 0x10` --
+    a 16.16 multiply.
+  * **Position** is 0x100000 per 16px cell, which is 65536 per pixel. The same
+    16.16, so our Fixed matches retail's resolution exactly rather than by
+    coincidence.
 
 ## Retail-faithful body collision: sub-cell solidity (2026-09-12)
 

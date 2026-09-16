@@ -114,10 +114,10 @@ static void openGround() {
         check(leg.goal && !leg.unload, "the routable leg is the approach, not the unload");
         check(!un.goal && un.unload,
               "the unload sits BEHIND the leg, where replaceLeg preserves it");
-        check(un.x == dropX && un.z == dropZ, "the unload keeps the drop point it was given");
+        check(un.x.toFloat() == dropX && un.z.toFloat() == dropZ, "the unload keeps the drop point it was given");
         // Hazard ONE: the approach must land inside the unload radius, or arriving at it
         // does not let the unload fire.
-        const float dx = leg.x - dropX, dz = leg.z - dropZ;
+        const float dx = leg.x.toFloat() - dropX, dz = leg.z.toFloat() - dropZ;
         check(std::sqrt(dx * dx + dz * dz) <= kRange,
               "the approach point is within unloading range of the drop point");
     } else {
@@ -129,7 +129,7 @@ static void openGround() {
     if (done) {
         const tak::sim::Unit* c = w.unit(cid);
         check(c->inTransport == 0, "the cargo unit is off the transport");
-        const float dx = c->x - dropX, dz = c->z - dropZ;
+        const float dx = c->x.toFloat() - dropX, dz = c->z.toFloat() - dropZ;
         check(std::sqrt(dx * dx + dz * dz) < 250,
               "the cargo is put down near the drop point, not where it boarded");
         check(w.unit(tid)->orders.empty(), "the unload order is consumed, not left stuck");
@@ -211,8 +211,8 @@ static void coastline() {
         const tak::sim::Order& leg = t->orders[0];
         // The approach must be WATER -- somewhere this boat can actually be. Aiming it
         // at the drop point is the regression this case exists for.
-        check(leg.x < shoreX, "the approach point is on water, not the land drop point");
-        const float dx = leg.x - dropX, dz = leg.z - dropZ;
+        check(leg.x.toFloat() < shoreX, "the approach point is on water, not the land drop point");
+        const float dx = leg.x.toFloat() - dropX, dz = leg.z.toFloat() - dropZ;
         check(std::sqrt(dx * dx + dz * dz) <= kRange,
               "the approach point is within unloading range of the drop point");
         check(leg.goal && !leg.unload && t->orders[1].unload, "the queue shape still holds");
@@ -228,9 +228,9 @@ static void coastline() {
         const tak::sim::Unit* c = w.unit(cid);
         const tak::sim::Unit* tr = w.unit(tid);
         check(c->inTransport == 0, "the cargo unit is off the transport");
-        check(c->x >= shoreX, "the cargo is put down on LAND, not in the water");
-        check(tr->x < shoreX, "the transport itself stayed in its own domain");
-        const float dx = c->x - dropX, dz = c->z - dropZ;
+        check(c->x.toFloat() >= shoreX, "the cargo is put down on LAND, not in the water");
+        check(tr->x.toFloat() < shoreX, "the transport itself stayed in its own domain");
+        const float dx = c->x.toFloat() - dropX, dz = c->z.toFloat() - dropZ;
         check(std::sqrt(dx * dx + dz * dz) < 250, "the cargo lands near the drop point");
     } else {
         g_fail += 4;
@@ -353,9 +353,9 @@ static void isolatedPond() {
     check(t->orders.size() == 2, "a reachable sea cell IS in range, so an approach is queued");
     if (t->orders.size() == 2) {
         const tak::sim::Order& leg = t->orders[0];
-        check(leg.x < shoreX,
+        check(leg.x.toFloat() < shoreX,
               "the approach is the open sea the boat can reach, not the nearer pond");
-        check(w.pathExists(&boat, leg.x, leg.z, w.unit(tid)->x, w.unit(tid)->z),
+        check(w.pathExists(&boat, leg.x.toFloat(), leg.z.toFloat(), w.unit(tid)->x.toFloat(), w.unit(tid)->z.toFloat()),
               "the approach point is actually reachable from where the transport is");
     } else {
         g_fail += 2;

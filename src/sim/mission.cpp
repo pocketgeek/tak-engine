@@ -237,7 +237,7 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders)
                     int best = -1; float bd = 1e18f;
                     for (const auto& e : w.units())
                         if (e.alive() && e.type == t && !w.allied(e.player, u->player)) {
-                            float dx = e.x - u->x, dz = e.z - u->z, d = dx * dx + dz * dz;
+                            float dx = e.x.toFloat() - u->x.toFloat(), dz = e.z.toFloat() - u->z.toFloat(), d = dx * dx + dz * dz;
                             if (d < bd) { bd = d; best = e.id; }
                         }
                     if (best >= 0) { w.attack(unitId, best, queue); queue = true; }
@@ -339,10 +339,10 @@ int32_t MissionScript::getValue(World& w, int32_t valId, const std::vector<int32
             if (Unit* u = w.unit(a1)) return typeHash(u->type);
             return 0;
         case 35:   // a unit's X cell (paired with 36 and compared to cell constants)
-            if (Unit* u = w.unit(a1)) return int32_t(u->x) / 16;
+            if (Unit* u = w.unit(a1)) return int32_t(u->x.toFloat()) / 16;
             return 0;
         case 36:   // a unit's Z cell
-            if (Unit* u = w.unit(a1)) return int32_t(u->z) / 16;
+            if (Unit* u = w.unit(a1)) return int32_t(u->z.toFloat()) / 16;
             return 0;
         case 40:   // a global counter, tested against 2500 to gate a late VO line;
                    // elapsed mission TICKS is the only reading that fits (~83s).
@@ -368,9 +368,10 @@ void MissionScript::sweepTriggers(World& w) {
         std::unordered_set<int> now;
         for (const auto& u : w.units()) {
             if (!u.alive() || u.embarked()) continue;
-            bool in = r.rect ? (u.x >= std::min(r.x, r.x2) && u.x <= std::max(r.x, r.x2) &&
-                                u.z >= std::min(r.z, r.z2) && u.z <= std::max(r.z, r.z2))
-                             : ((u.x - r.x) * (u.x - r.x) + (u.z - r.z) * (u.z - r.z) <= r.r * r.r);
+            const float ux = u.x.toFloat(), uz = u.z.toFloat();
+            bool in = r.rect ? (ux >= std::min(r.x, r.x2) && ux <= std::max(r.x, r.x2) &&
+                                uz >= std::min(r.z, r.z2) && uz <= std::max(r.z, r.z2))
+                             : ((ux - r.x) * (ux - r.x) + (uz - r.z) * (uz - r.z) <= r.r * r.r);
             if (!in) continue;
             now.insert(u.id);
             if (!occ.count(u.id)) {   // edge: newly entered -> fire the script once
@@ -460,7 +461,7 @@ void MissionScript::evalConditions(World& w, float) {
                 float cx = cellToWorld(c.a), cz = cellToWorld(c.b), rr = c.c * 16.0f;
                 for (const auto& u : w.units())
                     if (u.alive() && u.type == c.type &&
-                        (u.x - cx) * (u.x - cx) + (u.z - cz) * (u.z - cz) <= rr * rr) { met = true; break; }
+                        (u.x.toFloat() - cx) * (u.x.toFloat() - cx) + (u.z.toFloat() - cz) * (u.z.toFloat() - cz) <= rr * rr) { met = true; break; }
                 break;
             }
             // "Destroy all" rules arm once the target exists, then fire when it's gone --
@@ -525,14 +526,14 @@ void MissionScript::evalConditions(World& w, float) {
                     for (const auto& u : w.units())
                         if (u.alive() && u.type == c.type) {
                             c.armed = true;
-                            c.b = ((isX ? u.x : u.z) < line) ? -1.0f : 1.0f;
+                            c.b = ((isX ? u.x.toFloat() : u.z.toFloat()) < line) ? -1.0f : 1.0f;
                             break;
                         }
                     break;   // never satisfied on the tick it arms
                 }
                 for (const auto& u : w.units()) {
                     if (!u.alive() || u.type != c.type) continue;
-                    float p = isX ? u.x : u.z;
+                    float p = isX ? u.x.toFloat() : u.z.toFloat();
                     if (c.b < 0 ? p >= line : p <= line) { met = true; break; }
                 }
                 break;

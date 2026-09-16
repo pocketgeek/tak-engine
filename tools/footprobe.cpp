@@ -61,8 +61,8 @@ int main(int argc, char** argv) {
                 return true;
             };
             auto reach = [&](int n) {
-                int sx = int(w.unit(1) ? w.unit(1)->x : 0) / 16;
-                int sz = int(w.unit(1) ? w.unit(1)->z : 0) / 16;
+                int sx = int(w.unit(1) ? w.unit(1)->x.toFloat() : 0) / 16;
+                int sz = int(w.unit(1) ? w.unit(1)->z.toFloat() : 0) / 16;
                 int bx = -1, bz = -1;
                 for (int r = 0; r < 60 && bx < 0; ++r)
                     for (int j = -r; j <= r && bx < 0; ++j)

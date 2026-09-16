@@ -809,7 +809,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         // isStructure (maxVel <= 0), not canMove: see the note in World::startBuild --
         // two of the four walls set canmove=1 and would otherwise block nothing.
         if (!u.type || !u.type->isStructure()) continue;
-        world.blockFoot(*u.type, u.x, u.z, true);
+        world.blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), true);
     }
     return assigned;
 }
@@ -947,8 +947,8 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
         for (const auto& u : world.units()) {
             if (!u.alive() || !u.type) continue;
             if (u.player < 0 || u.player >= kMaxPlayers) continue;
-            out->slotPos[size_t(u.player)].first += u.x;
-            out->slotPos[size_t(u.player)].second += u.z;
+            out->slotPos[size_t(u.player)].first += u.x.toFloat();
+            out->slotPos[size_t(u.player)].second += u.z.toFloat();
             ++n[size_t(u.player)];
         }
         for (size_t i = 0; i < out->slotPos.size(); ++i)

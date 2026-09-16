@@ -521,7 +521,7 @@
             // working position, so step back to where the site actually goes.
             for (const auto& o : u.orders)
                 if (o.buildType)
-                    drawGhostAt(o.buildType, o.x, o.z - float(o.buildType->footZ) * 8 - 24);
+                    drawGhostAt(o.buildType, o.x.toFloat(), o.z.toFloat() - float(o.buildType->footZ) * 8 - 24);
         }
 
         // Projectiles: drawn per weapon family (only where visible).
@@ -2993,7 +2993,7 @@
                 // Route waypoints between them are the navigator's business, exactly
                 // as retail's order list held goals and not path nodes.
                 if (!o.goal) continue;
-                const float qx = o.x, qz = o.z;
+                const float qx = o.x.toFloat(), qz = o.z.toFloat();
                 const bool line = o.targetId == 0;         // attack orders: marker only
                 if (beads && line) {
                     float dx = qx - px, dz = qz - pz;

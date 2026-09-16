@@ -87,7 +87,7 @@ int ScenarioScript::countControl(World& w, int player, const UnitType* t,
     int n = 0;
     for (const auto& u : w.units())
         if (u.alive() && u.player == player && u.type == t &&
-            inRegion(w, u.x, u.z, loc)) ++n;
+            inRegion(w, u.x.toFloat(), u.z.toFloat(), loc)) ++n;
     return n;
 }
 
@@ -187,24 +187,24 @@ void ScenarioScript::runAction(World& w, int player, int group, const tak::crt::
         case 8:                                                                // Destroy X at L
             if (const UnitType* t = findType(s[0]))
                 for (auto& u : w.units())
-                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x, u.z, s[1]))
+                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x.toFloat(), u.z.toFloat(), s[1]))
                         u.hp = 0;
             break;
         case 9:                                                                // I own all X at L
             if (const UnitType* t = findType(s[0]))
                 for (auto& u : w.units())
-                    if (u.alive() && u.type == t && inRegion(w, u.x, u.z, s[1])) u.player = player;
+                    if (u.alive() && u.type == t && inRegion(w, u.x.toFloat(), u.z.toFloat(), s[1])) u.player = player;
             break;
         case 10:                                                               // Heal X by v at L
             if (const UnitType* t = findType(s[0]))
                 for (auto& u : w.units())
-                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x, u.z, s[2]))
+                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x.toFloat(), u.z.toFloat(), s[2]))
                         u.hp = std::min(u.type->maxHp, u.hp + u.type->maxHp * float(toInt(s[1])) / 100.0f);
             break;
         case 11:                                                               // Damage X by v at L
             if (const UnitType* t = findType(s[0]))
                 for (auto& u : w.units())
-                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x, u.z, s[2]))
+                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x.toFloat(), u.z.toFloat(), s[2]))
                         u.hp = std::max(0.0f, u.hp - u.type->maxHp * float(toInt(s[1])) / 100.0f);
             break;
         case 12: showClock_ = true; break;                                     // Display gameclock
@@ -214,7 +214,7 @@ void ScenarioScript::runAction(World& w, int player, int group, const tak::crt::
             if (const UnitType* t = findType(s[0])) {
                 float dx, dz; regionCenter(s[2], dx, dz);
                 for (auto& u : w.units())
-                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x, u.z, s[1]))
+                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x.toFloat(), u.z.toFloat(), s[1]))
                         w.order(u.id, dx, dz, false);
             }
             break;

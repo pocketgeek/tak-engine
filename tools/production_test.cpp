@@ -90,7 +90,7 @@ static void outputDoesNotJam() {
     // moved is one pushing at something it will never get past.
     std::vector<std::pair<int, std::pair<float, float>>> was;
     for (const auto& u : w.units())
-        if (u.alive() && u.type && !u.type->isStructure()) was.push_back({u.id, {u.x, u.z}});
+        if (u.alive() && u.type && !u.type->isStructure()) was.push_back({u.id, {u.x.toFloat(), u.z.toFloat()}});
     run(w, 10.0f);
 
     int total = 0, stuck = 0;
@@ -100,7 +100,7 @@ static void outputDoesNotJam() {
         if (u.orders.empty()) continue;
         for (auto& [id, p] : was)
             if (id == u.id) {
-                const float dx = u.x - p.first, dz = u.z - p.second;
+                const float dx = u.x.toFloat() - p.first, dz = u.z.toFloat() - p.second;
                 if (std::sqrt(dx * dx + dz * dz) < 8.0f) ++stuck;
                 break;
             }
@@ -121,7 +121,7 @@ static void outputDoesNotJam() {
             const float need = (float(std::max(live[a]->type->footX, live[a]->type->footZ)) +
                                 float(std::max(live[b]->type->footX, live[b]->type->footZ)))
                                * 8.0f * 0.5f;
-            const float dx = live[a]->x - live[b]->x, dz = live[a]->z - live[b]->z;
+            const float dx = live[a]->x.toFloat() - live[b]->x.toFloat(), dz = live[a]->z.toFloat() - live[b]->z.toFloat();
             if (std::sqrt(dx * dx + dz * dz) < need * 0.6f) ++overlaps;
         }
     check(overlaps == 0, "and no two of them are standing inside each other",
@@ -165,7 +165,7 @@ static void rallyIsAdopted() {
     for (const auto& u : w.units()) {
         if (!u.alive() || !u.type || u.type->isStructure()) continue;
         ++n;
-        const float dx = u.x - 1600.0f, dz = u.z - 200.0f;
+        const float dx = u.x.toFloat() - 1600.0f, dz = u.z.toFloat() - 200.0f;
         if (std::sqrt(dx * dx + dz * dz) < 220.0f) ++arrived;
     }
     check(n >= 5, "the units were produced", std::to_string(n));
@@ -193,7 +193,7 @@ static void rallyReplaces() {
     for (const auto& u : w.units()) {
         if (!u.alive() || !u.type || u.type->isStructure()) continue;
         ++n;
-        const float dx = u.x - 300.0f, dz = u.z - 1400.0f;
+        const float dx = u.x.toFloat() - 300.0f, dz = u.z.toFloat() - 1400.0f;
         if (std::sqrt(dx * dx + dz * dz) < 220.0f) ++arrived;
     }
     check(n > 0 && arrived == n, "and the output follows the NEW plan",

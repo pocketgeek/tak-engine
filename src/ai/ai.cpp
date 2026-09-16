@@ -251,7 +251,7 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
             // ring the base, keeping the Monarch near home instead of trekking across
             // the map (where losing it can lose the game). Other builders build where
             // they stand.
-            float ox = p.x, oz = p.z;
+            float ox = p.x.toFloat(), oz = p.z.toFloat();
             if (p.type->commander) { auto h = homeOf(world); ox = h.first; oz = h.second; }
             float x, z;
             if (placeSite(world, pick, ox, oz, x, z)) {
@@ -271,7 +271,7 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
     } else if (p.type->isBuilder) {             // mobile builder conjures mobile
         for (float r = 40; r < 170; r += 20)
             for (float a = 0; a < 6.28f; a += 0.6f) {
-                float x = p.x + detmath::cos(a) * r, z = p.z + detmath::sin(a) * r;
+                float x = p.x.toFloat() + detmath::cos(a) * r, z = p.z.toFloat() + detmath::sin(a) * r;
                 if (world.canPlace(pick, x, z)) {
                     emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                     return true;
@@ -281,7 +281,7 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
         if (kPickLog)
             std::fprintf(stderr, "    NO SPOT: %s#%d at (%.0f,%.0f) cannot place %s "
                                  "anywhere in r=40..170\n",
-                         p.type->id.c_str(), p.id, p.x, p.z, pick->id.c_str());
+                         p.type->id.c_str(), p.id, p.x.toFloat(), p.z.toFloat(), pick->id.c_str());
     }
     return false;
 }
@@ -323,7 +323,7 @@ bool Controller::nearestVisibleEnemy(const tak::sim::World& world, float cx, flo
         if (u.alive() && u.player == player_ && u.type && !u.embarked() &&
             !u.underConstruction) {   // a half-built unit has no eyes yet
             float s = std::max(u.type->sight, u.type->radar);
-            eyes.push_back({u.x, u.z, s * s});
+            eyes.push_back({u.x.toFloat(), u.z.toFloat(), s * s});
         }
     if (eyes.empty()) return false;
     std::vector<std::pair<float, std::pair<float, float>>> vis;
@@ -332,12 +332,12 @@ bool Controller::nearestVisibleEnemy(const tak::sim::World& world, float cx, flo
             continue;
         bool seen = false;
         for (const Eye& eye : eyes) {
-            float dx = e.x - eye.x, dz = e.z - eye.z;
+            float dx = e.x.toFloat() - eye.x, dz = e.z.toFloat() - eye.z;
             if (dx * dx + dz * dz <= eye.r2) { seen = true; break; }
         }
         if (!seen) continue;   // fogged: we haven't spotted this one
-        float dx = e.x - cx, dz = e.z - cz;
-        vis.push_back({dx * dx + dz * dz, {e.x, e.z}});
+        float dx = e.x.toFloat() - cx, dz = e.z.toFloat() - cz;
+        vis.push_back({dx * dx + dz * dz, {e.x.toFloat(), e.z.toFloat()}});
     }
     if (vis.empty()) return false;
     std::sort(vis.begin(), vis.end());
@@ -376,8 +376,8 @@ std::pair<float, float> Controller::homeOf(const tak::sim::World& world) const {
     float kx = 0, kz = 0; bool haveKing = false;
     for (const auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type) continue;
-        if (u.type->isStructure()) { sx += u.x; sz += u.z; ++n; }
-        if (u.type->commander && !haveKing) { kx = u.x; kz = u.z; haveKing = true; }
+        if (u.type->isStructure()) { sx += u.x.toFloat(); sz += u.z.toFloat(); ++n; }
+        if (u.type->commander && !haveKing) { kx = u.x.toFloat(); kz = u.z.toFloat(); haveKing = true; }
     }
     if (n) return {float(sx / n), float(sz / n)};   // centroid of my buildings
     if (haveKing) return {kx, kz};                  // no buildings yet: anchor on the Monarch
@@ -394,7 +394,7 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
         if (u.alive() && u.player == player_ && u.type && !u.type->isStructure() &&
             !u.type->isBuilder && waveFree(u)) {
             idle.push_back(u.id);
-            sx += u.x; sz += u.z;
+            sx += u.x.toFloat(); sz += u.z.toFloat();
             if (!atype && !u.type->canFly) atype = u.type;
         }
     if (idle.empty()) return;
@@ -529,7 +529,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         if (commanderActed || !u.orders.empty() || u.buildSiteId != 0 || u.underConstruction)
             break;
         auto h = homeOf(world);
-        float dx = u.x - h.first, dz = u.z - h.second;
+        float dx = u.x.toFloat() - h.first, dz = u.z.toFloat() - h.second;
         constexpr float kHomeLeash = 520.0f;   // ~a third of a small map's span
         if (dx * dx + dz * dz > kHomeLeash * kHomeLeash)
             emit(sink, tak::net::Cmd::Move, u.id, "", h.first, h.second);

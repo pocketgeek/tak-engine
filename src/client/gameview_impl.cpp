@@ -412,7 +412,7 @@
         // Probe outward from the keep for the first legal site.
         for (float r = 90; r < 400; r += 24) {
             for (float a = 0; a < 6.28f; a += 0.5f) {
-                float x = keep->x + std::cos(a) * r, z = keep->z + std::sin(a) * r;
+                float x = keep->x.toFloat() + std::cos(a) * r, z = keep->z.toFloat() + std::sin(a) * r;
                 if (world_.canPlace(lode, x, z)) {
                     int id = world_.startBuild(builderId_, lode, x, z);
                     std::printf("testbuild: site id %d at %.0f,%.0f\n", id, x, z);
@@ -563,7 +563,7 @@
                     if (!r.armed) continue;
                     for (auto& u : world_.units()) {
                         if (!u.alive() || u.embarked() || u.player != 0) continue;
-                        int cx = int(u.x) / 16, cz = int(u.z) / 16;
+                        int cx = int(u.x.toFloat()) / 16, cz = int(u.z.toFloat()) / 16;
                         bool inside = r.rect
                             ? (cx >= r.a && cz >= r.b && cx <= r.c && cz <= r.d)
                             : ((cx - r.a) * (cx - r.a) + (cz - r.b) * (cz - r.b) <=
@@ -723,7 +723,7 @@
             s.corpseFeat = u.corpseStatue >= 0 ? u.corpseStatue
                                                : world_.corpseTypeOf(u.type);
             s.corpseStatue = u.corpseStatue >= 0;
-            s.speed = u.speed; s.justFired = u.justFired; s.justBuilt = u.justBuilt;
+            s.speed = u.speed.toFloat(); s.justFired = u.justFired; s.justBuilt = u.justBuilt;
             s.disco = world_.discoActive(u.player);
             s.headbang = world_.headbangActive(u.player);
             s.alliedToLocal = alliedToLocal(u.player);
@@ -735,12 +735,12 @@
                                  pf.units[size_t(u.id)].type == u.type)
                                     ? &pf.units[size_t(u.id)] : nullptr;
             if (u.alive() && prev &&
-                std::abs(u.x - prev->x) <= 200.0f && std::abs(u.z - prev->z) <= 200.0f) {
+                std::abs(u.x.toFloat() - prev->x) <= 200.0f && std::abs(u.z.toFloat() - prev->z) <= 200.0f) {
                 s.px = prev->x; s.pz = prev->z; s.ph = prev->heading;   // UnitR already holds radians
-                s.x = u.x; s.z = u.z; s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
+                s.x = u.x.toFloat(); s.z = u.z.toFloat(); s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
                 s.seeded = true;
             } else {
-                s.x = u.x; s.z = u.z; s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
+                s.x = u.x.toFloat(); s.z = u.z.toFloat(); s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
                 s.px = s.x; s.pz = s.z; s.ph = s.heading;
                 s.seeded = u.alive();   // dead holds its pose (never interpolated)
             }
@@ -1754,7 +1754,7 @@
                 printed += 0.5f;
                 for (auto& u : world_.units())
                     if (u.player == 0 && u.alive())
-                        std::printf("TRACE %.1f %d %.1f %.1f\n", t, u.id, u.x, u.z);
+                        std::printf("TRACE %.1f %d %.1f %.1f\n", t, u.id, u.x.toFloat(), u.z.toFloat());
             }
         }
     }
@@ -3173,7 +3173,7 @@
                 float bestD = 1e18f;
                 for (auto& u : world_.units()) {
                     if (!u.alive() || u.player != player) continue;
-                    float dx = u.x - wx, dz = u.z - wz;
+                    float dx = u.x.toFloat() - wx, dz = u.z.toFloat() - wz;
                     if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; best = u.id; }
                 }
                 return best;
@@ -3200,7 +3200,7 @@
                 int n = 0;
                 for (auto& o : world_.units())
                     if (o.alive() && o.player == u->player && o.id != u->id && o.type &&
-                        o.type->canMove) { bx += o.x; bz += o.z; ++n; }
+                        o.type->canMove) { bx += o.x.toFloat(); bz += o.z.toFloat(); ++n; }
                 if (n) world_.attackMove(a[0], bx / float(n), bz / float(n), false);
                 return 0;
             }

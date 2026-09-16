@@ -512,41 +512,6 @@ struct Unit {
     float repathLeft = 0;   // chase steering repath countdown
     float stuckFor = 0;     // seconds wanting to move but making no progress
     float stuckX = 0, stuckZ = 0;   // position when the stuck timer last reset
-    // Seconds this unit has been COMMANDED to move and been unable to displace at all.
-    //
-    // This is not the same thing as `speed`, and the difference matters to the
-    // pathfinder. A fully blocked mover is deliberately NOT stopped -- retail clamps its
-    // speed rather than zeroing it, so it keeps pressing and resumes the instant the way
-    // clears -- so a wedged unit carries a positive `speed` while displacing nothing.
-    // Occupancy asked `speed == 0` to decide whether a body holds a cell against a
-    // search, which meant a stationary jam read as traffic under way and searches
-    // cheerfully planned routes through the middle of it.
-    //
-    // Measured from ADVANCEMENT TOWARD THE WAYPOINT over a sliding window, not from raw
-    // displacement. A unit blocked in the direction it needs but free sideways slides
-    // along the other axis indefinitely: the mover's per-axis fallback keeps it moving,
-    // so by displacement it is making headway while it goes nowhere. Traced on two
-    // columns meeting head-on, one unit over 3600 ticks:
-    //
-    //   full move (both axes)   367
-    //   slid along X only         0
-    //   slid along Z only      3233      <- 90% of ticks
-    //   fully blocked             0      <- never once, so jamT stayed 0.00
-    //
-    // It sat at the same x for 100 seconds, 579px from a goal it pointed straight at.
-    //
-    // A SLIDING WINDOW, not a best-ever distance. "Has it beaten its closest approach"
-    // marks a unit jammed permanently once it passes that point -- arrived units
-    // included -- and a crowd of permanent obstacles makes everyone else re-plan around
-    // them continuously: on an EMPTY field that drove the search count from 410 to
-    // 168,802. "Has it closed any distance lately" answers the question and forgets.
-    //
-    // It deliberately does NOT make every moving unit an obstacle: a body still closing
-    // on its waypoint, however slowly, stays transparent to searches.
-    float jamT = 0;
-    float jamRef = 0;                 // distance to the waypoint when the window opened
-    float jamWin = 0;                 // seconds the window has been open
-    float jamRefX = 0, jamRefZ = 0;   // the waypoint that distance refers to
     // Asymmetric yield (see the yield block in the mover): >0 while this unit is standing
     // aside to let an opposing one through, counting down.
     // ...and a cooldown after one, during which it cannot be asked to yield again.
@@ -669,10 +634,10 @@ struct Unit {
     // at 10 => up to 2.0x). Scales attack up, armor up (less damage taken), and
     // reload down (faster). Verified against KINGDOMS.icd. See retail-engine-internals.
     float vetMul() const { return 1.0f + 0.10f * float(veteran); }
-    bool moving() const { return alive() && (speed > 1.0f || !orders.empty()); }
+    bool moving() const { return alive() && (speed > Fixed::fromFloat(1.0f) || !orders.empty()); }
     // Actually translating (for the walk animation), vs standing with an
     // attack/queued order.
-    bool walking() const { return alive() && speed > 3.0f; }
+    bool walking() const { return alive() && speed > Fixed::fromFloat(3.0f); }
 };
 
 // A reclaimable map feature (tree, rock, house, wreckage, …). Positions and stats
@@ -964,10 +929,6 @@ public:
     // 0x413c80): impassable below the threshold, 4 when a parked body holds the
     // cell, 6 ordinary ground, 7 road. The pathfinder scores every candidate
     // through this, so it sees exactly what the mover will.
-    // Seconds of zero displacement before a commanded mover counts as holding its
-    // cell against a search. See World::unitHoldsCell.
-    static constexpr float kJamHoldsCell = 1.5f;
-    static constexpr float kJamWindow = 1.0f;
     // How often a jammed unit LOOKS for someone to yield to. Once it is jammed, asking
     // every tick buys nothing: the yield it would issue has already been issued, and the
     // recipient carries a cooldown. The hold is 1.2s (36 ticks), so checking every 8 is

@@ -123,7 +123,7 @@
             loadScreen_->step("WAITING FOR PLAYERS", 100);
             for (auto& u : world_.units())
                 if (u.player == localPlayer_ && u.type) {
-                    mapView_.setOffset(u.x - 640 / 0.9f, u.z - 400 / 0.9f);
+                    mapView_.setOffset(u.x.toFloat() - 640 / 0.9f, u.z.toFloat() - 400 / 0.9f);
                     break;
                 }
             return;

@@ -438,7 +438,7 @@ public:
             ffaPlayers_ = n;
             for (auto& u : world_.units()) {
                 if (!u.type || u.type->canMove) continue;
-                tak::sim::blockFootprint(world_.nav(), *u.type, u.x, u.z, true);
+                tak::sim::blockFootprint(world_.nav(), *u.type, u.x.toFloat(), u.z.toFloat(), true);
             }
             return;
         }
@@ -486,7 +486,7 @@ public:
 
         for (auto& u : world_.units()) {
             if (!u.type || u.type->canMove) continue;
-            tak::sim::blockFootprint(world_.nav(), *u.type, u.x, u.z, true);
+            tak::sim::blockFootprint(world_.nav(), *u.type, u.x.toFloat(), u.z.toFloat(), true);
         }
     }
 
@@ -2193,8 +2193,8 @@ private:
     // units, buildings, AND the feature decals (mana deposits, trees) -- so a mana
     // deposit sits at the height its heightmap claims and a lodestone/units built on
     // it stack right on top instead of the decal being flat while units float above.
-    float uLiftY(const tak::sim::Unit& u) { return terrainLift(u.x, u.z); }
-    float uLiftX(const tak::sim::Unit& u) { return terrainLiftX(u.x, u.z); }
+    float uLiftY(const tak::sim::Unit& u) { return terrainLift(u.x.toFloat(), u.z.toFloat()); }
+    float uLiftX(const tak::sim::Unit& u) { return terrainLiftX(u.x.toFloat(), u.z.toFloat()); }
     // Snapshot overloads. A FLYER rides the coarse dilated datum, not the relief
     // under its nose -- see flyerGround.
     float uLiftY(const UnitR& u) {

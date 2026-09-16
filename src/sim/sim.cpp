@@ -1,5 +1,7 @@
 #include "sim/sim.h"
 
+#include <type_traits>
+
 #include "hpi/hpi.h"
 #include "sim/detmath.h"
 #include "sim/mission.h"
@@ -1202,7 +1204,7 @@ void World::requestPath(Unit& u, float x, float z) {
     if (!u.type || u.type->canFly || u.type->isStructure()) return;
     const NavGrid& g = navFor(u.type);
     if (g.empty()) return;
-    const PathCell from{int(u.x) / 16, int(u.z) / 16};
+    const PathCell from{u.x.floorInt() / 16, u.z.floorInt() / 16};
     const PathCell to{int(x) / 16, int(z) / 16};
     if (pathDist(from, to) < 3) { paths_.cancel(u.id); return; }
     paths_.request(u.id, from, to, g.width(), g.height(), x, z,
@@ -1667,7 +1669,7 @@ void World::unloadAt(int transportId, float x, float z) {
     //   3. Nothing suitable (a drop point far inland, a landlocked lake) -- no approach
     //      leg, exactly as before: sail straight at it and let the range check decide.
     //      An unreachable approach leg would be strictly worse than none.
-    const float ddx = x - t->x, ddz = z - t->z;
+    const float ddx = x - t->x.toFloat(), ddz = z - t->z.toFloat();
     const bool inRange = ddx * ddx + ddz * ddz <= kUnloadRange * kUnloadRange;
     if (!inRange) {
         float ax = 0, az = 0;
@@ -1697,7 +1699,7 @@ void World::unloadAt(int transportId, float x, float z) {
     // navFor(), so it bought nothing over the tracer that an ordinary move order on the
     // same transport already went through; findPath is gone with it. No approach leg
     // means nothing to route.
-    if (t->orders.size() > 1) requestPath(*t, t->orders.front().x, t->orders.front().z);
+    if (t->orders.size() > 1) requestPath(*t, t->orders.front().x.toFloat(), t->orders.front().z.toFloat());
 }
 
 // The nearest point the transport can actually sit in AND get to, within kUnloadRange
@@ -1725,8 +1727,8 @@ bool World::approachCell(const Unit& t, float x, float z, float& outX, float& ou
     const CompGrid* cg = components(g, foot);
     int32_t here = -1;
     if (cg && !cg->empty()) {
-        const int tx = std::clamp(int(t.x) / 16, 0, cg->w - 1);
-        const int tz = std::clamp(int(t.z) / 16, 0, cg->h - 1);
+        const int tx = std::clamp(t.x.floorInt() / 16, 0, cg->w - 1);
+        const int tz = std::clamp(t.z.floorInt() / 16, 0, cg->h - 1);
         here = cg->componentAt(tx, tz);
     }
     auto reachable = [&](int nx, int nz) {
@@ -1764,7 +1766,7 @@ void World::tickTransport(Unit& u, float dt) {
             u.orders.erase(u.orders.begin());
             return;
         }
-        float dx = t->x - u.x, dz = t->z - u.z;
+        float dx = (t->x - u.x).toFloat(), dz = (t->z - u.z).toFloat();
         o.x = t->x;
         o.z = t->z;
         // The pickup radius is the TRANSPORT's own transportdistance, not a constant.
@@ -1780,9 +1782,9 @@ void World::tickTransport(Unit& u, float dt) {
         return;
     }
     // unload: sail close to the point, then place cargo on nearby land.
-    float dx = o.x - u.x, dz = o.z - u.z;
+    float dx = (o.x - u.x).toFloat(), dz = (o.z - u.z).toFloat();
     if (dx * dx + dz * dz > kUnloadRange * kUnloadRange) return;   // keep sailing
-    int cx = int(o.x) / 16, cz = int(o.z) / 16;
+    int cx = o.x.floorInt() / 16, cz = o.z.floorInt() / 16;
     for (int id : u.cargo) {
         Unit* c = unit(id);
         if (!c) continue;
@@ -1840,14 +1842,14 @@ void World::patrol(int unitId, float x, float z) {
         // no-headway watchdog discarded the leg. Step out along the patrol line by the
         // building's half-width plus a cell, which is the direction they are coming
         // back from anyway.
-        float rx = u->x, rz = u->z;
+        float rx = u->x.toFloat(), rz = u->z.toFloat();
         {
-            const float dx = x - u->x, dz = z - u->z;
+            const float dx = x - u->x.toFloat(), dz = z - u->z.toFloat();
             const float len = detmath::len(dx, dz);
             if (len > 1.0f) {
                 const float out = float(std::max(u->type->footX, u->type->footZ)) * 8.0f + 16.0f;
-                rx = u->x + dx / len * out;
-                rz = u->z + dz / len * out;
+                rx = u->x.toFloat() + dx / len * out;
+                rz = u->z.toFloat() + dz / len * out;
             }
         }
         Order b{Fixed::fromFloat(x), Fixed::fromFloat(z), 0};   b.patrol = true; b.attackMove = true;
@@ -2106,8 +2108,8 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         HitFx hf{hx, hz, &w, primary ? primary->type : nullptr};
         if (primary) { hf.victimId = primary->id; hf.damage = w.damageVs(primary->type); }
         const Unit* from = fromId ? unit(fromId) : nullptr;
-        hf.fromX = from ? from->x : hx;
-        hf.fromZ = from ? from->z : hz;
+        hf.fromX = from ? from->x.toFloat() : hx;
+        hf.fromZ = from ? from->z.toFloat() : hz;
         hits_.push_back(hf);
     }
     // Attacker's veteran attack multiplier boosts damage dealt (retail scales the
@@ -2177,7 +2179,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                     if (kStatLog)
                         std::fprintf(stderr, "statue kill: %s %s at %.0f,%.0f\n",
                                      e.type->id.c_str(), freeze ? "frozen" : "stoned",
-                                     e.x, e.z);
+                                     e.x.toFloat(), e.z.toFloat());
                 }
             }
         }
@@ -2238,7 +2240,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         Unit& e = units_[size_t(idx)];
         if (!e.alive() || e.embarked() || !e.type || allied(e.player, fromPlayer)) return;
         if (&e == primary) return;   // already took the direct hit
-        float dx = e.x - hx, dz = e.z - hz;
+        float dx = e.x.toFloat() - hx, dz = e.z.toFloat() - hz;
         float d = std::sqrt(dx * dx + dz * dz);
         if (d >= r) return;
         float t = 1.0f - d / r;
@@ -2263,17 +2265,17 @@ static constexpr float kLeadFrac = float(0xCCCC) / 65536.0f;   // 0.799987792968
 
 static void leadAim(const Unit& shooter, const Unit& tgt, const Weapon& w,
                     float& ax, float& az) {
-    ax = tgt.x;
-    az = tgt.z;
-    if (w.noLead || w.melee || w.beam || w.projVel <= 0.0f || tgt.speed == 0.0f) return;
+    ax = tgt.x.toFloat();
+    az = tgt.z.toFloat();
+    if (w.noLead || w.melee || w.beam || w.projVel <= 0.0f || tgt.speed.toFloat() == 0.0f) return;
     // Distance is the PRE-lead one, matching retail: a single pass, no iteration.
-    float d = detmath::len(tgt.x - shooter.x, tgt.z - shooter.z);
+    float d = detmath::len((tgt.x - shooter.x).toFloat(), (tgt.z - shooter.z).toFloat());
     float t = kLeadFrac * d / w.projVel;
     // Velocity from heading x speed is exact -- it is literally what the mover
     // integrates each tick.
     const SinCos tsc = fxSinCos(tgt.heading);
-    ax += tsc.s.toFloat() * tgt.speed * t;
-    az += tsc.c.toFloat() * tgt.speed * t;
+    ax += tsc.s.toFloat() * tgt.speed.toFloat() * t;
+    az += tsc.c.toFloat() * tgt.speed.toFloat() * t;
 }
 
 void World::fire(Unit& u, Unit& target, int slot) {
@@ -2295,7 +2297,7 @@ void World::fire(Unit& u, Unit& target, int slot) {
     if (w.kind == Weapon::Kind::Remote) {
         PendingEffect e;
         e.w = &w;
-        e.x = target.x; e.z = target.z;
+        e.x = target.x.toFloat(); e.z = target.z.toFloat();
         e.player = u.player; e.fromId = u.id;
         // shotart: this spell is DELIVERED. A visible shot flies to the aim point
         // first and the channel only starts when it lands, so the Acolyte lobs its
@@ -2304,12 +2306,12 @@ void World::fire(Unit& u, Unit& target, int slot) {
         // on arrival; the PendingEffect below carries all the actual damage.
         float deliver = 0.0f;
         if (!w.shotArt.empty() && w.projVel > 0) {
-            float sdx = target.x - u.x, sdz = target.z - u.z;
+            float sdx = (target.x - u.x).toFloat(), sdz = (target.z - u.z).toFloat();
             float sdist = std::max(detmath::len(sdx, sdz), 1e-3f);
             float svel = w.projVel * kTick / 30.0f;
             deliver = sdist / svel;
             Projectile s;
-            s.x = u.x; s.z = u.z;
+            s.x = u.x.toFloat(); s.z = u.z.toFloat();
             s.vx = sdx / sdist * svel;
             s.vz = sdz / sdist * svel;
             s.wsrc = &w;
@@ -2370,12 +2372,12 @@ void World::fire(Unit& u, Unit& target, int slot) {
         // for good (a storm never re-aims), weaving as it goes, so the caster is
         // aiming a slow moving hazard rather than placing one.
         Storm s;
-        float dx = target.x - u.x, dz = target.z - u.z;
+        float dx = (target.x - u.x).toFloat(), dz = (target.z - u.z).toFloat();
         float dl = std::max(detmath::len(dx, dz), 1e-3f);
         s.dirX = dx / dl; s.dirZ = dz / dl;
         s.w = &w;
-        s.x = u.x + s.dirX * 32.0f;
-        s.z = u.z + s.dirZ * 32.0f;
+        s.x = u.x.toFloat() + s.dirX * 32.0f;
+        s.z = u.z.toFloat() + s.dirZ * 32.0f;
         s.player = u.player; s.fromId = u.id;
         s.id = ++stormSeq_;
         s.arm = w.buildUp;            // wind-up: visible and moving, but harmless
@@ -2389,7 +2391,7 @@ void World::fire(Unit& u, Unit& target, int slot) {
         // drake's Fire Breath -- a sustained flame emission, not a lobbed shot). The
         // damage lands now along the sightline; the flame stream itself is a
         // client-side visual driven by emitTime, so no traveling projectile spawns.
-        applyHit(w, target.x, target.z, u.player, u.id, &target);
+        applyHit(w, target.x.toFloat(), target.z.toFloat(), u.player, u.id, &target);
         return;
     }
     // Dropped: the bomb is RELEASED, not fired. It leaves the bomber with only the
@@ -2398,15 +2400,15 @@ void World::fire(Unit& u, Unit& target, int slot) {
     // gate in tickCombat). Detonates on landing wherever it ended up, hit or miss.
     if (w.kind == Weapon::Kind::Dropped) {
         Projectile b;
-        b.x = u.x;
-        b.z = u.z;
+        b.x = u.x.toFloat();
+        b.z = u.z.toFloat();
         // Retail solves the release velocity so the bomb arrives over the aim point
         // exactly as it finishes falling: vel = (aim - release) / fallTicks, with
         // ZERO vertical speed. weaponvelocity is never read here and neither is the
         // flyer's heading -- release point and timing do not change where the bomb
         // lands. (It LOOKS like inherited momentum only because a closing bomber is
         // already pointed at its target.)
-        float bdx = target.x - u.x, bdz = target.z - u.z;
+        float bdx = (target.x - u.x).toFloat(), bdz = (target.z - u.z).toFloat();
         b.vx = bdx / kBombFall;
         b.vz = bdz / kBombFall;
         b.damage = w.damage;
@@ -2421,14 +2423,14 @@ void World::fire(Unit& u, Unit& target, int slot) {
         return;
     }
     Projectile p;
-    p.x = u.x;
-    p.z = u.z;
+    p.x = u.x.toFloat();
+    p.z = u.z.toFloat();
     // Aim where the target WILL be, not where it is (see leadAim). The projectile
     // keeps targetId so the swept proximity test still resolves a direct hit; what
     // changes is that a shot at a runner now lands behind it and detonates there.
-    float aimX = target.x, aimZ = target.z;
+    float aimX = target.x.toFloat(), aimZ = target.z.toFloat();
     leadAim(u, target, w, aimX, aimZ);
-    float dx = aimX - u.x, dz = aimZ - u.z;
+    float dx = aimX - u.x.toFloat(), dz = aimZ - u.z.toFloat();
     float dist = std::max(std::sqrt(dx * dx + dz * dz), 1e-3f);
     float vel = w.projVel * kTick / 30.0f;   // weaponvelocity is already px/s-ish
     p.vx = dx / dist * vel;
@@ -2546,14 +2548,14 @@ void World::tickCombat(Unit& u, float dt) {
         bool ranged = u.type->maxRange() > 64.0f && !u.type->canFly;
         int uFoot = std::max(u.type->footX, u.type->footZ) / 2;
         const bool lobber = u.type->lobs();   // shoots OVER obstacles: skip the LoS gate
-        forEachNear(u.x, u.z, ar, [&](int idx) {
+        forEachNear(u.x.toFloat(), u.z.toFloat(), ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
             if (!e.alive() || e.embarked() || allied(e.player, u.player) || !e.type) return;
             if (e.underConstruction) return;   // don't auto-react to a site still conjuring
             if (!canTarget(e)) return;
-            float hx = e.x - u.homeX, hz = e.z - u.homeZ;
+            float hx = e.x.toFloat() - u.homeX, hz = e.z.toFloat() - u.homeZ;
             if (hx * hx + hz * hz > leash2) return;   // outside the leash
-            float dx = e.x - u.x, dz = e.z - u.z;
+            float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
             float d = dx * dx + dz * dz;
             // A scatter-firing unit still only considers what is in RANGE (retail
             // gathers by radius the same way), but inside that set it no longer
@@ -2561,7 +2563,7 @@ void World::tickCombat(Unit& u, float dt) {
             if (!scatter && d >= bestD) return;
             if (d >= ar * ar) return;
             if (ranged && !e.type->canFly && !lobber &&
-                !nav_.losBetween(u.x, u.z, e.x, e.z, uFoot,
+                !nav_.losBetween(u.x.toFloat(), u.z.toFloat(), e.x.toFloat(), e.z.toFloat(), uFoot,
                                  std::max(e.type->footX, e.type->footZ) / 2))
                 return;                         // no clear shot: don't acquire it
             if (scatter) {
@@ -2599,7 +2601,7 @@ void World::tickCombat(Unit& u, float dt) {
         }
         o.x = t->x;
         o.z = t->z;
-        float dx = t->x - u.x, dz = t->z - u.z;
+        float dx = (t->x - u.x).toFloat(), dz = (t->z - u.z).toFloat();
         if (dx * dx + dz * dz <= 70 * 70)
             u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
         return;   // movement walks toward o when out of reach
@@ -2621,7 +2623,7 @@ void World::tickCombat(Unit& u, float dt) {
         u.orders.erase(u.orders.begin());
         return;
     }
-    float dx = target->x - u.x, dz = target->z - u.z;
+    float dx = (target->x - u.x).toFloat(), dz = (target->z - u.z).toFloat();
     float dist = std::sqrt(dx * dx + dz * dz);
     int slot = u.type->weapons.empty()
                    ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
@@ -2674,7 +2676,7 @@ void World::tickCombat(Unit& u, float dt) {
     // out of range) stops paying for a per-tick line-of-sight cast it never uses.
     bool los = true;
     if (needLoS && dist <= reach * 0.95f)
-        los = nav_.losBetween(u.x, u.z, target->x, target->z,
+        los = nav_.losBetween(u.x.toFloat(), u.z.toFloat(), target->x.toFloat(), target->z.toFloat(),
                               std::max(u.type->footX, u.type->footZ) / 2,
                               std::max(target->type->footX, target->type->footZ) / 2);
     // A static unit cannot chase -- and neither may one whose move standing order
@@ -2706,7 +2708,7 @@ void World::tickCombat(Unit& u, float dt) {
     u.speed = fxMax(Fixed(), u.speed - Fixed::fromFloat(u.type->brake * dt));
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
     const int32_t diff = bamDiff(want, u.heading);
-    if (u.speed <= 0.0f) {
+    if (u.speed.toFloat() <= 0.0f) {
         const int32_t maxTurn = bamFromRadians(u.type->turnInPlaceRate * dt).v;
         u.heading = u.heading + Bam(std::clamp(diff, -maxTurn, maxTurn));
     }
@@ -2924,7 +2926,7 @@ Fixed World::bodyPenetration(const Unit& u, Fixed nx, Fixed nz) const {
             //
             // Ignoring EVERY mover, which is what stood here, is far looser than
             // retail and is precisely what made a de-overlap pass necessary.
-            if (o->speed > 0.0f && o->speed >= u.speed &&
+            if (o->speed.toFloat() > 0.0f && o->speed >= u.speed &&
                 std::abs(bamDiff(o->heading, u.heading)) <= kBamQuarterV)
                 continue;
             const Fixed sep = hs + Fixed::fromInt(std::max(o->type->footX, o->type->footZ) * 8);
@@ -2950,28 +2952,21 @@ Fixed World::bodyPenetration(const Unit& u, Fixed nx, Fixed nz) const {
 
 // Does this body hold its cell against a search?
 //
-// Parked is the obvious case. The other is a mover that is COMMANDED to move and cannot:
-// the mover deliberately keeps such a unit's speed positive so it resumes the instant the
-// way clears, so `speed` cannot distinguish a jam from traffic. jamT measures actual
-// displacement and does.
+// STOPPED, and nothing else -- which is retail's grade: a body that is moving at all is
+// merely expensive to the search, and only a stopped one is impassable.
 //
-// The threshold matters in both directions. Too short and a body momentarily in contact
-// with another becomes an obstacle, every route around it churns, and the crowd
-// re-plans itself into a worse jam -- which is why this deliberately does NOT treat
-// every moving unit as solid. Long enough that only a settled jam counts.
+// A jam timer used to sit here too (jamT: "has this unit actually closed any distance
+// lately"), so a unit pressing against an obstruction turned solid after 1.5s and the
+// search could route ROUND the wedge. It was our invention, not retail -- the occupancy
+// rule beside it is RE'd to an address, this had no such citation -- and it was removed
+// 2026-09-15 on that ground. Measured cost, so nobody has to re-derive it: crowdbench
+// arrival is UNCHANGED at 100% in all five scenarios; opposing columns resolve slower
+// (t50 53.5s -> 65.5s) and ask more searches (424 -> 622). The case it really propped up
+// was two columns meeting PERFECTLY head-on, which now wedges outright -- and wedging is
+// what retail does there (docs/retail-engine.md: "fluid local movement that occasionally
+// wedges"). Do not reintroduce it to make that case green.
 bool World::unitHoldsCell(const Unit& u) const {
-    // STOPPED, and nothing else. The jamT clause that used to be here made a unit that
-    // was pressing against an obstruction count as PARKED after 1.5s -- and parked is
-    // the grade the mover refuses outright. Two columns meeting head-on therefore
-    // pressed for a second and a half and then turned into walls for each other, which
-    // is a deadlock our own model manufactured: retail grades a body that is moving at
-    // all as merely expensive, and only a stopped one as impassable.
-    //
-    // The old comment argued the opposite -- that `speed` cannot tell a jam from
-    // traffic, because the mover keeps a blocked unit's speed positive so it resumes
-    // the instant the way clears. That is true and it is the POINT: retail wants such a
-    // unit to stay passable so the crowd flows through itself.
-    return u.speed == 0.0f || u.jamT >= kJamHoldsCell;
+    return u.speed == Fixed();
 }
 
 int World::cellScore(const UnitType* t, int cx, int cz, int selfId) const {
@@ -3026,7 +3021,7 @@ void World::rebuildOccupancy() {
             if (unitHoldsCell(u) != wantParked) continue;
             // Stamp the whole footprint, centre-anchored to match NavGrid::fits.
             int f = footCells(u.type);
-            int cx = int(u.x) / 16 - f / 2, cz = int(u.z) / 16 - f / 2;
+            int cx = u.x.floorInt() / 16 - f / 2, cz = u.z.floorInt() / 16 - f / 2;
             for (int j = 0; j < f; ++j)
                 for (int i = 0; i < f; ++i) {
                     int x = cx + i, z = cz + j;
@@ -3048,8 +3043,8 @@ void World::rebuildGrid() {
     for (const auto& u : units_) {
         if (!inGrid(u)) continue;
         any = true;
-        minx = std::min(minx, float(u.x)); maxx = std::max(maxx, float(u.x));
-        minz = std::min(minz, float(u.z)); maxz = std::max(maxz, float(u.z));
+        minx = std::min(minx, float(u.x.toFloat())); maxx = std::max(maxx, float(u.x.toFloat()));
+        minz = std::min(minz, float(u.z.toFloat())); maxz = std::max(maxz, float(u.z.toFloat()));
     }
     if (!any) { gW_ = gH_ = 0; return; }
     gOx_ = minx - gCell_;
@@ -3061,8 +3056,8 @@ void World::rebuildGrid() {
     for (size_t i = 0; i < units_.size(); ++i) {
         const Unit& u = units_[i];
         if (!inGrid(u)) continue;
-        int cx = std::clamp(int((u.x - gOx_) / gCell_), 0, gW_ - 1);
-        int cz = std::clamp(int((u.z - gOz_) / gCell_), 0, gH_ - 1);
+        int cx = std::clamp(int((u.x.toFloat() - gOx_) / gCell_), 0, gW_ - 1);
+        int cz = std::clamp(int((u.z.toFloat() - gOz_) / gCell_), 0, gH_ - 1);
         int c = cz * gW_ + cx;
         gNext_[i] = gHead_[size_t(c)];
         gHead_[size_t(c)] = int(i);
@@ -3089,7 +3084,7 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
         // so a second lodestone can't squeeze onto the same stone.
         for (const auto& u : units_) {
             if (!u.alive() || !u.type || !u.type->onMana) continue;
-            float dx = u.x - sx, dz = u.z - sz;
+            float dx = u.x.toFloat() - sx, dz = u.z.toFloat() - sz;
             if (dx * dx + dz * dz < 44.0f * 44.0f) return false;   // deposit taken
         }
     }
@@ -3140,7 +3135,7 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
     }
     for (const auto& u : units_) {
         if (!u.alive()) continue;
-        float dx = u.x - x, dz = u.z - z;
+        float dx = u.x.toFloat() - x, dz = u.z.toFloat() - z;
         float min = 16.0f * float(std::max(type->footX, type->footZ)) / 2 + 12;
         if (dx * dx + dz * dz < min * min) return false;
     }
@@ -3184,7 +3179,7 @@ bool World::clearableForPlacement(const UnitType* type, float x, float z,
     // doodads can't move a body, and retail refuses here too.
     for (const auto& u : units_) {
         if (!u.alive()) continue;
-        float dx = u.x - x, dz = u.z - z;
+        float dx = u.x.toFloat() - x, dz = u.z.toFloat() - z;
         float min = 16.0f * float(std::max(type->footX, type->footZ)) / 2 + 12;
         if (dx * dx + dz * dz < min * min) return false;
     }
@@ -3266,7 +3261,7 @@ void World::cancelBuilds(int builderId) {
         // it so its marker/ghost doesn't linger.
         if (site && site->underConstruction && !site->buildBegun) {
             if (site->type && site->type->isStructure()) {
-                blockFoot(*site->type, site->x, site->z, false);
+                blockFoot(*site->type, site->x.toFloat(), site->z.toFloat(), false);
             }
             site->underConstruction = false;
             site->deadFor = 1000.0f;   // fully gone (painter skips deadFor>=4)
@@ -3288,7 +3283,7 @@ void World::assist(int builderId, int siteId, bool queue) {
     // this builder's rate (buildTime / workerTime) from the site's current HP.
     b->buildSiteId = siteId;
     b->buildStuckT = 0; b->buildStuckD = 1e30f;   // fresh job: reset the reach watchdog
-    order(builderId, site->x, site->z + float(site->type->footZ) * 8 + 24, queue);
+    order(builderId, site->x.toFloat(), site->z.toFloat() + float(site->type->footZ) * 8 + 24, queue);
 }
 
 void World::addFeature(int id, float x, float z, float manaYield, float work,
@@ -3418,7 +3413,7 @@ void World::reclaim(int builderId, int featureId, bool queue) {
             return;
         int ct = c->corpseStatue >= 0 ? c->corpseStatue : corpseTypeOf(c->type);
         if (ct < 0 || !featTypes_[size_t(ct)].reclaimable) return;
-        tx = c->x; tz = c->z;
+        tx = c->x.toFloat(); tz = c->z.toFloat();
         static const bool kRcLog = std::getenv("TAK_BURNLOG") != nullptr;
         if (kRcLog)
             std::fprintf(stderr, "corpse-reclaim ORDER: b%d -> %s (%d)\n",
@@ -3464,7 +3459,7 @@ void World::tickReclaim(Unit& b, float dt) {
         // Body still mid-death-anim: stand by until it settles (statues settle
         // instantly).
         if (c->deadFor < (c->corpseStatue >= 0 ? 0.0f : 4.0f)) return;
-        float dx = c->x - b.x, dz = c->z - b.z;
+        float dx = (c->x - b.x).toFloat(), dz = (c->z - b.z).toFloat();
         float reach = 24.0f + 8.0f * float(std::max(c->type->footX, c->type->footZ)) +
                       (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
         if (dx * dx + dz * dz > reach * reach) return;   // still walking there
@@ -3483,12 +3478,12 @@ void World::tickReclaim(Unit& b, float dt) {
             c->deadFor = 1000.0f;   // consumed
             if (c->corpseBlocks) {
                 c->corpseBlocks = false;
-                blockFoot(*c->type, c->x, c->z, false);
+                blockFoot(*c->type, c->x.toFloat(), c->z.toFloat(), false);
             }
             static const bool kRecLog = std::getenv("TAK_BURNLOG") != nullptr;
             if (kRecLog)
                 std::fprintf(stderr, "corpse reclaimed: %s at %.0f,%.0f\n",
-                             c->type->id.c_str(), c->x, c->z);
+                             c->type->id.c_str(), c->x.toFloat(), c->z.toFloat());
             advance();
         }
         return;
@@ -3497,7 +3492,7 @@ void World::tickReclaim(Unit& b, float dt) {
     if (it == featureIdx_.end()) { advance(); return; }
     Feature& f = features_[it->second];
     if (!f.alive) { advance(); return; }   // someone else got it (RECLAIMFAILED)
-    float dx = f.x - b.x, dz = f.z - b.z;
+    float dx = f.x - b.x.toFloat(), dz = f.z - b.z.toFloat();
     float reach = 24.0f + 8.0f * float(std::max(f.fx, f.fz)) +
                   (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
     if (dx * dx + dz * dz > reach * reach) return;   // still walking there
@@ -3560,12 +3555,12 @@ void World::tickRepair(Unit& b, float dt) {
         endRepair();
         return;
     }
-    float dx = t->x - b.x, dz = t->z - b.z;
+    float dx = (t->x - b.x).toFloat(), dz = (t->z - b.z).toFloat();
     float half = 16.0f * float(std::max(t->type->footX, t->type->footZ)) / 2;
     float reach = std::max(half + 40.0f,
                            b.type->buildDist > 0 ? b.type->buildDist + half : 0.0f);
     if (dx * dx + dz * dz > reach * reach) {
-        if (b.orders.empty()) order(b.id, t->x, t->z, false);   // (re)walk toward it
+        if (b.orders.empty()) order(b.id, t->x.toFloat(), t->z.toFloat(), false);   // (re)walk toward it
         return;
     }
     // ...but never the REPAIR order itself: that entry is the job.
@@ -3623,7 +3618,7 @@ void World::tickConstruction(Unit& b, float dt) {
         return;
     }
     site->beingBuilt = true;   // a builder is assigned (walking or working): no decay
-    float dx = site->x - b.x, dz = site->z - b.z;
+    float dx = (site->x - b.x).toFloat(), dz = (site->z - b.z).toFloat();
     float half = 16.0f * float(std::max(site->type->footX, site->type->footZ)) / 2;
     // Reach = the builder's FBI builddistance (to the site edge) when it has one,
     // else the default footprint-derived range.
@@ -3643,7 +3638,7 @@ void World::tickConstruction(Unit& b, float dt) {
             // blocked footprint don't linger.
             if (!site->buildBegun) {
                 if (site->type && site->type->isStructure()) {
-                    blockFoot(*site->type, site->x, site->z, false);
+                    blockFoot(*site->type, site->x.toFloat(), site->z.toFloat(), false);
                 }
                 site->underConstruction = false;
                 site->deadFor = 1000.0f;
@@ -3697,7 +3692,7 @@ void World::decayConstruction(Unit& u, float dt) {
     u.hp -= rate * dt;
     if (u.hp > 0) return;
     if (u.type->isStructure()) {
-        blockFoot(*u.type, u.x, u.z, false);
+        blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
     }
     u.underConstruction = false;
     u.deadFor = 1000.0f;   // fully gone (painter skips deadFor>=4), no death anim
@@ -3775,16 +3770,16 @@ void World::tickHealAuras() {
                        (!allied(e.player, s.player)) == a.affectsEnemy;
             };
             int n = 0;
-            forEachNear(s.x, s.z, a.radius, [&](int idx) {
+            forEachNear(s.x.toFloat(), s.z.toFloat(), a.radius, [&](int idx) {
                 const Unit& e = units_[size_t(idx)];
-                float dx = e.x - s.x, dz = e.z - s.z;
+                float dx = (e.x - s.x).toFloat(), dz = (e.z - s.z).toFloat();
                 if (eligible(e, dx * dx + dz * dz)) ++n;
             });
             if (n == 0) continue;
             Player& tm = players_[size_t(s.player)];
-            forEachNear(s.x, s.z, a.radius, [&](int idx) {
+            forEachNear(s.x.toFloat(), s.z.toFloat(), a.radius, [&](int idx) {
                 Unit& e = units_[size_t(idx)];
-                float dx = e.x - s.x, dz = e.z - s.z;
+                float dx = (e.x - s.x).toFloat(), dz = (e.z - s.z).toFloat();
                 float d2 = dx * dx + dz * dz;
                 if (!eligible(e, d2)) return;
                 if (e.hp >= e.type->maxHp) return;   // retail heals only the damaged
@@ -3842,12 +3837,12 @@ void World::tickAuras(float dt) {
         for (const Aura& a : s.type->auras) {
             if (a.kind == Aura::Kind::Joy || a.radius <= 0) continue;  // morale: not modelled
             float r2 = a.radius * a.radius;
-            forEachNear(s.x, s.z, a.radius, [&](int idx) {
+            forEachNear(s.x.toFloat(), s.z.toFloat(), a.radius, [&](int idx) {
                 Unit& e = units_[size_t(idx)];
                 if (!e.alive() || e.embarked() || !e.type) return;
                 bool enemy = !allied(e.player, s.player);
                 if (enemy != a.affectsEnemy) return;   // buff friends OR debuff foes
-                float dx = e.x - s.x, dz = e.z - s.z;
+                float dx = (e.x - s.x).toFloat(), dz = (e.z - s.z).toFloat();
                 float d2 = dx * dx + dz * dz;
                 if (d2 > r2) return;
                 // Retail's falloff is edge-at-the-CENTRE, full-at-the-RIM (see the
@@ -3880,7 +3875,7 @@ void World::tickAbilities(float dt) {
         c.deadFor = 1000.0f;
         if (c.corpseBlocks) {
             c.corpseBlocks = false;
-            blockFoot(*c.type, c.x, c.z, false);
+            blockFoot(*c.type, c.x.toFloat(), c.z.toFloat(), false);
         }
     };
     struct Revive { const UnitType* type; float x, z; int player; bool animate; };
@@ -3933,7 +3928,7 @@ void World::tickAbilities(float dt) {
         if (u.reviveTarget) {
             Unit* c = unit(u.reviveTarget);
             if (!c || !isCorpse(*c)) { u.reviveTarget = 0; continue; }
-            float dx = c->x - u.x, dz = c->z - u.z;
+            float dx = (c->x - u.x).toFloat(), dz = (c->z - u.z).toFloat();
             if (dx * dx + dz * dz > kR * kR * 4) { u.reviveTarget = 0; continue; }
             bool animate = u.reviveMode == 2;
             const UnitType* out = animate ? u.type->animateType : c->type;
@@ -3944,7 +3939,7 @@ void World::tickAbilities(float dt) {
             tm.mana -= inc;
             u.reviveLeft -= dt;
             if (u.reviveLeft <= 0) {
-                revives.push_back({out, c->x, c->z, u.player, animate});
+                revives.push_back({out, c->x.toFloat(), c->z.toFloat(), u.player, animate});
                 retire(*c);
                 u.reviveTarget = 0;
             }
@@ -3956,7 +3951,7 @@ void World::tickAbilities(float dt) {
             const size_t j = size_t(ci);
             Unit& c = units_[j];
             if (j == i || !isCorpse(c)) continue;   // re-check: an earlier caster may have taken it
-            float dx = c.x - u.x, dz = c.z - u.z;
+            float dx = (c.x - u.x).toFloat(), dz = (c.z - u.z).toFloat();
             if (dx * dx + dz * dz > kR * kR) continue;
             const FeatType* cd = corpseDef(c);
             if (!cd) continue;
@@ -4108,7 +4103,7 @@ void World::visGather() {
         int rRadar = int(u.type->radar) / 16;
         int r = std::max(rSight, rRadar) + 1;
         int rRadar2 = rRadar * rRadar;
-        int cx = int(u.x) / 16, cz = int(u.z) / 16;
+        int cx = u.x.floorInt() / 16, cz = u.z.floorInt() / 16;
         bool losBlocks = !heights_.empty() && cx >= 0 && cz >= 0 && cx < hW_ && cz < hH_ &&
                          rSight > rRadar;   // only worth testing where sight exceeds radar
         uint64_t key = 0;
@@ -4251,8 +4246,8 @@ void World::summonReadyGods() {
         int n = 0;
         for (const auto& u : units_)
             if (u.alive() && u.player == int(t) && u.type && !u.underConstruction) {
-                cx += u.x;
-                cz += u.z;
+                cx += u.x.toFloat();
+                cz += u.z.toFloat();
                 ++n;
             }
         // Mark it handled either way: a player with nothing left on the map does not
@@ -4288,7 +4283,7 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
                 forEachNear(wx, wz, clr, [&](int idx) {
                     const Unit& e = units_[size_t(idx)];
                     if (!e.alive() || !e.type) return;
-                    const float dx = e.x - wx, dz = e.z - wz;
+                    const float dx = e.x.toFloat() - wx, dz = e.z.toFloat() - wz;
                     if (dx * dx + dz * dz < clr * clr) taken = true;
                 });
                 if (taken) continue;
@@ -4333,7 +4328,7 @@ void World::tickProduction(Unit& u, float dt) {
     // it to clear and then spawned there anyway, so a factory running continuously
     // stacked bodies on one another. Search for a free spot instead, and only fall
     // back to waiting when the whole neighbourhood is genuinely full.
-    const float ex = u.x, ez = u.z + float(u.type->footZ) * 8 + 20;
+    const float ex = u.x.toFloat(), ez = u.z.toFloat() + float(u.type->footZ) * 8 + 20;
     float sx = ex, sz = ez;
     const bool haveSpot = exitSpot(t, ex, ez, sx, sz);
     if (!haveSpot && u.buildProgress < total + 2.5f) {
@@ -4565,7 +4560,7 @@ void World::tick(float dt) {
                 float speed = detmath::len(p.vx, p.vz);
                 if (speed > 0.01f) {
                     float cur = detmath::atan2(p.vx, p.vz);
-                    float want = detmath::atan2(gt->x - p.x, gt->z - p.z);
+                    float want = detmath::atan2(gt->x.toFloat() - p.x, gt->z.toFloat() - p.z);
                     float d = angleDiff(want, cur);
                     float maxTurn = p.wsrc->turnRate * dt;
                     float nh;
@@ -4601,16 +4596,16 @@ void World::tick(float dt) {
             // skip past the small hit radius between ticks.
             float sx = p.x - ox, sz = p.z - oz;
             float seg = sx * sx + sz * sz;
-            float u = seg > 0 ? ((t->x - ox) * sx + (t->z - oz) * sz) / seg : 0.0f;
+            float u = seg > 0 ? ((t->x.toFloat() - ox) * sx + (t->z.toFloat() - oz) * sz) / seg : 0.0f;
             u = std::clamp(u, 0.0f, 1.0f);
             float cx = ox + u * sx, cz = oz + u * sz;
-            float dx = t->x - cx, dz = t->z - cz;
+            float dx = t->x.toFloat() - cx, dz = t->z.toFloat() - cz;
             float r = t->type ? 8.0f + 8.0f * float(std::max(t->type->footX,
                                                              t->type->footZ)) : 8.0f;
             if (dx * dx + dz * dz < r * r) {
                 // Apply the impact: direct hit + area splash (per the weapon's
                 // FBI areaofeffect), using the grid from the previous rebuild.
-                if (p.wsrc) applyHit(*p.wsrc, t->x, t->z, p.fromPlayer, p.fromId, t);
+                if (p.wsrc) applyHit(*p.wsrc, t->x.toFloat(), t->z.toFloat(), p.fromPlayer, p.fromId, t);
                 else if (!(benchmarkMode() && t->type && t->type->commander)) {
                     t->hp -= p.damage;
                     if (t->hp <= 0) {
@@ -4659,7 +4654,7 @@ void World::tick(float dt) {
             forEachNear(bp.x, bp.z, 40.0f, [&](int idx) {
                 Unit& e = units_[size_t(idx)];
                 if (!e.alive() || e.embarked() || !e.type || allied(e.player, bp.fromPlayer)) return;
-                float dx = e.x - bp.x, dz = e.z - bp.z;
+                float dx = e.x.toFloat() - bp.x, dz = e.z.toFloat() - bp.z;
                 float d = dx * dx + dz * dz;
                 if (d < bestD) { bestD = d; under = &e; }
             });
@@ -4702,12 +4697,12 @@ void World::tick(float dt) {
             //   * near the GOAL, or ordering units onto ground where anything already
             //     stands would fail to route at all, which is most move orders in a
             //     base.
-            const int ux = int(u->x) / 16, uz = int(u->z) / 16;
+            const int ux = u->x.floorInt() / 16, uz = u->z.floorInt() / 16;
             if (std::max(std::abs(cx - ux), std::abs(cz - uz)) <= kParkedFreeCells)
                 return sc;
             if (!u->orders.empty()) {
                 const Order& leg = u->orders[currentLeg(u->orders)];
-                const int gx = int(leg.x) / 16, gz = int(leg.z) / 16;
+                const int gx = leg.x.floorInt() / 16, gz = leg.z.floorInt() / 16;
                 if (std::max(std::abs(cx - gx), std::abs(cz - gz)) <= kParkedFreeCells)
                     return sc;
             }
@@ -4733,14 +4728,14 @@ void World::tick(float dt) {
             // lake); several in a row for the same unit is not.
             {
                 float routeLen = 0;
-                float px = u->x, pz = u->z;
+                float px = u->x.toFloat(), pz = u->z.toFloat();
                 for (const PathCell& c : route) {
                     const float wx = float(c.x) * 16 + 8, wz = float(c.z) * 16 + 8;
                     routeLen += std::sqrt((wx - px) * (wx - px) + (wz - pz) * (wz - pz));
                     px = wx; pz = wz;
                 }
-                const float straight = std::sqrt((gx - u->x) * (gx - u->x) +
-                                                 (gz - u->z) * (gz - u->z));
+                const float straight = std::sqrt((gx - u->x.toFloat()) * (gx - u->x.toFloat()) +
+                                                 (gz - u->z.toFloat()) * (gz - u->z.toFloat()));
                 if (straight > 160.0f && routeLen > straight * kDetourTrigger) {
                     if (++pathDetours_[unitId] >= kDetoursBeforeAStar)
                         pathUseAStar_.insert(unitId);
@@ -4785,7 +4780,7 @@ void World::tick(float dt) {
             const NavGrid& ng = navFor(u->type);
             std::vector<PathCell> pulled;
             if (!ng.empty()) {
-                PathCell at{int(u->x) / 16, int(u->z) / 16};
+                PathCell at{u->x.floorInt() / 16, u->z.floorInt() / 16};
                 // The FIRST hop is tested from the unit's EXACT position, not from its
                 // cell. lineOpen walks cell centre to cell centre, which discards where
                 // inside the cell the body actually stands -- so a unit near a cell edge
@@ -4823,7 +4818,7 @@ void World::tick(float dt) {
                     for (size_t j = scanEnd; j-- > scanFrom;)
                         if (lineOpen(u->type, unitId, at.x, at.z, route[j].x, route[j].z) &&
                             (!firstHop ||
-                             ng.segmentFits(u->x, u->z, float(route[j].x) * 16 + 8,
+                             ng.segmentFits(u->x.toFloat(), u->z.toFloat(), float(route[j].x) * 16 + 8,
                                             float(route[j].z) * 16 + 8, footC))) {
                             take = j;
                             found = true;
@@ -4861,7 +4856,7 @@ void World::tick(float dt) {
                         for (size_t j = nearEnd; j-- > from;)
                             if (lineOpen(u->type, unitId, at.x, at.z, route[j].x, route[j].z) &&
                                 (!firstHop ||
-                                 ng.segmentFits(u->x, u->z, float(route[j].x) * 16 + 8,
+                                 ng.segmentFits(u->x.toFloat(), u->z.toFloat(), float(route[j].x) * 16 + 8,
                                                 float(route[j].z) * 16 + 8, footC))) {
                                 take = j;
                                 found = true;
@@ -4972,7 +4967,7 @@ void World::tick(float dt) {
             // dispersed yet, which is the ordinary case -- burned the single retry
             // without an order ever being issued. "One more look" became "one more
             // check". Wait another interval instead; kAbandonExpiry bounds the waiting.
-            if (!pathExists(u.type, rec.x, rec.z, u.x, u.z)) {
+            if (!pathExists(u.type, rec.x, rec.z, u.x.toFloat(), u.z.toFloat())) {
                 rec.probeAt = tickCounter_;   // wait again -- but the EXPIRY still runs
                 continue;
             }
@@ -5013,7 +5008,7 @@ void World::tick(float dt) {
             // follows what it got, asks again from further along, and chains its
             // way there. Skipping progressing units to save budget dropped a
             // journey from 97% of the way to 53%.
-            requestPath(u, leg.x, leg.z);
+            requestPath(u, leg.x.toFloat(), leg.z.toFloat());
         }
     }
 
@@ -5051,7 +5046,7 @@ void World::tick(float dt) {
     for (const auto& u : units_)
         if (u.alive() && u.type && u.squad < 0)
             if (FormAgg* f = formOf(u)) {
-                f->sx += u.x; f->sz += u.z; ++f->n;
+                f->sx += u.x.toFloat(); f->sz += u.z.toFloat(); ++f->n;
                 f->slowest = std::min(f->slowest, u.type->maxVel);
             }
     for (auto& u : units_) {
@@ -5060,7 +5055,7 @@ void World::tick(float dt) {
         FormAgg* f = formOf(u);
         if (!f || f->n <= 1) continue;
         float cx = float(f->sx / f->n), cz = float(f->sz / f->n);
-        if (detmath::len(u.x - cx, u.z - cz) > kFormRejoin) order(u.id, cx, cz, false);
+        if (detmath::len(u.x.toFloat() - cx, u.z.toFloat() - cz) > kFormRejoin) order(u.id, cx, cz, false);
     }
 
     for (auto& u : units_) {
@@ -5074,12 +5069,12 @@ void World::tick(float dt) {
             if (u.deadFor >= 4.0f && u.deadFor - dt < 4.0f &&
                 u.deadFor < u.corpseUntil &&
                 (u.type->corpseAdjX != 0 || u.type->corpseAdjZ != 0)) {
-                if (u.corpseBlocks) blockFoot(*u.type, u.x, u.z, false);
-                u.x = Fixed::fromFloat(std::clamp(u.x + float(u.type->corpseAdjX) * 16.0f,
+                if (u.corpseBlocks) blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
+                u.x = Fixed::fromFloat(std::clamp(u.x.toFloat() + float(u.type->corpseAdjX) * 16.0f,
                                  8.0f, float(terW_) * 16.0f - 8.0f));
-                u.z = Fixed::fromFloat(std::clamp(u.z + float(u.type->corpseAdjZ) * 16.0f,
+                u.z = Fixed::fromFloat(std::clamp(u.z.toFloat() + float(u.type->corpseAdjZ) * 16.0f,
                                  8.0f, float(terH_) * 16.0f - 8.0f));
-                if (u.corpseBlocks) blockFoot(*u.type, u.x, u.z, true);
+                if (u.corpseBlocks) blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), true);
             }
             // The body decomposed (or was never a corpse): fully gone. Records
             // explicitly retired at 1000 stay put.
@@ -5087,7 +5082,7 @@ void World::tick(float dt) {
                 u.deadFor = 1000.0f;
                 if (u.corpseBlocks) {   // blocking wreck finally clears the ground
                     u.corpseBlocks = false;
-                    blockFoot(*u.type, u.x, u.z, false);
+                    blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
                 }
             }
             continue;
@@ -5125,7 +5120,7 @@ void World::tick(float dt) {
             // over units_ -- draining after the loop keeps that safe and keeps the
             // order deterministic (sweep order, which is id order).
             if (u.type->hasExplodeAs)
-                deathBlasts_.push_back({&u.type->explodeAs, u.x, u.z, u.player, u.id});
+                deathBlasts_.push_back({&u.type->explodeAs, u.x.toFloat(), u.z.toFloat(), u.player, u.id});
             // Corpse window: the body lies reclaimable (and, if its corpse def
             // says so, resurrectable) until decomposetime runs out. Gibbed
             // (overkill >= maxHp -- placeholder severity rule pending the icd
@@ -5161,7 +5156,7 @@ void World::tick(float dt) {
                 if (u.deathType == Unit::kDeathSelfDestruct && u.corpseStatue < 0)
                     ct = -1;
                 if (ct >= 0 && !gib) {
-                    if (u.corpseStatue < 0 && isWater(u.x, u.z)) {
+                    if (u.corpseStatue < 0 && isWater(u.x.toFloat(), u.z.toFloat())) {
                         // Retail water graves sink and fade in seconds, never
                         // decompose, never get reclaimed (icd 0x512fbe).
                         u.corpseUntil = 4.0f + 2.5f;
@@ -5188,7 +5183,7 @@ void World::tick(float dt) {
                     if (wreckBlocks) {
                         u.corpseBlocks = true;
                     } else {
-                        blockFoot(*u.type, u.x, u.z, false);
+                        blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
                     }
                 }
             }
@@ -5237,7 +5232,7 @@ void World::tick(float dt) {
         // burned down. Flyers are over it, not in it; ships and amphibians belong
         // there, so anything that can cross water is exempt.
         if (waterDamage_ > 0 && !u.type->canFly && u.type->maxWaterDepth <= 0 &&
-            isWater(u.x, u.z)) {
+            isWater(u.x.toFloat(), u.z.toFloat())) {
             u.hp -= waterDamage_ * dt;
             if (u.hp <= 0) { u.overkill = std::max(u.overkill, -u.hp); u.deathType = 1; }
         }
@@ -5257,7 +5252,7 @@ void World::tick(float dt) {
             u.mana = std::min(u.type->maxMana, u.mana + u.type->manaRegen * dt);
         // A WANDERER keeps its spawn point as home -- that anchor is what stops its
         // stroll turning into a migration.
-        if (u.orders.empty() && !u.type->wanders) { u.homeX = u.x; u.homeZ = u.z; }
+        if (u.orders.empty() && !u.type->wanders) { u.homeX = u.x.toFloat(); u.homeZ = u.z.toFloat(); }
         // Wildlife and villagers roam. Retail gives them Standby_wander and they
         // amble; ours stood like statues on every campaign and scenario map. An idle
         // wanderer strolls every ~8 seconds, staggered by id so a herd doesn't move
@@ -5275,14 +5270,14 @@ void World::tick(float dt) {
         if (u.type->canCloak && u.cloakOn) {
             bool enemyNear = false;
             float md = std::max(u.type->minCloakDist, 1.0f);
-            forEachNear(u.x, u.z, md, [&](int idx) {
+            forEachNear(u.x.toFloat(), u.z.toFloat(), md, [&](int idx) {
                 const Unit& e = units_[size_t(idx)];
                 if (e.alive() && !e.embarked() && !allied(e.player, u.player) && e.type) {
-                    float dx = e.x - u.x, dz = e.z - u.z;
+                    float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
                     if (dx * dx + dz * dz <= md * md) enemyNear = true;
                 }
             });
-            float cost = (u.speed > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
+            float cost = (u.speed.toFloat() > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
             Player& tm = players_[size_t(u.player)];
             if (!enemyNear && tm.mana >= cost) { tm.mana -= cost; u.cloaked = true; }
             else u.cloaked = false;
@@ -5305,7 +5300,6 @@ void World::tick(float dt) {
         // several early exits -- escorting, arriving, handing an order to a builder --
         // and a value only ever cleared on the movement path would survive all of them
         // and leave a unit reading as jammed long after it stopped trying to move.
-        if (u.jamT > 0.0f) u.jamT = std::max(0.0f, u.jamT - dt * 0.25f);
         // A build order that has reached the front claims its ground NOW, before
         // the builder has walked anywhere. Waiting until arrival would leave the
         // spot unreserved for the whole walk, so two builders sent to the same
@@ -5332,7 +5326,7 @@ void World::tick(float dt) {
             !u.orders.front().load && !u.orders.front().guard && [&] {
                 Unit* t = unit(u.orders.front().targetId);
                 if (!t) return false;
-                float dx = t->x - u.x, dz = t->z - u.z;
+                float dx = (t->x - u.x).toFloat(), dz = (t->z - u.z).toFloat();
                 // Melee holds at footprint adjacency (must agree with tickCombat's
                 // gates, else a unit standing at contact is dragged back into
                 // walking by the radial test below).
@@ -5354,7 +5348,7 @@ void World::tick(float dt) {
                                t->type && !t->type->canFly && u.type->canMove &&
                                !u.type->lobs();
                 return !needLoS ||
-                       nav_.losBetween(u.x, u.z, t->x, t->z,
+                       nav_.losBetween(u.x.toFloat(), u.z.toFloat(), t->x.toFloat(), t->z.toFloat(),
                                        std::max(u.type->footX, u.type->footZ) / 2,
                                        std::max(t->type->footX, t->type->footZ) / 2);
             }();
@@ -5380,17 +5374,17 @@ void World::tick(float dt) {
             // exact distance test below is unchanged and the answer is a bool, so
             // iteration order cannot affect it.
             bool threat = false;
-            forEachNear(u.x, u.z, sight, [&](int idx) {
+            forEachNear(u.x.toFloat(), u.z.toFloat(), sight, [&](int idx) {
                 if (threat) return;
                 const Unit& e = units_[size_t(idx)];
                 if (!e.alive() || e.embarked() || !e.type || allied(e.player, u.player)) return;
-                const float dx = e.x - u.x, dz = e.z - u.z;
+                const float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
                 if (dx * dx + dz * dz <= sight * sight) threat = true;
             });
             if (threat) u.orders.erase(u.orders.begin());
         } else {
             const Order& o = u.orders.front();
-            float dx = o.x - u.x, dz = o.z - u.z;
+            float dx = (o.x - u.x).toFloat(), dz = (o.z - u.z).toFloat();
             float dist = std::sqrt(dx * dx + dz * dz);
             if (o.guard && dist <= 70.0f) continue;   // in escort position
             // A FINAL move goal completes a little short, so a crowd sharing one
@@ -5437,25 +5431,6 @@ void World::tick(float dt) {
             const int32_t maxTurn = bamFromRadians(u.type->turnRate * dt).v;
             u.heading = u.heading + Bam(std::clamp(diff, -maxTurn, maxTurn));
 
-            // PROGRESS, NOT DISPLACEMENT, over a sliding window. See Unit::jamT.
-            {
-                const float wdx = o.x - u.jamRefX, wdz = o.z - u.jamRefZ;
-                const float nd = detmath::len(o.x - u.x, o.z - u.z);
-                if (wdx * wdx + wdz * wdz > 1.0f) {     // new waypoint -> new window
-                    u.jamRefX = o.x; u.jamRefZ = o.z;
-                    u.jamRef = nd; u.jamWin = 0;
-                } else {
-                    u.jamWin += dt;
-                    if (u.jamWin >= kJamWindow) {
-                        const float gained = u.jamRef - nd;
-                        const float want = float(std::max(u.type->footX, u.type->footZ)) * 8.0f;
-                        if (gained >= want) u.jamT = 0; else u.jamT += kJamWindow;
-                        u.jamRef = nd;
-                        u.jamWin = 0;
-                    }
-                }
-            }
-
             // NO YIELD PASS. A stalled unit used to look for an opposing one in
             // front of it and make the lower id stand still while the higher passed.
             // Retail has nothing of the sort: its mover, refused, clamps the step,
@@ -5479,8 +5454,8 @@ void World::tick(float dt) {
                     // walking NOW -- against the last QUEUED leg a straggler check
                     // would compare everyone to a point nobody is heading for yet.
                     const Order& legEnd = u.orders[currentLeg(u.orders)];
-                    float gx = legEnd.x, gz = legEnd.z;
-                    float uToGoal = detmath::len(u.x - gx, u.z - gz);
+                    float gx = legEnd.x.toFloat(), gz = legEnd.z.toFloat();
+                    float uToGoal = detmath::len(u.x.toFloat() - gx, u.z.toFloat() - gz);
                     float cToGoal = detmath::len(cx - gx, cz - gz);
                     if (uToGoal <= cToGoal + kFormBehind) target = std::min(target, f->slowest);
                 }
@@ -5490,7 +5465,7 @@ void World::tick(float dt) {
             // (a road bridge over the river keeps the road bonus).
             if (!u.type->canFly) {
                 if (u.type->roadMult != 1.0f &&
-                    onRoad(u.x, u.z, u.type->footX, u.type->footZ)) {
+                    onRoad(u.x.toFloat(), u.z.toFloat(), u.type->footX, u.type->footZ)) {
                     target *= u.type->roadMult;
                     static const bool kRoadLog = std::getenv("TAK_ROADLOG") != nullptr;
                     if (kRoadLog) {
@@ -5500,7 +5475,7 @@ void World::tick(float dt) {
                                          u.type->id.c_str(), u.type->roadMult, ++logged);
                     }
                 } else if (u.type->waterMult != 1.0f && !depth_.empty()) {
-                    int cx = int(u.x) / 16, cz = int(u.z) / 16;
+                    int cx = u.x.floorInt() / 16, cz = u.z.floorInt() / 16;
                     if (cx >= 0 && cz >= 0 && cx < terW_ && cz < terH_ &&
                         depth_[size_t(cz) * terW_ + cx] > 0)
                         target *= u.type->waterMult;
@@ -5512,7 +5487,7 @@ void World::tick(float dt) {
             // sharp corner slows you down in proportion to how sharp it is, instead
             // of our old flat "over 0.8 rad, drop to 30%" cliff.
             float turnRate = std::max(u.type->turnRate, 1e-4f);
-            float arcDist = u.speed * std::abs(diff) / turnRate;
+            float arcDist = u.speed.toFloat() * std::abs(diff) / turnRate;
             if (dist < 2.0f * arcDist) target = 0;
             // Retail's stop-distance test measures to a DIFFERENT path point than the
             // arc test does, and we have only one `dist` (to the current order point).
@@ -5521,7 +5496,7 @@ void World::tick(float dt) {
             // does.
             bool last = u.orders.size() == 1;
             if (last) {
-                float stopDist = u.speed * u.speed / (2 * u.type->brake);
+                float stopDist = u.speed.toFloat() * u.speed.toFloat() / (2 * u.type->brake);
                 if (dist < stopDist) target = 0;
             }
             // The target is derived from unit data (float px/s) and the road/formation
@@ -5541,7 +5516,7 @@ void World::tick(float dt) {
             // INTEGER ALL THE WAY TO THE POSITION: a CORDIC sin/cos of a binary angle,
             // scaled by a fixed-point step. No float touches the displacement now.
             const SinCos sc = fxSinCos(u.heading);
-            const Fixed stepLen = Fixed::fromFloat(u.speed * dt);
+            const Fixed stepLen = Fixed::fromFloat(u.speed.toFloat() * dt);
             const Fixed mx = sc.s * stepLen;
             const Fixed mz = sc.c * stepLen;
             // Collide ground/water units with the nav grid so they can't walk
@@ -5594,13 +5569,10 @@ void World::tick(float dt) {
                     const Fixed kTouchSlack = Fixed::raw((Fixed::kOne * 3) / 4);
                     return bodyPenetration(u, nx, nz) <= kTouchSlack;
                 };
-                // Track whether the unit ACTUALLY displaced, not whether it was told to.
-                // Sliding along one axis still counts as headway; only the fully blocked
-                // branch below is a jam. See Unit::jamT.
                 // A SLIDE ONLY COUNTS IF IT ACTUALLY DISPLACES. Walking straight down a
                 // wall gives mx ~= 0, and the x-slide below then "succeeded" by moving
                 // the unit -0.0002px: not blocked, so the clamp/slow/repath branch never
-                // ran, jamT never rose from the mover, and the unit stood at full
+                // ran, nothing registered it as blocked, and the unit stood at full
                 // commanded speed for ever. It was invisible to every stuck-detector we
                 // have, which is precisely why a sideways teleport had to exist to
                 // rescue it.
@@ -5637,15 +5609,15 @@ void World::tick(float dt) {
                         // the last thing the player queued, and routing to it here
                         // deleted every leg in front of it.
                         const Order& legEnd = u.orders[currentLeg(u.orders)];
-                        float tx = legEnd.x, tz = legEnd.z;
+                        float tx = legEnd.x.toFloat(), tz = legEnd.z.toFloat();
                         // Check reachability BEFORE repathing: if this unit cannot get
                         // there, give up rather than queue a search that scans the
                         // whole map before failing -- hundreds of units doing that is
                         // the sim stall. pathExists answers it from the component
                         // labelling (it read the flow field's reachable set when that
                         // existed). Only repath when reachable, and within the budget.
-                        bool onWalkable = g.walkable(int(u.x) / 16, int(u.z) / 16);
-                        if (onWalkable && !pathExists(u.type, tx, tz, u.x, u.z))
+                        bool onWalkable = g.walkable(u.x.floorInt() / 16, u.z.floorInt() / 16);
+                        if (onWalkable && !pathExists(u.type, tx, tz, u.x.toFloat(), u.z.toFloat()))
                             dropLeg(u);      // give up THIS leg; honour the rest
                     }
                 }
@@ -5656,13 +5628,13 @@ void World::tick(float dt) {
             // repathed to break the deadlock. Half the units nudge each way so
             // a crowd splits around an obstacle instead of piling up.
             if (!u.type->canFly) {
-                float moved = detmath::len(u.x - u.stuckX, u.z - u.stuckZ);
+                float moved = detmath::len(u.x.toFloat() - u.stuckX, u.z.toFloat() - u.stuckZ);
                 if (moved > 11.0f) {
-                    u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
+                    u.stuckFor = 0; u.stuckX = u.x.toFloat(); u.stuckZ = u.z.toFloat();
                 } else {
                     u.stuckFor += dt;
                     if (u.stuckFor > 1.0f) {
-                        u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
+                        u.stuckFor = 0; u.stuckX = u.x.toFloat(); u.stuckZ = u.z.toFloat();
                         const NavGrid& g = navFor(u.type);
                         auto free = [&](Fixed nx, Fixed nz) {
                             return (g.empty() ||
@@ -5706,9 +5678,9 @@ void World::tick(float dt) {
                         // 8-AI server crash. A unit with no order has nothing to repath.
                         if (!g.empty() && !u.orders.empty() && u.orders.front().targetId == 0) {
                             const Order& legEnd = u.orders[currentLeg(u.orders)];
-                            float tx = legEnd.x, tz = legEnd.z;
-                            bool onWalkable = g.walkable(int(u.x) / 16, int(u.z) / 16);
-                            if (onWalkable && !pathExists(u.type, tx, tz, u.x, u.z))
+                            float tx = legEnd.x.toFloat(), tz = legEnd.z.toFloat();
+                            bool onWalkable = g.walkable(u.x.floorInt() / 16, u.z.floorInt() / 16);
+                            if (onWalkable && !pathExists(u.type, tx, tz, u.x.toFloat(), u.z.toFloat()))
                                 dropLeg(u);     // unreachable leg -> skip it, keep the queue
                         }
                     }
@@ -5735,7 +5707,7 @@ void World::tick(float dt) {
                 // this fired after 2s, routed straight to the last leg, and
                 // deleted the leg the player was watching the unit walk.
                 const Order& legEnd = u.orders[currentLeg(u.orders)];
-                float gx = legEnd.x, gz = legEnd.z;
+                float gx = legEnd.x.toFloat(), gz = legEnd.z.toFloat();
                 // LINEAR distance, not squared. This compared squared distances
                 // and subtracted 400 for "20px closer" -- which only means 20px
                 // when the goal is a few tens of pixels away. At 2900px the
@@ -5744,7 +5716,7 @@ void World::tick(float dt) {
                 // never build up at all. A unit circling between two routes
                 // 2900px from its goal therefore never gave up: measured 2426px
                 // of travel in 60s with no arrival and no stop.
-                float gd = detmath::len(u.x - gx, u.z - gz);
+                float gd = detmath::len(u.x.toFloat() - gx, u.z.toFloat() - gz);
                 if (gd < u.goalStuckD - 20.0f) {         // >20px closer -> real progress
                     u.goalStuckD = gd; u.goalStuckT = 0;
                 } else {
@@ -5803,7 +5775,7 @@ void World::tick(float dt) {
                         // is the last thing it has to do: a unit with more orders queued
                         // carries on and needs no rescue. See World::abandoned_.
                         const Order& lost = u.orders.back();
-                        const float ax = lost.x, az = lost.z;
+                        const float ax = lost.x.toFloat(), az = lost.z.toFloat();
                         const bool aAtk = lost.attackMove, aPat = lost.patrol;
                         const bool wasLast = currentLeg(u.orders) + 1 >= u.orders.size();
                         dropLeg(u);
@@ -5841,7 +5813,7 @@ void World::tick(float dt) {
                 int cx = int(x) / 16, cz = int(z) / 16;
                 return g.walkable(cx, cz) && cellFree(x, z, u.id, footCells(u.type));
             };
-            if (!landable(u.x, u.z)) {
+            if (!landable(u.x.toFloat(), u.z.toFloat())) {
                 bool found = false;
                 // The window grows exactly as retail's does: 12 draws, centre
                 // 64..240, so a flyer boxed in by its own airfield keeps widening
@@ -5850,7 +5822,7 @@ void World::tick(float dt) {
                     float half = 64.0f + float(i) * 16.0f;
                     float ox = float(int(fireRand(uint32_t(half * 2))) ) - half;
                     float oz = float(int(fireRand(uint32_t(half * 2))) ) - half;
-                    float tx = u.x + ox, tz = u.z + oz;
+                    float tx = u.x.toFloat() + ox, tz = u.z.toFloat() + oz;
                     if (tx < 16 || tz < 16 || !landable(tx, tz)) continue;
                     order(u.id, tx, tz, false);
                     found = true;
@@ -5859,8 +5831,8 @@ void World::tick(float dt) {
                     // Nowhere to land: circle the spot instead of grinding on it.
                     u.standbyTheta = uint16_t(u.standbyTheta - 21845);   // ~-120 deg
                     float a = float(u.standbyTheta) * (2.0f * 3.14159265f / 65536.0f);
-                    order(u.id, u.x - detmath::sin(a) * 160.0f,
-                          u.z - detmath::cos(a) * 160.0f, false);
+                    order(u.id, u.x.toFloat() - detmath::sin(a) * 160.0f,
+                          u.z.toFloat() - detmath::cos(a) * 160.0f, false);
                 }
             }
         }
@@ -5873,7 +5845,7 @@ void World::tick(float dt) {
         if (!b || !b->alive() || b->buildSiteId != 0 || b->orders.empty()) continue;
         const Order& o = b->orders.front();
         if (!o.buildType) continue;
-        startBuild(bid, o.buildType, o.x, o.z - float(o.buildType->footZ) * 8 - 24,
+        startBuild(bid, o.buildType, o.x.toFloat(), o.z.toFloat() - float(o.buildType->footZ) * 8 - 24,
                    Approach::None);
         // startBuild may have failed (the spot is taken now, or mana ran out). Drop
         // the order rather than parking the builder on it forever.
@@ -6057,7 +6029,20 @@ void World::hashTrace() const {
         for (int i = 0; i < 8; ++i) { h ^= (v >> (i * 8)) & 0xFF; h *= 1099511628211ULL; }
         return h;
     };
-    auto bits = [](float f) { uint32_t b; std::memcpy(&b, &f, 4); return uint64_t(b); };
+    // TEMPLATED SO A Fixed CANNOT SLIP THROUGH. These helpers take a float, and Fixed
+    // converts to one implicitly (the port scaffold in fixed.h), so folding a position
+    // silently hashed a float APPROXIMATION of it -- lossy past 256px, which means two
+    // units genuinely a fraction of a pixel apart could produce the same checksum and a
+    // real divergence would be invisible to the very check meant to catch it. That
+    // happened three times in this file before it was noticed. Now it will not compile.
+    auto bits = [](auto f) {
+        static_assert(!std::is_same_v<std::decay_t<decltype(f)>, Fixed>,
+                      "fold u.x.v -- the raw fixed-point -- not a float of it");
+        static_assert(!std::is_same_v<std::decay_t<decltype(f)>, Bam>,
+                      "fold the angle's raw int, not a float of it");
+        static_assert(std::is_floating_point_v<decltype(f)>, "bits() is for floats");
+        uint32_t b; std::memcpy(&b, &f, 4); return uint64_t(b);
+    };
     const uint64_t seed = 1469598103934665603ULL;
 
     uint64_t hUnitPos = seed, hUnitHp = seed, hUnitOrd = seed, hUnitMisc = seed;
@@ -6140,7 +6125,13 @@ uint64_t World::stateHash() const {
             h *= 1099511628211ULL;
         }
     };
-    auto mixf = [&](float f) {
+    // Same guard as bits() above, and for the same reason -- see the note there.
+    auto mixf = [&](auto f) {
+        static_assert(!std::is_same_v<std::decay_t<decltype(f)>, Fixed>,
+                      "fold the raw fixed-point (x.v), not a float of it");
+        static_assert(!std::is_same_v<std::decay_t<decltype(f)>, Bam>,
+                      "fold the angle's raw int, not a float of it");
+        static_assert(std::is_floating_point_v<decltype(f)>, "mixf() is for floats");
         uint32_t b;
         static_assert(sizeof b == sizeof f);
         std::memcpy(&b, &f, 4);

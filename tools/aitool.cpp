@@ -86,8 +86,8 @@ int main(int argc, char** argv) {
             if (t % (10 * 30) == 0) {
                 const sim::Unit* u = w.unit(id);
                 if (u) std::printf("  t=%2ds pos=(%.0f,%.0f) dist=%.0f orders=%zu\n",
-                                   t / 30, u->x, u->z,
-                                   std::sqrt((u->x - ex) * (u->x - ex) + (u->z - ez) * (u->z - ez)),
+                                   t / 30, u->x.toFloat(), u->z.toFloat(),
+                                   std::sqrt((u->x.toFloat() - ex) * (u->x.toFloat() - ex) + (u->z.toFloat() - ez) * (u->z.toFloat() - ez)),
                                    u->orders.size());
             }
         }
@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
                 comp[u.type->id]++;
                 if (u.type->canMove && !u.type->isBuilder) {
                     ++army;
-                    float d = std::sqrt((u.x - ex) * (u.x - ex) + (u.z - ez) * (u.z - ez));
+                    float d = std::sqrt((u.x.toFloat() - ex) * (u.x.toFloat() - ex) + (u.z.toFloat() - ez) * (u.z.toFloat() - ez));
                     minDist = std::min(minDist, d);
                 }
             }
@@ -161,10 +161,10 @@ int main(int argc, char** argv) {
         if (std::getenv("TAK_AI_UNITS"))
             for (const auto& u : w.units())
                 if (u.alive() && u.player == 1 && u.type && u.type->canMove && !u.type->isBuilder) {
-                    float d = std::sqrt((u.x - ex) * (u.x - ex) + (u.z - ez) * (u.z - ez));
-                    bool reach = w.pathExists(u.type, ex, ez, u.x, u.z);
+                    float d = std::sqrt((u.x.toFloat() - ex) * (u.x.toFloat() - ex) + (u.z.toFloat() - ez) * (u.z.toFloat() - ez));
+                    bool reach = w.pathExists(u.type, ex, ez, u.x.toFloat(), u.z.toFloat());
                     std::printf("      %s#%d pos=(%.0f,%.0f) dist=%.0f spd=%.1f reach-enemy=%s orders=%zu%s\n",
-                                u.type->id.c_str(), u.id, u.x, u.z, d, u.speed, reach ? "Y" : "N", u.orders.size(),
+                                u.type->id.c_str(), u.id, u.x.toFloat(), u.z.toFloat(), d, u.speed.toFloat(), reach ? "Y" : "N", u.orders.size(),
                                 u.orders.empty() ? "" : (u.orders.front().attackMove ? " [attackMove]" :
                                                          u.orders.front().targetId ? " [attack]" : " [move]"));
                 }

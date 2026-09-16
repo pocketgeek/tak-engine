@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
             int bro = findType(w3, "arabroad");
             float x0 = 0, z0 = 0;
             size_t program = 0;
-            if (auto* b = w3.unit(bro)) { x0 = b->x; z0 = b->z; program = b->orders.size(); }
+            if (auto* b = w3.unit(bro)) { x0 = b->x.toFloat(); z0 = b->z.toFloat(); program = b->orders.size(); }
             // 4s hold (should barely move) then a march that oscillates around the spawn.
             // Track the farthest it gets, its displacement mid-wait, and how many of the
             // queued orders (w/m/w/m/a) it consumes -- proof the sequence executes.
@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 360; ++i) {
                 w3.tick(1.0f / 30.0f);
                 if (auto* b = w3.unit(bro)) {
-                    float d = std::sqrt((b->x - x0) * (b->x - x0) + (b->z - z0) * (b->z - z0));
+                    float d = std::sqrt((b->x.toFloat() - x0) * (b->x.toFloat() - x0) + (b->z.toFloat() - z0) * (b->z.toFloat() - z0));
                     if (i == 90) dAtWait = d;   // ~3s in, still inside the 4s wait
                     if (d > maxD) maxD = d;
                 }

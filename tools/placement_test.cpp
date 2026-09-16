@@ -64,7 +64,7 @@ bool standsLegally(const sim::World& w, const sim::Unit& u) {
     const sim::NavGrid& g = w.navFor(u.type);
     if (g.empty()) return true;
     const int foot = std::clamp(std::max(u.type->footX, u.type->footZ), 1, 15);
-    return g.fits(int(u.x) / 16, int(u.z) / 16, foot);
+    return g.fits(int(u.x.toFloat()) / 16, int(u.z.toFloat()) / 16, foot);
 }
 
 void runCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Case& c) {
@@ -96,7 +96,7 @@ void runCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Case& c) {
             ++badMonarch;
         if (bad <= 3)
             std::printf("      %s at %.0f,%.0f does not fit its cell\n",
-                        u.type->id.c_str(), u.x, u.z);
+                        u.type->id.c_str(), u.x.toFloat(), u.z.toFloat());
     }
     std::printf("  %-24s %4d units, %d unplaceable%s\n", c.name, total, bad,
                 badMonarch ? "  (INCLUDING A MONARCH)" : "");

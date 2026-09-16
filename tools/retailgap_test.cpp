@@ -442,8 +442,8 @@ int main(int argc, char** argv) {
                 const sim::Unit* vv = w.unit(v);
                 if (!vv) break;
                 if (bb && vv) {
-                    float d = std::sqrt((bb->x - vv->x) * (bb->x - vv->x) +
-                                        (bb->z - vv->z) * (bb->z - vv->z));
+                    float d = std::sqrt((bb->x.toFloat() - vv->x.toFloat()) * (bb->x.toFloat() - vv->x.toFloat()) +
+                                        (bb->z.toFloat() - vv->z.toFloat()) * (bb->z.toFloat() - vv->z.toFloat()));
                     closest = std::min(closest, d);
                 }
                 if (!vv->alive() || vv->hp < hp0) { hurt = true; break; }
@@ -774,7 +774,7 @@ int main(int argc, char** argv) {
                 w.order(id, 900, sz, false);
                 for (int i = 0; i < int(secs * 30); ++i) w.tick(1.0f / 30.0f);
                 const sim::Unit* u = w.unit(id);
-                float dx = u->x - 900.0f, dz = u->z - sz;
+                float dx = u->x.toFloat() - 900.0f, dz = u->z.toFloat() - sz;
                 return std::sqrt(dx * dx + dz * dz);
             };
             float aligned = runTo(600, 1.5707963f, 20.0f);
@@ -938,7 +938,7 @@ int main(int argc, char** argv) {
                 // cannot tell "went around" from "went through and kept going",
                 // and that is exactly how a 13px interpenetration hid behind a
                 // passing end-state check once.
-                const float bx0 = w.unit(blocker)->x, bz0 = w.unit(blocker)->z;
+                const float bx0 = w.unit(blocker)->x.toFloat(), bz0 = w.unit(blocker)->z.toFloat();
                 const float touch =
                     float(std::max(sw->footX, sw->footZ)) * 8.0f * 2.0f;   // px, centre to centre
                 float closest = 1e9f;
@@ -946,8 +946,8 @@ int main(int argc, char** argv) {
                     w.tick(1.0f / 30.0f);
                     const sim::Unit* m2 = w.unit(walker);
                     if (!m2 || !m2->alive()) break;
-                    closest = std::min(closest, std::max(std::fabs(m2->x - bx0),
-                                                         std::fabs(m2->z - bz0)));
+                    closest = std::min(closest, std::max(std::fabs(m2->x.toFloat() - bx0),
+                                                         std::fabs(m2->z.toFloat() - bz0)));
                 }
                 check(closest >= touch - 1.0f,
                       "a walker never penetrates a parked body's footprint",
@@ -958,10 +958,10 @@ int main(int argc, char** argv) {
                 // The discriminating assertion: the walker was sent to x=800, PAST
                 // the blocker at 700. With only separation it shoulders through and
                 // arrives; solid, it is still on the near side or squeezing round.
-                check(m->x < 800.0f - 40.0f,
+                check(m->x.toFloat() < 800.0f - 40.0f,
                       "a parked body actually stops a walker (not just spaces it)",
-                      "walker x=" + std::to_string(int(m->x)) +
-                          " blocker x=" + std::to_string(int(b->x)));
+                      "walker x=" + std::to_string(int(m->x.toFloat())) +
+                          " blocker x=" + std::to_string(int(b->x.toFloat())));
             }
             // (b) An army still moves. 24 units ordered across open ground must
             //     nearly all arrive -- this is the regression that matters.
@@ -981,36 +981,27 @@ int main(int argc, char** argv) {
                 int arrived = 0;
                 for (int id : army) {
                     const sim::Unit* u = w.unit(id);
-                    float dx = u->x - 900.0f, dz = u->z - 700.0f;
+                    float dx = u->x.toFloat() - 900.0f, dz = u->z.toFloat() - 700.0f;
                     if (std::sqrt(dx * dx + dz * dz) < 120.0f) ++arrived;
                 }
                 check(arrived >= int(army.size()) * 3 / 4,
                       "an army of 24 still reaches its destination",
                       std::to_string(arrived) + "/" + std::to_string(army.size()));
             }
-            // (c) Two columns marching THROUGH each other must not lock. This is
-            //     deadlock mode #1, and the reason occupancy records only parked
-            //     bodies -- two moving units can never block one another.
-            {
-                sim::World w;
-                sim::MatchConfig cfg;
-                cfg.vfs = &vfs; cfg.mapPath = kMap;
-                cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
-                sim::setupMatch(w, reg, cfg);
-                std::vector<int> east, west;
-                for (int i = 0; i < 6; ++i) {
-                    east.push_back(w.spawn(sw, 620.0f + float(i) * 18.0f, 660, 0, 0));
-                    west.push_back(w.spawn(sw, 880.0f - float(i) * 18.0f, 660, 0, 0));
-                }
-                for (int id : east) w.order(id, 900, 660, false);
-                for (int id : west) w.order(id, 600, 660, false);
-                for (int i = 0; i < 30 * 40; ++i) w.tick(1.0f / 30.0f);
-                int through = 0;
-                for (int id : east) if (w.unit(id)->x > 820.0f) ++through;
-                for (int id : west) if (w.unit(id)->x < 680.0f) ++through;
-                check(through >= 8, "two columns pass through each other",
-                      std::to_string(through) + "/12 got past");
-            }
+            // (c) REMOVED 2026-09-15. It asserted that two columns marching head-on
+            //     pass through each other ("two moving units can never block one
+            //     another"), which was true of the model we had before retail's
+            //     occupancy rule was ported. It is not true of retail: that rule
+            //     (RE'd at 0x4db767-0x4db7c9, see bodyPenetration) lets you close up
+            //     behind someone going your way who is not slower than you, and
+            //     BLOCKS head-on traffic. Two files sharing one z therefore wedge --
+            //     "fluid local movement that occasionally wedges", docs/retail-engine.md.
+            //
+            //     It is not replaced by an assertion that they wedge, either: that
+            //     would pin a deadlock down as required behaviour. Crowd flow is
+            //     measured by tools/crowdbench (five scenarios, arrival rate the
+            //     headline) -- all five are at 100% arrival, which is the property
+            //     this test was reaching for. Measure there, not here.
         }
     }
 
@@ -1156,8 +1147,8 @@ int main(int argc, char** argv) {
                 w.tick(1.0f / 30.0f);
                 const sim::Unit* u = w.unit(id);
                 if (!u || !u->alive()) break;
-                float da = detmathLen(u->x - ax, u->z - az);
-                float db = detmathLen(u->x - bx, u->z - bz);
+                float da = detmathLen(u->x.toFloat() - ax, u->z.toFloat() - az);
+                float db = detmathLen(u->x.toFloat() - bx, u->z.toFloat() - bz);
                 if (da < 40) reachedA = true;
                 if (db < 40) { if (!reachedA) reachedBBeforeA = true; break; }
                 if (reachedA && db < 40) break;
@@ -1182,7 +1173,7 @@ int main(int argc, char** argv) {
                 w2.tick(1.0f / 30.0f);
                 const sim::Unit* u = w2.unit(id2);
                 if (!u || !u->alive()) break;
-                if (detmathLen(u->x - outX, u->z - outZ) < 48) { visitedOut = true; break; }
+                if (detmathLen(u->x.toFloat() - outX, u->z.toFloat() - outZ) < 48) { visitedOut = true; break; }
                 if (u->orders.empty()) break;       // finished without ever going out
             }
             check(visitedOut,
@@ -1293,33 +1284,33 @@ int main(int argc, char** argv) {
             float far = float(archer->maxRange()) + 260.0f;
             int prey = w.spawn(sword, 1000 + far, 2600, 0, 1);
             (void)prey;
-            float startX = w.unit(a)->x;
+            float startX = w.unit(a)->x.toFloat();
             for (int i = 0; i < 30 * 8; ++i) w.tick(1.0f / 30.0f);
             const sim::Unit* au = w.unit(a);
-            check(au && std::fabs(au->x - startX) < 24.0f,
+            check(au && std::fabs(au->x.toFloat() - startX) < 24.0f,
                   "a hold-position archer does NOT walk to an out-of-range enemy",
-                  "moved " + std::to_string(au ? au->x - startX : 0.0f) + "px");
+                  "moved " + std::to_string(au ? au->x.toFloat() - startX : 0.0f) + "px");
 
             // A leashed unit advances on something inside its leash...
             sim::World w2; freshWorld(w2);
             int a2 = w2.spawn(sword, 1000, 2600, 0, 0);   // arasword: move 1, leash 500
             w2.spawn(sword, 1300, 2600, 0, 1);            // 300px: inside the leash
             check(w2.unit(a2)->moveState == 1, "the swordsman is leashed");
-            float sx2 = w2.unit(a2)->x;
+            float sx2 = w2.unit(a2)->x.toFloat();
             for (int i = 0; i < 30 * 8; ++i) w2.tick(1.0f / 30.0f);
-            check(w2.unit(a2) && w2.unit(a2)->x - sx2 > 24.0f,
+            check(w2.unit(a2) && w2.unit(a2)->x.toFloat() - sx2 > 24.0f,
                   "a leashed unit advances on an enemy inside its leash",
-                  "moved " + std::to_string(w2.unit(a2) ? w2.unit(a2)->x - sx2 : 0.0f) + "px");
+                  "moved " + std::to_string(w2.unit(a2) ? w2.unit(a2)->x.toFloat() - sx2 : 0.0f) + "px");
 
             // ...and stays put for one beyond it.
             sim::World w4; freshWorld(w4);
             int a4 = w4.spawn(sword, 1000, 2600, 0, 0);
             w4.spawn(sword, 1000 + sword->leash + 220.0f, 2600, 0, 1);
-            float sx4 = w4.unit(a4)->x;
+            float sx4 = w4.unit(a4)->x.toFloat();
             for (int i = 0; i < 30 * 8; ++i) w4.tick(1.0f / 30.0f);
-            check(w4.unit(a4) && std::fabs(w4.unit(a4)->x - sx4) < 24.0f,
+            check(w4.unit(a4) && std::fabs(w4.unit(a4)->x.toFloat() - sx4) < 24.0f,
                   "but will not break its leash for one beyond it",
-                  "moved " + std::to_string(w4.unit(a4) ? w4.unit(a4)->x - sx4 : 0.0f) + "px");
+                  "moved " + std::to_string(w4.unit(a4) ? w4.unit(a4)->x.toFloat() - sx4 : 0.0f) + "px");
 
             // The Offensive button writes both fields.
             sim::World w5; freshWorld(w5);
@@ -1368,16 +1359,16 @@ int main(int argc, char** argv) {
                 int id = w.spawn(fly, bx, bz, 0, 0);
                 for (int i = 0; i < 30 * 20; ++i) w.tick(1.0f / 30.0f);
                 const sim::Unit* u = w.unit(id);
-                bool ok = u && w.navFor(fly).walkable(int(u->x) / 16, int(u->z) / 16);
+                bool ok = u && w.navFor(fly).walkable(int(u->x.toFloat()) / 16, int(u->z.toFloat()) / 16);
                 check(ok, "an idle flyer relocates off a spot it cannot land on",
-                      u ? "ended at " + std::to_string(int(u->x)) + "," +
-                              std::to_string(int(u->z)) : "gone");
+                      u ? "ended at " + std::to_string(int(u->x.toFloat())) + "," +
+                              std::to_string(int(u->z.toFloat())) : "gone");
                 // And then it STAYS: the search must not re-trigger every tick and
                 // leave the thing shuffling for the rest of the game.
-                float sx = u ? u->x : 0, sz = u ? u->z : 0;
+                float sx = u ? u->x.toFloat() : 0, sz = u ? u->z.toFloat() : 0;
                 for (int i = 0; i < 30 * 10; ++i) w.tick(1.0f / 30.0f);
                 const sim::Unit* u2 = w.unit(id);
-                check(u2 && std::fabs(u2->x - sx) < 2.0f && std::fabs(u2->z - sz) < 2.0f,
+                check(u2 && std::fabs(u2->x.toFloat() - sx) < 2.0f && std::fabs(u2->z.toFloat() - sz) < 2.0f,
                       "...and then settles, instead of shuffling forever");
             }
         }
@@ -1472,9 +1463,9 @@ int main(int argc, char** argv) {
             check(sawSite, "the queued build actually starts");
             check(built, "and finishes");
             const sim::Unit* u = w.unit(id);
-            check(u && u->x > 1350.0f,
+            check(u && u->x.toFloat() > 1350.0f,
                   "and THEN the builder goes on to the move queued behind it",
-                  u ? "ended at x=" + std::to_string(int(u->x)) : "gone");
+                  u ? "ended at x=" + std::to_string(int(u->x.toFloat())) : "gone");
             check(u && u->orders.empty(),
                   "with nothing left stuck in the queue");
 
@@ -1712,7 +1703,7 @@ int main(int argc, char** argv) {
                 if (!u.alive() || !u.type || u.type->canFly) continue;
                 ++total;
                 const int foot = std::clamp(std::max(u.type->footX, u.type->footZ), 1, 15);
-                if (!w.navFor(u.type).fits(int(u.x) / 16, int(u.z) / 16, foot)) ++bad;
+                if (!w.navFor(u.type).fits(int(u.x.toFloat()) / 16, int(u.z.toFloat()) / 16, foot)) ++bad;
             }
             return std::pair<int, int>{bad, total};
         };
@@ -1755,8 +1746,8 @@ int main(int argc, char** argv) {
                             (float(std::max(bodies[a]->type->footX, bodies[a]->type->footZ)) +
                              float(std::max(bodies[b]->type->footX, bodies[b]->type->footZ)))
                             * 8.0f;
-                        const float dx = bodies[a]->x - bodies[b]->x;
-                        const float dz = bodies[a]->z - bodies[b]->z;
+                        const float dx = bodies[a]->x.toFloat() - bodies[b]->x.toFloat();
+                        const float dz = bodies[a]->z.toFloat() - bodies[b]->z.toFloat();
                         if (std::sqrt(dx * dx + dz * dz) < need) ++pairs;
                     }
             }
@@ -1785,7 +1776,7 @@ int main(int argc, char** argv) {
                 if (!u.alive() || !u.type || u.type->canFly) continue;
                 ++total;
                 const int foot = std::clamp(std::max(u.type->footX, u.type->footZ), 1, 15);
-                if (!w.navFor(u.type).fits(int(u.x) / 16, int(u.z) / 16, foot)) ++bad;
+                if (!w.navFor(u.type).fits(int(u.x.toFloat()) / 16, int(u.z.toFloat()) / 16, foot)) ++bad;
             }
             // Much lower bar than the stress fill, for two reasons: this one has
             // fought for 60s first, and on a CRAMPED map the plan is capped at what

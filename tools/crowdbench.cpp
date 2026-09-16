@@ -101,10 +101,10 @@ Result run(const std::string& name, World& w, std::vector<Tracked>& group, float
         g.cx = g.gx; g.cz = g.gz;         // what the order named
         if (!u->orders.empty()) {
             const Order& fin = u->orders.back();
-            g.gx = fin.x; g.gz = fin.z;   // where this member was actually sent
+            g.gx = fin.x.toFloat(); g.gz = fin.z.toFloat();   // where this member was actually sent
         }
-        g.px = u->x; g.pz = u->z;
-        g.straight = std::sqrt((g.cx - u->x) * (g.cx - u->x) + (g.cz - u->z) * (g.cz - u->z));
+        g.px = u->x.toFloat(); g.pz = u->z.toFloat();
+        g.straight = std::sqrt((g.cx - u->x.toFloat()) * (g.cx - u->x.toFloat()) + (g.cz - u->z.toFloat()) * (g.cz - u->z.toFloat()));
     }
     for (int i = 0; i < steps; ++i) {
         w.tick(dt);
@@ -112,10 +112,10 @@ Result run(const std::string& name, World& w, std::vector<Tracked>& group, float
         for (auto& g : group) {
             const Unit* u = w.unit(g.id);
             if (!u || !u->alive()) continue;
-            g.travelled += std::sqrt((u->x - g.px) * (u->x - g.px) + (u->z - g.pz) * (u->z - g.pz));
-            g.px = u->x; g.pz = u->z;
+            g.travelled += std::sqrt((u->x.toFloat() - g.px) * (u->x.toFloat() - g.px) + (u->z.toFloat() - g.pz) * (u->z.toFloat() - g.pz));
+            g.px = u->x.toFloat(); g.pz = u->z.toFloat();
             if (g.arrivedAt < 0) {
-                const float dx = u->x - g.gx, dz = u->z - g.gz;
+                const float dx = u->x.toFloat() - g.gx, dz = u->z.toFloat() - g.gz;
                 if (std::sqrt(dx * dx + dz * dz) < arriveR) g.arrivedAt = t;
             }
             // ...and, separately, whether it reached the ordered AREA. A group order is
@@ -124,7 +124,7 @@ Result run(const std::string& name, World& w, std::vector<Tracked>& group, float
             // spreading the crowd moves members away from the centre (hurting the first)
             // while giving each a precise spot it may not settle on (hurting the second).
             if (g.arrivedArea < 0) {
-                const float dx = u->x - g.cx, dz = u->z - g.cz;
+                const float dx = u->x.toFloat() - g.cx, dz = u->z.toFloat() - g.cz;
                 if (std::sqrt(dx * dx + dz * dz) < g.areaR) g.arrivedArea = t;
             }
         }
@@ -165,11 +165,11 @@ void reportStranded(const World& w, const std::vector<Tracked>& group) {
         if (g.arrivedAt >= 0) continue;
         const Unit* u = w.unit(g.id);
         if (!u || !u->alive()) { std::printf("      unit %d: dead\n", g.id); continue; }
-        const float dx = u->x - g.gx, dz = u->z - g.gz;
+        const float dx = u->x.toFloat() - g.gx, dz = u->z.toFloat() - g.gz;
         const float left = std::sqrt(dx * dx + dz * dz);
         std::printf("      unit %d: %6.0fpx short of goal, travelled %6.0f (straight %.0f), "
-                    "speed %.1f jamT %.2f orders %zu\n",
-                    g.id, left, g.travelled, g.straight, u->speed, u->jamT, u->orders.size());
+                    "speed %.1f orders %zu\n",
+                    g.id, left, g.travelled, g.straight, u->speed.toFloat(), u->orders.size());
         if (++shown >= 8) { std::printf("      ...\n"); break; }
     }
 }
