@@ -436,7 +436,33 @@
             else if (na - actualSpeedT0_ >= 500) {
                 float ips = float(int64_t(netTick_) - int64_t(actualSpeedTick0_)) * 1000.0f
                             / float(na - actualSpeedT0_);
-                actualSpeed_ = ips / 30.0f;
+                // CAPPED AT THE REQUESTED SPEED. The playout controller deliberately
+                // runs up to 1.3x to drain a deep buffer (see the clamp on `rate`
+                // above), and at the start of a game or benchmark the buffer fills
+                // ahead of playout, so it pins to exactly that -- which is why a fresh
+                // game read "1.3x" before it settled. The sim was not going faster than
+                // asked; the buffer was catching up. Reporting the transient made the
+                // readout look wrong at the one moment everybody watches it.
+                //
+                // So the ceiling is the requested speed, and the meaning is kept simple:
+                // at the requested multiplier the sim is healthy, below it the client
+                // (or the server, pacing to the slowest) cannot sustain the pace. That
+                // is the only question this row answers, and undershoot -- the half that
+                // matters -- is untouched.
+                const float reqSp = std::max(1, int(mp_->gameSpeed())) / 10.0f;
+                const float sample = std::min(ips / 30.0f, reqSp);
+                // SMOOTHED, because the raw sample is mostly quantisation noise. A ~0.5s
+                // window holds about 15 ticks at 1x, so one tick landing either side of
+                // the boundary moves the reading ~7% -- the number changed constantly
+                // while telling the reader nothing. An exponential average over roughly
+                // the last two seconds still drops promptly when a client genuinely
+                // cannot keep up, which is the only thing this readout is for.
+                //
+                // Seeded from the first sample rather than ramping up from zero, so the
+                // display is honest immediately instead of climbing for two seconds.
+                actualSpeed_ = actualSpeed_ > 0.0f
+                                   ? actualSpeed_ + (sample - actualSpeed_) * 0.25f
+                                   : sample;
                 actualSpeedT0_ = na; actualSpeedTick0_ = netTick_;
             }
         }

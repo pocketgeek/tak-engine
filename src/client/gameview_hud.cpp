@@ -472,7 +472,9 @@
             rows.push_back({"PING", b});
         }
         if (actualSpeed_ > 0) {
-            std::snprintf(b, sizeof b, "%.2fX", actualSpeed_);
+            // One decimal: the second one was never meaningful (see the smoothing note
+            // where actualSpeed_ is measured) and only made the row look busy.
+            std::snprintf(b, sizeof b, "%.1fX", actualSpeed_);
             rows.push_back({"SIM", b});
         }
 
