@@ -608,7 +608,7 @@
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         for (const auto& p : front().projectiles) {
             if (!cellVisibleR(p.x.toFloat(), p.z.toFloat())) continue;
-            float t = std::clamp(p.age / std::max(p.flight, 0.05f), 0.0f, 1.0f);
+            float t = std::clamp(float(p.age) / std::max(float(p.flight), 1.0f), 0.0f, 1.0f);
             // Flyer shots: lift the whole trajectory by the altitude interpolated
             // from the firing unit down to the target (0.8x, matching the sprite
             // lift), so a drake's breath leaves its mouth and arcs to the ground.
@@ -660,7 +660,7 @@
                                  : std::min(18.0f, p.flight * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
                 drawShotModel(p.wsrc->shotModel, p.fromPlayer, p.x.toFloat(), p.z.toFloat(),
-                              h * zm + palt, -std::atan2(p.vx, p.vz));
+                              h * zm + palt, -std::atan2(p.vx.toFloat(), p.vz.toFloat()));
                 continue;
             }
             // Authored projectile art. Retail draws most shots as a real sprite
@@ -706,7 +706,7 @@
                 float sy = (p.z.toFloat() - mapView_.offY()) * zm - 12 * zm - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm
                            - palt;
                 float len = 22.0f;
-                float bx = -p.vx, bz = -p.vz;
+                float bx = -p.vx.toFloat(), bz = -p.vz.toFloat();
                 float bl = std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
                 bx /= bl; bz /= bl;
                 float px = sx, py = sy;
@@ -722,7 +722,7 @@
             } else if (p.fx == tak::sim::WeaponFx::Fire) {
                 // Flame breath: a short stream of flickering orange/yellow puffs
                 // trailing behind the leading tip, not a single fireball.
-                float bx = -p.vx, bz = -p.vz;
+                float bx = -p.vx.toFloat(), bz = -p.vz.toFloat();
                 float bl = std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
                 bx /= bl; bz /= bl;
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
@@ -759,8 +759,9 @@
                 float sy = (p.z.toFloat() - mapView_.offY()) * zm - h * zm - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm
                            - palt;
                 SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
-                SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx * 0.035f * zm,
-                                    sy - p.vz * 0.035f * zm + (t < 0.5f ? 2.5f : -2.5f) * zm);
+                // vx/vz are px per TICK now; the trail length was tuned against px/s.
+                SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx.toFloat() * 30.0f * 0.035f * zm,
+                                    sy - p.vz.toFloat() * 30.0f * 0.035f * zm + (t < 0.5f ? 2.5f : -2.5f) * zm);
             }
         }
         {

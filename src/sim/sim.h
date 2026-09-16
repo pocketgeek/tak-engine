@@ -737,13 +737,17 @@ struct Projectile {
     // cell, i.e. 65536 per pixel (docs/retail-engine.md), and a projectile is bounded
     // by the map exactly as a unit is, so the range that rules mana out does not bite.
     Fixed x = Fixed(), z = Fixed();
-    float vx = 0, vz = 0;
+    // PER TICK, 16.16 -- retail stores weapon velocity as a fixed-point integer and
+    // renders it in px/s by scaling 30/65536 (the dump at 0x4fbf2a..0x4fbf4f:
+    // imul of the two int components, fildll, then * 0x5f2d68 == 30/65536).
+    Fixed vx = Fixed(), vz = Fixed();
     float damage = 0;
     int targetId = 0;
     int fromPlayer = 0;
-    float life = 0;        // seconds left before it fizzles
-    float age = 0;         // seconds since launch
-    float flight = 1;      // expected seconds to target (for the render arc)
+    // TICKS, like every other retail timer.
+    int32_t life = 0;      // ticks left before it fizzles
+    int32_t age = 0;       // ticks since launch
+    int32_t flight = 1;    // expected ticks to target (for the render arc)
     // Set the moment a shot registers its direct hit. `life = -1` doubles as the
     // erase predicate, and `life -= dt` runs BEFORE the hit test, so on the final
     // tick a projectile can both connect and expire -- without this flag the
@@ -1389,7 +1393,8 @@ public:
     struct Storm {
         const Weapon* w = nullptr;
         Fixed x = Fixed(), z = Fixed();   // 16.16 world units, as a unit's
-        float dirX = 0, dirZ = 1;   // FIXED launch direction: a storm never re-aims
+        // 16.16, to match the velocity it is multiplied by.
+        Fixed dirX = Fixed(), dirZ = Fixed::fromInt(1);   // FIXED launch direction
         Fixed jitX = Fixed(), jitZ = Fixed();   // per-tick wander offset, in px
         int player = 0, fromId = 0;
         int id = 0;

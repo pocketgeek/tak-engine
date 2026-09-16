@@ -2309,19 +2309,19 @@ void World::fire(Unit& u, Unit& target, int slot) {
         if (!w.shotArt.empty() && w.projVel > 0) {
             float sdx = (target.x - u.x).toFloat(), sdz = (target.z - u.z).toFloat();
             float sdist = std::max(detmath::len(sdx, sdz), 1e-3f);
-            float svel = w.projVel * kTick / 30.0f;
+            const float svel = w.projVel;            // px/s from the FBI
             deliver = sdist / svel;
             Projectile s;
             s.x = u.x; s.z = u.z;
-            s.vx = sdx / sdist * svel;
-            s.vz = sdz / sdist * svel;
+            s.vx = Fixed::fromFloat(sdx / sdist * svel / kTick);   // px per TICK
+            s.vz = Fixed::fromFloat(sdz / sdist * svel / kTick);
             s.wsrc = &w;
             s.targetId = 0;              // cosmetic: hits nothing, just flies
             s.fromPlayer = u.player;
             s.fromId = u.id;
             s.fx = w.fx;
-            s.life = deliver;
-            s.flight = deliver;
+            s.life = int32_t(deliver * kTick + 0.5f);
+            s.flight = int32_t(deliver * kTick + 0.5f);
             projectiles_.push_back(s);
         }
         switch (w.remote) {
@@ -2375,10 +2375,10 @@ void World::fire(Unit& u, Unit& target, int slot) {
         Storm s;
         float dx = (target.x - u.x).toFloat(), dz = (target.z - u.z).toFloat();
         float dl = std::max(detmath::len(dx, dz), 1e-3f);
-        s.dirX = dx / dl; s.dirZ = dz / dl;
+        s.dirX = Fixed::fromFloat(dx / dl); s.dirZ = Fixed::fromFloat(dz / dl);
         s.w = &w;
-        s.x = u.x + Fixed::fromFloat(s.dirX * 32.0f);
-        s.z = u.z + Fixed::fromFloat(s.dirZ * 32.0f);
+        s.x = u.x + s.dirX * Fixed::fromInt(32);
+        s.z = u.z + s.dirZ * Fixed::fromInt(32);
         s.player = u.player; s.fromId = u.id;
         s.id = ++stormSeq_;
         s.arm = int32_t(w.buildUp * kTick + 0.5f);   // wind-up: visible, moving, harmless
@@ -2410,16 +2410,16 @@ void World::fire(Unit& u, Unit& target, int slot) {
         // lands. (It LOOKS like inherited momentum only because a closing bomber is
         // already pointed at its target.)
         float bdx = (target.x - u.x).toFloat(), bdz = (target.z - u.z).toFloat();
-        b.vx = bdx / kBombFall;
-        b.vz = bdz / kBombFall;
+        b.vx = Fixed::fromFloat(bdx / kBombFall / kTick);   // px per TICK
+        b.vz = Fixed::fromFloat(bdz / kBombFall / kTick);
         b.damage = w.damage;
         b.wsrc = &w;
         b.targetId = target.id;
         b.fromPlayer = u.player;
         b.fromId = u.id;
         b.fx = w.fx;
-        b.life = kBombFall;      // time to fall from cruise altitude
-        b.flight = kBombFall;    // the viewer arcs it down over the same window
+        b.life = int32_t(kBombFall * kTick + 0.5f);   // ticks to fall from cruise altitude
+        b.flight = int32_t(kBombFall * kTick + 0.5f);    // the viewer arcs it down over the same window
         projectiles_.push_back(b);
         return;
     }
@@ -2433,9 +2433,9 @@ void World::fire(Unit& u, Unit& target, int slot) {
     leadAim(u, target, w, aimX, aimZ);
     float dx = aimX - u.x.toFloat(), dz = aimZ - u.z.toFloat();
     float dist = std::max(std::sqrt(dx * dx + dz * dz), 1e-3f);
-    float vel = w.projVel * kTick / 30.0f;   // weaponvelocity is already px/s-ish
-    p.vx = dx / dist * vel;
-    p.vz = dz / dist * vel;
+    const float vel = w.projVel;             // weaponvelocity, px/s
+    p.vx = Fixed::fromFloat(dx / dist * vel / kTick);   // px per TICK, as retail stores it
+    p.vz = Fixed::fromFloat(dz / dist * vel / kTick);
     p.damage = w.damage;
     p.wsrc = &w;
     p.targetId = target.id;
@@ -2452,9 +2452,10 @@ void World::fire(Unit& u, Unit& target, int slot) {
     // detonates: the old half-second of slack would put an arapult's crater ~375px
     // (23 cells) beyond where the shell was drawn landing. A GUIDED one keeps the
     // slack and is fuelled from the weapon's RANGE instead.
-    p.life = w.kind == Weapon::Kind::Guided ? (std::max(float(w.range), dist) / vel + 0.5f)
-                                            : (dist / vel);
-    p.flight = dist / vel;
+    p.life = int32_t(kTick * (w.kind == Weapon::Kind::Guided
+                                  ? (std::max(float(w.range), dist) / vel + 0.5f)
+                                  : (dist / vel)));
+    p.flight = int32_t(dist / vel * kTick + 0.5f);
     projectiles_.push_back(p);
 }
 
@@ -4565,9 +4566,9 @@ void World::tick(float dt) {
         // A homer whose target is gone just flies on straight and fizzles.
         if (p.wsrc && p.wsrc->kind == Weapon::Kind::Guided && p.wsrc->turnRate > 0) {
             if (const Unit* gt = unit(p.targetId); gt && gt->alive() && !gt->embarked()) {
-                float speed = detmath::len(p.vx, p.vz);
+                float speed = detmath::len(p.vx.toFloat(), p.vz.toFloat());
                 if (speed > 0.01f) {
-                    float cur = detmath::atan2(p.vx, p.vz);
+                    float cur = detmath::atan2(p.vx.toFloat(), p.vz.toFloat());
                     float want = detmath::atan2((gt->x - p.x).toFloat(), (gt->z - p.z).toFloat());
                     float d = angleDiff(want, cur);
                     float maxTurn = p.wsrc->turnRate * dt;
@@ -4584,16 +4585,16 @@ void World::tick(float dt) {
                     } else {
                         nh = cur + (d > 0 ? maxTurn : -maxTurn);
                     }
-                    p.vx = detmath::sin(nh) * speed;
-                    p.vz = detmath::cos(nh) * speed;
+                    p.vx = Fixed::fromFloat(detmath::sin(nh) * speed);
+                    p.vz = Fixed::fromFloat(detmath::cos(nh) * speed);
                 }
             }
         }
         const float ox = p.x.toFloat(), oz = p.z.toFloat();   // segment start (before this step)
-        p.x += Fixed::fromFloat(p.vx * dt);
-        p.z += Fixed::fromFloat(p.vz * dt);
-        p.life -= dt;
-        p.age += dt;
+        p.x += p.vx;   // px per tick already
+        p.z += p.vz;
+        --p.life;
+        ++p.age;
         Unit* t = unit(p.targetId);
         // A falling bomb is ABOVE everything until it lands, so it takes no
         // in-flight collision -- it detonates once, on the ground, below.
@@ -5917,14 +5918,14 @@ void World::tick(float dt) {
                                   * kTick + 0.5f);
             float mv = s.w->maxVariation;
             if (mv > 0) {
-                float vx = mv * std::abs(s.dirZ), vz = mv * std::abs(s.dirX);
+                float vx = mv * std::abs(s.dirZ.toFloat()), vz = mv * std::abs(s.dirX.toFloat());
                 s.jitX = Fixed::fromFloat((float(burnRand(2001)) / 1000.0f - 1.0f) * vx);
                 s.jitZ = Fixed::fromFloat((float(burnRand(2001)) / 1000.0f - 1.0f) * vz);
             }
         }
         float vel = s.w->projVel > 0 ? s.w->projVel : 50.0f;
-        s.x += Fixed::fromFloat(s.dirX * vel * dt) + s.jitX;
-        s.z += Fixed::fromFloat(s.dirZ * vel * dt) + s.jitZ;
+        s.x += s.dirX * Fixed::fromFloat(vel / kTick) + s.jitX;
+        s.z += s.dirZ * Fixed::fromFloat(vel / kTick) + s.jitZ;
         s.x = fxMin(fxMax(s.x, Fixed()), Fixed::fromInt(terW_ * 16));
         s.z = fxMin(fxMax(s.z, Fixed()), Fixed::fromInt(terH_ * 16));
         // builduptime is a harmless wind-up: the storm is already visible and
