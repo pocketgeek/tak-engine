@@ -29,6 +29,24 @@ if(EXISTS "${TAK_STATIC_DEPS_PREFIX}/lib" OR EXISTS "${TAK_STATIC_DEPS_PREFIX}/l
   list(PREPEND CMAKE_PREFIX_PATH "${TAK_STATIC_DEPS_PREFIX}")
   set(ZLIB_ROOT "${TAK_STATIC_DEPS_PREFIX}")
   set(JPEG_ROOT "${TAK_STATIC_DEPS_PREFIX}")   # only the .a lives there -> found static
+  # DROP ANY CACHED DISCOVERY THAT POINTS OUTSIDE THE PREFIX. find_package does not
+  # re-search once its cache entries are set, so a build directory configured before
+  # these libraries became mandatory-static keeps pointing at the system's .so -- and
+  # then links it while this file cheerfully prints "vendored from ...". The result is
+  # the worst kind: a build that reports the configuration it does not have. A fresh
+  # directory never showed it, which is why it needed review to find.
+  foreach(_v ZLIB_LIBRARY ZLIB_LIBRARY_RELEASE ZLIB_LIBRARY_DEBUG ZLIB_INCLUDE_DIR
+             JPEG_LIBRARY JPEG_LIBRARY_RELEASE JPEG_LIBRARY_DEBUG JPEG_INCLUDE_DIR
+             SDL2_DIR SDL2_LIBRARY SDL2_INCLUDE_DIR)
+    if(DEFINED CACHE{${_v}})
+      set(_cached "$CACHE{${_v}}")
+      string(FIND "${_cached}" "${TAK_STATIC_DEPS_PREFIX}" _inPrefix)
+      if(NOT _inPrefix EQUAL 0)
+        message(STATUS "Static libs: discarding stale ${_v} (${_cached})")
+        unset(${_v} CACHE)
+      endif()
+    endif()
+  endforeach()
   message(STATUS "Static libs: vendored from ${TAK_STATIC_DEPS_PREFIX}")
 elseif(WIN32)
   # MSYS2/MinGW ships libz.a/libjpeg.a/libSDL2.a alongside the import libs. Prefer .a
