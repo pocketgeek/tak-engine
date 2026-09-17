@@ -3421,8 +3421,10 @@ void World::tickReclaim(Unit& b, float dt) {
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));   // face the feature
     // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
     const int32_t bTurnMax = b.type->turnInPlaceRate;
-    const int32_t turn = std::clamp(bamDiff(want, b.heading), -bTurnMax, bTurnMax);
+    const int32_t diff = bamDiff(want, b.heading);
+    const int32_t turn = std::clamp(diff, -bTurnMax, bTurnMax);
     b.heading = b.heading + Bam(turn);
+    b.turnReqBam = diff;   // builder pivot request -> TurnDirection anim (icd 0x4d9593)
     // Per TICK, like the corpse drain: kReclaimRate is work/second.
     const Fixed d = fxMin(f.work, Fixed::fromFloat(kReclaimRate / kTick));
     f.work -= d;
@@ -3492,7 +3494,9 @@ void World::tickRepair(Unit& b, float dt) {
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
     // Stopped: pivot at turninplacerate, not the moving turn rate.
     const int32_t bPivotMax = b.type->turnInPlaceRate;
-    b.heading = b.heading + Bam(std::clamp(bamDiff(want, b.heading), -bPivotMax, bPivotMax));
+    const int32_t diff = bamDiff(want, b.heading);
+    b.heading = b.heading + Bam(std::clamp(diff, -bPivotMax, bPivotMax));
+    b.turnReqBam = diff;   // builder pivot request -> TurnDirection anim (icd 0x4d9593)
     float total = t->type->buildTime / std::max(b.type->workerTime, 0.01f);
     Player& tm = players_[size_t(b.player)];
     float cost = t->type->buildCost * dt / std::max(total, 0.01f);
@@ -3585,8 +3589,10 @@ void World::tickConstruction(Unit& b, float dt) {
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
     // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
     const int32_t bTurnMax = b.type->turnInPlaceRate;
-    const int32_t turn = std::clamp(bamDiff(want, b.heading), -bTurnMax, bTurnMax);
+    const int32_t diff = bamDiff(want, b.heading);
+    const int32_t turn = std::clamp(diff, -bTurnMax, bTurnMax);
     b.heading = b.heading + Bam(turn);
+    b.turnReqBam = diff;   // builder pivot request -> TurnDirection anim (icd 0x4d9593)
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
     // Record the current build rate so an interrupted conjure decays at this speed.
     // hp per TICK, in the same fixed-point hp is kept in (it is subtracted from hp
