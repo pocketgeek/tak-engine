@@ -2298,7 +2298,9 @@
         const EffectAnim* ea = effectFor(it == kSparkly.end() ? std::string("aramonbuild") : it->second);
         if (!ea || ea->frames.empty()) return;
         const float zm = mapView_.zoom();
-        size_t fi = size_t(animClock_ * 20.0f) % ea->frames.size();   // ~20fps loop, as the 2D effect anims
+        // 15 fps, from the shipped data: every buildsparkly frame carries delayTicks=2
+        // (2/30Hz), uniform across all factions -- read straight off the TAF, not guessed.
+        size_t fi = size_t(animClock_ * 15.0f) % ea->frames.size();
         const auto& fr = ea->frames[fi];
         SDL_FRect d{cx - float(fr.ax) * zm, cy - float(fr.ay) * zm,
                     float(fr.w) * zm, float(fr.h) * zm};
