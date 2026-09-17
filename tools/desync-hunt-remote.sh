@@ -117,7 +117,17 @@ while [ $# -gt 0 ]; do
     --hosts)    HOSTS_SPEC="$2"; shift 2;;
     --minutes)  MINUTES="$2"; shift 2;;
     --jobs)     JOBS="$2"
-                case "$JOBS" in ''|*[!0-9]*|0) echo "--jobs needs a positive integer" >&2; exit 2;; esac
+                # Digits only FIRST -- the value is interpolated into arithmetic below,
+                # and $(( )) evaluates what it is given.
+                case "$JOBS" in ''|*[!0-9]*) echo "--jobs needs a positive integer" >&2; exit 2;; esac
+                # Then normalise with 10# and test the VALUE, not the string. Testing the
+                # string caught "0" but not "00", which sailed through as a concurrency of
+                # zero: the dispatch throttle is `while [ running -ge H_JOBS ]`, and
+                # `-ge 00` is true even with nothing running, so the sweep waits forever
+                # for a slot that cannot open. Leading zeros were the other half -- bash
+                # reads 08 as octal and dies with "value too great for base" mid-assignment.
+                JOBS=$((10#$JOBS))
+                [ "$JOBS" -gt 0 ] || { echo "--jobs needs a positive integer" >&2; exit 2; }
                 shift 2;;
     --data)     LDATA="$2"; shift 2;;
     --validate) VALIDATE=1; shift;;
