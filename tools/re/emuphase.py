@@ -44,15 +44,15 @@ class Phase:
     def _install_shims(self):
         icd = self.icd
 
-        def one_arg_alloc(uc, argp):
+        def one_arg_alloc(uc, argp):   # cdecl: caller cleans, nargs=0
             n = struct.unpack("<I", uc.mem_read(argp, 4))[0]
-            return (1, self._alloc(n))
+            return (0, self._alloc(n))
 
         def two_arg_alloc(uc, argp):
             n = struct.unpack("<I", uc.mem_read(argp + 4, 4))[0]
-            return (2, self._alloc(n))
+            return (0, self._alloc(n))
 
-        icd.hooks[0x4eba00] = lambda uc, argp: (1, 0)   # free(ptr) -> no-op
+        icd.hooks[0x4eba00] = lambda uc, argp: (0, 0)   # free(ptr) cdecl -> no-op
         icd.hooks[0x4eb9e0] = one_arg_alloc             # malloc(size)
         icd.hooks[0x5ba3d0] = two_arg_alloc             # alloc(tag, size)
         icd.hooks[0x5d3d12] = lambda uc, argp: (1, 0)   # atexit

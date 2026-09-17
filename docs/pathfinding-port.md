@@ -594,3 +594,43 @@ route fidelity is by CONSTRUCTION -- a correct Dijkstra over the exact cost mode
 -- rather than by observation of retail's output. Determinism makes this
 lockstep-safe regardless; the residual is whether retail's tie-breaks match ours
 in exact-cost ties, which is cosmetic.
+
+
+## VALIDATED (2026-09-17): the Dijkstra route matches retail's, observed
+
+The harness was driven all the way to a produced route. The wall that stopped it
+before was a cdecl bug in the emulation shims (the allocators clean their own
+args in the harness but retail's are caller-cleaned -- double-cleaning corrupted
+the stack across the node-pool grow). Fixed, the search completes: the tracer
+arrives, phase 2 expands nodes, reaches the goal, and 0x414450 reconstructs the
+route into the request handle. OBSERVED, on an open diagonal: a straight route.
+On a wall detour (start (20,10), goal (1,10), wall x=10 z=0..15): retail routes
+(20,10)->(14,16)->(10,16)->(4,10)->(1,10), rising over the wall on diagonals.
+
+Compared to our port on the same grid: our Dijkstra reaches the goal at cost
+1084 -- byte-for-byte the cost of the route retail produced (scored under our
+own cost model). So the COST MODEL IS EXACT and the search finds a genuine
+minimum. Our route's corners differ from retail's (both cost 1084): a tie among
+equal-cost routes, broken by the heap order, which is cosmetic -- matching it
+would mean replicating retail's exact heap (0x416a30) for no behavioural gain.
+
+Two things the validation corrected in the port (kNetVersion 85):
+  - The corner-cut guard (stepLegal) is REMOVED from the Dijkstra. Retail's cost
+    function (0x413e70) grades only the destination cell, so a diagonal rounds a
+    wall corner; keeping the guard forced wider cardinal detours our search then
+    rated 1720 against retail's 1084. Crowdbench improved with it gone
+    (chokepoint 23->24/24, work 6.3M->2.0M) -- straighter, cheaper, retail-shaped.
+  - Confirmed the earlier "wrong" routes were the tracer FALLBACK, not the
+    Dijkstra: with retail's mapcells/10 node budget the search only reaches the
+    goal on SHORT trips (~20% in crowdbench); longer trips exceed the budget and
+    fall back to the tracer route in both retail and our port. So the tracer
+    routing we already had is retail-faithful for the majority (long-trip) case,
+    and the Dijkstra refines the short-trip minority.
+
+The harness (tools/re/emuphase.py) drives the full lifecycle and is the tool to
+reach for when a route needs observing. Its traps, for the next session:
+work budget +0x165 must be nonzero or the march takes zero steps; the grade
+query is a local window anchored at the goal (put the goal near the origin with
+large +4/+6 window offsets to grade the whole map); the allocators (0x4eb9e0
+malloc, 0x4eba00 free, 0x5ba3d0 alloc) are all CDECL -- shim them to clean ZERO
+args or the stack corrupts across the node-pool grow.

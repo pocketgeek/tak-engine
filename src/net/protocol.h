@@ -17,7 +17,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 84;       // 84: retail's phase-2 Dijkstra makes the
+constexpr uint32_t kNetVersion = 85;       // 85: phase-2 Dijkstra validated against
+                                           // an observed retail route -- corner-cuts
+                                           // like retail (no stepLegal in the search)
+                                           // 84: retail's phase-2 Dijkstra makes the
                                            // route on tracer arrival (emulated costs)
                                            // 83: the cadence ladder is retail's --
                                            // per-frame dice, flag-keyed, emulated

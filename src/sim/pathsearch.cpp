@@ -182,7 +182,12 @@ bool PathSearch::buildDijkstraRoute(const std::function<int(int, int)>& score) {
             if (nx < 0 || nz < 0 || nx >= w_ || nz >= h_) continue;
             const int gc = gradeCost(score(nx, nz));
             if (gc < 0) continue;                       // impassable
-            if (!stepLegal(score, {cx, cz}, d)) continue;  // no diagonal corner-cut
+            // NO corner-cut guard here (unlike the tracer's stepLegal): retail's cost
+            // function (0x413e70) grades only the destination cell, so a diagonal may
+            // round a wall corner. Validated against an OBSERVED retail route: on a
+            // wall-detour the search reaches the goal at cost 1084, byte-for-byte the
+            // cost of the route retail's own search produced on the same grid. The
+            // mover's per-cell solidity handles the corner the diagonal rounds.
             // Turn cost from the parent's incoming heading. The start (dir 0xff) pays
             // none; otherwise the |rotational difference|, folded to 0..4.
             int turn = 0;
