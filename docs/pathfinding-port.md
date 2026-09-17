@@ -218,5 +218,55 @@ STILL OPEN, and not to be guessed:
   cadence is meaningless without it.
 - Whether the ROUTE is shortened as well as the timing randomised
   ("short-hop replanning"). Only the timing was found.
-- What the divisor argument to `0x416430` is at the call site. Emulation shows
-  it simply divides the budget; the value passed in the real game is unknown.
+RESOLVED 2026-09-16 (second pass):
+
+- **The divisor is 1.** `0x416430` has exactly one caller, `0x4f6ca0`, and it is
+  a literal `push 1`. So `budget / arg` is a no-op in the shipped game and the
+  quantum is simply `+0x225 / (A + 5*B)`. The call is also guarded by
+  `[ebp+0xc]+1 == [ebp+8]`, i.e. it runs on the last iteration of the caller's
+  loop, once per frame.
+
+- **`UnitType+0x249` is not new.** `retail-engine.md` already has it: the mover
+  accumulates a per-type value from it into navigator `+0x30` on each refusal --
+  the clamp-and-slow ported in `080d288`. The tracer also computes `50 / +0x249`
+  at `0x414588`. NOTE A DIVERGENCE: our port of the clamp-and-slow hardcodes
+  0.5x then 0.4x rather than deriving from this per-type byte, so our refusal
+  behaviour is type-independent where retail's is not. Its FBI key name is still
+  unknown and no store to it exists anywhere in the image.
+
+- **`+0x24e7`: the evidence is now three consumers, all local-player feedback,
+  and all pairing it with player type == 2.** `0x40fe00` gates a sound
+  (`0x50cd10` id `0x21`); `0x401e6d` gates a float threshold warning against
+  `[+0x10c]+8`; `0x409b9a` gates an ally-table test. Sound and warnings are
+  local-only, so "the local human player gets 5x the path budget" is the reading.
+  IT REMAINS INFERENCE. No store to the field exists in the image -- it is
+  filled from lobby/save data -- so this cannot be settled by reading code, and
+  it is NOT to be written into the port as fact.
+
+STILL OPEN:
+
+- Whether the ROUTE is shortened as well as the timing randomised
+  ("short-hop replanning"). Only the timing has been found.
+- The FBI key behind `UnitType+0x249`.
+- Confirmation (not inference) of what `+0x24e7` is.
+
+## What is ready to build, and what is blocked
+
+READY -- fully specified, depends on none of the open questions:
+
+  * the 0..7 cell rating including units (parked 0, moving 1, open 7, slope and
+    flag clamps at 6 and 4);
+  * moving-unit occupancy, so a moving body is solid-but-cheap rather than
+    absent;
+  * the corner-clearance test (`> 4` and `>= 6` on the orthogonal neighbours);
+  * the per-unit local rating window rebuilt each step.
+
+That set is the whole reported bug -- stacking and refusing to go around -- and
+it can be ported now.
+
+BLOCKED on the open questions:
+
+  * the repath cadence, which needs the meaning of `UnitType+0x249` to scale
+    correctly (the shape `(rand(10)+rand(10)+20) * scale` is known);
+  * moving the 5x budget weighting to the player axis, which needs to know which
+    players are the 5x class.
