@@ -20,10 +20,38 @@
 # the 0.4s spectator heartbeat -- the same window that turned a client hang into a
 # server-side wedge earlier in this work.
 #
-# The server binary is built STATIC and shipped: this host needs GLIBC_2.43 and the
-# remote is Ubuntu 24.04 on 2.39, so a dynamically linked copy would not start. Static
-# also keeps the referee on the SAME GCC as the client, which is what makes a hash
-# mismatch unambiguous -- a real logic bug rather than a cross-toolchain artifact.
+# THE REFEREE IS BUILT IN AN ubuntu:24.04 CONTAINER AND SHIPPED. This host is glibc
+# 2.43 and emits sqrtf/remainderf at GLIBC_2.43; the remotes are Ubuntu 24.04 on 2.39
+# and have no compiler to build it themselves, so a binary built here will not start
+# there. Container-built tops out at GLIBC_2.38. It must also be a DEBUG build --
+# TAK_GODS and the rest of the harness hooks are #ifndef NDEBUG, so a release referee
+# ignores them and the runs that depend on them desync by construction.
+#
+#   podman run --rm -v $PWD:/src:z -v /tmp/ctr-out:/out:z docker.io/library/ubuntu:24.04 \
+#     bash -c 'apt-get update && apt-get install -y cmake ninja-build g++ git nasm ... &&
+#              cd /src && PREFIX=/src/third_party/static-deps-u2404 ./tools/build-static-deps.sh &&
+#              cmake -B /out/bdbg -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+#                    -DTAK_STATIC_DEPS_PREFIX=/src/third_party/static-deps-u2404 &&
+#              cmake --build /out/bdbg --target takserver'
+#
+# build-static-deps.sh reads PREFIX, NOT TAK_STATIC_DEPS_PREFIX. Setting only the
+# latter makes it report "already built" and silently reuse whatever this host left in
+# third_party/static-deps -- Fedora archives, linked into an Ubuntu binary.
+#
+# THIS MEANS THE REFEREE AND THE CLIENT ARE BUILT BY DIFFERENT COMPILERS -- Ubuntu's
+# GCC 13.3 against whatever Fedora ships here. An earlier version of this comment
+# claimed the opposite, that shipping a static build kept both on the SAME GCC and
+# that this was what made a hash mismatch unambiguous. That was never quite true and
+# is now plainly false, so do not lean on it: a mismatch here is a cross-toolchain
+# difference until you have ruled one out.
+#
+# What makes that acceptable rather than a confound is that the pairing is now TESTED
+# directly: tools/check-determinism.sh golden-hashes the detmath shim across gcc and
+# clang at -O0/-O2/-O3, and the sim itself has been run gcc-referee against
+# clang-client to a byte-identical state hash. Cross-compiler agreement is a property
+# this engine is supposed to have -- it is the point of the fixed-point sim -- so
+# exercising it here is coverage, not noise. Treat a mismatch as real, but confirm it
+# reproduces with both sides on one compiler before calling it a logic bug.
 #
 # usage: tools/desync-hunt-remote.sh [--host H] [--minutes N] [--jobs N] [--validate]
 #        [--only NAME[,NAME...]]
@@ -1024,14 +1052,53 @@ echo "==== SUMMARY ===="
 # made every --validate run end with "DESYNCS FOUND", which trains you to ignore the
 # one line that matters.
 hits=$(grep -rlEi "DESYNCED|REFEREE SUSPECT" "$OUT" 2>/dev/null | grep -v "/validate\." | sed "s|$OUT/||" | sort -u)
-if [ -n "$hits" ]; then echo "DESYNCS FOUND in:"; echo "$hits"; else echo "no desyncs reported"; fi
+# Count the runs that produced a usable verdict BEFORE claiming anything, so the
+# headline can say what it is actually based on. "no desyncs" over 32 of 37 runs is
+# a different statement from "no desyncs" over 37, and the reader cannot tell them
+# apart unless this line does it for them.
+_ok=0; _bad=0
+for f in "$OUT"/*.client*.log; do
+  case "$(grep -h "mp-headless done" "$f" 2>/dev/null | tail -1)" in
+    *err=none*) _ok=$((_ok + 1)) ;;
+    *)          _bad=$((_bad + 1)) ;;
+  esac
+done
+if [ -n "$hits" ]; then
+  echo "DESYNCS FOUND in:"; echo "$hits"
+elif [ "$_bad" -gt 0 ]; then
+  echo "no desyncs in the $_ok run(s) that completed -- but $_bad DID NOT, see below."
+  echo "This is NOT a clean sweep: a run that errored proves nothing either way."
+else
+  echo "no desyncs reported ($_ok runs, all completed)"
+fi
 echo "note: runs marked 'flow' seated no human, so no hashes were compared in them --"
 echo "      they cover flow control only and prove nothing about determinism."
 echo "note: TAK_AUTOPLAY runs issue live commands, so the server buckets them by the"
 echo "      tick they ARRIVE on and the same seed gives a different hash each run."
 echo "      They prove consensus, not reproducibility -- do not diff their hashes."
+# A RUN THAT ERRORED IS NOT A RUN THAT PASSED.
+#
+# This used to test for "mp-headless done" alone, and that string is printed on the
+# way out of a FAILED run too: five stress runs died three minutes into a 37-run
+# sweep with
+#     mp-headless done: tick=0 ... units=0 err=server timeout
+# and were counted as complete, because the line was there. They also contain no
+# "DESYNCED", so the hits grep above skipped them as well. They fell through both
+# gates and the sweep printed "no desyncs reported" over a third of the heavy tier
+# never having simulated a single tick -- the worst outcome available to a harness,
+# a clean bill of health for work it did not do.
+#
+# So completion is now "done AND err=none", and anything else is named with its
+# error rather than merely omitted. tick=0 is called out separately: a run that
+# never started is a coverage hole, not a weak pass, and it should not take reading
+# the tick counts to notice.
 echo "runs that did not complete:"
-for f in "$OUT"/*.client.log; do
-  grep -q "mp-headless done" "$f" 2>/dev/null || echo "  $(basename "$f")"
+for f in "$OUT"/*.client*.log; do
+  d=$(grep -h "mp-headless done" "$f" 2>/dev/null | tail -1)
+  case "$d" in
+    "")            echo "  $(basename "$f") -- NEVER RAN (no result line)" ;;
+    *err=none*)    : ;;
+    *)             echo "  $(basename "$f") -- ${d#*err=}" ;;
+  esac
 done
 echo "logs: $OUT"
