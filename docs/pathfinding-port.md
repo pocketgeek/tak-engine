@@ -338,3 +338,50 @@ retail's own crowding ring (50/+0x249 cells) with nobody abandoning.
   not ported -- the flags they key on have no exact analogue yet.
 - kScore5's producer in the MAP fills was never found (the raters emit no 5);
   the live-query reading makes it same-way traffic, which is what we mark.
+
+
+## ATTEMPTED AND REVERTED (2026-09-17): the full cadence ladder
+
+The remaining traced pieces -- the refusal-flag cadence variant (0x4e52d3) and
+the crowded-success type gates -- were RE'd to completion and then implemented,
+and the implementation was REVERTED on measurement. The record, so the next
+attempt starts where this one stopped:
+
+**What the RE established, and stands:**
+- The complete per-frame ladder (dice rolled FRESH each check; nothing stores a
+  deadline):
+      bit0 (crowded goal):  floater-on-water 2d10+10 (0x4e5226);
+                            no refusal state 2d10+20 (0x4e5284);
+                            refusal state    2d8+10  (0x4e52d3)
+      bit1 (traffic):       floater-on-water 2d8+30  (0x4e535d);
+                            no refusal state 2d8+60  (0x4e53bc);
+                            refusal state    2d8+30  (0x4e540a)
+      neither, not-failed:  elapsed >= 120 AND rand(120)==0 per frame -- a
+                            geometric tail, not a timer (0x4e545b)
+- The type gates decoded: +0x260 bit 19 is the FBI key `floater` (parse at
+  0x4c03e0-0x4c0403) and +0x194 is the movement class's `maxwaterdepth`
+  (moveinfo copy block at 0x4c0e8x). The fast crowd cadences are for
+  water-capable floaters.
+- Bit 2 of +0x134 is set when the search object's +0x40 counter is positive
+  (0x4144bf), and the tolerance walk is SKIPPED then -- so bits 0/1 from the
+  walk mark only clean reconstructions.
+
+**What is NOT established, and why the implementation lost to measurement:**
+reconstruction ENTRY also sets bit0 / bit1 on its own conditions (`or 1` at
+0x41448b, `or ecx`=2 at 0x4144aa, keyed on search fields +0x50 and the branch at
+0x414476) -- and those conditions were never read. Mapping them by guess
+(failed-with-progress ~ bit1) produced a ladder that stranded long hauls or
+over-asked, and crowdbench regressed against the shipped state on every
+scenario (chokepoint 16/24 vs 22-24, group order 27/32 vs 32/32, open field
+18/24 vs 24/24, serpentine 10/12 vs 12/12). The shipped stored-deadline
+approximation is not retail's mechanism either, but it is measurably CLOSER in
+observables, and "not better, not worse" cuts both ways.
+
+**To finish this properly:** read the 0x414476/0x41448b/0x4144aa entry
+conditions and the +0x110 stamp discipline (who re-stamps, and when), or
+emulate 0x414450 with planted search states to enumerate the bit table the way
+emupath.py enumerated the grades. The WIP implementation is preserved as a
+patch in the session scratchpad (ladder-wip.patch) and included: the per-frame
+ladder, the traffic flag through PathService, the failed-quiet branch, and a
+cadence_test with two behavioural checks (failed-quiet, geometric-tail) that
+passed against the ladder but presume the unverified bit semantics.
