@@ -1434,6 +1434,29 @@
                     a.vm->start("MoveRate", {m ? 100 : 0});
                 }
             }
+            // Turn-in-place / steering trim: retail's TurnDirection(deg) engine callin
+            // (icd 0x4d9550). Each tick the mover turns, retail converts the tick's
+            // heading change to SIGNED DEGREES (the internal word-angle delta / 182 =
+            // 65536/360) and calls TurnDirection ONLY when the turn STATE changes --
+            // starts, stops, or reverses (it compares the sign against a per-unit
+            // remembered value at unit+0x26). The script stashes the arg in a static
+            // that the unit's Create ambient reads to lean the body / trim the
+            // rudder+sail / drive the turn-in-place gait. 116 of 187 shipped unit COBs
+            // define it, so this was a broad missing callin. Display-only: the heading
+            // itself is the sim's; the same per-tick delta value 33 (TURN RATE) reads,
+            // just rescaled to degrees. No reset() -- start() adds a thread and the
+            // script SIGNALs its own prior instance dead.
+            if (a.hasTurnDir && u.seeded) {
+                float d = u.heading - u.ph;
+                while (d >  3.14159265f) d -= 6.28318531f;   // shortest way round
+                while (d < -3.14159265f) d += 6.28318531f;
+                int deg = int(d * (180.0f / 3.14159265f));   // truncates toward 0, like retail
+                int sign = (deg > 0) - (deg < 0);
+                if (sign != a.turnSign) {
+                    a.vm->start("TurnDirection", {deg});
+                    a.turnSign = sign;
+                }
+            }
             // Turret aim (retail AimWeapon pipeline, display-only). The engaged
             // target -- ordered attack or auto-acquire -- always sits at
             // orders.front (auto-acquire INSERTS one), so the snapshot already
@@ -1921,6 +1944,7 @@
                 cc.hasFly = cc.file->scriptIndex("fly") >= 0;
                 cc.hasMotionControl = cc.file->scriptIndex("MotionControl") >= 0;
                 cc.hasOpen = cc.file->scriptIndex("open") >= 0;
+                cc.hasTurnDir = cc.file->scriptIndex("TurnDirection") >= 0;
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
             a.pieceNames = &ci->second.pieceNames;
@@ -1935,6 +1959,7 @@
             a.hasFlightSM = ci->second.hasFlightSM;
             a.hasActivate = ci->second.hasActivate;
             a.hasGateDoors = type && type->onOffable && ci->second.hasOpen;
+            a.hasTurnDir = ci->second.hasTurnDir;
             a.hasQueryWeapon = ci->second.hasQueryWeapon;
             // Airships with no fly/land state machine (creaeri rotors, verball/tarship
             // MotionControl): driven entirely by their Create ambients. The generic

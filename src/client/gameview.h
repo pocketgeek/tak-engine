@@ -1047,6 +1047,9 @@ private:
         bool active = true;      // last active/door-open state (onoffable/gate swing edge)
         bool cloaked = false;    // last sim cloak state (StartCloaking/StopCloaking edge)
         bool hasCloakAnim = false;   // COB defines StartCloaking (araspy, npcheket)
+        bool hasTurnDir = false; // has a TurnDirection script (rudder/sail trim,
+                                 // turn-in-place lean); 116 of 187 unit COBs define it
+        int turnSign = 0;        // last turn-direction sign passed to TurnDirection
         float gateNext = 0;      // animClock_ of the next gate proximity rescan (stagger)
         int windStamp = 0;       // last windGen_ this unit received (0 = never)
         bool hasMelee = false;   // has MoveWatcher/MeleeControl: the COB drives its own
@@ -1365,6 +1368,7 @@ private:
         bool hasFly = false;      // has a `fly` script
         bool hasMotionControl = false;  // has MotionControl (airship gait ambient)
         bool hasOpen = false;     // has an `open` door-swing script (gate)
+        bool hasTurnDir = false;  // has a TurnDirection script (turn-in-place / steering trim)
     };
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };
