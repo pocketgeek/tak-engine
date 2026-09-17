@@ -2037,6 +2037,7 @@ private:
     // the room is set up -- the host could previously only change it after the
     // game already existed. Default matches GameOptions::fogExplored.
     uint8_t createFog_ = 1;
+    bool createRandomStarts_ = false;   // create dialog: Random Start Locations (default OFF = fixed)
     bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
     bool createStressTest_ = false;   // SP spectate: spawn ~95% of each AI's unit cap at start
     // One selectable map plus the attributes the picker can sort by, read once from

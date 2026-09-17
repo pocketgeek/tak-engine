@@ -343,6 +343,12 @@ std::string mapDisplayName(const std::string& id) {
                   [this] { createFog_ = uint8_t((createFog_ + 1) % 3); });
             y += 34;
         }
+        // Random Start Locations: also a room rule, picked here like fog so it is set
+        // before the room exists. FIXED = slot N always takes the map's Nth start
+        // (spawns are memorisable); RANDOM = the starts are shuffled for the match.
+        lbBtn(x, y, 240, 26, std::string("START LOCATIONS: ") +
+              (createRandomStarts_ ? "RANDOM" : "FIXED"), true,
+              [this] { createRandomStarts_ = !createRandomStarts_; }); y += 34;
         static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
         lbBtn(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
               [this] { createOverride_ = uint8_t((createOverride_ + 1) % 3); }); y += 44;
@@ -355,6 +361,7 @@ std::string mapDisplayName(const std::string& id) {
             o.overridePolicy = createOverride_;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
             o.fogExplored = std::min<uint8_t>(createFog_, 2);
+            o.randomStarts = createRandomStarts_ ? 1 : 0;
             // Stress test only applies to an all-AI spectate game.
             o.stressTest = (singlePlayer_ && spSpectate_ && createStressTest_) ? 1 : 0;
             // SP spectate: create as a spectator (no slot) so every slot can be an AI;
@@ -649,7 +656,7 @@ std::string mapDisplayName(const std::string& id) {
             if (host && s.type == 1 && !mine) {
                 lbBtn(x + row.w - 54, y + 3, 50, 22, "KICK", true, [this, i] { mp_->kick(i); });
             }
-            y += 34;
+            y += 30;   // slot row pitch: 8 rows must leave room for the option toggles below
         }
         y += 10;
         // controls
