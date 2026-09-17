@@ -499,3 +499,53 @@ port needs the phase-2 execution conditions read first. The disciplined next
 step is to emulate the phase machine (0x416430 driving a planted request across
 phases 0/1/2) the way emupath.py enumerated the grades and the bit table --
 enumerate when phase 2 fires and what +0x40 it leaves -- BEFORE porting either.
+
+## RE (2026-09-17): the phase machine resolved -- and phase 2 IS the route
+
+The composition, read end to end from the scheduler's phase field (+0x5c) and
+the two tracer-outcome setups. No sim change: this is the map the eventual port
+needs, and it corrects a conclusion we had already committed.
+
+**The three phases** (scheduler 0x416430, per-request +0x5c):
+- **0 -> 0x415170**: initialise. Builds the per-grade cost table (+0xbc/c0/c4/c8),
+  the 8 direction costs (+0x70..0x8c), the node budget (+0xec), and clears the
+  navigator outcome bits. Advances to phase 1.
+- **1 -> 0x415b10 -> 0x4146e0**: the boundary tracer we ported. Its step result
+  lands in +0x40: -2 keeps phase 1 (more steps), 0 = arrived, -1 = failed.
+- **2 -> 0x4142c0**: a BEST-FIRST COST SEARCH. Pops the min-cost node off a heap
+  (0x416a30), returns when the popped cell carries the goal bit (0x4143fc test
+  al,4), else closes it (or al,2) and expands neighbours -- each neighbour's cost
+  from 0x413e70, the per-grade table selected at 0x414160 (grade 5->+0xc8,
+  4->+0xbc, 7->+0xc4, 6->+0xc0). Runs only while the heap is non-empty and under
+  +0xec nodes (guards at 0x416668-0x416680).
+
+**The composition, which is the point:**
+- Tracer ARRIVES (result 0, 0x415b6b): seeds the heap with the start node and
+  leaves phase at 2. Phase 2's cost search then finds the route. THE TRACER
+  DOES NOT PRODUCE THE ROUTE ON SUCCESS -- it is a fast reachability probe that,
+  on reaching the goal, hands off to the cost-optimal search.
+- Tracer FAILS (result -1, 0x415be2): builds the best-effort breadcrumb route
+  via 0x4e4ea0 and stops. Heap stays empty, so phase 2's guard skips it.
+- Phase 2 skipped / over budget (0x4166f1): retry up to 3, then relocate the
+  goal to a nearby passable cell via a widening 0x4139d0 scan.
+
+**What this means for our port.** We ported the tracer (phase 1) and use ITS
+route directly on success. Retail uses the cost search's route on success and
+the tracer's breadcrumbs only on failure. So our successful routes are the
+tracer's greedier, outline-hugging ones where retail's are cost-optimal. This
+also corrects docs/retail-engine.md's "retail's tracer is a bug algorithm that
+meanders" -- true of the tracer in isolation, but the tracer is not the route
+producer when the goal is reachable, which is the common case. Our serpentine
+x6.7 is the tracer alone; retail's cost search would be far straighter there.
+
+**Why not ported yet.** A faithful port is a whole best-first cost search plus
+the phase orchestration plus the bounded-budget fallback -- and it changes
+hashed sim state, so a wrong reconstruction is a desync, not a visible bug. The
+structure is read but NOT yet observed producing a route end to end. Porting on
+the read alone is the "half-understood exact mechanism" the reverted cadence
+attempt (e19929e) already paid for. The honest next step is a driver harness
+that runs a planted request through init -> tracer -> seed -> cost search ->
+route extraction on a small grid and OBSERVES the route (the way emupath.py
+observed the grades and the bit table), confirming the cost model and the
+composition before a line of it lands in the sim. That is a dedicated effort,
+not a tail-end one.
