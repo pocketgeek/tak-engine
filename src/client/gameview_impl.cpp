@@ -2282,27 +2282,27 @@
     }
 
     void GameView::sprinkleBuildFx(const std::string& sideLower, float cx, float cy, float fpw, float fph) {
-        auto fit = buildFx_.find(sideLower);
-        if (fit == buildFx_.end() || fit->second.empty()) return;
-        auto& frames = fit->second;
-        int fw, fh;
-        SDL_QueryTexture(frames[0], nullptr, nullptr, &fw, &fh);
+        (void)fpw; (void)fph;
+        // Retail's build / reclaim / resurrect effect is the side's "buildsparkly"
+        // (sidedata.tdf buildsparklyanim / resurrectsparklyanim). It is ONE self-
+        // contained animated sparkle CLUSTER -- e.g. aramonbuild: 12 frames, 42x45,
+        // centre anchor (19,21) -- drawn once, anchored on the unit like any 2D
+        // effect anim, additive. It is NOT tiled to fill the footprint: the previous
+        // 5x5, 2x-scaled grid over the whole footprint was ours, and read as a dense
+        // wall of sparkles rather than retail's single twinkling cluster. Route it
+        // through effectFor (which loads the same TAF, anchor-preserving + additive).
+        static const std::map<std::string, std::string> kSparkly = {
+            {"ara", "aramonbuild"}, {"tar", "tarosbuild"},
+            {"ver", "verunabuild"}, {"zon", "zhonbuild"}, {"cre", "zhonbuild"}};
+        auto it = kSparkly.find(sideLower);
+        const EffectAnim* ea = effectFor(it == kSparkly.end() ? std::string("aramonbuild") : it->second);
+        if (!ea || ea->frames.empty()) return;
         const float zm = mapView_.zoom();
-        constexpr float kBuildFxScale = 2.0f;   // bigger than 1:1 so the sparkle reads
-        float tw = float(fw) * zm * kBuildFxScale, th = float(fh) * zm * kBuildFxScale;
-        fpw = std::max(fpw * 1.35f, tw);         // overflow the footprint; >=1 sparkle
-        fph = std::max(fph * 1.35f, th);
-        int nx = std::clamp(int(fpw / tw + 0.5f), 1, 5);
-        int nz = std::clamp(int(fph / th + 0.5f), 1, 5);
-        float x0 = cx - fpw * 0.5f, y0 = cy - fph * 0.6f;
-        int base = int(animClock_ * 12);
-        for (int gz = 0; gz < nz; ++gz)
-            for (int gx = 0; gx < nx; ++gx) {
-                SDL_Texture* fxt = frames[size_t(base + gx * 3 + gz * 5) % frames.size()];
-                SDL_FRect d{x0 + (gx + 0.5f) * fpw / nx - tw * 0.5f,
-                            y0 + (gz + 0.5f) * fph / nz - th * 0.5f, tw, th};
-                SDL_RenderCopyF(ren_, fxt, nullptr, &d);
-            }
+        size_t fi = size_t(animClock_ * 20.0f) % ea->frames.size();   // ~20fps loop, as the 2D effect anims
+        const auto& fr = ea->frames[fi];
+        SDL_FRect d{cx - float(fr.ax) * zm, cy - float(fr.ay) * zm,
+                    float(fr.w) * zm, float(fr.h) * zm};
+        SDL_RenderCopyF(ren_, fr.tex, nullptr, &d);
     }
 
     tak::tdf::Node GameView::vtdf(const std::string& p) const {
@@ -2769,32 +2769,6 @@
         return out;   // empty -> startMusic falls back to all 20
     }
 
-    void GameView::loadBuildFx() {
-        static const std::pair<const char*, const char*> maps[] = {
-            {"ara", "aramonbuild"}, {"tar", "tarosbuild"},
-            {"ver", "verunabuild"}, {"zon", "zhonbuild"}, {"cre", "zhonbuild"},
-        };
-        for (auto& [side, file] : maps) {
-            try {
-                // TAF frames are raw ARGB; the palette arg is ignored for them.
-                auto pal = tak::gaf::Palette::fromBytes(vread("palettes/ara_textures.pcx"),
-                                                        "palettes/ara_textures.pcx");
-                std::string tp = "anims/" + std::string(file) + "_4444.taf";
-                auto seqs = tak::gaf::load(vread(tp), pal, -1, tp);
-                if (seqs.empty()) continue;
-                auto& frames = buildFx_[side];
-                for (auto& fr : seqs[0].frames) {
-                    if (fr.width == 0) continue;
-                    SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
-                                                       SDL_TEXTUREACCESS_STATIC,
-                                                       fr.width, fr.height);
-                    SDL_UpdateTexture(t, nullptr, fr.rgba.data(), fr.width * 4);
-                    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_ADD);
-                    frames.push_back(t);
-                }
-            } catch (const std::exception&) {}
-        }
-    }
 
     void GameView::issuePerUnit(tak::net::Cmd kind, int value) {
         for (int id : selection_) {

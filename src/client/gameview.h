@@ -202,7 +202,6 @@ public:
             std::fprintf(stderr, "font load: %s\n", e.what());
         }
         loadOrderButtons();
-        loadBuildFx();
         sounds_.init(vfs_);
         soundClasses_.load(vfs_);   // music is started per-state by manageMusic()
         loadPanel(side_);
@@ -2657,10 +2656,6 @@ private:
     };
     std::vector<OrderBtn> orderBtns_;
 
-    // The per-faction conjure/build effect animation (TAF), keyed by side.
-    std::map<std::string, std::vector<SDL_Texture*>> buildFx_;
-
-    void loadBuildFx();
 
     void loadOrderButtons();
 

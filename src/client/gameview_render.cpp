@@ -1460,9 +1460,6 @@
         for (auto& [n, frames] : textures_)
             for (SDL_Texture* t : frames) if (t) gpuvram::destroy(t);
         textures_.clear();
-        for (auto& [n, frames] : buildFx_)
-            for (SDL_Texture* t : frames) if (t) gpuvram::destroy(t);
-        buildFx_.clear();
         for (auto& row : guiTex_)
             for (SDL_Texture* t : row) if (t) gpuvram::destroy(t);
         guiTex_.clear();
