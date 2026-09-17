@@ -564,8 +564,22 @@ run_one() {
 
   # Start the referee on the remote. No --local and no tunnel: this is a LAN, so the
   # client reaches it over a real NIC, which is the point of running it remotely.
+  # TAK_GODS MUST REACH THE REFEREE TOO -- the same forwarding tools/desync-hunt.sh
+  # already does, which this script never got. Gods used to be a room option carried
+  # on the wire, so the referee learned them from the lobby; they are now decided
+  # inside setupMatch, which the referee and the client run INDEPENDENTLY. Setting the
+  # env on the client alone enables gods in one sim and not the other, and the run
+  # desyncs at tick 0 -- a divergence manufactured by the harness and then reported as
+  # a finding. That is exactly what the first post-redeploy sweep produced: five hits,
+  # every one of them a TAK_GODS run, every clean run without it.
+  #
+  # Every other option in the table still travels as a room setting; this is the one
+  # that does not, so it is forwarded explicitly rather than by passing $envs through
+  # (which would also ship client-only display vars to a headless referee).
+  local srv_env=""
+  case "$envs" in *TAK_GODS=1*) srv_env="TAK_GODS=1";; esac
   local spid
-  spid=$(rsh1 "nohup $RBIN --port $port --data $RDATA --replaydir $RREPLAY --no-auth \
+  spid=$(rsh1 "nohup env $srv_env $RBIN --port $port --data $RDATA --replaydir $RREPLAY --no-auth \
          --seed $seed >/tmp/tak-srv-$port.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
   [ -n "$spid" ] && note_server "$host" "$spid"
   local up=0
