@@ -29,6 +29,7 @@ struct UnitR {
     const tak::sim::UnitType* type = nullptr;
     int player = 0;
     float x = 0, z = 0, heading = 0;   // current-tick pose
+    int turnReqBam = 0;                // tick's requested turn (BAM) for TurnDirection anim
     float hp = 0, mana = 0;
     int veteran = 0;
     float deadFor = -1;

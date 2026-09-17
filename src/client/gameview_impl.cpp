@@ -746,9 +746,11 @@
                 s.px = prev->x; s.pz = prev->z; s.ph = prev->heading;   // UnitR already holds radians
                 s.x = u.x.toFloat(); s.z = u.z.toFloat(); s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
                 s.seeded = true;
+                s.turnReqBam = u.turnReqBam;   // sim's requested turn this tick (TurnDirection)
             } else {
                 s.x = u.x.toFloat(); s.z = u.z.toFloat(); s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
                 s.px = s.x; s.pz = s.z; s.ph = s.heading;
+                s.turnReqBam = u.turnReqBam;
                 s.seeded = u.alive();   // dead holds its pose (never interpolated)
             }
         }
@@ -1446,11 +1448,14 @@
             // itself is the sim's; the same per-tick delta value 33 (TURN RATE) reads,
             // just rescaled to degrees. No reset() -- start() adds a thread and the
             // script SIGNALs its own prior instance dead.
-            if (a.hasTurnDir && u.seeded) {
-                float d = u.heading - u.ph;
-                while (d >  3.14159265f) d -= 6.28318531f;   // shortest way round
-                while (d < -3.14159265f) d += 6.28318531f;
-                int deg = int(d * (180.0f / 3.14159265f));   // truncates toward 0, like retail
+            if (a.hasTurnDir) {
+                // The REQUESTED turn (want - heading, unclamped BAM) the sim recorded
+                // this tick -- NOT the applied heading delta, which retail also declines
+                // to use (0x4d9593 converts the original arg, not the clamped rotation
+                // stored into mover+0x24). A heading delta truncates to zero for a
+                // slow-turning ship even mid-turn, and understates the magnitude that
+                // units like aratrans scale their rudder/sail by.
+                int deg = u.turnReqBam / 182;                // BAM->degrees, retail's /182, truncating
                 int sign = (deg > 0) - (deg < 0);
                 if (sign != a.turnSign) {
                     a.vm->start("TurnDirection", {deg});

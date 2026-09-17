@@ -2665,6 +2665,7 @@ void World::tickCombat(Unit& u, float dt) {
     if (u.speed.toFloat() <= 0.0f) {
         const int32_t maxTurn = u.type->turnInPlaceRate;
         u.heading = u.heading + Bam(std::clamp(diff, -maxTurn, maxTurn));
+        u.turnReqBam = diff;   // pivot request -> TurnDirection anim (icd 0x4d9593)
     }
     // Fire a weapon when the target is in ITS [minrange, range] band, within its
     // aimtolerance, with a clear shot, and (unless noairweapon) legal against air.
@@ -4334,6 +4335,7 @@ void World::tickProduction(Unit& u, float dt) {
 
 void World::tick(float dt) {
     ++tickCounter_;
+    for (auto& _u : units_) _u.turnReqBam = 0;   // requested-turn display field, refreshed below
 #ifndef NDEBUG
     hashTrace();   // TAK_HASHTRACE=lo:hi -- per-component dump, EVERY tick on both peers
 #endif
@@ -5125,6 +5127,7 @@ void World::tick(float dt) {
             const int32_t diff = bamDiff(want, u.heading);
             const int32_t maxTurn = u.type->turnRate;
             u.heading = u.heading + Bam(std::clamp(diff, -maxTurn, maxTurn));
+            u.turnReqBam = diff;   // requested turn -> TurnDirection anim (icd 0x4d9593)
 
             // NO YIELD PASS. A stalled unit used to look for an opposing one in
             // front of it and make the lower id stand still while the higher passed.

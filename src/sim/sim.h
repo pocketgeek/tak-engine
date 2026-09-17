@@ -519,6 +519,12 @@ struct Unit {
     // +0x7e, its 90-degree test against 0x4000). Wrapping is a mask, two angles added
     // cannot drift, and there is no rounding for two libms to disagree about.
     Bam heading;
+    // The tick's REQUESTED turn (want - heading, unclamped BAM), display only --
+    // never hashed. Retail's TurnDirection callin (icd 0x4d9550) converts the
+    // requested arg, NOT the clamped rotation applied to heading, so the client
+    // animation needs this rather than a heading-delta (which would truncate to
+    // zero for slow turners). Reset each tick; set where the mover turns.
+    int32_t turnReqBam = 0;
     // FIXED-POINT px/s. Retail's is too: its occupancy test compares two units' speeds
     // with an integer cmp/jl (0x4db79e), and the scaling either side runs through a
     // 64-bit shift-by-16 helper (0x5d3dc0) -- a 16.16 multiply, the same operation as
