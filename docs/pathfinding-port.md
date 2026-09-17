@@ -430,3 +430,72 @@ retail's own 2d8+60 traffic dice rather than our uniform invention.
 Still open: the 0x415170 march parameters (+0xbc/+0xc0/+0xc4/+0xc8), bit3's
 setter (nothing found; only the clear sites), and the retail-under-wine ground
 truth for pacing.
+
+## RE (2026-09-17): bit3 found, and +0xbc is not what its name said
+
+Chasing the two items left open above. One resolved cleanly; the other turned
+out to be the tip of an unported search phase.
+
+### bit3's setter -- FOUND, and it is a delivered-route detour flag
+
+`0x414642  or ebx, 8`, in the DELIVERY walk of 0x414450 (arg==0, the
+successful-reconstruction path). It is gated at 0x414635 by
+
+    [ebp-0xc]  (waypoints walked back from the goal)  >  [ebp-0x14]  (the
+    Manhattan distance start->goal, computed at 0x414516)
+
+-- a detour-ratio test: the route wandered more cells than the straight line.
+When it fires it also CLEARS bits 0 and 1 (0x414654 / 0x414660). Via the
+service ladder's `test [+0x134], 0xc` at 0x4e545b, a set bit3 (like bit2)
+SUPPRESSES the plain re-ask branch. So retail stops re-asking a delivered route
+once it is "settled enough" -- either a clean valid delivery (bit2, requires
++0x40 > 0) or a detoured one (bit3).
+
+Confirmed the delivery bit conditions under emulation (0x414450 arg==0):
++0x40=0 -> no bits, +0x40>0 -> bit2. A clean tracer arrival stores +0x40=0
+(0x4146e0 returns 0 on arrival, 0x415b22), so a normal DIRECT success sets
+neither bit2 nor bit3 and DOES fall into the plain branch -- consistent with
+the shipped v83, where the plain 1-in-120 tail governs any route with no
+crowd/traffic marks. bit2/bit3 suppression applies only to the +0x40>0 and
+detour cases, which the shipped ladder does not distinguish. That is a known
+minor divergence, not a regression: it means a few settled routes re-ask on the
+tail where retail would stay quiet, at the cost of a handful of extra searches.
+
+### +0xbc/c0/c4/c8 are per-grade QUEUE-SEARCH costs, not march bounds
+
+The prior note called these "march parameters that bound march legs". That was
+wrong. 0x414160 selects among them BY CELL GRADE:
+
+    grade 5 -> +0xc8      grade 4 -> +0xbc
+    grade 7 -> +0xc4      grade 6 -> +0xc0   (default)
+
+and 0x413e70 adds the selected cost into a node total that 0x416a30 inserts into
+an OPEN LIST. That is a cost-ordered (best-first) queue search, driven by
+0x4142c0 -- and it is a SEPARATE PHASE from the boundary tracer we ported. The
+scheduler's per-request phase field (+0x5c) runs: 0 -> 0x415170 (initialise the
+costs), 1 -> 0x415b10 -> 0x4146e0 (the geometric tracer, the part we have), 2 ->
+0x4142c0 (the cost queue). 0x415170 -- long mislabelled "the failure path" --
+is the phase-0 initialiser; it also sets the floater gate (+0xbc = 0x30
+normally, 0x140 for a water-capable floater: +0x260 bit19 `floater` AND +0x194
+`maxwaterdepth` > 0) and three roadmultiplier-scaled costs (+0x172 x the rdata
+doubles 0x5ebc08 / 0x5eba78 / 0x5ebc10).
+
+THIS REOPENS THE A* QUESTION. We deleted our bounded A* (613e426) on the finding
+"retail has no A*, no open list, no cost-to-goal". That finding was about the
+TRACER (0x4146e0), and it holds for the tracer. But 0x4142c0 IS an open-list
+cost-ordered search, and the scheduler reaches it at phase 2. What is NOT yet
+established: whether phase 2 runs on every search or only when the tracer's
+phase-1 result leaves the queue non-empty (the guards at 0x41665f-0x4166a6 test
++0x14/+0x18 and a node budget +0xec), and how its result composes with the
+tracer's route. Until that is pinned, neither the cost port nor a claim about it
+is safe -- and half-porting it is the exact mistake the reverted cadence
+attempt already paid for.
+
+### NOT ported, deliberately
+
+No sim change. bit3's exact trigger is known but its faithful modelling needs
+the +0x40>0 / bit2 outcome pinned across both search phases; the cost-queue
+port needs the phase-2 execution conditions read first. The disciplined next
+step is to emulate the phase machine (0x416430 driving a planted request across
+phases 0/1/2) the way emupath.py enumerated the grades and the bit table --
+enumerate when phase 2 fires and what +0x40 it leaves -- BEFORE porting either.
