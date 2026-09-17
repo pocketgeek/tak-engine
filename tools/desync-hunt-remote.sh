@@ -97,7 +97,18 @@ RREPLAY="/home/pocket_geek/tak_replay"
 RBIN="/home/pocket_geek/takserver"
 LDATA="assets/game"
 MINUTES=45
-JOBS=12
+# Per-host concurrency normally comes from HOSTS_SPEC's middle field. --jobs, when
+# given, overrides it for EVERY host: an explicit flag on the command line should beat
+# a built-in default. Empty means "not given" -- distinguishable from --jobs 0, which
+# is rejected below rather than silently meaning something.
+#
+# This used to be JOBS=12, assigned by --jobs and then never read by anything. The
+# flag was documented in the usage line and silently did nothing, so `--jobs 2` on a
+# host spec'd at 10 still ran 10 at a time. That cost a wrong conclusion here: five
+# stress runs were timing out, --jobs 2 was used to rule out resource contention, it
+# did not actually reduce concurrency, and the runs had to be isolated a second time
+# with --hosts before contention could honestly be excluded.
+JOBS=""
 VALIDATE=0
 DRYRUN=0
 VALONLY=0
@@ -105,7 +116,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --hosts)    HOSTS_SPEC="$2"; shift 2;;
     --minutes)  MINUTES="$2"; shift 2;;
-    --jobs)     JOBS="$2"; shift 2;;
+    --jobs)     JOBS="$2"
+                case "$JOBS" in ''|*[!0-9]*|0) echo "--jobs needs a positive integer" >&2; exit 2;; esac
+                shift 2;;
     --data)     LDATA="$2"; shift 2;;
     --validate) VALIDATE=1; shift;;
     --dry-run)  DRYRUN=1; shift;;
@@ -809,7 +822,7 @@ H_NAME=(); H_JOBS=(); H_WEIGHT=(); H_COUNT=()
 for hspec in $HOSTS_SPEC; do
   H_NAME+=("${hspec%%:*}")
   _rest="${hspec#*:}"
-  H_JOBS+=("${_rest%%:*}")
+  H_JOBS+=("${JOBS:-${_rest%%:*}}")
   H_WEIGHT+=("${_rest##*:}")
   H_COUNT+=(0)
 done
@@ -1056,8 +1069,20 @@ hits=$(grep -rlEi "DESYNCED|REFEREE SUSPECT" "$OUT" 2>/dev/null | grep -v "/vali
 # headline can say what it is actually based on. "no desyncs" over 32 of 37 runs is
 # a different statement from "no desyncs" over 37, and the reader cannot tell them
 # apart unless this line does it for them.
+# SKIP THE PLANTED RUNS. validate.* and negative.* are SUPPOSED to fail -- one
+# plants a desync and requires the referee to catch it, the other plants an override
+# mismatch and requires rejection at load. The hits grep above already excludes them
+# for exactly this reason; counting them here reported the harness's own passing
+# self-tests as coverage gaps and then declared "this is NOT a clean sweep" over a
+# sweep in which every real seat finished.
+#
+# The count is SEATS, not runs: a 4-human run writes client.log plus client2..4, and
+# every one of them has to finish for the run to mean anything. Say "seat" so the
+# number lines up with something the reader can count, rather than looking like a
+# run total that disagrees with the table.
 _ok=0; _bad=0
 for f in "$OUT"/*.client*.log; do
+  case "$(basename "$f")" in validate.*|negative.*) continue ;; esac
   case "$(grep -h "mp-headless done" "$f" 2>/dev/null | tail -1)" in
     *err=none*) _ok=$((_ok + 1)) ;;
     *)          _bad=$((_bad + 1)) ;;
@@ -1066,10 +1091,10 @@ done
 if [ -n "$hits" ]; then
   echo "DESYNCS FOUND in:"; echo "$hits"
 elif [ "$_bad" -gt 0 ]; then
-  echo "no desyncs in the $_ok run(s) that completed -- but $_bad DID NOT, see below."
+  echo "no desyncs in the $_ok seat(s) that completed -- but $_bad DID NOT, see below."
   echo "This is NOT a clean sweep: a run that errored proves nothing either way."
 else
-  echo "no desyncs reported ($_ok runs, all completed)"
+  echo "no desyncs reported ($_ok seats, all completed)"
 fi
 echo "note: runs marked 'flow' seated no human, so no hashes were compared in them --"
 echo "      they cover flow control only and prove nothing about determinism."
@@ -1094,6 +1119,7 @@ echo "      They prove consensus, not reproducibility -- do not diff their hashe
 # the tick counts to notice.
 echo "runs that did not complete:"
 for f in "$OUT"/*.client*.log; do
+  case "$(basename "$f")" in validate.*|negative.*) continue ;; esac
   d=$(grep -h "mp-headless done" "$f" 2>/dev/null | tail -1)
   case "$d" in
     "")            echo "  $(basename "$f") -- NEVER RAN (no result line)" ;;
