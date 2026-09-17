@@ -1329,7 +1329,8 @@
                 // touches down only when truly idle) exactly as it does while building.
                 bool busy = u.walking() || !u.orders.empty() ||
                             u.buildSiteId != 0 || u.hasQueuedBuild() ||
-                            u.reclaimId != 0 || u.hasQueuedWork() || u.repairId != 0;
+                            u.reclaimId != 0 || u.hasQueuedWork() || u.repairId != 0 ||
+                            !u.buildQueue.empty();   // infinite/repeat conjure produces from the queue
                 float target = busy ? cruise : 0.0f;
                 float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise
                 a.altitude += std::clamp(target - a.altitude, -step, step);
@@ -1340,10 +1341,20 @@
                 if (a.hasFlightSM) {
                     // Drake VTOL state machine: retail's engine only ever calls
                     // BeginFlight (takeoff) and BeginLanding (descent), plus
-                    // setSFXoccupy to report active/occupied. The Create-started
-                    // FlightControl loop then plays launch->fly->soar itself, gated
-                    // on airborne(static7) and active(static5); RestoreWatcher eases
-                    // back to rest on halt. No reset() -- the loops must keep running.
+                    // setSFXoccupy(5) to report ACTIVE (static 6). Two Create-started
+                    // threads then drive the pose, both gated on static 6:
+                    //   FlightControl -- plays launch->fly->soar while active and NOT
+                    //     (aiming static 5 / building static 9); when aiming or building
+                    //     it switches to `attack` for the airborne body.
+                    //   RestoreWatcher -- while active AND building (static 10, set by
+                    //     Go via StartBuilding->RequestState), loops `build`, the conjure
+                    //     arm gesture; else eases back to rest.
+                    // Both freeze if static 6 goes clear -- so the flyer must stay ACTIVE
+                    // through any builder work, which the altitude `busy` test above
+                    // guarantees (it holds cruise while buildSiteId/queue is set). Traced
+                    // with tools/re/emuphase.py + the cob VM; pinned by conjure_test,
+                    // which drives this exact sequence through the real Vm. No reset()
+                    // -- the loops must keep running.
                     if (air != a.airborne) {
                         a.airborne = air;
                         if (air) {
@@ -1511,7 +1522,9 @@
                 // site started without walking in between).
                 int workId = u.buildSiteId ? u.buildSiteId
                            : u.repairId    ? u.repairId
-                           : u.reclaimId   ? u.reclaimId : 0;
+                           : u.reclaimId   ? u.reclaimId
+                           : !u.buildQueue.empty() ? -1   // producing from the queue (repeat conjure)
+                           : 0;
                 bool working = !u.walking() && workId != 0;
                 if (working != a.building || (working && workId != a.workId)) {
                     a.building = working;
@@ -1524,8 +1537,12 @@
                             a.vm->start("restore_x") || a.vm->start("RestoreAfterDelay");
                         }
                     } else if (a.hasFlightSM) {
-                        // SM flyer (arafly/zonhunt): StartBuilding sets the build static
-                        // and the Create-run FlightControl plays `build`; no reset.
+                        // SM flyer (arafly/zonhunt monarch): StartBuilding sets unit
+                        // value 5 and fires RequestState->Go, raising statics 9/10;
+                        // RestoreWatcher (a Create thread) then loops `build` -- NOT
+                        // FlightControl, which plays `attack` for the body. Verified by
+                        // driving the real Vm: arms conjure, body holds the attack pose.
+                        // No reset.
                         a.vm->start(working ? "StartBuilding" : "StopBuilding");
                     } else {
                         // Generic flyer builder (tarpries): no FlightControl loop, so the
