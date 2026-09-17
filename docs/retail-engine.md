@@ -409,14 +409,21 @@ constructor `0x415f80`, created at `0x4e6060` and cleared at `0x4e60b6`.
 with two booleans at `+0x229` / `+0x22a` for the -2 / -1 / 0 special values.
 So pathfinding effort is a user-facing quality knob.
 
-**Per-frame scheduler** (`0x416430`): walks the request lists of all 10
-players, counting pending requests into two buckets -- `B` for those flagged at
-`+0x24e7`, `A` for the rest. If none, it bumps an idle counter at `+0x1a5` and
-returns. Otherwise the per-request quantum is
+**Per-frame scheduler** (`0x416430`): walks all 10 player slots, counting into
+two buckets -- `B` for players flagged at `+0x24e7`, `A` for the rest. If none,
+it bumps an idle counter at `+0x1a5` and returns. Otherwise the quantum is
 
     quantum = +0x225 / (A + 5*B)
 
-so a flagged request gets FIVE TIMES the share. It zeroes `+0x165`, which is
+so a flagged player gets FIVE TIMES the share.
+
+CORRECTED 2026-09-16: this paragraph used to say "counting pending REQUESTS"
+and "per-request quantum". It is PER PLAYER. `0x634674[p]` holds a player's
+pending count but is only ever tested `> 0`, never summed, and the bucket is
+incremented once per player. Emulated to settle it: two players with one
+pending each split 500/500, and so do two players with 50 each, and so does
+1-pending against 99-pending. A player with 99 queued units gets the same frame
+budget as one with a single unit. See `docs/pathfinding-port.md`. It zeroes `+0x165`, which is
 the work cap the search meters itself against, then iterates the players.
 
 **Where we deliberately depart** (2026-09-12): retail lets every pending request

@@ -118,15 +118,44 @@ classes by byte `[+0x24e7]`, then
 
 with the frame budget at `[esi+0x225]` and the running total at `[esi+0x165]`.
 
-WE ALREADY IMPLEMENT THE 5x SPLIT, BUT AGAINST REQUESTS, NOT PLAYERS
-(`pathsearch.cpp`, "a flagged request is worth five ordinary ones"). That is a
-real divergence with a gameplay consequence: retail's version stops one player
-with 500 units from starving another, ours does not. The port must move the
-weighting to the player axis.
+CONFIRMED UNDER EMULATION. Synthetic game state, ten player slots, budget 1000:
 
-NOT ESTABLISHED: no AGE weighting was found. The weight is the player-class byte
-`[+0x24e7]`, and what that byte MEANS (human vs AI, or something else) is not
-established either. Both need pinning before this is written.
+    2 normal                -> 500 / 500
+    normal + special        -> 166 / 830          (830 = 166*5)
+    special + normal        -> 830 / 166          (order-independent)
+    2 normal + 2 special    -> 83 / 415 / 83 / 415
+                               denom 2+5*2=12, 1000/12=83, special 83*5=415
+
+THE COUNT IS PLAYERS, NOT REQUESTS -- and this is the decisive result. Vary the
+pending count and the share does not move:
+
+    two normal, each pending=1   -> 500 / 500
+    two normal, each pending=50  -> 500 / 500
+    pending 1 vs pending 99      -> 500 / 500
+
+A player with 99 queued units gets exactly the same frame budget as a player
+with one. The scheduler increments its bucket ONCE PER PLAYER that has any
+pending work; `0x634674[p]` is only ever tested `> 0`, never summed. That is
+per-player fairness regardless of army size, and it is the behaviour to copy.
+
+This corrects two things. `docs/retail-engine.md` (2026-09-12) describes the
+scheduler as "counting pending REQUESTS into two buckets" with a "per-request
+quantum" -- it is per player, and the quantum is per player. And our own
+`pathsearch.cpp` splits the budget across REQUESTS ("a flagged request is worth
+five ordinary ones"), which is the wrong axis: ours lets one player with 500
+units starve another, retail's cannot. The port must move the weighting to the
+player axis.
+
+NOT ESTABLISHED: no AGE weighting exists. The weight is the player-class byte
+`[+0x24e7]`. What that byte MEANS is still inference, not fact: the only other
+consumers are `0x40fe00`, where `type==2 && [+0xe3]!=0` gates a SOUND
+(`0x50cd10` id `0x21`), and `0x409b9a`, where it gates a relationship test
+against the ally table at `+0xac[playerId]`. Sound playback is local-only, so
+the evidence points at "the local player", i.e. the human at this machine gets
+5x the path budget for responsiveness. THAT IS A GUESS AND IS MARKED AS ONE.
+No store to the field was found anywhere in the image -- it is filled wholesale
+from lobby/save data -- so confirming it needs a different method than a search
+for writes.
 
 ### Continuous short-hop replanning -- NOT ESTABLISHED
 
@@ -169,11 +198,25 @@ remote sweep has to be re-run at the end.
 
 ## Open questions, all blocking a faithful port
 
-- What is player byte `[+0x24e7]`, the 5x class?
-- What is type byte `[+0x249]`, the repath scale?
-- What is the frame budget `[esi+0x225]`, and the divisor `arg` at `0x416504`?
-- Is there route shortening as well as repath timing?
-- What are `[+0x24ee]` (type in {1,2,3}) and `[+0x24ef] != 0xa`?
+RESOLVED:
 
-These are all reachable by the same static+emulation method; none of them should
-be guessed.
+- The budget formula and the 5x weighting -- confirmed under emulation, above.
+- The count is PLAYERS, not requests -- confirmed under emulation, above.
+- `[esi+0x225]` is the frame work budget. Already documented in
+  `retail-engine.md`: `0x4252e0` computes it as `base(+0x221) * clamp(pct, 5,
+  1000) / 100`, i.e. pathfinding effort is a user-facing quality slider.
+- `[+0x24ef]` is the player's own id; the `!= 0xa` test skips the unassigned /
+  neutral slot. Same field the enqueue reads as `[[unit+8]+0xb8]+0xeb`.
+- `[+0x24ee]` is the player type, and the scheduler serves types 1, 2 and 3.
+  `0x40fe00` shows type 2 taking a local-only sound path.
+
+STILL OPEN, and not to be guessed:
+
+- What player byte `[+0x24e7]` actually is. Evidence points to "local player";
+  see above for why that is inference. It decides who gets 5x, so it matters.
+- What type byte `[+0x249]` is -- the per-unit-type repath scale. The repath
+  cadence is meaningless without it.
+- Whether the ROUTE is shortened as well as the timing randomised
+  ("short-hop replanning"). Only the timing was found.
+- What the divisor argument to `0x416430` is at the call site. Emulation shows
+  it simply divides the budget; the value passed in the real game is unknown.
