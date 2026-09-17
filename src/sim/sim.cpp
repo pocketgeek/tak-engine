@@ -1200,8 +1200,6 @@ void World::cancelPath(Unit& u) {
     // detour history on every re-ask and the fallback could never accumulate -- the
     // trigger fired and was forgotten within the same second, and the benchmark showed
     // not a single number moving.
-    pathDetours_.erase(u.id);
-    pathUseAStar_.erase(u.id);
 }
 
 void World::requestPath(Unit& u, float x, float z) {
@@ -1215,8 +1213,7 @@ void World::requestPath(Unit& u, float x, float z) {
     if (pathDist(from, to) < 3) { paths_.cancel(u.id); return; }
     paths_.request(u.id, from, to, g.width(), g.height(),
                    Fixed::fromFloat(x), Fixed::fromFloat(z),
-                   /*priority=*/u.type->commander,
-                   /*useAStar=*/pathUseAStar_.count(u.id) != 0);
+                   /*priority=*/u.type->commander);
 }
 
 // Label the connected components of the cells a `foot`-wide unit can occupy, using
@@ -4746,37 +4743,10 @@ void World::tick(float dt) {
             Unit* u = unit(unitId);
             if (route.empty()) {           // failed: back off before retrying
                 pathRetryAt_[unitId] = tickCounter_ + kPathFailBackoff;
-                // Repeated failure is the OTHER trigger. It is rare in practice (2 of 710
-                // searches on the serpentine), which is why it is not the only one.
-                if (++pathDetours_[unitId] >= kDetoursBeforeAStar)
-                    pathUseAStar_.insert(unitId);
                 return;
             }
             pathRetryAt_.erase(unitId);
             if (!u || !u->alive() || u->orders.empty()) return;
-            // DETOUR WATCH. Compare the route the tracer just produced against the
-            // straight line to the goal. A route far longer than the crow flies is the
-            // tracer doing what a bug algorithm does -- following an outline it keeps
-            // re-meeting -- and it is the signal that this trip wants the planner.
-            // Repeated, because one long route is often perfectly correct (rounding a
-            // lake); several in a row for the same unit is not.
-            {
-                float routeLen = 0;
-                float px = u->x.toFloat(), pz = u->z.toFloat();
-                for (const PathCell& c : route) {
-                    const float wx = float(c.x) * 16 + 8, wz = float(c.z) * 16 + 8;
-                    routeLen += std::sqrt((wx - px) * (wx - px) + (wz - pz) * (wz - pz));
-                    px = wx; pz = wz;
-                }
-                const float straight = std::sqrt((gx - u->x.toFloat()) * (gx - u->x.toFloat()) +
-                                                 (gz - u->z.toFloat()) * (gz - u->z.toFloat()));
-                if (straight > 160.0f && routeLen > straight * kDetourTrigger) {
-                    if (++pathDetours_[unitId] >= kDetoursBeforeAStar)
-                        pathUseAStar_.insert(unitId);
-                } else {
-                    pathDetours_.erase(unitId);
-                }
-            }
             // Only the leg this search was issued for; anything queued behind
             // it stays untouched.
             // Snap the final waypoint to the caller's exact goal ONLY when the
@@ -5232,8 +5202,6 @@ void World::tick(float dt) {
             // rather than just memory.
             pathRetryAt_.erase(u.id);
             abandoned_.erase(u.id);
-            pathDetours_.erase(u.id);
-            pathUseAStar_.erase(u.id);
             u.deadFor = 0; u.orders.clear(); u.speed = Fixed(); continue;
         }
 
@@ -5449,20 +5417,6 @@ void World::tick(float dt) {
                     Order done = o;
                     u.orders.erase(u.orders.begin());
                     if (done.patrol) u.orders.push_back(done);
-                    // ARRIVING ENDS THE ESCALATION. pathUseAStar_ is set when the cheap
-                    // tracer hands this unit repeatedly long routes, and it was only ever
-                    // cleared by cancelPath -- i.e. by a genuinely new order. So a unit
-                    // that escalated in a serpentine kept the bounded planner for the
-                    // rest of its life, including for later trips across open ground
-                    // where the tracer answers in one test and A* expands a region.
-                    //
-                    // The escalation is a property of a TRIP, not of a unit. Completing
-                    // the goal ends the trip, so the next one earns a fresh cheap attempt
-                    // and re-escalates by the same evidence if the terrain warrants it.
-                    if (done.goal) {
-                        pathUseAStar_.erase(u.id);
-                        pathDetours_.erase(u.id);
-                    }
                 }
                 continue;
             }

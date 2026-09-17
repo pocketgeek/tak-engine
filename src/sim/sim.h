@@ -1901,19 +1901,6 @@ private:
     // record keeps that sweep running for the rest of the game. The expiry covers the
     // goal that simply never becomes reachable.
     static constexpr uint32_t kAbandonExpiry = 30 * 120;   // 2 minutes
-    // When to stop using the cheap tracer for a unit and reach for the bounded planner.
-    //
-    // The trigger is EXCESSIVE DETOUR, not repeated failure. Measured on a serpentine:
-    // 710 searches, only 2 of which failed -- the tracer succeeds and returns a route
-    // 4.46x longer than the shortest one the grid allows, the unit walks a bit, re-asks,
-    // and gets another. A failure-triggered fallback would essentially never fire.
-    static constexpr float kDetourTrigger = 2.5f;   // installed route vs straight line
-    static constexpr int kDetoursBeforeAStar = 2;   // ...this many times running
-    // Progress is measured ALONG THE ROUTE as well as by distance to the goal: a
-    // legitimate detour moves away from the destination, so distance-to-goal alone calls
-    // correct behaviour a failure.
-    std::unordered_map<int, int> pathDetours_;   // unit -> consecutive long routes
-    std::unordered_set<int> pathUseAStar_;       // units currently on the planner
     // How long a WEDGED unit keeps shoving at a goal it is not reaching before
     // it settles. Retail stops promptly -- ordered at an unreachable mountain it
     // walks as close as it can and comes to rest, with no long grind first --

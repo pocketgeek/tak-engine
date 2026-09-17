@@ -84,7 +84,7 @@ struct PathCell {
 // returns Suspended with every field intact for the next tick.
 struct PathSearch {
   public:
-    enum class Phase : uint8_t { Init, March, CardMarch, Trace, Done, Failed, AStar };
+    enum class Phase : uint8_t { Init, March, CardMarch, Trace, Done, Failed };
     enum class Result : uint8_t {
         Arrived,     // icd 0: the goal was reached
         Waypoint,    // icd -1: a point was emitted, more to do
@@ -98,22 +98,6 @@ struct PathSearch {
     int foot = 1;
     int selfId = 0;
     bool priority = false;   // retail's +0x24e7 flag: five times the work share
-    // Use the bounded A* instead of the boundary tracer.
-    //
-    // The tracer is cheap and right for ordinary trips, and it stays the default. It is a
-    // BUG ALGORITHM though: it walks an obstacle's outline until it regains the goal
-    // line, which in terrain that keeps interrupting that line means following every wall
-    // it meets. Measured on a six-baffle serpentine, 12 units, 240s:
-    //
-    //   straight line          2550px
-    //   shortest legal path    3565px   (x1.40 -- the maze itself forces only this)
-    //   what units travelled  15909px   (x6.24) = x4.46 of the best possible route
-    //
-    // and it cost 3.5M work against ~300k for the same crowd on open ground, with only
-    // 2 failures in 710 searches. So this is not a failure-to-find problem -- the tracer
-    // succeeds, and returns a route four and a half times longer than necessary, then the
-    // unit re-asks and gets another one.
-    bool useAStar = false;
 
     // Resumable state. Field comments give the icd offset each one mirrors.
     Phase phase = Phase::Init;
@@ -138,13 +122,6 @@ struct PathSearch {
     static constexpr uint8_t kGoal = 0x4;     // icd tests bit 0x4 to stop
     static constexpr uint8_t kSeen = 0x8;
     static constexpr uint8_t kScore5 = 0x40;
-    // A* only: this cell has been EXPANDED. Improving a cell's cost pushes a second heap
-    // entry without removing the first, so the same cell pops more than once -- and each
-    // pop was counted against the visit limit. With the limit set to one expansion per
-    // cell, duplicates exhausted it and REACHABLE GOALS FAILED: a 30x30 grid with a wall
-    // and occupied cells gave up after 901 expansions and reached the goal at 957 once
-    // the limit was raised. Closing a cell makes the per-cell bound mean what it says.
-    static constexpr uint8_t kClosed = 0x10;
 
     // Size the scratch to the map and clear the search. Call once per request.
     void reset(int mapW, int mapH);
@@ -165,14 +142,6 @@ private:
     std::vector<uint8_t> flag_;
     std::vector<uint8_t> from_;
     std::vector<uint32_t> walkStamp_;   // buildRoute's cycle guard, same trick
-    // A* scratch, stamped by the same generation trick so it costs nothing to reset.
-    std::vector<uint32_t> gStamp_;      // generation for gScore_
-    std::vector<int32_t> gScore_;       // cost from the start, in 10/14 units
-    std::vector<int32_t> open_;         // binary heap of cell indices
-    std::vector<int32_t> openF_;        // f-score parallel to open_ (heap key)
-    void aStarPush(int32_t cell, int32_t f);
-    int32_t aStarPop();                 // lowest f; ties broken by cell index
-    void buildAStarRoute();
     uint32_t walkGen_ = 0;
 
     bool seen(size_t i) const { return stamp_[i] == gen_; }
@@ -261,7 +230,7 @@ class PathService {
 
     // Queue a search. Replaces any request already outstanding for this unit.
     void request(int unitId, PathCell start, PathCell goal, int mapW, int mapH,
-                 Fixed goalX, Fixed goalZ, bool priority, bool useAStar = false);
+                 Fixed goalX, Fixed goalZ, bool priority);
     void cancel(int unitId);
     bool pending(int unitId) const { return q_.find(unitId) != q_.end(); }
     size_t pendingCount() const { return q_.size(); }
@@ -289,7 +258,6 @@ class PathService {
         bool priority = false;
         int slot = -1;          // index into pool_, or -1 while queued
         int cap = 0;            // icd +0x165: grows by the quantum each tick
-        bool useAStar = false;  // this request wants the bounded planner
         uint64_t ranAt = 0;     // tick this entry last got a slice (see the refill loop)
     };
     uint64_t tickNo_ = 0;       // monotonic, integer: tells "already ran this tick" apart
