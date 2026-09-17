@@ -634,3 +634,45 @@ query is a local window anchored at the goal (put the goal near the origin with
 large +4/+6 window offsets to grade the whole map); the allocators (0x4eb9e0
 malloc, 0x4eba00 free, 0x5ba3d0 alloc) are all CDECL -- shim them to clean ZERO
 args or the stack corrupts across the node-pool grow.
+
+## RE residuals resolved (2026-09-17)
+
+Three loose ends from the phase-2 validation, chased to ground under emulation
+and static disassembly.
+
+**The heap (0x416a30) is a plain binary min-heap with NO secondary key.** Its
+sift-down takes the current node at `[ebp+8]`, its children at `2i+1` / `2i+2`,
+compares a single integer key at `node+0xc`, and stops on `jge` (a child equal
+to its parent does not rise; between two equal children the LEFT one wins). There
+is no tie-break field beyond that key -- among equal-priority nodes retail's pop
+order is whatever the heap's array positions happen to give, a pure artefact of
+insertion + sift order. Our port instead breaks equal-cost ties by cell index
+(`a.cell > b.cell` in buildDijkstraRoute). That is a *deterministic substitute*,
+not a match: it yields an equal-cost (optimal) route, but not necessarily retail's
+particular one. Matching retail's exact corner sequence would mean reproducing
+this heap's push (sift-up) and pop (this sift-down) AND retail's neighbour
+insertion order verbatim, and then it would still only re-select among routes of
+identical cost -- no behavioural or determinism gain (our peers already agree
+with each other; phase 2 only fires on the ~20% short-trip case). Left as a
+documented cosmetic residual, now with the exact heap shape on record.
+
+**+0x24e7 is the human/privileged-player flag; humans get a 5x path-budget
+share (CONFIRMED, was inferred).** The scheduler's budget split (0x4164a0-
+0x416517) walks the player table, and for each active slot reads the byte at
+`player+0x24e7`: nonzero increments the "with" count (`edi`), zero increments the
+"without" count (`[ebp-4]`). It then forms the weighted total
+`edi + (without + 4*edi)` = `without*1 + with*5` (0x416500 `lea ecx,[ecx+edi*4]`
+then 0x416507 `add edi,ecx`) and divides the frame's search budget by it
+(0x416515 `idiv edi`). So a flagged player draws 5 shares to an unflagged
+player's 1 -- exactly the 5x our World::setHumanPlayers applies. (The adjacent
+byte `player+0x24ef == 0xa` gates a slot out entirely; 0xa = 10 is the same
+sentinel the player loop caps at.) The port is byte-faithful here.
+
+**Retail-under-wine pacing: not ground-truthed (environment-limited).** The
+cadence ladder (docs above) was reversed by EMULATING 0x414450/0x4e51f3 with
+planted states, which fixes the branch logic exactly but not the wall-clock feel
+of the geometric re-ask tail. Confirming that against a live retail process would
+need KINGDOMS.icd running under wine with the RNG + frame counter instrumented --
+outside this repo's harness (which emulates routines, it does not run the game).
+Recorded as a known gap, not a discrepancy: nothing observed contradicts the
+port; the tail's timing constants are simply unverified against a running binary.
