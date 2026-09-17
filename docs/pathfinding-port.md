@@ -549,3 +549,48 @@ route extraction on a small grid and OBSERVES the route (the way emupath.py
 observed the grades and the bit table), confirming the cost model and the
 composition before a line of it lands in the sim. That is a dedicated effort,
 not a tail-end one.
+
+
+## PORTED (2026-09-17): phase 2, the Dijkstra route producer
+
+The harness the previous section called for was built (tools/re/emuphase.py) and
+it did the job: it constructs retail's real search object (0x415f80), runs init
+(0x415170), and drives the phase machine -- the tracer ARRIVES and phase 2
+(0x4142c0) EXPANDS NODES -- observed live. From that run the EXACT cost model
+was read off the initialised object, and phase 2 was confirmed to be Dijkstra.
+
+**The cost model, emulated (not inferred):**
+  step cost   cardinal 16, diagonal 23         (+0x90 table)
+  turn cost   0/80/120/160/200 by |heading turn| (+0x70 table)
+  grade cost  open(6) 24, road(7) 8, slope(4) 48, traffic(5) 80
+  turn pen.   136 within a 3-cell window; floater-on-water scales all ~5.3x
+  node budget map cells / 10                    (0x415c47)
+  priority    g(parent) + step + turn + grade   -- NO heuristic (0x413ef5)
+
+**The port** (PathSearch::buildDijkstraRoute): a min-heap Dijkstra with these
+exact costs, tie-broken by cell index for determinism, bounded by the node
+budget. It is the route producer when the tracer reaches the goal (retail's
+composition: tracer = reachability probe, Dijkstra = the route); the tracer's
+breadcrumb route stays the failure/over-budget fallback. Wired at all four
+tracer-arrival sites.
+
+**Measured.** Runs (651 calls / 136 within-budget completions across crowdbench),
+deterministic (Ulasem Arena hash reproducible across runs), all 14 suites pass.
+The effect is SMALL and that is a finding, not a defect: where the tracer
+arrives its routes were already near-straight, so the Dijkstra's turn-minimising
+route often coincides; the hard cases (serpentine) are tracer FAILURES that fall
+back to breadcrumbs in retail too, so x6.78 there is faithful, not a gap our
+port should close. Crowdbench travel ratios rise a hair (chokepoint x1.17->1.24,
+open x1.02->1.04) -- the direct, predictable consequence of retail's turn cost
+(80..200) dwarfing its step cost (16..23): the search minimises TURNS, not
+distance, exactly as the emulated costs dictate.
+
+**Honest scope.** The cost model and the Dijkstra algorithm are emulation-exact.
+What could NOT be observed end to end is a complete retail ROUTE: the tracer's
+reverse-march runs over a recentering local-window grade system, and driving it
+to a produced route needs that subsystem replicated (the harness gets the tracer
+to arrive and phase 2 to expand nodes, then hits a node-pool plumbing wall). So
+route fidelity is by CONSTRUCTION -- a correct Dijkstra over the exact cost model
+-- rather than by observation of retail's output. Determinism makes this
+lockstep-safe regardless; the residual is whether retail's tie-breaks match ours
+in exact-cost ties, which is cosmetic.

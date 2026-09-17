@@ -176,6 +176,21 @@ struct PathSearch {
     // Size the scratch to the map and clear the search. Call once per request.
     void reset(int mapW, int mapH);
     void buildRouteTo(PathCell end);
+    // RETAIL'S PHASE 2 (icd 0x4142c0): a budget-bounded Dijkstra that produces the
+    // route when the tracer reaches the goal. The tracer (phases Init..Trace) is
+    // retail's fast reachability PROBE; on arrival the scheduler seeds this cost
+    // search and ITS route is the one used (0x415b6b seeds, 0x4142c0 searches). The
+    // tracer's own breadcrumb route (buildRoute) is retail's FAILURE fallback only.
+    // Costs, algorithm and composition were emulated: tools/re/emuphase.py runs the
+    // real object through init and observes the cost table below; the search is
+    // Dijkstra (NO heuristic -- the node priority is g(parent)+step+turn+grade, read
+    // at icd 0x413ef5-0x413f28), relaxing, min-heap.
+    //   step cost      cardinal 16, diagonal 23 (16*sqrt2)   (+0x90 table)
+    //   turn cost      0/80/120/160/200 by |heading change|  (+0x70 table)
+    //   grade cost     open(6) 24, road(7) 8, slope(4) 48, traffic(5) 80
+    //   node budget    map cells / 10                        (icd 0x415c47)
+    // Fills `out` and returns true iff it reached the goal within budget.
+    bool buildDijkstraRoute(const std::function<int(int, int)>& score);
 
     // `score` answers retail's per-cell query for this unit. One call runs until
     // `quantum` work units are spent; call again next tick to continue.
@@ -194,6 +209,13 @@ private:
     std::vector<uint8_t> from_;
     std::vector<uint32_t> walkStamp_;   // buildRoute's cycle guard, same trick
     uint32_t walkGen_ = 0;
+    // Dijkstra scratch, same generation-stamp trick as the tracer's. dGen_ bumps per
+    // search so nothing is cleared; dDist_ is the accumulated cost, dDir_ the parent
+    // direction for reconstruction.
+    std::vector<uint32_t> dStamp_;
+    std::vector<int32_t> dDist_;
+    std::vector<uint8_t> dDir_;
+    uint32_t dGen_ = 0;
 
     bool seen(size_t i) const { return stamp_[i] == gen_; }
     void touch(size_t i) {

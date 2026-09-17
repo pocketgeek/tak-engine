@@ -47,7 +47,10 @@ void PathSearch::reset(int mapW, int mapH) {
         walkStamp_.assign(n, 0);
         flag_.assign(n, 0);
         from_.assign(n, 0);
-        gen_ = walkGen_ = 0;
+        dStamp_.assign(n, 0);
+        dDist_.assign(n, 0);
+        dDir_.assign(n, 0);
+        gen_ = walkGen_ = dGen_ = 0;
     }
     ++gen_;   // every cell is now stale, i.e. empty -- no clearing needed
     phase = Phase::Init;
@@ -104,7 +107,114 @@ bool PathSearch::atGoal(PathCell c) const {
 // order (icd 0x414450 does the same over its own 0x218-byte buffer). Only
 // direction CHANGES become waypoints -- a straight run needs no intermediate
 // points -- and the navigator caps the list at 64 (0x4e4ea0).
+static bool stepLegal(const std::function<int(int, int)>& score, PathCell c, int d);
+
 void PathSearch::buildRoute() { buildRouteTo(goal); }
+
+// Retail's phase-2 Dijkstra (icd 0x4142c0), the route producer on tracer success.
+// Costs and algorithm emulated (tools/re/emuphase.py): a min-heap best-first search
+// with NO heuristic, relaxing on accumulated cost. Deterministic -- integer costs, a
+// binary heap tie-broken by cell index -- so every peer builds the same route.
+bool PathSearch::buildDijkstraRoute(const std::function<int(int, int)>& score) {
+    out.clear();
+    if (!inside(start) || !inside(goal)) return false;
+
+    // The exact per-grade cell cost from init (emuphase.py): the grade the score()
+    // callback returns (retail's 0..7) maps to the entry cost. Grades below the
+    // threshold are impassable and never entered.
+    auto gradeCost = [](int g) -> int {
+        switch (g) {
+            case kCellRoad:   return 8;    // 7, +0xc4
+            case kCellGround: return 24;   // 6, +0xc0
+            case kCellSlope:  return 48;   // 4, +0xbc
+            case kCellSameWay:return 80;   // 5, +0xc8
+            default:          return -1;   // 0..3: impassable
+        }
+    };
+    // Step cost by direction: cardinal 16, diagonal 23 (retail +0x90). Turn cost by
+    // the change in heading from the parent's incoming direction, |d| in 0..4 mapping
+    // to 0/80/120/160/200 (retail +0x70). Directions are the tracer's rotational
+    // order (kDirX/kDirZ), so a delta of 1 is 45 degrees.
+    static const int kStepCost[8] = {16, 23, 16, 23, 16, 23, 16, 23};
+    static const int kTurnCost[5] = {0, 80, 120, 160, 200};
+
+    const size_t goalI = size_t(goal.z) * size_t(w_) + size_t(goal.x);
+    if (score(start.x, start.z) < kCellThreshold) return false;
+
+    ++dGen_;
+    // Binary min-heap of (cost, cell, dir): cost primary, cell index tie-break so
+    // ties resolve identically on every machine.
+    struct Node { int32_t cost; int32_t cell; uint8_t dir; };
+    std::vector<Node> heap;
+    auto less = [](const Node& a, const Node& b) {
+        return a.cost != b.cost ? a.cost > b.cost : a.cell > b.cell;  // min-heap
+    };
+    auto relax = [&](int32_t cell, int32_t cost, uint8_t dir) {
+        if (dStamp_[size_t(cell)] == dGen_ && dDist_[size_t(cell)] <= cost) return;
+        dStamp_[size_t(cell)] = dGen_;
+        dDist_[size_t(cell)] = cost;
+        dDir_[size_t(cell)] = dir;
+        heap.push_back({cost, cell, dir});
+        std::push_heap(heap.begin(), heap.end(), less);
+    };
+    const int32_t startCell = int32_t(start.z * w_ + start.x);
+    relax(startCell, 0, 0xff);   // 0xff = no incoming direction
+
+    // Node budget: retail bounds phase 2 at map cells / 10 (icd 0x415c47). Beyond it
+    // the scheduler abandons phase 2 and falls back -- for us, to the tracer route.
+    const int budget = std::max(64, (w_ * h_) / 10);
+    int expanded = 0;
+    bool reached = false;
+
+    while (!heap.empty()) {
+        std::pop_heap(heap.begin(), heap.end(), less);
+        const Node top = heap.back();
+        heap.pop_back();
+        // Stale heap entry (a cheaper path to this cell already popped): skip.
+        if (dStamp_[size_t(top.cell)] != dGen_ || dDist_[size_t(top.cell)] != top.cost)
+            continue;
+        if (size_t(top.cell) == goalI) { reached = true; break; }
+        if (++expanded > budget) break;
+
+        const int cx = top.cell % w_, cz = top.cell / w_;
+        for (int d = 0; d < 8; ++d) {
+            const int nx = cx + kDirX[d], nz = cz + kDirZ[d];
+            if (nx < 0 || nz < 0 || nx >= w_ || nz >= h_) continue;
+            const int gc = gradeCost(score(nx, nz));
+            if (gc < 0) continue;                       // impassable
+            if (!stepLegal(score, {cx, cz}, d)) continue;  // no diagonal corner-cut
+            // Turn cost from the parent's incoming heading. The start (dir 0xff) pays
+            // none; otherwise the |rotational difference|, folded to 0..4.
+            int turn = 0;
+            if (top.dir != 0xff) {
+                int diff = (d - int(top.dir)) & 7;
+                if (diff > 4) diff = 8 - diff;
+                turn = kTurnCost[diff];
+            }
+            const int32_t nc = top.cost + kStepCost[d] + turn + gc;
+            relax(int32_t(nz * w_ + nx), nc, uint8_t(d));
+        }
+    }
+    if (!reached) return false;
+
+    // Reconstruct start->goal from the parent-direction map, emitting a waypoint only
+    // at each change of direction (retail's route is direction-change corners), and
+    // capping at retail's 64 waypoints (icd 0x4e4ea0).
+    std::vector<PathCell> rev;
+    int c = int(goalI);
+    int lastDir = -1;
+    for (int guard = 0; guard < w_ * h_ + 8; ++guard) {
+        const int cx = c % w_, cz = c / w_;
+        if (cx == start.x && cz == start.z) break;
+        const int d = dDir_[size_t(c)];
+        if (d == 0xff) break;
+        if (d != lastDir) { rev.push_back({cx, cz}); lastDir = d; }
+        c = (cz - kDirZ[d]) * w_ + (cx - kDirX[d]);
+    }
+    out.assign(rev.rbegin(), rev.rend());
+    if (out.size() > 64) out.resize(64);
+    return true;
+}
 
 // Reconstruct the breadcrumb walk back from `end`. Retail reconstructs on FAILURE
 // too (0x415170), from the closest-approach cell -- the best-effort route that walks
@@ -234,7 +344,9 @@ case Phase::Init: {
                 touch(gi);
                 flag_[gi] |= kGoal;
             }
-if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
+if (best == 0) { phase = Phase::Done;
+                if (!buildDijkstraRoute(score)) buildRoute();
+                return Result::Arrived; }
             if (score(start.x, start.z) < kCellThreshold) {
                 phase = Phase::Failed;
                 return Result::Failed;
@@ -267,7 +379,9 @@ if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             if (giveUp) { org = cur; phase = Phase::CardMarch; break; }
             cur = n;
             mark(cur, d, s);
-            if (atGoal(cur)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
+            if (atGoal(cur)) { phase = Phase::Done;
+                if (!buildDijkstraRoute(score)) buildRoute();
+                return Result::Arrived; }
             const int dist = pathDist(cur, goal);
             if (dist < best) { best = dist; bestCell = cur; }
             break;
@@ -298,7 +412,9 @@ if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             }
             org = n;
             mark(org, d, s);
-            if (atGoal(org)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
+            if (atGoal(org)) { phase = Phase::Done;
+                if (!buildDijkstraRoute(score)) buildRoute();
+                return Result::Arrived; }
             const int dist = pathDist(org, goal);
             if (dist < best) { best = dist; bestCell = org; }
             break;
@@ -311,7 +427,9 @@ if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             work += kWorkTraceStep;
             const bool okA = traceStep(score, curA, dirA, +1);
             if (okA) {
-                if (atGoal(curA)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
+                if (atGoal(curA)) { phase = Phase::Done;
+                    if (!buildDijkstraRoute(score)) buildRoute();
+                    return Result::Arrived; }
                 const int dist = pathDist(curA, goal);
                 if (dist < best) { best = dist; bestCell = curA; }
                 if (onGoalLine(org, curA)) { org = curA; phase = Phase::CardMarch; break; }
@@ -329,7 +447,9 @@ if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             }
             const bool okB = traceStep(score, curB, dirB, -1);
             if (okB) {
-                if (atGoal(curB)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
+                if (atGoal(curB)) { phase = Phase::Done;
+                    if (!buildDijkstraRoute(score)) buildRoute();
+                    return Result::Arrived; }
                 const int dist = pathDist(curB, goal);
                 if (dist < best) { best = dist; bestCell = curB; }
                 if (onGoalLine(org, curB)) { org = curB; phase = Phase::CardMarch; break; }

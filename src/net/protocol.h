@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 83;       // 83: the cadence ladder is retail's --
+constexpr uint32_t kNetVersion = 84;       // 84: retail's phase-2 Dijkstra makes the
+                                           // route on tracer arrival (emulated costs)
+                                           // 83: the cadence ladder is retail's --
                                            // per-frame dice, flag-keyed, emulated
                                            // 82: retail's movement layer -- per-cell
                                            // search grades and mover probe, best-effort
