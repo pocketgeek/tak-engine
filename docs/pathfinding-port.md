@@ -385,3 +385,48 @@ patch in the session scratchpad (ladder-wip.patch) and included: the per-frame
 ladder, the traffic flag through PathService, the failed-quiet branch, and a
 cadence_test with two behavioural checks (failed-quiet, geometric-tail) that
 passed against the ladder but presume the unverified bit semantics.
+
+
+## FINISHED (2026-09-17): the ladder is in, on emulated bit semantics
+
+The reverted attempt above is superseded. The missing reads were done, and the
+one that mattered was done the way emupath.py settled the grades -- by running
+the binary's own code against planted state:
+
+- **The bit table, emulated** (0x414450 called with planted search objects):
+  the FAILURE report (arg != 0, reached from the -1 branch of the step runner
+  at 0x415b53) converts the search's accumulators to navigator bits --
+  {+0x4c=1} -> bit0, {+0x50=1} -> bit1, {both} -> bit0 alone, {neither} -> no
+  bits. The delivery invocation (arg == 0) sets bit2 iff the stored step code
+  (+0x40, written at 0x415b22) is positive, then walks breadcrumbs.
+- **The accumulators are set at VISIT time** (0x414951-0x4149ab, read in
+  phase): every score-5 cell the march touches latches +0x4c (within
+  50/+0x249 of the goal) or +0x50 (elsewhere). The reconstruction walk
+  recomputes the same pair over breadcrumbs for delivered routes.
+- **0x415170 is the search INITIALISER**, not the failure path (an old note
+  mislabelled it): it clears the accumulators and navigator bits 0-3 per
+  request, and computes per-type march parameters -- including a floater-gated
+  one (+0xbc: 0x30 normally, 0x140 for water-capable floaters) and three
+  roadmultiplier-scaled ones. Those parameters are NOT yet ported (they bound
+  march legs; ours uses the visit-limit form).
+- **The consequence that fixed the pacing**: a failed search with no crowd
+  evidence reports NO bits, and the plain branch (elapsed >= 120 then a
+  1-in-120 roll per frame, 0x4e545b) governs it -- so long hauls that fail at
+  the visit limit chain their way across the map, and a unit against a sealed
+  wall gently probes it a few times a minute for ever. "Failure means quiet",
+  which the first attempt shipped, was wrong and measurably stranded units.
+
+What is in the tree now: visit-time accumulators feeding the failure report
+(priority bit0), walk-time flags feeding delivered routes, the full flag-keyed
+dice table rolled fresh per frame, the floater/maxwaterdepth gates, and the
+plain geometric tail -- with our goalStuck retry engine, the periodic re-anchor
+sweep, and the pathRetryAt_ backoff all deleted as duplicates of it.
+cadence_test pins the two ends (gentle probing at a sealed wall, re-anchoring
+on a long march). Crowdbench against the pre-ladder build: opposing columns
+32/32 (was 29-30), serpentine 12/12, group order 31/32, chokepoint and open
+field medians identical with slightly slower tails -- the tails now wait on
+retail's own 2d8+60 traffic dice rather than our uniform invention.
+
+Still open: the 0x415170 march parameters (+0xbc/+0xc0/+0xc4/+0xc8), bit3's
+setter (nothing found; only the clear sites), and the retail-under-wine ground
+truth for pacing.

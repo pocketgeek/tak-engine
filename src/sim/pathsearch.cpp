@@ -53,6 +53,9 @@ void PathSearch::reset(int mapW, int mapH) {
     phase = Phase::Init;
     best = 0;
     goalCrowded = false;
+    sawTraffic = false;
+    visNear = false;
+    visFar = false;
     visited = 0;
     work = 0;
     nOccupied = nGround = nRoad = 0;
@@ -74,6 +77,21 @@ void PathSearch::mark(PathCell c, int d, int score) {
     if (flag_[i] & kSeen) return;
     from_[i] = uint8_t(d);
     flag_[i] = uint8_t(flag_[i] | kSeen | (score == 5 ? kScore5 : 0));
+    // RETAIL ACCUMULATES THE CROWD EVIDENCE AT VISIT TIME, right here in the
+    // march (icd 0x414951-0x4149ab): the first score-5 cell within the type's
+    // goal tolerance latches +0x4c, any other latches +0x50. The failure report
+    // (0x414450 called with a nonzero arg from the -1 branch of the step runner,
+    // 0x415b53) converts these to the navigator's outcome bits, +0x4c first --
+    // emulated to confirm: {4c=1}->bit0, {50=1}->bit1, {both}->bit0, {none}->0.
+    // The reconstruction walk recomputes the same pair over BREADCRUMBS for a
+    // delivered route; visNear/visFar here serve the failure report.
+    if (score == 5) {
+        if (tolCells > 0 &&
+            std::max(std::abs(c.x - goal.x), std::abs(c.z - goal.z)) < tolCells)
+            visNear = true;
+        else
+            visFar = true;
+    }
 }
 
 bool PathSearch::atGoal(PathCell c) const {
@@ -110,9 +128,13 @@ void PathSearch::buildRouteTo(PathCell end) {
         // the search could only pass through as same-way traffic (kScore5), lying
         // within the type's tolerance of the goal, marks the goal area as crowded --
         // the route leans on bodies that may not part by the time the unit arrives.
-        if (tolCells > 0 && (flag_[i] & kScore5) &&
-            std::max(std::abs(c.x - goal.x), std::abs(c.z - goal.z)) < tolCells)
-            goalCrowded = true;
+        if (flag_[i] & kScore5) {
+            if (tolCells > 0 &&
+                std::max(std::abs(c.x - goal.x), std::abs(c.z - goal.z)) < tolCells)
+                goalCrowded = true;
+            else
+                sawTraffic = true;
+        }
         if (d != lastDir) { rev.push_back(c); lastDir = d; }
         PathCell p{c.x - kDirX[d], c.z - kDirZ[d]};
         if (!inside(p) || (p.x == c.x && p.z == c.z)) break;
@@ -414,7 +436,7 @@ void PathService::cancel(int unitId) {
 
 void PathService::tick(const std::function<int(int, int, int)>& score,
                        const std::function<void(int, const std::vector<PathCell>&,
-                                                Fixed, Fixed, bool, bool)>& done) {
+                                                Fixed, Fixed, bool, bool, bool)>& done) {
     if (q_.empty()) return;
     if (pool_.empty()) {
         pool_.resize(kMaxActiveSearches);
@@ -503,7 +525,7 @@ void PathService::tick(const std::function<int(int, int, int)>& score,
         // slots, and only then hand the routes over -- so a callback is free to queue
         // whatever it likes.
         struct Finished { int id; std::vector<PathCell> route; Fixed gx, gz;
-                          bool failed; bool crowded; };
+                          bool failed; bool crowded; bool traffic; };
         std::vector<Finished> finished;
         for (auto& [id, e] : q_) {
             if (e.slot < 0 || e.ranAt == tickNo_) continue;
@@ -533,7 +555,7 @@ void PathService::tick(const std::function<int(int, int, int)>& score,
                 spent += kWorkCompleteBase + kWorkPerCorner * int(ps.out.size());
                 ++completions_;
                 finished.push_back({id, ps.out, e.goalX, e.goalZ,
-                                    false, ps.goalCrowded});
+                                    false, ps.goalCrowded, ps.sawTraffic});
             } else if (r == PathSearch::Result::Failed) {
                 spent += kWorkCompleteBase;
                 ++failures_;
@@ -543,8 +565,17 @@ void PathService::tick(const std::function<int(int, int, int)>& score,
                 // NOTHING and steered a straight line instead; retail's walks to the
                 // reachable edge. The route may legitimately be empty (start boxed
                 // in, nothing visited): the installer treats that as the old failure.
+                // The FAILURE REPORT's flags come from the visit-time accumulators,
+                // bit 0 taking priority over bit 1 exactly as 0x414450's report
+                // branch does (emulated: both set -> bit0 alone). A failure that
+                // saw no score-5 cells at all reports NOTHING -- and that is not a
+                // rest: with no bits set, the service worker's PLAIN branch governs
+                // (elapsed >= 120 and a 1-in-120 roll per frame), which is how a
+                // long haul that failed at its visit limit chains route by route,
+                // and how a unit against a sealed wall keeps gently probing it.
                 finished.push_back({id, ps.out, e.goalX, e.goalZ,
-                                    true, ps.goalCrowded});
+                                    true, ps.visNear,
+                                    !ps.visNear && ps.visFar});
             }
             // Suspended: keep the entry, resume next tick with its state intact.
         }
@@ -558,7 +589,7 @@ void PathService::tick(const std::function<int(int, int, int)>& score,
         }
         // Queue walked, slots free: now it is safe for a callback to re-enter.
         for (const Finished& f : finished)
-            done(f.id, f.route, f.gx, f.gz, f.failed, f.crowded);
+            done(f.id, f.route, f.gx, f.gz, f.failed, f.crowded, f.traffic);
         if (finished.empty()) break;   // no slot freed -> a refill round would do nothing
     }
 }

@@ -136,6 +136,21 @@ struct PathSearch {
     int tolCells = 0;             // goal-crowding tolerance, 50 / UnitType+0x249 cells
     bool goalCrowded = false;     // reconstruction saw a kScore5 cell within tolCells
                                   // of the goal (icd 0x414563 sets unit flag bit 0)
+    bool sawTraffic = false;      // ...or OUTSIDE it (the same walk's else-arm sets
+                                  // bit 1, `or ebx,2` at 0x4145c6): the route leant
+                                  // on same-way traffic somewhere short of the goal.
+                                  // Reconstruction ENTRY also sets bit 1 on its own
+                                  // state conditions (`or ecx`=2 at 0x4144aa, keyed
+                                  // on +0x50): a limit-bounded search earns the
+                                  // re-ask cadence too, which is how a long haul
+                                  // chains route by route instead of stranding at
+                                  // its first visit-limit failure. We mirror that
+                                  // as failed-with-progress (see the installer).
+    bool visNear = false;         // visit-time +0x4c: a score-5 cell within tolCells
+                                  // of the goal was MARCHED THROUGH (0x414951)
+    bool visFar = false;          // visit-time +0x50: one anywhere else (0x4149ab);
+                                  // these feed the FAILURE report, the walk pair
+                                  // above feeds a delivered route
     PathCell bestCell{};          // the visited cell that achieved it: the endpoint of
                                   // a FAILED search's best-effort route (icd 0x415170
                                   // reconstructs on failure too -- a route toward the
@@ -288,7 +303,7 @@ class PathService {
     // (base 20, 0x4e5284).
     void tick(const std::function<int(int, int, int)>& score,
               const std::function<void(int, const std::vector<PathCell>&,
-                                       Fixed, Fixed, bool, bool)>& done);
+                                       Fixed, Fixed, bool, bool, bool)>& done);
 
   private:
     // A queued request is just its parameters -- no per-cell scratch until it is

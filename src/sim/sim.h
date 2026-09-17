@@ -561,19 +561,22 @@ struct Unit {
     // moves again. Measured -- opposing columns fell from 32/32 arriving to 20/32, with
     // the survivors travelling an almost perfect straight line, which is the shape of a
     // rule that works beautifully for whoever wins it.
-    // Randomised stale-route deadline, retail's service-worker cadence: set when a
-    // route installs, to now + dice * type->halfCellTicks, the dice keyed on how the
-    // search ended (0x4e5226 / 0x4e5284 / 0x4e535d). Two dice each -- TRIANGULAR --
-    // which is what keeps a crowd's re-asks from synchronising. -1 = no route.
-    // Deterministic scratch, like the watchdogs: identical on every peer, unhashed.
-    int32_t routeDeadline = -1;
+    // The tick the current traced route installed (-1 = none) plus the search's
+    // outcome flags -- retail's navigator stamp (+0x110) and outcome bits (+0x134
+    // bits 0/1; bits 2|3 = failed). The cadence ladder in the mover reads these
+    // EVERY FRAME, rolls fresh dice, and re-requests when the elapsed time beats
+    // them; nothing stores a deadline. Deterministic scratch, unhashed.
+    int32_t routeStamp = -1;
+    bool routeCrowded = false;   // bit 0: same-way traffic within goal tolerance
+    bool routeTraffic = false;   // bit 1: same-way traffic elsewhere on the route
+    bool routeFailed = false;    // the search never reached the goal. Bookkeeping
+                                 // only -- the cadence ladder does NOT gate on it
+                                 // (the failure report sets only bits 0/1; bit 2
+                                 // belongs to the delivery path)
     // Consecutive steps refused by a BODY -- retail's refusal streak (navigator flags
     // 0x100 on the first refusal, 0x200 once refused twice running), which its
-    // 0.5x-then-0.4x speed caps key off.
+    // 0.5x-then-0.4x speed caps key off; the ladder's "refusal state" branch too.
     int32_t bodyBlockStreak = 0;
-    int32_t goalStuckT = 0;         // ticks a point-destination move has not gotten closer
-    // LINEAR px, so it fits 16.16 (a map diagonal is ~11000px, well under 32768).
-    Fixed goalStuckD = Fixed::raw(INT32_MAX);  // best (closest) distance to that goal so far
     int32_t buildStuckT = 0;        // ticks a builder has approached its site with no progress
     // SQUARED px, which is why this one is NOT Fixed: 20px squared is 400, but a map
     // diagonal squared is ~1.3e8 -- far past 16.16's 32768 ceiling. Exact int instead.
@@ -1864,21 +1867,10 @@ private:
     PathService paths_;          // retail's request queue + budget scheduler
     // Enabled by setupMatch; a bare test World leaves it off.
     bool pathService_ = false;
-    // How often a travelling unit re-asks for a route. Retail's figure, not a
-    // guess: 0x4e545b re-requests only once the tick counter has passed the
-    // stamp at navigator+0x110 by 0x78 -- 120 ticks -- and only when the path
-    // did NOT fail (it tests the failed/detour bits first and does nothing at
-    // all if either is set). We were re-asking every 30, four times retail's
-    // rate, which is what kept units churning through fresh routes instead of
-    // settling on one.
-    static constexpr uint32_t kPathRetryTicks = 120;
-    // A search that failed once from roughly here will fail again -- the terrain
-    // has not changed. Sit out this many ticks before asking again, so a unit
-    // stuck against a maze stops burning the whole budget on doomed searches and
-    // leaves it for units that can actually be helped. Deterministic: keyed by
-    // unit id off the tick counter.
-    static constexpr uint32_t kPathFailBackoff = 150;   // 5s
-    // A unit whose FINAL leg the progress watchdog dropped is left with no orders, and
+    // The retry constants that lived here (kPathRetryTicks, kPathFailBackoff)
+    // are gone with the sweep and backoff they drove: the cadence ladder in the
+    // mover (the full 0x4e51f3-0x4e5491 table, dice rolled per frame) is
+    // retail's one and only re-ask engine, failed-quiet branch included.
     // The give-up-and-rescue apparatus that lived here (AbandonedGoal, abandoned_,
     // the bounded second look) is deleted with the no-headway abandon it served.
     // Retail neither abandons nor rescues: a blocked unit keeps its order, presses
@@ -1888,7 +1880,6 @@ private:
     // Indices into units_ of the bodies eligible to be raised or reclaimed this tick,
     // in ascending unit id. Rebuilt once per corpse pass; see the note there.
     std::vector<uint32_t> corpseIdx_;
-    std::map<int, uint32_t> pathRetryAt_;
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
     std::vector<uint8_t> slope_;   // local height spread

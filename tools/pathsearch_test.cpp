@@ -168,7 +168,7 @@ int main() {
         int ticks = 0, peak = 0;
         while (svc.pendingCount() > 0 && ticks < 4000) {
             svc.tick(score, [&](int id, const std::vector<PathCell>& route,
-                                Fixed, Fixed, bool, bool) {
+                                Fixed, Fixed, bool, bool, bool) {
                 (void)route;
                 int i = id - 1000;
                 if (i >= 0 && i < kReqs) served[size_t(i)] = true;
@@ -214,7 +214,7 @@ int main() {
         int firstTick = 0, ticks = 0;
         while (svc.pendingCount() > 0 && ticks < 4000) {
             int served = 0;
-            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool) { ++served; });
+            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool, bool) { ++served; });
             if (ticks == 0) firstTick = served;
             ++ticks;
         }
@@ -237,7 +237,7 @@ int main() {
         for (int round = 0; round < 200; ++round) {
             for (int i = 0; i < kMaxActiveSearches; ++i)
                 svc.request(1, {0, 0}, {9, 2}, int(g.rows[0].size()), int(g.rows.size()), Fixed::fromInt(0), Fixed::fromInt(0), 0, false);
-            svc.tick(score, [](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool) {});
+            svc.tick(score, [](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool, bool) {});
         }
         svc.clear();
         // After clear() the pool must be fully available again.
@@ -245,7 +245,7 @@ int main() {
             svc.request(2000 + i, {0, 0}, {9, 2}, int(g.rows[0].size()), int(g.rows.size()), Fixed::fromInt(0), Fixed::fromInt(0), 0, false);
         int done = 0;
         for (int t = 0; t < 200 && svc.pendingCount(); ++t)
-            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool) { ++done; });
+            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool, bool) { ++done; });
         check(done == kMaxActiveSearches,
               "slots are handed back on completion, cancel and clear",
               "served " + std::to_string(done) + "/" +
@@ -271,7 +271,7 @@ int main() {
         base.request(1, {0, 0}, {47, 23}, W, H, Fixed::fromInt(0), Fixed::fromInt(0), 0, false);
         int aloneTicks = 0; bool aloneDone = false;
         for (int t = 0; t < 4000 && !aloneDone; ++t) {
-            base.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool) { aloneDone = true; });
+            base.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool, bool) { aloneDone = true; });
             ++aloneTicks;
         }
         check(aloneDone && aloneTicks > 4,
@@ -286,7 +286,7 @@ int main() {
         for (; ticks < 4000 && !done; ++ticks) {
             if (ticks % 3 == 0)
                 svc.request(1, {0, 0}, {47, 23}, W, H, Fixed::fromInt(0), Fixed::fromInt(0), 0, false);   // same goal, same cell
-            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool) { done = true; });
+            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool, bool) { done = true; });
         }
         check(done, "a search re-asked every 3 ticks still completes",
               done ? ("finished in " + std::to_string(ticks) + " ticks")
@@ -309,7 +309,7 @@ int main() {
         svc.request(7, {0, 0}, {9, 5}, W, H, Fixed::fromFloat(158.0f), Fixed::fromFloat(82.0f), 0, false);   // same cell, new point
         float gotX = -1, gotZ = -1; bool done = false;
         for (int t = 0; t < 4000 && !done; ++t)
-            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed gx, Fixed gz, bool, bool) {
+            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed gx, Fixed gz, bool, bool, bool) {
                 gotX = gx.toFloat(); gotZ = gz.toFloat(); done = true;
             });
         check(done && gotX == 158.0f && gotZ == 82.0f,

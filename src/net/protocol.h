@@ -17,7 +17,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 82;       // 82: retail's movement layer -- per-cell
+constexpr uint32_t kNetVersion = 83;       // 83: the cadence ladder is retail's --
+                                           // per-frame dice, flag-keyed, emulated
+                                           // 82: retail's movement layer -- per-cell
                                            // search grades and mover probe, best-effort
                                            // routes, randomised repath cadences
                                            // 81: gods are retail's -- a seeded 10%

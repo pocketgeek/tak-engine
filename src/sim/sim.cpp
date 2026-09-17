@@ -1074,16 +1074,12 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
     // other", 6 of 12 instead of 12). The real answer is probably a separate
     // per-destination timer that re-routing does not touch, rather than reusing
     // this one. See docs/retail-engine.md.
-    u.goalStuckD = Fixed::raw(INT32_MAX);    // new leg -> the tracker starts over
-    u.goalStuckT = 0;
 }
 
 void World::dropLeg(Unit& u) {
     if (u.orders.empty()) return;
     const size_t end = currentLeg(u.orders);
     u.orders.erase(u.orders.begin(), u.orders.begin() + long(end) + 1);
-    u.goalStuckD = Fixed::raw(INT32_MAX);
-    u.goalStuckT = 0;
 }
 
 // A move/attack/patrol order aimed at a PRODUCTION BUILDING sets its rally instead:
@@ -1204,7 +1200,6 @@ void World::order(int unitId, float x, float z, bool queue) {
 // while a route was in flight.
 void World::cancelPath(Unit& u) {
     paths_.cancel(u.id);
-    pathRetryAt_.erase(u.id);
     // A new destination earns the cheap tracer again. This deliberately does NOT live in
     // requestPath: that is also the once-a-second re-anchor, so clearing there wiped the
     // detour history on every re-ask and the fallback could never accumulate -- the
@@ -1214,7 +1209,6 @@ void World::cancelPath(Unit& u) {
 
 void World::requestPath(Unit& u, float x, float z) {
     if (!pathService_) return;
-    pathRetryAt_.erase(u.id);   // a new order deserves a fresh attempt
     if (!u.type || u.type->canFly || u.type->isStructure()) return;
     const NavGrid& g = navFor(u.type);
     if (g.empty()) return;
@@ -3557,8 +3551,8 @@ void World::tickConstruction(Unit& b, float dt) {
     if (gd > reach * reach) {                          // out of range: still walking there
         // Give-up watchdog: if the builder gets no closer (~20px, squared 400) for ~8s,
         // it can't reach the site -- abandon it and pop the next queued build. Uses the
-        // same fixed-dt / squared-distance idiom as the movement goalStuck watchdog, so
-        // it stays deterministic (buildStuck* are non-hashed scratch, like goalStuck*).
+        // same fixed-dt / squared-distance idiom as the deleted movement watchdogs, so
+        // it stays deterministic (buildStuck* are non-hashed scratch).
         if (gd < float(b.buildStuckD) - 400.0f) {      // real progress: reset the timer
             b.buildStuckD = int32_t(gd); b.buildStuckT = 0;
         } else if (++b.buildStuckT > 8 * int32_t(kTick)) {
@@ -4618,15 +4612,22 @@ void World::tick(float dt) {
             return cellScore(u->type, cx, cz, unitId);
         },
         [&](int unitId, const std::vector<PathCell>& route, Fixed gxF, Fixed gzF,
-            bool failed, bool crowded) {
+            bool failed, bool crowded, bool traffic) {
             const float gx = gxF.toFloat(), gz = gzF.toFloat();
             Unit* u = unit(unitId);
-            if (route.empty()) {           // failed with NOTHING: back off before retrying
-                pathRetryAt_[unitId] = tickCounter_ + kPathFailBackoff;
+            if (route.empty()) {           // failed with NOTHING (start boxed in)
+                // Even an empty failure carries the outcome flags, and the ladder
+                // governs its retry like any other failed route: traffic evidence
+                // earns the 2d8 cadence, none means rest. The fixed 5s backoff
+                // that stood here was ours.
+                if (u && u->alive()) {
+                    u->routeStamp = int32_t(tickCounter_);
+                    u->routeCrowded = crowded;
+                    u->routeTraffic = traffic;
+                    u->routeFailed = true;
+                }
                 return;
             }
-            pathRetryAt_.erase(unitId);   // the randomised deadline owns every retry
-                                          // now, failed included (0x4e535d)
             if (!u || !u->alive() || u->orders.empty()) return;
             // Only the leg this search was issued for; anything queued behind
             // it stays untouched.
@@ -4704,58 +4705,23 @@ void World::tick(float dt) {
                 path.push_back(last);
             }
             replaceLeg(*u, path);
-            // Retail's randomised stale-route deadlines: two dice, TRIANGULAR, scaled
-            // by the type's per-half-cell ticks, with the dice and base keyed on how
-            // the search ended --
-            //   succeeded, goal area crowded:  rand(10)+rand(10)+10   (0x4e5226)
-            //   succeeded, normal:             rand(10)+rand(10)+20   (0x4e5284)
-            //   FAILED:                        rand(8)+rand(8)+30     (0x4e535d)
-            // The failed shape is the convergence loop: a unit resting on its
-            // best-effort route re-asks on it, and each re-ask from the crowd's edge
-            // reaches closer as the pack tightens. Slower dice, so a wall that will
-            // never open is probed gently rather than hammered.
-            u->routeDeadline = int32_t(tickCounter_) +
-                (failed
-                     ? int32_t((pathRand(8) + pathRand(8) + 30u) *
-                               uint32_t(u->type->halfCellTicks))
-                     : int32_t((pathRand(10) + pathRand(10) + (crowded ? 10u : 20u)) *
-                               uint32_t(u->type->halfCellTicks)));
+            // Stamp the install and carry the search's outcome; the per-frame
+            // cadence ladder in the mover does the rest (retail rolls fresh dice
+            // each frame against the elapsed time -- see the ladder for the table).
+            u->routeStamp = int32_t(tickCounter_);
+            u->routeCrowded = crowded;
+            u->routeTraffic = traffic;
+            u->routeFailed = failed;
         });
 
-    // Re-request, the way retail's navigator re-anchors instead of asking once.
-    // A search is capped at (w+h)*20 cell visits (icd 0x414797), so a long haul
-    // legitimately fails -- but the unit is meanwhile walking its straight
-    // segment, and from closer in the same search succeeds. Without this a unit
-    // that failed once never routes at all, which is most of a big map.
-    //
-    // Staggered by unit id so the queue does not spike on one tick, and driven
-    // off the tick counter, so it stays identical on every peer.
-    if (pathService_ && !nav_.empty()) {
-        for (auto& u : units_) {
-            if (!u.alive() || u.embarked() || !u.type) continue;
-            if (u.type->canFly || u.type->isStructure() || !u.type->canMove) continue;
-            if (u.orders.empty()) continue;
-            // CHEAP TESTS FIRST. currentLeg() scans the order queue, and a unit
-            // carrying a fresh 64-waypoint route makes that scan 64 long -- doing
-            // it for every unit on every tick cost more than the searches it was
-            // scheduling (41.5ms/tick against 19.5 baseline, almost all of it
-            // here). The stagger already discards 29 ticks in 30.
-            if ((tickCounter_ + uint32_t(u.id)) % kPathRetryTicks != 0) continue;
-            if (paths_.pending(u.id)) continue;       // a search is already running
-            if (auto it = pathRetryAt_.find(u.id);
-                it != pathRetryAt_.end() && tickCounter_ < it->second) continue;
-            const Order& leg = u.orders[currentLeg(u.orders)];
-            if (leg.targetId != 0) continue;          // chasing, not travelling
-            // Deliberately NOT skipped when the unit is already moving: the
-            // periodic re-ask IS the mechanism. A search is capped at (w+h)*20
-            // cell visits, so one route rarely spans a long trip -- the unit
-            // follows what it got, asks again from further along, and chains its
-            // way there. Skipping progressing units to save budget dropped a
-            // journey from 97% of the way to 53%.
-            requestPath(u, leg.x.toFloat(), leg.z.toFloat());
-        }
-    }
-
+    // The periodic re-anchor sweep that lived here (every unit with a route,
+    // every 120 ticks, staggered by id) is gone: it predates the cadence ladder
+    // and duplicated it -- and it kept re-asking FAILED routes, which the
+    // ladder's failed-quiet branch exists to forbid (cadence_test measured it
+    // probing a sealed wall of parked bodies every four seconds). Retail's
+    // re-anchoring IS the ladder: the plain branch chains a long haul route by
+    // route, the traffic branches pace crowd re-asks, and a failed route with
+    // no traffic evidence rests.
     // Auto-acquire re-scan period, widened with the crowd: target acquisition is the
     // dominant sim cost in a huge battle (each idle armed unit scans its neighbourhood
     // every acqStride_ ticks), so as unit counts climb we rescan LESS often -- a 0.5s
@@ -4937,7 +4903,6 @@ void World::tick(float dt) {
             // Drop this unit's per-unit pathfinding state. Ids are never reused, so a
             // dead unit's entries can never match anything again -- they would simply
             // accumulate for the rest of the match.
-            pathRetryAt_.erase(u.id);
             u.deadFor = 0; u.orders.clear(); u.speed = Fixed(); continue;
         }
 
@@ -5315,16 +5280,77 @@ void World::tick(float dt) {
                 // budget and RETURNS (0x4dbc17). It never decomposes the step, and the
                 // whole mover contains only two queries: the forward probe and the 3x3
                 // scan. There is no third to test an axis with.
-                // Stale-route refresh on the randomised deadline. Runs whether or not
-                // the step is blocked -- the route being WALKED is the stale thing --
-                // and respects the same failure backoff as every other re-ask.
-                if (u.routeDeadline >= 0 && int32_t(tickCounter_) >= u.routeDeadline &&
-                    !u.orders.empty() && u.orders.front().targetId == 0) {
-                    u.routeDeadline = -1;   // re-stamped when the new route installs
-                    auto rit = pathRetryAt_.find(u.id);
-                    if (rit == pathRetryAt_.end() || tickCounter_ >= rit->second) {
+                // THE CADENCE LADDER, retail's service worker (0x4e51f3-0x4e5491),
+                // evaluated per frame with FRESH dice each check -- retail stores no
+                // deadline; it rolls its RNG at every evaluation and re-requests when
+                // the elapsed time since the route's stamp beats the roll. The dice
+                // and base are keyed on the route's outcome flags and the unit's
+                // state, everything scaled by halfCellTicks (+0x249):
+                //
+                //   crowded goal (bit 0):
+                //     floater on water (0x260 bit19='floater', maxwaterdepth>0):
+                //                                 rand(10)+rand(10)+10   (0x4e5226)
+                //     no refusal state:           rand(10)+rand(10)+20   (0x4e5284)
+                //     refusal state:              rand(8)+rand(8)+10     (0x4e52d3)
+                //   traffic on route (bit 1):
+                //     floater on water:           rand(8)+rand(8)+30     (0x4e535d)
+                //     no refusal state:           rand(8)+rand(8)+60     (0x4e53bc)
+                //     refusal state:              rand(8)+rand(8)+30     (0x4e540a)
+                //   neither: elapsed >= 120 ticks AND rand(120)==0 -- a 1-in-120
+                //     roll per frame past the threshold, a geometric tail, not a
+                //     timer (0x4e545b). Failure does not gate this: the failure
+                //     report sets only bits 0/1 (0x414450's report branch,
+                //     emulated), so a failure with no crowd evidence lands here
+                //     and keeps re-asking gently.
+                //
+                // The "refusal state" is the navigator's 0x36 refusal/scan bits,
+                // recomputed every step in retail exactly as our bodyBlockStreak is.
+                if (u.routeStamp >= 0 && !u.orders.empty() &&
+                    u.orders.front().targetId == 0) {
+                    const int32_t elapsed = int32_t(tickCounter_) - u.routeStamp;
+                    const uint32_t sc = uint32_t(u.type->halfCellTicks);
+                    const bool water = u.type->floater && u.type->maxWaterDepth > 0;
+                    const bool refusal = u.bodyBlockStreak > 0;
+                    bool fire = false;
+                    if (u.routeCrowded) {
+                        const uint32_t dice =
+                            water   ? pathRand(10) + pathRand(10) + 10
+                          : !refusal ? pathRand(10) + pathRand(10) + 20
+                          :            pathRand(8) + pathRand(8) + 10;
+                        fire = elapsed >= int32_t(dice * sc);
+                    } else if (u.routeTraffic) {
+                        const uint32_t dice =
+                            water   ? pathRand(8) + pathRand(8) + 30
+                          : !refusal ? pathRand(8) + pathRand(8) + 60
+                          :            pathRand(8) + pathRand(8) + 30;
+                        fire = elapsed >= int32_t(dice * sc);
+                    } else {
+                        // The PLAIN branch -- and it does NOT care whether the
+                        // search failed. The failure report sets only bits 0/1
+                        // (emulated); bit 2 belongs to the delivery path, so a
+                        // clean failure with no crowd evidence leaves NO bits and
+                        // lands here: elapsed past 120 ticks, then a 1-in-120 roll
+                        // per frame (0x4e545b). This is how a long haul that failed
+                        // at its visit limit chains its way across the map, and how
+                        // a unit resting against a sealed wall keeps gently probing
+                        // it -- a few asks a minute, for ever, which IS retail.
+                        fire = elapsed >= 120 && pathRand(120) == 0;
+                    }
+                    if (fire) {
+                        u.routeStamp = -1;   // re-stamped when the new route installs
                         const Order& legEnd = u.orders[currentLeg(u.orders)];
-                        requestPath(u, legEnd.x.toFloat(), legEnd.z.toFloat());
+                        const float tx = legEnd.x.toFloat(), tz = legEnd.z.toFloat();
+                        // The reachability guard is ours (perf): a goal in another
+                        // component would cost a map-wide failing search; retail just
+                        // eats that. Give up the leg exactly as the old blocked-path
+                        // re-ask did.
+                        const bool onWalkable =
+                            g.walkable(u.x.floorInt() / 16, u.z.floorInt() / 16);
+                        if (onWalkable &&
+                            !pathExists(u.type, tx, tz, u.x.toFloat(), u.z.toFloat()))
+                            dropLeg(u);
+                        else
+                            requestPath(u, tx, tz);
                     }
                 }
                 const int blk = blockedBy(u.x + mx, u.z + mz);
@@ -5344,31 +5370,9 @@ void World::tick(float dt) {
                     u.speed = fxMin(u.speed,
                                     Fixed::fromFloat(u.type->maxVel.toFloat() *
                                                      (u.bodyBlockStreak >= 2 ? 0.4f : 0.5f)));
-                    if (u.repathLeft > 0) --u.repathLeft;
-                    if (!g.empty() && u.repathLeft <= 0 &&
-                        u.orders.front().targetId == 0) {
-                        // RETAIL'S CADENCE, not a guess. The navigator re-requests
-                        // only once the tick counter passes its stamp by 0x78 -- 120
-                        // ticks, four seconds -- and only when the path did not fail
-                        // (0x4e545b). Asking every half second is eight times that, and
-                        // it is what made a blocked unit stand there waiting for a new
-                        // route instead of pressing on the old one.
-                        u.repathLeft = 4 * int32_t(kTick);
-                        // The CURRENT leg's endpoint, not orders.back() -- that is
-                        // the last thing the player queued, and routing to it here
-                        // deleted every leg in front of it.
-                        const Order& legEnd = u.orders[currentLeg(u.orders)];
-                        float tx = legEnd.x.toFloat(), tz = legEnd.z.toFloat();
-                        // Check reachability BEFORE repathing: if this unit cannot get
-                        // there, give up rather than queue a search that scans the
-                        // whole map before failing -- hundreds of units doing that is
-                        // the sim stall. pathExists answers it from the component
-                        // labelling (it read the flow field's reachable set when that
-                        // existed). Only repath when reachable, and within the budget.
-                        bool onWalkable = g.walkable(u.x.floorInt() / 16, u.z.floorInt() / 16);
-                        if (onWalkable && !pathExists(u.type, tx, tz, u.x.toFloat(), u.z.toFloat()))
-                            dropLeg(u);      // give up THIS leg; honour the rest
-                    }
+                    // The re-ask that lived in this branch is gone: the cadence
+                    // ladder above IS retail's re-ask engine, refusal state included,
+                    // and it runs blocked or not. What stays here is only the press.
                 }
             }
 
@@ -5422,64 +5426,14 @@ void World::tick(float dt) {
             }
         }
 
-        // Progress-based give-up: a ground unit heading to a POINT (move /
-        // fight-move, targetId == 0) that has not gotten meaningfully closer for
-        // a long time re-asks the background pathfinder, and eventually abandons
-        // the leg
-        // or in the unit's own base without ever tripping the fully-blocked path, so a
-        // lone scout could sit forever. A traced route (which we know exists when the
-        // goal is reachable) replaces the order and steers it around. Fliers and
-        // target-locked (attack) orders are exempt; idle units reset the tracker.
-        if (!u.type->canFly && !u.orders.empty()) {
-            const Order& fo = u.orders.front();
-            bool pointMove = fo.targetId == 0 && !fo.load && !fo.unload &&
-                             fo.wait <= 0 && !fo.waitAttack;
-            if (pointMove) {
-                // Progress is measured against the leg being walked NOW. Against
-                // orders.back() an out-and-back queue looks permanently stuck on
-                // its outbound leg -- it IS moving away from the final one -- so
-                // this fired after 2s, routed straight to the last leg, and
-                // deleted the leg the player was watching the unit walk.
-                const Order& legEnd = u.orders[currentLeg(u.orders)];
-                float gx = legEnd.x.toFloat(), gz = legEnd.z.toFloat();
-                // LINEAR distance, not squared. This compared squared distances
-                // and subtracted 400 for "20px closer" -- which only means 20px
-                // when the goal is a few tens of pixels away. At 2900px the
-                // squared distance is ~8.6 million, so a sub-pixel gain cleared
-                // the bar, the tracker reset, and the no-headway timer could
-                // never build up at all. A unit circling between two routes
-                // 2900px from its goal therefore never gave up: measured 2426px
-                // of travel in 60s with no arrival and no stop.
-                const Fixed gd = fxLen(u.x - legEnd.x, u.z - legEnd.z);
-                if (gd < u.goalStuckD - Fixed::fromInt(20)) {   // >20px closer -> real progress
-                    u.goalStuckD = gd; u.goalStuckT = 0;
-                } else {
-                    ++u.goalStuckT;
-                    // No headway toward the goal. Ask the background search
-                    // again from where we actually are -- the original request
-                    // was made from somewhere else and may have failed there.
-                    if (u.goalStuckT > 2 * int32_t(kTick) && pathService_ &&
-                        !paths_.pending(u.id) &&
-                        (tickCounter_ + uint32_t(u.id)) % kPathRetryTicks == 0)
-                        requestPath(u, gx, gz);
+        // The no-headway machinery that lived here -- a 2s progress tracker whose
+        // re-ask duplicated the cadence ladder, and before that a give-up -- is
+        // gone entirely. Retail has exactly one re-ask engine, the ladder above, and
+        // its failed-quiet branch is load-bearing: cadence_test plants a walker
+        // against a sealed ring of parked bodies and REQUIRES zero re-asks during
+        // the rest; the tracker's staggered retry was firing every four seconds
+        // there, probing a wall that will never open.
 
-                    // The give-up that stood here -- no headway for long enough plus
-                    // a live failure backoff dropped the leg and recorded it for a
-                    // later rescue -- is deleted. Its own comment said it plainly:
-                    // OURS, not retail's. Retail keeps the order and keeps pressing
-                    // under the refusal caps, re-asking on the randomised deadlines
-                    // (the failed shape re-asks gently for ever, 0x4e535d); a unit
-                    // wedged against a cliff stays there, and a unit at a crowded
-                    // goal tightens in as the pack packs. The abandon was measured
-                    // killing exactly that: four of a 24-unit convergence lost their
-                    // orders mid-scrum and froze 140-180px out, permanently.
-                }
-            } else {
-                u.goalStuckD = Fixed::raw(INT32_MAX); u.goalStuckT = 0;
-            }
-        } else if (u.orders.empty()) {
-            u.goalStuckD = Fixed::raw(INT32_MAX); u.goalStuckT = 0;
-        }
         // An idle aircraft looks for somewhere to put down. Retail's VTOL_Standby
         // (icd 0x417350) hands off to VTOL_LandIfCan (0x416cd0), which tests the
         // spot underneath and, if it will not do, samples TWELVE grid-snapped
