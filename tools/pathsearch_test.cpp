@@ -16,7 +16,10 @@ static void check(bool ok, const std::string& what, const std::string& detail = 
     if (!ok) ++fails;
 }
 
-// A grid of '.', '#' (wall), 'o' (occupied body, score 4)
+// A grid of '.', '#' (wall), 'o' (a parked body). Retail grades a parked body 0 --
+// the same as a wall (icd 0x509020) -- so the search treats the two identically and
+// routes around either; 'o' is kept distinct in the fixtures only so they still read
+// as "a body here", and the Monarch case below asserts the route bends around one.
 struct Grid {
     std::vector<std::string> rows;
     int score(int x, int z) const {
@@ -24,7 +27,7 @@ struct Grid {
         if (x < 0 || x >= int(rows[z].size())) return 0;
         char c = rows[z][x];
         if (c == '#') return 0;
-        if (c == 'o') return kCellOccupied;
+        if (c == 'o') return kCellImpassable;
         if (c == '=') return kCellRoad;
         return kCellGround;
     }
@@ -158,14 +161,14 @@ int main() {
         const int kReqs = kMaxActiveSearches * 4;   // well past the pool
         PathService svc;
         for (int i = 0; i < kReqs; ++i)
-            svc.request(1000 + i, {0, 0}, {9, 4}, int(g.rows[0].size()), int(g.rows.size()), Fixed::fromInt(0), Fixed::fromInt(0), false);
+            svc.request(1000 + i, {0, 0}, {9, 4}, int(g.rows[0].size()), int(g.rows.size()), Fixed::fromInt(0), Fixed::fromInt(0), 0, false);
 
         std::vector<bool> served(size_t(kReqs), false);
         auto score = [&](int, int cx, int cz) { return g.score(cx, cz); };
         int ticks = 0, peak = 0;
         while (svc.pendingCount() > 0 && ticks < 4000) {
             svc.tick(score, [&](int id, const std::vector<PathCell>& route,
-                                Fixed, Fixed) {
+                                Fixed, Fixed, bool, bool) {
                 (void)route;
                 int i = id - 1000;
                 if (i >= 0 && i < kReqs) served[size_t(i)] = true;
@@ -206,12 +209,12 @@ int main() {
         PathService svc;
         const int kMany = 400;
         for (int i = 0; i < kMany; ++i)
-            svc.request(5000 + i, {0, 0}, {9, 4}, int(g.rows[0].size()), int(g.rows.size()), Fixed::fromInt(0), Fixed::fromInt(0), false);
+            svc.request(5000 + i, {0, 0}, {9, 4}, int(g.rows[0].size()), int(g.rows.size()), Fixed::fromInt(0), Fixed::fromInt(0), 0, false);
         auto score = [&](int, int cx, int cz) { return g.score(cx, cz); };
         int firstTick = 0, ticks = 0;
         while (svc.pendingCount() > 0 && ticks < 4000) {
             int served = 0;
-            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed) { ++served; });
+            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool) { ++served; });
             if (ticks == 0) firstTick = served;
             ++ticks;
         }
@@ -233,16 +236,16 @@ int main() {
         auto score = [&](int, int cx, int cz) { return g.score(cx, cz); };
         for (int round = 0; round < 200; ++round) {
             for (int i = 0; i < kMaxActiveSearches; ++i)
-                svc.request(1, {0, 0}, {9, 2}, int(g.rows[0].size()), int(g.rows.size()), Fixed::fromInt(0), Fixed::fromInt(0), false);
-            svc.tick(score, [](int, const std::vector<PathCell>&, Fixed, Fixed) {});
+                svc.request(1, {0, 0}, {9, 2}, int(g.rows[0].size()), int(g.rows.size()), Fixed::fromInt(0), Fixed::fromInt(0), 0, false);
+            svc.tick(score, [](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool) {});
         }
         svc.clear();
         // After clear() the pool must be fully available again.
         for (int i = 0; i < kMaxActiveSearches; ++i)
-            svc.request(2000 + i, {0, 0}, {9, 2}, int(g.rows[0].size()), int(g.rows.size()), Fixed::fromInt(0), Fixed::fromInt(0), false);
+            svc.request(2000 + i, {0, 0}, {9, 2}, int(g.rows[0].size()), int(g.rows.size()), Fixed::fromInt(0), Fixed::fromInt(0), 0, false);
         int done = 0;
         for (int t = 0; t < 200 && svc.pendingCount(); ++t)
-            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed) { ++done; });
+            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool) { ++done; });
         check(done == kMaxActiveSearches,
               "slots are handed back on completion, cancel and clear",
               "served " + std::to_string(done) + "/" +
@@ -265,10 +268,10 @@ int main() {
         // it spans many ticks (the point is to re-ask while it is still running).
         PathService base;
         base.setBudget(40);
-        base.request(1, {0, 0}, {47, 23}, W, H, Fixed::fromInt(0), Fixed::fromInt(0), false);
+        base.request(1, {0, 0}, {47, 23}, W, H, Fixed::fromInt(0), Fixed::fromInt(0), 0, false);
         int aloneTicks = 0; bool aloneDone = false;
         for (int t = 0; t < 4000 && !aloneDone; ++t) {
-            base.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed) { aloneDone = true; });
+            base.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool) { aloneDone = true; });
             ++aloneTicks;
         }
         check(aloneDone && aloneTicks > 4,
@@ -282,8 +285,8 @@ int main() {
         int ticks = 0;
         for (; ticks < 4000 && !done; ++ticks) {
             if (ticks % 3 == 0)
-                svc.request(1, {0, 0}, {47, 23}, W, H, Fixed::fromInt(0), Fixed::fromInt(0), false);   // same goal, same cell
-            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed) { done = true; });
+                svc.request(1, {0, 0}, {47, 23}, W, H, Fixed::fromInt(0), Fixed::fromInt(0), 0, false);   // same goal, same cell
+            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed, Fixed, bool, bool) { done = true; });
         }
         check(done, "a search re-asked every 3 ticks still completes",
               done ? ("finished in " + std::to_string(ticks) + " ticks")
@@ -302,11 +305,11 @@ int main() {
         const int W = int(g.rows[0].size()), H = int(g.rows.size());
         PathService svc;
         svc.setBudget(40);
-        svc.request(7, {0, 0}, {9, 5}, W, H, Fixed::fromFloat(150.0f), Fixed::fromFloat(90.0f), false);   // first order
-        svc.request(7, {0, 0}, {9, 5}, W, H, Fixed::fromFloat(158.0f), Fixed::fromFloat(82.0f), false);   // same cell, new point
+        svc.request(7, {0, 0}, {9, 5}, W, H, Fixed::fromFloat(150.0f), Fixed::fromFloat(90.0f), 0, false);   // first order
+        svc.request(7, {0, 0}, {9, 5}, W, H, Fixed::fromFloat(158.0f), Fixed::fromFloat(82.0f), 0, false);   // same cell, new point
         float gotX = -1, gotZ = -1; bool done = false;
         for (int t = 0; t < 4000 && !done; ++t)
-            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed gx, Fixed gz) {
+            svc.tick(score, [&](int, const std::vector<PathCell>&, Fixed gx, Fixed gz, bool, bool) {
                 gotX = gx.toFloat(); gotZ = gz.toFloat(); done = true;
             });
         check(done && gotX == 158.0f && gotZ == 82.0f,

@@ -42,10 +42,34 @@ namespace tak::sim {
 // 0x4db640). Every call site in the original compares against 4, so a cell
 // scoring below that is refused.
 inline constexpr int kCellThreshold = 4;
-inline constexpr int kCellImpassable = 0;   // terrain, or a body that blocks
-inline constexpr int kCellOccupied = 4;     // a parked body: passable, costly
+inline constexpr int kCellImpassable = 0;   // terrain, or a PARKED body -- retail
+                                            // grades both 0 (icd 0x509020)
+inline constexpr int kCellMoving = 1;       // a body under way: icd 0x50917c. Below
+                                            // the threshold like a wall, but distinct,
+                                            // so grade comparisons rank it above one.
+inline constexpr int kCellUnitBlocked = 2;  // the SEARCH's grade for a body it may not
+                                            // pass: retail's live query bails to
+                                            // 0x4db893, which returns 2 (the tracer
+                                            // scores through that query, 0x4139d0 ->
+                                            // 0x413c80 -> 0x4db640, not the raw map)
+inline constexpr int kCellSameWay = 5;      // a body the query lets the search THROUGH:
+                                            // moving, not slower than us, heading
+                                            // within 90 degrees (icd 0x4db767). The
+                                            // one grade the tracer marks (kScore5),
+                                            // which is how retail knows a route leant
+                                            // on traffic that may not part.
+inline constexpr int kCellSlope = 4;        // terrain-degraded (retail's slope clamp,
+                                            // 0x509318; our flat mosaic never emits it)
 inline constexpr int kCellGround = 6;
 inline constexpr int kCellRoad = 7;
+
+// These are retail's 0..7 PASSABILITY grades, and units are part of them. The map the
+// retail tracer searches on (the packed 4-bit array at navigator +0x348, filled through
+// 0x4dfe40 and read at 0x413a67) carries these same values, refreshed as units move --
+// so retail's SEARCH sees bodies and routes around a crowd, which is the entire
+// go-around mechanism. The mover has no sidestep of its own. kCellOccupied (a parked
+// body graded 4 = passable-but-costly) was ours, not retail's, and it is why units
+// drove into crowds: a route through one cost nothing.
 
 // The 8 compass directions in ROTATIONAL order, lifted from the tables at
 // icd 0x5f304c / 0x5f3054. Index is masked & 7 throughout, so rotating the
@@ -97,7 +121,9 @@ struct PathSearch {
     PathCell start, goal;
     int foot = 1;
     int selfId = 0;
-    bool priority = false;   // retail's +0x24e7 flag: five times the work share
+    bool priority = false;   // five times the work share -- retail's axis is the
+                             // PLAYER (+0x24e7, one bit per player slot), not the
+                             // request; PathService::tick applies it per player
 
     // Resumable state. Field comments give the icd offset each one mirrors.
     Phase phase = Phase::Init;
@@ -107,6 +133,15 @@ struct PathSearch {
     int dirA = 0, dirB = 0;       // +0x108 / +0x10c
     bool started = false;         // both cursors have taken a step
     int best = 0;                 // +0xcc, closest approach so far
+    int tolCells = 0;             // goal-crowding tolerance, 50 / UnitType+0x249 cells
+    bool goalCrowded = false;     // reconstruction saw a kScore5 cell within tolCells
+                                  // of the goal (icd 0x414563 sets unit flag bit 0)
+    PathCell bestCell{};          // the visited cell that achieved it: the endpoint of
+                                  // a FAILED search's best-effort route (icd 0x415170
+                                  // reconstructs on failure too -- a route toward the
+                                  // nearest reachable point, which is how a unit sent
+                                  // at a crowded goal walks to the crowd's edge
+                                  // instead of standing on a failure)
     int nOccupied = 0;            // +0xd8
     int nGround = 0;              // +0xdc
     int nRoad = 0;                // +0xe0
@@ -125,6 +160,7 @@ struct PathSearch {
 
     // Size the scratch to the map and clear the search. Call once per request.
     void reset(int mapW, int mapH);
+    void buildRouteTo(PathCell end);
 
     // `score` answers retail's per-cell query for this unit. One call runs until
     // `quantum` work units are spent; call again next tick to continue.
@@ -230,7 +266,8 @@ class PathService {
 
     // Queue a search. Replaces any request already outstanding for this unit.
     void request(int unitId, PathCell start, PathCell goal, int mapW, int mapH,
-                 Fixed goalX, Fixed goalZ, bool priority);
+                 Fixed goalX, Fixed goalZ, int player, bool priority,
+                 int tolCells = 0);
     void cancel(int unitId);
     bool pending(int unitId) const { return q_.find(unitId) != q_.end(); }
     size_t pendingCount() const { return q_.size(); }
@@ -242,11 +279,16 @@ class PathService {
     }
 
     // `score(unitId, cx, cz)` answers the per-cell query for that unit's
-    // movement class. `done(unitId, route, goalX, goalZ)` receives a finished
-    // route in travel order -- empty if the search failed.
+    // movement class. `done(unitId, route, goalX, goalZ, failed, crowded)`:
+    // `failed` marks a search that never reached the goal -- its route, when
+    // non-empty, is the BEST-EFFORT walk to its closest approach (icd 0x415170) and
+    // must not be extended toward the goal; `crowded` reports kScore5-marked cells
+    // within the goal-crowding tolerance of the goal (icd 0x414563), which selects
+    // retail's faster re-ask cadence (base 10, 0x4e5226) over the normal one
+    // (base 20, 0x4e5284).
     void tick(const std::function<int(int, int, int)>& score,
               const std::function<void(int, const std::vector<PathCell>&,
-                                       Fixed, Fixed)>& done);
+                                       Fixed, Fixed, bool, bool)>& done);
 
   private:
     // A queued request is just its parameters -- no per-cell scratch until it is
@@ -255,6 +297,8 @@ class PathService {
         PathCell start, goal;
         int mapW = 0, mapH = 0;
         Fixed goalX = Fixed(), goalZ = Fixed();
+        int player = 0;         // owner: the budget is split per PLAYER (icd 0x4164fa)
+        int tolCells = 0;       // goal-crowding tolerance for this unit's type
         bool priority = false;
         int slot = -1;          // index into pool_, or -1 while queued
         int cap = 0;            // icd +0x165: grows by the quantum each tick

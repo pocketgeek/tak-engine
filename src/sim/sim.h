@@ -316,6 +316,15 @@ struct UnitType {
     // actually consults, so a unit that breaks that coincidence still behaves.
     bool canSetStance = true;
     Fixed waterMult = Fixed::fromInt(1);      // watermultiplier: speed factor in shallow water
+    // Ticks to cross HALF A CELL (8px) at this type's best speed -- retail's per-type
+    // movement time scale, UnitType+0x249, computed at FBI load (icd 0x4bfc5e-0x4bfd34):
+    //   clamp( int( 8.0 / (max(watermultiplier, roadmultiplier, 1.0) * maxvelocity) ),
+    //          1, 255 ),  and 255 outright when maxvelocity <= 0.
+    // Everything retail times about movement scales by it: the randomised repath
+    // deadlines are dice * this (0x4e5226/0x4e5284/0x4e535d), and the goal-crowding
+    // tolerance is 50 / this cells (0x414563). A standard walker (1.1 px/tick, road
+    // x1.2) lands on 6, making the tolerance 8 cells = 128px.
+    int32_t halfCellTicks = 6;
     Fixed roadMult = Fixed::raw(0x13333);     // roadmultiplier: on-road speed factor. Retail's FBI
                               // parser defaults it to 16.16 0x13333 (~1.2) -- icd
                               // 0x4bfc5e -- so EVERY ground unit gains on roads.
@@ -552,6 +561,16 @@ struct Unit {
     // moves again. Measured -- opposing columns fell from 32/32 arriving to 20/32, with
     // the survivors travelling an almost perfect straight line, which is the shape of a
     // rule that works beautifully for whoever wins it.
+    // Randomised stale-route deadline, retail's service-worker cadence: set when a
+    // route installs, to now + dice * type->halfCellTicks, the dice keyed on how the
+    // search ended (0x4e5226 / 0x4e5284 / 0x4e535d). Two dice each -- TRIANGULAR --
+    // which is what keeps a crowd's re-asks from synchronising. -1 = no route.
+    // Deterministic scratch, like the watchdogs: identical on every peer, unhashed.
+    int32_t routeDeadline = -1;
+    // Consecutive steps refused by a BODY -- retail's refusal streak (navigator flags
+    // 0x100 on the first refusal, 0x200 once refused twice running), which its
+    // 0.5x-then-0.4x speed caps key off.
+    int32_t bodyBlockStreak = 0;
     int32_t goalStuckT = 0;         // ticks a point-destination move has not gotten closer
     // LINEAR px, so it fits 16.16 (a map diagonal is ~11000px, well under 32768).
     Fixed goalStuckD = Fixed::raw(INT32_MAX);  // best (closest) distance to that goal so far
@@ -819,7 +838,6 @@ public:
         if (obst_ && (*obst_)[i]) return false;   // shared obstacle overlay
         return cells_[i] != 0;
     }
-    // Obstacles -- buildings, blocking features, wrecks, the wall-occlusion pass --
     // block EVERY movement class equally, so they live in one overlay shared by all
     // the grids rather than being stamped into each. Before this they were stamped
     // into the ground grid alone, which is why hover units used to path straight
@@ -1221,6 +1239,7 @@ public:
     // this many live units (0 = unlimited). Set at match start (from the lobby).
     // The count it tests (Player::unitCount) is deterministic, so all peers agree.
     void setUnitCap(int c) { unitCap_ = c; }
+    void setHumanPlayers(uint32_t mask) { humanMask_ = mask; }
     int unitCap() const { return unitCap_; }
     bool atUnitCap(int player) const {
         return unitCap_ > 0 && player >= 0 && player < int(players_.size()) &&
@@ -1378,11 +1397,6 @@ public:
     // call and was the per-second AI hitch. Lets the AI pick a REACHABLE target
     // instead of one merely nearest in a straight line but walled off.
     bool pathExists(const UnitType* type, float gx, float gz, float fx, float fz) const;
-    // Is the straight line between two cells clear for this unit RIGHT NOW -- terrain
-    // and parked bodies alike? Stricter than the search's own passability. See the
-    // definition; it is what keeps a route shortcut from cutting back through the
-    // crowd the route just went around.
-    bool lineOpen(const UnitType* t, int selfId, int x0, int z0, int x1, int z1) const;
     void patrol(int unitId, float x, float z);
     // Queue a patrol waypoint (SetMission "p X Y"): like a move but the completed
     // order re-queues at the back, so a chain of these loops the unit through them.
@@ -1660,17 +1674,6 @@ private:
     int occW_ = 0, occH_ = 0;
     void requestPath(Unit& u, float x, float z);
     void rebuildOccupancy();
-    // How deep would `u`'s body sit inside another mobile body if it stood at
-    // (nx,nz)? Pixels of overlap along the shallower axis; <= 0 means clear.
-    // cellFree() below answers at 16px cell resolution and so only changes its
-    // mind when a unit CROSSES a boundary -- between crossings a body creeps
-    // into its neighbour unopposed. This is the same question asked in pixel
-    // space, which is the resolution the mover actually steps at.
-    // FIXED-POINT, like the positions it compares. Footprints are whole pixels and
-    // positions are exact, so the whole test is integer and the "are these two bodies
-    // touching" answer is the same on every machine by construction rather than by
-    // floating-point discipline.
-    Fixed bodyPenetration(const Unit& u, Fixed nx, Fixed nz) const;
     // Is (nx,nz) free of a parked body other than `selfId`? True when solidity is
     // off (no grid) or the cell is outside it.
     // Is the footprint rect at (nx,nz) free of a parked body other than `selfId`?
@@ -1770,6 +1773,18 @@ private:
     // ours is identical on every peer -- draws happen only in deterministic sim
     // paths, and the state is folded into stateHash.
     uint32_t burnRng_ = 0x54414B21;
+    // The movement cadence's dice (minstd, same shape as the two above). Retail rolls
+    // its global game RNG (0x535cc0, seed 0x64186c); ours is a separate stream with
+    // the same recurrence so movement stays deterministic without coupling its draw
+    // order to the other consumers.
+    uint32_t pathRng_ = 0x50415448;
+    // Which player slots are seated HUMANS -- the 5x path-budget class. Retail flags
+    // it per player (+0x24e7); the evidence for "human" is circumstantial (the flag's
+    // other consumers are all local-feedback paths) but a LOCAL-player reading would
+    // desync a lockstep sim, so human -- a lobby fact every peer shares -- is the
+    // only lockstep-safe candidate. Empty mask = everyone weight 1 (the all-AI
+    // harness), which is also every game until the lobby wires the mask through.
+    uint32_t humanMask_ = 0;
     // Target-scatter RNG for fireatwillrandom. Same Lehmer generator as burnRng_
     // and equally part of the lockstep contract: every peer runs the identical
     // acquisition in the identical order, so it advances in lockstep too.
@@ -1787,6 +1802,13 @@ private:
         burnRng_ = uint32_t((uint64_t(burnRng_) * 16807ULL) % 0x7FFFFFFFULL);
         return n > 0 ? int(burnRng_ % uint32_t(n)) : 0;
     }
+    // Retail's rand(n) shape (0x535cc0, emulated in tools/re/emupath.py): [0, n-1],
+    // 0 for n < 2, advancing the stream each draw.
+    uint32_t pathRand(uint32_t n) {
+        pathRng_ = uint32_t((uint64_t(pathRng_) * 16807ULL) % 0x7FFFFFFFULL);
+        return n < 2 ? 0u : pathRng_ % n;
+    }
+
     void igniteFeature(Feature& f);
     void swapFeature(Feature& f, int newType);   // chain stage swap (burnt/dead)
     void tickBurning();
@@ -1857,56 +1879,15 @@ private:
     // unit id off the tick counter.
     static constexpr uint32_t kPathFailBackoff = 150;   // 5s
     // A unit whose FINAL leg the progress watchdog dropped is left with no orders, and
-    // nothing ever looks at an idle unit again -- the periodic re-request loop skips
-    // them outright. Giving up is usually right (ordered at a mountain, retail walks as
-    // close as it can and comes to rest), but it is also reached by units that were
-    // merely DELAYED in a crowd, and those stop for good several hundred pixels short.
-    //
-    // Measured: opposing columns drops ~30 legs either way, yet a unit whose dropped leg
-    // happened to be its last never arrives. So this is a bounded second look, not a
-    // repeal of the give-up: remember where it was going, wait, and re-issue ONCE if the
-    // destination is actually reachable from where it now stands. Bounded because
-    // unbounded retrying is the wandering the watchdog exists to stop.
-    // The flags matter as much as the coordinates: the watchdog drops attack-move and
-    // patrol legs too, and reviving one as a plain move is a player-visible change of
-    // command -- a rescued attack-move stops engaging on the way, a rescued patrol stops
-    // looping. Carry what the order was, not just where it pointed.
-    struct AbandonedGoal {
-        Fixed x = Fixed(), z = Fixed();
-        bool attackMove = false, patrol = false;
-        // TWO timestamps, deliberately. `atTick` is when the goal was abandoned and
-        // never moves, so the expiry below is measured from a fixed point. `probeAt` is
-        // when the retry last looked, and moves on every deferral.
-        //
-        // One field cannot do both jobs: deferring a retry by pushing the single
-        // timestamp forward means the expiry is always measured from the last probe and
-        // can never elapse, so a permanently unreachable goal lives for ever, keeps
-        // abandoned_ non-empty -- which is what runs the per-tick sweep -- and pays a
-        // pathExists check every interval until the match ends.
-        uint32_t atTick = 0;
-        uint32_t probeAt = 0;
-        int tries = 0;
-    };
-    std::unordered_map<int, AbandonedGoal> abandoned_;
+    // The give-up-and-rescue apparatus that lived here (AbandonedGoal, abandoned_,
+    // the bounded second look) is deleted with the no-headway abandon it served.
+    // Retail neither abandons nor rescues: a blocked unit keeps its order, presses
+    // under the refusal caps, and re-asks on the randomised deadlines -- the failed
+    // shape (rand(8)+rand(8)+30 x halfCellTicks, icd 0x4e535d) probes gently for
+    // ever, which is both the crowd-convergence loop and the cliff-wedge behaviour.
     // Indices into units_ of the bodies eligible to be raised or reclaimed this tick,
     // in ascending unit id. Rebuilt once per corpse pass; see the note there.
     std::vector<uint32_t> corpseIdx_;
-    // Set only while the rescue sweep re-issues an order, so order() can tell an
-    // internal retry from a player picking a new destination.
-    bool abandonRetry_ = false;
-    static constexpr uint32_t kAbandonRetryTicks = 300;   // 10s before a second look
-    static constexpr int kAbandonRetries = 1;             // ...and only one of them
-    // A record that can never be used again must be REMOVED, not left to fail its own
-    // test for ever: `abandoned_` gates a per-tick sweep over every unit, so one spent
-    // record keeps that sweep running for the rest of the game. The expiry covers the
-    // goal that simply never becomes reachable.
-    static constexpr uint32_t kAbandonExpiry = 30 * 120;   // 2 minutes
-    // How long a WEDGED unit keeps shoving at a goal it is not reaching before
-    // it settles. Retail stops promptly -- ordered at an unreachable mountain it
-    // walks as close as it can and comes to rest, with no long grind first --
-    // so this is short. It is paired with a wedged test (stuckFor), which is
-    // what keeps a unit that is merely crawling from being cut off.
-    static constexpr int32_t kGoalGiveUpTicks = 20 * 30;   // 20s
     std::map<int, uint32_t> pathRetryAt_;
     NavGrid nav_, navWater_, navHover_;
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.

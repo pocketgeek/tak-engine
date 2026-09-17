@@ -191,6 +191,19 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.roadMult = info->value("roadmultiplier")
                        ? Fixed::fromFloat(float(info->numberOr("roadmultiplier", 1.2)))
                        : Fixed::raw(0x13333);
+            // Retail's per-type movement time scale, UnitType+0x249 (icd 0x4bfc5e-
+            // 0x4bfd34): ticks to cross half a cell at the type's best speed. The
+            // best speed is maxvelocity times the better of the two terrain
+            // multipliers, floored at 1.0; maxvelocity <= 0 pins the scale at 255.
+            // All in the same 16.16 the parser used, truncating like its ftol.
+            {
+                const int64_t mult = std::max<int64_t>(
+                    std::max(t.waterMult.v, t.roadMult.v), 0x10000);
+                const int64_t best = (mult * t.maxVel.v) >> 16;   // 16.16 px/tick
+                t.halfCellTicks = best <= 0
+                    ? 255
+                    : int32_t(std::clamp<int64_t>((int64_t(8) << 16) / best, 1, 255));
+            }
             t.maxWaterDepth = float(info->numberOr("maxwaterdepth", 0));
             t.maxSlope = float(info->numberOr("maxslope", 255));
             // Retail keeps this in 3 bits (icd 0x4c09e8: `& 7`, shifted into
@@ -1101,8 +1114,6 @@ void World::order(int unitId, float x, float z, bool queue) {
     // cancelPath, so clearing the rescue record only there left it live: the player
     // picks somewhere else, that move finishes, the retry delay expires, and the rescue
     // sweep walks the unit back to the destination they had already replaced. The
-    // internal re-issue below sets abandonRetry_ so it does not retire its own record.
-    if (!abandonRetry_) abandoned_.erase(u->id);
     if (!queue) u->orders.clear();
     auto markGoal = [&] {
         if (u->orders.empty()) return;
@@ -1194,7 +1205,6 @@ void World::order(int unitId, float x, float z, bool queue) {
 void World::cancelPath(Unit& u) {
     paths_.cancel(u.id);
     pathRetryAt_.erase(u.id);
-    abandoned_.erase(u.id);   // a new destination is not a retry of the old one
     // A new destination earns the cheap tracer again. This deliberately does NOT live in
     // requestPath: that is also the once-a-second re-anchor, so clearing there wiped the
     // detour history on every re-ask and the fallback could never accumulate -- the
@@ -1211,9 +1221,13 @@ void World::requestPath(Unit& u, float x, float z) {
     const PathCell from{u.x.floorInt() / 16, u.z.floorInt() / 16};
     const PathCell to{int(x) / 16, int(z) / 16};
     if (pathDist(from, to) < 3) { paths_.cancel(u.id); return; }
+    // The 5x budget class is the PLAYER's, not the request's: retail flags player
+    // slots (+0x24e7) and the scheduler weighs whole players. `commander` stood here
+    // as our stand-in for that flag and is gone with it.
     paths_.request(u.id, from, to, g.width(), g.height(),
                    Fixed::fromFloat(x), Fixed::fromFloat(z),
-                   /*priority=*/u.type->commander);
+                   u.player, /*priority=*/(humanMask_ >> (unsigned(u.player) & 31)) & 1,
+                   /*tolCells=*/u.type->halfCellTicks > 0 ? 50 / u.type->halfCellTicks : 0);
 }
 
 // Label the connected components of the cells a `foot`-wide unit can occupy, using
@@ -1504,71 +1518,6 @@ const World::CompGrid* World::components(const NavGrid& g, int foot) const {
     return &cg;
 }
 
-
-// Reachability: can a body of this type get from (fx,fz) to (gx,gz) at all? The AI
-// scores targets with it and the movement watchdogs use it to give up on a leg
-// rather than run a whole-map search that would scan the grid before failing.
-// Deterministic -- the labelling is a pure function of the nav grid -- so the sim
-// may use it, not only the AI.
-bool World::lineOpen(const UnitType* t, int selfId, int x0, int z0, int x1, int z1) const {
-    // Can this unit travel the straight line between two CELLS without meeting
-    // anything it cannot get past? Used to shortcut a traced route.
-    //
-    // Stricter than the SEARCH's own rule on purpose. cellScore grades a parked body
-    // as kCellOccupied, which equals kCellThreshold -- passable, just expensive -- so
-    // the trace prefers to go around one but is allowed through. The MOVER has no such
-    // latitude: bodies are solid and there is no local avoidance, so a unit sent
-    // through a parked crowd simply stops in it. Shortcutting on terrain alone
-    // (NavGrid::lineFits) therefore undid exactly the detours the trace had just made
-    // around parked troops, and put the mover back where it would jam. Here a cell
-    // must be genuinely clear -- ground or road, not merely "passable".
-    int dx = std::abs(x1 - x0), dz = -std::abs(z1 - z0);
-    int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1, err = dx + dz;
-    // How many OCCUPIED cells a shortcut may cross. Terrain is never crossed.
-    //
-    // ONE, and the reason is worth reading before changing it, because the obvious
-    // measurement gives the wrong answer. The search now refuses to route through a
-    // parked body (see the score callback in tick()), so a traced route genuinely goes
-    // AROUND a standing crowd -- and a shortcut that straightens back through it puts
-    // the mover right back where it jams. Measured on a wall of parked bodies 1-4 cells
-    // deep, with that search in place:
-    //
-    //   tolerance 1   all four walls passed, 1262-1288 travelled (1100 straight-line)
-    //   tolerance 6   walls 1 and 2 STUCK -- thin enough to fit inside the budget
-    //
-    // Earlier, with the OLD search -- which routed through parked bodies because
-    // kCellOccupied equals kCellThreshold -- a strict shortcut measured WORSE than a
-    // loose one, and 6 was chosen on that evidence. That result was an artifact: the
-    // only routes available then went through the crowd, so refusing them left nothing.
-    // Once the search was fixed the ordering reversed. A tuning number is only as good
-    // as the thing it was tuned against.
-    //
-    // Not zero: the GOAL cell is routinely occupied -- ordering a unit to where
-    // something already stands is an ordinary thing to do -- and the search's goal
-    // exemption does not apply here. One cell lets the last hop reach it without
-    // letting a shortcut cross a wall. Zero measures identically on arrivals and
-    // marginally worse on travel.
-    constexpr int kShortcutOccupied = 1;
-    int budget = kShortcutOccupied;
-    auto ok = [&](int x, int z) {
-        const int sc = cellScore(t, x, z, selfId);
-        if (sc < kCellThreshold) return false;         // terrain: never
-        if (sc <= kCellOccupied && --budget < 0) return false;   // too many bodies
-        return true;
-    };
-    for (int guard = 0; guard < 8192; ++guard) {
-        if (!ok(x0, z0)) return false;
-        if (x0 == x1 && z0 == z1) return true;
-        const int e2 = 2 * err;
-        const bool stepX = e2 >= dz, stepZ = e2 <= dx;
-        // A diagonal step passes between two cells; both must be clear, matching the
-        // movers' refusal to cut a corner.
-        if (stepX && stepZ && (!ok(x0 + sx, z0) || !ok(x0, z0 + sz))) return false;
-        if (stepX) { err += dz; x0 += sx; }
-        if (stepZ) { err += dx; z0 += sz; }
-    }
-    return false;
-}
 
 bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float fz) const {
     // Answered from connectivity, not a distance field. This used to build a full-map
@@ -2892,76 +2841,6 @@ void World::buildNavClasses(const TypeRegistry& reg) {
     for (auto& g : navClasses_) { g.setObstacles(&obst_); g.setRoads(&roads_); }
 }
 
-Fixed World::bodyPenetration(const Unit& u, Fixed nx, Fixed nz) const {
-    if (occW_ <= 0 || !u.type) return Fixed();
-    // Half-extent in whole pixels: a footprint is an integer number of 16px cells, so
-    // this is exact and needs no rounding.
-    const Fixed hs = Fixed::fromInt(std::max(u.type->footX, u.type->footZ) * 8);
-    // occ_ stamps a body's whole footprint, so any unit we could overlap has a
-    // stamped cell within hs of us: |nx-o.x| < hs+ohs and its cells reach o.x
-    // +/- ohs, leaving the nearest one inside hs. One cell of slack for the
-    // truncation in int(nx)/16.
-    const int span = hs.floorInt() / 16 + 2;
-    const int cx = nx.floorInt() / 16, cz = nz.floorInt() / 16;
-    Fixed worst;
-    int32_t last = 0;
-    for (int j = -span; j <= span; ++j) {
-        int z = cz + j;
-        if (z < 0 || z >= occH_) continue;
-        const int32_t* row = &occ_[size_t(z) * size_t(occW_)];
-        for (int i = -span; i <= span; ++i) {
-            int x = cx + i;
-            if (x < 0 || x >= occW_) continue;
-            int32_t id = row[x];
-            // A footprint stamps a run of identical ids; skipping the repeat is
-            // most of the scan for anything bigger than a single cell.
-            if (id == 0 || id == u.id || id == last) continue;
-            last = id;
-            const Unit* o = unit(id);
-            if (!o || !o->type) continue;
-            // Retail's occupancy rule, read off 0x4db640 (the unit half of the
-            // passability query) at 0x4db767-0x4db7c9. An occupant is IGNORED --
-            // the step passes straight through it -- only when all three hold:
-            //   1. it is genuinely under way (retail tests a live movement
-            //      object at its +8, and bails to "blocked" when there is none),
-            //   2. it is not slower than us ([[+8]+0x20] >= our own),
-            //   3. its heading (+0x7e) is within 0x4000 of ours -- 90 degrees.
-            // Anything else falls to 0x4db893, which returns 2; the threshold at
-            // every call site is 4, so the step is refused.
-            //
-            // Phrased in English: you may close up behind someone going your way
-            // who is not slower than you. Head-on traffic blocks. Slower traffic
-            // ahead of you blocks. Parked blocks. This is the rule that lets
-            // retail run with no separation pass at all -- overlap barely forms,
-            // and the single case that creates it (following a faster leader)
-            // unwinds itself as the leader pulls away.
-            //
-            // Ignoring EVERY mover, which is what stood here, is far looser than
-            // retail and is precisely what made a de-overlap pass necessary.
-            if (o->speed.toFloat() > 0.0f && o->speed >= u.speed &&
-                std::abs(bamDiff(o->heading, u.heading)) <= kBamQuarterV)
-                continue;
-            const Fixed sep = hs + Fixed::fromInt(std::max(o->type->footX, o->type->footZ) * 8);
-            // Bodies we are ALREADY inside are not ours to arbitrate. Units spawn
-            // in tight ranks, a finished building lands under its builder, a push
-            // overlaps a pair -- and a rule phrased on the deepest overlap freezes
-            // the lot: nobody can reduce every overlap at once, so nobody moves,
-            // and each frozen (speed 0) body then blocks its neighbours in turn.
-            // So the mover's job is the narrow one: never enter a body you are
-            // currently clear of. NOTHING pulls existing overlap apart any more --
-            // the separation pass that did was deleted with the move to retail's
-            // occupancy predicate, and the point of that change is that overlap
-            // barely forms in the first place (see the note further up). Do not
-            // re-read this as "something else will sort it out".
-            if (fxMin(sep - fxAbs(u.x - o->x), sep - fxAbs(u.z - o->z)) > Fixed())
-                continue;
-            const Fixed p = fxMin(sep - fxAbs(nx - o->x), sep - fxAbs(nz - o->z));
-            if (p > worst) worst = p;
-        }
-    }
-    return worst;
-}
-
 // Does this body hold its cell against a search?
 //
 // STOPPED, and nothing else -- which is retail's grade: a body that is moving at all is
@@ -2983,26 +2862,55 @@ bool World::unitHoldsCell(const Unit& u) const {
 
 int World::cellScore(const UnitType* t, int cx, int cz, int selfId) const {
     const NavGrid& g = navFor(t);
-    const int foot = footCells(t);
-    if (!g.empty() && !g.fits(cx, cz, foot)) return kCellImpassable;
+    // SINGLE CELL, not the footprint. Retail's map and its live query grade each
+    // cell by that cell's own terrain and occupant (the start-cell check at 0x41472e
+    // scores one cell through the same 0x4139d0 query as the march). Sweeping the
+    // querying unit's footprint over the grid -- which is what stood here -- is a
+    // stricter convolved score retail does not compute, and it made two bodies that
+    // had interpenetrated (legal, via the same-way rule) unable to SEARCH their way
+    // apart: each one's start footprint overlapped the other's stamp, the start
+    // graded blocked (our 0x414733 port), every re-ask failed instantly, and the
+    // pair wedged for minutes. Retail's coarser per-cell grading is what lets them
+    // route around each other; the footprint's clearance is the corner rule's and
+    // the mover's business, not the scorer's.
+    if (!g.empty() && !g.walkable(cx, cz)) return kCellImpassable;
     if (occW_ > 0) {
-        // Only STATIONARY bodies hold a cell against a search, matching the mover: a unit
-        // under way is something to fall in behind, not a wall.
+        // RETAIL'S GRADES, units included (icd 0x509020, confirmed against the second
+        // implementation at 0x404ff9): a PARKED body grades 0 -- the same as impassable
+        // terrain -- and a body under way grades 1. Both are below kCellThreshold, so
+        // the search refuses either; the 1 exists so a moving body still ranks above a
+        // wall wherever grades are compared rather than thresholded.
         //
-        // "Stationary" is not `speed == 0`. A fully blocked mover keeps a positive speed
-        // by design (it presses rather than stopping, so it resumes the moment the way
-        // clears), so a wedged crowd read as traffic and searches planned straight
-        // through the jam -- routing units into the one place they could not pass.
-        const int x0 = cx - foot / 2, z0 = cz - foot / 2;
-        for (int j = 0; j < foot; ++j)
-            for (int i = 0; i < foot; ++i) {
-                const int x = x0 + i, z = z0 + j;
-                if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
-                const int32_t o = occ_[size_t(z) * size_t(occW_) + size_t(x)];
-                if (o == 0 || o == selfId) continue;
+        // This is what makes routes bend AROUND crowds: retail's tracer searches on a
+        // rating map that carries exactly these values (navigator +0x348, read at
+        // 0x413a67), so its search sees bodies. Ours graded a parked body 4 -- equal to
+        // the threshold, i.e. never refused -- and ignored moving ones entirely, which
+        // is why a route through a standing army cost nothing and units piled into
+        // each other.
+        // The grades the tracer actually scores with are the LIVE QUERY's, not the
+        // map's: 0x4139d0 -> 0x413c80 -> 0x4db640, whose unit half (0x4db767) grades a
+        // body 2 (blocked) unless all three of retail's pass-through conditions hold --
+        // under way, not slower than us, heading within 90 degrees -- in which case it
+        // grades 5. Both raters that FILL the map return 0/1 for parked/moving (run
+        // under emulation, tools/re/emupath.py: empty 6, parked 0, moving 1 regardless
+        // of heading), so the same-way rule provably lives in the query, not the map.
+        // 2 and 0 and 1 are all below kCellThreshold -- the search refuses each the
+        // same way -- but the VALUES are kept exact because the tracer marks the one
+        // grade it can pass through traffic on (5, kScore5), and that mark is what
+        // retail's goal-crowding logic reads (0x414563).
+        const Unit* self = unit(selfId);
+        if (cx >= 0 && cz >= 0 && cx < occW_ && cz < occH_) {
+            const int32_t o = occ_[size_t(cz) * size_t(occW_) + size_t(cx)];
+            if (o != 0 && o != selfId) {
                 const Unit* u = unit(o);
-                if (u && u->alive() && unitHoldsCell(*u)) return kCellOccupied;
+                if (u && u->alive()) {
+                    if (self && u->speed > Fixed() && u->speed >= self->speed &&
+                        std::abs(bamDiff(u->heading, self->heading)) <= kBamQuarterV)
+                        return kCellSameWay;       // passable traffic, marked
+                    return kCellUnitBlocked;
+                }
             }
+        }
     }
     if (!g.empty() && g.roadAt(cx, cz)) return kCellRoad;
     return kCellGround;
@@ -4429,10 +4337,6 @@ void World::tickProduction(Unit& u, float dt) {
     }
 }
 
-// How close to the start or the goal a parked body stops blocking the search. Two
-// cells: measured against 4 and 8 on a 24-unit convergence, 2 is the only one where
-// every unit arrives (24/24 in 246s; 4 and 8 both stall at 23/24 and time out).
-constexpr int kParkedFreeCells = 2;
 
 void World::tick(float dt) {
     ++tickCounter_;
@@ -4703,49 +4607,26 @@ void World::tick(float dt) {
         [&](int unitId, int cx, int cz) {
             const Unit* u = unit(unitId);
             if (!u || !u->type) return int(kCellImpassable);
-            const int sc = cellScore(u->type, cx, cz, unitId);
-            if (sc != kCellOccupied) return sc;   // terrain or clear: unchanged
-            // A PARKED BODY BLOCKS THE SEARCH.
-            //
-            // cellScore grades one kCellOccupied, which EQUALS kCellThreshold --
-            // retail's model, where every icd call site compares against 4, so a
-            // parked body is passable-but-costly. That is why a unit ordered through
-            // a standing crowd walked into it and stopped: the tracer routed straight
-            // through, because doing so was legal by its own scoring, and the mover --
-            // for which bodies are solid and which has no local avoidance -- had
-            // nowhere to go. Measured before this: a wall of parked units 1-8 cells
-            // deep stopped the mover dead every time, and no amount of tightening the
-            // route SHORTCUT helped, because the shortcut was never the cause.
-            //
-            // Retail fidelity is knowingly traded here. Retail's mover nudges its way
-            // past a body; ours cannot, so a cost the original could afford to ignore
-            // is a wall for us.
-            //
-            // Two exemptions, and the change does not work without them:
-            //   * near the START, or a unit standing inside its own idle army could
-            //     not path OUT of it -- every neighbouring cell would be blocked;
-            //   * near the GOAL, or ordering units onto ground where anything already
-            //     stands would fail to route at all, which is most move orders in a
-            //     base.
-            const int ux = u->x.floorInt() / 16, uz = u->z.floorInt() / 16;
-            if (std::max(std::abs(cx - ux), std::abs(cz - uz)) <= kParkedFreeCells)
-                return sc;
-            if (!u->orders.empty()) {
-                const Order& leg = u->orders[currentLeg(u->orders)];
-                const int gx = leg.x.floorInt() / 16, gz = leg.z.floorInt() / 16;
-                if (std::max(std::abs(cx - gx), std::abs(cz - gz)) <= kParkedFreeCells)
-                    return sc;
-            }
-            return int(kCellImpassable);
+            // Plain cellScore, which now carries retail's grades -- bodies included.
+            // The exemption wrapper that stood here (parked cells near the unit or its
+            // goal graded passable, kParkedFreeCells) was ours: it existed so the
+            // search could route out of and into crowds while bodies were otherwise
+            // invisible to it. Retail has no such carve-out -- its map grades a parked
+            // neighbour 0 wherever it stands, a fully ringed start simply fails the
+            // search, and the mover presses on its segment until the cadence retries.
+            // Cell-exclusive parking makes a ringed start rare rather than normal.
+            return cellScore(u->type, cx, cz, unitId);
         },
-        [&](int unitId, const std::vector<PathCell>& route, Fixed gxF, Fixed gzF) {
+        [&](int unitId, const std::vector<PathCell>& route, Fixed gxF, Fixed gzF,
+            bool failed, bool crowded) {
             const float gx = gxF.toFloat(), gz = gzF.toFloat();
             Unit* u = unit(unitId);
-            if (route.empty()) {           // failed: back off before retrying
+            if (route.empty()) {           // failed with NOTHING: back off before retrying
                 pathRetryAt_[unitId] = tickCounter_ + kPathFailBackoff;
                 return;
             }
-            pathRetryAt_.erase(unitId);
+            pathRetryAt_.erase(unitId);   // the randomised deadline owns every retry
+                                          // now, failed included (0x4e535d)
             if (!u || !u->alive() || u->orders.empty()) return;
             // Only the leg this search was issued for; anything queued behind
             // it stays untouched.
@@ -4761,152 +4642,30 @@ void World::tick(float dt) {
             const bool traceReachedGoal =
                 !route.empty() && route.back().x == int(gx) / 16 &&
                 route.back().z == int(gz) / 16;
-            // SHORTCUT the traced route before installing it ("string pulling").
-            //
-            // The tracer emits a waypoint at every change of direction, and a march
-            // across open ground alternates orthogonal and diagonal steps -- so a
-            // completely unobstructed trip came back as a staircase of ~one waypoint
-            // per cell, hit the 64-waypoint cap before reaching the goal, and made the
-            // unit visibly jink at every one of them (the mover aims within 3px of an
-            // intermediate waypoint). Going around an obstacle had the same problem in
-            // the large: the trace hugs the outline, so a unit followed the far side of
-            // a plateau instead of cutting the corner once it was past.
-            //
-            // Keep only the waypoints that are actually needed: from where we are, take
-            // the FARTHEST waypoint still reachable in a straight line this body fits
-            // through, jump to it, repeat. Scanning from the end means open ground
-            // costs one test and collapses to a single waypoint.
-            //
-            // Starting from the unit's CURRENT cell (not the cell it occupied when the
-            // search was requested) also drops the waypoints it has already walked past
-            // while the search was in flight -- which used to reconnect the route behind
-            // the unit and send it backtracking.
-            const NavGrid& ng = navFor(u->type);
-            std::vector<PathCell> pulled;
-            if (!ng.empty()) {
-                PathCell at{u->x.floorInt() / 16, u->z.floorInt() / 16};
-                // The FIRST hop is tested from the unit's EXACT position, not from its
-                // cell. lineOpen walks cell centre to cell centre, which discards where
-                // inside the cell the body actually stands -- so a unit near a cell edge
-                // could be handed a shortcut whose real movement segment clips a cell the
-                // cell-centred walk never visited, introducing a collision into a route
-                // that had avoided it.
-                //
-                // segmentFits is the check for that, and losBetween was NOT: it converts
-                // both world endpoints to cells on entry and then walks cell centres, so
-                // it answers about the same cell-to-cell line lineOpen already walked and
-                // the sub-cell position it was given is thrown away. segmentFits keeps it
-                // and visits every cell the real segment crosses.
-                const int footC = footCells(u->type);
-                bool firstHop = true;
-                size_t from = 0;
-                bool routeBroken = false;   // nothing from here validated -- see below
-                // BOUND THE SCAN. Reconstruction may now hand back up to kRawRouteCap
-                // corners rather than 64, and this loop is O(corners^2) in the worst
-                // case -- a route so twisty that each waypoint can only reach its
-                // immediate successor. On open ground the very first test (the farthest
-                // waypoint) succeeds, so the common case is one test per hop and the
-                // longer route costs nothing; the window only exists so the pathological
-                // case cannot turn a cheap completion into a spike.
-                //
-                // Scanning the LAST kScanWindow candidates keeps the property that
-                // matters -- take the farthest waypoint still reachable -- while capping
-                // the work per hop.
-                constexpr size_t kScanWindow = 64;
-                while (from < route.size() && pulled.size() < 64) {
-                    size_t take = from;
-                    bool found = false;
-                    const size_t scanEnd = route.size();
-                    const size_t scanFrom =
-                        scanEnd - from > kScanWindow ? scanEnd - kScanWindow : from;
-                    for (size_t j = scanEnd; j-- > scanFrom;)
-                        if (lineOpen(u->type, unitId, at.x, at.z, route[j].x, route[j].z) &&
-                            (!firstHop ||
-                             ng.segmentFits(u->x.toFloat(), u->z.toFloat(), float(route[j].x) * 16 + 8,
-                                            float(route[j].z) * 16 + 8, footC))) {
-                            take = j;
-                            found = true;
-                            break;
-                        }
-                    // NEVER INSTALL A SEGMENT THAT FAILED VALIDATION. `take` starts at
-                    // `from`, so without this the loop appended route[from] even when
-                    // every candidate had just been rejected -- handing the unit exactly
-                    // the connection the checks above refused. It is reachable whenever
-                    // the world moved under a search that was already in flight: the unit
-                    // walked on, or an obstacle appeared across the route.
-                    // The window may have skipped past the only reachable waypoints (a
-                    // twisty route where just the next one or two are visible), so fall
-                    // back to the near end before concluding the route is broken. Without
-                    // this the window would turn "I only looked at the far ones" into
-                    // "nothing connects", and a perfectly walkable route would be thrown
-                    // away and re-requested.
-                    //
-                    // BOUNDED TOO. Scanning everything the window excluded makes the two
-                    // loops together equivalent to the unrestricted scan the window was
-                    // added to prevent: with the raw cap at 256, 64 retained hops could
-                    // cost 14,368 candidate checks against the 2,080 maximum before it.
-                    // The nearest few are what this fallback is for -- a waypoint further
-                    // out than that would have been inside the window already.
-                    // RELATIVE TO `from`, i.e. the NEAREST waypoints -- not the ones
-                    // just below the far-end window. Bounding it the other way scanned
-                    // indices 184..191 of a 256-entry route and never looked at the
-                    // immediate successors at all, so the one case this fallback exists
-                    // for -- an obstacle leaving only the next waypoint or two visible --
-                    // was the exact case it could not see. The route was then declared
-                    // broken and re-requested indefinitely, stranding the unit.
-                    constexpr size_t kNearFallback = 8;
-                    const size_t nearEnd = std::min(scanFrom, from + kNearFallback);
-                    if (!found && scanFrom > from)
-                        for (size_t j = nearEnd; j-- > from;)
-                            if (lineOpen(u->type, unitId, at.x, at.z, route[j].x, route[j].z) &&
-                                (!firstHop ||
-                                 ng.segmentFits(u->x.toFloat(), u->z.toFloat(), float(route[j].x) * 16 + 8,
-                                                float(route[j].z) * 16 + 8, footC))) {
-                                take = j;
-                                found = true;
-                                break;
-                            }
-                    if (!found) {
-                        // Nothing at all reachable from where we stand: the route does not
-                        // connect to the unit any more. Keep whatever leg it is walking and
-                        // ask for a repair rather than installing a broken one.
-                        if (pulled.empty()) { routeBroken = true; break; }
-                        // Otherwise keep the valid prefix and stop shortcutting here; the
-                        // destination is appended below, so the leg still ends where it
-                        // should.
-                        break;
-                    }
-                    firstHop = false;
-                    pulled.push_back(route[take]);
-                    at = route[take];
-                    if (take + 1 >= route.size()) break;
-                    from = take + 1;
-                }
-                if (routeBroken) {
-                    // Re-ask from where the unit actually is now -- but BACKED OFF, the
-                    // same as an outright failure. Repairing immediately is a feedback
-                    // loop: a crowded route fails to connect, the repair produces another
-                    // route through the same crowd, that fails too, and the search count
-                    // runs away. Measured at its worst, 480,000 searches in one scenario
-                    // against a baseline of 402, and travel twice as long -- the churn
-                    // costs far more than the broken route it was avoiding.
-                    pathRetryAt_[unitId] = tickCounter_ + kPathFailBackoff;
-                    return;
-                }
-            }
-            const std::vector<PathCell>& useRoute = pulled.empty() ? route : pulled;
-            // ASK THE ROUTE WE ARE ACTUALLY INSTALLING, not the one we started from.
-            //
-            // Shortcutting can stop early -- a hop fails validation and the valid prefix
-            // is kept -- so a trace that DID reach the goal can yield a route that does
-            // not. Reading the raw trace here then made the loop below overwrite the last
-            // VALIDATED waypoint with the distant goal: the one safe intermediate point
-            // discarded, and the unit aimed straight across the obstacle whose rejection
-            // truncated the route in the first place. Exactly the class of bug the
-            // validation exists to prevent, reintroduced at the truncation path.
-            const bool reachedGoal =
-                traceReachedGoal && !useRoute.empty() &&
-                useRoute.back().x == int(gx) / 16 && useRoute.back().z == int(gz) / 16;
+            // NO STRING-PULLING. The shortcut pass that stood here (lineOpen +
+            // segmentFits, farthest-reachable-waypoint) was ours, and it was also the
+            // second scorer: the search accepted a route and this pass re-judged it by
+            // different rules, and when the two disagreed the route was thrown away
+            // and the unit steered straight at its order -- into the very body the
+            // route had detoured around. Retail has exactly one judge: the tracer's
+            // reconstruction (0x414450) emits a waypoint at each change of direction,
+            // the navigator takes up to 64 of them as-is (0x4e4ea0), and nothing
+            // re-validates them. The cost is retail's own gait: a unit walks the
+            // cardinal/diagonal staircase of its trace, corner by corner -- the
+            // characteristic TA:K zigzag -- instead of a straightened line.
+            // RETAIL'S 64-WAYPOINT NAVIGATOR CAP (0x4e4ea0). The reconstruction can
+            // hand back more corners than that -- the tracer hugging a long outline
+            // produces hundreds -- and the string-pull used to hide it by collapsing
+            // them. Installed raw and uncapped, a 94-corner eastward hug of the
+            // island in Inner Circle walked a unit 500px the WRONG WAY along its
+            // whole length. Retail installs the first 64 and re-anchors: the clip
+            // ends the leg early, the appended goal and the re-ask pick up from
+            // CLOSER, and each re-trace shortens what remains of the wander.
+            std::vector<PathCell> capped;
+            const bool clipped = route.size() > 64;
+            if (clipped) capped.assign(route.begin(), route.begin() + 64);
+            const std::vector<PathCell>& useRoute = clipped ? capped : route;
+            const bool reachedGoal = traceReachedGoal && !failed && !clipped;
             std::vector<Order> path;
             path.reserve(useRoute.size());
             for (size_t i = 0; i < useRoute.size(); ++i) {
@@ -4927,12 +4686,40 @@ void World::tick(float dt) {
             // no-headway watchdog never fired because from its point of view the
             // unit kept reaching its goal. Keep the destination on the end.
             if (!reachedGoal) {
+                // Clipped OR failed, the ordered point stays on the end. For a clip
+                // (64-waypoint cap) that is how the destination survives; for a
+                // FAILURE it is how the ORDER survives: the best-effort route walks
+                // the unit to its closest approach (0x415170), the appended leg has
+                // it press there under the refusal caps, and the failed-route
+                // deadline (rand(8)+rand(8)+30 ticks x scale, 0x4e535d) re-asks from
+                // the crowd's edge -- each re-ask reaching closer as the pack
+                // tightens. Truncating the leg at the closest approach instead
+                // completed the ORDER there, the re-ask had nothing to work on, and
+                // a converging army froze as a loose ring around its first ring of
+                // arrivals. Permanent rest is the terrain path's job (pathExists
+                // false -> dropLeg), not the crowd path's.
                 Order last;
                 last.x = Fixed::fromFloat(gx);
                 last.z = Fixed::fromFloat(gz);
                 path.push_back(last);
             }
             replaceLeg(*u, path);
+            // Retail's randomised stale-route deadlines: two dice, TRIANGULAR, scaled
+            // by the type's per-half-cell ticks, with the dice and base keyed on how
+            // the search ended --
+            //   succeeded, goal area crowded:  rand(10)+rand(10)+10   (0x4e5226)
+            //   succeeded, normal:             rand(10)+rand(10)+20   (0x4e5284)
+            //   FAILED:                        rand(8)+rand(8)+30     (0x4e535d)
+            // The failed shape is the convergence loop: a unit resting on its
+            // best-effort route re-asks on it, and each re-ask from the crowd's edge
+            // reaches closer as the pack tightens. Slower dice, so a wall that will
+            // never open is probed gently rather than hammered.
+            u->routeDeadline = int32_t(tickCounter_) +
+                (failed
+                     ? int32_t((pathRand(8) + pathRand(8) + 30u) *
+                               uint32_t(u->type->halfCellTicks))
+                     : int32_t((pathRand(10) + pathRand(10) + (crowded ? 10u : 20u)) *
+                               uint32_t(u->type->halfCellTicks)));
         });
 
     // Re-request, the way retail's navigator re-anchors instead of asking once.
@@ -4943,54 +4730,6 @@ void World::tick(float dt) {
     //
     // Staggered by unit id so the queue does not spike on one tick, and driven
     // off the tick counter, so it stays identical on every peer.
-    // SECOND LOOK at a unit the progress watchdog left idle. Nothing else ever will:
-    // the sweep below skips units with no orders, so a dropped final leg is permanent.
-    if (pathService_ && !nav_.empty() && !abandoned_.empty()) {
-        for (auto& u : units_) {
-            if (!u.alive() || u.embarked() || !u.type || !u.orders.empty()) continue;
-            if (u.type->canFly || u.type->isStructure() || !u.type->canMove) continue;
-            auto it = abandoned_.find(u.id);
-            if (it == abandoned_.end()) continue;
-            AbandonedGoal& rec = it->second;
-            // RETIRE A RECORD THAT CAN NEVER BE USED AGAIN. Leaving it to fail its own
-            // test every tick keeps abandoned_ non-empty, and abandoned_ non-empty is
-            // what runs the sweep above -- so a single spent record meant this loop
-            // walked every unit in the game, every tick, for the rest of the match.
-            if (rec.tries >= kAbandonRetries ||
-                tickCounter_ - rec.atTick > kAbandonExpiry) {
-                abandoned_.erase(it);
-                continue;
-            }
-            if (tickCounter_ - rec.probeAt < kAbandonRetryTicks) continue;
-            // Only if it can actually get there from where it now stands. Re-issuing a
-            // genuinely unreachable goal is what the give-up exists to prevent -- the
-            // unit would walk at a mountain and grind at it again.
-            //
-            // A failed check does NOT spend the attempt. It used to: ++tries came first,
-            // so a goal still blocked at the ten-second mark -- a crowd that has not
-            // dispersed yet, which is the ordinary case -- burned the single retry
-            // without an order ever being issued. "One more look" became "one more
-            // check". Wait another interval instead; kAbandonExpiry bounds the waiting.
-            if (!pathExists(u.type, rec.x.toFloat(), rec.z.toFloat(),
-                            u.x.toFloat(), u.z.toFloat())) {
-                rec.probeAt = tickCounter_;   // wait again -- but the EXPIRY still runs
-                continue;
-            }
-            ++rec.tries;
-            const bool atk = rec.attackMove, pat = rec.patrol;
-            abandonRetry_ = true;          // this one re-issue is not a new player order
-            order(u.id, rec.x.toFloat(), rec.z.toFloat(), /*queue=*/false);
-            abandonRetry_ = false;
-            // Restore what the order WAS. order() issues a plain move, so without this a
-            // rescued attack-move would walk past enemies it was told to engage and a
-            // rescued patrol would stop looping -- the unit would come back doing
-            // something the player never asked for.
-            if (!u.orders.empty()) {
-                u.orders.back().attackMove = atk;
-                u.orders.back().patrol = pat;
-            }
-        }
-    }
     if (pathService_ && !nav_.empty()) {
         for (auto& u : units_) {
             if (!u.alive() || u.embarked() || !u.type) continue;
@@ -5197,11 +4936,8 @@ void World::tick(float dt) {
             }
             // Drop this unit's per-unit pathfinding state. Ids are never reused, so a
             // dead unit's entries can never match anything again -- they would simply
-            // accumulate for the rest of the match. abandoned_ matters most: it gates a
-            // per-tick sweep over every unit, so stale entries there cost real work
-            // rather than just memory.
+            // accumulate for the rest of the match.
             pathRetryAt_.erase(u.id);
-            abandoned_.erase(u.id);
             u.deadFor = 0; u.orders.clear(); u.speed = Fixed(); continue;
         }
 
@@ -5525,44 +5261,44 @@ void World::tick(float dt) {
                 // hatch skipping it entirely while a unit stayed inside its own
                 // cell -- so between crossings a body crept into its neighbour
                 // unopposed, measured 13px in where footprints touch at 32.
-                auto free = [&](Fixed nx, Fixed nz) {
-                    // Footprint-aware, and the SAME grid the pathfinder used, so a unit
-                    // never stalls on a cell its own path routed it through.
-                    if (!(g.empty() || g.fits(nx.floorInt() / 16, nz.floorInt() / 16,
-                                              footCells(u.type))))
-                        return false;
-                    // ...and units are solid, tested against the bodies themselves
-                    // rather than the cells they happen to be stamped into.
-                    // A HAIR OF SLACK. A traced route runs on 16px cells, so the corner
-                    // waypoint past a parked body is EXACTLY tangent: footprints touch at
-                    // 32px and the margin is 0.000. Any drift at all -- a unit sitting at
-                    // 568.04 rather than 568 -- puts it 0.04px inside, and a strict test
-                    // then refuses every step alongside, for ever. Measured: that is the
-                    // wedge the sideways teleport existed to rescue.
+                // 0 = clear, 1 = terrain, 2 = a body. WHY matters: retail's
+                // goal-crowding settle applies only when what stops you is a BODY --
+                // a unit blocked by terrain near its goal keeps pressing (the route
+                // will fix it), one blocked by the crowd it was sent into is done.
+                auto blockedBy = [&](Fixed nx, Fixed nz) -> int {
+                    // RETAIL'S FORWARD PROBE IS ONE CELL: project the step and query
+                    // the resulting POSITION (the mover RE: "one step of 0x100000 ...
+                    // cmp eax,4/jle -> blocked"). Terrain and occupant are judged for
+                    // the destination's own cell -- the same per-cell granularity the
+                    // search scores with (0x41472e runs the START through the very
+                    // same single-cell query), so the mover never refuses a cell its
+                    // own route was allowed to cross. The footprint-swept variants
+                    // that stood here were stricter than retail and manufactured
+                    // wedges retail does not have: two bodies that had legally
+                    // interpenetrated through the same-way rule could each find the
+                    // other inside their footprint sweep, refuse every direction, and
+                    // deadlock for minutes. The price of the per-cell probe is
+                    // retail's own price: bodies and terrain corners can visibly clip
+                    // by up to half a footprint, and always could in the original.
                     //
-                    // Retail is explicitly tolerant here ("bodies share space briefly and
-                    // nothing shoves"); half a pixel is far below anything visible and
-                    // well under the 32px at which footprints meet, so it unwedges the
-                    // tangent case without letting bodies sink into each other.
-                    //
-                    // IT IS A TUNING VALUE ON A KNIFE EDGE, and worth knowing that before
-                    // touching it. 0.5 was right while the mover took its direction from
-                    // a double-precision Taylor sin; moving to CORDIC shifted approach
-                    // angles by a fraction of a degree and one wall geometry began
-                    // wedging again, while 1.0 wedges a different one. Re-derive it
-                    // against pathblock_test and crowdbench if the trig ever changes
-                    // again -- do not assume the old number still holds.
-                    //
-                    // AND IT IS NOT A FLOAT WORKAROUND, which is what it was first taken
-                    // for. Positions are fixed-point now, exact to 1/65536 px, and
-                    // setting this to zero still collapses everything -- opposing columns
-                    // 21/32 -> 1/32, the chokepoint 24/24 -> 3/24, pathblock_test back to
-                    // 8 failures. The tangency is about whether a touch COUNTS as an
-                    // overlap, not about how precisely the touch is represented.
-                    // In fixed point: 0.75px is 49152 units of 1/65536, an exact integer
-                    // threshold rather than a float comparison two builds could straddle.
-                    const Fixed kTouchSlack = Fixed::raw((Fixed::kOne * 3) / 4);
-                    return bodyPenetration(u, nx, nz) <= kTouchSlack;
+                    // The occupant rule is 0x4db767: ignored -- the step passes
+                    // through -- only when it is under way, not slower than us, and
+                    // heading within 90 degrees. Head-on blocks. Slower-ahead blocks.
+                    // Parked blocks. This is what lets retail run with no separation
+                    // pass: overlap only forms behind a faster leader and unwinds as
+                    // the leader pulls away.
+                    const int cx = nx.floorInt() / 16, cz = nz.floorInt() / 16;
+                    if (!(g.empty() || g.walkable(cx, cz))) return 1;
+                    if (occW_ <= 0) return 0;
+                    if (cx < 0 || cz < 0 || cx >= occW_ || cz >= occH_) return 0;
+                    const int32_t id = occ_[size_t(cz) * size_t(occW_) + size_t(cx)];
+                    if (id == 0 || id == u.id) return 0;
+                    const Unit* o = unit(id);
+                    if (!o || !o->alive() || !o->type) return 0;
+                    if (o->speed > Fixed() && o->speed >= u.speed &&
+                        std::abs(bamDiff(o->heading, u.heading)) <= kBamQuarterV)
+                        return 0;
+                    return 2;
                 };
                 // A SLIDE ONLY COUNTS IF IT ACTUALLY DISPLACES. Walking straight down a
                 // wall gives mx ~= 0, and the x-slide below then "succeeded" by moving
@@ -5579,17 +5315,35 @@ void World::tick(float dt) {
                 // budget and RETURNS (0x4dbc17). It never decomposes the step, and the
                 // whole mover contains only two queries: the forward probe and the 3x3
                 // scan. There is no third to test an axis with.
-                if (free(u.x + mx, u.z + mz)) { u.x += mx; u.z += mz; }
+                // Stale-route refresh on the randomised deadline. Runs whether or not
+                // the step is blocked -- the route being WALKED is the stale thing --
+                // and respects the same failure backoff as every other re-ask.
+                if (u.routeDeadline >= 0 && int32_t(tickCounter_) >= u.routeDeadline &&
+                    !u.orders.empty() && u.orders.front().targetId == 0) {
+                    u.routeDeadline = -1;   // re-stamped when the new route installs
+                    auto rit = pathRetryAt_.find(u.id);
+                    if (rit == pathRetryAt_.end() || tickCounter_ >= rit->second) {
+                        const Order& legEnd = u.orders[currentLeg(u.orders)];
+                        requestPath(u, legEnd.x.toFloat(), legEnd.z.toFloat());
+                    }
+                }
+                const int blk = blockedBy(u.x + mx, u.z + mz);
+                if (blk == 2) ++u.bodyBlockStreak; else u.bodyBlockStreak = 0;
+                if (blk == 0) { u.x += mx; u.z += mz; }
                 else {
                     // Fully blocked (a wall dead-ahead the straight path clipped):
                     // stop and repath around it toward the final destination, so
                     // the unit routes around instead of wedging permanently.
                     // Retail does NOT stop a blocked unit dead -- it clamps the move
-                    // and caps speed (0.5x on the first refusal, 0.4x once it has
-                    // been refused twice running), so the unit keeps pressing and
-                    // resumes the instant the way clears. Stopping outright is what
-                    // turns a momentary jam into a permanent one.
-                    u.speed = fxMin(u.speed, Fixed::fromFloat(u.type->maxVel.toFloat() * 0.4f));
+                    // and caps speed, 0.5x on the FIRST refusal and 0.4x once it has
+                    // been refused twice running (the navigator's 0x100/0x200 refusal
+                    // flags), so the unit keeps pressing and resumes the instant the
+                    // way clears. This used to flatten both stages to 0.4x; the
+                    // streak the flags encode is now kept, so the two-stage cap is
+                    // exact.
+                    u.speed = fxMin(u.speed,
+                                    Fixed::fromFloat(u.type->maxVel.toFloat() *
+                                                     (u.bodyBlockStreak >= 2 ? 0.4f : 0.5f)));
                     if (u.repathLeft > 0) --u.repathLeft;
                     if (!g.empty() && u.repathLeft <= 0 &&
                         u.orders.front().targetId == 0) {
@@ -5631,21 +5385,6 @@ void World::tick(float dt) {
                     if (u.stuckFor > int32_t(kTick)) {
                         u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
                         const NavGrid& g = navFor(u.type);
-                        auto free = [&](Fixed nx, Fixed nz) {
-                            return (g.empty() ||
-                                    g.fits(nx.floorInt() / 16, nz.floorInt() / 16,
-                                           footCells(u.type))) &&
-                                   bodyPenetration(u, nx, nz) <= Fixed();
-                        };
-                        const SinCos psc = fxSinCos(u.heading);
-                        float px = psc.c.toFloat(), pz = -psc.s.toFloat();
-                        // Which way to dodge. `id & 1` alone makes two units of the
-                        // same parity meeting head-on pick the SAME side and collide
-                        // again -- the exact failure solidity would otherwise turn
-                        // into a permanent corridor lock. Fold in the tick so a pair
-                        // that keeps re-colliding eventually picks opposite sides,
-                        // and the choice stays deterministic.
-                        float s = ((u.id ^ int(tickCounter_ >> 5)) & 1) ? 1.0f : -1.0f;
                         // VALIDATE THE MOVE THAT IS ACTUALLY MADE. This used to test
                         // clearance at distance d and then move d/2, so the point it
                         // checked was never the point it moved to: the far end could be
@@ -5724,66 +5463,16 @@ void World::tick(float dt) {
                         (tickCounter_ + uint32_t(u.id)) % kPathRetryTicks == 0)
                         requestPath(u, gx, gz);
 
-                    // Still nothing after a long while: this leg cannot be
-                    // satisfied -- the goal is inside terrain, behind a barrier,
-                    // or down a corridor we cannot solve -- so stop shoving at
-                    // it and honour whatever the player queued behind it.
-                    //
-                    // OURS, not retail's: the original just keeps pressing
-                    // (0x4e545b does nothing at all once the path-failed bits
-                    // are set), and a unit wedged against a cliff stays there.
-                    // That reads as broken rather than characterful.
-                    // ...but only when the search has actually FAILED from here.
-                    // Time alone is not evidence: a unit following a long
-                    // wandering route legitimately goes many seconds without
-                    // getting nearer the goal, and dropping the leg then cuts a
-                    // journey short -- measured, it turned a 97%-of-the-way trip
-                    // into 53%. A live backoff entry means we tried to find a
-                    // route from here and could not, which is the real signal.
-                    // Three things must all hold, because each alone gives a
-                    // false positive: time (not getting closer), a live failure
-                    // backoff (we looked for a route from here and found none),
-                    // and actually being WEDGED rather than crawling. Without the
-                    // last one a unit grinding slowly along a wall gets its order
-                    // cancelled -- measured, a trip that reaches 97% of the way by
-                    // pressing was being abandoned at 53%.
-                    // "Wedged" has two shapes. Pressed against something and
-                    // barely moving is one (stuckFor). The other is standing on
-                    // ground the unit does not fit on at all: back when the
-                    // unstick pass existed (deleted 2026-09-12, see the note at
-                    // the end of this file) it nudged such a unit toward legal
-                    // ground every tick, that nudge counted as movement and kept
-                    // resetting stuckFor, and the unit wandered for ever while
-                    // never reaching anything --
-                    // measured 2426px of wandering in 60s with no arrival.
-                    // No extra conditions. Not getting closer for this long IS
-                    // the signal, whatever the unit is doing meanwhile -- wedged
-                    // against rock, or circling between two routes that each
-                    // lead back to the other. Earlier versions demanded the unit
-                    // be wedged, or standing off the grid, or to have had a
-                    // search fail; a unit oscillating on perfectly legal ground
-                    // is none of those, and wandered 2426px in 60s without ever
-                    // arriving. Retail stops: ordered at a mountain it walks as
-                    // close as it can and comes to rest.
-                    if (u.goalStuckT > kGoalGiveUpTicks) {
-                        // Remember where it was going BEFORE dropping, and only when this
-                        // is the last thing it has to do: a unit with more orders queued
-                        // carries on and needs no rescue. See World::abandoned_.
-                        const Order& lost = u.orders.back();
-                        const float ax = lost.x.toFloat(), az = lost.z.toFloat();
-                        const bool aAtk = lost.attackMove, aPat = lost.patrol;
-                        const bool wasLast = currentLeg(u.orders) + 1 >= u.orders.size();
-                        dropLeg(u);
-                        if (wasLast && u.orders.empty()) {
-                            auto& rec = abandoned_[u.id];
-                            if (rec.tries < kAbandonRetries) {
-                                rec.x = Fixed::fromFloat(ax); rec.z = Fixed::fromFloat(az);
-                                rec.attackMove = aAtk; rec.patrol = aPat;
-                                rec.atTick = tickCounter_;
-                                rec.probeAt = tickCounter_;
-                            }
-                        }
-                    }
+                    // The give-up that stood here -- no headway for long enough plus
+                    // a live failure backoff dropped the leg and recorded it for a
+                    // later rescue -- is deleted. Its own comment said it plainly:
+                    // OURS, not retail's. Retail keeps the order and keeps pressing
+                    // under the refusal caps, re-asking on the randomised deadlines
+                    // (the failed shape re-asks gently for ever, 0x4e535d); a unit
+                    // wedged against a cliff stays there, and a unit at a crowded
+                    // goal tightens in as the pack packs. The abandon was measured
+                    // killing exactly that: four of a 24-unit convergence lost their
+                    // orders mid-scrum and froze 140-180px out, permanently.
                 }
             } else {
                 u.goalStuckD = Fixed::raw(INT32_MAX); u.goalStuckT = 0;

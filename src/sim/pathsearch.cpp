@@ -1,5 +1,6 @@
 #include "sim/pathsearch.h"
 
+#include <bit>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -51,6 +52,7 @@ void PathSearch::reset(int mapW, int mapH) {
     ++gen_;   // every cell is now stale, i.e. empty -- no clearing needed
     phase = Phase::Init;
     best = 0;
+    goalCrowded = false;
     visited = 0;
     work = 0;
     nOccupied = nGround = nRoad = 0;
@@ -84,12 +86,18 @@ bool PathSearch::atGoal(PathCell c) const {
 // order (icd 0x414450 does the same over its own 0x218-byte buffer). Only
 // direction CHANGES become waypoints -- a straight run needs no intermediate
 // points -- and the navigator caps the list at 64 (0x4e4ea0).
-void PathSearch::buildRoute() {
+void PathSearch::buildRoute() { buildRouteTo(goal); }
+
+// Reconstruct the breadcrumb walk back from `end`. Retail reconstructs on FAILURE
+// too (0x415170), from the closest-approach cell -- the best-effort route that walks
+// a unit to the reachable edge of wherever it was sent, rather than leaving it to
+// steer a straight line into the first wall.
+void PathSearch::buildRouteTo(PathCell end) {
     out.clear();
-    if (!inside(goal)) return;
+    if (!inside(end)) return;
     std::vector<PathCell> rev;
     ++walkGen_;
-    PathCell c = goal;
+    PathCell c = end;
     int lastDir = -1;
     for (int guard = 0; guard < 8192; ++guard) {
         if (c.x == start.x && c.z == start.z) break;
@@ -98,6 +106,13 @@ void PathSearch::buildRoute() {
         if (walkStamp_[i] == walkGen_) break;   // belt and braces against a cycle
         walkStamp_[i] = walkGen_;
         const int d = from_[i] & 7;
+        // Retail's goal-crowding check runs during this walk (icd 0x414563): a cell
+        // the search could only pass through as same-way traffic (kScore5), lying
+        // within the type's tolerance of the goal, marks the goal area as crowded --
+        // the route leans on bodies that may not part by the time the unit arrives.
+        if (tolCells > 0 && (flag_[i] & kScore5) &&
+            std::max(std::abs(c.x - goal.x), std::abs(c.z - goal.z)) < tolCells)
+            goalCrowded = true;
         if (d != lastDir) { rev.push_back(c); lastDir = d; }
         PathCell p{c.x - kDirX[d], c.z - kDirZ[d]};
         if (!inside(p) || (p.x == c.x && p.z == c.z)) break;
@@ -175,7 +190,9 @@ PathSearch::Result PathSearch::step(const std::function<int(int, int)>& score,
             if (g_pathDbg) std::fprintf(stderr,
                 "  search gave up: visitLimit, phase=%d visited=%d work=%d best=%d cur=(%d,%d)\n",
                 int(phase), visited, work, best, cur.x, cur.z);
-            phase = Phase::Failed; return Result::Failed;
+            phase = Phase::Failed;
+            buildRouteTo(bestCell);
+            return Result::Failed;
         }
 
         switch (phase) {
@@ -185,6 +202,7 @@ case Phase::Init: {
                 return Result::Failed;
             }
             best = pathDist(start, goal);
+            bestCell = start;
             cur = start;
             org = start;
             // The goal carries the terminal flag both marches test for
@@ -216,7 +234,7 @@ if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             bool giveUp = false;
             if (s < kCellThreshold || !stepLegal(score, cur, d)) {
                 giveUp = true;
-            } else if (s == kCellOccupied) {
+            } else if (s == kCellSlope) {
                 if (nOccupied >= 3) giveUp = true; else ++nOccupied;
             } else if (s == kCellRoad) {
                 if (nRoad >= 3) { if (nGround >= 3) giveUp = true; }
@@ -229,7 +247,7 @@ if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             mark(cur, d, s);
             if (atGoal(cur)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             const int dist = pathDist(cur, goal);
-            if (dist < best) best = dist;
+            if (dist < best) { best = dist; bestCell = cur; }
             break;
         }
 
@@ -260,7 +278,7 @@ if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             mark(org, d, s);
             if (atGoal(org)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             const int dist = pathDist(org, goal);
-            if (dist < best) best = dist;
+            if (dist < best) { best = dist; bestCell = org; }
             break;
         }
 
@@ -273,7 +291,7 @@ if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             if (okA) {
                 if (atGoal(curA)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
                 const int dist = pathDist(curA, goal);
-                if (dist < best) best = dist;
+                if (dist < best) { best = dist; bestCell = curA; }
                 if (onGoalLine(org, curA)) { org = curA; phase = Phase::CardMarch; break; }
             }
             // The traces give up when they MEET (icd 0x414ec7 compares cursor B's
@@ -284,13 +302,14 @@ if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
             // of the map before it notices, which is what burned the visit limit.
             if (started && curA.x == curB.x && curA.z == curB.z && dirA == dirB) {
                 phase = Phase::Failed;
+                buildRouteTo(bestCell);
                 return Result::Failed;
             }
             const bool okB = traceStep(score, curB, dirB, -1);
             if (okB) {
                 if (atGoal(curB)) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
                 const int dist = pathDist(curB, goal);
-                if (dist < best) best = dist;
+                if (dist < best) { best = dist; bestCell = curB; }
                 if (onGoalLine(org, curB)) { org = curB; phase = Phase::CardMarch; break; }
             }
             started = true;
@@ -298,7 +317,9 @@ if (best == 0) { phase = Phase::Done; buildRoute(); return Result::Arrived; }
                 if (g_pathDbg) std::fprintf(stderr,
                     "  search gave up: both traces boxed in at A(%d,%d) B(%d,%d) visited=%d\n",
                     curA.x, curA.z, curB.x, curB.z, visited);
-                phase = Phase::Failed; return Result::Failed;
+                phase = Phase::Failed;
+                buildRouteTo(bestCell);
+                return Result::Failed;
             }
             break;
         }
@@ -321,6 +342,7 @@ void PathService::admit(int unitId, Entry& e, int slot) {
     ps.unitId = unitId;
     ps.start = e.start;
     ps.goal = e.goal;
+    ps.tolCells = e.tolCells;
     ps.cur = e.start;
     ps.priority = e.priority;
 }
@@ -331,7 +353,8 @@ void PathService::release(Entry& e) {
 }
 
 void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
-                          int mapH, Fixed goalX, Fixed goalZ, bool priority) {
+                          int mapH, Fixed goalX, Fixed goalZ, int player, bool priority,
+                          int tolCells) {
     // A RE-REQUEST FOR THE SAME SEARCH LETS IT RUN. Everything below restarts the
     // search from scratch (cap = 0), which is right when the question changed and
     // ruinous when it did not: the sim re-asks every kPathRetryTicks (120 ticks, 4s)
@@ -372,6 +395,8 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
     e.mapH = mapH;
     e.goalX = goalX;
     e.goalZ = goalZ;
+    e.player = player;
+    e.tolCells = tolCells;
     e.priority = priority;
     e.cap = 0;
     e.slot = -1;
@@ -389,7 +414,7 @@ void PathService::cancel(int unitId) {
 
 void PathService::tick(const std::function<int(int, int, int)>& score,
                        const std::function<void(int, const std::vector<PathCell>&,
-                                                Fixed, Fixed)>& done) {
+                                                Fixed, Fixed, bool, bool)>& done) {
     if (q_.empty()) return;
     if (pool_.empty()) {
         pool_.resize(kMaxActiveSearches);
@@ -446,15 +471,22 @@ void PathService::tick(const std::function<int(int, int, int)>& score,
             }
         }
 
-        // Count the two classes exactly as the scheduler does, then split what is LEFT of
-        // the budget: a flagged request is worth five ordinary ones (icd 0x4164fa). Only
-        // entries that have not yet had a slice this tick count -- a queued one is doing
-        // no work, and one that already ran is finished for this tick.
-        int a = 0, b = 0;
+        // Count PLAYERS, not requests -- emulated to settle it (docs/pathfinding-port
+        // .md): two players with one pending unit each split the budget 500/500, and so
+        // do two players with fifty each, and so does 1-pending against 99-pending.
+        // Retail's 0x634674 table holds a per-player pending count that the scheduler
+        // (0x4164fa) only ever tests > 0; the bucket increments once per player, and a
+        // flagged player is worth five ordinary ones. Splitting per REQUEST -- which is
+        // what stood here -- let one player with 500 units starve another, which retail
+        // cannot do. Only entries that have not yet had a slice this tick count.
+        uint32_t normals = 0, specials = 0;   // bitmasks over player slots
         for (const auto& [id, e] : q_) {
             if (e.slot < 0 || e.ranAt == tickNo_) continue;
-            (e.priority ? b : a) += 1;
+            const uint32_t bit = 1u << (unsigned(e.player) & 31);
+            if (e.priority) specials |= bit; else normals |= bit;
         }
+        normals &= ~specials;                  // a player is one class, not both
+        const int a = std::popcount(normals), b = std::popcount(specials);
         const int share = a + 5 * b;
         if (share <= 0) break;                 // nothing left to run
         const int remaining = budget_ - spent;
@@ -470,7 +502,8 @@ void PathService::tick(const std::function<int(int, int, int)>& score,
         // matters). Collect the finished searches, finish walking the queue, release the
         // slots, and only then hand the routes over -- so a callback is free to queue
         // whatever it likes.
-        struct Finished { int id; std::vector<PathCell> route; Fixed gx, gz; };
+        struct Finished { int id; std::vector<PathCell> route; Fixed gx, gz;
+                          bool failed; bool crowded; };
         std::vector<Finished> finished;
         for (auto& [id, e] : q_) {
             if (e.slot < 0 || e.ranAt == tickNo_) continue;
@@ -499,11 +532,19 @@ void PathService::tick(const std::function<int(int, int, int)>& score,
                 // smooths it, and that cost belongs to this tick's budget.
                 spent += kWorkCompleteBase + kWorkPerCorner * int(ps.out.size());
                 ++completions_;
-                finished.push_back({id, ps.out, e.goalX, e.goalZ});
+                finished.push_back({id, ps.out, e.goalX, e.goalZ,
+                                    false, ps.goalCrowded});
             } else if (r == PathSearch::Result::Failed) {
                 spent += kWorkCompleteBase;
                 ++failures_;
-                finished.push_back({id, {}, e.goalX, e.goalZ});
+                // A failed search still delivers its BEST-EFFORT route -- the walk to
+                // its closest approach (icd 0x415170 reconstructs on failure too). An
+                // empty route here meant a unit sent at a crowded or walled goal got
+                // NOTHING and steered a straight line instead; retail's walks to the
+                // reachable edge. The route may legitimately be empty (start boxed
+                // in, nothing visited): the installer treats that as the old failure.
+                finished.push_back({id, ps.out, e.goalX, e.goalZ,
+                                    true, ps.goalCrowded});
             }
             // Suspended: keep the entry, resume next tick with its state intact.
         }
@@ -516,7 +557,8 @@ void PathService::tick(const std::function<int(int, int, int)>& score,
             q_.erase(it);
         }
         // Queue walked, slots free: now it is safe for a callback to re-enter.
-        for (const Finished& f : finished) done(f.id, f.route, f.gx, f.gz);
+        for (const Finished& f : finished)
+            done(f.id, f.route, f.gx, f.gz, f.failed, f.crowded);
         if (finished.empty()) break;   // no slot freed -> a refill round would do nothing
     }
 }

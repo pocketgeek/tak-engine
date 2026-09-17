@@ -17,7 +17,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 81;       // 81: gods are retail's -- a seeded 10%
+constexpr uint32_t kNetVersion = 82;       // 82: retail's movement layer -- per-cell
+                                           // search grades and mover probe, best-effort
+                                           // routes, randomised repath cadences
+                                           // 81: gods are retail's -- a seeded 10%
                                            //     GameChance roll and a random appear
                                            //     time, no favour pool, no lobby option
                                            // 80: the SEARCH refuses to route through a

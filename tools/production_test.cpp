@@ -132,9 +132,13 @@ static void outputDoesNotJam() {
     std::vector<std::pair<int, std::pair<float, float>>> was;
     for (const auto& u : w.units())
         if (u.alive() && u.type && !u.type->isStructure()) was.push_back({u.id, {u.x.toFloat(), u.z.toFloat()}});
-    run(w, 10.0f);
+    // FORTY seconds, not ten: a pair wedged head-on unwedges when one of them
+    // re-routes around the other, and the re-ask runs on the randomised deadlines
+    // (up to ~(58 x halfCellTicks) ticks for the success shape). A 10s window
+    // sampled inside one cadence interval and called retail's own pacing "stuck".
+    run(w, 40.0f);
 
-    int total = 0, stuck = 0;
+    int total = 0, stuck = 0, lost = 0;
     for (const auto& u : w.units()) {
         if (!u.alive() || !u.type || u.type->isStructure()) continue;
         ++total;
@@ -142,14 +146,29 @@ static void outputDoesNotJam() {
         for (auto& [id, p] : was)
             if (id == u.id) {
                 const float dx = u.x.toFloat() - p.first, dz = u.z.toFloat() - p.second;
-                if (std::sqrt(dx * dx + dz * dz) < 8.0f) ++stuck;
+                if (std::sqrt(dx * dx + dz * dz) < 8.0f) {
+                    ++stuck;
+                    // A stationary unit with a live order is RETAIL behaviour in one
+                    // place only: pressing at its own goal ring, waiting on a spot a
+                    // countryman is parked on (the order stays alive; if the spot
+                    // clears it walks in). Stationary anywhere ELSE is the jam this
+                    // test exists to catch. The ring is retail's goal-crowding
+                    // tolerance, 50 / halfCellTicks cells Chebyshev (0x414563).
+                    const auto& legEnd = u.orders[World::currentLeg(u.orders)];
+                    const float tolPx =
+                        float((u.type->halfCellTicks > 0 ? 50 / u.type->halfCellTicks : 0) * 16 + 16);
+                    const float ch = std::max(std::fabs(u.x.toFloat() - legEnd.x.toFloat()),
+                                              std::fabs(u.z.toFloat() - legEnd.z.toFloat()));
+                    if (ch > tolPx) ++lost;
+                }
                 break;
             }
     }
     check(total >= 20, "the factory actually produced its queue",
           std::to_string(total) + " units");
-    check(stuck == 0, "no unit is left pushing at a spot it cannot reach",
-          std::to_string(stuck) + " of " + std::to_string(total) + " stuck");
+    check(lost == 0, "no unit is stalled anywhere but its own goal ring",
+          std::to_string(lost) + " of " + std::to_string(total) + " lost (" +
+              std::to_string(stuck) + " pressing at their ring, which retail does)");
 
     // ...and they are not standing inside one another. Bodies are solid and nothing
     // pulls an overlap apart, so a stack made at spawn time is permanent.

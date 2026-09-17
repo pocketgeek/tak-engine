@@ -270,3 +270,71 @@ BLOCKED on the open questions:
     correctly (the shape `(rand(10)+rand(10)+20) * scale` is known);
   * moving the 5x budget weighting to the player axis, which needs to know which
     players are the 5x class.
+
+
+## IMPLEMENTED (2026-09-16/17): the movement layer is retail's
+
+Everything below is in the tree, each piece against its address. The A*, the
+string-pull, the exemption wrapper, lineOpen, the pixel collision model
+(bodyPenetration, the 0.75px touch slack, the already-inside skip), the axis
+slides, the sideways-dodge stuck watchdog, and the no-headway abandon-and-rescue
+apparatus are all DELETED -- every one was ours, and every one existed to
+compensate for some other missing retail piece.
+
+**Grades** (dynamically verified, tools/re/emupath.py: the two map raters return
+empty 6 / parked 0 / moving 1 regardless of heading, so the same-way rule
+provably lives in the live query, not the map):
+
+    search scorer (0x4db640 semantics): terrain 0/6/7 per cell; a body grades 2
+      (blocked) unless under way, not slower, heading within 90 deg -> 5
+      (kCellSameWay, marked kScore5 -- the crowding evidence)
+    mover probe: ONE cell -- the projected position's own cell (the start-cell
+      check at 0x41472e runs through the same single-cell query). The
+      footprint-swept variants we had were stricter than retail and manufactured
+      multi-minute mutual wedges retail cannot express.
+    placement keeps the footprint loop (0x507d10): spawning is strict, moving is
+      per-cell. The visible price is retail's own: bodies and terrain corners
+      clip by up to half a footprint.
+
+**Cadences** (all traced, all scaled by UnitType+0x249 = clamp(8/bestSpeed,1,255)):
+    blocked re-request: 120 ticks fixed (0x4e545b)          [was already ported]
+    stale route, goal crowded:  rand(10)+rand(10)+10  (0x4e5226)
+    stale route, normal:        rand(10)+rand(10)+20  (0x4e5284)
+    failed route:               rand(8)+rand(8)+30    (0x4e535d)
+Triangular on purpose -- two dice desynchronise a crowd's re-asks. Drawn from a
+dedicated minstd stream (World::pathRand), deterministic per peer.
+
+**Failure = best-effort** (0x415170): a failed search reconstructs the walk to
+its closest approach and the unit takes it; the ordered point stays appended, so
+the order survives, the unit presses at the crowd's edge under the 0.5x/0.4x
+refusal caps (two-stage, keyed on the refusal streak -- navigator 0x100/0x200),
+and the failed-route cadence re-asks from closer as the pack tightens. That loop
+IS retail's convergence; there is no settle order and no give-up. The
+64-waypoint navigator cap (0x4e4ea0) bounds each installed leg and re-anchors,
+which is what tames the tracer's outline-hugging wander.
+
+**Budget**: split per PLAYER with the 5x class (0x4164fa; emulated), the class
+mapped to seated humans (the only lockstep-safe reading of +0x24e7; wired as
+World::setHumanPlayers, empty mask until the lobby passes it).
+
+**Measured profile** (crowdbench): opposing columns 29-30/32 (head-on files
+wedge a few -- retail's documented behaviour), chokepoint 22-24/24, group order
+32/32, open field 24/24, serpentine 12/12 at travel x6.65 (the naked tracer's
+maze wander, no A* hiding it). retailgap: a walker routes AROUND a parked body
+and arrives; head-on never tunnels; a 24-unit convergence packs 21+ into
+retail's own crowding ring (50/+0x249 cells) with nobody abandoning.
+
+## Still open, explicitly
+
+- **Retail runtime ground truth.** Grades, formulas and mechanisms are traced
+  and emulated, but no side-by-side run against retail itself (wine) has
+  measured convergence pace or wedge frequency. The quantitative bars in
+  retailgap/crowdbench are our fixtures around traced invariants, not retail
+  measurements.
+- **+0x24e7 = "human"** remains the inference (all its other consumers are
+  local-feedback paths; a local reading would desync a lockstep sim).
+- The +0x36 refusal-flag cadence variant (0x4e52d3, rand(8)-based) and the
+  crowded-success type gates (+0x260 bit 0x80000, +0x194 > 0) are traced but
+  not ported -- the flags they key on have no exact analogue yet.
+- kScore5's producer in the MAP fills was never found (the raters emit no 5);
+  the live-query reading makes it same-way traffic, which is what we mark.

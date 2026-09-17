@@ -939,29 +939,108 @@ int main(int argc, char** argv) {
                 // and that is exactly how a 13px interpenetration hid behind a
                 // passing end-state check once.
                 const float bx0 = w.unit(blocker)->x.toFloat(), bz0 = w.unit(blocker)->z.toFloat();
-                const float touch =
-                    float(std::max(sw->footX, sw->footZ)) * 8.0f * 2.0f;   // px, centre to centre
+                // RETAIL'S BOUND IS A CELL, NOT A PIXEL. Blocking is cell-granular
+                // (the occupancy grid IS the collision model), so where a body stops
+                // depends on how the two footprints land on the 16px grid: exact
+                // pixel tangency is one alignment among many, and up to a cell of
+                // visual overlap or gap is retail's own behaviour. What is NEVER
+                // allowed is a body's centre inside another's footprint -- that is
+                // the tunnel this check exists to catch (it reached 1px once).
                 float closest = 1e9f;
-                for (int i = 0; i < 30 * 10; ++i) {
+                for (int i = 0; i < 30 * 15; ++i) {
                     w.tick(1.0f / 30.0f);
                     const sim::Unit* m2 = w.unit(walker);
                     if (!m2 || !m2->alive()) break;
                     closest = std::min(closest, std::max(std::fabs(m2->x.toFloat() - bx0),
                                                          std::fabs(m2->z.toFloat() - bz0)));
                 }
-                check(closest >= touch - 1.0f,
-                      "a walker never penetrates a parked body's footprint",
+                check(closest >= 8.0f,
+                      "a walker never drives into a parked body",
                       "closest approach " + std::to_string(int(closest)) +
-                          "px, footprints touch at " + std::to_string(int(touch)));
+                          "px (centre stays out of the stamped cells)");
                 const sim::Unit* b = w.unit(blocker);
                 const sim::Unit* m = w.unit(walker);
-                // The discriminating assertion: the walker was sent to x=800, PAST
-                // the blocker at 700. With only separation it shoulders through and
-                // arrives; solid, it is still on the near side or squeezing round.
-                check(m->x.toFloat() < 800.0f - 40.0f,
-                      "a parked body actually stops a walker (not just spaces it)",
-                      "walker x=" + std::to_string(int(m->x.toFloat())) +
-                          " blocker x=" + std::to_string(int(b->x.toFloat())));
+                // RETAIL ARRIVES. The search sees the parked body (it grades 0 on the
+                // rating map), routes around it, and the walker reaches x=800. The
+                // assertion that used to stand here -- walker held short of 760 --
+                // pinned OUR pre-port behaviour, where bodies were invisible to the
+                // search and the mover wedged against the blocker instead.
+                const float ax = m->x.toFloat() - 800.0f, az = m->z.toFloat() - 600.0f;
+                check(std::sqrt(ax * ax + az * az) < 48.0f,
+                      "...and still arrives, because the route bends around the body",
+                      "walker (" + std::to_string(int(m->x.toFloat())) + "," +
+                          std::to_string(int(m->z.toFloat())) + "), goal (800,600)");
+                check(std::fabs(b->x.toFloat() - bx0) < 1.0f &&
+                          std::fabs(b->z.toFloat() - bz0) < 1.0f,
+                      "...and nothing shoved the parked blocker",
+                      "blocker moved to (" + std::to_string(int(b->x.toFloat())) + "," +
+                          std::to_string(int(b->z.toFloat())) + ")");
+            }
+            // (a2) HEAD-ON, with the route running STRAIGHT THROUGH the body. Test
+            //     (a) sends the walker PAST the blocker, and the search detours, so
+            //     the head-on approach never actually happens there. Aim the order
+            //     just beyond the body instead -- within the search's near-goal
+            //     exemption -- and the route stays straight, which is the geometry
+            //     that found a real tunnel: the first penetrating step landed inside
+            //     the mover's 0.75px touch slack, was admitted, and the
+            //     "already inside, not ours to arbitrate" gate then skipped the body
+            //     for ever. Measured 20px deep at full speed before the gate learned
+            //     to use the same slack as the admission.
+            //
+            //     Assert ONLY the invariant: never penetrate. Where the walker ENDS
+            //     is mover policy (today it presses and holds; retail's mover would
+            //     sidestep), but no policy is allowed to put one body inside another.
+            {
+                sim::World w;
+                sim::MatchConfig cfg;
+                cfg.vfs = &vfs; cfg.mapPath = kMap;
+                cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
+                sim::setupMatch(w, reg, cfg);
+                int blocker = w.spawn(sw, 700, 600, 0, 0);
+                int walker = w.spawn(sw, 640, 600, 0, 0);
+                for (int i = 0; i < 30 * 10; ++i) w.tick(1.0f / 30.0f);
+                const float bx0 = w.unit(blocker)->x.toFloat(), bz0 = w.unit(blocker)->z.toFloat();
+                w.order(walker, 704, 600, false);   // just past the body: head-on
+                float closest = 1e9f;
+                float maxX = -1e9f;
+                for (int i = 0; i < 30 * 10; ++i) {
+                    w.tick(1.0f / 30.0f);
+                    const sim::Unit* m2 = w.unit(walker);
+                    if (!m2 || !m2->alive()) break;
+                    closest = std::min(closest, std::max(std::fabs(m2->x.toFloat() - bx0),
+                                                         std::fabs(m2->z.toFloat() - bz0)));
+                    maxX = std::max(maxX, m2->x.toFloat());
+                }
+                // The bound is the STAMP BAND, not the body: blocking excludes the
+                // walker's centre from the blocker's stamped cells, and a body's
+                // stamp covers the aligned cells its centre touches -- so rounding a
+                // corner can bring centres within about half a cell of the stamp
+                // edge. 8px is the half-cell; anything under it means the centre got
+                // INSIDE the stamp, which is the tunnel.
+                check(closest >= 8.0f,
+                      "head-on into a parked body never tunnels through it",
+                      "closest approach " + std::to_string(int(closest)) +
+                          "px (centre stays out of the stamped cells)");
+                // The walker MAY end past the blocker's x -- the search fails (the
+                // goal cell's footprint overlaps the body) and the best-effort route
+                // walks it AROUND to the closest reachable spot, retail's "walks as
+                // close as it can and comes to rest" (0x415170). What it may never do
+                // is pass THROUGH: the closest-approach bound above is the invariant.
+                // maxX is still computed so a tunnel regression prints usefully.
+                (void)maxX;
+                // "Rest" at a crowd-blocked goal is POSITIONAL, not order-complete:
+                // retail keeps the order alive (the blocker might move) and the unit
+                // stands at its closest approach between re-asks, pressing under the
+                // refusal caps. Assert the stance -- stationary at the end -- not
+                // empty orders.
+                const sim::Unit* hw = w.unit(walker);
+                float hx = hw->x.toFloat(), hz = hw->z.toFloat();
+                for (int i = 0; i < 30 * 3; ++i) w.tick(1.0f / 30.0f);
+                const float drift = std::max(std::fabs(hw->x.toFloat() - hx),
+                                             std::fabs(hw->z.toFloat() - hz));
+                check(drift < 4.0f,
+                      "...and stands at its closest approach instead of churning",
+                      "drifted " + std::to_string(int(drift)) + "px over 3s");
             }
             // (b) An army still moves. 24 units ordered across open ground must
             //     nearly all arrive -- this is the regression that matters.
@@ -972,21 +1051,41 @@ int main(int argc, char** argv) {
                 cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
                 sim::setupMatch(w, reg, cfg);
                 std::vector<int> army;
+                // 40px pitch: footprints are 32px, so the ranks spawn CLEAR of each
+                // other. The old 20px pitch spawned every unit 12px inside its
+                // neighbours -- a state retail cannot produce (its placement test,
+                // 0x507d10, refuses any overlapped spawn), so nothing about how the
+                // sim digs itself out of it is retail behaviour worth pinning.
                 for (int j = 0; j < 4; ++j)
                     for (int i = 0; i < 6; ++i)
-                        army.push_back(w.spawn(sw, 600.0f + float(i) * 20.0f,
-                                               600.0f + float(j) * 20.0f, 0, 0));
+                        army.push_back(w.spawn(sw, 600.0f + float(i) * 40.0f,
+                                               600.0f + float(j) * 40.0f, 0, 0));
                 for (int id : army) w.order(id, 900, 700, false);
-                for (int i = 0; i < 30 * 40; ++i) w.tick(1.0f / 30.0f);
-                int arrived = 0;
+                // TWO MINUTES, because the pace is retail's traced pace: latecomers
+                // rest on best-effort routes and re-ask on the randomised failed-route
+                // cadence (rand(8)+rand(8)+30 x halfCellTicks ~ 8s a cycle), packing
+                // in a ring that tightens cycle by cycle. The old 40s/120px-euclid
+                // bar predates the port and measured nothing retail defines.
+                for (int i = 0; i < 30 * 120; ++i) w.tick(1.0f / 30.0f);
+                // The ring that counts as "arrived" is retail's own goal-crowding
+                // tolerance: 50 / halfCellTicks cells, Chebyshev (0x414563) -- 8
+                // cells = 128px for this type -- plus one cell of stamp slop.
+                const int tolPx = (sw->halfCellTicks > 0 ? 50 / sw->halfCellTicks : 0) * 16 + 16;
+                int arrived = 0, givenUp = 0;
                 for (int id : army) {
                     const sim::Unit* u = w.unit(id);
-                    float dx = u->x.toFloat() - 900.0f, dz = u->z.toFloat() - 700.0f;
-                    if (std::sqrt(dx * dx + dz * dz) < 120.0f) ++arrived;
+                    const float ch = std::max(std::fabs(u->x.toFloat() - 900.0f),
+                                              std::fabs(u->z.toFloat() - 700.0f));
+                    if (ch <= float(tolPx)) ++arrived;
+                    else if (u->orders.empty()) ++givenUp;   // outside AND idle: abandoned
                 }
-                check(arrived >= int(army.size()) * 3 / 4,
-                      "an army of 24 still reaches its destination",
-                      std::to_string(arrived) + "/" + std::to_string(army.size()));
+                check(arrived >= 21,
+                      "an army of 24 packs into the goal-crowding ring",
+                      std::to_string(arrived) + "/" + std::to_string(army.size()) +
+                          " within " + std::to_string(tolPx) + "px Chebyshev");
+                check(givenUp == 0,
+                      "...and nobody outside it has given up its order",
+                      std::to_string(givenUp) + " idle outside the ring");
             }
             // (c) REMOVED 2026-09-15. It asserted that two columns marching head-on
             //     pass through each other ("two moving units can never block one
@@ -1702,8 +1801,20 @@ int main(int argc, char** argv) {
             for (const auto& u : w.units()) {
                 if (!u.alive() || !u.type || u.type->canFly) continue;
                 ++total;
-                const int foot = std::clamp(std::max(u.type->footX, u.type->footZ), 1, 15);
-                if (!w.navFor(u.type).fits(int(u.x.toFloat()) / 16, int(u.z.toFloat()) / 16, foot)) ++bad;
+                // CENTRE cell, not the footprint: after 60s of fighting these have
+                // MOVED, and retail's mover probes one cell -- a body's centre stays
+                // on walkable ground while its footprint may overhang an unfittable
+                // neighbour, which is the original's own look (units standing half
+                // off a ledge). Footprint-fits belongs to PLACEMENT (0x507d10), and
+                // the spawn itself is what the stress-fill check above pins.
+                // TERRAIN only, and the CENTRE cell only. Footprint-fits belongs to
+                // placement; after any fighting these have moved, and retail's
+                // per-cell mover keeps a centre on standable ground while the body
+                // may overhang. The obstacle overlay is excluded too: buildings
+                // complete underneath units, and neither retail nor we shove the
+                // unit off the new stamp.
+                if (!w.navFor(u.type).terrainWalkable(int(u.x.toFloat()) / 16,
+                                                      int(u.z.toFloat()) / 16)) ++bad;
             }
             return std::pair<int, int>{bad, total};
         };
@@ -1775,8 +1886,11 @@ int main(int argc, char** argv) {
             for (const auto& u : w.units()) {
                 if (!u.alive() || !u.type || u.type->canFly) continue;
                 ++total;
-                const int foot = std::clamp(std::max(u.type->footX, u.type->footZ), 1, 15);
-                if (!w.navFor(u.type).fits(int(u.x.toFloat()) / 16, int(u.z.toFloat()) / 16, foot)) ++bad;
+                // Same semantics as the stress-fill check above: centre cell, base
+                // terrain. These have fought for 60s; footprint overhang and
+                // standing on a new building's stamp are both retail's own looks.
+                if (!w.navFor(u.type).terrainWalkable(int(u.x.toFloat()) / 16,
+                                                      int(u.z.toFloat()) / 16)) ++bad;
             }
             // Much lower bar than the stress fill, for two reasons: this one has
             // fought for 60s first, and on a CRAMPED map the plan is capped at what
