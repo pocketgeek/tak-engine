@@ -1657,3 +1657,96 @@ algorithm and would be just as bad in a maze, so "retail is bad here too" is the
 likelier reading. The reason it has not simply been deleted is that the measured
 cost is a 3x arrival time and a 6.19x path on the one layout that exercises it,
 and that trade deserves a decision rather than a default.
+
+## The steering layer: why our units stack and will not go around each other
+
+RE'd 2026-09-16, static analysis only, after a report that units pile up and
+drive into obstacles instead of around them. Nothing here is implemented yet --
+this section exists so the port has a spec before any sim change lands.
+
+### There are TWO pathfinding subsystems, and we ported one
+
+The boundary tracer at `0x4139d0`-`0x416xxx` is the one this document already
+covers and the one `src/sim/pathsearch.*` ports. It routes around TERRAIN and
+knows nothing about units.
+
+There is a second, separate cluster -- the mover at `0x4dfd70` and the cell
+raters at `0x5086xx`-`0x5094xx` -- that we never ported at all. That is the
+unit-aware layer, and its absence is exactly the reported behaviour: bodies
+stack because nothing makes a moving unit solid, and routes drive into crowds
+because the tracer cannot see units.
+
+### Cells are rated 0..7, and units are part of the rating
+
+`0x509020` returns a passability rating, NOT a cost -- higher is better. The
+same structure appears independently at `0x404ff9`, which is how the reading was
+confirmed rather than assumed.
+
+    7   default / open ground        (the initial value at 0x50904d)
+    6   clamped when a terrain flag is clear   (+0xd bit 0x80, at 0x509348)
+    4   clamped by the slope tests             (0x509318 / 0x509322)
+    1   cell held by a MOVING unit             (0x50917c)
+    0   cell held by a PARKED unit -- blocked  (the xor eax,eax exits)
+
+The occupant is read from the cell record: word at `+8` is the occupant id,
+`0xffff` means empty, and `0xfffe` means "this is a tail cell of a multi-cell
+body" -- follow the back-pointer built from the bytes at `+0xa`/`+0xb` and the
+map stride at `[0x62d55c]+0x19e98`. Byte `+6` is the height used by the slope
+test. Units live in a table at `[0x62d55c]+0x19edc` with stride `0x140` and a
+count at `+0x19ec0`; the flag word is at unit `+0x13c`, where bit 5 (`0x20`)
+means "a unit occupies this cell" and bit 17 (`0x20000`) means "it is moving".
+Every exit path reports its rating through `0x509390`.
+
+So a parked body is a wall and a moving body is passable at 1/7 the rating of
+open ground. Body-blocking a bridge is a real tactic, and a crowd is something a
+route bends around rather than through, without either being special-cased.
+
+### The rating is consumed as a per-unit LOCAL WINDOW, rebuilt every step
+
+`0x509020` has exactly one caller (`0x508fc5`, inside the wrapper `0x508f30`),
+found by scanning for `E8 rel32` rather than by linear disassembly -- a naive
+linear sweep desyncs on data and reports zero callers, which is what it did at
+first and what made this look indirect.
+
+Above that, `0x508e50` rates a cell together with its orthogonal neighbours and
+requires `> 4` and `>= 6` of them: a corner-clearance test, so a unit will not
+cut a diagonal through the gap between two bodies. `0x508cd0` is the same shape
+against a second rater at `0x5088f0`. `0x508e20` initialises the working set --
+it clears `0x121` dwords at `0x6405d4` and stores its two parameters at
+`0x6405d0`/`0x6405cc`.
+
+The mover at `0x4dfd70` (reached from `0x4c0e22`) is what ties it together: each
+step it fills a local buffer at `ebp-0x1ec` with the ratings over the unit's
+footprint window, dispatching on footprint size (`<= 5`, `<= 11` at `0x4e0260`)
+between a batched fill (`0x508db0`) and a per-cell one (`0x508cd0`), writing
+each result through `0x4dfe40`. The hard "may I stand here at all" test is
+`0x507d10`, which has nine callers.
+
+This is the piece `src/sim/sim.h` means when it says "there is no local obstacle
+avoidance in the steering". Retail rebuilds a small unit-aware cost window per
+mover per step and steers on it; we steer straight at the order point.
+
+### What we have, what we lack
+
+We already have more than the old comment implies: the tracer is ported and
+`PathService` owns a queue, a bounded pool of concurrent searches and a per-tick
+budget. The gap is specifically:
+
+  1. cell ratings that include units (parked 0, moving 1, open 7);
+  2. the per-unit local rating window and the corner-clearance test;
+  3. solidity for MOVING units -- ours records only stationary ones, and the
+     separation relaxation resolves overlap after the fact so it cannot stop
+     anyone, which is precisely why they stack.
+
+### NOT established -- do not build on these
+
+`src/sim/sim.h` asserts retail affords hard solidity through "continuous
+short-hop replanning, randomised repath delays and an age-weighted per-player
+path budget". Those three were NOT confirmed in this pass. They may well be
+real -- the claim came from somewhere -- but no routine for any of them has been
+identified, and the implementation should not assume them. The consumer of the
+rating window (the function containing `0x4c0e22`) also resisted a prologue
+scan and has not been read.
+
+Establishing those is the remaining work before the rating port is designed,
+because they are what decides whether hard solidity flows or gridlocks.
