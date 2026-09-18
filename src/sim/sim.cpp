@@ -1199,6 +1199,8 @@ void World::order(int unitId, float x, float z, bool queue) {
 // route to wherever it was going before. Both were reachable by changing your mind
 // while a route was in flight.
 void World::cancelPath(Unit& u) {
+    static const bool kPqLog = std::getenv("TAK_PATHLOG") != nullptr;
+    if (kPqLog) std::printf("[pq] t=%u id=%d CANCEL\n", tickCounter_, u.id);
     paths_.cancel(u.id);
     // A new destination earns the cheap tracer again. This deliberately does NOT live in
     // requestPath: that is also the once-a-second re-anchor, so clearing there wiped the
@@ -1208,13 +1210,19 @@ void World::cancelPath(Unit& u) {
 }
 
 bool World::requestPath(Unit& u, float x, float z) {
+    static const bool kPqLog = std::getenv("TAK_PATHLOG") != nullptr;
     if (!pathService_) return false;
     if (!u.type || u.type->canFly || u.type->isStructure()) return false;
     const NavGrid& g = navFor(u.type);
     if (g.empty()) return false;
     const PathCell from{u.x.floorInt() / 16, u.z.floorInt() / 16};
     const PathCell to{int(x) / 16, int(z) / 16};
-    if (pathDist(from, to) < 3) { paths_.cancel(u.id); return false; }
+    if (pathDist(from, to) < 3) {
+        if (kPqLog) std::printf("[pq] t=%u id=%d NEAR-CANCEL to=(%.0f,%.0f)\n",
+                                tickCounter_, u.id, x, z);
+        paths_.cancel(u.id); return false;
+    }
+    if (kPqLog) std::printf("[pq] t=%u id=%d QUEUED to=(%.0f,%.0f)\n", tickCounter_, u.id, x, z);
     // The 5x budget class is the PLAYER's, not the request's: retail flags player
     // slots (+0x24e7) and the scheduler weighs whole players. `commander` stood here
     // as our stand-in for that flag and is gone with it.
@@ -4624,6 +4632,12 @@ void World::tick(float dt) {
             bool failed, bool crowded, bool traffic) {
             const float gx = gxF.toFloat(), gz = gzF.toFloat();
             Unit* u = unit(unitId);
+            static const bool kPqLog2 = std::getenv("TAK_PATHLOG") != nullptr;
+            if (kPqLog2) std::printf("[pq] t=%u id=%d DELIVER wps=%zu failed=%d "
+                                     "(alive=%d orders=%zu)\n",
+                                     tickCounter_, unitId, route.size(), int(failed),
+                                     u && u->alive() ? 1 : 0,
+                                     u ? u->orders.size() : size_t(0));
             if (route.empty()) {           // failed with NOTHING (start boxed in)
                 // Even an empty failure carries the outcome flags, and the ladder
                 // governs its retry like any other failed route: traffic evidence
@@ -5315,6 +5329,23 @@ void World::tick(float dt) {
                 //
                 // The "refusal state" is the navigator's 0x36 refusal/scan bits,
                 // recomputed every step in retail exactly as our bodyBlockStreak is.
+                // A unit with somewhere to be must always hold a route or have a
+                // request in flight -- retail's missions carry a nav goal from
+                // birth, so its cadence timer always has a stamp to run against.
+                // Ours has entry paths that start a leg WITHOUT a request (the
+                // build/assist site approach goes through queueBuild, not order()),
+                // and cancel/supersede races that leave routeStamp=-1 with nothing
+                // pending. In that state the ladder below is latched off and the
+                // unit steers raw at its goal for ever -- the reported "stuck
+                // units never repath, keep walking into the obstacle". Restore the
+                // invariant: no route, nothing pending, a plain-move leg -> ask.
+                if (u.routeStamp < 0 && !u.orders.empty() &&
+                    u.orders.front().targetId == 0 && !paths_.pending(u.id)) {
+                    const Order& legEnd = u.orders[currentLeg(u.orders)];
+                    if (!requestPath(u, legEnd.x.toFloat(), legEnd.z.toFloat()))
+                        u.routeStamp = int32_t(tickCounter_);   // near-goal: hand the leg
+                                                                // to the ladder's timer
+                }
                 if (u.routeStamp >= 0 && !u.orders.empty() &&
                     u.orders.front().targetId == 0) {
                     const int32_t elapsed = int32_t(tickCounter_) - u.routeStamp;
@@ -5406,6 +5437,20 @@ void World::tick(float dt) {
                 } else {
                     ++u.stuckFor;
                     if (u.stuckFor > int32_t(kTick)) {
+                        static const bool kStLog = std::getenv("TAK_STUCKLOG") != nullptr;
+                        if (kStLog && !u.orders.empty())
+                            std::printf("[stuck] t=%u id=%d type=%s pos=(%.0f,%.0f) "
+                                        "front(tgt=%d goal=(%.0f,%.0f)) orders=%zu "
+                                        "routeStamp=%d crowd=%d traffic=%d failed=%d "
+                                        "streak=%d speed=%.2f\n",
+                                        tickCounter_, u.id, u.type->id.c_str(),
+                                        u.x.toFloat(), u.z.toFloat(),
+                                        u.orders.front().targetId,
+                                        u.orders.front().x.toFloat(),
+                                        u.orders.front().z.toFloat(), u.orders.size(),
+                                        u.routeStamp, int(u.routeCrowded),
+                                        int(u.routeTraffic), int(u.routeFailed),
+                                        u.bodyBlockStreak, u.speed.toFloat());
                         u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
                         const NavGrid& g = navFor(u.type);
                         // VALIDATE THE MOVE THAT IS ACTUALLY MADE. This used to test
@@ -5470,6 +5515,14 @@ void World::tick(float dt) {
                 int cx = int(x) / 16, cz = int(z) / 16;
                 return g.walkable(cx, cz) && cellFree(x, z, u.id, footCells(u.type));
             };
+            static const bool kSbLog = std::getenv("TAK_STANDBYLOG") != nullptr;
+            if (kSbLog && !landable(u.x.toFloat(), u.z.toFloat()))
+                std::printf("[standby] t=%u id=%d type=%s pos=(%.0f,%.0f) queue=%zu site=%d "
+                            "orders=%zu repeat=%s\n",
+                            tickCounter_, u.id, u.type->id.c_str(),
+                            u.x.toFloat(), u.z.toFloat(), u.buildQueue.size(),
+                            u.buildSiteId, u.orders.size(),
+                            u.repeatType ? u.repeatType->id.c_str() : "-");
             if (!landable(u.x.toFloat(), u.z.toFloat())) {
                 bool found = false;
                 // The window grows exactly as retail's does: 12 draws, centre

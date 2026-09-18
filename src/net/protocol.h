@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 87;       // 87: a stuck unit whose re-ask queued nothing no longer latches its repath cadence OFF (routeStamp stuck at -1); it keeps re-asking like retail
+constexpr uint32_t kNetVersion = 88;       // 88: every plain-move leg holds a route or a pending request (build-approach legs routed; stuck units re-ask like retail)
                                            // an observed retail route -- corner-cuts
                                            // like retail (no stepLegal in the search)
                                            // 84: retail's phase-2 Dijkstra makes the
