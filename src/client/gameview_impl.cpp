@@ -2302,8 +2302,12 @@
         // (2/30Hz), uniform across all factions -- read straight off the TAF, not guessed.
         size_t fi = size_t(animClock_ * 15.0f) % ea->frames.size();
         const auto& fr = ea->frames[fi];
-        SDL_FRect d{cx - float(fr.ax) * zm, cy - float(fr.ay) * zm,
-                    float(fr.w) * zm, float(fr.h) * zm};
+        // ~2x the TAF's native size: confirmed against live retail (a Zhon conjure's
+        // sparkle cluster spans ~2x the 42x45 art, roughly the conjured unit's extent).
+        // That is what the old kBuildFxScale=2.0 had right; only the 5x5 tiling was wrong.
+        constexpr float kScale = 2.0f;
+        float tw = float(fr.w) * zm * kScale, th = float(fr.h) * zm * kScale;
+        SDL_FRect d{cx - float(fr.ax) * zm * kScale, cy - float(fr.ay) * zm * kScale, tw, th};
         SDL_RenderCopyF(ren_, fr.tex, nullptr, &d);
     }
 
