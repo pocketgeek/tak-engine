@@ -1880,15 +1880,15 @@
         auto uFootW = [&] { return std::max(u.type->footX, 1) * 16.0f * zm; };
         auto uFootH = [&] { return std::max(u.type->footZ, 1) * 16.0f * zm; };
 
-        // A conjuring/summoning SITE (this unit) sparkles over itself.
+        // Retail sparkles BOTH ends of a conjure: the SITE being built AND the
+        // conjuror working it. Sparkle the site when this unit is that site...
         if (conjuring)
             sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());
-
-        // The BUILDER does not sparkle. Retail's build mission (0x401c20) plays
-        // the effect on [mission+0x16] -- the unit being built -- and on nothing
-        // else; the builder appears in that code only as the argument to a nano
-        // piece query whose result is discarded. The builder's own contribution
-        // is its StartBuilding animation, which we already run.
+        // ...and sparkle this unit when it is the conjuror actively working (a build
+        // site, or producing from its queue -- the repeat/infinite conjure path).
+        if (u.type && u.type->isBuilder && !u.walking() &&
+            (u.buildSiteId != 0 || !u.buildQueue.empty()))
+            sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());
 
         // A reclaimer IN RANGE (the reclaim has really started -- range test mirrors
         // World::tickReclaim): sparkle the reclaimer AND the feature it is chewing on.
