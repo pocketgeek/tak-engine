@@ -5452,8 +5452,8 @@ void World::tick(float dt) {
         // time round. Without this a flyer settles wherever it happened to stop --
         // over water, or on the roof of a building.
         if (u.type->canFly && u.type->vtolStandby && u.alive() && u.orders.empty() &&
-            u.buildSiteId == 0 && !hasQueuedWork(u) && u.reclaimId == 0 &&
-            u.repairId == 0 && !u.embarked()) {
+            u.buildSiteId == 0 && !hasQueuedWork(u) && u.buildQueue.empty() &&
+            u.reclaimId == 0 && u.repairId == 0 && !u.embarked()) {
             const NavGrid& g = navFor(u.type);
             auto landable = [&](float x, float z) {
                 if (g.empty()) return true;
