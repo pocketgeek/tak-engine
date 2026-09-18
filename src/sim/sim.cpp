@@ -1207,14 +1207,14 @@ void World::cancelPath(Unit& u) {
     // not a single number moving.
 }
 
-void World::requestPath(Unit& u, float x, float z) {
-    if (!pathService_) return;
-    if (!u.type || u.type->canFly || u.type->isStructure()) return;
+bool World::requestPath(Unit& u, float x, float z) {
+    if (!pathService_) return false;
+    if (!u.type || u.type->canFly || u.type->isStructure()) return false;
     const NavGrid& g = navFor(u.type);
-    if (g.empty()) return;
+    if (g.empty()) return false;
     const PathCell from{u.x.floorInt() / 16, u.z.floorInt() / 16};
     const PathCell to{int(x) / 16, int(z) / 16};
-    if (pathDist(from, to) < 3) { paths_.cancel(u.id); return; }
+    if (pathDist(from, to) < 3) { paths_.cancel(u.id); return false; }
     // The 5x budget class is the PLAYER's, not the request's: retail flags player
     // slots (+0x24e7) and the scheduler weighs whole players. `commander` stood here
     // as our stand-in for that flag and is gone with it.
@@ -1222,6 +1222,7 @@ void World::requestPath(Unit& u, float x, float z) {
                    Fixed::fromFloat(x), Fixed::fromFloat(z),
                    u.player, /*priority=*/(humanMask_ >> (unsigned(u.player) & 31)) & 1,
                    /*tolCells=*/u.type->halfCellTicks > 0 ? 50 / u.type->halfCellTicks : 0);
+    return true;
 }
 
 // Label the connected components of the cells a `foot`-wide unit can occupy, using
@@ -5346,7 +5347,6 @@ void World::tick(float dt) {
                         fire = elapsed >= 120 && pathRand(120) == 0;
                     }
                     if (fire) {
-                        u.routeStamp = -1;   // re-stamped when the new route installs
                         const Order& legEnd = u.orders[currentLeg(u.orders)];
                         const float tx = legEnd.x.toFloat(), tz = legEnd.z.toFloat();
                         // The reachability guard is ours (perf): a goal in another
@@ -5356,10 +5356,20 @@ void World::tick(float dt) {
                         const bool onWalkable =
                             g.walkable(u.x.floorInt() / 16, u.z.floorInt() / 16);
                         if (onWalkable &&
-                            !pathExists(u.type, tx, tz, u.x.toFloat(), u.z.toFloat()))
+                            !pathExists(u.type, tx, tz, u.x.toFloat(), u.z.toFloat())) {
                             dropLeg(u);
-                        else
-                            requestPath(u, tx, tz);
+                        } else if (requestPath(u, tx, tz)) {
+                            u.routeStamp = -1;   // queued; re-stamped when the route installs
+                        } else {
+                            // requestPath queued nothing (already within a couple cells
+                            // of the leg end but blocked, or superseded). Do NOT leave
+                            // routeStamp at -1 -- that latches the ladder OFF for good
+                            // (its guard is routeStamp>=0), which is exactly the "stuck
+                            // unit never re-asks, keeps pressing the obstacle" bug.
+                            // Retail's re-ask runs on a live timer that never latches
+                            // pending; restamp so the ladder keeps rolling.
+                            u.routeStamp = int32_t(tickCounter_);
+                        }
                     }
                 }
                 const int blk = blockedBy(u.x + mx, u.z + mz);

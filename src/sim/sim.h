@@ -1681,7 +1681,7 @@ private:
 
     std::vector<int32_t> occ_;      // 16px cells -> occupying unit id (0 = free)
     int occW_ = 0, occH_ = 0;
-    void requestPath(Unit& u, float x, float z);
+    bool requestPath(Unit& u, float x, float z);   // true iff a search was queued
     void rebuildOccupancy();
     // Is (nx,nz) free of a parked body other than `selfId`? True when solidity is
     // off (no grid) or the cell is outside it.

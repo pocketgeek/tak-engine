@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 86;       // 86: a queue-producing flying conjurer (zonhunt monarch) no longer enters VTOL standby -- it holds station to conjure
+constexpr uint32_t kNetVersion = 87;       // 87: a stuck unit whose re-ask queued nothing no longer latches its repath cadence OFF (routeStamp stuck at -1); it keeps re-asking like retail
                                            // an observed retail route -- corner-cuts
                                            // like retail (no stepLegal in the search)
                                            // 84: retail's phase-2 Dijkstra makes the
