@@ -6,7 +6,11 @@
 #include "sim/detmath.h"
 #include "sim/mission.h"
 #include "sim/scenario.h"
+#include "sim/retailreach.h"
+#include "sim/retailaipatrol.h"
+#include "sim/retailplacement.h"
 #include "tdf/tdf.h"
+#include "tdo/tdo.h"
 
 #include <algorithm>
 #include <cctype>
@@ -29,8 +33,8 @@ bool gInstantBuild = false;
 // thread, so each thread accumulates (and prints) its own room's timing -- both
 // race-free and correctly attributed.
 static const bool g_phase = getenv("TAK_PHASE") != nullptr;
-static double g_visMs = 0, g_burnMs = 0, g_gridMs = 0;   // finer "other" split
-static thread_local double g_tcomb = 0;
+static thread_local double g_visMs = 0, g_burnMs = 0, g_gridMs = 0;   // finer "other" split
+static thread_local double g_tcomb = 0, g_scriptMs = 0, g_moveMs = 0;
 
 namespace {
 
@@ -71,6 +75,12 @@ void TypeRegistry::loadMoveInfo(const hpi::Vfs& vfs, const std::string& path) {
             m.maxWaterSlope = float(c.numberOr("MaxWaterSlope", 255));
             m.maxWaterDepth = float(c.numberOr("MaxWaterDepth", 255));
             m.minWaterDepth = float(c.numberOr("MinWaterDepth", 0));
+            m.badSlope=int(c.numberOr("BadSlope",m.maxSlope/2));
+            m.badWaterSlope=std::min(int(c.numberOr("BadWaterSlope",m.maxWaterSlope/2)),int(m.maxWaterSlope));
+            m.maxSlope=std::min(m.maxSlope,m.maxWaterSlope);
+            m.badSlope=std::min(m.badSlope,m.maxSlope);
+            m.badMaxWaterDepth=int(c.numberOr("BadMaxWaterDepth",32768));
+            m.badMinWaterDepth=int(c.numberOr("BadMinWaterDepth",32768));
             moveClasses_[name] = m;
         }
     } catch (const std::exception&) {}   // no MOVEINFO -> units keep FBI defaults
@@ -99,23 +109,24 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             }
             if (canonical) canonicalTypes_.insert(t.id);
             t.name = info->valueOr("name", t.id);
+            t.orientation=uint16_t(int32_t(info->numberOr("orientation",0)));
+            t.buildAngle=uint16_t(int32_t(info->numberOr("buildangle",0)));
             t.side = info->valueOr("side", "");
             // Buildings often declare canmove=1; bmcode (0 = building,
             // 1 = mobile unit) is the authoritative mobility flag.
             t.canMove = info->numberOr("canmove", 0) != 0 &&
                         info->numberOr("bmcode", 1) != 0;
-            t.maxVel = Fixed::fromFloat(float(info->numberOr("maxvelocity", 0)));
+            t.maxVel = Fixed::fromRetailNumber(info->numberOr("maxvelocity", 0));
             // Velocity is px/tick (*kTick => px/s); acceleration and braking are
             // px/tick^2, so they need kTick^2. Using kTick left accel 30x too
             // small, so high-maxVel flyers never reached speed and all crawled.
-            t.accel = Fixed::fromFloat(float(info->numberOr("acceleration", 0.5)));
-            t.brake = Fixed::fromFloat(float(info->numberOr("brakerate", 0.5)));
+            t.accel = Fixed::fromRetailNumber(info->numberOr("acceleration", 0.5));
+            t.brake = Fixed::fromRetailNumber(info->numberOr("brakerate", 0.5));
             // FBI turnrate is COB angle units per tick.
             float tr = float(info->numberOr("turnrate", 500));
             t.turnRate = int32_t(tr);   // bam/tick, exactly as the FBI holds it
-            // See the header: retail defaults this to 0; we default it to turnrate so
-            // a unit that omits the key can still turn on the spot.
-            t.turnInPlaceRate = int32_t(float(info->numberOr("turninplacerate", tr)));
+            // Native +0x190 is an unsigned word, with zero for an omitted key.
+            t.turnInPlaceRate = uint16_t(int32_t(info->numberOr("turninplacerate", 0)));
             t.maxHp = float(info->numberOr("maxdamage", 100));
             t.isBuilder = info->numberOr("builder", 0) != 0;
             t.commander = info->numberOr("commander", 0) != 0;   // the Monarch
@@ -126,6 +137,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.storage = float(info->numberOr("mogriumstorage", 0));
             t.footX = int(info->numberOr("footprintx", 1));
             t.footZ = int(info->numberOr("footprintz", 1));
+            t.gate = (int(info->numberOr("gate",0))&1)!=0;
             {
                 std::string ym = info->valueOr("yardmap", "");
                 std::erase_if(ym, [](char c) { return c == ' ' || c == '\t'; });
@@ -133,6 +145,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 // must sit on a mana deposit.
                 t.onMana = ym.find('S') != std::string::npos ||
                            ym.find('s') != std::string::npos;
+                t.sacredIncome=ym.find('S')!=std::string::npos;
                 if (int(ym.size()) == t.footX * t.footZ) t.yardMap = ym;
             }
             // Every lodestone (Lodestone / Divine Lodestone) must sit on a mana
@@ -160,6 +173,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.shadowArt = lower(info->valueOr("shadowart", ""));
             t.noShadow = info->numberOr("noshadow", 0) != 0;
             t.floater = info->numberOr("floater", 0) != 0;
+            t.upright = info->numberOr("upright", 0) != 0;
             t.canHover = info->numberOr("canhover", 0) != 0;
             t.ghost = info->numberOr("ghost", 0) != 0;
             t.waterline = int(info->numberOr("waterline", 0));
@@ -183,13 +197,13 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     t.defaultFire = uint8_t(int(info->numberOr("standingfireorder", 2)) & 3);
                 }
             }
-            t.waterMult = Fixed::fromFloat(float(info->numberOr("watermultiplier",
-                                info->numberOr("watermultipliser", 1))));
+            t.waterMult = Fixed::fromRetailNumber(info->numberOr("watermultiplier",
+                                info->numberOr("watermultipliser", 1)));
             // Exact key only: the icd's parser knows no typo fallback, so
             // verpult's "roadmultplier" never counted in retail either. The
             // retail default is ~1.2 (16.16 0x13333), NOT 1.0.
             t.roadMult = info->value("roadmultiplier")
-                       ? Fixed::fromFloat(float(info->numberOr("roadmultiplier", 1.2)))
+                       ? Fixed::fromRetailNumber(info->numberOr("roadmultiplier", 1.2))
                        : Fixed::raw(0x13333);
             // Retail's per-type movement time scale, UnitType+0x249 (icd 0x4bfc5e-
             // 0x4bfd34): ticks to cross half a cell at the type's best speed. The
@@ -259,6 +273,8 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 t.maxWaterSlope = mci->second.maxWaterSlope;
                 t.maxWaterDepth = mci->second.maxWaterDepth;
                 t.minWaterDepth = mci->second.minWaterDepth;
+                t.badSlope=mci->second.badSlope;t.badWaterSlope=mci->second.badWaterSlope;
+                t.badMaxWaterDepth=mci->second.badMaxWaterDepth;t.badMinWaterDepth=mci->second.badMinWaterDepth;
                 // The movement class WINS over the FBI, which is retail's precedence
                 // and is safe here: no shipped unit declares both.
                 if (mci->second.footX > 0) t.footX = mci->second.footX;
@@ -275,20 +291,26 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // gives 75. It also pulled every flyer's shadow four times too close,
             // since the shadow offset is alt/4 off the same number.
             t.cruiseAlt = float(info->numberOr("cruisealt", 0));
-            t.bankScale = Fixed::fromFloat(float(info->numberOr("bankscale", 0)));
+            t.hoverAttack = info->numberOr("hoverattack", 0) != 0;
+            t.hoverAttackDistance = int(info->numberOr("hoverattackdistance", 0));
+            t.hoverAttackAltitude = int(info->numberOr("hoverattackaltitude", t.cruiseAlt));
+            t.bankScale = Fixed::fromRetailNumber(info->numberOr("bankscale", 0.5));
             t.canSetStance = int(info->numberOr("unitstandorders", 1)) != 0;
             {
                 std::string dmt = lower(info->valueOr("defaultmissiontype", ""));
                 t.wanders = dmt == "standby_wander";
                 t.vtolStandby = dmt == "vtol_standby";
             }
-            t.pitchScale = Fixed::fromFloat(float(info->numberOr("pitchscale", 0)));
+            t.pitchScale = Fixed::fromRetailNumber(info->numberOr("pitchscale", t.canFly?0.0:0.5));
             // One weapon block -> a Weapon. Shared by WEAPON1..3 and by
             // [EXPLODEAS] (the death blast), which is the same block shape.
             auto parseWeapon = [](const tdf::Node* w) {
                 Weapon wp;
                 wp.name = w->valueOr("name", "");
                 wp.range = float(w->numberOr("range", 0));
+                wp.hoverAttack = w->numberOr("hoverattack", 0) != 0;
+                wp.hoverAttackDistance = int(w->numberOr("hoverattackdistance", 0));
+                wp.hoverAttackAltitude = int(w->numberOr("hoverattackaltitude", 0));
                 wp.reload = float(w->numberOr("reloadtime", 1));
                 wp.projVel = float(w->numberOr("weaponvelocity", 0));
                 // See Weapon::subSteps. Integer ceil: no shipped weaponvelocity is a
@@ -514,6 +536,52 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // Skip malformed definitions rather than fail the registry.
         }
     }
+    // Script/model failures must not silently remove a valid unit definition.
+    for (auto& [id,t]:types_) {
+        if (!t.groundModelLoaded) {
+            const auto path="objects3d/"+t.id+".3do";
+            if (vfs.has(path)) {
+                const auto model=tdo::load(vfs.read(path));
+                t.sightHeight=uint8_t(uint32_t(retailModelTop(model.root))>>16);
+                const auto& root=model.root;
+                if (!t.canFly && !t.isStructure() && !t.upright && !t.floater &&
+                    root.selectionPrimitive>=0 && size_t(root.selectionPrimitive)<root.primitives.size()) {
+                    const auto& indices=root.primitives[size_t(root.selectionPrimitive)].indices;
+                    if (indices.size()>=4) {
+                        RetailGroundSupport support;
+                        for (size_t i=0;i<4;++i) {
+                            const auto& point=root.verticesRaw.at(indices[i]);
+                            support[i]={std::bit_cast<int32_t>(0u-uint32_t(point[0])),
+                                        std::bit_cast<int32_t>(0u-uint32_t(point[2]))};
+                        }
+                        t.groundSupport=support;
+                    }
+                }
+            }
+            t.groundModelLoaded=true;
+        }
+        if (t.simulationScript) continue;
+        {
+            const auto scriptPath="scripts/"+t.id+".cob";
+            if (vfs.has(scriptPath)) {
+                auto script=std::make_shared<cob::File>(cob::load(vfs.read(scriptPath),scriptPath));
+                t.simulationScript=script;
+                if (t.producesUnits() && script->scriptIndex("QueryBuildInfo")>=0) {
+                    auto model=tdo::load(vfs.read("objects3d/"+t.id+".3do"));
+                    auto append=[&](auto&& self,const tdo::Object& object,int parent)->void {
+                        int piece=-1;
+                        for (size_t i=0;i<script->pieces.size();++i)
+                            if (lower(script->pieces[i])==lower(object.name)) { piece=int(i); break; }
+                        const int index=int(t.productionModel.size());
+                        t.productionModel.push_back({object.offsetRaw,parent,piece});
+                        for (const auto& child:object.children) self(self,child,index);
+                    };
+                    append(append,model.root,-1);
+                    t.productionScript=std::move(script);
+                }
+            }
+        }
+    }
     // Intern here rather than asking callers to remember: loadDir is called once per
     // archive (unitscb then units) and this rebuilds from scratch each time, so it is
     // idempotent and cannot be left stale by a second load.
@@ -593,9 +661,9 @@ std::vector<const UnitType*> TypeRegistry::combatUnits(const std::string& side) 
     return out;
 }
 
-int World::spawn(const UnitType* type, float x, float z, float heading, int player) {
+int World::spawn(const UnitType* type, float x, float z, std::optional<float> heading, int player) {
     Unit u;
-    u.id = nextId_++;
+    u.groundGradeTick=tickCounter_;
     if (type) {                      // the type's standing orders are the unit's
         u.moveState = type->defaultMove;
         u.fireState = type->defaultFire;
@@ -609,28 +677,77 @@ int World::spawn(const UnitType* type, float x, float z, float heading, int play
                      player, int(players_.size()));
         player = 0;
     }
+    if (retailAllocation_) {
+        if (!retailEntityPools_) throw std::runtime_error("restored entity pools absent");
+        const auto [first,capacity]=(*retailEntityPools_)[size_t(player)];
+        std::vector<bool> occupied(size_t(capacity),false);
+        int allocated=0;
+        for (const auto& member:units_) {
+            if (member.id>=first && member.id<first+capacity && member.deadFor<kRetiredTicks) {
+                occupied[size_t(member.id-first)]=true;++allocated;
+            }
+        }
+        const int slot=retailAllocateSlot(capacity,allocated,[&](int index){return occupied[size_t(index)];},
+            [&]{return crtRand(0x5121dd);});
+        if (slot<0) throw std::runtime_error("restored entity pool exhausted");
+        u.id=first+slot;
+        if (unit(u.id)) throw std::runtime_error("restored entity slot reuse lifecycle is not ported");
+    } else u.id=nextId_++;
     players_[size_t(player)].unitCount++;   // keep the cap count exact within a tick
     players_[size_t(player)].built++;        // end-of-game "Units" column
     u.player = player;
+    if (type && type->canSetStance && players_[size_t(player)].defensiveAi) {
+        u.moveState=0;u.fireState=2;u.stance=1;
+    }
     u.type = type;
+    if (retailAllocation_ && players_[size_t(player)].buildCache) {
+        const auto& entries=players_[size_t(player)].buildCache->entries;
+        auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto& e){return e.type==type;});
+        if (entry!=entries.end() && entry->construction) u.constructionEmitter=entry->construction->emitter;
+    }
+    // 511ba2..511cbb initializes both angle fields before speed variation.
+    const uint32_t spread=type ? type->buildAngle : 0;
+    const uint16_t birthHeading=uint16_t(32768u+(type ? type->orientation : 0u)-spread/2+gameRand(spread));
+    u.variationPhase=uint16_t(gameRand(65536));
+    u.baseSpeed = type ? type->maxVel : Fixed();
+    if (u.baseSpeed > Fixed()) {
+        u.baseSpeed = individualSpeed(u.baseSpeed, gameRand(201));
+    }
     u.x = Fixed::fromFloat(x);   // boundary: callers still speak float
     u.z = Fixed::fromFloat(z);
-    u.heading = bamFromRadians(heading);   // boundary
+    u.heading = heading ? bamFromRadians(*heading) : retailHeadingToPort(birthHeading);
+    u.groundMoveTick=tickCounter_;
+    if (type && !type->canFly) u.groundY=surfaceHeight(u,tickCounter_,&u.groundPitch,&u.groundRoll);
+    if (type && type->canFly) {
+        u.flightSectorX=u.x.v>>23;u.flightSectorZ=u.z.v>>23;
+        const int cx=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
+        const int cz=std::clamp(u.z.floorInt()/16,0,std::max(0,terH_-1));
+        u.flightY=Fixed::fromInt(heights_.empty() ? 0 : heights_[size_t(cz)*terW_+cx]);
+        u.flightNavigation={{u.x.v,u.flightY.v,u.z.v},{},portHeadingToRetail(u.heading)};
+    }
     u.hp = Fixed::fromFloat(type ? type->maxHp : 100.0f);
     u.mana = type ? type->maxMana : 0;   // casters start with a full pool
     u.active = type ? type->activateWhenBuilt : true;
     u.homeX = Fixed::fromFloat(x);
     u.homeZ = Fixed::fromFloat(z);
     units_.push_back(u);
+    ++spawnGeneration_;
+    bodyIndexValid_=false;
+    if (type && type->script()) {
+        auto [it,inserted]=unitScripts_.try_emplace(u.id,*type->script());
+        (void)inserted;
+        if (unitScriptById_.size()<=size_t(u.id)) unitScriptById_.resize(size_t(u.id)+1,nullptr);
+        unitScriptById_[size_t(u.id)]=&it->second;
+        it->second.state.vm.start(*type->script(),type->script()->scriptIndex("Create"));
+    }
     return u.id;
 }
 
 Unit* World::unit(int id) {
-    // units_ is append-only with sequential ids (u.id = nextId_++ then push_back,
-    // never erased), so id == index + 1 -- an O(1) lookup. This is called per unit
+    // Ordinary matches append sequential IDs, allowing an O(1) lookup. This is called per unit
     // every tick in combat (unit(targetId)); the old linear scan made a big battle
     // O(n^2) and stalled the sim to single-digit fps. The scan stays as a fallback
-    // in case that invariant is ever broken.
+    // for restored retail slots, whose IDs are selected from free player pools.
     if (id >= 1 && size_t(id) <= units_.size()) {
         Unit& u = units_[size_t(id) - 1];
         if (u.id == id) return &u;
@@ -640,8 +757,191 @@ Unit* World::unit(int id) {
     return nullptr;
 }
 
+Fixed World::surfaceHeight(const Unit& u,uint32_t clock,uint16_t* pitch,uint16_t* roll) const {
+    if (!u.type || u.type->canFly || heights_.empty()) return u.groundY;
+    const auto& type=*u.type;
+    auto terrain=[&](int32_t x,int32_t z) {
+        return retailTerrainHeight(x,z,terW_,terH_,[&](int cx,int cz) {
+            return heights_[size_t(cz)*size_t(terW_)+size_t(cx)];
+        });
+    };
+    if (type.upright) return Fixed::raw(retailUprightHeight(terrain(u.x.v,u.z.v),
+        type.canHover,uint8_t(seaLevel_),uint8_t(type.waterline)));
+    if (type.floater) return Fixed::raw(retailFloatingHeight(uint8_t(seaLevel_),uint8_t(type.waterline)));
+    if (!type.groundSupport) return u.groundY;
+    Fixed effective=u.baseSpeed;
+    if (u.groundTerrainFlags&0x800) effective=effective*type.roadMult;
+    else if (u.groundTerrainFlags&0x1000) effective=effective*type.waterMult;
+    return Fixed::raw(retailSupportedHeight(u.x.v,u.z.v,u.groundY.v,portHeadingToRetail(u.heading),
+        *type.groundSupport,terrain,[&](size_t corner,int h) {
+            return type.canHover && u.alive()?
+                retailHoverHeightCorner(h,uint8_t(seaLevel_),corner,clock,u.variationPhase,
+                    u.speed.v,effective.v,tickCounter_-u.groundMoveTick):h;
+        },type.bankScale.v,type.pitchScale.v,pitch,roll));
+}
+
+void World::updateGroundTerrainFlags(Unit& u) const {
+    u.groundTerrainFlags=onRoad(u.x,u.z,u.type->footX,u.type->footZ)?0x800:0;
+    if (u.groundY.floorInt()<seaLevel_) u.groundTerrainFlags|=0x1000;
+}
+
+Fixed World::groundTerrainMultiplier(const Unit& u) const {
+    return u.groundTerrainFlags&0x800?u.type->roadMult:
+           u.groundTerrainFlags&0x1000?u.type->waterMult:Fixed::fromInt(1);
+}
+
+void World::brakeGround(Unit& u,std::optional<Bam> facing) {
+    const Fixed multiplier=groundTerrainMultiplier(u);
+    u.turnReqBam=0;
+    u.speed=fxMin(retailGroundSpeedCap(u.baseSpeed*multiplier,u.groundPitch,u.groundSpeedMode),
+        fxMax(Fixed(),u.speed-u.type->brake*multiplier));
+    if (facing && u.speed==Fixed()) {
+        const int32_t diff=retailTurnRequest(*facing,u.heading);
+        // 4d91b0 scales the unsigned 16-bit pivot rate, truncates toward zero,
+        // then retains its low word before clamping the signed request.
+        const int32_t rate=uint16_t(int64_t(uint16_t(u.type->turnInPlaceRate))*multiplier.v/65536);
+        u.heading=u.heading+Bam(std::clamp(diff,-rate,rate));
+        u.turnReqBam=diff;
+    }
+    const auto step=retailGroundStep(u.heading,u.speed);
+    commitGroundStep(u,step.s,step.c);
+}
+
+SinCos World::steerGround(Unit& u,RetailSteeringPoint start,RetailSteeringPoint end,
+                         RetailSteeringPoint next,Fixed maximum) {
+    const Fixed multiplier=groundTerrainMultiplier(u);
+    const auto aim=retailSteeringPoint(u.x,u.z,start,end,u.groundMovementMode);
+    // Convert the native direction explicitly: coincident points request
+    // native heading zero, which is a half-turn in World's heading convention.
+    const int direction=retailDirection(u.x-aim.x,u.z-aim.z).v;
+    const auto wanted=retailHeadingToPort(direction);
+    const int32_t diff=retailTurnRequest(wanted,u.heading);
+    const uint16_t rate=uint16_t(int64_t(uint16_t(u.type->turnRate))*multiplier.v/65536);
+    u.heading=u.heading+Bam(std::clamp(diff,-int32_t(rate),int32_t(rate)));
+    u.turnReqBam=diff;
+    const Fixed delta=retailGroundAcceleration(u.x,u.z,start,end,next,u.heading,u.speed,
+        maximum*multiplier,u.type->accel*multiplier,u.type->brake*multiplier,uint16_t(rate),
+        u.groundMovementMode==0 ? &aim : nullptr,u.groundMovementMode==0 ? direction : -1);
+    u.speed=fxMin(retailGroundSpeedCap(maximum*multiplier,u.groundPitch,u.groundSpeedMode),
+                  fxMax(Fixed(),u.speed+delta));
+    return retailGroundStep(u.heading,u.speed);
+}
+
+void World::commitGroundStep(Unit& u,Fixed dx,Fixed dz) {
+    if (dx==Fixed() && dz==Fixed()) return;
+    u.groundMoveTick=tickCounter_;
+    const int fx=u.type->footX,fz=u.type->footZ;
+    const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+    const Fixed px=u.x+dx,pz=u.z+dz;
+    const int nx=footprintOrigin(px,fx),nz=footprintOrigin(pz,fz);
+    if (nx==ox && nz==oz) { u.x=px;u.z=pz;updateBodyIndex(u);return; }
+    bool clear;
+    if (!mapPlacementCells_.empty()) clear=mobilePlacement(u,nx,nz,false);
+    else {
+        // Legacy terrain-only harnesses have no feature plane. Loaded matches
+        // use the authoritative rectangular map/body placement above.
+        const auto& grid=navFor(u.type);const int foot=std::clamp(std::max(fx,fz),1,15);
+        clear=(grid.empty() || grid.fits(footprintCell(px,foot),footprintCell(pz,foot),foot)) &&
+            cellFree(px,pz,u.id,foot);
+    }
+    if (clear) {
+        u.bodyBlockStreak=0;
+        refreshMovingSearchBody(u);
+        if (occW_>0) {
+            for (int z=oz;z<oz+fz;++z) for (int x=ox;x<ox+fx;++x)
+                if (x>=0 && z>=0 && x<occW_ && z<occH_) {
+                    auto& owner=occ_[size_t(z)*occW_+x];
+                    if (owner==u.id) owner=0;
+                }
+            for (int z=nz;z<nz+fz;++z) for (int x=nx;x<nx+fx;++x)
+                if (x>=0 && z>=0 && x<occW_ && z<occH_) occ_[size_t(z)*occW_+x]=u.id;
+        }
+        u.x=px;u.z=pz;
+    } else {
+        u.bodyBlockStreak=std::min(u.bodyBlockStreak+1,2);
+        const bool repeated=u.bodyBlockStreak>=2;
+        u.x=footprintClamp(u.x,px,fx,repeated);
+        u.z=footprintClamp(u.z,pz,fz,repeated);
+        Fixed base=u.baseSpeed;
+        if (u.groundTerrainFlags&0x800) base=base*u.type->roadMult;
+        else if (u.groundTerrainFlags&0x1000) base=base*u.type->waterMult;
+        u.speed=fxMin(u.speed,Fixed::raw(base.v/(repeated?5:2)));
+    }
+    updateBodyIndex(u);
+}
+
+bool World::mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) const {
+    const auto& type=*subject.type;
+    if (mapPlacementCells_.size()!=size_t(hW_)*hH_ || mapPlacementCells_.empty())
+        throw std::runtime_error("mobile placement requires loaded map feature data");
+    // A placement query observes one immutable body layout. Reuse its rectangle
+    // across all footprint cells instead of rescanning the army for each cell.
+    // Build lazily: out-of-map requests return before asking for any cells.
+    SearchBodyRect bodies;
+    auto cellAt=[&](int cx,int cz) {
+        const auto& source=mapPlacementCells_.at(size_t(cz)*hW_+cx);
+        RetailPlacementCell result;
+        result.low=source.low;
+        result.high=std::max({heights_[size_t(cz)*hW_+cx],heights_[size_t(cz)*hW_+cx+1],
+                             heights_[size_t(cz+1)*hW_+cx],heights_[size_t(cz+1)*hW_+cx+1]});
+        result.feature=source.feature;
+        if (source.feature<0xfffa || source.feature==0xfffe) {
+            const int ox=cx-(source.feature==0xfffe?source.backX:0);
+            const int oz=cz-(source.feature==0xfffe?source.backZ:0);
+            const auto index=mapPlacementCells_.at(size_t(oz)*hW_+ox).feature;
+            bool blocking=index<mapPlacementTypes_.size() && mapPlacementTypes_[index].blocking;
+            // Placement only observes the resolved feature's blocking bit.
+            result.feature=blocking?0:0xffff;
+        }
+        if (bodies.cells.empty()) bodies=searchBodyRect(x,z,type.footX,type.footZ);
+        const auto* body=bodies.cells[size_t(cz-z)*type.footX+cx-x];
+        if (body) result.entity=uint16_t(body->id);
+        return result;
+    };
+    const int maximum=type.canFly || type.domain!=UnitType::Domain::Ground
+        ? 10000 : (type.maxWaterDepth>0?type.maxWaterDepth:20);
+    const int minimum=type.domain==UnitType::Domain::Water
+        ? (type.minWaterDepth>0?type.minWaterDepth:13) : -10000;
+    return retailMobilePlacement(x,z,type.footX,type.footZ,hW_,hH_,seaLevel_,maximum,minimum,
+        type.maxSlope,type.maxWaterSlope,uint16_t(subject.id),allowMoving,1,cellAt,
+        [](uint16_t){return 0x20u;},[&](uint16_t id) {
+            const auto* u=unit(id);
+            return RetailPlacementEntity{u!=nullptr,u && u->alive(),u && !u->type->isStructure(),id};
+        });
+}
+
+void World::setMapPlacementFeatures(const std::vector<uint16_t>& raw,
+                                    std::vector<RetailMapFeatureType> types) {
+    mapPlacementTypes_=std::move(types);
+    mapPlacementCells_.assign(size_t(hW_)*hH_,{});
+    if (raw.size()!=mapPlacementCells_.size())
+        throw std::runtime_error("map placement feature dimensions differ from terrain");
+    auto cell=[&](int x,int z)->RetailMapFeatureCell& {
+        return mapPlacementCells_.at(size_t(z)*hW_+x);
+    };
+    for (int z=0;z<hH_;++z) for (int x=0;x<hW_;++x) {
+        auto& c=cell(x,z);
+        c.height=heights_[size_t(z)*hW_+x];
+        c.low=std::min({c.height,heights_[size_t(z)*hW_+std::min(x+1,hW_-1)],
+            heights_[size_t(std::min(z+1,hH_-1))*hW_+x],
+            heights_[size_t(std::min(z+1,hH_-1))*hW_+std::min(x+1,hW_-1)]});
+        // 50f789: roads set the separate terrain flag, not the feature index.
+        if (raw[size_t(z)*hW_+x]==0xfffc) c.feature=0xfffc;
+    }
+    for (int z=0;z<hH_;++z) for (int x=0;x<hW_;++x) {
+        const uint16_t index=raw[size_t(z)*hW_+x];
+        if (index>=mapPlacementTypes_.size()) continue;
+        retailMapInstall(hW_,hH_,x,z,index,mapPlacementTypes_,cell,[](int,int,uint16_t){});
+    }
+    if (hW_>=2 && hH_>=16)
+        retailMapBoundary(hW_,hH_,hH_*16,seaLevel_,false,cell);
+}
+
 void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel,
                        const std::vector<uint16_t>* features) {
+    mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();
+    paths_.clear();
+    searchGrades_.clear(); activeSearchGrade_=-1;
     // The fog worker reads heights_; never let a reload pull the map out from under it.
     if (visRunning_) { visWorker_.join(); visRunning_ = false; visDone_.store(false); }
     // EVERY cached LoS mask is a function of the terrain we are about to replace, and
@@ -654,6 +954,11 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     seaLevel_ = seaLevel;
     heights_ = heights;   // keep raw heights for fog line-of-sight
     hW_ = w; hH_ = h;
+    explorationHeights_=retailExplorationHeights(w,h,uint8_t(seaLevel),
+        [&](int x,int z){return heights_[size_t(z)*w+x];});
+    navigationExplored_.assign(explorationHeights_.size(),0);
+    restoredNavigationViewer_=-1;
+    for (auto& u:units_) u.sightFootprint={};
     // Road cells: the retail map format marks them as 0xFFFB in the feature
     // plane (verified against Two Castles -- the mask traces the road network).
     roads_.clear();
@@ -694,41 +999,9 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
         navClasses_.clear();
         navIdx_.clear();
     }
-    // Occlusion block: RETAIL NEVER LETS A UNIT STAND BEHIND TERRAIN. A tall
-    // cell's painted face leans up-screen over the lower ground to its north, so
-    // a unit stopping there would be drawn inside the rock; retail keeps it out
-    // of those cells rather than fixing the draw order. Block them.
-    //
-    // This pass existed before, was deleted this morning for blocking 12% of the
-    // map and stranding armies (2 of 24 arriving), and was right all along -- it
-    // was the PROJECTION CONSTANT that was wrong. It used 1.1 px of northward
-    // lean per height unit; retail's figure is 0.5, proven off 0x511140 and
-    // 0x426820 (screenY = z*16 - camY - height/2, and no X term at all). At more
-    // than twice the real lean it condemned more than twice the ground.
-    //
-    // Into the SHARED overlay, so the per-class grids see it -- the legacy grids
-    // are not what navFor() hands a unit in a real match.
-    {
-        long hist[256] = {0};
-        for (uint8_t v : heights) hist[v]++;
-        int ref = 0;
-        for (int i = 1; i < 256; ++i) if (hist[i] > hist[ref]) ref = i;
-        const float kProj = 0.5f;          // retail's lift, not the old 1.1
-        for (int z = 0; z < h; ++z)
-            for (int x = 0; x < w; ++x) {
-                int hu = heights[size_t(z) * w + x];
-                for (int d = 1; d <= 7; ++d) {
-                    int nz = z + d;
-                    if (nz >= h) break;
-                    int hw = heights[size_t(nz) * w + x];
-                    if (hw <= hu + 24) continue;   // not a wall relative to this cell
-                    if (float(hw - ref) * kProj > float(d) * 16.0f) {
-                        obst_[size_t(z) * size_t(w) + size_t(x)] = 1;
-                        break;
-                    }
-                }
-            }
-    }
+    // Projected cliff faces are rendering geometry, not extra navigation walls.
+    // The retail Hunter capture traverses cells the former seven-row projection
+    // heuristic blocked. Terrain limits and explicit feature blockers decide here.
     nav_.setRoads(&roads_);   // ground domain only: marches prefer highways
     // 0xFFFC cells are hard blockers (retail rates them impassable for every
     // movement domain AND rejects building placement on them -- icd 0x508190 /
@@ -786,7 +1059,7 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
 }
 
 void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked) {
-    int cx = int(x) / 16 - t.footX / 2, cz = int(z) / 16 - t.footZ / 2;
+    int cx = footprintOrigin(x, t.footX), cz = footprintOrigin(z, t.footZ);
     if (t.yardMap.empty()) {
         nav.block(cx, cz, t.footX, t.footZ, blocked);
         return;
@@ -907,6 +1180,7 @@ NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int sea,
                  const Limits& lim)
     : w_(w), h_(h) {
     cells_.assign(size_t(w) * h, 1);
+    terrainPenalty_.assign(size_t(w)*h,0);
     auto H = [&](int x, int z) {
         return int(heights[size_t(std::min(z, h - 1)) * size_t(w) + size_t(std::min(x, w - 1))]);
     };
@@ -916,11 +1190,17 @@ NavGrid::NavGrid(const std::vector<uint8_t>& heights, int w, int h, int sea,
             int a = H(x, z), b = H(x + 1, z), c = H(x, z + 1), d = H(x + 1, z + 1);
             int lo = std::min(std::min(a, b), std::min(c, d));
             int hi = std::max(std::max(a, b), std::max(c, d));
-            bool blocked = false;
-            if (lo < sea - lim.maxWaterDepth) blocked = true;          // too deep
-            else if (hi > sea - lim.minWaterDepth) blocked = true;     // too shallow
-            else if (hi - lo > (lo < sea ? lim.maxWaterSlope : lim.maxSlope)) blocked = true;
-            if (blocked) cells_[size_t(z) * w + x] = 0;
+            const int badSlope=lim.badSlope<0 ? lim.maxSlope/2 : lim.badSlope;
+            const int badWaterSlope=lim.badWaterSlope<0 ? lim.maxWaterSlope/2 : lim.badWaterSlope;
+            const int badMax=lim.badMaxWaterDepth==32768 ? lim.maxWaterDepth : lim.badMaxWaterDepth;
+            const int badMin=lim.badMinWaterDepth==32768 ? lim.minWaterDepth : lim.badMinWaterDepth;
+            auto grade=[&](bool road) {
+                return retailTerrainGrade(lo,hi,sea,lim.maxWaterDepth,lim.minWaterDepth,badMax,badMin,
+                    lim.maxSlope,badSlope,lim.maxWaterSlope,badWaterSlope,road);
+            };
+            const int ordinary=grade(false),road=grade(true);
+            cells_[size_t(z)*w+x]=uint8_t(ordinary!=0);
+            terrainPenalty_[size_t(z)*w+x]=uint8_t((ordinary==4 ? 1 : 0)|(road==4 ? 2 : 0));
         }
 }
 
@@ -968,7 +1248,11 @@ bool NavGrid::segmentFits(float wx0, float wz0, float wx1, float wz1, int foot) 
 
     // Integer world units. The sub-CELL position is what this exists to preserve;
     // sub-unit precision buys nothing here and integers keep the DDA exact.
-    const int ix0 = int(wx0), iz0 = int(wz0), ix1 = int(wx1), iz1 = int(wz1);
+    const int phase = foot % 2 ? 0 : 8;
+    const int ix0 = Fixed::fromFloat(wx0).floorInt() + phase;
+    const int iz0 = Fixed::fromFloat(wz0).floorInt() + phase;
+    const int ix1 = Fixed::fromFloat(wx1).floorInt() + phase;
+    const int iz1 = Fixed::fromFloat(wz1).floorInt() + phase;
     int cx = navCellOf(ix0), cz = navCellOf(iz0);
     const int ex = navCellOf(ix1), ez = navCellOf(iz1);
 
@@ -1056,29 +1340,52 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
     next.reserve(path.size() + u.orders.size() - end - 1);
     for (size_t i = 0; i < path.size(); ++i) {
         Order o = path[i];
+        if (i || !o.hasSegment) {
+            o.segmentX = i ? path[i - 1].x : u.x;
+            o.segmentZ = i ? path[i - 1].z : u.z;
+        }
+        o.hasSegment = true;
         o.attackMove = tmpl.attackMove;
         o.patrol = tmpl.patrol;
+        o.targetId = tmpl.targetId;
+        o.guard = tmpl.guard;
+        o.autoTarget = tmpl.autoTarget;
+        o.issuedTick = tmpl.issuedTick;
         o.goal = (i + 1 == path.size());
-        if (o.goal) { o.clickX = tmpl.clickX; o.clickZ = tmpl.clickZ; }
+        o.navigationExhausted=false;
+        o.navigationConsumed=false;
+        if (o.goal) {
+            o.clickX = tmpl.clickX; o.clickZ = tmpl.clickZ;
+            o.groundMission = tmpl.groundMission;
+            o.mission = tmpl.mission;
+            o.missionRadius = tmpl.missionRadius;
+            o.missionTarget = tmpl.missionTarget;
+            o.groundResponse = tmpl.groundResponse;
+            o.controller = tmpl.controller;
+            o.park = tmpl.park;
+            o.buildType = tmpl.buildType;
+            o.buildRectangle = tmpl.buildRectangle;
+            o.buildX = tmpl.buildX; o.buildZ = tmpl.buildZ;
+        }
         next.push_back(o);
     }
     next.insert(next.end(), u.orders.begin() + long(end) + 1, u.orders.end());
     u.orders.swap(next);
-    // KNOWN LIMITATION. This resets the no-headway tracker, and the pathfinder
-    // re-routes the same leg about once a second, so the tracker cannot build up
-    // while a unit is being re-routed -- which is why a unit circling between
-    // routes to the same place is never noticed and never gives up. Preserving
-    // the tracker when the destination is unchanged looks like the fix and is
-    // not: units held up briefly in a crowd then accumulate across re-routes and
-    // abandon perfectly good orders (it halves "two columns pass through each
-    // other", 6 of 12 instead of 12). The real answer is probably a separate
-    // per-destination timer that re-routing does not touch, rather than reusing
-    // this one. See docs/retail-engine.md.
+
 }
 
 void World::dropLeg(Unit& u) {
     if (u.orders.empty()) return;
+    // The request belongs to the departing movement controller, not to the
+    // unit's next order. Retail retires it when that controller is replaced
+    // (4d4d40 -> navigator -> 415f30), before any later route delivery.
+    cancelPath(u);
     const size_t end = currentLeg(u.orders);
+    if (u.orders[end].groundMission || u.orders[end].buildRectangle) {
+        // Detachment keeps a recent admission, otherwise clears it to zero.
+        // A -1 sentinel suppresses the next mission's native retry RNG draw.
+        if (u.orders[end].controller && uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
+    } else u.routeStamp=-1;
     u.orders.erase(u.orders.begin(), u.orders.begin() + long(end) + 1);
 }
 
@@ -1098,6 +1405,35 @@ bool World::setRally(Unit& u, const Order& o, bool queue) {
     return true;
 }
 
+static void resetGroundSegment(const Unit& u,Order& goal) {
+    // 4e2500/4e2820 retain the mission point separately from the navigator's
+    // footprint-aligned endpoint. A retry must use the mission, not a partial
+    // route's last corner, when constructing its new direct segment.
+    if (!goal.missionTarget) goal.missionTarget=std::pair{goal.x,goal.z};
+    goal.x=footprintWaypoint(footprintCell(goal.missionTarget->first,u.type->footX),u.type->footX);
+    goal.z=footprintWaypoint(footprintCell(goal.missionTarget->second,u.type->footZ),u.type->footZ);
+    goal.segmentX=Fixed::fromInt(u.x.floorInt());
+    goal.segmentZ=Fixed::fromInt(u.z.floorInt());
+    goal.hasSegment=true;
+    goal.navigationConsumed=false;
+}
+
+static bool retainGroundRoute(const Unit& u,const Order& goal) {
+    const auto target=goal.missionTarget.value_or(std::pair{goal.x,goal.z});
+    const Fixed gx=footprintWaypoint(footprintCell(target.first,u.type->footX),u.type->footX);
+    const Fixed gz=footprintWaypoint(footprintCell(target.second,u.type->footZ),u.type->footZ);
+    // 4e5563..4e55e9 uses signed wrapped fixed-point differences, x87 double
+    // square roots truncated to integers, then a signed doubled-distance test.
+    const auto distance=[&](Fixed x,Fixed z) {
+        const int32_t dx=std::bit_cast<int32_t>(uint32_t(x.v)-uint32_t(gx.v));
+        const int32_t dz=std::bit_cast<int32_t>(uint32_t(z.v)-uint32_t(gz.v));
+        return uint32_t(int64_t(std::sqrt(double(dx)*dx+double(dz)*dz)));
+    };
+    const uint32_t endpoint=distance(Fixed::fromInt(int16_t(goal.x.floorInt())),
+                                     Fixed::fromInt(int16_t(goal.z.floorInt())));
+    return std::bit_cast<int32_t>(endpoint*2u)<std::bit_cast<int32_t>(distance(u.x,u.z));
+}
+
 void World::order(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
     // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
@@ -1106,11 +1442,12 @@ void World::order(int unitId, float x, float z, bool queue) {
     // turned its heading toward the goal, so you could spin a keep by right-clicking.
     if (!u || !u->alive() || !u->type) return;
     if (u->type->isStructure()) { setRally(*u, Order{Fixed::fromFloat(x), Fixed::fromFloat(z), 0}, queue); return; }
-    // A NEW DESTINATION RETIRES AN ABANDONED ONE. order() does not go through
-    // cancelPath, so clearing the rescue record only there left it live: the player
-    // picks somewhere else, that move finishes, the retry delay expires, and the rescue
-    // sweep walks the unit back to the destination they had already replaced. The
-    if (!queue) u->orders.clear();
+    // A replacement owns a fresh search, even for another click in the same
+    // cell. Cadence retries within the same order may retain search progress.
+    if (!queue) {
+        cancelPath(*u);
+        u->orders.clear();
+    }
     auto markGoal = [&] {
         if (u->orders.empty()) return;
         u->orders.back().goal = true;
@@ -1121,58 +1458,20 @@ void World::order(int unitId, float x, float z, bool queue) {
         markGoal();
         return;
     }
-    // Ground/water units steer STRAIGHT at the front order's point. There is no local
-    // obstacle avoidance in the steering: going around terrain is entirely the job of
-    // the background path search, which splices its route in as further order legs.
-    //
-    // That search is retail's ported boundary tracer (sim/pathsearch.h), NOT an A* --
-    // no open list, no heuristic; it marches at the goal and traces an obstacle's
-    // outline from both sides when blocked. It is the sim's ONLY pathfinder: the
-    // A* that used to route transports to their unload point resolved its grid with
-    // the same navFor() and bought nothing over the tracer, so it is gone.
-    //
-    // This comment said "steer by a shared flow field ... fall back to A* waypoints",
-    // and neither half survived: the flow fields are gone, and what replaced them is
-    // not an A* either. Left stale it sends anyone debugging a unit that walks into a
-    // cliff looking for two mechanisms that do not exist.
-    // Snap the destination onto ground this unit can actually stand on. A click
-    // on a mountain is a click on a cell no ground unit fits in: without this the
-    // unit walks up to the cliff and shoves at it indefinitely, because the goal
-    // is never reached and nothing declares it unreachable -- the reachability
-    // test resolves an unstandable goal to the nearest walkable cell, which is
-    // usually on the unit's OWN side, so it reports "reachable" quite correctly
-    // and no watchdog fires. Retail behaves the way this makes us behave: ordered
-    // at a mountain, the unit walks as close as it can get and stops.
-    //
-    // Deterministic: a fixed outward scan in a fixed order, and it only moves a
-    // goal that was already impossible.
-    const float clickX = x, clickZ = z;   // what the player aimed at
-    {
-        const NavGrid& g = navFor(u->type);
-        const int foot = footCells(u->type);
-        int cx = int(x) / 16, cz = int(z) / 16;
-        if (!g.empty() && !g.fits(cx, cz, foot)) {
-            bool found = false;
-            for (int r = 1; r <= 24 && !found; ++r)
-                for (int dz = -r; dz <= r && !found; ++dz)
-                    for (int dx = -r; dx <= r && !found; ++dx) {
-                        if (std::abs(dx) != r && std::abs(dz) != r) continue;
-                        if (!g.fits(cx + dx, cz + dz, foot)) continue;
-                        x = float(cx + dx) * 16.0f + 8.0f;
-                        z = float(cz + dz) * 16.0f + 8.0f;
-                        found = true;
-                    }
-        }
-    }
-
-    // Retail pushes the straight goal in and starts steering at it IMMEDIATELY,
-    // while a path request runs in the background; when the search returns, the
-    // real route replaces the straight segment (docs/retail-engine.md). So the
-    // two-point segment is the interim, not the mechanism -- exactly what this
-    // engine did permanently until the search was ported.
+    // Retail move validation/submission retains the requested world point even
+    // on blocked terrain. The search and mission radius determine the reachable
+    // approach; choosing a nearby walkable cell here changes the search's goal.
+    // The navigator starts with a direct segment while its search is pending.
     u->orders.push_back({Fixed::fromFloat(x), Fixed::fromFloat(z), 0});
-    u->orders.back().clickX = Fixed::fromFloat(clickX);
-    u->orders.back().clickZ = Fixed::fromFloat(clickZ);
+    u->orders.back().clickX = Fixed::fromFloat(x);
+    u->orders.back().clickZ = Fixed::fromFloat(z);
+    u->orders.back().groundMission = true;
+    // 4d6c40 retains the point-move definition flags when a point is supplied.
+    u->orders.back().mission.flags = 0x3000400u;
+    u->orders.back().controller = ++nextMovementController_;
+    // The interim navigator segment starts at integer world coordinates.
+    // Captured retail routes preserve this anchor until the path is replaced.
+    if (u->orders.size() == 1) resetGroundSegment(*u,u->orders.back());
     markGoal();
     // Only ask for a route when this order is the one the unit is about to
     // WALK. Requests are keyed by unit id, so asking for a queued order cancels
@@ -1180,12 +1479,14 @@ void World::order(int unitId, float x, float z, bool queue) {
     // destination's route into that leg -- the unit sets off for the last thing
     // you queued and skips everything before it. Orders behind the current one
     // get their route when they become current, via the retry sweep in tick().
-    if (!queue || u->orders.size() == 1) requestPath(*u, x, z);
+    if (!queue || u->orders.size() == 1) {
+        // Replacing the controller cancels its work, but does not bypass the
+        // fifteen-tick admission interval after a very recent search.
+        if (u->routeStamp<0 || uint32_t(u->routeStamp)<=tickCounter_-6u) u->routeStamp=0;
+        requestPath(*u, x, z);
+    }
 }
 
-// Queue a background path for `u` toward (x,z). Flyers ignore the ground, and a
-// goal a couple of cells away is not worth a search -- the straight segment
-// already covers it.
 // Drop any path search still queued for this unit. Call it wherever a unit's order
 // list is REPLACED wholesale and nothing immediately re-requests, because a search
 // outlives the orders that asked for it: the PathService keys on the unit id, not on
@@ -1209,15 +1510,434 @@ void World::cancelPath(Unit& u) {
     // not a single number moving.
 }
 
+Order* World::groundMissionOrder(Unit& u) {
+    if (!u.type || u.type->canFly || u.orders.empty()) return nullptr;
+    const auto plain = [](const Order& o) {
+        return !o.targetId && !o.attackMove && !o.patrol && !o.guard && !o.load && !o.unload &&
+               !o.buildType && !o.reclaimFeat && !o.repairTarget && !o.wait && !o.waitAttack;
+    };
+    if (!plain(u.orders.front())) return nullptr;
+    Order& goal = u.orders[currentLeg(u.orders)];
+    return goal.groundMission && plain(goal) ? &goal : nullptr;
+}
+
+Order* World::navigationMissionOrder(Unit& u) {
+    if (auto* goal=groundMissionOrder(u)) return goal;
+    if (!u.type || u.type->canFly || u.orders.empty()) return nullptr;
+    auto& goal=u.orders[currentLeg(u.orders)];
+    return goal.buildRectangle ? &goal : nullptr;
+}
+
+bool World::groundMissionAccepts(const Unit& u,const Order& goal) {
+    const int radius=std::bit_cast<int32_t>(goal.missionRadius+4u);
+    const RetailCircleGoal circle{footprintOrigin(goal.missionTarget ? goal.missionTarget->first : goal.x,u.type->footX),
+        footprintOrigin(goal.missionTarget ? goal.missionTarget->second : goal.z,u.type->footZ),radius,retailCircleRadiusSquared(radius)};
+    return goal.park && goal.park->ring
+        ? goal.park->ring->accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ))
+        : circle.accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+}
+
+int World::flightGround(const Unit& u) const {
+    // 5066f0 relinks the center sector only when the footprint changes cells.
+    // Each tile stores the maximum of its four corners, including the far edge.
+    if (heights_.empty()) return 0;
+    const int sx=std::clamp(u.flightSectorX,0,(terW_-1)/8);
+    const int sz=std::clamp(u.flightSectorZ,0,(terH_-1)/8);
+    int height=seaLevel_;
+    for (int cz=std::max(0,(sz-1)*8);cz<std::min(terH_,(sz+2)*8+1);++cz)
+        for (int cx=std::max(0,(sx-1)*8);cx<std::min(terW_,(sx+2)*8+1);++cx)
+            height=std::max(height,int(heights_[size_t(cz)*terW_+cx]));
+    return height;
+}
+
+static bool plainFlightPatrol(const Unit& u) {
+    return u.type && u.type->canFly && !u.type->isBuilder && u.type->weapons.empty() &&
+        !u.orders.empty() && (u.orders.front().patrol || u.orders.front().flightMoveMission) && !u.orders.front().targetId;
+}
+
+void World::tickFlightPatrol(Unit& u) {
+    // A newly activated patrol may append its return anchor. Keep the
+    // dispatcher's reference to the current mission stable during that append.
+    u.orders.reserve(u.orders.size()+1);
+    struct Host {
+        World& w; Unit& u;
+        bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
+        RetailMissionState* head() { return plainFlightPatrol(u) ? &u.orders.front().mission : nullptr; }
+        bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState&) { u.orders.erase(u.orders.begin()); }
+        void rotate(RetailMissionState&) {
+            const auto order=u.orders.front();
+            u.orders.erase(u.orders.begin()); u.orders.push_back(order);
+        }
+        void clear() { u.orders.clear(); }
+        int handle(RetailMissionState& m,uint32_t events) {
+            if ((m.flags&0x8000000u) && random(10)==0) m.flags&=~0x8000000u;
+            if (u.orders.front().flightMoveMission) {
+                auto& order=u.orders.front();
+                if (m.stage==0) {
+                    if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
+                        script->second.activated=true;w.notifyUnitScript(u,"Activate");
+                    }
+                    w.notifyUnitScript(u,"BeginFlight");
+                    m.pending&=~0x700u; return 1;
+                }
+                if (m.stage==1) {
+                    order.x=footprintWaypoint(footprintCell(order.x,u.type->footX),u.type->footX);
+                    order.z=footprintWaypoint(footprintCell(order.z,u.type->footZ),u.type->footZ);
+                    order.flightGoal=RetailFlightGoal{{order.x.v,u.flightY.v,order.z.v},0x30,0,int16_t((random(5)+5)*16)};
+                    m.waitMask=0x700;m.sleep(w.tickCounter_,random(10)+5);return 1;
+                }
+                if (m.stage==2) {
+                    if (events&0x700) return 1;
+                    m.waitMask=0x700;m.sleep(w.tickCounter_,random(10)+5);return 2;
+                }
+                if (m.stage==3 && u.orders.size()>1) return 5;
+                throw std::runtime_error("unsupported terminal flight move mission");
+            }
+            if (m.stage==0) {
+                const bool anchored=std::any_of(u.orders.begin(),u.orders.end(),[](const Order& o) {return (o.mission.flags&0x4000u)!=0;});
+                if (!anchored) {
+                    Order anchor;anchor.x=u.x;anchor.z=u.z;anchor.goal=anchor.patrol=true;
+                    anchor.mission.flags=0x1000412u;anchor.issuedTick=w.tickCounter_;
+                    u.orders.push_back(anchor);
+                }
+                m.flags|=0x4000u;
+                if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
+                    script->second.activated=true;w.notifyUnitScript(u,"Activate");
+                }
+                w.notifyUnitScript(u,"BeginFlight");
+                m.pending&=~0x700u; return 1;
+            }
+            if (m.stage==1) {
+                auto& order=u.orders.front();
+                const RetailFlightVector waypoint{order.x.v,u.flightY.v,order.z.v};
+                order.flightGoal=retailFlightPatrolGoal({u.x.v,u.flightY.v,u.z.v},waypoint,
+                    u.type->maxVel.v,[&](int n) { return random(n); });
+                m.sleep(w.tickCounter_,1);
+                return 1;
+            }
+            if (m.stage==2) {
+                if (events&0x700) { m.stage=1; return 6; }
+                m.waitMask|=0x700;
+                m.sleep(w.tickCounter_,random(10)+5);
+                return 2;
+            }
+            return 7;
+        }
+    } host{*this,u};
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+}
+
+void World::tickFlightMovement(Unit& u, bool persistent) {
+    auto& order=u.orders.front();
+    if (order.guard) {
+        const auto* target=unit(order.targetId);
+        if (target && fxLen(target->x-u.x,target->z-u.z)<=Fixed::fromInt(70)) return;
+    }
+    u.flightGroundMode=2;
+    const int cruise=flightGround(u)+u.type->cruiseAlt;
+    if (!order.flightGoal) {
+        RetailFlightGoal goal;
+        goal.point={order.x.v,Fixed::fromInt(cruise).v,order.z.v};
+        order.flightGoal=goal;
+    }
+    auto& goal=*order.flightGoal;
+    // Non-patrol pursuit controllers track their current order destination.
+    if (!order.patrol) { goal.point.x=order.x.v; goal.point.z=order.z.v; }
+    if (!(goal.flags&8)) goal.point.y=Fixed::fromInt(std::min(cruise,511)).v;
+    const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
+    u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,goal.point,
+        u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+    if (!persistent && goal.accepts(position)) {
+        if (order.landing) {
+            u.missionEvents|=0x100;
+            u.orders.erase(u.orders.begin());
+            return;
+        }
+        const bool flyingBuild=u.retailBuild && u.retailBuild->flying;
+        if (!flyingBuild && (order.buildType || order.reclaimFeat || order.repairTarget)) return;
+        // Point controllers used by both move and patrol are nonpersistent:
+        // arrival posts 0x100 and releasing the controller posts 0x400.
+        if (flyingBuild) u.retailBuild->mission.pending|=0x500;
+        else if (plainFlightPatrol(u)) order.mission.pending|=0x500;
+        else {
+            Order done=order;
+            u.orders.erase(u.orders.begin());
+            if (done.patrol) { done.flightGoal.reset(); u.orders.push_back(done); }
+            return;
+        }
+    }
+    if (u.baseSpeed<=Fixed()) { u.flightVelocity={}; u.speed=Fixed(); return; }
+    const uint16_t heading=portHeadingToRetail(u.heading);
+    u.flightVelocity=retailFlightVelocity(u.flightVelocity,position,
+        u.flightNavigation.destination,u.flightNavigation.velocity,u.speed.v,u.baseSpeed.v,
+        u.type->accel.v,u.type->brake.v,heading);
+    const int diff=int16_t(uint16_t(u.flightNavigation.heading-heading));
+    u.heading=u.heading+Bam(std::clamp(diff,-u.type->turnRate,u.type->turnRate));
+    u.turnReqBam=diff;
+    const auto& v=u.flightVelocity;
+    u.speed=Fixed::raw(int32_t(std::sqrt((double(v.z)*v.z+double(v.y)*v.y)+double(v.x)*v.x)));
+    const int oldX=footprintOrigin(u.x,u.type->footX),oldZ=footprintOrigin(u.z,u.type->footZ);
+    u.x+=Fixed::raw(v.x); u.z+=Fixed::raw(v.z); u.flightY+=Fixed::raw(v.y);
+    updateBodyIndex(u);
+    if (oldX!=footprintOrigin(u.x,u.type->footX) || oldZ!=footprintOrigin(u.z,u.type->footZ)) {
+        u.flightSectorX=u.x.v>>23;u.flightSectorZ=u.z.v>>23;
+    }
+}
+
+void World::tickGuardNoMove(Unit& u) {
+    const bool eligible=u.guardNoMoveAllowed && u.type->isStructure() && !u.underConstruction &&
+        u.buildQueue.empty() && !u.buildSiteId &&
+        (u.orders.empty() || u.orders.front().autoTarget);
+    if (!eligible) { u.guardNoMoveActive=false; return; }
+    if (!u.guardNoMoveActive) { u.guardNoMoveState={}; u.guardNoMoveActive=true; }
+    struct Host {
+        World& w; Unit& u;
+        bool enabled() const { return u.alive() && !u.incapacitated() && u.guardNoMoveActive; }
+        RetailMissionState* head() { return &u.guardNoMoveState; }
+        bool hasNext(const RetailMissionState&) const { return false; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(n); }
+        void remove(RetailMissionState&) { u.guardNoMoveActive=false; }
+        void rotate(RetailMissionState&) {}
+        void clear() { u.guardNoMoveActive=false; }
+        int handle(RetailMissionState& m,uint32_t) {
+            return retailGuardNoMove(m,w.tickCounter_,true,!u.type->weapons.empty(),
+                [&](int n){return random(n);},[&]{ w.acquireTarget(u,true); });
+        }
+    } host{*this,u};
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+}
+
+void World::tickGroundMission(Unit& u) {
+    // Other mission kinds continue through their existing handlers.
+    if (!u.orders.empty() && !u.orders.front().landing) {
+        u.standbyActive=false; u.landing.reset();
+    }
+    struct Host {
+        World& w; Unit& u;
+        uint64_t replaceController=0;
+        bool enabled() const { return u.alive() && !u.underConstruction && !u.embarked(); }
+        bool canStandby() const {
+            return u.standbyAllowed && u.type && (!u.type->canFly || u.type->vtolStandby) && !u.type->isStructure() &&
+                   !u.type->wanders && !u.buildSiteId && !u.repairId && !u.reclaimId &&
+                   u.buildQueue.empty() && !u.repeatType && u.orders.empty();
+        }
+        RetailMissionState* head() {
+            if (u.landing) return &u.landing->mission;
+            if (auto* o = groundMissionOrder(u)) return &o->mission;
+            return canStandby() && u.standbyActive ? &u.standbyState : nullptr;
+        }
+        bool hasNext(const RetailMissionState&) const { return currentLeg(u.orders)+1 < u.orders.size(); }
+        void idle() {
+            if (canStandby()) {
+                u.standbyState = {};
+                if (!u.type->canFly) u.standbyState.flags=0x5012000u;
+                u.standbyActive = true;
+            }
+        }
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState& m) {
+            if (&m == &u.standbyState) u.standbyActive = false;
+            else if (u.landing && &m==&u.landing->mission) {
+                std::erase_if(u.orders,[](const Order& o){return o.landing;}); u.landing.reset();
+            }
+            else w.dropLeg(u);
+        }
+        void rotate(RetailMissionState&) {
+            const Order goal = u.orders[currentLeg(u.orders)];
+            w.dropLeg(u); u.orders.push_back(goal);
+        }
+        void clear() { w.cancelPath(u); u.orders.clear(); u.routeStamp=-1; u.standbyActive=false; u.landing.reset(); }
+        int handle(RetailMissionState& m, uint32_t events) {
+            if (u.landing && &m==&u.landing->mission)
+                return retailLanding(*u.landing,events,{u.x.v,u.flightY.v,u.z.v},portHeadingToRetail(u.heading),
+                    int16_t(u.type->footX),int16_t(u.type->footZ),true,u.type->canFly,*this);
+            if (&m==&u.standbyState && u.type->canFly)
+                return retailVtolStandby(m,w.tickCounter_,true,true,u.flightGroundMode==2,
+                    [&](int n){return random(n);},[&]{ initialize(); },
+                    [&]{return w.acquireTarget(u,true);},[&]{u.landing.emplace();return true;});
+            if (&m == &u.standbyState)
+                return retailStandby(m,w.tickCounter_,true,[&](int n) { return random(n); },
+                    [&] { w.cancelPath(u); }, [&] { return w.acquireTarget(u,true); });
+            auto& goal = u.orders[currentLeg(u.orders)];
+            if (goal.park) {
+                auto& park=*goal.park;
+                const Unit* target=w.unit(park.target);
+                const bool valid=target && target->alive();
+                return retailGroundPark(m,events,true,park.target!=0,valid,
+                    hasNext(m) && !u.incapacitated() && !u.embarked(),int16_t(u.type->footX),
+                    int16_t(valid ? target->type->footX : 0),int16_t(valid ? target->type->footZ : 0),
+                    park.padding,park.permanent,park.attempts,[&](int n){return random(n);},
+                    [&]{park.target=0;},[&](bool useTarget,int outer,int inner) {
+                        const Unit& center=useTarget ? *target : u;
+                        park.ring=RetailRingGoal{footprintOrigin(center.x,u.type->footX),
+                            footprintOrigin(center.z,u.type->footZ),inner,outer,retailCircleRadiusSquared(outer)};
+                        const auto point=park.ring->navigationPoint(u.x,u.z,u.type->footX,u.type->footZ);
+                        goal.x=point.x;goal.z=point.z;
+                        goal.segmentX=Fixed::fromInt(u.x.floorInt());goal.segmentZ=Fixed::fromInt(u.z.floorInt());
+                        goal.hasSegment=true;goal.navigationExhausted=false;goal.navigationConsumed=false;goal.controller=++w.nextMovementController_;
+                        m.pending&=~0x3700u;w.cancelPath(u);
+                        if (uint32_t(u.routeStamp)<=w.tickCounter_-6u) u.routeStamp=0;
+                        w.requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+                    });
+            }
+            std::optional<Order> auxiliary;
+            auto& response=goal.groundResponse;
+            const RetailGroundPoint position{int16_t(u.x.floorInt()),int16_t(u.z.floorInt())};
+            const uint16_t leash=uint16_t(std::clamp(u.type->leash,0,65535));
+            const int result=retailGroundMove(m,goal.missionRadius,w.tickCounter_,events,
+                int16_t(u.type->footX),u.embarked(),response.mode,uint8_t(u.moveState),[&](int n) { return random(n); },
+                [&](uint32_t) {
+                    w.cancelPath(u);
+                    const bool wasActive=!goal.navigationExhausted;
+                    goal.controller = ++w.nextMovementController_;
+                    m.pending &= ~0x3700u;
+                    const bool retain=currentLeg(u.orders)>0 && retainGroundRoute(u,goal);
+                    const bool direct=!retain && (!(m.flags&0x10400000u) ||
+                        (!wasActive && (m.flags&0x10000000u)));
+                    goal.navigationExhausted=!retain && !direct;
+                    if (direct) {
+                        resetGroundSegment(u,goal);
+                        // Erasing corners here would invalidate the dispatcher's
+                        // mission reference before it advances the stage.
+                        replaceController=goal.controller;
+                    }
+                    // Controller reset also invalidates stamps older than six
+                    // ticks, with the executable's unsigned comparison.
+                    if (uint32_t(u.routeStamp)<=w.tickCounter_-6u) u.routeStamp=0;
+                    // 4e54e0 cancels the old search, then 4e4f50(1) marks
+                    // the replacement controller pending. Retaining the stamp
+                    // alone loses this request until some later retry happens.
+                    w.requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+                },[&] {
+                    // Target scoring and retaliation eligibility still use the
+                    // World's combat host; the mission owns when to poll it.
+                    int target=w.findTarget(u,true,true);
+                    if (!target && u.fireState!=0 && u.lastHitBy) {
+                        const Unit* enemy=w.unit(u.lastHitBy);
+                        if (enemy && enemy->alive() && !enemy->embarked() && enemy->type &&
+                            !w.allied(u.player,enemy->player) && !enemy->cloaked &&
+                            fxLen(enemy->x-u.x,enemy->z-u.z)<=Fixed::fromFloat(u.type->maxRange()+90)) {
+                            for (const auto& weapon:u.type->weapons)
+                                if (!(enemy->type->canFly && weapon.noAir) && weapon.damageVs(enemy->type)>0) {
+                                    target=enemy->id; break;
+                                }
+                        }
+                    }
+                    if (!target) return false;
+                    const auto* enemy=w.unit(target);
+                    if (response.mode>0 && u.moveState==1 &&
+                        retailGroundDistance({int16_t(enemy->x.floorInt()),int16_t(enemy->z.floorInt())},
+                                             response.goal)>=leash) return false;
+                    if (response.mode<0) response.origin=position;
+                    auxiliary.emplace(); auxiliary->targetId=target;
+                    auxiliary->goal=true; auxiliary->autoTarget=response.mode>=0;
+                    w.cancelPath(u); u.routeStamp=-1;
+                    goal.controller=0; m.pending&=~0x3700u;
+                    return true;
+                },[&] {
+                    if (!retailGroundReturnNeeded(position,response,leash)) return true;
+                    auxiliary.emplace(); auto& back=*auxiliary;
+                    back.x=Fixed::fromInt(response.origin.x); back.z=Fixed::fromInt(response.origin.z);
+                    back.goal=back.groundMission=true; back.missionRadius=leash/4;
+                    back.groundResponse.mode=1; back.groundResponse.goal=response.origin;
+                    back.segmentX=Fixed::fromInt(position.x); back.segmentZ=Fixed::fromInt(position.z);
+                    back.hasSegment=true;back.navigationExhausted=false;back.navigationConsumed=false; back.controller=++w.nextMovementController_;
+                    w.cancelPath(u); u.routeStamp=-1;
+                    return true;
+                });
+            // Inserting can invalidate m and goal. The dispatcher re-fetches
+            // its head after result 4, so all parent updates must precede it.
+            if (auxiliary) u.orders.insert(u.orders.begin(),*auxiliary);
+            return result;
+        }
+        void initialize() {} // weapon aim reset has no separate state in this host
+        int velocityPercent() {
+            if (u.baseSpeed<=Fixed()) return 0;
+            const auto& v=u.flightVelocity;
+            const int32_t speed=int32_t(std::sqrt(double(v.x)*v.x+double(v.z)*v.z));
+            return std::clamp(int(double(speed)*100/u.baseSpeed.v+0.5),0,100);
+        }
+        bool landable(RetailFlightVector point) {
+            const auto& grid=w.navFor(u.type);
+            if (grid.empty()) return true;
+            const int foot=footCells(u.type);
+            const Fixed x=Fixed::raw(point.x),z=Fixed::raw(point.z);
+            return grid.fits(footprintCell(x,foot),footprintCell(z,foot),foot) && w.cellFree(x,z,u.id,foot);
+        }
+        int groundHeight(RetailFlightVector point) {
+            if (w.heights_.empty()) return 0;
+            const int x=std::clamp(Fixed::raw(point.x).floorInt()/16,0,w.terW_-1);
+            const int z=std::clamp(Fixed::raw(point.z).floorInt()/16,0,w.terH_-1);
+            return w.heights_[size_t(z)*w.terW_+x];
+        }
+        void touchdown() {} // display script notifications remain client-owned
+        void deactivate() { u.active=false; }
+        void finish() { u.flightGroundMode=1; u.flightVelocity={}; u.speed=Fixed(); }
+        void install(RetailFlightGoal goal) {
+            std::erase_if(u.orders,[](const Order& o){return o.landing;});
+            Order order; order.x=Fixed::raw(goal.point.x); order.z=Fixed::raw(goal.point.z);
+            order.flightGoal=goal; order.landing=true; u.orders.insert(u.orders.begin(),order);
+        }
+    } host{*this,u};
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (host.replaceController && !u.orders.empty()) {
+        const size_t end=currentLeg(u.orders);
+        if (u.orders[end].controller==host.replaceController)
+            u.orders.erase(u.orders.begin(),u.orders.begin()+long(end));
+    }
+}
+
+RetailCostSearch::Costs World::searchCosts(const Unit& u) const {
+    return retailPathCosts(uint16_t(u.type->turnRate),u.type->footX,
+                           u.type->roadMult.v,u.type->waterMult.v,u.groundTerrainFlags,
+                           u.type->floater && u.type->minWaterDepth>0);
+}
+
+void World::refreshSearchRequest(int id,PathCell& start,int& heading,RetailCostSearch::Costs& costs) const {
+    const Unit* u=unit(id);
+    if (!u || !u->type) return;
+    start={footprintCell(u->x,u->type->footX),footprintCell(u->z,u->type->footZ)};
+    heading=portHeadingToRetail(u->heading);
+    costs=searchCosts(*u);
+}
+
+bool World::admitSearchRequest(int id,uint32_t now) {
+    Unit* u=unit(id);
+    if (!u || !u->alive()) return false;
+    // 4e54a0 stamps a pending request before execution, at least 15 ticks
+    // after the preceding admission. Suspended work bypasses this callback.
+    uint32_t stamp=u->routeStamp<0 ? 0u : uint32_t(u->routeStamp);
+    if (!retailAdmitNavigator(true,now,stamp)) return false;
+    u->routeStamp=std::bit_cast<int32_t>(stamp);
+    return true;
+}
+
 bool World::requestPath(Unit& u, float x, float z) {
     static const bool kPqLog = std::getenv("TAK_PATHLOG") != nullptr;
     if (!pathService_) return false;
     if (!u.type || u.type->canFly || u.type->isStructure()) return false;
+    const auto* mission = navigationMissionOrder(u);
+    auto target = mission && mission->missionTarget ? *mission->missionTarget :
+        std::pair{Fixed::fromFloat(x),Fixed::fromFloat(z)};
+    if (mission && mission->buildRectangle) {
+        // A partial route can end away from the build perimeter. Re-query the
+        // controller rather than treating that stored endpoint as the goal.
+        const auto [cx,cz]=mission->buildRectangle->navigationCell(
+            footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+        target={Fixed::fromInt(cx*16+u.type->footX*8),Fixed::fromInt(cz*16+u.type->footZ*8)};
+    }
     const NavGrid& g = navFor(u.type);
     if (g.empty()) return false;
-    const PathCell from{u.x.floorInt() / 16, u.z.floorInt() / 16};
-    const PathCell to{int(x) / 16, int(z) / 16};
-    if (pathDist(from, to) < 3) {
+    const PathCell from{footprintCell(u.x,u.type->footX),footprintCell(u.z,u.type->footZ)};
+    const PathCell to{footprintCell(target.first,u.type->footX),footprintCell(target.second,u.type->footZ)};
+    // Distance alone says nothing about intervening terrain or bodies. Even a
+    // two-cell move may need a detour; cancelling those requests also cancelled
+    // every retry after the mover hit the obstacle.
+    if (from.x == to.x && from.z == to.z) {
         if (kPqLog) std::printf("[pq] t=%u id=%d NEAR-CANCEL to=(%.0f,%.0f)\n",
                                 tickCounter_, u.id, x, z);
         paths_.cancel(u.id); return false;
@@ -1226,10 +1946,19 @@ bool World::requestPath(Unit& u, float x, float z) {
     // The 5x budget class is the PLAYER's, not the request's: retail flags player
     // slots (+0x24e7) and the scheduler weighs whole players. `commander` stood here
     // as our stand-in for that flag and is gone with it.
+    const int32_t tolerance = mission ? std::bit_cast<int32_t>(mission->missionRadius + 4u) : 4;
+    const bool newlyPending=!paths_.pending(u.id);
     paths_.request(u.id, from, to, g.width(), g.height(),
-                   Fixed::fromFloat(x), Fixed::fromFloat(z),
+                   target.first, target.second,
                    u.player, /*priority=*/(humanMask_ >> (unsigned(u.player) & 31)) & 1,
-                   /*tolCells=*/u.type->halfCellTicks > 0 ? 50 / u.type->halfCellTicks : 0);
+                   /*tolCells=*/u.type->halfCellTicks > 0 ? 50 / u.type->halfCellTicks : 0,
+                   portHeadingToRetail(u.heading),searchCosts(u),{u.type->footX/2,u.type->footZ/2},
+                   tolerance, mission ? mission->controller : 0,
+                   mission ? retailCircleRadiusSquared(tolerance) : 0,
+                   u.orders.empty() ? std::nullopt : u.orders[currentLeg(u.orders)].buildRectangle,
+                   mission && mission->park ? mission->park->ring : std::nullopt);
+    // 4e4f50 clears prior outcome bits only when first marking a request pending.
+    if (newlyPending) u.routeCrowded=u.routeTraffic=u.routeFailed=u.routeDetour=false;
     return true;
 }
 
@@ -1535,15 +2264,15 @@ bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float
     if (!cg || cg->empty()) return false;
     const int w = cg->w, h = cg->h;
     auto labelAt = [&](float wx, float wz) -> int32_t {
-        int cx = int(wx) / 16, cz = int(wz) / 16;
+        int cx = footprintCell(wx, foot), cz = footprintCell(wz, foot);
         if (cx < 0 || cz < 0 || cx >= w || cz >= h) return -1;
         return cg->componentAt(cx, cz);
     };
     // Nearest label to a point whose own cell has none: spiral out to the first cell
     // a body of this size fits in. Used for BOTH ends -- see below.
     auto nearestLabel = [&](float wx, float wz) -> int32_t {
-        int cx = std::clamp(int(wx) / 16, 0, w - 1);
-        int cz = std::clamp(int(wz) / 16, 0, h - 1);
+        int cx = std::clamp(footprintCell(wx, foot), 0, w - 1);
+        int cz = std::clamp(footprintCell(wz, foot), 0, h - 1);
         for (int r = 1; r < 24; ++r)
             for (int j = -r; j <= r; ++j)
                 for (int i = -r; i <= r; ++i) {
@@ -1675,7 +2404,7 @@ bool World::approachCell(const Unit& t, float x, float z, float& outX, float& ou
     const NavGrid& g = navFor(t.type);
     if (g.empty()) return false;
     const int foot = footCells(t.type);
-    const int cx = int(x) / 16, cz = int(z) / 16;
+    const int cx = footprintCell(x, foot), cz = footprintCell(z, foot);
     const int maxR = int(kUnloadRange) / 16;      // rings beyond this cannot be in range
     // The transport's own component. Its cell is normally occupiable, but a boat can be
     // mid-nudge or on a cell its footprint no longer fits; fall back to accepting any
@@ -1683,8 +2412,8 @@ bool World::approachCell(const Unit& t, float x, float z, float& outX, float& ou
     const CompGrid* cg = components(g, foot);
     int32_t here = -1;
     if (cg && !cg->empty()) {
-        const int tx = std::clamp(t.x.floorInt() / 16, 0, cg->w - 1);
-        const int tz = std::clamp(t.z.floorInt() / 16, 0, cg->h - 1);
+        const int tx = std::clamp(footprintCell(t.x, foot), 0, cg->w - 1);
+        const int tz = std::clamp(footprintCell(t.z, foot), 0, cg->h - 1);
         here = cg->componentAt(tx, tz);
     }
     auto reachable = [&](int nx, int nz) {
@@ -1699,7 +2428,7 @@ bool World::approachCell(const Unit& t, float x, float z, float& outX, float& ou
                 const int nx = cx + i, nz = cz + j;
                 if (!g.fits(nx, nz, foot)) continue;
                 if (!reachable(nx, nz)) continue;   // fits, but not from here
-                const float wx = float(nx) * 16 + 8, wz = float(nz) * 16 + 8;
+                const float wx = footprintWaypoint(nx, foot).toFloat(), wz = footprintWaypoint(nz, foot).toFloat();
                 // Ring distance is Chebyshev; the range test is Euclidean, so a corner
                 // of the last ring can still fall outside it. Check the real distance.
                 const float dx = wx - x, dz = wz - z;
@@ -1730,6 +2459,8 @@ void World::tickTransport(Unit& u, float dt) {
         // without the key still works rather than never completing a load.
         float tr = t->type->transportDist > 0 ? t->type->transportDist : 70.0f;
         if (dx * dx + dz * dz <= tr * tr) {
+            cancelPath(u);
+            refreshMovingSearchBody(u);
             u.inTransport = t->id;
             t->cargo.push_back(u.id);
             u.orders.clear();
@@ -1740,19 +2471,27 @@ void World::tickTransport(Unit& u, float dt) {
     // unload: sail close to the point, then place cargo on nearby land.
     float dx = (o.x - u.x).toFloat(), dz = (o.z - u.z).toFloat();
     if (dx * dx + dz * dz > kUnloadRange * kUnloadRange) return;   // keep sailing
-    int cx = o.x.floorInt() / 16, cz = o.z.floorInt() / 16;
+    rebuildOccupancy();
     for (int id : u.cargo) {
         Unit* c = unit(id);
         if (!c) continue;
+        const int foot = footCells(c->type);
+        const int cx = footprintCell(o.x, foot), cz = footprintCell(o.z, foot);
+        const NavGrid& landing = navFor(c->type);
         // Spiral out for a free ground cell.
         for (int r = 0; r < 12 && c->inTransport; ++r)
             for (int j = -r; j <= r && c->inTransport; ++j)
                 for (int i = -r; i <= r && c->inTransport; ++i) {
                     if (std::max(std::abs(i), std::abs(j)) != r) continue;
-                    if (!nav_.walkable(cx + i, cz + j)) continue;
-                    c->x = Fixed::fromInt((cx + i) * 16 + 8);   // exact cell centre
-                    c->z = Fixed::fromInt((cz + j) * 16 + 8);
+                    if (!landing.fits(cx + i, cz + j, foot)) continue;
+                    const Fixed x = footprintWaypoint(cx + i, foot);
+                    const Fixed z = footprintWaypoint(cz + j, foot);
+                    if (!cellFree(x, z, c->id, foot)) continue;
+                    c->x = x;
+                    c->z = z;
                     c->inTransport = 0;
+                    updateBodyIndex(*c);
+                    rebuildOccupancy();  // reserve before the next passenger lands
                 }
     }
     std::erase_if(u.cargo, [&](int id) {
@@ -1820,6 +2559,9 @@ void World::patrol(int unitId, float x, float z) {
     a.x = u->x; a.z = u->z; a.patrol = true; a.attackMove = true;
     Order b;
     b.x = Fixed::fromFloat(x); b.z = Fixed::fromFloat(z); b.patrol = true; b.attackMove = true;
+    // These are two complete legs, not intermediate points of one route.
+    // Without boundaries, currentLeg selects the return point at our feet.
+    a.goal = b.goal = true;
     u->orders.push_back(b);
     u->orders.push_back(a);
 }
@@ -1851,7 +2593,10 @@ void World::patrolTo(int unitId, float x, float z, bool queue) {
 void World::orderWait(int unitId, float seconds, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
-    if (!queue) u->orders.clear();
+    if (!queue) {
+        cancelPath(*u);
+        u->orders.clear();
+    }
     Order o;
     o.x = u->x;
     o.z = u->z;
@@ -1862,7 +2607,10 @@ void World::orderWait(int unitId, float seconds, bool queue) {
 void World::orderWaitAttack(int unitId, bool queue) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
-    if (!queue) u->orders.clear();
+    if (!queue) {
+        cancelPath(*u);
+        u->orders.clear();
+    }
     Order o;
     o.x = u->x;
     o.z = u->z;
@@ -1875,10 +2623,15 @@ void World::guard(int unitId, int targetId, bool queue) {
     Unit* t = unit(targetId);
     if (!u || !t || !u->alive() || !t->alive() || u->id == t->id) return;
     if (!u->type || !u->type->canMove || u->player != t->player) return;
-    if (!queue) u->orders.clear();
+    if (!queue) {
+        u->orders.clear();
+        cancelPath(*u);
+        u->routeStamp = -1;
+    }
     Order o;
     o.targetId = targetId;
     o.guard = true;
+    o.goal = true;
     o.x = t->x;
     o.z = t->z;
     u->orders.push_back(o);
@@ -1888,11 +2641,13 @@ void World::stop(int unitId) {
     Unit* u = unit(unitId);
     if (!u) return;
     u->orders.clear();
+    u->landing.reset(); u->standbyActive=false;
     cancelPath(*u);          // stop means stop: do not finish routing where it was going
     // Stop also halts a conjurer: cancel the infinite loop and drain the queue.
     u->repeatType = nullptr;
     u->buildQueue.clear();
     u->buildProgress = 0;
+    u->productionSiteId = 0;
 }
 
 void World::destroy(int unitId) {
@@ -1935,6 +2690,11 @@ void World::setStance(int unitId, int stance) {
     // this is the authoritative half, so a modified client cannot set a stance on
     // something retail would not offer it for.
     if (u->type && !u->type->canSetStance) return;
+    if (!u->orders.empty() && u->orders.front().autoTarget) {
+        // A stance change ends the autonomous engagement immediately. Explicit
+        // player attacks and the underlying queued movement orders remain valid.
+        dropLeg(*u);cancelPath(*u);u->routeStamp=-1;
+    }
     u->stance = std::clamp(stance, 0, 2);
     // Retail's Standing_UnitOrder setter (icd 0x5198a0) writes the move AND fire
     // fields together, and note what it CANNOT write: move 2, the unlimited-chase
@@ -1957,7 +2717,14 @@ void World::setCloak(int unitId, bool on) {
 void World::setActive(int unitId, bool on) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || !u->type->onOffable) return;
+    if (u->active==on) return;
     u->active = on;
+    if (u->type->gate) {
+        // 51e4d0 notifies the script immediately on an active-bit edge.
+        if (auto script=unitScripts_.find(u->id);script!=unitScripts_.end())
+            script->second.activated=on;
+        notifyUnitScript(*u,on ? "Activate" : "Deactivate");
+    }
 }
 
 void World::setSquad(int unitId, int squad) {
@@ -1978,7 +2745,11 @@ void World::attack(int unitId, int targetId, bool queue) {
         return;
     }
     if (u->type->weapon.damage <= 0) return;
-    if (!queue) u->orders.clear();
+    if (!queue) {
+        u->orders.clear();
+        cancelPath(*u);
+        u->routeStamp = -1;
+    }
     u->orders.push_back({Fixed(), Fixed(), targetId});
     u->orders.back().goal = true;                 // an attack order IS its own leg
     u->orders.back().issuedTick = tickCounter_;
@@ -2066,6 +2837,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         const Unit* from = fromId ? unit(fromId) : nullptr;
         hf.fromX = from ? from->x.toFloat() : hx;
         hf.fromZ = from ? from->z.toFloat() : hz;
+        hf.fromPlayer = fromPlayer;
         hits_.push_back(hf);
     }
     // Attacker's veteran attack multiplier boosts damage dealt (retail scales the
@@ -2428,15 +3200,10 @@ static bool meleeInRange(const UnitType* a, const UnitType* b, float dx, float d
            std::abs(dz) < 8.0f * float(a->footZ + b->footZ) + 8.0f;
 }
 
-void World::tickCombat(Unit& u, float dt) {
-    // One tick per tick. The referee always steps at exactly 1/kServerHz and game
-    // speed changes the CADENCE, not dt, so a tick is the sim's real unit of time
-    // and the countdown no longer depends on dt at all -- which is both retail's
-    // representation and one less float in the checksum.
-    for (auto& r : u.reloads)
-        if (r > 0) --r;
-    if (!u.active) return;   // onoffable unit powered down: no acquisition/fire
-
+int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
+    // VTOL landing also clears active. Only switchable units interpret it as
+    // power-off; ordinary landed flyers must still acquire and fire.
+    if (u.type->onOffable && !u.active) return false;
     // Auto-acquire: idle armed units engage the nearest enemy in reach;
     // attack-movers and patrollers interrupt their route to fight. A PASSIVE unit
     // (stance 2, hold fire) never auto-acquires -- it only fights when ordered.
@@ -2445,13 +3212,13 @@ void World::tickCombat(Unit& u, float dt) {
     // auto-acquire a nearby enemy and wander off to fight while it should build.
     bool busyBuilding = u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0 ||
                         hasQueuedWork(u) ||
-                        (u.type->canMove && !u.buildQueue.empty());   // mobile conjurer producing
+                        (!u.type->isStructure() && (!u.buildQueue.empty() || u.repeatType));
     // Auto-acquisition belongs to the FIRE order: only Fire At Will goes looking.
     // Hold Fire and Return Fire both wait to be handed a target (an explicit attack
     // order still works -- retail's hold-fire gate has a "forced" bypass for
     // exactly that).
     bool acquiring = !busyBuilding && u.fireState == 2 &&
-                     (u.orders.empty() ||
+                     (groundResponse || u.orders.empty() ||
                       (u.orders.front().targetId == 0 &&
                        (u.orders.front().attackMove || u.orders.front().patrol)) ||
                       u.orders.front().guard);
@@ -2475,7 +3242,7 @@ void World::tickCombat(Unit& u, float dt) {
     // Deterministic (id+tick, identical on every lockstep peer), so no desync. The
     // stride widens with the crowd (acqStride_, set at tick start) so massive battles
     // rescan less often -- the acquisition cost scales sub-linearly instead of O(n).
-    bool acqTurn = (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
+    bool acqTurn = missionPoll || (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
     if (acquiring && u.type->weapon.damage > 0 && acqTurn) {
         // The +90 is approach margin: room to notice something and walk to it. A
         // unit whose move order forbids leaving has no use for it -- it should
@@ -2511,13 +3278,13 @@ void World::tickCombat(Unit& u, float dt) {
         bool ranged = u.type->maxRange() > 64.0f && !u.type->canFly;
         int uFoot = std::max(u.type->footX, u.type->footZ) / 2;
         const bool lobber = u.type->lobs();   // shoots OVER obstacles: skip the LoS gate
+        uint64_t enemies=~uint64_t(0);
+        for (int player=0;player<numPlayers() && player<64;++player)
+            if (allied(player,u.player)) enemies&=~(uint64_t(1)<<player);
         forEachNear(u.x.toFloat(), u.z.toFloat(), ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
             if (!e.alive() || e.embarked() || allied(e.player, u.player) || !e.type) return;
             if (e.underConstruction) return;   // don't auto-react to a site still conjuring
-            if (!canTarget(e)) return;
-            float hx = (e.x - u.homeX).toFloat(), hz = (e.z - u.homeZ).toFloat();
-            if (hx * hx + hz * hz > leash2) return;   // outside the leash
             float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
             float d = dx * dx + dz * dz;
             // A scatter-firing unit still only considers what is in RANGE (retail
@@ -2525,6 +3292,11 @@ void World::tickCombat(Unit& u, float dt) {
             // prefers the nearest -- so the early-out on distance is skipped.
             if (!scatter && d >= bestD) return;
             if (d >= ar * ar) return;
+            float hx = (e.x - u.homeX).toFloat(), hz = (e.z - u.homeZ).toFloat();
+            if (hx * hx + hz * hz > leash2) return;   // outside the leash
+            // Range rejects most candidates. Damage/category lookup is pure,
+            // so defer it until these cheap geometric checks have passed.
+            if (!canTarget(e)) return;
             if (ranged && !e.type->canFly && !lobber &&
                 !nav_.losBetween(u.x.toFloat(), u.z.toFloat(), e.x.toFloat(), e.z.toFloat(), uFoot,
                                  std::max(e.type->footX, e.type->footZ) / 2))
@@ -2541,38 +3313,73 @@ void World::tickCombat(Unit& u, float dt) {
                         dmg = std::max(dmg, wp.damageVs(e.type));
                 if (dmg <= 0) return;
                 uint32_t n = uint32_t(float(0x7FFFFFFF) / dmg);
-                float score = float(fireRand(n)) / 2.0f + float(fireRand(n));
+                const auto firstRoll = fireRand(n);
+                const auto secondRoll = fireRand(n);
+                float score = float(firstRoll) / 2.0f + float(secondRoll);
                 if (score >= bestScore) return;
                 bestScore = score; best = e.id;
                 return;
             }
             bestD = d; best = e.id;
-        });
-        if (best) {
-            u.orders.insert(u.orders.begin(), {Fixed(), Fixed(), best});
-            u.orders.front().autoTarget = true;
-        }
+        },enemies);
+        return best;
     }
+    return false;
+}
+
+bool World::acquireTarget(Unit& u,bool missionPoll) {
+    const int target=findTarget(u,missionPoll);
+    if (!target) return false;
+    cancelPath(u); u.routeStamp=-1;
+    u.orders.insert(u.orders.begin(),{Fixed(),Fixed(),target});
+    u.orders.front().autoTarget=true; u.orders.front().goal=true;
+    return true;
+}
+
+void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
+    // One tick per tick. The referee always steps at exactly 1/kServerHz and game
+    // speed changes the CADENCE, not dt, so a tick is the sim's real unit of time
+    // and the countdown no longer depends on dt at all -- which is both retail's
+    // representation and one less float in the checksum.
+    for (auto& r : u.reloads)
+        if (r > 0) --r;
+    if (u.type->onOffable && !u.active) return;   // explicitly powered down
+
+    if (!u.standbyActive && !u.guardNoMoveActive) acquireTarget(u, false);
+    const auto canDamage = [&](const Unit& e) {
+        for (const auto& wp : u.type->weapons)
+            if (!(e.type->canFly && wp.noAir) && wp.damageVs(e.type) > 0.0f) return true;
+        return false;
+    };
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
 
     if (u.orders.front().guard) {
         Order& o = u.orders.front();
         Unit* t = unit(o.targetId);
         if (!t || !t->alive()) {
-            u.orders.erase(u.orders.begin());
+            dropLeg(u);
+            cancelPath(u);
+            u.routeStamp = -1;
             return;
         }
-        o.x = t->x;
-        o.z = t->z;
+        Order& end = u.orders[currentLeg(u.orders)];
+        end.x = t->x;
+        end.z = t->z;
         float dx = (t->x - u.x).toFloat(), dz = (t->z - u.z).toFloat();
-        if (dx * dx + dz * dz <= 70 * 70)
-            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
+        if (dx * dx + dz * dz <= 70 * 70) {
+            if (!u.type->canFly && !u.type->isStructure()) {
+                brakeGround(u);
+                groundMovementHandled=true;
+            } else u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+        }
         return;   // movement walks toward o when out of reach
     }
 
     Unit* target = unit(u.orders.front().targetId);
     if (!target || !target->alive()) {
-        u.orders.erase(u.orders.begin());
+        dropLeg(u);
+        cancelPath(u);
+        u.routeStamp = -1;
         return;
     }
     // Give up a target this unit can neither damage NOR capture, instead of
@@ -2583,7 +3390,9 @@ void World::tickCombat(Unit& u, float dt) {
     bool canConvert = u.type->canCapture && target->type &&
                       !target->type->cantBeCaptured && !allied(u.player, target->player);
     if (target->type && !canDamage(*target) && !canConvert) {
-        u.orders.erase(u.orders.begin());
+        dropLeg(u);
+        cancelPath(u);
+        u.routeStamp = -1;
         return;
     }
     float dx = (target->x - u.x).toFloat(), dz = (target->z - u.z).toFloat();
@@ -2649,32 +3458,47 @@ void World::tickCombat(Unit& u, float dt) {
     const bool mayChase = u.type->canMove &&
                           (u.moveState != 0 || !u.orders.front().autoTarget);
     if (!mayChase && dist > reach) {
-        u.orders.erase(u.orders.begin());
+        dropLeg(u);
+        cancelPath(u);
+        u.routeStamp = -1;
         return;
+    }
+    const bool hovering = u.type->canFly && (u.type->hoverAttack || (sel && sel->hoverAttack));
+    if (hovering) {
+        tickHoverAttack(u,*target,sel);
+        groundMovementHandled=true; // the flight controller already committed movement
+        dx=(target->x-u.x).toFloat(); dz=(target->z-u.z).toFloat();
+        dist=std::sqrt(dx*dx+dz*dz);
     }
     if ((sel && sel->melee) ? !adj
                             : (dist > reach * 0.95f || (!los && mayChase))) {
+        if (hovering) return;
         // Advance toward the target, steering around impassable terrain.
         if (u.repathLeft > 0) --u.repathLeft;
-        Order& o = u.orders.front();
+        Order& o = u.orders[currentLeg(u.orders)];
         o.x = target->x;
         o.z = target->z;
-        // A chase target moves, so there is nothing worth pre-computing: steer
-        // straight at it and let the background pathfinder deal with whatever is
-        // in the way. This used to run a full-grid A* every 0.7s behind a shared
-        // per-tick budget; the budget is gone, and so is the A*.
+        // Refresh the leg's destination, preserving its intermediate waypoints.
+        // The shared route service and retry cadence handle chases too.
         return;   // movement handled by the normal move logic
     }
-    // In range: stop and face the target. Retail brakes to a halt FIRST and only
-    // then pivots, at turninplacerate rather than the moving turn rate (icd
-    // 0x4d9b65), so a unit doesn't spin on the spot while it is still sliding.
-    u.speed = fxMax(Fixed(), u.speed - u.type->brake);
-    const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
+    // The attack controller stops navigation and supplies a facing target.
+    // Ground movement brakes and commits once; pivoting starts only at rest.
+    const Bam want = u.type->canFly ? fxAtan2(Fixed::fromFloat(dx),Fixed::fromFloat(dz))
+        : retailDirection(target->x-u.x,target->z-u.z);
     const int32_t diff = bamDiff(want, u.heading);
-    if (u.speed.toFloat() <= 0.0f) {
-        const int32_t maxTurn = u.type->turnInPlaceRate;
-        u.heading = u.heading + Bam(std::clamp(diff, -maxTurn, maxTurn));
-        u.turnReqBam = diff;   // pivot request -> TurnDirection anim (icd 0x4d9593)
+    if (!u.type->canFly && !u.type->isStructure()) {
+        brakeGround(u,want);
+        groundMovementHandled=true;
+    } else if (!hovering) {
+        u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+        if (u.speed==Fixed()) {
+            // Flyers use their flight turn rate while aiming too. Many have no
+            // ground turn-in-place rate and otherwise remain stuck off-axis.
+            const int32_t maxTurn=u.type->canFly ? u.type->turnRate : u.type->turnInPlaceRate;
+            u.heading=u.heading+Bam(std::clamp(diff,-maxTurn,maxTurn));
+            u.turnReqBam=diff;
+        }
     }
     // Fire a weapon when the target is in ITS [minrange, range] band, within its
     // aimtolerance, with a clear shot, and (unless noairweapon) legal against air.
@@ -2709,7 +3533,9 @@ void World::tickCombat(Unit& u, float dt) {
             target->hp < Fixed::fromFloat(target->type->maxHp * 0.25f)) {
             captureUnit(*target, u.player);
             u.captureProg = 0;
-            u.orders.erase(u.orders.begin());   // done with this one
+            dropLeg(u);
+            cancelPath(u);
+            u.routeStamp = -1;
         }
     }
 }
@@ -2736,12 +3562,14 @@ void World::captureUnit(Unit& t, int newPlayer) {
             players_[size_t(newPlayer)].unitCount++;
     }
     t.player = newPlayer;
+    gPlayersValid_=false;
     t.orders.clear();
     t.hp = fxMax(t.hp, Fixed::fromFloat(t.type->maxHp * 0.5f));
     t.lastHitBy = 0;
     t.squad = 0;             // no longer in its old owner's control group
     t.buildQueue.clear();    // and not still producing for them
     t.buildProgress = 0;
+    t.productionSiteId = 0;
 }
 
 // Stamp every PARKED ground unit into the occupancy layer. O(n), one cell each:
@@ -2774,6 +3602,10 @@ void World::blockCells(int cx, int cz, int w, int h, bool blocked) {
     navWater_.overlayChanged(x0, z0, rw, rh);
     navHover_.overlayChanged(x0, z0, rw, rh);
     for (auto& g : navClasses_) g.overlayChanged(x0, z0, rw, rh);
+    for (auto& plane : searchGrades_) {
+        refreshSearchRect(plane,x0,z0,rw,rh);
+        plane.navVersion=plane.nav->version();
+    }
 
     // A pure block can only split components, and a split is provable locally -- so most
     // building placements need not throw away a whole-map labelling that costs ~5.7ms to
@@ -2791,7 +3623,7 @@ void World::blockCells(int cx, int cz, int w, int h, bool blocked) {
 }
 
 void World::blockFoot(const UnitType& t, float x, float z, bool blocked) {
-    int cx = int(x) / 16 - t.footX / 2, cz = int(z) / 16 - t.footZ / 2;
+    int cx = footprintOrigin(x, t.footX), cz = footprintOrigin(z, t.footZ);
     if (t.yardMap.empty()) { blockCells(cx, cz, t.footX, t.footZ, blocked); return; }
     for (int j = 0; j < t.footZ; ++j)
         for (int i = 0; i < t.footX; ++i) {
@@ -2801,6 +3633,8 @@ void World::blockFoot(const UnitType& t, float x, float z, bool blocked) {
 }
 
 void World::buildNavClasses(const TypeRegistry& reg) {
+    paths_.clear();
+    searchGrades_.clear(); activeSearchGrade_=-1;
     navClasses_.clear();
     navIdx_.clear();
     if (heights_.empty() || terW_ <= 0) return;
@@ -2810,6 +3644,8 @@ void World::buildNavClasses(const TypeRegistry& reg) {
         NavGrid::Limits l;
         l.maxSlope = int(t.maxSlope);
         l.maxWaterSlope = int(t.maxWaterSlope);
+        l.badSlope=t.badSlope;l.badWaterSlope=t.badWaterSlope;
+        l.badMaxWaterDepth=t.badMaxWaterDepth;l.badMinWaterDepth=t.badMinWaterDepth;
         // Domain decides the sense of the water band, exactly as the three legacy
         // grids did: a ground unit may wade only so deep, a boat needs a minimum
         // depth to float, a hoverer ignores both.
@@ -2826,9 +3662,10 @@ void World::buildNavClasses(const TypeRegistry& reg) {
         return l;
     };
     auto key = [](const NavGrid::Limits& l) {
-        return std::make_tuple(l.maxSlope, l.maxWaterSlope, l.maxWaterDepth, l.minWaterDepth);
+        return std::make_tuple(l.maxSlope,l.maxWaterSlope,l.maxWaterDepth,l.minWaterDepth,
+                              l.badSlope,l.badWaterSlope,l.badMaxWaterDepth,l.badMinWaterDepth);
     };
-    std::map<std::tuple<int, int, int, int>, int> seen;
+    std::map<std::tuple<int,int,int,int,int,int,int,int>,int> seen;
     for (const auto& [id, t] : reg.types()) {
         if (t.canFly) continue;             // flyers ignore the ground entirely
         NavGrid::Limits l = tupleOf(t);
@@ -2845,97 +3682,394 @@ void World::buildNavClasses(const TypeRegistry& reg) {
     for (auto& g : navClasses_) { g.setObstacles(&obst_); g.setRoads(&roads_); }
 }
 
-// Does this body hold its cell against a search?
-//
-// STOPPED, and nothing else -- which is retail's grade: a body that is moving at all is
-// merely expensive to the search, and only a stopped one is impassable.
-//
-// A jam timer used to sit here too (jamT: "has this unit actually closed any distance
-// lately"), so a unit pressing against an obstruction turned solid after 1.5s and the
-// search could route ROUND the wedge. It was our invention, not retail -- the occupancy
-// rule beside it is RE'd to an address, this had no such citation -- and it was removed
-// 2026-09-15 on that ground. Measured cost, so nobody has to re-derive it: crowdbench
-// arrival is UNCHANGED at 100% in all five scenarios; opposing columns resolve slower
-// (t50 53.5s -> 65.5s) and ask more searches (424 -> 622). The case it really propped up
-// was two columns meeting PERFECTLY head-on, which now wedges outright -- and wedging is
-// what retail does there (docs/retail-engine.md: "fluid local movement that occasionally
-// wedges"). Do not reintroduce it to make that case green.
+// Parked bodies take precedence when importing an already-overlapping world.
 bool World::unitHoldsCell(const Unit& u) const {
     return u.speed == Fixed();
 }
 
-int World::cellScore(const UnitType* t, int cx, int cz, int selfId) const {
-    const NavGrid& g = navFor(t);
-    // SINGLE CELL, not the footprint. Retail's map and its live query grade each
-    // cell by that cell's own terrain and occupant (the start-cell check at 0x41472e
-    // scores one cell through the same 0x4139d0 query as the march). Sweeping the
-    // querying unit's footprint over the grid -- which is what stood here -- is a
-    // stricter convolved score retail does not compute, and it made two bodies that
-    // had interpenetrated (legal, via the same-way rule) unable to SEARCH their way
-    // apart: each one's start footprint overlapped the other's stamp, the start
-    // graded blocked (our 0x414733 port), every re-ask failed instantly, and the
-    // pair wedged for minutes. Retail's coarser per-cell grading is what lets them
-    // route around each other; the footprint's clearance is the corner rule's and
-    // the mover's business, not the scorer's.
-    if (!g.empty() && !g.walkable(cx, cz)) return kCellImpassable;
-    if (occW_ > 0) {
-        // RETAIL'S GRADES, units included (icd 0x509020, confirmed against the second
-        // implementation at 0x404ff9): a PARKED body grades 0 -- the same as impassable
-        // terrain -- and a body under way grades 1. Both are below kCellThreshold, so
-        // the search refuses either; the 1 exists so a moving body still ranks above a
-        // wall wherever grades are compared rather than thresholded.
-        //
-        // This is what makes routes bend AROUND crowds: retail's tracer searches on a
-        // rating map that carries exactly these values (navigator +0x348, read at
-        // 0x413a67), so its search sees bodies. Ours graded a parked body 4 -- equal to
-        // the threshold, i.e. never refused -- and ignored moving ones entirely, which
-        // is why a route through a standing army cost nothing and units piled into
-        // each other.
-        // The grades the tracer actually scores with are the LIVE QUERY's, not the
-        // map's: 0x4139d0 -> 0x413c80 -> 0x4db640, whose unit half (0x4db767) grades a
-        // body 2 (blocked) unless all three of retail's pass-through conditions hold --
-        // under way, not slower than us, heading within 90 degrees -- in which case it
-        // grades 5. Both raters that FILL the map return 0/1 for parked/moving (run
-        // under emulation, tools/re/emupath.py: empty 6, parked 0, moving 1 regardless
-        // of heading), so the same-way rule provably lives in the query, not the map.
-        // 2 and 0 and 1 are all below kCellThreshold -- the search refuses each the
-        // same way -- but the VALUES are kept exact because the tracer marks the one
-        // grade it can pass through traffic on (5, kScore5), and that mark is what
-        // retail's goal-crowding logic reads (0x414563).
-        const Unit* self = unit(selfId);
-        if (cx >= 0 && cz >= 0 && cx < occW_ && cz < occH_) {
-            const int32_t o = occ_[size_t(cz) * size_t(occW_) + size_t(cx)];
-            if (o != 0 && o != selfId) {
-                const Unit* u = unit(o);
-                if (u && u->alive()) {
-                    if (self && u->speed > Fixed() && u->speed >= self->speed &&
-                        std::abs(bamDiff(u->heading, self->heading)) <= kBamQuarterV)
-                        return kCellSameWay;       // passable traffic, marked
-                    return kCellUnitBlocked;
+bool World::canFollowTraffic(const Unit& self, const Unit& other) const {
+    if (!self.type || other.speed <= Fixed() || other.speed < self.speed ||
+        std::abs(int(portHeadingToRetail(other.heading)) - int(portHeadingToRetail(self.heading))) > kBamQuarterV)
+        return false;
+    // 0x4db77d..0x4db7ac: compare against BOTH our current speed and 3/4
+    // of our terrain-adjusted base speed (0x421ae0). Without the latter,
+    // two slowed units pressing into a wall become passable to one another.
+    Fixed base = self.baseSpeed;
+    if (self.groundTerrainFlags&0x800) base=base*self.type->roadMult;
+    else if (self.groundTerrainFlags&0x1000) base=base*self.type->waterMult;
+    return other.speed >= base * Fixed::raw(0xc000);
+}
+
+void World::setSearchCell(SearchGradePlane& plane,size_t index,uint8_t value) {
+    const auto word=[&](uint8_t grade) -> uint64_t {
+        if (!grade) return 0;
+        uint64_t v=(uint64_t(index)<<4)|grade;
+        v=(v^(v>>30))*0xbf58476d1ce4e5b9ull;
+        v=(v^(v>>27))*0x94d049bb133111ebull;
+        return v^(v>>31);
+    };
+    plane.checksum^=word(plane.cells[index])^word(value);
+    plane.cells[index]=value;
+}
+
+bool World::searchGradeChecksumsValid() const {
+    for (const auto& plane:searchGrades_) {
+        uint64_t checksum=0;
+        for (size_t index=0;index<plane.cells.size();++index) {
+            const uint8_t grade=plane.cells[index];
+            if (!grade) continue;
+            uint64_t value=(uint64_t(index)<<4)|grade;
+            value=(value^(value>>30))*0xbf58476d1ce4e5b9ull;
+            value=(value^(value>>27))*0x94d049bb133111ebull;
+            checksum^=value^(value>>31);
+        }
+        if (checksum!=plane.checksum) return false;
+    }
+    return true;
+}
+
+int World::mapFeatureGrade(int cx,int cz) const {
+    const auto& cell=mapPlacementCells_[size_t(cz)*hW_+cx];
+    uint16_t index=cell.feature;
+    int ox=cx,oz=cz;
+    if (index==0xfffe) {
+        ox-=cell.backX;oz-=cell.backZ;
+        index=mapPlacementCells_[size_t(oz)*hW_+ox].feature;
+        if (index>=0xfffa) index=0xffff;
+    }
+    if (index==0xffff) return 7;
+    if (index>=mapPlacementTypes_.size()) return 0;
+    const auto& type=mapPlacementTypes_[index];
+    return type.blocking ? (type.clearable ? 1 : 0) : 7;
+}
+
+void World::rebuildBodyIndex() const {
+    bodyTilesW_=(hW_+7)/8; bodyTilesH_=(hH_+7)/8;
+    bodyTiles_.resize(size_t(bodyTilesW_)*bodyTilesH_);
+    for (auto& bucket:bodyTiles_) bucket.clear();
+    bodyTileBounds_.assign(units_.size(),{-1,-1,-1,-1});
+    bodyFootprints_.resize(units_.size());
+    bodyIndexValid_=true;
+    for (const auto& u:units_) updateBodyIndex(u);
+}
+
+void World::updateBodyIndex(const Unit& u) const {
+    if (!bodyIndexEnabled_ || !bodyIndexValid_ || !u.type) return;
+    const size_t index=size_t(&u-units_.data());
+    if (index>=bodyTileBounds_.size()) { bodyIndexValid_=false;return; }
+    const int x=footprintOrigin(u.x,u.type->footX),z=footprintOrigin(u.z,u.type->footZ);
+    // Keep exact cell bounds even when movement stays in the same buckets.
+    bodyFootprints_[index]={x,z,x+u.type->footX,z+u.type->footZ};
+    const std::array<int,4> bounds={std::clamp(x/8,0,bodyTilesW_),std::clamp(z/8,0,bodyTilesH_),
+        std::clamp((x+u.type->footX+7)/8,0,bodyTilesW_),
+        std::clamp((z+u.type->footZ+7)/8,0,bodyTilesH_)};
+    if (bounds==bodyTileBounds_[index]) return;
+    bodyTileBounds_[index]=bounds;
+    // Leave old memberships until the next tick. They are harmless false
+    // positives; stamping retains the last eligible unit in vector order.
+    for (int tz=bounds[1];tz<bounds[3];++tz)
+        for (int tx=bounds[0];tx<bounds[2];++tx)
+            bodyTiles_[size_t(tz)*bodyTilesW_+tx].push_back(int(index));
+}
+
+World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h) const {
+    SearchBodyRect result{x,z,w,h,std::vector<const Unit*>(size_t(w)*h,nullptr)};
+    auto stamp=[&](const Unit& u,const std::array<int,4>* bounds=nullptr) {
+        if (!u.alive() || u.embarked() || !u.type || (u.type->canFly && u.flightGroundMode!=1)) return;
+        const int ux=bounds ? (*bounds)[0] : footprintOrigin(u.x,u.type->footX);
+        const int uz=bounds ? (*bounds)[1] : footprintOrigin(u.z,u.type->footZ);
+        const int x0=std::max(x,ux),z0=std::max(z,uz);
+        const int x1=std::min(x+w,ux+u.type->footX),z1=std::min(z+h,uz+u.type->footZ);
+        for (int cz=z0;cz<z1;++cz) for (int cx=x0;cx<x1;++cx) {
+            if (u.type->isStructure() && !u.type->yardMap.empty()) {
+                const char yard=u.type->yardMap.at(size_t(cz-uz)*u.type->footX+cx-ux);
+                if (yard=='.') continue;
+                if (yard=='c' || yard=='C') {
+                    const auto script=unitScripts_.find(u.id);
+                    if (script!=unitScripts_.end() && script->second.yardOpen) continue;
                 }
             }
+            // Bucket visits need not follow unit order. Retain the last unit
+            // in the original vector, exactly as the full scan does.
+            auto& occupant=result.cells[size_t(cz-z)*w+cx-x];
+            if (!occupant || occupant<&u) occupant=&u;
+        }
+    };
+    if (bodyIndexEnabled_ && hW_>0 && hH_>0 && x>=0 && z>=0 && x+w<=hW_ && z+h<=hH_) {
+        if (!bodyIndexValid_) rebuildBodyIndex();
+        for (int tz=z/8;tz<(z+h+7)/8;++tz)
+            for (int tx=x/8;tx<(x+w+7)/8;++tx) {
+                const auto& bucket=bodyTiles_[size_t(tz)*bodyTilesW_+tx];
+                for (int index:bucket) {
+                    const auto& bounds=bodyFootprints_[size_t(index)];
+                    // Reject misses from compact bounds before touching the
+                    // larger unit/type records. Full-scan verification below
+                    // deliberately derives its bounds from live coordinates.
+                    // These pure comparisons can execute together instead of
+                    // taking up to four dependent early-exit branches.
+                    if ((bounds[0]>=x+w) | (bounds[1]>=z+h) |
+                        (bounds[2]<=x) | (bounds[3]<=z)) continue;
+                    stamp(units_[size_t(index)],&bounds);
+                }
+            }
+#ifndef NDEBUG
+        static const bool verify=std::getenv("TAK_VERIFY_BODY_INDEX")!=nullptr;
+        if (verify) {
+            const auto indexed=result.cells;
+            std::fill(result.cells.begin(),result.cells.end(),nullptr);
+            for (const auto& u:units_) stamp(u);
+            if (result.cells!=indexed) throw std::runtime_error("body spatial index differs from full occupancy scan");
+        }
+#endif
+    } else for (const auto& u:units_) stamp(u);
+    return result;
+}
+
+bool World::gatePassageAt(int x,int z) const {
+    for (const auto& gate:units_) {
+        if (!gate.alive() || gate.embarked() || !gate.type || !gate.type->gate) continue;
+        const auto& type=*gate.type;
+        const int dx=x-footprintOrigin(gate.x,type.footX),dz=z-footprintOrigin(gate.z,type.footZ);
+        if (dx<0 || dz<0 || dx>=type.footX || dz>=type.footZ || type.yardMap.empty()) continue;
+        const char yard=type.yardMap.at(size_t(dz)*type.footX+dx);
+        if (yard=='c' || yard=='C') return true;
+    }
+    return false;
+}
+
+bool World::gateWantsOpen(const Unit& gate) const {
+    const int x=footprintOrigin(gate.x,gate.type->footX),z=footprintOrigin(gate.z,gate.type->footZ);
+    const auto bodies=searchBodyRect(x-1,z-1,gate.type->footX+2,gate.type->footZ+2);
+    for (const auto* body:bodies.cells) {
+        if (!body || body==&gate || body->player!=gate.player || body->type->isStructure()) continue;
+        if (body->speed.v) return true;
+        const int bx=footprintOrigin(body->x,body->type->footX),bz=footprintOrigin(body->z,body->type->footZ);
+        for (int dz=0;dz<body->type->footZ;++dz)
+            for (int dx=0;dx<body->type->footX;++dx)
+                if (gatePassageAt(bx+dx,bz+dz)) return true;
+    }
+    return false;
+}
+
+void World::tickAutomaticGates() {
+    // Gate policy runs at simulation cadence. The skirmish AI scheduler is
+    // intentionally independent of retail's planner; the proximity rule is not.
+    for (auto& gate:units_) {
+        if (!gate.alive() || gate.underConstruction || !gate.type || !gate.type->gate ||
+            !players_[size_t(gate.player)].automaticGates) continue;
+        setActive(gate.id,gateWantsOpen(gate));
+    }
+}
+
+int World::rawSearchGrade(const SearchGradePlane& plane,int x,int z,int w,int h,
+                          const SearchBodyRect* bodies) const {
+    const auto& nav=*plane.nav;
+    // The raw rectangle routine excludes the final map row/column, even
+    // when the footprint would otherwise fit there (508918..508937).
+    if (x<0 || z<0 || x+w>=nav.width() || z+h>=nav.height()) return 0;
+    const auto localBodies=bodies ? SearchBodyRect{} : searchBodyRect(x,z,w,h);
+    if (!bodies) bodies=&localBodies;
+    const bool hasMapCells=mapPlacementCells_.size()==size_t(hW_)*hH_ && !mapPlacementCells_.empty();
+    int grade=7;
+    for (int dz=0;dz<h;++dz) for (int dx=0;dx<w;++dx) {
+        const int cx=x+dx,cz=z+dz;
+        if (hasMapCells) {
+            const int featureGrade=mapFeatureGrade(cx,cz);
+            if (!featureGrade) return 0;
+            grade=std::min(grade,featureGrade);
+        }
+        const int terrain=nav.terrainGrade(cx,cz,!hasMapCells);
+        if (!terrain) return 0;
+        grade=std::min(grade,terrain);
+        const Unit* body=bodies->cells[size_t(cz-bodies->z)*bodies->width+cx-bodies->x];
+        if (body) {
+            if (body->type->gate && !body->type->yardMap.empty()) {
+                const int bx=cx-footprintOrigin(body->x,body->type->footX);
+                const int bz=cz-footprintOrigin(body->z,body->type->footZ);
+                const char yard=body->type->yardMap.at(size_t(bz)*body->type->footX+bx);
+                // 506416 marks only c/C gate passages; 508b54 grades them
+                // specially before the ordinary stationary-body rejection.
+                if (yard=='c' || yard=='C') { grade=std::min(grade,3);continue; }
+            }
+            grade=std::min(grade,retailCachedBodyGrade(!body->type->isStructure(),
+                body->id==plane.preparation.requestSlot,body->groundGradeTick,
+                plane.preparation.recent,plane.preparation.stale));
+            if (!grade) return 0;
         }
     }
-    if (!g.empty() && g.roadAt(cx, cz)) return kCellRoad;
-    return kCellGround;
+    return grade;
+}
+
+void World::refreshSearchRect(SearchGradePlane& plane,int x,int z,int w,int h) {
+    const int width=plane.nav->width(),height=plane.nav->height();
+    const int x0=std::max(0,x-plane.footX),z0=std::max(0,z-plane.footZ);
+    const int x1=std::min(width,x+w+1),z1=std::min(height,z+h+1);
+    if (x1<=x0 || z1<=z0) return;
+    const auto bodies=searchBodyRect(x0-1,z0-1,x1-x0+plane.footX+2,z1-z0+plane.footZ+2);
+    for (int cz=z0;cz<z1;++cz) for (int cx=x0;cx<x1;++cx) {
+        const int grade=retailCachedFootprintGrade(cx,cz,plane.footX,plane.footZ,
+            [&](int qx,int qz,int qw,int qh) { return rawSearchGrade(plane,qx,qz,qw,qh,&bodies); });
+        const size_t index=size_t(cz)*width+cx;
+        setSearchCell(plane,index,uint8_t((plane.cells[index]&8)|grade));
+    }
+}
+
+void World::ageSearchBody(SearchGradePlane& plane,const RetailGradeBody& body,bool stale) {
+    RetailGradeContext c;
+    c.width=plane.nav->width(); c.height=plane.nav->height();
+    c.footX=plane.footX; c.footZ=plane.footZ;
+    // The native routine expects a body overlapping its cache. Imported or
+    // off-map bodies must not turn a clipped-empty border into an array read.
+    if (body.x+body.footX+1<=0 || body.z+body.footZ+1<=0 ||
+        body.x-c.footX>=c.width || body.z-c.footZ>=c.height) return;
+    retailAgeGradeRect(c,body.x,body.z,body.footX,body.footZ,stale,
+        [&](int x,int z) {
+            if (x<0 || z<0 || x>=c.width || z>=c.height) return uint8_t(0);
+            return plane.cells[size_t(z)*c.width+x];
+        },
+        [&](int x,int z,int grade) {
+            if (x<0 || z<0 || x>=c.width || z>=c.height) return;
+            const size_t index=size_t(z)*c.width+x;
+            setSearchCell(plane,index,uint8_t((plane.cells[index]&8)|grade));
+        });
+}
+
+void World::prepareSearchGrade(int id,bool lastRetry) {
+    const Unit* requester=unit(id);
+    if (!requester || !requester->type) return;
+    const auto* nav=&navFor(requester->type);
+    int index=0;
+    for (;index<int(searchGrades_.size());++index) {
+        const auto& plane=searchGrades_[size_t(index)];
+        if (plane.nav==nav && plane.footX==requester->type->footX &&
+            plane.footZ==requester->type->footZ) break;
+    }
+    if (index==int(searchGrades_.size())) {
+        SearchGradePlane plane;
+        plane.nav=nav; plane.footX=requester->type->footX; plane.footZ=requester->type->footZ;
+        searchGrades_.push_back(std::move(plane));
+    }
+    auto& plane=searchGrades_[size_t(index)];
+    if (plane.cells.empty() || plane.navVersion!=nav->version()) {
+        plane.preparation={}; plane.checksum=0;
+        plane.cells.assign(size_t(nav->width())*nav->height(),0);
+        refreshSearchRect(plane,0,0,nav->width(),nav->height());
+        plane.navVersion=nav->version();
+    }
+    activeSearchGrade_=index;
+    std::vector<RetailGradeBody> bodies;
+    RetailGradeBody request;
+    for (const auto& u:units_) {
+        if (!u.type || !u.alive() || u.embarked() || (u.type->canFly && u.flightGroundMode!=1)) continue;
+        RetailGradeBody body{u.id,0x1000001u,u.groundGradeTick,!u.type->isStructure(),
+            footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
+            u.type->footX,u.type->footZ};
+        bodies.push_back(body);
+        if (u.id==id) request=body;
+    }
+    std::sort(bodies.begin(),bodies.end(),[](const auto& a,const auto& b) { return a.slot<b.slot; });
+    plane.preparation.prepare(tickCounter_,request,bodies,lastRetry,
+        [&](const auto& body) { refreshSearchRect(plane,body.x,body.z,body.footX,body.footZ); },
+        [&](const auto& body,bool stale) { ageSearchBody(plane,body,stale); });
+}
+
+void World::finishSearchGrade(int id) {
+    if (activeSearchGrade_<0) return;
+    auto& plane=searchGrades_[size_t(activeSearchGrade_)];
+    RetailGradeBody body;
+    const Unit* u=unit(id);
+    if (u && u->alive() && u->type) body={u->id,0x1000001u,u->groundGradeTick,true,
+        footprintOrigin(u->x,u->type->footX),footprintOrigin(u->z,u->type->footZ),
+        u->type->footX,u->type->footZ};
+    plane.preparation.finish(u ? &body : nullptr,
+        [&](const auto& b,bool stale) { ageSearchBody(plane,b,stale); });
+    activeSearchGrade_=-1;
+}
+
+int World::searchGrade(int id,int cx,int cz,int retry,PathCell start) const {
+    const Unit* u=unit(id);
+    if (!u || !u->type || activeSearchGrade_<0) return 0;
+    const auto& plane=searchGrades_[size_t(activeSearchGrade_)];
+    RetailGradeContext c;
+    c.width=plane.nav->width(); c.height=plane.nav->height();
+    c.footX=plane.footX; c.footZ=plane.footZ;
+    c.startX=start.x-plane.footX/2; c.startZ=start.z-plane.footZ/2;
+    c.player=u->player; c.retry=retry;
+    c.specialBlockerProbe=players_[size_t(u->player)].automaticGates;
+    return retailSearchGrade(c,cx-plane.footX/2,cz-plane.footZ/2,
+        [&](int x,int z) {
+            return retailSearchVisible(c,hW_,hH_,x,z,[&](int vx,int vz) {
+                return navigationExplored_[size_t(vz)*(hW_/2)+vx];
+            });
+        },
+        [&](int x,int z) { return plane.cells[size_t(z)*c.width+x]; },
+        [&](int x,int z) { return cellScore(u->type,x+plane.footX/2,z+plane.footZ/2,id); },
+        [&](int x,int z) {
+            const auto bodies=searchBodyRect(x,z,1,1);
+            const auto* body=bodies.cells[0];
+            return body && body->type->gate && gatePassageAt(x,z) ? body->player : -1;
+        });
+}
+
+void World::refreshMovingSearchBody(Unit& u) {
+    const auto old=u.groundGradeTick;
+    u.groundGradeTick=tickCounter_;
+    for (auto& plane:searchGrades_)
+        if (old<plane.preparation.recent && plane.preparation.requestSlot!=u.id)
+            refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
+                              u.type->footX,u.type->footZ);
+}
+
+int World::cellScore(const UnitType* t, int cx, int cz, int selfId) const {
+    return cellScoreWithBodies(t,cx,cz,selfId,nullptr);
+}
+
+int World::cellScoreWithBodies(const UnitType* t,int cx,int cz,int selfId,
+                                const SearchBodyRect* snapshot) const {
+    const NavGrid& g=navFor(t);
+    const Unit* self=unit(selfId);
+    const int x0=cx-t->footX/2,z0=cz-t->footZ/2;
+    if (self && t->canFly && self->flightGroundMode==2) return 7;
+    if (x0<0 || z0<0 || x0+t->footX>=g.width() || z0+t->footZ>=g.height()) return -1;
+    const bool hasMapCells=mapPlacementCells_.size()==size_t(hW_)*hH_ && !mapPlacementCells_.empty();
+    int score=7;
+    for (int z=z0;z<z0+t->footZ;++z) for (int x=x0;x<x0+t->footX;++x) {
+        // A feature can be considered for clearing by search, but the live
+        // footprint cannot stand on it (507fb0); all terrain is checked first.
+        if (hasMapCells && mapFeatureGrade(x,z)<7) return -1;
+        const int terrain=g.liveTerrainGrade(x,z,!hasMapCells);
+        if (terrain<0) return -1;
+        score=std::min(score,terrain);
+    }
+    const auto bodies=snapshot ? SearchBodyRect{} : searchBodyRect(x0,z0,t->footX,t->footZ);
+    if (!snapshot) snapshot=&bodies;
+    // The retail scan stops at the first failing body in ascending ID order.
+    // Find that body directly: traffic checks are pure, and repeated footprint
+    // cells cannot change the minimum failing ID.
+    const Unit* firstBlocker=nullptr;
+    int blockedScore=score;
+    for (int z=z0;z<z0+t->footZ;++z) for (int x=x0;x<x0+t->footX;++x) {
+        const auto* body=snapshot->cells[size_t(z-snapshot->z)*snapshot->width+x-snapshot->x];
+        if (!body || body->id==selfId || (firstBlocker && body->id>=firstBlocker->id)) continue;
+        if (body->type->isStructure()) {
+            firstBlocker=body; blockedScore=0;
+        } else if (!self || !canFollowTraffic(*self,*body)) {
+            firstBlocker=body; blockedScore=2;
+        }
+    }
+    return blockedScore;
 }
 
 void World::rebuildOccupancy() {
     occW_ = terW_;
     occH_ = terH_;
-    if (occW_ <= 0 || occH_ <= 0) { occ_.clear(); occW_ = occH_ = 0; return; }
+    if (occW_ <= 0 || occH_ <= 0) {
+        occ_.clear(); occW_ = occH_ = 0; return;
+    }
     occ_.assign(size_t(occW_) * size_t(occH_), 0);
-    // Every mobile body is stamped, moving or parked, matching retail's "exclusive
-    // per-cell occupancy layer" (080d288's RE).
-    //
-    // MOVING BODIES ARE STAMPED SECOND -- i.e. a parked body wins a contested cell.
-    // A cell holds exactly one id, so whoever stamps last is the only one anybody
-    // can see there, and the mover now gates on PARKED bodies specifically (a
-    // moving one is merely expensive, per retail's graded area score). Let a mover
-    // overwrite a parked stamp and the parked body becomes invisible to the test
-    // that exists to respect it -- units would walk through precisely the bodies
-    // that are standing still, and only while someone happened to be passing.
-    // Two passes rather than one, in fixed unit order, so this stays deterministic.
+    // Rebuild in deterministic order, moving bodies first and parked ones last.
+    // Subsequent steps update ownership immediately; two units cannot reserve
+    // the same destination using a stale snapshot of this grid.
     for (int pass = 0; pass < 2; ++pass) {
         const bool wantParked = (pass == 1);
         for (const auto& u : units_) {
@@ -2944,13 +4078,14 @@ void World::rebuildOccupancy() {
             if (u.underConstruction) continue;
             if (unitHoldsCell(u) != wantParked) continue;
             // Stamp the whole footprint, centre-anchored to match NavGrid::fits.
-            int f = footCells(u.type);
-            int cx = u.x.floorInt() / 16 - f / 2, cz = u.z.floorInt() / 16 - f / 2;
-            for (int j = 0; j < f; ++j)
-                for (int i = 0; i < f; ++i) {
+            const int fx=u.type->footX,fz=u.type->footZ;
+            int cx = footprintOrigin(u.x, fx), cz = footprintOrigin(u.z, fz);
+            for (int j = 0; j < fz; ++j)
+                for (int i = 0; i < fx; ++i) {
                     int x = cx + i, z = cz + j;
                     if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
-                    occ_[size_t(z) * size_t(occW_) + size_t(x)] = u.id;
+                    const size_t cell = size_t(z) * size_t(occW_) + size_t(x);
+                    occ_[cell] = u.id;
                 }
         }
     }
@@ -2976,6 +4111,8 @@ void World::rebuildGrid() {
     gW_ = int((maxx - minx) / gCell_) + 3;
     gH_ = int((maxz - minz) / gCell_) + 3;
     gHead_.assign(size_t(gW_) * gH_, -1);
+    gPlayers_.assign(gHead_.size(),0);
+    gPlayersValid_=true;
     gNext_.assign(units_.size(), -1);
     for (size_t i = 0; i < units_.size(); ++i) {
         const Unit& u = units_[i];
@@ -2985,6 +4122,8 @@ void World::rebuildGrid() {
         int c = cz * gW_ + cx;
         gNext_[i] = gHead_[size_t(c)];
         gHead_[size_t(c)] = int(i);
+        if (unsigned(u.player)<64) gPlayers_[size_t(c)]|=uint64_t(1)<<u.player;
+        else gPlayersValid_=false; // unrepresentable owners require the full traversal
     }
 }
 
@@ -3002,6 +4141,12 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
             if (d < best) { best = d; spot = int(i); }
         }
         if (spot < 0) return false;   // not on any deposit
+        // Proximity alone can accept an offset footprint that earns no mana.
+        // Match the sacred-site coverage used by the economy calculation.
+        if (type->sacredIncome && !sacredSites_.empty() &&
+            sacredIncomeMultiplier(footprintOrigin(x,type->footX),
+                                   footprintOrigin(z,type->footZ),type->footX,type->footZ)<=0)
+            return false;
         float sx = manaSpots_[size_t(spot)].first, sz = manaSpots_[size_t(spot)].second;
         // One lodestone per deposit. Some Sacred Stones register as two adjacent
         // spots (~22-40px apart); a 44px exclusion merges those into one deposit
@@ -3015,7 +4160,7 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
     // Check the domain-appropriate grid so water units (Kraken) require water
     // and land units require land, rather than always testing the ground grid.
     const NavGrid& grid = navFor(type);
-    int cx = int(x) / 16 - type->footX / 2, cz = int(z) / 16 - type->footZ / 2;
+    int cx = footprintOrigin(x, type->footX), cz = footprintOrigin(z, type->footZ);
     // Water structures (Veruna's Sea Fort / Floating Tower) encode a shoreline
     // footprint in their yardmap: 'w' cells are the slipway that MUST sit over water
     // (where the ships launch), solid cells ('o'/'c'/'C') the land-side base, '.' is
@@ -3073,7 +4218,7 @@ bool World::clearableForPlacement(const UnitType* type, float x, float z,
     if (canPlace(type, x, z)) return true;            // nothing in the way already
     const NavGrid& grid = navFor(type);
     if (grid.empty()) return false;
-    int cx = int(x) / 16 - type->footX / 2, cz = int(z) / 16 - type->footZ / 2;
+    int cx = footprintOrigin(x, type->footX), cz = footprintOrigin(z, type->footZ);
     // Which live features could be cleared, indexed by the cells they cover.
     auto featureAt = [&](int gx, int gz) -> const Feature* {
         for (const auto& f : features_) {
@@ -3122,7 +4267,9 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
     if (atTypeCap(b->player, type)) return 0;   // totalallowed: already fielding one
     if (!canPlace(type, x, z)) return 0;
     int8_t bsquad = b->squad;   // capture before spawn may realloc units_
-    int id = spawn(type, x, z, 3.14159f, b->player);
+    // Preserve retail birth orientation. Factory scripts query this heading to
+    // counter-rotate their build pads into the fixed yard where appropriate.
+    int id = spawn(type, x, z, std::nullopt, b->player);
     Unit* site = unit(id);
     site->underConstruction = true;
     site->beingBuilt = true;   // its builder owns it this tick (no instant decay)
@@ -3137,6 +4284,22 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
         blockFoot(*type, x, z, true);
     }
     b = unit(builderId);   // spawn may have reallocated units_
+    if (players_[size_t(b->player)].retailResources) {
+        initializeRetailSite(*site, builderId);
+        RetailConstructionJob job;
+        job.target=id;job.workerTime=b->type->workerTime;job.working=true;
+        for (const auto& entry:players_[size_t(b->player)].buildCache->entries)
+            if (entry.type==b->type && entry.construction) job.workerTime=entry.construction->workerTime;
+        job.mission.stage=2;
+        const uint16_t target=uint16_t(retailDirection(b->x-site->x,b->z-site->z).v);
+        job.turnHeading=target;
+        b->retailBuild=job;b->constructionHolding=true;
+        if (auto script=unitScripts_.find(builderId);script!=unitScripts_.end()) {
+            const auto& file=*b->type->script();
+            script->second.state.startArguments(file,file.scriptIndex("StartBuilding"),
+                {uint16_t(target-portHeadingToRetail(b->heading)),1,0,0},2);
+        }
+    }
     b->buildSiteId = id;
     b->buildStuckT = 0; b->buildStuckD = INT32_MAX;   // fresh job: reset the reach watchdog
     if (approach == Approach::Replace)
@@ -3146,7 +4309,8 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
 
 void World::queueBuild(int builderId, const UnitType* type, float x, float z, bool queue) {
     Unit* b = unit(builderId);
-    if (!b || !type) return;
+    if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
+        b->underConstruction || !type) return;
     if (!canPlace(type, x, z)) return;
     // ONE queue. A build is an order like any other and lives in Unit::orders, in
     // the position the player clicked it -- which is what makes "move here, build
@@ -3154,16 +4318,85 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
     // Retail works the same way: its order list holds MobileBuild orders alongside
     // the moves, and the order-line iterator (icd 0x4d6340) dispatches per kind.
     // A non-queued build replaces the lot, exactly as a non-queued move does.
-    if (!queue) b->orders.clear();
+    if (!queue) {
+        cancelPath(*b);
+        cancelBuilds(builderId);
+        b->orders.clear();
+    }
+    b->orders.push_back(makeBuildOrder(*b,type,Fixed::fromFloat(x),Fixed::fromFloat(z)));
+}
+
+Order World::makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const {
+    const Unit* b=&builder;
     Order o;
-    // Park it where the builder must stand to work, so arriving at this order
-    // means "in position to build" rather than "standing on the site".
-    o.x = Fixed::fromFloat(x);
-    o.z = Fixed::fromFloat(z + float(type->footZ) * 8 + 24);
+    o.buildX=footprintWaypoint(footprintCell(x,type->footX),type->footX);
+    o.buildZ=footprintWaypoint(footprintCell(z,type->footZ),type->footZ);
+    const int sx=footprintOrigin(o.buildX,type->footX),sz=footprintOrigin(o.buildZ,type->footZ);
+    o.buildRectangle=RetailRectGoal{sx-b->type->footX,sx+type->footX,
+                                  sz-b->type->footZ,sz+type->footZ};
+    const auto [cx,cz]=o.buildRectangle->navigationCell(
+        footprintOrigin(b->x,b->type->footX),footprintOrigin(b->z,b->type->footZ));
+    o.x=Fixed::fromInt(cx*16+b->type->footX*8);
+    o.z=Fixed::fromInt(cz*16+b->type->footZ*8);
     o.goal = true;
     o.issuedTick = tickCounter_;
     o.buildType = type;
-    b->orders.push_back(o);
+    o.mission.flags=0x80508u; // MobileBuild definition with a supplied point.
+    return o;
+}
+
+bool World::prepareBuildApproach(Unit& u) {
+    if (u.orders.empty()) return false;
+    auto& goal=u.orders[currentLeg(u.orders)];
+    if (goal.buildRectangle && goal.mission.stage==0) {
+        // A queued build computes its approach when it becomes active,
+        // after earlier movement/build orders have changed our position.
+        const auto [x,z]=goal.buildRectangle->navigationCell(
+            footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+        goal.x=Fixed::fromInt(x*16+u.type->footX*8);
+        goal.z=Fixed::fromInt(z*16+u.type->footZ*8);
+        if (u.type->canFly) {
+            // Flying construction works at builddistance from the site centre
+            // (retail 41ef00), rather than at the ground footprint perimeter.
+            // Choose the initial hover point on the builder's side of the site.
+            const uint16_t angle=uint16_t(retailDirection(u.x-goal.buildX,u.z-goal.buildZ).v);
+            const int32_t radius=Fixed::fromInt(u.type->buildDist>0 ? u.type->buildDist : 40).v;
+            goal.x=goal.buildX+Fixed::raw(retailScaledSine(angle,radius));
+            goal.z=goal.buildZ+Fixed::raw(retailScaledCosine(angle,radius));
+            goal.flightGoal=RetailFlightGoal{{goal.x.v,0,goal.z.v},0x60,angle,0};
+        }
+        goal.segmentX=Fixed::fromInt(u.x.floorInt());
+        goal.segmentZ=Fixed::fromInt(u.z.floorInt());
+        goal.hasSegment=true;
+        goal.mission.stage=1;
+        goal.mission.waitMask=u.type->canFly ? 0x100 : 0x700;
+        if (!u.type->canFly) {
+            goal.controller=++nextMovementController_;
+            goal.navigationExhausted=goal.navigationConsumed=false;
+            goal.mission.pending&=~0x3700u;
+            if (u.routeStamp<0 || uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
+        }
+        // Replacing the build controller preserves navigator cadence.
+        // Its previous search stamp still governs this tick's retry.
+        cancelPath(u);
+        requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+    }
+    if (!goal.buildRectangle) return false;
+    if (u.type->canFly) return (goal.mission.pending & goal.mission.waitMask & 0x100)!=0;
+    const uint32_t events=(u.missionEvents | goal.mission.pending) & goal.mission.waitMask;
+    if (!events) return false;
+    // 4d8450 consumes the approach events before MobileBuild enters placement.
+    u.missionEvents&=~events;goal.mission.pending&=~events;goal.mission.waitMask=0;
+    if (events&0x200) {
+        if (!retailBuildWithinReach(u.x,u.z,goal.buildX,goal.buildZ,
+                int16_t(u.type->footX),int16_t(u.type->footZ),
+                int16_t(goal.buildType->footX),int16_t(goal.buildType->footZ),uint16_t(u.type->buildDist))) {
+            dropLeg(u);
+            tickGroundMission(u);
+            return prepareBuildApproach(u);
+        }
+    }
+    return true;
 }
 
 void World::cancelBuilds(int builderId) {
@@ -3210,14 +4443,142 @@ void World::assist(int builderId, int siteId, bool queue) {
     order(builderId, site->x.toFloat(), site->z.toFloat() + float(site->type->footZ) * 8 + 24, queue);
 }
 
+float World::sacredIncomeMultiplier(int x,int z,int fx,int fz) const {
+    // 51d68e..51d7b6 scans x then z. Count positive sacred-site cells and
+    // compare with the last encountered site's full footprint.
+    const SacredSite* last=nullptr;
+    int covered=0;
+    for (int dx=0;dx<fx;++dx) for (int dz=0;dz<fz;++dz) {
+        for (auto it=sacredSites_.rbegin();it!=sacredSites_.rend();++it) {
+            if (x+dx<it->x || x+dx>=it->x+it->fx || z+dz<it->z || z+dz>=it->z+it->fz) continue;
+            if (it->multiplier>0) { ++covered;last=&*it; }
+            break;
+        }
+    }
+    return last && covered>=last->fx*last->fz ? last->multiplier : 0;
+}
+
+// Corpse visuals/reclaim targets stay on the dead unit record. Navigation uses
+// the feature's own footprint, and ownership prevents an old corpse retiring a
+// newer feature placed at the same anchor.
+void World::forgetCorpseAt(int cx,int cz) {
+    for (auto it=corpseFootprints_.begin();it!=corpseFootprints_.end();) {
+        const auto footprint=it->second;
+        if (footprint.x!=cx || footprint.z!=cz) { ++it;continue; }
+        const auto& type=featTypes_.at(size_t(footprint.type));
+        if (auto* corpse=unit(it->first)) {
+            corpse->deadFor=kRetiredTicks;
+            corpse->corpseUntil=0;
+            corpse->corpseBlocks=false;
+        }
+        it=corpseFootprints_.erase(it);
+        if (type.blocking) blockCells(cx,cz,type.fx,type.fz,false);
+    }
+}
+
+bool World::placeCorpse(Unit& corpse,int type) {
+    if (type<0 || corpseFootprints_.contains(corpse.id)) return false;
+    const auto& definition=featTypes_.at(size_t(type));
+    // 512ee0: origin belongs to the original unit, not the new feature. The
+    // corpse offset moves this anchor; a differently sized wreck keeps it.
+    const int cx=footprintOrigin(corpse.x,corpse.type->footX)+corpse.type->corpseAdjX;
+    const int cz=footprintOrigin(corpse.z,corpse.type->footZ)+corpse.type->corpseAdjZ;
+    Feature feature;
+    feature.id=cz*terW_+cx;feature.type=type;
+    feature.fx=definition.fx;feature.fz=definition.fz;feature.blocks=definition.blocking;
+    feature.x=Fixed::fromInt(cx*16+definition.fx*8);
+    feature.z=Fixed::fromInt(cz*16+definition.fz*8);
+    if (!placeMapFeature(feature)) return false;
+    corpseFootprints_[corpse.id]={cx,cz,type};
+    corpse.corpseBlocks=definition.blocking;
+    if (definition.blocking) blockCells(cx,cz,definition.fx,definition.fz,true);
+    corpse.x+=Fixed::fromInt(corpse.type->corpseAdjX*16);
+    corpse.z+=Fixed::fromInt(corpse.type->corpseAdjZ*16);
+    return true;
+}
+
+void World::retireCorpse(Unit& corpse) {
+    const auto found=corpseFootprints_.find(corpse.id);
+    if (found!=corpseFootprints_.end()) {
+        const auto footprint=found->second;
+        corpseFootprints_.erase(found);
+        const auto& type=featTypes_.at(size_t(footprint.type));
+        removeMapFeature(footprint.x,footprint.z);
+        if (type.blocking) blockCells(footprint.x,footprint.z,type.fx,type.fz,false);
+    }
+    corpse.deadFor=kRetiredTicks;
+    corpse.corpseUntil=0;
+    corpse.corpseBlocks=false;
+}
+
+void World::removeMapFeature(int cx,int cz) {
+    if (mapPlacementCells_.empty() || cx<0 || cz<0 || cx>=hW_ || cz>=hH_) return;
+    const auto index=mapPlacementCells_[size_t(cz)*hW_+cx].feature;
+    if (index>=mapPlacementTypes_.size()) return;
+    const auto& type=mapPlacementTypes_[index];
+    forgetCorpseAt(cx,cz);
+    retailMapRemove(cx,cz,type,[&](int x,int z)->RetailMapFeatureCell& {
+        return mapPlacementCells_.at(size_t(z)*hW_+x);
+    });
+    for (auto& plane:searchGrades_) refreshSearchRect(plane,cx,cz,type.footX,type.footZ);
+}
+
+bool World::placeMapFeature(const Feature& f) {
+    if (mapPlacementCells_.empty()) return true;
+    RetailMapFeatureType type;
+    type.footX=f.fx;type.footZ=f.fz;type.blocking=f.blocks;type.clearable=true;
+    if (f.type>=0) {
+        const auto& definition=featTypes_.at(size_t(f.type));
+        type.name=definition.name;type.indestructible=definition.indestructible;
+        type.clearable=!type.indestructible;
+        std::vector<int> pending{f.type};
+        std::vector<bool> seen(featTypes_.size(),false);
+        while (type.clearable && !pending.empty()) {
+            const int i=pending.back();pending.pop_back();
+            if (i<0 || seen.at(size_t(i))) continue;
+            seen[size_t(i)]=true;
+            const auto& stage=featTypes_[size_t(i)];
+            if (stage.blocking && stage.indestructible) { type.clearable=false;break; }
+            pending.push_back(stage.deadType);pending.push_back(stage.burntType);
+        }
+    } else type.name="untyped feature";
+    auto found=std::find_if(mapPlacementTypes_.begin(),mapPlacementTypes_.end(),[&](const auto& t) {
+        return t.name==type.name && t.footX==type.footX && t.footZ==type.footZ &&
+            t.blocking==type.blocking && t.indestructible==type.indestructible && t.clearable==type.clearable;
+    });
+    const size_t index=size_t(found-mapPlacementTypes_.begin());
+    if (found==mapPlacementTypes_.end()) {
+        if (index>=0xfffa) throw std::runtime_error("too many map feature types");
+        mapPlacementTypes_.push_back(std::move(type));
+    }
+    const int cx=footprintOrigin(f.x,f.fx),cz=footprintOrigin(f.z,f.fz);
+    const bool placed=retailMapInstall(hW_,hH_,cx,cz,uint16_t(index),mapPlacementTypes_,[&](int x,int z)->RetailMapFeatureCell& {
+            return mapPlacementCells_.at(size_t(z)*hW_+x);
+        },[&](int x,int z,uint16_t previous) {
+            forgetCorpseAt(x,z);
+            const auto& oldType=mapPlacementTypes_[previous];
+            if (oldType.blocking) blockCells(x,z,oldType.footX,oldType.footZ,false);
+            for (auto& plane:searchGrades_) refreshSearchRect(plane,x,z,oldType.footX,oldType.footZ);
+            auto it=featureIdx_.find(z*hW_+x);
+            if (it!=featureIdx_.end()) features_[it->second].alive=false;
+            bumpFeatGen();
+        });
+    // Feature grades can change without changing the legacy obstacle bit (for
+    // example, clearable -> indestructible). Refresh the actual search cache.
+    if (placed) for (auto& plane:searchGrades_) refreshSearchRect(plane,cx,cz,f.fx,f.fz);
+    return placed;
+}
+
 void World::addFeature(int id, float x, float z, float manaYield, float work,
-                       int fx, int fz, bool blocks, int type) {
-    featureIdx_[id] = features_.size();
+                       int fx, int fz, bool blocks, int type, bool placeOnMap) {
     Feature f{id, Fixed::fromFloat(x), Fixed::fromFloat(z), fx, fz, manaYield,
               Fixed::fromFloat(std::max(work, 1.0f)),
               Fixed::fromFloat(std::max(work, 1.0f)), blocks, true};
     f.type = type;
+    if (placeOnMap && !placeMapFeature(f)) return;
+    featureIdx_[id] = features_.size();
     features_.push_back(f);
+    if (placeOnMap && blocks) blockCells(footprintOrigin(f.x,fx),footprintOrigin(f.z,fz),fx,fz,true);
     bumpFeatGen();   // a new feature needs a visual instance
 }
 
@@ -3254,14 +4615,20 @@ void World::swapFeature(Feature& f, int newType) {
     bumpFeatGen();   // burnt-stage swap (or removal): art changes
     f.burn = 0;
     f.dmg = 0;
+    const int cx = f.x.floorInt() / 16 - f.fx / 2;
+    const int cz = f.z.floorInt() / 16 - f.fz / 2;
     if (f.blocks)   // old stage's footprint frees first
-        blockCells(f.x.floorInt() / 16 - f.fx / 2, f.z.floorInt() / 16 - f.fz / 2,
-                   f.fx, f.fz, false);
+        blockCells(cx, cz, f.fx, f.fz, false);
+    removeMapFeature(cx,cz);
     if (newType < 0) { f.alive = false; f.blocks = false; f.type = -1; return; }
     const FeatType& nt = featTypes_[size_t(newType)];
     f.type = newType;
     f.fx = nt.fx; f.fz = nt.fz;
+    f.x = Fixed::fromInt(cx * 16 + f.fx * 8);
+    f.z = Fixed::fromInt(cz * 16 + f.fz * 8);
     f.blocks = nt.blocking;
+    f.alive=placeMapFeature(f);
+    if (!f.alive) { f.blocks=false;return; }
     if (f.blocks)
         blockCells(f.x.floorInt() / 16 - f.fx / 2, f.z.floorInt() / 16 - f.fz / 2,
                    f.fx, f.fz, true);
@@ -3296,7 +4663,7 @@ void World::tickBurning() {
         // rand(100) < its own spreadchance. (Retail's downwind spark phase moves
         // <1 cell at shipped wind speeds -- omitted.)
         if (f.spreadIn > 0 && --f.spreadIn == 0) {
-            int cx = f.x.floorInt() / 16, cz = f.z.floorInt() / 16;
+            int cx = f.x.floorInt() / 16 - f.fx / 2, cz = f.z.floorInt() / 16 - f.fz / 2;
             for (int dz = -3; dz <= 3; ++dz)
                 for (int dx = -3; dx <= 3; ++dx) {
                     if (dx == 0 && dz == 0) continue;
@@ -3353,7 +4720,10 @@ void World::reclaim(int builderId, int featureId, bool queue) {
     // drained from inside tickReclaim, so unless a reclaim was ALREADY running
     // nothing started it: an area reclaim queued behind a move or a build sat
     // there for the rest of the game.
-    if (!queue) b->orders.clear();
+    if (!queue) {
+        cancelPath(*b);
+        b->orders.clear();
+    }
     Order o;
     o.x = Fixed::fromFloat(tx); o.z = Fixed::fromFloat(tz);
     o.goal = true;
@@ -3397,16 +4767,12 @@ void World::tickReclaim(Unit& b, float dt) {
         // Proportional drip against the INITIAL work (= max(energy,60), set at
         // death). Shipped corpse defs all have energy 0, so this grants nothing.
         if (cd && cd->energy > 0 && c->corpseWork > Fixed())
-            players_[size_t(b.player)].mana +=
+            players_[size_t(b.player)].creditMana(
                 double(cd->energy) * double(fxMin(step, c->corpseWork).toFloat()) /
-                double(std::max(cd->energy, 60.0f));
+                double(std::max(cd->energy, 60.0f)) * double(players_[size_t(b.player)].manaMult));
         c->corpseWork -= step;
         if (c->corpseWork <= Fixed()) {
-            c->deadFor = kRetiredTicks;   // consumed
-            if (c->corpseBlocks) {
-                c->corpseBlocks = false;
-                blockFoot(*c->type, c->x.toFloat(), c->z.toFloat(), false);
-            }
+            retireCorpse(*c);
             static const bool kRecLog = std::getenv("TAK_BURNLOG") != nullptr;
             if (kRecLog)
                 std::fprintf(stderr, "corpse reclaimed: %s at %.0f,%.0f\n",
@@ -3437,14 +4803,15 @@ void World::tickReclaim(Unit& b, float dt) {
     // Per TICK, like the corpse drain: kReclaimRate is work/second.
     const Fixed d = fxMin(f.work, Fixed::fromFloat(kReclaimRate / kTick));
     f.work -= d;
-    players_[size_t(b.player)].mana +=
+    players_[size_t(b.player)].creditMana(
         // DIVIDE IN DOUBLE. `(d / f.workFull)` in fixed point truncates the
         // proportion every tick, and the remainder is never paid: a shipped
         // 525-energy feature returned about 524.66 over a full reclaim.
         double(f.manaYield) * (double(d.toFloat()) / double(f.workFull.toFloat()))
-        * double(players_[size_t(b.player)].manaMult);   // drip (income-cheat scaled)
+        * double(players_[size_t(b.player)].manaMult));   // drip (income-cheat scaled)
     if (f.work <= Fixed()) {
         f.alive = false;
+        removeMapFeature(footprintOrigin(f.x,f.fx),footprintOrigin(f.z,f.fz));
         bumpFeatGen();   // reclaimed away: stop drawing it
         if (f.blocks) {   // free the ground cells it occupied (setupMatch blocked nav_)
             blockCells(f.x.floorInt() / 16 - f.fx / 2, f.z.floorInt() / 16 - f.fz / 2, f.fx, f.fz, false);
@@ -3461,7 +4828,10 @@ void World::repair(int builderId, int targetId, bool queue) {
         !allied(t->player, b->player) || t->hp >= Fixed::fromFloat(t->type->maxHp))
         return;
     // An order, in sequence, like construction and reclaim.
-    if (!queue) b->orders.clear();
+    if (!queue) {
+        cancelPath(*b);
+        b->orders.clear();
+    }
     Order o;
     o.x = t->x; o.z = t->z;
     o.goal = true;
@@ -3510,7 +4880,7 @@ void World::tickRepair(Unit& b, float dt) {
     Player& tm = players_[size_t(b.player)];
     float cost = t->type->buildCost * dt / std::max(total, 0.01f);
     if (tm.mana < cost) return;   // can't afford: pause the repair
-    tm.mana -= cost;
+    tm.debitMana(cost);
     t->hp = fxMin(Fixed::fromFloat(t->type->maxHp),
                   t->hp + Fixed::fromFloat(t->type->maxHp * dt / std::max(total, 0.01f)));
     if (t->hp >= Fixed::fromFloat(t->type->maxHp)) endRepair();   // mended: on to the next order
@@ -3545,6 +4915,247 @@ bool World::headbangActive(int player) const {
 // the order blocks the queue, which is exactly what keeps the builder in place.
 static void popBuildOrder(Unit& b) {
     if (!b.orders.empty() && b.orders.front().buildType) b.orders.erase(b.orders.begin());
+}
+
+static void turnBuilderToSite(Unit& b, const Unit& site) {
+    const Bam want=retailHeadingToPort(uint16_t(retailDirection(b.x-site.x,b.z-site.z).v));
+    const int32_t diff=bamDiff(want,b.heading);
+    b.heading=b.heading+Bam(std::clamp(diff,-b.type->turnInPlaceRate,b.type->turnInPlaceRate));
+    b.turnReqBam=diff;
+}
+
+void World::emitConstruction(Unit& u,bool rising) {
+    if (!u.constructionEmitter) return;
+    const int x=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
+    const int z=std::clamp(u.z.floorInt()/16,0,std::max(0,terH_-1));
+    const int32_t y=u.type->canFly ? u.flightY.v :
+        int32_t(heights_.empty() ? 0 : heights_[size_t(z)*terW_+x])*65536;
+    unsigned draw=0;
+    u.constructionEmitter->emit(1,y,rising,[&]{return crtRand(draw++ ? 0x4f14a2u : 0x4f1467u);});
+}
+
+void World::completeRetailConstruction(Unit& builder,Unit& site) {
+    const auto& owner=players_[size_t(builder.player)];
+    if (!owner.buildCache) throw std::runtime_error("construction completion catalogue absent");
+    const RetailBuildCacheEntry *builderType=nullptr,*siteType=nullptr;
+    for (const auto& entry:owner.buildCache->entries) {
+        if (entry.type==builder.type) builderType=&entry;
+        if (entry.type==site.type) siteType=&entry;
+    }
+    if (!builderType || !siteType) throw std::runtime_error("construction completion type absent");
+    if (site.embarked() || (siteType->inputs.flags&0x1040000u))
+        throw std::runtime_error("special construction completion attachment/activation/death host is not ported");
+    RetailConstructionCompletion input;
+    input.builderPresent=true;input.builderFlags=builder.alive() ? 0x1000000u : 0;
+    input.builderTypeFlags=builderType->inputs.flags;input.builderSecondaryFlags=builderType->inputs.secondaryFlags;
+    input.siteTypeFlags=siteType->inputs.flags;input.sameUnit=builder.id==site.id;
+    input.allied=allied(builder.player,site.player);input.deathType=uint8_t(site.deathType);
+    // Retail's owner-role notification publishes completion on its wire.
+    // Our lockstep peers already execute this transition from shared commands.
+    if (!retailCompleteConstruction(site.retailSite->progress,input).applied)
+        throw std::runtime_error("construction completion rejected by original eligibility rules");
+    site.underConstruction=false;site.beingBuilt=false;
+    site.standbyAllowed=true;site.guardNoMoveAllowed=true;
+    // Completion publishes a solid mobile body before later movers/searches.
+    // Cached grades must see it even if its stationary mover never refreshes.
+    if (!site.type->canFly && !site.type->isStructure()) {
+        const int foot=footCells(site.type);
+        const int x=footprintOrigin(site.x,foot),z=footprintOrigin(site.z,foot);
+        for (int dz=0;dz<foot;++dz) for (int dx=0;dx<foot;++dx)
+            if (x+dx>=0 && z+dz>=0 && x+dx<occW_ && z+dz<occH_)
+                occ_[size_t(z+dz)*occW_+x+dx]=site.id;
+        for (auto& plane:searchGrades_) refreshSearchRect(plane,x,z,foot,foot);
+    }
+}
+
+void World::tickRetailGetBuilt(Unit& site) {
+    struct Host {
+        World& w;Unit& u;
+        bool enabled() const { return u.alive() && !u.incapacitated(); }
+        RetailMissionState* head() { return u.retailSite && u.retailSite->mission ? &*u.retailSite->mission : nullptr; }
+        bool hasNext(const RetailMissionState&) const { return false; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState&) { u.retailSite->mission.reset(); }
+        void rotate(RetailMissionState&) { throw std::runtime_error("unsupported GetBuilt rotation"); }
+        void clear() { u.retailSite->mission.reset(); }
+        int handle(RetailMissionState& m,uint32_t events) {
+            auto& state=*u.retailSite;
+            if (state.progress.remaining==0) {
+                auto* builder=w.unit(state.builder);
+                if (!u.type->isStructure() && builder && builder->alive() && builder->type->isStructure()) {
+                    if (u.type->canFly || !builder->rally.empty())
+                        throw std::runtime_error("factory flight/rally completion host is not ported");
+                    Order order;order.goal=order.groundMission=true;order.park.emplace();
+                    order.park->target=builder->id;
+                    order.mission.flags=0x200u; // PARK definition retains its live target.
+                    const uint32_t first=random(6),second=random(3);
+                    order.park->padding=(first+second+3)*16;
+                    u.orders.push_back(order);
+                }
+                return 5;
+            }
+            return retailGetBuiltWaiting(m,w.tickCounter_,events,[&] {
+                // Fresh construction has no active weapon controller. Existing
+                // unfinished imports are already in the waiting stages.
+                if (!u.underConstruction) throw std::runtime_error("GetBuilt weapon host requires unfinished unit");
+            },[&] {
+                auto& owner=w.players_[size_t(u.player)];
+                if (!owner.retailResources) throw std::runtime_error("GetBuilt resource state absent");
+                state.progress.events=u.missionEvents;
+                const auto result=retailConstructionWork(state.progress,state.type,*owner.retailResources,-0.5f);
+                owner.mana=owner.retailResources->stored;u.hp=Fixed::fromInt(state.progress.hp);
+                u.missionEvents=state.progress.events;
+                if (result==RetailConstructionResult::Removed)
+                    throw std::runtime_error("restored unconjure removal notifications are not ported");
+            });
+        }
+    } host{*this,site};
+    retailDispatchMissions(tickCounter_,site.missionEvents,host);
+    site.retailSite->progress.events=site.missionEvents;
+}
+
+void World::tickRetailConstruction(Unit& builder) {
+    if (!builder.alive() || builder.incapacitated() || builder.underConstruction || builder.embarked()) return;
+    auto& job=*builder.retailBuild;
+    if (job.turnHeading) {
+        if (portHeadingToRetail(builder.heading)!=*job.turnHeading) {
+            const Bam want=retailHeadingToPort(*job.turnHeading);
+            const int32_t diff=bamDiff(want,builder.heading);
+            builder.heading=builder.heading+Bam(std::clamp(diff,-builder.type->turnInPlaceRate,builder.type->turnInPlaceRate));
+            builder.turnReqBam=diff;builder.speed=Fixed();
+            return;
+        }
+        job.turnHeading.reset();
+    }
+    struct Host {
+        World& w;Unit& b;
+        bool enabled() const { return b.alive() && !b.incapacitated() && !b.underConstruction && !b.embarked(); }
+        RetailMissionState* head() { return b.retailBuild ? &b.retailBuild->mission : nullptr; }
+        bool hasNext(const RetailMissionState&) const { return false; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState&) { clear(); }
+        void rotate(RetailMissionState&) { throw std::runtime_error("unsupported construction rotation"); }
+        void clear() {
+            if (b.retailBuild && b.retailBuild->working) w.notifyUnitScript(b,"StopBuilding");
+            b.retailBuild.reset();b.buildSiteId=0;b.constructionHolding=false;b.standbyAllowed=true;
+        }
+        int handle(RetailMissionState& m,uint32_t events) {
+            auto& job=*b.retailBuild;
+            auto* site=w.unit(job.target);
+            if (events&2) return 5;
+            if ((events&8) || !site || !site->alive()) return 8;
+            if (job.flying && m.stage==5) {
+                if ((job.flyingOwnerFlags&0xcu) && random(50)!=0) return 1;
+                m.stage=4;return 4;
+            }
+            if (job.flying && m.stage==4) {
+                int angle=int(retailDirection(b.x-site->x,b.z-site->z).v);
+                angle-=int(random(0x2492));angle+=int(random(0x2492));
+                const int inward=int(random(8));
+                const int outward=int(random(8));
+                const int32_t radius=std::bit_cast<int32_t>(uint32_t(int(job.flyingBuildDistance)-inward+outward)<<16);
+                RetailFlightGoal goal;
+                goal.point={std::bit_cast<int32_t>(uint32_t(site->x.v)+uint32_t(retailScaledSine(uint16_t(angle),radius))),
+                    0,std::bit_cast<int32_t>(uint32_t(site->z.v)+uint32_t(retailScaledCosine(uint16_t(angle),radius)))};
+                goal.flags=0x60;goal.heading=uint16_t(angle);goal.radius=0;
+                if (b.orders.empty()) throw std::runtime_error("flying construction order missing");
+                auto& order=b.orders.front();order.flightGoal=goal;
+                order.x=Fixed::raw(goal.point.x);order.z=Fixed::raw(goal.point.z);
+                m.pending&=~0x3700u;
+                m.stage=6;return 4;
+            }
+            if (job.flying && m.stage!=6)
+                throw std::runtime_error("unsupported flying construction stage");
+            if (m.stage==4) {
+                if (job.working) { job.working=false;w.notifyUnitScript(b,"StopBuilding"); }
+                return 5; // imported active jobs have exactly one build remaining
+            }
+            if (m.stage==2) {
+                const auto script=w.unitScripts_.find(b.id);
+                if (script!=w.unitScripts_.end() && script->second.ready) return 1;
+                m.waitMask=0xe;return 2;
+            }
+            if ((!job.flying && m.stage!=3) || !site->retailSite)
+                throw std::runtime_error("unsupported restored construction stage/site");
+            auto& owner=w.players_[size_t(b.player)];
+            if (!owner.retailResources) throw std::runtime_error("construction resource state absent");
+            auto& state=*site->retailSite;
+            state.progress.events=site->missionEvents;
+            const auto result=retailConstructionWork(state.progress,state.type,*owner.retailResources,
+                float(double(job.workerTime)*0.03333333));
+            owner.mana=owner.retailResources->stored;
+            site->hp=Fixed::fromInt(state.progress.hp);
+            site->missionEvents|=state.progress.events;
+            if (result==RetailConstructionResult::Completed) w.completeRetailConstruction(b,*site);
+            if (result==RetailConstructionResult::Worked || result==RetailConstructionResult::Completed) {
+                w.emitConstruction(b,false);w.emitConstruction(*site,true);
+            }
+            if (!job.flying) job.activityDeadline=std::max(job.activityDeadline,w.tickCounter_+300u);
+            if (state.progress.remaining==0) return 1;
+            m.sleep(w.tickCounter_,1);m.waitMask|=0xa;
+            if (job.flying) { m.stage=5;return 4; }
+            return 2;
+        }
+    } host{*this,builder};
+    retailDispatchMissions(tickCounter_,builder.missionEvents,host);
+}
+
+void World::tickHoverAttack(Unit& u,const Unit& target,const Weapon* weapon) {
+    auto& order=u.orders.front();
+    const int distance=weapon && weapon->hoverAttackDistance ? weapon->hoverAttackDistance : u.type->hoverAttackDistance;
+    const int altitude=weapon && weapon->hoverAttackAltitude ? weapon->hoverAttackAltitude : u.type->hoverAttackAltitude;
+    if (!order.flightGoal || !order.hoverAttackRefresh || tickCounter_>=order.hoverAttackRefresh) {
+        order.flightGoal=retailHoverAttackGoal({u.x.v,u.flightY.v,u.z.v},
+            {target.x.v,0,target.z.v},distance,[&](int n) {return pathRand(uint32_t(n));});
+        order.hoverAttackRefresh=tickCounter_+15+pathRand(15);
+    } else {
+        // The retail target controller follows its entity between mission wakes.
+        order.flightGoal->point.x+=(target.x-order.hoverAttackTargetX).v;
+        order.flightGoal->point.z+=(target.z-order.hoverAttackTargetZ).v;
+    }
+    order.hoverAttackTargetX=target.x;order.hoverAttackTargetZ=target.z;
+    auto& goal=*order.flightGoal;
+    int ground=seaLevel_;
+    if (!heights_.empty()) ground=std::max(ground,retailTerrainHeight(goal.point.x,goal.point.z,
+        terW_,terH_,[&](int x,int z) {return heights_[size_t(z)*terW_+x];}));
+    goal.point.y=Fixed::fromInt(std::min(511,ground+altitude)).v;
+    goal.heading=uint16_t(retailDirection(u.x-target.x,u.z-target.z).v);
+    order.x=Fixed::raw(goal.point.x);order.z=Fixed::raw(goal.point.z);
+    tickFlightMovement(u,true);
+    notifyFlightOccupancy(u);
+}
+
+// Flying construction (retail 41ef00, stages 4--6) wanders near builddistance
+// while facing the site. Use the same flight controller as ordinary flight;
+// this is construction mission behavior, independent of ground navigation.
+void World::tickConjureHover(Unit& b, const Unit& site) {
+    if (b.conjureHoverTarget!=site.id) {
+        b.conjureHoverTarget=site.id;
+        b.conjureHoverGoal.reset();
+    }
+    if (!b.conjureHoverGoal || ((!b.speed.v && !b.turnReqBam) || pathRand(50)==0)) {
+        int angle=int(retailDirection(b.x-site.x,b.z-site.z).v);
+        angle-=int(pathRand(0x2492));angle+=int(pathRand(0x2492));
+        const int inward=int(pathRand(8)),outward=int(pathRand(8));
+        const int32_t radius=Fixed::fromInt(std::max(8,int(b.type->buildDist))-inward+outward).v;
+        b.conjureHoverGoal=RetailFlightGoal{{
+            site.x.v+retailScaledSine(uint16_t(angle),radius),0,
+            site.z.v+retailScaledCosine(uint16_t(angle),radius)},0x60,uint16_t(angle),0};
+    }
+    // Keep the player's construction/production queue intact. This temporary
+    // controller belongs solely to the active conjure job.
+    Order hover;
+    hover.buildType=site.type;
+    hover.flightGoal=b.conjureHoverGoal;
+    hover.x=Fixed::raw(hover.flightGoal->point.x);
+    hover.z=Fixed::raw(hover.flightGoal->point.z);
+    b.orders.insert(b.orders.begin(),hover);
+    tickFlightMovement(b);
+    b.conjureHoverGoal=b.orders.front().flightGoal;
+    b.orders.erase(b.orders.begin());
+    notifyFlightOccupancy(b);
 }
 
 void World::tickConstruction(Unit& b, float dt) {
@@ -3592,16 +5203,12 @@ void World::tickConstruction(Unit& b, float dt) {
     // IS the job, and it is what holds the rest of the queue back until the
     // building is finished (popBuildOrder retires it when the job ends).
     if (b.orders.empty() || !b.orders.front().buildType) dropLeg(b);   // never the build order
-    b.speed = Fixed();
+    b.constructionHolding = true;
+    if (b.type->canFly) tickConjureHover(b,*site);
+    else b.speed = Fixed();
     // Face what we're building/conjuring: turn toward the site at the unit's turn
     // rate (a building has turnRate 0, so it simply doesn't rotate).
-    const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
-    // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
-    const int32_t bTurnMax = b.type->turnInPlaceRate;
-    const int32_t diff = bamDiff(want, b.heading);
-    const int32_t turn = std::clamp(diff, -bTurnMax, bTurnMax);
-    b.heading = b.heading + Bam(turn);
-    b.turnReqBam = diff;   // builder pivot request -> TurnDirection anim (icd 0x4d9593)
+    if (!b.type->canFly) turnBuilderToSite(b,*site);
     float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
     // Record the current build rate so an interrupted conjure decays at this speed.
     // hp per TICK, in the same fixed-point hp is kept in (it is subtracted from hp
@@ -3614,7 +5221,7 @@ void World::tickConstruction(Unit& b, float dt) {
     } else {
         float cost = site->type->buildCost * dt / std::max(total, 0.01f);
         if (tm.mana < cost) return;
-        tm.mana -= cost;
+        tm.debitMana(cost);
         site->hp += Fixed::fromFloat(site->type->maxHp * 0.95f * dt / std::max(total, 0.01f));
     }
     if (site->hp >= Fixed::fromFloat(site->type->maxHp)) {
@@ -3648,6 +5255,242 @@ void World::train(int builderId, const UnitType* type, int count) {
     for (int i = 0, n = std::max(1, count); i < n; ++i) b->buildQueue.push_back(type);
 }
 
+void World::tickRetailAiStrike(int owner,unsigned index) {
+    auto unsupported=[&](const char* branch) {
+        throw std::runtime_error("unsupported retail AI strike "+std::string(branch)+
+                                 " at tick "+std::to_string(tickCounter_));
+    };
+    auto& player=players_[size_t(owner)];auto& ai=*player.retailAi;auto& squad=ai.squads[index];
+    if (!player.buildCache) unsupported("type catalogue");
+    RetailAiCentroid centroid;
+    for (int id:squad.members) if (const Unit* u=unit(id);u && u->alive()) centroid.add(u->x.v,u->z.v);
+    const auto center=centroid.center();if (!center) return;
+    // With only one occupied base, the strength-filtered search and its
+    // unfiltered fallback select the same recipient. Multiple bases need the
+    // original weapon-controller strength calculation.
+    unsigned bases=0;
+    for (unsigned i=1;i<=20;++i) if (ai.schedule.groups[i].present && !ai.squads[i].members.empty()) ++bases;
+    if (bases>1) unsupported("multiple retreat bases");
+    const int backup=squad.parameters[0];
+    if (backup<0 || backup>=100) unsupported("backup reference");
+    if (int(squad.members.size()+ai.squads[size_t(backup)].members.size())<=squad.parameters[2])
+        unsupported("squad dissolution");
+    const Unit* target=unit(int(uint32_t(squad.parameters[4])&65535));
+    if (!squad.parameters[5] || !target || !target->alive()) unsupported("target selection");
+    if (pathRand(250)==0) unsupported("target refresh");
+    int radius=10;
+    for (int id:squad.members) {
+        const Unit* u=unit(id);
+        if (!u || !u->alive() || u->type->isStructure() || u->type->canFly || u->type->weapons.empty() || u->embarked())
+            unsupported("member withdrawal");
+        const RetailBuildCacheEntry* type=nullptr;
+        for (const auto& entry:player.buildCache->entries) if (entry.type==u->type) { type=&entry;break; }
+        if (!type || !type->construction) unsupported("member maximum HP");
+        const unsigned divisor=pathRand(3)+3;
+        if (uint32_t(int32_t(int16_t(u->hp.floorInt())))<type->construction->type.maxHp/divisor)
+            unsupported("injured member withdrawal");
+        const auto& weapon=u->type->weapons[size_t(std::clamp(u->weaponSlot,0,int(u->type->weapons.size())-1))];
+        if (!u->orders.empty() && u->orders[currentLeg(u->orders)].controller && pathRand(20)==0) {
+            const auto* nav=&navFor(u->type);
+            const auto plane=std::find_if(searchGrades_.begin(),searchGrades_.end(),[&](const auto& p) {
+                return p.nav==nav && p.footX==u->type->footX && p.footZ==u->type->footZ;
+            });
+            if (plane==searchGrades_.end() || plane->cells.empty() || plane->navVersion!=nav->version())
+                unsupported("member reachability plane");
+            const int range=std::max(1,weapon.range/16);
+            if (!retailRectangleReachable(nav->width(),nav->height(),
+                    footprintOrigin(u->x,u->type->footX),footprintOrigin(u->z,u->type->footZ),
+                    u->type->footX,u->type->footZ,
+                    footprintOrigin(target->x,target->type->footX),footprintOrigin(target->z,target->type->footZ),
+                    range,range,true,false,[&](int x,int z) { return plane->cells[size_t(z)*nav->width()+x]; }))
+                unsupported("unreachable member withdrawal");
+        }
+        radius=std::max(radius,std::max(u->type->sight,weapon.range));
+        if (u->orders.empty() || !u->orders[currentLeg(u->orders)].groundMission || u->orders[currentLeg(u->orders)].park)
+            unsupported("non-move member order");
+    }
+    auto distance=[](int32_t ax,int32_t az,int32_t bx,int32_t bz) {
+        const int64_t x=std::bit_cast<int32_t>(uint32_t(ax)-uint32_t(bx));
+        const int64_t z=std::bit_cast<int32_t>(uint32_t(az)-uint32_t(bz));
+        return std::bit_cast<int32_t>(uint32_t((x*x)>>32)+uint32_t((z*z)>>32));
+    };
+    const int threatRadius=(radius*3)/2;
+    for (const auto& enemy:units_) if (enemy.alive() && !allied(owner,enemy.player) &&
+        distance(center->first,center->second,enemy.x.v,enemy.z.v)<=threatRadius*threatRadius)
+        unsupported("nearby combat");
+    squad.parameters[5]=2;
+    bool close=false;
+    for (int id:squad.members) {
+        const auto& u=*unit(id);const auto& goal=u.orders[currentLeg(u.orders)];
+        if ((goal.mission.flags&0x400u) && distance(goal.missionTarget ? goal.missionTarget->first.v : goal.x.v,
+                goal.missionTarget ? goal.missionTarget->second.v : goal.z.v,target->x.v,target->z.v)<2500) {
+            close=true;break;
+        }
+    }
+    for (int id:squad.members) {
+        auto& u=*unit(id);const auto& goal=u.orders[currentLeg(u.orders)];
+        const bool force=(goal.mission.flags&0x10000u) && pathRand(50)==0;
+        if (!force && close && pathRand(10)!=0) continue;
+        // Issue the primary mission now; its stage-zero handler creates the
+        // controller on the unit's next update, retaining exact fixed positions.
+        Order next;next.x=goal.x;next.z=goal.z;next.goal=next.groundMission=true;
+        next.segmentX=goal.segmentX;next.segmentZ=goal.segmentZ;next.hasSegment=goal.hasSegment;
+        next.missionTarget=std::pair{target->x,target->z};
+        next.mission.flags=0x3001401u;next.issuedTick=tickCounter_;
+        next.groundResponse.mode=-1;
+        next.groundResponse.goal={int16_t(target->x.floorInt()),int16_t(target->z.floorInt())};
+        const size_t end=currentLeg(u.orders);
+        cancelPath(u);u.routeStamp=0;u.orders.resize(end+1);u.orders[end]=next;u.standbyActive=false;
+    }
+    squad.setActive(1);
+}
+
+void World::tickRetailAiBase(int owner,unsigned index) {
+    auto unsupported=[&](const char* branch) {
+        throw std::runtime_error("unsupported retail AI base "+std::string(branch)+
+                                 " at tick "+std::to_string(tickCounter_));
+    };
+    auto& player=players_[size_t(owner)];
+    auto& ai=*player.retailAi;auto& squad=ai.squads[index];
+    if (!player.buildCache || !player.buildCache->planner || !player.retailResources)
+        unsupported("planner metadata");
+    auto& cache=*player.buildCache;const auto& planner=*cache.planner;
+    auto typeIndex=[&](const Unit& u)->size_t {
+        for (size_t i=0;i<cache.entries.size();++i) if (cache.entries[i].type==u.type) return i;
+        unsupported("unit catalogue");return 0;
+    };
+    auto classify=[&](const Unit& u) {
+        const size_t i=typeIndex(u);const auto& inputs=cache.entries[i].inputs;
+        RetailAiUnitClass result;
+        result.flags=u.alive()?0x1000000u:0;
+        if (u.type->isStructure()) result.flags|=0x2000000u;
+        if (!u.type->weapons.empty()) result.flags|=0x8000000u;
+        result.typeFlags=inputs.flags;result.secondaryFlags=inputs.secondaryFlags;
+        result.constructor=!planner.types[i].choices.empty();result.mover=!u.type->isStructure();
+        result.capacity=inputs.weapon;
+        result.mission=u.retailBuild.has_value() || !u.orders.empty() || u.standbyActive;
+        result.missionFlags=u.retailBuild?8:(!u.orders.empty()?uint8_t(u.orders.back().mission.flags):0);
+        return result;
+    };
+    auto countCategory=[&](unsigned category,bool ready) {
+        int count=0;
+        for (int id:squad.members) {
+            const Unit* u=unit(id);
+            if (!u || !retailAiCategory(classify(*u),category)) continue;
+            if (ready) {
+                if (u->underConstruction || u->incapacitated()) continue;
+                if (u->embarked()) unsupported("attached member count");
+                const auto& type=cache.entries[typeIndex(*u)];
+                if (!type.construction) unsupported("member maximum HP");
+                if (uint32_t(int32_t(int16_t(u->hp.floorInt())))<(type.construction->type.maxHp*3u)/4u) continue;
+            }
+            ++count;
+        }
+        return count;
+    };
+    if (squad.parameters[0] && !ai.anchorsRestored) unsupported("anchor metadata");
+    if (squad.parameters[0] && !ai.anchors.contains(squad.parameters[0])) squad.parameters[0]=0;
+    std::optional<std::pair<int32_t,int32_t>> center;
+    if (auto anchor=ai.anchors.find(squad.parameters[0]);anchor!=ai.anchors.end()) {
+        center=std::pair{std::bit_cast<int32_t>(uint32_t(int32_t(anchor->second.first))*1048576u+524288u),
+                         std::bit_cast<int32_t>(uint32_t(int32_t(anchor->second.second))*1048576u+524288u)};
+    } else {
+        RetailAiCentroid centroid;
+        for (int id:squad.members) if (const Unit* u=unit(id);u && u->alive()) centroid.add(u->x.v,u->z.v);
+        center=centroid.center();
+    }
+    if (!center) return;
+    int32_t footprint=0;
+    for (int id:squad.members) if (const Unit* u=unit(id);u && u->alive() && u->type->isStructure())
+        footprint+=u->type->footX+u->type->footZ;
+    const int radius=retailAiBaseRadius(footprint,0);
+    for (const auto& enemy:units_) if (enemy.alive() && !allied(owner,enemy.player)) {
+        const int64_t dx=std::bit_cast<int32_t>(uint32_t(center->first)-uint32_t(enemy.x.v));
+        const int64_t dz=std::bit_cast<int32_t>(uint32_t(center->second)-uint32_t(enemy.z.v));
+        const int32_t distance=std::bit_cast<int32_t>(uint32_t((dx*dx)>>32)+uint32_t((dz*dz)>>32));
+        if (distance<=radius*radius) unsupported("nearby threat response");
+    }
+    unsigned population=0;
+    for (const auto& u:units_) if (u.alive() && u.player==owner) ++population;
+    for (int id:squad.members) {
+        Unit* u=unit(id);
+        if (!u || !u->alive() || u->underConstruction || u->incapacitated()) continue;
+        if (u->embarked()) unsupported("attached member planning");
+        const auto c=classify(*u);const size_t source=typeIndex(*u);
+        if (c.constructor && u->type->isStructure()) {
+            retailAiPlanFactory(player.retailResources->allocation,!u->buildQueue.empty(),uint16_t(population),[&] {
+                std::vector<RetailAiBuildChoice> choices;
+                for (uint16_t index:planner.types[source].choices) {
+                    const auto& entry=cache.entries[index-1];const auto& meta=planner.types[index-1];
+                    choices.push_back({index,retailAiBuildWeight(planner.limited,entry.inputs.desired,
+                        entry.inputs.count,meta.weight,int8_t(entry.priority)),meta.special,
+                        meta.faction==planner.types[source].faction});
+                }
+                return retailAiChooseBuild(choices,false,[&](int n){return pathRand(n);});
+            },[&](uint16_t index){return cache.entries[index-1].inputs.cost;},
+            [&](int n){return pathRand(n);},[&](uint16_t index){train(id,cache.entries[index-1].type);});
+        } else if (c.constructor && c.mover) {
+            if (!u->retailBuild) unsupported("idle mobile builder");
+            if (c.secondaryFlags&0x40000u) {
+                const auto& entry=cache.entries[source];
+                if (!entry.construction || u->hp.floorInt()<int(entry.construction->type.maxHp/2))
+                    unsupported("commander retreat");
+                if (countCategory(2,false)>=squad.parameters[1] || tickCounter_<ai.scenarioDeadline)
+                    unsupported("commander combat planning");
+            }
+            // An active construction mission owns the builder's next action.
+        } else if (c.mover) {
+            if (!c.mission || (!u->orders.empty() && (u->orders.back().mission.flags&0x2000u)))
+                unsupported("idle combat member");
+            if (pathRand(50)==0) {
+                if (!u->type->canFly || u->type->isBuilder || !u->type->weapons.empty())
+                    unsupported("combat member replanning");
+                const auto& definition=cache.entries[source];
+                if (!definition.construction || uint32_t(u->hp.floorInt())<definition.construction->type.maxHp/4)
+                    unsupported("injured flight patrol planning");
+                const auto points=retailAiPatrolPoints(center->first,center->second,radius,
+                    terW_*16,terH_*16,[&](int n){return pathRand(n);},
+                    [](int32_t,int32_t){return true;});
+                if (!points) unsupported("flight patrol candidate exhaustion");
+                if (fxLen(u->x-Fixed::raw(center->first),u->z-Fixed::raw(center->second))>Fixed::fromInt(radius))
+                    unsupported("flight patrol return to base");
+                cancelPath(*u);u->orders.clear();
+                for (size_t i=0;i<points->size();++i) {
+                    Order order;order.x=Fixed::raw((*points)[i].first);order.z=Fixed::raw((*points)[i].second);order.goal=true;
+                    order.flightMoveMission=i==0;order.patrol=i!=0;
+                    order.mission.flags=i==0?0x1000403u:0x1001413u;
+                    order.issuedTick=tickCounter_;u->orders.push_back(order);
+                }
+            }
+        }
+    }
+    if (int(population/(index==1?20:30))>squad.parameters[1]) {
+        for (unsigned i=1;i<=4;++i) {
+            const uint32_t delta=pathRand(squad.parameters[i]/2)+1u;
+            squad.parameters[i]=std::bit_cast<int32_t>(uint32_t(squad.parameters[i])+delta);
+        }
+    }
+    const int freeBuilders=countCategory(3,true)-(index==1?0:1);
+    const int builders=countCategory(2,true)-squad.parameters[1];
+    const int ground=countCategory(4,true)-(squad.parameters[5]<0?squad.parameters[2]:0);
+    const int air=countCategory(5,true)-(squad.parameters[6]<0?squad.parameters[3]:0);
+    const int transports=countCategory(6,true)-(squad.parameters[7]<0?squad.parameters[4]:0);
+    if (std::max(freeBuilders,builders)>0) unsupported("builder redistribution");
+    auto redistribute=[&](const char* branch) {
+        // The original recipient search excludes this base and all empty slots.
+        // A populated recipient still requires the transfer planner.
+        for (unsigned other=1;other<=20;++other)
+            if (other!=index && ai.schedule.groups[other].present && !ai.squads[other].members.empty())
+                unsupported(branch);
+    };
+    if (ground>0 && pathRand(10)==0) redistribute("ground redistribution");
+    if (air>0 && pathRand(10)==0) redistribute("air redistribution");
+    auto magnitude=[](int32_t n) { return n<0?-int64_t(n):int64_t(n); };
+    if (ground>=magnitude(squad.parameters[5]) || air>=magnitude(squad.parameters[6]))
+        unsupported("strike recruitment");
+    if (transports>=magnitude(squad.parameters[7])) unsupported("transport recruitment");
+}
+
 void World::dequeue(int builderId, const UnitType* type, int count) {
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !type) return;
@@ -3658,7 +5501,7 @@ void World::dequeue(int builderId, const UnitType* type, int count) {
         for (int i = int(b->buildQueue.size()) - 1; i >= 0; --i)
             if (b->buildQueue[size_t(i)] == type) { idx = i; break; }
         if (idx < 0) break;
-        if (idx == 0) b->buildProgress = 0;   // canceling the in-progress front
+        if (idx == 0) { b->buildProgress = 0; b->productionSiteId = 0; }   // canceling the in-progress front
         b->buildQueue.erase(b->buildQueue.begin() + idx);
     }
     // If the queue no longer holds a type set to infinite-repeat, stop repeating it
@@ -3686,7 +5529,15 @@ void World::setRepeat(int builderId, const UnitType* type) {
         b->repeatType = nullptr;
         b->buildQueue.clear();
         b->buildProgress = 0;
+        b->productionSiteId = 0;
     } else {
+        if (b->type && !b->type->isStructure()) {
+            // Entering infinite production also retires an earlier move/attack;
+            // otherwise the builder can keep following it beneath the queue.
+            cancelBuilds(builderId);
+            b->orders.clear();b->landing.reset();b->standbyActive=false;
+            cancelPath(*b);b->routeStamp=-1;
+        }
         b->repeatType = type;
         if (b->buildQueue.empty()) b->buildQueue.push_back(type);   // kick it off
     }
@@ -3744,7 +5595,7 @@ void World::tickHealAuras() {
                     prog *= tm.mana / std::max(cost, 1e-6f);
                     cost = tm.mana;
                 }
-                tm.mana -= cost;
+                tm.debitMana(cost);
                 e.hp = fxMin(Fixed::fromFloat(e.type->maxHp),
                              e.hp + Fixed::fromFloat(e.type->maxHp * prog));
             });
@@ -3809,20 +5660,14 @@ void World::tickAbilities(float dt) {
     auto isCorpse = [](const Unit& c) {
         // Statues stand from the instant of death (retail: severity 0, no Dying
         // anim); ordinary bodies appear after the 4s death animation.
-        float from = c.corpseStatue >= 0 ? 0.0f : 4.0f;
+        const int from = c.corpseStatue >= 0 ? 0 : kCorpseAnimTicks;
         return c.type && !c.alive() && c.deadFor >= from && c.deadFor < c.corpseUntil;
     };
     auto corpseDef = [&](const Unit& c) -> const FeatType* {
         int ct = c.corpseStatue >= 0 ? c.corpseStatue : corpseTypeOf(c.type);
         return ct >= 0 ? &featTypes_[size_t(ct)] : nullptr;
     };
-    auto retire = [&](Unit& c) {
-        c.deadFor = kRetiredTicks;
-        if (c.corpseBlocks) {
-            c.corpseBlocks = false;
-            blockFoot(*c.type, c.x.toFloat(), c.z.toFloat(), false);
-        }
-    };
+    auto retire = [&](Unit& c) { retireCorpse(c); };
     struct Revive { const UnitType* type; float x, z; int player; bool animate; };
     std::vector<Revive> revives;
     const float kR = 56.0f;
@@ -3881,7 +5726,7 @@ void World::tickAbilities(float dt) {
             float inc = totalMana / float(std::max(u.reviveTotal, 1));
             Player& tm = players_[size_t(u.player)];
             if (tm.mana < inc) continue;   // starved: the channel stalls, not drops
-            tm.mana -= inc;
+            tm.debitMana(inc);
             --u.reviveLeft;
             if (u.reviveLeft <= 0) {
                 revives.push_back({out, c->x.toFloat(), c->z.toFloat(), u.player, animate});
@@ -3926,7 +5771,7 @@ void World::tickAbilities(float dt) {
             } else if (u.type->canReclaim && cd->reclaimable) {
                 // Retail yield = the corpse def's energy -- 0 for every shipped
                 // corpse. You reclaim bodies to DENY resurrection, not for mana.
-                players_[size_t(u.player)].mana += cd->energy;
+                players_[size_t(u.player)].creditMana(double(cd->energy)*players_[size_t(u.player)].manaMult);
                 retire(c);
             }
         }
@@ -3986,6 +5831,59 @@ void World::visPump() {
         ++visGen_;   // renderer: fog content may have changed; re-upload once
         visHavePass_ = true;
     }
+}
+
+void World::updateNavigationExploration() {
+    if (explorationHeights_.empty()) return;
+    const int width=hW_/2,height=hH_/2;
+    std::vector<uint16_t> playerViewers(players_.size(),0);
+    for (size_t owner=0;owner<players_.size();++owner)
+        for (size_t viewer=0;viewer<players_.size() && viewer<16;++viewer)
+            if (allied(int(owner),int(viewer))) playerViewers[owner]|=uint16_t(1u<<viewer);
+    const unsigned available=serialThreads_ ? 1u : std::max(1u,std::thread::hardware_concurrency());
+    const unsigned workers=std::min({4u,available,unsigned(std::max(size_t(1),units_.size()/2048))});
+    // Seed private masks before starting workers: each can skip cells already
+    // explored without reading another worker's writes.
+    for (unsigned k=1;k<workers;++k) explorationScratch_[k-1]=navigationExplored_;
+    auto explore=[&](size_t begin,size_t end,std::vector<uint16_t>& revealed) {
+        for (size_t index=begin;index<end;++index) {
+            auto& u=units_[index];
+            if (!u.alive() || !u.type || u.underConstruction || u.embarked()) continue;
+            const int16_t distance=int16_t(u.type->sight);
+            if (u.sightFootprint.distance!=distance || u.sightFootprint.sightHeight!=u.type->sightHeight) {
+                u.sightFootprint={};
+                u.sightFootprint.distance=distance;
+                u.sightFootprint.sightHeight=u.type->sightHeight;
+            }
+            const uint16_t viewers=size_t(u.player)<playerViewers.size() ? playerViewers[size_t(u.player)] : 0;
+            const Fixed y=u.type->canFly?u.flightY:u.groundY;
+            retailUpdateSight(u.sightFootprint,u.x,y,u.z,uint8_t(seaLevel_),true,width,height,uint8_t(u.player),
+                [&](int x,int z){return explorationHeights_[size_t(z)*width+x];},
+                [&](int x,int z,int delta,uint16_t) {
+                    if (delta>0) revealed[size_t(z)*width+x]|=viewers;
+                },
+                [&](int x,int z,bool active) {
+                    // Exploration only adds bits. Already revealed cells need
+                    // no terrain calculation, and removal never changes this map.
+                    return active && (revealed[size_t(z)*width+x]&viewers)!=viewers;
+                });
+        }
+    };
+    // Each worker owns distinct unit footprints and an independent reveal mask.
+    // OR is associative and commutative; merge only after all workers join.
+    const size_t chunk=(units_.size()+workers-1)/workers;
+    std::vector<std::jthread> threads;
+    threads.reserve(workers-1);
+    for (unsigned k=1;k<workers;++k) {
+        const size_t begin=std::min(units_.size(),size_t(k)*chunk);
+        const size_t end=std::min(units_.size(),begin+chunk);
+        threads.emplace_back([&,k,begin,end]{explore(begin,end,explorationScratch_[k-1]);});
+    }
+    explore(0,std::min(units_.size(),chunk),navigationExplored_);
+    for (auto& thread:threads) thread.join();
+    for (unsigned k=1;k<workers;++k)
+        for (size_t i=0;i<navigationExplored_.size();++i)
+            navigationExplored_[i]|=explorationScratch_[k-1][i];
 }
 
 void World::updateVisibility() {
@@ -4218,14 +6116,14 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
     // Clearance to keep from the nearest body: our own half-width plus a little, so
     // the spot is somewhere this unit can actually come to rest.
     const float clr = float(std::max(t->footX, t->footZ)) * 8.0f + 10.0f;
-    const int cx = int(fx) / 16, cz = int(fz) / 16;
+    const int cx = footprintCell(fx, foot), cz = footprintCell(fz, foot);
     for (int r = 0; r <= 12; ++r)
         for (int j = -r; j <= r; ++j)
             for (int i = -r; i <= r; ++i) {
                 if (std::max(std::abs(i), std::abs(j)) != r) continue;   // ring only
                 const int nx = cx + i, nz = cz + j;
                 if (!g.fits(nx, nz, foot)) continue;
-                const float wx = float(nx) * 16 + 8, wz = float(nz) * 16 + 8;
+                const float wx = footprintWaypoint(nx, foot).toFloat(), wz = footprintWaypoint(nz, foot).toFloat();
                 bool taken = false;
                 forEachNear(wx, wz, clr, [&](int idx) {
                     const Unit& e = units_[size_t(idx)];
@@ -4241,66 +6139,249 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
     return false;
 }
 
-void World::tickProduction(Unit& u, float dt) {
-    if (u.underConstruction || u.buildQueue.empty()) return;
-    const UnitType* t = u.buildQueue.front();
-    // Ticks of work, as retail counts it: buildtime / workertime is SECONDS at
-    // workertime 1 (emulated: 170/1 -> 5100 ticks -> 170s), so scale by kTick.
-    const float totalSec = t->buildTime / std::max(u.type->workerTime, 0.01f);
-    // AT LEAST ONE TICK. The 0.01f floor is in SECONDS and predates the tick
-    // conversion: 0.01s rounds to 0 ticks, `buildProgress < total` is then 0 < 0,
-    // and the whole accumulate branch -- which is where mana is checked and spent --
-    // is skipped, so a positive-cost unit pops out free. A fast factory reaches this
-    // (production_test builds with workertime 1000 against buildtime 1) and was
-    // silently doing exactly that.
-    const int32_t total = std::max(1, int32_t(totalSec * kTick + 0.5f));
-    Player& tm = players_[size_t(u.player)];
-    // Accumulate work (spending mana) until complete. Once complete, buildProgress
-    // holds at `total` and grows only as a wait timer below.
-    if (u.buildProgress < total) {
-        if (gInstantBuild) {
-            u.buildProgress = total;   // finishes this tick, free
-        } else {
-            // DIVIDE BY THE SAME `total` THE BUILD ACTUALLY TAKES. This used to
-            // divide by the unclamped duration, so a build clamped up to one tick
-            // still charged as though it were spread over 0.3 of one: a 500-cost
-            // unit cost about 1667, and a player holding exactly its price could
-            // not afford it.
-            const double cost = double(t->buildCost) / double(total);
-            if (tm.mana < cost) return;   // stalled: no mana
-            tm.mana -= cost;
-            ++u.buildProgress;   // one tick of work
+struct World::ScriptHost {
+    World& world; Unit& unit; UnitScript& factory;
+    uint32_t random(int32_t bound) { return world.gameRand(bound); }
+    uint32_t get(int id,const std::array<uint32_t,4>&) {
+        switch (id) {
+        case 1: return factory.activated;
+        case 2: return uint32_t(unit.moveState);
+        case 3: return uint32_t(unit.fireState);
+        case 4: return uint32_t(int32_t(int16_t(unit.hp.floorInt()))*100/std::max(unit.maximumHp(),1));
+        case 5: return factory.ready;
+        case 8: return unit.productionSiteId!=0;
+        case 17: return unit.retailSite ? retailConstructionPercent(unit.retailSite->progress.remaining)
+                                       : uint32_t(unit.underConstruction);
+        case 18: return factory.yardOpen;
+        case 19: return factory.buggerOff;
+        case 27: return portHeadingToRetail(unit.heading);
+        case 32: return uint32_t(unit.veteran);
+        default: return 0;
         }
-        if (u.buildProgress < total) return;   // not done yet
     }
-    // At the per-player unit cap: hold the finished unit inside the building (no mana
-    // spent) until a slot frees, rather than popping the queue and spawning it.
-    if (atUnitCap(u.player)) return;
-    // Same for the FBI totalallowed cap (one dragon/god/juggernaut per player): hold
-    // the finished unit until the one already fielded dies, instead of spawning a
-    // second. The mana is already spent, so it emerges the moment a slot frees.
-    if (atTypeCap(u.player, t)) return;
-    // Finished: the conjured unit emerges just south of the footprint and walks to
-    // a rally point. Hold it until that tile is clear so a repeat/queued build
-    // doesn't stack units on top of each other -- but never wait forever (2.5s cap)
-    // if the exit is jammed.
-    // The exit tile, and the spot the unit will actually EMERGE on. Both used to be
-    // the one fixed tile just south of the footprint: production waited up to 2.5s for
-    // it to clear and then spawned there anyway, so a factory running continuously
-    // stacked bodies on one another. Search for a free spot instead, and only fall
-    // back to waiting when the whole neighbourhood is genuinely full.
-    const float ex = u.x.toFloat(), ez = u.z.toFloat() + float(u.type->footZ) * 8 + 20;
-    float sx = ex, sz = ez;
-    const bool haveSpot = exitSpot(t, ex, ez, sx, sz);
-    if (!haveSpot && u.buildProgress < total + int32_t(2.5f * kTick)) {
-        ++u.buildProgress;   // nowhere to put it yet (no mana spent)
+    void set(int id,int value) {
+        switch (id) {
+        case 5: factory.ready=(value&1)!=0; unit.missionEvents|=4; break; // 50d49b
+        case 18: {
+            // 507ae0 refuses a yard transition while another body occupies
+            // a cell that must be blocked in the requested state.
+            const auto& type=*unit.type;
+            unit.missionEvents|=4;
+            const int x0=footprintOrigin(unit.x,type.footX),z0=footprintOrigin(unit.z,type.footZ);
+            if (x0<1 || z0<1 || x0+type.footX>=world.occW_ || z0+type.footZ>=world.occH_) break;
+            bool occupied=false;
+            for (int z=0;z<type.footZ && !occupied;++z)
+                for (int x=0;x<type.footX;++x) {
+                    const char cell=type.yardMap.empty() ? '.' : type.yardMap[size_t(z)*type.footX+x];
+                    const bool blocks=cell=='o' || cell=='f' || cell=='w' || cell=='S' ||
+                        (value ? cell=='O' : cell=='c' || cell=='C');
+                    if (!blocks) continue;
+                    const int owner=world.occ_[size_t(z0+z)*world.occW_+x0+x];
+                    if (owner && owner!=unit.id) { occupied=true;break; }
+                }
+            if (!occupied) {
+                factory.yardOpen=(value&1)!=0;
+                // 507c70 restamps the yard, then 4e1e20 refreshes every
+                // movement-class cache, including its clearance border.
+                for (auto& plane:world.searchGrades_)
+                    world.refreshSearchRect(plane,x0,z0,type.footX,type.footZ);
+            }
+            break;
+        }
+        case 19: factory.buggerOff=value!=0; break;
+        default: break;
+        }
+    }
+    void effect(uint32_t,int,int32_t) {} // display effects remain client-owned
+    uint32_t sound(int,int32_t) { return 0; } // audio remains client-owned
+};
+
+void World::notifyUnitScript(Unit& u,const char* name) {
+    auto it=unitScripts_.find(u.id);
+    if (it==unitScripts_.end()) return;
+    auto& state=it->second;
+    const auto& file=*u.type->script();
+    ScriptHost host{*this,u,state};
+    state.state.notify(file,file.scriptIndex(name),host);
+}
+
+void World::notifyFlightOccupancy(Unit& u) {
+    if (u.retailBuild && u.retailBuild->flying) {
+        auto& job=*u.retailBuild;
+        uint32_t rate=0;
+        if (u.speed.v || u.turnReqBam) {
+            const auto& v=u.flightVelocity;
+            const int32_t horizontal=int32_t(std::sqrt(double(v.x)*v.x+double(v.z)*v.z));
+            rate=horizontal<=job.flyingSlowSpeed ? 1u : 2u+uint32_t(horizontal>job.flyingFastSpeed);
+        }
+        if (((job.flyingOwnerFlags>>2)&3u)!=rate) {
+            const auto it=unitScripts_.find(u.id);
+            if (it!=unitScripts_.end()) {
+                auto& script=it->second;const auto& file=*u.type->script();
+                ScriptHost host{*this,u,script};
+                if (script.state.startArguments(file,file.scriptIndex("MoveRate"),{rate,0,0,0},1))
+                    script.state.tick(file,0,host);
+            }
+            job.flyingOwnerFlags=(job.flyingOwnerFlags&~0xcu)|(rate<<2);
+        }
+    }
+    // 4dc600 reports airborne mode after the mover, with an immediate
+    // zero-elapsed script pass. Landed/water transitions need their own host.
+    if (u.flightGroundMode!=2) return;
+    constexpr uint32_t occupancy=5;
+    if (occupancy==u.scriptOccupancy) return;
+    const auto it=unitScripts_.find(u.id);
+    if (it!=unitScripts_.end()) {
+        auto& script=it->second;const auto& file=*u.type->script();
+        ScriptHost host{*this,u,script};
+        if (script.state.startArguments(file,file.scriptIndex("setSFXoccupy"),{occupancy,0,0,0},1))
+            script.state.tick(file,0,host);
+    }
+    u.scriptOccupancy=occupancy;
+}
+
+void World::tickUnitScript(Unit& u) {
+    auto* script=size_t(u.id)<unitScriptById_.size() ? unitScriptById_[size_t(u.id)] : nullptr;
+    if (!script) return;
+    if (!u.alive() || (u.hp<=Fixed() && !(u.retailSite && u.underConstruction))) {
+        unitScriptById_[size_t(u.id)]=nullptr;
+        unitScripts_.erase(u.id);return;
+    }
+    auto& factory=*script;
+    const auto& file=*u.type->script();
+    ScriptHost host{*this,u,factory};
+    factory.state.tick(file,1,host);
+    const bool activated=!u.underConstruction && !u.buildQueue.empty();
+    if (u.type->productionScript && activated!=factory.activated) {
+        factory.activated=activated;
+        factory.state.notify(file,file.scriptIndex(activated ? "Activate" : "Deactivate"),host);
+    }
+}
+
+void World::initializeRetailSite(Unit& site,int builderId) {
+    const auto& owner=players_[size_t(site.player)];
+    if (!owner.buildCache) throw std::runtime_error("new construction catalogue absent");
+    const auto& entries=owner.buildCache->entries;
+    const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto& e){return e.type==site.type;});
+    if (entry==entries.end() || !entry->construction)
+        throw std::runtime_error("new construction type absent");
+    site.retailSite=RetailConstructionSite{{1,0,0,0x1000000u},entry->construction->type,{},0};
+    site.retailSite->mission.emplace();site.retailSite->builder=builderId;
+    site.hp=Fixed();site.routeStamp=0;
+    // 511ed3 executes Create at zero elapsed time while work remaining is 1.
+    if (auto script=unitScripts_.find(site.id);script!=unitScripts_.end()) {
+        ScriptHost host{*this,site,script->second};
+        script->second.state.tick(*site.type->script(),0,host);
+    }
+}
+
+void World::tickProduction(Unit& u, float dt) {
+    (void)dt;
+    if (u.underConstruction || u.incapacitated() || u.hp <= Fixed() || u.buildQueue.empty()) return;
+    const UnitType* t = u.buildQueue.front();
+    const int producerId=u.id, player=u.player;
+    const int32_t total=std::max(1,int32_t(t->buildTime/std::max(u.type->workerTime,0.01f)*kTick+0.5f));
+    Unit* site=u.productionSiteId ? unit(u.productionSiteId) : nullptr;
+    if (u.productionSiteId && (!site || !site->alive() || (site->hp<=Fixed() && !site->retailSite) || site->player!=player)) {
+        u.productionSiteId=0; u.buildProgress=0;
         return;
     }
-    u.buildProgress = 0;
-    u.buildQueue.erase(u.buildQueue.begin());
-    int producerId = u.id, player = u.player;
-    // spawn() may reallocate units_, invalidating `u`; capture the id and re-fetch.
-    int id = spawn(t, sx, sz, 3.14159f, player);
+    if (!site) {
+        if (auto it=unitScripts_.find(u.id);u.type->productionScript && it!=unitScripts_.end() && !it->second.ready) return;
+        if (atUnitCap(player) || atTypeCap(player,t)) return;
+        Fixed spawnX,spawnZ,spawnY;
+        if (auto it=unitScripts_.find(u.id);u.type->productionScript && it!=unitScripts_.end()) {
+            const auto& file=*u.type->productionScript;
+            std::array<uint32_t,4> args{0xffffffffu,0,0,0};
+            ScriptHost host{*this,u,it->second};
+            if (!it->second.state.query(file,file.scriptIndex("QueryBuildInfo"),args,host)) return;
+            const auto offset=retailPieceOrigin(u.type->productionModel,it->second.state.pieces,
+                                               std::bit_cast<int32_t>(args[0]),portHeadingToRetail(u.heading));
+            spawnX=u.x+Fixed::raw(offset[0]); spawnZ=u.z+Fixed::raw(offset[2]);
+            const int cx=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
+            const int cz=std::clamp(u.z.floorInt()/16,0,std::max(0,terH_-1));
+            spawnY=Fixed::fromInt(heights_.empty() ? 0 : heights_[size_t(cz)*terW_+cx])+Fixed::raw(offset[1]);
+            if (!canPlace(t,spawnX.toFloat(),spawnZ.toFloat())) return;
+        } else {
+            const float ex=u.x.toFloat(),ez=u.z.toFloat()+float(u.type->footZ)*8+20;
+            float sx=ex,sz=ez;
+            if (!exitSpot(t,ex,ez,sx,sz)) return;
+            spawnX=Fixed::fromFloat(sx); spawnZ=Fixed::fromFloat(sz);
+        }
+        // Preserve the raw script position across the public float spawn API.
+        const int siteId=spawn(t,spawnX.toFloat(),spawnZ.toFloat(),std::nullopt,player);
+        site=unit(siteId);
+        site->x=site->homeX=spawnX; site->z=site->homeZ=spawnZ; site->flightY=spawnY; updateBodyIndex(*site);
+        site->flightSectorX=spawnX.v>>23;site->flightSectorZ=spawnZ.v>>23;
+        site->underConstruction=site->buildBegun=true;
+        site->hp=Fixed::fromFloat(t->maxHp*0.05f);
+        if (players_[size_t(player)].retailResources) initializeRetailSite(*site,producerId);
+        unit(producerId)->productionSiteId=siteId;
+        if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) {
+            const auto& file=*unit(producerId)->type->script();
+            it->second.state.startArguments(file,file.scriptIndex("StartBuilding"),{},2);
+        }
+    }
+    // spawn can reallocate units_; never use the original reference after it.
+    Unit* producer=unit(producerId);
+    site->beingBuilt=true;
+    // Mobile conjurers use this queue too. Face the actual output position,
+    // which exitSpot may have displaced, just as for a placed build site.
+    if (!producer->type->isStructure() && producer->orders.empty()) {
+        if (producer->type->canFly) tickConjureHover(*producer,*site);
+        else turnBuilderToSite(*producer,*site);
+    }
+    const Fixed work=Fixed::fromFloat(t->maxHp*0.95f/float(total));
+    site->conjureRate=work;
+    Player& tm=players_[size_t(player)];
+    if (site->retailSite && tm.retailResources) {
+        float worker=producer->type->workerTime;
+        if (tm.buildCache) for (const auto& entry:tm.buildCache->entries)
+            if (entry.type==producer->type && entry.construction) worker=entry.construction->workerTime;
+        auto& s=*site->retailSite;
+        s.progress.events=site->missionEvents;
+        const auto result=retailConstructionWork(s.progress,s.type,*tm.retailResources,float(double(worker)*0.03333333));
+        tm.mana=tm.retailResources->stored;site->hp=Fixed::fromInt(s.progress.hp);
+        site->missionEvents|=s.progress.events;
+        if (result==RetailConstructionResult::Completed) completeRetailConstruction(*producer,*site);
+        if (result==RetailConstructionResult::Worked || result==RetailConstructionResult::Completed)
+            emitConstruction(*site,true);
+        if (result==RetailConstructionResult::Completed) {
+            notifyUnitScript(*producer,"StopBuilding");
+            producer->productionSiteId=0;producer->buildProgress=0;
+            producer->buildQueue.erase(producer->buildQueue.begin());
+            if (producer->buildQueue.empty()) {
+                if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) it->second.activated=false;
+                notifyUnitScript(*producer,"Deactivate");
+            }
+        }
+        return;
+    }
+    if (gInstantBuild) {
+        producer->buildProgress=total;
+        site->hp=Fixed::fromFloat(t->maxHp);
+    } else {
+        const double cost=double(t->buildCost)/double(total);
+        if (tm.mana<cost) return;
+        tm.debitMana(cost);
+        ++producer->buildProgress;
+        site->hp=fxMin(Fixed::fromFloat(t->maxHp),site->hp+work);
+        if (producer->buildProgress<total) return;
+        // Correct accumulated fixed-point rounding without undoing combat damage.
+        const Fixed rounding=Fixed::fromFloat(t->maxHp)-
+            (Fixed::fromFloat(t->maxHp*0.05f)+Fixed::raw(int32_t(int64_t(work.v)*total)));
+        site->hp=fxMin(Fixed::fromFloat(t->maxHp),site->hp+rounding);
+    }
+    const int id=site->id;
+    const float sx=site->x.toFloat(),sz=site->z.toFloat();
+    site->underConstruction=false;
+    producer->productionSiteId=0;
+    producer->buildProgress=0;
+    producer->buildQueue.erase(producer->buildQueue.begin());
+    if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) {
+        const auto& file=*producer->type->script();
+        it->second.state.vm.start(file,file.scriptIndex("StopBuilding"));
+    }
     // Then walk it clear of the exit, to a spot that is free RIGHT NOW -- computed
     // after the spawn, so it also avoids the unit we just put down.
     //
@@ -4348,8 +6429,406 @@ void World::tickProduction(Unit& u, float dt) {
 }
 
 
+void World::deliverSearchRoute(int unitId,const std::vector<PathCell>& route,Fixed gxF,Fixed gzF,
+                               bool failed,bool crowded,bool traffic,bool detour) {
+    const float gx = gxF.toFloat(), gz = gzF.toFloat();
+    Unit* u = unit(unitId);
+    // 4e4f39: every route delivery, including an empty route, makes
+    // the mover recheck nearby obstacles on its next update.
+    if (u && u->alive()) u->groundScanTick=0;
+    static const bool kPqLog2 = std::getenv("TAK_PATHLOG") != nullptr;
+    if (kPqLog2) std::printf("[pq] t=%u id=%d DELIVER wps=%zu failed=%d "
+                             "(alive=%d orders=%zu)\n",
+                             tickCounter_, unitId, route.size(), int(failed),
+                             u && u->alive() ? 1 : 0,
+                             u ? u->orders.size() : size_t(0));
+    if (route.empty()) {           // failed with NOTHING (start boxed in)
+        // Even an empty failure carries the outcome flags, and the ladder
+        // governs its retry like any other failed route: traffic evidence
+        // earns the 2d8 cadence, none means rest. The fixed 5s backoff
+        // that stood here was ours.
+        if (u && u->alive()) {
+            u->routeCrowded = crowded;
+            u->routeTraffic = traffic;
+            u->routeFailed = failed;u->routeDetour=detour;
+            if (!u->orders.empty()) u->orders[currentLeg(u->orders)].navigationExhausted=true;
+            // 4e4ead..4e4ed4: an empty delivery disables navigation and
+            // reports failure only when the owning controller is unsatisfied.
+            if (auto* goal=navigationMissionOrder(*u)) {
+                const bool satisfied=goal->buildRectangle
+                    ? goal->buildRectangle->accepts(footprintOrigin(u->x,u->type->footX),footprintOrigin(u->z,u->type->footZ))
+                    : groundMissionAccepts(*u,*goal);
+                if (!satisfied) goal->mission.pending|=0x200;
+            }
+        }
+        return;
+    }
+    if (!u || !u->alive() || u->orders.empty()) return;
+    // The mission owns the requested point; the navigator may end at
+    // a partial-route boundary. Appending the requested point changes
+    // corner pruning before the unit even reaches that boundary.
+    auto& mission=u->orders[currentLeg(u->orders)];
+    if (mission.groundMission && !mission.missionTarget)
+        mission.missionTarget=std::pair{mission.x,mission.z};
+    // Only the leg this search was issued for; anything queued behind
+    // it stays untouched.
+    // Snap the final waypoint to the caller's exact goal ONLY when the
+    // route actually reached the goal cell. A route clipped at the
+    // 64-waypoint limit stops short, and pointing its last waypoint at
+    // the distant goal sends the unit charging straight at whatever lies
+    // between -- it gets blocked, re-asks, gets another clipped route,
+    // and ping-pongs. Measured: a unit oscillating between two points
+    // 2426px of travel later, having never arrived.
+    // Whether the RAW trace reached the goal cell. Note this is not the
+    // question the order-building loop below needs -- see reachedGoal.
+    const bool traceReachedGoal =
+        !route.empty() && route.back().x == footprintCell(gxF,u->type->footX) &&
+        route.back().z == footprintCell(gzF,u->type->footZ);
+    // NO STRING-PULLING. The shortcut pass that stood here (lineOpen +
+    // segmentFits, farthest-reachable-waypoint) was ours, and it was also the
+    // second scorer: the search accepted a route and this pass re-judged it by
+    // different rules, and when the two disagreed the route was thrown away
+    // and the unit steered straight at its order -- into the very body the
+    // route had detoured around. Retail has exactly one judge: the tracer's
+    // reconstruction (0x414450) emits a waypoint at each change of direction,
+    // the navigator takes up to 64 of them as-is (0x4e4ea0), and nothing
+    // re-validates them. The cost is retail's own gait: a unit walks the
+    // cardinal/diagonal staircase of its trace, corner by corner -- the
+    // characteristic TA:K zigzag -- instead of a straightened line.
+    // RETAIL'S 64-WAYPOINT NAVIGATOR CAP (0x4e4ea0). The reconstruction can
+    // hand back more corners than that -- the tracer hugging a long outline
+    // produces hundreds -- and the string-pull used to hide it by collapsing
+    // them. Installed raw and uncapped, a 94-corner eastward hug of the
+    // island in Inner Circle walked a unit 500px the WRONG WAY along its
+    // whole length. Retail installs the first 64 and re-anchors: the clip
+    // ends the leg early, the appended goal and the re-ask pick up from
+    // CLOSER, and each re-trace shortens what remains of the wander.
+    std::vector<PathCell> capped;
+    const bool clipped = route.size() > 64;
+    if (clipped) capped.assign(route.begin(), route.begin() + 64);
+    const std::vector<PathCell>& useRoute = clipped ? capped : route;
+    const bool reachedGoal = traceReachedGoal && !failed && !clipped;
+    std::vector<Order> path;
+    path.reserve(useRoute.size());
+    // Retail's navigator steers along points [0,1] and tests arrival
+    // at point 1 (4e5150). Point 0 is the segment origin, not a
+    // destination to walk back toward after a replan.
+    const size_t firstTarget=useRoute.size()>1 ? 1 : 0;
+    for (size_t i = firstTarget; i < useRoute.size(); ++i) {
+        Order o;
+        // The waypoint anchor depends on footprint parity, just like
+        // the movement and occupancy cell conversion.
+        o.x = footprintWaypoint(useRoute[i].x,u->type->footX);
+        o.z = footprintWaypoint(useRoute[i].z,u->type->footZ);
+        if (i==firstTarget && i>0) {
+            o.segmentX=footprintWaypoint(useRoute[0].x,u->type->footX);
+            o.segmentZ=footprintWaypoint(useRoute[0].z,u->type->footZ);
+            o.hasSegment=true;
+        }
+        if (i + 1 == useRoute.size() && reachedGoal &&
+            !u->orders[currentLeg(u->orders)].missionTarget &&
+            !u->orders[currentLeg(u->orders)].buildRectangle) {
+            o.x = Fixed::fromFloat(gx); o.z = Fixed::fromFloat(gz);
+        }
+        path.push_back(o);
+    }
+    // A route clipped at 64 waypoints stops short of where the player
+    // actually sent the unit, and replaceLeg marks the LAST waypoint as
+    // the leg's goal -- so installing a clipped route silently threw the
+    // real destination away. The unit then walked to the end of each
+    // clipped route, asked for another, and shuffled between them for
+    // ever: measured 2426px of travel in 60s, never arriving, and the
+    // no-headway watchdog never fired because from its point of view the
+    // unit kept reaching its goal. Keep the destination on the end.
+    if (!reachedGoal && !u->orders[currentLeg(u->orders)].buildRectangle &&
+        !u->orders[currentLeg(u->orders)].groundMission) {
+        // Clipped OR failed, the ordered point stays on the end. For a clip
+        // (64-waypoint cap) that is how the destination survives; for a
+        // FAILURE it is how the ORDER survives: the best-effort route walks
+        // the unit to its closest approach (0x415170), the appended leg has
+        // it press there under the refusal caps, and the failed-route
+        // deadline (rand(8)+rand(8)+30 ticks x scale, 0x4e535d) re-asks from
+        // the crowd's edge -- each re-ask reaching closer as the pack
+        // tightens. Truncating the leg at the closest approach instead
+        // completed the ORDER there, the re-ask had nothing to work on, and
+        // a converging army froze as a loose ring around its first ring of
+        // arrivals. Permanent rest is the terrain path's job (pathExists
+        // false -> dropLeg), not the crowd path's.
+        Order last;
+        last.x = Fixed::fromFloat(gx);
+        last.z = Fixed::fromFloat(gz);
+        path.push_back(last);
+    }
+    replaceLeg(*u, path);
+    // Retain the admission stamp and carry the search's outcome; the per-frame
+    // cadence ladder in the mover does the rest (retail rolls fresh dice
+    // each frame against the elapsed time -- see the ladder for the table).
+    u->routeCrowded = crowded;
+    u->routeTraffic = traffic;
+    u->routeFailed = failed;u->routeDetour=detour;
+}
+
+void World::tickNavigationMovement(Unit& u,Fixed maximum) {
+    // Queued mobile production already advanced its hover controller this tick.
+    if (u.type->canFly && u.orders.empty() && u.productionSiteId &&
+        u.conjureHoverTarget==u.productionSiteId) return;
+    if (u.orders.empty()) {
+        if (u.type->canFly) { u.speed=fxMax(Fixed(),u.speed-u.type->brake);u.flightVelocity={}; }
+        else if (!u.type->isStructure()) brakeGround(u);
+    } else if (u.orders.front().wait > 0) {
+        // SetMission "w N": hold position while the scripted wait counts down.
+        if (u.type->canFly) u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+        else if (!u.type->isStructure()) brakeGround(u);
+        --u.orders.front().wait;
+        if (u.orders.front().wait <= 0.0f) u.orders.erase(u.orders.begin());
+    } else if (u.orders.front().waitAttack) {
+        // SetMission "wa": ambush -- hold until a non-allied unit is within sight,
+        // then release to the next order (usually an attack).
+        if (u.type->canFly) u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+        else if (!u.type->isStructure()) brakeGround(u);
+        float sight = u.type->sight > 0 ? u.type->sight : 200.0f;
+        // THROUGH THE SPATIAL GRID. This scanned every unit in the world, for every
+        // ambushing unit, every tick -- O(n^2) in the number of ambushers, and a
+        // mission that sets "wa" on a large force pays it on the referee as well as
+        // on every client. The grid holds ALL alive units, buildings included
+        // (rebuildGrid), so this is the same set, merely visited by locality; the
+        // exact distance test below is unchanged and the answer is a bool, so
+        // iteration order cannot affect it.
+        bool threat = false;
+        forEachNear(u.x.toFloat(), u.z.toFloat(), sight, [&](int idx) {
+            if (threat) return;
+            const Unit& e = units_[size_t(idx)];
+            if (!e.alive() || e.embarked() || !e.type || allied(e.player, u.player)) return;
+            const float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
+            if (dx * dx + dz * dz <= sight * sight) threat = true;
+        });
+        if (threat) u.orders.erase(u.orders.begin());
+    } else {
+        // Goal satisfaction belongs to the mission, independently of the
+        // navigator's next intermediate point (retail 0x4e5150). A stale
+        // waypoint can be occupied even after we have reached the goal area.
+        const Order legGoal = u.orders[currentLeg(u.orders)];
+        const bool rectangleReached = legGoal.buildRectangle && legGoal.buildRectangle->accepts(
+            footprintOrigin(u.x,u.type->footX), footprintOrigin(u.z,u.type->footZ));
+        if (u.type->canFly) {
+            if (legGoal.buildRectangle && legGoal.flightGoal &&
+                legGoal.flightGoal->accepts({u.x.v,u.flightY.v,u.z.v})) {
+                u.orders[currentLeg(u.orders)].mission.pending |= 0x100;
+                u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+                return;
+            }
+            tickFlightMovement(u); notifyFlightOccupancy(u); return;
+        }
+        Order* completed = nullptr;
+        if (rectangleReached && !(legGoal.mission.pending & 0x100))
+            completed = &u.orders[currentLeg(u.orders)];
+        else if (auto* goal = groundMissionOrder(u)) {
+            if (goal->controller && groundMissionAccepts(u,*goal)) completed = goal;
+        }
+        if (completed) {
+            // 4e5168..4e5186 detaches satisfied circle, ring and rectangle
+            // controllers. Stored points still advance while braking; the
+            // next mission dispatch owns removal of the mission itself.
+            cancelPath(u);
+            completed->mission.pending |= 0x500;
+            completed->controller=0;
+            completed->navigationExhausted=true;
+            if (uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
+        }
+        const Fixed goalRadius = Fixed::fromInt(std::max(16, std::max(u.type->footX, u.type->footZ) * 8));
+        if (!groundMissionOrder(u) && legGoal.goal && !legGoal.targetId && !legGoal.buildType &&
+            !legGoal.reclaimFeat && !legGoal.repairTarget && !legGoal.load && !legGoal.unload &&
+            fxLen(legGoal.x - u.x, legGoal.z - u.z) < goalRadius) {
+            cancelPath(u);
+            dropLeg(u);
+            u.routeStamp = -1;
+            if (legGoal.patrol) u.orders.push_back(legGoal);
+            return;
+        }
+        // 0x4e5192..0x4e51c0 advances one navigator point using integer
+        // world coordinates and a five-pixel circle, before steering.
+        // Continue moving this tick with the next segment.
+        if (!u.orders[currentLeg(u.orders)].navigationConsumed) {
+            const int64_t px = u.x.floorInt() - u.orders.front().x.floorInt();
+            const int64_t pz = u.z.floorInt() - u.orders.front().z.floorInt();
+            if (px * px + pz * pz <= 25) {
+                if (!u.orders.front().goal && u.orders.size()>1) u.orders.erase(u.orders.begin());
+                else {
+                    auto& goal=u.orders[currentLeg(u.orders)];
+                    goal.navigationExhausted=goal.navigationConsumed=true;
+                }
+            }
+        }
+        const bool routeable = !u.orders.empty() &&
+            !u.orders.front().load && !u.orders.front().unload &&
+            ((!u.orders[currentLeg(u.orders)].groundMission && !u.orders[currentLeg(u.orders)].buildRectangle) ||
+             u.orders[currentLeg(u.orders)].controller);
+        if (u.routeStamp < 0 && routeable && !paths_.pending(u.id)) {
+            const Order& legEnd = u.orders[currentLeg(u.orders)];
+            if (!requestPath(u, legEnd.x.toFloat(), legEnd.z.toFloat()))
+                u.routeStamp = int32_t(tickCounter_);   // near-goal: hand the leg
+                                                        // to the ladder's timer
+        }
+        if (u.routeStamp >= 0 && routeable) {
+            const int32_t elapsed = int32_t(tickCounter_) - u.routeStamp;
+            const uint32_t sc = uint32_t(u.type->halfCellTicks);
+            const bool water = u.type->floater && u.type->minWaterDepth > 0;
+            const bool constrained = u.groundMovementMode!=0 || u.groundSpeedMode!=0;
+            // 0x4e51d4 bypasses the random cadence on repeated
+            // refusal. 0x4e4f50 leaves an already-pending request alone.
+            bool fire = u.bodyBlockStreak >= 2 || u.orders[currentLeg(u.orders)].navigationConsumed;
+            if (fire) {
+                fire = !paths_.pending(u.id);
+            } else if (u.routeCrowded) {
+                const uint32_t dice =
+                    water   ? pathRand(10) + pathRand(10) + 10
+                  : !constrained ? pathRand(10) + pathRand(10) + 20
+                  :            pathRand(8) + pathRand(8) + 10;
+                fire = elapsed >= int32_t(dice * sc);
+            } else if (u.routeTraffic) {
+                const uint32_t dice =
+                    water   ? pathRand(8) + pathRand(8) + 30
+                  : !constrained ? pathRand(8) + pathRand(8) + 60
+                  :            pathRand(8) + pathRand(8) + 30;
+                fire = elapsed >= int32_t(dice * sc);
+            } else {
+                // 4e5454..4e548f: partial routes and long detours
+                // suppress the plain random retry, including its draw.
+                fire = !u.routeFailed && !u.routeDetour && elapsed >= 120 && pathRand(120) == 0;
+            }
+            if (fire) {
+                const Order& legEnd = u.orders[currentLeg(u.orders)];
+                const float tx = legEnd.x.toFloat(), tz = legEnd.z.toFloat();
+                if (!requestPath(u, tx, tz)) {
+                    // requestPath queued nothing (already in the goal cell
+                    // or pathfinding disabled). Do NOT leave
+                    // routeStamp at -1 -- that latches the ladder OFF for good
+                    // (its guard is routeStamp>=0), which is exactly the "stuck
+                    // unit never re-asks, keeps pressing the obstacle" bug.
+                    // Retail's re-ask runs on a live timer that never latches
+                    // pending; restamp so the ladder keeps rolling.
+                    u.routeStamp = int32_t(tickCounter_);
+                }
+            }
+        }
+        if (u.orders[currentLeg(u.orders)].navigationExhausted) {
+            brakeGround(u);
+            return;
+        }
+        // 0x4dc89a / 0x4dba80: a clear eight-neighbor scan can remove
+        // a corner before steering. Each removal repeats the scan and only
+        // considers points in this leg, never a later queued command.
+        if (tickCounter_ >= u.groundScanTick) {
+            const bool boat=u.type->floater && u.type->minWaterDepth>0;
+            // All eight ground probes (including repeated corner checks) observe
+            // the same positions and yards. Snapshot their union once instead of
+            // scanning the whole army for every neighboring footprint. Boats also
+            // probe farther ahead, so retain their unrestricted query path.
+            const auto scanBodies=boat ? SearchBodyRect{} : searchBodyRect(
+                footprintCell(u.x,u.type->footX)-u.type->footX/2-1,
+                footprintCell(u.z,u.type->footZ)-u.type->footZ/2-1,
+                u.type->footX+2,u.type->footZ+2);
+            const int viewer=restoredNavigationViewer_>=0?restoredNavigationViewer_:u.player;
+            uint16_t scanTurnRate = uint16_t(u.type->turnRate);
+            const Fixed multiplier=groundTerrainMultiplier(u);
+            scanTurnRate = uint16_t(int64_t(scanTurnRate)*multiplier.v/65536);
+            for (;;) {
+                const auto scan=retailGroundScan(u.x,u.groundY,u.z,u.heading,tickCounter_,
+                    uint8_t(u.type->halfCellTicks),boat,int16_t(u.type->footX),int16_t(u.type->sight),false,
+                    [&](Fixed x,Fixed,Fixed z) {
+                        return cellScoreWithBodies(u.type,footprintCell(x,u.type->footX),
+                                         footprintCell(z,u.type->footZ),u.id,boat?nullptr:&scanBodies);
+                    },[&](Fixed x,Fixed y,Fixed z) {
+                        return retailBoatScanVisible(x,y,z,hW_/2,hH_/2,uint8_t(viewer),
+                            [&](int cx,int cz){return navigationExplored_[size_t(cz)*(hW_/2)+cx];});
+                    });
+                u.groundScanTick=scan.nextTick;
+                u.groundMovementMode=scan.movementMode;
+                u.groundSpeedMode=scan.speedMode;
+                if (u.groundMovementMode || u.orders.front().goal || u.orders.size()<2) break;
+                const Order& corner = u.orders.front();
+                const RetailSteeringPoint start = corner.hasSegment
+                    ? RetailSteeringPoint{corner.segmentX,corner.segmentZ}
+                    : RetailSteeringPoint{Fixed::fromInt(u.x.floorInt()),Fixed::fromInt(u.z.floorInt())};
+                if (!retailPruneGroundCorner(u.x,u.z,start,{corner.x,corner.z},
+                        {u.orders[1].x,u.orders[1].z},u.heading,scanTurnRate,boat,u.groundSpeedMode)) break;
+                u.orders.erase(u.orders.begin());
+            }
+        }
+        Order& o = u.orders.front();
+        if (!u.type->canFly && !o.hasSegment) {
+            o.segmentX = Fixed::fromInt(u.x.floorInt());
+            o.segmentZ = Fixed::fromInt(u.z.floorInt());
+            o.hasSegment = true;
+        }
+        float dx = (o.x - u.x).toFloat(), dz = (o.z - u.z).toFloat();
+        float dist = std::sqrt(dx * dx + dz * dz);
+        if (o.guard) {
+            const Unit* t = unit(o.targetId);
+            if (t && fxLen(t->x - u.x, t->z - u.z) <= Fixed::fromInt(70))
+                return;   // in escort position, not merely near a waypoint
+        }
+        // A FINAL move goal completes a little short, so a crowd sharing one
+        // destination settles into a blob (spread by separation) instead of every
+        // unit fighting for the exact same point. (Described as "flow-field orders"
+        // when the arrival radius came from the field; it is the o.goal flag now.)
+        // Retail move goals are AREAS -- NavGoalCircle / NavGoalRect / NavGoalRing
+        // in the RTTI, not points (docs/retail-engine.md). A FINAL goal therefore
+        // completes on a circle wide enough to hold a body: 16px, or the unit's own
+        // footprint if that is bigger, so a 4x4 trebuchet is not asked to stand on
+        // the same pixel a swordsman would. Intermediate route waypoints keep the tight
+        // ground intermediate points are advanced above.
+        // (This was `o.flow ? 16 : 3`, which quietly became 3 for EVERY unit once the
+        // retail-nav experiment stopped setting o.flow -- a whole group then fought
+        // over one pixel, which is exactly what it looked like.)
+        float foot = float(std::max(u.type->footX, u.type->footZ)) * 8.0f;
+        float arrive = o.goal ? std::max(16.0f, foot) : 3.0f;
+        if (!groundMissionOrder(u) && !legGoal.buildRectangle && (u.type->canFly || o.goal) && dist < arrive) {
+            if (o.buildType || o.reclaimFeat || o.repairTarget)
+                return;   // the job is claimed above; its order blocks the queue
+            if (o.targetId == 0 || !o.goal) {
+                Order done = o;
+                u.orders.erase(u.orders.begin());
+                if (done.patrol) u.orders.push_back(done);
+            }
+            return;
+        }
+        // Refusal clamps and route scheduling below share the mover's low
+        // refusal bits. Do not add a separate unit-id yielding rule.
+        const Fixed target=maximum;
+        // Navigator repeats the final point; a queued command is not a
+        // look-ahead point in the current route.
+        const RetailSteeringPoint next=!o.goal && u.orders.size()>1
+            ? RetailSteeringPoint{u.orders[1].x,u.orders[1].z}:RetailSteeringPoint{o.x,o.z};
+        const auto displacement=steerGround(u,{o.segmentX,o.segmentZ},{o.x,o.z},next,target);
+        const Fixed mx=displacement.s,mz=displacement.c;
+        commitGroundStep(u,mx,mz);
+
+    }
+
+}
+
 void World::tick(float dt) {
+    bodyIndexEnabled_=true;bodyIndexValid_=false;
+    struct BodyIndexScope { bool& enabled; ~BodyIndexScope(){enabled=false;} } bodyIndexScope{bodyIndexEnabled_};
+    if (retailAllocation_)
+        std::sort(units_.begin(),units_.end(),[](const auto& a,const auto& b){return a.id<b.id;});
+    if (!tickCounter_) updateNavigationExploration();
     ++tickCounter_;
+    // 51b890 runs before unit updates. Active squads publish whether they
+    // contain any completed mobile members (50b7a0), dirtying only on change.
+    for (auto& player:players_) if (player.retailAi) {
+        auto& ai=*player.retailAi;
+        for (unsigned i=1;i<100;++i) {
+            auto& squad=ai.squads[i];
+            if (!ai.schedule.groups[i].present || !squad.active) continue;
+            const bool populated=std::any_of(squad.members.begin(),squad.members.end(),[&](int id) {
+                const auto* u=unit(id);
+                return u && u->alive() && !u->underConstruction && u->type && !u->type->isStructure();
+            });
+            if (squad.parameters[8]!=int(populated)) { squad.parameters[8]=int(populated);squad.dirty=1; }
+        }
+    }
     for (auto& _u : units_) _u.turnReqBam = 0;   // requested-turn display field, refreshed below
 #ifndef NDEBUG
     hashTrace();   // TAK_HASHTRACE=lo:hi -- per-component dump, EVERY tick on both peers
@@ -4365,12 +6844,14 @@ void World::tick(float dt) {
     // lockstep holds. It IS hashed (real sim state), which is fine: every peer agrees.
     while (benchCursor_ < benchPlan_.size() && benchPlan_[benchCursor_].tick <= tickCounter_) {
         for (const auto& bs : benchPlan_[benchCursor_].units)
-            spawn(bs.type, bs.x, bs.z, 0, bs.player);
+            // A player/AI may have conjured this limited type since planning.
+            // Recheck live counts; dead units release their slot normally.
+            if (!atTypeCap(bs.player,bs.type)) spawn(bs.type, bs.x, bs.z, 0, bs.player);
         ++benchCursor_;
     }
     std::chrono::steady_clock::time_point _tk0, _sep0;
     if (g_phase) { _tk0 = std::chrono::steady_clock::now();
-                   g_tcomb = 0;
+                   g_tcomb = g_scriptMs = g_moveMs = 0;
                    g_visMs = g_burnMs = g_gridMs = 0; }
     // Cap repaths per tick: a big group that jams while moving can trip the
     // blocked/stuck watchdogs en masse, and hundreds of path searches in one tick
@@ -4413,8 +6894,23 @@ void World::tick(float dt) {
         // half-built lodestone must not add its mana income or storage capacity yet.
         if (!u.alive() || !u.type || u.underConstruction) continue;
         auto& tm = players_[size_t(u.player)];
-        tm.income += u.type->income;
-        tm.storage += u.type->storage;
+        float income=u.type->income,storage=u.type->storage;
+        bool sacred=u.type->sacredIncome;
+        if (tm.buildCache) {
+            const auto& entries=tm.buildCache->entries;
+            auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto& e){return e.type==u.type;});
+            if (entry!=entries.end() && entry->hasEconomy) {
+                income=entry->income;storage=entry->storage;
+                sacred=(entry->inputs.secondaryFlags&0x80000000u)!=0;
+            }
+        }
+        if (sacred) {
+            const float multiplier=sacredIncomeMultiplier(
+                footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
+                u.type->footX,u.type->footZ);
+            tm.income=float(double(tm.income)+double(income)*double(multiplier));
+        } else tm.income += income;
+        tm.storage += storage;
     }
     // Difficulty income cheat: scale the summed income so the boost flows through the
     // mana accrual below, allied surplus sharing, and god-favour alike. manaMult is 1
@@ -4426,7 +6922,31 @@ void World::tick(float dt) {
     // wasted only when the whole team is capped. Deterministic -- collected and
     // handed out in player-index order. A solo/FFA player (a team of one) has no
     // teammate to receive the surplus, so this reduces exactly to the old clamp.
-    for (auto& tm : players_) tm.mana += tm.income * dt;
+    for (size_t player=0;player<players_.size();++player) {
+        auto& tm=players_[player];
+        if (!tm.retailResources) { tm.creditMana(tm.income*dt);continue; }
+        float demand=0;
+        for (const auto& builder:units_) {
+            if (builder.player!=int(player) || !builder.alive() || builder.underConstruction) continue;
+            int target=0;
+            float worker=0;
+            if (builder.retailBuild && builder.retailBuild->working) {
+                target=builder.retailBuild->target;worker=builder.retailBuild->workerTime;
+            } else if (builder.productionSiteId && !builder.buildQueue.empty()) {
+                target=builder.productionSiteId;worker=builder.type->workerTime;
+                if (tm.buildCache) for (const auto& entry:tm.buildCache->entries)
+                    if (entry.type==builder.type && entry.construction) worker=entry.construction->workerTime;
+            } else continue;
+            const auto* site=unit(target);
+            if (site && site->retailSite && site->alive()) {
+                const auto& type=site->retailSite->type;
+                demand=float(double(demand)+double(worker)*
+                    double(type.inverseTime)*double(type.cost));
+            }
+        }
+        tm.retailResources->beginTick(tm.income,tm.storage,demand);
+        tm.mana=tm.retailResources->stored;tm.storage=tm.retailResources->capacity;
+    }
     const int np = int(players_.size());
     auto cap = [&](int i) { return std::max(players_[size_t(i)].storage, 100.0f); };
     bool teamDone[kMaxPlayers] = {};
@@ -4436,14 +6956,14 @@ void World::tick(float dt) {
         teamDone[team] = true;
         float pool = 0;   // surplus above caps, gathered from the whole team
         for (int i = 0; i < np; ++i)
-            if (players_[size_t(i)].team == team && players_[size_t(i)].mana > cap(i)) {
+            if (!players_[size_t(i)].retailResources && players_[size_t(i)].team == team && players_[size_t(i)].mana > cap(i)) {
                 pool += players_[size_t(i)].mana - cap(i);
                 players_[size_t(i)].mana = cap(i);
             }
         for (int i = 0; i < np && pool > 0; ++i)
-            if (players_[size_t(i)].team == team) {
+            if (!players_[size_t(i)].retailResources && players_[size_t(i)].team == team) {
                 double give = std::min(cap(i) - players_[size_t(i)].mana, double(pool));
-                if (give > 0) { players_[size_t(i)].mana += give; pool -= float(give); }
+                if (give > 0) { players_[size_t(i)].creditMana(give); pool -= float(give); }
             }
         // Any pool left (every member capped) is wasted, as before.
     }
@@ -4455,25 +6975,32 @@ void World::tick(float dt) {
     // in, with nothing in the command stream to explain it.
     summonReadyGods();
 
-    // Index-based: tickProduction can spawn a trained unit, reallocating
-    // units_ and invalidating any range-for iterator over it.
-    for (size_t i = 0, n = units_.size(); i < n; ++i) {
-        Unit& u = units_[i];
-        if (u.alive() && u.type) tickProduction(u, dt);
-    }
-    // Construction: clear the per-tick "worked" flag, let builders add HP (which
-    // re-sets it on the sites they walk to / work), then bleed any orphaned conjure
-    // that no builder touched this tick until it dies and vanishes.
+    // Both factory and mobile construction keep their sites alive this tick.
     for (auto& u : units_)
         if (u.alive() && u.underConstruction) u.beingBuilt = false;
+    // Factory missions run in unit order below. Protect their existing sites
+    // from orphan decay while the producer still owns an active build.
+    for (const auto& producer:units_)
+        if (producer.alive() && producer.hp>Fixed() && !producer.incapacitated() &&
+            !producer.underConstruction && !producer.buildQueue.empty() && producer.productionSiteId)
+            if (auto* site=unit(producer.productionSiteId);site && site->alive() &&
+                (site->hp>Fixed() || site->retailSite) && site->player==producer.player) site->beingBuilt=true;
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& u = units_[i];
-        if (u.alive() && u.type && u.buildSiteId) tickConstruction(u, dt);
+        u.constructionHolding=false;
+        if (u.conjureHoverTarget && u.conjureHoverTarget!=u.buildSiteId &&
+            u.conjureHoverTarget!=u.productionSiteId) {
+            u.conjureHoverTarget=0;u.conjureHoverGoal.reset();
+        }
+        if (u.alive() && u.type && u.retailBuild) {
+            u.constructionHolding=!u.retailBuild->flying;
+            if (auto* site=unit(u.retailBuild->target);site) site->beingBuilt=true;
+        } else if (u.alive() && u.type && u.buildSiteId) tickConstruction(u, dt);
         else if (u.alive() && u.type && u.reclaimId) tickReclaim(u, dt);
         else if (u.alive() && u.type && u.repairId) tickRepair(u, dt);
     }
     for (auto& u : units_)
-        if (u.alive() && u.type && u.underConstruction && !u.beingBuilt)
+        if (u.alive() && u.type && u.underConstruction && !u.beingBuilt && !(u.retailSite && u.retailSite->mission))
             decayConstruction(u, dt);
 
     visPump();   // land a finished async fog pass (cheap; a swap or nothing at all)
@@ -4610,132 +7137,7 @@ void World::tick(float dt) {
 
     rebuildGrid();   // spatial hash for this tick (combat acquire + separation)
     rebuildOccupancy();   // who is parked where: units are solid (see sim.h)
-
-    // Retail's pathfinder: one integer work budget split across every pending
-    // request, each search resuming where it left off (icd 0x416430). Runs
-    // after occupancy so a search scores exactly what the mover will see.
-    if (pathService_) paths_.tick(
-        [&](int unitId, int cx, int cz) {
-            const Unit* u = unit(unitId);
-            if (!u || !u->type) return int(kCellImpassable);
-            // Plain cellScore, which now carries retail's grades -- bodies included.
-            // The exemption wrapper that stood here (parked cells near the unit or its
-            // goal graded passable, kParkedFreeCells) was ours: it existed so the
-            // search could route out of and into crowds while bodies were otherwise
-            // invisible to it. Retail has no such carve-out -- its map grades a parked
-            // neighbour 0 wherever it stands, a fully ringed start simply fails the
-            // search, and the mover presses on its segment until the cadence retries.
-            // Cell-exclusive parking makes a ringed start rare rather than normal.
-            return cellScore(u->type, cx, cz, unitId);
-        },
-        [&](int unitId, const std::vector<PathCell>& route, Fixed gxF, Fixed gzF,
-            bool failed, bool crowded, bool traffic) {
-            const float gx = gxF.toFloat(), gz = gzF.toFloat();
-            Unit* u = unit(unitId);
-            static const bool kPqLog2 = std::getenv("TAK_PATHLOG") != nullptr;
-            if (kPqLog2) std::printf("[pq] t=%u id=%d DELIVER wps=%zu failed=%d "
-                                     "(alive=%d orders=%zu)\n",
-                                     tickCounter_, unitId, route.size(), int(failed),
-                                     u && u->alive() ? 1 : 0,
-                                     u ? u->orders.size() : size_t(0));
-            if (route.empty()) {           // failed with NOTHING (start boxed in)
-                // Even an empty failure carries the outcome flags, and the ladder
-                // governs its retry like any other failed route: traffic evidence
-                // earns the 2d8 cadence, none means rest. The fixed 5s backoff
-                // that stood here was ours.
-                if (u && u->alive()) {
-                    u->routeStamp = int32_t(tickCounter_);
-                    u->routeCrowded = crowded;
-                    u->routeTraffic = traffic;
-                    u->routeFailed = true;
-                }
-                return;
-            }
-            if (!u || !u->alive() || u->orders.empty()) return;
-            // Only the leg this search was issued for; anything queued behind
-            // it stays untouched.
-            // Snap the final waypoint to the caller's exact goal ONLY when the
-            // route actually reached the goal cell. A route clipped at the
-            // 64-waypoint limit stops short, and pointing its last waypoint at
-            // the distant goal sends the unit charging straight at whatever lies
-            // between -- it gets blocked, re-asks, gets another clipped route,
-            // and ping-pongs. Measured: a unit oscillating between two points
-            // 2426px of travel later, having never arrived.
-            // Whether the RAW trace reached the goal cell. Note this is not the
-            // question the order-building loop below needs -- see reachedGoal.
-            const bool traceReachedGoal =
-                !route.empty() && route.back().x == int(gx) / 16 &&
-                route.back().z == int(gz) / 16;
-            // NO STRING-PULLING. The shortcut pass that stood here (lineOpen +
-            // segmentFits, farthest-reachable-waypoint) was ours, and it was also the
-            // second scorer: the search accepted a route and this pass re-judged it by
-            // different rules, and when the two disagreed the route was thrown away
-            // and the unit steered straight at its order -- into the very body the
-            // route had detoured around. Retail has exactly one judge: the tracer's
-            // reconstruction (0x414450) emits a waypoint at each change of direction,
-            // the navigator takes up to 64 of them as-is (0x4e4ea0), and nothing
-            // re-validates them. The cost is retail's own gait: a unit walks the
-            // cardinal/diagonal staircase of its trace, corner by corner -- the
-            // characteristic TA:K zigzag -- instead of a straightened line.
-            // RETAIL'S 64-WAYPOINT NAVIGATOR CAP (0x4e4ea0). The reconstruction can
-            // hand back more corners than that -- the tracer hugging a long outline
-            // produces hundreds -- and the string-pull used to hide it by collapsing
-            // them. Installed raw and uncapped, a 94-corner eastward hug of the
-            // island in Inner Circle walked a unit 500px the WRONG WAY along its
-            // whole length. Retail installs the first 64 and re-anchors: the clip
-            // ends the leg early, the appended goal and the re-ask pick up from
-            // CLOSER, and each re-trace shortens what remains of the wander.
-            std::vector<PathCell> capped;
-            const bool clipped = route.size() > 64;
-            if (clipped) capped.assign(route.begin(), route.begin() + 64);
-            const std::vector<PathCell>& useRoute = clipped ? capped : route;
-            const bool reachedGoal = traceReachedGoal && !failed && !clipped;
-            std::vector<Order> path;
-            path.reserve(useRoute.size());
-            for (size_t i = 0; i < useRoute.size(); ++i) {
-                Order o;
-                // EXACT: a waypoint is a cell centre, a whole number of pixels. This is the
-                // value a parked body sits exactly tangent to, so build it exactly.
-                o.x = Fixed::fromInt(useRoute[i].x * 16 + 8);
-                o.z = Fixed::fromInt(useRoute[i].z * 16 + 8);
-                if (i + 1 == useRoute.size() && reachedGoal) { o.x = Fixed::fromFloat(gx); o.z = Fixed::fromFloat(gz); }
-                path.push_back(o);
-            }
-            // A route clipped at 64 waypoints stops short of where the player
-            // actually sent the unit, and replaceLeg marks the LAST waypoint as
-            // the leg's goal -- so installing a clipped route silently threw the
-            // real destination away. The unit then walked to the end of each
-            // clipped route, asked for another, and shuffled between them for
-            // ever: measured 2426px of travel in 60s, never arriving, and the
-            // no-headway watchdog never fired because from its point of view the
-            // unit kept reaching its goal. Keep the destination on the end.
-            if (!reachedGoal) {
-                // Clipped OR failed, the ordered point stays on the end. For a clip
-                // (64-waypoint cap) that is how the destination survives; for a
-                // FAILURE it is how the ORDER survives: the best-effort route walks
-                // the unit to its closest approach (0x415170), the appended leg has
-                // it press there under the refusal caps, and the failed-route
-                // deadline (rand(8)+rand(8)+30 ticks x scale, 0x4e535d) re-asks from
-                // the crowd's edge -- each re-ask reaching closer as the pack
-                // tightens. Truncating the leg at the closest approach instead
-                // completed the ORDER there, the re-ask had nothing to work on, and
-                // a converging army froze as a loose ring around its first ring of
-                // arrivals. Permanent rest is the terrain path's job (pathExists
-                // false -> dropLeg), not the crowd path's.
-                Order last;
-                last.x = Fixed::fromFloat(gx);
-                last.z = Fixed::fromFloat(gz);
-                path.push_back(last);
-            }
-            replaceLeg(*u, path);
-            // Stamp the install and carry the search's outcome; the per-frame
-            // cadence ladder in the mover does the rest (retail rolls fresh dice
-            // each frame against the elapsed time -- see the ladder for the table).
-            u->routeStamp = int32_t(tickCounter_);
-            u->routeCrowded = crowded;
-            u->routeTraffic = traffic;
-            u->routeFailed = failed;
-        });
+    tickAutomaticGates();
 
     // The periodic re-anchor sweep that lived here (every unit with a route,
     // every 120 ticks, staggered by id) is gone: it predates the cadence ladder
@@ -4780,7 +7182,7 @@ void World::tick(float dt) {
         if (u.alive() && u.type && u.squad < 0)
             if (FormAgg* f = formOf(u)) {
                 f->sx += u.x.toFloat(); f->sz += u.z.toFloat(); ++f->n;
-                f->slowest = std::min(f->slowest, u.type->maxVel.toFloat());
+                f->slowest = std::min(f->slowest, u.baseSpeed.toFloat());
             }
     for (auto& u : units_) {
         if (!u.alive() || !u.type || u.squad >= 0 || !u.orders.empty()) continue;
@@ -4791,36 +7193,71 @@ void World::tick(float dt) {
         if (detmath::len(u.x.toFloat() - cx, u.z.toFloat() - cz) > kFormRejoin) order(u.id, cx, cz, false);
     }
 
-    for (auto& u : units_) {
-        if (!u.type) continue;
+    for (size_t unitIndex=0;unitIndex<units_.size();++unitIndex) {
+#if defined(__GNUC__) || defined(__clang__)
+        // Fetch upcoming thread flags while the current unit runs. This is
+        // only a cache hint; scripts still execute in their original order.
+        if (unitIndex+8<units_.size()) {
+            const size_t id=size_t(units_[unitIndex+8].id);
+            if (id<unitScriptById_.size()) if (const auto* next=unitScriptById_[id]) {
+                for (const auto& thread:next->state.vm.threads)
+                    __builtin_prefetch(thread.words.data(),0,1);
+                __builtin_prefetch(&next->state.vm.active,0,1);
+            }
+        }
+#endif
+        if (!units_[unitIndex].type) continue;
+        if (units_[unitIndex].alive() && units_[unitIndex].constructionEmitter)
+            units_[unitIndex].constructionEmitter->advance();
+        if (g_phase) {
+            const auto start=std::chrono::steady_clock::now();
+            tickUnitScript(units_[unitIndex]);
+            g_scriptMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+        } else tickUnitScript(units_[unitIndex]);
+        if (units_[unitIndex].retailSite && units_[unitIndex].retailSite->mission)
+            tickRetailGetBuilt(units_[unitIndex]);
+        if (units_[unitIndex].retailBuild) tickRetailConstruction(units_[unitIndex]);
+        const auto generationBefore=spawnGeneration_;
+        const int currentId=units_[unitIndex].id;
+        if (units_[unitIndex].alive()) tickProduction(units_[unitIndex],dt);
+        if (spawnGeneration_!=generationBefore) {
+            if (retailAllocation_) {
+                std::sort(units_.begin(),units_.end(),[](const auto& a,const auto& b){return a.id<b.id;});
+                bodyIndexValid_=false;
+                unitIndex=size_t(std::find_if(units_.begin(),units_.end(),[&](const auto& u){return u.id==currentId;})-units_.begin());
+            }
+            rebuildGrid();rebuildOccupancy();
+        }
+        // Production may reallocate the vector; acquire the reference afterward.
+        auto& u=units_[unitIndex];
+        // 51e220 updates surface Y after each mover, including early returns.
+        // The next mover tick consumes that stored height for its water flag.
+        struct SurfaceUpdate {
+            World& world; int id; Fixed x,z; Bam heading;
+            ~SurfaceUpdate() {
+                // A mission can create a construction site and reallocate units.
+                // Resolve the owner again at this final per-unit phase.
+                auto* subject=world.unit(id);
+                if (!subject || !subject->type) return;
+                auto& u=*subject;
+                if (u.alive() && !u.embarked() && !u.type->canFly && !u.type->isStructure() &&
+                    u.flightGroundMode==1 && (u.type->canHover || u.x!=x || u.z!=z || u.heading!=heading))
+                    u.groundY=world.surfaceHeight(u,world.tickCount(),&u.groundPitch,&u.groundRoll);
+            }
+        } surfaceUpdate{*this,u.id,u.x,u.z,u.heading};
         if (!u.alive()) {
             ++u.deadFor;
-            // CorpseAdjustX/Z: the wreck art sits offset from the building's
-            // centre (arakeep corpseadjustz=2). Shift the record -- and its nav
-            // block -- once, the moment the death anim ends and the corpse
-            // appears (retail places the corpse feature at the adjusted cell).
-            if (u.deadFor == kCorpseAnimTicks &&
-                u.deadFor < u.corpseUntil &&
-                (u.type->corpseAdjX != 0 || u.type->corpseAdjZ != 0)) {
-                if (u.corpseBlocks) blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
-                u.x = Fixed::fromFloat(std::clamp(u.x.toFloat() + float(u.type->corpseAdjX) * 16.0f,
-                                 8.0f, float(terW_) * 16.0f - 8.0f));
-                u.z = Fixed::fromFloat(std::clamp(u.z.toFloat() + float(u.type->corpseAdjZ) * 16.0f,
-                                 8.0f, float(terH_) * 16.0f - 8.0f));
-                if (u.corpseBlocks) blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), true);
+            if (u.corpseStatue<0 && u.deadFor==kCorpseAnimTicks && u.deadFor<u.corpseUntil) {
+                if (!placeCorpse(u,corpseTypeOf(u.type))) retireCorpse(u);
             }
-            // The body decomposed (or was never a corpse): fully gone. Records
-            // explicitly retired at 1000 stay put.
-            if (u.deadFor >= u.corpseUntil && u.deadFor < kRetiredTicks - 30) {
-                u.deadFor = kRetiredTicks;
-                if (u.corpseBlocks) {   // blocking wreck finally clears the ground
-                    u.corpseBlocks = false;
-                    blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
-                }
-            }
+            if (u.deadFor>=u.corpseUntil &&
+                (u.deadFor<kRetiredTicks-30 || corpseFootprints_.contains(u.id)))
+                retireCorpse(u);
             continue;
         }
-        if (u.hp <= Fixed()) {
+        if (u.hp <= Fixed() && !(u.retailSite && u.underConstruction)) {
+            cancelPath(u);
+            refreshMovingSearchBody(u);
             if (u.player >= 0 && u.player < int(players_.size()))
                 players_[size_t(u.player)].losses++;   // end-of-game "Losses" column
             // Award the destroyed unit's experiencepoints to the killer, then set
@@ -4861,7 +7298,7 @@ void World::tick(float dt) {
             {
                 // Retail severity (icd 0x512610): ((overkill% + HP% one second
                 // before death) / 2), clamped 1..100. Passed to the COB Killed.
-                float okPct = u.overkill.toFloat() * 100.0f / std::max(float(u.type->maxHp), 1.0f);
+                float okPct = u.overkill.toFloat() * 100.0f / std::max(float(u.maximumHp()), 1.0f);
                 u.severity = uint8_t(std::clamp((okPct + float(u.hpPct1s)) * 0.5f,
                                                 1.0f, 100.0f));
                 // Dying while petrified/frozen leaves the FBI stone=/frozen=
@@ -4899,7 +7336,8 @@ void World::tick(float dt) {
                         // until reclaimed, like retail).
                         // decomposeTicks is ALREADY a tick count, so this is now a
                         // plain add rather than a round trip through seconds.
-                        u.corpseUntil = d30 > 0 ? kCorpseAnimTicks + d30 : INT32_MAX;
+                        const int starts=u.corpseStatue>=0 ? 0 : kCorpseAnimTicks;
+                        u.corpseUntil = d30 > 0 ? starts + d30 : INT32_MAX;
                     }
                 } else {
                     u.corpseUntil = kCorpseAnimTicks;
@@ -4907,33 +7345,27 @@ void World::tick(float dt) {
                 u.corpseWork = Fixed::fromFloat(
                     std::max(ct >= 0 ? featTypes_[size_t(ct)].energy : 0.0f,
                              60.0f));   // ~0.5s minimum consume time
-                // A dead structure frees its nav footprint -- unless its wreck
-                // BLOCKS (arakeep_dead blocking=1; a destroyed wall's ARAWALL
-                // feature likewise), which keeps the cells occupied until the
-                // wreck is reclaimed or rots. (Fixes a long-standing gap:
-                // destroyed buildings never unblocked at all.)
-                if (u.type->isStructure()) {
-                    bool wreckBlocks =
-                        u.corpseUntil > 4.0f &&
-                        ct >= 0 && featTypes_[size_t(ct)].blocking;
-                    if (wreckBlocks) {
-                        u.corpseBlocks = true;
-                    } else {
-                        blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
-                    }
-                }
+                if (u.type->isStructure())
+                    blockFoot(*u.type,u.x.toFloat(),u.z.toFloat(),false);
             }
             // Drop this unit's per-unit pathfinding state. Ids are never reused, so a
             // dead unit's entries can never match anything again -- they would simply
             // accumulate for the rest of the match.
-            u.deadFor = 0; u.orders.clear(); u.speed = Fixed(); continue;
+            u.deadFor = 0; u.orders.clear(); u.speed = Fixed();
+            // Refresh the old body before a corpse offset moves the record.
+            for (auto& plane:searchGrades_)
+                refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),
+                    footprintOrigin(u.z,u.type->footZ),u.type->footX,u.type->footZ);
+            // Frozen/stone deaths bypass the ordinary death animation.
+            if (u.corpseStatue>=0 && !placeCorpse(u,u.corpseStatue)) retireCorpse(u);
+            continue;
         }
 
         // Retail 1-second HP-percent samples (unit+0x110/+0x111): the Killed
         // severity reads the PREVIOUS sample, i.e. your health ~1s before death.
         if (tickCounter_ % 30 == 0) {
             u.hpPct1s = u.hpPctCur;
-            u.hpPctCur = uint8_t(std::clamp(u.hp.toFloat() / std::max(float(u.type->maxHp), 1.0f)
+            u.hpPctCur = uint8_t(std::clamp(u.hp.toFloat() / std::max(float(u.maximumHp()), 1.0f)
                                             * 100.0f, 0.0f, 100.0f));
         }
         // Status timers count down; HP regenerates (healtime); mana recharges.
@@ -4976,14 +7408,56 @@ void World::tick(float dt) {
         // which is nearly every unit: of the 202 types this registry loads from a
         // retail install, 200 have healtime > 0 (only aranull and npcwagon do not).
         // That is why Ctrl+Shift+D self-destruct appeared to do nothing.
-        if (u.type->healTime > 0 && u.hp > Fixed() && u.hp < Fixed::fromFloat(u.type->maxHp))
-            u.hp = fxMin(Fixed::fromFloat(u.type->maxHp),
+        if (u.type->healTime > 0 && u.hp > Fixed() && u.hp < Fixed::fromFloat(u.maximumHp()))
+            u.hp = fxMin(Fixed::fromFloat(u.maximumHp()),
                          u.hp + Fixed::fromFloat(dt / u.type->healTime));
         if (u.type->maxMana > 0 && u.mana < u.type->maxMana)
             u.mana = std::min(double(u.type->maxMana), u.mana + double(u.type->manaRegen) * double(dt));
         // A WANDERER keeps its spawn point as home -- that anchor is what stops its
         // stroll turning into a migration.
         if (u.orders.empty() && !u.type->wanders) { u.homeX = u.x; u.homeZ = u.z; }
+        // Retail dispatches each unit's missions immediately before its mover,
+        // not all ground missions before every other unit's activity.
+        if (u.constructionHolding && u.buildSiteId) continue;
+        if (g_phase) {
+            const auto start=std::chrono::steady_clock::now();
+            tickGroundMission(u);
+            g_moveMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+        } else tickGroundMission(u);
+        if (plainFlightPatrol(u)) tickFlightPatrol(u);
+        tickGuardNoMove(u);
+        // A captured MobileBuild waits for navigator arrival before creating
+        // the site. Keep that rectangle attached to the owning goal across
+        // every intermediate route, and hand construction over on the next tick.
+        if (!u.orders.empty()) {
+            auto& goal=u.orders[currentLeg(u.orders)];
+            if (prepareBuildApproach(u)) {
+                const Order arrived=goal;
+                dropLeg(u);
+                u.orders.insert(u.orders.begin(),arrived);
+                u.orders.front().buildRectangle.reset();
+                u.orders.front().x=arrived.buildX;
+                u.orders.front().z=arrived.buildZ+Fixed::fromInt(arrived.buildType->footZ*8+24);
+                cancelPath(u);
+                // Allocate during this unit's dispatch: later units may draw
+                // construction particles from the same CRT stream.
+                const int builderId=u.id;
+                const int siteId=startBuild(builderId,arrived.buildType,arrived.buildX.toFloat(),
+                                             arrived.buildZ.toFloat(),Approach::None);
+                if (siteId) turnBuilderToSite(*unit(builderId),*unit(siteId));
+                else popBuildOrder(*unit(builderId));
+                // spawn invalidates references; re-establish slot order before
+                // continuing so a later newborn receives its first update today.
+                if (retailAllocation_)
+                    std::sort(units_.begin(),units_.end(),[](const auto& a,const auto& b){return a.id<b.id;});
+                    bodyIndexValid_=false;
+                unitIndex=size_t(std::find_if(units_.begin(),units_.end(),
+                    [&](const auto& candidate){return candidate.id==builderId;})-units_.begin());
+                rebuildGrid();rebuildOccupancy();
+                continue;
+            }
+        }
+
         // Wildlife and villagers roam. Retail gives them Standby_wander and they
         // amble; ours stood like statues on every campaign and scenario map. An idle
         // wanderer strolls every ~8 seconds, staggered by id so a herd doesn't move
@@ -5011,7 +7485,7 @@ void World::tick(float dt) {
             });
             float cost = (u.speed.toFloat() * kTick > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
             Player& tm = players_[size_t(u.player)];
-            if (!enemyNear && tm.mana >= cost) { tm.mana -= cost; u.cloaked = true; }
+            if (!enemyNear && tm.mana >= cost) { tm.debitMana(cost); u.cloaked = true; }
             else u.cloaked = false;
         } else if (u.cloaked) {
             u.cloaked = false;   // toggled off (or no longer a cloaker): decloak now
@@ -5020,12 +7494,15 @@ void World::tick(float dt) {
         if (u.underConstruction) continue;   // silent until finished
         if (u.embarked()) {                  // riding a transport
             Unit* t = unit(u.inTransport);
-            if (t && t->alive()) { u.x = t->x; u.z = t->z; }
+            if (t && t->alive()) { u.x = t->x; u.z = t->z; updateBodyIndex(u); }
             else { if (mission_ || scenario_) justDied_.push_back(u.id); u.deadFor = 0; }  // transport lost with all hands
             continue;
         }
         // Frozen / petrified / paralyzed: the unit is inert this tick.
-        if (u.incapacitated()) { u.speed = Fixed(); continue; }
+        if (u.incapacitated()) { u.speed = Fixed(); if (u.type->canFly) u.flightVelocity={}; continue; }
+        if (!u.type->canFly && !u.type->isStructure()) {
+            updateGroundTerrainFlags(u);
+        }
         // Jam tracker DECAYS every tick and is topped up only while the mover is
         // genuinely stuck (see the fully-blocked branch). Decaying here rather than
         // clearing it inside the movement code makes it self-correcting: the mover has
@@ -5039,7 +7516,7 @@ void World::tick(float dt) {
         // The actual startBuild happens after this loop: it spawns the site, which
         // can reallocate units_ and leave every Unit& here dangling -- an earlier
         // version called it inline and read the order queue out of freed memory.
-        if (!u.orders.empty() && u.orders.front().buildType && u.buildSiteId == 0)
+        if (!u.orders.empty() && u.orders.front().buildType && !u.orders.front().buildRectangle && u.buildSiteId == 0)
             buildDue_.push_back(u.id);
         // Reclaim needs no deferral: consuming a feature spawns nothing, so
         // nothing can reallocate units_ underneath us.
@@ -5048,13 +7525,15 @@ void World::tick(float dt) {
         if (!u.orders.empty() && u.orders.front().repairTarget && u.repairId == 0)
             u.repairId = u.orders.front().repairTarget;
 
+        bool groundMovementHandled=false;
         if (!u.orders.empty() && (u.orders.front().load || u.orders.front().unload))
             tickTransport(u, dt);
-        else if (g_phase) { auto _c0=std::chrono::steady_clock::now(); tickCombat(u, dt); g_tcomb += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_c0).count(); }
-        else tickCombat(u, dt);
+        else if (g_phase) { auto _c0=std::chrono::steady_clock::now(); tickCombat(u, dt, groundMovementHandled); g_tcomb += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_c0).count(); }
+        else tickCombat(u, dt, groundMovementHandled);
 
+        if (groundMovementHandled) continue;
         bool combatHold =
-            !u.orders.empty() && u.orders.front().targetId != 0 &&
+            (u.type->canFly || u.type->isStructure()) && !u.orders.empty() && u.orders.front().targetId != 0 &&
             !u.orders.front().load && !u.orders.front().guard && [&] {
                 Unit* t = unit(u.orders.front().targetId);
                 if (!t) return false;
@@ -5073,10 +7552,15 @@ void World::tick(float dt) {
                 // building's edge gets dragged back into moving).
                 float pad = t->type->maxVel <= Fixed()
                     ? 8.0f * float(std::max(t->type->footX, t->type->footZ)) + 24.0f : 0.0f;
-                if (std::sqrt(dx * dx + dz * dz) > (u.type->maxRange() + pad) * 0.95f) return false;
+                // Weapon switchers approach using the selected weapon, just as
+                // tickCombat does. A longer secondary spell must not stop a
+                // dragon outside its selected breath weapon's range.
+                const bool allWeapons=!u.type->weaponSwitching && u.type->weapons.size()>1;
+                const float range=allWeapons ? u.type->maxRange() : (sel ? float(sel->range) : u.type->maxRange());
+                if (std::sqrt(dx * dx + dz * dz) > (range + pad) * 0.95f) return false;
                 // Don't sit still with no shot: a ranged unit whose line to the
                 // target is blocked keeps moving to get around the wall.
-                bool needLoS = u.type->maxRange() > 64.0f && !u.type->canFly &&
+                bool needLoS = range > 64.0f && !u.type->canFly &&
                                t->type && !t->type->canFly && u.type->canMove &&
                                !u.type->lobs();
                 return !needLoS ||
@@ -5086,466 +7570,61 @@ void World::tick(float dt) {
             }();
         if (combatHold) continue;
 
-        if (u.orders.empty()) {
-            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
-        } else if (u.orders.front().wait > 0) {
-            // SetMission "w N": hold position while the scripted wait counts down.
-            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
-            --u.orders.front().wait;
-            if (u.orders.front().wait <= 0.0f) u.orders.erase(u.orders.begin());
-        } else if (u.orders.front().waitAttack) {
-            // SetMission "wa": ambush -- hold until a non-allied unit is within sight,
-            // then release to the next order (usually an attack).
-            u.speed = fxMax(Fixed(), u.speed - u.type->brake);
-            float sight = u.type->sight > 0 ? u.type->sight : 200.0f;
-            // THROUGH THE SPATIAL GRID. This scanned every unit in the world, for every
-            // ambushing unit, every tick -- O(n^2) in the number of ambushers, and a
-            // mission that sets "wa" on a large force pays it on the referee as well as
-            // on every client. The grid holds ALL alive units, buildings included
-            // (rebuildGrid), so this is the same set, merely visited by locality; the
-            // exact distance test below is unchanged and the answer is a bool, so
-            // iteration order cannot affect it.
-            bool threat = false;
-            forEachNear(u.x.toFloat(), u.z.toFloat(), sight, [&](int idx) {
-                if (threat) return;
-                const Unit& e = units_[size_t(idx)];
-                if (!e.alive() || e.embarked() || !e.type || allied(e.player, u.player)) return;
-                const float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
-                if (dx * dx + dz * dz <= sight * sight) threat = true;
-            });
-            if (threat) u.orders.erase(u.orders.begin());
-        } else {
-            const Order& o = u.orders.front();
-            float dx = (o.x - u.x).toFloat(), dz = (o.z - u.z).toFloat();
-            float dist = std::sqrt(dx * dx + dz * dz);
-            if (o.guard && dist <= 70.0f) continue;   // in escort position
-            // A FINAL move goal completes a little short, so a crowd sharing one
-            // destination settles into a blob (spread by separation) instead of every
-            // unit fighting for the exact same point. (Described as "flow-field orders"
-            // when the arrival radius came from the field; it is the o.goal flag now.)
-            // Retail move goals are AREAS -- NavGoalCircle / NavGoalRect / NavGoalRing
-            // in the RTTI, not points (docs/retail-engine.md). A FINAL goal therefore
-            // completes on a circle wide enough to hold a body: 16px, or the unit's own
-            // footprint if that is bigger, so a 4x4 trebuchet is not asked to stand on
-            // the same pixel a swordsman would. Intermediate route waypoints keep the tight
-            // 3px so a route is actually followed.
-            // (This was `o.flow ? 16 : 3`, which quietly became 3 for EVERY unit once the
-            // retail-nav experiment stopped setting o.flow -- a whole group then fought
-            // over one pixel, which is exactly what it looked like.)
-            float foot = float(std::max(u.type->footX, u.type->footZ)) * 8.0f;
-            float arrive = o.goal ? std::max(16.0f, foot) : 3.0f;
-            if (dist < arrive) {
-                if (o.buildType || o.reclaimFeat || o.repairTarget)
-                    continue;   // the job is claimed above; its order blocks the queue
-                if (o.targetId == 0) {
-                    Order done = o;
-                    u.orders.erase(u.orders.begin());
-                    if (done.patrol) u.orders.push_back(done);
-                }
-                continue;
-            }
-            const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
-            const int32_t diff = bamDiff(want, u.heading);
-            const int32_t maxTurn = u.type->turnRate;
-            u.heading = u.heading + Bam(std::clamp(diff, -maxTurn, maxTurn));
-            u.turnReqBam = diff;   // requested turn -> TurnDirection anim (icd 0x4d9593)
-
-            // NO YIELD PASS. A stalled unit used to look for an opposing one in
-            // front of it and make the lower id stand still while the higher passed.
-            // Retail has nothing of the sort: its mover, refused, clamps the step,
-            // slows (0.5x on the first refusal, 0.4x once refused twice running) and
-            // returns -- and the refusal flags it sets are write-only, so being blocked
-            // reaches no other system at all (docs/retail-engine.md). A blocked unit
-            // simply presses, and moves the instant the way clears.
-            //
-            // Standing still was not even standing ASIDE: in a corridor the unit that
-            // yielded went on blocking the one it yielded to.
-
-            // Brake into the waypoint if it's the last one; slow for big turns.
-            Fixed target = u.type->maxVel;
-            // Formation pacing: a pure-move member keeps to the group's slowest speed,
-            // UNLESS it's behind the centre relative to the goal (a straggler), in which
-            // case it sprints at its own speed to catch up (see the FormAgg pass above).
-            if (u.squad < 0 && o.targetId == 0) {
-                if (FormAgg* f = formOf(u); f && f->n > 1) {
-                    float cx = float(f->sx / f->n), cz = float(f->sz / f->n);
-                    // "Behind the centre" is measured against the leg the group is
-                    // walking NOW -- against the last QUEUED leg a straggler check
-                    // would compare everyone to a point nobody is heading for yet.
-                    const Order& legEnd = u.orders[currentLeg(u.orders)];
-                    float gx = legEnd.x.toFloat(), gz = legEnd.z.toFloat();
-                    float uToGoal = detmath::len(u.x.toFloat() - gx, u.z.toFloat() - gz);
-                    float cToGoal = detmath::len(cx - gx, cz - gz);
-                    if (uToGoal <= cToGoal + kFormBehind) target = fxMin(target, Fixed::fromFloat(f->slowest));
-                }
-            }
-            // Terrain speed factors, retail-style (icd 0x51be12): ROAD first --
-            // whole footprint on road cells -- else shallow WATER, never both
-            // (a road bridge over the river keeps the road bonus).
-            if (!u.type->canFly) {
-                if (u.type->roadMult != Fixed::fromInt(1) &&
-                    onRoad(u.x.toFloat(), u.z.toFloat(), u.type->footX, u.type->footZ)) {
-                    target = target * u.type->roadMult;
-                    static const bool kRoadLog = std::getenv("TAK_ROADLOG") != nullptr;
-                    if (kRoadLog) {
-                        static int logged = 0;
-                        if (logged < 5)
-                            std::fprintf(stderr, "road boost: %s x%.2f (%d)\n",
-                                         u.type->id.c_str(), u.type->roadMult.toFloat(), ++logged);
-                    }
-                } else if (u.type->waterMult != Fixed::fromInt(1) && !depth_.empty()) {
-                    int cx = u.x.floorInt() / 16, cz = u.z.floorInt() / 16;
-                    if (cx >= 0 && cz >= 0 && cx < terW_ && cz < terH_ &&
-                        depth_[size_t(cz) * terW_ + cx] > 0)
-                        target = target * u.type->waterMult;
-                }
-            }
-            // Retail couples turning to braking (icd 0x4da4ce): it works out how far
-            // the unit will travel while it finishes the turn it still owes, and
-            // brakes when the remaining distance is inside twice that arc -- so a
-            // sharp corner slows you down in proportion to how sharp it is, instead
-            // of our old flat "over 0.8 rad, drop to 30%" cliff.
-            // back to rad/s for the arc test below
-            float turnRate = std::max(float(u.type->turnRate) * kCobAngle * kTick, 1e-4f);
-            float arcDist = u.speed.toFloat() * kTick * std::abs(diff) / turnRate;
-            if (dist < 2.0f * arcDist) target = Fixed();
-            // Retail's stop-distance test measures to a DIFFERENT path point than the
-            // arc test does, and we have only one `dist` (to the current order point).
-            // Feeding it both tests unguarded would stop the unit at every route node, so
-            // the stop test stays on the final leg, where our `dist` means what its
-            // does.
-            bool last = u.orders.size() == 1;
-            if (last) {
-                const Fixed stopDist = (u.speed * u.speed) / (Fixed::fromInt(2) * u.type->brake);
-                if (Fixed::fromFloat(dist) < stopDist) target = Fixed();
-            }
-            // The target is derived from unit data (float px/s) and the road/formation
-            // multipliers above; it crosses into fixed point once, here, and the ramp
-            // toward it is integer from then on.
-            const Fixed targetFx = target;
-            if (u.speed < targetFx)
-                u.speed = fxMin(u.speed + u.type->accel, targetFx);
-            else
-                u.speed = fxMax(u.speed - u.type->brake, targetFx);
-
-            // THE STEP IS FIXED-POINT. detmath still computes the direction in double
-            // (it is bit-identical across builds by construction), but the displacement
-            // is quantised to 1/65536 px before it is ever added to a position, so a
-            // walk of ten thousand ticks accumulates exactly and cannot drift a unit
-            // four hundredths of a pixel into a body it is meant to be clear of.
-            // INTEGER ALL THE WAY TO THE POSITION: a CORDIC sin/cos of a binary angle,
-            // scaled by a fixed-point step. No float touches the displacement now.
-            const SinCos sc = fxSinCos(u.heading);
-            const Fixed stepLen = u.speed;
-            const Fixed mx = sc.s * stepLen;
-            const Fixed mz = sc.c * stepLen;
-            // Collide ground/water units with the nav grid so they can't walk
-            // through walls and buildings (pathfinding routes around, but direct
-            // steering in combat did not). Slide along a blocked axis.
-            if (u.type->canFly) {
-                u.x += mx; u.z += mz;
-            } else {
-                const NavGrid& g = navFor(u.type);
-                // The old test was "is the destination CELL free", plus an escape
-                // hatch skipping it entirely while a unit stayed inside its own
-                // cell -- so between crossings a body crept into its neighbour
-                // unopposed, measured 13px in where footprints touch at 32.
-                // 0 = clear, 1 = terrain, 2 = a body. WHY matters: retail's
-                // goal-crowding settle applies only when what stops you is a BODY --
-                // a unit blocked by terrain near its goal keeps pressing (the route
-                // will fix it), one blocked by the crowd it was sent into is done.
-                auto blockedBy = [&](Fixed nx, Fixed nz) -> int {
-                    // RETAIL'S FORWARD PROBE IS ONE CELL: project the step and query
-                    // the resulting POSITION (the mover RE: "one step of 0x100000 ...
-                    // cmp eax,4/jle -> blocked"). Terrain and occupant are judged for
-                    // the destination's own cell -- the same per-cell granularity the
-                    // search scores with (0x41472e runs the START through the very
-                    // same single-cell query), so the mover never refuses a cell its
-                    // own route was allowed to cross. The footprint-swept variants
-                    // that stood here were stricter than retail and manufactured
-                    // wedges retail does not have: two bodies that had legally
-                    // interpenetrated through the same-way rule could each find the
-                    // other inside their footprint sweep, refuse every direction, and
-                    // deadlock for minutes. The price of the per-cell probe is
-                    // retail's own price: bodies and terrain corners can visibly clip
-                    // by up to half a footprint, and always could in the original.
-                    //
-                    // The occupant rule is 0x4db767: ignored -- the step passes
-                    // through -- only when it is under way, not slower than us, and
-                    // heading within 90 degrees. Head-on blocks. Slower-ahead blocks.
-                    // Parked blocks. This is what lets retail run with no separation
-                    // pass: overlap only forms behind a faster leader and unwinds as
-                    // the leader pulls away.
-                    const int cx = nx.floorInt() / 16, cz = nz.floorInt() / 16;
-                    if (!(g.empty() || g.walkable(cx, cz))) return 1;
-                    if (occW_ <= 0) return 0;
-                    if (cx < 0 || cz < 0 || cx >= occW_ || cz >= occH_) return 0;
-                    const int32_t id = occ_[size_t(cz) * size_t(occW_) + size_t(cx)];
-                    if (id == 0 || id == u.id) return 0;
-                    const Unit* o = unit(id);
-                    if (!o || !o->alive() || !o->type) return 0;
-                    if (o->speed > Fixed() && o->speed >= u.speed &&
-                        std::abs(bamDiff(o->heading, u.heading)) <= kBamQuarterV)
-                        return 0;
-                    return 2;
-                };
-                // A SLIDE ONLY COUNTS IF IT ACTUALLY DISPLACES. Walking straight down a
-                // wall gives mx ~= 0, and the x-slide below then "succeeded" by moving
-                // the unit -0.0002px: not blocked, so the clamp/slow/repath branch never
-                // ran, nothing registered it as blocked, and the unit stood at full
-                // commanded speed for ever. It was invisible to every stuck-detector we
-                // have, which is precisely why a sideways teleport had to exist to
-                // rescue it.
-                //
-                // Measured on a unit squeezing past the end of a parked wall: full=0,
-                // xonly=1 (a no-op), zonly=0, every tick for the whole run.
-                // NO AXIS SLIDE. Retail's mover probes ONE point -- a step along its
-                // heading -- and on refusal sets a flag, adds a per-type value to its
-                // budget and RETURNS (0x4dbc17). It never decomposes the step, and the
-                // whole mover contains only two queries: the forward probe and the 3x3
-                // scan. There is no third to test an axis with.
-                // THE CADENCE LADDER, retail's service worker (0x4e51f3-0x4e5491),
-                // evaluated per frame with FRESH dice each check -- retail stores no
-                // deadline; it rolls its RNG at every evaluation and re-requests when
-                // the elapsed time since the route's stamp beats the roll. The dice
-                // and base are keyed on the route's outcome flags and the unit's
-                // state, everything scaled by halfCellTicks (+0x249):
-                //
-                //   crowded goal (bit 0):
-                //     floater on water (0x260 bit19='floater', maxwaterdepth>0):
-                //                                 rand(10)+rand(10)+10   (0x4e5226)
-                //     no refusal state:           rand(10)+rand(10)+20   (0x4e5284)
-                //     refusal state:              rand(8)+rand(8)+10     (0x4e52d3)
-                //   traffic on route (bit 1):
-                //     floater on water:           rand(8)+rand(8)+30     (0x4e535d)
-                //     no refusal state:           rand(8)+rand(8)+60     (0x4e53bc)
-                //     refusal state:              rand(8)+rand(8)+30     (0x4e540a)
-                //   neither: elapsed >= 120 ticks AND rand(120)==0 -- a 1-in-120
-                //     roll per frame past the threshold, a geometric tail, not a
-                //     timer (0x4e545b). Failure does not gate this: the failure
-                //     report sets only bits 0/1 (0x414450's report branch,
-                //     emulated), so a failure with no crowd evidence lands here
-                //     and keeps re-asking gently.
-                //
-                // The "refusal state" is the navigator's 0x36 refusal/scan bits,
-                // recomputed every step in retail exactly as our bodyBlockStreak is.
-                // A unit with somewhere to be must always hold a route or have a
-                // request in flight -- retail's missions carry a nav goal from
-                // birth, so its cadence timer always has a stamp to run against.
-                // Ours has entry paths that start a leg WITHOUT a request (the
-                // build/assist site approach goes through queueBuild, not order()),
-                // and cancel/supersede races that leave routeStamp=-1 with nothing
-                // pending. In that state the ladder below is latched off and the
-                // unit steers raw at its goal for ever -- the reported "stuck
-                // units never repath, keep walking into the obstacle". Restore the
-                // invariant: no route, nothing pending, a plain-move leg -> ask.
-                if (u.routeStamp < 0 && !u.orders.empty() &&
-                    u.orders.front().targetId == 0 && !paths_.pending(u.id)) {
-                    const Order& legEnd = u.orders[currentLeg(u.orders)];
-                    if (!requestPath(u, legEnd.x.toFloat(), legEnd.z.toFloat()))
-                        u.routeStamp = int32_t(tickCounter_);   // near-goal: hand the leg
-                                                                // to the ladder's timer
-                }
-                if (u.routeStamp >= 0 && !u.orders.empty() &&
-                    u.orders.front().targetId == 0) {
-                    const int32_t elapsed = int32_t(tickCounter_) - u.routeStamp;
-                    const uint32_t sc = uint32_t(u.type->halfCellTicks);
-                    const bool water = u.type->floater && u.type->maxWaterDepth > 0;
-                    const bool refusal = u.bodyBlockStreak > 0;
-                    bool fire = false;
-                    if (u.routeCrowded) {
-                        const uint32_t dice =
-                            water   ? pathRand(10) + pathRand(10) + 10
-                          : !refusal ? pathRand(10) + pathRand(10) + 20
-                          :            pathRand(8) + pathRand(8) + 10;
-                        fire = elapsed >= int32_t(dice * sc);
-                    } else if (u.routeTraffic) {
-                        const uint32_t dice =
-                            water   ? pathRand(8) + pathRand(8) + 30
-                          : !refusal ? pathRand(8) + pathRand(8) + 60
-                          :            pathRand(8) + pathRand(8) + 30;
-                        fire = elapsed >= int32_t(dice * sc);
-                    } else {
-                        // The PLAIN branch -- and it does NOT care whether the
-                        // search failed. The failure report sets only bits 0/1
-                        // (emulated); bit 2 belongs to the delivery path, so a
-                        // clean failure with no crowd evidence leaves NO bits and
-                        // lands here: elapsed past 120 ticks, then a 1-in-120 roll
-                        // per frame (0x4e545b). This is how a long haul that failed
-                        // at its visit limit chains its way across the map, and how
-                        // a unit resting against a sealed wall keeps gently probing
-                        // it -- a few asks a minute, for ever, which IS retail.
-                        fire = elapsed >= 120 && pathRand(120) == 0;
-                    }
-                    if (fire) {
-                        const Order& legEnd = u.orders[currentLeg(u.orders)];
-                        const float tx = legEnd.x.toFloat(), tz = legEnd.z.toFloat();
-                        // The reachability guard is ours (perf): a goal in another
-                        // component would cost a map-wide failing search; retail just
-                        // eats that. Give up the leg exactly as the old blocked-path
-                        // re-ask did.
-                        const bool onWalkable =
-                            g.walkable(u.x.floorInt() / 16, u.z.floorInt() / 16);
-                        if (onWalkable &&
-                            !pathExists(u.type, tx, tz, u.x.toFloat(), u.z.toFloat())) {
-                            dropLeg(u);
-                        } else if (requestPath(u, tx, tz)) {
-                            u.routeStamp = -1;   // queued; re-stamped when the route installs
-                        } else {
-                            // requestPath queued nothing (already within a couple cells
-                            // of the leg end but blocked, or superseded). Do NOT leave
-                            // routeStamp at -1 -- that latches the ladder OFF for good
-                            // (its guard is routeStamp>=0), which is exactly the "stuck
-                            // unit never re-asks, keeps pressing the obstacle" bug.
-                            // Retail's re-ask runs on a live timer that never latches
-                            // pending; restamp so the ladder keeps rolling.
-                            u.routeStamp = int32_t(tickCounter_);
-                        }
-                    }
-                }
-                const int blk = blockedBy(u.x + mx, u.z + mz);
-                if (blk == 2) ++u.bodyBlockStreak; else u.bodyBlockStreak = 0;
-                if (blk == 0) { u.x += mx; u.z += mz; }
-                else {
-                    // Fully blocked (a wall dead-ahead the straight path clipped):
-                    // stop and repath around it toward the final destination, so
-                    // the unit routes around instead of wedging permanently.
-                    // Retail does NOT stop a blocked unit dead -- it clamps the move
-                    // and caps speed, 0.5x on the FIRST refusal and 0.4x once it has
-                    // been refused twice running (the navigator's 0x100/0x200 refusal
-                    // flags), so the unit keeps pressing and resumes the instant the
-                    // way clears. This used to flatten both stages to 0.4x; the
-                    // streak the flags encode is now kept, so the two-stage cap is
-                    // exact.
-                    u.speed = fxMin(u.speed,
-                                    Fixed::fromFloat(u.type->maxVel.toFloat() *
-                                                     (u.bodyBlockStreak >= 2 ? 0.4f : 0.5f)));
-                    // The re-ask that lived in this branch is gone: the cadence
-                    // ladder above IS retail's re-ask engine, refusal state included,
-                    // and it runs blocked or not. What stays here is only the press.
-                }
-            }
-
-            // Stuck watchdog: a unit that wants to move but makes no headway
-            // (crowd jam at a corner/chokepoint) gets nudged sideways and
-            // repathed to break the deadlock. Half the units nudge each way so
-            // a crowd splits around an obstacle instead of piling up.
-            if (!u.type->canFly) {
-                const Fixed moved = fxLen(u.x - u.stuckX, u.z - u.stuckZ);
-                if (moved > Fixed::fromFloat(11.0f)) {
-                    u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
-                } else {
-                    ++u.stuckFor;
-                    if (u.stuckFor > int32_t(kTick)) {
-                        static const bool kStLog = std::getenv("TAK_STUCKLOG") != nullptr;
-                        if (kStLog && !u.orders.empty())
-                            std::printf("[stuck] t=%u id=%d type=%s pos=(%.0f,%.0f) "
-                                        "front(tgt=%d goal=(%.0f,%.0f)) orders=%zu "
-                                        "routeStamp=%d crowd=%d traffic=%d failed=%d "
-                                        "streak=%d speed=%.2f\n",
-                                        tickCounter_, u.id, u.type->id.c_str(),
-                                        u.x.toFloat(), u.z.toFloat(),
-                                        u.orders.front().targetId,
-                                        u.orders.front().x.toFloat(),
-                                        u.orders.front().z.toFloat(), u.orders.size(),
-                                        u.routeStamp, int(u.routeCrowded),
-                                        int(u.routeTraffic), int(u.routeFailed),
-                                        u.bodyBlockStreak, u.speed.toFloat());
-                        u.stuckFor = 0; u.stuckX = u.x; u.stuckZ = u.z;
-                        const NavGrid& g = navFor(u.type);
-                        // VALIDATE THE MOVE THAT IS ACTUALLY MADE. This used to test
-                        // clearance at distance d and then move d/2, so the point it
-                        // checked was never the point it moved to: the far end could be
-                        // clear while the halfway point -- where the unit actually landed
-                        // -- was inside a body or a wall, which is how a unit "escaping" a
-                        // jam could shove itself into one.
-                        //
-                        // Check the real endpoint, and the swept segment as well: a short
-                        // hop that starts and ends clear can still cross a blocked cell in
-                        // between, and this is a teleport rather than a steered move, so
-                        // nothing else will catch that.
-                        // NO SIDEWAYS NUDGE. A stalled unit used to be TELEPORTED 10-17px
-                        // sideways from here. Retail does not dodge, does not teleport,
-                        // and the RE found no obstacle-avoidance algorithm in it at all:
-                        // "the response to being blocked is entirely inside the mover --
-                        // clamp, slow, return". What stays is the part that is about the
-                        // ORDER rather than the body: noticing a leg that cannot be
-                        // reached and dropping it.
-                        // Guard emptiness: the fully-blocked branch above may have
-                        // just u.orders.clear()'d this unit (gave up an unreachable
-                        // goal), and back()/front() on an empty deque is undefined --
-                        // it computes a wild pointer that segfaults on some heap
-                        // layouts (the release referee sim) while reading harmless
-                        // garbage on others, which is exactly how this surfaced as an
-                        // 8-AI server crash. A unit with no order has nothing to repath.
-                        if (!g.empty() && !u.orders.empty() && u.orders.front().targetId == 0) {
-                            const Order& legEnd = u.orders[currentLeg(u.orders)];
-                            float tx = legEnd.x.toFloat(), tz = legEnd.z.toFloat();
-                            bool onWalkable = g.walkable(u.x.floorInt() / 16, u.z.floorInt() / 16);
-                            if (onWalkable && !pathExists(u.type, tx, tz, u.x.toFloat(), u.z.toFloat()))
-                                dropLeg(u);     // unreachable leg -> skip it, keep the queue
-                        }
-                    }
-                }
+        Fixed target = u.baseSpeed;
+        // Formation pacing: a pure-move member keeps to the group's slowest speed,
+        // UNLESS it's behind the centre relative to the goal (a straggler), in which
+        // case it sprints at its own speed to catch up (see the FormAgg pass above).
+        if (u.squad < 0 && !u.orders.empty() && u.orders.front().targetId == 0) {
+            if (FormAgg* f = formOf(u); f && f->n > 1) {
+                float cx = float(f->sx / f->n), cz = float(f->sz / f->n);
+                // "Behind the centre" is measured against the leg the group is
+                // walking NOW -- against the last QUEUED leg a straggler check
+                // would compare everyone to a point nobody is heading for yet.
+                const Order& legEnd = u.orders[currentLeg(u.orders)];
+                float gx = legEnd.x.toFloat(), gz = legEnd.z.toFloat();
+                float uToGoal = detmath::len(u.x.toFloat() - gx, u.z.toFloat() - gz);
+                float cToGoal = detmath::len(cx - gx, cz - gz);
+                if (uToGoal <= cToGoal + kFormBehind) target = fxMin(target, Fixed::fromFloat(f->slowest));
             }
         }
+        if (g_phase) {
+            const auto start=std::chrono::steady_clock::now();
+            tickNavigationMovement(u,target);
+            g_moveMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+        } else tickNavigationMovement(u,target);
 
-        // The no-headway machinery that lived here -- a 2s progress tracker whose
-        // re-ask duplicated the cadence ladder, and before that a give-up -- is
-        // gone entirely. Retail has exactly one re-ask engine, the ladder above, and
-        // its failed-quiet branch is load-bearing: cadence_test plants a walker
-        // against a sealed ring of parked bodies and REQUIRES zero re-asks during
-        // the rest; the tracker's staggered retry was firing every four seconds
-        // there, probing a wall that will never open.
+    }
 
-        // An idle aircraft looks for somewhere to put down. Retail's VTOL_Standby
-        // (icd 0x417350) hands off to VTOL_LandIfCan (0x416cd0), which tests the
-        // spot underneath and, if it will not do, samples TWELVE grid-snapped
-        // candidates through a window that grows from +/-64 to +/-240 world units,
-        // taking the first that is landable. Only if all twelve fail does it give
-        // up and orbit its anchor at radius 160, stepping about -120 degrees each
-        // time round. Without this a flyer settles wherever it happened to stop --
-        // over water, or on the roof of a building.
-        if (u.type->canFly && u.type->vtolStandby && u.alive() && u.orders.empty() &&
-            u.buildSiteId == 0 && !hasQueuedWork(u) && u.buildQueue.empty() &&
-            u.reclaimId == 0 && u.repairId == 0 && !u.embarked()) {
-            const NavGrid& g = navFor(u.type);
-            auto landable = [&](float x, float z) {
-                if (g.empty()) return true;
-                int cx = int(x) / 16, cz = int(z) / 16;
-                return g.walkable(cx, cz) && cellFree(x, z, u.id, footCells(u.type));
-            };
-            static const bool kSbLog = std::getenv("TAK_STANDBYLOG") != nullptr;
-            if (kSbLog && !landable(u.x.toFloat(), u.z.toFloat()))
-                std::printf("[standby] t=%u id=%d type=%s pos=(%.0f,%.0f) queue=%zu site=%d "
-                            "orders=%zu repeat=%s\n",
-                            tickCounter_, u.id, u.type->id.c_str(),
-                            u.x.toFloat(), u.z.toFloat(), u.buildQueue.size(),
-                            u.buildSiteId, u.orders.size(),
-                            u.repeatType ? u.repeatType->id.c_str() : "-");
-            if (!landable(u.x.toFloat(), u.z.toFloat())) {
-                bool found = false;
-                // The window grows exactly as retail's does: 12 draws, centre
-                // 64..240, so a flyer boxed in by its own airfield keeps widening
-                // its search instead of giving up on the first miss.
-                for (int i = 0; i < 12 && !found; ++i) {
-                    float half = 64.0f + float(i) * 16.0f;
-                    float ox = float(int(fireRand(uint32_t(half * 2))) ) - half;
-                    float oz = float(int(fireRand(uint32_t(half * 2))) ) - half;
-                    float tx = u.x.toFloat() + ox, tz = u.z.toFloat() + oz;
-                    if (tx < 16 || tz < 16 || !landable(tx, tz)) continue;
-                    order(u.id, tx, tz, false);
-                    found = true;
-                }
-                if (!found) {
-                    // Nowhere to land: circle the spot instead of grinding on it.
-                    u.standbyTheta = uint16_t(u.standbyTheta - 21845);   // ~-120 deg
-                    float a = float(u.standbyTheta) * (2.0f * 3.14159265f / 65536.0f);
-                    order(u.id, u.x.toFloat() - detmath::sin(a) * 160.0f,
-                          u.z.toFloat() - detmath::cos(a) * 160.0f, false);
-                }
-            }
-        }
+    // Retail updates missions/movers in 51d3e0 before 4f6c70 runs 416430
+    // (5263aa, then 526411). Install completed routes only after movement,
+    // and admit new searches from the position and occupancy after that step.
+    if (pathService_) paths_.tick(
+        [&](int unitId, int cx, int cz) {
+            const Unit* u = unit(unitId);
+            if (!u || !u->type) return int(kCellImpassable);
+            // Plain cellScore, which now carries retail's grades -- bodies included.
+            // The exemption wrapper that stood here (parked cells near the unit or its
+            // goal graded passable, kParkedFreeCells) was ours: it existed so the
+            // search could route out of and into crowds while bodies were otherwise
+            // invisible to it. Retail has no such carve-out -- its map grades a parked
+            // neighbour 0 wherever it stands, a fully ringed start simply fails the
+            // search, and the mover presses on its segment until the cadence retries.
+            // Cell-exclusive parking makes a ringed start rare rather than normal.
+            return cellScore(u->type, cx, cz, unitId);
+        },
+        [&](int unitId, const std::vector<PathCell>& route, Fixed gxF, Fixed gzF,
+            bool failed, bool crowded, bool traffic, bool detour) {
+            deliverSearchRoute(unitId,route,gxF,gzF,failed,crowded,traffic,detour);
+        },[&](int id,PathCell& start,int& heading,RetailCostSearch::Costs& costs) {
+            refreshSearchRequest(id,start,heading,costs);
+        },tickCounter_,[&](int id,uint32_t now) {
+            return admitSearchRequest(id,now);
+        });
+
+    for (const auto& event : paths_.takeNotifications()) {
+        if (auto* u = unit(event.unitId))
+            if (auto* goal = navigationMissionOrder(*u); goal && goal->controller == event.controller)
+                goal->mission.pending |= uint32_t(event.events);
     }
 
     // Queued builds that came due this tick, started now that nothing holds a
@@ -5553,10 +7632,14 @@ void World::tick(float dt) {
     for (int bid : buildDue_) {
         Unit* b = unit(bid);
         if (!b || !b->alive() || b->buildSiteId != 0 || b->orders.empty()) continue;
-        const Order& o = b->orders.front();
+        const Order o = b->orders.front();
         if (!o.buildType) continue;
-        startBuild(bid, o.buildType, o.x.toFloat(), o.z.toFloat() - float(o.buildType->footZ) * 8 - 24,
-                   Approach::None);
+        const int siteId=startBuild(bid, o.buildType, o.x.toFloat(), o.z.toFloat() - float(o.buildType->footZ) * 8 - 24,
+                                   Approach::None);
+        // Restored perimeter arrival creates its site and begins the pivot on
+        // this dispatch. Do not run a second movement or construction step.
+        if (siteId && (o.mission.pending & o.mission.waitMask & 0x100))
+            turnBuilderToSite(*unit(bid),*unit(siteId));
         // startBuild may have failed (the spot is taken now, or mana ran out). Drop
         // the order rather than parking the builder on it forever.
         if (Unit* b2 = unit(bid); b2 && b2->buildSiteId == 0 && !b2->orders.empty() &&
@@ -5564,6 +7647,128 @@ void World::tick(float dt) {
             b2->orders.erase(b2->orders.begin());
     }
     buildDue_.clear();
+
+    // Retail runs player bookkeeping after unit updates and before wind.
+    // Restored priority caches use the current World economy and unit lifecycle.
+    // Other availability queries continue to read live World state.
+    for (auto& player:players_) {
+        if (player.retailResources) {
+            auto& r=*player.retailResources;
+            r.finishTick();player.mana=r.stored;player.storage=r.capacity;
+            player.displayResources.income=r.produced;
+            player.displayResources.usage=r.requested;
+            if (player.buildCache) {
+                auto& history=player.buildCache->resources;
+                history.income=r.produced;history.usage=r.requested;history.advance();
+            }
+            r.produced=r.requested=0;
+        }
+        player.displayResources.advance();
+        if (player.retailAi) {
+            auto& ai=*player.retailAi;
+            const int owner=int(&player-players_.data());
+            auto unsupported=[&](const char* branch) {
+                throw std::runtime_error("unsupported retail AI "+std::string(branch)+
+                                         " at tick "+std::to_string(tickCounter_));
+            };
+            retailTickAiSchedule(ai.schedule,tickCounter_,[&](int n){return pathRand(n);},
+                [&] {
+                    for (auto& squad:ai.squads)
+                        std::erase_if(squad.members,[&](int id) {
+                            const Unit* member=unit(id);
+                            return !member || !member->alive() || member->player!=owner;
+                        });
+                },
+                [&] {
+                    if (!ai.initialized && tickCounter_<=30) unsupported("initial assignment");
+                    ai.initialized=true;
+                    if (ai.scenarioDeadline && tickCounter_>=ai.scenarioDeadline)
+                        unsupported("scenario assignment");
+                    for (auto& member:units_) {
+                        if (member.player!=owner || !member.alive() || member.underConstruction ||
+                            !member.type || member.type->isStructure()) continue;
+                        bool assigned=false;
+                        for (const auto& squad:ai.squads)
+                            if (std::find(squad.members.begin(),squad.members.end(),member.id)!=squad.members.end()) {
+                                assigned=true;break;
+                            }
+                        if (assigned || member.incapacitated()) continue;
+                        if (member.embarked()) unsupported("attached unit assignment");
+                        std::array<RetailAiBaseCandidate,20> bases;
+                        for (unsigned i=1;i<=20;++i) {
+                            const auto& base=ai.squads[i];
+                            if (!ai.schedule.groups[i].present || base.members.empty()) continue;
+                            if (base.kind!=RetailAiSquadKind::Base) unsupported("non-base selection slot");
+                            if (base.parameters[0] && !ai.anchorsRestored) unsupported("missing base anchors");
+                            auto& candidate=bases[i-1];candidate.occupied=true;
+                            if (auto anchor=ai.anchors.find(base.parameters[0]);anchor!=ai.anchors.end()) {
+                                candidate.center=std::pair{std::bit_cast<int32_t>(uint32_t(int32_t(anchor->second.first))*1048576u+524288u),
+                                                          std::bit_cast<int32_t>(uint32_t(int32_t(anchor->second.second))*1048576u+524288u)};
+                            } else {
+                                RetailAiCentroid centroid;
+                                for (int id:base.members) {
+                                    const Unit* u=unit(id);
+                                    if (!u || !u->alive()) continue;
+                                    centroid.add(u->x.v,u->z.v);
+                                }
+                                candidate.center=centroid.center();
+                            }
+                        }
+                        unsigned selected=retailNearestAiBase(bases,member.x.v,member.z.v);
+                        if (!selected) selected=2;
+                        if (!ai.schedule.groups[selected].present) unsupported("missing assignment group");
+                        member.moveState=1;member.fireState=2;member.stance=0;
+                        ai.squads[selected].members.push_back(member.id);
+                    }
+                },
+                [&](unsigned index,auto& clock) {
+                    auto& squad=ai.squads[index];
+                    retailTickAiSquad(squad,clock,tickCounter_,[&](int n){return pathRand(n);},
+                        [&](auto& strike) {
+                            const int backup=strike.parameters[0];
+                            if (backup<0 || backup>=100) unsupported("backup index");
+                            if (backup!=int(index) && ai.schedule.groups[size_t(backup)].present &&
+                                !ai.squads[size_t(backup)].members.empty()) unsupported("strike recruitment");
+                        },
+                        [&](auto&) {
+                            if (squad.kind==RetailAiSquadKind::Base && player.buildCache && player.buildCache->planner) {
+                                tickRetailAiBase(owner,index);return;
+                            }
+                            if (squad.kind==RetailAiSquadKind::Strike && player.buildCache && player.buildCache->planner) {
+                                tickRetailAiStrike(owner,index);return;
+                            }
+                            const auto detail="occupied squad planner slot "+std::to_string(index);
+                            unsupported(detail.c_str());
+                        });
+                });
+        }
+        if (player.buildCache && !player.retailResources) player.buildCache->resources.advance();
+        if (retailTickPlayerCache(player.cacheClock,tickCounter_,[&](int n){return pathRand(n);}) && player.buildCache) {
+            auto& cache=*player.buildCache;
+            const int owner=int(&player-players_.data());
+            unsigned population=0;
+            for (auto& entry:cache.entries) entry.inputs.count=entry.inputs.completed=0;
+            for (const auto& member:units_) {
+                if (member.player!=owner || !member.alive()) continue;
+                ++population;
+                const auto entry=std::find_if(cache.entries.begin(),cache.entries.end(),
+                    [&](const auto& candidate){return candidate.type==member.type;});
+                if (entry==cache.entries.end()) throw std::runtime_error("unit missing from restored build catalogue");
+                ++entry->inputs.count;
+                if (!member.underConstruction) ++entry->inputs.completed;
+            }
+            const float stored=float(player.mana);
+            const float capacity=std::max(player.storage,100.0f); // current World economy host
+            const float ratio=double(capacity)>0.01 ? stored/capacity : 0.0f;
+            const bool shortfall=cache.resources.shortfall(stored);
+            for (auto& entry:cache.entries)
+                entry.priority=retailBuildPriority(entry.inputs,uint16_t(population),ratio,shortfall,
+                    [&](int n){return pathRand(n);});
+        }
+    }
+    if (windEnabled_)
+        retailTickWind(wind_, tickCounter_, [&](int n) { return pathRand(n); },
+                       [&] { return crtRand(0x525248); });
 
     // Remote Effect spells channelling toward their landing point. The effect is
     // pinned to the ground where it was aimed, so it lands whether or not the
@@ -5659,19 +7864,8 @@ void World::tick(float dt) {
     }
     tickAbilities(dt);   // reclaim / resurrect corpses (uses the fresh grid)
     tickAuras(dt);       // AdjustArmor/Attack stat auras (uses the fresh grid)
-    // NO SEPARATION PASS. Retail has none, and with the occupancy rule above
-    // ported faithfully it has nothing left to do: a body cannot step into a
-    // parked one, nor into a mover that is slower or coming the other way, so
-    // the overlaps this used to clean up no longer form. What it did form was
-    // its own problem -- it enforced spacing at a different resolution from the
-    // mover, and the two fighting is what read in play as units shoving each
-    // other around.
-    //
-    // The known cost, accepted deliberately: a unit may still tuck in behind a
-    // faster leader and end up overlapping it if that leader then stops, and
-    // nothing now pushes the pair apart. Retail behaves the same way. Units
-    // getting stuck the way retail's did is the intended outcome here, not a
-    // regression to fix by reintroducing a push.
+    // Footprint ownership prevents movement from creating overlaps, so no
+    // after-the-fact separation force is needed.
     // There was an "unstick" pass here, deleted 2026-09-12. It nudged any ground
     // unit standing on a blocked cell toward the nearest walkable one, to rescue
     // bodies "spawned by a building, shoved by a crowd, or clipped a corner".
@@ -5689,6 +7883,7 @@ void World::tick(float dt) {
     // what should keep it from happening in the first place.
     // Win/defeat is derived from unit state on every sim (clients + referee),
     // so all peers agree on the tick a team is eliminated / the game is won.
+    updateNavigationExploration();
     updateOutcome();
     if (g_phase) {
         auto _end = std::chrono::steady_clock::now();
@@ -5699,9 +7894,9 @@ void World::tick(float dt) {
             int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
             // flow= and path= used to sit here; the flow fields and the inline
             // A* are both gone, so the counters were always zero.
-            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f vis=%.1f burn=%.1f grid=%.1f other=%.1f units=%d\n",
-                         ttot, g_tcomb, tsep, g_visMs, g_burnMs, g_gridMs,
-                         ttot - g_tcomb - tsep - g_visMs - g_burnMs - g_gridMs, alive);
+            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f vis=%.1f burn=%.1f grid=%.1f scripts=%.1f movement=%.1f other=%.1f units=%d\n",
+                         ttot, g_tcomb, tsep, g_visMs, g_burnMs, g_gridMs, g_scriptMs, g_moveMs,
+                         ttot - g_tcomb - tsep - g_visMs - g_burnMs - g_gridMs - g_scriptMs - g_moveMs, alive);
         }
     }
     // Campaign mission runner: feed this tick's build/death events into the "god"
@@ -5736,6 +7931,7 @@ void World::hashTrace() const {
         }
     }
     if (!on || tickCounter_ < lo || tickCounter_ > hi) return;
+    if (std::getenv("TAK_HASHDETAIL")) (void)stateHash();
 
     auto fnv = [](uint64_t h, uint64_t v) {
         for (int i = 0; i < 8; ++i) { h ^= (v >> (i * 8)) & 0xFF; h *= 1099511628211ULL; }
@@ -5782,6 +7978,7 @@ void World::hashTrace() const {
         }
         hUnitMisc = fnv(fnv(hUnitMisc, u.id), uint64_t(u.alive() ? 1 : 0));
         hUnitMisc = fnv(hUnitMisc, uint64_t(u.veteran));
+        hUnitMisc = fnv(hUnitMisc, uint32_t(u.baseSpeed.v));
         for (int32_t rl : u.reloads) hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(rl)));
         hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(u.stance)));
         hUnitMisc = fnv(hUnitMisc, uint64_t(u.moveState) * 3 + uint64_t(u.fireState));
@@ -5814,23 +8011,21 @@ void World::hashTrace() const {
     // referee until it changes a decision seconds later.
     uint64_t hObst = seed;
     for (uint8_t o : obst_) hObst = fnv(hObst, o);
-    // nav_ is built from (heights, seaLevel, limits); obst_'s occlusion pass reads
-    // heights ONLY -- so heights-vs-seaLevel is exactly the split that would leave
-    // obst_ matching while nav_ diverges.
+    // Keep the terrain inputs distinct from the dynamic obstacle overlay.
     uint64_t hHeights = seed;
     for (uint8_t v : heights_) hHeights = fnv(hHeights, v);
     const uint64_t hNav = nav_.debugCellsHash();
 
     std::fprintf(stderr,
         "HASHTRACE t=%u units=%zu alive=%llu pos=%016llx hp=%016llx ord=%016llx misc=%016llx "
-        "proj=%016llx(%zu) eff=%016llx storm=%016llx play=%016llx feat=%016llx burn=%llu fire=%u obst=%016llx nav=%016llx hgt=%016llx sea=%d hw=%d hh=%d\n",
+        "proj=%016llx(%zu) eff=%016llx storm=%016llx play=%016llx feat=%016llx rng=%u obst=%016llx nav=%016llx hgt=%016llx sea=%d hw=%d hh=%d\n",
         tickCounter_, units_.size(), (unsigned long long)aliveN,
         (unsigned long long)hUnitPos, (unsigned long long)hUnitHp,
         (unsigned long long)hUnitOrd, (unsigned long long)hUnitMisc,
         (unsigned long long)hProj, projectiles_.size(),
         (unsigned long long)hEff, (unsigned long long)hStorm,
         (unsigned long long)hPlayers, (unsigned long long)hFeat,
-        (unsigned long long)burnRng_, fireRng_,
+        gameRng_,
         (unsigned long long)hObst, (unsigned long long)hNav,
         (unsigned long long)hHeights, seaLevel_, hW_, hH_);
 }
@@ -5839,6 +8034,28 @@ void World::hashTrace() const {
 uint64_t World::stateHash() const {
     // FNV-1a over the quantities that must agree between lockstep peers.
     uint64_t h = 1469598103934665603ULL;
+    // Optional checkpoints include the newer script/navigation state omitted
+    // from the older motion-oriented hashTrace diagnostic.
+    auto checkpoint = [&](const char* section) {
+#ifndef NDEBUG
+        static const char* limit = std::getenv("TAK_HASHDETAIL");
+        if (limit && tickCounter_ <= std::strtoul(limit,nullptr,10)) {
+            std::fprintf(stderr,"HASHDETAIL t=%u section=%s hash=%016llx\n",
+                         tickCounter_,section,static_cast<unsigned long long>(h));
+            if (std::strcmp(section,"grades")==0) {
+                int index=0;
+                for (const auto& plane:searchGrades_) {
+                    std::fprintf(stderr,"HASHGRADE t=%u index=%d active=%d foot=%d,%d version=%llu checksum=%016llx recent=%u stale=%u requester=%d\n",
+                        tickCounter_,index++,activeSearchGrade_,plane.footX,plane.footZ,
+                        static_cast<unsigned long long>(plane.navVersion),static_cast<unsigned long long>(plane.checksum),
+                        plane.preparation.recent,plane.preparation.stale,plane.preparation.requestSlot);
+                }
+            }
+        }
+#else
+        (void)section;
+#endif
+    };
     auto mix = [&h](uint64_t v) {
         for (int i = 0; i < 8; ++i) {
             h ^= (v >> (i * 8)) & 0xFF;
@@ -5857,16 +8074,136 @@ uint64_t World::stateHash() const {
         std::memcpy(&b, &f, 4);
         mix(b);
     };
+    mix(nextMovementController_);
+    mix(navigationExplored_.size());
+    mix(uint32_t(restoredNavigationViewer_));
+    for (auto mask:navigationExplored_) mix(mask);
+    checkpoint("exploration");
+    for (const auto& [id,factory]:unitScripts_) {
+        mix(0x434f42564dull); mix(uint32_t(id));
+        mix(factory.activated); mix(factory.ready); mix(factory.yardOpen); mix(factory.buggerOff);
+        const auto& state=factory.state;
+        mix(state.vm.active); mix(uint32_t(state.vm.ticksPerSecond));
+        for (auto value:state.vm.statics) mix(value);
+        // Every word is serialized as eight bytes, including unused stack
+        // words. Eight zero-byte FNV steps equal one multiplication modulo 2^64.
+        constexpr uint64_t zeroWordFactor=[] {
+            uint64_t factor=1;
+            for (int i=0;i<8;++i) factor*=1099511628211ULL;
+            return factor;
+        }();
+        for (const auto& thread:state.vm.threads) for (auto value:thread.words) {
+            if (value==0) h*=zeroWordFactor;
+            else mix(value);
+        }
+        for (const auto& piece:state.pieces) {
+            mix(piece.active); mix(piece.visible); mix(piece.cached); mix(piece.shaded); mix(piece.rendered);
+            for (const auto* values:{&piece.moveTarget,&piece.moveSpeed,&piece.turnTarget,&piece.turnSpeed,
+                                    &piece.spinTarget,&piece.spinAcceleration,&piece.move,&piece.turn})
+                for (auto value:*values) mix(uint32_t(value));
+        }
+    }
+    checkpoint("scripts");
+    mix(searchGrades_.size()); mix(uint32_t(activeSearchGrade_));
+    for (const auto& plane:searchGrades_) {
+        mix(plane.footX); mix(plane.footZ); mix(plane.navVersion); mix(plane.checksum);
+        mix(plane.preparation.recent); mix(plane.preparation.stale); mix(plane.preparation.requestSlot);
+    }
+    checkpoint("grades");
     for (const auto& u : units_) {
         mix(uint64_t(u.id));
         mix(uint64_t(u.player));
         // Raw fixed-point -- see the note in hashTrace. A float conversion here would
         // silently drop the low bits of the very state this checksum guards.
         mix(uint64_t(uint32_t(u.x.v)));
+        mix(uint32_t(u.groundY.v)); mix(u.groundMoveTick);
+        mix(u.groundPitch); mix(u.groundRoll); mix(u.groundSpeedMode);
         mix(uint64_t(uint32_t(u.z.v)));
         mix(uint64_t(uint32_t(u.hp.v)));       // hp is fixed-point now
-        mix(uint64_t(uint32_t(u.heading.v)));   // an angle is an integer now
+        mix(uint64_t(uint32_t(u.heading.v)));
+        mix(u.variationPhase);
+        mix(uint64_t(uint32_t(u.baseSpeed.v)));
+        if (u.type && u.type->canFly) {
+            if (u.scriptOccupancy) { mix(0x5346584fu);mix(u.scriptOccupancy); }
+            mix(u.flightGroundMode); mix(u.landing.has_value());
+            if (u.landing) {
+                const auto& l=*u.landing; const auto& m=l.mission;
+                mix(m.stage); mix(m.waitMask); mix(m.deadline); mix(m.pending); mix(m.flags);
+                mix(uint32_t(l.anchor.x)); mix(uint32_t(l.anchor.y)); mix(uint32_t(l.anchor.z));
+                mix(l.angle); mix(l.parity); mix(l.canceled);
+            }
+            mix(uint32_t(u.flightY.v));
+            mix(uint32_t(u.flightSectorX));mix(uint32_t(u.flightSectorZ));
+            for (const auto& v:{u.flightVelocity,u.flightNavigation.destination,u.flightNavigation.velocity}) {
+                mix(uint32_t(v.x)); mix(uint32_t(v.y)); mix(uint32_t(v.z));
+            }
+            mix(u.flightNavigation.heading);
+        }
+        if (u.type && !u.type->canFly && !u.type->isStructure()) {
+            mix(uint32_t(u.routeStamp));mix(u.routeCrowded);mix(u.routeTraffic);
+            mix(u.routeFailed);mix(u.routeDetour);
+        }
         mix(uint64_t(u.orders.size()));
+        mix(u.missionEvents);
+        mix(u.standbyAllowed); mix(u.standbyActive);
+        mix(u.guardNoMoveAllowed); mix(u.guardNoMoveActive);
+        if (u.guardNoMoveActive) {
+            const auto& m=u.guardNoMoveState;
+            mix(m.stage); mix(m.waitMask); mix(m.deadline); mix(m.pending); mix(m.flags);
+        }
+        if (u.standbyActive) {
+            mix(u.standbyState.stage); mix(u.standbyState.waitMask);
+            mix(u.standbyState.deadline); mix(u.standbyState.pending); mix(u.standbyState.flags);
+        }
+        for (const auto& order : u.orders) {
+            if (order.park) {
+                mix(0x5041524bu);const auto& p=*order.park;
+                mix(p.target);mix(p.padding);mix(p.attempts);mix(uint32_t(p.permanent));mix(p.ring.has_value());
+                if (p.ring) {mix(p.ring->x);mix(p.ring->z);mix(p.ring->innerRadius);
+                    mix(p.ring->outerTolerance);mix(p.ring->outerSquared);}
+            }
+            mix(order.groundMission);mix(order.navigationExhausted);mix(order.navigationConsumed);
+            mix(order.buildRectangle.has_value());
+            if (u.type && u.type->canFly) {
+                mix(order.landing);
+                mix(order.flightMoveMission);
+                mix(order.hoverAttackRefresh);
+                mix(uint32_t(order.hoverAttackTargetX.v));mix(uint32_t(order.hoverAttackTargetZ.v));
+                mix(order.flightGoal.has_value());
+                if (order.flightGoal) {
+                    const auto& g=*order.flightGoal;
+                    mix(uint32_t(g.point.x)); mix(uint32_t(g.point.y)); mix(uint32_t(g.point.z));
+                    mix(g.flags); mix(g.heading); mix(uint16_t(g.radius));
+                }
+            }
+            if (order.buildRectangle) {
+                mix(order.buildRectangle->minX); mix(order.buildRectangle->maxX);
+                mix(order.buildRectangle->minZ); mix(order.buildRectangle->maxZ);
+                mix(uint32_t(order.buildX.v)); mix(uint32_t(order.buildZ.v));
+                mix(order.mission.waitMask); mix(order.mission.pending);
+                if (order.buildType) {
+                    mix(order.buildType->id.size());
+                    for (unsigned char c : order.buildType->id) mix(c);
+                } else mix(0);
+            }
+            if (!order.groundMission && !(u.type && u.type->canFly && (order.patrol || order.flightMoveMission))) continue;
+            mix(order.controller);
+            mix(order.missionRadius);
+            if (order.missionTarget) {
+                mix(0x4d544754u);mix(uint32_t(order.missionTarget->first.v));mix(uint32_t(order.missionTarget->second.v));
+            }
+            mix(uint32_t(order.groundResponse.mode));
+            if (order.groundResponse.mode) {
+                mix(uint16_t(order.groundResponse.origin.x)); mix(uint16_t(order.groundResponse.origin.z));
+                mix(uint16_t(order.groundResponse.goal.x)); mix(uint16_t(order.groundResponse.goal.z));
+                mix(uint32_t(u.lastHitBy));
+            }
+            mix(order.mission.stage);
+            mix(order.mission.waitMask);
+            mix(order.mission.deadline);
+            mix(order.mission.pending);
+            mix(order.mission.flags);
+        }
         // Order target + attack-move flag: two sims can hold the same order
         // COUNT while chasing different targets -- fold the head order in so a
         // divergence shows up before damage lands (the referee must attribute
@@ -5879,8 +8216,20 @@ uint64_t World::stateHash() const {
             // a float of it would lose the low bits the mover actually steers to.
             mix(uint64_t(uint32_t(o.x.v)));
             mix(uint64_t(uint32_t(o.z.v)));
+            mix(uint64_t(o.hasSegment));
+            if (o.hasSegment) {
+                mix(uint64_t(uint32_t(o.segmentX.v)));
+                mix(uint64_t(uint32_t(o.segmentZ.v)));
+            }
         }
         mix(uint64_t(u.alive() ? 1 : 0));
+        mix(uint64_t(u.groundMovementMode));
+        mix(uint64_t(u.groundTerrainFlags));
+        mix(uint64_t(u.groundScanTick));
+        mix(uint16_t(u.sightFootprint.x));mix(uint16_t(u.sightFootprint.z));
+        mix(uint32_t(u.sightFootprint.eyeHeight));mix(uint16_t(u.sightFootprint.distance));
+        mix(u.sightFootprint.sightHeight);mix(u.sightFootprint.active);
+        mix(u.groundGradeTick);
         mix(uint64_t(u.veteran));
         // All three reload timers, not just the primary: they now decide WHICH
         // weapon the auto-selector fires, so a drift in any of them would change
@@ -5895,9 +8244,59 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(u.stance)));
         mix(uint64_t(u.moveState) * 3 + uint64_t(u.fireState));
         mix(uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
+        if (u.conjureHoverTarget) {
+            mix(0x484f5645u);mix(uint32_t(u.conjureHoverTarget));
+            if (u.conjureHoverGoal) {
+                const auto& g=*u.conjureHoverGoal;
+                mix(uint32_t(g.point.x));mix(uint32_t(g.point.y));mix(uint32_t(g.point.z));
+                mix(g.flags);mix(g.heading);mix(uint16_t(g.radius));
+            }
+        }
+        mix(uint32_t(u.productionSiteId)); mix(uint32_t(u.buildProgress));
+        mix(u.underConstruction); mix(u.buildBegun); mix(uint32_t(u.conjureRate.v));
+        if (u.retailSite) {
+            mix(0x53495445u);const auto& s=*u.retailSite;
+            mixf(s.progress.remaining);mix(s.progress.hp);mix(s.progress.events);mix(s.progress.flags);
+            mixf(s.type.inverseTime);mixf(s.type.cost);mix(s.type.maxHp);
+            mix(s.mission.has_value());mix(uint32_t(s.builder));
+            if (s.mission) {
+                const auto& m=*s.mission;
+                mix(m.stage);mix(m.waitMask);mix(m.deadline);mix(m.pending);mix(m.flags);
+            }
+        }
+        if (u.retailBuild) {
+            mix(0x4255494cu);const auto& b=*u.retailBuild;
+            mix(b.target);mixf(b.workerTime);mix(b.working);mix(b.activityDeadline);
+            if (b.flying) {
+                mix(0x464c5942u);mix(b.flyingOwnerFlags);mix(uint32_t(b.flyingSlowSpeed));
+                mix(uint32_t(b.flyingFastSpeed));mix(b.flyingBuildDistance);
+            }
+            mix(b.mission.stage);mix(b.mission.waitMask);mix(b.mission.deadline);
+            mix(b.mission.pending);mix(b.mission.flags);
+            if (b.turnHeading) { mix(0x5455524eu);mix(*b.turnHeading); }
+        }
+        if (u.constructionEmitter) {
+            mix(0x454d4954u);const auto& e=*u.constructionEmitter;
+            mix(e.capacity);mix(uint32_t(e.radius));mix(uint32_t(e.height));mix(e.particles.size());
+            for (const auto& p:e.particles) {
+                mix(uint32_t(p.x));mix(uint32_t(p.y));mix(uint32_t(p.z));
+                mix(uint32_t(p.speed));mix(uint32_t(p.ceiling));
+            }
+        }
+        mix(u.buildQueue.size());
+        if (u.repeatType) {
+            mix(0x52455054u);
+            for (unsigned char ch : u.repeatType->id) mix(ch);
+            mix(0);
+        }
+        for (const auto* queued : u.buildQueue) {
+            mix(queued->id.size());
+            for (unsigned char c : queued->id) mix(c);
+        }
         mix(uint64_t(uint32_t(u.repairId)));   // build-power target -> HP/mana divergence
         mix(uint64_t(uint32_t(int32_t(u.squad))));   // control squad: formation<0 drives movement
     }
+    checkpoint("units");
     // Projectiles: count alone hides same-count divergence, so fold owner and
     // position of each in flight (mixf hashes the exact bits -- deterministic
     // across peers and NaN-safe, unlike an int cast).
@@ -5928,12 +8327,67 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(s.nextVary)));
     }
     for (const auto& t : players_) {
+        mix(uint32_t(t.automaticGates) | (uint32_t(t.defensiveAi)<<1));
         { uint64_t b; std::memcpy(&b, &t.mana, 8); mix(b); }   // double: fold all 8 bytes
+        mix(t.cacheClock.enabled); mix(t.cacheClock.lastRefresh);
+        if (t.retailResources) {
+            mix(0x5245534fu);const auto& r=*t.retailResources;
+            mixf(r.stored);mixf(r.allocation);mixf(r.requested);mixf(r.produced);
+            mixf(r.capacity);mixf(r.capacityOverride);
+            mix(std::bit_cast<uint64_t>(r.totalProduced));mix(std::bit_cast<uint64_t>(r.excess));
+        }
+        if (t.buildCache) {
+            mix(0x4255494c44434143ull);
+            const auto& cache=*t.buildCache;
+            if (cache.planner) {
+                mix(0x504c414eu);mix(cache.planner->limited);mix(cache.planner->types.size());
+                for (const auto& type:cache.planner->types) {
+                    mix(type.weight);mix(type.special);mix(type.faction.size());
+                    for (unsigned char c:type.faction) mix(c);
+                    mix(type.choices.size());for (auto choice:type.choices) mix(choice);
+                }
+            }
+            mixf(cache.resources.income); mixf(cache.resources.usage);
+            for (const auto& sample:cache.resources.samples) for (float value:sample) mixf(value);
+            mix(cache.entries.size());
+            for (const auto& entry:cache.entries) {
+                mix(entry.type->id.size()); for (unsigned char c:entry.type->id) mix(c);
+                const auto& p=entry.inputs;
+                mix(p.flags);mix(p.secondaryFlags);mix(uint16_t(p.count));mix(uint16_t(p.completed));
+                mix(uint16_t(p.weapon));mix(uint32_t(p.desired));mixf(p.cost);mix(entry.priority);
+                mix(entry.hasEconomy);
+                if (entry.hasEconomy) { mixf(entry.income);mixf(entry.storage); }
+                if (entry.construction) {
+                    mix(0x434f4e53u);const auto& c=*entry.construction;
+                    mixf(c.type.inverseTime);mixf(c.type.cost);mix(c.type.maxHp);mixf(c.workerTime);
+                    mix(c.emitter.capacity);mix(uint32_t(c.emitter.radius));mix(uint32_t(c.emitter.height));
+                }
+            }
+        }
+        if (t.retailAi) {
+            mix(0x524149u);
+            const auto& ai=*t.retailAi;
+            mix(uint32_t(ai.schedule.assignmentCountdown));mix(ai.initialized);mix(ai.scenarioDeadline);
+            if (ai.anchorsRestored) {
+                mix(0x414e4348u);mix(ai.anchors.size());
+                for (const auto& [reference,cell]:ai.anchors) {
+                    mix(uint32_t(reference));mix(uint16_t(cell.first));mix(uint16_t(cell.second));
+                }
+            }
+            for (unsigned i=0;i<100;++i) {
+                const auto& clock=ai.schedule.groups[i];const auto& squad=ai.squads[i];
+                mix(clock.present);mix(clock.deadline);mix(unsigned(squad.kind));
+                mix(squad.active);mix(squad.dirty);
+                for (int value:squad.parameters) mix(uint32_t(value));
+                mix(squad.members.size());for (int id:squad.members) mix(uint32_t(id));
+            }
+        }
         // Team assignment drives sim behaviour (splash/acquire/auras) but is set
         // from setup -- fold it in so a lobby/config mismatch faults immediately
         // as a desync instead of diverging mysteriously.
         mix(uint64_t(uint32_t(t.team)));
     }
+    checkpoint("players");
     // Reclaimable features: fold a cheap signature so a reclaim divergence faults as
     // a desync directly (mana/nav already reflect it indirectly). Order-independent.
     uint64_t fAlive = 0, fWork = 0;
@@ -5952,7 +8406,33 @@ uint64_t World::stateHash() const {
         }
     mix(fAlive);
     mix(fWork);
-    mix(uint64_t(burnRng_));   // burn-RNG stream position must agree
+    mix(corpseFootprints_.size());
+    for (const auto& [id,footprint]:corpseFootprints_) {
+        mix(uint32_t(id));mix(uint32_t(footprint.x));mix(uint32_t(footprint.z));mix(uint32_t(footprint.type));
+    }
+    for (const auto& corpse:units_) if (!corpse.alive() &&
+        (corpse.deadFor<kRetiredTicks || corpseFootprints_.contains(corpse.id))) {
+        mix(uint32_t(corpse.id));mix(uint32_t(corpse.deadFor));mix(uint32_t(corpse.corpseUntil));
+        mix(uint32_t(corpse.corpseStatue));mix(uint32_t(corpse.corpseWork.v));mix(corpse.corpseBlocks);
+    }
+    for (const auto& cell:mapPlacementCells_) {
+        mix(cell.feature);
+        if (cell.feature==0xfffe) { mix(cell.backX);mix(cell.backZ); }
+    }
+    mix(uint64_t(gameRng_));   // shared RNG stream position must agree
+    mix(windEnabled_);
+    if (retailAllocation_) {
+        mix(0x534c4f5453ull);
+        for (const auto& [first,count]:*retailEntityPools_) { mix(first);mix(count); }
+        mix(windRng_);
+    }
+    if (!windEnabled_ && std::any_of(units_.begin(),units_.end(),[](const auto& u){return bool(u.constructionEmitter);}))
+        mix(windRng_);
+    if (windEnabled_) {
+        mix(windRng_); mix(wind_.minimum); mix(wind_.maximum); mix(wind_.nextTick);
+        mix(uint32_t(wind_.x)); mix(uint32_t(wind_.z)); mix(uint32_t(wind_.speed));
+        mix(wind_.heading); mix(wind_.flags); mix(wind_.generation);
+    }
     if (mission_) mission_->foldHash(h);   // mission triggers/vars/outcome are lockstep state
     if (scenario_) scenario_->foldHash(h); // scenario flags/timers/outcome are lockstep state
     for (uint8_t d : forcedDefeat_) { h ^= (d + 1u); h *= 1099511628211ULL; }
@@ -5961,7 +8441,13 @@ uint64_t World::stateHash() const {
 
 // Mission runner ownership -- ctor/dtor defined here where MissionScript is a complete
 // type, so no other TU instantiates the unique_ptr<MissionScript> deleter.
-World::World() = default;
+World::World() {
+    paths_.setGradeHost({
+        [this](int id,bool last) { prepareSearchGrade(id,last); },
+        [this](int id,int x,int z,int retry,PathCell start) { return searchGrade(id,x,z,retry,start); },
+        [this](int id) { finishSearchGrade(id); }
+    });
+}
 World::~World() {
     if (visRunning_) visWorker_.join();   // the fog worker outlives nothing
 }

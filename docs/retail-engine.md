@@ -11,6 +11,14 @@ Analysis was static only — strings, RTTI names, and disassembly of specific co
 paths read against the game's own data files. No engine code or assets are
 reproduced here; this documents an interface for a clean-room recreation.
 
+Current executable movement checks, including the 24:10 direction threshold,
+trace-to-cost handoff and 64-corner reconstruction, are recorded in
+[pathfinding-port.md](pathfinding-port.md). Earlier static interpretations
+below do not supersede those comparisons. Whole-game parity remains unproven. Protocol 103 integrates the verified flight
+velocity/navigator and unarmed positional patrol into World; the initial-state
+replay matches all 61 captured frames of unit 821, including altitude. See the
+linked movement notes for remaining flight and full-scene limitations.
+
 ## Technology stack (imports)
 
 - **DirectDraw** (`DDRAW.dll`) — a *software* 2.5D renderer; no Direct3D. An
@@ -283,8 +291,9 @@ clear-on-entry (`andw $0xf81f` at 0x4dbaa8) and its refusal writes. The three
 `0x13c(%edx,%eax,1)`, not a navigator field.
 
 That completes the picture the rest of this section describes. A blocked retail
-unit sets a status bit nobody consumes, clamps, slows (0.5x on the first
-refusal, 0.4x once refused twice), and presses on. It does not dodge, it does
+unit sets refusal bits, clamps, slows (0.5x on the first
+refusal, 0.2x once refused twice; corrected by the executable comparison in
+`pathfinding-port.md`), and presses on. It does not dodge, it does
 not sidestep, and it does not ask for a new route -- re-requests are on their
 own 120-tick cadence and only fire when the path did not fail.
 
@@ -344,12 +353,12 @@ Working DOWN from the navigator instead of up from a suggestive routine:
     two points. The navigator is a general multi-waypoint follower, and the
     mover's `pop_front(1)`-then-recurse (`0x4dbf36` / `0x4dbf7e`, vtable slot
     11 = `0x4e50a0`) is it advancing along that list.
-  * **The mover's refusal flags are write-only.** Nothing in the binary reads
-    bit `0x20`, `0x100` or `0x200` of navigator `+0x36`. The mover clears
-    `0x07E0` on entry and sets them on refusal, and no consumer exists. They
-    are status, not control -- so the response to being blocked is entirely
-    inside the mover: clamp, slow (the `+0x30` budget against the global at
-    `[0x62d55c+0x19f44]`), return.
+  * **CORRECTED 2026-09-17: these flags are read.** Mover `+36` bits 5..7
+    select 80/16-pixel steering look-ahead at `0x4d9b9a`; bits 8..10 affect
+    speed caps at `0x4d96ee`. Actual refusal uses low bits 0x8 then 0x4
+    (`0x4daf9f`), and repeated refusal bypasses the navigator's random retry
+    cadence at `0x4e51d4`. Mover `+30` is the next local-scan tick, checked
+    at `0x4dc89a`, not a movement budget. The previous write-only claim was wrong.
   * **A real route producer exists** and feeds the navigator: `0x414450`,
     `0x415040`, `0x415b10` and `0x416430` all call the setter above, and that
     cluster contains the contour tracer retracted earlier. So the tracer IS
@@ -429,6 +438,13 @@ the work cap the search meters itself against, then iterates the players.
 **Where we deliberately depart** (2026-09-12): retail lets every pending request
 hold a live search. We cap the concurrent searches at `kMaxActiveSearches` (12)
 and queue the rest. Two reasons, neither of which costs throughput:
+
+**2026-09-17 correction:** the throughput/parity claims in this historical
+paragraph are unproven. `0x416430` operates on a singleton with current entity
+at `+58` and per-player iteration cursors at `+115`; it does not establish
+that each pending navigator owns a separate complete search. The port's pool,
+admission order and frame completion timing need direct scheduler comparison.
+Matching arithmetic or total work does not prove matching route-delivery ticks.
 
   * The per-cell scratch is the expensive part of a search -- 10 bytes per map
     cell, measured at 360 KiB on a 192x192 map -- so one search per pending
@@ -830,9 +846,14 @@ leader pulls away. Ours now implements the predicate and the separation pass is
 DELETED. Two systems enforcing spacing at different resolutions, which is what
 we had, is what read in play as units shoving each other around.
 
-Known and accepted: a follower can still end up overlapping its leader if that
-leader stops, and nothing now pushes them apart. Retail behaves the same way.
-Do not reintroduce a push to "fix" it.
+**Correction (2026-09-17): that query alone does not authorize a movement
+commit.** `0x4daf8f` separately calls the hard footprint placement test
+`0x507d10`, which refuses both parked and moving occupants. The older claim
+that persistent overlap was established retail behavior was unsupported.
+The traffic predicate also requires 75% of the querying unit's terrain-adjusted
+base speed, not just its current speed. Both checks are now exercised under
+emulation in `tools/re/emutraffic.py`; see the current correction in
+[`pathfinding-port.md`](pathfinding-port.md) for the implementation and limits.
 
 ## Self-destruct: the unit quits, it does not explode (2026-09-12)
 
@@ -1153,11 +1174,91 @@ confirms is right.
 Two other details fall out of the same neighbourhood. `0x511170` is the
 BILINEAR sampler: it takes a sub-cell position (`sar $4` for the cell, `and
 $0xf` for the fraction), reads four neighbouring cells and interpolates -- so
-retail smooths the lift across a slope exactly as our `heightAbove` does. And
+retail smooths the lift across a slope. Its arithmetic is not identical to
+the floating-point `heightAbove`: it discards the fixed-point subpixel part
+and truncates each signed interpolation separately (see the surface-height
+notes below). And
 the cell record really is 14 bytes with the height at `+4`, which the same code
 shows twice over (`+0x4` and `+0x12` are the same field one cell apart).
 
+### Surface movement height (2026-09-19)
+
+The mover alone does not produce the complete next-tick ground position.
+In the tick-14468 captured process, `4dc800` produces the next X/Z for units
+672, 1307, 2866 and 3239 while leaving their old Y. A complete native tick
+then updates their Y through `51b2a0`, called from `51e220` during each unit's
+update, not at the simulation-batch epilogue. Memory-write hooks distinguish
+upright writes at `51b26b`/`51b28f` from the support-plane write at `51b183`.
+The complete native one-tick replay matched the next captured frame; this is
+phase evidence, not a claim that the port's AI or complete movement matches.
+
+`51b2a0` runs when unit flag `4000` is dirty or type flag `1000` (canhover)
+is set. It clears the dirty bit, requires a mover and grounded mode 1, then
+dispatches upright (`100000`), floater (`80000`), or model-supported height.
+Upright units use `511170`; upright hoverers clamp that result to
+sea minus unsigned-byte waterline. Floaters use sea minus waterline without
+a terrain clamp. These branches clear the fractional half of Y.
+
+`511170` reads signed integer X/Z from the 16.16 position. Cell coordinates
+are integer position shifted right by four; fractions are the low four bits.
+Each horizontal lerp truncates toward zero, followed by a separately
+truncated vertical lerp. A missing full quad returns -1, including the last
+map row/column. Floating-point interpolation or a single weighted sum is
+not equivalent on descending slopes.
+
+`51ad20` reads the first four indices of the root model's selection primitive
+and rotates each X/Z support point by the native heading through `536143`.
+Native model X/Z are the negatives of the authored 3DO coordinates, verified
+for the four captured tilting types VERPULT, CRETORT, CREFIRE and ARAPULT.
+Samples are at world X plus rotated X, world Z minus rotated Z. Any missing
+quad leaves Y unchanged. Otherwise it averages corners 0/1 and 2/3 separately,
+then averages those two results, truncating each division. The write replaces
+only Y's integer half, preserving its old fractional half. The routine also
+updates pitch/roll. Protocol 139 ports those outputs because `4d95f0` uses
+signed pitch, shifted by 11 and clamped to -5..5, to limit ground speed.
+The pitch denominator is the integer absolute Z span of support corners 0/3
+scaled by pitchscale; roll uses the X span of corners 0/1 and bankscale.
+Each scaled span truncates before `53612a` computes the angle. Native parser
+defaults are bankscale 0.5, ground pitchscale 0.5, and flyer pitchscale zero.
+
+Tilting hoverers have an additional corner adjustment gated by unit flags
+`1000000` and absence of `1000`. It includes sea clamping and bobbing using
+`53ff20`, which reads elapsed wall-clock time through `5ba760` and the runtime
+speed scale. It is not a random draw. TARCAN is the shipped non-upright,
+non-floater surface hoverer that needs this branch. Its corner adjustment is
+now ported with an explicit clock input; World supplies simulation tick, not
+retail's wall-clock animation phase. Both shipped TARCAN definitions have roadmultiplier and
+watermultiplier 1.0, making its water flag irrelevant to those speed/turn-cost
+multipliers. That does not remove pitch coupling: native controlled TARCAN
+inputs on a slope of seven height units per cell produce pitch -2002 with
+clock 0, versus -2059 with clock 26, crossing a speed-limit bucket boundary.
+Standard uses HOVER3; Crusades uses HOVER2. Complete trajectory checks must
+account for this clock input along with speed and acceleration.
+
+`check_ground_height.py` executes original `511170` and the complete `51b2a0`
+dispatcher on 15,000 controlled cases. The sole substitution supplies the
+clock at `53ff20`; all height calculations execute natively.
+Each upright, upright-hover, floater, non-hover support, and hover-bobbing branch
+has 3,000 cases. Both Debug and Release kernels match, including signed/fractional
+positions, map boundaries, random headings, waterlines, old Y fractions,
+road/water priority, speed-dependent amplitude, and decay at 60 ticks.
+Zero effective speed exercises native 0/0 conversion: the float-to-int helper
+stores an int64 indefinite value and the caller retains its low 32 bits (zero),
+rather than producing int32 minimum.
+These are roster-independent numeric inputs, not standard/Crusades route
+tests. Protocol 137 connects model support data, stored ground Y, and the
+post-mover update phase to World. `check_world_height.py` additionally compares
+asset-loaded World heights on the captured maps; see `pathfinding-port.md` for
+coverage and remaining complete-trajectory gaps.
+
 ## Retail never lets a unit stand behind terrain (2026-09-12)
+
+**Superseded by the 2026-09-17 movement capture.** The claim below confused
+screen projection with navigation. Hunter 17 occupies and traverses flat cells
+the port's seven-row projection heuristic marked impassable. Its terrain-only
+grid allows them and no nearby feature supplies the block. The heuristic has
+been removed; terrain slope/depth and explicit blockers remain. The old
+projection observations below do not establish an extra movement exclusion.
 
 A tall cell's painted face leans up-screen over the lower ground to its north,
 so a unit stopping there is drawn inside the rock. Retail does not fix that at
@@ -1682,6 +1783,15 @@ raters at `0x5086xx`-`0x5094xx` -- that we never ported at all. That is the
 unit-aware layer, and its absence is exactly the reported behaviour: bodies
 stack because nothing makes a moving unit solid, and routes drive into crowds
 because the tracer cannot see units.
+
+### Historical rating notes (superseded feature/body interpretation)
+
+The following early notes misidentified the feature table as units. Cell +8
+and the 0x140-byte table at game+0x19edc describe map features; their 0x20000
+flag is clearability through replacement chains, not unit motion. Actual
+unit occupancy is cell +0 and the 0x138-byte entity table. For current native
+comparisons and live versus cached grading, see
+[pathfinding adapter audit](pathfinding-port.md#active-scope-pathfinding-parity-2026-09-19).
 
 ### Cells are rated 0..7, and units are part of the rating
 

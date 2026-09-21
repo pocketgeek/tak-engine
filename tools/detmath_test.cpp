@@ -16,6 +16,8 @@
 #include <string>
 
 #include "sim/detmath.h"
+#include "sim/retailmotion.h"
+#include "sim/retailexploration.h"
 
 namespace {
 
@@ -27,6 +29,30 @@ void mixBits(float f) {
 }
 
 }  // namespace
+
+namespace tak::sim {
+inline Bam referenceDirection(Fixed y, Fixed x) {
+    if (!x.v && !y.v) return Bam(0);
+    int64_t vx = int64_t(x.v) * (int64_t(1) << 28);
+    int64_t vy = int64_t(y.v) * (int64_t(1) << 28);
+    int64_t angle = 0;
+    if (vx < 0) {
+        angle = (vy >= 0 ? int64_t(32768) : -int64_t(32768)) * (int64_t(1) << 32);
+        vx = -vx;
+        vy = -vy;
+    }
+    for (unsigned i = 0; i < detail::directionAngles.size() && vy; ++i) {
+        const int64_t dx = vx >> i, dy = vy >> i;
+        if (vy > 0) {
+            vx += dy; vy -= dx; angle += detail::directionAngles[i];
+        } else {
+            vx -= dy; vy += dx; angle -= detail::directionAngles[i];
+        }
+    }
+    return bamWrap(int32_t((angle + (int64_t(1) << 31)) >> 32));
+}
+
+}
 
 int main(int argc, char** argv) {
     bool hashOnly = argc > 1 && std::string(argv[1]) == "--hash";
@@ -52,8 +78,68 @@ int main(int argc, char** argv) {
             atanMax = std::max(atanMax, std::fabs(double(da) - ref));
         }
 
+    // Exploration's stored binary32 slope feeds hashed movement inputs. Include
+    // its terrain producer and admitted cells in the cross-compiler golden.
+    const auto heights=tak::sim::retailExplorationHeights(24,28,32,
+        [](int x,int z){return uint8_t((x*37+z*13)%256);});
+    for (const auto& h:heights) {mixBits(float(h[0]));mixBits(float(h[1]));}
+    for (int i=0;i<512;++i) {
+        tak::sim::RetailSightFootprint sight{int16_t(i%16-2),int16_t(i/16%18-2),
+            i%385-64,int16_t(i*17%512),uint8_t(i),false};
+        tak::sim::retailSightFootprint(sight,true,true,12,14,uint8_t(i%16),
+            [&](int x,int z){return heights[size_t(z)*12+x];},
+            [](int x,int z,int delta,uint16_t mask){
+                mixBits(float(x));mixBits(float(z));mixBits(float(delta));mixBits(float(mask));
+            });
+        mixBits(float(sight.active));
+    }
+
     std::printf("detmath golden %016llx\n", (unsigned long long)g_hash);
     if (hashOnly) return 0;
+
+    // Integer-root invariants are exact and also exercise UINT64_MAX, where
+    // the old n+1 Newton seed overflowed. Division avoids squaring overflow.
+    auto rootValid=[](uint64_t n) {
+        const uint64_t r=tak::sim::isqrt64(n);
+        return n==0 ? r==0 : r>0 && r<=n/r && r+1>n/(r+1);
+    };
+    uint64_t rootRng=0x987654321abcdefULL;
+    for (int i=0;i<200000;++i) {
+        rootRng=rootRng*6364136223846793005ULL+1442695040888963407ULL;
+        if (!rootValid(rootRng)) {std::puts("FAIL: integer square root");return 1;}
+    }
+    for (unsigned b=0;b<64;++b) {
+        const uint64_t n=uint64_t(1)<<b;
+        if (!rootValid(n-1) || !rootValid(n) || !rootValid(n+1)) return 1;
+    }
+    for (uint64_t r=1;r<=65536;++r) {
+        const uint64_t n=r*r;
+        if (!rootValid(n-1) || !rootValid(n) || !rootValid(n+1)) return 1;
+    }
+    for (uint64_t r:{uint64_t(1)<<31,(uint64_t(1)<<32)-1}) {
+        const uint64_t n=r*r;
+        if (!rootValid(n-1) || !rootValid(n) || !rootValid(n+1)) return 1;
+    }
+    if (!rootValid(UINT64_MAX)) return 1;
+
+    // Retain the full CORDIC as an independent reference for the early exit.
+    // Include arbitrary signed fixed-point values, not just small map vectors.
+    uint32_t rng=0x87654321;
+    for (int i=0;i<200000;++i) {
+        rng=rng*1664525u+1013904223u;
+        const auto x=tak::sim::Fixed::raw(std::bit_cast<int32_t>(rng));
+        rng=rng*1664525u+1013904223u;
+        const auto y=tak::sim::Fixed::raw(std::bit_cast<int32_t>(rng));
+        if (tak::sim::retailDirection(y,x)!=tak::sim::referenceDirection(y,x)) {
+            std::printf("FAIL: direction early exit differs at %d,%d\n",y.v,x.v);
+            return 1;
+        }
+    }
+    for (int y:{0,1,-1,32767,-32768,2147483647,(-2147483647-1)})
+        for (int x:{0,1,-1,32767,-32768,2147483647,(-2147483647-1)})
+            if (tak::sim::retailDirection(tak::sim::Fixed::raw(y),tak::sim::Fixed::raw(x))!=
+                tak::sim::referenceDirection(tak::sim::Fixed::raw(y),tak::sim::Fixed::raw(x))) return 1;
+
 
     std::printf("accuracy vs libm: sin<=%.3e cos<=%.3e atan2<=%.3e\n", sinMax, cosMax, atanMax);
     const double kTol = 1e-5;

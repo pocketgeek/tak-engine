@@ -321,13 +321,6 @@ std::string mapDisplayName(const std::string& id) {
             lbBtn(x, y, 240, 26, spSpectate_ ? "SPECTATE (WATCH AIS): ON"
                                              : "SPECTATE (WATCH AIS): OFF", true,
                   [this] { spSpectate_ = !spSpectate_; }); y += 34;
-            // Stress test (spectate only): every AI starts at ~95% of the unit cap in
-            // its faction's combat units -- an instant heavy load to profile the sim.
-            if (spSpectate_) {
-                lbBtn(x, y, 240, 26, createStressTest_ ? "STRESS TEST: ON"
-                                                       : "STRESS TEST: OFF", true,
-                      [this] { createStressTest_ = !createStressTest_; }); y += 34;
-            }
         }
         // Override tier for the game: NONE (pure retail) / COSMETIC (art & sound
         // may differ) / FULL (gameplay overrides allowed but every player must
@@ -335,7 +328,7 @@ std::string mapDisplayName(const std::string& id) {
         // FULL if you didn't mount your gameplay overrides).
         // Fog of war: a room rule, so it is picked here and not only after the
         // room exists. Display-only (never hashed) -- every peer applies the same
-        // rule, so it stays fair. Same three states the room button cycles.
+        // rule, so it stays fair. The room displays this choice as information.
         {
             static const char* kFogName[3] = {"NOT EXPLORED", "EXPLORED", "FULL VISION"};
             lbBtn(x, y, 240, 26,
@@ -362,8 +355,6 @@ std::string mapDisplayName(const std::string& id) {
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
             o.fogExplored = std::min<uint8_t>(createFog_, 2);
             o.randomStarts = createRandomStarts_ ? 1 : 0;
-            // Stress test only applies to an all-AI spectate game.
-            o.stressTest = (singlePlayer_ && spSpectate_ && createStressTest_) ? 1 : 0;
             // SP spectate: create as a spectator (no slot) so every slot can be an AI;
             // the game-start path flags spectating_ + noFog_ from mp_->isSpectator().
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(),
@@ -395,11 +386,7 @@ std::string mapDisplayName(const std::string& id) {
         blockText("SELECT MAP", lx, hy, 1.8f, {200, 205, 220, 255});
         // Toggle between the map list and the random-map generator.
         bool gen = tak::mapgen::isGeneratedMapId(mpMapId_);
-        lbBtn(lx + 176, hy - 2, 164, 22, gen ? "PICK AN EXISTING MAP" : "GENERATE RANDOM MAP", true,
-              [this, gen] {
-                  if (gen) { mpMapId_.clear(); mapPath_.clear(); }  // drop back to the list
-                  else applyGenParams();                           // encode the current gen params
-              });
+
       if (!gen) {
         // Sort buttons: NAME / PLAYERS / SIZE. Clicking sets the sort key; clicking the
         // active one flips ascending/descending. The active key shows an up/down arrow.
@@ -553,6 +540,12 @@ std::string mapDisplayName(const std::string& id) {
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
         if (!mapPreviewDims_.empty())
             blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
+        // Keep the generator action below the preview and map description.
+        lbBtn(pvx, pvy + pvH + 32, pvW, 26, gen ? "PICK AN EXISTING MAP" : "GENERATE RANDOM MAP", true,
+              [this, gen] {
+                  if (gen) { mpMapId_.clear(); mapPath_.clear(); }  // drop back to the list
+                  else applyGenParams();                           // encode the current gen params
+              });
     }
 
     void GameView::drawRoom(int winW, int winH) {
@@ -691,18 +684,19 @@ std::string mapDisplayName(const std::string& id) {
                 auto o = mpRoom().opts; o.speedUnlock = o.speedUnlock ? 0 : 1;
                 mp_->setGameOptions(o); });
         }
-        // Per-player unit cap (host cycles 250/500/1000/2000/5000; everyone sees it).
+        // Per-player unit cap (host cycles 250/500/1000/2000; everyone sees it).
         y += 34;
         char cb[40]; std::snprintf(cb, sizeof cb, "UNIT CAP  %d", int(room.opts.unitCap));
         blockText(cb, x, y + 6, 2.0f, {205, 210, 225, 255});
         if (host) {
             lbBtn(x + 220, y, 90, 26, "CHANGE", true, [this] {
-                static const uint16_t seq[] = {250, 500, 1000, 2000, 5000};
+                static const uint16_t seq[] = {250, 500, 1000, 2000};
                 auto o = mpRoom().opts; int idx = 3;   // default 2000
-                for (int k = 0; k < 5; ++k) if (seq[k] == o.unitCap) idx = k;
-                o.unitCap = seq[(idx + 1) % 5];
+                for (int k = 0; k < 4; ++k) if (seq[k] == o.unitCap) idx = k;
+                o.unitCap = seq[(idx + 1) % 4];
                 mp_->setGameOptions(o); });
         }
+        // Rules chosen when creating the game are informational in the lobby.
         // Fog of war (display-only rule, never hashed): NOT EXPLORED darkens seen
         // terrain again when it leaves sight; EXPLORED keeps it dimmed-but-visible;
         // FULL VISION removes fog entirely (whole map + every unit, all players).
@@ -711,13 +705,7 @@ std::string mapDisplayName(const std::string& id) {
             static const char* kFogName[3] = {"NOT EXPLORED", "EXPLORED", "FULL VISION"};
             std::string fb = std::string("FOG OF WAR: ") +
                              kFogName[std::min<int>(room.opts.fogExplored, 2)];
-            if (host)
-                lbBtn(x, y, 420, 26, fb, true, [this] {
-                    auto o = mpRoom().opts;
-                    o.fogExplored = uint8_t((o.fogExplored + 1) % 3);
-                    mp_->setGameOptions(o); });
-            else
-                blockText(fb, x, y + 6, 2.0f, {205, 210, 225, 255});
+            blockText(fb, x, y + 6, 2.0f, {205, 210, 225, 255});
         }
         y += 34;
         {
@@ -725,13 +713,7 @@ std::string mapDisplayName(const std::string& id) {
             // each slot gets, so spawns can't be memorised on a familiar map.
             std::string rb = std::string("START LOCATIONS: ") +
                              (room.opts.randomStarts ? "RANDOM" : "FIXED");
-            if (host)
-                lbBtn(x, y, 420, 26, rb, true, [this] {
-                    auto o = mpRoom().opts;
-                    o.randomStarts = o.randomStarts ? 0 : 1;
-                    mp_->setGameOptions(o); });
-            else
-                blockText(rb, x, y + 6, 2.0f, {205, 210, 225, 255});
+            blockText(rb, x, y + 6, 2.0f, {205, 210, 225, 255});
         }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
         if (!singlePlayer_) {
@@ -791,4 +773,3 @@ std::string mapDisplayName(const std::string& id) {
             } else if (e.key.keysym.sym == SDLK_ESCAPE) { lbField_ = 0; SDL_StopTextInput(); }
         }
     }
-

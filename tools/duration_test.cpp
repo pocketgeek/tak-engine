@@ -72,7 +72,7 @@ static World* makeWorld() {
     return w;
 }
 
-// Ticks from queueing one unit until a mobile unit exists, or -1 if it never came.
+// Ticks until a mobile unit is finished, rather than its construction site appearing.
 static int ticksToBuildOne(float workerTime, float buildTime, float buildCost,
                            double mana, int maxTicks) {
     World& w = *makeWorld();
@@ -84,7 +84,7 @@ static int ticksToBuildOne(float workerTime, float buildTime, float buildCost,
     for (int i = 0; i < maxTicks; ++i) {
         w.tick(1.0f / 30.0f);
         for (const auto& u : w.units())
-            if (u.alive() && u.type && !u.type->isStructure()) return i + 1;
+            if (u.alive() && u.type && !u.type->isStructure() && !u.underConstruction) return i + 1;
     }
     return -1;
 }

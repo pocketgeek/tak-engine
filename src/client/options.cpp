@@ -251,7 +251,7 @@ void OptionsScreen::build(int channels) {
     // Projected unit shadows. Retail's Glide path casts these, so ON is the faithful
     // setting -- but it is the largest single cost in a crowded frame (measured ~3.2ms
     // of a ~12ms draw at ~1180 visible units), which is worth a switch on a slow machine.
-    toggle("UNIT SHADOWS", [&] { return s_.unitShadows ? 1.0f : 0.0f; },
+    toggle("SHADOWS", [&] { return s_.unitShadows ? 1.0f : 0.0f; },
            [&](float v) { s_.unitShadows = v > 0.5f; });
     // Edge-directed 2x upscale of the static art, done when it is BUILT -- so it costs
     // load time and VRAM and nothing per frame. Art already loaded keeps whatever it was

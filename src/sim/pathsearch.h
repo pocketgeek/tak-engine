@@ -1,40 +1,20 @@
 #pragma once
 
-// Retail's pathfinder, ported from KINGDOMS.icd by static analysis.
-//
-// It is NOT an A*. There is no open list, no priority queue and no cost-to-goal
-// ordering anywhere in the original. It marches straight at the goal and, when
-// something blocks it, traces the obstacle's outline from BOTH sides at once
-// until one of them regains the origin-to-goal line -- a "bug" algorithm. See
-// docs/retail-engine.md for the full disassembly notes; addresses in the
-// comments below are the icd entry points the code mirrors.
-//
-// Everything here is integer arithmetic on 16px cells, and the per-frame work
-// budget is an integer too (retail's default is 12000 units), so a match runs
-// identically on every peer. No timers, no floats: safe for lockstep.
-//
-// Three phases, mirroring the original's state machine at +0x60:
-//   1  OCTANT march from the true start, counting the quality of what it
-//      crosses and giving up on the third occupied cell (icd 0x414833).
-//   2  CARDINAL march from the current origin, laying a breadcrumb in every
-//      cell it enters, until something blocks it (0x414a6a).
-//   3  TWIN boundary traces, counter-rotating, running at the same time; the
-//      first one to regain the straight line from the origin to the goal
-//      becomes the new origin and hands back to phase 2 (0x414c25, with the
-//      M-line test at 0x414dc4 and the hand-offs at 0x414fde / 0x414ff8).
-// Reaching a cell flagged as the goal ends the search, and the route is
-// reconstructed by walking the breadcrumbs back (0x414450).
-//
-// This IS the sim's pathfinder. PathService below owns the queue, the bounded pool of
-// concurrent searches and the per-tick budget; World::requestPath feeds it and installs
-// finished routes as order legs (replaceLeg). The header used to end "NOT WIRED INTO
-// THE SIM YET", which was true only until it was.
+// Gameplay routes use the executable-verified RetailSearchWorker phases.
+// PathSearch is retained below as a legacy comparison harness. PathService's
+// admission wrapper still differs from the retail singleton scheduler; see
+// docs/pathfinding-port.md for integration gaps and executable comparisons.
 
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
+#include <utility>
 #include <vector>
 #include "fixed.h"
+#include "retailtrace.h"
+#include "retailgoal.h"
+#include "retailscheduler.h"
 
 namespace tak::sim {
 
@@ -133,22 +113,15 @@ struct PathSearch {
     int dirA = 0, dirB = 0;       // +0x108 / +0x10c
     bool started = false;         // both cursors have taken a step
     int best = 0;                 // +0xcc, closest approach so far
-    int tolCells = 0;             // goal-crowding tolerance, 50 / UnitType+0x249 cells
-    bool goalCrowded = false;     // reconstruction saw a kScore5 cell within tolCells
-                                  // of the goal (icd 0x414563 sets unit flag bit 0)
-    bool sawTraffic = false;      // ...or OUTSIDE it (the same walk's else-arm sets
-                                  // bit 1, `or ebx,2` at 0x4145c6): the route leant
-                                  // on same-way traffic somewhere short of the goal.
-                                  // Reconstruction ENTRY also sets bit 1 on its own
-                                  // state conditions (`or ecx`=2 at 0x4144aa, keyed
-                                  // on +0x50): a limit-bounded search earns the
-                                  // re-ask cadence too, which is how a long haul
-                                  // chains route by route instead of stranding at
-                                  // its first visit-limit failure. We mirror that
-                                  // as failed-with-progress (see the installer).
+    int tolCells = 0;             // traffic radius FROM START, 50 / UnitType+0x249
+    bool goalCrowded = false;     // legacy name: traffic near START, not the goal
+                                  // (icd 0x414563 sets unit flag bit 0)
+    bool sawTraffic = false;      // another traffic cell, including a second nearby
+                                  // cell after bit 0 was set (0x4145c6). The failure
+                                  // report sets bit 1 from +0x50 only if +0x4c is clear.
     bool visNear = false;         // visit-time +0x4c: a score-5 cell within tolCells
-                                  // of the goal was MARCHED THROUGH (0x414951)
-    bool visFar = false;          // visit-time +0x50: one anywhere else (0x4149ab);
+                                  // of the START was MARCHED THROUGH (0x414951)
+    bool visFar = false;          // visit-time +0x50: another traffic cell (0x4149ab);
                                   // these feed the FAILURE report, the walk pair
                                   // above feeds a delivered route
     PathCell bestCell{};          // the visited cell that achieved it: the endpoint of
@@ -176,19 +149,12 @@ struct PathSearch {
     // Size the scratch to the map and clear the search. Call once per request.
     void reset(int mapW, int mapH);
     void buildRouteTo(PathCell end);
-    // RETAIL'S PHASE 2 (icd 0x4142c0): a budget-bounded Dijkstra that produces the
-    // route when the tracer reaches the goal. The tracer (phases Init..Trace) is
-    // retail's fast reachability PROBE; on arrival the scheduler seeds this cost
-    // search and ITS route is the one used (0x415b6b seeds, 0x4142c0 searches). The
-    // tracer's own breadcrumb route (buildRoute) is retail's FAILURE fallback only.
-    // Costs, algorithm and composition were emulated: tools/re/emuphase.py runs the
-    // real object through init and observes the cost table below; the search is
-    // Dijkstra (NO heuristic -- the node priority is g(parent)+step+turn+grade, read
-    // at icd 0x413ef5-0x413f28), relaxing, min-heap.
-    //   step cost      cardinal 16, diagonal 23 (16*sqrt2)   (+0x90 table)
-    //   turn cost      0/80/120/160/200 by |heading change|  (+0x70 table)
-    //   grade cost     open(6) 24, road(7) 8, slope(4) 48, traffic(5) 80
-    //   node budget    map cells / 10                        (icd 0x415c47)
+    // Legacy approximation, retained for comparison tests. Retail instead uses a
+    // weighted goal heuristic, a heading-dependent neighbor fan, indexed heap
+    // updates and resumable state. Its first-attempt node limit is map cells/20.
+    // The former emuphase.py used an incorrect goal-distance stub; its claims
+    // of Dijkstra equivalence were invalid. The corrected, separately verified
+    // kernel is RetailCostSearch in retailcost.h, used by the gameplay worker.
     // Fills `out` and returns true iff it reached the goal within budget.
     bool buildDijkstraRoute(const std::function<int(int, int)>& score);
 
@@ -215,6 +181,7 @@ private:
     std::vector<uint32_t> dStamp_;
     std::vector<int32_t> dDist_;
     std::vector<uint8_t> dDir_;
+    std::vector<uint8_t> dTraffic_;
     uint32_t dGen_ = 0;
 
     bool seen(size_t i) const { return stamp_[i] == gen_; }
@@ -226,6 +193,7 @@ private:
         return c.x >= 0 && c.z >= 0 && c.x < w_ && c.z < h_;
     }
     void mark(PathCell c, int d, int score);
+    void recordTraffic(PathCell c, bool& near, bool& other) const;
     bool atGoal(PathCell c) const;
     void buildRoute();
     bool onGoalLine(PathCell org, PathCell c) const;
@@ -235,38 +203,14 @@ private:
 
 // The request queue and its per-tick budget scheduler (icd 0x416430).
 //
-// Retail counts every pending request across all players, splits one integer
-// work budget between them, and gives each a slice; flagged requests get five
-// times the share. Each search then runs until its slice is spent and resumes
-// next tick. Requests are keyed by unit id and visited in that order, so the
-// whole thing is deterministic and safe to run inside the lockstep sim.
+// One active search is retained across ticks. Player
+// shares govern admission; an active search may spend beyond its player's
+// share until the GLOBAL budget is exhausted. Admission rotates players and
+// scans their allocated entity slots, charging 7 even for empty slots. Init
+// costs 500 and may overshoot the budget. See tools/re/emuscheduler.py, which
+// executes those branches in the retail binary. RetailSearchScheduler owns
+// admission and RetailSearchWorker owns resumable search phases.
 //
-// We depart from retail in ONE way: at most kMaxActiveSearches run at a time,
-// and the rest wait their turn. Two reasons, and neither costs throughput.
-//
-// MEMORY. The per-cell scratch is the expensive part of a PathSearch -- two
-// uint32 stamp arrays and two byte arrays, 10 bytes per map cell. That is
-// 360 KiB per search on a 192x192 map (measured), so one-search-per-pending-
-// request makes footprint a product of map area and how many units happen to be
-// ordered at once: ~176 MB for 500 pending, on the referee as well as every
-// client. Only the active searches now own scratch, and they own it in a POOL
-// that is reused, so a completed request hands its arrays to the next one
-// instead of freeing and reallocating them.
-//
-// BUDGET. `quantum = max(1, budget / share)` is not a cap: once share exceeds
-// the budget every request still gets 1, so total work per tick grows without
-// limit as requests pile up. Bounding the active set bounds `share`, which
-// makes the budget mean what it says.
-//
-// Throughput is unaffected because the budget is fixed either way: running 100
-// searches at 1/100th speed each and running them 12 at a time finish the whole
-// set at the same tick. Bounding only changes the ORDER -- and it improves the
-// early latencies, since a search that gets a real slice finishes in a tick or
-// two instead of all of them crawling together.
-//
-// Admission rotates (admitCursor_) rather than always starting at the lowest
-// unit id, so a busy low-numbered unit cannot starve a high-numbered one. The
-// cursor is an integer advanced in map order: deterministic, like the rest.
 // How many corners RECONSTRUCTION may hand back. This is NOT the navigator's
 // 64-waypoint limit -- that still applies to the route actually installed (see the
 // shortcut in World). The two were the same number, and that was the bug: the raw
@@ -290,7 +234,7 @@ private:
 // bounding reconstruction. Beyond it the route is genuinely partial, which
 // reachedGoal already detects and handles.
 inline constexpr size_t kRawRouteCap = 256;
-inline constexpr int kMaxActiveSearches = 12;
+inline constexpr int kMaxActiveSearches = 1;
 
 class PathService {
   public:
@@ -300,32 +244,72 @@ class PathService {
     uint64_t completions() const { return completions_; }
     uint64_t failures() const { return failures_; }
     uint64_t requests() const { return requests_; }
+    // Allocated entity ranges include empty slots. The default range starts
+    // at zero and grows with observed IDs; replay hosts can restore exact pools.
+    void setEntityPool(int player,int first,int count);
+    void restoreTraversal(int playerCursor,const std::array<int,10>& slots,
+                          const std::array<int,10>& wraps) {
+        if (activeId_>=0 || playerCursor<0 || playerCursor>=10)
+            throw std::invalid_argument("invalid scheduler restore boundary");
+        for (size_t i=0;i<10;++i)
+            if (slots[i]<0 || (poolSize_[i] && slots[i]>=poolSize_[i]))
+                throw std::invalid_argument("invalid scheduler slot cursor");
+        scheduler_.playerCursor=playerCursor;
+        scheduler_.slotCursor=slots; scheduler_.lastWrapTick=wraps;
+    }
+    struct GradeHost {
+        std::function<void(int,bool)> prepare;
+        std::function<int(int,int,int,int,PathCell)> score;
+        std::function<void(int)> finish;
+    };
+    // Callbacks must outlive the service; finish also runs on cancellation.
+    void setGradeHost(GradeHost host) { gradeHost_=std::move(host); }
 
     // Queue a search. Replaces any request already outstanding for this unit.
     void request(int unitId, PathCell start, PathCell goal, int mapW, int mapH,
                  Fixed goalX, Fixed goalZ, int player, bool priority,
-                 int tolCells = 0);
+                 int tolCells = 0, int heading = 0,
+                 RetailCostSearch::Costs costs = {}, PathCell cellOffset = {}, int goalTolerance = 0,
+                 uint64_t controller = 0, int goalRadiusSquared = 0,
+                 std::optional<RetailRectGoal> rectangle = {},
+                 std::optional<RetailRingGoal> ring = {});
+    // Nonzero controller tokens opt into mission notifications. Phase 1 may
+    // notify while phase 2 still has work; do not wait for route completion.
+    // Drain after tick(), before the next mission dispatch. The caller matches
+    // the token to its current controller; zero keeps the legacy route-only API.
+    struct Notification { int unitId; uint64_t controller; int events; };
+    std::vector<Notification> takeNotifications() { return std::exchange(notifications_, {}); }
     void cancel(int unitId);
     bool pending(int unitId) const { return q_.find(unitId) != q_.end(); }
     size_t pendingCount() const { return q_.size(); }
     void clear() {
+        retireActive();
         q_.clear();
-        slotOwner_.assign(slotOwner_.size(), -1);   // hand every slot back
-        admitCursor_ = -1;
+        notifications_.clear();
+        scheduler_={};
+        poolFirst_.fill(0); poolSize_.fill(0); fixedPool_.fill(false);
         tickNo_ = 0;
     }
 
     // `score(unitId, cx, cz)` answers the per-cell query for that unit's
     // movement class. `done(unitId, route, goalX, goalZ, failed, crowded)`:
-    // `failed` marks a search that never reached the goal -- its route, when
-    // non-empty, is the BEST-EFFORT walk to its closest approach (icd 0x415170) and
-    // must not be extended toward the goal; `crowded` reports kScore5-marked cells
-    // within the goal-crowding tolerance of the goal (icd 0x414563), which selects
+    // `failed` is the navigator's partial-route bit (unit+134:4), not the
+    // mission's 0x2000 failure notification. An empty failure can leave this
+    // bit clear. A partial route ends at the closest approach and must not be
+    // extended toward the goal; `crowded` reports kScore5-marked cells
+    // within the traffic radius of the START (icd 0x414563), which selects
     // retail's faster re-ask cadence (base 10, 0x4e5226) over the normal one
     // (base 20, 0x4e5284).
+    // admit checks and stamps a new request at slot selection, including when
+    // that scan consumes the remaining budget. Suspended work bypasses it.
+    // refresh supplies attempt inputs at initialization. At the trace-to-cost
+    // transition it is called again, consuming only the current heading.
     void tick(const std::function<int(int, int, int)>& score,
               const std::function<void(int, const std::vector<PathCell>&,
-                                       Fixed, Fixed, bool, bool, bool)>& done);
+                                       Fixed, Fixed, bool, bool, bool, bool)>& done,
+              const std::function<void(int, PathCell&, int&, RetailCostSearch::Costs&)>& refresh = {},
+              uint32_t simulationTick = 0,
+              const std::function<bool(int, uint32_t)>& admit = {});
 
   private:
     // A queued request is just its parameters -- no per-cell scratch until it is
@@ -335,13 +319,19 @@ class PathService {
         int mapW = 0, mapH = 0;
         Fixed goalX = Fixed(), goalZ = Fixed();
         int player = 0;         // owner: the budget is split per PLAYER (icd 0x4164fa)
-        int tolCells = 0;       // goal-crowding tolerance for this unit's type
+        int tolCells = 0;       // origin-relative traffic radius for this unit's type
         bool priority = false;
-        int slot = -1;          // index into pool_, or -1 while queued
-        int cap = 0;            // icd +0x165: grows by the quantum each tick
-        uint64_t ranAt = 0;     // tick this entry last got a slice (see the refill loop)
+        int heading = 0, goalTolerance = 0;
+        PathCell cellOffset;
+        RetailCostSearch::Costs costs;
+        int notification = 0;
+        uint64_t controller = 0;
+        int goalRadiusSquared = 0;
+        std::optional<RetailRectGoal> rectangle; // footprint-origin coordinates
+        std::optional<RetailRingGoal> ring;
     };
     uint64_t tickNo_ = 0;       // monotonic, integer: tells "already ran this tick" apart
+    std::vector<Notification> notifications_;
     // OBSERVATIONAL ONLY -- never read by the scheduler, never hashed. Exists so a
     // benchmark can report what a crowd actually costs the pathfinder instead of
     // guessing from tick counts.
@@ -352,17 +342,17 @@ class PathService {
 
     int budget_ = kPathBudgetDefault;
     std::map<int, Entry> q_;    // unit id order: deterministic
-    std::vector<PathSearch> pool_;    // the only owners of per-cell scratch
-    std::vector<int> slotOwner_;      // unit id in each slot, -1 = free
-    int admitCursor_ = -1;            // admit starting after this unit id
-
-    void admit(int unitId, Entry& e, int slot);
-    void release(Entry& e);
+    RetailSearchWorker worker_;
+    RetailSearchScheduler scheduler_;
+    std::array<int,10> poolFirst_{},poolSize_{};
+    std::array<bool,10> fixedPool_{};
+    int activeId_=-1;
+    GradeHost gradeHost_;
+    void retireActive();
 };
 
-// Chebyshev distance in cells. Retail's 0x413e50 returns a distance the search
-// only ever compares, so the metric that matters is the 8-connected one its
-// own stepping uses.
+// Legacy service's Chebyshev distance in cells. Retail's controller query is
+// different: the verified point-goal metric is retailGoalDistance in retailcost.h.
 int pathDist(PathCell a, PathCell b);
 
 // Delta -> one of the 8 directions (icd 0x415040).

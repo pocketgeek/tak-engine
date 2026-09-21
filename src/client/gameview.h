@@ -207,6 +207,12 @@ public:
         loadPanel(side_);
         loadGui(side_);
 
+#ifndef NDEBUG
+        if (!bare && !mission && !scenario && tak::devFlag("TAK_PATROL_PERF")) {
+            setupPatrolPerf();
+            return;
+        }
+#endif
         if (mission) {
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
                               mapView_.map().height, mapView_.map().seaLevel,
@@ -487,6 +493,8 @@ public:
         }
         }
 
+        startAtMonarch();
+
         for (auto& u : world_.units()) {
             if (!u.type || u.type->canMove) continue;
             tak::sim::blockFootprint(world_.nav(), *u.type, u.x.toFloat(), u.z.toFloat(), true);
@@ -582,6 +590,7 @@ public:
     bool benchmarkStatsShown() const { return benchStatsShown_; }
     // Establish the t=0 baseline for the CPU% deltas (called once when the run starts).
     void benchmarkBaseline();
+    void setupPatrolPerf();
     // Record one metrics row for game-second `gameSec`: client/server CPU% (delta over the
     // wall interval since the last sample), RSS, fps and sim speed.
     void pushBenchSample(int gameSec);
@@ -673,6 +682,14 @@ public:
     // zero when a mode simulates without publishing -- which is exactly how replay
     // playback managed to show an empty map (replayStep never called captureFrame).
     size_t framedUnits() const { return front().live.size(); }
+    uint32_t framedTick() const { return front().gameTick; }
+    size_t framedAliveUnits() const {
+        const auto& f=front();
+        size_t count=0;
+        for (int p=0;p<f.numPlayers && p<int(f.players.size());++p)
+            count+=size_t(std::max(0,f.players[size_t(p)].unitCount));
+        return count;
+    }
 
     // Drive one iteration of the multiplayer lobby + game. autoMode: 0 = don't
     // auto-drive the lobby (a real UI will), 1 = auto-host (create + start at 2+
@@ -734,7 +751,7 @@ public:
 #endif
     const std::string& netError() const { return netError_; }
 
-    void setFollow(float zoom) { follow_ = true; mapView_.setZoom(zoom); }
+    void setFollow(float zoom) { initialCamera_.reset(); follow_ = true; mapView_.setZoom(zoom); }
 
     void amphibDemo();
 
@@ -747,6 +764,8 @@ public:
     void testBuild();
 
     void lookAt(float x, float z);
+    void startAtMonarch();
+    void cancelInitialCamera() { initialCamera_.reset(); }
 
     std::string lodeUnit;
     void soundTest();
@@ -808,6 +827,10 @@ public:
     int frameVisH() const { return front().visH; }
     uint32_t frameVisGeneration() const { return front().visGen; }
     bool cellVisibleR(float x, float z) const;
+    bool canPickPoint(float x, float z) const { return noFog_ || cellVisibleR(x, z); }
+    bool canPickUnit(const UnitR& u) const {
+        return !u.embarked() && (alliedToLocal(u.player) || canPickPoint(u.x, u.z));
+    }
     // More snapshot accessors mirroring the World calls the render used to make directly.
     const std::vector<tak::sim::World::HitFx>& frameHits() const { return front().hits; }
     // Impacts are ONE-SHOT and the sim clears them every tick, while the render
@@ -912,6 +935,7 @@ private:
     // the same region click-select uses, so the hover cursor and a click always
     // agree. Optional out: squared distance to the sprite centre (tie-breaks).
     bool unitUnderCursor(const UnitR& u, float mx, float my, float* d2 = nullptr) {
+        if (!canPickUnit(u)) return false;
         float zms = mapView_.zoom();
         SDL_FPoint p = unitScreen(u);
         const SDL_FRect& hb = unitHitBox(u.type);
@@ -934,6 +958,9 @@ private:
     struct PieceMeta {
         bool skip = false;                  // ground plate / *off duplicate: draws nothing
         std::vector<std::string> primTex;   // lowercased per primitive ("" = untextured)
+        std::vector<const SDL_Rect*> primAtlas; // immutable atlas layout; shared by all colour slots
+        std::vector<const std::vector<SDL_Texture*>*> primShadowMasks;
+        std::vector<bool> primAnimated;
         std::vector<PieceMeta> children;    // 1:1 with Object::children
     };
     // The rules themselves, in ONE place, used both to precompute the tree and to
@@ -964,8 +991,16 @@ private:
         }
     }
     // Precompute the whole tree for a model (once, at registration).
-    static void buildPieceMeta(const tak::tdo::Object& o, PieceMeta& m, bool isRoot = true) {
+    void buildPieceMeta(const tak::tdo::Object& o, PieceMeta& m, bool isRoot = true) {
         pieceMetaFor(o, isRoot, m);
+        m.primAtlas.reserve(m.primTex.size());
+        for (const auto& name : m.primTex) {
+            auto it = atlasRect_.find(name);
+            m.primAtlas.push_back(it == atlasRect_.end() ? nullptr : &it->second);
+            auto mask=shadowMasks_.find(name);
+            m.primShadowMasks.push_back(mask==shadowMasks_.end() ? nullptr : &mask->second);
+            m.primAnimated.push_back(animatedTex_.count(name)!=0);
+        }
         m.children.resize(o.children.size());
         for (size_t i = 0; i < o.children.size(); ++i)
             buildPieceMeta(o.children[i], m.children[i], false);
@@ -991,6 +1026,9 @@ private:
         auto it = visuals_.find(key);
         if (it != visuals_.end()) return &it->second.model;
         Visual v{tak::tdo::load(vread("objects3d/" + key + ".3do")), {}};
+        // Layout is built once and survives GPU target recreation. Rect pointers
+        // remain valid for this view's lifetime, including unordered-map rehashes.
+        if (!atlasLaidOut_) buildAtlasLayout();
         buildPieceMeta(v.model.root, v.meta);   // fixed for the model's life
         return &visuals_.emplace(key, std::move(v)).first->second.model;
     }
@@ -1007,15 +1045,9 @@ private:
         bool firing = false;
         bool flying = false;
         bool airborne = false;   // true while the flight animation should run
-        float altitude = 0;      // flyers: 0 grounded, rising to cruiseAlt in flight
-        // The ground datum this flyer is currently holding its altitude above,
-        // walked toward flyerGround() at a limited rate. Retail never snaps a
-        // flyer's Y: a servo in the flyer mover moves it max(1, speed/4) world
-        // units per 30Hz tick toward the commanded altitude. Without that the
-        // dilated sector datum is a STEP function -- it changes the instant the
-        // unit crosses a 128-unit sector boundary -- and the flyer teleports
-        // vertically at every boundary. That jump is the whole reason the servo
-        // exists.
+        float altitude = 0;      // captured flight height above groundY (body/shadow/effects)
+        // Split the captured absolute flight height into datum + altitude for
+        // projection and shadows. Vertical movement belongs to the sim controller.
         float groundY = 0;
         bool groundInit = false;
         // Flyer attitude (bankscale/pitchscale): a smoothed roll into the turn and
@@ -1050,7 +1082,7 @@ private:
                                  // turn-in-place lean); 116 of 187 unit COBs define it
         int turnSign = 0;        // last turn-direction sign passed to TurnDirection
         float gateNext = 0;      // animClock_ of the next gate proximity rescan (stagger)
-        int windStamp = 0;       // last windGen_ this unit received (0 = never)
+        uint32_t windStamp = 0;  // last windGen_ this unit received (0 = never)
         bool hasMelee = false;   // has MoveWatcher/MeleeControl: the COB drives its own
                                  // gait retail-style (Create ambients poll GET 29/28/34
                                  // and CALL walk_* themselves) -- the manual walk state
@@ -1210,9 +1242,15 @@ private:
                        float altPx, float facing) {
         const tak::tdo::Model* model = ghostModel(name);
         if (!model) return;
+        // These retail bolt meshes have their arrowhead on -Z; the other
+        // directional projectile meshes (including araarrow) point along +Z.
+        if (name == "verbal1" || name == "verbal1_vet") facing += 3.14159265f;
         tris_.clear();
         SDL_Texture* atlas = atlasFor(colorSlot_[player & 7]);
-        collect(tris_, atlas, model->root, Xform{}, nullptr, facing, player);
+        // Projectile roots contain the shot itself, unlike unit roots whose
+        // ground-reference plates are suppressed by collect().
+        collect(tris_, atlas, model->root, Xform{}, nullptr, facing, player,
+                false, false);
         if (tris_.empty()) return;
         std::stable_sort(tris_.begin(), tris_.end(),
                          [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
@@ -1305,7 +1343,18 @@ private:
         // software backends; the validation lives in SDL_render.c above the backend, so
         // it behaves the same for D3D/Metal too.
         std::vector<SDL_FPoint> shadowVerts;
+        std::vector<Tri> maskedShadows; // only alpha-cutout faces need UVs/textures
     };
+    void drawUnitShadow(const UnitGeom& g) {
+        profShadowVerts_ += g.shadowVerts.size() + g.maskedShadows.size()*3;
+        static const SDL_Color color{kShadowLevel,kShadowLevel,kShadowLevel,255};
+        static const float uv[2] = {0,0};
+        if (!g.shadowVerts.empty())
+            SDL_RenderGeometryRaw(ren_,nullptr,&g.shadowVerts[0].x,sizeof(SDL_FPoint),
+                                  &color,0,uv,0,int(g.shadowVerts.size()),nullptr,0,0);
+        for (const auto& tri:g.maskedShadows)
+            SDL_RenderGeometry(ren_,tri.tex,tri.v,3,nullptr,0);
+    }
     std::vector<const UnitR*> visUnits_;
     // unitBatch_: the cross-unit body batch. overlayBatch_: a reusable scratch vertex
     // buffer for the flat-quad overlay passes -- order/waypoint markers, the two
@@ -1637,10 +1686,16 @@ private:
             const std::string& name = pi < meta->primTex.size() ? meta->primTex[pi]
                                                                 : p.texture;
             if (!name.empty()) {
-                auto rit = atlasRect_.find(name);
-                if (atlas && rit != atlasRect_.end()) {
+                const SDL_Rect* packed = nullptr;
+                if (pi < meta->primAtlas.size()) packed = meta->primAtlas[pi];
+                else {
+                    // Transient metadata (ghosts/projectiles) still resolves live.
+                    auto rit = atlasRect_.find(name);
+                    if (rit != atlasRect_.end()) packed = &rit->second;
+                }
+                if (atlas && packed) {
                     tex = atlas;             // whole model shares one atlas texture
-                    arect = &rit->second;
+                    arect = packed;
                 } else {
                     // Fallback for any texture not packed into the atlas.
                     auto it = textures_.find(name);
@@ -1650,6 +1705,24 @@ private:
                         size_t ci = size_t(colorSlot_[player & 7]);
                         tex = it->second[ci < it->second.size() ? ci : 0];
                     }
+                }
+            }
+            SDL_Texture* shadowMask = nullptr;
+            if (shadow) {
+                const std::vector<SDL_Texture*>* masks=nullptr;
+                bool animated=false;
+                if (pi<meta->primShadowMasks.size()) {
+                    masks=meta->primShadowMasks[pi];
+                    animated=meta->primAnimated[pi];
+                } else {
+                    auto it=shadowMasks_.find(name);
+                    if (it!=shadowMasks_.end()) masks=&it->second;
+                    animated=animatedTex_.count(name)!=0;
+                }
+                if (masks) {
+                    const size_t frame=animated ? size_t(std::max(0,glowFrame_))
+                                                : size_t(colorSlot_[player & 7]);
+                    shadowMask=(*masks)[frame % masks->size()];
                 }
             }
             // Transform each of this primitive's vertices ONCE. The fan below
@@ -1793,7 +1866,14 @@ private:
                     // keeps POSITIONS ONLY and the flat grey is supplied once at
                     // stride 0 when the geometry is submitted. Writing them per vertex
                     // was filling ~8.5 MB a frame with the same two constants.
-                    tri.tex = nullptr;
+                    tri.tex = shadowMask;
+                    if (shadowMask) {
+                        static const SDL_FPoint uv[4] = {{0,0},{1,0},{1,1},{0,1}};
+                        for (int k=0;k<3;++k) {
+                            tri.v[k].tex_coord = uv[idx[k] & 3];
+                            tri.v[k].color = {255,255,255,255};
+                        }
+                    }
                     tri.depth = 0;
                     out.push_back(tri);
                     continue;
@@ -1862,8 +1942,8 @@ private:
         if (vt == visuals_.end() || !u.type) return false;
         float m[3];
         if (!pieceModelOrigin(vt->second.model.root, &a, Xform{}, pieceName, m)) return false;
-        // isStructure(), not canMove -- see the identical test in the draw path.
-        float facing = isStructure(u.type) ? 0.0f : -u.heading;
+        // Match the body rotation, including a building's birth heading.
+        float facing = -u.heading;
         float cy = std::cos(facing), sy = std::sin(facing);
         float rx = m[0] * cy + m[2] * sy;
         float rz = -m[0] * sy + m[2] * cy;
@@ -1933,6 +2013,7 @@ private:
     static constexpr float kBirthFxDur = 0.9f;
     float birthProgress(int id) const;
     std::map<std::string, std::vector<SDL_Texture*>> textures_;
+    std::map<std::string, std::vector<SDL_Texture*>> shadowMasks_;
     std::vector<Tri> tris_;
     std::vector<SDL_Vertex> triBatch_;   // reused per-unit vertex batch
     std::vector<UnitGeom> geomPool_;              // reused across frames (keeps capacity)
@@ -2038,7 +2119,6 @@ private:
     uint8_t createFog_ = 1;
     bool createRandomStarts_ = false;   // create dialog: Random Start Locations (default OFF = fixed)
     bool createMonarchExp_ = false;   // create dialog: Monarch Expendable (default OFF = monarch matters)
-    bool createStressTest_ = false;   // SP spectate: spawn ~95% of each AI's unit cap at start
     // One selectable map plus the attributes the picker can sort by, read once from
     // the map's .ota GlobalHeader (a tiny text file -- no need to decompress the TNT).
     struct MapInfo {
@@ -2321,6 +2401,7 @@ private:
     bool simThreadDecided_ = false;
     bool simThreadMode_ = true;         // interactive default ON; the headless harness opts out
     bool benchmarkMode_ = false;        // menu Benchmark: all-AI watch run + staged spawn plan
+    float patrolPerfAccum_ = -1.0f;     // developer fixture only; negative disables it
     int benchmarkLevel_ = 0;            // benchmark intensity 1..5 (for the plan + results label)
     // Benchmark metrics: one sample per 5s milestone (the 7 spawn stages + the 40s end).
     struct BenchSample {
@@ -2391,6 +2472,7 @@ public:
     uint32_t soundSeqSeen_ = 0;   // last mission PLAY_SOUND sequence acted on
 private:
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
+    std::optional<std::pair<float,float>> initialCamera_;
     int playerMonarchId_ = -1, aiMonarchId_ = -1;
     const tak::sim::UnitType* placing_ = nullptr;
     float mouseX_ = -1, mouseY_ = -1;   // -1 until the first real mouse motion, so
@@ -2619,7 +2701,7 @@ private:
     void syncBurningFeatures();
 
     // Place one feature instance by definition name; returns success.
-    bool addFeature(const std::string& rawName, float x, float z);
+    bool addFeature(const std::string& rawName, int cx, int cz);
 
     void loadFeatures();
     // Scatter retail wave sprites along the coast (display only; see the impl).
@@ -3118,6 +3200,8 @@ private:
     struct BeamFx {
         float x1 = 0, z1 = 0, x2 = 0, z2 = 0;
         float alt1 = 0, alt2 = 0;
+        std::string model;          // hitscan arrows/harpoons still draw their authored mesh
+        int player = 0;
         // Retail treats a Line-of-Sight shot as a VIRTUAL projectile: the damage is
         // instant, but the bolt is drawn from the muzzle out to a head travelling at
         // weaponvelocity, and it expires when that head reaches the victim. So the
@@ -3189,17 +3273,9 @@ private:
         float x = 0, z = 0, age = 0, delay = 0, dur = 1.2f, maxR = 120;
         int sprites = 24;
     };
-    // Ambient wind (retail WindChange callin): a slow random walk, re-sent to
-    // every unit with the script whenever it shifts. Purely cosmetic, per-client.
-    // Ambient wind. Display-only (it drives the COB WindChange call-in on flags and
-    // sails, plus smoke drift) and never hashed. The range is the MAP's: retail reads
-    // minwindspeed/maxwindspeed from the .ota, defaulting to 100/2000.
-    float windMin_ = 100.0f, windMax_ = 2000.0f;
-    std::string windFrom_;   // mapPath_ the range above was read for ("" = not yet)
-    void loadMapWind();      // lazily read min/maxwindspeed from the map's .ota
-    float windHeading_ = 0.8f, windSpeed_ = 150;
-    float windNext_ = 0;   // animClock_ time of the next shift
-    int windGen_ = 1;      // bumped per shift; Anim.windStamp tracks delivery
+    // WindChange delivery follows the published simulation generation.
+    float windHeading_ = 0, windSpeed_ = 0;
+    uint32_t windGen_ = 0;
     // Camera shake (weapon shakemagnitude/shakeduration on heavy impacts).
     float shakeTime_ = 0, shakeDur_ = 0, shakeMag_ = 0;
     void triggerShake(float mag, float dur);
@@ -3301,4 +3377,3 @@ private:
     float animClock_ = 0;
     float trigTimer_ = 0;
 };
-

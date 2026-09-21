@@ -133,7 +133,7 @@ jobs:
 
       - name: Determinism gate (cross-platform parity)
         run: |
-          expected=ab1ef54ae324bd0e
+          expected=8adc4762a852fadd
           ./build/detmath_test.exe    # accuracy vs libm (fails on tolerance)
           got=$(./build/detmath_test.exe --hash | grep -oE '[0-9a-f]{16}')
           echo "detmath golden: $got (expected $expected)"

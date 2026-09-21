@@ -80,8 +80,10 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
 
 - `src/sim/` — deterministic sim (movement, A* nav, combat, economy). The
   authority for gameplay state; guard determinism carefully here.
-- `src/client/main.cpp` — the SDL2 app (`takclient`): rendering + input, and the
-  **COB animation VM runs here**, so animation never affects the sim hash.
+- `src/client/main.cpp` — the SDL2 app (`takclient`): rendering + input and
+  display animation. Unit COB threads and piece motion also run in `World`:
+  their random draws, factory readiness and output positions affect gameplay
+  and are hashed. Audio and display effects remain client-owned.
 - `src/net/` + `src/server/` — client-server MP (lockstep relay, referee,
   server-run AI). `src/ai/` — the skirmish AI (emits commands).
 - Asset loaders: `src/{hpi,tnt,tdo,cob,gaf,tdf,terrain,crt}`. Full table in the

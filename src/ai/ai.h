@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -40,7 +41,7 @@ Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name = "default
 // rather than cheating its economy -- so all three respect the same rules the human
 // does. See paramsFor().
 // Ordered weakest -> strongest; the value is the wire aiLevel (SlotInfo.aiLevel).
-// Passive = Easy that never attacks (defends only). Absurd = Hard with a mana-income
+// Passive builds a defensive home force and never sends attacks. Absurd = Hard with a mana-income
 // cheat (see incomeMultFor). Renumbering is versioned by kNetVersion.
 enum class Difficulty : uint8_t {
     Passive = 0, Easy = 1, Normal = 2, Hard = 3, Absurd = 4
@@ -84,13 +85,15 @@ enum class BuildCat { Economy, Factory, Builder, Army, Defense };
 // and then pours the rest into army, rather than letting a weighted-random draw spiral
 // into all-economy / all-builders / no-soldiers (the old seed-fragile failure).
 struct Needs {
-    float income = 0;          // BASE income (an Absurd AI's cheat divided back out)
+    float income = 0;          // actual spendable income, including difficulty bonus
     // Own live units per type, filled in the same assessNeeds pass -- weightedPick's
     // limit checks read this instead of re-scanning all units per menu entry.
     std::unordered_map<const tak::sim::UnitType*, int> counts;
     int   economy = 0;         // count: income/storage structures
     int   factories = 0;       // count: structures that train units
     int   builders = 0;        // count: mobile builders (incl. the Monarch)
+    int   defenses = 0;
+    int   desiredArmy = 0;
     int   army = 0;            // count: mobile combatants
     int   builderCap = 2;      // stop making builders past this (a handful, not a horde)
     int   desiredFactories = 1;// how many factories the current income wants to feed
@@ -115,6 +118,7 @@ public:
     void tick(const tak::sim::World& world, uint32_t simTick, const CommandSink& sink);
 
 private:
+    friend struct PlacementProbe;
     // --- deterministic RNG (retail-style LCG) --------------------------------
     int rand(int n) {
         rng_ = rng_ * 1103515245u + 12345u;
@@ -137,7 +141,7 @@ private:
     // another category rather than burning the producer's turn on it.
     bool produce(const tak::sim::World&, const tak::sim::Unit& producer,
                  const tak::sim::UnitType* pick, const CommandSink&);
-    bool placeSite(const tak::sim::World&, const tak::sim::UnitType*, float nx, float nz,
+    bool placeSite(const tak::sim::World&, const tak::sim::UnitType*, const tak::sim::Unit& builder, float nx, float nz,
                    float& outX, float& outZ) const;
     // Fog of war for the AI: an enemy is targeted only when one of the AI's own units
     // is within its sight/radar. For direction (before anything is spotted) the AI
@@ -145,9 +149,13 @@ private:
     bool nearestVisibleEnemy(const tak::sim::World&, float cx, float cz,
                              const tak::sim::UnitType* atype, float& tx, float& tz) const;
     bool nearestEnemyStart(float cx, float cz, float& tx, float& tz) const;
+    bool reachablePoint(const tak::sim::World&, const tak::sim::UnitType*,
+                        float fx, float fz, float tx, float tz, float& x, float& z) const;
+    int terrainWeight(const tak::sim::World&, const tak::sim::Unit&,
+                      const tak::sim::UnitType*, int weight) const;
     void sendWaves(const tak::sim::World&, uint32_t simTick, const CommandSink&);
-    // The AI's home: the centroid of its own buildings (its base). Used to keep the
-    // Monarch anchored near home for safety instead of wandering to distant builds.
+    // The initial base anchor stays fixed as expansion adds remote buildings.
+    // The Monarch and defensive AI use it to remain near home.
     std::pair<float, float> homeOf(const tak::sim::World&) const;
 
     // A fighter is free to be committed to a wave when it's idle or only doing a plain
@@ -155,7 +163,8 @@ private:
     // think doesn't reset its march and thrash it in place).
     static bool waveFree(const tak::sim::Unit& u) {
         return u.orders.empty() ||
-               (u.orders.front().targetId == 0 && !u.orders.front().attackMove);
+               (u.orders.front().targetId == 0 && !u.orders.front().attackMove && !u.orders.front().buildType &&
+                !u.orders.front().load && !u.orders.front().unload && !u.orders.front().guard);
     }
     void emit(const CommandSink& sink, tak::net::Cmd kind, int unitId,
               const std::string& type, float x, float z) const;
@@ -167,6 +176,8 @@ private:
     Difficulty diff_;
     DiffParams dp_;
     std::vector<std::pair<float, float>> enemyStarts_;
+    std::optional<std::pair<float,float>> home_;
+    int raidersSincePush_ = 0;
     bool scouted_ = false;        // one-shot early scout sent
     uint32_t lastRaidTick_ = 0;   // last tick a harassing raid was sent (raid cooldown)
 };

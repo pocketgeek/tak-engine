@@ -17,7 +17,29 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 88;       // 88: every plain-move leg holds a route or a pending request (build-approach legs routed; stuck units re-ask like retail)
+constexpr uint32_t kNetVersion = 176;      // 176: infinite mobile production accepts only Stop
+                                           // 175: data-driven hover attack positioning for flyers
+                                           // 174: flyer activation, selected-weapon approach range, and attack turning
+                                           // 170: bound off-map grade aging and stress-flyer spawns
+                                           // 169: AI validates snapped construction sites and builder approaches
+                                           // 168: defensive AI, stances, income, conjure hover and birth orientation
+                                           // 142: terrain-scaled active steering and braking geometry
+                                           // 141: combat coasting and terrain-scaled stopping pivots
+                                           // 140: ground braking retains movement and terrain state
+                                           // 139: terrain pitch and ground speed limits
+                                           // 138: rectangular placement in ground movement commitment
+                                           // 137: stored surface height and water transition timing
+                                           // 136: corpse and statue navigation footprints
+                                           // 135: mutable feature footprints in navigation
+                                           // 134: traffic and path costs retain mover terrain flags
+                                           // 108: ground responses, corner pruning and player bookkeeping RNG
+                                           // 105: navigator admission timing and retry stamp
+                                           // 104: simulation-owned wind and RNG consumption
+                                           // 103: persistent three-dimensional flight motion
+                                           // 97: verified resumable retail search phases in gameplay
+                                           // 94: failed routes stop at their traced endpoint
+                                           // 93: retail steering/braking, local scans, refusal retries,
+                                           //     waypoint advance, terrain and default path budget
                                            // an observed retail route -- corner-cuts
                                            // like retail (no stepLegal in the search)
                                            // 84: retail's phase-2 Dijkstra makes the
@@ -278,7 +300,7 @@ struct GameOptions {
     uint8_t speed = 10;
     uint8_t speedUnlock = 0;   // 1 = the host may change speed in-game with -/+
     // Per-player unit limit (production/build halts a player at this many live units).
-    // One of 250/500/1000/2000/5000; 2000 default. Serialised as u32.
+    // One of 250/500/1000/2000; 2000 default. Serialised as u32.
     uint16_t unitCap = 2000;
     // When 0 (default) losing your Monarch loses the game; 1 makes it just a unit.
     uint8_t monarchExpendable = 0;

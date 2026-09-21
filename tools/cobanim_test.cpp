@@ -16,6 +16,7 @@
 // gives, the build sequence must terminate.
 #include "cob/cob.h"
 #include "cob/vm.h"
+#include "client/renderframe.h"
 
 #include <cmath>
 #include <cstdio>
@@ -90,6 +91,23 @@ static int wheelSides(const std::string& path, int32_t turnRate) {
 }
 
 int main(int argc, char** argv) {
+    if (argc==3 && std::string(argv[1])=="--hunter-movement") {
+        sim::UnitType type;type.maxVel=sim::Fixed::fromInt(5);
+        sim::Unit unit;unit.type=&type;unit.speed=sim::Fixed::fromInt(1);
+        UnitR frame;frame.type=&type;
+        cob::Vm vm(cob::load(argv[2]),true);
+        vm.onGet=[&](int32_t id,const std::vector<int32_t>&) {
+            return id==29 ? frame.animationSpeedPercent() : 0;
+        };
+        if (!vm.start("MoveWatcher")) return 2;
+        for (int blocked : {0,1,2,2,0}) {
+            unit.bodyBlockStreak=blocked;frame.captureMovement(unit);
+            for (int tick=0;tick<12;++tick) vm.tick(1.0f/30.0f);
+            check(vm.getStatic(0)==(blocked<2),
+                  "Hunter walk gate follows collision refusal and resumes without restarting its script");
+        }
+        return fails ? 1 : 0;
+    }
     if (argc < 2) { std::printf("usage: cobyard_test <scripts-dir>\n"); return 2; }
     const std::string dir = argv[1];
     // Yard units across three factions, so a faction-specific script template

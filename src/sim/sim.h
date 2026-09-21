@@ -1,6 +1,23 @@
 #pragma once
 
 #include "sim/fixed.h"
+#include "sim/footprint.h"
+#include "sim/retailrng.h"
+#include "sim/retailmotion.h"
+#include "sim/retailpiecepose.h"
+#include "sim/retailheight.h"
+#include "sim/retailexploration.h"
+#include "sim/retailflight.h"
+#include "sim/retailwind.h"
+#include "sim/retailmission.h"
+#include "sim/retailpark.h"
+#include "sim/retailplayer.h"
+#include "sim/retailconstruction.h"
+#include "sim/retailconstructionparticles.h"
+#include "sim/retailai.h"
+#include "sim/retailgrade.h"
+#include "sim/retailmap.h"
+#include "cob/retailstate.h"
 
 #include <algorithm>
 #include <atomic>
@@ -11,9 +28,11 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
+#include <source_location>
 #include <string>
 #include <vector>
 
@@ -103,6 +122,8 @@ struct Weapon {
     bool  mindControl = false;
     int32_t minRange = 0;    // minrange (readInt): can't hit targets closer than this
     bool noAir = false;
+    bool hoverAttack = false;
+    int32_t hoverAttackDistance = 0, hoverAttackAltitude = 0;
     // dontleadtargets: aim at the target's CURRENT position instead of extrapolating
     // where it will be. Retail leads a moving unit by default; this flag skips it.
     // All four shipped users are Dropped bombs, whose weaponvelocity is a fall
@@ -202,6 +223,7 @@ struct Aura {
 
 struct UnitType {
     std::string id;        // lowercase objectname, e.g. "araarch"
+    uint16_t orientation=0,buildAngle=0; // original spawn-heading range in BAM
     std::string name;      // display name, e.g. "Archer"
     std::string side;      // ARA/TAR/VER/ZON/CRE
     Fixed maxVel = Fixed::fromInt(1);                 // px/tick  (= 30 px/s)
@@ -216,10 +238,8 @@ struct UnitType {
     // FBI turninplacerate: the pivot rate used when the unit is STOPPED and merely
     // turning to face something, which retail keeps separate from the turn rate it
     // uses while moving (KINGDOMS.icd 0x4d91b0 picks between the two on an in-place
-    // flag). Retail's parse default is 0, which would leave the 39 ground movers that
-    // omit the key unable to pivot at all -- so default to turnRate instead and let an
-    // explicit 0 stand.
-    int32_t turnInPlaceRate = 1092;   // bam/tick, as turnRate
+    // flag). An omitted key has rate zero, including when a facing target is set.
+    int32_t turnInPlaceRate = 0;   // unsigned 16-bit BAM/tick in retail
     int32_t maxHp = 100;        // maxdamage: readInt at +0x1be in retail
     bool canMove = false;
     bool isBuilder = false;
@@ -227,6 +247,10 @@ struct UnitType {
     // structure; used to decide whether a move/attack/patrol order on a BUILDING
     // means "set the rally" rather than "do nothing".
     bool producesUnits() const { return isBuilder && isStructure(); }
+    std::shared_ptr<const cob::File> productionScript;
+    std::shared_ptr<const cob::File> simulationScript;
+    const cob::File* script() const { return simulationScript ? simulationScript.get() : productionScript.get(); }
+    std::vector<RetailModelPiece> productionModel;
     bool commander = false;   // FBI commander=1: the faction's Monarch (loss condition)
     // Buildings vs mobile units: the reliable test is maxVel. The FBI `canmove`
     // flag is set on some buildings too (e.g. the Keep, or the Taros Hell), so a
@@ -234,6 +258,8 @@ struct UnitType {
     bool isStructure() const { return maxVel <= Fixed(); }
     int32_t buildDist = 0;  // FBI builddistance (readInt): how far a builder reaches to build
     bool onMana = false;    // must be built on a mana deposit (yardmap 'S'), e.g. lodestones
+    bool sacredIncome = false; // retail yardmap S: income requires sacred-site coverage
+    bool gate = false; // FBI gate low bit: closed passage cells use search grade 3
     float buildCost = 0;    // mana
     float buildTime = 0;    // work units; seconds = buildTime / builder workerTime
     float workerTime = 1;
@@ -247,8 +273,8 @@ struct UnitType {
     std::vector<int> catIds;    // `categories`, interned; same order (see Weapon::dmgVsIds)
     int32_t sight = 180;      // px (FBI sightdistance, readInt)
     bool canFly = false;
-    // bankscale / pitchscale: how hard this flyer rolls into a turn and pitches
-    // into a climb or dive. Display-only (53 and 33 units carry them).
+    // bankscale / pitchscale also scale surface support-plane angles. Surface
+    // pitch participates in the mover's ramp speed limit.
     // 16.16 in retail: bankscale/pitchscale go through the fixed-point reader.
     Fixed bankScale = Fixed(), pitchScale = Fixed();
     // defaultmissiontype = Standby_wander: cows, deer, wolves, boar, peasants and
@@ -256,6 +282,8 @@ struct UnitType {
     // place hundreds of them.
     bool  wanders = false;
     int32_t cruiseAlt = 0;    // world units above ground when flying (readInt)
+    bool hoverAttack = false;
+    int32_t hoverAttackDistance = 0, hoverAttackAltitude = 0;
     enum class Domain { Ground, Water, Hover };
     Domain domain = Domain::Ground;   // from FBI movementclass prefix
     bool canTransport = false;
@@ -275,7 +303,10 @@ struct UnitType {
     const UnitType* animateType = nullptr;   // animatetype=<unit>, resolved post-load
     std::string animName_;                   // raw animatetype value (loadDir fixup)
     std::string shadowArt;    // FBI shadowart: shadow sprite name in shadows.gaf
-    // Display-only render flags (never hashed; the sim has no Y axis at all).
+    bool upright=false;
+    std::optional<RetailGroundSupport> groundSupport;
+    bool groundModelLoaded=false;
+    uint8_t sightHeight=0; // low byte of the bind-pose model top's integer height
     bool noShadow = false;    // FBI noshadow: casts no ground shadow (walls, spectres)
     bool floater = false;     // FBI floater: rides the water surface. Retail skips the
                               // shadow for these too, independently of noshadow, which
@@ -285,9 +316,8 @@ struct UnitType {
                               // units carry it (Ghost of Garacaius, Ghost Ship, Risen
                               // Wolf) and all three also set noshadow.
     int  waterline = 0;       // FBI waterline: height units the model sits BELOW the
-                              // water surface. Retail sets the object's Y to
-                              // max(terrainHeight, waterLevel - waterline), so a god
-                              // wades in up to its waist and a hull sits in the water.
+                              // water surface; upright hoverers clamp to terrain,
+                              // floaters use the waterline without a terrain clamp.
     std::string veteranModel; // veteranmodel: 3DO the unit swaps to at max veterancy
     // --- extended FBI stats -------------------------------------------------
     float healTime = 0;       // healtime: seconds per HP regenerated (0 = no regen)
@@ -332,6 +362,8 @@ struct UnitType {
     int32_t maxWaterSlope = 255; // MaxWaterSlope (readInt): the slope limit below the waterline
     int32_t maxSlope = 255;   // steepest cell height-spread the unit may cross (readInt)
     int32_t minWaterDepth = 0;   // shallowest water a water unit needs (readInt)
+    int32_t badSlope=-1,badWaterSlope=-1;
+    int32_t badMaxWaterDepth=32768,badMinWaterDepth=32768;
     int32_t radar = 0;        // radardistance (readInt): fog-reveal radius (separate from sight)
     bool  noVeteran = false;  // noveteran: this unit can never gain veterancy
     float maxMana = 0;        // per-unit mana pool (casters); 0 = uses no personal mana
@@ -410,6 +442,8 @@ struct MoveClass {
     int32_t maxWaterSlope = 255;   // the limit used when the cell's low corner is wet
     int32_t maxWaterDepth = 255;
     int32_t minWaterDepth = 0;
+    int32_t badSlope=-1,badWaterSlope=-1;
+    int32_t badMaxWaterDepth=32768,badMinWaterDepth=32768;
 };
 
 class TypeRegistry {
@@ -493,6 +527,7 @@ struct Order {
     // The move standing order gates only AUTO engagement: a Defensive unit told
     // explicitly to attack something across the map still walks over and does it.
     bool autoTarget = false;
+    bool landing = false; // controller owned by the VTOL landing mission
     // Tick this order was issued, for the order-line beads: retail phases the
     // trail by (now - orderCreationTick) so each segment's dots crawl toward the
     // destination independently (icd 0x4d5747 reading order+0x5e). Display only --
@@ -508,17 +543,55 @@ struct Order {
     // {x, z, targetId}; a field inserted after x/z silently becomes the third
     // one and every such call site starts setting the wrong member.
     Fixed clickX = Fixed(), clickZ = Fixed();
+    // Navigator segment start retained when preceding route nodes are consumed.
+    // This belongs to this route leg, never to the next queued player command.
+    Fixed segmentX, segmentZ;
+    bool hasSegment = false;
+    // Owned by the issued ground-move goal, never its intermediate waypoints.
+    // Other mission kinds retain their existing handlers until ported.
+    bool groundMission = false;
+    // Inactive navigator: either consumed or disabled with stored points intact.
+    bool navigationExhausted = false;
+    bool navigationConsumed = false; // only the final stored point remains
+    bool flightMoveMission = false;
+    RetailMissionState mission;
+    uint32_t missionRadius = 0;
+    RetailGroundResponse groundResponse;
+    uint64_t controller = 0;
+    std::optional<RetailParkState> park;
+    // Restored MobileBuild approach; production after arrival still uses the
+    // World's construction host. Bounds use retail footprint-origin cells.
+    std::optional<RetailRectGoal> buildRectangle;
+    Fixed buildX, buildZ;
+    std::optional<RetailFlightGoal> flightGoal;
+    uint32_t hoverAttackRefresh = 0;
+    Fixed hoverAttackTargetX, hoverAttackTargetZ;
+    // Mission destination can change while the navigator retains its old route.
+    std::optional<std::pair<Fixed,Fixed>> missionTarget;
 };
 
 struct Unit {
     int id = 0;
     int player = 0;
+    // Keep broad-phase eligibility and position together for nearby-unit scans.
     const UnitType* type = nullptr;
     Fixed x, z;   // FIXED-POINT: 16.16, 65536/px. See fixed.h.
-    // BINARY ANGLE, 65536 == 360 degrees, 0 = +z -- retail's own convention (navigator
-    // +0x7e, its 90-degree test against 0x4000). Wrapping is a mask, two angles added
+    int32_t deadFor = -1;  // >= 0 once dead; counts up for death animation
+    int inTransport = 0;   // id of carrying transport, 0 = none
+    uint8_t flightGroundMode=1; // retail unit +130 low bits: 1 landed, 2 airborne
+    bool underConstruction = false;
+    uint32_t missionEvents = 0;
+    RetailMissionState standbyState;
+    bool standbyActive = false;
+    bool standbyAllowed = true; // partial replay can disable unsupported idle handlers
+    bool guardNoMoveAllowed = true, guardNoMoveActive = false;
+    RetailMissionState guardNoMoveState;
+    // BINARY ANGLE, 65536 == 360 degrees, 0 = +z. Retail's navigator +0x7e
+    // differs by a half turn; retailmotion.h converts at observation boundaries.
+    // Wrapping is a mask, two angles added
     // cannot drift, and there is no rounding for two libms to disagree about.
     Bam heading;
+    uint16_t variationPhase=0; // original per-unit random phase at +82
     // The tick's REQUESTED turn (want - heading, unclamped BAM), display only --
     // never hashed. Retail's TurnDirection callin (icd 0x4d9550) converts the
     // requested arg, NOT the clamped rotation applied to heading, so the client
@@ -531,6 +604,18 @@ struct Unit {
     // Fixed::operator*. Speed feeds the step length, so leaving it float would have kept
     // a float multiply in the middle of an otherwise integer displacement.
     Fixed speed;
+    Fixed baseSpeed;   // entity +0x12b: individual speed before terrain modifiers
+    Fixed flightY;     // absolute simulation height, not a render animation
+    Fixed groundY;
+    RetailSightFootprint sightFootprint;
+    uint16_t groundPitch=0,groundRoll=0;
+    uint8_t groundSpeedMode=0; // mover +36 bits 8..10
+    uint32_t groundMoveTick=0; // mover +2c: last proposed position/mode change
+    RetailFlightVector flightVelocity;
+    RetailFlightNavigation flightNavigation;
+    int flightSectorX=0,flightSectorZ=0; // center sector at the last footprint relocation
+    uint32_t scriptOccupancy=0; // last setSFXoccupy notification (unit +100)
+    std::optional<RetailLandingState> landing;
     // Fixed, not float: retail keeps no float in its unit state (docs/retail-engine.md).
     //
     // RANGE. Fixed is 16.16 in an int32, so it saturates at 32768 -- and the largest
@@ -567,29 +652,29 @@ struct Unit {
     // moves again. Measured -- opposing columns fell from 32/32 arriving to 20/32, with
     // the survivors travelling an almost perfect straight line, which is the shape of a
     // rule that works beautifully for whoever wins it.
-    // The tick the current traced route installed (-1 = none) plus the search's
+    // The tick the navigator admitted its last search (-1 = none) plus the search's
     // outcome flags -- retail's navigator stamp (+0x110) and outcome bits (+0x134
     // bits 0/1; bits 2|3 = failed). The cadence ladder in the mover reads these
     // EVERY FRAME, rolls fresh dice, and re-requests when the elapsed time beats
-    // them; nothing stores a deadline. Deterministic scratch, unhashed.
+    // them; nothing stores a deadline. Stamps and outcomes are hashed.
     int32_t routeStamp = -1;
     bool routeCrowded = false;   // bit 0: same-way traffic within goal tolerance
     bool routeTraffic = false;   // bit 1: same-way traffic elsewhere on the route
-    bool routeFailed = false;    // the search never reached the goal. Bookkeeping
-                                 // only -- the cadence ladder does NOT gate on it
-                                 // (the failure report sets only bits 0/1; bit 2
-                                 // belongs to the delivery path)
-    // Consecutive steps refused by a BODY -- retail's refusal streak (navigator flags
-    // 0x100 on the first refusal, 0x200 once refused twice running), which its
-    // 0.5x-then-0.4x speed caps key off; the ladder's "refusal state" branch too.
+    bool routeFailed = false;    // original outcome bit 2: partial route
+    bool routeDetour = false;    // bit 3: reconstruction exceeded Manhattan distance
+    // Consecutive refused steps, saturated at two: mover +36 sets 0x8 on
+    // first refusal, then 0x4 on repetition. Caps are base/2 then base/5.
     int32_t bodyBlockStreak = 0;
+    uint16_t groundTerrainFlags = 0; // mover +36 bits 11/12, refreshed by the mover
+    uint8_t groundMovementMode = 0; // retail mover +36 bits 5..7; mode transitions remain partial
+    uint32_t groundScanTick = 0;    // mover +30: next local navigation scan
+    uint32_t groundGradeTick = 0;   // mover +28: last occupancy-grid refresh
     int32_t buildStuckT = 0;        // ticks a builder has approached its site with no progress
     // SQUARED px, which is why this one is NOT Fixed: 20px squared is 400, but a map
     // diagonal squared is ~1.3e8 -- far past 16.16's 32768 ceiling. Exact int instead.
     int32_t buildStuckD = INT32_MAX;// best (closest) squared dist to the build site so far
     // TICKS. The death animation runs to 4s (kCorpseAnimTicks) and the body lingers
     // to corpseUntil; kRetiredTicks marks a record explicitly retired.
-    int32_t deadFor = -1;  // >= 0 once dead; counts up for death animation
     int32_t corpseUntil = 120;  // deadFor when the body is gone (120t = 4s, right after the
                              // death anim; corpse types extend by decomposetime)
     // Fixed: this is hp that went past zero, in the same units hp is now kept in.
@@ -612,8 +697,7 @@ struct Unit {
     int8_t reviveMode = 0;   // 1 = resurrect (own corpse), 2 = animate (raise ghoul)
     int32_t reviveLeft = 0;  // ticks of channel remaining
     int32_t reviveTotal = 1; // full channel length in ticks (mana drains proportionally)
-    bool corpseBlocks = false;   // dead structure still occupies its nav footprint
-                                 // (blocking wreck / neutral wall) until retired
+    bool corpseBlocks = false;   // installed corpse feature blocks its own footprint
     // --- extended runtime state --------------------------------------------
     // DOUBLE, like Player::mana and for the same reason: retail's pools are 64-bit
     // floating point (the affordability check at 0x46e85f subtracts one with `fsubl`).
@@ -656,7 +740,6 @@ struct Unit {
     // fireState: 0 = hold fire (no auto-acquire, no retaliation -- an explicit
     //   attack order still works), 1 = return fire (never self-acquires, but
     //   shoots what it is handed and does hit back), 2 = fire at will.
-    uint16_t standbyTheta = 0;   // idle-flyer orbit phase (retail steps it ~-120 deg)
     uint8_t moveState = 2;
     uint8_t fireState = 2;
     int   stance = 1;      // combat stance: 0=offensive (chase freely), 1=defensive
@@ -670,11 +753,16 @@ struct Unit {
     int32_t captureProg = 0; // canCapture units: ticks spent charming the current target
     Fixed homeX = Fixed(), homeZ = Fixed();   // leash anchor (idle position) for auto-chase
     bool  justFired = false;   // set for one tick when the weapon fires
-    bool underConstruction = false;
+    std::optional<RetailConstructionSite> retailSite;
+    std::optional<RetailConstructionJob> retailBuild;
+    std::optional<RetailConstructionEmitter> constructionEmitter;
     bool buildBegun = false;   // construction site: true once the builder arrived
     Fixed conjureRate = Fixed();  // site: hp/TICK the last builder added; drives decay
     bool  beingBuilt = false;  // site: transient -- a builder worked it this tick
     int buildSiteId = 0;   // builder: id of the building it is constructing
+    int conjureHoverTarget = 0;
+    std::optional<RetailFlightGoal> conjureHoverGoal;
+    bool constructionHolding = false; // recomputed each tick before movement; not persistent state
     // These queues hold at most a handful of entries and are edited only on order
     // completion (not in a hot inner loop), so std::vector -- which allocates NOTHING
     // when empty, unlike std::deque's eager ~576-byte control block -- is both the
@@ -682,7 +770,6 @@ struct Unit {
     // order (all that stateHash folds in) is preserved, so lockstep is byte-identical.
     int reclaimId = 0;                 // builder: feature being reclaimed (0 = none)
     int repairId = 0;                  // builder: damaged friendly being repaired (0 = none)
-    int inTransport = 0;   // id of carrying transport, 0 = none
     std::vector<int> cargo;
     std::vector<Order> orders;
     // RALLY orders for a production building: what the units it makes should do once
@@ -710,10 +797,12 @@ struct Unit {
     // retail routine is incomplete -- whatever it stores at +0x52, it cannot be a
     // 16.16 count of a 300,000-tick build either.
     int32_t buildProgress = 0;
+    int productionSiteId = 0; // attached unfinished factory output
     int justBuilt = 0;         // unit id produced this tick (viewer hook), else 0
     const UnitType* repeatType = nullptr;   // infinite production: re-queue when idle
 
     bool alive() const { return deadFor < 0; }
+    int32_t maximumHp() const { return retailSite ? int32_t(retailSite->type.maxHp) : type->maxHp; }
     bool embarked() const { return inTransport != 0; }
     // Frozen/petrified/paralyzed units can't move, turn, or fire.
     bool incapacitated() const { return frozenFor > 0 || stonedFor > 0 || paralyzedFor > 0; }
@@ -755,6 +844,11 @@ struct FeatType {
     int32_t hp = 0;          // TDF damage= -- readInt in retail, so an int here too
     int  deadType = -1;      // TDF featuredead -> destroyed-replacement (placed neutral)
     std::string object;      // TDF object= (3D corpse mesh; client visual)
+};
+
+struct SacredSite {
+    int x=0,z=0,fx=1,fz=1; // feature-plane origin and footprint, in cells
+    float multiplier=0;
 };
 
 struct Feature {
@@ -824,6 +918,8 @@ public:
     struct Limits {
         int maxSlope = 255, maxWaterSlope = 255;
         int maxWaterDepth = 10000, minWaterDepth = -10000;   // retail's ctor defaults
+        int badSlope=-1,badWaterSlope=-1;
+        int badMaxWaterDepth=32768,badMinWaterDepth=32768;
     };
     NavGrid(const std::vector<uint8_t>& heights, int w, int h, int sea, const Limits& lim);
 
@@ -846,6 +942,19 @@ public:
         size_t i = size_t(cz) * size_t(w_) + size_t(cx);
         if (obst_ && (*obst_)[i]) return false;   // shared obstacle overlay
         return cells_[i] != 0;
+    }
+    int terrainGrade(int cx,int cz,bool includeObstacles=true) const {
+        if (!(includeObstacles ? walkable(cx,cz) : terrainWalkable(cx,cz))) return 0;
+        const unsigned penalty=terrainPenalty_.empty() ? 0 : terrainPenalty_[size_t(cz)*w_+cx];
+        if (penalty&2) return 4;
+        return roadAt(cx,cz) ? 7 : (penalty&1) ? 4 : 6;
+    }
+    int liveTerrainGrade(int cx,int cz,bool includeObstacles=true) const {
+        if (!(includeObstacles ? walkable(cx,cz) : terrainWalkable(cx,cz))) return -1;
+        const unsigned penalty=terrainPenalty_.empty() ? 0 : terrainPenalty_[size_t(cz)*w_+cx];
+        // 508232..5082bd: live placement keeps the slope penalty on roads.
+        if (penalty&3) return 4;
+        return roadAt(cx,cz) ? 7 : 6;
     }
     // block EVERY movement class equally, so they live in one overlay shared by all
     // the grids rather than being stamped into each. Before this they were stamped
@@ -923,6 +1032,7 @@ private:
     void rebuildClearance() const;
 
     std::vector<uint8_t> cells_;
+    std::vector<uint8_t> terrainPenalty_;
     // clear_[c] = side of the largest all-walkable square whose min corner is c.
     // Lazily rebuilt (dirtied by block()); a foot-cell unit fits at corner c iff
     // clear_[c] >= foot. mutable so fits()/pathfinding can build it on demand.
@@ -941,17 +1051,40 @@ private:
 void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked);
 
 struct Player {
-    // DOUBLE, because that is what retail uses. Read off the end-of-game stats screen
-    // at 0x500586/0x5005ba, which loads "Mana Produced" and "Excess Mana" with `fldl`
-    // (64-bit) from +0x18/+0x20 and only calls the ftol helper at 0x5d3d54 to DISPLAY
-    // them as integers -- the stored accumulator is a double, the integer is the
-    // rendering. The accumulate is a double read-modify-write (faddl 0x18(%eax) /
-    // fstpl 0x18(%eax)), and the affordability check at 0x46e85f loads an integer cost
-    // with fildl and subtracts the pool with `fsubl 0xd1(%edi)`, also 64-bit.
-    //
-    // So mana is the one pool that is NOT fixed point, and that is not a compromise:
-    // the range that rules 16.16 out (it saturates at 32768, while mana routinely runs
-    // past it) is exactly why retail did not use fixed point here either.
+    // HUD-only accounting: never used by gameplay decisions or stateHash().
+    RetailResourceHistory displayResources;
+    bool automaticGates=false; // normal AI capability; human gates remain manually controlled
+    bool defensiveAi = false; // Passive AI defends in place from the moment units spawn
+    RetailPlayerCacheClock cacheClock;
+    std::optional<RetailBuildCache> buildCache;
+    std::optional<RetailConstructionResources> retailResources;
+    void creditMana(double amount) {
+        displayResources.income=float(double(displayResources.income)+amount);
+        mana+=amount;
+        if (retailResources) {
+            auto& r=*retailResources;
+            mana=r.stored=float(mana);
+            r.produced=float(double(r.produced)+amount);r.totalProduced+=amount;
+        }
+        if (buildCache) buildCache->resources.income=float(double(buildCache->resources.income)+amount);
+    }
+    void debitMana(double amount) {
+        displayResources.usage=float(double(displayResources.usage)+amount);
+        mana-=amount;
+        if (retailResources) {
+            auto& r=*retailResources;
+            mana=r.stored=float(mana);
+            r.requested=float(double(r.requested)+amount);
+        }
+        if (buildCache) buildCache->resources.usage=float(double(buildCache->resources.usage)+amount);
+    }
+    // Restored retail AI is separate from the command-emitting skirmish AI.
+    // Unsupported planner branches stop diagnostic replay explicitly.
+    std::optional<RetailAiState> retailAi;
+    // Legacy World economy uses a double pool. Retail's resource object stores
+    // the current pool as float; only produced/excess lifetime totals are double.
+    // RetailConstructionResources preserves that arithmetic for the pending
+    // economy/construction integration.
     double mana = 500;
     float storage = 0;   // recomputed each tick from alive units
     float income = 0;
@@ -1010,8 +1143,10 @@ struct BenchSpawn { const UnitType* type = nullptr; float x = 0, z = 0; int play
 struct BenchStage { uint32_t tick = 0; std::vector<BenchSpawn> units; };
 
 class World {
+    // Offline diagnostic importer; not a supported game-save load interface.
+    friend struct RetailReplayProbe;
 public:
-    int spawn(const UnitType* type, float x, float z, float heading = 0, int player = 0);
+    int spawn(const UnitType* type, float x, float z, std::optional<float> heading = {}, int player = 0);
     // Benchmark: install the staged spawn plan (see BenchStage). endTick marks when the
     // benchmark run finishes; benchmarkMode() is true while a plan is installed.
     void setBenchmarkPlan(std::vector<BenchStage> plan, uint32_t endTick) {
@@ -1030,16 +1165,9 @@ public:
     // Observational pathfinder counters (never hashed) -- for benchmarks.
     const PathService& pathStats() const { return paths_; }
 
-    // Retail's per-cell query for one unit's movement class (icd 0x4139d0 ->
-    // 0x413c80): impassable below the threshold, 4 when a parked body holds the
-    // cell, 6 ordinary ground, 7 road. The pathfinder scores every candidate
-    // through this, so it sees exactly what the mover will.
-    // How often a jammed unit LOOKS for someone to yield to. Once it is jammed, asking
-    // every tick buys nothing: the yield it would issue has already been issued, and the
-    // recipient carries a cooldown. The hold is 1.2s (36 ticks), so checking every 8 is
-    // ample -- and in a 14k-unit melee the difference is 14k spatial queries a tick
-    // against a couple of thousand. Staggered by unit id, the same way the path retry
-    // sweep spreads its work, so the cost does not land on one tick.
+    // Footprint route score: terrain/parked bodies block, qualifying same-way
+    // traffic costs extra, ordinary ground is 6 and roads are 7. Step placement
+    // separately reserves the entire footprint, even in moving traffic.
     bool unitHoldsCell(const Unit& u) const;
     int cellScore(const UnitType* t, int cx, int cz, int selfId) const;
 
@@ -1124,14 +1252,37 @@ public:
     }
     bool hasManaSpots() const { return !manaSpots_.empty(); }
     const std::vector<std::pair<float, float>>& manaSpots() const { return manaSpots_; }
+    void setSacredSites(std::vector<SacredSite> sites) { sacredSites_=std::move(sites); }
+    float sacredIncomeMultiplier(int x,int z,int fx,int fz) const;
     // Reclaimable features (trees/rocks/houses). Populated only by setupMatch (the
     // one deterministic per-peer walk); never from the viewer. See struct Feature.
     void addFeature(int id, float x, float z, float manaYield, float work,
-                    int fx, int fz, bool blocks, int type = -1);
+                    int fx, int fz, bool blocks, int type = -1, bool placeOnMap = true);
     const std::vector<Feature>& features() const { return features_; }
+    void setMapPlacementFeatures(const std::vector<uint16_t>& raw,
+                                 std::vector<RetailMapFeatureType> types);
+    const std::vector<RetailMapFeatureCell>& mapPlacementCells() const { return mapPlacementCells_; }
+    const std::vector<RetailMapFeatureType>& mapPlacementTypes() const { return mapPlacementTypes_; }
+    void updateNavigationExploration();
+    const std::vector<uint16_t>& navigationExploration() const { return navigationExplored_; }
+    bool mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) const;
+    Fixed surfaceHeight(const Unit& subject,uint32_t clock,uint16_t* pitch=nullptr,uint16_t* roll=nullptr) const;
+    void commitGroundStep(Unit& subject,Fixed dx,Fixed dz);
+    void updateGroundTerrainFlags(Unit& subject) const;
+    Fixed groundTerrainMultiplier(const Unit& subject) const;
+    void brakeGround(Unit& subject,std::optional<Bam> facing=std::nullopt);
+    void tickNavigationMovement(Unit& subject,Fixed maximum);
+    SinCos steerGround(Unit& subject,RetailSteeringPoint start,RetailSteeringPoint end,
+                       RetailSteeringPoint next,Fixed maximum);
     const Feature* feature(int id) const;                 // by id, nullptr if none
     const Feature* featureAt(float x, float z) const;     // by cell (viewer burn/art sync)
     void setFeatureTypes(std::vector<FeatType> t) { featTypes_ = std::move(t); }
+    void clearFeatureTypes() {
+        featTypes_.clear();
+        // Registry rebuilds can reuse an old UnitType address for a different
+        // unit. Types without a corpse/statue must not inherit that old mapping.
+        corpseType_.clear(); stoneType_.clear(); frozenType_.clear();
+    }
     // Unit type -> its corpse feature def (index into featTypes_, -1 = none).
     void mapCorpse(const UnitType* t, int featType) { corpseType_[t] = featType; }
     void mapStatue(const UnitType* t, int stoneIdx, int frozenIdx) {
@@ -1149,7 +1300,7 @@ public:
     }
     // Drop all registered features (setupMatch rebuilds authoritatively -- the
     // client ctor may have pre-registered the launch map's via registerMapFeatures).
-    void clearFeatures() { features_.clear(); featureIdx_.clear(); }
+    void clearFeatures() { features_.clear(); featureIdx_.clear(); clearFeatureTypes(); }
     const std::vector<FeatType>& featureTypes() const { return featTypes_; }
     bool featureAliveAt(float x, float z) const;          // viewer decal sync
     // Order a mobile builder to reclaim feature `featureId` (queue = append to its
@@ -1163,16 +1314,18 @@ public:
     // Retail (icd 0x509760): a unit is "on road" only when EVERY cell under its
     // footprint carries the road flag (ground units only; checked per tick into
     // a status bit that GET 34 and the speed formula read).
-    bool onRoad(float x, float z, int footX = 1, int footZ = 1) const {
+    bool onRoad(Fixed x, Fixed z, int footX = 1, int footZ = 1) const {
         if (roads_.empty()) return false;
-        int cx = int(x) / 16, cz = int(z) / 16;
-        int x0 = cx - footX / 2, z0 = cz - footZ / 2;
+        int x0 = footprintOrigin(x, footX), z0 = footprintOrigin(z, footZ);
         if (x0 < 0 || z0 < 0 || x0 + footX > terW_ || z0 + footZ > terH_)
             return false;
         for (int dz = 0; dz < footZ; ++dz)
             for (int dx = 0; dx < footX; ++dx)
                 if (!roads_[size_t(z0 + dz) * terW_ + size_t(x0 + dx)]) return false;
         return true;
+    }
+    bool onRoad(float x, float z, int footX = 1, int footZ = 1) const {
+        return onRoad(Fixed::fromFloat(x), Fixed::fromFloat(z), footX, footZ);
     }
     // .ota waterdoesdamage/waterdamage: on two Iron Plague missions the water is
     // lethal, which is the whole point of their terrain. Damage is per second.
@@ -1186,16 +1339,51 @@ public:
     Player& player(int i) { return players_[size_t(i)]; }
     const Player& player(int i) const { return players_[size_t(i)]; }
     int numPlayers() const { return int(players_.size()); }
+    // Initialize before spawning units. Match/replay peers supply the same seed.
+    void setGameSeed(uint32_t seed) {
+        gameRng_ = initialGameRng_ = retailSeed(seed);
+        windRng_ = initialWindRng_ = seed;
+    }
+    void setWindRange(int minimum, int maximum) {
+        minimum = std::clamp(minimum, 0, 32767);
+        maximum = std::clamp(maximum, 0, 32767);
+        if (maximum < minimum) std::swap(minimum, maximum);
+        wind_ = {}; wind_.minimum = minimum; wind_.maximum = maximum;
+        windEnabled_ = true;
+    }
+    const RetailWind& wind() const { return wind_; }
+    struct RngObservation {
+        uint32_t tick;
+        int32_t bound;
+        uint32_t seedBefore, seedAfter, result;
+        std::source_location caller;
+        uint32_t retailReturnAddress=0; // diagnostic call-site identity, never simulation input
+    };
+    // Diagnostic observer only: it must not modify the world. Observation is
+    // excluded from lockstep state and survives resetForReplay for replay tools.
+    void setRngObserver(std::function<void(const RngObservation&)> observer) {
+        rngObserver_ = std::move(observer);
+    }
+    void setCrtRngObserver(std::function<void(const RngObservation&)> observer) {
+        crtRngObserver_=std::move(observer);
+    }
     // Reset all simulation state so a match can be rebuilt (via setupMatch) and
     // replayed from tick 0 deterministically -- crucially nextId_ resets so the
     // replayed spawns get the SAME unit ids as the original run. setTerrain and
     // setPlayerCount (called by setupMatch afterwards) rebuild nav/vis/players.
     void resetForReplay() {
+        unitScripts_.clear();unitScriptById_.clear();
+        paths_.clear();
+        searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();
         projectiles_.clear();
         hits_.clear();
         features_.clear();
+        mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();
+        explorationHeights_.clear();navigationExplored_.clear();
+        restoredNavigationViewer_=-1;
         featureIdx_.clear();
+        clearFeatureTypes();
         // Every other kind of live cross-tick sim state has to go too, or a rejoin
         // replays tick 0 with leftovers from before the drop: a storm still roaming
         // (or a spell still channelling) would deal damage the referee never dealt
@@ -1206,8 +1394,13 @@ public:
         storms_.clear();
         stormSeq_ = 0;
         deathBlasts_.clear();
-        burnRng_ = 0x54414B21;
+        gameRng_ = initialGameRng_;
+        windRng_ = initialWindRng_;
+        const int windMin = wind_.minimum, windMax = wind_.maximum;
+        wind_ = {}; wind_.minimum = windMin; wind_.maximum = windMax;
         nextId_ = 1;
+        retailAllocation_=false;retailEntityPools_.reset();spawnGeneration_=0;
+        nextMovementController_ = 0;
         tickCounter_ = 0;
         winningTeam_ = -1;
     }
@@ -1307,11 +1500,13 @@ public:
     void setSerialThreads(bool s) { serialThreads_ = s; }
     // Deterministic digest of sim state, for lockstep sync checking.
     uint64_t stateHash() const;
+    // Read-only invariant check for the incrementally maintained grade hashes.
+    bool searchGradeChecksumsValid() const;
 #ifndef NDEBUG
     // Debug-only divergence locator, and the first thing to reach for when the referee
     // reports a desync. TAK_HASHTRACE="lo:hi" dumps a PER-COMPONENT checksum every tick
     // in [lo,hi]: units (position / hp / orders / misc), projectiles, effects, storms,
-    // players, features, the burn and fire RNG streams, and -- deliberately -- the nav
+    // players, features, the shared game RNG stream, and -- deliberately -- the nav
     // overlay and grid cells, which stateHash does NOT fold.
     //
     // stateHash() collapses the world to one number, which says THAT two peers disagree
@@ -1385,8 +1580,11 @@ public:
     // Swap the current leg's waypoints for `path`, keeping the leg's own flags
     // and every order queued behind it.
     static void replaceLeg(Unit& u, const std::vector<Order>& path);
+    void deliverSearchRoute(int,const std::vector<PathCell>&,Fixed,Fixed,bool,bool,bool,bool);
+    void refreshSearchRequest(int,PathCell&,int&,RetailCostSearch::Costs&) const;
+    bool admitSearchRequest(int,uint32_t);
     // Drop the current leg entirely and move on to whatever was queued behind it.
-    static void dropLeg(Unit& u);
+    void dropLeg(Unit& u);
     // Does this unit still have construction queued (anywhere in its orders)?
     static bool hasQueuedBuild(const Unit& u) {
         for (const Order& o : u.orders) if (o.buildType) return true;
@@ -1464,7 +1662,8 @@ public:
                    const UnitType* target = nullptr;
                    int victimId = 0;            // primary struck unit (0 = ground hit)
                    float fromX = 0, fromZ = 0;  // attacker pos (viewer flinch direction)
-                   float damage = 0; };         // pre-armour damage vs the victim
+                   float damage = 0;           // pre-armour damage vs the victim
+                   int fromPlayer = 0; };      // display colour for hitscan projectile models
     const std::vector<HitFx>& hits() const { return hits_; }
     // A mission script asking for a camera shake (the ScreenShake map command).
     // Viewer-only: the sequence number is what the client watches for an edge, and
@@ -1483,7 +1682,7 @@ public:
     void clearHits() { hits_.clear(); }
 
 private:
-    void tickCombat(Unit& u, float dt);
+    void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot);
     // Convert a unit to another player (contact charm + mind-control weapons).
     void captureUnit(Unit& t, int newPlayer);
@@ -1493,6 +1692,9 @@ private:
     void applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId, Unit* primary);
 
     void tickProduction(Unit& u, float dt);
+    void initializeRetailSite(Unit& site, int builderId);
+    void tickRetailAiBase(int owner,unsigned index);
+    void tickRetailAiStrike(int owner,unsigned index);
     // Where a newly produced unit is sent: the nearest free, occupiable spot to the
     // factory's exit. See the definition -- the fixed five-point fan it replaced is
     // what made units walk at each other for ever.
@@ -1513,6 +1715,15 @@ private:
     // sensible to approach. See unloadAt.
     bool approachCell(const Unit& t, float x, float z, float& outX, float& outZ) const;
     void tickConstruction(Unit& u, float dt);
+    void tickConjureHover(Unit& builder, const Unit& site);
+    void tickRetailConstruction(Unit& u);
+    void emitConstruction(Unit& u,bool rising);
+    void tickRetailGetBuilt(Unit& u);
+    void completeRetailConstruction(Unit& builder,Unit& site);
+    void notifyUnitScript(Unit& u,const char* name);
+    void notifyFlightOccupancy(Unit& u);
+    bool prepareBuildApproach(Unit& u);
+    Order makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const;
     // Orphaned conjure (no builder worked it this tick): bleed HP at its build
     // rate, then vanish with no corpse.
     void decayConstruction(Unit& u, float dt);
@@ -1615,7 +1826,7 @@ private:
     // Call fn(int unitIndex) for every mobile unit whose cell lies within
     // `radius` of (x,z). Iterates cells in a fixed order, so it is deterministic.
     template <class F>
-    void forEachNear(float x, float z, float radius, F&& fn) const {
+    void forEachNear(float x, float z, float radius, F&& fn, uint64_t players=~uint64_t(0)) const {
         if (gW_ <= 0) return;
         int r = int(radius / gCell_) + 1;
         int cx = int((x - gOx_) / gCell_), cz = int((z - gOz_) / gCell_);
@@ -1625,7 +1836,9 @@ private:
             for (int dx = -r; dx <= r; ++dx) {
                 int gx = cx + dx;
                 if (gx < 0 || gx >= gW_) continue;
-                for (int i = gHead_[size_t(gz) * gW_ + gx]; i >= 0; i = gNext_[size_t(i)])
+                const size_t cell=size_t(gz)*gW_+gx;
+                if (gPlayersValid_ && !(gPlayers_[cell]&players)) continue;
+                for (int i = gHead_[cell]; i >= 0; i = gNext_[size_t(i)])
                     fn(i);
             }
         }
@@ -1654,23 +1867,6 @@ private:
             }
         }
     }
-    // Unit solidity. Retail stamps every ground unit into an exclusive per-cell
-    // occupancy layer and REFUSES a move whose destination footprint overlaps
-    // another unit's cell (KINGDOMS.icd 0x507d10) -- units are hard-solid, and
-    // body-blocking a bridge is a real tactic. Ours passed through each other
-    // entirely; the only unit-vs-unit force was the separation relaxation, which
-    // resolves overlap after the fact and cannot stop anyone.
-    //
-    // ONE DELIBERATE SIMPLIFICATION: we record only STATIONARY units. Retail's
-    // hard test blocks on any occupant, but its steering layer (0x509020) rates a
-    // parked unit impassable and a MOVING one merely expensive, so crowds flow
-    // through each other's wake; it affords that with continuous short-hop
-    // replanning, randomised repath delays and an age-weighted per-player path
-    // budget that we do not have. Blocking only on parked units keeps what a
-    // player notices -- a wall of bodies stops you -- while making a head-on
-    // corridor lock between two marching units impossible by construction.
-    // Rebuilt wholesale once a tick in unit-index order, so it is deterministic;
-    // it is derived state and is not itself hashed.
     // Per-movement-class nav. navClasses_ holds one grid per distinct limit tuple;
     // navIdx_ maps a type to its grid. Derived from terrain + the registry, so it is
     // not hashed -- but it MUST be identical on every peer, which it is: the table
@@ -1678,22 +1874,69 @@ private:
     std::vector<uint8_t> obst_;   // shared obstacle overlay (see NavGrid::setObstacles)
     std::vector<NavGrid> navClasses_;
     std::unordered_map<const UnitType*, int> navIdx_;
+    struct SearchGradePlane {
+        const NavGrid* nav=nullptr;
+        int footX=1,footZ=1;
+        uint64_t navVersion=0;
+        RetailGradePreparation preparation;
+        std::vector<uint8_t> cells;
+        uint64_t checksum=0;
+    };
+    std::vector<SearchGradePlane> searchGrades_;
+    int activeSearchGrade_=-1;
+    struct SearchBodyRect {
+        int x=0,z=0,width=0,height=0;
+        std::vector<const Unit*> cells;
+    };
+    // Tick-local broad phase. Buckets keep conservative candidates, including
+    // dead/flying bodies; exact current eligibility and yards are checked below.
+    bool bodyIndexEnabled_=false;
+    mutable bool bodyIndexValid_=false;
+    mutable int bodyTilesW_=0,bodyTilesH_=0;
+    mutable std::vector<std::vector<int>> bodyTiles_;
+    mutable std::vector<std::array<int,4>> bodyTileBounds_;
+    mutable std::vector<std::array<int,4>> bodyFootprints_;
+    void rebuildBodyIndex() const;
+    void updateBodyIndex(const Unit&) const;
+    SearchBodyRect searchBodyRect(int,int,int,int) const;
+    int cellScoreWithBodies(const UnitType*,int,int,int,const SearchBodyRect*) const;
+    bool gatePassageAt(int,int) const;
+    bool gateWantsOpen(const Unit&) const;
+    void tickAutomaticGates();
+    int mapFeatureGrade(int,int) const;
+    int rawSearchGrade(const SearchGradePlane&,int,int,int,int,const SearchBodyRect* = nullptr) const;
+    static void setSearchCell(SearchGradePlane&,size_t,uint8_t);
+    void refreshSearchRect(SearchGradePlane&,int,int,int,int);
+    void ageSearchBody(SearchGradePlane&,const RetailGradeBody&,bool);
+    void prepareSearchGrade(int,bool);
+    void finishSearchGrade(int);
+    int searchGrade(int,int,int,int,PathCell) const;
+    void refreshMovingSearchBody(Unit&);
 
-    std::vector<int32_t> occ_;      // 16px cells -> occupying unit id (0 = free)
+    // Derived occupancy: rebuilt each tick, then updated after every cell change.
+    // Both moving and parked bodies reserve their whole footprint (0 = free).
+    std::vector<int32_t> occ_;
     int occW_ = 0, occH_ = 0;
+    RetailCostSearch::Costs searchCosts(const Unit& u) const;
     bool requestPath(Unit& u, float x, float z);   // true iff a search was queued
+    static Order* groundMissionOrder(Unit& u);
+    static bool groundMissionAccepts(const Unit&,const Order&);
+    void tickGroundMission(Unit& u);
+    Order* navigationMissionOrder(Unit& u);
+    void tickGuardNoMove(Unit& u);
+    void tickFlightMovement(Unit& u, bool persistent = false);
+    void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon);
+    void tickFlightPatrol(Unit& u);
+    int flightGround(const Unit& u) const;
+    bool acquireTarget(Unit& u, bool missionPoll);
+    int findTarget(Unit& u, bool missionPoll, bool groundResponse = false);
     void rebuildOccupancy();
-    // Is (nx,nz) free of a parked body other than `selfId`? True when solidity is
-    // off (no grid) or the cell is outside it.
-    // Is the footprint rect at (nx,nz) free of a parked body other than `selfId`?
-    // `foot` is the unit's footprint in cells; at foot==1 this is the single-cell
-    // test it replaced, byte for byte.
-    bool cellFree(float nx, float nz, int selfId, int foot = 1) const {
+    bool canFollowTraffic(const Unit& self, const Unit& other) const;
+    // Is the footprint free of any other body? Terrain bounds are checked by
+    // the caller. The centre anchor matches NavGrid::fits and the route scorer.
+    bool cellFree(Fixed nx, Fixed nz, int selfId, int foot = 1) const {
         if (occW_ <= 0) return true;
-        int cx = int(nx) / 16, cz = int(nz) / 16;
-        // Centre-anchored, matching NavGrid::fits and blockFootprint, so a unit's
-        // nav footprint and its occupancy footprint are the same rect.
-        cx -= foot / 2; cz -= foot / 2;
+        int cx = footprintOrigin(nx, foot), cz = footprintOrigin(nz, foot);
         for (int j = 0; j < foot; ++j)
             for (int i = 0; i < foot; ++i) {
                 int x = cx + i, z = cz + j;
@@ -1705,6 +1948,10 @@ private:
     }
 
     std::vector<int> gHead_, gNext_;
+    // Conservative owner mask for rejecting all-allied target cells. Capture
+    // invalidates it until the next rebuild; linked-list order stays unchanged.
+    std::vector<uint64_t> gPlayers_;
+    bool gPlayersValid_=false;
     int gW_ = 0, gH_ = 0;
     float gCell_ = 32.0f, gOx_ = 0, gOz_ = 0;
 
@@ -1750,6 +1997,9 @@ private:
     uint32_t visGen_ = 0;
     float visTimer_ = 0;
     std::vector<uint8_t> heights_;   // raw TNT heightmap, for fog line-of-sight
+    std::vector<RetailExplorationHeight> explorationHeights_;
+    std::vector<uint16_t> navigationExplored_; // simulation-owned persistent owner bits
+    int restoredNavigationViewer_=-1; // captured query context; live matches use the unit owner
 public:
     // Corpse lifecycle, in ticks. Public because the RENDERER shares the contract:
     // it decides the death-animation window and the corpse cull from the same
@@ -1774,19 +2024,29 @@ private:
     std::vector<uint8_t> forcedDefeat_;        // scenario Victory/Defeat: forced-defeated slots
     std::vector<int> justDied_;                // unit ids that died this tick (mission/scenario hook)
     std::vector<std::pair<float, float>> manaSpots_;
+    std::vector<SacredSite> sacredSites_;
     std::vector<Feature> features_;             // reclaimable map features
+    std::vector<RetailMapFeatureCell> mapPlacementCells_;
+    std::vector<RetailMapFeatureType> mapPlacementTypes_;
+    struct CorpseFootprint { int x=0,z=0,type=-1; };
+    std::map<int,CorpseFootprint> corpseFootprints_; // unit id -> installed feature anchor
     std::vector<FeatType> featTypes_;           // per-type burn data (setup-time, static)
     std::unordered_map<const UnitType*, int> corpseType_;   // unit -> corpse FeatType
     std::unordered_map<const UnitType*, int> stoneType_, frozenType_;   // statue defs
-    // Burn RNG: retail rolls spread on its game LCG (icd 0x535cc0, Lehmer 16807);
-    // ours is identical on every peer -- draws happen only in deterministic sim
-    // paths, and the state is folded into stateHash.
-    uint32_t burnRng_ = 0x54414B21;
-    // The movement cadence's dice (minstd, same shape as the two above). Retail rolls
-    // its global game RNG (0x535cc0, seed 0x64186c); ours is a separate stream with
-    // the same recurrence so movement stays deterministic without coupling its draw
-    // order to the other consumers.
-    uint32_t pathRng_ = 0x50415448;
+    // Retail's game stream (0x535cc0 / 0x64186c). Consumers below share it;
+    // matching the full retail call order and match seed remains a parity task.
+    uint32_t initialGameRng_ = retailSeed(0);
+    uint32_t gameRng_ = initialGameRng_;
+    RetailWind wind_;
+    bool windEnabled_ = false;
+    // Wind and restored construction particles share retail's CRT stream.
+    // Allocation and render-cadence consumers are not yet fully integrated.
+    uint32_t windRng_ = 0, initialWindRng_ = 0;
+    std::function<void(const RngObservation&)> rngObserver_;
+    std::function<void(const RngObservation&)> crtRngObserver_;
+    bool retailAllocation_=false;
+    std::optional<std::array<std::pair<int,int>,10>> retailEntityPools_;
+    uint64_t spawnGeneration_=0; // transient mutation detection; not gameplay state
     // Which player slots are seated HUMANS -- the 5x path-budget class. Retail flags
     // it per player (+0x24e7); the evidence for "human" is circumstantial (the flag's
     // other consumers are all local-feedback paths) but a LOCAL-player reading would
@@ -1794,31 +2054,38 @@ private:
     // only lockstep-safe candidate. Empty mask = everyone weight 1 (the all-AI
     // harness), which is also every game until the lobby wires the mask through.
     uint32_t humanMask_ = 0;
-    // Target-scatter RNG for fireatwillrandom. Same Lehmer generator as burnRng_
-    // and equally part of the lockstep contract: every peer runs the identical
-    // acquisition in the identical order, so it advances in lockstep too.
-    uint32_t fireRng_ = 0x4649524Eu;   // 'FIRN'
     // Builders whose queued build order has come due this tick. startBuild spawns
     // the site, which can REALLOCATE units_, so it must never be called while the
     // per-unit loop holds a Unit& -- that reference dangles the moment it returns.
     // Collected in unit order (deterministic) and drained after the loop.
     std::vector<int> buildDue_;
-    uint32_t fireRand(uint32_t n) {    // retail's rand(n): 0 when n < 2
-        fireRng_ = uint32_t((uint64_t(fireRng_) * 16807ULL) % 0x7FFFFFFFULL);
-        return n < 2 ? 0u : fireRng_ % n;
+    uint32_t gameRand(int32_t n, std::source_location caller = std::source_location::current()) {
+        const uint32_t before = gameRng_;
+        const uint32_t result = retailRandom(gameRng_, n);
+        if (rngObserver_) rngObserver_({tickCounter_, n, before, gameRng_, result, caller});
+        return result;
     }
-    int burnRand(int n) {
-        burnRng_ = uint32_t((uint64_t(burnRng_) * 16807ULL) % 0x7FFFFFFFULL);
-        return n > 0 ? int(burnRng_ % uint32_t(n)) : 0;
+    uint32_t crtRand(uint32_t origin,std::source_location caller=std::source_location::current()) {
+        const uint32_t before=windRng_,result=retailCrtRandom(windRng_);
+        if (crtRngObserver_) crtRngObserver_({tickCounter_,32768,before,windRng_,result,caller,origin});
+        return result;
     }
-    // Retail's rand(n) shape (0x535cc0, emulated in tools/re/emupath.py): [0, n-1],
-    // 0 for n < 2, advancing the stream each draw.
-    uint32_t pathRand(uint32_t n) {
-        pathRng_ = uint32_t((uint64_t(pathRng_) * 16807ULL) % 0x7FFFFFFFULL);
-        return n < 2 ? 0u : pathRng_ % n;
+    uint32_t fireRand(uint32_t n, std::source_location caller = std::source_location::current()) {
+        return gameRand(int32_t(n), caller);
+    }
+    int burnRand(int n, std::source_location caller = std::source_location::current()) {
+        return int(gameRand(n, caller));
+    }
+    uint32_t pathRand(uint32_t n, std::source_location caller = std::source_location::current()) {
+        return gameRand(int32_t(n), caller);
     }
 
     void igniteFeature(Feature& f);
+    void forgetCorpseAt(int cx,int cz);
+    bool placeCorpse(Unit& unit,int type);
+    void retireCorpse(Unit& unit);
+    void removeMapFeature(int cx,int cz);
+    bool placeMapFeature(const Feature& f);
     void swapFeature(Feature& f, int newType);   // chain stage swap (burnt/dead)
     void tickBurning();
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
@@ -1859,6 +2126,7 @@ private:
     }();
     int winningTeam_ = -1;
     bool monarchExpendable_ = true;      // default: Monarch is just a unit (net option overrides)
+    std::array<std::vector<uint16_t>,3> explorationScratch_; // derived worker-local reveal masks
     bool serialThreads_ = false;
     std::vector<uint8_t> hadMonarch_;   // per-player: ever fielded a Monarch (for the loss rule)
     bool godsEnabled_ = false;
@@ -1871,6 +2139,17 @@ private:
     uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
                                  // (deterministic: derived from the live-unit count)
     PathService paths_;          // retail's request queue + budget scheduler
+    struct UnitScript {
+        cob::RetailScriptState state;
+        bool activated=false,ready=false,yardOpen=false,buggerOff=false;
+        explicit UnitScript(const cob::File& file):state(file) {}
+    };
+    std::map<int,UnitScript> unitScripts_;
+    // Non-owning direct lookup; the map still owns stable script objects and
+    // supplies the unchanged ID-ordered state-hash traversal.
+    std::vector<UnitScript*> unitScriptById_;
+    struct ScriptHost;
+    void tickUnitScript(Unit& unit);
     // Enabled by setupMatch; a bare test World leaves it off.
     bool pathService_ = false;
     // The retry constants that lived here (kPathRetryTicks, kPathFailBackoff)
@@ -1911,6 +2190,7 @@ private:
         return true;
     }
     int nextId_ = 1;
+    uint64_t nextMovementController_ = 0;
 };
 
 } // namespace tak::sim

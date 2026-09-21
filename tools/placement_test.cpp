@@ -30,6 +30,8 @@
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
+#include "sim/footprint.h"
+#include "client/renderframe.h"
 
 #include <cmath>
 #include <cstdio>
@@ -37,6 +39,12 @@
 #include <vector>
 
 using namespace tak;
+
+namespace tak::sim {
+struct RetailReplayProbe {
+    static const std::vector<BenchStage>& plan(const World& world) { return world.benchPlan_; }
+};
+}
 
 namespace {
 int failures = 0;
@@ -82,6 +90,25 @@ void runCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Case& c) {
     }
     sim::setupMatch(world, reg, cfg);
 
+    std::map<std::pair<int,const sim::UnitType*>,int> counts;
+    for (const auto& u:world.units()) if (u.alive() && u.type) {
+        const int n=++counts[{u.player,u.type}];
+        if (u.type->totalAllowed>0 && n>u.type->totalAllowed) {
+            std::printf("      player %d exceeds %s totalallowed=%d\n",u.player,
+                        u.type->id.c_str(),u.type->totalAllowed);
+            ++failures;
+        }
+    }
+    for (const auto& stage:sim::RetailReplayProbe::plan(world))
+        for (const auto& spawn:stage.units) {
+            const int n=++counts[{spawn.player,spawn.type}];
+            if (spawn.type->totalAllowed>0 && n>spawn.type->totalAllowed) {
+                std::printf("      benchmark plan exceeds %s totalallowed=%d for player %d\n",
+                            spawn.type->id.c_str(),spawn.type->totalAllowed,spawn.player);
+                ++failures;
+            }
+        }
+
     int total = 0, bad = 0, badMonarch = 0;
     for (const auto& u : world.units()) {
         if (!u.alive() || !u.type) continue;
@@ -108,10 +135,53 @@ int main(int argc, char** argv) {
     if (argc < 2) { std::printf("usage: placement_test <retail-install>\n"); return 2; }
     std::printf("placement_test -- no unit starts on ground it cannot stand on\n");
     auto vfs = hpi::mountRetailRoot(argv[1], hpi::OverridePolicy::None);
-    sim::TypeRegistry reg;
-    reg.loadMoveInfo(vfs, "gamedata/moveinfo.tdf");
-    sim::setupRegistry(reg, vfs, false);
-    for (const auto& c : kCases) runCase(vfs, reg, c);
+    for (bool crusades:{false,true}) {
+        sim::TypeRegistry reg;
+        sim::setupRegistry(reg, vfs, crusades);
+        std::printf("balance: %s\n",crusades ? "Crusades" : "standard");
+        for (const auto& c : kCases) runCase(vfs, reg, c);
+        for (const char* id:{"aralode","tarlode","verlode","zonlode","crelode"}) {
+            const auto* type=reg.find(id);
+            if (!type) { ++failures;continue; }
+            sim::World world;world.setVisPlayer(-1);
+            sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=hpi::findMap(vfs,"ulasem arena");
+            cfg.slots={{true,0,0,1}};
+            sim::setupMatch(world,reg,cfg);
+            int accepted=0,unproductive=0;
+            float px=0,pz=0,multiplier=0;
+            for (const auto& [x,z]:world.manaSpots())
+                for (int dx=-16;dx<=16;dx+=8) for (int dz=-16;dz<=16;dz+=8) {
+                    if (!world.canPlace(type,x+dx,z+dz)) continue;
+                    ++accepted;
+                    multiplier=world.sacredIncomeMultiplier(
+                        sim::footprintOrigin(x+dx,type->footX),sim::footprintOrigin(z+dz,type->footZ),
+                        type->footX,type->footZ);
+                    if (multiplier<=0) ++unproductive;
+                    px=x+dx;pz=z+dz;
+                }
+            if (!accepted || unproductive) ++failures;
+            world.player(0).mana=0;
+            for (int i=0;i<31;++i) world.tick(1.f/30.f);
+            PlayerR before;before.captureEconomy(world.player(0));
+            const int lode=world.spawn(type,px,pz,0,0);
+            world.unit(lode)->underConstruction=true;
+            for (int i=0;i<31;++i) world.tick(1.f/30.f);
+            PlayerR unfinished;unfinished.captureEconomy(world.player(0));
+            if (std::abs(unfinished.income-before.income)>0.001 ||
+                unfinished.storage!=before.storage) ++failures;
+            world.unit(lode)->underConstruction=false;
+            const double stored=world.player(0).mana;
+            for (int i=0;i<60;++i) world.tick(1.f/30.f);
+            PlayerR after;after.captureEconomy(world.player(0));
+            const float expected=before.income+type->income*multiplier;
+            if (std::abs(after.income-expected)>0.001 ||
+                std::abs(after.mana-(stored+expected*2))>0.01 ||
+                after.storage!=before.storage+type->storage) ++failures;
+            std::printf("  %s: %d productive placements, %d zero-income placements; HUD income %.1f -> %.1f, capacity %.0f -> %.0f\n",
+                        id,accepted,unproductive,before.income,after.income,before.storage,after.storage);
+        }
+
+    }
     std::printf(failures ? "placement_test: FAILURES (%d case(s))\n"
                          : "placement_test: all passed\n", failures);
     return failures ? 1 : 0;

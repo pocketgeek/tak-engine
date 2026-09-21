@@ -1,4 +1,5 @@
 #include "client/gameview.h"
+#include "client/shadowmask.h"
 #include "client/runtimesettings.h"
 
 // Out-of-line GameView method definitions (core concern), split from the
@@ -170,6 +171,7 @@
             std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
             if (useSimThread_) lk.lock();
             for (const auto& f : world_.features()) {
+                if (!canPickPoint(f.x.toFloat(), f.z.toFloat())) continue;
                 if (!f.alive || f.x.toFloat() < minx || f.x.toFloat() > maxx || f.z.toFloat() < minz || f.z.toFloat() > maxz) continue;
                 float dx = f.x.toFloat() - b->x, dz = f.z.toFloat() - b->z;
                 targets.push_back({dx * dx + dz * dz, f.id});
@@ -179,6 +181,7 @@
         // dead-unit record -- see World::reclaim).
         for (const UnitR* _cp : front().live) {
             const UnitR& cu = *_cp;
+            if (!canPickPoint(cu.x, cu.z)) continue;
             if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
             if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
                 !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable)
@@ -406,6 +409,15 @@
     }
 
     void GameView::testBuild() {
+        if (tak::devFlag("TAK_CONJURE_TEST")) {
+            const int id=spawn("zonhunt",1920,1616,0,0);
+            world_.queueBuild(id,registry_.find("zonter"),2048,1616,false);
+            selection_={id};
+            noFog_=true;edgeScrollOn_=false;
+            mapView_.setZoom(3.0f);
+            mapView_.setOffset(2048-500/3.0f,1616-terrainLift(2048,1616)-400/3.0f);
+            return;
+        }
         const auto* keep = world_.unit(keepId_);
         if (!keep) return;
         const auto* lode = registry_.find("aralode");
@@ -423,7 +435,21 @@
         std::printf("testbuild: no site found\n");
     }
 
+    void GameView::startAtMonarch() {
+        const tak::sim::Unit* target=nullptr;
+        for (const auto& u : world_.units()) {
+            if (u.player!=localPlayer_ || !u.alive() || !u.type) continue;
+            if (!target || u.type->commander) target=&u;
+            if (u.type->commander) break;
+        }
+        if (target) {
+            playerMonarchId_=target->id;builderId_=target->id;
+            initialCamera_=std::pair{target->x.toFloat(),target->z.toFloat()};
+        }
+    }
+
     void GameView::lookAt(float x, float z) {
+        initialCamera_.reset();
         mapView_.setOffset(x - 640 / mapView_.zoom(), z - 400 / mapView_.zoom());
     }
 
@@ -446,6 +472,15 @@
 
     void GameView::fireTest() {
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        if (const char* type=tak::devEnv("TAK_PROJECTILE_TEST")) {
+            const int shooter=spawn(type,cx-200,cz,1.57f,0);
+            const int target=spawn("tarzom",cx+200,cz,-1.57f,1);
+            if (auto* u=world_.unit(target)) { u->stance=2;u->hp=tak::sim::Fixed::fromInt(25000); }
+            if (shooter>=0 && target>=0) world_.attack(shooter,target,false);
+            mapView_.setZoom(1.5f);
+            mapView_.setOffset(cx-400,cz-240);
+            return;
+        }
         int a = spawn("araarch", cx - 40, cz, 1.57f, 0);
         int e = spawn("tararch", cx + 200, cz, -1.57f, 1);
         world_.attack(a, e, false);
@@ -645,7 +680,9 @@
             int win = world_.winningTeam();
             if (teamsSeen >= 2 && win >= 0) {
                 outcome_ = (win == world_.player(localPlayer_).team) ? 1 : -1;
-            } else if (world_.player(localPlayer_).defeated && teamsSeen >= 2) {
+            } else if (!spectating_ && world_.player(localPlayer_).defeated && teamsSeen >= 2) {
+                // Spectators have no team to lose; their fallback player 0 may
+                // be eliminated while the watched match is still running.
                 // My whole team may still be alive via allies; only lose when the
                 // sim says my team is gone, but a solo (FFA) defeat ends my game.
                 bool teamAlive = false;
@@ -716,11 +753,16 @@
             s.stonedFor = float(u.stonedFor) / 30.0f;
             s.paralyzedFor = float(u.paralyzedFor) / 30.0f;
             s.selfDestructT = u.selfDestructT < 0 ? -1.0f : float(u.selfDestructT) / 30.0f;
+            const int conjureSiteId=u.buildSiteId ? u.buildSiteId : u.productionSiteId;
+            // Zero means no site. Looking it up would fall back to a full unit
+            // scan for every non-conjuring unit in this per-tick snapshot.
+            const auto* conjureSite=conjureSiteId ? world_.unit(conjureSiteId) : nullptr;
+            s.conjuring=conjureSite && conjureSite->underConstruction && conjureSite->buildBegun;
             s.buildSiteId = u.buildSiteId; s.reclaimId = u.reclaimId; s.repairId = u.repairId;
             s.buildProgress = float(u.buildProgress) / 30.0f;   // ticks -> seconds
             s.buildQueue = u.buildQueue; s.orders = u.orders;
             s.cargo = u.cargo; s.repeatType = u.repeatType;
-            s.moving_ = u.moving(); s.walking_ = u.walking();
+            s.captureMovement(u);
             s.corpsePhase = !u.alive() && u.deadFor < u.corpseUntil &&
                             u.deadFor >= (u.corpseStatue >= 0 ? 0 : tak::sim::World::kCorpseAnimTicks);
             s.deathType = u.deathType;
@@ -730,7 +772,7 @@
             s.corpseStatue = u.corpseStatue >= 0;
             // UnitR::speed is documented px/s and consumers (the flyer altitude servo,
             // the MotionControl percentage) rely on that; the sim keeps px/TICK now.
-            s.speed = u.speed.toFloat() * 30.0f; s.justFired = u.justFired; s.justBuilt = u.justBuilt;
+            s.justFired = u.justFired; s.justBuilt = u.justBuilt;
             s.disco = world_.discoActive(u.player);
             s.headbang = world_.headbangActive(u.player);
             s.alliedToLocal = alliedToLocal(u.player);
@@ -759,7 +801,7 @@
         for (int p = 0; p < fb.numPlayers && p < int(fb.players.size()); ++p) {
             const auto& pl = world_.player(p);
             PlayerR& r = fb.players[size_t(p)];
-            r.mana = pl.mana; r.storage = pl.storage; r.income = pl.income;
+            r.captureEconomy(pl);
             r.kills = pl.kills; r.unitCount = pl.unitCount;
             r.built = pl.built; r.losses = pl.losses;
             // sim keeps these in TICKS now; the scoreboard wants seconds.
@@ -785,6 +827,7 @@
         fb.soundReq = world_.soundRequest();       // ditto (carries a std::string)
         fb.winningTeam = world_.winningTeam();
         fb.gameTick = world_.tickCount();
+        fb.wind = world_.wind();
         // Fog snapshot: copy world_.vis_ into this buffer only when THIS buffer's fog is stale
         // (fog recomputes ~4Hz, so at most ~2 copies per change -- one per buffer). A spectator
         // (noFog_) leaves vis_ empty, so the copy is a no-op and cellVisibleR reveals all.
@@ -916,6 +959,8 @@
                 h.weapon->fx != tak::sim::WeaponFx::Fire &&
                 (noFog_ || cellVisibleR(h.x, h.z))) {
                 BeamFx b;
+                b.model = h.weapon->shotModel;
+                b.player = h.fromPlayer;
                 b.x1 = h.fromX; b.z1 = h.fromZ;
                 b.x2 = h.x;     b.z2 = h.z;
                 b.alt1 = unitAltById(h.weapon ? 0 : 0) * 0.0f;   // set below
@@ -1011,14 +1056,7 @@
                         v && v->alive() && v->type) {
                         int dtype = (h.weapon && h.weapon->status !=
                                      tak::sim::Weapon::Status::None) ? 4 : 0;
-                        // isStructure(), not canMove: drawUnit locks a structure's
-                        // yaw to 0, and the Barracks declares canmove=1 with no
-                        // velocity (the CLAUDE.md gotcha), so canMove said "rotates"
-                        // for a body rendered fixed -- putting every bearing 180 deg
-                        // out on a building that spawns at heading pi.
-                        bool rot = !v->type->isStructure();
-                        float ang = std::atan2(h.fromX - v->x, h.fromZ - v->z) -
-                                    (rot ? v->heading : 0.0f);
+                        float ang = std::atan2(h.fromX - v->x, h.fromZ - v->z) - v->heading;
                         fi->second.vm->start("HitByWeapon",
                             {dtype, int32_t(std::cos(ang) * 400.0f),
                              int32_t(std::sin(ang) * 400.0f), int32_t(h.damage)});
@@ -1026,22 +1064,11 @@
         }
         // Sim-driven feature fire: burn-anim playback, smoke, burnt-art swaps.
         syncBurningFeatures();
-        // Ambient wind: a slow random walk; each shift bumps windGen_ and the
-        // per-unit loop below re-sends WindChange to flags/sails as they differ.
-        loadMapWind();
-        if (animClock_ >= windNext_) {
-            // Retail's wind tick (KINGDOMS.icd 0x525170): the next shift lands in
-            // 90..360 ticks (3..12s at 30Hz), the speed is re-rolled anywhere in the
-            // map's range, and the direction random-walks +-0x2000 (+-45 degrees) --
-            // but only when the new speed is non-zero. Ours re-oriented on a 20-40s
-            // timer over a hardcoded 50..300, so shipped flags and sails turned about
-            // four times too slowly and never reached a gale.
-            windNext_ = animClock_ + 3.0f + float(salt_++ % 10);
-            windSpeed_ = windMin_ + (windMax_ - windMin_) * (float(salt_++ % 1024) / 1024.0f);
-            if (windSpeed_ > 0.0f)
-                windHeading_ += (float(salt_++ % 256) / 256.0f - 0.5f) * (6.2831853f / 4.0f);
-            ++windGen_;
-        }
+        // Wind is simulation state; consume the published snapshot so skipped
+        // render frames and animation rates cannot change its random stream.
+        windGen_ = front().wind.generation;
+        windSpeed_ = float(front().wind.speed);
+        windHeading_ = float(front().wind.heading) * (6.2831853f / 65536.0f);
         // (No world_.clearHits() here: World::tick already clears hits_ at the start of the
         //  next tick, so the viewer-side clear was redundant -- and dropping it keeps the
         //  render path from mutating sim state, a prerequisite for the sim-thread decouple.
@@ -1299,47 +1326,15 @@
                 continue;   // VM advanced in the parallel pass below
             }
             if (a.flying) {
-                // Walk the ground datum toward the sector value rather than
-                // snapping to it. The dilated datum is a step function -- it jumps
-                // the moment the unit crosses a 128-unit sector boundary -- so
-                // reading it directly makes a flyer hop vertically at every
-                // boundary. Retail's flyer mover never does that: its vertical
-                // servo moves Y at most max(1, speed/4) world units per 30Hz tick
-                // toward the commanded altitude, which turns those steps into a
-                // climb. Same rate here, converted to per-second.
-                float wantGround = flyerGround(u.x, u.z);
-                if (!a.groundInit) { a.groundY = wantGround; a.groundInit = true; }
-                else {
-                    // Retail's step is max(1, speed/4) world units per 30Hz TICK,
-                    // and its speed is per-tick too. Ours is px/SECOND, so the
-                    // conversion is max(1, (speed/30)/4) * 30 == max(30, speed/4)
-                    // units per second. Getting that wrong by the 30x makes the
-                    // servo cross the entire relief in a twentieth of a second,
-                    // i.e. it smooths nothing and the steps come straight back.
-                    float rate = std::max(30.0f, std::abs(u.speed) / 4.0f);
-                    float step = rate * dt;
-                    a.groundY += std::clamp(wantGround - a.groundY, -step, step);
-                }
-                // Take off when moving, settle back to the ground when idle.
-                float cruise = u.type ? u.type->cruiseAlt : 0.0f;
-                // Flyers cruise while doing anything — moving, or hovering to
-                // conjure — and touch down when idle, playing the `land` script
-                // for a proper folded-wing landed pose (not the wings-spread
-                // rest "T-pose").
-                // Also stay airborne for any builder work -- reclaiming/clearing and
-                // repairing, not just conjuring -- so a flyer hovers over the job (and
-                // touches down only when truly idle) exactly as it does while building.
-                bool busy = u.walking() || !u.orders.empty() ||
-                            u.buildSiteId != 0 || u.hasQueuedBuild() ||
-                            u.reclaimId != 0 || u.hasQueuedWork() || u.repairId != 0 ||
-                            !u.buildQueue.empty();   // infinite/repeat conjure produces from the queue
-                float target = busy ? cruise : 0.0f;
-                float step = std::max(cruise, 1.0f) / 0.7f * dt;   // ~0.7s to cruise
-                a.altitude += std::clamp(target - a.altitude, -step, step);
-
-                // Run the flight animation whenever she is airborne (always, in
-                // practice, since idle only settles to a low hover).
-                bool air = a.altitude > std::max(cruise, 1.0f) * 0.3f;
+                // Flight height already follows the retail controller in the sim.
+                // The old independent 0.7s ascent and terrain servo could draw a
+                // conjurer far north of her actual position, especially near hills.
+                const float datum=flyerGround(u.x,u.z); // also resolves heightRef_
+                const auto [ground,altitude]=u.flightRenderHeight(datum,heightRef_);
+                a.groundY=ground;a.groundInit=true;a.altitude=altitude;
+                // Occupancy is authoritative too: a hovering conjurer stays active
+                // even when stationary; a landed flyer plays its landing pose.
+                const bool air=u.flightGroundMode==2;
                 if (a.hasFlightSM) {
                     // Drake VTOL state machine: retail's engine only ever calls
                     // BeginFlight (takeoff) and BeginLanding (descent), plus
@@ -1352,8 +1347,7 @@
                     //     Go via StartBuilding->RequestState), loops `build`, the conjure
                     //     arm gesture; else eases back to rest.
                     // Both freeze if static 6 goes clear -- so the flyer must stay ACTIVE
-                    // through any builder work, which the altitude `busy` test above
-                    // guarantees (it holds cruise while buildSiteId/queue is set). Traced
+                    // through hovering builder work, as reported by flightGroundMode. Traced
                     // with tools/re/emuphase.py + the cob VM; pinned by conjure_test,
                     // which drives this exact sequence through the real Vm. No reset()
                     // -- the loops must keep running.
@@ -1486,12 +1480,7 @@
                         a.aimTarget = tgt;
                         a.aimNext = animClock_ + 0.33f;   // retail re-aims each cycle
                         constexpr float kTau = 6.2831853f;
-                        // Structures render yaw-locked (facing 0 in drawUnit) even
-                        // though the sim turns their heading toward the target --
-                        // aim against the RENDERED facing, not the sim heading.
-                        bool rotates = !u.type->isStructure();   // see HitByWeapon above
-                        float rel = std::atan2(t->x - u.x, t->z - u.z) -
-                                    (rotates ? u.heading : 0.0f);
+                        float rel = std::atan2(t->x - u.x, t->z - u.z) - u.heading;
                         while (rel > kTau / 2) rel -= kTau;
                         while (rel < -kTau / 2) rel += kTau;
                         int32_t h16 = 32768 + int32_t(rel * (65536.0f / kTau));
@@ -1523,12 +1512,11 @@
             }
             // Wind delivery (retail WindChange(speed, heading)): the script TURNs
             // flag/sail pieces straight to arg1, so pass the wind bearing in
-            // rendered-facing space (structures: absolute; movers: minus heading).
+            // rendered-facing space, relative to the body heading.
             if (a.hasWind && a.windStamp != windGen_) {
                 a.windStamp = windGen_;
                 constexpr float kTau = 6.2831853f;
-                bool rotates = !u.type->isStructure();   // see HitByWeapon above
-                float w = windHeading_ - (rotates ? u.heading : 0.0f);
+                float w = windHeading_ - u.heading;
                 while (w > kTau / 2) w -= kTau;
                 while (w < -kTau / 2) w += kTau;
                 a.vm->start("WindChange", {int32_t(windSpeed_),
@@ -1553,7 +1541,7 @@
                            : u.reclaimId   ? u.reclaimId
                            : !u.buildQueue.empty() ? -1   // producing from the queue (repeat conjure)
                            : 0;
-                bool working = !u.walking() && workId != 0;
+                bool working = workId != 0 && (!u.walking() || (u.type->canFly && u.conjuring));
                 if (working != a.building || (working && workId != a.workId)) {
                     a.building = working;
                     a.workId = working ? workId : 0;
@@ -1771,11 +1759,41 @@
         if (paused_) return;   // freeze the sim; input/render/camera keep running
         // Game speed: scale game time (sim, effects, AI, animation all follow dt).
         dt *= speedMult();
+#ifndef NDEBUG
+        if (patrolPerfAccum_ >= 0.0f) {
+            patrolPerfAccum_ += dt;
+            for (int steps = 0; patrolPerfAccum_ >= 1.0f / 30.0f && steps < 64; ++steps) {
+                simStep(1.0f / 30.0f);
+                patrolPerfAccum_ -= 1.0f / 30.0f;
+                if (world_.tickCount() % 300 == 0) {
+                    int alive = 0, moving = 0, displaced = 0;
+                    for (const auto& u : world_.units()) {
+                        alive += u.alive();
+                        moving += u.alive() && u.speed.v > 0;
+                        displaced += u.alive() && (u.x != u.homeX || u.z != u.homeZ);
+                    }
+                    std::printf("PATROL_PERF tick=%u alive=%d moving=%d displaced=%d\n",
+                                world_.tickCount(), alive, moving, displaced);
+                    std::fflush(stdout);
+                }
+            }
+            cosmeticStep(dt);
+            return;
+        }
+#endif
         simStep(dt);
         cosmeticStep(dt);
     }
 
     void GameView::prepare(int winW, int winH) {
+        if (initialCamera_ && !inLobbyPhase() && !spectating_ && !replayMode_) {
+            const auto [x,z]=*initialCamera_;
+            mapView_.setZoom(1.25f);
+            mapView_.setOffset(x-terrainLiftX(x,z)-float(mapViewW(winW))*0.5f/mapView_.zoom(),
+                               z-terrainLift(x,z)-12.0f-float(winH-barH())*0.5f/mapView_.zoom());
+            initialCamera_.reset();
+        }
+
         mapView_.ensureChunks(mapViewW(winW), winH);
         if (!miniTex_) buildMinimap();
         // Listener = the camera view (the map viewport), so positional sounds pan by
@@ -1805,6 +1823,7 @@
         float printed = 0;
         for (float t = 0; t < seconds; t += 1.0f / 30.0f) {
             update(1.0f / 30.0f);
+            if (tak::devFlag("TAK_CONJURE_TEST")) animFrame(1.0f / 30.0f);
             if (trace_ && t >= printed) {
                 printed += 0.5f;
                 for (auto& u : world_.units())
@@ -2006,7 +2025,7 @@
                                                                        // anims/emit-sfx hold off
                                                                        // until the building is up)
                     case 27:                                           // HEADING (16-bit angle)
-                        return int32_t(su->heading * (65536.0f / 6.2831853f)) & 0xFFFF;
+                        return tak::sim::portHeadingToRetail(tak::sim::bamFromRadians(su->heading));
                     case 28: {                                         // STANDING ON WATER
                         // (MeleeControl picks walk_water; WakeControl gates wakes.)
                         const auto& mp = mapView_.map();               // const after load
@@ -2033,11 +2052,7 @@
                         return 1;
                     }
                     case 29:                                           // CURRENT_SPEED (% of max:
-                        return su->type->maxVel > tak::sim::Fixed()                    // ship MotionControl picks
-                                   ? int32_t(std::clamp(               // slowrow/row/fastrow at
-                                         su->speed / std::max(su->type->maxVel.toFloat() * 30.0f, 0.001f) * 100.0f,  // 25/75)
-                                         0.0f, 100.0f))
-                                   : 0;
+                        return su->animationSpeedPercent();           // repeated refusal reports zero
                     case 32: return su->veteran;                       // VETERAN LEVEL (StatusControl
                                                                        // swaps golden weapon pieces)
                     // YARD_OPEN. Returning 0 here is NOT benign, which is what
@@ -2246,6 +2261,8 @@
                         sampledColors_ = true;
                     }
                     std::vector<SDL_Texture*> frames;
+                    std::vector<SDL_Texture*> masks(n,nullptr);
+                    bool hasMask=false;
                     for (size_t i = 0; i < n; ++i) {
                         auto& f = seq.frames[i];
                         if (f.width == 0 || f.height == 0) break;
@@ -2255,7 +2272,23 @@
                         SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
                         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
                         frames.push_back(t);
+                        bool cutout=false;
+                        for (size_t k=3;k<f.rgba.size();k+=4)
+                            if (f.rgba[k]!=255) { cutout=true; break; }
+                        if (cutout) {
+                            // MOD leaves white texels untouched; opaque texels
+                            // multiply the ground by the usual shadow level.
+                            auto pixels=tak::shadowMaskPixels(f.rgba,kShadowLevel);
+                            auto* mask=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
+                                SDL_TEXTUREACCESS_STATIC,f.width,f.height);
+                            if (mask) {
+                                SDL_UpdateTexture(mask,nullptr,pixels.data(),f.width*4);
+                                SDL_SetTextureBlendMode(mask,SDL_BLENDMODE_MOD);
+                                masks[i]=mask; hasMask=true;
+                            }
+                        }
                     }
+                    if (hasMask) shadowMasks_[name]=std::move(masks);
                     if (!frames.empty()) textures_[name] = std::move(frames);
                 }
             } catch (const std::exception&) {}
@@ -2347,28 +2380,6 @@
     // reference and NOT clamped at zero, so water cells report their true (low)
     // height. heightAbove() below is this minus the reference, floored at 0; only
     // the waterline sink needs the unclamped value.
-    // The map's wind range, from the .ota [GlobalHeader]. Lazy and keyed on the map
-    // path, so it follows a lobby map swap, a mission and a replay alike. A generated
-    // map has no .ota, which leaves retail's own defaults standing -- exactly what
-    // retail does for the 31 shipped maps that omit the keys.
-    void GameView::loadMapWind() {
-        if (windFrom_ == mapPath_) return;
-        windFrom_ = mapPath_;
-        windMin_ = 100.0f;
-        windMax_ = 2000.0f;
-        std::string ota = mapSibling(".ota");
-        if (!vhas(ota)) return;
-        try {
-            auto b = vread(ota);
-            tak::tdf::Node r = tak::tdf::parseText(std::string(b.begin(), b.end()), ota);
-            if (const tak::tdf::Node* gh = r.child("globalheader")) {
-                windMin_ = float(gh->numberOr("minwindspeed", 100));
-                windMax_ = float(gh->numberOr("maxwindspeed", 2000));
-                if (windMax_ < windMin_) std::swap(windMin_, windMax_);
-            }
-        } catch (const std::exception&) {}
-    }
-
     float GameView::rawHeight(float wx, float wz) {
         const auto& m = mapView_.map();
         if (m.heights.empty() || m.width <= 0) return 0.0f;
@@ -2516,41 +2527,13 @@
         auto vt = visuals_.find(type->id);
         if (vt != visuals_.end()) {
             std::vector<Tri> scratch;
-            // A STRUCTURE is drawn at a fixed facing -- and never rotates, even with
-            // the canmove=1/no-velocity FBI quirk -- so its bounds are just its
-            // projected vertices.
-            //
-            // A MOVER has to be covered from every side. That used to mean sampling
-            // sixteen headings and unioning the results, which is both approximate
-            // (an extreme falling between two samples is missed) and sixteen full
-            // projections. It is unnecessary: rotating about Y sends each vertex
-            // (x,z) round a circle of radius hypot(x,z) and leaves y untouched, so
-            // ONE walk that records those radii gives the union over ALL headings
-            // exactly -- x spans +-maxR, and y spans the per-vertex
-            // -(y*kProjY) -+ r*kProjZ. collect() gathers it as it goes, so there is
-            // still a single transform implementation rather than a copy of it here.
-            if (isStructure(type)) {
-                float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
-                bool any = false;
-                collect(scratch, nullptr, vt->second.model.root, Xform{}, nullptr,
-                        0.0f, 0, false);
-                for (const auto& t : scratch)
-                    for (int i = 0; i < 3; ++i) {
-                        minX = std::min(minX, t.v[i].position.x);
-                        minY = std::min(minY, t.v[i].position.y);
-                        maxX = std::max(maxX, t.v[i].position.x);
-                        maxY = std::max(maxY, t.v[i].position.y);
-                        any = true;
-                    }
-                if (any) box = SDL_FRect{minX, minY, maxX - minX, maxY - minY};
-            } else {
-                RadialExtent ext;
-                collect(scratch, nullptr, vt->second.model.root, Xform{}, nullptr,
-                        0.0f, 0, false, true, false, &ext);
-                if (ext.any)
-                    box = SDL_FRect{-ext.maxR, ext.minY, 2.0f * ext.maxR,
-                                    ext.maxY - ext.minY};
-            }
+            // Buildings also carry a birth heading. Cache bounds that cover
+            // every heading, as for movers, so rotated bodies remain selectable.
+            RadialExtent ext;
+            collect(scratch, nullptr, vt->second.model.root, Xform{}, nullptr,
+                    0.0f, 0, false, true, false, &ext);
+            if (ext.any)
+                box = SDL_FRect{-ext.maxR, ext.minY, 2.0f * ext.maxR, ext.maxY-ext.minY};
         }
         return hitBoxes_.emplace(type->id, box).first->second;
     }
@@ -2717,6 +2700,11 @@
         std::lock_guard<std::mutex> lk(frameMutex_);
         renderReadIdx_ = published_;
         reading_ = published_;
+        // A previously selected enemy must stop exposing its live state on leaving sight.
+        std::erase_if(selection_, [this](int id) {
+            const auto* u = frameUnitP(id);
+            return !u || !u->alive() || !canPickUnit(*u);
+        });
     }
 
     void GameView::endFrame() {
@@ -2935,10 +2923,14 @@
             case tak::Act::SelectAll:
                 selectOwned([](const UnitR&){ return true; });
                 return true;
-            case tak::Act::SelectSameType: {   // all of the currently-selected type
-                const auto* first = selection_.empty() ? nullptr : frameUnitP(selection_.front());
-                const auto* t = first ? first->type : nullptr;
-                if (t) selectOwned([t](const UnitR& u){ return u.type == t; });
+            case tak::Act::SelectSameType: {   // expand every type in the original selection
+                std::set<const tak::sim::UnitType*> types;
+                for (int id : selection_)
+                    if (const auto* u = frameUnitP(id); u && u->type)
+                        types.insert(u->type);
+                // Snapshot the types first: selectOwned replaces selection_.
+                if (!types.empty())
+                    selectOwned([&types](const UnitR& u){ return types.contains(u.type); });
                 return true;
             }
             case tak::Act::SelectOnScreen:
@@ -3309,4 +3301,3 @@
             shakeMag_ = mag; shakeDur_ = dur; shakeTime_ = dur;
         }
     }
-

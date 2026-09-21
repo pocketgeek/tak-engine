@@ -804,7 +804,7 @@ void Server::sendGameList(Client& c) {
 // Snap an incoming unit-cap value to the allowed lobby set (defensive against a
 // malformed client); anything unexpected falls back to the 2000 default.
 static uint16_t clampUnitCap(uint16_t v) {
-    for (uint16_t a : {250, 500, 1000, 2000, 5000}) if (v == a) return v;
+    for (uint16_t a : {250, 500, 1000, 2000}) if (v == a) return v;
     return 2000;
 }
 
@@ -1241,7 +1241,7 @@ void Server::tryStart(Client& c) {
                 // shared aiLevel so the client mirror sets the same factor (lockstep).
                 float mm = s.type == 2
                     ? tak::ai::incomeMultFor(tak::ai::difficultyFromLevel(s.aiLevel)) : 1.0f;
-                cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm};
+                cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm, s.type == 2, s.type == 2 && s.aiLevel == 0};
             }
             auto spots = tak::sim::setupMatch(*r->ref, *r->reg, cfg);
             // setupMatch returns start positions in USED-slot order; remap to slot index.
@@ -1696,7 +1696,12 @@ void Server::dropClient(uint32_t id, const char* reason) {
     if (it == clients_.end()) return;
     Client& c = *it->second;
     Room* r = c.roomId ? roomOf(c) : nullptr;
-    if (r && r->running && c.slot >= 0 && c.slot < kMaxSlots && r->slots[c.slot].type == 1) {
+    // Defeated players normally disconnect from the result screen. Their
+    // departure must not pause the surviving players for reconnect grace.
+    const bool defeated = r && r->ref && c.slot >= 0 && c.slot < r->ref->numPlayers() &&
+                          r->ref->player(c.slot).defeated;
+    if (r && r->running && c.slot >= 0 && c.slot < kMaxSlots &&
+        r->slots[c.slot].type == 1 && !defeated) {
         // A disconnect from a running game HOLDS the slot: the player may rejoin
         // with their resume token within the grace window. Auto-pause (budget
         // permitting) so nobody is fighting a frozen empire meanwhile.
@@ -1898,12 +1903,18 @@ int Server::run() {
         for (auto& [rid, r] : rooms_)
             if (r.running && !r.paused && r.nextTickMs <= now) due.push_back(&r);
         auto tickRoom = [&](Room& r) {
+            // Heavy games can take longer than their nominal tick interval.
+            // Bound catch-up work between socket polls: advancing the entire
+            // lead window in one burst otherwise withholds bundles/keepalives
+            // long enough for connected clients to time out.
+            const uint64_t batchStart = nowMs();
             while (r.nextTickMs <= now) {
                 // Pace to the slowest. Back off a few ms rather than rebasing to
                 // `now`: an immediate deadline makes the poll above return at
                 // once, so the server would spin until the laggard acked.
                 if (!canAdvance(r)) { r.nextTickMs = now + kFlowRetryMs; break; }
                 closeTick(r);
+                if (nowMs() - batchStart >= 8) break;
             }
         };
         bool parallel = due.size() >= 2;

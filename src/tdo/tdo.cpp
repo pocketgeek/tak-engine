@@ -34,6 +34,8 @@ Object parseOne(const std::vector<uint8_t>& d, size_t off, int depth) {
     Object obj;
     uint32_t numVerts = u32(d, off + 4);
     uint32_t numPrims = u32(d, off + 8);
+    obj.selectionPrimitive=s32(d,off+12);
+    obj.offsetRaw={s32(d,off+16),s32(d,off+20),s32(d,off+24)};
     obj.x = float(s32(d, off + 16)) * kScale;
     obj.y = float(s32(d, off + 20)) * kScale;
     obj.z = float(s32(d, off + 24)) * kScale;
@@ -46,6 +48,7 @@ Object parseOne(const std::vector<uint8_t>& d, size_t off, int depth) {
 
     obj.vertices.reserve(numVerts * 3);
     for (uint32_t i = 0; i < numVerts; ++i) {
+        obj.verticesRaw.push_back({s32(d,offVerts+i*12),s32(d,offVerts+i*12+4),s32(d,offVerts+i*12+8)});
         obj.vertices.push_back(float(s32(d, offVerts + i * 12)) * kScale);
         obj.vertices.push_back(float(s32(d, offVerts + i * 12 + 4)) * kScale);
         obj.vertices.push_back(float(s32(d, offVerts + i * 12 + 8)) * kScale);

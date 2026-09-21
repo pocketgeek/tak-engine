@@ -615,12 +615,14 @@ bool affectsGameplay(const std::string& path) {
         return k.size() >= n && k.compare(k.size() - n, n, e) == 0;
     };
     // Files our deterministic sim consumes: unit stats, weapon/side/game data,
-    // build lists, map geometry + scenario data. Everything else (art, models,
-    // animation scripts, sound, music, fonts, gui) is cosmetic.
+    // build lists, map geometry + scenario data, scripts and model origins.
+    // Factory scripts and their animated build points affect production.
     // Build-tree markers (canbuild/canbuildcb/<builder>/<buildable>.tdf) define who
     // builds what -- gameplay, and .tdf, so check them BEFORE the .tdf rule below.
     if (k.find("canbuild") != std::string::npos) return true;
     if (ext(".fbi") || ext(".tnt") || ext(".ota") || ext(".crt")) return true;
+    // Factory scripts and model build-piece transforms now drive production.
+    if (ext(".cob") || ext(".3do")) return true;
     if (ext(".tdf")) {
         // Only the .tdf files our sim actually consumes are gameplay: weapon
         // stats, movement classes, faction data, god timing. Everything else in

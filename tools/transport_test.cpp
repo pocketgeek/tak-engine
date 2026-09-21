@@ -154,6 +154,9 @@ static void alreadyInRange() {
     board(w, tid, cid);
 
     // 100px away -- inside kRange, so there is nothing to approach.
+    foot.footX = foot.footZ = 2;
+    const int cid2 = w.spawn(&foot, 500, 500);
+    board(w, tid, cid2);
     w.unloadAt(tid, 600, 500);
     const tak::sim::Unit* t = w.unit(tid);
     check(t->orders.size() == 1 && t->orders[0].unload,
@@ -166,6 +169,11 @@ static void alreadyInRange() {
         quick = w.unit(tid)->cargo.empty();
     }
     check(quick, "it unloads within a second instead of driving at the drop point");
+    const auto& a = *w.unit(cid);
+    const auto& b = *w.unit(cid2);
+    check(std::abs(tak::sim::footprintOrigin(a.x, 2) - tak::sim::footprintOrigin(b.x, 2)) >= 2 ||
+          std::abs(tak::sim::footprintOrigin(a.z, 2) - tak::sim::footprintOrigin(b.z, 2)) >= 2,
+          "passengers reserve distinct whole footprints during one unload");
 }
 
 // A coastline: cells [0,shoreCell) are water, the rest land. Water units need

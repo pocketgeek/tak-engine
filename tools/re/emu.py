@@ -50,7 +50,18 @@ class Icd:
         self.uc.mem_map(STACK, STACK_SZ)
         self.uc.mem_map(HEAP, HEAP_SZ)
         self.hooks = {}          # address -> python callable(uc) -> return value in eax
-        self.uc.hook_add(UC_HOOK_CODE, self._code)
+        self._global_code_hook = self.uc.hook_add(UC_HOOK_CODE, self._code)
+
+    def freeze_hooks(self):
+        """Finalize substitutions and avoid a Python callback on every instruction."""
+        from types import MappingProxyType
+        if self._global_code_hook is None:
+            raise RuntimeError('substitution hooks already finalized')
+        for address in self.hooks:
+            self.uc.hook_add(UC_HOOK_CODE,self._code,begin=address,end=address)
+        self.uc.hook_del(self._global_code_hook)
+        self._global_code_hook=None
+        self.hooks=MappingProxyType(dict(self.hooks))
 
     def _code(self, uc, addr, size, _):
         fn = self.hooks.get(addr)

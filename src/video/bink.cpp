@@ -247,26 +247,17 @@ bool BinkVideo::nextFrame(std::vector<uint8_t>& rgba) {
                 d_->sws, fw, fh, AVPixelFormat(d_->frame->format),
                 fw, fh, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
             if (!d_->sws) { av_frame_unref(d_->frame); return false; }
-            // COLOUR RANGE: swscale's default, which expands the 16..235 the stream
-            // is tagged with out to 0..255. Three independent measurements agree:
-            //   * FFmpeg reports color_range=tv on these clips.
-            //   * Least-squares fitting a free affine YCbCr->RGB decode against the
-            //     retail art recovers a luma gain of ~1.16 -- i.e. 255/219.
-            //   * Over 12k NEUTRAL pixels (no chroma to confound it) where a door
-            //     clip overlaps MainBG 1:1, mean error is 4.1 expanding vs 11.2 not.
-            //     Re-fitting a residual gamma on top lands at 0.97, i.e. nothing.
-            //
-            // Do not "fix" this from a histogram, and do not re-litigate it from how
-            // a clip LOOKS against the static art. The decoded luma sits inside
-            // 16..235, which argues for full-range content, and a single dark frame
-            // can dip to 12, which argues the other way; both are inconclusive, and I
-            // changed this twice on them. A seam across a clip's border is not a test
-            // either -- I used one and it pointed the right way for the wrong reason.
-            // Bink is lossy, so a clip is NEVER a pixel match for art painted behind
-            // it: thin high-contrast detail comes back low (the menu's carved gold
-            // loses ~24 luma) while flat neutrals land within ~2. A clip that looks
-            // wrong over the background is evidence about the CLIP, not the decode.
-            // Only compare neutrals, and only at 1:1 with alignment confirmed.
+            // The shipped Bink decoder uses limited-range luma but exchanges the
+            // BT.601 chroma coefficients: red uses 2.017*Cr, blue 1.596*Cb,
+            // green -0.813*Cb -0.392*Cr. Standard BT.601 makes the menu's gold
+            // orange. Verified against binkw32.dll output, not the lossy artwork.
+            // swscale stores these coefficients before the 255/219 range gain.
+            const int* standard = sws_getCoefficients(SWS_CS_ITU601);
+            const int retail[4] = {standard[1], standard[0], standard[3], standard[2]};
+            if (sws_setColorspaceDetails(d_->sws, retail, 0, retail, 1,
+                                        0, 1 << 16, 1 << 16) < 0) {
+                av_frame_unref(d_->frame); return false;
+            }
             // sws SIMD over-writes past a tightly-packed row when the width isn't
             // aligned (odd door widths like 155/221), so scale into a properly
             // aligned + padded image, then copy the rows out tightly (pitch fw*4).
@@ -288,24 +279,8 @@ bool BinkVideo::nextFrame(std::vector<uint8_t>& rgba) {
             // ...then clamp the edge if this build really did skip that column. Detected
             // rather than assumed, so a build that DOES write it keeps its own pixels.
             //
-            // The obvious-looking fix is SWS_ACCURATE_RND, which does make the column
-            // get written -- but it is not a rounding tweak here, and it is NOT a colour
-            // fix either. Recomputing BT.601 by hand from the raw yuv420p planes of
-            // KNIGHT4 frame 0 and scoring both variants against it settles what each one
-            // actually is:
-            //
-            //            vs hand BT.601 + NEAREST chroma   vs hand BT.601 + BILINEAR chroma
-            //   BILINEAR          mean 1.00, max 2                  mean 1.48, max 51
-            //   +ACCURATE_RND     mean 1.26, max 62                 mean 0.97, max 25
-            //
-            // Both are correct BT.601 with the SAME matrix and the same expanding range
-            // (the frames report color_range=MPEG, matching the note above). The only
-            // thing the flag changes is chroma UPSAMPLING: nearest vs interpolated. Our
-            // current path is an essentially exact nearest-chroma decode -- max delta 2
-            // from hand-computed truth -- so there is no colour error here to fix, and
-            // nearest is what a 1999 software Bink decoder did. If smoother chroma is
-            // ever wanted it is a deliberate look change belonging behind the SMOOTH
-            // MOVIES option, not something to switch on while chasing an edge artifact.
+            // Keep nearest chroma sampling, as in the shipped decoder. Adding
+            // SWS_ACCURATE_RND here also changes chroma interpolation.
             if (fw >= 2) {
                 const size_t last = size_t(fw - 1) * 4, prev = size_t(fw - 2) * 4;
                 bool skipped = true;

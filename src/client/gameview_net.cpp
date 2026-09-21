@@ -121,11 +121,7 @@
             loadPanel(side_);
             loadGui(side_);
             loadScreen_->step("WAITING FOR PLAYERS", 100);
-            for (auto& u : world_.units())
-                if (u.player == localPlayer_ && u.type) {
-                    mapView_.setOffset(u.x.toFloat() - 640 / 0.9f, u.z.toFloat() - 400 / 0.9f);
-                    break;
-                }
+            startAtMonarch();
             return;
         }
         // Adopt the ROOM's map (the host's / lobby selection), which may differ from
@@ -155,7 +151,7 @@
             // shared aiLevel, so hashed mana stays identical to the server (lockstep).
             float mm = s.type == 2
                 ? tak::ai::incomeMultFor(tak::ai::difficultyFromLevel(s.aiLevel)) : 1.0f;
-            cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm};
+            cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm, s.type == 2, s.type == 2 && s.aiLevel == 0};
             colorSlot_[i & 7] = s.color % 10;
             playerAi_[i & 7] = (s.type == 2);
             playerName_[i & 7] = !s.name.empty()
@@ -192,8 +188,7 @@
         loadPanel(side_);
         loadGui(side_);
         loadScreen_->step("WAITING FOR PLAYERS", 100);
-        if (!spots.empty())
-            mapView_.setOffset(spots[0].first - 640 / 0.9f, spots[0].second - 400 / 0.9f);
+        startAtMonarch();
     }
 
     bool GameView::mpStep() {
@@ -849,4 +844,3 @@ void GameView::autoplayStep() {
     void GameView::clampMapScroll() {
         mapScroll_ = std::clamp(mapScroll_, 0, std::max(0, mapTotalRows_ - mapVisRows_));
     }
-

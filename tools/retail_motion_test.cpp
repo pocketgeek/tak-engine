@@ -1,0 +1,954 @@
+#include "sim/sim.h"
+#include "sim/retailflight.h"
+#include "sim/retailheight.h"
+#include "sim/retailexploration.h"
+#include "tdo/tdo.h"
+
+#include <cstdio>
+#include <cstring>
+
+using namespace tak::sim;
+
+int main(int argc, char** argv) {
+    if (argc==2 && std::strcmp(argv[1],"--hover-attack")==0) {
+        using namespace tak::sim;
+        RetailFlightVector p,t;int distance;unsigned seed;
+        while (std::scanf("%d %d %d %d %d %u",&p.x,&p.z,&t.x,&t.z,&distance,&seed)==6) {
+            p.y=t.y=0;unsigned calls=0;
+            auto g=retailHoverAttackGoal(p,t,distance,[&](int n) {
+                ++calls;seed=seed*1664525u+1013904223u;return seed%unsigned(n);
+            });
+            std::printf("%d %d %u %u\n",g.point.x,g.point.z,seed,calls);
+        }
+        return 0;
+    }
+    if (argc==2 && std::strcmp(argv[1],"--sight-model-top")==0) {
+        int count;
+        while (std::scanf("%d",&count)==1) {
+            if (count<1 || count>128) return 2;
+            std::vector<tak::tdo::Object> nodes(size_t(count),tak::tdo::Object{});
+            std::vector<int> parents(size_t(count),-1);
+            for (int i=0;i<count;++i) {
+                int vertices;auto& node=nodes[size_t(i)];
+                if (std::scanf("%d %d %d",&parents[size_t(i)],&node.offsetRaw[1],&vertices)!=3 || vertices<0 || vertices>128) return 2;
+                node.verticesRaw.resize(size_t(vertices));
+                for (auto& v:node.verticesRaw) if (std::scanf("%d",&v[1])!=1) return 2;
+            }
+            for (int i=count-1;i>0;--i) {
+                if (parents[size_t(i)]<0 || parents[size_t(i)]>=i) return 2;
+                nodes[size_t(parents[size_t(i)])].children.push_back(std::move(nodes[size_t(i)]));
+            }
+            std::printf("%d\n",retailModelTop(nodes[0]));
+        }
+        return 0;
+    }
+    if (argc==2 && std::strcmp(argv[1],"--exploration-heights")==0) {
+        int width,height;unsigned sea;
+        while (std::scanf("%d %d %u",&width,&height,&sea)==3) {
+            if (width<2 || height<2 || width>128 || height>128) return 2;
+            std::vector<uint8_t> input(size_t(width)*height);
+            for (auto& h:input) {unsigned value;if (std::scanf("%u",&value)!=1) return 2;h=uint8_t(value);}
+            const auto heights=retailExplorationHeights(width,height,uint8_t(sea),
+                [&](int x,int z){return input[size_t(z)*width+x];});
+            for (const auto& h:heights) std::printf("%u %u ",unsigned(h[0]),unsigned(h[1]));
+            std::printf("\n");
+        }
+        return 0;
+    }
+    if (argc==2 && (std::strcmp(argv[1],"--sight-footprint")==0 || std::strcmp(argv[1],"--sight-update")==0)) {
+        const bool update=std::strcmp(argv[1],"--sight-update")==0;
+        int width,height,x,z,eye,distance;unsigned sh,oldActive,active,explore,player;
+        while (std::scanf("%d %d %d %d %d %d %u %u %u %u %u",&width,&height,&x,&z,&eye,&distance,
+                &sh,&oldActive,&active,&explore,&player)==11) {
+            if (width<1 || height<1 || width>128 || height>128) return 2;
+            int32_t px=0,py=0,pz=0;unsigned sea=0;
+            if (update && std::scanf("%d %d %d %u",&px,&py,&pz,&sea)!=4) return 2;
+            std::vector<RetailExplorationHeight> heights(size_t(width)*height);
+            for (auto& h:heights) {
+                unsigned a,b;if (std::scanf("%u %u",&a,&b)!=2) return 2;h={uint8_t(a),uint8_t(b)};
+            }
+            RetailSightFootprint sight{int16_t(x),int16_t(z),eye,int16_t(distance),uint8_t(sh),oldActive!=0};
+            std::vector<int> visits;
+            const auto heightAt=[&](int cx,int cz){return heights[size_t(cz)*width+cx];};
+            const auto visit=[&](int cx,int cz,int delta,uint16_t mask){visits.insert(visits.end(),{cx,cz,delta,int(mask)});};
+            if (update) retailUpdateSight(sight,Fixed::raw(px),Fixed::raw(py),Fixed::raw(pz),uint8_t(sea),
+                explore!=0,width,height,uint8_t(player),heightAt,visit);
+            else retailSightFootprint(sight,active!=0,explore!=0,width,height,uint8_t(player),heightAt,visit);
+            std::printf("%u",unsigned(sight.active));
+            if (update) std::printf(" %d %d %d",int(sight.x),int(sight.z),sight.eyeHeight);
+            for (auto v:visits) std::printf(" %d",v);
+            std::printf("\n");
+        }
+        return 0;
+    }
+    if (argc==2 && std::strcmp(argv[1],"--ground-scan")==0) {
+        int32_t x,y,z;unsigned heading,tick,half,boat,disabled,player,mask;
+        int foot,sight,width,height,badIndex,badGrade,baseGrade;
+        while (std::scanf("%d %d %d %u %u %u %u %d %d %u %d %d %u %u %d %d %d",
+                &x,&y,&z,&heading,&tick,&half,&boat,&foot,&sight,&disabled,
+                &width,&height,&player,&mask,&badIndex,&badGrade,&baseGrade)==17) {
+            std::vector<int32_t> queries;int probe=0;
+            const auto result=retailGroundScan(Fixed::raw(x),Fixed::raw(y),Fixed::raw(z),
+                retailHeadingToPort(uint16_t(heading)),tick,uint8_t(half),boat!=0,
+                int16_t(foot),int16_t(sight),disabled!=0,
+                [&](Fixed px,Fixed py,Fixed pz) {
+                    queries.insert(queries.end(),{0,px.v,py.v,pz.v});
+                    return probe++==badIndex?badGrade:baseGrade;
+                },[&](Fixed px,Fixed py,Fixed pz) {
+                    return retailBoatScanVisible(px,py,pz,width,height,uint8_t(player),
+                        [&](int cx,int cz) {
+                            queries.insert(queries.end(),{1,cx,cz});return uint16_t(mask);
+                        });
+                });
+            std::printf("%u %u %u",result.nextTick,unsigned(result.movementMode),unsigned(result.speedMode));
+            for (auto q:queries) std::printf(" %d",q);
+            std::printf("\n");
+        }
+        return 0;
+    }
+    if (argc==2 && std::strcmp(argv[1],"--ground-travel")==0) {
+        int32_t speed,maximum,accel,brake,road,water;unsigned rate,pitch,speedMode,heading,flags,mode;
+        while (std::scanf("%d %d %d %d %u %d %d %u %u %u %u %u",&speed,&maximum,&accel,&brake,
+                          &rate,&road,&water,&pitch,&speedMode,&heading,&flags,&mode)==12) {
+            std::array<RetailSteeringPoint,3> points;
+            for (auto& point:points) if (std::scanf("%d %d",&point.x.v,&point.z.v)!=2) return 2;
+            World world;UnitType type;
+            type.turnRate=int32_t(rate);type.accel=Fixed::raw(accel);type.brake=Fixed::raw(brake);
+            type.roadMult=Fixed::raw(road);type.waterMult=Fixed::raw(water);
+            Unit u;u.type=&type;u.speed=Fixed::raw(speed);u.baseSpeed=Fixed::raw(maximum);
+            u.groundPitch=uint16_t(pitch);u.groundSpeedMode=uint8_t(speedMode);
+            u.groundTerrainFlags=uint16_t(flags);u.groundMovementMode=uint8_t(mode);
+            u.heading=retailHeadingToPort(uint16_t(heading));
+            const auto step=world.steerGround(u,points[0],points[1],points[2],u.baseSpeed);
+            std::printf("%u %d %d %d\n",unsigned(portHeadingToRetail(u.heading)),u.speed.v,step.s.v,step.c.v);
+        }
+        return 0;
+    }
+    if (argc==2 && std::strcmp(argv[1],"--ground-brake")==0) {
+        int32_t speed,maximum,brake,road,water,facing;unsigned pitch,mode,heading,flags,rate;
+        while (std::scanf("%d %d %d %d %d %u %u %u %u %d %u",&speed,&maximum,&brake,&road,&water,
+                          &pitch,&mode,&heading,&flags,&facing,&rate)==11) {
+            World world;UnitType type;type.footX=type.footZ=1;
+            type.turnInPlaceRate=int32_t(rate);type.brake=Fixed::raw(brake);type.roadMult=Fixed::raw(road);type.waterMult=Fixed::raw(water);
+            Unit u;u.type=&type;u.x=u.z=Fixed::fromInt(128);
+            u.speed=Fixed::raw(speed);u.baseSpeed=Fixed::raw(maximum);
+            u.groundPitch=uint16_t(pitch);u.groundSpeedMode=uint8_t(mode);
+            u.groundTerrainFlags=uint16_t(flags);u.heading=retailHeadingToPort(uint16_t(heading));
+            world.brakeGround(u,facing<0?std::nullopt:std::optional<Bam>(retailHeadingToPort(uint16_t(facing))));
+            std::printf("%d %d %d %u\n",u.speed.v,u.x.v-128*65536,u.z.v-128*65536,
+                        unsigned(portHeadingToRetail(u.heading)));
+        }
+        return 0;
+    }
+    if (argc==2 && std::strcmp(argv[1],"--ground-speed")==0) {
+        int32_t speed,maximum,delta;unsigned pitch,mode,heading;
+        while (std::scanf("%d %d %d %u %u %u",&speed,&maximum,&delta,&pitch,&mode,&heading)==6) {
+            const Fixed value=fxMin(retailGroundSpeedCap(Fixed::raw(maximum),uint16_t(pitch),uint8_t(mode)),
+                fxMax(Fixed(),Fixed::raw(speed)+Fixed::raw(delta)));
+            const auto step=retailGroundStep(retailHeadingToPort(uint16_t(heading)),value);
+            std::printf("%d %d %d\n",value.v,step.s.v,step.c.v);
+        }
+        return 0;
+    }
+    if (argc==2 && std::strcmp(argv[1],"--ground-height")==0) {
+        int width,height;
+        while (std::scanf("%d %d",&width,&height)==2) {
+            if (width<2 || height<2 || width>256 || height>256) return 2;
+            std::vector<int> cells(size_t(width)*size_t(height));
+            for (auto& h:cells) if (std::scanf("%d",&h)!=1 || h<0 || h>255) return 2;
+            int32_t x,z,oldY; unsigned heading,sea,waterline,mode;
+            if (std::scanf("%d %d %d %u %u %u %u",&x,&z,&oldY,&heading,&sea,&waterline,&mode)!=7) return 2;
+            RetailGroundSupport support{};
+            for (auto& point:support)
+                if (std::scanf("%d %d",&point[0],&point[1])!=2) return 2;
+            uint32_t clock,elapsed; unsigned phase; int32_t speed,effectiveSpeed;
+            if (std::scanf("%u %u %u %d %d",&clock,&elapsed,&phase,&speed,&effectiveSpeed)!=5) return 2;
+            int32_t bankScale,pitchScale;unsigned oldPitch,oldRoll;
+            if (std::scanf("%d %d %u %u",&bankScale,&pitchScale,&oldPitch,&oldRoll)!=4) return 2;
+            uint16_t pitch=uint16_t(oldPitch),roll=uint16_t(oldRoll);
+            auto terrain=[&](int32_t px,int32_t pz) {
+                return retailTerrainHeight(px,pz,width,height,[&](int cx,int cz) {
+                    return cells[size_t(cz)*size_t(width)+size_t(cx)];
+                });
+            };
+            const int sampled=terrain(x,z);
+            const int32_t y=mode==2?retailFloatingHeight(uint8_t(sea),uint8_t(waterline)):
+                mode>=3?retailSupportedHeight(x,z,oldY,uint16_t(heading),support,terrain,
+                    [&](size_t i,int h){return mode==4?retailHoverHeightCorner(h,uint8_t(sea),i,
+                        clock,uint16_t(phase),speed,effectiveSpeed,elapsed):h;},bankScale,pitchScale,&pitch,&roll):
+                retailUprightHeight(sampled,mode==1,uint8_t(sea),uint8_t(waterline));
+            std::printf("%d %d %u %u\n",sampled,y,unsigned(pitch),unsigned(roll));
+        }
+        return 0;
+    }
+    // Offline oracle interface for the emulator/live-trace comparison script.
+    if (argc == 2 && std::strcmp(argv[1], "--oracle") == 0) {
+        char kind;
+        double input;
+        int b;
+        while (std::scanf(" %c %lf %d", &kind, &input, &b) == 3) {
+            int a = int(input);
+            if (kind == 'b') {
+                uint32_t tick,seed;
+                if (std::scanf("%u %u",&tick,&seed)!=2) return 2;
+                RetailPlayerCacheClock clock{a!=0,uint32_t(b)};
+                bool refresh=retailTickPlayerCache(clock,tick,[&](int n){return retailRandom(seed,n);});
+                std::printf("%u %u %u\n",clock.lastRefresh,seed,unsigned(refresh));
+            }
+            else if (kind == 'l') {
+                int pz,ax,ay,az,fx,fz,accept; uint32_t events,angle,seed;
+                if (std::scanf("%d %d %d %d %d %d %u %u %u %d",&pz,&ax,&ay,&az,&fx,&fz,&events,&angle,&seed,&accept)!=10) return 2;
+                bool orbit=false; int probes=0;
+                const auto point=retailLandingSearch({a,b,pz},{ax,ay,az},int16_t(fx),int16_t(fz),events,angle,orbit,
+                    [&](int n){return retailRandom(seed,n);},[&](auto){return ++probes==accept;});
+                std::printf("%d %d %d %u %u %d %d\n",point.x,point.y,point.z,angle,seed,int(orbit),probes);
+            }
+            else if (kind == 'k') {
+                unsigned stage; uint32_t seed; RetailMissionState m; int scans=0;
+                if (std::scanf("%u %u %u %u",&stage,&m.waitMask,&m.deadline,&seed)!=4) return 2;
+                m.stage=uint8_t(stage);
+                const int result=retailGuardNoMove(m,uint32_t(a),(b&2)!=0,(b&8)!=0,
+                    [&](int n){return retailRandom(seed,n);},[&]{++scans;});
+                std::printf("%d %u %u %u %u %d\n",result,unsigned(m.stage),m.waitMask,m.deadline,seed,scans);
+            }
+            else if (kind == 'w') {
+                RetailWind wind;
+                uint32_t tick, seed, crtSeed; unsigned heading, flags;
+                wind.minimum=a; wind.maximum=b;
+                if (std::scanf("%u %u %d %d %d %u %u %u %u", &tick,&wind.nextTick,
+                        &wind.x,&wind.z,&wind.speed,&heading,&flags,&seed,&crtSeed)!=9) return 2;
+                wind.heading=uint16_t(heading); wind.flags=uint16_t(flags);
+                retailTickWind(wind,tick,[&](int n){return retailRandom(seed,n);},
+                               [&]{return retailCrtRandom(crtSeed);});
+                std::printf("%u %d %d %d %u %u %u %u\n",wind.nextTick,wind.x,wind.z,wind.speed,
+                            unsigned(wind.heading),unsigned(wind.flags),seed,crtSeed);
+            }
+            else if (kind == 'j') {
+                int pz,tx,ty,tz,maximum; uint32_t seed;
+                if (std::scanf("%d %d %d %d %d %u",&pz,&tx,&ty,&tz,&maximum,&seed)!=6) return 2;
+                const auto goal=retailFlightPatrolGoal({a,b,pz},{tx,ty,tz},maximum,
+                    [&](int n) { return retailRandom(seed,n); });
+                std::printf("%d %d %d %d %u\n",goal.point.x,goal.point.y,goal.point.z,int(goal.radius),seed);
+            }
+            else if (kind == 'n') {
+                int pz, ox, oy, oz, tx, ty, tz, heading, height, cruise, hasHeading, controllerHeading;
+                if (std::scanf("%d %d %d %d %d %d %d %d %d %d %d %d", &pz, &ox, &oy, &oz,
+                        &tx, &ty, &tz, &heading, &height, &cruise, &hasHeading, &controllerHeading) != 12) return 2;
+                const auto nav = retailFlightNavigation({a,b,pz}, {ox,oy,oz}, {tx,ty,tz},
+                    uint16_t(heading), height, cruise != 0, hasHeading != 0, uint16_t(controllerHeading));
+                std::printf("%d %d %d %d %d %d %u\n", nav.destination.x, nav.destination.y,
+                    nav.destination.z, nav.velocity.x, nav.velocity.y, nav.velocity.z, nav.heading);
+            }
+            else if (kind == 'v') {
+                int vz, px, py, pz, tx, ty, tz, vx, vy, targetVz, speed, maximum, accel, lateral, heading, direct;
+                if (std::scanf("%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+                        &vz, &px, &py, &pz, &tx, &ty, &tz, &vx, &vy, &targetVz,
+                        &speed, &maximum, &accel, &lateral, &heading, &direct) != 16) return 2;
+                const auto velocity = retailFlightVelocity({a,b,vz}, {px,py,pz}, {tx,ty,tz},
+                    {vx,vy,targetVz}, speed, maximum, accel, lateral, uint16_t(heading), direct != 0);
+                std::printf("%d %d %d\n", velocity.x, velocity.y, velocity.z);
+            }
+            else if (kind == 'q' || kind == 'Q') {
+                int sx,sz,ex,ez,tx,tz,heading,rate;
+                if (std::scanf("%d %d %d %d %d %d %d %d",&sx,&sz,&ex,&ez,&tx,&tz,&heading,&rate)!=8) return 2;
+                int speedMode=0;
+                if (kind=='Q' && std::scanf("%d",&speedMode)!=1) return 2;
+                std::printf("%d\n",int(retailPruneGroundCorner(Fixed::raw(a),Fixed::raw(b),
+                    {Fixed::raw(sx),Fixed::raw(sz)},{Fixed::raw(ex),Fixed::raw(ez)},
+                    {Fixed::raw(tx),Fixed::raw(tz)},retailHeadingToPort(uint16_t(heading)),uint16_t(rate),
+                    kind=='Q',uint8_t(speedMode))));
+            }
+            else if (kind == 'g') {
+                int sx, sz, ex, ez, tx, tz, heading, speed, maximum, accel, brake, rate;
+                if (std::scanf("%d %d %d %d %d %d %d %d %d %d %d %d", &sx, &sz, &ex, &ez,
+                               &tx, &tz, &heading, &speed, &maximum, &accel, &brake, &rate) != 12) return 2;
+                const auto delta = retailGroundAcceleration(Fixed::raw(a), Fixed::raw(b),
+                    {Fixed::raw(sx), Fixed::raw(sz)}, {Fixed::raw(ex), Fixed::raw(ez)},
+                    {Fixed::raw(tx), Fixed::raw(tz)}, retailHeadingToPort(uint16_t(heading)),
+                    Fixed::raw(speed), Fixed::raw(maximum), Fixed::raw(accel), Fixed::raw(brake), uint16_t(rate));
+                std::printf("%d\n", delta.v);
+            }
+            else if (kind == 'p') {
+                int sx, sz, ex, ez, mode;
+                if (std::scanf("%d %d %d %d %d", &sx, &sz, &ex, &ez, &mode) != 5) return 2;
+                auto point = retailSteeringPoint(Fixed::raw(a), Fixed::raw(b),
+                    {Fixed::raw(sx), Fixed::raw(sz)}, {Fixed::raw(ex), Fixed::raw(ez)}, unsigned(mode));
+                std::printf("%d %d\n", point.x.v, point.z.v);
+            }
+            else if (kind == 'f') std::printf("%d\n", Fixed::fromRetailNumber(input).v);
+            else if (kind == 'h') std::printf("%d\n", retailDirection(Fixed::raw(a), Fixed::raw(b)).v);
+            else if (kind == 'i') std::printf("%u\n", retailSeed(uint32_t(a)));
+            else if (kind == 'a') std::printf("%d\n", retailTurnTravel(Fixed::raw(a),
+                                                uint16_t(b), uint16_t(uint32_t(b) >> 16)).v);
+            else if (kind == 't') std::printf("%d %d\n", retailScaledSine(uint16_t(a), b),
+                                                                  retailScaledCosine(uint16_t(a), b));
+            else if (kind == 'c' || kind == 'd')
+                std::printf("%d\n", footprintClamp(Fixed::fromInt(160), Fixed::raw(a), b, kind == 'd').v);
+            else if (kind == 'o') std::printf("%d\n", footprintOrigin(Fixed::raw(a), b));
+            else if (kind == 's') std::printf("%d\n", individualSpeed(Fixed::raw(a), unsigned(b)).v);
+            else if (kind == 'r') {
+                uint32_t seed = uint32_t(a);
+                auto result = retailRandom(seed, b);
+                std::printf("%u %u\n", result, seed);
+            } else return 2;
+        }
+        return 0;
+    }
+    int failures = 0;
+    // Golden from the preceding per-call Q60 implementation (GCC and Clang):
+    // every 16-bit angle, a nonsymmetric pair, and signed overflow boundaries.
+    uint64_t rotationHash=1469598103934665603ull;
+    for (uint32_t angle=0;angle<65536;++angle)
+        for (auto pair:{std::array<int32_t,2>{123456789,-987654321},
+                       std::array<int32_t,2>{INT32_MIN,INT32_MAX}}) {
+            retailRotatePair(pair[0],pair[1],uint16_t(angle));
+            for (int32_t value:pair) for (unsigned byte=0;byte<4;++byte) {
+                rotationHash^=(uint32_t(value)>>(byte*8))&255;
+                rotationHash*=1099511628211ull;
+            }
+        }
+    if (rotationHash!=0x930f68c69f30a3b6ull) {
+        std::fprintf(stderr,"rotation coefficient cache differs from prior math\n");
+        ++failures;
+    }
+    auto check = [&](bool ok, const char* what) {
+        std::printf("%s: %s\n", ok ? "PASS" : "FAIL", what);
+        failures += !ok;
+    };
+    {
+        World headless,viewed;UnitType type;
+        type.id="explorer";type.maxHp=100;type.maxVel=Fixed::fromInt(2);type.upright=true;
+        type.sight=128;type.sightHeight=32;
+        for (World* world:{&headless,&viewed}) {
+            world->setPlayerCount(3);world->setTeam(2,0);
+            world->setVisPlayer(world==&headless?-1:1);
+            world->setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
+            world->spawn(&type,256,256,{},0);world->tick(1.0f/30.0f);
+        }
+        const size_t center=8*32+8;
+        check(headless.navigationExploration()[center]==5 && headless.navigationExploration()[0]==0,
+              "navigation exploration reveals allies' cells without revealing the whole map");
+        check(headless.navigationExploration()==viewed.navigationExploration() && headless.stateHash()==viewed.stateHash(),
+              "navigation exploration and its hash do not depend on the local viewer");
+        const auto revealed=headless.navigationExploration();
+        headless.unit(headless.units().front().id)->hp=Fixed();
+        headless.tick(1.0f/30.0f);
+        check(headless.navigationExploration()==revealed,"exploration survives loss of its sight source");
+        headless.resetForReplay();
+        check(headless.navigationExploration().empty(),"replay reset removes old exploration");
+    }
+    for (bool shore:{false,true}) {
+        World world;world.setPlayerCount(2);world.setVisPlayer(0);
+        std::vector<uint8_t> terrain(64*64,0);
+        if (shore) for (int z=36;z<64;++z) for (int x=0;x<64;++x) terrain[size_t(z)*64+x]=100;
+        world.setTerrain(terrain,64,64,32);
+        UnitType boat;boat.id="scan-boat";boat.maxHp=100;boat.maxVel=Fixed::fromInt(4);
+        boat.floater=true;boat.domain=UnitType::Domain::Water;boat.minWaterDepth=13;boat.maxWaterDepth=255;
+        boat.footX=boat.footZ=2;boat.halfCellTicks=6;boat.sight=shore?512:64;boat.sightHeight=32;
+        const int id=world.spawn(&boat,512,512,{},1);
+        world.unit(id)->heading=Bam(0);world.order(id,512,900,false);
+        world.updateNavigationExploration();
+        world.updateGroundTerrainFlags(*world.unit(id));
+        world.tickNavigationMovement(*world.unit(id),world.unit(id)->baseSpeed);
+        check(world.unit(id)->groundSpeedMode==(shore?2:1) && world.unit(id)->groundScanTick==unsigned(shore?18:12),
+              shore?"boat shoreline scan selects strong slowdown and triple interval":
+                    "boat unexplored-water scan selects moderate slowdown and double interval");
+        if (!shore) {
+            UnitType spotter=boat;spotter.id="spotter";spotter.canFly=true;spotter.sight=256;
+            const int spotterId=world.spawn(&spotter,512,640,{},1);
+            world.unit(spotterId)->flightGroundMode=2;
+            world.updateNavigationExploration();world.unit(id)->groundScanTick=0;
+            world.tickNavigationMovement(*world.unit(id),world.unit(id)->baseSpeed);
+            check(world.unit(id)->groundSpeedMode==0 && world.unit(id)->groundScanTick==6,
+                  "boat uses its owner's exploration and clears slowdown after the route is revealed");
+        }
+    }
+    {
+        World world;world.setVisPlayer(-1);
+        std::vector<uint16_t> roads(64*64,0xfffb);
+        world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0,&roads);
+        UnitType type;type.id="road-turn";type.canMove=true;type.upright=true;
+        type.maxVel=Fixed::fromInt(4);type.accel=Fixed::fromRetailNumber(0.5);
+        type.turnRate=1000;type.roadMult=Fixed::fromRetailNumber(1.5);
+        const int id=world.spawn(&type,512,512);
+        world.unit(id)->baseSpeed=Fixed::fromInt(4);world.unit(id)->heading=retailHeadingToPort(0);
+        world.order(id,900,512,false);world.tick(1.0f/30.0f);
+        check(portHeadingToRetail(world.unit(id)->heading)==uint16_t(-1500) &&
+              world.unit(id)->speed==Fixed::fromRetailNumber(0.75),
+              "live road movement scales turning and acceleration together");
+    }
+    {
+        World world;UnitType type;type.turnRate=65535;type.roadMult=Fixed::fromInt(2);
+        Unit u;u.type=&type;u.baseSpeed=Fixed::fromInt(4);u.groundTerrainFlags=0x800;
+        u.heading=retailHeadingToPort(35720);
+        const auto step=world.steerGround(u,{},{},{},u.baseSpeed);
+        check(portHeadingToRetail(u.heading)==0 && step.s==Fixed() && step.c==Fixed(),
+              "a coincident active waypoint uses native heading zero");
+        type.turnRate=type.turnInPlaceRate=1;type.roadMult=Fixed::fromInt(1);
+        u.heading=retailHeadingToPort(32768);
+        world.steerGround(u,{},{},{},u.baseSpeed);
+        check(portHeadingToRetail(u.heading)==32767,"active half-turn uses the native negative direction");
+        u.heading=retailHeadingToPort(32768);u.speed=Fixed();
+        world.brakeGround(u,retailHeadingToPort(0));
+        check(portHeadingToRetail(u.heading)==32767,"stopped half-turn uses the native negative direction");
+    }
+    for (bool boat:{false,true}) {
+        World world;world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,boat?32:0);
+        UnitType type;type.id=boat?"braking-boat":"braking-land";type.canMove=true;
+        type.floater=boat;type.upright=!boat;type.maxVel=Fixed::fromInt(4);
+        type.brake=Fixed::fromInt(1);type.waterline=2;
+        type.domain=boat?UnitType::Domain::Water:UnitType::Domain::Ground;
+        type.maxWaterDepth=boat?255:0;type.minWaterDepth=boat?13:0;
+        const int id=world.spawn(&type,512,512);
+        auto& u=*world.unit(id);u.baseSpeed=u.speed=Fixed::fromInt(4);
+        u.heading=retailHeadingToPort(0);
+        world.stop(id);
+        for (int i=0;i<5;++i) world.tick(1.0f/30.0f);
+        check(world.unit(id)->speed==Fixed() && world.unit(id)->z==Fixed::fromInt(506),
+              boat?"stopped boat coasts to rest":"stopped land unit coasts to rest");
+        check(world.unit(id)->groundY==Fixed::fromInt(boat?30:0),"braking retains surface height");
+    }
+    for (bool boat:{false,true}) {
+        World world;world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,boat?32:0);
+        UnitType type;type.id=boat?"attacking-boat":"attacking-land";type.canMove=true;
+        type.floater=boat;type.upright=!boat;type.maxVel=Fixed::fromInt(4);
+        type.brake=Fixed::fromInt(1);type.turnInPlaceRate=4096;
+        type.domain=boat?UnitType::Domain::Water:UnitType::Domain::Ground;
+        type.maxWaterDepth=boat?255:0;type.minWaterDepth=boat?13:0;
+        type.weapon.range=64;type.weapon.damage=1;type.weapon.aimTol=1;type.weapons={type.weapon};
+        UnitType victim=type;victim.maxHp=10000;victim.weapons.clear();victim.weapon.damage=0;
+        const int id=world.spawn(&type,512,512,0,0);
+        const int target=world.spawn(&victim,560,512,0,1);
+        world.unit(id)->baseSpeed=world.unit(id)->speed=Fixed::fromInt(4);
+        world.unit(id)->heading=retailHeadingToPort(0);
+        world.attack(id,target,false);
+        world.tick(1.0f/30.0f);
+        check(world.unit(id)->z==Fixed::fromInt(509) && world.unit(id)->speed==Fixed::fromInt(3) &&
+              portHeadingToRetail(world.unit(id)->heading)==0,
+              boat?"attacking boat coasts once without pivoting":"attacking land unit coasts once without pivoting");
+        for (int i=0;i<3;++i) world.tick(1.0f/30.0f);
+        check(world.unit(id)->z==Fixed::fromInt(506) && world.unit(id)->speed==Fixed() &&
+              portHeadingToRetail(world.unit(id)->heading)==uint16_t(-4096),
+              "combat pivot starts on the tick braking reaches zero");
+        const int edge=world.spawn(&type,256,256,0,0);
+        const int edgeTarget=world.spawn(&victim,256,316,0,1);
+        world.unit(edge)->baseSpeed=world.unit(edge)->speed=Fixed::fromInt(4);
+        world.unit(edge)->heading=retailHeadingToPort(0);
+        world.attack(edge,edgeTarget,false);
+        world.tick(1.0f/30.0f);
+        check(world.unit(edge)->z==Fixed::fromInt(253) && world.unit(edge)->speed==Fixed::fromInt(3),
+              "coasting out of attack range does not run movement twice in one tick");
+    }
+    {
+        World world;world.setVisPlayer(-1);
+        std::vector<uint8_t> heights(64*64);
+        for (int z=0;z<64;++z) for (int x=0;x<64;++x) heights[size_t(z)*64+x]=uint8_t(z*4);
+        world.setTerrain(heights,64,64,0);
+        UnitType mover;mover.id="tilting-ramp";mover.canMove=true;mover.maxVel=Fixed::fromInt(4);
+        mover.footX=mover.footZ=2;mover.bankScale=mover.pitchScale=Fixed::fromInt(1);
+        mover.groundSupport=RetailGroundSupport{{{{-8*65536,-8*65536}},{{8*65536,-8*65536}},
+                                                {{8*65536,8*65536}},{{-8*65536,8*65536}}}};
+        const int id=world.spawn(&mover,512,512);
+        auto& u=*world.unit(id);u.heading=retailHeadingToPort(0);
+        u.groundY=world.surfaceHeight(u,0,&u.groundPitch,&u.groundRoll);
+        check(u.groundPitch==uint16_t(-2555) && u.groundRoll==0 && u.groundY==Fixed::fromInt(128),
+              "model support retains the ground pitch used by the mover");
+        u.baseSpeed=u.speed=Fixed::fromInt(4);
+        world.order(id,512,128,false);
+        world.tick(1.0f/30.0f);
+        check(world.unit(id)->speed.v==222820 && world.unit(id)->z.v==512*65536-222820,
+              "live ramp movement applies the prior support pitch to speed and displacement");
+    }
+    {
+        World world;world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(16*16,0),16,16,0);
+        std::vector<uint16_t> features(16*16,0xffff);features[5*16+8]=0;
+        RetailMapFeatureType rock;rock.name="rock";rock.blocking=true;
+        world.setMapPlacementFeatures(features,{rock});
+        UnitType rectangle;rectangle.id="rectangle";rectangle.canMove=true;rectangle.upright=true;
+        rectangle.footX=2;rectangle.footZ=4;rectangle.maxVel=Fixed::fromInt(4);
+        const int id=world.spawn(&rectangle,96,96);
+        auto& u=*world.unit(id);u.baseSpeed=Fixed::fromInt(4);u.speed=u.baseSpeed;
+        world.commitGroundStep(u,Fixed::fromInt(16),Fixed());
+        check(u.x==Fixed::fromInt(112) && u.bodyBlockStreak==0,
+              "movement commitment uses rectangular width beside an obstacle outside that footprint");
+        world.commitGroundStep(u,Fixed::fromInt(16),Fixed());
+        check(u.x.v==120*65536-1 && u.z==Fixed::fromInt(96) && u.speed==Fixed::fromInt(2) && u.bodyBlockStreak==1,
+              "first refused rectangular step clamps to its original cell and halves speed");
+        world.commitGroundStep(u,Fixed::fromInt(16),Fixed());
+        check(u.x.v==120*65536-1 && u.speed.v==4*65536/5 && u.bodyBlockStreak==2,
+              "repeated refusal retains ownership and caps speed at one fifth");
+        const auto before=u.x;
+        world.commitGroundStep(u,Fixed::fromInt(-1),Fixed());
+        check(u.x==before-Fixed::fromInt(1) && u.bodyBlockStreak==2,
+              "movement inside the current cell preserves the prior refusal state");
+    }
+    {
+        World world; world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(32*32,64),32,32,100);
+        UnitType walker;walker.id="height-walker";walker.canMove=true;walker.upright=true;
+        walker.maxVel=Fixed::fromInt(2);walker.maxWaterDepth=255;
+        UnitType hover=walker;hover.id="height-hover";hover.canHover=true;
+        UnitType boat=walker;boat.id="height-boat";boat.upright=false;boat.floater=true;boat.waterline=8;
+        const int a=world.spawn(&walker,128,128),b=world.spawn(&hover,192,128),c=world.spawn(&boat,256,128);
+        check(world.unit(a)->groundY==Fixed::fromInt(64) && world.unit(b)->groundY==Fixed::fromInt(100) &&
+              world.unit(c)->groundY==Fixed::fromInt(92),"surface spawn uses upright, hover and boat height rules");
+        world.tick(1.0f/30.0f);
+        check((world.unit(a)->groundTerrainFlags&0x1000) && !(world.unit(b)->groundTerrainFlags&0x1000) &&
+              (world.unit(c)->groundTerrainFlags&0x1000),"water flags follow stored body height rather than submerged terrain");
+    }
+    {
+        World world;world.setVisPlayer(-1);
+        std::vector<uint8_t> heights(32*32);
+        for (int z=0;z<32;++z) for (int x=0;x<32;++x) heights[size_t(z)*32+x]=uint8_t(x*4);
+        world.setTerrain(heights,32,32,16);
+        UnitType walker;walker.id="ramp-walker";walker.canMove=true;walker.upright=true;
+        walker.maxVel=Fixed::fromInt(2);walker.maxWaterDepth=255;walker.minWaterDepth=-255;
+        walker.waterMult=Fixed::fromRetailNumber(0.5);walker.roadMult=Fixed::fromInt(1);
+        const int id=world.spawn(&walker,55,128);
+        world.order(id,144,128,false);
+        bool correct=true,crossed=false;
+        for (int i=0;i<150;++i) {
+            const int previous=world.unit(id)->groundY.floorInt();
+            world.tick(1.0f/30.0f);
+            const auto& u=*world.unit(id);
+            correct=correct && u.groundY.floorInt()==u.x.floorInt()/4 &&
+                bool(u.groundTerrainFlags&0x1000)==(previous<16);
+            crossed=crossed || (previous<16 && u.groundY.floorInt()>=16);
+        }
+        check(correct && crossed,"ramp traversal updates height after movement and changes water speed flags on the following tick");
+    }
+    {
+        World world;
+        world.setVisPlayer(-1);
+        world.setGameSeed(123);
+        world.setWindRange(25,5000);
+        std::vector<World::RngObservation> draws;
+        world.setRngObserver([&](const auto& draw){draws.push_back(draw);});
+        world.tick(1.0f/30.0f);
+        const auto first=world.wind();
+        check(draws.size()==2 && draws[0].bound==4975 && draws[1].bound==16384 &&
+              first.generation==1 && (first.flags&1), "live wind uses the shared speed and bearing RNG in order");
+        for (uint32_t tick=1;tick<first.nextTick;++tick) world.tick(1.0f/30.0f);
+        check(draws.size()==2 && world.wind().generation==1 && !(world.wind().flags&1),
+              "wind waits through the exact deadline without advancing either game draw");
+        world.tick(1.0f/30.0f);
+        check(draws.size()==4 && world.wind().generation==2, "wind changes on the tick after its deadline");
+        world.resetForReplay();
+        world.tick(1.0f/30.0f);
+        check(world.wind().speed==first.speed && world.wind().heading==first.heading &&
+              world.wind().nextTick==first.nextTick, "replay reset restores both wind random streams");
+        World calm;
+        calm.setVisPlayer(-1); calm.setWindRange(0,0);
+        std::vector<World::RngObservation> calmDraws;
+        calm.setRngObserver([&](const auto& draw){calmDraws.push_back(draw);});
+        calm.tick(1.0f/30.0f);
+        check(calmDraws.size()==1 && calmDraws[0].bound==0 && calm.wind().heading==0,
+              "zero-speed wind does not draw a new bearing");
+    }
+    {
+        World world; world.setVisPlayer(-1); world.setPlayerCount(2);
+        for (int i=0;i<2;++i) world.player(i).cacheClock.enabled=true;
+        std::vector<World::RngObservation> draws;
+        world.setRngObserver([&](const auto& draw){draws.push_back(draw);});
+        for (int i=0;i<6;++i) world.tick(1.0f/30.0f);
+        check(draws.empty(),"player bookkeeping waits until its seventh tick");
+        world.tick(1.0f/30.0f);
+        check(draws.size()==2 && draws[0].bound==30 && draws[1].bound==30 &&
+              world.player(0).cacheClock.lastRefresh==7 && world.player(1).cacheClock.lastRefresh==7,
+              "both human and AI player slots consume their bookkeeping draws in the simulation");
+        const auto hash=world.stateHash(); world.player(1).cacheClock.lastRefresh=8;
+        check(world.stateHash()!=hash,"player bookkeeping deadline participates in lockstep hash");
+        world.player(1).cacheClock.enabled=false;
+        for (int i=0;i<7;++i) world.tick(1.0f/30.0f);
+        check(draws.size()==3 && draws.back().bound==30,
+              "absent player bookkeeping does not advance shared random state");
+    }
+    {
+        RetailMissionState m;
+        int scans=0,draws=0;
+        auto random=[&](int bound){++draws; return bound-1;};
+        retailGuardNoMove(m,42,true,true,random,[&]{++scans;});
+        check(m.deadline==63 && m.waitMask==1 && scans==1 && draws==1,
+              "armed stationary guard scans and schedules its randomized repeat");
+        retailGuardNoMove(m,42,true,false,random,[&]{++scans;});
+        check(m.deadline==192 && scans==1 && draws==1,
+              "unarmed stationary guard sleeps without consuming random state");
+        check(retailGuardNoMove(m,42,false,true,random,[&]{++scans;})==8 && scans==1,
+              "disabled stationary guard retires without a scan");
+    }
+    {
+        World world;world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
+        UnitType flyer;flyer.canFly=flyer.canMove=true;flyer.footX=flyer.footZ=2;
+        flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
+        flyer.turnRate=1200;flyer.cruiseAlt=80;
+        const int id=world.spawn(&flyer,128,128);
+        Order move;move.x=Fixed::fromFloat(300.25f);move.z=Fixed::fromFloat(700.5f);
+        move.flightMoveMission=move.goal=true;move.mission.flags=0x1000403;
+        Order patrol;patrol.x=Fixed::fromInt(500);patrol.z=Fixed::fromInt(500);
+        patrol.patrol=patrol.goal=true;patrol.mission.flags=0x1001413;
+        world.unit(id)->orders={move,patrol};
+        world.tick(1.0f/30.0f);
+        const auto& active=world.unit(id)->orders.front();
+        check(active.flightMoveMission && active.x==Fixed::fromInt(304) && active.z==Fixed::fromInt(704) &&
+              active.mission.stage==2 && active.mission.waitMask==0x701 && active.flightGoal &&
+              active.flightGoal->radius>=80 && active.flightGoal->radius<=144,
+              "initial flight move snaps to the body center and waits on its randomized radius");
+        world.unit(id)->orders.front().mission.pending|=0x100;
+        world.tick(1.0f/30.0f);
+        check(world.unit(id)->orders.size()==2 && world.unit(id)->orders.front().patrol &&
+              !world.unit(id)->orders.front().flightMoveMission,
+              "flight move arrival activates the patrol and its return anchor");
+    }
+    {
+        World world;world.setVisPlayer(-1);
+        std::vector<uint8_t> heights(64*64,10);
+        heights[16*64+16]=90; // far tile corner of the footprint's sector neighborhood
+        heights[8*64+23]=200; // belongs only to the next sector's neighborhood
+        world.setTerrain(heights,64,64,20);
+        UnitType flyer;flyer.canFly=flyer.canMove=true;flyer.footX=flyer.footZ=2;
+        flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
+        flyer.turnRate=1200;flyer.cruiseAlt=80;
+        const int id=world.spawn(&flyer,128,128);
+        world.order(id,800,800,false);
+        world.tick(1.0f/30.0f);
+        check(world.unit(id)->flightNavigation.destination.y==280*65536,
+              "flight terrain links the center sector at spawn");
+        auto* u=world.unit(id);
+        u->x=Fixed::fromInt(130);u->z=Fixed::fromInt(128);
+        u->flightSectorX=0;u->flightSectorZ=0;
+        u->flightVelocity={};u->speed=Fixed();
+        world.tick(1.0f/30.0f);
+        check(u->flightNavigation.destination.y==170*65536 && u->flightSectorX==0,
+              "flight terrain retains its sector between footprint relocations");
+    }
+    {
+        std::vector<uint8_t> heights={100,120,100,120},roads(4,1);
+        NavGrid::Limits limits;limits.maxSlope=30;limits.badSlope=15;
+        NavGrid slope(heights,2,2,0,limits);
+        check(slope.walkable(0,0) && slope.terrainGrade(0,0)==4,
+              "passable steep terrain retains its costly search grade");
+        slope.setRoads(&roads);
+        check(slope.terrainGrade(0,0)==7,"roads suppress the soft slope penalty");
+        limits.badMinWaterDepth=-110;
+        NavGrid depth(heights,2,2,0,limits);depth.setRoads(&roads);
+        check(depth.terrainGrade(0,0)==4,"roads retain preferred-depth penalties");
+        limits.maxSlope=19;limits.badSlope=15;
+        NavGrid blocked(heights,2,2,0,limits);blocked.setRoads(&roads);
+        check(blocked.terrainGrade(0,0)==0,"roads cannot override a hard slope limit");
+    }
+    {
+        World world; world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        UnitType flyer; flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
+        flyer.maxVel=Fixed::fromInt(4); flyer.accel=flyer.brake=Fixed::fromInt(1);
+        flyer.turnRate=1200; flyer.cruiseAlt=80;
+        const int id=world.spawn(&flyer,256,256);
+        auto* u=world.unit(id); u->standbyActive=true; u->standbyState={1,0x21,1,0,0};
+        world.tick(1.0f/30.0f); u=world.unit(id);
+        check(u->standbyActive && u->standbyState.stage==1 && u->standbyState.deadline>=8 &&
+              u->standbyState.deadline<=14 && u->orders.empty(),
+              "grounded VTOL standby owns its scan/retry timer");
+        u->flightGroundMode=2; u->flightY=Fixed::fromInt(180);
+        u->standbyState={1,0,0xffffffffu,0,0};
+        world.tick(1.0f/30.0f); u=world.unit(id);
+        check(u->landing && u->landing->mission.stage==3 && !u->orders.empty() &&
+              u->orders.front().landing && u->flightY<Fixed::fromInt(180),
+              "airborne standby installs the landing mission and starts descent");
+        for (int i=0;i<180;++i) world.tick(1.0f/30.0f);
+        u=world.unit(id);
+        check(!u->landing && u->flightGroundMode==1 && u->orders.empty() &&
+              std::abs(u->flightY.v-100*65536)<=65536,
+              "landing arrival retires its controller and restores grounded standby");
+    }
+    {
+        World world; world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        UnitType fighter; fighter.canMove=true; fighter.maxHp=10000;
+        fighter.maxVel=Fixed::fromInt(3); fighter.accel=fighter.brake=Fixed::fromFloat(0.1f);
+        fighter.turnRate=1200; fighter.leash=90;
+        fighter.weapon.damage=10; fighter.weapon.range=80; fighter.weapons.push_back(fighter.weapon);
+        const int id=world.spawn(&fighter,256,256,0.0f,0);
+        const int enemy=world.spawn(&fighter,304,256,0.0f,1);
+        world.unit(enemy)->fireState=0;
+        world.order(id,800,256,false);
+        auto* u=world.unit(id);
+        auto& move=u->orders.back(); move.groundResponse={-1,{}, {800,256}};
+        move.mission={2,1,1,0,0};
+        world.tick(1.0f/30.0f); u=world.unit(id);
+        auto parent=std::find_if(u->orders.begin(),u->orders.end(),[](const Order& o){return o.groundResponse.mode==-1;});
+        check(u->orders.front().targetId==enemy && parent!=u->orders.end() && parent->mission.stage==3 &&
+              parent->groundResponse.origin.x==256 && parent->groundResponse.origin.z==256,
+              "ground response interrupts movement while retaining its resume position and mission");
+        world.unit(enemy)->hp=Fixed();
+        world.tick(1.0f/30.0f); u=world.unit(id);
+        u->x=Fixed::fromInt(100); u->z=Fixed::fromInt(256);
+        // The combat host retires the dead target after mission dispatch;
+        // the suspended parent is dispatched on the following update.
+        for (int i=0;i<2;++i) world.tick(1.0f/30.0f);
+        u=world.unit(id);
+        parent=std::find_if(u->orders.begin(),u->orders.end(),[](const Order& o){return o.groundResponse.mode==-1;});
+        auto back=std::find_if(u->orders.begin(),u->orders.end(),[](const Order& o){return o.groundResponse.mode==1;});
+        check(parent!=u->orders.end() && parent->mission.stage==0 && back!=u->orders.end() &&
+              back->missionTarget==std::pair{Fixed::fromInt(256),Fixed::fromInt(256)} &&
+              back->x==Fixed::fromInt(264) && back->z==Fixed::fromInt(264) && back->missionRadius==22,
+              "completed auxiliary attack installs a bounded return leg before resuming the original move");
+    }
+    {
+        RetailFlightGoal goal;
+        goal.flags = 0x30;
+        goal.radius = 80;
+        check(goal.accepts({80*65536-1,0,0}) && !goal.accepts({80*65536,0,0}),
+              "flight patrol radius excludes its exact boundary");
+        goal.flags = 8;
+        check(goal.accepts({32768,65536,0}) && !goal.accepts({32769,0,0}) &&
+              !goal.accepts({0,65537,0}), "flight point arrival checks horizontal and vertical tolerances");
+        World world;
+        world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        UnitType flyer;
+        flyer.canFly = flyer.canMove = true;
+        flyer.maxVel = Fixed::fromInt(4);
+        flyer.accel = flyer.brake = Fixed::fromInt(1);
+        flyer.turnRate = 1200;
+        flyer.cruiseAlt = 80;
+        const int id = world.spawn(&flyer,256,256);
+        world.order(id,768,256,false);
+        auto* unit = world.unit(id);
+        check(unit->flightY == Fixed::fromInt(100), "flight spawn uses absolute terrain height");
+        world.tick(1.0f/30.0f);
+        unit = world.unit(id);
+        check(unit->flightY == Fixed::fromInt(101) && unit->flightVelocity.y == 65536 &&
+              unit->x > Fixed::fromInt(256) && unit->flightNavigation.destination.y == 180*65536,
+              "live flight moves and climbs toward terrain-relative cruise height");
+        const auto hash = world.stateHash();
+        ++unit->flightVelocity.x;
+        check(world.stateHash() != hash, "persistent flight momentum participates in lockstep hash");
+        --unit->flightVelocity.x;
+        auto& order = unit->orders.front();
+        order.patrol = true;
+        order.mission = {2,0x701,100,0,0};
+        order.flightGoal = RetailFlightGoal{{unit->x.v,unit->flightY.v,unit->z.v},0x30,0,80};
+        const auto before = unit->x;
+        world.tick(1.0f/30.0f);
+        unit = world.unit(id);
+        check((unit->orders.front().mission.pending & 0x100) && unit->x != before,
+              "patrol arrival signals the dispatcher while retaining motion on the arrival tick");
+        world.tick(1.0f/30.0f);
+        unit = world.unit(id);
+        check(unit->orders.size() == 1 && unit->orders.front().mission.stage == 2 &&
+              !(unit->orders.front().mission.pending & 0x100) &&
+              unit->orders.front().flightGoal->point.x != before.v,
+              "patrol dispatcher consumes arrival and installs the next randomized goal");
+    }
+    {
+        const auto climbing = retailFlightVelocity({}, {}, {10*65536,10*65536,0}, {},
+            0, 4*65536, 65536, 65536, 0);
+        check(climbing.x == 65536 && climbing.y == 65536 && climbing.z == 0,
+              "flight accelerates toward its destination while climbing independently");
+        const auto descending = retailFlightVelocity({}, {0,10*65536,0}, {}, {},
+            8*65536, 8*65536, 65536, 65536, 0);
+        check(descending.x == 0 && descending.y == -4*65536 && descending.z == 0,
+              "flight doubles its descent limit directly above the destination");
+        const auto close = retailFlightNavigation({}, {}, {16*65536,65536,0},
+            1234, 100*65536, false, false, 0);
+        check(close.heading == 1234 && close.destination.y == 65536,
+              "close flight destination preserves its heading and target altitude");
+        const auto far = retailFlightNavigation({}, {}, {161*65536,65536,0},
+            1234, 100*65536, false, true, 4321);
+        check(far.heading == 4321 && far.destination.y == 100*65536 && far.velocity.y == 65536,
+              "flight cruise override follows destination velocity measurement");
+    }
+    {
+        World world;
+        world.setVisPlayer(-1);
+        std::vector<uint8_t> heights(32 * 32, 64);
+        for (int z = 16; z < 32; ++z)
+            for (int x = 0; x < 32; ++x) heights[size_t(z) * 32 + x] = 192;
+        world.setTerrain(heights, 32, 32, 0);
+        UnitType mover;
+        mover.canMove = true;
+        mover.footX = mover.footZ = 2;
+        check(world.cellScore(&mover, 12, 13, 0) >= kCellThreshold,
+              "flat ground north of a cliff is not blocked by screen projection");
+        check(world.cellScore(&mover, 12, 16, 0) < kCellThreshold,
+              "the actual cliff slope still blocks movement");
+    }
+    // Actual signed fixed-point positions/origins from the live Hunter capture.
+    check(Fixed::fromRetailNumber(1.8).v == 117964, "Hunter nominal speed truncates like retail");
+    check(retailTurnTravel(Fixed::fromInt(2), 16384, 4096) == Fixed::fromInt(8) &&
+          retailTurnTravel(Fixed::fromInt(2), 16384, 0) == Fixed(),
+          "turn travel uses matching angle units and retail zero-rate behavior");
+    check(retailHeadingToPort(0).v == 32768 && portHeadingToRetail(retailHeadingToPort(5692)) == 5692,
+          "retail heading conversion is confined to the import/export boundary");
+    {
+        World world;
+        world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(128 * 64, 100), 128, 64, 20);
+        UnitType mover;
+        mover.canMove = true;
+        mover.maxVel = mover.brake = Fixed::fromInt(2);
+        mover.turnRate = 4096;
+        const int id = world.spawn(&mover, 128.25f, 128.25f);
+        world.order(id, 1024, 128, false);
+        auto* unit = world.unit(id);
+        unit->heading = Bam(16384);
+        unit->speed = unit->baseSpeed = Fixed::fromInt(2);
+        unit->orders.front().segmentX = Fixed::fromInt(133);
+        unit->orders.front().segmentZ = Fixed::fromInt(128);
+        unit->orders.front().hasSegment = true;
+        Order intermediate;
+        intermediate.x = Fixed::fromInt(133);
+        intermediate.z = intermediate.segmentZ = Fixed::fromInt(128);
+        intermediate.segmentX = Fixed::fromInt(112);
+        intermediate.hasSegment = true;
+        unit->orders.insert(unit->orders.begin(), intermediate);
+        world.tick(1.0f / 30.0f);
+        check(world.unit(id)->orders.size() == 1 && world.unit(id)->x > Fixed::fromFloat(128.25f),
+              "five-pixel navigator advance keeps moving on the same tick");
+    }
+    for (int blocked=0; blocked<2; ++blocked) {
+        World world;
+        world.setVisPlayer(-1);
+        std::vector<uint8_t> terrain(64*64,100);
+        if (blocked) terrain[15*64+16]=240;
+        world.setTerrain(terrain,64,64,20);
+        UnitType mover;
+        mover.canMove=true; mover.footX=mover.footZ=1;
+        mover.maxVel=mover.brake=Fixed::fromInt(2); mover.turnRate=2500;
+        const int id=world.spawn(&mover,256,256);
+        world.order(id,800,256,false);
+        auto* u=world.unit(id);
+        u->orders.back().mission={2,0x2701,100,0,0};
+        u->orders.back().segmentX=Fixed::fromInt(272);
+        u->orders.back().segmentZ=Fixed::fromInt(272);
+        u->orders.back().hasSegment=true;
+        Order corner;
+        corner.x=corner.z=Fixed::fromInt(272);
+        corner.segmentX=Fixed::fromInt(240); corner.segmentZ=Fixed::fromInt(272);
+        corner.hasSegment=true;
+        u->orders.insert(u->orders.begin(),corner);
+        u->groundScanTick=0;
+        world.tick(1.0f/30.0f);
+        check(world.unit(id)->orders.size()==size_t(blocked ? 2 : 1),
+              blocked ? "nearby impassable footprint preserves the corner" :
+                        "clear-ground scan removes a nearby corner before steering");
+    }
+    const auto hunterStep = retailGroundStep(retailHeadingToPort(5692), Fixed::raw(106521));
+    check(hunterStep.s.v == -54769 && hunterStep.c.v == -91372,
+          "first captured Hunter displacement includes retail angle quantization and rounding");
+    {
+        World world;
+        world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(128 * 64, 100), 128, 64, 20);
+        UnitType mover;
+        mover.canMove = true;
+        mover.maxVel = mover.brake = Fixed::fromInt(2);
+        mover.turnRate = 32767;
+        int id = world.spawn(&mover, 128, 192);
+        world.order(id, 768, 128, false);
+        auto* unit = world.unit(id);
+        auto& order = unit->orders.front();
+        order.segmentX = Fixed::fromInt(128);
+        order.segmentZ = Fixed::fromInt(128);
+        order.hasSegment = true;
+        // This is an existing route, after controller initialization. Stage 0
+        // intentionally replaces a direct segment with the current position.
+        order.mission={2,0x2701,100,0,0};
+        auto aim = retailSteeringPoint(unit->x, unit->z,
+            {order.segmentX, order.segmentZ}, {order.x, order.z});
+        Bam expected = retailDirection(aim.x - unit->x, aim.z - unit->z);
+        Bam direct = retailDirection(order.x - unit->x, order.z - unit->z);
+        world.tick(1.0f / 30.0f);
+        check(world.unit(id)->heading == expected && expected != direct,
+              "ground mover steers toward the adjusted route segment point");
+    }
+    {
+        World world;
+        world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(128 * 64, 100), 128, 64, 20);
+        UnitType mover;
+        mover.canMove = true;
+        mover.maxVel = mover.brake = Fixed::fromInt(2);
+        mover.turnRate = 4096;
+        int id = world.spawn(&mover, 128, 128);
+        auto* unit = world.unit(id);
+        unit->speed = unit->baseSpeed = Fixed::fromInt(2);
+        world.order(id, 1024, 128, false);
+        world.tick(1.0f / 30.0f);
+        check(world.unit(id)->speed == Fixed::fromInt(2) && world.unit(id)->x > Fixed::fromInt(128),
+              "a distant quarter-turn destination does not incorrectly brake the mover");
+    }
+    check(footprintOrigin(Fixed::raw(218628095), 2) == 207 &&
+          footprintOrigin(Fixed::raw(140480695), 2) == 133 &&
+          footprintOrigin(Fixed::raw(216588010), 2) == 206,
+          "recorded Hunter footprint origins");
+    check(footprintOrigin(Fixed::raw(168 * 65536 - 1), 2) == 9 &&
+          footprintOrigin(Fixed::fromInt(168), 2) == 10 &&
+          footprintOrigin(Fixed::raw(-1), 1) == -1,
+          "subpixel and negative footprint boundaries");
+    check(footprintWaypoint(10, 2) == Fixed::fromInt(160) &&
+          footprintWaypoint(10, 3) == Fixed::fromInt(168),
+          "even and odd waypoint anchors");
+    uint32_t seed = 12345;
+    check(retailRandom(seed, 0) == 0 && retailRandom(seed, 1) == 0 && seed == 12345,
+          "small RNG bounds consume no draw");
+    check(retailRandom(seed, 100) == 15 && seed == 207482415,
+          "retail RNG output and successor seed");
+    seed = 0;
+    check(retailRandom(seed, 10) == 7 && seed == 0x7fffffff,
+          "retail zero-seed behavior");
+    UnitType type;
+    type.maxVel = Fixed::fromInt(2);
+    World a, b;
+    std::vector<World::RngObservation> draws;
+    a.setRngObserver([&](const World::RngObservation& draw) { draws.push_back(draw); });
+    a.setVisPlayer(-1); b.setVisPlayer(-1);
+    const int first = a.spawn(&type, 100, 100);
+    b.spawn(&type, 100, 100);
+    const int second = a.spawn(&type, 200, 100);
+    b.spawn(&type, 200, 100);
+    check(a.unit(first)->baseSpeed != a.unit(second)->baseSpeed &&
+          a.stateHash() == b.stateHash(), "individual speed variation is deterministic");
+    check(draws.size() == 6 && draws[0].bound == 0 && draws[1].bound==65536 && draws[2].bound==201 && draws[0].tick == 0 &&
+          draws[0].seedAfter==draws[0].seedBefore && draws[0].seedAfter == draws[1].seedBefore &&
+          draws[1].seedAfter==draws[2].seedBefore && a.unit(first)->variationPhase==draws[1].result &&
+          std::strstr(draws[0].caller.function_name(), "spawn") != nullptr,
+          "RNG observer records ordered consumers without changing simulation state");
+    b.unit(first)->baseSpeed.v++;
+    check(a.stateHash() != b.stateHash(), "individual speed participates in lockstep hash");
+    a.resetForReplay(); b.resetForReplay();
+    a.spawn(&type, 100, 100); b.spawn(&type, 100, 100);
+    check(a.stateHash() == b.stateHash(), "world reset resets creation RNG");
+    check(draws.size() == 9 && draws[6].seedBefore == draws[0].seedBefore,
+          "RNG observer persists across replay reset without advancing its seed");
+    {
+        World traced, plain;
+        UnitType mover = type;
+        mover.canMove = true;
+        mover.footX = mover.footZ = 2;
+        std::vector<World::RngObservation> movementDraws;
+        traced.setRngObserver([&](const World::RngObservation& draw) { movementDraws.push_back(draw); });
+        for (World* world : {&traced, &plain}) {
+            world->setVisPlayer(-1);
+            world->setTerrain(std::vector<uint8_t>(256 * 64, 100), 256, 64, 20);
+            world->setPathService(true);
+            int id = world->spawn(&mover, 128, 256);
+            world->order(id, 3200, 256, false);
+        }
+        bool same = true;
+        for (int tick = 0; tick < 600; ++tick) {
+            traced.tick(1.0f / 30.0f);
+            plain.tick(1.0f / 30.0f);
+            same &= traced.stateHash() == plain.stateHash();
+        }
+        check(same, "RNG tracing preserves every movement tick's state hash");
+        check(std::any_of(movementDraws.begin(), movementDraws.end(), [](const auto& draw) {
+            return draw.tick > 0 && std::strstr(draw.caller.function_name(), "World::tick") != nullptr;
+        }), "path RNG tracing identifies the consuming call site through its wrapper");
+    }
+    return failures ? 1 : 0;
+}

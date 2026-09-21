@@ -1,4 +1,5 @@
 #include "sim/pathsearch.h"
+#include "sim/retailtrace.h"
 
 #include <bit>
 #include <algorithm>
@@ -14,16 +15,7 @@ int pathDist(PathCell a, PathCell b) {
 }
 
 int pathDirFromDelta(int dx, int dz) {
-    // Octant, using the rotational order of the direction tables. Verified
-    // against the original by emulating 0x415040 over 81 deltas: all agree.
-    // The zero delta is the one case worth spelling out -- the icd answers 5,
-    // not 0, and while the search should never ask for a direction to where it
-    // already is, matching costs nothing.
-    if (dx == 0 && dz == 0) return 5;
-    if (std::abs(dx) > 2 * std::abs(dz)) return dx < 0 ? 2 : 6;
-    if (std::abs(dz) > 2 * std::abs(dx)) return dz <= 0 ? 0 : 4;
-    if (dx < 0) return dz <= 0 ? 1 : 3;
-    return dz <= 0 ? 7 : 5;
+    return retailSearchDirection(dx, dz);
 }
 
 // Cardinal direction toward a delta (icd 0x414ae9): x dominates, ties go north.
@@ -50,6 +42,7 @@ void PathSearch::reset(int mapW, int mapH) {
         dStamp_.assign(n, 0);
         dDist_.assign(n, 0);
         dDir_.assign(n, 0);
+        dTraffic_.assign(n, 0);
         gen_ = walkGen_ = dGen_ = 0;
     }
     ++gen_;   // every cell is now stale, i.e. empty -- no clearing needed
@@ -75,26 +68,31 @@ void PathSearch::mark(PathCell c, int d, int score) {
     // FIRST VISIT WINS. Overwriting the incoming direction on a revisit turns
     // the parent map into a graph with cycles, and the backtrack then walks a
     // little loop for ever instead of reaching the start -- observed as a
-    // 4-cell cycle repeated to the 64-waypoint clamp. Retail's separate bitmap
-    // at +0x2c is exactly this guard.
+    // 4-cell cycle repeated to the 64-waypoint clamp. This is a legacy port
+    // guard, not retail's bitmap behavior: the verified probe in retailtrace.h
+    // overwrites directions and hands the plane to a separate cost search.
     if (flag_[i] & kSeen) return;
     from_[i] = uint8_t(d);
     flag_[i] = uint8_t(flag_[i] | kSeen | (score == 5 ? kScore5 : 0));
     // RETAIL ACCUMULATES THE CROWD EVIDENCE AT VISIT TIME, right here in the
     // march (icd 0x414951-0x4149ab): the first score-5 cell within the type's
-    // goal tolerance latches +0x4c, any other latches +0x50. The failure report
+    // origin-relative radius latches +0x4c, any other latches +0x50. The failure report
     // (0x414450 called with a nonzero arg from the -1 branch of the step runner,
     // 0x415b53) converts these to the navigator's outcome bits, +0x4c first --
     // emulated to confirm: {4c=1}->bit0, {50=1}->bit1, {both}->bit0, {none}->0.
     // The reconstruction walk recomputes the same pair over BREADCRUMBS for a
     // delivered route; visNear/visFar here serve the failure report.
-    if (score == 5) {
-        if (tolCells > 0 &&
-            std::max(std::abs(c.x - goal.x), std::abs(c.z - goal.z)) < tolCells)
-            visNear = true;
-        else
-            visFar = true;
-    }
+    if (score == 5) recordTraffic(c, visNear, visFar);
+}
+
+void PathSearch::recordTraffic(PathCell c, bool& near, bool& other) const {
+    // Both visit-time 414951 and reconstruction 414563 compare with +30/+32:
+    // the search origin. Once near is set, another traffic cell sets bit 1,
+    // even if it too is near. The traversal order is therefore significant.
+    if (!near && tolCells > 0 &&
+        std::max(std::abs(c.x - start.x), std::abs(c.z - start.z)) < tolCells)
+        near = true;
+    else other = true;
 }
 
 bool PathSearch::atGoal(PathCell c) const {
@@ -111,10 +109,9 @@ static bool stepLegal(const std::function<int(int, int)>& score, PathCell c, int
 
 void PathSearch::buildRoute() { buildRouteTo(goal); }
 
-// Retail's phase-2 Dijkstra (icd 0x4142c0), the route producer on tracer success.
-// Costs and algorithm emulated (tools/re/emuphase.py): a min-heap best-first search
-// with NO heuristic, relaxing on accumulated cost. Deterministic -- integer costs, a
-// binary heap tie-broken by cell index -- so every peer builds the same route.
+// Legacy Dijkstra approximation, not retail-equivalent. The earlier goal-distance
+// emulation stub was wrong. Retail's verified weighted, resumable replacement is
+// in retailcost.h; this service still needs the scheduler/tracer hand-off port.
 bool PathSearch::buildDijkstraRoute(const std::function<int(int, int)>& score) {
     out.clear();
     if (!inside(start) || !inside(goal)) return false;
@@ -149,16 +146,17 @@ bool PathSearch::buildDijkstraRoute(const std::function<int(int, int)>& score) {
     auto less = [](const Node& a, const Node& b) {
         return a.cost != b.cost ? a.cost > b.cost : a.cell > b.cell;  // min-heap
     };
-    auto relax = [&](int32_t cell, int32_t cost, uint8_t dir) {
+    auto relax = [&](int32_t cell, int32_t cost, uint8_t dir, bool traffic) {
         if (dStamp_[size_t(cell)] == dGen_ && dDist_[size_t(cell)] <= cost) return;
         dStamp_[size_t(cell)] = dGen_;
         dDist_[size_t(cell)] = cost;
         dDir_[size_t(cell)] = dir;
+        dTraffic_[size_t(cell)] = uint8_t(traffic);
         heap.push_back({cost, cell, dir});
         std::push_heap(heap.begin(), heap.end(), less);
     };
     const int32_t startCell = int32_t(start.z * w_ + start.x);
-    relax(startCell, 0, 0xff);   // 0xff = no incoming direction
+    relax(startCell, 0, 0xff, false);   // 0xff = no incoming direction
 
     // Node budget: retail bounds phase 2 at map cells / 10 (icd 0x415c47). Beyond it
     // the scheduler abandons phase 2 and falls back -- for us, to the tracer route.
@@ -180,7 +178,8 @@ bool PathSearch::buildDijkstraRoute(const std::function<int(int, int)>& score) {
         for (int d = 0; d < 8; ++d) {
             const int nx = cx + kDirX[d], nz = cz + kDirZ[d];
             if (nx < 0 || nz < 0 || nx >= w_ || nz >= h_) continue;
-            const int gc = gradeCost(score(nx, nz));
+            const int grade = score(nx, nz);
+            const int gc = gradeCost(grade);
             if (gc < 0) continue;                       // impassable
             // NO corner-cut guard here (unlike the tracer's stepLegal): retail's cost
             // function (0x413e70) grades only the destination cell, so a diagonal may
@@ -197,7 +196,7 @@ bool PathSearch::buildDijkstraRoute(const std::function<int(int, int)>& score) {
                 turn = kTurnCost[diff];
             }
             const int32_t nc = top.cost + kStepCost[d] + turn + gc;
-            relax(int32_t(nz * w_ + nx), nc, uint8_t(d));
+            relax(int32_t(nz * w_ + nx), nc, uint8_t(d), grade == kCellSameWay);
         }
     }
     if (!reached) return false;
@@ -213,6 +212,8 @@ bool PathSearch::buildDijkstraRoute(const std::function<int(int, int)>& score) {
         if (cx == start.x && cz == start.z) break;
         const int d = dDir_[size_t(c)];
         if (d == 0xff) break;
+        if (dTraffic_[size_t(c)])
+            recordTraffic({cx, cz}, goalCrowded, sawTraffic);
         if (d != lastDir) { rev.push_back({cx, cz}); lastDir = d; }
         c = (cz - kDirZ[d]) * w_ + (cx - kDirX[d]);
     }
@@ -239,24 +240,18 @@ void PathSearch::buildRouteTo(PathCell end) {
         if (walkStamp_[i] == walkGen_) break;   // belt and braces against a cycle
         walkStamp_[i] = walkGen_;
         const int d = from_[i] & 7;
-        // Retail's goal-crowding check runs during this walk (icd 0x414563): a cell
-        // the search could only pass through as same-way traffic (kScore5), lying
-        // within the type's tolerance of the goal, marks the goal area as crowded --
-        // the route leans on bodies that may not part by the time the unit arrives.
-        if (flag_[i] & kScore5) {
-            if (tolCells > 0 &&
-                std::max(std::abs(c.x - goal.x), std::abs(c.z - goal.z)) < tolCells)
-                goalCrowded = true;
-            else
-                sawTraffic = true;
-        }
+        // Match retail's backtracking order and origin-relative traffic flags.
+        if (flag_[i] & kScore5)
+            recordTraffic(c, goalCrowded, sawTraffic);
         if (d != lastDir) { rev.push_back(c); lastDir = d; }
         PathCell p{c.x - kDirX[d], c.z - kDirZ[d]};
         if (!inside(p) || (p.x == c.x && p.z == c.z)) break;
         c = p;
     }
-    if (rev.empty() || rev.front().x != goal.x || rev.front().z != goal.z)
-        rev.insert(rev.begin(), goal);
+    // The first backtracked point is already `end`. A failed search may end
+    // at bestCell, short of an unreachable goal. Appending the requested goal
+    // fabricated a final leg through the obstacle; with no progress it even
+    // fabricated a route from a boxed-in start. Only emit traced points.
     for (auto it = rev.rbegin(); it != rev.rend(); ++it)
         if (out.empty() || out.back().x != it->x || out.back().z != it->z)
             out.push_back(*it);
@@ -477,31 +472,38 @@ if (best == 0) { phase = Phase::Done;
     }
 }
 
-// Point a pool slot at this request and start its search there.
-void PathService::admit(int unitId, Entry& e, int slot) {
-    e.slot = slot;
-    e.cap = 0;
-    slotOwner_[size_t(slot)] = unitId;
-    PathSearch& ps = pool_[size_t(slot)];
-    // reset() only reallocates when the map size changed, so a slot that has
-    // already run a search on this map recycles its arrays for free.
-    ps.reset(e.mapW, e.mapH);
-    ps.unitId = unitId;
-    ps.start = e.start;
-    ps.goal = e.goal;
-    ps.tolCells = e.tolCells;
-    ps.cur = e.start;
-    ps.priority = e.priority;
+void PathService::setEntityPool(int player,int first,int count) {
+    if (player<0 || player>=10 || first<0 || count<1 || int64_t(first)+count>INT32_MAX)
+        throw std::invalid_argument("invalid allocated entity range");
+    if (scheduler_.active.player==player &&
+        (poolFirst_[size_t(player)]!=first || poolSize_[size_t(player)]!=count))
+        throw std::logic_error("cannot relocate an active entity pool");
+    poolFirst_[size_t(player)]=first; poolSize_[size_t(player)]=count;
+    fixedPool_[size_t(player)]=true;
 }
 
-void PathService::release(Entry& e) {
-    if (e.slot >= 0) slotOwner_[size_t(e.slot)] = -1;
-    e.slot = -1;
+void PathService::retireActive() {
+    if (activeId_>=0 && gradeHost_.finish) gradeHost_.finish(activeId_);
+    activeId_=-1;
+    scheduler_.cancel(scheduler_.active);
 }
 
 void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
                           int mapH, Fixed goalX, Fixed goalZ, int player, bool priority,
-                          int tolCells) {
+                          int tolCells, int heading, RetailCostSearch::Costs costs, PathCell cellOffset, int goalTolerance,
+                          uint64_t controller, int goalRadiusSquared,
+                          std::optional<RetailRectGoal> rectangle,std::optional<RetailRingGoal> ring) {
+    if (player<0 || player>=10 || unitId<0 || unitId==INT32_MAX)
+        throw std::invalid_argument("invalid search owner");
+    const size_t owner=size_t(player);
+    if (!fixedPool_[owner]) poolSize_[owner]=std::max(poolSize_[owner],unitId+1);
+    if (unitId<poolFirst_[owner] || unitId-poolFirst_[owner]>=poolSize_[owner])
+        throw std::invalid_argument("search owner outside allocated entity range");
+    // Coordinates alone do not identify an order. A replacement controller
+    // cannot inherit the old controller's search or undelivered events.
+    if (auto it = q_.find(unitId); it != q_.end() &&
+        (it->second.controller != controller || it->second.player != player))
+        cancel(unitId);
     // A RE-REQUEST FOR THE SAME SEARCH LETS IT RUN. Everything below restarts the
     // search from scratch (cap = 0), which is right when the question changed and
     // ruinous when it did not: the sim re-asks every kPathRetryTicks (120 ticks, 4s)
@@ -521,6 +523,9 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
         Entry& ex = it->second;
         const int dx = ex.start.x - start.x, dz = ex.start.z - start.z;
         if (ex.goal.x == goal.x && ex.goal.z == goal.z &&
+            ex.cellOffset.x == cellOffset.x && ex.cellOffset.z == cellOffset.z &&
+            ex.goalTolerance == goalTolerance && ex.goalRadiusSquared == goalRadiusSquared &&
+            ex.rectangle == rectangle && ex.ring == ring &&
             dx >= -1 && dx <= 1 && dz >= -1 && dz <= 1) {
             // Keep the search's PROGRESS (cap, slot) but take the new request's exact
             // destination. goalX/goalZ never enter the search -- it works in cells --
@@ -534,8 +539,10 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
             return;
         }
     }
+    if (auto it=q_.find(unitId); it!=q_.end() && scheduler_.active==
+        RetailSearchScheduler::Request{it->second.player,unitId-poolFirst_[size_t(it->second.player)]})
+        retireActive();
     Entry& e = q_[unitId];
-    const int slot = e.slot;      // keep the slot if this unit already holds one
     e.start = start;
     e.goal = goal;
     e.mapW = mapW;
@@ -545,178 +552,118 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
     e.player = player;
     e.tolCells = tolCells;
     e.priority = priority;
-    e.cap = 0;
-    e.slot = -1;
-    // A re-request for a unit that is already searching restarts it in place,
-    // exactly as it did when every request owned its own search.
-    if (slot >= 0) admit(unitId, e, slot);
+    e.heading = heading;
+    e.cellOffset = cellOffset;
+    e.goalTolerance = goalTolerance;
+    e.costs = costs;
+    e.notification = 0;
+    e.controller = controller;
+    e.goalRadiusSquared = goalRadiusSquared;
+    e.rectangle = rectangle;
+    e.ring = ring;
 }
 
 void PathService::cancel(int unitId) {
+    std::erase_if(notifications_, [=](const Notification& n) { return n.unitId == unitId; });
     auto it = q_.find(unitId);
     if (it == q_.end()) return;
-    release(it->second);
+    if (scheduler_.active==RetailSearchScheduler::Request{
+        it->second.player,unitId-poolFirst_[size_t(it->second.player)]}) retireActive();
     q_.erase(it);
 }
 
-void PathService::tick(const std::function<int(int, int, int)>& score,
-                       const std::function<void(int, const std::vector<PathCell>&,
-                                                Fixed, Fixed, bool, bool, bool)>& done) {
-    if (q_.empty()) return;
-    if (pool_.empty()) {
-        pool_.resize(kMaxActiveSearches);
-        slotOwner_.assign(kMaxActiveSearches, -1);
-    }
-
+void PathService::tick(const std::function<int(int,int,int)>& score,
+        const std::function<void(int,const std::vector<PathCell>&,Fixed,Fixed,bool,bool,bool,bool)>& done,
+        const std::function<void(int,PathCell&,int&,RetailCostSearch::Costs&)>& refresh,
+        uint32_t simulationTick, const std::function<bool(int,uint32_t)>& admit) {
     ++tickNo_;
-
-    // ADMIT, RUN, THEN REFILL WHILE BUDGET REMAINS.
-    //
-    // This used to admit once, run the admitted set, and release finished slots at the
-    // end -- so a slot freed by a search that completed early sat idle for the rest of
-    // the tick no matter how much work budget was left. Throughput was pinned at
-    // kMaxActiveSearches per tick regardless of how cheap the searches were. Measured on
-    // trivial requests: one costs 72 work, so 12 slots spend 864 of the 12000 budget --
-    // 7.2% used -- while 48 requests still took four ticks and 96 took eight.
-    //
-    // (The comment above kMaxActiveSearches argued throughput was unaffected by bounding
-    // the pool. That holds when searches are expensive enough to consume their slice; it
-    // does not hold for cheap ones, which finish far inside their quantum and leave the
-    // rest of the budget unusable until the next tick.)
-    //
-    // Now a completion frees its slot immediately and the freed slot is refilled from the
-    // queue while integer budget remains. Two properties are preserved deliberately:
-    //
-    //   * ADMISSION ORDER. Still the rotating cursor over unit-id order, so every peer
-    //     admits the same requests in the same sequence on the same tick.
-    //   * ONE SLICE PER TICK. A search that suspends is NOT run again this tick -- only
-    //     newly admitted requests run in a refill round. Re-running suspended searches
-    //     would change their pacing, which is hashed state.
-    int spent = 0;
-    for (int round = 0; round < kMaxActiveSearches + 1; ++round) {
-        // Fill every free slot from the queue, starting after the last unit id admitted
-        // and wrapping, so a low unit id that re-requests every tick cannot hold the pool
-        // against a higher one.
-        int free = 0;
-        for (int owner : slotOwner_) if (owner < 0) ++free;
-        if (free > 0) {
-            for (int pass = 0; pass < 2 && free > 0; ++pass) {
-                auto it = pass == 0 ? q_.upper_bound(admitCursor_) : q_.begin();
-                const auto stop = pass == 0 ? q_.end() : q_.upper_bound(admitCursor_);
-                for (; it != stop && free > 0; ++it) {
-                    Entry& e = it->second;
-                    if (e.slot >= 0) continue;
-                    int slot = -1;
-                    for (size_t i = 0; i < slotOwner_.size(); ++i)
-                        if (slotOwner_[i] < 0) { slot = int(i); break; }
-                    if (slot < 0) break;
-                    admit(it->first, e, slot);
-                    ++requests_;
-                    admitCursor_ = it->first;
-                    --free;
-                }
-            }
-        }
-
-        // Count PLAYERS, not requests -- emulated to settle it (docs/pathfinding-port
-        // .md): two players with one pending unit each split the budget 500/500, and so
-        // do two players with fifty each, and so does 1-pending against 99-pending.
-        // Retail's 0x634674 table holds a per-player pending count that the scheduler
-        // (0x4164fa) only ever tests > 0; the bucket increments once per player, and a
-        // flagged player is worth five ordinary ones. Splitting per REQUEST -- which is
-        // what stood here -- let one player with 500 units starve another, which retail
-        // cannot do. Only entries that have not yet had a slice this tick count.
-        uint32_t normals = 0, specials = 0;   // bitmasks over player slots
-        for (const auto& [id, e] : q_) {
-            if (e.slot < 0 || e.ranAt == tickNo_) continue;
-            const uint32_t bit = 1u << (unsigned(e.player) & 31);
-            if (e.priority) specials |= bit; else normals |= bit;
-        }
-        normals &= ~specials;                  // a player is one class, not both
-        const int a = std::popcount(normals), b = std::popcount(specials);
-        const int share = a + 5 * b;
-        if (share <= 0) break;                 // nothing left to run
-        const int remaining = budget_ - spent;
-        if (remaining <= 0) break;             // the budget is a real cap
-        const int quantum = std::max(1, remaining / share);
-
-        // THE CALLBACK IS NOT INVOKED WHILE THE QUEUE IS BEING WALKED.
-        //
-        // `done` installs the route, and installing a route can ask for another one --
-        // a route that no longer connects to its unit requests a repair. That reaches
-        // back into request()/cancel() and mutates q_ underneath this very loop, which
-        // segfaulted the moment a crowd made repairs common (a crowd is exactly when it
-        // matters). Collect the finished searches, finish walking the queue, release the
-        // slots, and only then hand the routes over -- so a callback is free to queue
-        // whatever it likes.
-        struct Finished { int id; std::vector<PathCell> route; Fixed gx, gz;
-                          bool failed; bool crowded; bool traffic; };
-        std::vector<Finished> finished;
-        for (auto& [id, e] : q_) {
-            if (e.slot < 0 || e.ranAt == tickNo_) continue;
-            // THE BUDGET IS CHECKED HERE, not only between rounds. The quantum is
-            // computed once per round from what was left at the START of it, and
-            // completions are charged as they happen -- so the searches later in the same
-            // round were still handed a full slice from a budget already spent. Measured:
-            // 12 open-ground requests at 952 search + 540 completion work each charged
-            // 17,904 against a 12,000 budget. A cap that can be overrun by half again is
-            // not a cap, and the whole point of bounding this is that a big order becomes
-            // a short queue rather than a frame spike.
-            //
-            // Leaving the entry unmarked means it simply waits: next tick it is first in
-            // line with its state intact.
-            if (spent >= budget_) break;
-            e.ranAt = tickNo_;
-            e.cap += quantum * (e.priority ? 5 : 1);
-            auto sc = [&](int cx, int cz) { return score(id, cx, cz); };
-            PathSearch& ps = pool_[size_t(e.slot)];
-            const int workBefore = ps.work;
-            const PathSearch::Result r = ps.step(sc, e.cap);
-            spent += ps.work - workBefore;
-            workSpent_ += uint64_t(ps.work - workBefore);
-            if (r == PathSearch::Result::Arrived) {
-                // Charge the completion BEFORE handing the route over: the callback
-                // smooths it, and that cost belongs to this tick's budget.
-                spent += kWorkCompleteBase + kWorkPerCorner * int(ps.out.size());
-                ++completions_;
-                finished.push_back({id, ps.out, e.goalX, e.goalZ,
-                                    false, ps.goalCrowded, ps.sawTraffic});
-            } else if (r == PathSearch::Result::Failed) {
-                spent += kWorkCompleteBase;
-                ++failures_;
-                // A failed search still delivers its BEST-EFFORT route -- the walk to
-                // its closest approach (icd 0x415170 reconstructs on failure too). An
-                // empty route here meant a unit sent at a crowded or walled goal got
-                // NOTHING and steered a straight line instead; retail's walks to the
-                // reachable edge. The route may legitimately be empty (start boxed
-                // in, nothing visited): the installer treats that as the old failure.
-                // The FAILURE REPORT's flags come from the visit-time accumulators,
-                // bit 0 taking priority over bit 1 exactly as 0x414450's report
-                // branch does (emulated: both set -> bit0 alone). A failure that
-                // saw no score-5 cells at all reports NOTHING -- and that is not a
-                // rest: with no bits set, the service worker's PLAIN branch governs
-                // (elapsed >= 120 and a 1-in-120 roll per frame), which is how a
-                // long haul that failed at its visit limit chains route by route,
-                // and how a unit against a sealed wall keeps gently probing it.
-                finished.push_back({id, ps.out, e.goalX, e.goalZ,
-                                    true, ps.visNear,
-                                    !ps.visNear && ps.visFar});
-            }
-            // Suspended: keep the entry, resume next tick with its state intact.
-        }
-        // Hand the slots back NOW rather than at the end of the tick, so the next round
-        // can use them. This is the whole point of the loop.
-        for (const Finished& f : finished) {
-            auto it = q_.find(f.id);
-            if (it == q_.end()) continue;
-            release(it->second);
-            q_.erase(it);
-        }
-        // Queue walked, slots free: now it is safe for a callback to re-enter.
-        for (const Finished& f : finished)
-            done(f.id, f.route, f.gx, f.gz, f.failed, f.crowded, f.traffic);
-        if (finished.empty()) break;   // no slot freed -> a refill round would do nothing
+    if (q_.empty()) return;
+    const uint32_t now=simulationTick ? simulationTick : uint32_t(tickNo_);
+    std::array<RetailSearchScheduler::Player,10> players{};
+    for (const auto& [id,e]:q_) {
+        auto& p=players[size_t(e.player)];
+        p.enabled=true; p.priority|=e.priority; ++p.pending;
+        p.slots=poolSize_[size_t(e.player)];
     }
+    auto lookup=[&](RetailSearchScheduler::Request r) {
+        const int id=poolFirst_[size_t(r.player)]+r.slot;
+        auto it=q_.find(id);
+        return it!=q_.end() && it->second.player==r.player ? it : q_.end();
+    };
+    struct Finished { int id; std::vector<PathCell> route; Fixed x,z; bool failed,crowded,traffic,detour; };
+    std::vector<Finished> finished;
+    scheduler_.tick(players,budget_,1,int(now),
+        [&](auto r) { return lookup(r)!=q_.end(); },
+        [&](auto r) {
+            workSpent_+=7;
+            const auto it=lookup(r);
+            return it!=q_.end() && (!admit || admit(it->first,now));
+        },
+        [&](auto r,bool admitted,int remaining) {
+            auto it=lookup(r);
+            const int id=it->first;
+            auto& e=it->second;
+            if (admitted) { activeId_=id; e.notification=0; ++requests_; }
+            const RetailCircleGoal circle{e.goal.x-e.cellOffset.x,e.goal.z-e.cellOffset.z,
+                                           e.goalTolerance,e.goalRadiusSquared};
+            auto result=worker_.dispatch(admitted,remaining,[&](int retry) {
+                if (refresh) refresh(id,e.start,e.heading,e.costs);
+                RetailSearchAttempt::Parameters p;
+                p.width=e.mapW; p.height=e.mapH;
+                p.start={e.start.x-e.cellOffset.x,e.start.z-e.cellOffset.z};
+                p.heading=e.heading; p.costs=e.costs; p.trafficRadius=e.tolCells;
+                p.retry=retry;
+                auto& last=scheduler_.lastWrapTick[size_t(scheduler_.playerCursor)];
+                uint32_t wrap=uint32_t(last);
+                p.weight=retailInitialPathWeight(now,wrap,players[size_t(e.player)].pending,retry,e.costs.heavyFloater);
+                last=int(wrap);
+                return p;
+            },[&](bool last) {
+                if (gradeHost_.prepare) gradeHost_.prepare(id,last);
+            },[&] {
+                std::vector<RetailReachability::Point> cells;
+                auto emit=[&](int x,int z) { cells.push_back({x,z}); };
+                if (e.rectangle) e.rectangle->enumerate(emit);
+                else if (e.ring) e.ring->enumerate(emit); else circle.enumerate(emit);
+                return cells;
+            },[&](int x,int z) {
+                return e.rectangle ? e.rectangle->accepts(x,z) : e.ring ? e.ring->accepts(x,z) : circle.accepts(x,z);
+            },[&](int x,int z) {
+                return e.rectangle ? e.rectangle->distance(x,z) : e.ring ? e.ring->distance(x,z) : circle.distance(x,z);
+            },[&](int x,int z,int) {
+                const int cx=x+e.cellOffset.x,cz=z+e.cellOffset.z;
+                return gradeHost_.score ? gradeHost_.score(id,cx,cz,worker_.retry,e.start) : score(id,cx,cz);
+            },[&] {
+                // The start and cost profile remain those of this attempt.
+                // Only orientation is sampled again at the phase transition.
+                auto start=e.start;auto costs=e.costs;int heading=e.heading;
+                if (refresh) refresh(id,start,heading,costs);
+                return heading;
+            });
+            workSpent_+=uint64_t(result.work);
+            if (result.notification) {
+                e.notification=result.notification;
+                if (e.controller) notifications_.push_back({id,e.controller,result.notification});
+            }
+            const bool complete=result.result==RetailSearchAttempt::Result::Complete;
+            if (complete) {
+                const auto& route=worker_.attempt.route;
+                const bool partial=(route.flags&4)!=0;
+                if (e.notification==0x2000 || partial) ++failures_; else ++completions_;
+                std::vector<PathCell> points;
+                for (auto p:route.points) points.push_back({p.x+e.cellOffset.x,p.z+e.cellOffset.z});
+                finished.push_back({id,std::move(points),e.goalX,e.goalZ,partial,
+                                    (route.flags&1)!=0,(route.flags&2)!=0,(route.flags&8)!=0});
+                if (gradeHost_.finish) gradeHost_.finish(id);
+                activeId_=-1;
+                --players[size_t(e.player)].pending;
+                q_.erase(it);
+            }
+            return RetailSearchScheduler::Slice{result.work,complete};
+        });
+    // Delivery can cancel or replace other orders. Release the active queue
+    // traversal first so callbacks never invalidate its current entry.
+    for (const auto& f:finished) done(f.id,f.route,f.x,f.z,f.failed,f.crowded,f.traffic,f.detour);
 }
 
 }   // namespace tak::sim

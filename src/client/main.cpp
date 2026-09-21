@@ -510,7 +510,7 @@ int main(int argc, char** argv) {
     localHarness = demo || scenario || missionFlag || navy || amphib || firetest ||
                    facetest || guardtest || lodetest || keytest ||
                    soundtest || misstest || creon || testbuild ||
-                   (tak::devEnv("TAK_FFA") != nullptr);
+                   (tak::devEnv("TAK_FFA") != nullptr) || tak::devFlag("TAK_PATROL_PERF");
 #endif
     // Create the window + renderer up front so the front-end menu can drive the
     // single-player / multiplayer setup that follows it.
@@ -755,8 +755,15 @@ int main(int argc, char** argv) {
                 sv = sv.substr(0, colon);
             }
             serverHost = sv.empty() ? std::string("127.0.0.1") : sv;
-        } else if (!benchmarkLaunch) {
-            menuInteractive = true;   // single-player: local server, but stop in the lobby
+        } else {
+            // Remote credentials belong to that multiplayer session. Leaving the
+            // account set makes the client reject the private server's no-auth
+            // welcome on a later single-player / campaign / benchmark launch.
+            loginUser.clear();
+            tak::crypto::wipe(loginPass);
+            playerName = settings.playerName;
+            if (!benchmarkLaunch)
+                menuInteractive = true;   // single-player: local server, but stop in the lobby
         }
         // Benchmark: like single-player (local server) but auto-hosts an all-AI watch run
         // -- no interactive lobby, and mpAutoMode is forced to 1 below.
@@ -1082,6 +1089,7 @@ int main(int argc, char** argv) {
             // LOCAL sim -- debug builds only, and never for a server-driven game
             // (localHarness is false whenever a server is involved).
             if (localHarness) {
+                if (!missionFlag) gameView->cancelInitialCamera();
                 if (doMarch) gameView->marchTo(marchX, marchZ);
                 if (testbuild) gameView->testBuild();
                 if (navy) gameView->navyDemo();
@@ -1485,6 +1493,9 @@ int main(int argc, char** argv) {
         // the AA-resolved scene) at native resolution. Only in-game; the asset viewers
         // keep the OS arrow.
         if (gameView) gameView->drawCursorOverlay();
+        // Read both metrics from the pinned snapshot before releasing it.
+        const uint32_t profTick = prof && gameView ? gameView->framedTick() : 0;
+        const size_t profLive = prof && gameView ? gameView->framedAliveUnits() : 0;
         if (gameView) gameView->endFrame();   // release the pinned sim snapshot for this frame
         SDL_RenderPresent(ren);
         if (prof) {
@@ -1562,12 +1573,15 @@ int main(int argc, char** argv) {
                 uint64_t units = 0, shVerts = 0;
                 if (gameView) gameView->takeProf(proj, submit, shadow, sim, units, shVerts);
                 std::printf("PROF fps=%.0f | update=%.1f [sim=%.1f] draw=%.1f "
-                            "[proj=%.1f submit=%.1f (shadow=%.1f) other=%.1f] present=%.1f | units=%llu shverts=%lluk\n",
+                            "[proj=%.1f submit=%.1f (shadow=%.1f) other=%.1f] present=%.1f | units=%llu shverts=%lluk "
+                            "tick=%u live=%zu wall_ms=%llu\n",
                             pFrames * 1000.0 / pAcc, pUpd / pFrames, sim / pFrames,
                             pDraw / pFrames, proj / pFrames, submit / pFrames,
                             shadow / pFrames, (pDraw - proj - submit) / pFrames, pPres / pFrames,
                             (unsigned long long)(units / uint64_t(std::max(1, pFrames))),
-                            (unsigned long long)(shVerts / uint64_t(std::max(1, pFrames)) / 1000));
+                            (unsigned long long)(shVerts / uint64_t(std::max(1, pFrames)) / 1000),
+                            profTick, profLive,
+                            (unsigned long long)SDL_GetTicks64());
                 std::fflush(stdout);
                 pUpd = pDraw = pPres = pAcc = 0; pFrames = 0;
             }

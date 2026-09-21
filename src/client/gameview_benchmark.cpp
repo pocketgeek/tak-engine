@@ -1,5 +1,35 @@
 #include "client/gameview.h"
 
+    void GameView::setupPatrolPerf() {
+#ifndef NDEBUG
+        // Exactly 16,000 living units: eight monarchs plus 1,999 troops per
+        // faction. This is a local developer fixture, not a lobby cap option.
+        tak::sim::MatchConfig cfg;
+        cfg.vfs = &vfs_;
+        cfg.mapPath = mapPath_;
+        cfg.stressTest = true;
+        cfg.unitCap = (1999 * 100 + 94) / 95;
+        for (int p = 0; p < 8; ++p)
+            cfg.slots.push_back({true, p % 5, 0, 2, true, false});
+        const auto spots = tak::sim::setupMatch(world_, registry_, cfg);
+        if (world_.units().size() != 16000)
+            throw std::runtime_error("patrol performance map must fit exactly 16000 units");
+        for (const auto& u : world_.units())
+            if (u.type && !u.type->isStructure())
+                world_.patrol(u.id, float(world_.nav().width() * 16) - u.x.toFloat(),
+                              u.z.toFloat());
+        noFog_ = true;
+        world_.setVisPlayer(-1);
+        edgeScrollOn_ = false;
+        patrolPerfAccum_ = 0.0f;
+        mapView_.setZoom(0.9f);
+        if (!spots.empty()) lookAt(spots[0].first, spots[0].second);
+        std::printf("PATROL_PERF initial=%zu balance=%s (local, no AI/combat/network)\n",
+                    world_.units().size(), crusades_ ? "crusades" : "standard");
+        std::fflush(stdout);
+#endif
+    }
+
 // Out-of-line GameView method definitions (benchmark concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
 // unit. Trivial getters, ctors, static, template, constexpr and default-arg
@@ -22,7 +52,7 @@
         };
         BenchSample s;
         s.gameSec = gameSec;
-        s.liveUnits = int(front().live.size());
+        s.liveUnits = int(framedAliveUnits());
         s.clientCpuPct = pct(cli, benchCliPrev_);
         s.serverCpuPct = pct(srv, benchSrvPrev_);
         s.clientRss = cli.rssBytes;
@@ -182,4 +212,3 @@
         blockText("DONE", done.x + (dw - blockWidth("DONE", setPx)) * 0.5f, done.y + (dh - 7 * setPx) * 0.5f,
                   setPx, {230, 234, 244, 255});
     }
-

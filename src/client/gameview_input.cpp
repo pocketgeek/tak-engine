@@ -395,6 +395,7 @@
                 for (const auto& f : world_.features())
                     if (f.id == fid) { fx = f.x.toFloat(); fz = f.z.toFloat(); break; }
             }
+            if (!canPickPoint(fx, fz)) continue;
             float dx = fx - (b ? b->x : x), dz = fz - (b ? b->z : z);
             order.push_back({dx * dx + dz * dz, fid});
         }

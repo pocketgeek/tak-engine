@@ -31,6 +31,8 @@ struct MatchSlot {
     int faction = 0;   // 0 ara, 1 tar, 2 ver, 3 zon, 4 cre
     int team = 0;
     float manaMult = 1.0f;   // per-player income multiplier (Absurd AI = 2); Player::manaMult
+    bool automaticGates = false;
+    bool defensiveAi = false; // Passive AI defends in place from the moment units spawn
 };
 
 struct MatchConfig {

@@ -54,7 +54,7 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
         // on normal income and its whole production curve diverged.
         const float mm = h.slotType[i] == 2
             ? tak::ai::incomeMultFor(tak::ai::difficultyFromLevel(h.slotAiLevel[i])) : 1.0f;
-        out.cfg.slots[size_t(i)] = {used, h.slotFaction[i] % 5, h.slotTeam[i], mm};
+        out.cfg.slots[size_t(i)] = {used, h.slotFaction[i] % 5, h.slotTeam[i], mm, h.slotType[i] == 2, h.slotType[i] == 2 && h.slotAiLevel[i] == 0};
         if (used) maxUsed = i;
     }
     // The game used setPlayerCount(maxUsedSlot+1); match it exactly (empty trailing

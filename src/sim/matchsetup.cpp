@@ -1,6 +1,7 @@
 #include "sim/matchsetup.h"
 
 #include "sim/detmath.h"
+#include "sim/footprint.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -27,6 +28,13 @@ const char* const kMonarchs[5] = {"araking", "tarnecro", "vermage", "zonhunt", "
 
 void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command& c) {
     using tak::net::Cmd;
+    // An infinitely producing mobile builder stays on that job until Stop.
+    // Gate before redirect(): rejected orders must not cancel its construction.
+    // Test repeatType rather than queue size so item transitions, mana shortages
+    // and blocked output positions do not briefly unlock the producer.
+    const auto* producer=world.unit(c.unitId);
+    if (c.kind!=Cmd::Stop && producer && producer->type &&
+        !producer->type->isStructure() && producer->repeatType) return;
     auto owns = [&](int id) {
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);
@@ -179,7 +187,7 @@ namespace {
 // Feature definition fields the sim cares about: is it a mana deposit, and its
 // footprint (for nav blocking). Loaded from the feature TDFs.
 struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx = 1, fz = 1;
-                 int reclaimable = 0; float energy = 0;
+                 int reclaimable = 0; float energy = 0; float sacredSite = 0;
                  // Burning chain (see World::tickBurning).
                  bool flamable = false; bool hasBurnAnim = false;
                  int spreadChance = 0; int sparkTicks = 0; std::string burnt;
@@ -214,6 +222,7 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     d.fz = int(node.numberOr("footprintz", 1));
                     d.reclaimable = int(node.numberOr("reclaimable", 0));
                     d.energy = float(node.numberOr("energy", 0));   // reclaim mana yield
+                    d.sacredSite = float(node.numberOr("sacredsite",0));
                     d.flamable = node.numberOr("flamable", 0) != 0;
                     d.hasBurnAnim = !node.valueOr("seqnameburn", "").empty();
                     d.spreadChance = int(node.numberOr("spreadchance", 0));
@@ -291,7 +300,33 @@ static void scanFeaturePlane(World& world, const tak::tnt::Map& map,
                              FeatTypeInterner& types,
                              std::vector<std::pair<float, float>>& rawMana,
                              std::vector<std::pair<float, float>>& rawAll) {
-    if (map.featureNames.empty()) return;
+    std::vector<SacredSite> sacredSites;
+    std::vector<RetailMapFeatureType> placementTypes;
+    for (auto name:map.featureNames) {
+        std::transform(name.begin(),name.end(),name.begin(),::tolower);
+        RetailMapFeatureType type;
+        if (auto it=defs.find(name);it!=defs.end()) {
+            type={name,it->second.fx,it->second.fz,it->second.blocking!=0,it->second.indestructible};
+            // 4945bb: grade-1 blockers must remain removable through every
+            // dead/burnt replacement, including cycles and shared successors.
+            type.clearable=!type.indestructible;
+            std::vector<std::string> pending{name};
+            std::set<std::string> seen;
+            while (type.clearable && !pending.empty()) {
+                const auto current=std::move(pending.back());pending.pop_back();
+                if (!seen.insert(current).second) continue;
+                const auto found=defs.find(current);
+                if (found==defs.end()) continue;
+                const auto& def=found->second;
+                if (def.blocking && def.indestructible) { type.clearable=false;break; }
+                if (!def.dead.empty()) pending.push_back(def.dead);
+                if (!def.burnt.empty()) pending.push_back(def.burnt);
+            }
+        }
+        placementTypes.push_back(std::move(type));
+    }
+    world.setMapPlacementFeatures(map.features,std::move(placementTypes));
+    if (map.featureNames.empty()) { world.setSacredSites({});return; }
     for (int cz = 0; cz < map.height; ++cz)
         for (int cx = 0; cx < map.width; ++cx) {
             uint16_t v = map.features[size_t(cz) * map.width + cx];
@@ -300,7 +335,11 @@ static void scanFeaturePlane(World& world, const tak::tnt::Map& map,
             std::transform(key.begin(), key.end(), key.begin(), ::tolower);
             auto di = defs.find(key);
             if (di == defs.end()) continue;
-            float x = float(cx) * 16 + 8, z = float(cz) * 16 + 8;
+            if (di->second.sacredSite>0)
+                sacredSites.push_back({cx,cz,di->second.fx,di->second.fz,di->second.sacredSite});
+            // Retail feature records name the footprint origin (0x4931e0).
+            float x = float(cx * 16 + di->second.fx * 8);
+            float z = float(cz * 16 + di->second.fz * 8);
             if (di->second.mana) {
                 rawAll.push_back({x, z});
                 if (di->second.glowy) rawMana.push_back({x, z});   // buildable centre
@@ -309,7 +348,7 @@ static void scanFeaturePlane(World& world, const tak::tnt::Map& map,
             // (blocking=1) block; only the glowy Sacred Stone centre stays clear.
             if (!di->second.glowy && (!di->second.mana || di->second.blocking != 0)) {
                 int fx = di->second.fx, fz = di->second.fz;
-                world.blockCells(int(x) / 16 - fx / 2, int(z) / 16 - fz / 2, fx, fz, true);
+                world.blockCells(cx, cz, fx, fz, true);
             }
             // Reclaimable obstacle features (trees/rocks/houses) enter the sim so a
             // mobile builder can clear them for mana -- and flamable ones so dragonfire
@@ -319,9 +358,10 @@ static void scanFeaturePlane(World& world, const tak::tnt::Map& map,
                 float work = std::max(di->second.energy, 60.0f);   // rocks (energy 0) still take a beat
                 world.addFeature(cz * map.width + cx, x, z, di->second.energy, work,
                                  di->second.fx, di->second.fz, di->second.blocking != 0,
-                                 types.intern(key));
+                                 types.intern(key),false);
             }
         }
+    world.setSacredSites(std::move(sacredSites));
 }
 
 // Cluster the mana features into deposits, publish them, and carve each one clear.
@@ -368,6 +408,7 @@ static void installManaSpots(World& world,
 // is NOT done here (those paths already block via their own feature placement).
 void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs& vfs,
                          const TypeRegistry* reg) {
+    world.clearFeatureTypes();
     auto defs = loadFeatureDefs(vfs);
     FeatTypeInterner types(defs);
     std::vector<std::pair<float, float>> rawMana, rawAll;
@@ -389,9 +430,24 @@ void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs&
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
                                                 const MatchConfig& cfg) {
     const hpi::Vfs& vfs = *cfg.vfs;
+    world.setGameSeed(cfg.startSeed);
     // A "~gen1~" mapPath is a random-map recipe: generate it in memory (identically
     // on client and referee -- the params ride the mapId, generation is integer-only).
     const bool generated = tak::mapgen::isGeneratedMapId(cfg.mapPath);
+    int windMin = 100, windMax = 2000;
+    if (!generated) {
+        auto ota = std::filesystem::path(cfg.mapPath);
+        ota.replace_extension(".ota");
+        if (vfs.has(ota.generic_string())) {
+            const auto bytes = vfs.read(ota.generic_string());
+            const auto root = tdf::parseText(std::string(bytes.begin(), bytes.end()), ota.generic_string());
+            if (const auto* gh = root.child("globalheader")) {
+                windMin = int(gh->numberOr("minwindspeed", 100));
+                windMax = int(gh->numberOr("maxwindspeed", 2000));
+            }
+        }
+    }
+    world.setWindRange(windMin, windMax);
     std::vector<std::pair<float, float>> genStarts;
     tak::tnt::Map map;
     if (generated) {
@@ -409,15 +465,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // Retail's background pathfinder. Every match gets it; see
     // docs/retail-engine.md for what it is and what it still cannot do.
     world.setPathService(true);
-    // Retail's own default is 12000 work units a tick (icd 0x41617b), which it
-    // exposes as a quality setting scaling that by 5%..1000%. We run at 1500 --
-    // 12.5%, well inside retail's range -- because measured on the 8-AI
-    // benchmark 12000 costs 42.2ms/tick against 23.5 at 1500, and routing is
-    // IDENTICAL at 12000, 3000 and 1500 (same percentage of the distance closed
-    // for 40-, 80- and 160-cell goals). The budget decides how fast a search
-    // finishes, not whether it can: the unit walks its straight segment
-    // meanwhile and the route lands a few ticks later either way.
-    world.setPathBudget(1500);
+    // Route delivery timing affects steering and RNG order. Use retail's
+    // default work budget (0x41617b), not the former performance shortcut.
+    world.setPathBudget(kPathBudgetDefault);
     world.clearFeatures();   // authoritative rebuild (the client ctor pre-registers)
 
     // Features: block nav footprints, and gather mana-deposit positions. Iterate
@@ -447,7 +497,10 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     world.setPlayerCount(int(cfg.slots.size()));
     for (int i = 0; i < int(cfg.slots.size()); ++i) {
         world.setTeam(i, cfg.slots[i].team);
+        world.player(i).cacheClock.enabled=true;
         world.player(i).manaMult = cfg.slots[i].manaMult;   // Absurd AI = 2x income
+        world.player(i).automaticGates = cfg.slots[i].automaticGates;
+        world.player(i).defensiveAi = cfg.slots[i].defensiveAi;
     }
     // GODS DO NOT APPEAR IN MULTIPLAYER. This is a deliberate divergence, decided
     // 2026-09-16 -- do not "restore fidelity" here without asking.
@@ -632,20 +685,29 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // it was more code, and slower to converge on the right answer than the constant.
     constexpr int kSnapCells = 96;
     auto snapSpawn = [&](const UnitType* t, float& ux, float& uz) {
-        if (!t || t->canFly) return true;         // flyers are fine over anything
+        if (!t) return true;
+        if (t->canFly) {
+            // Flyers may cross any terrain, but the stress lattice must not
+            // start them outside the map (they can later enter a landed state).
+            const float halfX=float(t->footX)*8, halfZ=float(t->footZ)*8;
+            ux=std::clamp(ux,halfX,std::max(halfX,float(claimW)*16-halfX));
+            uz=std::clamp(uz,halfZ,std::max(halfZ,float(claimH)*16-halfZ));
+            return true;
+        }
         const NavGrid& g = world.navFor(t);
         if (g.empty()) return true;
         const int foot = std::clamp(std::max(t->footX, t->footZ), 1, 15);
-        const int cx = int(ux) / 16, cz = int(uz) / 16;
+        const int cx = footprintCell(ux,foot), cz = footprintCell(uz,foot);
         for (int r = 0; r <= kSnapCells; ++r)
             for (int j = -r; j <= r; ++j)
-                for (int i = -r; i <= r; ++i) {
-                    if (std::max(std::abs(i), std::abs(j)) != r) continue;   // ring only
+                for (int i = -r; i <= r; i += (j == -r || j == r) ? 1 : 2*r) {
+                    // Same perimeter and row order; skip the unused interior
+                    // directly so dense stress fills do not exhaust the load timeout.
                     const int nx = cx + i, nz = cz + j;
                     if (!g.fits(nx, nz, foot)) continue;
                     if (!claimFoot(nx, nz, foot)) continue;                  // taken
-                    ux = float(nx) * 16 + 8;
-                    uz = float(nz) * 16 + 8;
+                    ux = footprintWaypoint(nx,foot).toFloat();
+                    uz = footprintWaypoint(nz,foot).toFloat();
                     return true;
                 }
         // Nothing free within kSnapCells of where this unit wanted to be. Sweep a
@@ -657,8 +719,8 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             const int nx = sweepCursor % claimW, nz = sweepCursor / claimW;
             if (!g.fits(nx, nz, foot)) continue;
             if (!claimFoot(nx, nz, foot)) continue;
-            ux = float(nx) * 16 + 8;
-            uz = float(nz) * 16 + 8;
+            ux = footprintWaypoint(nx,foot).toFloat();
+            uz = footprintWaypoint(nz,foot).toFloat();
             return true;
         }
         return false;                             // the map really is full
@@ -681,13 +743,22 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         if (!t || t->canFly) return;
         const int foot = std::clamp(std::max(t->footX, t->footZ), 1, 15);
         const NavGrid& g = world.navFor(t);
-        const int cx = int(ux) / 16, cz = int(uz) / 16;
+        const int cx = footprintCell(ux,foot), cz = footprintCell(uz,foot);
         if (!g.empty() && g.fits(cx, cz, foot) && claimFoot(cx, cz, foot))
             return;                       // the spot is good: leave it untouched
         snapSpawn(t, ux, uz);             // claims the cell it settles on
     };
 
     const int kBenchSpawns = benchmarkSpawns(cfg.benchmark);   // 0 when off
+    // Reserve every monarch before an earlier player's stress army can consume
+    // the remaining ground cells on a cramped map.
+    std::vector<std::pair<float,float>> monarchPositions(cfg.slots.size());
+    int monarchSpot=spot;
+    for (size_t i=0;i<cfg.slots.size();++i) if (cfg.slots[i].used) {
+        auto [x,z]=spots[size_t(monarchSpot++)];
+        placeMonarch(reg.find(kMonarchs[cfg.slots[i].faction % 5]),x,z);
+        monarchPositions[i]={x,z};
+    }
     std::vector<BenchStage> benchPlan;
     if (kBenchSpawns > 0) {
         benchPlan.resize(size_t(kBenchSpawns));
@@ -697,9 +768,8 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     for (int i = 0; i < int(cfg.slots.size()); ++i) {
         if (!cfg.slots[i].used) continue;
         const UnitType* monarch = reg.find(kMonarchs[cfg.slots[i].faction % 5]);
-        float mx = spots[size_t(spot)].first, mz = spots[size_t(spot)].second;
+        auto [mx,mz]=monarchPositions[size_t(i)];
         ++spot;
-        placeMonarch(monarch, mx, mz);   // onto ground it can stand on, and reserve it
         // AFTER the snap, not before: this list is what the caller opens the camera on
         // (and what the server records as the slot's position), so recording the raw
         // spot would point the opening view at the lake the Monarch was just moved out
@@ -707,6 +777,21 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         assigned.push_back({mx, mz});
         world.spawn(monarch, mx, mz, 0, i);
         world.player(i).mana = cfg.startMana;
+        // Reserve per-type slots for both immediate stress spawns and the future
+        // benchmark plan. Continue round-robin with eligible types so unique
+        // units do not either multiply or shrink the requested workload.
+        std::map<const UnitType*,int> allocated;
+        for (const auto& u:world.units())
+            if (u.alive() && u.player==i) ++allocated[u.type];
+        auto nextType=[&](const std::vector<const UnitType*>& roster,size_t& cursor) -> const UnitType* {
+            for (size_t attempt=0;attempt<roster.size();++attempt) {
+                const auto* type=roster[cursor++ % roster.size()];
+                if (type->totalAllowed>0 && allocated[type]>=type->totalAllowed) continue;
+                ++allocated[type];
+                return type;
+            }
+            return nullptr;
+        };
         // Resolve this player's god now, while the registry is in hand. The sim
         // summons it itself (World::summonReadyGods) and has no registry of its own;
         // the client used to do the lookup AND the summon, which is what desynced it
@@ -766,8 +851,10 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 const float spacing = 24.0f;
                 float x0 = mx - float(cols) * spacing * 0.5f; // centre the block on the start
                 float z0 = mz + spacing;                      // just south of the Monarch
+                size_t cursor=0;
                 for (int k = 0; k < target; ++k) {
-                    const UnitType* t = roster[size_t(k) % roster.size()];
+                    const UnitType* t = nextType(roster,cursor);
+                    if (!t) break;
                     float ux = x0 + float(k % cols) * spacing;
                     float uz = z0 + float(k / cols) * spacing;
                     // The lattice ignores terrain; this does not. False means the map
@@ -804,8 +891,10 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 // Snapped at PLAN time, not spawn time: the plan is built identically on
                 // every peer here, whereas snapping during the run would have to agree
                 // about a world that has moved on.
+                size_t cursor=0;
                 for (int s = 0; s < plan; ++s) {
-                    const UnitType* t = roster[size_t(s) % roster.size()];
+                    const UnitType* t = nextType(roster,cursor);
+                    if (!t) break;
                     float ux = x0 + float(s % cols) * spacing;
                     float uz = z0 + float(s / cols) * spacing;
                     if (!snapSpawn(t, ux, uz)) break;   // map full: stop, do not stack
@@ -866,8 +955,9 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
         s.used = false;   // no monarch spawn -- units come from [Map Data][units]
         s.team = def.find("opponent") != std::string::npos ? 1 : 0;
         for (int f = 0; f < 5; ++f) if (def.find(kingdoms[f]) != std::string::npos) s.faction = f;
-        slots.push_back(s);
         bool strategic = def.find("strategic") != std::string::npos;
+        s.automaticGates=strategic;
+        slots.push_back(s);
         bool ai = strategic || def.find("passive") != std::string::npos;
         if (!ai && !foundHuman) { human = slot; foundHuman = true; }
         // Only a STRATEGIC player gets a brain. A "passive neutral" is scenery --

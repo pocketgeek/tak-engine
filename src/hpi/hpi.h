@@ -210,7 +210,7 @@ private:
 
 // Which override files a game will mount (Phase 3 multiplayer policy). None: no
 // overrides. Cosmetic: only files that cannot affect the deterministic sim
-// (art/models/anim/sound/music/fonts/gui). Full: every override, including
+// (textures/sprites/sound/music/fonts/gui). Full: every override, including
 // gameplay data (*.fbi, weapon/side/game *.tdf, canbuild, features, maps).
 enum class OverridePolicy { None, Cosmetic, Full };
 
@@ -220,7 +220,7 @@ enum class OverridePolicy { None, Cosmetic, Full };
 bool affectsGameplay(const std::string& path);
 
 // A 64-bit fingerprint of the gameplay data the sim consumes (unit stats, weapon/
-// side/game data, build lists, features) as resolved from the VFS -- NOT maps
+// side/game data, build lists, features, scripts/models) as resolved from the VFS -- NOT maps
 // (per-game) and NOT cosmetic files. Multiplayer peers must agree on this: it
 // verifies the shipped gameplay files are unmodified, and (under the Full override
 // tier, where gameplay overrides are mounted) that every player has the same ones.

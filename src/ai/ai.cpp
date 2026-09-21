@@ -4,6 +4,7 @@
 
 #include "hpi/hpi.h"
 #include "sim/detmath.h"
+#include "sim/footprint.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -38,9 +39,9 @@ Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name) {
 
 DiffParams paramsFor(Difficulty d) {
     switch (d) {
-        // Turtle: Easy's build-up, but never sends an attack wave -- it only defends
+        // Defensive: normal production, but never sends an attack wave -- it only defends
         // (idle units still auto-fire on anything that walks into range).
-        case Difficulty::Passive: return {60, 4, 1, 70,  false, false, 0};
+        case Difficulty::Passive: return {30, 5, 3, 100, false, false, 0};
         // Sluggish: reacts slowly, builds up slowly, and only commits once it has
         // gathered a sizeable group -- so it's passive and beatable. No raiding.
         case Difficulty::Easy:   return {60, 4, 1, 70,  false, true,  0};
@@ -119,7 +120,7 @@ BuildCat Controller::categoryOf(const tak::sim::UnitType* t) const {
 Needs Controller::assessNeeds(const tak::sim::World& world) const {
     Needs n;
     const auto& me = world.player(player_);
-    n.income = me.income / std::max(me.manaMult, 1.0f);   // ignore an Absurd AI's cheat
+    n.income = me.income;   // spend the income actually available
     for (const auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type) continue;
         ++n.counts[u.type];
@@ -128,12 +129,13 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
             case BuildCat::Factory:  ++n.factories; break;
             case BuildCat::Builder:  ++n.builders;  break;
             case BuildCat::Army:     ++n.army;      break;
-            case BuildCat::Defense:  break;
+            case BuildCat::Defense:  ++n.defenses; break;
         }
     }
     // One factory per ~40 income so production can actually spend what we earn; a couple
     // of mobile builders is plenty (more just spiral the economy). Hard/Absurd run hotter.
     n.desiredFactories = std::clamp(int(n.income / 40.0f) + 1, 1, 8);
+    n.desiredArmy = std::clamp(12 + int(n.income * 1.5f), 12, 180);
     n.builderCap = (diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd) ? 3 : 2;
     return n;
 }
@@ -147,16 +149,18 @@ int Controller::desire(BuildCat c, const Needs& n) const {
             // Bootstrap income BEFORE the pricey first factory -- building a 1700-mana
             // keep out of the opening treasury with no income starves everything after.
             if (n.income < 20.0f) return 95;
-            return n.income < 25.0f + 20.0f * n.factories ? 60 : 0; // sustain the factories
+            return n.income < 25.0f + 20.0f * n.factories ?
+                ((diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd) ? 80 : 60) : 0; // sustain the factories
         case BuildCat::Factory:
             if (n.factories == 0) return 90;                        // then: some production
             return n.factories < n.desiredFactories ? 70 : 0;       // scale with income
         case BuildCat::Builder:
             return n.builders < n.builderCap ? 65 : 0;              // a handful, then stop
         case BuildCat::Army:
-            return 50;                                              // the default sink
+            return n.army < n.desiredArmy ? 50 : 0;
         case BuildCat::Defense:
-            return 0;                                               // (profile walls weight 0)
+            return n.defenses < std::clamp(1 + int(n.income / 50), 1, 6) ?
+                (n.army >= 4 ? 55 : 30) : 0;
     }
     return 0;
 }
@@ -170,18 +174,21 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
                                                    const Needs& needs, int excludeCats) {
     const auto& menu = registry_.buildable(producer.type->id);
     const auto& me = world.player(player_);
-    float income = me.income / std::max(me.manaMult, 1.0f);   // plan against base income
+    float income = me.income;   // include the Absurd income bonus
     // A menu entry the AI may build right now: has a positive weight, is under its
     // limit, and savings + income over its build time cover the cost (so a builder
     // never traps itself on a site the mana runs dry beneath).
+    std::unordered_map<const tak::sim::UnitType*,int> terrainWeights;
     auto usable = [&](const tak::sim::UnitType* ut) -> int {
         if (!ut) return 0;
         auto wi = profile_.weight.find(ut->id);
         int w = wi == profile_.weight.end() ? 0 : wi->second;
         if (w <= 0) return 0;
+        if (categoryOf(ut)==BuildCat::Economy && ut->income<=0 && needs.income<20) return 0;
         auto li = profile_.limit.find(ut->id);
         int lim = li == profile_.limit.end() ? -1 : li->second;
-        if (lim >= 0) {
+        if (lim == 0) return 0;
+        if (lim > 0) {
             auto ci = needs.counts.find(ut);
             if ((ci == needs.counts.end() ? 0 : ci->second) >=
                 std::max(1, lim * dp_.limitScale / 100))
@@ -191,7 +198,9 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
             float secs = ut->buildTime / std::max(producer.type->workerTime, 1.0f);
             if (me.mana + income * secs < ut->buildCost) return 0;
         }
-        return w;
+        auto [it,inserted]=terrainWeights.try_emplace(ut,0);
+        if (inserted) it->second=terrainWeight(world,producer,ut,w);
+        return it->second;
     };
     // Pass 1: the highest desire among categories this producer can actually build now.
     int best = 0;
@@ -239,6 +248,52 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     return chosen;
 }
 
+// These are read-only terrain queries. Orders still go through the normal
+// command stream and the existing retail movement controllers.
+bool Controller::reachablePoint(const tak::sim::World& world, const tak::sim::UnitType* type,
+                                 float fx,float fz,float tx,float tz,float& x,float& z) const {
+    if (type->canFly) { x=tx;z=tz;return true; }
+    const auto& nav=world.navFor(type);
+    const int foot=std::clamp(std::max(type->footX,type->footZ),1,15);
+    auto reachable=[&](float px,float pz) {
+        return nav.fits(tak::sim::footprintCell(px,foot),tak::sim::footprintCell(pz,foot),foot) &&
+            world.pathExists(type,px,pz,fx,fz);
+    };
+    if (reachable(tx,tz)) { x=tx;z=tz;return true; }
+    // A ship can bombard a shore it cannot occupy. Likewise, approach the edge
+    // of an occupied building rather than treating its blocked centre as a wall.
+    const float range=type->weapon.melee ? 16.0f : std::max(16.0f,float(type->weapon.range)*0.8f);
+    for (float r : {16.0f,range*0.5f,range})
+        for (int i=0;i<8;++i) {
+            const float a=float(i)*0.785398163f;
+            const float px=tx+detmath::cos(a)*r,pz=tz+detmath::sin(a)*r;
+            if (reachable(px,pz)) { x=px;z=pz;return true; }
+        }
+    return false;
+}
+
+int Controller::terrainWeight(const tak::sim::World& world,const tak::sim::Unit& producer,
+                               const tak::sim::UnitType* type,int weight) const {
+    if (type->isStructure()) return weight;
+    float px=producer.x.toFloat(),pz=producer.z.toFloat();
+    bool launch=false;
+    for (int r=48;r<=304 && !launch;r+=64)
+        for (int i=0;i<8;++i) {
+            const float a=float(i)*0.785398163f;
+            const float x=producer.x.toFloat()+detmath::cos(a)*r;
+            const float z=producer.z.toFloat()+detmath::sin(a)*r;
+            if (world.canPlace(type,x,z)) { px=x;pz=z;launch=true;break; }
+        }
+    if (!launch) return 0;
+    if (categoryOf(type)!=BuildCat::Army || enemyStarts_.empty()) return weight;
+    float x,z;
+    for (const auto& [tx,tz] : enemyStarts_)
+        if (reachablePoint(world,type,px,pz,tx,tz,x,z)) return weight;
+    // Keep a smaller home defense on isolated land; don't fill a landlocked
+    // lake with ships that cannot threaten any enemy shore.
+    return type->domain==tak::sim::UnitType::Domain::Water ? 0 : std::max(1,weight/5);
+}
+
 // Turn a pick into a command: a factory (keep/castle) trains a mobile unit; a
 // mobile builder places a structure or conjures a mobile unit near itself. The
 // placement spot is probed against the (const) world, then issued as a Build.
@@ -254,7 +309,7 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
             float ox = p.x.toFloat(), oz = p.z.toFloat();
             if (p.type->commander) { auto h = homeOf(world); ox = h.first; oz = h.second; }
             float x, z;
-            if (placeSite(world, pick, ox, oz, x, z)) {
+            if (placeSite(world, pick, p, ox, oz, x, z)) {
                 emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                 return true;
             } else {
@@ -290,13 +345,69 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
 // (when the map has any), everything else probes outward from the builder.
 // Returns true and the chosen (outX,outZ) if a spot was found.
 bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitType* t,
-                           float nx, float nz, float& outX, float& outZ) const {
+                           const tak::sim::Unit& builder, float nx, float nz, float& outX, float& outZ) const {
     if (!t) return false;
+    const auto home=homeOf(world);
+    const bool aggressive=diff_==Difficulty::Hard || diff_==Difficulty::Absurd;
+    const float radius=!dp_.attack ? 600.0f : (builder.type->commander ? 900.0f : aggressive ? 100000.0f : 1600.0f);
+    // Reserve the largest lodestone this faction may use, including upgrades.
+    // This is AI policy, not a change to the player's placement/navigation rules.
+    int manaFootX=0,manaFootZ=0;
+    if (t->isStructure() && !t->onMana && world.hasManaSpots())
+        for (const auto& [id,type]:registry_.types())
+            if (type.onMana && type.isStructure() && type.side==builder.type->side) {
+                manaFootX=std::max(manaFootX,type.footX);
+                manaFootZ=std::max(manaFootZ,type.footZ);
+            }
+    const bool factory=!registry_.buildable(t->id).empty();
+    auto usable=[&](float x,float z) {
+        const float dx=x-home.first,dz=z-home.second;
+        if (manaFootX>0) for (const auto& [mx,mz]:world.manaSpots()) {
+            const int x0=tak::sim::footprintOrigin(x,t->footX);
+            const int z0=tak::sim::footprintOrigin(z,t->footZ);
+            const int mx0=tak::sim::footprintOrigin(mx,manaFootX);
+            const int mz0=tak::sim::footprintOrigin(mz,manaFootZ);
+            if (x0<mx0+manaFootX && x0+t->footX>mx0 &&
+                z0<mz0+manaFootZ && z0+t->footZ>mz0) return false;
+            const float mdx=x-mx,mdz=z-mz;
+            const float clearance=float(std::max(manaFootX,manaFootZ))*8+12;
+            if (mdx*mdx+mdz*mdz<clearance*clearance) return false;
+            // The lodestone planner also leaves working room around factories.
+            if (factory && std::abs(mdx)<float(t->footX+manaFootX)*8+48 &&
+                std::abs(mdz)<float(t->footZ+manaFootZ)*8+48) return false;
+        }
+        if (!builder.type->canFly) {
+            // Check the position where MobileBuild will bring the constructor,
+            // too. A rectangular factory can be clear now but reject its own
+            // builder after a short-side approach enters the placement radius.
+            const int sx=tak::sim::footprintOrigin(x,t->footX);
+            const int sz=tak::sim::footprintOrigin(z,t->footZ);
+            const tak::sim::RetailRectGoal rectangle{sx-builder.type->footX,sx+t->footX,
+                                                     sz-builder.type->footZ,sz+t->footZ};
+            const auto [cx,cz]=rectangle.navigationCell(
+                tak::sim::footprintOrigin(builder.x,builder.type->footX),
+                tak::sim::footprintOrigin(builder.z,builder.type->footZ));
+            const float ax=float(cx*16+builder.type->footX*8)-x;
+            const float az=float(cz*16+builder.type->footZ*8)-z;
+            const float clearance=float(std::max(t->footX,t->footZ))*8+12;
+            if (ax*ax+az*az<clearance*clearance) return false;
+        }
+        for (const auto& u : world.units()) {
+            if (!u.alive() || u.player!=player_ || !u.type || !u.type->isStructure()) continue;
+            if (registry_.buildable(u.type->id).empty() && registry_.buildable(t->id).empty()) continue;
+            // Leave working room around production buildings, including their
+            // scripted output point. Placement validity alone allows blocked doors.
+            if (std::abs(x-u.x.toFloat()) < float(t->footX+u.type->footX)*8+48 &&
+                std::abs(z-u.z.toFloat()) < float(t->footZ+u.type->footZ)*8+48) return false;
+        }
+        return dx*dx+dz*dz<=radius*radius && world.canPlace(t,x,z) &&
+            (builder.type->canFly || world.pathExists(builder.type,x,z,builder.x.toFloat(),builder.z.toFloat()));
+    };
     if (t->onMana && world.hasManaSpots()) {
         float bestD = 1e18f;
         bool found = false;
         for (const auto& [sx, sz] : world.manaSpots()) {
-            if (!world.canPlace(t, sx, sz)) continue;   // taken or blocked
+            if (!usable(sx, sz)) continue;   // taken or blocked
             float dx = sx - nx, dz = sz - nz, d = dx * dx + dz * dz;
             if (d < bestD) { bestD = d; outX = sx; outZ = sz; found = true; }
         }
@@ -304,8 +415,9 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     }
     for (float r = 70; r < 340; r += 30)
         for (float a = 0; a < 6.28f; a += 0.5f) {
-            float x = nx + detmath::cos(a) * r, z = nz + detmath::sin(a) * r;
-            if (world.canPlace(t, x, z)) { outX = x; outZ = z; return true; }
+            float x = tak::sim::footprintWaypoint(tak::sim::footprintCell(nx + detmath::cos(a) * r,t->footX),t->footX).toFloat();
+            float z = tak::sim::footprintWaypoint(tak::sim::footprintCell(nz + detmath::sin(a) * r,t->footZ),t->footZ).toFloat();
+            if (usable(x, z)) { outX = x; outZ = z; return true; }
         }
     return false;
 }
@@ -326,23 +438,25 @@ bool Controller::nearestVisibleEnemy(const tak::sim::World& world, float cx, flo
             eyes.push_back({u.x.toFloat(), u.z.toFloat(), s * s});
         }
     if (eyes.empty()) return false;
-    std::vector<std::pair<float, std::pair<float, float>>> vis;
+    // Sort candidates before testing visibility. Only the first 16 visible
+    // positions can affect the result, and usually the first is reachable.
+    // The key is identical to the old visible-only sort, including x/z ties.
+    std::vector<std::pair<float, std::pair<float, float>>> candidates;
     for (auto& e : world.units()) {
         if (!e.alive() || e.embarked() || world.allied(e.player, player_) || !e.type)
             continue;
+        float dx = e.x.toFloat() - cx, dz = e.z.toFloat() - cz;
+        candidates.push_back({dx * dx + dz * dz, {e.x.toFloat(), e.z.toFloat()}});
+    }
+    std::sort(candidates.begin(), candidates.end());
+    int checked = 0;
+    for (auto& e : candidates) {
         bool seen = false;
         for (const Eye& eye : eyes) {
-            float dx = e.x.toFloat() - eye.x, dz = e.z.toFloat() - eye.z;
+            float dx = e.second.first - eye.x, dz = e.second.second - eye.z;
             if (dx * dx + dz * dz <= eye.r2) { seen = true; break; }
         }
-        if (!seen) continue;   // fogged: we haven't spotted this one
-        float dx = e.x.toFloat() - cx, dz = e.z.toFloat() - cz;
-        vis.push_back({dx * dx + dz * dz, {e.x.toFloat(), e.z.toFloat()}});
-    }
-    if (vis.empty()) return false;
-    std::sort(vis.begin(), vis.end());
-    int checked = 0;
-    for (auto& e : vis) {
+        if (!seen) continue;
         if (++checked > 16) break;   // bound the reachability probes (flow builds)
         if (!atype || world.pathExists(atype, e.second.first, e.second.second, cx, cz)) {
             tx = e.second.first; tz = e.second.second;
@@ -372,6 +486,7 @@ bool Controller::nearestEnemyStart(float cx, float cz, float& tx, float& tz) con
 // as a group is the whole of it.
 // Also sends one early scout so the AI reveals + commits rather than turtling forever.
 std::pair<float, float> Controller::homeOf(const tak::sim::World& world) const {
+    if (home_) return *home_;
     double sx = 0, sz = 0; int n = 0;
     float kx = 0, kz = 0; bool haveKing = false;
     for (const auto& u : world.units()) {
@@ -381,42 +496,41 @@ std::pair<float, float> Controller::homeOf(const tak::sim::World& world) const {
     }
     if (n) return {float(sx / n), float(sz / n)};   // centroid of my buildings
     if (haveKing) return {kx, kz};                  // no buildings yet: anchor on the Monarch
-    return {0.0f, 0.0f};
+    for (const auto& u : world.units())
+        if (u.alive() && u.player==player_) { sx+=u.x.toFloat();sz+=u.z.toFloat();++n; }
+    return n ? std::pair{float(sx/n),float(sz/n)} : std::pair{0.0f,0.0f};
 }
 
 void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
                            const CommandSink& sink) {
     if (!dp_.attack) return;   // Passive: never marches out; units defend in place.
-    std::vector<int> idle;
-    double sx = 0, sz = 0;
-    const tak::sim::UnitType* atype = nullptr;
-    for (auto& u : world.units())
-        if (u.alive() && u.player == player_ && u.type && !u.type->isStructure() &&
-            !u.type->isBuilder && waveFree(u)) {
-            idle.push_back(u.id);
-            sx += u.x.toFloat(); sz += u.z.toFloat();
-            if (!atype && !u.type->canFly) atype = u.type;
+    struct Fighter { int id; float x,z; };
+    std::vector<Fighter> idle;
+    const auto home=homeOf(world);
+    float objectiveX=0,objectiveZ=0;
+    if (!nearestVisibleEnemy(world,home.first,home.second,nullptr,objectiveX,objectiveZ) &&
+        !nearestEnemyStart(home.first,home.second,objectiveX,objectiveZ)) return;
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player!=player_ || !u.type || u.underConstruction || u.embarked() ||
+            u.type->isStructure() || u.type->isBuilder || u.type->weapon.damage<=0 || !waveFree(u)) continue;
+        float tx=0,tz=0;
+        bool reached=reachablePoint(world,u.type,u.x.toFloat(),u.z.toFloat(),objectiveX,objectiveZ,tx,tz);
+        if (!reached) for (const auto& [ex,ez] : enemyStarts_) {
+            if ((reached=reachablePoint(world,u.type,u.x.toFloat(),u.z.toFloat(),ex,ez,tx,tz))) break;
         }
+        if (reached) idle.push_back({u.id,tx,tz});
+    }
     if (idle.empty()) return;
-    float cx = float(sx / idle.size()), cz = float(sz / idle.size());
-
-    // Objective: the nearest enemy we can actually SEE, else march on the nearest
-    // known enemy base (which draws us forward and into its defenders).
-    float tx = 0, tz = 0;
-    if (!nearestVisibleEnemy(world, cx, cz, atype, tx, tz) &&
-        !nearestEnemyStart(cx, cz, tx, tz))
-        return;   // nothing seen and no known base to march on -> hold
 
     // The "big push" army scales with mana INCOME: a rich economy masses a large army
     // before it commits, a lean one strikes with less. So a strong AI stops trickling
     // its units into the enemy and instead builds an overwhelming force. A tapped-out
-    // economy (little mana, little income) attacks with what it has rather than turtle.
+    // economy still waits for the minimum wave instead of feeding in single units.
     const auto& me = world.player(player_);
-    float income = me.income / std::max(me.manaMult, 1.0f);   // ignore an Absurd cheat
+    float income = me.income;   // scale the force with actual income
     int bigPush = std::clamp(dp_.waveSize + int(income * 0.25f), dp_.waveSize, 60);
-    bool tapped = me.mana < 200.0f && me.income < 40.0f;
 
-    if (int(idle.size()) >= bigPush || tapped) {
+    if (int(idle.size()) >= bigPush) {
         // Commit the army -- but cap commands per think so a huge force (a near-cap
         // game, or a stress test with thousands of units) doesn't emit one giant tick
         // bundle that blows the wire frame limit. The rest stay idle and deploy over
@@ -425,9 +539,10 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
         constexpr int kMaxWaveCmds = 256;
         int n = std::min(int(idle.size()), kMaxWaveCmds);
         for (int i = 0; i < n; ++i)
-            emit(sink, tak::net::Cmd::AttackMove, idle[size_t(i)], "", tx, tz);
+            emit(sink, tak::net::Cmd::AttackMove, idle[size_t(i)].id, "", idle[size_t(i)].x, idle[size_t(i)].z);
         lastRaidTick_ = simTick;      // let the freshly-built stragglers regroup, don't raid next
         scouted_ = true;
+        raidersSincePush_=0;
         return;
     }
 
@@ -439,13 +554,15 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     int homeCore = std::max(dp_.waveSize, bigPush / 3);   // never raid below this reserve
     bool firstProbe = dp_.scout && !scouted_ && int(idle.size()) >= 1;
     bool canRaid = dp_.raidSize > 0 &&
+                   raidersSincePush_ + dp_.raidSize <= std::max(dp_.raidSize,bigPush/3) &&
                    int(idle.size()) >= homeCore + dp_.raidSize &&
                    simTick - lastRaidTick_ >= kRaidCooldown;
     if (firstProbe || canRaid) {
         int party = firstProbe && !canRaid ? 1 : dp_.raidSize;   // opening scout is a lone unit
         for (int i = 0; i < party && i < int(idle.size()); ++i)
-            emit(sink, tak::net::Cmd::AttackMove, idle[size_t(i)], "", tx, tz);
+            emit(sink, tak::net::Cmd::AttackMove, idle[size_t(i)].id, "", idle[size_t(i)].x, idle[size_t(i)].z);
         scouted_ = true;
+        raidersSincePush_+=party;
         lastRaidTick_ = simTick;
     }
 }
@@ -458,7 +575,8 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     if ((simTick % uint32_t(dp_.thinkPeriod)) != uint32_t(player_ % dp_.thinkPeriod)) return;
     if (world.player(player_).defeated) return;
 
-    const Needs needs = assessNeeds(world);   // one empire assessment drives every producer
+    if (!home_) home_=homeOf(world);
+    Needs needs = assessNeeds(world);   // one empire assessment drives every producer
     // Snapshot the idle producers, then act on up to producersPerThink of them -- the
     // per-think cap is what paces the economy across difficulties (Easy builds one
     // thing per think, Hard many).
@@ -496,6 +614,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
             if (u.player == player_ && u.alive() && u.underConstruction) { throttle = true; break; }
     int acted = 0;
     bool commanderActed = false;
+    std::vector<int> assigned;
     if (!throttle)
         for (int pid : producers) {
             if (acted >= dp_.producersPerThink) break;
@@ -515,18 +634,67 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                 if (produce(world, *p, pick, sink)) {
                     if (p->type && p->type->commander) commanderActed = true;
                     ++acted;
+                    assigned.push_back(pid);
+                    ++needs.counts[pick];
+                    switch (categoryOf(pick)) {
+                        case BuildCat::Army: ++needs.army; break;
+                        case BuildCat::Factory: ++needs.factories; break;
+                        case BuildCat::Builder: ++needs.builders; break;
+                        case BuildCat::Economy: ++needs.economy; break;
+                        case BuildCat::Defense: ++needs.defenses; break;
+                    }
                     break;
                 }
                 exclude |= 1 << int(categoryOf(pick));
             }
         }
+    // Most units are not factories. Build the ordered factory list once per
+    // think, rather than scan the whole empire for every idle army member.
+    // Keep IDs so the command sink cannot invalidate stored unit pointers.
+    std::vector<int> exitFactories;
+    for (const auto& factory:world.units())
+        if (factory.alive() && factory.player==player_ && factory.type && !factory.underConstruction &&
+            factory.type->isStructure() && !registry_.buildable(factory.type->id).empty())
+            exitFactories.push_back(factory.id);
+    // Idle newborns and constructors must clear factory doors even when this AI
+    // never attacks. Issue ordinary local moves; do not relax body occupancy or
+    // change the movement controller to make production succeed.
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player!=player_ || !u.type || u.type->isStructure() ||
+            u.underConstruction || u.embarked() || !u.orders.empty() || u.buildSiteId ||
+            std::find(assigned.begin(),assigned.end(),u.id)!=assigned.end()) continue;
+        for (int factoryId:exitFactories) {
+            const auto* found=world.unit(factoryId);
+            if (!found) continue;
+            const auto& factory=*found;
+            const float clearance=float(std::max(factory.type->footX,factory.type->footZ))*8+64;
+            const float dx=u.x.toFloat()-factory.x.toFloat(),dz=u.z.toFloat()-factory.z.toFloat();
+            if (dx*dx+dz*dz>clearance*clearance) continue;
+            bool moved=false;
+            for (float r : {clearance+48,clearance+96,clearance+160}) {
+                for (int i=0;i<16;++i) {
+                    const float a=float((u.id+i)%16)*0.392699082f;
+                    const float x=factory.x.toFloat()+detmath::cos(a)*r;
+                    const float z=factory.z.toFloat()+detmath::sin(a)*r;
+                    const auto home=homeOf(world);
+                    if (!dp_.attack && (x-home.first)*(x-home.first)+(z-home.second)*(z-home.second)>600*600) continue;
+                    if (!world.canPlace(u.type,x,z) || (!u.type->canFly &&
+                        !world.pathExists(u.type,x,z,u.x.toFloat(),u.z.toFloat()))) continue;
+                    emit(sink,tak::net::Cmd::Move,u.id,"",x,z);
+                    assigned.push_back(u.id);moved=true;break;
+                }
+                if (moved) break;
+            }
+            if (moved) break;
+        }
+    }
     // Keep the Monarch safe: when it's idle (no build this think, no order, no site)
     // and has strayed beyond a leash of home, walk it back to the base. Losing the
     // Monarch can lose the game (Monarch Expendable), so it must not sit exposed out
     // in the field. A plain Move (not AttackMove) -- it retreats, it doesn't hunt.
     for (const auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type || !u.type->commander) continue;
-        if (commanderActed || !u.orders.empty() || u.buildSiteId != 0 || u.underConstruction)
+        if (commanderActed || std::find(assigned.begin(),assigned.end(),u.id)!=assigned.end() || !u.orders.empty() || u.buildSiteId != 0 || u.underConstruction)
             break;
         auto h = homeOf(world);
         float dx = u.x.toFloat() - h.first, dz = u.z.toFloat() - h.second;
@@ -534,6 +702,15 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         if (dx * dx + dz * dz > kHomeLeash * kHomeLeash)
             emit(sink, tak::net::Cmd::Move, u.id, "", h.first, h.second);
         break;
+    }
+    if (!dp_.attack) {
+        for (const auto& u : world.units()) {
+            if (!u.alive() || u.player!=player_ || u.underConstruction || !u.type ||
+                !u.type->canSetStance || (u.moveState==0 && u.fireState==2)) continue;
+            tak::net::Command c; c.kind=tak::net::Cmd::Stance;
+            c.player=uint8_t(player_);c.unitId=u.id;c.targetId=1;
+            sink(c); // defend in place; never auto-chase an intruder away from home
+        }
     }
     sendWaves(world, simTick, sink);
 }

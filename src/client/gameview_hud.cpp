@@ -29,6 +29,7 @@
             float bestT = 24 * 24;
             for (const UnitR* _up : front().live) {
                 const UnitR& u = *_up;
+                if (!canPickUnit(u)) continue;
                 if (!u.alive() || !first || u.player != first->player || !u.type ||
                     !u.type->canTransport)
                     continue;
@@ -56,6 +57,7 @@
                 int allyId = -1;   float bestAlly = 22.0f * 22.0f;
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
+                    if (!canPickUnit(u)) continue;
                     if (!u.alive() || u.embarked() || !u.type || !first ||
                         !world_.allied(u.player, first->player)) continue;
                     float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
@@ -104,6 +106,7 @@
             float best = 20 * 20;
             for (const UnitR* _up : front().live) {
                 const UnitR& u = *_up;
+                if (!canPickUnit(u)) continue;
                 if (!u.alive() || u.embarked() || !first ||
                     world_.allied(u.player, first->player)) continue;
                 float dx = u.x - wx, dz = u.z - wz;
@@ -119,7 +122,7 @@
                     std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
                     if (useSimThread_) lk.lock();
                     for (const auto& f : world_.features()) {
-                        if (!f.alive) continue;
+                        if (!f.alive || !canPickPoint(f.x.toFloat(), f.z.toFloat())) continue;
                         float dx = f.x.toFloat() - wx, dz = f.z.toFloat() - wz, d = dx * dx + dz * dz;
                         float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
                         if (d < r * r && d < bestF) { bestF = d; fid = f.id; fhit = true; }
@@ -128,6 +131,7 @@
                 // Corpses / statues / rubble under the click too (negative id).
                 for (const UnitR* _cp : front().live) {
                     const UnitR& cu = *_cp;
+                    if (!canPickPoint(cu.x, cu.z)) continue;
                     if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
                     if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
                         !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable) continue;
@@ -263,6 +267,7 @@
             float bLoad = 1e30f, bSite = 1e30f, bOwn = 1e30f, bAlly = 1e30f,
                   bEnemy = 1e30f;
             for (const UnitR* _up : front().live) { const UnitR& u = *_up;
+                if (!canPickUnit(u)) continue;
                 if (!u.alive() || u.embarked() || !u.type) continue;
                 float d = 0;
                 if (!unitUnderCursor(u, mouseX_, mouseY_, &d)) continue;
@@ -309,7 +314,7 @@
                     // drawing. Testing aliveVis alone put the broom over scenery that no
                     // click could reclaim -- world_.features(), which this replaced, only
                     // ever contained real sim features.
-                    if (!f.hasSim || !f.aliveVis) continue;
+                    if (!f.hasSim || !f.aliveVis || !canPickPoint(f.x, f.z)) continue;
                     float dx = f.x - wx, dz = f.z - wz;
                     float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
                     if (dx * dx + dz * dz < r * r) return tak::CursorId::Reclaim;
@@ -323,6 +328,7 @@
 
         // Nothing selected: highlight your own unit under the pointer, else the arrow.
         for (const UnitR* _up : front().live) { const UnitR& u = *_up;
+            if (!canPickUnit(u)) continue;
             if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_) continue;
             float dx = u.x - wx, dz = u.z - wz;
             if (dx * dx + dz * dz < 22.0f * 22.0f) return tak::CursorId::Select;
@@ -648,7 +654,7 @@
                 std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
                 if (useSimThread_) lk.lock();
                 for (const auto& f : world_.features()) {
-                    if (!f.alive) continue;
+                    if (!f.alive || !canPickPoint(f.x.toFloat(), f.z.toFloat())) continue;
                     float dx = f.x.toFloat() - wx, dz = f.z.toFloat() - wz, d = dx * dx + dz * dz;
                     float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
                     if (d < r * r && d < bestF) { bestF = d; fid = f.id; fhit = true; }
@@ -657,6 +663,7 @@
             // Corpses / statues / rubble under the click too (negative id).
             for (const UnitR* _cp : front().live) {
                 const UnitR& cu = *_cp;
+                if (!canPickPoint(cu.x, cu.z)) continue;
                 if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
                 if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
                     !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable) continue;
@@ -685,6 +692,7 @@
             if (builderId < 0) return;
             int tid = -1; float best = 28.0f * 28.0f;
             for (const UnitR* _up : front().live) { const UnitR& u = *_up;
+                if (!canPickUnit(u)) continue;
                 if (!u.alive() || u.embarked() || u.id == builderId || !u.type) continue;
                 if (!world_.allied(u.player, localPlayer_)) continue;
                 if (u.underConstruction || u.hp >= u.type->maxHp) continue;   // only damaged
@@ -728,6 +736,7 @@
             if (!t) return;
             int pid = -1; float best = 24.0f * 24.0f;
             for (const UnitR* _up : front().live) { const UnitR& u = *_up;
+                if (!canPickUnit(u)) continue;
                 if (!u.alive() || u.embarked() || u.id == transportId || !u.type) continue;
                 if (u.player != t->player || u.type->canTransport) continue;
                 float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
@@ -747,6 +756,7 @@
             float best = precise ? 24.0f : 96.0f;   // generous radius on the minimap
             best *= best;
             for (const UnitR* _up : front().live) { const UnitR& u = *_up;
+                if (!canPickUnit(u)) continue;
                 if (!u.alive() || u.player != localPlayer_) continue;
                 float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
                 if (d < best) { best = d; buddy = u.id; }
@@ -771,6 +781,7 @@
             const auto* first = frameUnitP(selection_.front());
             float best = 20 * 20;
             for (const UnitR* _up : front().live) { const UnitR& u = *_up;
+                if (!canPickUnit(u)) continue;
                 if (!u.alive() || u.embarked() || !first ||
                     world_.allied(u.player, first->player))
                     continue;
@@ -1246,12 +1257,11 @@
         int cb = guiIdx("CrystalBall");
         if (cb >= 0) {
             const PlayerR& tm = framePlayer(localPlayer_);
-            float cap = std::max(tm.storage, 100.0f);
+            float cap = tm.storage;
             SDL_FRect orb = guiCmdRect(gui_.gadgets[cb]);
             if (!guiTex_[cb].empty()) {
                 int nf = int(guiTex_[cb].size());
-                float frac = std::clamp(tm.mana / cap, 0.0f, 1.0f);
-                int fr = std::clamp(int(frac * float(nf - 1) + 0.5f), 0, nf - 1);
+                int fr = tm.manaBulbFrame(nf);
                 if (guiTex_[cb][size_t(fr)])
                     SDL_RenderCopyF(ren_, guiTex_[cb][size_t(fr)], nullptr, &orb);
             }
@@ -1279,27 +1289,11 @@
             float w1 = blockWidth("MANA", px), w2 = blockWidth(nums, px);
             blockText("MANA", mbox.x + (mbox.w - w1) * 0.5f, y0, px, mc);
             blockText(nums, mbox.x + (mbox.w - w2) * 0.5f, y0 + lineH + gap, px, mc);
-            // +income / -expenditure (conjure + repair drain, computed here) flanking orb.
-            float expend = 0;
-            for (const UnitR* _up : front().live) { const UnitR& un = *_up;
-                if (un.player != localPlayer_ || !un.alive() || !un.type) continue;
-                if (un.buildSiteId)
-                    if (const auto* st = frameUnitP(un.buildSiteId);
-                        st && st->type && st->underConstruction) {
-                        float total = st->type->buildTime / std::max(un.type->workerTime, 0.01f);
-                        expend += st->type->buildCost / std::max(total, 0.01f);
-                    }
-                if (un.repairId)
-                    if (const auto* t2 = frameUnitP(un.repairId);
-                        t2 && t2->type && t2->hp < t2->type->maxHp) {
-                        float total = t2->type->buildTime / std::max(un.type->workerTime, 0.01f);
-                        expend += t2->type->buildCost / std::max(total, 0.01f);
-                    }
-            }
+            // Both rates come from the same resource history as the simulation.
             float ipx = std::max(1.5f, orb.h / 24.0f);
             char inb[16], outb[16];
             std::snprintf(inb, sizeof inb, "+%d", int(tm.income + 0.5f));
-            std::snprintf(outb, sizeof outb, "-%d", int(expend + 0.5f));
+            std::snprintf(outb, sizeof outb, "-%d", int(tm.expenditure + 0.5f));
             float iy = orb.y + orb.h * 0.5f - 3.5f * ipx;
             blockText(inb, orb.x - blockWidth(inb, ipx) - 5, iy, ipx, {150, 225, 150, 255});
             blockText(outb, orb.x + orb.w + 5, iy, ipx, {230, 160, 150, 255});
@@ -1678,7 +1672,7 @@
             blockText(s, nameX, y, px, c);
             if (showMana) {   // current mana + income, e.g. "1234 +18"
                 const PlayerR& pl = framePlayer(t);
-                std::snprintf(buf, sizeof buf, "%d +%d", int(pl.mana), int(pl.income));
+                std::snprintf(buf, sizeof buf, "%d +%d", int(pl.mana), int(pl.income + 0.5f));
                 blockText(buf, colMana, y, hx, c);
             }
             std::snprintf(buf, sizeof buf, "%d", cnt[t]);
@@ -1819,8 +1813,10 @@
             // extra BUILD MENU SCALE, so the row can grow independently of the HUD.
             float bScale = buildBarScale_;   // effective scale after the fit clamp below
             float iconSz = (float(barH()) - 10.0f) * buildBarScale_;
+            // Retail build portraits are 64 x 48; keep their landscape shape.
+            float iconW = iconSz * (4.0f / 3.0f);
             float gap = 6.0f * buildBarScale_;
-            float rowW = n > 0 ? (n - 1) * (iconSz + gap) + iconSz : 0;
+            float rowW = n > 0 ? (n - 1) * (iconW + gap) + iconW : 0;
             // BUILD MENU SCALE goes to 400%, which is more than a wide menu can spend
             // on a narrow window: 13 icons at 4x is several thousand pixels. Rather
             // than let the row run off the screen (where the icons are unreachable),
@@ -1835,8 +1831,9 @@
                 if (iconSz > availH) fit = std::min(fit, availH / iconSz);
                 if (fit < 1.0f) {
                     iconSz *= fit;
+                    iconW *= fit;
                     gap *= fit;
-                    rowW = (n - 1) * (iconSz + gap) + iconSz;
+                    rowW = (n - 1) * (iconW + gap) + iconW;
                 }
                 // Everything drawn INSIDE an icon (the +++ badge, the queue count, the
                 // tooltip) is sized from the scale too, so it has to follow the clamp
@@ -1861,7 +1858,7 @@
             for (int i = 0; i < n; ++i) {
                 const auto* bt = registry_.find(menu[size_t(i)]);
                 if (!bt) continue;
-                SDL_FRect r{x, iconY, iconSz, iconSz};
+                SDL_FRect r{x, iconY, iconW, iconSz};
                 SDL_SetRenderDrawColor(ren_, 20, 18, 14, 235);
                 SDL_FRect rb{r.x - 1, r.y - 1, r.w + 2, r.h + 2};
                 SDL_RenderFillRectF(ren_, &rb);
@@ -1870,7 +1867,19 @@
                 // square like the building it is, not turned like a soldier.
                 if (!ic) ic = modelIconTex(bt->id, colorSlot_[localPlayer_ & 7],
                                            !isStructure(bt));
-                if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &r);
+                if (ic) {
+                    // A few retail portraits differ by a pixel, and generated
+                    // model thumbnails are square. Fit both without distortion.
+                    int iw = 0, ih = 0;
+                    if (SDL_QueryTexture(ic, nullptr, nullptr, &iw, &ih) == 0 &&
+                        iw > 0 && ih > 0) {
+                        float scale = std::min(r.w / iw, r.h / ih);
+                        SDL_FRect imageRect{r.x + (r.w - iw * scale) / 2,
+                                            r.y + (r.h - ih * scale) / 2,
+                                            iw * scale, ih * scale};
+                        SDL_RenderCopyF(ren_, ic, nullptr, &imageRect);
+                    }
+                }
                 else {
                     SDL_SetRenderDrawColor(ren_, 60, 55, 50, 255);
                     SDL_RenderFillRectF(ren_, &r);
@@ -1910,7 +1919,7 @@
                                   int(bt->buildCost));
                     float px = 2.0f * bScale;
                     float tw = blockWidth(tip, px);
-                    float tipx = std::clamp(r.x + iconSz / 2 - tw / 2, 6.0f, winW - tw - 6);
+                    float tipx = std::clamp(r.x + r.w / 2 - tw / 2, 6.0f, winW - tw - 6);
                     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
                     SDL_FRect tb{tipx - 6, iconY - 28 * bScale,
                                  tw + 12, 26 * bScale};
@@ -1918,7 +1927,7 @@
                     blockText(tip, tipx, iconY - 24 * bScale, px, {255, 240, 190, 255});
                 }
                 iconRects_.push_back({r, bt});
-                x += iconSz + gap;
+                x += iconW + gap;
             }
             if (!b->buildQueue.empty()) {
                 char q[64];
@@ -1939,9 +1948,9 @@
             SDL_Color txt{0, 0, 0, 255};
             blockText("MANA", manaX, bar.y + 9, 2.0f, txt);
             std::snprintf(buf, sizeof buf, "%d/%d", int(tm.mana),
-                          int(std::max(tm.storage, 100.0f)));
+                          int(tm.storage));
             blockText(buf, manaX, bar.y + 30, 2.3f, txt);
-            std::snprintf(buf, sizeof buf, "+%d/SEC", int(tm.income));
+            std::snprintf(buf, sizeof buf, "+%d/SEC", int(tm.income + 0.5f));
             blockText(buf, manaX, bar.y + 52, 1.8f, txt);
         }
     }

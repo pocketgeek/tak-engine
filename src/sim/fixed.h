@@ -40,6 +40,9 @@ struct Fixed {
     // Never inside the tick. std::lround is round-half-away-from-zero and identical
     // everywhere, unlike a bare cast's truncation-toward-zero.
     static Fixed fromFloat(float f) { return raw(int32_t(std::lround(double(f) * kOne))); }
+    // FBI fixed-point reader 0x5431f0 parses a double, scales, then truncates.
+    // Keep separate from rounded position/UI boundaries above.
+    static Fixed fromRetailNumber(double value) { return raw(int32_t(value * kOne)); }
 
     constexpr float toFloat() const { return float(v) / float(kOne); }
     // NO IMPLICIT CONVERSION TO FLOAT, and it is worth saying why this note exists
@@ -102,7 +105,10 @@ constexpr Fixed fxMax(Fixed a, Fixed b) { return a.v > b.v ? a : b; }
 // length below; no float anywhere, so it cannot differ between builds.
 constexpr uint64_t isqrt64(uint64_t n) {
     if (n == 0) return 0;
-    uint64_t x = n, y = (x + 1) / 2;
+    // Start above the root, within a factor of two. Starting at n needed
+    // roughly half its bit width in divisions before Newton converged.
+    uint64_t x = uint64_t(1) << ((std::bit_width(n) + 1) / 2);
+    uint64_t y = (x + n / x) / 2;
     while (y < x) { x = y; y = (x + n / x) / 2; }
     return x;
 }

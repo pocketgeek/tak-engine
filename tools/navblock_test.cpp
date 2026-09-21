@@ -100,7 +100,7 @@ int main(int argc, char** argv) {
     }
     const int matchBlocked = blockedCells(wMatch, cols, rows);
 
-    // Terrain alone already blocks cells (cliffs, water, the occlusion pass), so the
+    // Terrain alone already blocks cells (cliffs and water), so the
     // meaningful comparison is against a world with the SAME terrain and no features.
     sim::World wBare;
     wBare.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
@@ -151,6 +151,39 @@ int main(int argc, char** argv) {
               "and both paths find the same deposits",
               std::to_string(spots.size()) + " vs " + std::to_string(wMatch.manaSpots().size()));
     }
+
+    // Isolate the 2x2 tree that exposed the shifted factory-exit blocker.
+    tnt::Map isolated;
+    isolated.width = isolated.height = 32;
+    isolated.seaLevel = 20;
+    isolated.heights.assign(32 * 32, 100);
+    isolated.features.assign(32 * 32, 0xffff);
+    isolated.featureNames = {"ZonTree201"};
+    isolated.features[10 * 32 + 12] = 0;
+    sim::World treeWorld;
+    treeWorld.setVisPlayer(-1);
+    treeWorld.setTerrain(isolated.heights, 32, 32, 20, &isolated.features);
+    sim::registerMapFeatures(treeWorld, isolated, vfs, &reg);
+    const auto* tree = treeWorld.feature(10 * 32 + 12);
+    check(tree && tree->fx == 2 && tree->fz == 2 && tree->x == sim::Fixed::fromInt(208) &&
+          tree->z == sim::Fixed::fromInt(176), "multi-cell feature uses its footprint centre");
+    bool anchored = true;
+    for (int z = 9; z <= 12; ++z)
+        for (int x = 11; x <= 14; ++x)
+            anchored &= treeWorld.nav().walkable(x, z) == !(x >= 12 && x < 14 && z >= 10 && z < 12);
+    check(anchored, "feature blocks from its recorded origin, with clear neighbours");
+    sim::UnitType reclaimer;
+    reclaimer.id = "reclaimer"; reclaimer.maxHp = 100;
+    reclaimer.isBuilder = reclaimer.canMove = reclaimer.canReclaim = true;
+    reclaimer.maxVel = sim::Fixed::fromInt(1); reclaimer.buildDist = 200;
+    const int builder = treeWorld.spawn(&reclaimer, 144, 176, 0, 0);
+    treeWorld.reclaim(builder, 10 * 32 + 12, false);
+    for (int i = 0; i < 600 && tree && tree->alive; ++i) treeWorld.tick(1.f / 30);
+    check(tree && !tree->alive, "multi-cell feature can be reclaimed");
+    bool freed = true;
+    for (int z = 10; z < 12; ++z)
+        for (int x = 12; x < 14; ++x) freed &= treeWorld.nav().walkable(x, z);
+    check(freed, "reclaim frees the original footprint");
 
     std::printf(failures ? "\nFAILED (%d)\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;

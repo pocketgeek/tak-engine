@@ -23,14 +23,17 @@
 # THE REFEREE IS BUILT IN AN ubuntu:24.04 CONTAINER AND SHIPPED. This host is glibc
 # 2.43 and emits sqrtf/remainderf at GLIBC_2.43; the remotes are Ubuntu 24.04 on 2.39
 # and have no compiler to build it themselves, so a binary built here will not start
-# there. Container-built tops out at GLIBC_2.38. It must also be a DEBUG build --
+# there. Container-built tops out at GLIBC_2.38. Keep DEBUG test hooks enabled --
 # TAK_GODS and the rest of the harness hooks are #ifndef NDEBUG, so a release referee
 # ignores them and the runs that depend on them desync by construction.
+# Use Debug with -O2 -g for stress sweeps: this retains the hooks while avoiding
+# unoptimized startup/tick times being misreported as network timeouts.
 #
 #   podman run --rm -v $PWD:/src:z -v /tmp/ctr-out:/out:z docker.io/library/ubuntu:24.04 \
 #     bash -c 'apt-get update && apt-get install -y cmake ninja-build g++ git nasm ... &&
 #              cd /src && PREFIX=/src/third_party/static-deps-u2404 ./tools/build-static-deps.sh &&
 #              cmake -B /out/bdbg -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+#                    -DCMAKE_CXX_FLAGS_DEBUG="-O2 -g" \
 #                    -DTAK_STATIC_DEPS_PREFIX=/src/third_party/static-deps-u2404 &&
 #              cmake --build /out/bdbg --target takserver'
 #
@@ -55,6 +58,8 @@
 #
 # usage: tools/desync-hunt-remote.sh [--host H] [--minutes N] [--jobs N] [--validate]
 #        [--only NAME[,NAME...]]
+# Set TAK_CLIENT=./build-o2/takclient to use an optimized client with Debug hooks.
+# Set TAK_SERVER=/home/pocket_geek/takserver.sweep170 to test an isolated remote binary.
 set -u
 
 # RUN FROM A SNAPSHOT, NOT FROM THE LIVE FILE -- and do it before ANY argument is
@@ -94,7 +99,7 @@ HOSTS_SPEC="${TAK_HOSTS:-tak.pgnet.us:10:heavy vpn3.pgnet.us:6:light}"
 RUSER="pocket_geek"
 RDATA="/home/pocket_geek/tak_data"
 RREPLAY="/home/pocket_geek/tak_replay"
-RBIN="/home/pocket_geek/takserver"
+RBIN="${TAK_SERVER:-/home/pocket_geek/takserver}"
 LDATA="assets/game"
 MINUTES=45
 # Per-host concurrency normally comes from HOSTS_SPEC's middle field. --jobs, when
@@ -138,8 +143,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-CLIENT=./build-dbg/takclient
-[ -x "$CLIENT" ] || { echo "build-dbg/takclient missing" >&2; exit 2; }
+CLIENT="${TAK_CLIENT:-./build-dbg/takclient}"
+[ -x "$CLIENT" ] || { echo "$CLIENT missing" >&2; exit 2; }
 
 
 OUT="${TMPDIR:-/tmp}/desync-remote-$$"; mkdir -p "$OUT"
@@ -383,7 +388,7 @@ RUNS=(
   "h-absurd|Ulasem Arena|TAK_AI_LEVEL=4||human|light"
   "h-fog-explored|Ulasem Arena|TAK_FOG=1||human|light"
   "h-fog-full|Ulasem Arena|TAK_FOG=2||human|light"
-  "h-unitcap|Ulasem Arena|TAK_UNITCAP=5000||human|light"
+  "h-unitcap|Ulasem Arena|TAK_UNITCAP=2000||human|light"
   "h-cramped|Inner Circle|TAK_GODS=1||human|light"
   "h-naval|Aibel's Seaport|||human|light"
   "h-naval-crus|Aibel's Seaport||--crusades|human|light"
@@ -1002,14 +1007,15 @@ echo "== validating the detector with a PLANTED desync (TAK_FAKE_DESYNC=900) on 
   fi
   {
 
-    "${VSSH[@]}" "$RUSER@$vhost" "nohup $RBIN --port 7891 --data $RDATA --no-auth --seed 999 >/tmp/tak-neg.log 2>&1 </dev/null & echo \$!" >/dev/null 2>&1
+    npid=$("${VSSH[@]}" "$RUSER@$vhost" "nohup $RBIN --port 7891 --data $RDATA --no-auth --seed 999 >/tmp/tak-neg.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
+    [ -n "$npid" ] && note_server "$vhost" "$npid"
     for _ in $(seq 60); do "${VSSH[@]}" "$RUSER@$vhost" "grep -q listening /tmp/tak-neg.log 2>/dev/null" && break; sleep 2; done
     env TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy TAK_MP_AIS=7 TAK_SPEED=40 \
         timeout -k 20 180 $CLIENT game "Ulasem Arena" --data "$_negdata" \
         --server "$vhost" --serverport 7891 --mphost --time 60 --overrides full \
         >"$OUT/negative.client.log" 2>&1
     "${VSSH[@]}" "$RUSER@$vhost" "cat /tmp/tak-neg.log" >"$OUT/negative.server.log" 2>/dev/null
-    "${VSSH[@]}" "$RUSER@$vhost" "ps -o pid,args -C takserver --no-headers | awk '/7891/{print \$1}' | xargs -r kill" >/dev/null 2>&1
+    [ -n "$npid" ] && "${VSSH[@]}" "$RUSER@$vhost" "kill $npid 2>/dev/null; true" >/dev/null 2>&1
 
     _rejected=0
     grep -qi "override mismatch" "$OUT/negative.server.log" "$OUT/negative.client.log" 2>/dev/null && _rejected=1

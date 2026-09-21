@@ -2,7 +2,7 @@
 // how its economy + army develop and whether it marches on the enemy. A dev harness
 // for tuning the AI -- not shipped in a game.
 //
-//   aitool <retail-install-dir> [map] [passive|easy|normal|hard|absurd] [seconds]
+//   aitool <retail-install-dir> [map] [passive|easy|normal|hard|absurd] [seconds] [standard|crusades]
 
 #include <cstdlib>
 #include "ai/ai.h"
@@ -19,7 +19,7 @@
 using namespace tak;
 
 int main(int argc, char** argv) {
-    if (argc < 2) { std::fprintf(stderr, "usage: aitool <install> [map] [passive|easy|normal|hard|absurd] [seconds]\n"); return 2; }
+    if (argc < 2) { std::fprintf(stderr, "usage: aitool <install> [map] [passive|easy|normal|hard|absurd] [seconds] [standard|crusades]\n"); return 2; }
     std::string dataRoot = argv[1];
     std::string map = argc >= 3 ? argv[2] : "Inner Circle";
     std::string dstr = argc >= 4 ? argv[3] : "normal";
@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
 
     hpi::Vfs vfs = hpi::mountRetailRoot(dataRoot);
     sim::TypeRegistry reg;
-    sim::setupRegistry(reg, vfs, false);
+    sim::setupRegistry(reg, vfs, argc>5 && std::string(argv[5])=="crusades");
     ai::Profile profile = ai::loadProfile(vfs);
 
     // 2-player 1v1: slot 0 = idle human (Aramon), slot 1 = the AI under test (Taros).
@@ -43,13 +43,15 @@ int main(int argc, char** argv) {
     cfg.mapPath = hpi::findMap(vfs, map);
     if (cfg.mapPath.empty()) { std::fprintf(stderr, "aitool: map '%s' not found\n", map.c_str()); return 1; }
     // Slot 0 = opponent (idle, or a 2nd AI under TAK_2AI), slot 1 = the AI under test.
-    // Both carry the difficulty's income multiplier so an Absurd test is fair either way.
+    // Only AI slots receive the difficulty income multiplier.
     // TAK_FACTION=0..4 (ara/tar/ver/zon/cre) sets the AI-under-test's faction (default
     // 1 = Taros) so each faction's AI can be exercised.
     float mm = ai::incomeMultFor(diff);
     int fac = 1;
     if (const char* fe = std::getenv("TAK_FACTION")) fac = std::clamp(std::atoi(fe), 0, 4);
-    cfg.slots = {{true, 0, 0, mm}, {true, fac, 1, mm}};
+    cfg.slots = {{true, 0, 0, 1.0f}, {true, fac, 1, mm, true, diff==ai::Difficulty::Passive}};
+    if (std::getenv("TAK_2AI")) { cfg.slots[0].manaMult=mm;cfg.slots[0].automaticGates=true;
+        cfg.slots[0].defensiveAi=diff==ai::Difficulty::Passive; }
     auto spots = sim::setupMatch(w, reg, cfg);
     std::vector<std::pair<float, float>> enemyStarts;
     if (!spots.empty()) enemyStarts.push_back(spots[0]);   // the human's start
@@ -104,6 +106,8 @@ int main(int argc, char** argv) {
     std::map<int, int> cmdCount;   // Cmd kind -> count
     auto sink = [&](const net::Command& c) {
         cmdCount[int(c.kind)]++;
+        if (std::getenv("TAK_AI_PICK") && c.kind==net::Cmd::Build)
+            std::fprintf(stderr,"    BUILD %s by #%d at (%.2f,%.2f)\n",c.type,c.unitId,c.x,c.z);
         sim::applyCommand(w, reg, c);
     };
 
@@ -152,7 +156,7 @@ int main(int argc, char** argv) {
                 if (u.type->isBuilder && (u.buildSiteId || !u.buildQueue.empty() || u.repeatType)) {
                     std::string q;
                     for (const auto* qt : u.buildQueue) if (qt) q += qt->id + " ";
-                    std::printf("      builder %s#%d site=%d prog=%.0f queue=[%s] repeat=%s\n",
+                    std::printf("      builder %s#%d site=%d prog=%d queue=[%s] repeat=%s\n",
                                 u.type->id.c_str(), u.id, u.buildSiteId, u.buildProgress,
                                 q.c_str(), u.repeatType ? u.repeatType->id.c_str() : "-");
                 }

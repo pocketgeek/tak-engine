@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -20,6 +21,9 @@ struct Primitive {
 
 struct Object {
     std::string name;
+    int32_t selectionPrimitive=-1;
+    std::vector<std::array<int32_t,3>> verticesRaw;
+    std::array<int32_t,3> offsetRaw{}; // exact 16.16 origin for simulation queries
     float x = 0, y = 0, z = 0;       // offset from parent, in world units
     std::vector<float> vertices;     // x,y,z triples, world units
     std::vector<Primitive> primitives;

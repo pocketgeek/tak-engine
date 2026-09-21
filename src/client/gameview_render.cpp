@@ -284,7 +284,7 @@
                 const int gs = geomSlot(it.u->id);
                 if (gs < 0) continue;
                 const UnitGeom& gsh = geomPool_[size_t(gs)];
-                if (gsh.shadowVerts.empty()) continue;
+                if (gsh.shadowVerts.empty() && gsh.maskedShadows.empty()) continue;
                 // An AIRBORNE flyer's shadow falls on whatever is beneath it, so drawing
                 // it here -- before any body -- lets every ground unit and feature paint
                 // over it. Retail has no global shadow pre-pass at all: the Glide path
@@ -313,15 +313,7 @@
                 // actually visible, and it costs nothing because it is ONE boundary
                 // rather than one per unit.
                 if (it.layer == 1) { airShadows_.push_back(&gsh); continue; }
-                profShadowVerts_ += uint64_t(gsh.shadowVerts.size());
-                // One colour and one texcoord at stride 0 -- SDL reads element 0 per
-                // vertex, so the flat grey costs nothing per vertex to store or read.
-                static const SDL_Color kShCol{kShadowLevel, kShadowLevel, kShadowLevel, 255};
-                static const float kShUV[2] = {0.0f, 0.0f};
-                SDL_RenderGeometryRaw(ren_, nullptr,
-                                      &gsh.shadowVerts[0].x, int(sizeof(SDL_FPoint)),
-                                      &kShCol, 0, kShUV, 0,
-                                      int(gsh.shadowVerts.size()), nullptr, 0, 0);
+                drawUnitShadow(gsh);
             }
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         }
@@ -399,15 +391,8 @@
         auto drainAirShadows = [&] {
             if (airShadows_.empty()) return;
             const double _as0 = double(SDL_GetPerformanceCounter());
-            static const SDL_Color kAirCol{kShadowLevel, kShadowLevel, kShadowLevel, 255};
-            static const float kAirUV[2] = {0.0f, 0.0f};
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_MOD);
-            for (const UnitGeom* gp : airShadows_) {
-                profShadowVerts_ += uint64_t(gp->shadowVerts.size());
-                SDL_RenderGeometryRaw(ren_, nullptr, &gp->shadowVerts[0].x,
-                                      int(sizeof(SDL_FPoint)), &kAirCol, 0, kAirUV, 0,
-                                      int(gp->shadowVerts.size()), nullptr, 0, 0);
-            }
+            for (const UnitGeom* gp : airShadows_) drawUnitShadow(*gp);
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             airShadows_.clear();
             const double ms = (double(SDL_GetPerformanceCounter()) - _as0) / _ptFreq;
@@ -423,11 +408,32 @@
                 // deposit sits at the height its heightmap claims (and lodestones/units
                 // built on it line up) instead of the decal being flat.
                 float lfx = terrainLiftX(f.x, f.z) * zm0, lfy = terrainLift(f.x, f.z) * zm0;
-                if (f.shadow) {
+                const bool swayTree=f.tree && settings_ && settings_->treeSway;
+                const float phase=f.x*0.043f+f.z*0.029f;
+                const float sway=swayTree ? std::sin(animClock_*1.1f+phase)*0.7f+
+                                           std::sin(animClock_*2.7f+phase*1.7f)*0.3f : 0;
+                if (f.shadow && shadowsOnFrame_) {
                     SDL_FRect sd{(f.x - mapView_.offX() - float(f.sxoff)) * zm0 - lfx,
                                  (f.z - mapView_.offY() - float(f.syoff)) * zm0 - lfy,
                                  float(f.sw) * zm0, float(f.sh) * zm0};
-                    SDL_RenderCopyF(ren_, f.shadow, nullptr, &sd);
+                    if (swayTree) {
+                        // Authored feature shadows can extend above or below
+                        // their ground anchor. Move the far end with the crown,
+                        // leaving the trunk anchor fixed in either orientation.
+                        const float shear=sway*float(f.h)*zm0*0.04f;
+                        const float reach=float(f.sh)*0.5f<float(f.syoff)
+                            ? -float(std::max(1,f.syoff))
+                            : float(std::max(1,f.sh-f.syoff));
+                        const float top=-float(f.syoff)/reach*shear;
+                        const float bottom=(float(f.sh)-float(f.syoff))/reach*shear;
+                        const SDL_Color white{255,255,255,255};
+                        SDL_Vertex v[4]={{{sd.x+top,sd.y},white,{0,0}},
+                            {{sd.x+sd.w+top,sd.y},white,{1,0}},
+                            {{sd.x+sd.w+bottom,sd.y+sd.h},white,{1,1}},
+                            {{sd.x+bottom,sd.y+sd.h},white,{0,1}}};
+                        static const int indices[6]={0,1,2,0,2,3};
+                        SDL_RenderGeometry(ren_,f.shadow,v,4,indices,6);
+                    } else SDL_RenderCopyF(ren_, f.shadow, nullptr, &sd);
                 }
                 // Retail feature playback: one shared clock per TYPE (every
                 // instance of a sequence shows the identical frame -- variety
@@ -471,15 +477,12 @@
                 SDL_FRect dst{(f.x - mapView_.offX() - float(fxo)) * zm0 - lfx,
                               (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
                               float(fw) * zm0, float(fh) * zm0};
-                if (f.tree && settings_ && settings_->treeSway) {
+                if (swayTree) {
                     // Wind sway (Options; beyond-retail -- retail trees are static
                     // single-frame GAFs): shear the crown sideways on two blended
                     // gust sines, pivoting at the trunk base (the GAF anchor sits
                     // there). Per-tree phase so a forest ripples instead of rocking
                     // in unison. Display-only; the sim never sees it.
-                    float ph = f.x * 0.043f + f.z * 0.029f;
-                    float sway = std::sin(animClock_ * 1.1f + ph) * 0.7f +
-                                 std::sin(animClock_ * 2.7f + ph * 1.7f) * 0.3f;
                     float shear = sway * dst.h * 0.04f;
                     const SDL_Color wc{255, 255, 255, 255};
                     SDL_Vertex v[4] = {
@@ -521,7 +524,9 @@
             // working position, so step back to where the site actually goes.
             for (const auto& o : u.orders)
                 if (o.buildType)
-                    drawGhostAt(o.buildType, o.x.toFloat(), o.z.toFloat() - float(o.buildType->footZ) * 8 - 24);
+                    drawGhostAt(o.buildType,
+                        o.buildRectangle ? o.buildX.toFloat() : o.x.toFloat(),
+                        o.buildRectangle ? o.buildZ.toFloat() : o.z.toFloat() - float(o.buildType->footZ) * 8 - 24);
         }
 
         // Projectiles: drawn per weapon family (only where visible).
@@ -565,8 +570,18 @@
             // fade over a one-second bolt reads as a fizzle rather than a strike.
             float t = std::clamp(b.age / std::max(b.life, 1e-3f), 0.0f, 1.0f);
             if (t >= 1.0f) continue;
-            float f = 1.0f - std::max(0.0f, (t - 0.75f) / 0.25f);
             if (!cellVisibleR(b.x2, b.z2) && !noFog_) continue;
+            if (!b.model.empty()) {
+                // Line-of-sight describes hit delivery, not appearance. Crossbow
+                // bolts and harpoons use the same model path as travelling shots.
+                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+                drawShotModel(b.model,b.player,b.x1+(b.x2-b.x1)*t,b.z1+(b.z2-b.z1)*t,
+                              (8+b.alt1+(b.alt2-b.alt1)*t)*zm,
+                              3.14159265358979323846f-std::atan2(b.x2-b.x1,b.z2-b.z1));
+                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
+                continue;
+            }
+            float f = 1.0f - std::max(0.0f, (t - 0.75f) / 0.25f);
             auto sx = [&](float x, float z) {
                 return (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
             };
@@ -636,7 +651,7 @@
                     }
                     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
                 }
-                if (!p.wsrc->shadowArt.empty()) {
+                if (shadowsOnFrame_ && !p.wsrc->shadowArt.empty()) {
                     // shadowgaf is always "shadows"; effectFor's "file:sequence"
                     // form picks the named sequence out of it.
                     if (const EffectAnim* sh = effectFor("shadows:" + p.wsrc->shadowArt)) {
@@ -654,7 +669,8 @@
             }
             // A shot with a real mesh (arrows, spears, boulders) is drawn as that
             // mesh, yawed along its flight so an arrow actually points where it is
-            // going. Models face -heading, like every other mover.
+            // going. Projectile models point along +z (the arrowhead is at
+            // +z and the fletching at -z), opposite the unit-model forward axis.
             if (p.wsrc && !p.wsrc->shotModel.empty()) {
                 bool bal = p.wsrc->ballistic;
                 const float flightSec = float(p.flight) / 30.0f;
@@ -662,7 +678,8 @@
                                  : std::min(18.0f, flightSec * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
                 drawShotModel(p.wsrc->shotModel, p.fromPlayer, p.x.toFloat(), p.z.toFloat(),
-                              h * zm + palt, -std::atan2(p.vx.toFloat(), p.vz.toFloat()));
+                              h * zm + palt, 3.14159265358979323846f -
+                                  std::atan2(p.vx.toFloat(), p.vz.toFloat()));
                 continue;
             }
             // Authored projectile art. Retail draws most shots as a real sprite
@@ -1460,6 +1477,9 @@
         for (auto& [n, frames] : textures_)
             for (SDL_Texture* t : frames) if (t) gpuvram::destroy(t);
         textures_.clear();
+        for (auto& [name,frames]:shadowMasks_)
+            for (auto* texture:frames) if (texture) gpuvram::destroy(texture);
+        shadowMasks_.clear();
         for (auto& row : guiTex_)
             for (SDL_Texture* t : row) if (t) gpuvram::destroy(t);
         guiTex_.clear();
@@ -1565,6 +1585,7 @@
         // shadow pass submits whatever is there -- a ghost site would have drawn
         // the shadow of whatever unit last used its slot.
         g.shadowVerts.clear();
+        g.maskedShadows.clear();
         g.canFly = u.type && u.type->canFly;
         if (u.underConstruction && !u.buildBegun) return;   // ghost drawn serially
         auto ut = unitType_.find(u.id);   // defensive: a throw here would abort
@@ -1606,18 +1627,9 @@
             float alt = base.t[1];
             base = Xform{}.then(0.0f, alt, 0.0f, att);
         }
-        // Flyers face -heading exactly like ground movers (no flyer facing branch).
-        // A STRUCTURE never turns, so it draws at a fixed facing -- and the test for
-        // "is it a structure" is isStructure() (maxVel <= 0), NEVER canMove. This read
-        // canMove, which is the exact trap CLAUDE.md warns about: 13 types declare
-        // canmove=1 with no velocity and no bmcode (the Keep, the Barracks, both
-        // Cabals, the Sea Fort, the walls...). They took the MOVER branch, and since
-        // startBuild spawns every structure at heading pi they were drawn at -pi --
-        // turned 180 degrees. On a factory that puts the stone build pad on the far
-        // side of the building from where retail has it, which is how this was
-        // reported. The hit box already used isStructure(), so the body and the box
-        // disagreed for those 13 as well.
-        float facing = isStructure(u.type) ? 0.0f : -ih;
+        // Retail applies the birth heading to buildings as well as movers.
+        // Their scripts can counter-rotate a build pad independently of the body.
+        float facing = -ih;
         // Disco emote: a dancing monarch spins, bobs and hue-cycles. Local wall-time
         // (animClock_) drives the smooth motion; world_.discoActive() (a synced sim
         // timer) gates it. Pure client-side eye-candy -- nothing here is hashed.
@@ -1726,8 +1738,10 @@
         if (shadowsOnFrame_)
             buildUnitShadow(u, g, vt->second.model.root, vt->second.meta, anim, facing,
                             zm, scratch);
-        else
+        else {
             g.shadowVerts.clear();
+            g.maskedShadows.clear();
+        }
     }
 
     // Reuses `scratch`: whatever the caller had in it is already consumed.
@@ -1736,6 +1750,7 @@
                                    const Anim* anim, float facing, float zm,
                                    std::vector<Tri>& scratch) {
         g.shadowVerts.clear();
+        g.maskedShadows.clear();
         if (u.underConstruction || !castsBlobShadow(u.type)) return;
         scratch.clear();
         // Only a body that is actually LYING FLAT culls. See the shadow branch in
@@ -1754,10 +1769,18 @@
         const float sx = g.ax + kShadowLX * g.alt * zm;
         const float sy = g.ay + (kProjY - kShadowLZ) * g.alt * zm;
         g.shadowVerts.reserve(scratch.size() * 3);
-        for (const Tri& t : scratch)
-            for (int k = 0; k < 3; ++k)
-                g.shadowVerts.push_back({sx + t.v[k].position.x * zm,
-                                         sy + t.v[k].position.y * zm});
+        for (const Tri& t : scratch) {
+            if (t.tex) {
+                auto tri=t;
+                for (auto& v:tri.v)
+                    v.position={sx+v.position.x*zm,sy+v.position.y*zm};
+                g.maskedShadows.push_back(tri);
+            } else {
+                for (int k=0;k<3;++k)
+                    g.shadowVerts.push_back({sx+t.v[k].position.x*zm,
+                                             sy+t.v[k].position.y*zm});
+            }
+        }
     }
 
     void GameView::drawUnit(const UnitR& u) {
@@ -1886,8 +1909,10 @@
             sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());
         // ...and sparkle this unit when it is the conjuror actively working (a build
         // site, or producing from its queue -- the repeat/infinite conjure path).
-        if (u.type && u.type->isBuilder && !u.walking() &&
-            (u.buildSiteId != 0 || !u.buildQueue.empty()))
+        // Flying conjurors move while hovering around the active site. That
+        // movement must not suppress their end of the build effect.
+        if (u.type && u.type->isBuilder && u.conjuring &&
+            (u.type->canFly || !u.walking()))
             sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());
 
         // A reclaimer IN RANGE (the reclaim has really started -- range test mirrors
@@ -1898,9 +1923,12 @@
             struct { bool ok = false; float x = 0, z = 0; int fx = 0, fz = 0; } fc;
             {
                 std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-                if (useSimThread_) lk.lock();
-                if (const auto* f = world_.feature(u.reclaimId))
-                    fc = {f->alive, f->x.toFloat(), f->z.toFloat(), f->fx, f->fz};
+                // This sparkle is optional for the current frame. Never stall
+                // camera/input behind a long simulation tick to draw it.
+                if (!useSimThread_ || lk.try_lock()) {
+                    if (const auto* f = world_.feature(u.reclaimId))
+                        fc = {f->alive, f->x.toFloat(), f->z.toFloat(), f->fx, f->fz};
+                }
             }
             const auto* feat = &fc;
             if (fc.ok) {
@@ -2132,7 +2160,7 @@
         return featureArt_[key].tex ? &featureArt_[key] : nullptr;
     }
 
-    bool GameView::addFeature(const std::string& rawName, float x, float z) {
+    bool GameView::addFeature(const std::string& rawName, int cx, int cz) {
         loadFeatureDefs();
         std::string key = rawName;
         std::transform(key.begin(), key.end(), key.begin(), ::tolower);
@@ -2147,10 +2175,12 @@
         inst.shadow = a->shadow;
         inst.w = a->w; inst.h = a->h; inst.xoff = a->xoff; inst.yoff = a->yoff;
         inst.sw = a->sw; inst.sh = a->sh; inst.sxoff = a->sxoff; inst.syoff = a->syoff;
-        inst.x = x;
-        inst.z = z;
+        inst.fx = int(di->second.numberOr("footprintx", 1));
+        inst.fz = int(di->second.numberOr("footprintz", 1));
+        inst.x = float(cx * 16 + inst.fx * 8);
+        inst.z = float(cz * 16 + inst.fz * 8);
         inst.name = key;
-        inst.simId = (int(z) / 16) * mapView_.map().width + int(x) / 16;
+        inst.simId = cz * mapView_.map().width + cx;
         featInstIds_.insert(inst.simId);
         // Mana deposits ("Sacred Stone", category=Mana) are the spots you build
         // lodestones ON, so they must stay buildable (walkable) — never block
@@ -2202,9 +2232,8 @@
         // vector under this loop.
         // COPY under the lock, then do the visual work outside it. Holding
         // simMutex_ across the whole scan meant the worker waited on art
-        // replacement, atlas lookups, texture loads and effect spawns -- the render
-        // thread already waits a tick for the worker, and this made the worker wait
-        // a full visual update back.
+        // replacement, atlas lookups, texture loads and effect spawns. Render-side
+        // acquisition is nonblocking so neither thread waits on the other's work.
         // Only the LOCKED scans below are gated on the generation counter -- the apply
         // loop after them still runs every frame, because that is what keeps burning
         // features emitting smoke on their own timer. Skipping the whole function when
@@ -2212,14 +2241,21 @@
         std::vector<FeatSim>& simState = featSimState_;
         const uint32_t featGen = world_.featGeneration();   // atomic; no lock needed
         const bool featDirty = featGen != lastFeatGen_ || simState.size() != features_.size();
-        if (featDirty) {
-            simState.clear();
+        struct NewFeat { int id; std::string name; };
+        std::vector<NewFeat> fresh;
+        // A simulation tick can take seconds in a crowded match. Keep drawing
+        // the previous visual state while it owns the lock; retry next frame.
+        // Copy existing and newly created features under ONE acquisition so a
+        // failed retry cannot mark unseen corpses as already synchronized.
+        auto refresh = [&] {
+            if (!featDirty) return;
             std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-            if (useSimThread_) lk.lock();
+            if (useSimThread_ && !lk.try_lock()) return;
             if (world_.featureTypes().empty()) return;
+            simState.clear();
             simState.reserve(features_.size());
             for (const auto& fi : features_) {
-                const auto* sf = world_.featureAt(fi.x, fi.z);
+                const auto* sf = world_.feature(fi.simId);
                 simState.push_back(sf ? FeatSim{sf->type, sf->alive && sf->burn != 0,
                                                 sf->alive, sf->fx, sf->fz, true}
                                       : FeatSim{-1, false, true, 1, 1, false});
@@ -2230,14 +2266,24 @@
             for (auto& st : simState)
                 if (st.type >= 0 && size_t(st.type) < world_.featureTypes().size())
                     burnNames_[size_t(st.type)] = world_.featureTypes()[size_t(st.type)].name;
+            for (const auto& sf : world_.features()) {
+                if (!sf.alive || sf.type < 0 || featInstIds_.count(sf.id)) continue;
+                if (size_t(sf.type) >= world_.featureTypes().size()) continue;
+                fresh.push_back({sf.id, world_.featureTypes()[size_t(sf.type)].name});
+            }
             lastFeatGen_ = featGen;
-        }
+        };
+        refresh();
         if (simState.size() != features_.size()) return;   // nothing synced yet
         size_t fidx = 0;
         for (auto& fi : features_) {
             const FeatSim st = simState[fidx++];
             fi.aliveVis = st.alive ? 1 : 0;   // what the draw loop reads
-            fi.fx = st.fx; fi.fz = st.fz;     // what the reclaim cursor picks with
+            if (st.hasSim) {
+                fi.fx = st.fx; fi.fz = st.fz;
+                fi.x = float((fi.simId % mapView_.map().width) * 16 + fi.fx * 8);
+                fi.z = float((fi.simId / mapView_.map().width) * 16 + fi.fz * 8);
+            }
             fi.hasSim = st.hasSim ? 1 : 0;    // ...and whether it is reclaimable at all
             if (st.type < 0) continue;
             if (fi.simType == -2) fi.simType = st.type;        // first sight
@@ -2273,24 +2319,8 @@
         // first sight. No nav blocking here -- the sim owns corpse blocking.
         // Same rule: copy under the lock, load art outside it (addFeature can pull
         // a GAF off disk, which is not something to hold the sim behind).
-        struct NewFeat { int id; float x, z; std::string name; };
-        static std::vector<NewFeat> fresh;
-        fresh.clear();
-        // Adding a feature bumps the generation, so when it has not moved there is by
-        // construction nothing new to find here either -- and this scan walks the whole
-        // SIM feature list under the lock, which is the more expensive of the two.
-        if (featDirty) {
-            std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-            if (useSimThread_) lk.lock();
-            for (const auto& sf : world_.features()) {
-                if (!sf.alive || sf.type < 0 || featInstIds_.count(sf.id)) continue;
-                if (size_t(sf.type) >= world_.featureTypes().size()) continue;
-                fresh.push_back({sf.id, sf.x.toFloat(), sf.z.toFloat(),
-                                 world_.featureTypes()[size_t(sf.type)].name});
-            }
-        }
         for (const auto& sf : fresh) {
-            addFeature(sf.name, sf.x, sf.z);
+            addFeature(sf.name, sf.id % mapView_.map().width, sf.id / mapView_.map().width);
             featInstIds_.insert(sf.id);   // even on art failure: don't retry every frame
         }
     }
@@ -2307,7 +2337,7 @@
             for (int cx = 0; cx < map.width; ++cx) {
                 uint16_t v = map.features[size_t(cz) * map.width + cx];
                 if (v >= names.size()) continue;
-                if (addFeature(names[v], float(cx) * 16 + 8, float(cz) * 16 + 8))
+                if (addFeature(names[v], cx, cz))
                     ++placed;
             }
         std::printf("features: %d placed\n", placed);
@@ -2448,7 +2478,7 @@
                 else v = ddz >= 0 ? 1 : 13;
                 char nm[24];
                 std::snprintf(nm, sizeof nm, "%sWave%02d", wp.c_str(), v);
-                if (addFeature(nm, float(cx) * 16 + 8, float(cz) * 16 + 8)) ++placed;
+                if (addFeature(nm, cx, cz)) ++placed;
             }
         std::printf("offshore waves: %d placed (%sWave)\n", placed, wp.c_str());
     }

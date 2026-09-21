@@ -6,7 +6,7 @@
 
 _Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit of OpenRA and the Robot War Engine._
 
-[![version](https://img.shields.io/badge/version-0.6.5-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.6.9-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599c?style=flat-square&logo=cplusplus&logoColor=white)](CMakeLists.txt)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![multiplayer](https://img.shields.io/badge/multiplayer-deterministic%20lockstep-b03a2e?style=flat-square)](#multiplayer)
@@ -42,7 +42,7 @@ _Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit
 A modern, cross-platform engine recreation for **Total Annihilation: Kingdoms**
 (Cavedog Entertainment, 1999), in the spirit of OpenRA and Robot War Engine.
 
-**Version 0.6.5** — reported by `takclient --version` and `takserver --version`
+**Version 0.6.9** — reported by `takclient --version` and `takserver --version`
 (and shown in the window title / server banner). The release version is set in
 one place, `project(... VERSION ...)` in `CMakeLists.txt`, and is separate from
 the multiplayer wire protocol version, which is gated independently at connect.
@@ -250,16 +250,26 @@ of five **difficulty levels** in the lobby:
 
 | Difficulty | Behaviour |
 | --- | --- |
-| **Passive** | turtles and only *defends* — builds an army but never marches out |
+| **Passive** | builds an income-scaled defensive army and defenses near home; never sends attacks |
 | **Easy** | slow to build up; no harassment, then commits a single army late |
 | **Normal** | harasses with small **raiding parties** while massing a main army sized to its mana income |
-| **Hard** | reacts fast; raids early, but **holds its big attack** until it has a large army relative to its income |
-| **Absurd** | Hard, plus **double mana income** from every source — an economic juggernaut (so its army threshold is huge) |
+| **Hard** | expands more aggressively; probes with raids while saving an income-scaled heavy force |
+| **Absurd** | Hard, with **double mana income** from recurring and reclaim sources |
 
 From **Normal** up the AI doesn't trickle units in: it peels off a few for **raids**
 to pressure and scout, and holds the main force back until it's massed a decisive army
 scaled to its mana income, then commits it — re-mustering the next wave afterward.
 (Easy skips the raids and just gathers one army.)
+Unit selection accounts for land connectivity, flight, and usable water; ships can
+be sent to reachable coastal firing positions. Raids have a limited allocation
+between heavy waves so they do not consume the entire reserve.
+
+Built and conjured units receive their type's default standing orders:
+**Offensive** engages and pursues within its standing-order limits,
+**Defensive** fires without pursuing, and **Passive** does not auto-engage.
+Explicit player attack orders still work. Passive AI units begin Defensive.
+Games start partly zoomed in and centered on the local player's Monarch.
+
 
 Each side begins with **only its Monarch**, dropped on the map's real start positions
 (from the `.ota`). The Monarch trickles mogrium and builds the first lodestones and
@@ -410,7 +420,7 @@ identical sim with only ~35-byte commands on the wire.
   rule: *off* (the retail commander rule) means losing your Monarch loses you the
   game even if other units survive; *on* makes the Monarch just another unit. The
   host also sets the **unit cap** — the per-player live-unit limit (250 / 500 /
-  1000 / 2000 / 5000, default 2000; production and new builds stall a player once
+  1000 / 2000, default 2000; production and new builds stall a player once
   they reach it) — and can **allow in-game speed changes** so the host's **+/−**
   keys re-cadence the match live (0.5×–4×). Speed only changes how fast ticks
   happen in wall-clock — the per-tick `dt` is fixed — so the sim stays bit-identical
@@ -427,8 +437,7 @@ identical sim with only ~35-byte commands on the wire.
   follows along with no fog, no control, and a radar that shows every unit.
   Single-player has its own spectate mode too — flip **SPECTATE (WATCH AIS)** in
   the SP lobby and every slot fills with a random-faction AI to just watch them
-  fight (there's even a **STRESS TEST** toggle that starts each AI at ~95 % of the
-  unit cap, for load-testing the sim).
+  fight.
 
 See `docs/multiplayer-design.md` for the full design, and `docs/detmath-scope.md`
 for the determinism contract. (The old 2-player `--host`/`--join` peer mode is
@@ -451,9 +460,10 @@ Start the server with `--replaydir <dir>` and it writes a self-contained
 Anything in the install's `overrides/` folder -- loose files or `*.hpi`/`*.kmp`
 archives -- overrides the shipped data, exactly like the original game. For
 example a `overrides/click.hpi` holding `sounds/*.wav` replaces the faction
-order-acknowledgement tones. Overrides are classified as **cosmetic** (art,
-models, animation, sound, music, fonts, GUI) or **gameplay** (unit/weapon/side/
-build/feature data, maps). A release build always mounts **`full`** (everything);
+order-acknowledgement tones. Overrides are classified as **cosmetic** (textures,
+sprites, sound, music, fonts, GUI) or **gameplay** (unit/weapon/side/
+build/feature data, maps, COB scripts and 3DO models). Scripts and model origins
+control factory production and must agree across peers. A release build always mounts **`full`** (everything);
 a debug build can restrict it with `--overrides {none,cosmetic,full}` (`cosmetic`
 mounts only the art/sound tier). Cosmetic overrides never affect a multiplayer game
 and can differ between players; gameplay overrides (the `full` tier) change the data
