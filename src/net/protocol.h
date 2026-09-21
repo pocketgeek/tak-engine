@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 176;      // 176: infinite mobile production accepts only Stop
+constexpr uint32_t kNetVersion = 177;      // 177: naval combat sight and stationary aiming
+                                           // 176: infinite mobile production accepts only Stop
                                            // 175: data-driven hover attack positioning for flyers
                                            // 174: flyer activation, selected-weapon approach range, and attack turning
                                            // 170: bound off-map grade aging and stress-flyer spawns

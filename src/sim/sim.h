@@ -1929,6 +1929,7 @@ private:
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
     bool acquireTarget(Unit& u, bool missionPoll);
+    bool combatLineOfSight(const Unit& from, const Unit& to) const;
     int findTarget(Unit& u, bool missionPoll, bool groundResponse = false);
     void rebuildOccupancy();
     bool canFollowTraffic(const Unit& self, const Unit& other) const;
@@ -2166,6 +2167,7 @@ private:
     // in ascending unit id. Rebuilt once per corpse pass; see the note there.
     std::vector<uint32_t> corpseIdx_;
     NavGrid nav_, navWater_, navHover_;
+    NavGrid navalSight_; // combat only: terrain at/above the water surface
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
     std::vector<uint8_t> slope_;   // local height spread
     std::vector<uint8_t> depth_;   // water depth (sea level - height), 0 on land

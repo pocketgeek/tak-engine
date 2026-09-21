@@ -991,12 +991,21 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
         hover.maxSlope = 30; hover.maxWaterSlope = 255;
         hover.maxWaterDepth = 10000; hover.minWaterDepth = -10000;
         navHover_ = NavGrid(heights, w, h, seaLevel, hover);
+        // Direct naval shots see the water surface, not the seabed. Flatten
+        // submerged heights before computing slopes so even a steep seabed or
+        // shallow shoreline cannot become an artificial firing wall. Raised
+        // land and the shared feature/building overlay still block direct shots.
+        auto surface=heights;
+        for (auto& height:surface) height=uint8_t(std::max(int(height),seaLevel));
+        NavGrid::Limits sight=hover;
+        navalSight_=NavGrid(surface,w,h,seaLevel,sight);
         // One obstacle overlay, shared by every grid. Buildings, blocking features
         // and wrecks go here rather than into a single grid's cells.
         obst_.assign(size_t(w) * size_t(h), 0);
         nav_.setObstacles(&obst_);
         navWater_.setObstacles(&obst_);
         navHover_.setObstacles(&obst_);
+        navalSight_.setObstacles(&obst_);
         navClasses_.clear();
         navIdx_.clear();
     }
@@ -3201,6 +3210,17 @@ static bool meleeInRange(const UnitType* a, const UnitType* b, float dx, float d
            std::abs(dz) < 8.0f * float(a->footZ + b->footZ) + 8.0f;
 }
 
+// Naval shots cross both water and shore. Water depth is a movement restriction,
+// not a projectile blocker; sight grids still consult the shared obstacle overlay.
+// Ground-only combat retains its existing sight test and navigation is unchanged.
+bool World::combatLineOfSight(const Unit& from,const Unit& to) const {
+    const bool naval=from.type->domain==UnitType::Domain::Water ||
+                     to.type->domain==UnitType::Domain::Water;
+    return (naval?navalSight_:nav_).losBetween(from.x.toFloat(),from.z.toFloat(),to.x.toFloat(),to.z.toFloat(),
+        std::max(from.type->footX,from.type->footZ)/2,
+        std::max(to.type->footX,to.type->footZ)/2);
+}
+
 int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
     // VTOL landing also clears active. Only switchable units interpret it as
     // power-off; ordinary landed flyers must still acquire and fire.
@@ -3277,7 +3297,6 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
         // doesn't charge a target hidden behind a wall (which caused pile-ups at
         // corners). Melee/flyers acquire regardless.
         bool ranged = u.type->maxRange() > 64.0f && !u.type->canFly;
-        int uFoot = std::max(u.type->footX, u.type->footZ) / 2;
         const bool lobber = u.type->lobs();   // shoots OVER obstacles: skip the LoS gate
         uint64_t enemies=~uint64_t(0);
         for (int player=0;player<numPlayers() && player<64;++player)
@@ -3299,8 +3318,7 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
             // so defer it until these cheap geometric checks have passed.
             if (!canTarget(e)) return;
             if (ranged && !e.type->canFly && !lobber &&
-                !nav_.losBetween(u.x.toFloat(), u.z.toFloat(), e.x.toFloat(), e.z.toFloat(), uFoot,
-                                 std::max(e.type->footX, e.type->footZ) / 2))
+                !combatLineOfSight(u,e))
                 return;                         // no clear shot: don't acquire it
             if (scatter) {
                 // Retail's scorer, with the flag's substitution in place: n is
@@ -3449,9 +3467,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // out of range) stops paying for a per-tick line-of-sight cast it never uses.
     bool los = true;
     if (needLoS && dist <= reach * 0.95f)
-        los = nav_.losBetween(u.x.toFloat(), u.z.toFloat(), target->x.toFloat(), target->z.toFloat(),
-                              std::max(u.type->footX, u.type->footZ) / 2,
-                              std::max(target->type->footX, target->type->footZ) / 2);
+        los = combatLineOfSight(u,*target);
     // A static unit cannot chase -- and neither may one whose move standing order
     // says hold position. Both drop an AUTO-acquired target that walks out of
     // reach; an explicitly ordered attack is unaffected, because being told to go
@@ -3489,7 +3505,16 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         : retailDirection(target->x-u.x,target->z-u.z);
     const int32_t diff = bamDiff(want, u.heading);
     if (!u.type->canFly && !u.type->isStructure()) {
-        brakeGround(u,want);
+        if (u.type->domain==UnitType::Domain::Water && !u.type->turnInPlaceRate) {
+            // Ships commonly specify only turnrate. Once in firing range they
+            // still need to face the target instead of waiting on a zero pivot rate.
+            brakeGround(u);
+            if (u.speed==Fixed()) {
+                const int32_t turn=retailTurnRequest(want,u.heading);
+                u.heading=u.heading+Bam(std::clamp(turn,-u.type->turnRate,u.type->turnRate));
+                u.turnReqBam=turn;
+            }
+        } else brakeGround(u,want);
         groundMovementHandled=true;
     } else if (!hovering) {
         u.speed=fxMax(Fixed(),u.speed-u.type->brake);
@@ -7569,9 +7594,7 @@ void World::tick(float dt) {
                                t->type && !t->type->canFly && u.type->canMove &&
                                !u.type->lobs();
                 return !needLoS ||
-                       nav_.losBetween(u.x.toFloat(), u.z.toFloat(), t->x.toFloat(), t->z.toFloat(),
-                                       std::max(u.type->footX, u.type->footZ) / 2,
-                                       std::max(t->type->footX, t->type->footZ) / 2);
+                       combatLineOfSight(u,*t);
             }();
         if (combatHold) continue;
 
