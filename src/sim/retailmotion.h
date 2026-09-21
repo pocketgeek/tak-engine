@@ -3,6 +3,7 @@
 #include "sim/fixed.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 
 namespace tak::sim {
 
