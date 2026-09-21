@@ -142,14 +142,14 @@ template<class Visible,class Cached,class Live,class SpecialOwner>
 int retailSearchGrade(const RetailGradeContext& c,int x,int z,Visible visible,
                       Cached cached,Live live,SpecialOwner specialOwner) {
     if (uint32_t(x)>=uint32_t(c.width) || uint32_t(z)>=uint32_t(c.height)) return 0;
-    const auto near=[](int value,int start,int foot,int margin) {
+    const auto nearStart=[](int value,int start,int foot,int margin) {
         return value>=start-margin && value<=start+foot+margin-1;
     };
-    if (!visible(x,z) && !near(x,c.startX,c.footX,1) && !near(z,c.startZ,c.footZ,1))
+    if (!visible(x,z) && !nearStart(x,c.startX,c.footX,1) && !nearStart(z,c.startZ,c.footZ,1))
         return 5;
     const int grade=cached(x,z)&7;
     if (grade==2 && c.retry<=1 &&
-        !near(x,c.startX,c.footX,9) && !near(z,c.startZ,c.footZ,9))
+        !nearStart(x,c.startX,c.footX,9) && !nearStart(z,c.startZ,c.footZ,9))
         return live(x,z);
     if (grade==3 && c.retry<=1 && c.specialBlockerProbe && c.footX==c.footZ) {
         for (int i=0; i<c.footX; ++i) {

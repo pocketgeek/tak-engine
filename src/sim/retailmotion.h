@@ -175,8 +175,8 @@ inline Fixed retailGroundAcceleration(Fixed x, Fixed z,
         Bam heading, Fixed speed, Fixed maximum, Fixed accel, Fixed brake,
         uint16_t turnRate, const RetailSteeringPoint* knownAim=nullptr,
         int knownDirection=-1) {
-    const bool near = fxLen(p1.x - x, p1.z - z) <= Fixed::fromInt(80);
-    const Fixed cap = near ? Fixed::raw(maximum.v / 3) : maximum;
+    const bool nearPoint = fxLen(p1.x - x, p1.z - z) <= Fixed::fromInt(80);
+    const Fixed cap = nearPoint ? Fixed::raw(maximum.v / 3) : maximum;
     brake = fxMin(brake, cap);
     accel = fxMin(accel, cap);
     const auto aim = knownAim ? *knownAim : retailSteeringPoint(x, z, p0, p1);
