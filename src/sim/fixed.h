@@ -107,7 +107,7 @@ constexpr uint64_t isqrt64(uint64_t n) {
     if (n == 0) return 0;
     // Start above the root, within a factor of two. Starting at n needed
     // roughly half its bit width in divisions before Newton converged.
-    uint64_t x = uint64_t(1) << ((std::bit_width(n) + 1) / 2);
+    uint64_t x = uint64_t(1) << (((64u - unsigned(__builtin_clzll(n))) + 1) / 2);
     uint64_t y = (x + n / x) / 2;
     while (y < x) { x = y; y = (x + n / x) / 2; }
     return x;

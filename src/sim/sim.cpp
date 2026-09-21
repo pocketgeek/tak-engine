@@ -568,12 +568,13 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 t.simulationScript=script;
                 if (t.producesUnits() && script->scriptIndex("QueryBuildInfo")>=0) {
                     auto model=tdo::load(vfs.read("objects3d/"+t.id+".3do"));
+                    auto& productionModel=t.productionModel;
                     auto append=[&](auto&& self,const tdo::Object& object,int parent)->void {
                         int piece=-1;
                         for (size_t i=0;i<script->pieces.size();++i)
                             if (lower(script->pieces[i])==lower(object.name)) { piece=int(i); break; }
-                        const int index=int(t.productionModel.size());
-                        t.productionModel.push_back({object.offsetRaw,parent,piece});
+                        const int index=int(productionModel.size());
+                        productionModel.push_back({object.offsetRaw,parent,piece});
                         for (const auto& child:object.children) self(self,child,index);
                     };
                     append(append,model.root,-1);
@@ -4439,7 +4440,7 @@ void World::assist(int builderId, int siteId, bool queue) {
     // Latch onto the existing site; tickConstruction walks there and resumes at
     // this builder's rate (buildTime / workerTime) from the site's current HP.
     b->buildSiteId = siteId;
-    b->buildStuckT = 0; b->buildStuckD = 1e30f;   // fresh job: reset the reach watchdog
+    b->buildStuckT = 0; b->buildStuckD = INT32_MAX;   // fresh job: reset the reach watchdog
     order(builderId, site->x.toFloat(), site->z.toFloat() + float(site->type->footZ) * 8 + 24, queue);
 }
 
@@ -4643,7 +4644,7 @@ void World::igniteFeature(Feature& f) {
     static const bool kBurnLog = std::getenv("TAK_BURNLOG") != nullptr;
     if (kBurnLog)
         std::fprintf(stderr, "ignite %s at %.0f,%.0f (spark %d)\n",
-                     ft.name.c_str(), f.x, f.z, ft.sparkTicks);
+                     ft.name.c_str(), f.x.toFloat(), f.z.toFloat(), ft.sparkTicks);
     f.burn = 1;
     bumpFeatGen();   // ignition edge: flame overlay + smoke start
     // Retail spread timer: sparktime30/2 + rand(sparktime30/2), one LCG draw.
@@ -5872,7 +5873,11 @@ void World::updateNavigationExploration() {
     // Each worker owns distinct unit footprints and an independent reveal mask.
     // OR is associative and commutative; merge only after all workers join.
     const size_t chunk=(units_.size()+workers-1)/workers;
-    std::vector<std::jthread> threads;
+    std::vector<std::thread> threads;
+    struct JoinThreads {
+        std::vector<std::thread>& threads;
+        ~JoinThreads() { for (auto& thread:threads) if (thread.joinable()) thread.join(); }
+    } joinThreads{threads};
     threads.reserve(workers-1);
     for (unsigned k=1;k<workers;++k) {
         const size_t begin=std::min(units_.size(),size_t(k)*chunk);
@@ -7309,7 +7314,7 @@ void World::tick(float dt) {
                               : u.frozenFor > 0 ? statueTypeOf(u.type, true) : -1;
                 static const bool kStatLog2 = std::getenv("TAK_BURNLOG") != nullptr;
                 if (kStatLog2 && (u.stonedFor > 0 || u.frozenFor > 0))
-                    std::fprintf(stderr, "statue edge: %s statue=%d stoned=%.1f\n",
+                    std::fprintf(stderr, "statue edge: %s statue=%d stoned=%d\n",
                                  u.type->id.c_str(), u.corpseStatue, u.stonedFor);
                 int ct = u.corpseStatue >= 0 ? u.corpseStatue : corpseTypeOf(u.type);
                 // Retail gib rule (icd 0x512610): deathType = the killing blow's
