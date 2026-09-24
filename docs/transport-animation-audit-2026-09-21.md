@@ -125,11 +125,12 @@ implementation descriptions. Current open gates are:
   mission, terrain scans, placement, and release match through step 314, with
   176 distinct grade cells, 219 grade calls, and 74 scan deadlines; Standard
   and Crusades pass across the same three builds. Other maps and carrier
-  profiles remain open. A continuous live-blocker diagnostic now drives the
-  actual native mover from the start, but that diagnostic omits the real
-  `GROUND_UNLOAD` dispatcher and misses World's terrain-scan cadence at step
-  825. Automatic native collision detection and route replacement in one
-  uninterrupted mission-backed trace are still unverified.
+  profiles remain open. A combined continuous live-blocker diagnostic now
+  includes the actual native mover and `GROUND_UNLOAD` dispatcher, but it is
+  inconclusive: its scan/movement trace diverges before the blocker changes
+  position, and the mission worker returns no replacement route at the later
+  matched replan cell. Automatic native collision detection and route
+  replacement in one uninterrupted mission-backed trace remain unverified.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -145,6 +146,16 @@ implementation descriptions. Current open gates are:
   directly, so global projectile-manager scheduling remains open. Special
   weapon cases, broader missing-script behavior, visibility-loss timelines,
   and full movement/flight callback phase comparisons remain open.
+- Menu video color: the Bink decoder now uses the chroma matrix measured from
+  retail's Bink DLL. Sixteen sampled frames across idle, hover-in, hover-loop,
+  and mouse-out for all four doors pass, with mean RGB error 1.151–2.058/255.
+  This checks representative decoded colors; exact door-state timing and every
+  decoded frame are not covered by that color oracle.
+- Build icon aspect: all 171 shipped build portraits measured across the three
+  containing HPI archives are 63–64 by 47–49 pixels, matching the authored
+  4:3 shape within one-pixel variations. The HUD uses a 4:3 icon box and scales
+  each texture proportionally, so this path does not stretch the portraits.
+  Resolution-by-resolution visual layout remains outside this asset/layout check.
 - Cursors: authored frame timing, software/hardware rendering, enemy weapon-range
   feedback, and the native Revive, Load, and FindSite selector gates are covered.
   Native mode 3's Airstrike gates and active weapon selection are measured. The
@@ -172,7 +183,12 @@ implementation descriptions. Current open gates are:
   Headless live-script fixtures cover `verpill`'s detached SFX 264 and
   Kirenna's (`vermage`) water-transition SFX 263 through skipped render ticks
   and owner removal, checking authored art, emission position/tick and lifetime.
-  Pixel-identical Glide output is not required.
+  The shipped arrow, bolt, harpoon, and spear 3DO selection/pose path also has
+  passing native draw and 4,096-case pose checks; all 145 moving shot slots in
+  Standard and Crusades resolve their referenced models. The remaining
+  projectile gaps are other effect lifecycles and uncovered collision/lifetime
+  families, not the arrow-to-yellow-streak fallback. Pixel-identical Glide
+  output is not required.
 - Overall animation parity: verify engine-driven callback timelines and final
   rendered behavior across the roster. VM/piece-transform oracle coverage and
   the current smoke viewport fix do not by themselves prove that requirement.
@@ -221,6 +237,24 @@ instead of searching nearby cells. Full carrier mission scheduling remains under
 audit; transfer-state parity alone does not establish the complete approach trace.
 
 ## Animation corrections and coverage
+
+The main-menu door clips also have a separate color oracle. The former Credits
+hover clip appeared orange/brown against yellow/gold background art because the
+decoder used standard BT.601 chroma coefficients. `BinkVideo` now uses the
+coefficient ordering measured from the shipped retail Bink DLL; the original
+idle, hover-in, loop, and mouse-out playback states remain in the menu state
+machine. The 16 reference-frame comparisons across all four doors pass with mean
+RGB error between 1.151 and 2.058/255. This is close color agreement rather than
+byte-identical decoding, and does not measure the complete frame-by-frame
+transition timing. Detailed method and results are in
+[`docs/bink-colors-2026-09-20.md`](bink-colors-2026-09-20.md).
+
+The build-menu portrait concern also has an asset/layout check: all 171 shipped
+`anims/buildpic/*.jpg` images in the three HPI archives that contain them are
+between 63 and 64 pixels wide and 47 and 49 pixels high. The in-game HUD draws a
+4:3 icon rectangle and fits the source texture using the smaller width/height
+scale, preserving each portrait's aspect ratio. Generated model thumbnails are
+square fallbacks and are fit into the same portrait rectangle without stretching.
 
 Gameplay unit display VMs now use the same integer scheduler and piece controller
 that are checked against retail `56c870`, rather than a separate floating-point
@@ -8507,18 +8541,21 @@ python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
 ### Continuous native mover through the live-blocker boundary (2026-09-24)
 
 The earlier live route-replacement replay begins at the captured replan request,
-while its mover is not physically advanced between worker requests. A separate
-diagnostic continuously advances retail's `0x4dc800`/`0x51b2a0` mover and matches
-1,232 unobstructed Lake Lokken movement rows, but it does not run the real
-`GROUND_UNLOAD` dispatcher. Without that dispatcher, the native terrain-scan
-deadline first differs from World at step 825 (859 versus 857), followed by a
-speed/mode divergence. This is a scheduler-fixture mismatch and cannot be used
-to judge collision against the mobile blocker. The viable combined test needs
-to retain the mission-backed path, which already matches 550 terrain scans
-through physical release at step 2,217, while also injecting the blocker from
-the live World rows and servicing the worker through the replan boundary.
-That continuous mission-backed collision-and-replan trace remains open and is
-not counted as a parity pass. No retail GUI was launched.
+while its mover is not physically advanced between worker requests. The combined
+Lake Lokken diagnostic now retains the mission-backed path, continuously advances
+retail's `0x4dc800`/`0x51b2a0` mover, and injects the map-backed blocker. It is not
+a parity pass. Before the blocker moves, the first scan/movement mismatch is at
+step 825: World changes speed mode and scan deadline (857), while native retains
+the prior mode and deadline (859). Supplying World exploration changes to the
+native mapping plane moves the first mismatch to step 891, so the visibility
+inputs are still not fully reconciled. At the later replan boundary, both traces
+start from cell `(238,231)`, and direct native search can reproduce all five
+World replacement waypoints, but the retained mission worker delivers no route
+and the native carrier does not release its passenger. The isolated worker
+control still passes. The combined failure therefore does not establish a
+production pathfinding mismatch; the scan and worker-service context remains
+unresolved. This was Standard only; Crusades was not run. No retail GUI was
+launched.
 
 ### Araarch projectile release and impact timing (2026-09-24)
 
@@ -8534,3 +8571,38 @@ case. The native collision routine was advanced directly, so the global
 projectile-manager's same-tick scheduling is not established. The untracked
 ad-hoc Araarch probe still calls the callbacks in the old reversed order and is
 not authoritative for release timing. No retail GUI was launched.
+
+### Shipped arrow and bolt rendering paths (2026-09-24)
+
+The asset-backed weapon inventory covers the Standard and Crusades registries:
+145 moving projectile slots resolve their referenced 3DO models, with no
+missing, unreadable, or empty model files. This includes Araarch/Taros arrows
+(`araarrow`), the Arasiege Mounted Ballista's large bolt (`arabolt`), the
+Veruna Ballista's veteran pair (`verbal1`/`verbal1_vet`), anti-air arrows, and
+LOS arrow/bolt weapons. The unique arrow/bolt/harpoon/spear model names all
+appear in the low-zoom readable-silhouette path. The four artless slots are the
+same two authored beams (`vermage` Water Ball and `zonspide` Claws) in both
+balance registries; they are not arrow weapons.
+
+The Glide renderer sends modeled ballistic and straight/LOS shots to
+`drawShotModel` and returns before the generic yellow-streak fallback. Native
+emulation checks pass for 4,096 ballistic draw dispatches, 4,096 straight-shot
+launches, 4,096 straight-shot draw decisions, and 4,096 XYZ model poses; the
+largest pose difference is 0.00002706 world units. The draw probes validate
+model selection, angles, position, visibility, and draw ordering. A headless
+Arasiege image did not expose a clear enough in-flight bolt for a retail/Glide
+visual comparison; this work establishes the authored model path and pose, not
+a final screenshot comparison. Screenshot pixel identity is not a completion
+gate.
+
+Reproduce the focused checks with:
+
+```sh
+python3 tools/re/probe_ballistic_projectile_render.py
+python3 tools/re/probe_straight_projectile_launch.py
+for bin in build build-dbg build-o2; do
+  "$bin/effect_inventory" /home/pocket_geek/tak_data --weapons
+  python3 tools/re/probe_straight_projectile_render.py "$bin/retail_visual_test"
+  python3 tools/re/check_projectile_model_transform.py "$bin/model_transform_test"
+done
+```
