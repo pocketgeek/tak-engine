@@ -43,6 +43,19 @@ using tak::sim::World;
 
 namespace tak::sim {
 struct RetailReplayProbe {
+    static bool waterFootprintPassable(const World& world,const tak::sim::Unit* unit) {
+        if(!unit || !unit->type) return false;
+        const int fx=unit->type->footX,fz=unit->type->footZ;
+        const int x=tak::sim::footprintOrigin(unit->x,fx);
+        const int z=tak::sim::footprintOrigin(unit->z,fz);
+        const auto& nav=world.navFor(unit->type);
+        if(!nav.fits(x+fx/2,z+fz/2,std::max(fx,fz))) return false;
+        for(int cz=z;cz<z+fz;++cz)
+            for(int cx=x;cx<x+fx;++cx)
+                if(!world.passable(unit->type,cx,cz)) return false;
+        return true;
+    }
+
     static void dumpSurfaceSearchGrades(World& world) {
         struct State { bool dumped=false; std::vector<int> initial; int changes=0; };
         auto* stream=std::getenv("TAK_DUMP_GRADE_PLANE") ? stderr : nullptr;
@@ -1828,6 +1841,83 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
     std::printf("NO_ROUTE\n");
 }
 
+// Asset-backed end-to-end surface unload on a shipped map. Unlike the route
+// fixture above, this keeps the World and carrier alive through physical
+// movement, placement checking, transfer, and passenger release.
+static bool surfaceUnloadMapTravelFixture(const char* retailRoot,const char* mapName,
+                                          int startCellX,int startCellZ,
+                                          int goalCellX,int goalCellZ) {
+    auto vfs=tak::hpi::mountRetailRoot(retailRoot,tak::hpi::OverridePolicy::None);
+    const std::string mapPath=tak::hpi::findMap(vfs,mapName);
+    if(mapPath.empty()) throw std::runtime_error(std::string("map not found: ")+mapName);
+    const auto map=tak::tnt::Map::load(vfs.read(mapPath),mapPath);
+    if(startCellX<0 || startCellZ<0 || goalCellX<0 || goalCellZ<0 ||
+       startCellX>=map.width || startCellZ>=map.height ||
+       goalCellX>=map.width || goalCellZ>=map.height)
+        throw std::runtime_error("surface-unload map travel coordinates outside the map");
+
+    World world;world.setVisPlayer(-1);
+    world.setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
+    tak::sim::registerMapFeatures(world,map,vfs);
+    world.setPathService(true);
+    UnitType carrier=boatType(),passenger=footType();
+    carrier.domain=UnitType::Domain::Water;carrier.floater=true;
+    carrier.minWaterDepth=13;carrier.maxWaterDepth=10000;
+    carrier.footX=carrier.footZ=4;
+    passenger.accel={}; // keep the release point observable after transfer
+    const int startX=startCellX*16,startZ=startCellZ*16;
+    const int goalX=goalCellX*16+8,goalZ=goalCellZ*16+8;
+    const int carrierId=world.spawn(&carrier,startX,startZ);
+    const int passengerId=world.spawn(&passenger,startX,startZ);
+    board(world,carrierId,passengerId);
+    world.unloadAt(carrierId,float(goalX),float(goalZ));
+
+    bool unloaded=false;
+    uint32_t unloadTick=0;
+    for(uint32_t tick=1;tick<=20000;++tick) {
+        world.tick(1.0f/30.0f);
+        const auto* carrierUnit=world.unit(carrierId);
+        const auto* passengerUnit=world.unit(passengerId);
+        if(!carrierUnit || !passengerUnit) break;
+        if(carrierUnit->cargo.empty() && !passengerUnit->embarked()) {
+            unloaded=true;unloadTick=tick;break;
+        }
+    }
+    const auto* carrierUnit=world.unit(carrierId);
+    const auto* passengerUnit=world.unit(passengerId);
+    std::printf("MAPTRAVEL %s %d %d %d %d %u %d %d %d %u\n",mapName,
+        startX,startZ,goalX,goalZ,unloadTick,
+        carrierUnit?int(carrierUnit->x.floorInt()):0,
+        carrierUnit?int(carrierUnit->z.floorInt()):0,
+        passengerUnit?int(passengerUnit->x.floorInt()):0,
+        passengerUnit?unsigned(passengerUnit->inTransport):0);
+    if(carrierUnit && !carrierUnit->orders.empty()) {
+        const auto& order=carrierUnit->orders[World::currentLeg(carrierUnit->orders)];
+        const auto& mission=order.transportMission;
+        std::printf("MISSION %zu %u %u %u %u %u %u %d %d %d %d %d %d %llu %llu\n",
+            carrierUnit->orders.size(),unsigned(mission.stage),mission.waitMask,
+            mission.deadline,mission.pending,mission.flags,order.transportTicks,
+            order.x.floorInt(),order.z.floorInt(),order.missionTarget?order.missionTarget->first.floorInt():0,
+            order.missionTarget?order.missionTarget->second.floorInt():0,
+            carrierUnit->groundMovementMode,carrierUnit->groundSpeedMode,
+            static_cast<unsigned long long>(world.pathStats().completions()),
+            static_cast<unsigned long long>(world.pathStats().failures()));
+    } else if(carrierUnit) std::printf("MISSION 0\n");
+    const bool exactRelease=passengerUnit && passengerUnit->x.v==tak::sim::Fixed::fromInt(goalX).v &&
+        passengerUnit->z.v==tak::sim::Fixed::fromInt(goalZ).v;
+    const bool emptyCargo=carrierUnit && carrierUnit->cargo.empty();
+    const bool carrierInWater=tak::sim::RetailReplayProbe::waterFootprintPassable(world,carrierUnit);
+    std::printf("%s: %s\n",unloaded?"PASS":"FAIL",
+        unloaded?"boat completed routed shore unload on the shipped map":"boat did not release its cargo");
+    std::printf("%s: %s\n",exactRelease?"PASS":"FAIL",
+        exactRelease?"passenger occupies the selected legal landing point":"passenger did not occupy the requested landing point");
+    std::printf("%s: %s\n",emptyCargo?"PASS":"FAIL",
+        emptyCargo?"carrier cargo is empty after release":"carrier still owns cargo after release");
+    std::printf("%s: %s\n",carrierInWater?"PASS":"FAIL",
+        carrierInWater?"surface carrier footprint remains in navigable water after shore release":"surface carrier footprint is not navigable water after shore release");
+    return unloaded && exactRelease && emptyCargo && carrierInWater;
+}
+
 // Paired with the native 0x4dc800 flight-mover probe.  This isolates the
 // long-lived point-controller update used by air transports after their
 // dispatcher has installed a destination, so the comparison can distinguish
@@ -1934,6 +2024,10 @@ int main(int argc,char** argv) {
         surfaceUnloadMapRouteFixture(argv[2],argv[3],std::atoi(argv[4]),std::atoi(argv[5]),
                                      std::atoi(argv[6]),std::atoi(argv[7]),std::atoi(argv[8]));
         return 0;
+    }
+    if(argc==8 && !std::strcmp(argv[1],"--surface-unload-map-travel")) {
+        return surfaceUnloadMapTravelFixture(argv[2],argv[3],std::atoi(argv[4]),
+            std::atoi(argv[5]),std::atoi(argv[6]),std::atoi(argv[7])) ? 0 : 1;
     }
     if((argc==2 || argc==3) && !std::strcmp(argv[1],"--surface-unload-route-fixture")) {
         const int variant=argc==3 ? std::atoi(argv[2]) : 0;

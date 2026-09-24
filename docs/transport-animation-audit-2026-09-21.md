@@ -52,8 +52,14 @@ implementation descriptions. Current open gates are:
   and the real mission-removal routine retires it at 335. Scheduler request
   events and World-produced terrain grades are controlled harness inputs. The
   World crowded-shore retry regression now exercises real terrain, routing,
-  movement, and attachment. Independent grade generation and shoreline cargo
-  placement on a live map remain open.
+  movement, and attachment. A new asset-backed Lake Lokken World test follows a
+  surface carrier from a real water start through route movement and releases
+  its passenger at the exact selected shore point while the carrier's full
+  footprint remains navigable water. Its paired Lake Lokken route reconstruction
+  consumes effective grades produced by World and returns a usable partial
+  route after reporting failure; it is not independent grade generation or a
+  complete native dispatcher/mover/placement comparison. Broader live-map
+  shoreline route coverage remains open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -176,6 +182,13 @@ scripts without corruption.
   limits, competing boarders, transfer delay/interruption, carrier loss, water
   crossings, coastal approaches, whole-footprint reservations, disconnected ponds,
   and superseded path requests.
+- `transport_test --surface-unload-map-travel /home/pocket_geek/tak_data 'Lake Lokken' 240 340 240 350`:
+  asset-backed World route, shore placement, cargo transfer, exact passenger
+  landing, and a navigable-water check for the carrier footprint.
+- `python3 tools/re/check_surface_unload_map_route.py build/transport_test --map 'Lake Lokken' --start 240 340 --target 240 350`:
+  paired native route reconstruction using World-produced effective grades; the
+  World search reports one failure while still supplying the partial route used
+  by the successful end-to-end unload.
 - `python3 tools/re/check_vertical_animation.py`: 4,096 airborne GET 30 results
   against `4dc1f0`, including attachment and refusal.
 - `python3 tools/re/check_animation_roster.py assets/extracted/all/scripts
@@ -198,6 +211,11 @@ Protocol **178** separates the changed transport simulation from published 0.7.0
 
 - Release, Debug and optimized Debug: all targets rebuilt; **46/46 CTest tests
   passed in each configuration** (138 passing executions).
+- The Lake Lokken surface unload and its paired route reconstruction pass in
+  Release, Debug, and optimized Debug. The route search returns two waypoints
+  with one World failure; the World carrier follows that partial route, releases
+  the passenger at the selected shore point, and keeps its full footprint in
+  navigable water.
 - The same-trip sea retry route probe passes for 1,000 physical mover steps;
   retail and World agree on all route points, movement state, cargo release and
   mission retirement. This is a controlled composition of native dispatcher
