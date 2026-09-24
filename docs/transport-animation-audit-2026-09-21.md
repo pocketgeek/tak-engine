@@ -8189,12 +8189,35 @@ roll/yaw/pitch combinations. The maximum coordinate error is 0.00002706 world
 units. Together with the native draw-dispatch probes and the existing model
 transform tests, this closes the mesh orientation and trajectory-pose path for
 the authored arrow. No remaining projectile transform or shipped asset-selection
-mismatch was demonstrated, so this audit made no renderer change. It does not
-compare the final Glide texture sampling or triangle pixels; those remain outside
-the behavioral parity gate.
+mismatch was demonstrated. The remaining complaint was about the arrow's low-zoom
+silhouette, not its selected asset or trajectory; the display readability
+correction is recorded below. This audit does not compare final Glide texture
+sampling or triangle pixels; those remain outside the behavioral parity gate.
 
 Reproduce the model-pose check with:
 
 ```sh
 python3 tools/re/check_projectile_model_transform.py build-o2/model_transform_test
 ```
+
+### Low-zoom arrow and bolt silhouette (2026-09-24)
+
+The headless `TAK_PROJECTILE_TEST=araarch` scene showed that the correct
+`araarrow` mesh and heading still collapsed to a narrow line at ordinary map
+zoom. The authored head and fletching are present, but their roughly 14-by-3
+world-unit model loses those details during projection. `drawShotModel` now
+applies a camera-dependent display scale to the elongated projectile models
+used for arrows, bolts, harpoons, and spears (`araarrow*`, `arabolt`, `cregatl1`,
+`araharp1`, `verbal1*`, `verhpoon`, `verspear`, and `zonterspear`). It expands
+the projected cross-section slightly more than length and returns to the
+authored size at close zoom. Projectile coordinates, aim, collision, lifetime,
+and texture selection are unchanged; shells, bombs, and magic beams are not
+scaled.
+
+The in-engine Ulasem Arena screenshot fixture reproduces the normal-zoom shot;
+the zoomed crop shows the mesh's tail feathers, shaft, and arrowhead separately.
+Release, Debug, and optimized Debug client builds succeed, and the complete
+Debug suite passes 52/52. The final cross-section refinement was then rebuilt
+in Debug and exercised by the same headless screenshot. This is a readability
+approximation for the low-resolution projection, not evidence of retail's exact
+projectile size. No retail GUI was launched, as requested.

@@ -1200,6 +1200,44 @@ private:
         collect(tris_, atlas, model->root, base, nullptr, facing, player,
                 false, false);
         if (tris_.empty()) return;
+        // The authored arrow/bolt 3DOs are only about 14 world units long and
+        // less than 3 units wide. At normal map zoom their arrowheads and
+        // fletching collapse into a one-pixel streak, so the shot reads like a
+        // laser despite using the correct mesh. Keep the native trajectory,
+        // heading, altitude and texture, but use a small zoom-dependent display
+        // lift so their authored silhouette survives minification. At close
+        // zoom the meshes retain native size. This is deliberately limited to
+        // the arrow/bolt/harpoon/spear families; round shells and magical beams
+        // keep their native scale.
+        static const std::unordered_set<std::string> readableArrowModels = {
+            "araarrow", "araarrow2", "araarrow3", "arabolt", "cregatl1",
+            "araharp1", "verbal1", "verbal1_vet", "verhpoon", "verspear",
+            "zonterspear"
+        };
+        if (readableArrowModels.contains(name)) {
+            const float alongScale = std::clamp(
+                2.0f / std::max(mapView_.zoom(), 0.01f), 1.0f, 1.5f);
+            const float nearZoom = (alongScale - 1.0f) / 0.5f;
+            const float crossScale = alongScale * (1.0f + 0.35f * nearZoom);
+            float modelAxis[3] = {0.0f, 0.0f, 1.0f};
+            if (native) base.apply(0.0f, 0.0f, 1.0f, modelAxis);
+            const float cs = std::cos(facing), sn = std::sin(facing);
+            const float axisX = modelAxis[0] * cs + modelAxis[2] * sn;
+            const float axisZ = -modelAxis[0] * sn + modelAxis[2] * cs;
+            float axisX2 = axisX;
+            float axisY2 = -(modelAxis[1] * kProjY + axisZ * kProjZ);
+            const float axisLength = std::max(std::sqrt(axisX2 * axisX2 + axisY2 * axisY2), 1e-4f);
+            axisX2 /= axisLength;
+            axisY2 /= axisLength;
+            const float crossX = -axisY2, crossY = axisX2;
+            for (auto& tri : tris_)
+                for (auto& vertex : tri.v) {
+                    const float along = vertex.position.x * axisX2 + vertex.position.y * axisY2;
+                    const float across = vertex.position.x * crossX + vertex.position.y * crossY;
+                    vertex.position.x = axisX2 * along * alongScale + crossX * across * crossScale;
+                    vertex.position.y = axisY2 * along * alongScale + crossY * across * crossScale;
+                }
+        }
         std::stable_sort(tris_.begin(), tris_.end(),
                          [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
