@@ -959,6 +959,27 @@ int main(int argc,char** argv) {
         require(draws==1 && reloadAtCallback>=240 && reloadAtCallback<360,"callback consumes one native reload draw");
         require(world.unit(sid)->mana==17,"mana is spent when the script releases the projectile");
         {
+            World edge;edge.setVisPlayer(-1);
+            edge.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            UnitType stationary=shooter;stationary.canMove=false;
+            UnitType mobileTarget=targetType;mobileTarget.maxVel=Fixed::fromInt(1);
+            const int from=edge.spawn(&stationary,200,200,{},0);
+            const int atRange=edge.spawn(&mobileTarget,600,200,{},1);
+            edge.attack(from,atRange,false);edge.tick(1.f/30);
+            const auto& inRangeEvents=edge.unit(from)->weaponAnimations;
+            require(inRangeEvents.count>0 &&
+                    inRangeEvents.events[0].kind==tak::RetailWeaponAnimation::Aim,
+                "scripted combat starts AimWeapon at the native inclusive maximum range");
+
+            World outside;outside.setVisPlayer(-1);
+            outside.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            const int outsideFrom=outside.spawn(&stationary,200,200,{},0);
+            const int outsideTarget=outside.spawn(&mobileTarget,601,200,{},1);
+            outside.attack(outsideFrom,outsideTarget,false);outside.tick(1.f/30);
+            require(outside.unit(outsideFrom)->weaponAnimations.count==0,
+                "scripted combat does not start AimWeapon beyond the native maximum range");
+        }
+        {
             World blocked;blocked.setVisPlayer(-1);
             blocked.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             blocked.blockCells(15,12,1,1,true);

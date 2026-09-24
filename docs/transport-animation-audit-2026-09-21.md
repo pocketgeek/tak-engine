@@ -110,9 +110,11 @@ implementation descriptions. Current open gates are:
   scheduler at the native deferred phase. The native mover callback tail and
   display helper also agree on the coincident
   `TurnDirection → MoveRate → setSFXoccupy` order, and the display VM receives
-  `BeginFlight` call-ins from the simulation snapshot. Special weapon cases,
-  broader missing-script behavior, actual range/visibility-loss timelines, and
-  full movement/flight callback phase comparisons remain open.
+  `BeginFlight` call-ins from the simulation snapshot. An exact-range regression
+  now confirms that AimWeapon starts at the native inclusive maximum range and
+  remains gated one pixel beyond it. Special weapon cases, broader missing-script
+  behavior, visibility-loss timelines, and full movement/flight callback phase
+  comparisons remain open.
 - Cursors: authored frame timing, software/hardware rendering, enemy weapon-range
   feedback, and the native Revive, Load, and FindSite selector gates are covered.
   Native mode 3's Airstrike gates and active weapon selection are measured. The

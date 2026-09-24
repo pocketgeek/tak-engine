@@ -650,6 +650,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 const auto modelPath="objects3d/"+t.id+".3do";
                 if(vfs.has(modelPath)) {
                     auto model=tdo::load(vfs.read(modelPath));
+                    auto& currentType=t;
                     t.scriptPieceCenters.resize(script->pieces.size());
                     auto& productionModel=t.productionModel;
                     auto append=[&](auto&& self,const tdo::Object& object,int parent)->void {
@@ -668,7 +669,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                                 for(int axis:{0,2})vertex[size_t(axis)]=std::bit_cast<int32_t>(0u-uint32_t(vertex[size_t(axis)]));
                                 bounds.add(vertex);
                             }
-                            t.scriptPieceCenters[size_t(piece)]=bounds.center();
+                            currentType.scriptPieceCenters[size_t(piece)]=bounds.center();
                         }
                         for (const auto& child:object.children) self(self,child,index);
                     };
@@ -4106,13 +4107,13 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     bool needLoS = best > 64.0f && !u.type->canFly &&
                    target->type && !target->type->canFly && !u.type->lobs();
     // LoS gates ONLY in-range firing and in-range repositioning; an out-of-range
-    // chaser advances regardless (the `dist > best*0.95` move test below
+    // chaser advances regardless (the `dist > best` move test below
     // short-circuits before `los` is read, and the fire gate is never reached out of
     // range). So defer the raycast until we're actually close enough for it to
     // matter -- identical result, but a marching army (the bulk of a big battle, all
     // out of range) stops paying for a per-tick line-of-sight cast it never uses.
     bool los = true;
-    if (needLoS && dist <= reach * 0.95f)
+    if (needLoS && dist <= reach)
         los = combatLineOfSight(u,*target);
     // A static unit cannot chase -- and neither may one whose move standing order
     // says hold position. Both drop an AUTO-acquired target that walks out of
@@ -4134,7 +4135,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         dist=std::sqrt(dx*dx+dz*dz);
     }
     if ((sel && sel->melee) ? !adj
-                            : (dist > reach * 0.95f || (!los && mayChase))) {
+                            : (dist > reach || (!los && mayChase))) {
         if (hovering) return;
         // Advance toward the target, steering around impassable terrain.
         if (u.repathLeft > 0) --u.repathLeft;
