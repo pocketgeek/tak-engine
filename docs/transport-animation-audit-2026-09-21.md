@@ -99,11 +99,19 @@ implementation descriptions. Current open gates are:
   that retry. For the captured Lake Lokken Vertrans/Araarch route, retail's
   `0x416430` worker now installs a replacement from blocker-adjusted map grades
   on the same navigator/controller while the native unload mission and cargo
-  remain active. All five World waypoints match in Standard and Crusades across
-  Release, Debug, and optimized Debug builds. The replay begins at the captured
-  World replan boundary and explicitly submits the replacement; having the
-  moving carrier detect the blocker and trigger it in one joined timeline, plus
-  other maps and carrier profiles, remains open.
+  remain active. The paired search packs World's captured grade cache and keeps
+  retail's original `0x4139d0` cached/live dispatch intact. In the delayed
+  blocker case, all five World waypoints match in Standard and Crusades across
+  Release, Debug, and optimized Debug builds. An experimental always-on route
+  search case has a separate direct-search discrepancy: the isolated captured
+  attempt agrees on its first point but differs by one cell on later points,
+  even though every native grade-dispatch result matches the captured plane.
+  Replaying that same replacement through the native unload worker while the
+  mission and cargo remain active delivers all ten World waypoints. The isolated
+  always-on search-state difference remains unexplained. The replay begins at
+  the captured World replan boundary and explicitly submits the replacement;
+  having the moving carrier detect the blocker and trigger it in one joined
+  timeline, plus other maps and carrier profiles, remains open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -8370,37 +8378,35 @@ python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
 
 ### Live-blocker replacement route paired with retail search (2026-09-24)
 
-The `--live-route-blocker-steps` Lake Lokken fixture now captures the completed
-World replan after a stationary Vertrans physically blocks the carrier, then
-replays that exact request through retail's native route search. The native
-circle goal, scheduler weight, water movement costs, and footprint are set from
-the captured request. Retail reconstructs the same five route points. An
-initial mismatch exposed a fixture ordering bug: it built the native circle
-before setting the carrier's 4x4 footprint, shifting the destination by one
-cell. The fixture now sets the footprint before `0x4e2500` and checks the
-native goal center, radius, and route cost inputs.
+The `--live-route-blocker-steps` Lake Lokken fixture captures a completed World
+replan after a Vertrans blocks the shore, then replays the request through
+retail's native route search and worker. It packs World's row-major grade cache
+into retail's native map buffer, preserving the original `0x4139d0` cached-grade
+dispatch, including its grade-2 live-refresh branch. Only the live map query is
+supplied by the independent TNT/body oracle. The native circle goal, scheduler
+weight, water movement costs, and footprint come from the captured request;
+the fixture checks the goal center, radius, start origin, and initial distance.
 
-The blocker footprint changes 120 locally sampled route grades from open TNT
-terrain to the same blocked interior and clearance border produced by retail's
-native `0x508cd0` terrain grades plus the live body. Retail's route-query grade
-callback reconstructs each value from the TNT map and blocker footprint while
-retaining World's grade-5 visibility fallback; all 1,479 native search queries
-match the captured World plane. Retail then reconstructs the same five World
-replacement waypoints, ending inside the authored 266px unload circle. World
-moves the blocker clear and releases Araarch at the selected shore on physical
-step 2,350. The optional --native-worker-mission-repath mode takes this captured
-request, keeps a native GROUND_UNLOAD mission and attached Araarch active,
-installs an unobstructed route, switches the native grade callback to the live
-blocker plane, and requests a replacement through real
-0x4e54e0/0x416430/0x4e4ea0 on the same navigator and controller. Both native
-deliveries retain those identities and cargo links; the replacement matches all
-five World and direct-retail waypoints. The grade oracle checks 120 local
-blocker cells and every distinct native query against TNT terrain, occupancy,
-clearance, and the captured World plane. This verifies map-backed asynchronous
-route replacement from the captured replan boundary while the unload mission
-remains live. The carrier is not physically stepped between requests, so
-automatic blocker detection and replan are not yet one continuous native trace.
+In the delayed blocker case, the footprint changes 120 locally sampled grades
+from open TNT terrain to retail's blocked interior and clearance border. The
+grade oracle checks those cells against native `0x508cd0`; the original native
+dispatcher returns the same grades as World's captured plane for all 1,545
+queries. It reconstructs the same five replacement waypoints. The real
+`0x416430` mission worker keeps the carrier, navigator, controller, unload
+mission, and attached Araarch through both deliveries, and its replacement also
+matches all five World waypoints. World moves the blocker clear and releases
+Araarch at the selected shore on physical step 2,350.
 
+An experimental always-on path-service run captures a ten-waypoint replacement.
+The isolated direct replay returns the same first point but shifts later points
+by one cell, although all 2,131 original-dispatcher grade results match the
+captured plane. The resulting native and World final cost planes differ. In
+contrast, replaying the same request through the native sea-unload worker
+delivers all ten captured World waypoints while the mission and cargo remain
+active. The isolated search-state discrepancy is unresolved and is not counted
+as direct-search parity. In both fixtures the carrier is not physically stepped
+between worker requests, so automatic blocker detection and replan are not yet
+one continuous native trace; other maps and carrier profiles also remain open.
 Standard and Crusades worker replays pass with Release, Debug, and optimized
 Debug binaries (six runs). The four transport CTests pass in each build
 (12/12). No retail GUI was launched. Reproduce the Standard case with:

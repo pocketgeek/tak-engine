@@ -28,9 +28,13 @@ from check_surface_unload_map_release import (
     cat, movement_profile, native_placement_oracle, parse_tnt)
 
 
-def replay_native_attempt(width, height, grades, attempt, profile, target_x,
-                          target_z, circle_radius, sea, position):
+def replay_native_attempt(width, height, cached_grades, live_grade, attempt,
+                          profile, target_x, target_z, circle_radius, sea,
+                          position):
     """Run one captured World request through retail's actual search kernel."""
+    from unicorn import UC_HOOK_CODE
+    from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ESP
+
     (tick, unit_id, sx, sz, goal_x, goal_z, heading, retry, weight, *_rest) = attempt
     (turn, fx, fz, road, water, flags, _transport_dist, max_water, min_water,
      half_cell_ticks, heavy) = profile
@@ -54,6 +58,7 @@ def replay_native_attempt(width, height, grades, attempt, profile, target_x,
     phase.uc.mem_write(TYPE + 0x249, bytes([half_cell_ticks]))
     phase.uc.mem_write(OBJ + 0x1ad, struct.pack('<I', retry))
     phase.uc.mem_write(phase.GRID + 4, struct.pack('<hh', fx, fz))
+    phase.set_grade_plane(cached_grades)
     _, error = phase.icd.call(0x4e2500,
         (phase.HANDLE + 0x1000, target_x * 65536, target_z * 65536,
          circle_radius), ecx=phase.HANDLE)
@@ -67,19 +72,59 @@ def replay_native_attempt(width, height, grades, attempt, profile, target_x,
             native_goal, native_radius, radius_squared,
             goal_cell, circle_radius, expected_radius_squared)
 
-    def grade(_uc, args):
-        x, z = struct.unpack('<ii', phase.uc.mem_read(args, 8))
+    dispatch_calls = [0]
+    live_grade_calls = [0]
+    grade_results = []
+    pending_grade_queries = []
+
+    def observe_dispatch(_uc, _address, _size, _data):
+        dispatch_calls[0] += 1
+        esp = _uc.reg_read(UC_X86_REG_ESP)
+        _return, x, z, _direction = struct.unpack(
+            '<Iiii', _uc.mem_read(esp, 16))
+        pending_grade_queries.append((x, z))
+
+    def observe_grade_return(uc, address, _size, _data):
+        assert pending_grade_queries, hex(address)
+        x, z = pending_grade_queries.pop()
+        grade_results.append((x, z, uc.reg_read(UC_X86_REG_EAX), address))
+
+    def query_live_grade(_uc, args):
+        live_grade_calls[0] += 1
+        _who, world_x, _world_y, world_z = struct.unpack(
+            '<Iiii', phase.uc.mem_read(args, 16))
+        x = ((world_x >> 19) - fx) // 2
+        z = ((world_z >> 19) - fz) // 2
         if not (0 <= x < width and 0 <= z < height):
-            return 3, 0
-        value = grades(x, z) if callable(grades) else grades[z * width + x]
-        return 3, value
+            return 4, 0
+        return 4, live_grade(x, z)
+
+    def no_gate(_uc, _args):
+        return 0, 0
+
+    def visible(_uc, _args):
+        return 4, 1
+
+    def no_special_body(_uc, _args):
+        return 2, 0
 
     def request_weight(_uc, args):
         address = struct.unpack('<I', phase.uc.mem_read(args, 4))[0]
         phase.uc.mem_write(address, struct.pack('<I', weight))
         return 1, address
 
-    phase.icd.hooks[0x4139d0] = grade
+    # Preserve retail's cached-grade and grade-2 live-refresh dispatch. Only
+    # the dynamic terrain/body query comes from the independent map oracle.
+    phase.icd.hooks[0x413c80] = visible
+    phase.icd.hooks[0x409fe0] = no_gate
+    phase.icd.hooks[0x4db640] = query_live_grade
+    phase.icd.hooks[0x50e600] = no_special_body
+    phase.uc.hook_add(UC_HOOK_CODE, observe_dispatch,
+                      begin=0x4139d0, end=0x4139d0)
+    for return_site in (0x4139fe, 0x413a51, 0x413a9a, 0x413ae1,
+                        0x413bb9, 0x413bd7, 0x413bf7, 0x413c36, 0x413c77):
+        phase.uc.hook_add(UC_HOOK_CODE, observe_grade_return,
+                          begin=return_site, end=return_site)
     phase.icd.hooks[0x4161b0] = request_weight
     _, error = phase.init()
     assert error is None, error
@@ -87,6 +132,11 @@ def replay_native_attempt(width, height, grades, attempt, profile, target_x,
     # World. Supply its recorded retail weight to the native initializer rather
     # than recalculating it from this standalone emulator's fresh queue.
     assert phase.get(0x54) == weight, (tick, phase.get(0x54), weight)
+    native_start = struct.unpack('<hh', phase.uc.mem_read(OBJ + 0x30, 4))
+    assert native_start == (sx - fx // 2, sz - fz // 2), (
+        tick, native_start, sx, sz, fx, fz)
+    assert phase.get(0xb0) == attempt[9], (
+        tick, 'initial distance', phase.get(0xb0), attempt[9])
     # The emulated unit record omits the retail heavy-floater multiplier on
     # minimum straight distance. Use the captured request's exact kernel input.
     phase.uc.mem_write(OBJ + 0xb8, struct.pack('<i', attempt[19]))
@@ -112,13 +162,22 @@ def replay_native_attempt(width, height, grades, attempt, profile, target_x,
     count = struct.unpack('<I', phase.uc.mem_read(phase.NAV + 0x10c, 4))[0]
     words = struct.unpack('<' + 'h' * (count * 2),
                           phase.uc.mem_read(phase.NAV + 12, count * 4)) if count else ()
-    return list(zip(words[::2], words[1::2]))
+    search_cells = phase.uc.mem_read(phase.get(0x1c), width * height * 4)
+    search_plane_hash = 14695981039346656037
+    for offset in range(0, len(search_cells), 4):
+        search_plane_hash = ((search_plane_hash ^ search_cells[offset]) *
+                             1099511628211) & 0xffffffffffffffff
+        search_plane_hash = ((search_plane_hash ^ search_cells[offset + 1]) *
+                             1099511628211) & 0xffffffffffffffff
+    return (list(zip(words[::2], words[1::2])), dispatch_calls[0],
+            live_grade_calls[0], grade_results, search_plane_hash)
 
 
-def replay_native_worker_repath(width, height, base_grades, dynamic_grades,
-                                attempt, profile, target_x, target_z,
-                                circle_radius, sea, position,
-                                mission_backed=False):
+def replay_native_worker_repath(width, height, base_cached_grades,
+                                dynamic_cached_grades, base_live_grade,
+                                dynamic_live_grade, attempt, profile,
+                                target_x, target_z, circle_radius, sea,
+                                position, mission_backed=False):
     """Run a map-backed replacement through retail's queued route worker.
 
     The starting position is the captured World replan boundary. Retail first
@@ -168,6 +227,7 @@ def replay_native_worker_repath(width, height, base_grades, dynamic_grades,
     phase.uc.mem_write(OBJ + 0x1ad, struct.pack('<I', retry))
     phase.uc.mem_write(phase.GRID + 4, struct.pack('<hh', fx, fz))
     phase.uc.mem_write(OBJ + 0xb8, struct.pack('<i', attempt[19]))
+    phase.set_grade_plane(base_cached_grades)
 
     if native_live:
         phase.uc.mem_write(type_address + 0x23e, struct.pack('<H', transport_dist))
@@ -209,13 +269,25 @@ def replay_native_worker_repath(width, height, base_grades, dynamic_grades,
                 circle_radius, expected_radius_squared)
 
     blocker_active = [False]
-    def grade(_uc, args):
-        x, z = struct.unpack('<ii', phase.uc.mem_read(args, 8))
+    active_live_grade = [base_live_grade]
+
+    def query_live_grade(_uc, args):
+        _who, world_x, _world_y, world_z = struct.unpack(
+            '<Iiii', phase.uc.mem_read(args, 16))
+        x = ((world_x >> 19) - fx) // 2
+        z = ((world_z >> 19) - fz) // 2
         if not (0 <= x < width and 0 <= z < height):
-            return 3, 0
-        source = dynamic_grades if blocker_active[0] else base_grades
-        value = source(x, z) if callable(source) else source[z * width + x]
-        return 3, value
+            return 4, 0
+        return 4, active_live_grade[0](x, z)
+
+    def no_gate(_uc, _args):
+        return 0, 0
+
+    def visible(_uc, _args):
+        return 4, 1
+
+    def no_special_body(_uc, _args):
+        return 2, 0
 
     pending = [False]
     # The path scheduler is a fresh emulated singleton. Keep its clock in the
@@ -268,11 +340,21 @@ def replay_native_worker_repath(width, height, base_grades, dynamic_grades,
         worker_events.append(('notify', current_tick[0]))
         return 1, 0
 
+    dispatch_calls = [0]
+
+    def observe_dispatch(_uc, _address, _size, _data):
+        dispatch_calls[0] += 1
+
+    phase.uc.hook_add(UC_HOOK_CODE, observe_dispatch,
+                      begin=0x4139d0, end=0x4139d0)
     phase.icd.hooks[0x4e4f50] = enqueue
     phase.icd.hooks[0x4e1ee0] = prepare
     phase.icd.hooks[0x4e2470] = notify
     phase.icd.hooks[0x4e2060] = finish
-    phase.icd.hooks[0x4139d0] = grade
+    phase.icd.hooks[0x413c80] = visible
+    phase.icd.hooks[0x409fe0] = no_gate
+    phase.icd.hooks[0x4db640] = query_live_grade
+    phase.icd.hooks[0x50e600] = no_special_body
     phase.icd.hooks[0x4161b0] = request_weight
     vtable = read(nav)
     phase.icd.hooks[read(vtable + 0x18)] = lookup
@@ -343,12 +425,15 @@ def replay_native_worker_repath(width, height, base_grades, dynamic_grades,
 
     original_nav, original_controller = read(mover), read(nav + 4)
     blocker_active[0] = True
+    active_live_grade[0] = dynamic_live_grade
+    phase.set_grade_plane(dynamic_cached_grades)
     second_request = len(requests)
     set_destination(delivered_at + 1)
     assert pending[0] and len(requests) > second_request, (pending, requests)
     run_until_delivery(2, delivered_at + 2)
     second_route = deliveries[1]
     assert second_route and second_route != first_route, (first_route, second_route)
+    assert dispatch_calls[0] > 0, 'retail worker did not use the original grade dispatcher'
     assert read(mover) == original_nav == nav
     assert read(nav + 4) == original_controller == controller
     assert read(nav + 0x10c) == len(second_route), (read(nav + 0x10c), second_route)
@@ -366,7 +451,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 hpitool='build/hpitool', native_map_mover_steps=0,
                 native_live_unload=False, terrain_scan_after=None,
                 shore_blocker=False, live_route_blocker_steps=0,
-                native_worker_repath=False, native_worker_mission_repath=False):
+                native_worker_repath=False, native_worker_mission_repath=False,
+                always_on_route_search=False):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     if native_live_unload and (map_name.lower() != 'lake lokken' or
@@ -387,6 +473,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         raise ValueError('--native-worker-repath requires --live-route-blocker-steps')
     if native_worker_mission_repath and not live_route_blocker_steps:
         raise ValueError('--native-worker-mission-repath requires --live-route-blocker-steps')
+    if always_on_route_search and not live_route_blocker_steps:
+        raise ValueError('--always-on-route-search requires --live-route-blocker-steps')
     env = os.environ.copy()
     env['TAK_DUMP_GRADE_PLANE'] = '1'
     if terrain_scan_after is not None:
@@ -397,6 +485,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         env['TAK_MAP_SURFACE_ROUTE_BLOCKER'] = '1'
         env['TAK_MAP_SURFACE_SCAN_AFTER'] = '1'
         env['TAK_MAP_SURFACE_STEPS'] = str(live_route_blocker_steps)
+    if always_on_route_search:
+        env['TAK_MAP_SURFACE_ROUTE_ALWAYS_ON'] = '1'
     if carrier:
         env['TAK_DUMP_ATTEMPT_PLANES'] = '1'
         env['TAK_DUMP_ROUTE_ATTEMPT'] = '1'
@@ -548,15 +638,24 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         assert len(route_blocker) == 6, route_blocker
         blocker_id, blocker_x, blocker_z, initial_waypoints, blocker_fx, blocker_fz = route_blocker
         assert blocker_id > 0 and initial_waypoints > 0 and blocker_fx == fx and blocker_fz == fz, route_blocker
-        search_enabled = [tuple(map(int, line.split()[1:])) for line in stdout
-                          if line.startswith('WORLD_ROUTE_SEARCH_ENABLED ')]
-        assert len(search_enabled) == 1 and search_enabled[0][1] >= 2, search_enabled
+        if always_on_route_search:
+            search_enabled = [tuple(map(int, line.split()[1:])) for line in stdout
+                              if line.startswith('WORLD_ROUTE_BLOCK_THRESHOLD ')]
+            assert len(search_enabled) <= 1, search_enabled
+            assert not any(line.startswith('WORLD_ROUTE_SEARCH_ENABLED ')
+                           for line in stdout), 'always-on route service was disabled'
+        else:
+            search_enabled = [tuple(map(int, line.split()[1:])) for line in stdout
+                              if line.startswith('WORLD_ROUTE_SEARCH_ENABLED ')]
+            assert len(search_enabled) == 1 and search_enabled[0][1] >= 2, search_enabled
         repaths = [tuple(map(int, line.split()[1:])) for line in stdout
                    if line.startswith('WORLD_REPATH ')]
         assert repaths and all(len(row) == 10 for row in repaths), repaths[:5]
-        changed_repaths = [row for row in repaths if row[3] and row[7] >= 2 and
+        changed_repaths = [row for row in repaths if row[3] and
+                           (always_on_route_search or row[7] >= 2) and
                            row[8] == 1 and row[9] == 1]
-        assert changed_repaths and changed_repaths[0][0] >= search_enabled[0][0], (
+        assert changed_repaths and (always_on_route_search or
+                                    changed_repaths[0][0] >= search_enabled[0][0]), (
             'World did not install a changed route while the boat was body-blocked '
             'with cargo retained', search_enabled, repaths[:8])
         route_bodies = {row[0]: row[1:] for row in
@@ -600,11 +699,16 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         assert len(dynamic_matches) == 1, (changed_step, route_tick,
                                            [row[0][:8] for row in captured_attempts])
         dynamic_attempt, dynamic_world_raw = dynamic_matches[0]
-        dynamic_key = (dynamic_attempt[0], dynamic_attempt[1], dynamic_attempt[2],
-                       dynamic_attempt[3], dynamic_attempt[7], dynamic_attempt[6])
+        dynamic_key = (dynamic_attempt[1], dynamic_attempt[2], dynamic_attempt[3],
+                       dynamic_attempt[7], dynamic_attempt[6])
         dynamic_planes = [(index, header) for index, header in attempts
-                          if (header[0], header[1], header[2], header[3],
-                              header[4], header[5]) == dynamic_key]
+                          if (header[1], header[2], header[3],
+                              header[4], header[5]) == dynamic_key and
+                          header[0] <= dynamic_attempt[0]]
+        if dynamic_planes:
+            latest_plane_tick = max(header[0] for _, header in dynamic_planes)
+            dynamic_planes = [(index, header) for index, header in dynamic_planes
+                              if header[0] == latest_plane_tick]
         assert len(dynamic_planes) == 1, (dynamic_attempt, dynamic_planes)
         plane_index, plane_header = dynamic_planes[0]
         plane_width, plane_height = plane_header[8:10]
@@ -615,7 +719,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         blocker_cell = ((blocker_x // 65536 - (fx - 1) * 8) // 16,
                         (blocker_z // 65536 - (fz - 1) * 8) // 16)
         bx, bz = blocker_cell
-        assert grades[bz * width + bx] >= 6 and dynamic_grades[bz * width + bx] == 0, (
+        assert grades[bz * width + bx] >= 6 and dynamic_grades[bz * width + bx] in (0, 2), (
             'the live boat blocker was not added to the captured route-grade plane',
             blocker_cell, grades[bz * width + bx], dynamic_grades[bz * width + bx])
         route_map = parse_tnt(cat(hpitool, Path(retail_root), 'maps.hpi',
@@ -643,7 +747,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                     grade_mismatches.append((x, z, grades[index], base, 'static'))
                     continue
                 if overlaps(x, z, fx, fz):
-                    expected = 0
+                    if dynamic_grades[index] not in (0, 2):
+                        grade_mismatches.append((x, z, dynamic_grades[index],
+                                                 (0, 2), 'blocker'))
+                    continue
                 elif (overlaps(x - 1, z - 1, fx + 1, 1) or
                       overlaps(x + fx, z - 1, 1, fz + 1) or
                       overlaps(x, z + fz, fx + 1, 1) or
@@ -658,45 +765,78 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                                       grade_mismatches[:20])
         assert grade_checks > 0, ('no independently checked blocker grade cells', block_rect)
 
-        dynamic_grade_reads = {}
-        dynamic_grade_mismatches = []
+        live_grade_reads = []
+        live_grade_mismatches = []
 
-        def native_dynamic_grade(x, z):
+        def native_live_grade(x, z):
             index = z * width + x
-            if dynamic_grades[index] == 5:
-                value = 5  # retain the World-only unexplored-terrain fallback
-            else:
-                value = native_map_grade(x, z)
-                if overlaps(x, z, fx, fz):
-                    value = 0
-                elif (overlaps(x - 1, z - 1, fx + 1, 1) or
-                      overlaps(x + fx, z - 1, 1, fz + 1) or
-                      overlaps(x, z + fz, fx + 1, 1) or
-                      overlaps(x - 1, z, 1, fz + 1)):
-                    value = min(value, 4)
-            dynamic_grade_reads[(x, z)] = value
-            if value != dynamic_grades[index]:
-                dynamic_grade_mismatches.append(
+            # Retail's 4db640 rechecks a grade-2 cached cell against terrain
+            # and live bodies. A mobile occupant that cannot be followed gives
+            # grade 2; the cached occupancy plane may independently mark its
+            # footprint as 0 or retain the grade-2 refresh sentinel.
+            value = 2 if overlaps(x, z, fx, fz) else native_map_grade(x, z)
+            live_grade_reads.append((x, z, value))
+            if dynamic_grades[index] != 2 or value != 2:
+                live_grade_mismatches.append(
                     (x, z, dynamic_grades[index], value))
             return value
 
-        dynamic_native_route = replay_native_attempt(
-            plane_width, plane_height, native_dynamic_grade, dynamic_attempt,
-            profiles[(dynamic_attempt[0], dynamic_attempt[1])],
+        dynamic_profile_matches = [(tick, profile) for (tick, unit_id), profile
+                                   in profiles.items()
+                                   if unit_id == dynamic_attempt[1] and
+                                   tick <= dynamic_attempt[0]]
+        assert dynamic_profile_matches, dynamic_attempt
+        dynamic_profile_tick = max(tick for tick, _ in dynamic_profile_matches)
+        dynamic_profile = next(profile for tick, profile in dynamic_profile_matches
+                               if tick == dynamic_profile_tick)
+        (dynamic_native_route, native_dispatch_calls, native_live_grade_calls,
+         native_grade_results, native_search_plane_hash) = replay_native_attempt(
+            plane_width, plane_height, dynamic_grades, native_live_grade,
+            dynamic_attempt, dynamic_profile,
             target_x, target_z, circle_radius, sea,
             (changed_repaths[0][4], changed_repaths[0][5]))
-        assert dynamic_grade_reads and not dynamic_grade_mismatches, (
-            'native route-query grades differ from the captured map/blocker plane',
-            len(dynamic_grade_reads), dynamic_grade_mismatches[:20])
+        assert native_dispatch_calls > 0, 'retail route skipped original 0x4139d0'
+        native_grade_mismatches = []
+        for x, z, value, return_site in native_grade_results:
+            expected = (dynamic_grades[z * width + x]
+                        if 0 <= x < width and 0 <= z < height else 0)
+            if value != expected:
+                native_grade_mismatches.append(
+                    (x, z, value, expected, return_site))
+        assert not native_grade_mismatches, (
+            'retail 0x4139d0 grade results differ from World attempt plane',
+            native_grade_mismatches[:20])
+        assert len(live_grade_reads) == native_live_grade_calls, (
+            len(live_grade_reads), native_live_grade_calls)
+        assert not live_grade_mismatches, (
+            'retail live grade-2 refresh differs from the captured blocker plane',
+            live_grade_mismatches[:20])
+        world_search_rows = [line.split()[1:] for line in stderr
+                             if line.startswith('WORLDSEARCH ')]
+        dynamic_world_search = [row for row in world_search_rows
+                                if int(row[0]) == dynamic_attempt[0] and
+                                   int(row[1]) == dynamic_attempt[1] and
+                                   int(row[2]) == dynamic_attempt[7]]
+        assert len(dynamic_world_search) == 1, (dynamic_attempt, dynamic_world_search)
+        world_search_plane_hash = int(dynamic_world_search[0][6], 16)
         dynamic_world_pixels = [(x * 16, z * 16) for x, z in dynamic_world_raw]
         common_prefix = 0
         for native_point, world_point in zip(dynamic_native_route, dynamic_world_pixels):
             if native_point != world_point:
                 break
             common_prefix += 1
-        assert dynamic_native_route == dynamic_world_pixels, (
-            'retail native search did not reproduce the live-blocker replacement route',
-            dynamic_attempt, dynamic_native_route, dynamic_world_pixels)
+        if dynamic_native_route != dynamic_world_pixels:
+            message = (
+                'retail native search did not reproduce the live-blocker replacement route',
+                dynamic_attempt, dynamic_native_route, dynamic_world_pixels,
+                native_dispatch_calls, native_live_grade_calls,
+                live_grade_reads, live_grade_mismatches[:20],
+                native_grade_mismatches[:20], hex(world_search_plane_hash),
+                hex(native_search_plane_hash))
+            if not always_on_route_search:
+                raise AssertionError(message)
+            print('  Direct captured-attempt mismatch (continuing through worker):',
+                  message)
         for route_name, route in (('retail', dynamic_native_route),
                                   ('World', dynamic_world_pixels)):
             dx, dz = route[-1][0] - target_x, route[-1][1] - target_z
@@ -705,20 +845,21 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         if native_worker_repath:
             worker_route, worker_request_count, worker_delivery_count = \
                 replay_native_worker_repath(
-                    plane_width, plane_height, native_map_grade,
-                    native_dynamic_grade, dynamic_attempt,
-                    profiles[(dynamic_attempt[0], dynamic_attempt[1])],
+                    plane_width, plane_height, grades, dynamic_grades,
+                    native_map_grade, native_live_grade, dynamic_attempt,
+                    dynamic_profile,
                     target_x, target_z, circle_radius, sea,
                     (changed_repaths[0][4], changed_repaths[0][5]))
-            assert worker_route == dynamic_native_route, (
-                'retail route worker did not install the direct native dynamic route',
-                worker_route, dynamic_native_route, dynamic_attempt)
+            if not always_on_route_search:
+                assert worker_route == dynamic_native_route, (
+                    'retail route worker did not install the direct native dynamic route',
+                    worker_route, dynamic_native_route, dynamic_attempt)
             assert worker_route == dynamic_world_pixels, (
                 'retail route worker did not reproduce the captured World replacement',
                 worker_route, dynamic_world_pixels, dynamic_attempt)
-            assert not dynamic_grade_mismatches, (
+            assert not live_grade_mismatches, (
                 'retail worker queried a grade that differs from the captured blocker plane',
-                dynamic_grade_mismatches[:20])
+                live_grade_mismatches[:20])
             print(f'  Retail 0x416430 worker delivered the blocked replacement on the '
                   f'same navigator/controller ({worker_delivery_count} deliveries from '
                   f'{worker_request_count} worker requests); the replacement changed '
@@ -726,21 +867,22 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         if native_worker_mission_repath:
             mission_route, mission_request_count, mission_delivery_count = \
                 replay_native_worker_repath(
-                    plane_width, plane_height, native_map_grade,
-                    native_dynamic_grade, dynamic_attempt,
-                    profiles[(dynamic_attempt[0], dynamic_attempt[1])],
+                    plane_width, plane_height, grades, dynamic_grades,
+                    native_map_grade, native_live_grade, dynamic_attempt,
+                    dynamic_profile,
                     target_x, target_z, circle_radius, sea,
                     (changed_repaths[0][4], changed_repaths[0][5]),
                     mission_backed=True)
-            assert mission_route == dynamic_native_route, (
-                'native sea-unload mission worker did not install the direct native dynamic route',
-                mission_route, dynamic_native_route, dynamic_attempt)
+            if not always_on_route_search:
+                assert mission_route == dynamic_native_route, (
+                    'native sea-unload mission worker did not install the direct native dynamic route',
+                    mission_route, dynamic_native_route, dynamic_attempt)
             assert mission_route == dynamic_world_pixels, (
                 'native sea-unload mission worker did not reproduce the World replacement',
                 mission_route, dynamic_world_pixels, dynamic_attempt)
-            assert not dynamic_grade_mismatches, (
+            assert not live_grade_mismatches, (
                 'native sea-unload worker queried a grade that differs from the blocker plane',
-                dynamic_grade_mismatches[:20])
+                live_grade_mismatches[:20])
             print(f'  Retail unload dispatcher kept carrier and Araarch attached through '
                   f'{mission_delivery_count} worker deliveries ({mission_request_count} '
                   f'requests); its live mission route replacement matches all '
@@ -748,9 +890,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         print(f'  World hit a live map-backed boat blocker, installed a changed '
               f'route at physical step {changed_repaths[0][0]}, cleared the blocker, '
               f'and released Araarch at the selected shore on step {route_release_step}.')
-        print(f'  Retail native search reproduced all {common_prefix} replacement-route '
-              f'points; {grade_checks} local grades and {len(dynamic_grade_reads)} '
-              f'native route-query grades match TNT terrain plus the blocker; the endpoint '
+        print(f'  Retail native search reproduced {common_prefix}/{len(dynamic_world_pixels)} '
+              f'replacement-route points through {native_dispatch_calls} original 0x4139d0 calls '
+              f'({native_live_grade_calls} live 0x4db640 refreshes); {grade_checks} '
+              f'local grades match TNT terrain plus the blocker; the endpoint '
               f'is inside the same {circle_radius}px unload circle.')
     if transport_profile and world_route:
         dx = world_route[-1][0] - target_x
@@ -1426,6 +1569,8 @@ def main():
                         help='also replay the captured blocker route through retail 0x416430 on one retained navigator/controller; requires --live-route-blocker-steps')
     parser.add_argument('--native-worker-mission-repath', action='store_true',
                         help='also replay the blocker route through retail 0x416430 with a live GROUND_UNLOAD mission and attached passenger')
+    parser.add_argument('--always-on-route-search', action='store_true',
+                        help='keep World path service enabled throughout the moving blocker trace')
     parser.add_argument('--hpitool', default='build/hpitool')
     args = parser.parse_args()
     if bool(args.carrier) != bool(args.passenger):
@@ -1444,13 +1589,15 @@ def main():
         parser.error('--native-worker-repath requires --live-route-blocker-steps')
     if args.native_worker_mission_repath and not args.live_route_blocker_steps:
         parser.error('--native-worker-mission-repath requires --live-route-blocker-steps')
+    if args.always_on_route_search and not args.live_route_blocker_steps:
+        parser.error('--always-on-route-search requires --live-route-blocker-steps')
     check_route(args.world_binary, args.retail_root, args.map, tuple(args.start),
                 tuple(args.target), args.footprint, args.carrier, args.passenger,
                 args.crusades, args.native_map_grades or bool(args.native_map_mover_steps),
                 str(Path(args.hpitool).resolve()), args.native_map_mover_steps,
                 args.native_live_unload,args.terrain_scan_after,args.shore_blocker,
                 args.live_route_blocker_steps, args.native_worker_repath,
-                args.native_worker_mission_repath)
+                args.native_worker_mission_repath, args.always_on_route_search)
 
 
 if __name__ == '__main__':

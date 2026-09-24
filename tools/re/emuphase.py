@@ -209,6 +209,20 @@ class Phase:
         d = (d & ~(0x7 << shift)) | ((g & 7) << shift)
         self.uc.mem_write(addr, _s.pack("<I", d))
 
+    def set_grade_plane(self, grades):
+        """Write row-major 0-7 grades into the native packed footprint cache."""
+        if len(grades) != self.W * self.H:
+            raise ValueError((len(grades), self.W, self.H))
+        rows8 = (self.H + 7) // 8
+        packed = [0] * (self.W * rows8)
+        for z in range(self.H):
+            row = z * self.W
+            word_row = (z >> 3) * self.W
+            shift = (z & 7) * 4
+            for x in range(self.W):
+                packed[word_row + x] |= (int(grades[row + x]) & 7) << shift
+        self.uc.mem_write(self.GMAP, struct.pack("<%dI" % len(packed), *packed))
+
     def init(self):
         return self.icd.call(0x415170, args=(self.HANDLE,), ecx=OBJ)
 

@@ -166,6 +166,15 @@ struct RetailReplayProbe {
             std::fprintf(stderr,"WORLDRAW %zu %d %d\n",i,
                          point.x+fx/2,point.z+fz/2);
         }
+        uint64_t searchPlaneHash=14695981039346656037ull;
+        for(const auto& cell:attempt.cost.cells) {
+            searchPlaneHash=(searchPlaneHash^cell.flags)*1099511628211ull;
+            searchPlaneHash=(searchPlaneHash^cell.direction)*1099511628211ull;
+        }
+        std::fprintf(stderr,"WORLDSEARCH %u %d %d %d %d %d %016llx\n",
+            world.tickCounter_,unitId,attempt.retry,attempt.cost.processed,
+            attempt.cost.endpoint,attempt.cost.heuristicWeight,
+            static_cast<unsigned long long>(searchPlaneHash));
     }
 };
 }
@@ -1953,6 +1962,9 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
             unsigned routeCompletions=w.pathStats().completions();
             bool routeBlockerCleared=false;
             bool routeSearchEnabled=false;
+            const char* routeAlwaysEnabled=std::getenv("TAK_MAP_SURFACE_ROUTE_ALWAYS_ON");
+            const bool alwaysEnabledRouteSearch=routeAlwaysEnabled && *routeAlwaysEnabled &&
+                *routeAlwaysEnabled!='0';
             const char* routeBlockerEnabled=std::getenv("TAK_MAP_SURFACE_ROUTE_BLOCKER");
             const bool liveRouteBlocker=routeBlockerEnabled && *routeBlockerEnabled &&
                 *routeBlockerEnabled!='0';
@@ -1985,7 +1997,7 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
                 }
             }
             stepped=w.unit(tid); // spawning the blocker may reallocate World's unit vector
-            w.setPathService(false);
+            if(!alwaysEnabledRouteSearch) w.setPathService(false);
             std::printf("WORLDSEED %d %d %d %d %d %d %d\n",stepped->x.v,
                 stepped->groundY.v,stepped->z.v,
                 int(tak::sim::portHeadingToRetail(stepped->heading)),
@@ -2013,9 +2025,11 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
                     routeReleaseReported=true;
                 }
                 if(routeBlocker && !routeSearchEnabled && after->bodyBlockStreak>=2) {
-                    w.setPathService(true);
+                    if(!alwaysEnabledRouteSearch) w.setPathService(true);
                     routeSearchEnabled=true;
-                    std::printf("WORLD_ROUTE_SEARCH_ENABLED %u %d %u\n",step,
+                    std::printf(alwaysEnabledRouteSearch ?
+                        "WORLD_ROUTE_BLOCK_THRESHOLD %u %d %u\n" :
+                        "WORLD_ROUTE_SEARCH_ENABLED %u %d %u\n",step,
                         after->bodyBlockStreak,after->groundScanTick);
                 }
                 if(routeBlocker && w.pathStats().completions()>routeCompletions) {
