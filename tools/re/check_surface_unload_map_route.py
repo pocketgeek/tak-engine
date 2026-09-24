@@ -27,6 +27,93 @@ from check_surface_unload_map_release import (
     cat, movement_profile, native_placement_oracle, parse_tnt)
 
 
+def replay_native_attempt(width, height, grades, attempt, profile, target_x,
+                          target_z, circle_radius, sea, position):
+    """Run one captured World request through retail's actual search kernel."""
+    (tick, unit_id, sx, sz, goal_x, goal_z, heading, retry, weight, *_rest) = attempt
+    (turn, fx, fz, road, water, flags, _transport_dist, max_water, min_water,
+     half_cell_ticks, heavy) = profile
+    goal_cell = (goal_x - fx // 2, goal_z - fz // 2)
+    phase = Phase(width, height)
+    unit = phase.unit(sx - fx // 2, sz - fz // 2)
+    assert phase.construct() is None
+    phase.plant_request(unit, (sx - fx // 2, sz - fz // 2), goal_cell)
+    phase.uc.mem_write(unit + 0x78, struct.pack('<hh', fx, fz))
+    phase.uc.mem_write(unit + 0x68, struct.pack('<iii', position[0],
+                                                sea * 65536, position[1]))
+    phase.uc.mem_write(unit + 0x7e, struct.pack('<H', heading))
+    mover = struct.unpack('<I', phase.uc.mem_read(unit + 8, 4))[0]
+    phase.uc.mem_write(mover + 0x36, struct.pack('<H', flags))
+    phase.uc.mem_write(TYPE + 0x126, struct.pack('<hh', fx, fz))
+    phase.uc.mem_write(TYPE + 0x18e, struct.pack('<H', turn))
+    phase.uc.mem_write(TYPE + 0x172, struct.pack('<i', road))
+    phase.uc.mem_write(TYPE + 0x260, struct.pack('<I', 0x80000 if heavy else 0))
+    phase.uc.mem_write(TYPE + 0x16e, struct.pack('<i', water))
+    phase.uc.mem_write(TYPE + 0x192, struct.pack('<hh', max_water, min_water))
+    phase.uc.mem_write(TYPE + 0x249, bytes([half_cell_ticks]))
+    phase.uc.mem_write(OBJ + 0x1ad, struct.pack('<I', retry))
+    phase.uc.mem_write(phase.GRID + 4, struct.pack('<hh', fx, fz))
+    _, error = phase.icd.call(0x4e2500,
+        (phase.HANDLE + 0x1000, target_x * 65536, target_z * 65536,
+         circle_radius), ecx=phase.HANDLE)
+    assert error is None, error
+    native_goal = tuple(struct.unpack('<hh', phase.uc.mem_read(phase.HANDLE + 8, 4)))
+    native_radius, radius_squared = struct.unpack('<ii',
+        phase.uc.mem_read(phase.HANDLE + 0x0c, 8))
+    expected_radius_squared = int(circle_radius * circle_radius / 256 + 0.5)
+    assert (native_goal, native_radius, radius_squared) == (
+        goal_cell, circle_radius, expected_radius_squared), (
+            native_goal, native_radius, radius_squared,
+            goal_cell, circle_radius, expected_radius_squared)
+
+    def grade(_uc, args):
+        x, z = struct.unpack('<ii', phase.uc.mem_read(args, 8))
+        if not (0 <= x < width and 0 <= z < height):
+            return 3, 0
+        value = grades(x, z) if callable(grades) else grades[z * width + x]
+        return 3, value
+
+    def request_weight(_uc, args):
+        address = struct.unpack('<I', phase.uc.mem_read(args, 4))[0]
+        phase.uc.mem_write(address, struct.pack('<I', weight))
+        return 1, address
+
+    phase.icd.hooks[0x4139d0] = grade
+    phase.icd.hooks[0x4161b0] = request_weight
+    _, error = phase.init()
+    assert error is None, error
+    # This captured request already passed scheduler aging and admission in
+    # World. Supply its recorded retail weight to the native initializer rather
+    # than recalculating it from this standalone emulator's fresh queue.
+    assert phase.get(0x54) == weight, (tick, phase.get(0x54), weight)
+    # The emulated unit record omits the retail heavy-floater multiplier on
+    # minimum straight distance. Use the captured request's exact kernel input.
+    phase.uc.mem_write(OBJ + 0xb8, struct.pack('<i', attempt[19]))
+    native_costs = tuple(phase.get(offset) for offset in
+                         (0xc0, 0xc4, 0xbc, 0xc8, 0xb4, 0xb8))
+    assert native_costs == tuple(attempt[14:20]), (tick, native_costs, attempt[14:20])
+    phase.uc.mem_write(OBJ + 0x165, struct.pack('<I', 10_000_000))
+    phase.uc.mem_write(OBJ + 0x5c, struct.pack('<I', 1))
+    _, error = phase.step()
+    assert error is None, error
+    completed = struct.unpack('<I', phase.uc.mem_read(phase.NAV + 0x10c, 4))[0] != 0
+    if not completed:
+        assert phase.phase() == 2, (tick, 'retail rejected captured live route')
+        for search_step in range(100_000):
+            value, error = phase.step()
+            assert error is None, (tick, search_step, error)
+            if value:
+                _, error = phase.icd.call(0x414450, (0,), ecx=OBJ)
+                assert error is None, error
+                completed = True
+                break
+    assert completed, (tick, unit_id, sx, sz, goal_x, goal_z)
+    count = struct.unpack('<I', phase.uc.mem_read(phase.NAV + 0x10c, 4))[0]
+    words = struct.unpack('<' + 'h' * (count * 2),
+                          phase.uc.mem_read(phase.NAV + 12, count * 4)) if count else ()
+    return list(zip(words[::2], words[1::2]))
+
+
 def check_route(world_binary, retail_root, map_name, start_cell, target_cell, footprint,
                 carrier=None, passenger=None, crusades=False, native_map_grades=False,
                 hpitool='build/hpitool', native_map_mover_steps=0,
@@ -115,8 +202,12 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         grades = [int(value) for line in stderr[header_index + 1:header_index + 1 + height]
                   for value in line.split()]
         assert len(grades) == width * height
-        world_raw = [tuple(map(int, line.split()[2:])) for line in stderr
-                     if line.startswith('WORLDRAW ')]
+        world_raw_rows = [tuple(map(int, line.split()[2:])) for line in stderr
+                          if line.startswith('WORLDRAW ')]
+        # The live-route fixture can emit additional completed attempts after
+        # this initial route. Keep the first completion paired with the
+        # initial ATTEMPTPLANE; later WORLDRAW rows are parsed separately below.
+        world_raw = world_raw_rows[:raw_count]
         assert len(world_raw) == raw_count and world_raw[0] == (sx, sz), \
             (world_raw, completed_attempt)
     else:
@@ -239,9 +330,133 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         blocker_moved = ((released_blocker[0] - blocker_x) ** 2 +
                          (released_blocker[1] - blocker_z) ** 2) > (64 * 65536) ** 2
         assert blocker_moved, (route_blocker, released_blocker)
+        changed_step = changed_repaths[0][0]
+        changed_tick = route_tick + changed_step
+        captured_attempts = []
+        for line_index, line in enumerate(stderr):
+            if not line.startswith('WORLDATTEMPT '):
+                continue
+            values = list(map(int, line.split()[1:]))
+            raw_count = values[-1]
+            raw_points = [tuple(map(int, row.split()[2:]))
+                          for row in stderr[line_index + 1:line_index + 1 + raw_count]
+                          if row.startswith('WORLDRAW ')]
+            assert len(raw_points) == raw_count, (values, raw_points)
+            captured_attempts.append((values, raw_points))
+        dynamic_matches = [(values, points) for values, points in captured_attempts
+                           if values[0] == changed_tick and values[1] == _unit_id]
+        assert len(dynamic_matches) == 1, (changed_step, route_tick,
+                                           [row[0][:8] for row in captured_attempts])
+        dynamic_attempt, dynamic_world_raw = dynamic_matches[0]
+        dynamic_key = (dynamic_attempt[0], dynamic_attempt[1], dynamic_attempt[2],
+                       dynamic_attempt[3], dynamic_attempt[7], dynamic_attempt[6])
+        dynamic_planes = [(index, header) for index, header in attempts
+                          if (header[0], header[1], header[2], header[3],
+                              header[4], header[5]) == dynamic_key]
+        assert len(dynamic_planes) == 1, (dynamic_attempt, dynamic_planes)
+        plane_index, plane_header = dynamic_planes[0]
+        plane_width, plane_height = plane_header[8:10]
+        dynamic_grades = [int(value)
+                          for row in stderr[plane_index + 1:plane_index + 1 + plane_height]
+                          for value in row.split()]
+        assert len(dynamic_grades) == plane_width * plane_height
+        blocker_cell = ((blocker_x // 65536 - (fx - 1) * 8) // 16,
+                        (blocker_z // 65536 - (fz - 1) * 8) // 16)
+        bx, bz = blocker_cell
+        assert grades[bz * width + bx] >= 6 and dynamic_grades[bz * width + bx] == 0, (
+            'the live boat blocker was not added to the captured route-grade plane',
+            blocker_cell, grades[bz * width + bx], dynamic_grades[bz * width + bx])
+        route_map = parse_tnt(cat(hpitool, Path(retail_root), 'maps.hpi',
+                                  f'Maps/{map_name}.tnt'))
+        _, water_profile, native_fx, native_fz = native_water_profile(hpitool, retail_root)
+        assert (native_fx, native_fz) == (fx, fz), (native_fx, native_fz, fx, fz)
+        native_map_grade = native_grade_reader(route_map, water_profile)
+        block_rect = (bx, bz, blocker_fx, blocker_fz)
+
+        def overlaps(left, top, cells_wide, cells_high):
+            return (left < bx + blocker_fx and bx < left + cells_wide and
+                    top < bz + blocker_fz and bz < top + cells_high)
+
+        grade_checks = 0
+        grade_mismatches = []
+        for z in range(max(0, bz - 8), min(height, bz + blocker_fz + 8)):
+            for x in range(max(0, bx - 8), min(width, bx + blocker_fx + 8)):
+                index = z * width + x
+                # Grade 5 is World's visibility fallback, not a terrain score
+                # from retail's native 0x508cd0 routine.
+                if grades[index] == 5:
+                    continue
+                base = native_map_grade(x, z)
+                if base != grades[index]:
+                    grade_mismatches.append((x, z, grades[index], base, 'static'))
+                    continue
+                if overlaps(x, z, fx, fz):
+                    expected = 0
+                elif (overlaps(x - 1, z - 1, fx + 1, 1) or
+                      overlaps(x + fx, z - 1, 1, fz + 1) or
+                      overlaps(x, z + fz, fx + 1, 1) or
+                      overlaps(x - 1, z, 1, fz + 1)):
+                    expected = min(base, 4)
+                else:
+                    expected = base
+                grade_checks += 1
+                if dynamic_grades[index] != expected:
+                    grade_mismatches.append((x, z, dynamic_grades[index], expected, 'blocker'))
+        assert not grade_mismatches, ('native map/blocker grade-plane mismatch',
+                                      grade_mismatches[:20])
+        assert grade_checks > 0, ('no independently checked blocker grade cells', block_rect)
+
+        dynamic_grade_reads = {}
+        dynamic_grade_mismatches = []
+
+        def native_dynamic_grade(x, z):
+            index = z * width + x
+            if dynamic_grades[index] == 5:
+                value = 5  # retain the World-only unexplored-terrain fallback
+            else:
+                value = native_map_grade(x, z)
+                if overlaps(x, z, fx, fz):
+                    value = 0
+                elif (overlaps(x - 1, z - 1, fx + 1, 1) or
+                      overlaps(x + fx, z - 1, 1, fz + 1) or
+                      overlaps(x, z + fz, fx + 1, 1) or
+                      overlaps(x - 1, z, 1, fz + 1)):
+                    value = min(value, 4)
+            dynamic_grade_reads[(x, z)] = value
+            if value != dynamic_grades[index]:
+                dynamic_grade_mismatches.append(
+                    (x, z, dynamic_grades[index], value))
+            return value
+
+        dynamic_native_route = replay_native_attempt(
+            plane_width, plane_height, native_dynamic_grade, dynamic_attempt,
+            profiles[(dynamic_attempt[0], dynamic_attempt[1])],
+            target_x, target_z, circle_radius, sea,
+            (changed_repaths[0][4], changed_repaths[0][5]))
+        assert dynamic_grade_reads and not dynamic_grade_mismatches, (
+            'native route-query grades differ from the captured map/blocker plane',
+            len(dynamic_grade_reads), dynamic_grade_mismatches[:20])
+        dynamic_world_pixels = [(x * 16, z * 16) for x, z in dynamic_world_raw]
+        common_prefix = 0
+        for native_point, world_point in zip(dynamic_native_route, dynamic_world_pixels):
+            if native_point != world_point:
+                break
+            common_prefix += 1
+        assert dynamic_native_route == dynamic_world_pixels, (
+            'retail native search did not reproduce the live-blocker replacement route',
+            dynamic_attempt, dynamic_native_route, dynamic_world_pixels)
+        for route_name, route in (('retail', dynamic_native_route),
+                                  ('World', dynamic_world_pixels)):
+            dx, dz = route[-1][0] - target_x, route[-1][1] - target_z
+            assert dx * dx + dz * dz <= circle_radius * circle_radius, (
+                route_name, route[-1], (target_x, target_z), circle_radius)
         print(f'  World hit a live map-backed boat blocker, installed a changed '
               f'route at physical step {changed_repaths[0][0]}, cleared the blocker, '
               f'and released Araarch at the selected shore on step {route_release_step}.')
+        print(f'  Retail native search reproduced all {common_prefix} replacement-route '
+              f'points; {grade_checks} local grades and {len(dynamic_grade_reads)} '
+              f'native route-query grades match TNT terrain plus the blocker; the endpoint '
+              f'is inside the same {circle_radius}px unload circle.')
     if transport_profile and world_route:
         dx = world_route[-1][0] - target_x
         dz = world_route[-1][1] - target_z

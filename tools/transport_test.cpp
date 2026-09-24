@@ -1996,6 +1996,7 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
             std::printf("WORLDSCAN %u %u %u\n",w.tickCount(),stepped->groundScanTick,
                 unsigned(stepped->type->halfCellTicks));
             bool routeReleaseReported=false;
+            bool routeAttemptReported=false;
             for(unsigned step=1;step<=stepLimit;++step) {
                 w.tick(1.f/30);
                 const auto* after=w.unit(tid);
@@ -2032,6 +2033,11 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
                         int(changed),after->x.v,after->z.v,pathEnd,
                         int(after->bodyBlockStreak),after->cargo.size(),
                         int(w.unit(cid)->inTransport==tid));
+                    if(changed && !routeAttemptReported &&
+                       std::getenv("TAK_DUMP_ROUTE_ATTEMPT")) {
+                        tak::sim::RetailReplayProbe::dumpCompletedPathAttempt(w,tid);
+                        routeAttemptReported=true;
+                    }
                     if(!routeBlockerCleared && changed) {
                         w.order(routeBlocker,float(goalX+256),float(goalZ+256),false);
                         routeBlockerCleared=true;

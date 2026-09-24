@@ -8346,8 +8346,9 @@ blocked retry and retail release. Retail releases at step 2,252; World releases
 at step 2,253, the one-tick dispatcher/mover phase offset.
 
 The fixture holds the delivered route fixed while it verifies the moving shore
-blocker and retry. Dynamic route replacement around changing map occupancy is
-still open. The blocker trace passes Standard and Crusades with Release, Debug,
+blocker and retry. Dynamic route replacement around changing map occupancy
+remains open at this point in the audit; the following section closes that route
+search case. The blocker trace passes Standard and Crusades with Release, Debug,
 and optimized Debug builds (six runs), including 550 paired live terrain-scan
 deadlines. No retail GUI was launched. Reproduce the Standard case with:
 
@@ -8357,4 +8358,39 @@ python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
   --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
   --native-map-grades --native-map-mover-steps 2500 --native-live-unload \
   --terrain-scan-after 1 --shore-blocker
+```
+
+### Live-blocker replacement route paired with retail search (2026-09-24)
+
+The `--live-route-blocker-steps` Lake Lokken fixture now captures the completed
+World replan after a stationary Vertrans physically blocks the carrier, then
+replays that exact request through retail's native route search. The native
+circle goal, scheduler weight, water movement costs, and footprint are set from
+the captured request. Retail reconstructs the same five route points. An
+initial mismatch exposed a fixture ordering bug: it built the native circle
+before setting the carrier's 4x4 footprint, shifting the destination by one
+cell. The fixture now sets the footprint before `0x4e2500` and checks the
+native goal center, radius, and route cost inputs.
+
+The blocker footprint changes 120 locally sampled route grades from open TNT
+terrain to the same blocked interior and clearance border produced by retail's
+native `0x508cd0` terrain grades plus the live body. Retail's route-query grade
+callback reconstructs each value from the TNT map and blocker footprint while
+retaining World's grade-5 visibility fallback; all 1,479 native search queries
+match the captured World plane. Retail then reconstructs the same five World
+replacement waypoints, ending inside the authored 266px unload circle. World
+moves the blocker clear and releases Araarch at the selected shore on physical
+step 2,350. This pairs the dynamic replacement search and map-backed release;
+the native physical mover continues to be covered by the separately joined
+shoreline trace.
+
+Standard and Crusades pass with Release, Debug, and optimized Debug binaries
+(six runs). The four transport CTests pass in each build (12/12). No retail GUI
+was launched. Reproduce the Standard case with:
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
+  --native-map-grades --live-route-blocker-steps 5000
 ```
