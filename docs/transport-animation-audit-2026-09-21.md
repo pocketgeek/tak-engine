@@ -115,7 +115,21 @@ implementation descriptions. Current open gates are:
   routes also match for Aratrans/WATER5 on the same long Lake Lokken shore route
   in Standard and Crusades: 698 distinct native query cells, 906 grade calls,
   one waypoint, and an endpoint inside its 385px unload circle. Other maps and
-  carrier profiles remain open.
+  carrier profiles remain open. Per Mare Per Terras now has a second joined
+  Vertrans/Araarch case: native TNT-backed grades, active terrain scans, the
+  native unload mission, mover, shoreline placement and release all match the
+  World trace through step 78. Its 54 distinct queried cells, 58 grade calls,
+  15 scan deadlines and 16 placement checks pass Standard and Crusades in
+  Release, Debug and optimized builds. Sea Dragon Spine adds a third
+  Vertrans/Araarch case: three reconstructed waypoints and the joined live
+  mission, terrain scans, placement, and release match through step 314, with
+  176 distinct grade cells, 219 grade calls, and 74 scan deadlines; Standard
+  and Crusades pass across the same three builds. Other maps and carrier
+  profiles remain open. A continuous live-blocker diagnostic now drives the
+  actual native mover from the start, but that diagnostic omits the real
+  `GROUND_UNLOAD` dispatcher and misses World's terrain-scan cadence at step
+  825. Automatic native collision detection and route replacement in one
+  uninterrupted mission-backed trace are still unverified.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -124,9 +138,13 @@ implementation descriptions. Current open gates are:
   `TurnDirection → MoveRate → setSFXoccupy` order, and the display VM receives
   `BeginFlight` call-ins from the simulation snapshot. An exact-range regression
   now confirms that AimWeapon starts at the native inclusive maximum range and
-  remains gated one pixel beyond it. Special weapon cases, broader missing-script
-  behavior, visibility-loss timelines, and full movement/flight callback phase
-  comparisons remain open.
+  remains gated one pixel beyond it. Araarch's native projectile timing now
+  matches World when callbacks run in retail order: SET23 at tick 39, release at
+  tick 40, identical age-zero position/velocity/angles, tree impact at age 9,
+  and clear-target impact at age 11. The native impact callback was stepped
+  directly, so global projectile-manager scheduling remains open. Special
+  weapon cases, broader missing-script behavior, visibility-loss timelines,
+  and full movement/flight callback phase comparisons remain open.
 - Cursors: authored frame timing, software/hardware rendering, enemy weapon-range
   feedback, and the native Revive, Load, and FindSite selector gates are covered.
   Native mode 3's Airstrike gates and active weapon selection are measured. The
@@ -8425,3 +8443,94 @@ python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
   --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
   --native-map-grades --live-route-blocker-steps 5000 --native-worker-mission-repath
 ```
+
+### Per Mare map-backed unload with live terrain scans (2026-09-24)
+
+The route checker now also joins a Vertrans/Araarch unload on Per Mare Per
+Terras. Retail's `0x508cd0` grades are computed from the map's TNT height and
+feature planes; the queried feature neighborhood contains no unmodeled
+blocking feature. Native reconstruction matches World's one-waypoint route
+from `(40,120)` to the shore site `(40,142)`, with 54 distinct map-grade cells
+across 58 queries. The actual `GROUND_UNLOAD` mission, navigator, carrier,
+passenger and mover remain joined through navigator arrival, 16 native
+map-backed placement checks, cargo release and mission retirement. With live
+terrain scanning enabled on the first movement tick, all 15 scan deadlines and
+the full movement state match through release at physical step 78. Standard
+and Crusades pass in Release, Debug and optimized builds (six runs). This adds
+one real map and carrier profile; the broader map, carrier and dynamic-traffic
+gates above remain open. No retail GUI was launched.
+
+Reproduce the Standard and Crusades optimized runs with:
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Per Mare Per Terras' \
+  --start 40 120 --target 40 142 --carrier vertrans --passenger araarch \
+  --native-map-grades --native-map-mover-steps 120 --native-live-unload \
+  --terrain-scan-after 1
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Per Mare Per Terras' \
+  --start 40 120 --target 40 142 --carrier vertrans --passenger araarch \
+  --native-map-grades --native-map-mover-steps 120 --native-live-unload \
+  --terrain-scan-after 1 --crusades
+```
+
+### Sea Dragon Spine map-backed unload with live terrain scans (2026-09-24)
+
+The joined Vertrans/Araarch case also passes on Sea Dragon Spine. Independent
+retail terrain grades are computed from its TNT height and feature planes, and
+native route reconstruction matches World's three-waypoint route from
+`(240,95)` to the shore site `(240,120)`: 176 distinct grade cells across 219
+queries. The `GROUND_UNLOAD` mission, navigator, carrier, passenger, and mover
+remain joined through navigator arrival, 16 map-backed placement checks,
+release, and mission retirement. Starting live terrain scanning on the first
+movement tick preserves all 74 scan deadlines and movement fields through
+release at physical step 314. Standard and Crusades pass in Release, Debug,
+and optimized builds (six runs). The additional map does not close broader
+map, carrier, or dynamic-traffic coverage. No retail GUI was launched.
+
+Reproduce the Standard and Crusades optimized runs with:
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Sea Dragon Spine' \
+  --start 240 95 --target 240 120 --carrier vertrans --passenger araarch \
+  --native-map-grades --native-map-mover-steps 500 --native-live-unload \
+  --terrain-scan-after 1
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Sea Dragon Spine' \
+  --start 240 95 --target 240 120 --carrier vertrans --passenger araarch \
+  --native-map-grades --native-map-mover-steps 500 --native-live-unload \
+  --terrain-scan-after 1 --crusades
+```
+
+### Continuous native mover through the live-blocker boundary (2026-09-24)
+
+The earlier live route-replacement replay begins at the captured replan request,
+while its mover is not physically advanced between worker requests. A separate
+diagnostic continuously advances retail's `0x4dc800`/`0x51b2a0` mover and matches
+1,232 unobstructed Lake Lokken movement rows, but it does not run the real
+`GROUND_UNLOAD` dispatcher. Without that dispatcher, the native terrain-scan
+deadline first differs from World at step 825 (859 versus 857), followed by a
+speed/mode divergence. This is a scheduler-fixture mismatch and cannot be used
+to judge collision against the mobile blocker. The viable combined test needs
+to retain the mission-backed path, which already matches 550 terrain scans
+through physical release at step 2,217, while also injecting the blocker from
+the live World rows and servicing the worker through the replan boundary.
+That continuous mission-backed collision-and-replan trace remains open and is
+not counted as a parity pass. No retail GUI was launched.
+
+### Araarch projectile release and impact timing (2026-09-24)
+
+The native update order calls the weapon update (`0x52ae90`) before the unit's
+COB VM (`0x56c870`). With that order, the VM writes SET23 at tick 39 and the
+weapon update releases the projectile at tick 40, matching World's release
+tick and age-zero projectile state. The first native and World snapshots match
+position `(225,141.25,200)`, velocity `(815300,-80300,0)`, and angles
+`(0,16384,64512)`. Against the same placed tree, both hit at age 9; against a
+clear target, both hit at age 11. This resolves the reported one-tick gap as a
+probe-ordering issue and gives no reason to change production code for this
+case. The native collision routine was advanced directly, so the global
+projectile-manager's same-tick scheduling is not established. The untracked
+ad-hoc Araarch probe still calls the callbacks in the old reversed order and is
+not authoritative for release timing. No retail GUI was launched.

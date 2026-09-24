@@ -455,10 +455,16 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 always_on_route_search=False):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
-    if native_live_unload and (map_name.lower() != 'lake lokken' or
-                               carrier.lower() != 'vertrans' or
-                               passenger.lower() != 'araarch'):
-        raise ValueError('--native-live-unload currently checks Lake Lokken Vertrans/Araarch')
+    native_live_profiles = {
+        'lake lokken': {('vertrans', 'araarch')},
+        'per mare per terras': {('vertrans', 'araarch')},
+        'sea dragon spine': {('vertrans', 'araarch')},
+    }
+    if native_live_unload and (not carrier or not passenger or
+            (carrier.lower(), passenger.lower()) not in
+            native_live_profiles.get(map_name.lower(), set())):
+        raise ValueError('--native-live-unload currently checks Vertrans/Araarch on '
+                         'Lake Lokken, Per Mare Per Terras, and Sea Dragon Spine')
     if terrain_scan_after is not None and not native_live_unload:
         raise ValueError('--terrain-scan-after requires --native-live-unload')
     if shore_blocker and (not native_live_unload or not carrier):
@@ -1010,9 +1016,15 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
 
     independent_grade = None
     if native_map_grades:
-        if (not carrier or map_name.lower() != 'lake lokken' or
-                carrier.lower() not in ('vertrans', 'aratrans')):
-            raise ValueError('--native-map-grades currently checks Lake Lokken Vertrans and Aratrans')
+        native_grade_profiles = {
+            'lake lokken': {'vertrans', 'aratrans'},
+            'per mare per terras': {'vertrans'},
+            'sea dragon spine': {'vertrans'},
+        }
+        supported_carriers = native_grade_profiles.get(map_name.lower(), set())
+        if not carrier or carrier.lower() not in supported_carriers:
+            raise ValueError('--native-map-grades currently checks Lake Lokken (Vertrans/Aratrans), '
+                             'Per Mare Per Terras (Vertrans), and Sea Dragon Spine (Vertrans)')
         tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
                        f'Maps/{map_name}.tnt')
         map_data = parse_tnt(tnt_data)
@@ -1237,7 +1249,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     map_mover_entered_circle = False
     if native_map_mover_steps:
         if not independent_grade or not carrier:
-            raise AssertionError('map mover check requires native Lake Lokken Vertrans grades')
+            raise AssertionError('map mover check requires an asset-backed native-grade trace')
         (seed_x, seed_y, seed_z, seed_heading, seed_speed, seed_base, terrain_flags) = world_seed
         _max_velocity, acceleration, braking, unit_turn, waterline = world_type
         if terrain_flags != 0x1000 or seed_speed != 0 or seed_base <= 0:
@@ -1436,7 +1448,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 int((released[0] / 65536 - (passenger_profile[0] - 1) * 8) // 16),
                 int((released[2] / 65536 - (passenger_profile[1] - 1) * 8) // 16))
             assert released_origin == target_cell, (
-                'retail unload did not release Araarch at the selected Lake Lokken shore cell',
+                'retail unload did not release Araarch at the selected map shore cell',
                 released, released_origin, target_cell)
             assert native_placement_results, native_placement_results
             if not shore_blocker:
