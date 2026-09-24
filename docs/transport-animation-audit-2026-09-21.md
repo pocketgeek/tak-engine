@@ -7343,14 +7343,22 @@ correlation.
 
 ### Drake fire comparison status (2026-09-23)
 
-The existing retail frames show a pale-yellow Drake flame stream, while the
-local age-8 fixture shows a stream in the expected direction. The captures are
-not synchronized in map, camera, target distance, or particle age, so they do
-not establish a pixel mismatch. Native probes still pass 4,096 particle
-motion/frame/projection cases, 4,096 stream-admission/clipping cases, 4,096
-emission updates, and 1,536 blend-state draws. Final Glide-versus-SDL pixels
-remain unverified; do not change colors or geometry based on these unmatched
-screenshots.
+The behavior comparison is now covered headlessly. Native `52d290` initializes
+the ordinary LOS-flame emitter, sets its end tick from `emittime`, and creates a
+500-particle emitter. `52d360` scans silently on the start tick, then re-queries
+the muzzle and advances the flame front on active ticks; a collision dispatches
+one impact, emission stops at the authored end, and remaining particles drain
+after expiry or owner death. World follows those boundaries. Native probes pass
+4,096 flame-scan cases, 4,096 emission updates, 64 impact timelines, 4,096
+straight-projectile launch cases, and 4,132 FireWeapon callback/reload cases.
+World `retail_script` and `flyer_combat` tests pass for Zhon Drake fire in both
+balance modes. No behavioral mismatch was found, so no production change was
+justified.
+
+The native timeline substitutes collision and damage sinks; it does not prove
+damage magnitude or full World target acquisition parity. Pixel-synchronized
+Glide captures are not a completion gate under the behavior-based acceptance.
+No retail GUI was launched.
 
 ### Paired sea-unload dispatcher timeline (2026-09-23)
 
@@ -7488,13 +7496,27 @@ A World regression places a real terrain blocker on the ranged shot line and
 confirms that `tickCombat` withholds AimWeapon/FireWeapon, projectile creation,
 and mana expenditure until the obstruction is removed. Separately, native
 52a4d0 probes establish environmental projectile collision against feature and
-terrain cells, and the 52d360 timing probe establishes delayed impact dispatch;
-however, the latter substitutes collision and damage sinks. The probes do not
-yet run the same native shot through an obstructed map and target to determine
-whether its collision is a direct hit on the blocker, a miss, or some other
-damage path. Consequently the World blocked-shot gate is not claimed as retail
-parity, and no production change is justified from callback admission alone.
-The native-versus-World blocked-shot collision/damage comparison remains open.
+terrain cells, and the 52d360 timing probe establishes delayed impact dispatch.
+
+`tools/re/probe_ballistic_blocked_target.py` now runs the same aimed Arabow
+trajectory through native `52bdf0` aim, `52be80` launch, `52bf90` update,
+`52a4d0` map collision and `51f340` unit-quad collision. It uses actual native
+64x64 cell and unit tables. With a feature at `(448,400)` and an enemy at
+`(520,400)`, the arrow hits the blocker at `(452.987,20.647,400)` and calls
+`529c10` with a null unit pointer. Removing only the blocker lets the same
+trajectory hit the enemy at `(505.974,20.175,400)`. This resolves the collision
+choice that was previously unknown: the obstructing feature takes the native
+impact path before the unit behind it. The existing World regression uses the
+same source, target and blocker arrangement; it applies the Arabow's authored
+476 damage to the feature and leaves the target at full health. The focused
+`retail_script` CTest passes in `build-dbg`.
+
+The probe intercepts `529c10` at its entry to record the native impact target,
+so it does not execute the later native feature/unit damage routines. Exact
+native damage magnitude and area falloff therefore remain unverified. This is
+the remaining blocker to claiming full World blocked-shot damage parity; the
+bounded collision-selection comparison found no mismatch and justifies no
+production change.
 
 ### Surface unload physical route through transfer and coast (2026-09-23)
 
@@ -7865,11 +7887,19 @@ Attached effect owner lists now survive the HP-death edge through the existing
 The sim supplies a raw statue feature ID, while RenderFrame supplies a boolean;
 the cleanup guard handles and tests those representations separately so an
 ordinary `false` snapshot value is not read as feature ID zero.
-Native code confirms smoke and damage-flame managers own per-unit lists and
-their destructors free attached entries, but the exact native manager
-destructor tick relative to `Killed`/`Dying` is not established. The port uses
-its current rendered-body handoff as the safe cleanup boundary; further native
-timing evidence remains open. No retail GUI was launched.
+
+`probe_attached_sfx_teardown.py` verifies that native model teardown synchronously
+drains the smoke/damage-flame owner list through its vtable destructor. The
+death dispatcher starts `Dying`; `SET_UNIT_VALUE 26` requests teardown on the
+next update, while `SET_UNIT_VALUE 31` starts a one-second model timer that
+sets the same removal bit when it expires. For example, shipped `araking`
+uses value 31 and `araknigh` uses value 26. The exact teardown tick for a
+regular death still depends on the preceding callback schedule and the unit's
+`Dying` branch, which this probe does not run. The confirmed attached death
+flames finish by tick 87, before the port's 120-tick body cleanup. Thus the
+remaining teardown-time difference has not shown a visible effect-lifecycle
+mismatch, and no change is justified from this evidence. No retail GUI was
+launched.
 
 ### Live detached script transient lifecycle (2026-09-24)
 
@@ -7913,23 +7943,47 @@ endpoint. The Per Mare Per Terras case still matches at
 `(40,120)` to `(40,142)`, with four waypoints and 564 grade queries. Both cases
 pass with Release, Debug, and optimized World binaries. The Lake Lokken
 paired destination is in water, so it checks a connected water crossing rather
-than shore cargo placement. The separate actual-profile World shore unload
-completes from `(240,120)` to `(240,350)` in both balances at tick 2,222. Its
-native comparison remains open: the completed World search starts at
-`(240,123)` and targets `(239,349)`, while the first grade-plane export was from
-an abandoned request at `(240,121)`. The native emulator faults at `0x414367`
-when the completed attempt reaches cost search because its heap-root pointer is
-null. No long-shore route mismatch has been established.
+than shore cargo placement. The asset-backed route fixture also compares the
+long shore approach from `(240,120)` to the unload circle centered at
+`(240,350)`. In both balances, the completed search runs at World tick 30 from
+`(240,123)` to controller goal cell `(239,349)` and emits the direct route
+`(240,123) → (240,337)`. The earlier tick-15 plane belonged to an abandoned
+request from `(240,121)`; the checker now selects the completed attempt's grade
+plane, heading, weight, and Vertrans profile. World and native reconstruction
+match exactly in both balances: native outputs `(3840,1968) → (3840,5392)` and
+makes 264 grade queries. The trace's `partialDistance=-1` means retail delivers
+this direct route during the first `0x415b10` handoff. The previous fixture
+advanced once more into `0x4142c0` without a cost heap; the null root at
+`0x414367` was a harness sequencing error, not a route mismatch. The separate
+actual-profile World shore unload completes in both balances at tick 2,222.
 
 This exposed an emulation-fixture overlap: the fixed terrain-cell buffer sat
 1 MiB before the unit/type/object tables, so a 480x480 map overwrote those
 tables. `Phase` now allocates cell planes larger than 1 MiB from its emulated
 heap, retaining the fixed address for smaller fixtures that write it directly.
-Native search still consumes the grade plane exported by World. Independent
-terrain-grade parity and a live-map shore unload remain open. Reproduce the
-native route comparisons with:
+Native search still consumes the grade plane exported by World. This closes
+route reconstruction parity for these two captured Lake Lokken requests, but
+does not prove that retail and World independently generate the same terrain
+grades. `check_surface_unload_map_release.py` now pairs the completed World
+shore unload with retail's real `0x507d10` placement test over the map's
+TNT-derived terrain and feature records. In both balances, retail accepts shore
+cell `(240,350)` for the 2x2 passenger footprint and releases at `(3848,5608)`
+on transfer tick 18. World requests that same release cell; its first observed
+position `(3849.11,5607.41)` is after PARK movement has started, with the same
+footprint origin `(240,349)`. This checks route-arrival handling, legal coast
+placement, detach, and release. The native arrival is delivered at World's
+completed carrier position, and the native physical route mover is not run over
+the map; independent terrain-grade generation and full physical route parity
+remain open. Reproduce with:
 
 ```sh
+python3 tools/re/check_surface_unload_map_release.py --binary build/transport_test
+python3 tools/re/check_surface_unload_map_route.py build/transport_test \
+  --map 'Lake Lokken' --start 240 120 --target 240 350 \
+  --carrier vertrans --passenger araarch
+python3 tools/re/check_surface_unload_map_route.py build/transport_test \
+  --map 'Lake Lokken' --start 240 120 --target 240 350 \
+  --carrier vertrans --passenger araarch --crusades
 for bin in build build-dbg build-o2; do
   python3 tools/re/check_surface_unload_map_route.py "$bin/transport_test" \
     --map 'Lake Lokken' --start 240 120 --target 240 140
@@ -8028,3 +8082,30 @@ the unrelated `tools/retail_ai_test.cpp` Planner construction test. The Windows
 cross-build compiles the changed client source and links the focused retail
 tests, but its full client link is blocked by unresolved FFmpeg symbols in that
 build configuration.
+
+### Sprite-only BallisticWeapon motion and impact (2026-09-24)
+
+The shipped standard and Crusades weapon inventory includes many ordinary
+`BallisticWeapon` shots that have sprite art but no projectile mesh, including
+Arapult cannonballs, several faction cannons and mortars, Taros fireballs, and
+water balls. Native motion and collision belong to the BallisticWeapon class;
+they do not depend on a model pointer. World previously enabled its matching
+XYZ path only when `shotModel` was nonempty, leaving these weapons on the flat
+projectile path.
+
+World now launches every ordinary non-melee, non-beam BallisticWeapon through
+the shared retail XYZ initializer, substep/gravity updater, and map collision.
+The renderer already selects a mesh when one is authored and otherwise draws
+the weapon sprite at that same 3D position. These shots have no range-based
+expiry in retail, so the old distance/velocity timer no longer removes a
+pitched shell while it is still in flight. `retail_script_test` covers a
+`cannbmed` sprite-only projectile with no mesh: its altitude changes during
+flight, its sprite coordinates track the XYZ state, it remains independent of
+the flat-shot lifetime, and a feature impact stops it before the selected unit.
+The long-running `retailgap` case also verifies a missed Arapult shell still
+lands and splashes after the target moves away.
+
+The complete Release CTest suite passes 50/50; complete Debug and optimized
+suites each pass 52/52; the static and fully static suites each pass 36/36.
+These are behavior and lifecycle checks; no pixel-match comparison or retail
+GUI launch was used.

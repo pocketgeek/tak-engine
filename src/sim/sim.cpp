@@ -3768,11 +3768,12 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
     // Retail BallisticWeapon::initShot selects and stores a model pointer at
     // launch, so later veterancy changes cannot change an in-flight bolt.
     p.projectileUsesVeteranModel = w.usesVeteranShotModel(u.veteran);
-    // Keep the existing X/Z projectile and hit logic intact, but retain retail's
-    // three-dimensional ballistic state for model-backed shots. The renderer uses
-    // this state to place and orient the mesh; it never feeds damage or collision.
+    // Retail's BallisticWeapon class uses XYZ motion and collision whether its
+    // authored projectile is a mesh or a sprite. Preserve that native trajectory
+    // for every ordinary ballistic shot; the renderer draws a mesh when present
+    // and otherwise places the weapon sprite at the same 3D position.
     if (w.ballistic && w.kind == Weapon::Kind::Normal && !w.melee &&
-        !w.beam && !w.shotModel.empty()) {
+        !w.beam) {
         const double rawSpeed = double(w.projVel) * 2184.5333333333333;
         if (rawSpeed > 0.0 && rawSpeed < double(INT32_MAX)) {
             const int32_t raw = int32_t(rawSpeed);
@@ -3814,6 +3815,10 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
     p.life = int32_t(std::ceil(kTick * (w.kind == Weapon::Kind::Guided
                                   ? (std::max(float(w.range), dist) / vel + 0.5f)
                                   : (dist / vel))));
+    // BallisticWeapon has no range-derived expiry. Its gravity arc and collision
+    // with the map retire it; dist/projVel is only the old flat-projectile lifetime
+    // and can expire a pitched shot in midair.
+    if (p.ballistic3d) p.life = std::numeric_limits<int32_t>::max();
     p.flight = int32_t(dist / vel * kTick + 0.5f);
     projectiles_.push_back(p);
 }
@@ -4089,10 +4094,9 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
                meleeInRange(u.type, target->type, dx, dz);
     // Ranged units need a clear line to shoot; a wall between them means close
     // in / reposition rather than firing through it (melee & flyers are exempt).
-    // A lobbing weapon arcs over what is in the way, which is the whole point of a
-    // mortar. Our projectiles are still 2D, so this is an approximation of retail's
-    // high-arc solve rather than the mechanism: it lets a lobber shoot over a cliff
-    // it could not genuinely clear. Ported faithfully, the arc would decide.
+    // Ballistic shots use retail's pitched 3D arc and terrain collision, so a
+    // lobber does not need this separate 2D line test: the trajectory itself
+    // determines whether it clears the obstruction.
     bool needLoS = best > 64.0f && !u.type->canFly &&
                    target->type && !target->type->canFly && !u.type->lobs();
     // LoS gates ONLY in-range firing and in-range repositioning; an out-of-range

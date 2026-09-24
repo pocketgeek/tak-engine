@@ -586,7 +586,47 @@ int main(int argc,char** argv) {
             require(world.feature(treeId)->dmg==476 && world.unit(target)->hp==Fixed::fromInt(2000),
                 "ballistic arrow stops at the feature top, damages the feature, and never reaches its selected unit target");
         }
+        {
+            UnitType shooter;shooter.maxHp=100;
+            Weapon cannon;cannon.ballistic=true;cannon.weaponArt="cannbmed";cannon.projVel=530;
+            cannon.range=550;cannon.damage=476;cannon.reload=100;
+            shooter.weapons={cannon};shooter.weapon=cannon;
+            UnitType targetType;targetType.maxHp=2000;targetType.footX=targetType.footZ=2;
+            targetType.modelTop=20*65536;
+            targetType.projectileQuad=RetailCollisionQuad{{{-10*65536,-10*65536},{10*65536,-10*65536},
+                {10*65536,10*65536},{-10*65536,10*65536}}};
+            World world;world.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
+            RetailMapFeatureType mapTree;mapTree.name="tree";mapTree.projectileHeight=255;
+            std::vector<uint16_t> raw(64*64,0xffff);const int treeId=25*64+28;
+            raw[size_t(treeId)]=0;world.setMapPlacementFeatures(raw,{mapTree});
+            FeatType tree;tree.name="tree";tree.hp=10000;tree.projectileHeight=255;
+            world.setFeatureTypes({tree});world.addFeature(treeId,448,400,0,1,1,1,false,0,false);
+            const int from=world.spawn(&shooter,400,400,0,0);
+            const int target=world.spawn(&targetType,520,400,0,1);
+            world.unit(from)->groundY=world.unit(target)->groundY=Fixed::fromInt(20);
+            world.setStance(from,2);world.setStance(target,2);
+            RetailReplayProbe::shoot(world,from,target);
+            require(world.projectiles().size()==1 && world.projectiles()[0].ballistic3d &&
+                    world.projectiles()[0].wsrc->shotModel.empty() &&
+                    world.projectiles()[0].wsrc->weaponArt=="cannbmed" &&
+                    world.projectiles()[0].life==std::numeric_limits<int32_t>::max(),
+                "sprite-only BallisticWeapon uses native XYZ flight without a mesh or range expiry");
+            const auto launch=world.projectiles()[0].position;
+            for(unsigned tick=0;tick<20 && world.feature(treeId)->dmg==0 &&
+                    world.unit(target)->hp==Fixed::fromInt(2000);++tick) {
+                world.tick(1.f/30.f);
+                if(!world.projectiles().empty() && !world.projectiles()[0].spent) {
+                    const auto& shot=world.projectiles()[0];
+                    require(shot.position[1]!=launch[1] && shot.x.v==shot.position[0] &&
+                            shot.z.v==shot.position[2],
+                        "sprite-only ballistic sprite follows the live 3D arc and collision position");
+                }
+            }
+            require(world.feature(treeId)->dmg==476 && world.unit(target)->hp==Fixed::fromInt(2000),
+                "sprite-only ballistic cannon collides with a blocking feature before its selected unit target");
+        }
         std::cout<<"PASS: authored ballistic arrows collide with features before their selected unit target\n";
+        std::cout<<"PASS: sprite-only ballistic shots use native XYZ motion and feature collision\n";
         {
             UnitType bomber;bomber.maxHp=100;bomber.canFly=true;bomber.defaultFire=0;
             Weapon egg;egg.kind=Weapon::Kind::Dropped;egg.ballistic=true;
