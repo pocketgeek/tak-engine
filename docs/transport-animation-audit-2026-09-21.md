@@ -125,12 +125,14 @@ implementation descriptions. Current open gates are:
   mission, terrain scans, placement, and release match through step 314, with
   176 distinct grade cells, 219 grade calls, and 74 scan deadlines; Standard
   and Crusades pass across the same three builds. Other maps and carrier
-  profiles remain open. A combined continuous live-blocker diagnostic now
-  includes the actual native mover and `GROUND_UNLOAD` dispatcher, but it is
-  inconclusive: its scan/movement trace diverges before the blocker changes
-  position, and the mission worker returns no replacement route at the later
-  matched replan cell. Automatic native collision detection and route
-  replacement in one uninterrupted mission-backed trace remain unverified.
+  profiles remain open. An experimental combined live-blocker trace is
+  inconclusive because its emulator initially lacked World exploration updates
+  and then omitted the blocker from its live-body query and occupancy plane; the
+  resulting scan mismatch is a fixture error, not evidence of different gameplay.
+  That trace also did not deliver a replacement route in its combined mission
+  context, while the isolated mission-worker replay installs all five World
+  waypoints. Automatic native collision detection and route replacement in one
+  uninterrupted mission-backed trace remain unverified.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
