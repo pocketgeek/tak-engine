@@ -169,6 +169,11 @@ struct Weapon {
     // the game is the same hand-drawn streak.
     std::string weaponArt;    // weaponart: anims/<name>_4444.taf sprite sequence
     std::string shotModel;    // model: objects3d/<name>.3do projectile mesh
+    std::string veteranShotModel; // veteranmodel: alternate projectile mesh at veteranlevel
+    int32_t veteranLevel = 0; // veteranlevel: source rank that selects veteranShotModel
+    bool usesVeteranShotModel(int sourceVeteran) const {
+        return !veteranShotModel.empty() && sourceVeteran >= veteranLevel;
+    }
     bool  nimbus = false;     // nimbus: faction caster effect and conditional buildup delay
     bool  hasBoltColor = false;
     uint8_t inner[3] = {255, 255, 255};    // innercolor: lightning bolt core
@@ -957,6 +962,7 @@ struct Projectile {
     bool straight=false;
     bool guided3d=false;    // GuidedWeapon's simulation-owned XYZ state.
     bool ballistic3d=false; // mesh-only native XYZ state; legacy X/Z collision and hash remain separate.
+    bool projectileUsesVeteranModel=false; // model variant selected once at launch by source rank.
     std::array<int32_t,3> muzzle{};
     std::optional<RetailLightningEffect> lightningEffect;
     // Position in the same 16.16 as a unit's: retail's world is 0x100000 per 16px

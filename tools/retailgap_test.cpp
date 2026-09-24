@@ -148,6 +148,35 @@ int main(int argc, char** argv) {
         if (const sim::UnitType* t = reg.find("arabow"); t && t->weapons.size() > 1)
             check(t->weapons[1].turnRate > 3.0f, "guided turnrate in radians/s",
                   std::to_string(t->weapons[1].turnRate));
+        if (const sim::UnitType* t = reg.find("verbal"); t && !t->weapons.empty()) {
+            const sim::Weapon& bolt = t->weapons[0];
+            check(bolt.shotModel == "verbal1", "Ballista bolt parses its regular projectile mesh");
+            check(bolt.veteranShotModel == "verbal1_vet" && bolt.veteranLevel == 10,
+                  "Ballista bolt parses veteranmodel/veteranlevel from WEAPON1");
+            check(!bolt.usesVeteranShotModel(9) && bolt.usesVeteranShotModel(10) &&
+                  bolt.usesVeteranShotModel(11),
+                  "Ballista switches its per-shot mesh at rank 10");
+
+            auto firedVariant = [&](int rank) {
+                sim::World w;
+                sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=kMap;
+                cfg.slots={sim::MatchSlot{},sim::MatchSlot{}};
+                cfg.slots[0].team=0;cfg.slots[1].team=1;
+                sim::setupMatch(w,reg,cfg);
+                float sx=1200,sz=1000,tx=1200,tz=1500;
+                legalSpot(w,t,sx,sz);legalSpot(w,victim,tx,tz);
+                const int shooter=w.spawn(t,sx,sz,0,0);
+                const int targetId=w.spawn(victim,tx,tz,0,1);
+                if(auto* unit=w.unit(shooter)) {unit->veteran=rank;unit->stance=0;}
+                w.attack(shooter,targetId,false);
+                for(int step=0;step<300 && w.projectiles().empty();++step)
+                    w.tick(1.0f/30.0f);
+                if(w.projectiles().empty())return -1;
+                return int(w.projectiles().front().projectileUsesVeteranModel);
+            };
+            check(firedVariant(9)==0 && firedVariant(10)==1,
+                  "Ballista shots snapshot their rank-selected projectile mesh at launch");
+        }
     }
 
     // ---- 2. totalallowed ---------------------------------------------------

@@ -757,6 +757,8 @@
                     SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
                 };
                 if(lightning)sprite(w.weaponArt,float(z-(y>>1))+float(heightRef_)*0.5f,false);
+                const std::string& projectileModel = p.projectileUsesVeteranModel &&
+                    !w.veteranShotModel.empty() ? w.veteranShotModel : w.shotModel;
                 if(lightning && p.lightningEffect && w.lightningEffect) {
                     const auto& effect=*p.lightningEffect;
                     const int tw=int(std::bit_ceil(unsigned(effect.width)));
@@ -789,8 +791,8 @@
                 }
                 if(!lightning && shadowsOnFrame_ && !w.shadowArt.empty())
                     sprite("shadows:"+w.shadowArt,float(z)-terrainLift(float(x),float(z)),true);
-                if(!lightning && !w.shotModel.empty())
-                    drawShotModel(w.shotModel,p.fromPlayer,float(x),float(z),0,
+                if(!lightning && !projectileModel.empty())
+                    drawShotModel(projectileModel,p.fromPlayer,float(x),float(z),0,
                         3.14159265358979323846f-float(p.angles[1])*(6.283185307179586f/65536.f),&p);
                 if(!lightning)sprite(w.weaponArt,float(z-(y>>1))+float(heightRef_)*0.5f,false);
                 continue;
@@ -863,9 +865,12 @@
             // mesh, yawed along its flight so an arrow actually points where it is
             // going. Projectile models point along +z (the arrowhead is at
             // +z and the fletching at -z), opposite the unit-model forward axis.
-            if (p.wsrc && !p.wsrc->shotModel.empty()) {
+            const std::string* projectileModel = p.wsrc ?
+                &(p.projectileUsesVeteranModel && !p.wsrc->veteranShotModel.empty()
+                    ? p.wsrc->veteranShotModel : p.wsrc->shotModel) : nullptr;
+            if (projectileModel && !projectileModel->empty()) {
                 if(native3d) {
-                    drawShotModel(p.wsrc->shotModel,p.fromPlayer,renderX,renderZ,0,
+                    drawShotModel(*projectileModel,p.fromPlayer,renderX,renderZ,0,
                         3.14159265358979323846f-float(p.angles[1])*(6.283185307179586f/65536.f),&p);
                     continue;
                 }
@@ -879,7 +884,7 @@
                 // the same 30 Hz COB-unit conversion used for spinning shot art.
                 const float spin = float(p.age) / 30.0f * float(p.wsrc->spinRate) *
                                    (6.2831853071795864769f / 65536.0f);
-                drawShotModel(p.wsrc->shotModel, p.fromPlayer, renderX, renderZ,
+                drawShotModel(*projectileModel, p.fromPlayer, renderX, renderZ,
                               h * zm + palt, 3.14159265358979323846f -
                                   std::atan2(p.vx.toFloat(), p.vz.toFloat()) + spin);
                 continue;

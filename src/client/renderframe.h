@@ -49,7 +49,7 @@ struct UnitR {
     bool cloaked = false, cloakOn = true, active = true;
     float frozenFor = 0, stonedFor = 0, paralyzedFor = 0;
     float selfDestructT = -1;   // >=0 = self-destruct countdown (seconds) armed
-    int buildSiteId = 0, reclaimId = 0, repairId = 0;
+    int buildSiteId = 0, productionSiteId = 0, reclaimId = 0, repairId = 0;
     bool conjuring = false;
     bool hasConstructionEmitter = false;
     std::array<uint32_t,2> constructionEmissions{};

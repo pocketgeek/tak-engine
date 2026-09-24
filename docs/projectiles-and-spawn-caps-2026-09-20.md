@@ -22,8 +22,8 @@ The projectile audit found two separate rendering faults:
 - Veruna Ballista's `verbal1` mesh was already rendering, but backward. Both
   `verbal1` and `verbal1_vet` have their head along authored -Z, unlike the +Z
   arrow/harpoon meshes inspected. The common model renderer now accounts for
-  these two assets' opposite orientation. This does not add veteran-model
-  selection where the weapon loader does not already provide it.
+  these two assets' opposite orientation. A follow-up below also adds the
+  weapon-level veteran-model selection declared by the Ballista FBI.
 
 Validation:
 
@@ -46,3 +46,29 @@ Validation:
 
 `TAK_PROJECTILE_TEST=<unit id>` with debug `--firetest` provides a repeatable
 single-shooter fixture. Release ignores this developer hook.
+
+### Ballista veteran bolt and streak fallback (2026-09-23)
+
+`verbal.fbi` declares `model=verbal1`, `veteranlevel=10`, and
+`veteranmodel=verbal1_vet` inside `WEAPON1`. The weapon loader now retains both
+mesh names and the threshold, snapshots the chosen variant when the shot is
+created, and draws that stored variant through the existing model renderer.
+Retail's `0x52be80` initializer confirms the behavior: it puts the regular model
+pointer in shot+`0x93`, then substitutes the veteran pointer when the source
+rank returned by `0x519310` is at least the threshold. The native probe passed
+ranks 0, 9, 10, and 11 against the threshold of 10.
+
+The Archer and Ballista normal ballistic paths do not also render the local
+yellow streak. A modeled shot takes the `drawShotModel` branch and immediately
+continues past the fallback line renderer. Retail `0x52c100` likewise dispatches
+the selected model to the 3DO renderer at `0x4ff570`; its optional sprite calls
+are separate authored art, and these Archer/Ballista weapon blocks do not declare
+`weaponart`. So the old beam-like look is not explained by an extra generic line
+in the current modeled-ballistic path. A remaining report after rebuilding would
+point to the 3DO geometry or its rendering/orientation, which still needs a
+behavior-focused visual review of whether the shot reads and points like an
+arrow; no retail GUI was launched for this follow-up.
+
+The optimized client and asset-backed `retailgap` test rebuilt successfully;
+`retailgap` passed. The native veteran-model probe passed its four threshold
+cases. `git diff --check` also passed.

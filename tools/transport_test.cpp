@@ -308,6 +308,104 @@ static void coastline() {
     }
 }
 
+// A moving body arrives at the exact landing cell while a transport is closing
+// on a crowded shore. Exercise the interaction the flat blocker and empty-coast
+// fixtures cover separately: real placement/terrain, the native retry wait,
+// carrier movement during the retry, and passenger attachment/release. Air and
+// surface carriers share the landing rules, while only the ship must remain on
+// the water side of the shoreline.
+static void crowdedCoastlineUnloadRetry() {
+    for (bool air : {false, true}) {
+        std::printf("crowded coastline unload retry (%s):\n", air ? "air" : "sea");
+        constexpr int W=96,H=96,shoreCell=25;
+        auto heights=coastHeights(W,H,shoreCell);
+        World w;w.setVisPlayer(-1);w.setPathService(true);
+        w.setTerrain(heights,W,H,40);
+        w.setMapPlacementFeatures(std::vector<uint16_t>(size_t(W)*H,0xffff),{});
+
+        UnitType carrier=boatType(),passenger=footType(),blockerType=footType();
+        carrier.canFly=air;carrier.cruiseAlt=100;
+        if(!air)carrier.domain=UnitType::Domain::Water;
+        passenger.accel={};
+        blockerType.accel=tak::sim::Fixed::fromInt(1);
+        blockerType.maxVel=tak::sim::Fixed::fromInt(3);
+        const int dropX=shoreCell*16+64,dropZ=300;
+        const int tid=w.spawn(&carrier,80,700),cid=w.spawn(&passenger,80,700);
+        board(w,tid,cid);
+        w.unloadAt(tid,float(dropX),float(dropZ));
+
+        int blocker=0;
+        bool retrySeen=false,carrierMovedDuringRetry=false,passengerFollowedCarrier=true;
+        bool heldThroughRetry=false,blockerClearedAtRelease=false;
+        int retryTick=-1;tak::sim::Fixed retryX{},retryZ{};
+        bool released=false;
+        for(int tick=0;tick<4000 && !released;++tick) {
+            const auto* before=w.unit(tid);
+            const float dx=(tak::sim::Fixed::fromInt(dropX)-before->x).toFloat();
+            const float dz=(tak::sim::Fixed::fromInt(dropZ)-before->z).toFloat();
+            if(!blocker && dx*dx+dz*dz < (kRange+8)*(kRange+8)) {
+                blocker=w.spawn(&blockerType,float(dropX),float(dropZ));
+            }
+            w.tick(1.f/30);
+            auto* transport=w.unit(tid);
+            auto mission=std::find_if(transport->orders.begin(),transport->orders.end(),
+                [](const auto& order){return order.transportUnloadApproach;});
+            if(mission!=transport->orders.end() && mission->transportMission.stage==3 && !retrySeen) {
+                retrySeen=true;retryTick=int(w.tickCount());retryX=transport->x;retryZ=transport->z;
+                heldThroughRetry=transport->cargo.size()==1 && w.unit(cid)->inTransport==tid;
+                w.order(blocker,dropX+256,dropZ,false);
+            }
+            if(retrySeen && transport->cargo.size()==1 && w.unit(cid)->inTransport==tid &&
+               int(w.tickCount())>=retryTick+4) {
+                if(transport->x!=retryX || transport->z!=retryZ)
+                    carrierMovedDuringRetry=true;
+                passengerFollowedCarrier=passengerFollowedCarrier &&
+                    w.unit(cid)->x==transport->x && w.unit(cid)->z==transport->z;
+            }
+            released=transport->cargo.empty();
+            if(released && blocker) {
+                const auto& cargo=*w.unit(cid);const auto& body=*w.unit(blocker);
+                const int px=tak::sim::footprintOrigin(cargo.x,passenger.footX);
+                const int pz=tak::sim::footprintOrigin(cargo.z,passenger.footZ);
+                const int bx=tak::sim::footprintOrigin(body.x,blockerType.footX);
+                const int bz=tak::sim::footprintOrigin(body.z,blockerType.footZ);
+                const bool overlapX=bx<px+passenger.footX && px<bx+blockerType.footX;
+                const bool overlapZ=bz<pz+passenger.footZ && pz<bz+blockerType.footZ;
+                blockerClearedAtRelease=!overlapX || !overlapZ;
+            }
+        }
+        if(!released || !heldThroughRetry) {
+            const auto* transport=w.unit(tid);const auto* cargo=w.unit(cid);
+            const auto* blockerUnit=blocker?w.unit(blocker):nullptr;
+            std::fprintf(stderr,"crowded unload diagnostic air=%d tick=%u retry=%d moved=%d released=%d cargo=%zu attached=%d ship=(%.1f,%.1f) blocker=(%.1f,%.1f) orders=%zu\n",
+                int(air),w.tickCount(),retryTick,int(carrierMovedDuringRetry),int(released),
+                transport->cargo.size(),cargo->inTransport==tid,transport->x.toFloat(),transport->z.toFloat(),
+                blockerUnit?blockerUnit->x.toFloat():-1,blockerUnit?blockerUnit->z.toFloat():-1,
+                transport->orders.size());
+        }
+        check(blocker!=0,"a crowding unit enters the selected shoreline landing cell");
+        check(retrySeen,"a landing-cell arrival interrupts the native unload transfer");
+        check(heldThroughRetry,
+              "cargo remains attached while the shoreline unload retries");
+        check(carrierMovedDuringRetry,
+              "the carrier keeps moving while the crowded-site retry waits");
+        check(passengerFollowedCarrier,
+              "the attached passenger follows the carrier during the retry");
+        check(released && !w.unit(cid)->embarked(),
+              "the same passenger is released after the blocker clears");
+        if(released) {
+            check(blockerClearedAtRelease,
+                  "the blocker leaves the passenger's footprint before release");
+            check(w.unit(cid)->x==tak::sim::Fixed::fromInt(dropX) &&
+                  w.unit(cid)->z==tak::sim::Fixed::fromInt(dropZ),
+                  "retry retains the exact selected passenger landing point");
+            if(!air)
+                check(w.unit(tid)->x.toFloat()<shoreCell*16,
+                      "the surface carrier stays in navigable water as cargo lands on shore");
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 4. Far inland: preserve the native circle request even when no fitting water cell
 // is reachable inside it; navigator failure handling owns the result.
@@ -2027,6 +2125,7 @@ int main(int argc,char** argv) {
     openGround();
     alreadyInRange();
     coastline();
+    crowdedCoastlineUnloadRetry();
     farInland();
     unloadApproachFailure();
     retargetWithPendingRoute();

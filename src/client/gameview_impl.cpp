@@ -3,6 +3,7 @@
 #include "client/gameview.h"
 #include "client/shadowmask.h"
 #include "client/retailfeatureclock.h"
+#include "client/retailbuilderanimation.h"
 #include "client/retailmovementcallbacks.h"
 #include "client/runtimesettings.h"
 #include <cmath>
@@ -1261,7 +1262,8 @@
             if (u.constructionEmitter) s.constructionParticles=u.constructionEmitter->particles;
             else if (u.cosmeticConstructionEmitter) s.constructionParticles=u.cosmeticConstructionEmitter->particles;
             else s.constructionParticles.clear();
-            s.buildSiteId = u.buildSiteId; s.reclaimId = u.reclaimId; s.repairId = u.repairId;
+            s.buildSiteId = u.buildSiteId; s.productionSiteId = u.productionSiteId;
+            s.reclaimId = u.reclaimId; s.repairId = u.repairId;
             s.yardOpen = world_.scriptYardOpen(u.id);
             s.scriptHealthPercent = int32_t(int16_t(u.hp.floorInt()))*100/std::max(u.maximumHp(),1);
             s.constructionPercentLeft = u.retailSite
@@ -1927,44 +1929,35 @@
             // too (arafly/zonhunt via their FlightControl, tarpries via a direct `build`),
             // which used to just flap in place while conjuring.
             if (u.type->isBuilder && !isStructure(u.type)) {
-                // One-shot per JOB, not a loop: the retail build scripts are a single
-                // pose performance (zonhand's whip swing + PLAY_SOUND crack, ~4s of
-                // keyframes, then RETURN) after which the builder HOLDS the final
-                // working stance until StopBuilding. Re-invoking on thread death
-                // (the walk pattern) replayed the whole performance -- and its sound
-                // -- endlessly. Retrigger only for a NEW job (a queued neighbouring
-                // site started without walking in between).
-                int workId = u.buildSiteId ? u.buildSiteId
-                           : u.repairId    ? u.repairId
-                           : u.reclaimId   ? u.reclaimId
-                           : !u.buildQueue.empty() ? -1   // producing from the queue (repeat conjure)
-                           : 0;
-                bool working = workId != 0 && (!u.walking() || (u.type->canFly && u.conjuring));
-                if (working != a.building || (working && workId != a.workId)) {
-                    a.building = working;
-                    a.workId = working ? workId : 0;
-                    if (!a.flying) {
-                        // Ground builder.
-                        if (working) a.vm->start("StartBuilding") || a.vm->start("startbuild");
-                        else {
-                            a.vm->start("StopBuilding");
-                            a.vm->start("restore_x") || a.vm->start("RestoreAfterDelay");
+                // Each queued output gets its own site id. A non-empty queue
+                // alone is not work: while capped there is no active conjure
+                // site, and consecutive products must retrigger one-shot poses.
+                tak::updateRetailBuilderAnimation(a.building,a.workId,
+                    u.buildSiteId,u.repairId,u.reclaimId,!u.buildQueue.empty(),
+                    u.productionSiteId,u.conjuring,u.walking(),u.type->canFly,
+                    [&](bool working) {
+                        if (!a.flying) {
+                            // Ground builder.
+                            if (working) a.vm->start("StartBuilding") || a.vm->start("startbuild");
+                            else {
+                                a.vm->start("StopBuilding");
+                                a.vm->start("restore_x") || a.vm->start("RestoreAfterDelay");
+                            }
+                        } else if (a.hasFlightSM) {
+                            // SM flyer (arafly/zonhunt monarch): StartBuilding sets unit
+                            // value 5 and fires RequestState->Go, raising statics 9/10;
+                            // RestoreWatcher (a Create thread) then loops `build` -- NOT
+                            // FlightControl, which plays `attack` for the body. Verified by
+                            // driving the real Vm: arms conjure, body holds the attack pose.
+                            // No reset.
+                            a.vm->start(working ? "StartBuilding" : "StopBuilding");
+                        } else {
+                            // Generic flyer builder (tarpries): no FlightControl loop, so the
+                            // flight re-kick above loops `build` while a.building (matching
+                            // retail's BuildControl). Just flip the state + set the COB gate.
+                            a.vm->start(working ? "StartBuilding" : "StopBuilding");
                         }
-                    } else if (a.hasFlightSM) {
-                        // SM flyer (arafly/zonhunt monarch): StartBuilding sets unit
-                        // value 5 and fires RequestState->Go, raising statics 9/10;
-                        // RestoreWatcher (a Create thread) then loops `build` -- NOT
-                        // FlightControl, which plays `attack` for the body. Verified by
-                        // driving the real Vm: arms conjure, body holds the attack pose.
-                        // No reset.
-                        a.vm->start(working ? "StartBuilding" : "StopBuilding");
-                    } else {
-                        // Generic flyer builder (tarpries): no FlightControl loop, so the
-                        // flight re-kick above loops `build` while a.building (matching
-                        // retail's BuildControl). Just flip the state + set the COB gate.
-                        a.vm->start(working ? "StartBuilding" : "StopBuilding");
-                    }
-                }
+                    });
             }
             // Buildings: yard/production anims. Detect via isStructure (maxVel <= tak::sim::Fixed()),
             // NOT !canMove -- the Keep/Castle/Hell carry canmove=1 in their FBI, so

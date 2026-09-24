@@ -7685,3 +7685,50 @@ After the final test-only edits, the affected `retail_motion` and `retail_visual
 tests also pass in all three configurations. Focused feature-smoke,
 movement-animation, native mover-callback and landing-callback probes pass. The
 retail game GUI was not launched.
+
+### Behavioral accuracy acceptance bar (2026-09-23)
+
+Animation and transport review targets an accurate representation of retail
+behavior, not pixel identity. Completion checks should cover the visible action
+and its state transitions: what moves, where it faces, when it starts/stops,
+how long it persists, and how it interacts with units, terrain, and missions.
+Pixel-difference captures remain useful diagnostic evidence, but a remaining
+pixel-only comparison is not an open completion gate. Any visual difference
+that changes the apparent action (for example, an arrow that reads as a beam)
+remains a behavioral issue to investigate.
+
+### Queued mobile-builder animation transitions (2026-09-23)
+
+The display previously represented every nonempty mobile production queue as
+one constant work ID. Consecutive output sites therefore did not retrigger
+one-shot `StartBuilding` performances, and a capped queue with no live output
+site could animate as if work were underway. `UnitR` now carries
+`productionSiteId`, and the display transition keys the performance to that
+active site. A shared regression covers no-site waiting, consecutive sites,
+stopping while the queue waits, placed builds, and a moving active flyer. With
+`zonhand.cob`, it drives the display VM and observes `StartBuilding`,
+`StartBuilding`, then `StopBuilding` state writes.
+
+The focused builder-animation test, `conjure_test`, relevant movement/script
+tests, and the native `0x41ef00` orbit probe pass. The new builder-animation
+case is included in the full 48-test Release, Debug, and optimized suites.
+
+### Crowded-shore unload retry (2026-09-23)
+
+A World test routes both air and sea carriers to a real shoreline landing cell,
+then moves a unit into that exact cell at transfer range. It verifies the
+passenger stays attached while the carrier moves, the site retries after the
+blocker clears, and the passenger releases at the selected point; the sea case
+also confirms the carrier stays on navigable water. This exposed a sea-only
+stage-1 retry race: after route and unload had been folded into one order, the
+approach dispatcher treated the retry wake as a second approach completion and
+removed the combined order, stranding cargo. The dispatcher now still allows a
+stage-1 retry to re-anchor when out of transfer range, but it only folds an
+approach into an unload when a separate unload order remains.
+
+The transport World regression and all 48 CTests pass in Release, Debug, and
+optimized builds. Native surface retry/route probes, 71 sea and 100 air unload
+cases, and a 500-tick integrated air-unload trace pass. Native fixtures still
+control scheduler requests and selected placement/effect callbacks; the World
+regression exercises live terrain, body placement, routing, movement, and
+attachment. No retail GUI was launched.

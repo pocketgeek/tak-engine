@@ -459,6 +459,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 wp.shotModel = lower(w->valueOr("model", ""));
                 if (auto dot = wp.shotModel.rfind(".3do"); dot != std::string::npos)
                     wp.shotModel.erase(dot);          // some FBIs spell the extension
+                wp.veteranShotModel = lower(w->valueOr("veteranmodel", ""));
+                if (auto dot = wp.veteranShotModel.rfind(".3do");
+                    dot != std::string::npos)
+                    wp.veteranShotModel.erase(dot);
+                wp.veteranLevel = int32_t(w->numberOr("veteranlevel", 0));
                 wp.nimbus = w->numberOr("nimbus", 0) != 0;
                 {
                     // innercolor/middlecolor/outercolor are "R G B" triples that
@@ -1968,7 +1973,11 @@ void World::tickGroundMission(Unit& u) {
                         if(uint32_t(u.routeStamp)<=w.tickCounter_-6u)u.routeStamp=0;
                         w.requestPath(u,goal.x.toFloat(),goal.z.toFloat());
                     });
-                if(result==1)completeUnloadApproach=true;
+                // A blocked transfer resets the combined unload to stage 1.
+                // It still needs this handler to re-route if the carrier has
+                // drifted out of range, but it must not fold a second unload
+                // into itself (there is no queued unload behind it).
+                if(result==1 && !goal.unload)completeUnloadApproach=true;
                 return result;
             }
             if (goal.park) {
@@ -3762,6 +3771,9 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
     p.vx = Fixed::fromFloat(dx / dist * vel / kTick);   // px per TICK, as retail stores it
     p.vz = Fixed::fromFloat(dz / dist * vel / kTick);
     p.wsrc = &w;
+    // Retail BallisticWeapon::initShot selects and stores a model pointer at
+    // launch, so later veterancy changes cannot change an in-flight bolt.
+    p.projectileUsesVeteranModel = w.usesVeteranShotModel(u.veteran);
     // Keep the existing X/Z projectile and hit logic intact, but retain retail's
     // three-dimensional ballistic state for model-backed shots. The renderer uses
     // this state to place and orient the mesh; it never feeds damage or collision.
