@@ -8542,19 +8542,23 @@ python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
 
 The earlier live route-replacement replay begins at the captured replan request,
 while its mover is not physically advanced between worker requests. The combined
-Lake Lokken diagnostic now retains the mission-backed path, continuously advances
-retail's `0x4dc800`/`0x51b2a0` mover, and injects the map-backed blocker. It is not
-a parity pass. Before the blocker moves, the first scan/movement mismatch is at
-step 825: World changes speed mode and scan deadline (857), while native retains
-the prior mode and deadline (859). Supplying World exploration changes to the
-native mapping plane moves the first mismatch to step 891, so the visibility
-inputs are still not fully reconciled. At the later replan boundary, both traces
-start from cell `(238,231)`, and direct native search can reproduce all five
-World replacement waypoints, but the retained mission worker delivers no route
-and the native carrier does not release its passenger. The isolated worker
-control still passes. The combined failure therefore does not establish a
-production pathfinding mismatch; the scan and worker-service context remains
-unresolved. This was Standard only; Crusades was not run. No retail GUI was
+Lake Lokken diagnostic retained the mission-backed path, advanced retail's
+`0x4dc800`/`0x51b2a0` mover, and injected the map-backed blocker, but its first
+run did not have complete environment inputs. The initial step-825 difference
+came from the emulator's exploration plane missing World updates. After those
+updates were supplied, scans matched through step 890. At step 891, World grades
+candidate origin `(238,232)` as blocked because its 4x4 footprint overlaps the
+map-backed Vertrans at `(238,235)`. The emulator fixture had not registered that
+blocker in its live-body query and occupancy plane, so its different scan result
+is a fixture omission, not evidence of a retail/gameplay mismatch.
+
+The corrected combined movement-and-worker trace is still open. The independent
+map-backed worker replay remains green: retail's `0x416430` unload worker keeps
+the carrier, navigator, controller, mission, and attached Araarch through both
+requests and installs all five replacement waypoints captured from World. That
+does not yet prove automatic detection and replan during continuous native
+movement. No production pathfinding change is justified by the incomplete
+combined trace. This was Standard only; Crusades was not run. No retail GUI was
 launched.
 
 ### Araarch projectile release and impact timing (2026-09-24)
