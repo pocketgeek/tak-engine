@@ -9,14 +9,17 @@ from the TNT cell plane. An optional mover trace steps both implementations over
 the shipped map without launching a game GUI.
 An optional live-unload composition keeps the native mission and cargo active
 through map-backed movement, arrival wakeup, passenger placement and release.
+An optional blocker trace mirrors one mobile shore occupant through the actual
+native placement routine and the unload retry.
 """
 import argparse
 import os
+import re
 import struct
 import subprocess
 from pathlib import Path
 
-from balance_inputs import unit_properties
+from balance_inputs import class_record, properties, unit_properties
 from emuphase import Phase, OBJ, TYPE, GS
 from check_surface_unload_map_grades import native_grade_reader, native_water_profile
 from check_surface_unload_map_release import (
@@ -26,7 +29,8 @@ from check_surface_unload_map_release import (
 def check_route(world_binary, retail_root, map_name, start_cell, target_cell, footprint,
                 carrier=None, passenger=None, crusades=False, native_map_grades=False,
                 hpitool='build/hpitool', native_map_mover_steps=0,
-                native_live_unload=False, terrain_scan_after=None):
+                native_live_unload=False, terrain_scan_after=None,
+                shore_blocker=False):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     if native_live_unload and (map_name.lower() != 'lake lokken' or
@@ -35,10 +39,14 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         raise ValueError('--native-live-unload currently checks Lake Lokken Vertrans/Araarch')
     if terrain_scan_after is not None and not native_live_unload:
         raise ValueError('--terrain-scan-after requires --native-live-unload')
+    if shore_blocker and (not native_live_unload or not carrier):
+        raise ValueError('--shore-blocker requires an asset-backed --native-live-unload trace')
     env = os.environ.copy()
     env['TAK_DUMP_GRADE_PLANE'] = '1'
     if terrain_scan_after is not None:
         env['TAK_MAP_SURFACE_SCAN_AFTER'] = str(terrain_scan_after)
+    if shore_blocker:
+        env['TAK_MAP_SURFACE_BLOCK_SHORE'] = '1'
     if carrier:
         env['TAK_DUMP_ATTEMPT_PLANES'] = '1'
         env['TAK_DUMP_ROUTE_ATTEMPT'] = '1'
@@ -170,6 +178,16 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                        if line.startswith('WORLDSTEP ')]
         assert len(world_steps) == native_map_mover_steps, (
             len(world_steps), native_map_mover_steps)
+    world_blockers = {}
+    if shore_blocker:
+        for line in stdout:
+            if line.startswith('WORLD_BLOCKER '):
+                row = tuple(map(int, line.split()[1:]))
+                assert len(row) == 8, row
+                world_blockers[row[0]] = row[1:]
+        assert len(world_blockers) == native_map_mover_steps + 1, (
+            len(world_blockers), native_map_mover_steps)
+        assert sorted(world_blockers) == list(range(native_map_mover_steps + 1))
     if transport_profile and world_route:
         dx = world_route[-1][0] - target_x
         dz = world_route[-1][1] - target_z
@@ -179,6 +197,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     p = Phase(width, height)
     native_live = None
     native_placement_results = []
+    placement_blocker_states = []
+    blocked_placement_states = []
+    blocked_cargo_held = []
+    active_blocker_state = None
     if native_live_unload:
         tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
                        f'Maps/{map_name}.tnt')
@@ -198,6 +220,15 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         def checked_placement(args, call_number):
             result = native_place(args, call_number)
             native_placement_results.append((args, result))
+            placement_blocker_states.append(active_blocker_state)
+            if not result:
+                blocked_placement_states.append(active_blocker_state)
+                if native_live:
+                    blocked_cargo_held.append(
+                        native_live.get(native_live.carrier + 0xac) ==
+                        native_live.passenger and
+                        native_live.get(native_live.passenger + 0xa8) ==
+                        native_live.carrier)
             return result
 
         from probe_transport_surface_unload_callbacks import SurfaceUnload
@@ -353,13 +384,96 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         return list(zip(words[::2], words[1::2]))
 
     native_route = run_native_search()
+    native_blocker = None
+    if shore_blocker:
+        # Register the same mobile body in retail's live entity table and the
+        # TNT cell occupancy plane after the initial route has been delivered.
+        # This keeps the fixture's arrival route controlled while native mover
+        # scans and placement see the actual blocker on subsequent ticks.
+        entity_table = p._alloc(16 * 0x138)
+        blocker_id = 2
+        blocker = entity_table + blocker_id * 0x138
+        blocker_nav = p._alloc(0x180)
+        blocker_type = p._alloc(0x400)
+        blocker_grid = p._alloc(0x40)
+        unit_text = cat(hpitool, Path(retail_root), 'data.hpi',
+                        f'units/{passenger}.fbi').decode('latin1')
+        unit_fields = unit_properties(unit_text)
+        moveinfo_text = cat(hpitool, Path(retail_root), 'data.hpi',
+                            'gamedata/moveinfo.tdf').decode('latin1')
+        class_fields = next((properties(block_text) for block_text in
+            re.findall(r'\[[^]]+\]\s*\{([^{}]*)\}', moveinfo_text, re.S)
+            if properties(block_text).get('name', '').lower() ==
+               unit_fields.get('movementclass', '').lower()), None)
+        if class_fields is None:
+            raise AssertionError(('missing passenger movement class', unit_fields))
+        class_bytes = class_record(class_fields)
+        p.uc.mem_write(GS + 0x14e84,
+                       struct.pack('<II', entity_table, entity_table + 16 * 0x138))
+        p.uc.mem_write(blocker_grid + 4, class_bytes)
+        p.uc.mem_write(blocker_type + 0x18a, struct.pack('<I', blocker_grid))
+        p.uc.mem_write(blocker_type + 0x126,
+                       struct.pack('<hh', *passenger_profile[:2]))
+        for key, offset, default in (('maxvelocity', 0x162, 0),
+                                     ('brakerate', 0x166, 0.5),
+                                     ('acceleration', 0x16a, 0.5)):
+            p.uc.mem_write(blocker_type + offset,
+                           struct.pack('<i', int(float(unit_fields.get(key, default)) * 65536)))
+        for key, offset, default in (('turnrate', 0x18e, 500),
+                                     ('turninplacerate', 0x190, 0)):
+            p.uc.mem_write(blocker_type + offset,
+                           struct.pack('<H', int(float(unit_fields.get(key, default))) & 65535))
+        blocker_road = int(float(unit_fields.get('roadmultiplier', 1.2)) * 65536)
+        blocker_water = int(float(unit_fields.get('watermultiplier',
+            unit_fields.get('watermultipliser', 1))) * 65536)
+        blocker_maximum = int(float(unit_fields.get('maxvelocity', 0)) * 65536)
+        best_speed = max(blocker_road, blocker_water, 65536) * blocker_maximum >> 16
+        half_cell_ticks = 255 if best_speed <= 0 else max(1, min(255, (8 * 65536) // best_speed))
+        p.uc.mem_write(blocker_type + 0x172, struct.pack('<i', blocker_road))
+        p.uc.mem_write(blocker_type + 0x16e, struct.pack('<i', blocker_water))
+        p.uc.mem_write(blocker_type + 0x249, bytes((half_cell_ticks,)))
+        p.uc.mem_write(blocker_type + 0x192, class_bytes[4:12])
+        p.uc.mem_write(blocker_type + 0x23c, bytes((class_bytes[12], class_bytes[14])))
+        p.uc.mem_write(blocker_type + 0x24a, b'\x01')
+        p.uc.mem_write(blocker + 2, struct.pack('<H', blocker_id))
+        p.uc.mem_write(blocker + 8, struct.pack('<I', blocker_nav))
+        p.uc.mem_write(blocker + 0xb4, struct.pack('<I', blocker_type))
+        p.uc.mem_write(blocker + 0x130, struct.pack('<I', 0x1000000))
+        p.uc.mem_write(blocker + 0x12b, struct.pack('<i', blocker_maximum))
+        previous_cells = set()
+
+        def set_native_blocker(state):
+            nonlocal previous_cells
+            for x, z in previous_cells:
+                p.uc.mem_write(p.cells_addr + (z * width + x) * 14,
+                               struct.pack('<H', 0))
+            previous_cells = set()
+            x_raw, z_raw, speed_raw, heading = state[:4]
+            foot_x, foot_z = passenger_profile[:2]
+            cell_x = (x_raw - (foot_x - 1) * 8 * 65536) // (16 * 65536)
+            cell_z = (z_raw - (foot_z - 1) * 8 * 65536) // (16 * 65536)
+            p.uc.mem_write(blocker + 0x68, struct.pack('<iii', x_raw, 0, z_raw))
+            p.uc.mem_write(blocker + 0x74, struct.pack('<hh', cell_x, cell_z))
+            p.uc.mem_write(blocker + 0x78, struct.pack('<hh', foot_x, foot_z))
+            p.uc.mem_write(blocker + 0x7e, struct.pack('<H', heading))
+            p.uc.mem_write(blocker_nav + 0x20, struct.pack('<i', speed_raw))
+            p.uc.mem_write(blocker_nav + 0x36, struct.pack('<H', 0))
+            for z in range(max(0, cell_z), min(height, cell_z + foot_z)):
+                for x in range(max(0, cell_x), min(width, cell_x + foot_x)):
+                    p.uc.mem_write(p.cells_addr + (z * width + x) * 14,
+                                   struct.pack('<H', blocker_id))
+                    previous_cells.add((x, z))
+
+        native_blocker = set_native_blocker
     if native_live:
         # The World physical trace intentionally suspends the mission poll so
         # both movers follow the already delivered segment until circle arrival.
-        # Keep this exact same controlled deadline in retail; circle arrival
-        # still wakes the real unload dispatcher through 0x4e5150.
+        # For the blocker case, wake the real dispatcher as the carrier enters
+        # the authored circle so subsequent blocked-placement retry deadlines
+        # are owned by retail's live mission logic.
+        first_poll_delay = 2200 if shore_blocker else native_map_mover_steps + 1000
         native_live.put(native_live.mission + 0x0a,
-                        route_tick + native_map_mover_steps + 1000)
+                        route_tick + first_poll_delay)
     if terrain_scan_after is not None:
         if not native_map_mover_steps or not carrier:
             raise ValueError('--terrain-scan-after requires a carrier map mover trace')
@@ -503,9 +617,16 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         live_release_step = None
         native_arrival_wakes = 0
         native_scan_count = 0
+        movement_parity_steps = 0
         previous_native_scan_deadline = native_scan_deadline
         for step, row in enumerate(world_steps, 1):
             p.uc.mem_write(GS + 0x19f44, struct.pack('<I', route_tick + step))
+            if shore_blocker:
+                active_blocker_state = world_blockers[step - 1]
+                x_raw, z_raw, blocker_speed, heading = active_blocker_state[:4]
+                native_place.set_blocker(x_raw, z_raw, blocker_speed != 0, heading,
+                                         blocker_speed)
+                native_blocker(active_blocker_state)
             if native_live:
                 stage_before_dispatch = p.uc.mem_read(native_live.mission + 5, 1)[0]
                 dispatch_row = native_live.dispatch(route_tick + step)
@@ -552,9 +673,11 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                            (move_flags >> 5) & 7, (move_flags >> 8) & 7,
                            move_flags & 0x1800)
             expected_step = (*row[1:6], *row[6:9])
-            assert native_step == expected_step, (
-                'native/World real-map mover step', step, native_step,
-                expected_step, row[9])
+            if not (shore_blocker and blocked_placement_states):
+                assert native_step == expected_step, (
+                    'native/World real-map mover step', step, native_step,
+                    expected_step, row[9])
+                movement_parity_steps += 1
             if native_live and not native_live.get(unit + 0xac):
                 live_release_step = step
                 break
@@ -573,7 +696,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                  'navigator_controller': native_live.get(native_live.nav + 4),
                  'navigator_path_count': struct.unpack('<I', p.uc.mem_read(
                      native_live.nav + 0x10C, 4))[0],
-                 'arrival_wakes': native_arrival_wakes})
+                 'arrival_wakes': native_arrival_wakes,
+                 'placement_blocker_states': placement_blocker_states,
+                 'final_mission_deadline': native_live.get(native_live.mission + 0x0A),
+                 'final_tick': route_tick + len(world_steps)})
             native_live.dispatch(route_tick + live_release_step + 1)
             assert native_live.get(unit + 0x60) == 0, (
                 'native surface mission did not retire after its one-tick release tail',
@@ -586,18 +712,102 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             assert released_origin == target_cell, (
                 'retail unload did not release Araarch at the selected Lake Lokken shore cell',
                 released, released_origin, target_cell)
-            assert native_placement_results and all(result == 1
-                for _, result in native_placement_results), native_placement_results
+            assert native_placement_results, native_placement_results
+            if not shore_blocker:
+                assert all(result == 1 for _, result in native_placement_results), \
+                    native_placement_results
             assert native_live.get(unit + 0xac) == 0
             assert native_live.get(native_live.passenger + 0xa8) == 0
-            assert native_arrival_wakes == 1, \
-                ('native navigator arrival did not wake the unload mission exactly once',
-                 native_arrival_wakes)
+            if shore_blocker:
+                assert native_arrival_wakes >= 1, \
+                    ('native navigator arrival never woke the blocked unload mission',
+                     native_arrival_wakes)
+            else:
+                assert native_arrival_wakes == 1, \
+                    ('native navigator arrival did not wake the unload mission exactly once',
+                     native_arrival_wakes)
+            if shore_blocker:
+                foot_x, foot_z = passenger_profile[:2]
+                target_origin = (
+                    (target_x - (foot_x - 1) * 8) // 16,
+                    (target_z - (foot_z - 1) * 8) // 16)
+
+                def overlaps_target(state):
+                    if state is None:
+                        return False
+                    x_raw, z_raw, *_ = state
+                    origin = (
+                        (x_raw - (foot_x - 1) * 8 * 65536) // (16 * 65536),
+                        (z_raw - (foot_z - 1) * 8 * 65536) // (16 * 65536))
+                    return (origin[0] < target_origin[0] + foot_x and
+                            target_origin[0] < origin[0] + foot_x and
+                            origin[1] < target_origin[1] + foot_z and
+                            target_origin[1] < origin[1] + foot_z)
+
+                blocked_placements = [state for (_, result), state in
+                                      zip(native_placement_results,
+                                          placement_blocker_states) if not result]
+                assert blocked_placements and any(
+                    not result and args[4] == 0 and overlaps_target(state)
+                    for (args, result), state in zip(native_placement_results,
+                                                     placement_blocker_states)), (
+                    'native map placement did not reject the live blocker on the shore',
+                    native_placement_results, placement_blocker_states[:20])
+                successful_placements = [state for (_, result), state in
+                                         zip(native_placement_results,
+                                             placement_blocker_states) if result]
+                assert any(successful_placements), \
+                    ('native map placement never accepted the shore after blocker clearance',
+                     native_placement_results)
+                clear_site_success = any(
+                    result and not overlaps_target(state)
+                    for (_, result), state in zip(native_placement_results,
+                                                  placement_blocker_states))
+                assert clear_site_success, (
+                    'native placement accepted the selected site only while the blocker overlapped it',
+                    native_placement_results, placement_blocker_states)
+                assert any(args[4] == 1 and result and overlaps_target(state)
+                           for (args, result), state in zip(native_placement_results,
+                                                            placement_blocker_states)), (
+                    'native relaxed placement did not recognize the live mobile blocker',
+                    native_placement_results, placement_blocker_states)
+                assert blocked_cargo_held and all(blocked_cargo_held), \
+                    ('native dropped cargo during a blocked shoreline placement',
+                     blocked_cargo_held)
+                world_failed = [tick for tick, state in world_blockers.items()
+                                if state[4] == 3 and state[5] > 0]
+                world_released = next((tick for tick, state in world_blockers.items()
+                                       if state[5] == 0), None)
+                assert world_failed and world_released is not None, (
+                    'World did not hold and release cargo through its live shore retry',
+                    world_failed[:8], world_released)
+                assert world_blockers[world_released][6] == 1, \
+                    ('World blocker did not receive its clear-site move order',
+                     world_blockers[world_released])
+                assert not overlaps_target(world_blockers[world_released]), \
+                    ('World released cargo while the blocker still overlapped the site',
+                     world_blockers[world_released], target_origin)
+                release_state = world_blockers[live_release_step - 1]
+                assert not overlaps_target(release_state), (
+                    'retail released cargo while the paired World blocker occupied the shore',
+                    live_release_step, release_state, target_origin)
+                assert abs(world_released - live_release_step) <= 1, (
+                    'native and World live-blocker release differ by more than the '
+                    'dispatcher/mover phase boundary', world_released, live_release_step)
+                released_position = struct.unpack('<3i',
+                    p.uc.mem_read(unit + 0x68, 12))
+                carrier_x = released_position[0] / 65536
+                carrier_z = released_position[2] / 65536
+                assert ((carrier_x - target_x) ** 2 + (carrier_z - target_z) ** 2 <=
+                        circle_radius ** 2), (
+                    'retail carrier left the authored water-side unload circle during retry',
+                    released_position, (target_x, target_z), circle_radius)
             map_mover_count = live_release_step
             print(f'  Native mission, search, and map mover remained joined through the '
                   f'retail shoreline release at physical step {live_release_step}; '
-                  f'navigator arrival advanced the mission exactly once; '
-                  f'{len(native_placement_results)} map-backed passenger placement checks passed.' +
+                  f'{native_arrival_wakes} navigator arrival wake(s); '
+                  f'{len(native_placement_results)} native map-backed passenger placement '
+                  f'checks ran.' +
                   (f' {native_scan_count} live terrain-scan deadlines matched.'
                    if terrain_scan_after is not None else ''))
         final_row = world_steps[map_mover_count - 1]
@@ -621,8 +831,12 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         arrival_note = ('; both finish inside the authored unload circle'
                         if map_mover_entered_circle else
                         '; final position remains outside the unload circle')
-        print(f'  Native 0x4dc800 + 0x51b2a0 matches {map_mover_count} World physical '
-              f'mover steps over TNT terrain{arrival_note}.')
+        compared_steps = movement_parity_steps if shore_blocker else map_mover_count
+        scope_note = (' before the blocked-placement retry; mover steps during the '
+                      'controlled retry window are not used as an equality gate'
+                      if shore_blocker else '')
+        print(f'  Native 0x4dc800 + 0x51b2a0 matches {compared_steps} World physical '
+              f'mover steps over TNT terrain{scope_note}{arrival_note}.')
 
 
 def main():
@@ -644,6 +858,8 @@ def main():
                         help='keep retail GROUND_UNLOAD active through map-backed movement and passenger release')
     parser.add_argument('--terrain-scan-after', type=int,
                         help='compare live native/World terrain scans after route delivery; requires --native-live-unload (0..2500 ticks)')
+    parser.add_argument('--shore-blocker', action='store_true',
+                        help='move one live Araarch away after it blocks map-backed unload placement')
     parser.add_argument('--hpitool', default='build/hpitool')
     args = parser.parse_args()
     if bool(args.carrier) != bool(args.passenger):
@@ -660,7 +876,7 @@ def main():
                 tuple(args.target), args.footprint, args.carrier, args.passenger,
                 args.crusades, args.native_map_grades or bool(args.native_map_mover_steps),
                 str(Path(args.hpitool).resolve()), args.native_map_mover_steps,
-                args.native_live_unload,args.terrain_scan_after)
+                args.native_live_unload,args.terrain_scan_after,args.shore_blocker)
 
 
 if __name__ == '__main__':

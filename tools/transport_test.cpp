@@ -1947,6 +1947,21 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
             stepped->groundTerrainFlags=0x1000;
             const size_t activeGoal=World::currentLeg(stepped->orders);
             stepped->orders[activeGoal].transportMission.deadline=tick+stepLimit+1000;
+            int shoreBlocker=0;
+            bool shoreBlockerCleared=false;
+            if(const char* enabled=std::getenv("TAK_MAP_SURFACE_BLOCK_SHORE")) {
+                if(*enabled && *enabled!='0') {
+                    if(!passengerType || !passengerType->canMove || passengerType->canFly)
+                        throw std::runtime_error("shore blocker requires a ground passenger profile");
+                    shoreBlocker=w.spawn(passengerType,float(goalX),float(goalZ));
+                    const auto* body=w.unit(shoreBlocker);
+                    std::printf("WORLD_BLOCKER 0 %d %d %d %d 0 %zu 0\n",body->x.v,
+                        body->z.v,body->speed.v,
+                        int(tak::sim::portHeadingToRetail(body->heading)),
+                        w.unit(tid)->cargo.size());
+                }
+            }
+            stepped=w.unit(tid); // spawning the blocker may reallocate World's unit vector
             w.setPathService(false);
             std::printf("WORLDSEED %d %d %d %d %d %d %d\n",stepped->x.v,
                 stepped->groundY.v,stepped->z.v,
@@ -1965,6 +1980,23 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
                     int(tak::sim::portHeadingToRetail(after->heading)),after->speed.v,
                     unsigned(after->groundMovementMode),unsigned(after->groundSpeedMode),
                     unsigned(after->groundTerrainFlags),after->turnReqBam,after->groundScanTick);
+                if(shoreBlocker) {
+                    const auto& orders=w.unit(tid)->orders;
+                    auto mission=std::find_if(orders.begin(),orders.end(),
+                        [](const auto& order){return order.transportUnloadApproach;});
+                    const unsigned stage=mission==orders.end()?255u:
+                        unsigned(mission->transportMission.stage);
+                    const size_t cargo=w.unit(tid)->cargo.size();
+                    if(!shoreBlockerCleared && stage==3 && cargo) {
+                        w.order(shoreBlocker,goalX+256.f,float(goalZ),false);
+                        shoreBlockerCleared=true;
+                    }
+                    const auto* body=w.unit(shoreBlocker);
+                    std::printf("WORLD_BLOCKER %u %d %d %d %d %u %zu %u\n",step,
+                        body->x.v,body->z.v,body->speed.v,
+                        int(tak::sim::portHeadingToRetail(body->heading)),stage,cargo,
+                        unsigned(shoreBlockerCleared));
+                }
             }
         }
         return;

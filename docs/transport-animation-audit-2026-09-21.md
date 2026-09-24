@@ -90,10 +90,14 @@ implementation descriptions. Current open gates are:
   shared overlay honors that flag instead of treating decorative wave art as an
   obstacle. A separate map-backed release test runs retail's unload dispatcher,
   placement, detach and PARK at the World carrier's completed circle position
-  in both balances. The remaining shoreline gate is one uninterrupted live
-  mission with terrain rescans and dynamic occupancy active from departure
-  through release; these paired route/mover and release fixtures isolate those
-  scheduler inputs.
+  in both balances. A mobile Araarch now blocks that selected Lake Lokken
+  shoreline during the joined live-scan mission: native `0x507d10` reads its
+  live entity slot and cell occupancy, rejects the blocked footprint, then
+  accepts the same site after the blocker walks clear. World releases one tick
+  after retail (2253 versus 2252); carrier mover fields match through tick 2200,
+  before the controlled retry window, and are not used as a parity gate during
+  that retry. Full asynchronous route replacement around newly blocked water
+  cells, other maps, and other carrier profiles remain open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -8302,8 +8306,9 @@ passenger at `(240,350)`, and retires through its empty tail.
 The live-scan case passes Standard and Crusades with Release, Debug, and
 optimized Debug binaries (six runs). This verifies live terrain rescans for
 this Lake Lokken Vertrans/Araarch unload route. Dynamic collision traffic from
-other moving units, retries around newly blocked shore cells, and other
-maps/carrier profiles remain open. No retail GUI was launched. Reproduce the
+other moving units and retries around newly blocked shore cells are covered by
+the following bounded blocker variant; broader traffic, additional maps, and
+other carrier profiles remain open. No retail GUI was launched. Reproduce the
 Standard run with:
 
 ```sh
@@ -8312,4 +8317,35 @@ python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
   --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
   --native-map-grades --native-map-mover-steps 2500 --native-live-unload \
   --terrain-scan-after 1
+```
+
+### Moving blocker at the map-backed sea-unload shore (2026-09-24)
+
+The optional `--shore-blocker` trace adds a mobile Araarch at the selected
+Lake Lokken landing point after the initial route is delivered. World starts
+the unload retry when the carrier reaches the blocked site and orders the
+blocker to walk clear. Retail's placement oracle uses the actual `0x507d10`
+routine with the TNT cell plane, a live `0x138`-stride entity slot, and matching
+cell occupancy IDs. It rejects the site while occupied, retains the original
+landing point and attached passenger, then accepts it after the blocker clears.
+The live-scan deadlines remain paired through release, and the surface carrier
+stays inside the authored water-side unload circle. Retail releases at physical
+step 2,252; World releases at 2,253, a one-tick dispatcher/mover phase offset.
+
+Carrier movement fields match for the first 2,200 physical steps. Once the
+blocked placement starts the retry, this controlled fixed-route fixture does
+not compare the subsequent mover timeline: World's path service is held at the
+delivered route boundary, while a complete dynamic route replacement under
+changing occupancy still needs coverage. This test establishes real mapped
+landing occupancy and retry/release, not full path replanning around moving
+traffic. It passes Standard and Crusades with Release, Debug, and optimized
+Debug builds (six runs). No retail GUI was launched. Reproduce the Standard
+case with:
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
+  --native-map-grades --native-map-mover-steps 2500 --native-live-unload \
+  --terrain-scan-after 1 --shore-blocker
 ```

@@ -106,6 +106,37 @@ def native_placement_oracle(map_data, profile):
     icd.uc.mem_write(kind + 0x24A, b"\x01")
     icd.freeze_hooks()
 
+    blocker_id = 2
+    blocker = entities + blocker_id * 312
+    blocker_nav = HEAP + 0x50000
+    icd.uc.mem_write(blocker_nav, bytes(0x180))
+    put(blocker + 2, "<H", blocker_id)
+    put(blocker + 0x08, "<I", blocker_nav)
+    put(blocker + 0x0B4, "<I", kind)
+    put(blocker + 0x130, "<I", 0x1000000)
+    put(blocker + 0x78, "<hh", foot_x, foot_z)
+    occupied = set()
+
+    def set_blocker(x_raw=None, z_raw=None, moving=False, heading=0, speed_raw=0):
+        """Update the native mobile-placement oracle's live cell occupancy."""
+        nonlocal occupied
+        for x, z in occupied:
+            put(cells + (z * width + x) * 14, "<H", 0)
+        occupied = set()
+        if x_raw is None or z_raw is None:
+            put(blocker_nav + 0x20, "<i", 0)
+            return
+        put(blocker_nav + 0x20, "<i", int(speed_raw) if moving else 0)
+        put(blocker + 0x68, "<iii", int(x_raw), 0, int(z_raw))
+        put(blocker + 0x7E, "<H", int(heading) & 0xFFFF)
+        cell_x = (int(x_raw) - (foot_x - 1) * 8 * 65536) // (16 * 65536)
+        cell_z = (int(z_raw) - (foot_z - 1) * 8 * 65536) // (16 * 65536)
+        put(blocker + 0x74, "<hh", cell_x, cell_z)
+        for z in range(max(0, cell_z), min(height, cell_z + foot_z)):
+            for x in range(max(0, cell_x), min(width, cell_x + foot_x)):
+                put(cells + (z * width + x) * 14, "<H", blocker_id)
+                occupied.add((x, z))
+
     def check(args, _call):
         result, error = icd.call(0x507D10,
             (kind, args[1], args[2], args[3], args[4]))
@@ -113,6 +144,7 @@ def native_placement_oracle(map_data, profile):
             raise RuntimeError(error)
         return result
 
+    check.set_blocker = set_blocker
     return check
 
 
