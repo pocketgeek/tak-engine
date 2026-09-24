@@ -8253,3 +8253,35 @@ configurations. The four transport CTests also pass in each configuration
 ```sh
 python3 tools/re/probe_transport_air_unload_flight.py --binary build-o2/transport_test --steps 1200
 ```
+
+### Joined Lake Lokken sea-unload route, movement, and release (2026-09-24)
+
+The `--native-live-unload` mode of
+`tools/re/check_surface_unload_map_route.py` now carries the native
+`GROUND_UNLOAD` mission through one uninterrupted map-backed trip. On Lake
+Lokken, a Vertrans starting at `(240,120)` routes Araarch to the selected shore
+cell `(240,350)`. Retail's actual map-grade routine answers the route queries
+from the shipped TNT terrain, and native route reconstruction agrees with
+World's delivered route. The same native carrier then advances through retail's
+`0x4dc800` mover and `0x51b2a0` position update alongside World, receives the
+circle-arrival wake once, passes 16 map-backed Araarch placement checks, releases
+the passenger at the selected shore footprint, and retires the mission after
+its native empty tail. Both movers match for all 1,488 ticks through release.
+
+The integrated trace passes Standard and Crusades with Release, Debug, and
+optimized Debug binaries (six runs). A 1,470-step limit reaches the circle but
+ends before retail's dispatcher consumes arrival; use at least 1,550 steps to
+include the release at physical step 1,488. No retail GUI was launched.
+
+This closes the selected map-backed shoreline mission/route/movement/placement
+integration case. The mover's local terrain-rescan deadline is deliberately
+held past the trace on both sides, and the fixture has no moving neighboring
+blockers. Live rescans, traffic from other units, and additional maps/carrier
+profiles remain separate parity coverage. Reproduce the Standard case with:
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
+  --native-map-grades --native-map-mover-steps 1550 --native-live-unload
+```

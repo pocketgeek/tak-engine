@@ -520,7 +520,15 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         if native_live:
             assert live_release_step is not None, (
                 'native surface mission did not release Araarch during the map-backed mover trace',
-                native_placement_results[-8:])
+                {'placement': native_placement_results[-8:],
+                 'stage': p.uc.mem_read(native_live.mission + 5, 1)[0],
+                 'mission_events': native_live.get(native_live.mission + 0x6A),
+                 'unit_events': native_live.get(unit + 0x60),
+                 'position': struct.unpack('<iii', p.uc.mem_read(unit + 0x68, 12)),
+                 'navigator_controller': native_live.get(native_live.nav + 4),
+                 'navigator_path_count': struct.unpack('<I', p.uc.mem_read(
+                     native_live.nav + 0x10C, 4))[0],
+                 'arrival_wakes': native_arrival_wakes})
             native_live.dispatch(route_tick + live_release_step + 1)
             assert native_live.get(unit + 0x60) == 0, (
                 'native surface mission did not retire after its one-tick release tail',
