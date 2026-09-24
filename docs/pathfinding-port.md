@@ -1,6 +1,6 @@
 # Porting retail's movement layer
 
-## Current status: scoped pathfinding work complete (protocol 168)
+## Current status: scoped pathfinding work complete (protocol 179)
 
 The requested scope is retail-compatible surface navigation and valid map
 occupancy, including mountain boundaries, ramps, boats, and both standard and
@@ -9,6 +9,22 @@ comparisons below. This is a tested scope statement, not proof of identical
 behavior on every possible map or a claim of whole-game retail parity. AI
 strategy may differ, as agreed. Terrain-art occlusion and renderer ordering are
 separate from whether a unit can occupy a map position.
+
+### Protocol 179: honor nonblocking map features
+
+The shared movement obstacle overlay now blocks map features only when their
+shipped definition sets `blocking=1` (while preserving the clear Sacred Stone
+centre). Decorative wave art such as Lake Lokken's `TarWave05` is explicitly
+`blocking=0`; it no longer closes water-route cells. Before this correction,
+Vertrans could be physically placed after unloading while its water navigation
+grid still marked the same footprint blocked. The data-backed `navblock` test
+checks that Lake Lokken's TarWave05 cells stay out of the shared overlay, and
+the real-profile Vertrans/Araarch pickup-and-unload test checks that the carrier
+footprint remains passable in its water grid through the post-release coast.
+
+This is an overlay correction based on the retail feature definitions and map
+behavior, not a claim of full live-map route parity. Protocol 179 separates the
+changed deterministic movement rule from protocol 178's transport simulation.
 
 ### Protocol 168: AI, standing orders, and flying construction
 

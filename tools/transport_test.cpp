@@ -49,11 +49,19 @@ struct RetailReplayProbe {
         const int x=tak::sim::footprintOrigin(unit->x,fx);
         const int z=tak::sim::footprintOrigin(unit->z,fz);
         const auto& nav=world.navFor(unit->type);
-        if(!nav.fits(x+fx/2,z+fz/2,std::max(fx,fz))) return false;
+        const bool fits=nav.fits(x+fx/2,z+fz/2,std::max(fx,fz));
+        if(!fits) return false;
         for(int cz=z;cz<z+fz;++cz)
             for(int cx=x;cx<x+fx;++cx)
                 if(!world.passable(unit->type,cx,cz)) return false;
         return true;
+    }
+
+    static bool footprintPhysicallyPlaced(const World& world,const tak::sim::Unit* unit) {
+        if(!unit || !unit->type) return false;
+        return world.mobilePlacement(*unit,
+            tak::sim::footprintOrigin(unit->x,unit->type->footX),
+            tak::sim::footprintOrigin(unit->z,unit->type->footZ),false);
     }
 
     static void dumpSurfaceSearchGrades(World& world) {
@@ -1846,7 +1854,10 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
 // movement, placement checking, transfer, and passenger release.
 static bool surfaceUnloadMapTravelFixture(const char* retailRoot,const char* mapName,
                                           int startCellX,int startCellZ,
-                                          int goalCellX,int goalCellZ) {
+                                          int goalCellX,int goalCellZ,
+                                          const char* carrierName=nullptr,
+                                          const char* passengerName=nullptr,
+                                          bool crusades=false,bool loadOrder=false) {
     auto vfs=tak::hpi::mountRetailRoot(retailRoot,tak::hpi::OverridePolicy::None);
     const std::string mapPath=tak::hpi::findMap(vfs,mapName);
     if(mapPath.empty()) throw std::runtime_error(std::string("map not found: ")+mapName);
@@ -1856,31 +1867,84 @@ static bool surfaceUnloadMapTravelFixture(const char* retailRoot,const char* map
        goalCellX>=map.width || goalCellZ>=map.height)
         throw std::runtime_error("surface-unload map travel coordinates outside the map");
 
+    std::unique_ptr<tak::sim::TypeRegistry> registry;
+    UnitType syntheticCarrier{},syntheticPassenger{};
+    const UnitType* carrierType=nullptr;
+    const UnitType* passengerType=nullptr;
+    if(carrierName || passengerName) {
+        if(!carrierName || !passengerName)
+            throw std::runtime_error("both retail carrier and passenger names are required");
+        registry=std::make_unique<tak::sim::TypeRegistry>();
+        tak::sim::setupRegistry(*registry,vfs,crusades);
+        carrierType=registry->find(carrierName);
+        passengerType=registry->find(passengerName);
+        if(!carrierType || !passengerType)
+            throw std::runtime_error("retail carrier or passenger unit type not found");
+        if(!carrierType->canTransport || carrierType->domain!=UnitType::Domain::Water ||
+           !passengerType->canMove || passengerType->domain==UnitType::Domain::Water)
+            throw std::runtime_error("retail unit profiles are not a surface carrier and land passenger");
+    } else {
+        syntheticCarrier=boatType();syntheticPassenger=footType();
+        syntheticCarrier.domain=UnitType::Domain::Water;syntheticCarrier.floater=true;
+        syntheticCarrier.minWaterDepth=13;syntheticCarrier.maxWaterDepth=10000;
+        syntheticCarrier.footX=syntheticCarrier.footZ=4;
+        syntheticPassenger.accel={}; // keep the release point observable after transfer
+        carrierType=&syntheticCarrier;passengerType=&syntheticPassenger;
+    }
+
     World world;world.setVisPlayer(-1);
     world.setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
     tak::sim::registerMapFeatures(world,map,vfs);
+    if(registry) world.buildNavClasses(*registry);
     world.setPathService(true);
-    UnitType carrier=boatType(),passenger=footType();
-    carrier.domain=UnitType::Domain::Water;carrier.floater=true;
-    carrier.minWaterDepth=13;carrier.maxWaterDepth=10000;
-    carrier.footX=carrier.footZ=4;
-    passenger.accel={}; // keep the release point observable after transfer
     const int startX=startCellX*16,startZ=startCellZ*16;
     const int goalX=goalCellX*16+8,goalZ=goalCellZ*16+8;
-    const int carrierId=world.spawn(&carrier,startX,startZ);
-    const int passengerId=world.spawn(&passenger,startX,startZ);
-    board(world,carrierId,passengerId);
+    const int carrierId=world.spawn(carrierType,startX,startZ);
+    const int passengerId=world.spawn(passengerType,loadOrder?goalX:startX,
+        loadOrder?goalZ:startZ);
+    uint32_t pickupTick=0;
+    if(loadOrder) {
+        if(!carrierName || !world.canLoadInto(passengerId,carrierId)) {
+            std::printf("FAIL: retail profiles do not admit this pickup\n");
+            return false;
+        }
+        world.loadInto(passengerId,carrierId);
+        for(uint32_t tick=1;tick<=20000;++tick) {
+            world.tick(1.0f/30.0f);
+            const auto* passenger=world.unit(passengerId);
+            if(!passenger || passenger->inTransport!=carrierId) continue;
+            pickupTick=tick;break;
+        }
+        std::printf("%s: %s at tick %u\n",pickupTick?"PASS":"FAIL",
+            pickupTick?"retail passenger boarded through the issued load order":"retail pickup did not board the passenger",
+            pickupTick);
+        if(!pickupTick) return false;
+    } else board(world,carrierId,passengerId);
     world.unloadAt(carrierId,float(goalX),float(goalZ));
 
     bool unloaded=false;
-    uint32_t unloadTick=0;
+    uint32_t unloadTick=0,finalTick=0;
+    int releasedX=0,releasedZ=0;
+    bool carrierPassableAtRelease=false,carrierPassableAtEnd=false;
+    bool passengerPhysicallyPlacedAtRelease=false;
     for(uint32_t tick=1;tick<=20000;++tick) {
         world.tick(1.0f/30.0f);
         const auto* carrierUnit=world.unit(carrierId);
         const auto* passengerUnit=world.unit(passengerId);
         if(!carrierUnit || !passengerUnit) break;
         if(carrierUnit->cargo.empty() && !passengerUnit->embarked()) {
-            unloaded=true;unloadTick=tick;break;
+            if(!unloaded) {
+                unloaded=true;unloadTick=tick;
+                releasedX=passengerUnit->x.v;releasedZ=passengerUnit->z.v;
+                carrierPassableAtRelease=tak::sim::RetailReplayProbe::footprintPhysicallyPlaced(
+                    world,carrierUnit);
+                passengerPhysicallyPlacedAtRelease=
+                    tak::sim::RetailReplayProbe::footprintPhysicallyPlaced(world,passengerUnit);
+            }
+            carrierPassableAtEnd=tak::sim::RetailReplayProbe::footprintPhysicallyPlaced(
+                world,carrierUnit);
+            finalTick=tick;
+            if(tick>=unloadTick+60) break;
         }
     }
     const auto* carrierUnit=world.unit(carrierId);
@@ -1891,6 +1955,12 @@ static bool surfaceUnloadMapTravelFixture(const char* retailRoot,const char* map
         carrierUnit?int(carrierUnit->z.floorInt()):0,
         passengerUnit?int(passengerUnit->x.floorInt()):0,
         passengerUnit?unsigned(passengerUnit->inTransport):0);
+    if(loadOrder) std::printf("PICKUP_TICK %u\n",pickupTick);
+    if(passengerUnit)
+        std::printf("LANDING %.4f %.4f final=%.4f,%.4f speed=%.4f orders=%zu\n",
+            releasedX/65536.0f,releasedZ/65536.0f,
+            passengerUnit->x.toFloat(),passengerUnit->z.toFloat(),passengerUnit->speed.toFloat(),
+            passengerUnit->orders.size());
     if(carrierUnit && !carrierUnit->orders.empty()) {
         const auto& order=carrierUnit->orders[World::currentLeg(carrierUnit->orders)];
         const auto& mission=order.transportMission;
@@ -1903,19 +1973,46 @@ static bool surfaceUnloadMapTravelFixture(const char* retailRoot,const char* map
             static_cast<unsigned long long>(world.pathStats().completions()),
             static_cast<unsigned long long>(world.pathStats().failures()));
     } else if(carrierUnit) std::printf("MISSION 0\n");
-    const bool exactRelease=passengerUnit && passengerUnit->x.v==tak::sim::Fixed::fromInt(goalX).v &&
-        passengerUnit->z.v==tak::sim::Fixed::fromInt(goalZ).v;
+    const bool exactRelease=unloaded && releasedX==tak::sim::Fixed::fromInt(goalX).v &&
+        releasedZ==tak::sim::Fixed::fromInt(goalZ).v;
+    const int64_t landingDx=unloaded ? int64_t(releasedX)-tak::sim::Fixed::fromInt(goalX).v : INT64_MAX;
+    const int64_t landingDz=unloaded ? int64_t(releasedZ)-tak::sim::Fixed::fromInt(goalZ).v : INT64_MAX;
+    constexpr int64_t kRetailPostReleaseTolerance=8ll*65536;
+    const bool retailLanding=carrierName && unloaded && landingDx*landingDx+landingDz*landingDz<=
+        kRetailPostReleaseTolerance*kRetailPostReleaseTolerance;
+    const bool landedAtSite=carrierName ? retailLanding : exactRelease;
     const bool emptyCargo=carrierUnit && carrierUnit->cargo.empty();
-    const bool carrierInWater=tak::sim::RetailReplayProbe::waterFootprintPassable(world,carrierUnit);
+    const bool carrierInWater=carrierPassableAtEnd;
+    const bool carrierRoutePassable=tak::sim::RetailReplayProbe::waterFootprintPassable(
+        world,carrierUnit);
+    const bool passengerPlaced=tak::sim::RetailReplayProbe::footprintPhysicallyPlaced(
+        world,passengerUnit);
     std::printf("%s: %s\n",unloaded?"PASS":"FAIL",
         unloaded?"boat completed routed shore unload on the shipped map":"boat did not release its cargo");
-    std::printf("%s: %s\n",exactRelease?"PASS":"FAIL",
-        exactRelease?"passenger occupies the selected legal landing point":"passenger did not occupy the requested landing point");
+    std::printf("%s: %s\n",landedAtSite?"PASS":"FAIL",
+        landedAtSite?(carrierName?"retail passenger remains within 8px of the selected legal landing point":"passenger occupies the selected legal landing point"):
+            "passenger did not occupy the requested landing point");
     std::printf("%s: %s\n",emptyCargo?"PASS":"FAIL",
         emptyCargo?"carrier cargo is empty after release":"carrier still owns cargo after release");
+    if(carrierName) {
+        std::printf("%s: %s\n",carrierPassableAtRelease?"PASS":"FAIL",
+            carrierPassableAtRelease?"retail carrier footprint is passable at release":"retail carrier footprint is blocked at release");
+        std::printf("%s: %s\n",passengerPhysicallyPlacedAtRelease?"PASS":"FAIL",
+            passengerPhysicallyPlacedAtRelease?"retail passenger footprint is placeable at release":"retail passenger footprint is blocked at release");
+        std::printf("COAST %u %d %d %d\n",finalTick-unloadTick,
+            carrierUnit?carrierUnit->x.floorInt():0,carrierUnit?carrierUnit->z.floorInt():0,
+            int(carrierPassableAtEnd));
+        std::printf("%s: %s\n",carrierRoutePassable?"PASS":"FAIL",
+            carrierRoutePassable?"carrier footprint remains passable in its water navigation grid":
+                "carrier footprint is blocked in its water navigation grid");
+    }
     std::printf("%s: %s\n",carrierInWater?"PASS":"FAIL",
-        carrierInWater?"surface carrier footprint remains in navigable water after shore release":"surface carrier footprint is not navigable water after shore release");
-    return unloaded && exactRelease && emptyCargo && carrierInWater;
+        carrierInWater?"surface carrier footprint remains physically valid through the 60-tick post-release coast":"surface carrier footprint is invalid after the 60-tick post-release coast");
+    std::printf("%s: %s\n",passengerPlaced?"PASS":"FAIL",
+        passengerPlaced?"released passenger remains physically placeable after the coast":"released passenger ends on a blocked or invalid footprint");
+    return unloaded && landedAtSite && emptyCargo && carrierInWater &&
+        (!carrierName || carrierRoutePassable) &&
+        (!carrierName || passengerPhysicallyPlacedAtRelease) && passengerPlaced;
 }
 
 // Paired with the native 0x4dc800 flight-mover probe.  This isolates the
@@ -2028,6 +2125,16 @@ int main(int argc,char** argv) {
     if(argc==8 && !std::strcmp(argv[1],"--surface-unload-map-travel")) {
         return surfaceUnloadMapTravelFixture(argv[2],argv[3],std::atoi(argv[4]),
             std::atoi(argv[5]),std::atoi(argv[6]),std::atoi(argv[7])) ? 0 : 1;
+    }
+    if((argc==10 || argc==11) && !std::strcmp(argv[1],"--surface-unload-map-travel-type")) {
+        return surfaceUnloadMapTravelFixture(argv[2],argv[3],std::atoi(argv[6]),
+            std::atoi(argv[7]),std::atoi(argv[8]),std::atoi(argv[9]),argv[4],argv[5],
+            argc==11 && std::atoi(argv[10])!=0) ? 0 : 1;
+    }
+    if((argc==10 || argc==11) && !std::strcmp(argv[1],"--surface-transport-map-roundtrip-type")) {
+        return surfaceUnloadMapTravelFixture(argv[2],argv[3],std::atoi(argv[6]),
+            std::atoi(argv[7]),std::atoi(argv[8]),std::atoi(argv[9]),argv[4],argv[5],
+            argc==11 && std::atoi(argv[10])!=0,true) ? 0 : 1;
     }
     if((argc==2 || argc==3) && !std::strcmp(argv[1],"--surface-unload-route-fixture")) {
         const int variant=argc==3 ? std::atoi(argv[2]) : 0;

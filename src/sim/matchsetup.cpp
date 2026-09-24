@@ -352,9 +352,11 @@ static void scanFeaturePlane(World& world, const tak::tnt::Map& map,
                 rawAll.push_back({x, z});
                 if (di->second.glowy) rawMana.push_back({x, z});   // buildable centre
             }
-            // Retail nav-blocking: obstacle features + static Standing Stones
-            // (blocking=1) block; only the glowy Sacred Stone centre stays clear.
-            if (!di->second.glowy && (!di->second.mana || di->second.blocking != 0)) {
+            // Retail movement treats the feature definition's blocking flag as
+            // authoritative. Decorative waves and other nonblocking map art must
+            // not become route obstacles; glowy Sacred Stone centres stay clear
+            // even when their definition carries the static ruin's blocking bit.
+            if (!di->second.glowy && di->second.blocking != 0) {
                 int fx = di->second.fx, fz = di->second.fz;
                 world.blockCells(cx, cz, fx, fz, true);
             }

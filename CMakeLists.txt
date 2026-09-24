@@ -364,6 +364,12 @@ set(TAK_TEST_DATA "" CACHE PATH "Retail install for the data-backed tests (optio
 if(TAK_TEST_DATA)
     add_test(NAME naval_combat COMMAND naval_combat_test "${TAK_TEST_DATA}")
     add_test(NAME transport_roster COMMAND transport_test "${TAK_TEST_DATA}")
+    add_test(NAME transport_map_roundtrip COMMAND transport_test
+        --surface-transport-map-roundtrip-type "${TAK_TEST_DATA}"
+        "Lake Lokken" vertrans araarch 240 120 240 350)
+    add_test(NAME transport_map_roundtrip_crusades COMMAND transport_test
+        --surface-transport-map-roundtrip-type "${TAK_TEST_DATA}"
+        "Lake Lokken" vertrans araarch 240 120 240 350 1)
     add_test(NAME animation_roster COMMAND animation_roster_test "${TAK_TEST_DATA}")
     add_test(NAME flyer_combat COMMAND flyer_combat_test "${TAK_TEST_DATA}")
     add_test(NAME gate_scripts COMMAND retail_script_test --gates "${TAK_TEST_DATA}")

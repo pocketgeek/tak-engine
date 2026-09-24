@@ -59,7 +59,17 @@ implementation descriptions. Current open gates are:
   consumes effective grades produced by World and returns a usable partial
   route after reporting failure; it is not independent grade generation or a
   complete native dispatcher/mover/placement comparison. Broader live-map
-  shoreline route coverage remains open.
+  shoreline route coverage remains open. Release, Debug, and optimized builds
+  also complete a full World pickup-and-unload trip on Lake Lokken with the
+  shipped `vertrans` and `araarch` definitions in both standard and Crusades
+  balance: the ship reaches the shore passenger through a load order, boards,
+  unloads at the selected point, and both unit footprints remain physically
+  placeable through a 60-tick coast. The same trace now verifies that the
+  carrier footprint remains passable in its water navigation grid. The map's
+  `TarWave05` feature is `blocking=0`; the shared overlay now honors that flag
+  instead of treating decorative wave art as an obstacle. These are real
+  asset/type profiles but remain World-only route traces; full native-vs-World
+  live-map movement parity is still open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -189,6 +199,9 @@ scripts without corruption.
   paired native route reconstruction using World-produced effective grades; the
   World search reports one failure while still supplying the partial route used
   by the successful end-to-end unload.
+- `ctest --test-dir build -R '^transport_map_roundtrip(_crusades)?$' --output-on-failure`:
+  the shipped Vertrans/Araarch Lake Lokken pickup-and-unload trip in standard
+  and Crusades balance.
 - `python3 tools/re/check_vertical_animation.py`: 4,096 airborne GET 30 results
   against `4dc1f0`, including attachment and refusal.
 - `python3 tools/re/check_animation_roster.py assets/extracted/all/scripts
@@ -204,18 +217,25 @@ scripts without corruption.
 
 These checks provide broad execution coverage, not a claim of pixel-for-pixel
 comparison of every camera angle, effect blend, or game-driven callback instant.
-Protocol **178** separates the changed transport simulation from published 0.7.0
-(protocol 177).
+Protocol **179** carries the corrected shared navigation overlay, following
+protocol **178**'s transport simulation changes and published 0.7.0 (protocol
+177).
 
 ## Results in this checkout
 
-- Release, Debug and optimized Debug: all targets rebuilt; **46/46 CTest tests
-  passed in each configuration** (138 passing executions).
+- Release, Debug and optimized Debug: all targets rebuilt; **50/50 CTest tests
+  passed in each configuration** (150 passing executions).
 - The Lake Lokken surface unload and its paired route reconstruction pass in
   Release, Debug, and optimized Debug. The route search returns two waypoints
   with one World failure; the World carrier follows that partial route, releases
   the passenger at the selected shore point, and keeps its full footprint in
   navigable water.
+- The Lake Lokken Vertrans/Araarch pickup-and-unload round trip also passes in
+  standard and Crusades balance across Release, Debug, and optimized Debug,
+  including 60 post-release ticks, physical placement checks for both units,
+  and water-grid passability for the carrier.
+- The data-backed `navblock` regression confirms Lake Lokken's shipped
+  `TarWave05` decorative cells do not enter the shared movement-obstacle overlay.
 - The same-trip sea retry route probe passes for 1,000 physical mover steps;
   retail and World agree on all route points, movement state, cargo release and
   mission retirement. This is a controlled composition of native dispatcher
@@ -288,8 +308,11 @@ range.
 The broad original request still requires stronger evidence in these areas:
 
 - Complete air/sea transport mission scheduling and crowded-shore placement,
-  including carrier/passenger movement interactions and cancellation. Current
-  capacity/query oracles do not prove those complete mission traces.
+  including paired live-map carrier/passenger movement and cancellation. The
+  Lake Lokken World round trip now covers a real shipped sea carrier and
+  passenger in both balance modes; it does not compare their full route and
+  mover trace against retail. Current controlled native traces cover dispatcher
+  and mover phases separately, not the complete live-map trip.
 - Actual game-driven animation callback ordering and arguments across the roster;
   controlled callback schedules establish VM parity, not the correctness of every
   engine call site.

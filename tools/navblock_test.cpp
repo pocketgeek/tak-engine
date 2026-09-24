@@ -31,6 +31,8 @@
 #include "sim/sim.h"
 #include "tnt/tnt.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -47,6 +49,13 @@ void check(bool ok, const std::string& what, const std::string& detail = "") {
     std::printf("  %s %s%s\n", ok ? "ok  " : "FAIL", what.c_str(),
                 detail.empty() ? "" : (" (" + detail + ")").c_str());
     if (!ok) ++failures;
+}
+
+std::string lower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return char(std::tolower(c));
+    });
+    return value;
 }
 
 // A cheap fingerprint of everything that decides passability: the shared obstacle
@@ -125,6 +134,40 @@ int main(int argc, char** argv) {
           "register=" + std::to_string(regBlocked) + " match=" + std::to_string(matchBlocked));
     check(walkFingerprint(wReg, cols, rows) == walkFingerprint(wMatch, cols, rows),
           "and the same passability cell for cell");
+
+    // Lake Lokken's shallow-water TarWave05 art is explicitly blocking=0 in the
+    // shipped feature TDF. It must remain absent from the shared nav obstacle
+    // overlay, including for boat grids; blanket-blocking non-mana features made
+    // Vertrans unload routes fail on decorative wave cells.
+    std::printf("[nonblocking wave art stays out of navigation obstacles]\n");
+    const std::string lokkenPath = hpi::findMap(vfs, "Lake Lokken");
+    if (lokkenPath.empty()) {
+        std::printf("  (Lake Lokken is absent from this install; skipped)\n");
+    } else {
+        tnt::Map lokken = tnt::Map::load(vfs.read(lokkenPath), lokkenPath);
+        sim::World waveWorld;
+        waveWorld.setTerrain(lokken.heights, lokken.width, lokken.height,
+                             lokken.seaLevel, &lokken.features);
+        sim::registerMapFeatures(waveWorld, lokken, vfs, &reg);
+        const auto waveIt = std::find_if(lokken.featureNames.begin(), lokken.featureNames.end(),
+            [](const std::string& name) { return lower(name) == "tarwave05"; });
+        if (waveIt == lokken.featureNames.end()) {
+            std::printf("  (Lake Lokken has no TarWave05 cells; skipped)\n");
+        } else {
+            const size_t featureId = size_t(waveIt - lokken.featureNames.begin());
+            int waveCells = 0;
+            bool overlayClear = true;
+            const auto& obstacles = waveWorld.obstacles();
+            for (size_t i = 0; i < lokken.features.size(); ++i) {
+                if (lokken.features[i] != featureId) continue;
+                ++waveCells;
+                overlayClear &= i < obstacles.size() && obstacles[i] == 0;
+            }
+            check(waveCells > 0 && overlayClear,
+                  "TarWave05 cells do not enter the shared navigation obstacle overlay",
+                  "checked=" + std::to_string(waveCells));
+        }
+    }
 
     // ---- 3. mana deposits stay buildable -------------------------------------
     // Standing Stones block, but the 2x2 lodestone footprint at each deposit centre is

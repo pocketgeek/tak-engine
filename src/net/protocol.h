@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 178;      // 178: retail transports; Unload targetId carries fixed-point destination Y
+constexpr uint32_t kNetVersion = 179;      // 179: nonblocking map features no longer obstruct navigation
+                                           // 178: retail transports; Unload targetId carries fixed-point destination Y
                                            // 176: infinite mobile production accepts only Stop
                                            // 175: data-driven hover attack positioning for flyers
                                            // 174: flyer activation, selected-weapon approach range, and attack turning
