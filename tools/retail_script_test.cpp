@@ -587,6 +587,40 @@ int main(int argc,char** argv) {
                 "ballistic arrow stops at the feature top, damages the feature, and never reaches its selected unit target");
         }
         std::cout<<"PASS: authored ballistic arrows collide with features before their selected unit target\n";
+        {
+            UnitType bomber;bomber.maxHp=100;bomber.canFly=true;bomber.defaultFire=0;
+            Weapon egg;egg.kind=Weapon::Kind::Dropped;egg.ballistic=true;
+            egg.projVel=10;egg.subSteps=1;egg.range=900;egg.damage=25;egg.noLead=true;
+            bomber.weapons={egg};bomber.weapon=egg;
+            UnitType targetType;targetType.maxHp=100;targetType.footX=targetType.footZ=2;
+            targetType.modelTop=20*65536;
+            targetType.projectileQuad=RetailCollisionQuad{{{-16*65536,-16*65536},
+                {16*65536,-16*65536},{16*65536,16*65536},{-16*65536,16*65536}}};
+            World dropped;dropped.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
+            dropped.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
+            const int bomberId=dropped.spawn(&bomber,400,400,0,0);
+            const int targetId=dropped.spawn(&targetType,800,400,0,1);
+            dropped.unit(bomberId)->flightY=Fixed::fromInt(100);
+            const auto expected=retailDroppedBallisticLaunch(
+                {400*65536,100*65536,400*65536},{800*65536,0,400*65536},
+                dropped.ballisticGravityRaw());
+            RetailReplayProbe::shoot(dropped,bomberId,targetId);
+            require(dropped.projectiles().size()==1 && dropped.projectiles()[0].ballistic3d,
+                "DroppedBallistic creates a native XYZ projectile");
+            const auto& shot=dropped.projectiles()[0];
+            require(shot.position==expected.position && shot.velocity==expected.velocity &&
+                    shot.angles==expected.angles && shot.substeps==1 && shot.flight==40,
+                "dropped launch uses the authored QueryWeapon muzzle and gravity-derived native state");
+            unsigned impacts=0;
+            for(unsigned tick=0;tick<80 && !dropped.projectiles().empty();++tick) {
+                dropped.tick(1.f/30.f);
+                impacts+=unsigned(dropped.hits().size());
+            }
+            require(impacts==1 && dropped.unit(targetId)->hp==Fixed::fromInt(75) &&
+                    dropped.projectiles().empty(),
+                "dropped ballistic reaches and damages its ground target once, with no expiry detonation");
+            std::cout<<"PASS: gravity-driven dropped ballistic path, target impact and one-shot retirement\n";
+        }
         for(bool blocked:{false,true}) {
             UnitType shooter;shooter.maxHp=100;
             Weapon weapon;weapon.beam=true;weapon.straight=true;weapon.projVel=240;

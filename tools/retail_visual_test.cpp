@@ -797,6 +797,19 @@ int main(int argc,char** argv) {
         }
         return 0;
     }
+    if(argc==2 && std::strcmp(argv[1],"--dropped-ballistic-projectile")==0) {
+        std::array<int32_t,3> muzzle{},target{};int32_t gravity;
+        while(std::scanf("%d %d %d %d %d %d %d",&muzzle[0],&muzzle[1],&muzzle[2],
+                &target[0],&target[1],&target[2],&gravity)==7) {
+            uint32_t ticks=0;
+            const auto shot=tak::sim::retailDroppedBallisticLaunch(muzzle,target,gravity,&ticks);
+            std::printf("%u %d %d %d %d %d %d %u %u %u\n",ticks,
+                shot.position[0],shot.position[1],shot.position[2],shot.velocity[0],
+                shot.velocity[1],shot.velocity[2],unsigned(shot.angles[0]),
+                unsigned(shot.angles[1]),unsigned(shot.angles[2]));
+        }
+        return 0;
+    }
     if(argc==2 && std::strcmp(argv[1],"--guided-projectile")==0) {
         char operation;
         while(std::scanf(" %c",&operation)==1) {

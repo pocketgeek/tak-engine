@@ -32,6 +32,44 @@ inline RetailBallisticShot retailBallisticLaunch(const std::array<int32_t,3>& mu
     return shot;
 }
 
+// DroppedBallistic::initShot (KINGDOMS.icd 0x52c3b0). Unlike the regular
+// ballistic launcher, a bomb starts with no vertical velocity and a fixed
+// downward model angle. Retail computes the number of fall ticks from the
+// muzzle/aim-point height difference and world gravity, then divides the
+// horizontal delta by that integer tick count.
+inline uint32_t retailDroppedFallTicks(int32_t muzzleY,int32_t targetY,int32_t gravityRaw) {
+    if(gravityRaw<=0)return 1;
+    const int64_t signedHeight=int64_t(targetY)-int64_t(muzzleY);
+    const uint64_t height=uint64_t(signedHeight<0 ? -signedHeight : signedHeight);
+    const uint64_t ratio=(height*2u)/uint32_t(gravityRaw);
+    // Integer square root is exactly floor(sqrt(ratio)), matching the native
+    // conversion helper's round-toward-zero mode without platform libm drift.
+    uint64_t root=0,bit=uint64_t(1)<<62;
+    while(bit>ratio)bit>>=2;
+    uint64_t remainder=ratio;
+    while(bit) {
+        if(remainder>=root+bit) {
+            remainder-=root+bit;
+            root=(root>>1)+bit;
+        } else root>>=1;
+        bit>>=2;
+    }
+    return uint32_t(std::max<uint64_t>(1,root));
+}
+
+inline RetailBallisticShot retailDroppedBallisticLaunch(
+        const std::array<int32_t,3>& muzzle,const std::array<int32_t,3>& target,
+        int32_t gravityRaw,uint32_t* fallTicksOut=nullptr) {
+    const uint32_t ticks=retailDroppedFallTicks(muzzle[1],target[1],gravityRaw);
+    RetailBallisticShot shot;
+    shot.position=muzzle;
+    shot.velocity={int32_t((int64_t(target[0])-muzzle[0])/ticks),0,
+                   int32_t((int64_t(target[2])-muzzle[2])/ticks)};
+    shot.angles={0,0,0xc000};
+    if(fallTicksOut)*fallTicksOut=ticks;
+    return shot;
+}
+
 // 52bf90 converts velocity dwords to float before normalization, stores the
 // normalized Y component as float, then derives pitch with asin and truncates
 // to BAM. atan(y/sqrt(1-y^2)) is the same angle; detmath keeps peers bit-stable.

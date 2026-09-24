@@ -29,6 +29,7 @@
 #include <cstring>
 #include <array>
 #include <atomic>
+#include <limits>
 #include <thread>
 
 namespace tak::sim {
@@ -47,11 +48,6 @@ static thread_local double g_tcomb = 0, g_scriptMs = 0, g_moveMs = 0;
 namespace {
 
 constexpr float kPi = 3.14159265358979f;
-// How long a released bomb takes to reach the ground from a flyer's cruise
-// altitude. Retail drives it down under gravity from the terrain height it looks
-// up at the release point; our projectiles are 2-D, so the fall is a fixed window
-// after which the bomb detonates where it has drifted to.
-constexpr float kBombFall = 0.8f;
 constexpr float kTick = 30.0f;               // FBI per-tick values -> per-second
 constexpr float kCobAngle = 2 * kPi / 65536.0f;
 
@@ -3730,30 +3726,28 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         applyHit(w, target.x.toFloat(), target.z.toFloat(), u.player, u.id, &target);
         return;
     }
-    // Dropped: the bomb is RELEASED, not fired. It leaves the bomber with only the
-    // bomber's own forward drift and falls onto the ground beneath -- so it lands
-    // where the bomber IS, and a bomber has to overfly its target (see the release
-    // gate in tickCombat). Detonates on landing wherever it ended up, hit or miss.
+    // Dropped: the bomb is RELEASED, not fired. Native
+    // DroppedBallistic::initShot uses the QueryWeapon muzzle, solves horizontal
+    // travel to the selected aim point over the gravity-derived fall time, then
+    // the common ballistic updater advances and collides the full XYZ shot.
     if (w.kind == Weapon::Kind::Dropped) {
-        Projectile b;
-        b.x = u.x;
-        b.z = u.z;
-        // Retail solves the release velocity so the bomb arrives over the aim point
-        // exactly as it finishes falling: vel = (aim - release) / fallTicks, with
-        // ZERO vertical speed. weaponvelocity is never read here and neither is the
-        // flyer's heading -- release point and timing do not change where the bomb
-        // lands. (It LOOKS like inherited momentum only because a closing bomber is
-        // already pointed at its target.)
-        float bdx = (target.x - u.x).toFloat(), bdz = (target.z - u.z).toFloat();
-        b.vx = Fixed::fromFloat(bdx / kBombFall / kTick);   // px per TICK
-        b.vz = Fixed::fromFloat(bdz / kBombFall / kTick);
-        b.wsrc = &w;
-        b.targetId = target.id;
-        b.fromPlayer = u.player;
-        b.fromId = u.id;
-        b.fx = w.fx;
-        b.life = int32_t(kBombFall * kTick + 0.5f);   // ticks to fall from cruise altitude
-        b.flight = int32_t(kBombFall * kTick + 0.5f);    // the viewer arcs it down over the same window
+        const auto aim=queryWeaponAim(u.id,target.id,slot);
+        const auto targetPoint=aim ? aim->target :
+            std::array<int32_t,3>{target.x.v,(target.type->canFly ? target.flightY : target.groundY).v,target.z.v};
+        const auto muzzle=queryUnitScriptPoint(u.id,false,slot);
+        uint32_t fallTicks=1;
+        const auto launch=retailDroppedBallisticLaunch(muzzle,targetPoint,ballisticGravityRaw_,&fallTicks);
+        Projectile b;b.ballistic3d=true;b.wsrc=&w;
+        b.position=launch.position;b.velocity=launch.velocity;b.angles=launch.angles;
+        b.x=Fixed::raw(b.position[0]);b.z=Fixed::raw(b.position[2]);
+        b.targetId=target.id;b.slot=slot;b.fromPlayer=u.player;b.fromId=u.id;b.fx=w.fx;
+        b.projectileUsesVeteranModel=w.usesVeteranShotModel(u.veteran);
+        b.substeps=uint32_t(std::max(1,w.subSteps));
+        b.start=tickCounter_+1;b.flight=int32_t(fallTicks);
+        // BallisticWeapon has no range-derived expiry. Collision with terrain,
+        // a feature or a unit retires the shot; retain a large failsafe countdown
+        // for malformed terrain that prevents all impacts.
+        b.life=std::numeric_limits<int32_t>::max();
         projectiles_.push_back(b);
         return;
     }
@@ -8156,8 +8150,9 @@ void World::tick(float dt) {
             continue;
         }
         Unit* t = unit(p.targetId);
-        // A falling bomb is ABOVE everything until it lands, so it takes no
-        // in-flight collision -- it detonates once, on the ground, below.
+        // Older 2D-only fixture shots may still model a bomb as a terminal
+        // effect. Production DroppedBallistic shots take the 3D collision path
+        // above and never enter this approximate segment test.
         bool bomb = p.wsrc && p.wsrc->kind == Weapon::Kind::Dropped;
         if (!bomb && t && t->alive() && !t->embarked()) {
             // Distance from the target to the segment travelled this tick, so a
@@ -8185,11 +8180,9 @@ void World::tick(float dt) {
             }
         }
     }
-    // A released bomb detonates the moment it reaches the ground, wherever it has
-    // drifted to -- unlike a fired shot, which is a dud if it runs out of life.
-    // Whatever it lands ON takes the direct hit: several bombs carry no
-    // areaofeffect at all (tarbeak's Egg Bomb), and a splash-only detonation would
-    // make those deal nothing whatsoever.
+    // The expiry fallback also handles any legacy 2D bomb fixture. Normal
+    // DroppedBallistic shots retire in the 3D collision path above, where the
+    // native impact cell/unit is known and cannot detonate twice.
     // ...and so does an ordinary BALLISTIC shell that missed. A retail ballistic
     // projectile has no lifetime at all: it flies its arc under gravity and always
     // comes down, and the terrain impact runs the ordinary area-damage path with no
@@ -8210,11 +8203,10 @@ void World::tick(float dt) {
         // that centre cell unconditionally -- so porting it literally would have
         // every stray arrow chopping and igniting forests. Deliberate divergence.
         if (!dropped && !(ballistic && bp.wsrc->aoe > 0.0f)) continue;
-        // A bomb is let go over its target, so whatever it lands on takes the DIRECT
-        // hit -- several bombs carry no areaofeffect at all and a splash-only
-        // detonation would deal nothing. A missed shell has no such victim: retail's
-        // terrain impact carries no hit unit, and a unit genuinely standing there
-        // would have been caught by the in-flight test instead.
+        // A fallback 2D bomb is let go over its target, so whatever it lands on
+        // takes the DIRECT hit -- several bombs carry no areaofeffect at all. A
+        // missed shell has no such victim: retail's terrain impact carries no hit
+        // unit, and a unit there would have been caught by the in-flight test.
         Unit* under = nullptr;
         if (dropped) {
             float bestD = 1e30f;
@@ -9128,8 +9120,8 @@ void World::hashTrace() const {
     uint64_t hProj = fnv(seed, projectiles_.size());
     for (const auto& p : projectiles_) {
         hProj = fnv(fnv(fnv(hProj, uint32_t(p.fromPlayer)), uint64_t(uint32_t(p.x.v))), uint64_t(uint32_t(p.z.v)));
-        if(p.guided3d) {
-            hProj=fnv(hProj,0x47554944u);
+        if(p.guided3d || p.ballistic3d) {
+            hProj=fnv(hProj,p.guided3d ? 0x47554944u : 0x42414c4cu);
             hProj=fnv(fnv(hProj,uint32_t(p.fromId)),uint32_t(p.slot));
             hProj=fnv(fnv(hProj,uint32_t(p.targetId)),p.start);hProj=fnv(hProj,p.end);
             hProj=fnv(hProj,p.substeps);hProj=fnv(hProj,uint32_t(p.life));hProj=fnv(hProj,uint32_t(p.age));
@@ -9478,8 +9470,9 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(p.fromPlayer)));
         mix(uint64_t(uint32_t(p.x.v)));   // projectile position is fixed-point
         mix(uint64_t(uint32_t(p.z.v)));
-        if(p.guided3d) {
-            mix(0x47554944u);mix(p.fromId);mix(p.slot);mix(p.targetId);mix(p.start);mix(p.end);mix(p.substeps);
+        if(p.guided3d || p.ballistic3d) {
+            mix(p.guided3d ? 0x47554944u : 0x42414c4cu);
+            mix(p.fromId);mix(p.slot);mix(p.targetId);mix(p.start);mix(p.end);mix(p.substeps);
             mix(p.spent);mix(uint32_t(p.life));mix(uint32_t(p.age));
             for(const auto* values:{&p.position,&p.velocity})
                 for(int32_t value:*values)mix(uint32_t(value));

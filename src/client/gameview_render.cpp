@@ -805,16 +805,16 @@
             // Flyer shots: lift the whole trajectory by the altitude interpolated
             // from the firing unit down to the target (0.8x, matching the sprite
             // lift), so a drake's breath leaves its mouth and arcs to the ground.
-            float palt = p.guided3d ? 0.0f :
+            float palt = native3d ? 0.0f :
                 (unitAltById(p.fromId) * (1 - t) + unitAltById(p.targetId) * t) * 0.8f * zm;
-            const float shotWorldY=p.guided3d ? tak::sim::Fixed::raw(p.position[1]).toFloat() : 0.0f;
-            const float velocityX=p.guided3d ? tak::sim::Fixed::raw(p.velocity[0]).toFloat() : p.vx.toFloat();
-            const float velocityY=p.guided3d ? tak::sim::Fixed::raw(p.velocity[1]).toFloat() : 0.0f;
-            const float velocityZ=p.guided3d ? tak::sim::Fixed::raw(p.velocity[2]).toFloat() : p.vz.toFloat();
+            const float shotWorldY=native3d ? tak::sim::Fixed::raw(p.position[1]).toFloat() : 0.0f;
+            const float velocityX=native3d ? tak::sim::Fixed::raw(p.velocity[0]).toFloat() : p.vx.toFloat();
+            const float velocityY=native3d ? tak::sim::Fixed::raw(p.velocity[1]).toFloat() : 0.0f;
+            const float velocityZ=native3d ? tak::sim::Fixed::raw(p.velocity[2]).toFloat() : p.vz.toFloat();
             const float velocityLength=std::max(std::sqrt(velocityX*velocityX+
                 velocityY*velocityY+velocityZ*velocityZ),1e-3f);
             float nativeSpriteX=0,nativeSpriteY=0;
-            if(p.guided3d) {
+            if(native3d) {
                 auto whole=[](int32_t v){return int(std::bit_cast<int16_t>(uint16_t(uint32_t(v)>>16)));};
                 const int x=whole(p.position[0]),y=whole(p.position[1]),z=whole(p.position[2]);
                 (void)heightAbove(float(x),float(z));
@@ -905,9 +905,9 @@
                     float peak = bal ? std::min(95.0f, flightSec * 55.0f)
                                      : std::min(18.0f, flightSec * 12.0f);
                     float h = 8 + 4 * peak * t * (1 - t);
-                    float sx = p.guided3d ? nativeSpriteX :
+                    float sx = native3d ? nativeSpriteX :
                         (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
-                    float sy = p.guided3d ? nativeSpriteY :
+                    float sy = native3d ? nativeSpriteY :
                         (renderZ - mapView_.offY()) * zm - h * zm
                             - terrainLift(renderX, renderZ) * zm - palt;
                     const auto index=tak::retailEffectFrame(ea->durations,ea->loop,uint32_t(p.age));
@@ -930,13 +930,13 @@
             }
             if (p.fx == tak::sim::WeaponFx::Lightning) {
                 // Flat, fast, jagged blue-white bolt from source toward target.
-                float sx = p.guided3d ? nativeSpriteX :
+                float sx = native3d ? nativeSpriteX :
                     (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
-                float sy = p.guided3d ? nativeSpriteY :
+                float sy = native3d ? nativeSpriteY :
                     (renderZ - mapView_.offY()) * zm - 12 * zm - terrainLift(renderX, renderZ) * zm - palt;
                 float len = 22.0f;
                 float bx = -velocityX, bz = -velocityZ;
-                float bl = p.guided3d ? velocityLength : std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
+                float bl = native3d ? velocityLength : std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
                 bx /= bl; bz /= bl;
                 float px = sx, py = sy;
                 SDL_SetRenderDrawColor(ren_, 210, 230, 255, 255);
@@ -945,7 +945,7 @@
                     float jitter = ((s * 1327 + int(float(p.age) / 30.0f * 900)) % 7 - 3) * 1.6f * zm;
                     float nx = sx + bx * d - bz * jitter;
                     float ny = sy + bz * d + bx * jitter -
-                        (p.guided3d ? velocityY / velocityLength * d * 0.5f : 12 * zm * s / 4.0f);
+                        (native3d ? velocityY / velocityLength * d * 0.5f : 12 * zm * s / 4.0f);
                     SDL_RenderDrawLineF(ren_, px, py, nx, ny);
                     px = nx; py = ny;
                 }
@@ -953,7 +953,7 @@
                 // Flame breath: a short stream of flickering orange/yellow puffs
                 // trailing behind the leading tip, not a single fireball.
                 float bx = -velocityX, by = -velocityY, bz = -velocityZ;
-                float bl = p.guided3d ? velocityLength : std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
+                float bl = native3d ? velocityLength : std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
                 bx /= bl; by /= bl; bz /= bl;
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
                 for (int s = 0; s < 5; ++s) {
@@ -961,9 +961,9 @@
                     float wob = ((s * 811 + int(p.age * 1000)) % 5 - 2) * 2.0f;
                     float fx = renderX + bx * back - bz * wob;
                     float fz = renderZ + bz * back + bx * wob;
-                    float sx = p.guided3d ? (fx-mapView_.offX())*zm :
+                    float sx = native3d ? (fx-mapView_.offX())*zm :
                         (fx - mapView_.offX()) * zm - terrainLiftX(fx, fz) * zm;
-                    float sy = p.guided3d ?
+                    float sy = native3d ?
                         (fz-(shotWorldY+by*back)*0.5f+float(heightRef_)*0.5f-mapView_.offY())*zm :
                         (fz - mapView_.offY()) * zm - 12 * zm - terrainLift(fx, fz) * zm - palt;
                     float r = (4.0f - s * 0.6f) * zm;   // shrinks toward the tail
@@ -987,15 +987,15 @@
                 float peak = bal ? std::min(95.0f, p.flight * 55.0f)
                                  : std::min(18.0f, p.flight * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
-                float sx = p.guided3d ? nativeSpriteX :
+                float sx = native3d ? nativeSpriteX :
                     (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
-                float sy = p.guided3d ? nativeSpriteY :
+                float sy = native3d ? nativeSpriteY :
                     (renderZ - mapView_.offY()) * zm - h * zm - terrainLift(renderX, renderZ) * zm - palt;
                 SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
                 // vx/vz are px per TICK now; the trail length was tuned against px/s.
-                const float trailX=p.guided3d ? -velocityX/velocityLength*12.0f :
+                const float trailX=native3d ? -velocityX/velocityLength*12.0f :
                     -p.vx.toFloat()*30.0f*0.035f;
-                const float trailY=p.guided3d ? (-velocityZ+velocityY*0.5f)/velocityLength*12.0f :
+                const float trailY=native3d ? (-velocityZ+velocityY*0.5f)/velocityLength*12.0f :
                     -p.vz.toFloat()*30.0f*0.035f;
                 SDL_RenderDrawLineF(ren_,sx,sy,sx+trailX*zm,
                     sy+trailY*zm+(t<0.5f?2.5f:-2.5f)*zm);

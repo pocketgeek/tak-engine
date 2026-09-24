@@ -7979,3 +7979,52 @@ come from the 77-unit altitude difference. This is the expected projection
 of the matching map-relative pose, so no behavioral position, height, facing,
 or piece-transform correction is justified. Pixel-synchronized capture is not
 a completion gate. No retail GUI was launched for this audit.
+
+### DroppedBallistic launch and update oracle (2026-09-24)
+
+The Tarbeak Egg Bomb is a `type=Ballistic, subtype=Dropped` shot with
+`weaponvelocity=10` and `cruisealt=200`. Its DroppedBallistic class uses the
+shared native 3D updater `0x52bf90`. It reads the weapon type's `+0xd0` field
+and loops that many XYZ movement/collision substeps. Native type setup at
+`0x531ccb` derives the count from quantized speed as `ceil(rawSpeed / 2^20)`;
+the loader at `0x530f21` quantizes FBI speed by `65536/30` and truncates.
+Tarbeak's value 10 therefore becomes raw speed 21845 and one substep. Verball's
+dropped cannonball at speed 15 becomes 32768 and also uses one. The probe sets
+the native field to one and confirms the updater dispatches one collision step.
+
+The custom initializer `0x52c3b0` queries the weapon muzzle with `0x4dd420`,
+computes `max(1, floor(sqrt(2 * abs(targetY - muzzleY) / worldGravity)))`,
+divides the fixed-point X/Z aim-point delta by that tick count with signed
+truncation toward zero, and starts with zero vertical velocity and pitch
+`0xc000`.
+
+Before the World correction, dropped bombs instead launched from the unit center
+and used a fixed 24-tick fall window. The new
+`tools/re/probe_dropped_ballistic.py` executes the native initializer and the
+shared update with controlled QueryWeapon/collision sinks. Its 512 varying
+height/gravity launch cases and first-update XYZ/velocity/angle states match the
+TAK helper (pitch within one BAM unit); negative X/Z cases also check
+C-style truncation rather than Python floor division. The probe runs the retail
+binary only through headless Unicorn; no retail GUI was launched.
+
+World now launches this as `ballistic3d` from the QueryWeapon muzzle, advances
+it with the shared ballistic XYZ/gravity update, and dispatches impact through
+the 3D collision path. The renderer routes dropped `ballistic3d` shots through
+the native-3D path: projectile meshes use the shot's XYZ position and angles,
+including actual Y altitude, while authored sprites use XYZ-derived screen
+position and trail direction rather than an invented 2D arc. The synthetic
+World regression passed in `build-dbg`: a 100-unit drop takes the expected 40
+ticks, hits its ground target for 25 damage exactly once, and retires without an
+expiry detonation. The native probe, Python byte-compilation, and `git diff --check`
+pass. This validates the launch/update and one-impact behavior; it is
+not a pixel-synchronized renderer comparison.
+
+After the World integration, the complete `build-dbg` and `build-o2` CTest
+suites each passed all 52 tests. `build-static` and `build-allstatic` each passed
+all 36 registered tests, and the native 512-case probe also passed against the
+debug and fully static visual-test binaries. The changed client, simulation,
+and visual-test targets compile with Clang; its full all-target build stops in
+the unrelated `tools/retail_ai_test.cpp` Planner construction test. The Windows
+cross-build compiles the changed client source and links the focused retail
+tests, but its full client link is blocked by unresolved FFmpeg symbols in that
+build configuration.

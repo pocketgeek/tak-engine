@@ -96,10 +96,9 @@ struct Weapon {
     //                   monarch waves, god spells, Area Mind Control).
     //   Wandering    -- a roaming storm entity that drifts for `duration`
     //                   (4: Tornado, Fire/Water Vortex, Hurricane).
-    //   Dropped    -- a bomb RELEASED from a flyer: it falls to the ground under
-    //                 the release point (retail looks up the terrain height right
-    //                 there and drives it down under gravity), so the bomber has to
-    //                 overfly its target instead of shooting from range.
+    //   Dropped    -- a bomb RELEASED from a flyer: retail starts at its scripted
+    //                 QueryWeapon muzzle with zero vertical speed, then divides the
+    //                 aim-point X/Z delta by the gravity-derived fall ticks.
     enum class Kind { Normal, Guided, Remote, Wandering, Dropped } kind = Kind::Normal;
     // Remote Effect splits further by subtype, and the split changes the damage
     // CADENCE completely (retail has a C++ subclass per variant):
@@ -141,16 +140,13 @@ struct Weapon {
     int32_t hoverAttackDistance = 0, hoverAttackAltitude = 0;
     // dontleadtargets: aim at the target's CURRENT position instead of extrapolating
     // where it will be. Retail leads a moving unit by default; this flag skips it.
-    // All four shipped users are Dropped bombs, whose weaponvelocity is a fall
-    // parameter rather than a flight speed -- leading on it would throw the aim
-    // point hundreds of cells away.
+    // Shipped dropped bombs use this to aim at the current point; their
+    // weaponvelocity is a fall parameter rather than a flight speed.
     bool noLead = false;
     // BallisticWeapon's own two fields (KINGDOMS.icd 0x52bb70 parses exactly these).
     // gravityadjustment is a plain multiplier on world gravity for this weapon's
-    // arc; lobpreferred picks the HIGH root of the ballistic quadratic instead of
-    // the low one, which is what lets a mortar drop its shell behind a wall.
-    // We have no projectile Y yet, so only lobPreferred changes behaviour today --
-    // see the note at the line-of-sight gate in tickCombat.
+    // 3D arc; lobpreferred picks the HIGH root of the ballistic quadratic instead
+    // of the low one, which is what lets a mortar drop its shell behind a wall.
     float gravityAdj = 1.0f;
     bool lobPreferred = false;      // noairweapon: cannot target flying units
     float manaCost = 0;      // manapershot: mana drained from the firer per shot
@@ -961,7 +957,7 @@ struct Projectile {
     int slot=0;
     bool straight=false;
     bool guided3d=false;    // GuidedWeapon's simulation-owned XYZ state.
-    bool ballistic3d=false; // mesh-only native XYZ state; legacy X/Z collision and hash remain separate.
+    bool ballistic3d=false; // BallisticWeapon XYZ motion and collision, also used to pose the authored shot.
     bool projectileUsesVeteranModel=false; // model variant selected once at launch by source rank.
     std::array<int32_t,3> muzzle{};
     std::optional<RetailLightningEffect> lightningEffect;
