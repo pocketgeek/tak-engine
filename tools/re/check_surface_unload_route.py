@@ -55,9 +55,12 @@ def raw_water_grid(variant, width, height):
             for x in range(x0, x1):
                 tx, tz = transform_cell(variant, x, z)
                 water[tz * width + tx] = 6
-    unload_cell = 104 if variant == 4 else 40
-    tx, tz = transform_cell(variant, unload_cell, unload_cell)
-    water[tz * width + tx] = 0
+    unload_cell = 104 if variant == 4 else 31 if variant == 8 else 40
+    patch_size = 2 if variant == 8 else 1
+    for z in range(unload_cell, unload_cell + patch_size):
+        for x in range(unload_cell, unload_cell + patch_size):
+            tx, tz = transform_cell(variant, x, z)
+            water[tz * width + tx] = 0
     return water
 
 
@@ -75,7 +78,7 @@ def raw_surface_heights(variant, width, height):
             for x in range(x0, x1):
                 tx, tz = transform_cell(variant, x, z)
                 heights[tz * width + tx] = 10
-    unload_cell = 104 if variant == 4 else 40
+    unload_cell = 104 if variant == 4 else 31 if variant == 8 else 40
     for z in range(unload_cell, unload_cell + 2):
         for x in range(unload_cell, unload_cell + 2):
             tx, tz = transform_cell(variant, x, z)
@@ -84,9 +87,10 @@ def raw_surface_heights(variant, width, height):
 
 
 def check_variant(world_binary, variant, physical_steps):
+    physical_variant = variant in (0, 8)
     env = os.environ.copy()
     env['TAK_DUMP_GRADE_PLANE'] = '1'
-    if variant == 0:
+    if physical_variant:
         env['TAK_SURFACE_STEP'] = '1'
         env['TAK_SURFACE_STEPS'] = str(physical_steps)
     world = subprocess.run([world_binary, '--surface-unload-route-fixture', str(variant)],
@@ -97,7 +101,8 @@ def check_variant(world_binary, variant, physical_steps):
     header_index = next(i for i, line in enumerate(stderr) if line.startswith('GRADEPLANE '))
     width, height, grade_fx, grade_fz, retry, sx, sz, tick, grade_heading = map(
         int, stderr[header_index].split()[1:])
-    expected_start = transform_cell(variant, 10, 10)
+    start_cell = (25, 10) if variant == 8 else (10, 10)
+    expected_start = transform_cell(variant, *start_cell)
     expected_foot = 3 if variant == 5 else 2 if variant == 6 else 4
     expected_size = 128 if variant == 4 else 64
     assert (width, height, grade_fx, grade_fz, retry, sx, sz) == (
@@ -119,12 +124,12 @@ def check_variant(world_binary, variant, physical_steps):
     world_route_fixed = [tuple(map(int, line.split()))
                          for line in stdout[route_index + 1:route_index + 1 + route_count]]
     world_route = [(x // 65536, z // 65536) for x, z in world_route_fixed]
-    world_seed = tuple(map(int, next(line for line in stdout if line.startswith('WORLDSEED ')).split()[1:])) if variant == 0 else ()
-    world_steps = [tuple(map(int, line.split()[1:])) for line in stdout if line.startswith('WORLDSTEP ')] if variant == 0 else []
+    world_seed = tuple(map(int, next(line for line in stdout if line.startswith('WORLDSEED ')).split()[1:])) if physical_variant else ()
+    world_steps = [tuple(map(int, line.split()[1:])) for line in stdout if line.startswith('WORLDSTEP ')] if physical_variant else []
     world_nav = {int(fields[0]): tuple(map(int, fields[1:]))
-                 for fields in (line.split()[1:] for line in stdout if line.startswith('WORLDNAV '))} if variant == 0 else {}
+                 for fields in (line.split()[1:] for line in stdout if line.startswith('WORLDNAV '))} if physical_variant else {}
     world_points = {}
-    if variant == 0:
+    if physical_variant:
         for fields in (line.split()[1:] for line in stdout if line.startswith('WORLDPOINT ')):
             step, index, x, z = map(int, fields)
             world_points.setdefault(step, []).append((x, z))
@@ -132,8 +137,9 @@ def check_variant(world_binary, variant, physical_steps):
     p = Phase(width, height)
     unit = p.unit(sx - fx // 2, sz - fz // 2)
     assert p.construct() is None
-    requested_target = 1664 if variant == 4 else 640
-    start_x, start_z = transform_pixel(variant, 160, 160)
+    requested_target = 1664 if variant == 4 else 500 if variant == 8 else 640
+    start_pixel = (400, 160) if variant == 8 else (160, 160)
+    start_x, start_z = transform_pixel(variant, *start_pixel)
     target_x, target_z = transform_pixel(variant, requested_target, requested_target)
     # World::requestPath passes footprintOrigin(target, size) to the circular
     # goal. This floor is asymmetric under a pixel-space mirror at cell edges.
@@ -197,7 +203,7 @@ def check_variant(world_binary, variant, physical_steps):
     native_route = list(zip(native_words[::2], native_words[1::2]))
     assert native_route[0] == anchor, (native_route[0], anchor)
     assert native_route[1:] == world_route, (native_route[1:], world_route)
-    if variant == 0:
+    if physical_variant:
         from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_READ_UNMAPPED
         from unicorn.x86_const import UC_X86_REG_EIP
         def unmapped(uc, access, address, size, value, _data):
@@ -471,8 +477,16 @@ def check_variant(world_binary, variant, physical_steps):
             (world_orders, world_cargo, world_stage, world_wait, world_deadline,
              world_pending, world_flags, world_attempts, world_ticks,
              world_embarked, world_effects) = wt
+            # World keeps arrival/detachment 0x500 in mission.pending, while
+            # retail posts the equivalent bits on the unit event word and the
+            # dispatcher consumes them on the next pass.
+            comparable_pending = world_pending & 0x700
+            if variant == 8:
+                comparable_pending &= ~0x500
+                native_mission = (*native_mission[:4], native_mission[4] & ~0x500,
+                                  *native_mission[5:])
             expected_mission = (int(world_unload), world_stage, world_wait, world_deadline,
-                                world_pending & 0x700, int(world_cargo != 0), world_embarked)
+                                comparable_pending, int(world_cargo != 0), world_embarked)
             if native_mission[0] or expected_mission[0]:
                 assert native_mission == expected_mission, (
                 'sea unload dispatcher/cargo state', step, native_mission,
@@ -514,12 +528,20 @@ def check_variant(world_binary, variant, physical_steps):
                         'detached sea unload circle retained a native controller', step,
                         active_goal, active_radius, active_radius_squared)
                 if world_stage == 1:
-                    assert mission_events & 0x100 == world_events & 0x100 == 0, (
-                        'intermediate waypoint raised final circle-arrival event', step,
-                        hex(mission_events), hex(world_events))
-                    assert world_unload == 1 and world_goal == 1 and world_controller == 1, (
+                    arrival_leads_dispatch = (variant == 8 and
+                        mission_events & 0x100 and not world_events & 0x100 and
+                        world_state[6] == 1)
+                    assert arrival_leads_dispatch or (
+                        mission_events & 0x100 == world_events & 0x100 == 0), (
+                            'intermediate waypoint raised final circle-arrival event', step,
+                            hex(mission_events), hex(world_events), native_step,
+                            route, world_state, world_points.get(step, []))
+                    assert world_unload == 1 and world_goal == 1 and (
+                        world_controller == 1 or arrival_leads_dispatch), (
                         'unload approach controller state', step, world_state)
-                    assert world_pending == 4096 and world_wait == 1793, ('unload pending wait mask', step, world_state)
+                    assert (world_pending == 4096 or (variant == 8 and
+                            world_pending == 0x1500 and arrival_leads_dispatch)) and world_wait == 1793, (
+                                'unload pending wait mask', step, world_state)
                     assert world_count == len(expected_points) and world_orders == world_count + 1, (
                         'World route cursor/order size', step, world_state, expected_points)
                 elif world_stage >= 2:
@@ -547,19 +569,40 @@ def check_variant(world_binary, variant, physical_steps):
             f'{len(world_steps)} physical steps did not cross a native route waypoint'
         transfer_route_steps = [step for step, state in world_nav.items()
                                 if state[6] >= 2 and state[3]]
-        assert transfer_route_steps, \
-            'World did not keep the surface navigator active while unload transfer ran'
+        if variant == 8:
+            assert not transfer_route_steps, transfer_route_steps
+            release_steps = [step for step, state in world_trans.items()
+                             if state[0] and not state[1]]
+            retirement_steps = [step for step, state in world_trans.items()
+                                if not state[0] and step > 1 and world_trans[step - 1][0]]
+            assert len(release_steps) == len(retirement_steps) == 1, (
+                release_steps, retirement_steps)
+            assert retirement_steps[0] == release_steps[0] + 1, (
+                release_steps, retirement_steps)
+        else:
+            assert transfer_route_steps, \
+                'World did not keep the surface navigator active while unload transfer ran'
         assert native_callback_counts[0x4e5150] == len(world_steps), native_callback_counts
         assert native_callback_counts[0x4e50a0] == len(route_transition_steps), (
             native_callback_counts, route_transition_steps)
         callback_summary = ', '.join(f'{address:#x}:{count}'
                                      for address, count in native_callback_counts.items())
-        print(f'PASS: retail 0x4dc800+0x51b2a0 matches {len(world_steps)} World movement steps, '
-              f'active route state, and the unload transfer/coast boundary '
-              f'from delayed route seed {world_seed}; transfer-route overlap at '
-              f'{transfer_route_steps[0]}..{transfer_route_steps[-1]}, circle arrival at physical step '
-              f'{next((step for step, state in world_nav.items() if state[6] >= 2 and not state[3]), None)}; route-point transitions at '
-              f'{route_transition_steps}; callbacks={{{callback_summary}}}; last={native_step}')
+        if variant == 8:
+            circle_detach = next((step for step, state in world_nav.items()
+                                  if state[6] == 1 and not state[3] and
+                                  state[4] & 0x500 == 0x500), None)
+            print(f'PASS: retail 0x4dc800+0x51b2a0 matches {len(world_steps)} World movement steps '
+                  f'from remote post-retry seed {world_seed}; the replacement route detaches at '
+                  f'physical step {circle_detach}, passenger release/mission retirement at '
+                  f'{release_steps[0]}/{retirement_steps[0]}, route-point transitions at '
+                  f'{route_transition_steps}; callbacks={{{callback_summary}}}; last={native_step}')
+        else:
+            print(f'PASS: retail 0x4dc800+0x51b2a0 matches {len(world_steps)} World movement steps, '
+                  f'active route state, and the unload transfer/coast boundary '
+                  f'from delayed route seed {world_seed}; transfer-route overlap at '
+                  f'{transfer_route_steps[0]}..{transfer_route_steps[-1]}, circle arrival at physical step '
+                  f'{next((step for step, state in world_nav.items() if state[6] >= 2 and not state[3]), None)}; route-point transitions at '
+                  f'{route_transition_steps}; callbacks={{{callback_summary}}}; last={native_step}')
     if variant == 7:
         assert world_failures == 1 and world_completions == 0, route_header
         print(f'PASS: unreachable boat unload variant {variant} returns the same partial '
@@ -568,14 +611,22 @@ def check_variant(world_binary, variant, physical_steps):
     else:
         print(f'PASS: boat circle route variant {variant} matches exactly at tick {tick}; '
               f'heading {heading}, native including anchor={native_route}, {query_count} grade queries')
+    return {
+        'seed': world_seed,
+        'target': (target_x * 65536, target_z * 65536),
+        'native_route': native_route,
+        'world_route': world_route,
+        'physical_steps': len(world_steps),
+        'circle_radius': radius,
+    }
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('world_binary', nargs='?', default='build-o2/transport_test')
-    parser.add_argument('--variant', type=int, choices=range(8), action='append')
+    parser.add_argument('--variant', type=int, choices=range(9), action='append')
     parser.add_argument('--steps', type=int, default=1000,
-                        help='physical movement steps for canonical variant 0 (1..1000; includes unload transfer)')
+                        help='physical movement steps for variants 0/8 (1..1000; includes unload transfer)')
     args = parser.parse_args()
     if not 1 <= args.steps <= 1000:
         parser.error('--steps must be between 1 and 1000')

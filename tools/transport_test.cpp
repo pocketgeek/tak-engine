@@ -1535,7 +1535,7 @@ static void surfaceUnloadRouteFixture(int variant) {
     }
     // Keep the exact passenger drop cell dry while leaving enough open water
     // around it for the boat's unload-range circle and footprint.
-    const int unloadCell=variant==4 ? 104 : 40;
+    const int unloadCell=variant==4 ? 104 : variant==8 ? 31 : 40;
     for(int z=unloadCell;z<=unloadCell+1;++z)
         for(int x=unloadCell;x<=unloadCell+1;++x)
             source[size_t(z)*W+x]=100;
@@ -1568,8 +1568,8 @@ static void surfaceUnloadRouteFixture(int variant) {
     carrier.minWaterDepth=13;carrier.maxWaterDepth=10000;
     const int footprint=variant==5 ? 3 : variant==6 ? 2 : 4;
     carrier.footX=carrier.footZ=int16_t(footprint);carrier.transportDist=150;
-    const int requestedTarget=variant==4 ? 1664 : 640;
-    const auto [startX,startZ]=pixel(160,160);
+    const int requestedTarget=variant==4 ? 1664 : variant==8 ? 500 : 640;
+    const auto [startX,startZ]=pixel(variant==8 ? 400 : 160,160);
     const auto [goalX,goalZ]=pixel(requestedTarget,requestedTarget);
     const int tid=w.spawn(&carrier,startX,startZ),cid=w.spawn(&passenger,startX,startZ);
     board(w,tid,cid);w.unloadAt(tid,float(goalX),float(goalZ));
@@ -1839,7 +1839,7 @@ int main(int argc,char** argv) {
     }
     if((argc==2 || argc==3) && !std::strcmp(argv[1],"--surface-unload-route-fixture")) {
         const int variant=argc==3 ? std::atoi(argv[2]) : 0;
-        if(variant<0 || variant>7) return 2;
+        if(variant<0 || variant>8) return 2;
         surfaceUnloadRouteFixture(variant);return 0;
     }
     if(argc==2 && !std::strcmp(argv[1],"--passenger-pickup")) {
