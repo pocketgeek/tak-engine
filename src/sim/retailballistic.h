@@ -58,22 +58,25 @@ inline int32_t retailBallisticGravityStep(int32_t gravityRaw,float gravityAdjust
     return std::bit_cast<int32_t>(uint32_t(static_cast<int64_t>(value)));
 }
 
+inline void retailBallisticStep(RetailBallisticShot& shot,int32_t gravityStep,
+        const std::array<uint16_t,3>& spin) {
+    shot.velocity[1]=std::bit_cast<int32_t>(uint32_t(shot.velocity[1])-uint32_t(gravityStep));
+    for(unsigned axis=0;axis<3;++axis)
+        shot.position[axis]=std::bit_cast<int32_t>(uint32_t(shot.position[axis])+uint32_t(shot.velocity[axis]));
+    if(spin[0] || spin[1] || spin[2]) {
+        shot.angles[2]=uint16_t(shot.angles[2]+spin[2]);
+        shot.angles[1]=uint16_t(shot.angles[1]+spin[1]);
+        shot.angles[0]=uint16_t(shot.angles[0]+spin[0]);
+    } else {
+        shot.angles[2]=retailBallisticPitchFromVelocity(shot.velocity);
+    }
+}
+
 inline void retailBallisticTick(RetailBallisticShot& shot,int32_t gravityRaw,
         float gravityAdjustment,uint32_t substeps,const std::array<uint16_t,3>& spin) {
     if(!substeps)return;
     const int32_t gravityStep=retailBallisticGravityStep(gravityRaw,gravityAdjustment,substeps);
-    for(uint32_t i=0;i<substeps;++i) {
-        shot.velocity[1]=std::bit_cast<int32_t>(uint32_t(shot.velocity[1])-uint32_t(gravityStep));
-        for(unsigned axis=0;axis<3;++axis)
-            shot.position[axis]=std::bit_cast<int32_t>(uint32_t(shot.position[axis])+uint32_t(shot.velocity[axis]));
-        if(spin[0] || spin[1] || spin[2]) {
-            shot.angles[2]=uint16_t(shot.angles[2]+spin[2]);
-            shot.angles[1]=uint16_t(shot.angles[1]+spin[1]);
-            shot.angles[0]=uint16_t(shot.angles[0]+spin[0]);
-        } else {
-            shot.angles[2]=retailBallisticPitchFromVelocity(shot.velocity);
-        }
-    }
+    for(uint32_t i=0;i<substeps;++i)retailBallisticStep(shot,gravityStep,spin);
 }
 
 // The map OTA stores gravity in pixels/second^2; the retail simulation global

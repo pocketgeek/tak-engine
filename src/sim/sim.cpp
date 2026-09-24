@@ -357,6 +357,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             auto parseWeapon = [this,&stormTiming](const tdf::Node* w) {
                 Weapon wp;
                 wp.name = w->valueOr("name", "");
+                // Native WeaponType+0xc8 bit 0x20 drives the Airstrike cursor
+                // when it is the active weapon; it is distinct from subtype=Dropped.
+                wp.cursorAirstrike = w->numberOr("dropped", 0) != 0;
                 wp.range = float(w->numberOr("range", 0));
                 wp.hoverAttack = w->numberOr("hoverattack", 0) != 0;
                 wp.hoverAttackDistance = int(w->numberOr("hoverattackdistance", 0));
@@ -552,11 +555,16 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 }
                 return wp;
             };
+            t.hasPrimaryWeaponBlock = root.child("WEAPON1") != nullptr;
             for (int slot = 1; slot <= 3; ++slot) {
                 const auto* w = root.child("WEAPON" + std::to_string(slot));
                 if (!w) continue;
                 Weapon wp = parseWeapon(w);
-                if (wp.damage > 0) t.weapons.push_back(wp);
+                t.weaponAirstrikeCursor[size_t(slot-1)] = wp.cursorAirstrike;
+                if (wp.damage > 0) {
+                    t.weaponNativeSlotForLocal[t.weapons.size()] = uint8_t(slot-1);
+                    t.weapons.push_back(wp);
+                }
             }
             if (!t.weapons.empty()) t.weapon = t.weapons[0];
             // [EXPLODEAS]: the weapon a unit detonates at its own position when it
@@ -8092,17 +8100,45 @@ void World::tick(float dt) {
             } else if(p.life>0)--p.life;
             continue;
         }
-        if(p.ballistic3d && p.wsrc) {
-            RetailBallisticShot state{p.position,p.velocity,p.angles};
-            retailBallisticTick(state,ballisticGravityRaw_,p.wsrc->gravityAdj,
-                p.substeps,p.wsrc->shotSpin);
-            p.position=state.position;p.velocity=state.velocity;p.angles=state.angles;
-        }
+        const bool ballistic3d=p.ballistic3d && p.wsrc;
         const float ox = p.x.toFloat(), oz = p.z.toFloat();   // segment start (before this step)
         p.x += p.vx;   // px per tick already
         p.z += p.vz;
         --p.life;
         ++p.age;
+        if(ballistic3d) {
+            // BallisticWeapon::update (0x52bf90) resolves every 3D substep
+            // through 0x52a4d0. The old port advanced this XYZ state for drawing
+            // but then used only the separate 2D target sweep for collision, so
+            // arrows passed through trees, terrain and water in World.
+            RetailBallisticShot state{p.position,p.velocity,p.angles};
+            const int32_t gravityStep=retailBallisticGravityStep(ballisticGravityRaw_,
+                p.wsrc->gravityAdj,p.substeps);
+            const uint32_t flags=(p.wsrc->unitsOnly?0x800u:0u)|
+                (p.wsrc->groundBounce?0x1000u:0u)|(p.wsrc->waterWeapon?0x2000u:0u);
+            bool stopped=false;
+            for(uint32_t step=0;step<p.substeps;++step) {
+                retailBallisticStep(state,gravityStep,p.wsrc->shotSpin);
+                const auto hit=projectileCollision(state.position,state.velocity[1],flags,
+                    p.fromPlayer,projectileAircraft);
+                if(hit.code==0)continue;
+                p.position=state.position;p.velocity=state.velocity;p.angles=state.angles;
+                p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
+                if(hit.code==2)
+                    applyHit(*p.wsrc,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId));
+                // Native retires an out-of-map shell without damage and dispatches
+                // exactly one impact when collision returns 2.
+                p.spent=true;p.life=-1;stopped=true;break;
+            }
+            if(!stopped) {
+                p.position=state.position;p.velocity=state.velocity;p.angles=state.angles;
+                p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
+            }
+            // Ballistic XYZ motion owns collision. Keep the old range-derived
+            // endpoint for a shell that completes its simulated flight without a
+            // 3D impact; do not also run the unrelated 2D target-radius sweep.
+            continue;
+        }
         Unit* t = unit(p.targetId);
         // A falling bomb is ABOVE everything until it lands, so it takes no
         // in-flight collision -- it detonates once, on the ground, below.
