@@ -18,6 +18,7 @@
 #include "sim/retailhweffectdata.h"
 #include "tdf/tdf.h"
 #include "client/retailaim.h"
+#include "client/retailflightanimation.h"
 #include "client/renderframe.h"
 #include <cstdio>
 #include <cstring>
@@ -25,6 +26,43 @@
 #include <tuple>
 
 int main(int argc,char** argv) {
+    {
+        using Call=tak::RetailFlightAnimationCall;
+        tak::RetailFlightAnimationState state;
+        std::vector<Call> calls;
+        const auto update=[&](bool air,uint32_t serial,bool transport=false) {
+            calls.clear();
+            tak::updateRetailFlightAnimation(state,air,serial,transport,
+                [&](Call call){calls.push_back(call);});
+        };
+        update(true,0);
+        if(calls!=std::vector<Call>{Call::BeginFlight})return 1;
+        update(true,1,true);
+        if(calls!=std::vector<Call>{Call::EndTransport,Call::BeginLanding})return 1;
+        update(true,1,true);
+        if(!calls.empty())return 1;
+        update(false,1,true);
+        if(!calls.empty())return 1;
+        update(true,1,true);
+        if(calls!=std::vector<Call>{Call::BeginFlight})return 1;
+        tak::RetailFlightAnimationState skipped;
+        calls.clear();
+        tak::updateRetailFlightAnimation(skipped,true,0,false,
+            [&](Call call){calls.push_back(call);});
+        calls.clear();
+        tak::updateRetailFlightAnimation(skipped,false,1,true,
+            [&](Call call){calls.push_back(call);});
+        if(calls!=std::vector<Call>{Call::EndTransport,Call::BeginLanding})return 1;
+        tak::RetailFlightAnimationState fallback;
+        calls.clear();
+        tak::updateRetailFlightAnimation(fallback,true,0,false,
+            [&](Call call){calls.push_back(call);});
+        calls.clear();
+        tak::updateRetailFlightAnimation(fallback,false,0,false,
+            [&](Call call){calls.push_back(call);});
+        if(calls!=std::vector<Call>{Call::BeginLanding})return 1;
+        std::puts("PASS: landing callbacks start at site acceptance, order transport first, and do not repeat at touchdown");
+    }
     if(argc==2 && std::strcmp(argv[1],"--smoke-viewport")==0) {
         float x,y,width,height;
         while(std::scanf("%f %f %f %f",&x,&y,&width,&height)==4)

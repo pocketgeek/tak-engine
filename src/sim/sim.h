@@ -671,6 +671,7 @@ struct Unit {
     bool retainedFlightControllerActive=false;
     int flightSectorX=0,flightSectorZ=0; // center sector at the last footprint relocation
     uint32_t scriptOccupancy=0; // last setSFXoccupy notification (unit +100)
+    uint32_t flightLandingCallbackSerial=0; // display-only edge; excluded from lockstep hash
     std::optional<RetailLandingState> landing;
     // Fixed, not float: retail keeps no float in its unit state (docs/retail-engine.md).
     //

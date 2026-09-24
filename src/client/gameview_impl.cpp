@@ -1851,14 +1851,20 @@
                     // with tools/re/emuphase.py + the cob VM; pinned by conjure_test,
                     // which drives this exact sequence through the real Vm. No reset()
                     // -- the loops must keep running.
-                    if (air != a.airborne) {
-                        a.airborne = air;
-                        if (air) {
-                            a.vm->start("BeginFlight");         // takeoff: launch then fly
-                        } else {
-                            a.vm->start("BeginLanding");        // descent -> land thread
-                        }
-                    }
+                    tak::updateRetailFlightAnimation(a.flightAnimation,air,
+                        u.flightLandingCallbackSerial,u.type->canTransport,[&](auto call) {
+                            switch (call) {
+                                case tak::RetailFlightAnimationCall::BeginFlight:
+                                    a.vm->start("BeginFlight");
+                                    break;
+                                case tak::RetailFlightAnimationCall::BeginLanding:
+                                    a.vm->start("BeginLanding");
+                                    break;
+                                case tak::RetailFlightAnimationCall::EndTransport:
+                                    a.vm->start("EndTransport");
+                                    break;
+                            }
+                        });
                 }
                 // Other flyers (Priest and ambient birds) run their own
                 // Create-started controllers, polling speed/vertical motion.

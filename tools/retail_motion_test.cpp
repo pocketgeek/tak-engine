@@ -661,8 +661,9 @@ int main(int argc, char** argv) {
         for (int i=0;i<180;++i) world.tick(1.0f/30.0f);
         u=world.unit(id);
         check(!u->landing && u->flightGroundMode==1 && u->orders.empty() &&
-              std::abs(u->flightY.v-100*65536)<=65536,
-              "landing arrival retires its controller and restores grounded standby");
+              std::abs(u->flightY.v-100*65536)<=65536 &&
+              u->flightLandingCallbackSerial==1,
+              "landing arrival retires its controller, emits one callback, and restores grounded standby");
     }
     {
         World world; world.setVisPlayer(-1);

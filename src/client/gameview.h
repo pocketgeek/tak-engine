@@ -51,6 +51,7 @@
 #include "client/modelview.h"   // standalone 3DO model viewer (extracted leaf)
 #include "client/renderframe.h"   // UnitR/PlayerR/Frame render snapshot (extracted leaf)
 #include "client/retailaim.h"
+#include "client/retailflightanimation.h"
 #include "client/retaileffectvisibility.h"
 #include "client/replayfile.h"   // .takrep parser (extracted leaf)
 #include "client/sound.h"     // WAV mixer + music + soundclasses (extracted leaf)
@@ -1057,7 +1058,7 @@ private:
         bool building = false;   // mobile builder actively working a site (conjure anim)
         bool firing = false;
         bool flying = false;
-        bool airborne = false;   // true while the flight animation should run
+        tak::RetailFlightAnimationState flightAnimation;
         uint32_t occupancy = 0;  // last native setSFXoccupy notification
         uint32_t moveRate = 0;   // last native speed-tier notification
         float altitude = 0;      // captured flight height above groundY (body/shadow/effects)

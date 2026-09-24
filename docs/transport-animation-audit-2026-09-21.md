@@ -138,6 +138,13 @@ native airborne vertical-speed percentage used by the bird script. Per-unit
 cosmetic RNG remains separate from simulation RNG; identical VM semantics do not
 mean identical random animation choices across two independent game runs.
 
+Native `416cd0` queues `BeginLanding` as soon as a landing site is accepted,
+before installing its final ground-height controller. Transport-capable flyers
+also receive `EndTransport` first. The sim now carries that callback edge through
+the render snapshot, where the VM starts those scripts in native order and avoids
+restarting `BeginLanding` at the later grounded-mode transition. Focused mission
+and renderer tests cover one-shot delivery and the transport callback order.
+
 `check_script_state.py` also had a test-harness defect: bytecode exceeding 64 KiB
 could overlap its emulated entry table. Separate allocations now cover large
 scripts without corruption.

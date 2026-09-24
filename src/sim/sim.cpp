@@ -2082,7 +2082,7 @@ void World::tickGroundMission(Unit& u) {
             const int z=std::clamp(Fixed::raw(point.z).floorInt()/16,0,w.terH_-1);
             return w.heights_[size_t(z)*w.terW_+x];
         }
-        void touchdown() {} // display script notifications remain client-owned
+        void touchdown() { ++u.flightLandingCallbackSerial; }
         void deactivate() { u.active=false; }
         void finish() {
             if(u.flightGroundMode!=1) {

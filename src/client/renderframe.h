@@ -83,6 +83,7 @@ struct UnitR {
     uint16_t movementTerrainFlags = 0; // native mover flags used by GET 28/34
     uint32_t animationOccupancy = 0;
     uint32_t animationMoveRate = 0;
+    uint32_t flightLandingCallbackSerial = 0;
     void captureMoveRate(const tak::sim::Unit& u,int16_t turn) {
         const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
             u.groundTerrainFlags&0x1000 ? u.type->waterMult : tak::sim::Fixed::fromInt(1);
@@ -107,6 +108,7 @@ struct UnitR {
         worldPosition={u.x.v,(u.type->canFly ? u.flightY : u.groundY).v,u.z.v};
         flightY = u.flightY.toFloat();
         flightGroundMode = u.flightGroundMode;
+        flightLandingCallbackSerial = u.flightLandingCallbackSerial;
         movementTerrainFlags=u.groundTerrainFlags;
         movementRefused = !u.type->canFly && u.bodyBlockStreak >= 2;
         const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
