@@ -8221,3 +8221,35 @@ Debug suite passes 52/52. The final cross-section refinement was then rebuilt
 in Debug and exercised by the same headless screenshot. This is a readability
 approximation for the low-resolution projection, not evidence of retail's exact
 projectile size. No retail GUI was launched, as requested.
+
+### Joined native VTOL-unload mission and flight trace (2026-09-24)
+
+`tools/re/probe_transport_air_unload_flight.py` now pairs the native unload
+mission dispatcher with the native flight point controller, navigator, and
+mover on the same continuous synthetic trip as World's
+`--air-unload-flight-trace`. The trace begins with the distant unload command,
+observes the dispatcher install the `transportdistance-34` circle goal, follows
+the carrier through the physical flight path, and continues through arrival,
+cargo/passenger release, and the empty mission tail. The comparison reaches
+the released-and-parked terminal state after 488 ticks in Debug, Release, and
+optimized Debug. All movement, controller goal, mission stage/timer, cargo,
+passenger, effects, and park fields agree. One post-mover sample has only a
+pending-wake-field difference: World exposes `0x500` after its movement pass;
+retail consumes that wake in the next dispatcher pass before the paired
+post-mover snapshot.
+
+This joins mission dispatch and flight integration for a direct synthetic
+circle route. It deliberately pins terrain rescans past the trace and uses the
+fixture's controlled placement hook. It does not validate native route search,
+active terrain rescans, dynamic body collisions, retries/interrupted trips, or
+map-backed shoreline placement in this same end-to-end trace; those remain
+separate coverage. No retail GUI was launched.
+
+Validation: the joined 488-tick probe, the existing 17-tick native callback
+probe, and the 470-tick native flight-mover probe pass against all three build
+configurations. The four transport CTests also pass in each configuration
+(12/12 total). Reproduce the joined trace with:
+
+```sh
+python3 tools/re/probe_transport_air_unload_flight.py --binary build-o2/transport_test --steps 1200
+```
