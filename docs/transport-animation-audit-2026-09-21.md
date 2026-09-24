@@ -111,7 +111,11 @@ implementation descriptions. Current open gates are:
   always-on search-state difference remains unexplained. The replay begins at
   the captured World replan boundary and explicitly submits the replacement;
   having the moving carrier detect the blocker and trigger it in one joined
-  timeline, plus other maps and carrier profiles, remains open.
+  timeline remains open. Native TNT-backed terrain grading and reconstructed
+  routes also match for Aratrans/WATER5 on the same long Lake Lokken shore route
+  in Standard and Crusades: 698 distinct native query cells, 906 grade calls,
+  one waypoint, and an endpoint inside its 385px unload circle. Other maps and
+  carrier profiles remain open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -257,6 +261,10 @@ scripts without corruption.
   reconstructs the long shore route using native TNT-backed `0x508cd0` grades
   for all queried cells, retaining World’s grade-5 visibility mask separately.
   The exact one-waypoint route matches and ends inside the 266px unload circle.
+- Repeat the preceding command with `--carrier aratrans --passenger araarch`:
+  the WATER5 route and native terrain grades also match in Standard and
+  Crusades; 698 distinct map cells are checked across 906 grade calls, and the
+  endpoint lies inside the 385px unload circle.
 - Repeat the preceding command with `--native-map-mover-steps 1470` (and
   `--crusades`): after native `0x4e4ea0` route installation, retail's
   `0x4dc800` mover plus `0x51b2a0` height update match World on every XYZ,

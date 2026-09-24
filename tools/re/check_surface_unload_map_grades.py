@@ -42,11 +42,12 @@ def asset(hpitool, root, internal):
                           check=True, capture_output=True).stdout
 
 
-def native_water_profile(hpitool, root):
-    unit = unit_properties(asset(hpitool, root, "units/vertrans.fbi").decode("latin1"))
+def native_water_profile(hpitool, root, carrier="vertrans"):
+    unit = unit_properties(
+        asset(hpitool, root, f"units/{carrier.lower()}.fbi").decode("latin1"))
     movement = unit.get("movementclass", "").lower()
-    if movement != "water4":
-        raise AssertionError(f"Vertrans movement class changed: {movement}")
+    if not movement.startswith("water"):
+        raise AssertionError(f"{carrier} is not a water carrier: {movement}")
     moveinfo = asset(hpitool, root, "gamedata/moveinfo.tdf").decode("latin1")
     definitions = [properties(block) for block in
                    re.findall(r"\[[^]]+\]\s*\{([^{}]*)\}", moveinfo, re.S)]
@@ -57,8 +58,8 @@ def native_water_profile(hpitool, root):
     packed = class_record(fields)
     values = struct.unpack("<6h4B", packed)
     foot_x, foot_z = values[:2]
-    if (foot_x, foot_z) != (4, 4):
-        raise AssertionError((movement, foot_x, foot_z))
+    if foot_x < 1 or foot_z < 1:
+        raise AssertionError((carrier, movement, foot_x, foot_z))
     return movement, packed, foot_x, foot_z
 
 

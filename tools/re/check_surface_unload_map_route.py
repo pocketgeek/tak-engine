@@ -539,8 +539,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         assert (fx, fz, attempt_heavy_profile) == (grade_fx, grade_fz, attempt_heavy)
         assert traffic_radius == 50 // half_cell_ticks, \
             (traffic_radius, half_cell_ticks)
+        expected_min_straight = (max(fx, fz) + 3) * (2 if attempt_heavy else 1)
         assert (ground_cost, road_cost, slope_cost, traffic_cost, short_turn_cost,
-                min_straight_cost) == (24, 8, 320, 80, 680, 14), completed_attempt
+                min_straight_cost) == (24, 8, 320, 80, 680,
+                                       expected_min_straight), completed_attempt
         grades = [int(value) for line in stderr[header_index + 1:header_index + 1 + height]
                   for value in line.split()]
         assert len(grades) == width * height
@@ -1009,8 +1011,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     independent_grade = None
     if native_map_grades:
         if (not carrier or map_name.lower() != 'lake lokken' or
-                carrier.lower() != 'vertrans'):
-            raise ValueError('--native-map-grades currently checks Lake Lokken Vertrans')
+                carrier.lower() not in ('vertrans', 'aratrans')):
+            raise ValueError('--native-map-grades currently checks Lake Lokken Vertrans and Aratrans')
         tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
                        f'Maps/{map_name}.tnt')
         map_data = parse_tnt(tnt_data)
@@ -1020,7 +1022,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             tnt_data[feature_name_pointer + index * 132 + 4:
                      feature_name_pointer + index * 132 + 132].split(b'\0', 1)[0]
             .decode('latin1') for index in range(feature_count)]
-        movement, profile, native_fx, native_fz = native_water_profile(hpitool, retail_root)
+        movement, profile, native_fx, native_fz = native_water_profile(
+            hpitool, retail_root, carrier)
         if (native_fx, native_fz) != (fx, fz):
             raise AssertionError(('native map-grade footprint', movement,
                                   (native_fx, native_fz), (fx, fz)))
@@ -1048,6 +1051,17 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         return 3, value
 
     p.icd.hooks[0x4139d0] = grade
+    captured_weight = completed_attempt[8]
+
+    def request_weight(_uc, args):
+        address = struct.unpack('<I', p.uc.mem_read(args, 4))[0]
+        p.uc.mem_write(address, struct.pack('<I', captured_weight))
+        return 1, address
+
+    # Match the request's scheduler weight from the actual World boundary. The
+    # standalone fixture does not have retail's full player queue, and the
+    # weight can differ for another movement/footprint class.
+    p.icd.hooks[0x4161b0] = request_weight
     # Let native reconstruction deliver through retail's actual navigator
     # setter. Replacing 0x4e4ea0 with a callback would capture the route but
     # leave the mover without its installed controller/path.
@@ -1061,9 +1075,12 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     assert (native_goal, native_radius, radius_squared) == \
         (goal_cell, circle_radius, expected_radius_squared), \
         (native_goal, goal_cell, native_radius, radius_squared)
+    native_initial_weights = []
+
     def run_native_search():
         _, error = p.init()
         assert error is None, error
+        native_initial_weights.append(p.get(0x54))
         p.uc.mem_write(OBJ + 0x165, struct.pack('<I', 10_000_000))
         p.uc.mem_write(OBJ + 0x5c, struct.pack('<I', 1))
         _, error = p.step()
@@ -1203,12 +1220,15 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         assert observed_names <= {'TarWave05'}, (
             'native map-grade route probe encountered an unmodeled feature', observed_names)
     if carrier:
-        world_raw_pixels = [(x * 16, z * 16) for x, z in world_raw]
+        world_raw_pixels = [(x * 16 + (fx % 2) * 8,
+                             z * 16 + (fz % 2) * 8)
+                            for x, z in world_raw]
         assert native_route == world_raw_pixels, (native_route, world_raw_pixels)
         assert world_route == world_raw_pixels[1:], (world_route, world_raw_pixels)
         assert (attempt_goal_x - fx // 2, attempt_goal_z - fz // 2) == goal_cell, \
             ((attempt_goal_x, attempt_goal_z), goal_cell)
-        assert p.get(0x54) == weight, ('retail initial path weight', p.get(0x54), weight)
+        assert native_initial_weights and all(value == weight for value in native_initial_weights), \
+            ('retail initial path weight', native_initial_weights, weight)
     else:
         assert native_route[0] == anchor, (native_route[0], anchor)
         assert native_route[1:] == world_route, (native_route[1:], world_route)
