@@ -7,6 +7,8 @@ retail's original circle constructor, reachability tracer, cost search and route
 reconstruction against either those grades or native 0x508cd0 grades generated
 from the TNT cell plane. An optional mover trace steps both implementations over
 the shipped map without launching a game GUI.
+An optional live-unload composition keeps the native mission and cargo active
+through map-backed movement, arrival wakeup, passenger placement and release.
 """
 import argparse
 import os
@@ -16,12 +18,20 @@ from pathlib import Path
 
 from emuphase import Phase, OBJ, TYPE, GS
 from check_surface_unload_map_grades import native_grade_reader, native_water_profile
-from check_surface_unload_map_release import cat, parse_tnt
+from check_surface_unload_map_release import (
+    cat, movement_profile, native_placement_oracle, parse_tnt)
 
 
 def check_route(world_binary, retail_root, map_name, start_cell, target_cell, footprint,
                 carrier=None, passenger=None, crusades=False, native_map_grades=False,
-                hpitool='build/hpitool', native_map_mover_steps=0):
+                hpitool='build/hpitool', native_map_mover_steps=0,
+                native_live_unload=False):
+    if native_live_unload and (not carrier or not native_map_mover_steps):
+        raise ValueError('--native-live-unload requires a carrier and map mover steps')
+    if native_live_unload and (map_name.lower() != 'lake lokken' or
+                               carrier.lower() != 'vertrans' or
+                               passenger.lower() != 'araarch'):
+        raise ValueError('--native-live-unload currently checks Lake Lokken Vertrans/Araarch')
     env = os.environ.copy()
     env['TAK_DUMP_GRADE_PLANE'] = '1'
     if carrier:
@@ -162,29 +172,84 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             (world_route[-1], (target_x, target_z), circle_radius)
 
     p = Phase(width, height)
-    unit = p.unit(sx - fx // 2, sz - fz // 2)
+    native_live = None
+    native_placement_results = []
+    if native_live_unload:
+        tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
+                       f'Maps/{map_name}.tnt')
+        live_map_data = parse_tnt(tnt_data)
+        passenger_profile = movement_profile(
+            cat(hpitool, Path(retail_root), 'data.hpi', 'gamedata/moveinfo.tdf')
+                .decode('latin1'),
+            cat(hpitool, Path(retail_root), 'data.hpi',
+                f'units/{passenger}.fbi').decode('latin1'))
+        native_place = native_placement_oracle(live_map_data, passenger_profile)
+
+        def checked_placement(args, call_number):
+            result = native_place(args, call_number)
+            native_placement_results.append((args, result))
+            return result
+
+        from probe_transport_surface_unload_callbacks import SurfaceUnload
+        native_live = SurfaceUnload(placement_result=checked_placement,
+            real_mission_removal=True, icd=p.icd, game=GS, freeze_hooks=False)
+        unit, mover, type_address = native_live.carrier, native_live.mover, native_live.kind
+    else:
+        unit = p.unit(sx - fx // 2, sz - fz // 2)
+        mover = None
+        type_address = TYPE
     assert p.construct() is None
-    mover = struct.unpack('<I', p.uc.mem_read(unit + 8, 4))[0]
+    if mover is None:
+        mover = struct.unpack('<I', p.uc.mem_read(unit + 8, 4))[0]
     goal_cell = ((target_x - (fx - 1) * 8) // 16,
                  (target_z - (fz - 1) * 8) // 16)
-    p.plant_request(unit, (sx - fx // 2, sz - fz // 2), goal_cell)
-    if carrier:
+    if native_live:
+        # Start the actual surface-unload handler on the same map-backed carrier
+        # that will search, move, arrive and release its passenger below.
         p.uc.mem_write(unit + 0x68, struct.pack('<iii', route_header[1],
                                                sea * 65536, route_header[2]))
+        p.uc.mem_write(unit + 0x74, struct.pack('<hh', sx - fx // 2,
+                                               sz - fz // 2))
+        p.uc.mem_write(unit + 0x78, struct.pack('<hh', fx, fz))
+        p.uc.mem_write(type_address + 0x126, struct.pack('<hh', fx, fz))
+        p.uc.mem_write(type_address + 0x23e, struct.pack('<H', transport_dist))
+        p.uc.mem_write(native_live.mission + 0x22,
+                       struct.pack('<i', target_x * 65536))
+        p.uc.mem_write(native_live.mission + 0x26, bytes(4))
+        p.uc.mem_write(native_live.mission + 0x2a,
+                       struct.pack('<i', target_z * 65536))
+        native_live.put(unit + 0xc4, native_live.mission + 0x12)
+        native_live.put(native_live.passenger + 0xc4, native_live.mission + 0x12)
+        p.uc.mem_write(0x64186c, struct.pack('<I', route_tick))
+        initial = native_live.dispatch(route_tick)
+        assert initial[0:3] == (1, 1, 0x701), initial
+        assert native_live.requests == [1], native_live.requests
+        controller = native_live.get(native_live.nav + 4)
+        assert controller and native_live.get(controller + 4) == native_live.mission
+        assert native_live.controller_goal() == (
+            0x5f28d8, goal_cell, circle_radius), native_live.controller_goal()
+        p.attach_live_request(unit, mover, native_live.nav, controller,
+                              (sx - fx // 2, sz - fz // 2), (fx, fz))
+    else:
+        p.plant_request(unit, (sx - fx // 2, sz - fz // 2), goal_cell)
+    if carrier:
+        if not native_live:
+            p.uc.mem_write(unit + 0x68, struct.pack('<iii', route_header[1],
+                                                   sea * 65536, route_header[2]))
     else:
         p.uc.mem_write(unit + 0x68, struct.pack('<iii', start_x * 65536,
                                                sea * 65536, start_z * 65536))
     p.uc.mem_write(unit + 0x78, struct.pack('<hh', fx, fz))
     p.uc.mem_write(unit + 0x7e, struct.pack('<H', heading))
     p.uc.mem_write(mover + 0x36, struct.pack('<H', flags))
-    p.uc.mem_write(TYPE + 0x126, struct.pack('<hh', fx, fz))
-    p.uc.mem_write(TYPE + 0x18e, struct.pack('<H', turn))
-    p.uc.mem_write(TYPE + 0x172, struct.pack('<i', road))
-    p.uc.mem_write(TYPE + 0x260, struct.pack('<I', 0x80000 if heavy else 0))
-    p.uc.mem_write(TYPE + 0x16e, struct.pack('<i', water))
-    p.uc.mem_write(TYPE + 0x192, struct.pack('<hh', max_water, min_water))
+    p.uc.mem_write(type_address + 0x126, struct.pack('<hh', fx, fz))
+    p.uc.mem_write(type_address + 0x18e, struct.pack('<H', turn))
+    p.uc.mem_write(type_address + 0x172, struct.pack('<i', road))
+    p.uc.mem_write(type_address + 0x260, struct.pack('<I', 0x80000 if heavy else 0))
+    p.uc.mem_write(type_address + 0x16e, struct.pack('<i', water))
+    p.uc.mem_write(type_address + 0x192, struct.pack('<hh', max_water, min_water))
     if carrier:
-        p.uc.mem_write(TYPE + 0x249, bytes([half_cell_ticks]))
+        p.uc.mem_write(type_address + 0x249, bytes([half_cell_ticks]))
         p.uc.mem_write(OBJ + 0x1ad, struct.pack('<I', retry))
     p.uc.mem_write(p.GRID + 4, struct.pack('<hh', fx, fz))
 
@@ -233,43 +298,53 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     # Let native reconstruction deliver through retail's actual navigator
     # setter. Replacing 0x4e4ea0 with a callback would capture the route but
     # leave the mover without its installed controller/path.
-    _, error = p.icd.call(0x4e2500,
-        (p.HANDLE + 0x1000, target_x * 65536, target_z * 65536, circle_radius), ecx=p.HANDLE)
-    assert error is None, error
+    if not native_live:
+        _, error = p.icd.call(0x4e2500,
+            (p.HANDLE + 0x1000, target_x * 65536, target_z * 65536, circle_radius), ecx=p.HANDLE)
+        assert error is None, error
     native_goal = tuple(struct.unpack('<hh', p.uc.mem_read(p.HANDLE + 8, 4)))
     native_radius, radius_squared = struct.unpack('<ii', p.uc.mem_read(p.HANDLE + 0x0c, 8))
     expected_radius_squared = int(circle_radius * circle_radius / 256 + 0.5)
     assert (native_goal, native_radius, radius_squared) == \
         (goal_cell, circle_radius, expected_radius_squared), \
         (native_goal, goal_cell, native_radius, radius_squared)
-    _, error = p.init()
-    assert error is None, error
-    p.uc.mem_write(OBJ + 0x165, struct.pack('<I', 10_000_000))
-    p.uc.mem_write(OBJ + 0x5c, struct.pack('<I', 1))
-    _, error = p.step()
-    assert error is None, error
-    # 415b10 can deliver a direct trace route on this first handoff. Detect the
-    # route in the navigator because delivery now runs through retail's actual
-    # 0x4e4ea0 setter, rather than a replacement callback.
-    completed = struct.unpack('<I', p.uc.mem_read(p.NAV + 0x10c, 4))[0] != 0
-    if not completed:
-        assert p.phase() == 2, 'retail reachability tracer rejected the connected map route'
-        assert struct.unpack('<I', p.uc.mem_read(OBJ + 4, 4))[0] != 0, \
-            'phase-2 handoff did not initialize retail cost-search heap'
-        for step in range(100_000):
-            value, error = p.step()
-            assert error is None, (step, error)
-            if value:
-                completed = True
-                _, error = p.icd.call(0x414450, (0,), ecx=OBJ)
-                assert error is None, error
-                break
-    assert completed, completed
-    native_count = struct.unpack('<I', p.uc.mem_read(p.NAV + 0x10c, 4))[0]
-    native_words = struct.unpack('<' + 'h' * (native_count * 2),
-                                 p.uc.mem_read(p.NAV + 12, native_count * 4)) \
-        if native_count else ()
-    native_route = list(zip(native_words[::2], native_words[1::2]))
+    def run_native_search():
+        _, error = p.init()
+        assert error is None, error
+        p.uc.mem_write(OBJ + 0x165, struct.pack('<I', 10_000_000))
+        p.uc.mem_write(OBJ + 0x5c, struct.pack('<I', 1))
+        _, error = p.step()
+        assert error is None, error
+        # 415b10 can deliver a direct trace route on this first handoff. Detect
+        # the route in the navigator because delivery now runs through retail's
+        # actual 0x4e4ea0 setter, not a replacement callback.
+        completed = struct.unpack('<I', p.uc.mem_read(p.NAV + 0x10c, 4))[0] != 0
+        if not completed:
+            assert p.phase() == 2, 'retail reachability tracer rejected the connected map route'
+            assert struct.unpack('<I', p.uc.mem_read(OBJ + 4, 4))[0] != 0, \
+                'phase-2 handoff did not initialize retail cost-search heap'
+            for search_step in range(100_000):
+                value, error = p.step()
+                assert error is None, (search_step, error)
+                if value:
+                    completed = True
+                    _, error = p.icd.call(0x414450, (0,), ecx=OBJ)
+                    assert error is None, error
+                    break
+        assert completed, completed
+        count = struct.unpack('<I', p.uc.mem_read(p.NAV + 0x10c, 4))[0]
+        words = struct.unpack('<' + 'h' * (count * 2),
+                              p.uc.mem_read(p.NAV + 12, count * 4)) if count else ()
+        return list(zip(words[::2], words[1::2]))
+
+    native_route = run_native_search()
+    if native_live:
+        # The World physical trace intentionally suspends the mission poll so
+        # both movers follow the already delivered segment until circle arrival.
+        # Keep this exact same controlled deadline in retail; circle arrival
+        # still wakes the real unload dispatcher through 0x4e5150.
+        native_live.put(native_live.mission + 0x0a,
+                        route_tick + native_map_mover_steps + 1000)
     if independent_grade:
         map_features = map_data[4]
         observed_features = set()
@@ -384,17 +459,17 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         p.uc.mem_write(mover + 8, bytes(12))
         p.uc.mem_write(mover + 0x14, bytes(12))
         p.uc.mem_write(mover + 0x36, struct.pack('<H', flags | 1))
-        p.uc.mem_write(TYPE + 0x162, struct.pack('<i', seed_base))
+        p.uc.mem_write(type_address + 0x162, struct.pack('<i', seed_base))
         # Retail stores brakerate before acceleration in the native type block:
         # maxvelocity +0x162, brakerate +0x166, acceleration +0x16a.
-        p.uc.mem_write(TYPE + 0x166, struct.pack('<i', braking))
-        p.uc.mem_write(TYPE + 0x16a, struct.pack('<i', acceleration))
-        p.uc.mem_write(TYPE + 0x126, struct.pack('<hh', fx, fz))
-        p.uc.mem_write(TYPE + 0x18a, struct.pack('<I', p.GRID))
-        p.uc.mem_write(TYPE + 0x18e, struct.pack('<H', unit_turn))
-        p.uc.mem_write(TYPE + 0x23c, bytes((max_slope, max_water_slope)))
-        p.uc.mem_write(TYPE + 0x24a, b'\x01')
-        p.uc.mem_write(TYPE + 0x248, bytes((waterline & 0xff,)))
+        p.uc.mem_write(type_address + 0x166, struct.pack('<i', braking))
+        p.uc.mem_write(type_address + 0x16a, struct.pack('<i', acceleration))
+        p.uc.mem_write(type_address + 0x126, struct.pack('<hh', fx, fz))
+        p.uc.mem_write(type_address + 0x18a, struct.pack('<I', p.GRID))
+        p.uc.mem_write(type_address + 0x18e, struct.pack('<H', unit_turn))
+        p.uc.mem_write(type_address + 0x23c, bytes((max_slope, max_water_slope)))
+        p.uc.mem_write(type_address + 0x24a, b'\x01')
+        p.uc.mem_write(type_address + 0x248, bytes((waterline & 0xff,)))
         p.uc.mem_write(p.GRID + 4, struct.pack('<hh', fx, fz))
         p.uc.mem_write(p.GRID + 8, struct.pack('<4h4B', max_depth, min_depth,
             bad_max_depth, bad_min_depth, max_slope, bad_slope,
@@ -402,11 +477,29 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         p.icd.hooks[0x51ad20] = lambda _uc, _args: (1, 0)
         p.icd.hooks[0x56c640] = lambda _uc, _args: (8, 0)
 
+        live_release_step = None
+        native_arrival_wakes = 0
         for step, row in enumerate(world_steps, 1):
             p.uc.mem_write(GS + 0x19f44, struct.pack('<I', route_tick + step))
-            value, error = p.icd.call(0x4d8450, (unit,))
-            assert error is None, ('native map mover pre-step', step, error)
-            value, error = p.icd.call(0x4dc800, (unit,), ecx=mover)
+            if native_live:
+                stage_before_dispatch = p.uc.mem_read(native_live.mission + 5, 1)[0]
+                dispatch_row = native_live.dispatch(route_tick + step)
+                if stage_before_dispatch == 1 and dispatch_row[1] == 2:
+                    native_arrival_wakes += 1
+            else:
+                value, error = p.icd.call(0x4d8450, (unit,))
+                assert error is None, ('native map mover pre-step', step, error)
+            # The surface mission's placement hook is a map-backed Araarch
+            # release oracle. Keep retail's own carrier-footprint mover scan
+            # active during 0x4dc800 rather than routing it through that hook.
+            placement_hooks = p.icd.hooks
+            if native_live:
+                p.icd.hooks = {address: hook for address, hook in placement_hooks.items()
+                               if address != 0x507d10}
+            try:
+                value, error = p.icd.call(0x4dc800, (unit,), ecx=mover)
+            finally:
+                p.icd.hooks = placement_hooks
             assert error is None, ('native map mover', step, error)
             value, error = p.icd.call(0x51b2a0, (unit,), ecx=mover)
             assert error is None, ('native map route update', step, error)
@@ -420,8 +513,40 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             assert native_step == expected_step, (
                 'native/World real-map mover step', step, native_step,
                 expected_step, row[9])
+            if native_live and not native_live.get(unit + 0xac):
+                live_release_step = step
+                break
         map_mover_count = len(world_steps)
-        final_x, final_z = world_steps[-1][1], world_steps[-1][3]
+        if native_live:
+            assert live_release_step is not None, (
+                'native surface mission did not release Araarch during the map-backed mover trace',
+                native_placement_results[-8:])
+            native_live.dispatch(route_tick + live_release_step + 1)
+            assert native_live.get(unit + 0x60) == 0, (
+                'native surface mission did not retire after its one-tick release tail',
+                hex(native_live.get(unit + 0x60)))
+            released = struct.unpack('<3i',
+                                     p.uc.mem_read(native_live.passenger + 0x68, 12))
+            released_origin = (
+                int((released[0] / 65536 - (passenger_profile[0] - 1) * 8) // 16),
+                int((released[2] / 65536 - (passenger_profile[1] - 1) * 8) // 16))
+            assert released_origin == target_cell, (
+                'retail unload did not release Araarch at the selected Lake Lokken shore cell',
+                released, released_origin, target_cell)
+            assert native_placement_results and all(result == 1
+                for _, result in native_placement_results), native_placement_results
+            assert native_live.get(unit + 0xac) == 0
+            assert native_live.get(native_live.passenger + 0xa8) == 0
+            assert native_arrival_wakes == 1, \
+                ('native navigator arrival did not wake the unload mission exactly once',
+                 native_arrival_wakes)
+            map_mover_count = live_release_step
+            print(f'  Native mission, search, and map mover remained joined through the '
+                  f'retail shoreline release at physical step {live_release_step}; '
+                  f'navigator arrival advanced the mission exactly once; '
+                  f'{len(native_placement_results)} map-backed passenger placement checks passed.')
+        final_row = world_steps[map_mover_count - 1]
+        final_x, final_z = final_row[1], final_row[3]
         dx = final_x - target_x * 65536
         dz = final_z - target_z * 65536
         map_mover_entered_circle = dx * dx + dz * dz <= (circle_radius * 65536) ** 2
@@ -460,16 +585,21 @@ def main():
                         help='answer retail route grades with TNT-backed native 0x508cd0')
     parser.add_argument('--native-map-mover-steps', type=int, default=0,
                         help='also compare this many native physical mover ticks on the map (1..2500)')
+    parser.add_argument('--native-live-unload', action='store_true',
+                        help='keep retail GROUND_UNLOAD active through map-backed movement and passenger release')
     parser.add_argument('--hpitool', default='build/hpitool')
     args = parser.parse_args()
     if bool(args.carrier) != bool(args.passenger):
         parser.error('--carrier and --passenger must be supplied together')
     if not 0 <= args.native_map_mover_steps <= 2500:
         parser.error('--native-map-mover-steps must be 0..2500')
+    if args.native_live_unload and args.native_map_mover_steps == 0:
+        parser.error('--native-live-unload requires --native-map-mover-steps')
     check_route(args.world_binary, args.retail_root, args.map, tuple(args.start),
                 tuple(args.target), args.footprint, args.carrier, args.passenger,
                 args.crusades, args.native_map_grades or bool(args.native_map_mover_steps),
-                str(Path(args.hpitool).resolve()), args.native_map_mover_steps)
+                str(Path(args.hpitool).resolve()), args.native_map_mover_steps,
+                args.native_live_unload)
 
 
 if __name__ == '__main__':

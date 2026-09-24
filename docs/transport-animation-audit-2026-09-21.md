@@ -243,14 +243,24 @@ scripts without corruption.
   heading, speed, mode and terrain-flag sample through entry into the unload
   circle. The scan deadline is held beyond this controlled trace, and there are
   no dynamic occupancy blockers.
+- Repeat it with `--native-map-mover-steps 2500 --native-live-unload` (and
+  `--crusades`): one native `GROUND_UNLOAD` mission, carrier, passenger,
+  navigator and circle controller remain joined through native map-grade route
+  search, physical movement, circle-arrival wakeup, real `0x507d10` shoreline
+  placement, cargo detach and mission retirement. Both balances release Araarch
+  at Lake Lokken cell `(240,350)` after 1,488 paired movement steps; all 16
+  native passenger-placement checks accept the selected site. As in the World
+  movement fixture, the mission-poll and terrain-scan deadlines are held past
+  the trace and there are no dynamic occupancy blockers. The first path request
+  is serviced at the controlled route-search boundary; repeated asynchronous
+  scheduler jobs with live rescans and blockers remain outside this check.
 - For each `bin` in `build`, `build-dbg`, `build-o2`, run
   `"$bin/transport_test" --surface-unload-map-travel-type /home/pocket_geek/tak_data 'Lake Lokken' vertrans araarch 240 120 240 350 0` and repeat with final argument `1`:
   full World shore unload in standard and Crusades. It completes at tick 2,222,
   releases at the selected shore point, and keeps both unit footprints valid
-  through the 60-tick coast. Native terrain grades, route reconstruction,
-  physical movement into the unload circle, and the actual-map release path are
-  paired in the focused retail harnesses above. A single live run with terrain
-  rescans and dynamic occupancy active through release remains open.
+  through the 60-tick coast. A single live run with repeated asynchronous path
+  requests, terrain rescans and dynamic occupancy active through release remains
+  open.
 - `ctest --test-dir build -R '^transport_map_roundtrip(_crusades)?$' --output-on-failure`:
   the shipped Vertrans/Araarch Lake Lokken pickup-and-unload trip in standard
   and Crusades balance.
@@ -296,6 +306,12 @@ protocol **178**'s transport simulation changes and published 0.7.0 (protocol
   standard and Crusades balance across Release, Debug, and optimized Debug,
   including 60 post-release ticks, physical placement checks for both units,
   and water-grid passability for the carrier.
+- The map-backed retail `GROUND_UNLOAD` integration fixture now carries one
+  native mission from its real controller setup through retail route search,
+  1,488 paired Lake Lokken mover steps, the native arrival wake, shoreline
+  placement, passenger release and mission retirement in both balances. It
+  holds the poll/scan deadlines past the controlled approach and does not add
+  moving occupancy blockers; those full-scheduler conditions remain open.
 - The data-backed `navblock` regression confirms Lake Lokken's shipped
   `TarWave05` decorative cells do not enter the shared movement-obstacle overlay.
 - The same-trip sea retry route probe passes for 1,000 physical mover steps;
