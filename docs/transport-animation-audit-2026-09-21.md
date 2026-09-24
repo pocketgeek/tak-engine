@@ -35,8 +35,9 @@ implementation descriptions. Current open gates are:
   matches in paired native-air and native-sea traces; World regressions cover
   both carrier classes. Native sea-unload recovery now also resumes the same
   in-range mission through transfer and release after the ten-tick retry. A
-  retry that must reinstall and physically follow a new coastal route remains
-  open.
+  retry that must reinstall its circle controller now has a native dispatcher
+  trace through controlled arrival and cargo release; physically following the
+  newly requested coastal route remains open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. Special weapon cases, missing-script behavior, range/visibility-loss
@@ -7555,8 +7556,19 @@ call is used in this trace.
 
 World's existing `exactLandingSites` regression exercises the same in-range
 same-trip retry for both air and surface carriers, including the full restarted
-transfer interval and release. The native probe and `transport_test` pass. This
-does not exercise a retry while the sea carrier is outside transfer range, where
-the same mission must construct a new circle controller and physically route
-back to the selected site. That coastal route-reinstallation case remains open;
-this evidence closes only the in-range transfer-retry slice.
+transfer interval and release. The native probe and `transport_test` pass.
+
+The follow-up out-of-range trace moves the carrier 424 px from the selected site
+during the blocked retry. The original mission and destination remain intact;
+retail destroys the old controller, requests a route, and installs a fresh
+`0x5f28d8` circle controller at `(31,31)` with radius 116. After arrival is
+delivered at the navigator boundary, the same mission releases cargo at tick 31
+and retires at tick 32. The allocator fixture now returns distinct controller
+addresses, matching the native replacement lifetime and avoiding an aliasing
+pure-virtual call in the emulator.
+
+This still controls route search and physical travel to the replacement circle.
+It proves the native dispatcher/controller reinstallation and resumed transfer,
+not that a ship physically follows the newly requested coastal route. The
+existing 1,000-tick surface route trace covers physical movement on its canonical
+route, but not this retry-generated route.

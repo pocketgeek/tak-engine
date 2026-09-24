@@ -139,6 +139,68 @@ def check_same_trip_retry():
     print(f'PASS: the original native sea-unload mission resumes after its ten-tick blocked retry, releases at tick {released_at}, and retires at tick {retired_at}')
 
 
+def check_same_trip_out_of_range_retry():
+    # Leave transfer range during the blocked retry. Retail must replace the
+    # old circle controller and request a route back to the original site.
+    # Physical path travel is controlled at the navigator-arrival boundary;
+    # check_surface_unload_route.py separately covers the real mover/route path.
+    native = SurfaceUnload(placement_result=lambda args, _call: int(args[4] == 1))
+    mission = native.mission
+    destination = bytes(native.p.uc.mem_read(mission + 0x22, 12))
+
+    assert native.dispatch(1)[0:3] == (1, 1, 0x701)
+    events, detached, arrived = native.arrive_inside_goal()
+    assert events & 0x100 and detached and arrived[0:3] == (1, 2, 1)
+    assert native.dispatch(3)[0:3] == (1, 3, 1)
+    old_controller = native._controllerAllocations[0]
+    assert native.get(old_controller) == 0x5F28D8
+
+    # Move 424 px from the saved 500,500 landing site: beyond both the
+    # transport range and the initial circle radius.
+    native.put(native.carrier + 0x68, 200 << 16)
+    native.put(native.carrier + 0x70, 200 << 16)
+    native.placementResult = 1
+    for tick in range(4, 15):
+        row = native.dispatch(tick)
+
+    assert row[0:2] == (1, 1), row
+    assert native.get(native.carrier + 0x60) == mission
+    assert native.p.uc.mem_read(mission + 0x22, 12) == destination
+    assert native.get(native.carrier + 0xAC) == native.passenger
+    assert native.requests == [1, 0, 1], native.requests
+    assert len(native._controllerAllocations) == 2, native._controllerAllocations
+    new_controller = native._controllerAllocations[1]
+    assert new_controller != old_controller
+    assert native.get(old_controller) == 0x5F28A4, hex(native.get(old_controller))
+    assert native.controller_goal() == (0x5F28D8, (31, 31), 116), native.controller_goal()
+    assert native.get(native.nav + 4) == new_controller
+
+    # Deliver native route arrival, then let the original mission transfer and
+    # release its passenger at the unchanged selected point.
+    events, detached, resumed = native.arrive_inside_goal(tick=15)
+    assert events & 0x100 and detached and resumed[0:3] == (1, 2, 1), resumed
+    released_at = retired_at = None
+    for tick in range(16, 40):
+        row = native.dispatch(tick)
+        assert native.get(native.carrier + 0x60) == mission or not row[0]
+        assert native.p.uc.mem_read(mission + 0x22, 12) == destination
+        if native.get(native.carrier + 0xAC) == 0 and released_at is None:
+            released_at = tick
+            assert native.get(native.passenger + 0xA8) == 0
+            position = tuple(struct.unpack('<3i',
+                native.p.uc.mem_read(native.passenger + 0x68, 12)))
+            assert position == (500 << 16, 0, 500 << 16), position
+        if not row[0]:
+            retired_at = tick
+            break
+
+    assert released_at == 31, released_at
+    assert retired_at == 32, retired_at
+    assert native.parked
+    print('PASS: an out-of-range retry preserves its original sea-unload mission and landing point, retires the old circle controller, requests a fresh route, and installs a new exact-site circle controller')
+    print(f'PASS: after controlled arrival on that new controller, the same native mission releases cargo at tick {released_at} and retires at tick {retired_at}')
+
+
 def check_world(binary):
     result = subprocess.run([binary], text=True, capture_output=True, check=True)
     expected = (
@@ -162,6 +224,7 @@ def main():
     args = parser.parse_args()
     check_native()
     check_same_trip_retry()
+    check_same_trip_out_of_range_retry()
     check_world(args.binary)
 
 

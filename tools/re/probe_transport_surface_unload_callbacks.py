@@ -26,6 +26,8 @@ class SurfaceUnload:
         self.placementResult = placement_result
         self.realMissionRemoval = real_mission_removal
         self.placementCalls = []
+        self._nextController = self.controller
+        self._controllerAllocations = []
 
         def put(address, value):
             self.p.uc.mem_write(address, struct.pack('<I', value & 0xffffffff))
@@ -39,8 +41,15 @@ class SurfaceUnload:
         self.put, self.get, self.byte = put, get, byte
 
         def allocate(_uc, _sp):
-            self.p.uc.mem_write(self.controller, bytes(0x100))
-            return 0, self.controller
+            # A retry can replace an earlier circle controller. Keep each
+            # allocation distinct so destroying the previous object cannot
+            # reset the new object's vtable through an aliased fixture pointer.
+            controller = self._nextController
+            self._nextController += 0x1000
+            self._controllerAllocations.append(controller)
+            self.p.uc.mem_write(controller, bytes(0x100))
+            self.controller = controller
+            return 0, controller
 
         def request(_uc, sp):
             self.requests.append(get(sp))
@@ -167,7 +176,7 @@ class SurfaceUnload:
         radius = struct.unpack('<i', self.p.uc.mem_read(self.controller + 0x0C, 4))[0]
         return vtable, center, radius
 
-    def arrive_inside_goal(self):
+    def arrive_inside_goal(self, tick=2):
         # Native route format contains the start and final footprint cell. The
         # endpoint at (28,31) lies 50 px from the authored (500,500) center,
         # inside the native 150-34 px arrival radius.
@@ -183,7 +192,7 @@ class SurfaceUnload:
             raise RuntimeError(error)
         callback_events = self.get(self.mission + 0x6A)
         detached = self.get(self.nav + 4) == 0
-        return callback_events, detached, self.dispatch(2)
+        return callback_events, detached, self.dispatch(tick)
 
 
 def compare(binary):
