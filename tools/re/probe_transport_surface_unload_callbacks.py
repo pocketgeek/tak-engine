@@ -15,19 +15,24 @@ from unicorn.x86_const import UC_X86_REG_ECX
 
 
 class SurfaceUnload:
-    def __init__(self, placement_result=1, real_mission_removal=False):
-        self.p = Icd()
+    def __init__(self, placement_result=1, real_mission_removal=False, *,
+                 icd=None, game=None, freeze_hooks=True):
+        self.p = icd or Icd()
         (self.carrier, self.owner, self.kind, self.definitions, self.game,
          self.mission, self.mover, self.passenger, self.nav,
          self.controller, self.pool) = (HEAP + i * 0x10000 for i in range(11))
+        if game is not None:
+            self.game = game
         self.requests = []
         self.effects = 0
         self.parked = False
         self.placementResult = placement_result
         self.realMissionRemoval = real_mission_removal
         self.placementCalls = []
+        self._insideDispatcher = False
         self._nextController = self.controller
         self._controllerAllocations = []
+        self._baseAllocator = self.p.hooks.get(0x4EB9E0)
 
         def put(address, value):
             self.p.uc.mem_write(address, struct.pack('<I', value & 0xffffffff))
@@ -41,6 +46,8 @@ class SurfaceUnload:
         self.put, self.get, self.byte = put, get, byte
 
         def allocate(_uc, _sp):
+            if not self._insideDispatcher and self._baseAllocator is not None:
+                return self._baseAllocator(_uc, _sp)
             # A retry can replace an earlier circle controller. Keep each
             # allocation distinct so destroying the previous object cannot
             # reset the new object's vtable through an aliased fixture pointer.
@@ -98,7 +105,8 @@ class SurfaceUnload:
         if not self.realMissionRemoval:
             hooks[0x4D6AD0] = lambda _uc, _sp: (2, 0)
         self.p.hooks.update(hooks)
-        self.p.freeze_hooks()
+        if freeze_hooks:
+            self.p.freeze_hooks()
 
         put(0x62D55C, self.game)
         put(0x62DB84, self.definitions)
@@ -153,7 +161,11 @@ class SurfaceUnload:
     def dispatch(self, tick):
         self.put(self.game + 0x19F44, tick)
         self.effects = 0
-        _, error = self.p.call(0x4D8450, (self.carrier,))
+        self._insideDispatcher = True
+        try:
+            _, error = self.p.call(0x4D8450, (self.carrier,))
+        finally:
+            self._insideDispatcher = False
         if error:
             raise RuntimeError(error)
         active = self.get(self.carrier + 0x60) == self.mission

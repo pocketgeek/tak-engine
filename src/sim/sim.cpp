@@ -5283,6 +5283,7 @@ bool World::featureAliveAt(float x, float z) const {
 void World::swapFeature(Feature& f, int newType) {
     bumpFeatGen();   // burnt-stage swap (or removal): art changes
     f.burn = 0;
+    f.burnSequence = 0;
     f.dmg = 0;
     const int cx = f.x.floorInt() / 16 - f.fx / 2;
     const int cz = f.z.floorInt() / 16 - f.fz / 2;
@@ -5315,6 +5316,7 @@ void World::igniteFeature(Feature& f) {
                      ft.name.c_str(), f.x.toFloat(), f.z.toFloat(), ft.sparkTicks);
     f.burn = 1;
     f.burnStarted = tickCounter_;
+    f.burnSequence = ++burnSequence_;
     bumpFeatGen();   // ignition edge: flame overlay + smoke start
     // Retail spread timer: sparktime30/2 + rand(sparktime30/2), one LCG draw.
     int half = std::max(ft.sparkTicks / 2, 1);
@@ -7223,6 +7225,7 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
 }
 
 void World::notifyUnitScript(Unit& u,const char* name) {
+    if (std::strcmp(name,"BeginFlight")==0) ++u.flightBeginCallbackSerial;
     auto it=unitScripts_.find(u.id);
     if (it==unitScripts_.end()) return;
     auto& state=it->second;

@@ -3,6 +3,7 @@
 #include "client/gameview.h"
 #include "client/shadowmask.h"
 #include "client/retailfeatureclock.h"
+#include "client/retailmovementcallbacks.h"
 #include "client/runtimesettings.h"
 #include <cmath>
 #include <cstdlib>
@@ -1149,11 +1150,13 @@
         }
         for(auto it=featureSmokeOwners_.begin();it!=featureSmokeOwners_.end();) {
             const auto* feature=world_.feature(it->first);
-            if(!feature || !feature->alive || !feature->burn || feature->burnStarted!=it->second) {
+            if(!feature || !feature->alive || !feature->burn ||
+               feature->burnStarted!=it->second.burnStarted ||
+               feature->burnSequence!=it->second.activationSequence) {
                 smoke.removedFeatures.push_back(it->first);it=featureSmokeOwners_.erase(it);
             } else ++it;
         }
-        if(smoke.tick%3==0)for(const auto& feature:world_.features()) {
+        for(const auto& feature:world_.features()) {
             const auto bodyAge=tak::retailFeatureSmokeAge(smoke.tick,feature.burnStarted);
             if(!feature.alive || !feature.burn || feature.type<0 || !bodyAge)continue;
             const auto& map=mapView_.map();
@@ -1164,9 +1167,10 @@
                 });
             smoke.features.push_back({feature.id,world_.featureTypes()[size_t(feature.type)].name,
                 {x,std::bit_cast<int32_t>(uint32_t(height)<<16),z},
-                *bodyAge});
-            featureSmokeOwners_[feature.id]=feature.burnStarted;
+                *bodyAge,feature.burnSequence,smoke.tick%3==0});
+            featureSmokeOwners_[feature.id]={feature.burnStarted,feature.burnSequence};
         }
+        tak::retailOrderFeatureSmokeNewestFirst(smoke.features);
         for(const auto& event:world_.scriptEmissions()) {
             if(!(event.code>=2 && event.code<=5) && event.code!=257 && event.code!=258 && event.code!=265 &&
                (event.code<260 || event.code>264))continue;
@@ -1852,7 +1856,8 @@
                     // which drives this exact sequence through the real Vm. No reset()
                     // -- the loops must keep running.
                     tak::updateRetailFlightAnimation(a.flightAnimation,air,
-                        u.flightLandingCallbackSerial,u.type->canTransport,[&](auto call) {
+                        u.flightBeginCallbackSerial,u.flightLandingCallbackSerial,
+                        u.type->canTransport,[&](auto call) {
                             switch (call) {
                                 case tak::RetailFlightAnimationCall::BeginFlight:
                                     a.vm->start("BeginFlight");
@@ -1873,44 +1878,19 @@
             }
             // Every shipped walker has a Create-owned movement controller.
             // GET 29/28/34 drives its gait without resetting concurrent scripts.
-            // 4db350 drives all mover scripts, including ships and airships.
-            // Turning alone is tier 1; a hovering, stationary airship is tier 0.
-            if (a.moveRate!=u.animationMoveRate) {
-                a.moveRate=u.animationMoveRate;
-                a.vm->start("MoveRate", {int32_t(a.moveRate)});
-            }
-            // 4dc600 reports the surface/flight state after the mover. Ground
-            // and water states matter to wakes/effects too; landed is not a
-            // blanket zero. Preserve the native state-retaining depth band.
-            if (a.occupancy!=u.animationOccupancy) {
-                a.occupancy=u.animationOccupancy;
-                a.vm->start("setSFXoccupy", {int32_t(a.occupancy)});
-            }
-            // Turn-in-place / steering trim: retail's TurnDirection(deg) engine callin
-            // (icd 0x4d9550). Each tick the mover turns, retail converts the tick's
-            // requested turn to SIGNED DEGREES (the internal word-angle delta / 182 =
-            // 65536/360) and calls TurnDirection ONLY when the turn STATE changes --
-            // starts, stops, or reverses (it compares the sign against a per-unit
-            // remembered value at unit+0x26). The script stashes the arg in a static
-            // that the unit's Create ambient reads to lean the body / trim the
-            // rudder+sail / drive the turn-in-place gait. 116 of 187 shipped unit COBs
-            // define it. GET 33 instead normalizes the applied turn to a percentage.
-            // No reset() -- start() adds a thread and the
-            // script SIGNALs its own prior instance dead.
-            if (a.hasTurnDir) {
-                // The REQUESTED turn (want - heading, unclamped BAM) the sim recorded
-                // this tick -- NOT the applied heading delta, which retail also declines
-                // to use (0x4d9593 converts the original arg, not the clamped rotation
-                // stored into mover+0x24). A heading delta truncates to zero for a
-                // slow-turning ship even mid-turn, and understates the magnitude that
-                // units like aratrans scale their rudder/sail by.
-                int deg = u.turnReqBam / 182;                // BAM->degrees, retail's /182, truncating
-                int sign = (deg > 0) - (deg < 0);
-                if (sign != a.turnSign) {
-                    a.vm->start("TurnDirection", {deg});
-                    a.turnSign = sign;
-                }
-            }
+            // Native 4dc800's common tail receives TurnDirection during the
+            // mover, then MoveRate (4db350), then setSFXoccupy (4dc600). All
+            // three can signal COB threads, so keep that order on coincident
+            // transitions for both ground and flight movers.
+            // TurnDirection uses the REQUESTED turn (want - heading, unclamped
+            // BAM), converted with retail's truncating /182. Retail notifies only
+            // when its turn state changes sign, including the stop transition.
+            const int turnDegrees=u.turnReqBam/182;
+            tak::updateRetailMovementAnimationCallbacks(a.hasTurnDir,turnDegrees,a.turnSign,
+                u.animationMoveRate,a.moveRate,u.animationOccupancy,a.occupancy,
+                [&](int degrees) { a.vm->start("TurnDirection",{degrees}); },
+                [&](uint32_t rate) { a.vm->start("MoveRate",{int32_t(rate)}); },
+                [&](uint32_t surface) { a.vm->start("setSFXoccupy",{int32_t(surface)}); });
             // The simulation owns readiness and callback order. Do not recompute
             // aim from interpolated render poses or a separate display handshake.
             if (newTick_) for (unsigned i=0;i<u.weaponAnimations.count;++i) {
@@ -2333,31 +2313,37 @@
             smokeTick_=tick.tick;
             for(int owner:tick.removedOwners) {smokeSprites_.erase(owner);damageFlames_.erase(owner);pointParticles_.erase(owner);}
             for(int id:tick.removedFeatures)featureSmokeSprites_.erase(id);
-            for(auto& [id,sprites]:featureSmokeSprites_)
+            const auto updateFeatureSmoke=[&](const FeatureSmokeEmission& event) {
+                const auto found=featureSmokeSprites_.find(event.id);
+                if(found==featureSmokeSprites_.end())return;
+                auto& sprites=found->second;
                 std::erase_if(sprites,[&](auto& sprite) {
                     return !sprite.particle.tick(tick.windX,tick.windZ,8155,random);
                 });
-            for(const auto& event:tick.features) {
+                if(sprites.empty())featureSmokeSprites_.erase(found);
+            };
+            const auto emitFeatureSmoke=[&](const FeatureSmokeEmission& event) {
                 const auto definition=featureDefs_.find(event.type);
-                if(definition==featureDefs_.end())continue;
+                if(definition==featureDefs_.end())return;
                 const auto* body=featureArtFor(definition->second,"seqnameburn","seqnameburnshad");
-                if(!body || body->fgeom.empty() || body->totalTicks<=0)continue;
+                if(!body || body->fgeom.empty() || body->totalTicks<=0)return;
                 const int age=int(event.age%uint32_t(body->totalTicks));
                 const size_t index=size_t(std::upper_bound(body->tickEnd.begin(),body->tickEnd.end(),age)-body->tickEnd.begin());
-                if(index>=body->fgeom.size())continue;
+                if(index>=body->fgeom.size())return;
                 const auto& frame=body->fgeom[index];
                 const int dx=frame.w/4+int(uint64_t(random())*unsigned(frame.w/2)/32768)-frame.xoff;
                 const int dy=2*(frame.yoff-int(uint64_t(random())*unsigned(frame.h/2)/32768)-frame.h/4);
                 auto& sprites=featureSmokeSprites_[event.id];
-                if(sprites.size()>=10)continue;
+                if(sprites.size()>=10)return;
                 const auto* art=effectFor("bigsmoke");
-                if(!art || art->frames.size()<3)continue;
+                if(!art || art->frames.size()<3)return;
                 tak::RetailSmokeParticle particle;particle.position=event.position;
                 particle.position[0]=std::bit_cast<int32_t>(uint32_t(particle.position[0])+(uint32_t(dx)<<16));
                 particle.position[1]=std::bit_cast<int32_t>(uint32_t(particle.position[1])+(uint32_t(dy)<<16));
                 particle.frameLimit=2+uint32_t(uint64_t(random())*(art->frames.size()-3)/32768);
                 sprites.push_back({particle,art});
-            }
+            };
+            tak::retailStepFeatureSmoke(tick.features,updateFeatureSmoke,emitFeatureSmoke);
             const auto& terrain=mapView_.map();
             for(auto it=pointParticles_.begin();it!=pointParticles_.end();) {
                 std::erase_if(it->second,[&](auto& particle) {

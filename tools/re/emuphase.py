@@ -154,6 +154,45 @@ class Phase:
         uc.mem_write(mv + 4, struct.pack("<I", GRID))
         uc.mem_write(OBJ + 0x6c, struct.pack("<I", GRID))
 
+    def attach_live_request(self, unit, mover, nav, handle, start, footprint):
+        """Attach the retail search object to an existing unit/nav/controller.
+
+        Unlike plant_request(), this preserves the caller's live mission and
+        circle-controller allocation. It is used when a native dispatcher
+        creates the request and the fixture then drives retail's search kernel
+        at that controlled scheduler boundary.
+        """
+        uc = self.uc
+        W, H = self.W, self.H
+        GRID = ARENA + 0x0F00000
+        GMAP = ARENA + 0x0F10000
+        uc.mem_write(GRID, b"\0" * 0x400)
+        uc.mem_write(GRID + 4, struct.pack("<hh", *footprint))
+        uc.mem_write(GRID + 0x340, struct.pack("<I", W))
+        uc.mem_write(GRID + 0x344, struct.pack("<I", H))
+        uc.mem_write(GRID + 0x348, struct.pack("<I", GMAP))
+        rows8 = (H + 7) // 8
+        import array as _a
+        words = _a.array("I", [0x66666666] * (W * rows8))
+        uc.mem_write(GMAP, words.tobytes())
+        self.GRID, self.GMAP, self.rows8 = GRID, GMAP, rows8
+        for (bx, bz) in self.blocked:
+            self._set_grade(bx, bz, 0)
+
+        # The caller's controller has already been built by 0x4e2500 and its
+        # +4 field already identifies the original unload mission. Keep that
+        # identity; only clear the navigator's old route storage.
+        uc.mem_write(nav, struct.pack("<III", 0x5f2a24, handle, unit))
+        uc.mem_write(nav + 0x0c, bytes(0x109))
+        uc.mem_write(mover, struct.pack("<II", nav, GRID))
+        uc.mem_write(OBJ + 0x58, struct.pack("<I", unit))
+        uc.mem_write(OBJ + 0x64, struct.pack("<I", nav))
+        uc.mem_write(OBJ + 0x68, struct.pack("<I", handle))
+        uc.mem_write(OBJ + 0x6c, struct.pack("<I", GRID))
+        uc.mem_write(unit + 0x74, struct.pack("<hh", *start))
+        uc.mem_write(unit + 0x78, struct.pack("<hh", *footprint))
+        self.HANDLE, self.NAV, self.GOAL = handle, nav, start
+
     def _set_grade(self, x, z, g):
         idx = self.W * (z >> 3) + x
         addr = self.GMAP + idx * 4

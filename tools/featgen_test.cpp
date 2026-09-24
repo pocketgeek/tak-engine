@@ -28,6 +28,9 @@ struct RetailReplayProbe {
     static void visualIgnition(World& world,int id,uint32_t tick) {
         world.features_.at(world.featureIdx_.at(id)).burnStarted=tick;
     }
+    static void visualBurnSequence(World& world,int id,uint64_t sequence) {
+        world.features_.at(world.featureIdx_.at(id)).burnSequence=sequence;
+    }
     static int grade(const World& world,int x,int z) { return world.mapFeatureGrade(x,z); }
     static void cache(World& world,int id) { world.prepareSearchGrade(id,false); }
     static int cached(const World& world,int x,int z) {
@@ -95,8 +98,9 @@ int main() {
         for(int i=0;i<17;++i)fire.tick(1.0f/30);
         const auto generation=fire.featGeneration();
         RetailReplayProbe::ignite(fire,77);
-        check(fire.feature(77)->burnStarted==17 && fire.featGeneration()!=generation,
-              "ignition preserves the actual simulation tick for late viewers");
+        check(fire.feature(77)->burnStarted==17 && fire.feature(77)->burnSequence==1 &&
+              fire.featGeneration()!=generation,
+              "ignition preserves its tick and activation order for late viewers");
         for(int i=0;i<9;++i)fire.tick(1.0f/30);
         RetailReplayProbe::ignite(fire,77);
         check(fire.feature(77)->burnStarted==17,
@@ -104,6 +108,8 @@ int main() {
         const auto hash=fire.stateHash();
         RetailReplayProbe::visualIgnition(fire,77,1000);
         check(fire.stateHash()==hash,"visual ignition timestamp does not affect lockstep hash");
+        RetailReplayProbe::visualBurnSequence(fire,77,1000);
+        check(fire.stateHash()==hash,"visual burn activation order does not affect lockstep hash");
         for(int i=0;i<20;++i)fire.tick(1.0f/30);
         check(fire.feature(77)->alive && fire.feature(77)->burnLeft==1,
               "burn remains present through the final authored display tick");
@@ -121,10 +127,14 @@ int main() {
         fire.addFeature(85,88,88,10,5,1,1,false,0);
         fire.addFeature(86,104,88,10,5,1,1,false,0);
         RetailReplayProbe::ignite(fire,85);
+        const auto firstOrder=fire.feature(85)->burnSequence;
         fire.tick(1.0f/30);
         check(bool(fire.feature(86)->burn)==(lifetime>1),
               lifetime==1 ? "expiry suppresses a simultaneous spark into the adjacent tree"
                           : "a spark before expiry still ignites the adjacent tree");
+        if(lifetime>1)
+            check(firstOrder<fire.feature(86)->burnSequence,
+                  "spread ignition receives a newer active-list order than its source");
     }
 
     World w;

@@ -20,48 +20,156 @@
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
 #include "client/renderframe.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <map>
 #include <tuple>
+#include <vector>
 
 int main(int argc,char** argv) {
+    if(argc==1) {
+        struct BurnEvent { int id; uint64_t activationSequence; bool emit; };
+        std::vector<BurnEvent> events{{13,1,true},{2,2,true},{9,3,true}};
+        tak::retailOrderFeatureSmokeNewestFirst(events);
+        if(events.size()!=3 || events[0].id!=9 || events[1].id!=2 || events[2].id!=13) {
+            std::fprintf(stderr,"feature smoke order helper did not return 9,2,13 newest-first\n");return 1;
+        }
+
+        std::map<int,std::vector<tak::RetailSmokeParticle>> particles;
+        auto seedParticle=[&](int id,uint32_t countdown,uint32_t frameLimit) {
+            tak::RetailSmokeParticle particle;
+            particle.position={id*65536,id*2*65536,-id*65536};
+            particle.countdown=countdown;particle.frameLimit=frameLimit;
+            particles[id].push_back(particle);
+        };
+        seedParticle(9,1,1);  // expires this update, after consuming its countdown RNG draw
+        seedParticle(2,2,20); // survives without a random draw
+        seedParticle(13,1,20);// consumes a draw and survives
+
+        std::vector<std::pair<int,int>> order;
+        std::vector<std::pair<int,uint32_t>> draws;
+        int owner=0;
+        uint32_t randomState=0;
+        const auto random=[&] {
+            const auto value=++randomState;draws.emplace_back(owner,value);return value;
+        };
+        std::map<int,std::vector<std::array<int32_t,3>>> emittedPositions;
+        std::map<int,std::vector<uint32_t>> emittedFrameLimits;
+        const auto update=[&](const BurnEvent& event) {
+            owner=event.id;order.emplace_back(0,event.id);
+            auto& list=particles[event.id];
+            std::erase_if(list,[&](auto& particle) {
+                return !particle.tick(100,-50,8155,random);
+            });
+        };
+        const auto emit=[&](const BurnEvent& event) {
+            owner=event.id;order.emplace_back(1,event.id);
+            std::array<uint32_t,3> rolls{};
+            for(auto& roll:rolls)roll=random();
+            tak::RetailSmokeParticle particle;
+            particle.position={event.id*65536,event.id*2*65536,-event.id*65536};
+            particle.frameLimit=rolls[2];
+            emittedPositions[event.id].push_back(particle.position);
+            emittedFrameLimits[event.id].push_back(particle.frameLimit);
+            particles[event.id].push_back(particle);
+        };
+        tak::retailStepFeatureSmoke(events,update,emit);
+        const std::vector<std::pair<int,int>> expectedOrder{
+            {0,9},{1,9},{0,2},{1,2},{0,13},{1,13}};
+        const std::vector<std::pair<int,uint32_t>> expectedDraws{
+            {9,1},{9,2},{9,3},{9,4},{2,5},{2,6},{2,7},
+            {13,8},{13,9},{13,10},{13,11}};
+        if(order!=expectedOrder || draws!=expectedDraws || particles[9].size()!=1 ||
+           particles[2].size()!=2 || particles[13].size()!=2 ||
+           emittedFrameLimits[9]!=std::vector<uint32_t>{4} ||
+           emittedFrameLimits[2]!=std::vector<uint32_t>{7} ||
+           emittedFrameLimits[13]!=std::vector<uint32_t>{11}) {
+            std::fprintf(stderr,"feature smoke interleave/expiration regression failed: order=%zu draws=%zu counts=%zu,%zu,%zu limits=%u,%u,%u\n",
+                order.size(),draws.size(),particles[9].size(),particles[2].size(),particles[13].size(),
+                emittedFrameLimits[9].empty()?0:emittedFrameLimits[9].front(),
+                emittedFrameLimits[2].empty()?0:emittedFrameLimits[2].front(),
+                emittedFrameLimits[13].empty()?0:emittedFrameLimits[13].front());return 1;
+        }
+        for(const auto& [id,positions]:emittedPositions) {
+            const auto& created=particles.at(id).back();
+            if(positions.size()!=1 || created.position!=positions.front() || created.countdown!=8) {
+                std::fprintf(stderr,"feature smoke new particle was advanced in its emission tick for feature %d\n",id);return 1;
+            }
+        }
+
+        for(auto& event:events)event.emit=false;
+        order.clear();
+        tak::retailStepFeatureSmoke(events,update,emit);
+        if(order!=std::vector<std::pair<int,int>>{{0,9},{0,2},{0,13}} ||
+           emittedFrameLimits[9].size()!=1 || emittedFrameLimits[2].size()!=1 ||
+           emittedFrameLimits[13].size()!=1) {
+            std::fprintf(stderr,"feature smoke off-cadence tick emitted particles\n");return 1;
+        }
+        std::puts("PASS: feature smoke burns run newest-first, update then emit per burn, and retire expired particles before emission");
+    }
     {
         using Call=tak::RetailFlightAnimationCall;
         tak::RetailFlightAnimationState state;
         std::vector<Call> calls;
-        const auto update=[&](bool air,uint32_t serial,bool transport=false) {
+        const auto update=[&](bool air,uint32_t flightSerial,uint32_t landingSerial,
+                              bool transport=false) {
             calls.clear();
-            tak::updateRetailFlightAnimation(state,air,serial,transport,
+            tak::updateRetailFlightAnimation(state,air,flightSerial,landingSerial,transport,
                 [&](Call call){calls.push_back(call);});
         };
-        update(true,0);
+        update(true,0,0);
         if(calls!=std::vector<Call>{Call::BeginFlight})return 1;
-        update(true,1,true);
+        update(true,0,1,true);
         if(calls!=std::vector<Call>{Call::EndTransport,Call::BeginLanding})return 1;
-        update(true,1,true);
+        update(true,0,1,true);
         if(!calls.empty())return 1;
-        update(false,1,true);
+        update(false,0,1,true);
         if(!calls.empty())return 1;
-        update(true,1,true);
+        update(true,0,1,true);
         if(calls!=std::vector<Call>{Call::BeginFlight})return 1;
         tak::RetailFlightAnimationState skipped;
         calls.clear();
-        tak::updateRetailFlightAnimation(skipped,true,0,false,
+        tak::updateRetailFlightAnimation(skipped,true,0,0,false,
             [&](Call call){calls.push_back(call);});
         calls.clear();
-        tak::updateRetailFlightAnimation(skipped,false,1,true,
+        tak::updateRetailFlightAnimation(skipped,false,0,1,true,
             [&](Call call){calls.push_back(call);});
         if(calls!=std::vector<Call>{Call::EndTransport,Call::BeginLanding})return 1;
         tak::RetailFlightAnimationState fallback;
         calls.clear();
-        tak::updateRetailFlightAnimation(fallback,true,0,false,
+        tak::updateRetailFlightAnimation(fallback,true,0,0,false,
             [&](Call call){calls.push_back(call);});
         calls.clear();
-        tak::updateRetailFlightAnimation(fallback,false,0,false,
+        tak::updateRetailFlightAnimation(fallback,false,0,0,false,
             [&](Call call){calls.push_back(call);});
         if(calls!=std::vector<Call>{Call::BeginLanding})return 1;
-        std::puts("PASS: landing callbacks start at site acceptance, order transport first, and do not repeat at touchdown");
+        tak::RetailFlightAnimationState landedAttack;
+        calls.clear();
+        tak::updateRetailFlightAnimation(landedAttack,false,1,0,false,
+            [&](Call call){calls.push_back(call);});
+        if(calls!=std::vector<Call>{Call::BeginFlight})return 1;
+        calls.clear();
+        tak::updateRetailFlightAnimation(landedAttack,true,1,0,false,
+            [&](Call call){calls.push_back(call);});
+        if(!calls.empty())return 1;
+        tak::RetailFlightAnimationState takeoff;
+        calls.clear();
+        tak::updateRetailFlightAnimation(takeoff,true,1,0,false,
+            [&](Call call){calls.push_back(call);});
+        if(calls!=std::vector<Call>{Call::BeginFlight})return 1;
+        tak::RetailFlightAnimationState multiple;
+        calls.clear();
+        tak::updateRetailFlightAnimation(multiple,false,2,0,false,
+            [&](Call call){calls.push_back(call);});
+        if(calls!=std::vector<Call>{Call::BeginFlight,Call::BeginFlight})return 1;
+        calls.clear();
+        tak::updateRetailFlightAnimation(multiple,true,2,0,false,
+            [&](Call call){calls.push_back(call);});
+        if(!calls.empty())return 1;
+        if(argc==1)
+            std::puts("PASS: flight/landing call-ins are mirrored once and suppress duplicate mode-transition fallbacks");
     }
     if(argc==2 && std::strcmp(argv[1],"--smoke-viewport")==0) {
         float x,y,width,height;
@@ -153,7 +261,8 @@ int main(int argc,char** argv) {
             tak::RetailDebrisMotion state;
             const bool created=tak::RetailDebrisMotion::launch(flags,
                 [&](unsigned bound) {const unsigned value=values[draws++];
-                    if(value>=bound)std::abort();return value;},state);
+                    if(value>=bound)std::abort();
+                    return value;},state);
             std::printf("%d %u %d %d %d %u %u\n",int(created),draws,
                 state.velocity[0],state.velocity[1],state.velocity[2],state.remaining,state.flags);
         }

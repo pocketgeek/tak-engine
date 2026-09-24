@@ -3197,6 +3197,12 @@ private:
         std::string type;
         std::array<int32_t,3> position{};
         uint32_t age=0;
+        uint64_t activationSequence=0;
+        bool emit=true;
+    };
+    struct FeatureSmokeOwner {
+        uint32_t burnStarted=0;
+        uint64_t activationSequence=0;
     };
     struct SmokeTick {
         uint32_t tick=0;
@@ -3208,7 +3214,7 @@ private:
     };
     struct SmokeSprite { tak::RetailSmokeParticle particle; const EffectAnim* art=nullptr; };
     std::deque<SmokeTick> smokeTickQueue_; // guarded by hitQueueMutex_
-    std::map<int,uint32_t> featureSmokeOwners_;
+    std::map<int,FeatureSmokeOwner> featureSmokeOwners_;
     std::map<int,std::vector<SmokeSprite>> featureSmokeSprites_;
     std::set<int> smokeOwners_; // simulation-thread emission owners
     uint32_t smokeCaptureTick_=0;

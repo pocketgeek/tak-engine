@@ -3,6 +3,12 @@
 This audit uses the locally installed `KINGDOMS.icd` and shipped unit scripts.
 No retail executable bytes or assets are included in the repository.
 
+Animation parity means accurate retail behavior: callback order, selected pose
+and state, transitions, motion and relative placement, and playback/lifecycle
+timing. It does not require pixel-identical rendering. Visual captures are
+useful for checking representative behavior; pixel comparisons are diagnostic,
+not a completion gate.
+
 ## Current completion status
 
 The original air/sea transport and all-animation goal remains incomplete. The
@@ -39,14 +45,20 @@ implementation descriptions. Current open gates are:
   native and World agree on the remote `(400,160)` retry start, original
   `(500,500)` landing site, route, and circle radius. Their physical mover state
   matches for 1,000 steps, including five route transitions, circle arrival at
-  step 317, cargo release at 334, and mission retirement at 335. Dispatcher
-  retry and route/mover runs are separate emulator fixtures joined by those
-  exact state assertions, not one integrated scheduler trace. Crowded-shore and
-  live-map transport interactions remain open.
+  step 317, cargo release at 334, and mission retirement at 335. The integrated
+  sea retry fixture now keeps one native mission, carrier, passenger, mover,
+  navigator and controller through retry, retail route search and physical
+  movement; arrival detaches the controller at step 317, cargo releases at 334,
+  and the real mission-removal routine retires it at 335. Scheduler request
+  events and World-produced terrain grades are controlled harness inputs, so
+  crowded-shore and live-map transport interactions remain open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
-  input. Special weapon cases, missing-script behavior, range/visibility-loss
-  timing, and full movement/flight callback phase comparisons remain open.
+  input. The native mover callback tail and display helper now agree on the
+  coincident `TurnDirection → MoveRate → setSFXoccupy` order, and the display
+  VM receives `BeginFlight` call-ins from the simulation snapshot. Special
+  weapon cases, missing-script behavior, range/visibility-loss timing, and
+  full movement/flight callback phase comparisons remain open.
 - Cursors: authored frame timing, software/hardware rendering, enemy weapon-range
   feedback, and the native Revive, Load, and FindSite selector gates are covered.
   Native mode 3's Airstrike gates and active weapon selection are measured. The
@@ -68,8 +80,10 @@ implementation descriptions. Current open gates are:
   matches the World feature-damage regression. Remaining work includes other
   effect and attached-emitter lifecycles, debris details, shared cosmetic
   RNG/tick phase, collision/lifetime comparisons outside the covered projectile
-  paths, and paired Glide pixels for projectile, feature-fire and detached
-  effects.
+  paths, and representative checks that live effects use the right art family,
+  placement and lifetime. Feature smoke now follows retail's newest-first burn
+  order and updates each burn's existing particles before that burn emits.
+  Pixel-identical Glide output is not required.
 - Overall animation parity: verify engine-driven callback timelines and final
   rendered behavior across the roster. VM/piece-transform oracle coverage and
   the current smoke viewport fix do not by themselves prove that requirement.
@@ -257,9 +271,10 @@ The broad original request still requires stronger evidence in these areas:
 - Actual game-driven animation callback ordering and arguments across the roster;
   controlled callback schedules establish VM parity, not the correctness of every
   engine call site.
-- Rendered animation/effect behavior beyond piece transforms: blending, palette,
-  playback rate, model attachment and state transitions. A few screenshots are
-  smoke tests, not a full retail visual comparison.
+- Animation/effect behavior beyond piece transforms: playback rate, model
+  attachment, state transitions, and the correct effect class, placement and
+  lifetime. A few screenshots are smoke tests, so representative behavior still
+  needs review; pixel-identical output is not required.
 
 These items remain part of the goal, not excluded from its definition of success.
 
@@ -7613,8 +7628,8 @@ The paired route/mover fixture starts from that exact remote position and landin
 site. Its composed dispatcher and physical traces agree on the route and radius;
 the mover matches for 1,000 physical steps, reaching the replacement circle at
 step 317, releasing cargo at 334 and retiring the mission at 335. The dispatcher
-and mover remain separate emulator fixtures joined by exact state assertions,
-not one integrated live scheduler run. Crowded-shore interactions and live-map
+and mover were separate emulator fixtures at that stage. The later integrated
+same-object trace is recorded below. Crowded-shore interactions and live-map
 transport tests remain open.
 
 ### Airstrike HUD and ballistic environmental collision integration (2026-09-23)
@@ -7634,6 +7649,39 @@ the same XYZ trajectory. The native Arabow feature-hit probe confirms one
 environmental impact dispatch with no unit target; the World regression applies
 the authored damage to the blocking feature without reaching its selected unit.
 Native projectile, cursor and retry-route probes all pass. Release, Debug and
-optimized builds pass all 46 CTest cases each (138 passing executions). The full
-screen-by-screen animation and Glide pixel comparisons remain open; no retail
-game GUI was launched for this verification.
+optimized builds pass all 47 CTest cases each (141 passing executions). A
+representative review of the complete animation behavior remains open; pixel
+identity is not required. No retail game GUI was launched for this verification.
+
+### Movement callbacks, flight events and integrated sea retry (2026-09-23)
+
+Retail `0x4dc800` dispatches `TurnDirection` during the mover, then the common
+tail calls `MoveRate` and `setSFXoccupy`. The display path now preserves that
+order when all three values change together. `check_movement_callback_order.py`
+captures the native sequence `TurnDirection(-135)`, `MoveRate(1)`,
+`setSFXoccupy(5)` and compares it with the shared client callback helper; a
+second unchanged tick is silent. The helper CTest also checks same-sign turn
+changes, reversal and stop.
+
+`BeginFlight` call-ins now carry a display-only serial through the render
+snapshot. The display VM receives every call-in, including one that occurs while
+the flyer is still landed, and avoids duplicating the later airborne-mode
+fallback. A simulation test confirms flight-move dispatch increments the serial
+without changing lockstep state; the display test covers pre-takeoff delivery,
+same-tick takeoff deduplication and multiple call-ins in one snapshot. The
+landing probe continues to pass all 2,048 native stage, callback and RNG cases.
+
+The sea retry trace now retains one live native carrier, passenger, mission,
+mover, navigator and replacement controller across retry, retail route search,
+and physical movement. Against the World route it matches 1,000 steps, including
+five route-point transitions, controller detach at step 317, cargo release at
+334 and mission retirement at 335. The broader sea-route suite also passes all
+connected-water variants and the disconnected partial route. These tests still
+inject scheduler request events and use World-produced grade data; they do not
+close crowded-shore or live-map interaction coverage.
+
+The full 47-case CTest suites pass in Release, Debug and optimized builds.
+After the final test-only edits, the affected `retail_motion` and `retail_visual`
+tests also pass in all three configurations. Focused feature-smoke,
+movement-animation, native mover-callback and landing-callback probes pass. The
+retail game GUI was not launched.

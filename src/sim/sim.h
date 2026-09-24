@@ -671,6 +671,7 @@ struct Unit {
     bool retainedFlightControllerActive=false;
     int flightSectorX=0,flightSectorZ=0; // center sector at the last footprint relocation
     uint32_t scriptOccupancy=0; // last setSFXoccupy notification (unit +100)
+    uint32_t flightBeginCallbackSerial=0; // display-only BeginFlight call-in edge
     uint32_t flightLandingCallbackSerial=0; // display-only edge; excluded from lockstep hash
     std::optional<RetailLandingState> landing;
     // Fixed, not float: retail keeps no float in its unit state (docs/retail-engine.md).
@@ -935,10 +936,11 @@ struct Feature {
     bool  alive = true;    // false once fully reclaimed (decal disappears)
     // Burning (retail mechanic, icd 0x494b40/0x495110/0x495300 -- ours runs
     // fully deterministic in the lockstep sim instead of retail's host-authority
-    // event scheme). All hashed.
+    // event scheme). Active/timer state is hashed; display timestamp/order is not.
     int   type = -1;       // index into World's FeatType table (-1 = untyped)
     uint8_t burn = 0;      // 1 = burning
     uint32_t burnStarted = 0; // cosmetic ignition timestamp; excluded from stateHash
+    uint64_t burnSequence = 0; // cosmetic activation order; excluded from stateHash
     // INT, because both sides of the comparison are: weapon damage is readInt in
     // retail and so is a feature's `damage` (its hit points).
     int32_t dmg = 0;       // accumulated weapon damage (dies at FeatType.hp)
@@ -1393,7 +1395,9 @@ public:
     }
     // Drop all registered features (setupMatch rebuilds authoritatively -- the
     // client ctor may have pre-registered the launch map's via registerMapFeatures).
-    void clearFeatures() { features_.clear(); featureIdx_.clear(); clearFeatureTypes(); }
+    void clearFeatures() {
+        features_.clear(); featureIdx_.clear(); clearFeatureTypes(); burnSequence_=0;
+    }
     const std::vector<FeatType>& featureTypes() const { return featTypes_; }
     bool featureAliveAt(float x, float z) const;          // viewer decal sync
     // Order a mobile builder to reclaim feature `featureId` (queue = append to its
@@ -1477,6 +1481,7 @@ public:
         transportEffects_.clear();
         scriptEmissions_.clear();
         features_.clear();
+        burnSequence_ = 0;
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();
         explorationHeights_.clear();navigationExplored_.clear();
         restoredNavigationViewer_=-1;
@@ -2274,6 +2279,7 @@ private:
     int unitCap_ = 0;                 // per-player live-unit limit (0 = unlimited)
     int64_t godAppearTick_ = INT64_MAX;
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
+    uint64_t burnSequence_ = 0;  // display order for active feature burns; not lockstep state
     std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
     size_t benchCursor_ = 0;              // next unexecuted stage
     uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run

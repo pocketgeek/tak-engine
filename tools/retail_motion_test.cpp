@@ -597,6 +597,13 @@ int main(int argc, char** argv) {
               active.mission.stage==2 && active.mission.waitMask==0x701 && active.flightGoal &&
               active.flightGoal->radius>=80 && active.flightGoal->radius<=144,
               "initial flight move snaps to the body center and waits on its randomized radius");
+        check(world.unit(id)->flightBeginCallbackSerial==1,
+              "flight move dispatch exposes BeginFlight even without an authoritative script VM");
+        const auto hash=world.stateHash();
+        ++world.unit(id)->flightBeginCallbackSerial;
+        check(world.stateHash()==hash,
+              "display-only BeginFlight callback serial is excluded from lockstep state");
+        --world.unit(id)->flightBeginCallbackSerial;
         world.unit(id)->orders.front().mission.pending|=0x100;
         world.tick(1.0f/30.0f);
         check(world.unit(id)->orders.size()==2 && world.unit(id)->orders.front().patrol &&

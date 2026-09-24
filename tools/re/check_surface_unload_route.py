@@ -86,7 +86,9 @@ def raw_surface_heights(variant, width, height):
     return heights
 
 
-def check_variant(world_binary, variant, physical_steps):
+def check_variant(world_binary, variant, physical_steps, integrated_retry=False):
+    if integrated_retry and variant != 8:
+        raise ValueError('the integrated same-trip retry trace is the variant-8 water lane')
     physical_variant = variant in (0, 8)
     env = os.environ.copy()
     env['TAK_DUMP_GRADE_PLANE'] = '1'
@@ -135,8 +137,19 @@ def check_variant(world_binary, variant, physical_steps):
             world_points.setdefault(step, []).append((x, z))
 
     p = Phase(width, height)
-    unit = p.unit(sx - fx // 2, sz - fz // 2)
-    assert p.construct() is None
+    native = None
+    if integrated_retry:
+        from probe_transport_surface_unload_callbacks import SurfaceUnload
+        native = SurfaceUnload(
+            placement_result=lambda args, _call: int(args[4] == 1),
+            real_mission_removal=True, icd=p.icd, game=GS, freeze_hooks=False)
+        unit = native.carrier
+        mover = native.mover
+        type_address = native.kind
+        assert p.construct() is None
+    else:
+        unit = p.unit(sx - fx // 2, sz - fz // 2)
+        assert p.construct() is None
     requested_target = 1664 if variant == 4 else 500 if variant == 8 else 640
     start_pixel = (400, 160) if variant == 8 else (160, 160)
     start_x, start_z = transform_pixel(variant, *start_pixel)
@@ -145,20 +158,95 @@ def check_variant(world_binary, variant, physical_steps):
     # goal. This floor is asymmetric under a pixel-space mirror at cell edges.
     expected_goal = ((target_x - (fx - 1) * 8) // 16,
                      (target_z - (fz - 1) * 8) // 16)
-    p.plant_request(unit, (sx - fx // 2, sz - fz // 2), expected_goal)
-    mover = struct.unpack('<I', p.uc.mem_read(unit + 8, 4))[0]
-    p.uc.mem_write(unit + 0x68, struct.pack('<iii', start_x * 65536, 40 * 65536,
-                                           start_z * 65536))
-    p.uc.mem_write(unit + 0x78, struct.pack('<hh', fx, fz))
-    p.uc.mem_write(unit + 0x7e, struct.pack('<H', heading))
+    if integrated_retry:
+        mission_identity = native.mission
+        carrier_identity = native.carrier
+        passenger_identity = native.passenger
+        mover_identity = native.mover
+        nav_identity = native.nav
+        original_destination = bytes(p.uc.mem_read(mission_identity + 0x22, 12))
+        assert original_destination == struct.pack('<3i', 500 << 16, 0, 500 << 16)
+        # Keep the real GROUND_UNLOAD mission alive while the native arrival
+        # callback raises the moving-blocker retry. Its retained references are
+        # also needed if the real mission remover retires it after disembark.
+        p.uc.mem_write(native.kind + 0x126, struct.pack('<hh', fx, fz))
+        p.uc.mem_write(native.kind + 0x23E, struct.pack('<H', 150))
+        p.uc.mem_write(native.carrier + 0x78, struct.pack('<hh', fx, fz))
+        native.put(native.carrier + 0xC4, native.mission + 0x12)
+        native.put(native.passenger + 0xC4, native.mission + 0x12)
+        first = native.dispatch(1)
+        assert first[0:3] == (1, 1, 0x701), first
+        initial_controller = native.get(native.nav + 4)
+        assert initial_controller and native.get(initial_controller + 4) == mission_identity
+        events, detached, arrived = native.arrive_inside_goal()
+        assert events & 0x100 and detached and arrived[0:3] == (1, 2, 1), arrived
+        blocked = native.dispatch(3)
+        assert blocked[0:3] == (1, 3, 1), blocked
+        assert native.get(native.carrier + 0x60) == mission_identity
+        assert native.get(native.carrier + 0xAC) == passenger_identity
+        assert native.get(native.passenger + 0xA8) == carrier_identity
+        assert bytes(p.uc.mem_read(mission_identity + 0x22, 12)) == original_destination
+
+        # The original same-trip mission is now at stage 3. Move that same live
+        # carrier to the connected remote water lane, then let its own ten-tick
+        # retry replace the circle controller and issue the native path request.
+        native.put(native.carrier + 0x68, 400 << 16)
+        native.put(native.carrier + 0x6C, 0)
+        native.put(native.carrier + 0x70, 160 << 16)
+        native.placementResult = 1
+        for retry_tick in range(4, 15):
+            retry_row = native.dispatch(retry_tick)
+        assert retry_row[0:2] == (1, 1), retry_row
+        assert native.get(native.carrier + 0x60) == mission_identity
+        assert native.get(native.carrier + 0xAC) == passenger_identity
+        assert native.get(native.passenger + 0xA8) == carrier_identity
+        assert native.requests == [1, 0, 1], native.requests
+        assert len(native._controllerAllocations) == 2, native._controllerAllocations
+        old_controller, controller_identity = native._controllerAllocations
+        assert native.get(old_controller) == 0x5F28A4
+        assert native.get(native.nav + 4) == controller_identity
+        assert native.get(mission_identity + 0x6E) == controller_identity
+        assert native.get(controller_identity + 4) == mission_identity
+        assert native.controller_goal() == (0x5F28D8, expected_goal, 116), \
+            native.controller_goal()
+        position = tuple(struct.unpack('<3i', p.uc.mem_read(unit + 0x68, 12)))
+        assert position == (start_x << 16, 0, start_z << 16), position
+
+        # Match the route fixture's starting heading and physical Y seed without
+        # replacing the carrier, mission, passenger, or controller.
+        seed_x, seed_y, seed_z, seed_heading, seed_speed, seed_base, terrain_flags = world_seed
+        assert (position[0], position[2]) == (seed_x, seed_z)
+        assert terrain_flags == 0x1000 and seed_speed == 0
+        p.uc.mem_write(unit + 0x6C, struct.pack('<i', seed_y))
+        p.uc.mem_write(unit + 0x7E, struct.pack('<H', seed_heading))
+        p.uc.mem_write(unit + 0x78, struct.pack('<hh', fx, fz))
+        p.uc.mem_write(mover + 0x20, struct.pack('<i', seed_speed))
+        p.uc.mem_write(unit + 0x12B, struct.pack('<i', seed_base))
+        p.attach_live_request(unit, mover, nav_identity, controller_identity,
+                              (sx - fx // 2, sz - fz // 2), (fx, fz))
+        assert native.get(unit + 0x60) == mission_identity
+        assert native.get(unit + 8) == mover_identity
+        assert native.get(mover_identity) == nav_identity
+        assert native.get(nav_identity + 4) == controller_identity
+        assert native.get(nav_identity + 8) == unit
+        assert native.get(mission_identity + 0x6E) == controller_identity
+    else:
+        p.plant_request(unit, (sx - fx // 2, sz - fz // 2), expected_goal)
+        mover = struct.unpack('<I', p.uc.mem_read(unit + 8, 4))[0]
+        p.uc.mem_write(unit + 0x68, struct.pack('<iii', start_x * 65536, 40 * 65536,
+                                               start_z * 65536))
+        p.uc.mem_write(unit + 0x78, struct.pack('<hh', fx, fz))
+        p.uc.mem_write(unit + 0x7e, struct.pack('<H', heading))
+        type_address = TYPE
     p.uc.mem_write(mover + 0x36, struct.pack('<H', flags))
-    p.uc.mem_write(TYPE + 0x126, struct.pack('<hh', fx, fz))
-    p.uc.mem_write(TYPE + 0x18e, struct.pack('<H', turn))
-    p.uc.mem_write(TYPE + 0x172, struct.pack('<i', road))
-    p.uc.mem_write(TYPE + 0x260, struct.pack('<I', 0x80000))
-    p.uc.mem_write(TYPE + 0x16e, struct.pack('<i', water))
-    p.uc.mem_write(TYPE + 0x192, struct.pack('<hh', 10000, 13))
-    p.uc.mem_write(p.GRID + 4, struct.pack('<hh', fx, fz))
+    p.uc.mem_write(type_address + 0x126, struct.pack('<hh', fx, fz))
+    p.uc.mem_write(type_address + 0x18e, struct.pack('<H', turn))
+    p.uc.mem_write(type_address + 0x172, struct.pack('<i', road))
+    p.uc.mem_write(type_address + 0x260, struct.pack('<I', 0x80000))
+    p.uc.mem_write(type_address + 0x16e, struct.pack('<i', water))
+    p.uc.mem_write(type_address + 0x192, struct.pack('<hh', 10000, 13))
+    if not integrated_retry:
+        p.uc.mem_write(p.GRID + 4, struct.pack('<hh', fx, fz))
 
     query_count = 0
 
@@ -170,9 +258,10 @@ def check_variant(world_binary, variant, physical_steps):
         return 3, value
 
     p.icd.hooks[0x4139d0] = grade
-    _, error = p.icd.call(0x4e2500,
-        (p.HANDLE + 0x1000, target_x * 65536, target_z * 65536, 116), ecx=p.HANDLE)
-    assert error is None, error
+    if not integrated_retry:
+        _, error = p.icd.call(0x4e2500,
+            (p.HANDLE + 0x1000, target_x * 65536, target_z * 65536, 116), ecx=p.HANDLE)
+        assert error is None, error
     goal = tuple(struct.unpack('<hh', p.uc.mem_read(p.HANDLE + 8, 4)))
     radius, radius_squared = struct.unpack('<ii', p.uc.mem_read(p.HANDLE + 0x0c, 8))
     assert (goal, radius, radius_squared) == (expected_goal, 116, 53), \
@@ -288,13 +377,13 @@ def check_variant(world_binary, variant, physical_steps):
         # 0x4daf8f forwards mover +36's low bits to 507d10; bit 0 selects
         # its full mobile-footprint check for this active surface carrier.
         p.uc.mem_write(mover + 0x36, struct.pack('<H', flags | 1))
-        p.uc.mem_write(TYPE + 0x162, struct.pack('<i', seed_base))
-        p.uc.mem_write(TYPE + 0x166, struct.pack('<i', 1092))
-        p.uc.mem_write(TYPE + 0x16a, struct.pack('<i', 1092))
-        p.uc.mem_write(TYPE + 0x126, struct.pack('<hh', fx, fz))
-        p.uc.mem_write(TYPE + 0x18a, struct.pack('<I', p.GRID))
-        p.uc.mem_write(TYPE + 0x23c, bytes((255, 255)))
-        p.uc.mem_write(TYPE + 0x24a, b'\x01')
+        p.uc.mem_write(type_address + 0x162, struct.pack('<i', seed_base))
+        p.uc.mem_write(type_address + 0x166, struct.pack('<i', 1092))
+        p.uc.mem_write(type_address + 0x16a, struct.pack('<i', 1092))
+        p.uc.mem_write(type_address + 0x126, struct.pack('<hh', fx, fz))
+        p.uc.mem_write(type_address + 0x18a, struct.pack('<I', p.GRID))
+        p.uc.mem_write(type_address + 0x23c, bytes((255, 255)))
+        p.uc.mem_write(type_address + 0x24a, b'\x01')
         p.uc.mem_write(p.GRID + 8, struct.pack('<4h4B', 10000, 13, 10000, 13, 255, 127, 255, 127))
         before = struct.unpack('<iii', p.uc.mem_read(unit + 0x68, 12))
         world_mission = tuple(map(int, next(
@@ -303,11 +392,15 @@ def check_variant(world_binary, variant, physical_steps):
          mission_flags, approach_attempts, cargo_count, passenger_id,
          target_x_fixed, target_z_fixed) = world_mission
         assert (mission_stage, cargo_count, passenger_id) == (1, 1, 2), world_mission
-        mission = p.HANDLE + 0x1000
-        passenger = UNITS + 2 * 0x140
-        owner = struct.unpack('<I', p.uc.mem_read(unit + 0xb8, 4))[0]
+        if integrated_retry:
+            mission, passenger, owner = native.mission, native.passenger, native.owner
+        else:
+            mission = p.HANDLE + 0x1000
+            passenger = UNITS + 2 * 0x140
+            owner = struct.unpack('<I', p.uc.mem_read(unit + 0xb8, 4))[0]
         passenger_type = p._alloc(0x400)
-        p.uc.mem_write(passenger, bytes(0x140))
+        if not integrated_retry:
+            p.uc.mem_write(passenger, bytes(0x140))
         p.uc.mem_write(passenger_type, bytes(0x400))
         p.uc.mem_write(passenger + 2, struct.pack('<H', 2))
         p.uc.mem_write(passenger + 0xb4, struct.pack('<I', passenger_type))
@@ -319,11 +412,11 @@ def check_variant(world_binary, variant, physical_steps):
         p.uc.mem_write(unit + 0xa4, bytes(4))
         p.uc.mem_write(unit + 0x130, struct.pack('<I', 0x1000000))
         p.uc.mem_write(unit + 0xb8, struct.pack('<I', owner))
-        p.uc.mem_write(TYPE + 0x23e, struct.pack('<H', 150))
-        p.uc.mem_write(TYPE + 0x260, struct.pack('<I', 0))
-        p.uc.mem_write(TYPE + 0x264, struct.pack('<I', 0x200))
-        p.uc.mem_write(TYPE + 0x14a, struct.pack('<I', 1 << 16))
-        p.uc.mem_write(TYPE + 0x24b, b'\0')
+        p.uc.mem_write(type_address + 0x23e, struct.pack('<H', 150))
+        p.uc.mem_write(type_address + 0x260, struct.pack('<I', 0))
+        p.uc.mem_write(type_address + 0x264, struct.pack('<I', 0x200))
+        p.uc.mem_write(type_address + 0x14a, struct.pack('<I', 1 << 16))
+        p.uc.mem_write(type_address + 0x24b, b'\0')
         p.uc.mem_write(owner + 0xea, b'\x01')
         p.uc.mem_write(owner + 0x74, struct.pack('<I', ARENA + 0x1500000))
         p.uc.mem_write(owner + 0x78, struct.pack('<I', ARENA + 0x14fffff))
@@ -335,26 +428,35 @@ def check_variant(world_binary, variant, physical_steps):
         p.uc.mem_write(GS + 0x19f30, struct.pack('<I', 1))
         p.uc.mem_write(GS + 0x174c8, struct.pack('<I', 101))
         p.uc.mem_write(GS + 0x174cc, struct.pack('<I', 102))
-        p.uc.mem_write(mission, bytes(0x72))
-        p.uc.mem_write(mission + 4, b'\x01')
-        p.uc.mem_write(mission + 5, bytes((mission_stage,)))
-        p.uc.mem_write(mission + 6, struct.pack('<I', mission_wait))
-        p.uc.mem_write(mission + 0x0a, struct.pack('<I', mission_deadline))
-        p.uc.mem_write(mission + 0x0e, struct.pack('<I', unit))
-        p.uc.mem_write(mission + 0x16, struct.pack('<I', passenger))
-        p.uc.mem_write(mission + 0x22, struct.pack('<i', target_x_fixed))
-        p.uc.mem_write(mission + 0x26, struct.pack('<i', 0))
-        p.uc.mem_write(mission + 0x2a, struct.pack('<i', target_z_fixed))
-        p.uc.mem_write(mission + 0x52, struct.pack('<H', approach_attempts))
-        # The World's 0x1000 bit marks the pending path-service notification;
-        # the native dispatcher consumes it as an engine event before checking
-        # this mission's wait mask, so it is not a transport-handler event.
-        p.uc.mem_write(mission + 0x6a, struct.pack('<I', mission_pending & 0x700))
-        p.uc.mem_write(mission + 0x6e, struct.pack('<I', p.HANDLE))
+        if integrated_retry:
+            native_stage = p.uc.mem_read(mission + 5, 1)[0]
+            assert native_stage == mission_stage, (native_stage, world_mission)
+            assert native.get(mission + 6) == mission_wait, (native.get(mission + 6), world_mission)
+            native.put(mission + 0x0A, mission_deadline)
+            assert native.get(mission + 0x0E) == unit
+            assert native.get(mission + 0x16) == passenger
+            assert native.get(mission + 0x6E) == p.HANDLE
+        else:
+            p.uc.mem_write(mission, bytes(0x72))
+            p.uc.mem_write(mission + 4, b'\x01')
+            p.uc.mem_write(mission + 5, bytes((mission_stage,)))
+            p.uc.mem_write(mission + 6, struct.pack('<I', mission_wait))
+            p.uc.mem_write(mission + 0x0a, struct.pack('<I', mission_deadline))
+            p.uc.mem_write(mission + 0x0e, struct.pack('<I', unit))
+            p.uc.mem_write(mission + 0x16, struct.pack('<I', passenger))
+            p.uc.mem_write(mission + 0x22, struct.pack('<i', target_x_fixed))
+            p.uc.mem_write(mission + 0x26, struct.pack('<i', 0))
+            p.uc.mem_write(mission + 0x2a, struct.pack('<i', target_z_fixed))
+            p.uc.mem_write(mission + 0x52, struct.pack('<H', approach_attempts))
+            # The World's 0x1000 bit marks the pending path-service notification;
+            # the native dispatcher consumes it as an engine event before checking
+            # this mission's wait mask, so it is not a transport-handler event.
+            p.uc.mem_write(mission + 0x6a, struct.pack('<I', mission_pending & 0x700))
+            p.uc.mem_write(mission + 0x6e, struct.pack('<I', p.HANDLE))
 
         native_effects = 0
         native_parked = False
-        native_requests = []
+        native_requests = native.requests if integrated_retry else []
         def detach(_uc, _sp):
             p.uc.mem_write(passenger + 0xa8, bytes(4))
             p.uc.mem_write(unit + 0xac, bytes(4))
@@ -379,23 +481,31 @@ def check_variant(world_binary, variant, physical_steps):
             address = struct.unpack('<I', uc.mem_read(sp, 4))[0]
             uc.mem_write(reference + 4, struct.pack('<I', address))
             return 1, reference
-        p.icd.hooks.update({
-            0x415f30: lambda _uc, _sp: (1, 0),
-            0x4d4bf0: lambda _uc, _sp: (1, 0),
-            0x5199f0: bind_reference,
-            0x4d6ad0: lambda _uc, _sp: (2, 0),
-            0x4f5db0: lambda _uc, _sp: (2, 0),
-            0x50a9c0: lambda _uc, _sp: (3, 0),
-            0x4e4f50: request,
-            0x507d10: place,
-            # The fixture omits the ship type's detailed hull/waterline mesh.
-            # Keep the seeded Y fixed while comparing native route movement and
-            # map-footprint placement, which use the real height plane above.
-            0x51ad20: lambda _uc, _sp: (1, 0),
-            0x421e10: effect,
-            0x51b4f0: detach,
-            0x4d78a0: park,
-        })
+        if integrated_retry:
+            # These are the remaining fixture boundaries for the shared-Icd
+            # path: no ship COB, and no detailed hull mesh callback.
+            p.icd.hooks[0x51ad20] = lambda _uc, _sp: (1, 0)
+            p.icd.hooks[0x56c640] = lambda _uc, _args: (8, 0)
+        else:
+            p.icd.hooks.update({
+                0x415f30: lambda _uc, _sp: (1, 0),
+                0x4d4bf0: lambda _uc, _sp: (1, 0),
+                0x5199f0: bind_reference,
+                0x4d6ad0: lambda _uc, _sp: (2, 0),
+                0x4f5db0: lambda _uc, _sp: (2, 0),
+                0x50a9c0: lambda _uc, _sp: (3, 0),
+                0x4e4f50: request,
+                0x507d10: place,
+                # The fixture omits the ship type's detailed hull/waterline mesh.
+                # Keep the seeded Y fixed while comparing native route movement and
+                # map-footprint placement, which use the real height plane above.
+                0x51ad20: lambda _uc, _sp: (1, 0),
+                0x421e10: effect,
+                0x51b4f0: detach,
+                0x4d78a0: park,
+            })
+        if integrated_retry:
+            p.icd.freeze_hooks()
         put = lambda address, value: p.uc.mem_write(address, struct.pack('<I', value & 0xffffffff))
         world_trans = {int(fields[0]): tuple(map(int, fields[1:]))
                        for fields in (line.split()[1:] for line in stdout
@@ -404,6 +514,8 @@ def check_variant(world_binary, variant, physical_steps):
         assert world_steps and len(world_nav) == len(world_steps), (
             len(world_steps), len(world_nav), len(world_points))
         native_callback_counts = {0x4e5150: 0, 0x4e50a0: 0, 0x507d10: 0}
+        if integrated_retry:
+            native_callback_counts[0x4d6ad0] = 0
         native_placement_arguments = []
         from unicorn import UC_HOOK_CODE
         from unicorn.x86_const import UC_X86_REG_ESP
@@ -418,12 +530,26 @@ def check_variant(world_binary, variant, physical_steps):
         route_transition_steps = []
         prior_native_route = native_route
         movement_trace = []
+        mission_retired = False
+        if integrated_retry:
+            assert native.get(unit + 0x60) == mission_identity
+            assert native.get(unit + 8) == mover_identity
+            assert native.get(mover_identity) == nav_identity
+            assert native.get(nav_identity + 4) == controller_identity
+            assert native.get(mission_identity + 0x6e) == controller_identity
         for step, row in enumerate(world_steps, 1):
             placement_start = len(native_placement_arguments)
             p.uc.mem_write(GS + 0x19f44, struct.pack('<I', tick + step))
             try:
-                value, error = p.icd.call(0x4d8450, (unit,))
-                assert error is None, error
+                if integrated_retry:
+                    native.dispatch(tick + step)
+                    active_after_dispatch = native.get(unit + 0x60)
+                    if active_after_dispatch == 0:
+                        mission_retired = True
+                    assert active_after_dispatch == (0 if mission_retired else mission_identity)
+                else:
+                    value, error = p.icd.call(0x4d8450, (unit,))
+                    assert error is None, error
                 placement_hooks = p.icd.hooks
                 p.icd.hooks = {address: hook for address, hook in placement_hooks.items()
                                if address != 0x507d10}
@@ -464,7 +590,8 @@ def check_variant(world_binary, variant, physical_steps):
                                   p.uc.mem_read(p.NAV + 12, count * 4)) if count else ()
             route = list(zip(words[::2], words[1::2]))
             controller = struct.unpack('<I', p.uc.mem_read(p.NAV + 4, 4))[0]
-            mission_events = struct.unpack('<I', p.uc.mem_read(p.HANDLE + 0x1000 + 0x6a, 4))[0]
+            mission_event_address = mission + 0x6a if integrated_retry else p.HANDLE + 0x1000 + 0x6a
+            mission_events = struct.unpack('<I', p.uc.mem_read(mission_event_address, 4))[0]
             native_mission = (
                 int(struct.unpack('<I', p.uc.mem_read(unit + 0x60, 4))[0] == mission),
                 p.uc.mem_read(mission + 5, 1)[0],
@@ -491,6 +618,39 @@ def check_variant(world_binary, variant, physical_steps):
                 assert native_mission == expected_mission, (
                 'sea unload dispatcher/cargo state', step, native_mission,
                 expected_mission, wt)
+            if integrated_retry:
+                active_mission = native.get(unit + 0x60)
+                assert active_mission in (mission_identity, 0), (step, hex(active_mission))
+                assert native.get(unit + 8) == mover_identity
+                assert native.get(mover_identity) == nav_identity
+                assert native.get(nav_identity + 8) == unit
+                active_controller = native.get(nav_identity + 4)
+                assert active_controller in (controller_identity, 0), (
+                    step, hex(active_controller), hex(controller_identity))
+                stored_controller = native.get(mission_identity + 0x6E)
+                assert stored_controller in (controller_identity, 0), (
+                    step, hex(stored_controller), hex(controller_identity))
+                if active_mission:
+                    assert native.get(mission_identity + 0x0E) == unit
+                    assert native.get(mission_identity + 0x16) == passenger_identity
+                    assert bytes(p.uc.mem_read(mission_identity + 0x22, 12)) == original_destination
+                else:
+                    assert mission_retired and not active_controller and not stored_controller
+                carrier_cargo = native.get(unit + 0xAC)
+                passenger_carrier = native.get(passenger_identity + 0xA8)
+                assert ((carrier_cargo == passenger_identity and
+                         passenger_carrier == carrier_identity) or
+                        (carrier_cargo == 0 and passenger_carrier == 0)), (
+                    step, hex(carrier_cargo), hex(passenger_carrier))
+                if carrier_cargo == 0:
+                    released_position = tuple(struct.unpack('<3i',
+                        p.uc.mem_read(passenger_identity + 0x68, 12)))
+                    assert released_position == (500 << 16, 0, 500 << 16), (
+                        step, released_position)
+                if active_mission == 0:
+                    mission_retired = True
+                else:
+                    assert not mission_retired, step
             if native_step != expected_step:
                 for prior in movement_trace:
                     print('SURFACE_RECENT', *prior, flush=True)
@@ -579,6 +739,12 @@ def check_variant(world_binary, variant, physical_steps):
                 release_steps, retirement_steps)
             assert retirement_steps[0] == release_steps[0] + 1, (
                 release_steps, retirement_steps)
+            if integrated_retry:
+                assert mission_retired, 'the original retry mission was not retired'
+                assert native.get(unit + 0x60) == 0
+                assert native.get(unit + 0xAC) == 0
+                assert native.get(passenger_identity + 0xA8) == 0
+                assert native_callback_counts[0x4d6ad0] >= 1, native_callback_counts
         else:
             assert transfer_route_steps, \
                 'World did not keep the surface navigator active while unload transfer ran'
@@ -591,7 +757,9 @@ def check_variant(world_binary, variant, physical_steps):
             circle_detach = next((step for step, state in world_nav.items()
                                   if state[6] == 1 and not state[3] and
                                   state[4] & 0x500 == 0x500), None)
-            print(f'PASS: retail 0x4dc800+0x51b2a0 matches {len(world_steps)} World movement steps '
+            trace_label = ('one native same-trip retry mission/carrier/passenger/controller '
+                           'through retail search, mover, release and retirement; ' if integrated_retry else '')
+            print(f'PASS: {trace_label}retail 0x4dc800+0x51b2a0 matches {len(world_steps)} World movement steps '
                   f'from remote post-retry seed {world_seed}; the replacement route detaches at '
                   f'physical step {circle_detach}, passenger release/mission retirement at '
                   f'{release_steps[0]}/{retirement_steps[0]}, route-point transitions at '
@@ -608,7 +776,7 @@ def check_variant(world_binary, variant, physical_steps):
         print(f'PASS: unreachable boat unload variant {variant} returns the same partial '
               f'route after World failure at tick {tick}; {len(world_route)} waypoint, '
               f'{query_count} native grade queries')
-    else:
+    elif not integrated_retry:
         print(f'PASS: boat circle route variant {variant} matches exactly at tick {tick}; '
               f'heading {heading}, native including anchor={native_route}, {query_count} grade queries')
     return {
