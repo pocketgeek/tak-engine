@@ -7894,6 +7894,18 @@ done
 
 This is a controlled mover comparison, not a synchronized render comparison:
 it does not pair the live native frame's body/piece transforms and camera with
-a Glide frame. Establishing the reported visual separation still needs those
-render inputs captured together with the Monarch and site positions at one
-tick. No retail GUI was launched for this trace.
+a Glide frame. A synchronized camera/frame pair would only settle the exact
+raster appearance; it is not needed for the behavior-based acceptance.
+
+The pose follow-up found no behavioral mismatch. `zonhunt.cob` passes the
+native script oracle across 1,501 boundaries for the controlled flight/build
+timeline, including piece, thread, and RNG state (`/tmp/animation-timeline-results.json`).
+The captured-model transform check includes `zonhunt` and matches all 2,374
+vertices across 293 retail model pieces to under 0.000023 world units. At tick
+16, both movement traces put the Monarch at `(1012.576,177,995.101)` relative
+to the site at `(1120,100,1060)`. Retail's `screenY = z - y/2` projection puts
+that root 103.4 world-screen units north of the site; 38.5 units of that offset
+come from the 77-unit altitude difference. This is the expected projection
+of the matching map-relative pose, so no behavioral position, height, facing,
+or piece-transform correction is justified. Pixel-synchronized capture is not
+a completion gate. No retail GUI was launched for this audit.
