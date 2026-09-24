@@ -673,11 +673,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                            (move_flags >> 5) & 7, (move_flags >> 8) & 7,
                            move_flags & 0x1800)
             expected_step = (*row[1:6], *row[6:9])
-            if not (shore_blocker and blocked_placement_states):
-                assert native_step == expected_step, (
-                    'native/World real-map mover step', step, native_step,
-                    expected_step, row[9])
-                movement_parity_steps += 1
+            assert native_step == expected_step, (
+                'native/World real-map mover step', step, native_step,
+                expected_step, row[9])
+            movement_parity_steps += 1
             if native_live and not native_live.get(unit + 0xac):
                 live_release_step = step
                 break
@@ -831,12 +830,9 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         arrival_note = ('; both finish inside the authored unload circle'
                         if map_mover_entered_circle else
                         '; final position remains outside the unload circle')
-        compared_steps = movement_parity_steps if shore_blocker else map_mover_count
-        scope_note = (' before the blocked-placement retry; mover steps during the '
-                      'controlled retry window are not used as an equality gate'
-                      if shore_blocker else '')
-        print(f'  Native 0x4dc800 + 0x51b2a0 matches {compared_steps} World physical '
-              f'mover steps over TNT terrain{scope_note}{arrival_note}.')
+        retry_note = ', including the blocked retry' if shore_blocker else ''
+        print(f'  Native 0x4dc800 + 0x51b2a0 matches {movement_parity_steps} World physical '
+              f'mover steps over TNT terrain{retry_note}{arrival_note}.')
 
 
 def main():

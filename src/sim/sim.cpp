@@ -2873,7 +2873,13 @@ bool World::tickTransport(Unit& u, float dt) {
     const Fixed unloadZ=o.transportUnloadApproach && o.missionTarget ?
         o.missionTarget->second : o.z;
     const bool surfaceRouteActive=!u.type->canFly && o.transportUnloadApproach &&
-        (o.controller || ((o.transportMission.stage>1 || o.transportUnloadReleasePending) &&
+        // GROUND_UNLOAD's blocked-placement retry briefly returns its
+        // RetailMissionState to stage 1 before it starts transfer stage 2
+        // again. The native mover still consumes any remaining surface
+        // momentum during that sleep. Treat every live mission stage as an
+        // active surface route so this tick's refusal/retry path does not
+        // zero speed in the middle of the coast-down.
+        (o.controller || ((o.transportMission.stage>0 || o.transportUnloadReleasePending) &&
                           u.speed>Fixed()));
     const bool inRange=retailTransportInRange((unloadX-u.x).v,(unloadZ-u.z).v,
                                                uint16_t(u.type->transportDist));

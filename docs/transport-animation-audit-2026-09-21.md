@@ -8329,18 +8329,19 @@ routine with the TNT cell plane, a live `0x138`-stride entity slot, and matching
 cell occupancy IDs. It rejects the site while occupied, retains the original
 landing point and attached passenger, then accepts it after the blocker clears.
 The live-scan deadlines remain paired through release, and the surface carrier
-stays inside the authored water-side unload circle. Retail releases at physical
-step 2,252; World releases at 2,253, a one-tick dispatcher/mover phase offset.
+stays inside the authored water-side unload circle. The retry briefly returns
+the unload mission to stage 1; World previously treated that as an inactive
+surface route and zeroed the carrier's remaining coast speed. It now keeps the
+mover active through every live unload stage, matching retail's brake-down.
+Native and World movement fields match on all 2,252 physical steps through the
+blocked retry and retail release. Retail releases at step 2,252; World releases
+at step 2,253, the one-tick dispatcher/mover phase offset.
 
-Carrier movement fields match for the first 2,200 physical steps. Once the
-blocked placement starts the retry, this controlled fixed-route fixture does
-not compare the subsequent mover timeline: World's path service is held at the
-delivered route boundary, while a complete dynamic route replacement under
-changing occupancy still needs coverage. This test establishes real mapped
-landing occupancy and retry/release, not full path replanning around moving
-traffic. It passes Standard and Crusades with Release, Debug, and optimized
-Debug builds (six runs). No retail GUI was launched. Reproduce the Standard
-case with:
+The fixture holds the delivered route fixed while it verifies the moving shore
+blocker and retry. Dynamic route replacement around changing map occupancy is
+still open. The blocker trace passes Standard and Crusades with Release, Debug,
+and optimized Debug builds (six runs), including 550 paired live terrain-scan
+deadlines. No retail GUI was launched. Reproduce the Standard case with:
 
 ```sh
 python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
