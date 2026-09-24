@@ -68,6 +68,7 @@ struct Weapon {
     int32_t damage = 0;      // DAMAGE.default (readInt; the dump prints it %i) (base, used when no category matches)
     float projVel = 0;       // px/s; 0 = instant (melee)
     bool melee = false;
+    bool cursorAirstrike = false; // FBI `dropped=` -> WeaponType+0xc8 bit 0x20
     int32_t aoe = 0;         // areaofeffect radius px (readInt); >0 = splash
     float edge = 1;          // edgeeffectiveness: damage fraction at the aoe edge
     // RAW COB ANGLE UNITS, which is both what retail stores (AimTolerance is
@@ -436,6 +437,9 @@ struct UnitType {
     std::vector<Aura> auras;   // stat auras projected onto nearby units
     Weapon weapon;            // primary (WEAPON1); damage 0 = unarmed
     std::vector<Weapon> weapons;   // all slots (WEAPON1..3)
+    bool hasPrimaryWeaponBlock=false; // native UnitDef+264 bit 0x20 is set by WEAPON1 presence
+    std::array<bool,3> weaponAirstrikeCursor{}; // FBI `dropped=` bit on native WeaponType slots
+    std::array<uint8_t,3> weaponNativeSlotForLocal{}; // compressed local damage vector -> FBI slot
     // [EXPLODEAS]: a weapon fired at the unit's OWN position the moment it dies
     // (Kamikaze Rat's 320-radius blast, Grenadier/Fire Demon/Balloon death pops).
     Weapon explodeAs;

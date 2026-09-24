@@ -262,13 +262,23 @@ namespace {
         if (dragging_) return tak::CursorId::Normal;       // box-select drag
         if (pendingCmd_)  {
             fightTint = (pendingCmd_ == 'f');
-            if (pendingCmd_ == 'a' && mouseX_ >= 0 && !selection_.empty()) {
-                float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
-                const tak::CursorId targetCursor = hoverCursor(wx, wz);
-                if (targetCursor == tak::CursorId::Attack ||
-                    targetCursor == tak::CursorId::TooFar ||
-                    targetCursor == tak::CursorId::Red)
-                    return targetCursor;
+            if (pendingCmd_ == 'a') {
+                bool anySelected=false,hasAirstrike=false,allAirstrike=!selection_.empty();
+                for(int id:selection_) {
+                    const UnitR* unit=frameUnitP(id);
+                    if(!unit || !unit->alive() || !unit->type)continue;
+                    anySelected=true;
+                    const bool airstrike=tak::client::unitHasAirstrikeCursor(
+                        *unit->type,unit->weaponSlot);
+                    hasAirstrike|=airstrike;allAirstrike&=airstrike;
+                }
+                allAirstrike&=anySelected;
+                tak::CursorId ordinaryCursor=tak::CursorId::Normal;
+                if(mouseX_>=0 && !selection_.empty()) {
+                    float wx,wz;pickWorld(mouseX_,mouseY_,wx,wz);
+                    ordinaryCursor=hoverCursor(wx,wz,true);
+                }
+                return tak::cursorForArmedAttack(ordinaryCursor,hasAirstrike,allAirstrike);
             }
             bool hasLoadTransport = false;
             if (pendingCmd_ == 'l') {
@@ -287,7 +297,7 @@ namespace {
         return hoverCursor(wx, wz);
     }
 
-    tak::CursorId GameView::hoverCursor(float wx, float wz) {
+    tak::CursorId GameView::hoverCursor(float wx, float wz,bool ignoreAirstrikeWeapons) {
         const auto* first = selection_.empty() ? nullptr : frameUnitP(selection_.front());
 
         // Selected transport carrying cargo -> unload cursor anywhere.
@@ -337,6 +347,8 @@ namespace {
                     const int slot = type.weaponSwitching
                         ? std::clamp(attacker->weaponSlot, 0, int(type.weapons.size()) - 1)
                         : 0;
+                    if(ignoreAirstrikeWeapons && tak::client::unitHasAirstrikeCursor(
+                            type,attacker->weaponSlot))continue;
                     const auto& weapon = type.weapons[size_t(slot)];
                     if (tak::client::cursorDamageVs(weapon, *target->type) <= 0.0f ||
                         (weapon.noAir && target->flightGroundMode == 2))

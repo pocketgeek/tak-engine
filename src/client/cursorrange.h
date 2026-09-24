@@ -3,12 +3,30 @@
 #include "sim/retailaim.h"
 #include "sim/sim.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 
 namespace tak::client {
 
 enum class CursorWeaponRange { InRange, OutOfRange, Unknown };
+
+// Native 0x4dd780's mode-3 Airstrike gate requires a WEAPON1 pointer, then
+// checks the `dropped` bit on the active native slot selected by 0x519ac0.
+// Local damage weapons are compressed, so translate a switchable local index
+// back to its original FBI slot before testing the per-slot flag.
+inline bool unitHasAirstrikeCursor(const sim::UnitType& type,int localWeaponSlot) {
+    if(!type.hasPrimaryWeaponBlock)return false;
+    int nativeSlot=0;
+    if(type.weaponSwitching) {
+        if(type.weapons.empty()) nativeSlot=std::clamp(localWeaponSlot,0,2);
+        else {
+            const int local=std::clamp(localWeaponSlot,0,int(type.weapons.size())-1);
+            nativeSlot=type.weaponNativeSlotForLocal[size_t(local)];
+        }
+    }
+    return nativeSlot>=0 && nativeSlot<3 && type.weaponAirstrikeCursor[size_t(nativeSlot)];
+}
 
 // The retail cursor selector resolves damage against UnitDef+0x9e, populated
 // only from FBI `damagecategory`. Simulation damage uses the wider category

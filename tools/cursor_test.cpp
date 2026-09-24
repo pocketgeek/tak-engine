@@ -89,6 +89,12 @@ int main(int argc, char** argv) {
         tak::cursorForArmedCommand('m') != tak::CursorId::Move ||
         tak::cursorForArmedCommand('g') != tak::CursorId::Defend)
         return fail("armed Load cursor requires a selected transport, other command glyphs remain mapped");
+    if (tak::cursorForArmedAttack(tak::CursorId::Attack,true,false)!=tak::CursorId::Attack ||
+        tak::cursorForArmedAttack(tak::CursorId::TooFar,true,false)!=tak::CursorId::Airstrike ||
+        tak::cursorForArmedAttack(tak::CursorId::TooFar,false,false)!=tak::CursorId::TooFar ||
+        tak::cursorForArmedAttack(tak::CursorId::Normal,true,true)!=tak::CursorId::Airstrike ||
+        tak::cursorForArmedAttack(tak::CursorId::Normal,true,false)!=tak::CursorId::Attack)
+        return fail("armed attack cursor follows native minimum-slot selection for mixed Airstrike groups");
     if (tak::cursorForBuildPlacement(true,true) != tak::CursorId::FindSite ||
         tak::cursorForBuildPlacement(false,true) != tak::CursorId::Normal ||
         tak::cursorForBuildPlacement(true,false) != tak::CursorId::Normal)
@@ -105,6 +111,7 @@ int main(int argc, char** argv) {
 
     using tak::client::CursorWeaponRange;
     using tak::client::cursorWeaponRange;
+    using tak::client::unitHasAirstrikeCursor;
     using tak::sim::UnitType;
     using tak::sim::Weapon;
     UnitType attacker, target;
@@ -112,6 +119,23 @@ int main(int argc, char** argv) {
     std::array<int32_t, 3> at100{100 * 65536, 0, 0};
     std::array<int32_t, 3> at101{101 * 65536, 0, 0};
     Weapon ranged;
+    UnitType cursorAirstrike;
+    cursorAirstrike.hasPrimaryWeaponBlock=true;
+    cursorAirstrike.weaponSwitching=true;
+    cursorAirstrike.weapons.resize(2);
+    cursorAirstrike.weaponNativeSlotForLocal={0,2,0};
+    cursorAirstrike.weaponAirstrikeCursor[2]=true;
+    if(!unitHasAirstrikeCursor(cursorAirstrike,1) ||
+        unitHasAirstrikeCursor(cursorAirstrike,0))
+        return fail("Airstrike flag follows the selected native slot through the local compressed weapon list");
+    cursorAirstrike.weaponSwitching=false;
+    cursorAirstrike.weaponAirstrikeCursor[0]=true;
+    if(!unitHasAirstrikeCursor(cursorAirstrike,1))
+        return fail("non-switching Airstrike selection always uses native slot zero");
+    cursorAirstrike.hasPrimaryWeaponBlock=false;
+    if(unitHasAirstrikeCursor(cursorAirstrike,0))
+        return fail("Airstrike cursor requires the native WEAPON1 UnitDef gate");
+
     ranged.range = 100;
     if (cursorWeaponRange(ranged, attacker, origin, target, at100, 1) !=
             CursorWeaponRange::InRange ||

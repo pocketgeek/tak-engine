@@ -51,6 +51,20 @@ inline CursorId cursorForArmedCommand(char cmd, bool hasLoadTransport = false) {
     }
 }
 
+// Native 0x521cd0 reduces selected-unit cursor slots with a numeric minimum:
+// Attack beats Airstrike, while Airstrike beats TooFar. With no target-specific
+// result, a pure Airstrike selection keeps slot 2; any ordinary selected unit
+// returns the default Attack slot 1.
+inline CursorId cursorForArmedAttack(CursorId ordinaryCursor,
+                                     bool hasAirstrikeWeapon,
+                                     bool allSelectedAirstrike) {
+    if (ordinaryCursor == CursorId::Attack) return CursorId::Attack;
+    if (ordinaryCursor == CursorId::TooFar || ordinaryCursor == CursorId::Red)
+        return hasAirstrikeWeapon ? CursorId::Airstrike : ordinaryCursor;
+    return hasAirstrikeWeapon && allSelectedAirstrike
+        ? CursorId::Airstrike : CursorId::Attack;
+}
+
 // Retail action mode 14 is armed by selecting a build item. Its per-unit cursor
 // selector returns FindSite for a live selected builder with a build-option list.
 inline CursorId cursorForBuildPlacement(bool placementArmed,bool selectedBuilderWithBuildList) {
