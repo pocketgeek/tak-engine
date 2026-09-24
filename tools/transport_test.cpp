@@ -1939,7 +1939,10 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
             stepped->heading=tak::sim::retailHeadingToPort(
                 tak::sim::portHeadingToRetail(stepped->heading));
             stepped->turnReqBam=0;stepped->groundMoveTick=0;
-            stepped->groundScanTick=tick+stepLimit+1000;
+            unsigned scanAfter=stepLimit+1000;
+            if(const char* scan=std::getenv("TAK_MAP_SURFACE_SCAN_AFTER"))
+                scanAfter=unsigned(std::clamp(std::atoi(scan),0,2500));
+            stepped->groundScanTick=tick+scanAfter;
             stepped->groundMovementMode=0;stepped->groundSpeedMode=0;
             stepped->groundTerrainFlags=0x1000;
             const size_t activeGoal=World::currentLeg(stepped->orders);
@@ -1952,14 +1955,16 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
             std::printf("WORLDTYPE %d %d %d %d %d\n",stepped->type->maxVel.v,
                 stepped->type->accel.v,stepped->type->brake.v,stepped->type->turnRate,
                 stepped->type->waterline);
+            std::printf("WORLDSCAN %u %u %u\n",w.tickCount(),stepped->groundScanTick,
+                unsigned(stepped->type->halfCellTicks));
             for(unsigned step=1;step<=stepLimit;++step) {
                 w.tick(1.f/30);
                 const auto* after=w.unit(tid);
-                std::printf("WORLDSTEP %u %d %d %d %d %d %u %u %u %d\n",step,
+                std::printf("WORLDSTEP %u %d %d %d %d %d %u %u %u %d %u\n",step,
                     after->x.v,after->groundY.v,after->z.v,
                     int(tak::sim::portHeadingToRetail(after->heading)),after->speed.v,
                     unsigned(after->groundMovementMode),unsigned(after->groundSpeedMode),
-                    unsigned(after->groundTerrainFlags),after->turnReqBam);
+                    unsigned(after->groundTerrainFlags),after->turnReqBam,after->groundScanTick);
             }
         }
         return;

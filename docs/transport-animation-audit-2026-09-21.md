@@ -8273,15 +8273,43 @@ optimized Debug binaries (six runs). A 1,470-step limit reaches the circle but
 ends before retail's dispatcher consumes arrival; use at least 1,550 steps to
 include the release at physical step 1,488. No retail GUI was launched.
 
-This closes the selected map-backed shoreline mission/route/movement/placement
-integration case. The mover's local terrain-rescan deadline is deliberately
-held past the trace on both sides, and the fixture has no moving neighboring
-blockers. Live rescans, traffic from other units, and additional maps/carrier
-profiles remain separate parity coverage. Reproduce the Standard case with:
+This closes the map-backed shoreline mission/route/movement/placement
+integration case. The original trace pins local terrain scans past its window;
+the live-scan extension below exercises those scans during the same trip. The
+fixture has no moving neighboring blockers. Traffic from other units and
+additional maps/carrier profiles remain separate parity coverage. Reproduce
+the original pinned-scan Standard case with:
 
 ```sh
 python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
   --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
   --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
   --native-map-grades --native-map-mover-steps 1550 --native-live-unload
+```
+
+### Live-scan Lake Lokken sea-unload route (2026-09-24)
+
+The same joined route now has an active terrain-scan variant. The harness seeds
+retail's carrier with its shipped sight range and map-sized exploration plane,
+and restores the scan-enabled game-options context after each mission dispatch.
+World and retail start with the same unexplored plane and scan on the first
+physical movement tick. Every movement field remains equal through the native
+shoreline release at step 2,217, including 550 live scan deadlines and the
+terrain/speed modes those scans select. The native mission wakes once at circle
+arrival, passes all 16 map-backed Araarch placement checks, releases the
+passenger at `(240,350)`, and retires through its empty tail.
+
+The live-scan case passes Standard and Crusades with Release, Debug, and
+optimized Debug binaries (six runs). This verifies live terrain rescans for
+this Lake Lokken Vertrans/Araarch unload route. Dynamic collision traffic from
+other moving units, retries around newly blocked shore cells, and other
+maps/carrier profiles remain open. No retail GUI was launched. Reproduce the
+Standard run with:
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
+  --native-map-grades --native-map-mover-steps 2500 --native-live-unload \
+  --terrain-scan-after 1
 ```

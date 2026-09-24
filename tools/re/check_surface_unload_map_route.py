@@ -16,6 +16,7 @@ import struct
 import subprocess
 from pathlib import Path
 
+from balance_inputs import unit_properties
 from emuphase import Phase, OBJ, TYPE, GS
 from check_surface_unload_map_grades import native_grade_reader, native_water_profile
 from check_surface_unload_map_release import (
@@ -25,15 +26,19 @@ from check_surface_unload_map_release import (
 def check_route(world_binary, retail_root, map_name, start_cell, target_cell, footprint,
                 carrier=None, passenger=None, crusades=False, native_map_grades=False,
                 hpitool='build/hpitool', native_map_mover_steps=0,
-                native_live_unload=False):
+                native_live_unload=False, terrain_scan_after=None):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     if native_live_unload and (map_name.lower() != 'lake lokken' or
                                carrier.lower() != 'vertrans' or
                                passenger.lower() != 'araarch'):
         raise ValueError('--native-live-unload currently checks Lake Lokken Vertrans/Araarch')
+    if terrain_scan_after is not None and not native_live_unload:
+        raise ValueError('--terrain-scan-after requires --native-live-unload')
     env = os.environ.copy()
     env['TAK_DUMP_GRADE_PLANE'] = '1'
+    if terrain_scan_after is not None:
+        env['TAK_MAP_SURFACE_SCAN_AFTER'] = str(terrain_scan_after)
     if carrier:
         env['TAK_DUMP_ATTEMPT_PLANES'] = '1'
         env['TAK_DUMP_ROUTE_ATTEMPT'] = '1'
@@ -183,6 +188,11 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 .decode('latin1'),
             cat(hpitool, Path(retail_root), 'data.hpi',
                 f'units/{passenger}.fbi').decode('latin1'))
+        carrier_profile = unit_properties(cat(hpitool, Path(retail_root),
+            'data.hpi', f'units/{carrier}.fbi').decode('latin1'))
+        carrier_sight = int(carrier_profile.get('sightdistance', '0'))
+        if carrier_sight <= 0:
+            raise AssertionError(('carrier sight distance', carrier, carrier_profile))
         native_place = native_placement_oracle(live_map_data, passenger_profile)
 
         def checked_placement(args, call_number):
@@ -213,6 +223,11 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         p.uc.mem_write(unit + 0x78, struct.pack('<hh', fx, fz))
         p.uc.mem_write(type_address + 0x126, struct.pack('<hh', fx, fz))
         p.uc.mem_write(type_address + 0x23e, struct.pack('<H', transport_dist))
+        # Retail's boat scanner reads the exploration-plane dimensions from
+        # the owner record and sight distance from the unit type block.
+        p.uc.mem_write(native_live.owner + 0x8c, struct.pack('<II', width // 2,
+                                                             height // 2))
+        p.uc.mem_write(type_address + 0x226, struct.pack('<h', carrier_sight))
         p.uc.mem_write(native_live.mission + 0x22,
                        struct.pack('<i', target_x * 65536))
         p.uc.mem_write(native_live.mission + 0x26, bytes(4))
@@ -345,6 +360,12 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         # still wakes the real unload dispatcher through 0x4e5150.
         native_live.put(native_live.mission + 0x0a,
                         route_tick + native_map_mover_steps + 1000)
+    if terrain_scan_after is not None:
+        if not native_map_mover_steps or not carrier:
+            raise ValueError('--terrain-scan-after requires a carrier map mover trace')
+        native_scan_deadline = route_tick + terrain_scan_after
+    else:
+        native_scan_deadline = route_tick + native_map_mover_steps + 1000
     if independent_grade:
         map_features = map_data[4]
         observed_features = set()
@@ -445,8 +466,11 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         p.uc.mem_write(GS + 0x19f1c, struct.pack('<I', sector_stride))
         p.uc.mem_write(GS + 0x600000, struct.pack('<I', GS + 0x700000))
         visibility = struct.unpack('<I', p.uc.mem_read(GS + 0x19ef4, 4))[0]
+        # The World fixture starts with an unexplored map; expose the same
+        # initial state to retail when the live scanner is under comparison.
+        initial_visibility = 0 if terrain_scan_after is not None else 0xffff
         p.uc.mem_write(visibility, struct.pack('<' + 'H' * (width * height // 4),
-                                               *([0xffff] * (width * height // 4))))
+            *([initial_visibility] * (width * height // 4))))
         p.uc.mem_write(GS + 0x19f44, struct.pack('<I', route_tick))
         p.uc.mem_write(0x64186c, struct.pack('<I', route_tick))
 
@@ -454,8 +478,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         p.uc.mem_write(unit + 0x7e, struct.pack('<H', seed_heading))
         p.uc.mem_write(unit + 0x12b, struct.pack('<i', seed_base))
         p.uc.mem_write(mover + 0x20, struct.pack('<i', seed_speed))
-        p.uc.mem_write(mover + 0x30, struct.pack(
-            '<I', route_tick + native_map_mover_steps + 1000))
+        p.uc.mem_write(mover + 0x30, struct.pack('<I', native_scan_deadline))
         p.uc.mem_write(mover + 8, bytes(12))
         p.uc.mem_write(mover + 0x14, bytes(12))
         p.uc.mem_write(mover + 0x36, struct.pack('<H', flags | 1))
@@ -479,6 +502,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
 
         live_release_step = None
         native_arrival_wakes = 0
+        native_scan_count = 0
+        previous_native_scan_deadline = native_scan_deadline
         for step, row in enumerate(world_steps, 1):
             p.uc.mem_write(GS + 0x19f44, struct.pack('<I', route_tick + step))
             if native_live:
@@ -489,6 +514,13 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             else:
                 value, error = p.icd.call(0x4d8450, (unit,))
                 assert error is None, ('native map mover pre-step', step, error)
+            if terrain_scan_after is not None:
+                # The mission dispatcher temporarily changes this global
+                # context pointer. Restore the same scan-enabled options used
+                # by the World trace before retail's mover runs.
+                p.uc.mem_write(0x62d558, struct.pack('<I', GS + 0x600000))
+                p.uc.mem_write(GS + 0x600000, struct.pack('<I', GS + 0x700000))
+                p.uc.mem_write(GS + 0x700000 + 0x0a, b'\0')
             # The surface mission's placement hook is a map-backed Araarch
             # release oracle. Keep retail's own carrier-footprint mover scan
             # active during 0x4dc800 rather than routing it through that hook.
@@ -504,6 +536,16 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             value, error = p.icd.call(0x51b2a0, (unit,), ecx=mover)
             assert error is None, ('native map route update', step, error)
             move_flags = struct.unpack('<H', p.uc.mem_read(mover + 0x36, 2))[0]
+            if terrain_scan_after is not None:
+                native_scan_deadline = struct.unpack('<I',
+                    p.uc.mem_read(mover + 0x30, 4))[0]
+                world_scan_deadline = row[10]
+                assert native_scan_deadline == world_scan_deadline, (
+                    'native/World local terrain-scan deadline', step,
+                    native_scan_deadline, world_scan_deadline, row)
+                if native_scan_deadline != previous_native_scan_deadline:
+                    native_scan_count += 1
+                previous_native_scan_deadline = native_scan_deadline
             native_step = (*struct.unpack('<iii', p.uc.mem_read(unit + 0x68, 12)),
                            struct.unpack('<H', p.uc.mem_read(unit + 0x7e, 2))[0],
                            struct.unpack('<i', p.uc.mem_read(mover + 0x20, 4))[0],
@@ -517,6 +559,9 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 live_release_step = step
                 break
         map_mover_count = len(world_steps)
+        if terrain_scan_after is not None:
+            assert native_scan_count > 0, ('native live terrain scan did not run',
+                                           native_scan_count)
         if native_live:
             assert live_release_step is not None, (
                 'native surface mission did not release Araarch during the map-backed mover trace',
@@ -552,7 +597,9 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             print(f'  Native mission, search, and map mover remained joined through the '
                   f'retail shoreline release at physical step {live_release_step}; '
                   f'navigator arrival advanced the mission exactly once; '
-                  f'{len(native_placement_results)} map-backed passenger placement checks passed.')
+                  f'{len(native_placement_results)} map-backed passenger placement checks passed.' +
+                  (f' {native_scan_count} live terrain-scan deadlines matched.'
+                   if terrain_scan_after is not None else ''))
         final_row = world_steps[map_mover_count - 1]
         final_x, final_z = final_row[1], final_row[3]
         dx = final_x - target_x * 65536
@@ -595,6 +642,8 @@ def main():
                         help='also compare this many native physical mover ticks on the map (1..2500)')
     parser.add_argument('--native-live-unload', action='store_true',
                         help='keep retail GROUND_UNLOAD active through map-backed movement and passenger release')
+    parser.add_argument('--terrain-scan-after', type=int,
+                        help='compare live native/World terrain scans after route delivery; requires --native-live-unload (0..2500 ticks)')
     parser.add_argument('--hpitool', default='build/hpitool')
     args = parser.parse_args()
     if bool(args.carrier) != bool(args.passenger):
@@ -603,11 +652,15 @@ def main():
         parser.error('--native-map-mover-steps must be 0..2500')
     if args.native_live_unload and args.native_map_mover_steps == 0:
         parser.error('--native-live-unload requires --native-map-mover-steps')
+    if args.terrain_scan_after is not None and not 0 <= args.terrain_scan_after <= 2500:
+        parser.error('--terrain-scan-after must be 0..2500')
+    if args.terrain_scan_after is not None and not args.native_live_unload:
+        parser.error('--terrain-scan-after requires --native-live-unload')
     check_route(args.world_binary, args.retail_root, args.map, tuple(args.start),
                 tuple(args.target), args.footprint, args.carrier, args.passenger,
                 args.crusades, args.native_map_grades or bool(args.native_map_mover_steps),
                 str(Path(args.hpitool).resolve()), args.native_map_mover_steps,
-                args.native_live_unload)
+                args.native_live_unload,args.terrain_scan_after)
 
 
 if __name__ == '__main__':
