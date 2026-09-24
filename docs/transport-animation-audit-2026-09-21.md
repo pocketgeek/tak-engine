@@ -19,10 +19,10 @@ implementation descriptions. Current open gates are:
   captured. Paired native/World pickup dispatcher traces match for 36 air/sea
   ticks; surface pickup callbacks match for 18 ticks. Paired unload dispatcher
   traces match for 17 air ticks and 19 sea ticks, with route arrival controlled
-  at the navigator boundary. Eight deterministic boat unload-circle searches
-  and five cases on the shipped Per Mare Per Terras map match retail's native
-  reconstructed routes using World-produced grades, including a disconnected-
-  water partial route after a World failure. The World air-route end-to-end
+  at the navigator boundary. Eight deterministic boat unload-circle searches,
+  five Per Mare Per Terras cases, and one Lake Lokken water-crossing case match
+  retail's native reconstructed routes using World-produced grades, including a
+  disconnected-water partial route after a World failure. The World air-route end-to-end
   test now includes a distant unload after a cross-water pickup. Sea-mover state
   matches for 1,000 physical steps through transfer, three route-point transitions,
   and the complete post-unload coast to rest. The fixture now enables retail's
@@ -50,14 +50,18 @@ implementation descriptions. Current open gates are:
   navigator and controller through retry, retail route search and physical
   movement; arrival detaches the controller at step 317, cargo releases at 334,
   and the real mission-removal routine retires it at 335. Scheduler request
-  events and World-produced terrain grades are controlled harness inputs, so
-  crowded-shore and live-map transport interactions remain open.
+  events and World-produced terrain grades are controlled harness inputs. The
+  World crowded-shore retry regression now exercises real terrain, routing,
+  movement, and attachment. Independent grade generation and shoreline cargo
+  placement on a live map remain open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
-  input. The native mover callback tail and display helper now agree on the
-  coincident `TurnDirection → MoveRate → setSFXoccupy` order, and the display
-  VM receives `BeginFlight` call-ins from the simulation snapshot. Special
-  weapon cases, missing-script behavior, range/visibility-loss timing, and
+  input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
+  scheduler at the native deferred phase. The native mover callback tail and
+  display helper also agree on the coincident
+  `TurnDirection → MoveRate → setSFXoccupy` order, and the display VM receives
+  `BeginFlight` call-ins from the simulation snapshot. Special weapon cases,
+  broader missing-script behavior, actual range/visibility-loss timelines, and
   full movement/flight callback phase comparisons remain open.
 - Cursors: authored frame timing, software/hardware rendering, enemy weapon-range
   feedback, and the native Revive, Load, and FindSite selector gates are covered.
@@ -7732,3 +7736,123 @@ cases, and a 500-tick integrated air-unload trace pass. Native fixtures still
 control scheduler requests and selected placement/effect callbacks; the World
 regression exercises live terrain, body placement, routing, movement, and
 attachment. No retail GUI was launched.
+
+### Deferred combat-script callback phase (2026-09-23)
+
+Retail's `52fe30` AimWeapon, `530140` FireWeapon, and `51a7f0` TargetCleared
+call the script dispatcher `56c640` with immediate execution disabled. The
+dispatcher installs the COB thread; it calls the VM tick routine `56c870` at
+start time only when that flag is enabled. `probe_weapon_callback_phase.py`
+executes the native `56c640/56c680` path for all three callbacks, checks that
+each thread remains at its entry with its arguments intact, then runs the next
+regular VM pass. An immediate-mode control confirms the distinction.
+
+World had started these callbacks and also run `state.tick(file,0)` inline in
+the same combat update. That could let AimWeapon SET 22, FireWeapon SET 23, or
+TargetCleared SET 21 affect readiness, projectile release, or aim cancellation
+one update too early. The inline pass is removed; the existing per-unit COB
+phase runs the queued callback on the following update. Display events are
+still recorded at native callback-start order. The live regression now verifies
+that retargeting reports TargetCleared first and starts the replacement aim
+after the script phase resets the old handshake; pending release cancellation
+also takes effect in that regular phase rather than inside target retirement.
+
+The native callback-phase probe, native range/visibility and weapon-update
+probes, and focused Release `retail_script`, `retail_visual`, `naval_combat`,
+and `flyer_combat` CTests pass. This closes callback-start scheduling for these
+three script entry points; it does not establish the complete native unit
+dispatcher phase or remaining range/visibility, special-weapon, and animation
+roster behavior. No retail GUI was launched.
+
+### Death-script SFX attachment lifecycle (2026-09-23)
+
+The display VM continues `Killed`/`Dying` after the authoritative script host
+stops, so death-time `EMIT_SFX` callbacks need a separate capture path. An
+initial all-roster sweep incorrectly counted live `Create` child threads: the
+production death edge resets that VM before starting `Killed`/`Dying`. The
+corrected sweep follows that reset, clears static slot 0 as GameView does, and
+scans each shipped death timeline for 600 ticks. It finds attached damage-flame
+codes 260/261/262 (in `tarmage`, `tarhel`, and `crefire`); the latest emission
+is at tick 72. It finds no death emissions for smoke codes 257/258/265 or
+detached codes 263/264. In particular, `zonfire` 257/262 and `verpill` 264
+were live `Create` emissions, not `Killed`/`Dying` effects.
+
+The display VM now captures only death codes 260–262 at the EMIT_SFX
+instruction, using the same retail fixed-point piece-origin routine as the
+simulation host. These events enter the existing per-owner damage-flame lists,
+preserving their 40-particle cap, class selection, authored animation clock,
+and 15-tick sprite lifetime. The existing simulation-side transient bridge for
+live script emissions of 263/264 remains in place; the death capture does not
+claim those codes. `animation_roster_test` reproduces reset-separated callback
+ordering, checks all 600 ticks, requires each confirmed flame family, rejects
+live-only families in death callbacks, and verifies attached emissions finish
+before the 120-tick body handoff.
+
+Attached effect owner lists now survive the HP-death edge through the existing
+`kCorpseAnimTicks` body handoff (120 ticks); statue removal remains immediate.
+The sim supplies a raw statue feature ID, while RenderFrame supplies a boolean;
+the cleanup guard handles and tests those representations separately so an
+ordinary `false` snapshot value is not read as feature ID zero.
+Native code confirms smoke and damage-flame managers own per-unit lists and
+their destructors free attached entries, but the exact native manager
+destructor tick relative to `Killed`/`Dying` is not established. The port uses
+its current rendered-body handoff as the safe cleanup boundary; further native
+timing evidence remains open. No retail GUI was launched.
+
+### Lake Lokken native sea-route fixture (2026-09-23)
+
+`check_surface_unload_map_route.py` now exercises the shipped 480x480-cell
+Lake Lokken map. A 4x4 boat route from `(240,120)` to the circle centered at
+`(240,140)` matches retail's reconstructed route at World tick 15: one waypoint
+and 84 native grade queries. The Per Mare Per Terras case still matches at
+`(40,120)` to `(40,142)`, with four waypoints and 564 grade queries. Both cases
+pass with Release, Debug, and optimized World binaries. The Lake Lokken
+destination is in water, so it checks a connected water crossing rather than
+shore cargo placement.
+
+This exposed an emulation-fixture overlap: the fixed terrain-cell buffer sat
+1 MiB before the unit/type/object tables, so a 480x480 map overwrote those
+tables. `Phase` now allocates cell planes larger than 1 MiB from its emulated
+heap, retaining the fixed address for smaller fixtures that write it directly.
+Native search still consumes the grade plane exported by World. Independent
+terrain-grade parity and a live-map shore unload remain open. Reproduce the
+native route comparisons with:
+
+```sh
+for bin in build build-dbg build-o2; do
+  python3 tools/re/check_surface_unload_map_route.py "$bin/transport_test" \
+    --map 'Lake Lokken' --start 240 120 --target 240 140
+  python3 tools/re/check_surface_unload_map_route.py "$bin/transport_test" \
+    --map 'Per Mare Per Terras' --start 40 120 --target 40 142
+done
+```
+
+### Controlled Zhon construction-flight pair (2026-09-23)
+
+`check_zhon_construction_flight_trace.py` now composes native `41ef00` stages
+5→4, the real point-controller constructor and setters (`4e40e0`, `4e4540`),
+the native navigator install (`4d4d40`), and 16 `4dc800` mover ticks through
+`524af0`. The World side loads the retail `zonhunt` profile and follows the
+exact installed point. Seed 50 installs `(1041.015,100,1007.224)` around the
+site at `(1120,100,1060)`, with flags `0x60` and heading 43016. Both sides use
+the same flat 100-height plane and start at `(1000,161,1000)`; by tick 16 both
+are at `(1012.576,177,995.101)`. All 16 rows match exactly for XYZ, altitude,
+heading, velocity, navigator output, and Monarch-to-site X/Z. The controlled
+trace therefore finds no native/World construction-flight mismatch over this
+orbit leg, and needs no height or position correction on this evidence.
+
+Reproduce after building the focused World mode in each configuration with:
+
+```sh
+for bin in build build-dbg build-o2; do
+  cmake --build "$bin" --target conjure_test -j4
+  python3 tools/re/check_zhon_construction_flight_trace.py \
+    --binary "$bin/conjure_test" --steps 16
+done
+```
+
+This is a controlled mover comparison, not a synchronized render comparison:
+it does not pair the live native frame's body/piece transforms and camera with
+a Glide frame. Establishing the reported visual separation still needs those
+render inputs captured together with the Monarch and site positions at one
+tick. No retail GUI was launched for this trace.

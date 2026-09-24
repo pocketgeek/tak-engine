@@ -6,6 +6,7 @@
 #include "sim/matchsetup.h"
 #include "sim/retailrng.h"
 #include "sim/retailanimationqueries.h"
+#include "client/retaildeathsfx.h"
 #include "hpi/hpi.h"
 #include <cmath>
 #include <cstdio>
@@ -58,6 +59,10 @@ int main(int argc,char**argv) {
     for(const auto& [name,type]:registry.types()) {
         const auto* file=type.script();if(!file)continue;
         ++scripts;
+        std::map<int32_t,size_t> deathEmissions;
+        std::map<int32_t,int> deathLatestTick;
+        int deathTick=0;
+        bool captureDeathSfx=false;
         tak::cob::Vm display(*file);display.enableRetailAnimation();
         display.onEmitSfx=[&](int,int32_t code){++emissions[code];};
         const auto reachability=tak::cob::explosionReachability(*file);
@@ -111,7 +116,10 @@ int main(int argc,char**argv) {
         // dormant during the normal callback timeline above.
         for(int severity:{1,100,1000})for(int damageType:{0,1}) {
             tak::cob::Vm dying(*file);dying.enableRetailAnimation();
-            dying.onEmitSfx=[&](int,int32_t code){++emissions[code];};
+            dying.onEmitSfx=[&](int,int32_t code){
+                ++emissions[code];
+                if(captureDeathSfx) {++deathEmissions[code];deathLatestTick[code]=deathTick;}
+            };
             bool deathSerial=true;
             dying.onGet=[](int query,const std::vector<int32_t>&) {return query==4?100:0;};
             dying.onExplode=[&](int,int32_t) {
@@ -122,11 +130,47 @@ int main(int argc,char**argv) {
                 }
                 return true;
             };
-            dying.start("Create");dying.start("Killed",{severity,0,damageType});
-            for(int frame=0;frame<240;++frame) {
+            // Match the production death edge: Create has started its background
+            // threads, then reset() stops them before Killed/Dying are installed.
+            dying.start("Create");
+            for(int frame=0;frame<30;++frame)dying.tick(1.f/30);
+            dying.reset();dying.setStatic(0,0);
+            captureDeathSfx=true;deathTick=0;
+            dying.start("Killed",{severity,0,damageType});
+            if(!dying.start("Dying",{damageType}))dying.start("death");
+            for(int frame=0;frame<600;++frame) {
+                deathTick=frame+1;
                 deathSerial=dying.mayReachExplosion(reachability);
                 ++(deathSerial?serialFrames:parallelFrames);
                 dying.tick(1.f/30);
+            }
+            captureDeathSfx=false;
+        }
+        const auto requiresDeathEffect=[&](int32_t code) {
+            const bool required=(name=="tarmage" && code==260) ||
+                                (name=="tarhel" && code==261) ||
+                                (name=="crefire" && code==262);
+            if(required && !deathEmissions[code]) {
+                std::printf("FAIL %s Killed timeline omitted native SFX code %d\n",
+                            name.c_str(),code);
+                ++failures;
+            }
+        };
+        for(int32_t code:{260,261,262})requiresDeathEffect(code);
+        for(const auto& [code,count]:deathEmissions) {
+            const auto family=tak::retailDeathSfxFamily(code);
+            if(count && family && *family!=tak::RetailDeathSfxFamily::DamageFlame) {
+                std::printf("FAIL %s reset-separated death timeline emitted live-only SFX code %d\n",
+                            name.c_str(),code);
+                ++failures;
+            }
+        }
+        for(const auto& [code,lastTick]:deathLatestTick) {
+            const auto family=tak::retailDeathSfxFamily(code);
+            if(family && *family!=tak::RetailDeathSfxFamily::Detached && lastTick>=120) {
+                std::printf("FAIL %s death SFX %d emitted at tick %d, after owner handoff\n",
+                            name.c_str(),code,lastTick);
+                ++failures;
             }
         }
     }

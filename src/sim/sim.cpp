@@ -6953,12 +6953,11 @@ struct World::ScriptHost {
             world.scriptEmissions_.push_back(std::move(event));
             return;
         }
-        const auto offset=retailPieceOrigin(unit.type->productionModel,factory.state.pieces,piece,
-            portHeadingToRetail(unit.heading),unit.groundPitch,unit.groundRoll);
-        std::array<int32_t,3> position={unit.x.v,
+        const std::array<int32_t,3> base={unit.x.v,
             (unit.type->canFly ? unit.flightY : unit.groundY).v,unit.z.v};
-        for(size_t axis=0;axis<3;++axis)
-            position[axis]=std::bit_cast<int32_t>(uint32_t(position[axis])+uint32_t(offset[axis]));
+        const auto position=retailScriptEffectPosition(base,unit.type->productionModel,
+            factory.state.pieces,piece,portHeadingToRetail(unit.heading),
+            unit.groundPitch,unit.groundRoll);
         world.scriptEmissions_.push_back({world.tickCounter_,unit.id,unit.player,piece,code,position});
     }
     uint32_t sound(int,int32_t) { return 0; } // audio remains client-owned
@@ -7179,14 +7178,16 @@ std::optional<World::WeaponAimSolution> World::queryWeaponAim(int unitId,int tar
 void World::clearScriptWeaponTarget(Unit& u) {
     const auto it=unitScripts_.find(u.id);
     if(it!=unitScripts_.end()) {
-        const auto& file=*u.type->script();ScriptHost host{*this,u,it->second};
+        const auto& file=*u.type->script();
         for(size_t slot=0;slot<std::min(size_t(3),u.type->weapons.size());++slot) {
             // 51a7f0 retires all targets, but only the selected callback can
             // acknowledge/reset a switcher's weapon state.
             if(u.type->weaponSwitching && int(slot)!=u.weaponSlot)continue;
             u.weaponAnimations.add(tak::RetailWeaponAnimation::Clear,int(slot));
-            if(it->second.state.startArguments(file,file.scriptIndex("TargetCleared"),{uint32_t(slot),0,0,0},1))
-                it->second.state.tick(file,0,host);
+            // Native 51a7f0 starts TargetCleared with immediate=0. The callback
+            // thread runs in the next regular COB pass, not inline in target
+            // retirement; its SET 21 remains script-owned and takes effect there.
+            it->second.state.startArguments(file,file.scriptIndex("TargetCleared"),{uint32_t(slot),0,0,0},1);
         }
     }
     u.scriptAimTarget=0;
@@ -7204,12 +7205,12 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
     u.scriptAimTarget=target.id;
     u.weaponAimPoints[size_t(slot)]=solution->target;
     auto& aim=u.weaponAim[size_t(slot)];const auto& weapon=u.type->weapons[size_t(slot)];
-    ScriptHost host{*this,u,it->second};
     const bool dropped=weapon.kind==Weapon::Kind::Dropped;
     if(!dropped && aim.start(solution->heading,solution->pitch)) {
         u.weaponAnimations.add(tak::RetailWeaponAnimation::Aim,slot,solution->heading,solution->pitch);
-        if(it->second.state.startArguments(file,aimScript,{solution->heading,solution->pitch,uint32_t(slot),0},3))
-            it->second.state.tick(file,0,host);
+        // Native 52fe30 starts AimWeapon with immediate=0. Starting the VM here
+        // only queues its thread; the following unit-script phase runs its body.
+        it->second.state.startArguments(file,aimScript,{solution->heading,solution->pitch,uint32_t(slot),0},3);
     }
     const bool available=u.reloads[slot]==0 &&
         (u.type->maxMana<=0 || u.mana>=weapon.manaCost);
@@ -7225,9 +7226,9 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
         u.missionEvents|=retailWeaponFireEvent(0,0x10000,all ? 0xc0000000u : uint32_t(slot)<<30,aim.flags);
         u.fireAnimations|=uint32_t(1)<<slot;
         u.weaponAnimations.add(tak::RetailWeaponAnimation::Fire,slot);
-        if(it->second.state.startArguments(file,fireScript,{uint32_t(slot),0,0,0},1)) {
-            it->second.state.tick(file,0,host);
-        }
+        // Native 530140 also starts FireWeapon with immediate=0. SET 23 can
+        // therefore only be observed by a later common weapon update.
+        it->second.state.startArguments(file,fireScript,{uint32_t(slot),0,0,0},1);
     }
     if(aim.flags&16) {
         fire(u,target,slot,true);

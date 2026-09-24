@@ -1049,6 +1049,13 @@ private:
     }
     struct EffectAnim;   // defined below; Anim only needs the pointer type
     struct Anim {
+        struct PendingDeathEffect {
+            uint32_t tick = 0;
+            int32_t code = 0;
+            int ownerId = 0;
+            uint32_t ownerRetireTick = 0;
+            std::array<int32_t,3> position{};
+        };
         std::unique_ptr<tak::cob::Vm> vm;
         // Points at the shared per-TYPE CobCache.pieceNames (node-stable in cobCache_,
         // which outlives every Anim), not a per-unit copy -- ~25 MB saved at 38k units.
@@ -1087,6 +1094,10 @@ private:
         // emit-sfx (piece, sfxType) captured off the worker thread; drained on the
         // main thread after the parallel VM tick (SDL/effects_ are main-thread only).
         std::vector<std::pair<int, int32_t>> pendingSfx;
+        // The sim VM stops on death, but the display VM still runs Killed/Dying.
+        // These captured damage-flame callbacks need the owner position and
+        // retirement tick because their native effect lists are unit-attached.
+        std::vector<PendingDeathEffect> pendingDeathEffects;
         std::vector<tak::sim::World::ScriptEmission> pendingPoints;
         std::vector<int32_t> pendingSnd;   // COB PLAY_SOUND name indices, drained on main
         std::span<const uint8_t> explosionReachability; // shared per-script control-flow map
@@ -1107,6 +1118,7 @@ private:
     // Refresh a cosmetic flame/smoke effect attached to its animated COB piece.
     // Effect classes and lifetimes still need a full native particle comparison.
     void emitSfx(const UnitR& u, Anim& a, int piece, int32_t sfx);
+    void emitDeathScriptSfx(const Anim::PendingDeathEffect& event);
     void emitPoint(const tak::sim::World::ScriptEmission& event);
     // COB EXPLODE: the piece flies off as a debris chunk (retail icd 0x50dd20)
     // plus the TA-flag extras (SMOKE/FIRE bits, BITMAPn explosion classes).
@@ -3227,6 +3239,7 @@ private:
         int life=15;
     };
     std::map<int,std::vector<DamageFlameSprite>> damageFlames_;
+    std::map<int,uint32_t> deathSfxOwnerRetireTicks_;
     std::array<std::vector<const EffectAnim*>,3> damageFlameClasses_;
     bool damageFlameClassesLoaded_=false;
     void loadDamageFlameClasses();

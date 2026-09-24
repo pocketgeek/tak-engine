@@ -913,12 +913,15 @@ int main(int argc,char** argv) {
         const int next=world.spawn(&targetType,320,237,{},1);
         const auto expected=world.queryWeaponAim(sid,next,0);
         world.attack(sid,next,false);world.tick(1.f/30);
-        const auto& events=world.unit(sid)->weaponAnimations;
-        require(events.count==2 && events.events[0].kind==tak::RetailWeaponAnimation::Clear &&
-            events.events[1].kind==tak::RetailWeaponAnimation::Aim,
-            "retargeting delivers TargetCleared before the new AimWeapon callback");
-        require(events.events[1].heading==(expected->heading&0xff00) &&
-            events.events[1].pitch==(expected->pitch&0xff00),"display angles use native packet precision");
+        const auto& clearEvents=world.unit(sid)->weaponAnimations;
+        require(clearEvents.count==1 && clearEvents.events[0].kind==tak::RetailWeaponAnimation::Clear,
+            "retargeting queues TargetCleared before a new aim can start");
+        world.tick(1.f/30);
+        const auto& aimEvents=world.unit(sid)->weaponAnimations;
+        require(aimEvents.count==1 && aimEvents.events[0].kind==tak::RetailWeaponAnimation::Aim,
+            "the regular script pass clears the old aim before starting the new AimWeapon callback");
+        require(aimEvents.events[0].heading==(expected->heading&0xff00) &&
+            aimEvents.events[0].pitch==(expected->pitch&0xff00),"display angles use native packet precision");
         world.tick(1.f/30);
         require(world.unit(sid)->weaponAnimations.count==0,"callback events expire on the next simulation update");
         std::cout<<"PASS: live script-timed aim, firing callback, reload and delayed projectile\n";
@@ -963,9 +966,11 @@ int main(int argc,char** argv) {
                 "target death prevents a pending release from spending mana or creating a shot");
             require(unit->weaponAnimations.count==1 && unit->weaponAnimations.events[0].kind==tak::RetailWeaponAnimation::Clear &&
                 unit->scriptAimTarget==0,"dying target is cleared during the same combat update");
-            require(bool(unit->weaponAim[0].flags&16)==!clearAcknowledges,
-                "target retirement leaves cancellation to the TargetCleared script");
+            require(unit->weaponAim[0].flags&16,
+                "target retirement queues TargetCleared without executing it inline");
             loss.tick(1.f/30);
+            require(bool(loss.unit(from)->weaponAim[0].flags&16)==!clearAcknowledges,
+                "the regular script pass owns delayed-acknowledgement cancellation");
             require(loss.unit(from)->weaponAnimations.count==0,"target retirement does not repeat its clear callback next tick");
             const int next=loss.spawn(&targetType,320,200,{},1);
             loss.attack(from,next,false);loss.tick(1.f/30);
@@ -995,6 +1000,9 @@ int main(int argc,char** argv) {
             delayed.setWeapon(from,0);
             if(interruption==2) {
                 delayed.stop(from);delayed.tick(1.f/30);
+                require(delayed.unit(from)->weaponAim[0].flags&16,
+                    "Stop queues TargetCleared but does not run the script inline");
+                delayed.tick(1.f/30);
                 require(!(delayed.unit(from)->weaponAim[0].flags&16),"TargetCleared SET 21 cancels an already-pending release");
             }
             if(interruption!=1)delayed.attack(from,target,false);

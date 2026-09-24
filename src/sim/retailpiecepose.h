@@ -107,6 +107,21 @@ inline std::array<int32_t,3> retailPieceOrigin(std::span<const RetailModelPiece>
     return result;
 }
 
+// Add an instruction-time script-piece offset to the unit's fixed-point world
+// origin. EMIT_SFX effects use this same wrapped XYZ placement in both the
+// simulation host and the display-side death-script bridge.
+inline std::array<int32_t,3> retailScriptEffectPosition(
+        const std::array<int32_t,3>& worldPosition,
+        std::span<const RetailModelPiece> model,
+        std::span<const cob::RetailPiece> poses,int scriptPiece,
+        uint16_t heading,uint16_t pitch=0,uint16_t roll=0) {
+    const auto offset=retailPieceOrigin(model,poses,scriptPiece,heading,pitch,roll);
+    std::array<int32_t,3> result{};
+    for(size_t axis=0;axis<3;++axis)
+        result[axis]=std::bit_cast<int32_t>(uint32_t(worldPosition[axis])+uint32_t(offset[axis]));
+    return result;
+}
+
 // 4dd2a0: SweetSpot uses mirrored model-space vertex bounds, including zero.
 // The native extrema start at zero, and signed center division truncates to zero.
 struct RetailPieceBounds {

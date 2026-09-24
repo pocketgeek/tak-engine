@@ -31,6 +31,13 @@ class Phase:
         self.W, self.H = W, H
         self.blocked = set()
         self.brk = BRK0
+        # The historical fixed CELLS address sits only 1 MiB before UNITS.
+        # Keep it for the small path fixtures that write that exported address
+        # directly, but place larger map planes in the emulated heap so they do
+        # not overwrite the unit/type/object tables.
+        self.cells_addr = CELLS
+        if W * H * 14 > 0x100000:
+            self.cells_addr = self._alloc(W * H * 14)
         self._install_shims()
         self._gamestate()
 
@@ -67,7 +74,7 @@ class Phase:
         g = lambda off, v: uc.mem_write(GS + off, struct.pack("<I", v))
         g(0x19e98, self.W)
         g(0x19e9c, self.H)
-        g(0x19f04, CELLS)
+        g(0x19f04, self.cells_addr)
         g(0x19edc, UNITS)
         g(0x19ec0, 64)
         uc.mem_write(GS + 0x19ef8, bytes([0]))
@@ -77,7 +84,7 @@ class Phase:
         uc.mem_write(GS + 0x19ef4, struct.pack("<I", BM))
         cell = bytearray(14)
         cell[8:10] = b"\xff\xff"
-        uc.mem_write(CELLS, bytes(cell) * (self.W * self.H))
+        uc.mem_write(self.cells_addr, bytes(cell) * (self.W * self.H))
         uc.mem_write(UNITS, b"\0" * (0x140 * 64))
         uc.mem_write(TYPE, b"\0" * 0x400)
 

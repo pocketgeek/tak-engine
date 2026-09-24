@@ -8,6 +8,7 @@
 #include "client/retailviewport.h"
 #include "client/retailpointparticle.h"
 #include "client/retaildebris.h"
+#include "client/retaildeathsfx.h"
 #include "client/retailglow.h"
 #include "client/retailblood.h"
 #include "sim/retailprojectile.h"
@@ -20,6 +21,7 @@
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
 #include "client/renderframe.h"
+#include "sim/retailpiecepose.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -28,8 +30,77 @@
 #include <tuple>
 #include <vector>
 
+static bool testScriptEffectPosition() {
+    uint32_t seed=0x51f3a217u;
+    const auto random=[&] {
+        seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;
+        return seed;
+    };
+    for(int caseIndex=0;caseIndex<4096;++caseIndex) {
+        std::vector<tak::sim::RetailModelPiece> model(2);
+        model[0].parent=-1;model[0].scriptPiece=0;
+        model[1].parent=0;model[1].scriptPiece=1;
+        for(auto& node:model)for(auto& value:node.offset)value=int32_t(random());
+        std::vector<tak::cob::RetailPiece> pose(2);
+        for(auto& piece:pose) {
+            for(auto& value:piece.move)value=int32_t(random());
+            for(auto& value:piece.turn)value=int32_t(random());
+        }
+        std::array<int32_t,3> base{};
+        for(auto& value:base)value=int32_t(random());
+        const uint16_t heading=uint16_t(random()),pitch=uint16_t(random()),roll=uint16_t(random());
+        const auto offset=tak::sim::retailPieceOrigin(model,pose,1,heading,pitch,roll);
+        std::array<int32_t,3> expected{};
+        for(size_t axis=0;axis<3;++axis)
+            expected[axis]=std::bit_cast<int32_t>(uint32_t(base[axis])+uint32_t(offset[axis]));
+        if(tak::sim::retailScriptEffectPosition(base,model,pose,1,heading,pitch,roll)!=expected) {
+            std::fprintf(stderr,"script effect origin overflow/placement mismatch at case %d\n",caseIndex);
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool testDeathSfxLifecycle() {
+    using Family=tak::RetailDeathSfxFamily;
+    for(const auto& [code,family]:std::array{
+            std::pair{257,Family::Smoke},std::pair{258,Family::Smoke},
+            std::pair{265,Family::Smoke},std::pair{260,Family::DamageFlame},
+            std::pair{261,Family::DamageFlame},std::pair{262,Family::DamageFlame},
+            std::pair{263,Family::Detached},std::pair{264,Family::Detached}}) {
+        const auto actual=tak::retailDeathSfxFamily(code);
+        if(!actual || *actual!=family) {
+            std::fprintf(stderr,"death SFX family %d was classified incorrectly\n",code);
+            return false;
+        }
+    }
+    if(tak::retailDeathSfxFamily(259) || tak::retailDeathSfxFamily(256)) {
+        std::fprintf(stderr,"native no-op/unknown SFX code was admitted as a death effect\n");
+        return false;
+    }
+    if(tak::retailAttachedSfxOwnerRemoved(true,200,-1,120) ||
+       tak::retailAttachedSfxOwnerRemoved(false,119,-1,120) ||
+       !tak::retailAttachedSfxOwnerRemoved(false,120,-1,120) ||
+       !tak::retailAttachedSfxOwnerRemoved(false,0,0,120) ||
+       tak::retailAttachedSfxOwnerRemovedSnapshot(true,200,false,120) ||
+       tak::retailAttachedSfxOwnerRemovedSnapshot(false,119,false,120) ||
+       !tak::retailAttachedSfxOwnerRemovedSnapshot(false,120,false,120) ||
+       !tak::retailAttachedSfxOwnerRemovedSnapshot(false,0,true,120)) {
+        std::fprintf(stderr,"attached death SFX owner retirement boundary is incorrect\n");
+        return false;
+    }
+    const uint32_t retirement=tak::retailAttachedSfxRetirementTick(0xfffffffcu,118,120);
+    if(retirement!=0xfffffffeu || tak::retailTickAtOrAfter(0xfffffffdu,retirement) ||
+       !tak::retailTickAtOrAfter(0u,retirement)) {
+        std::fprintf(stderr,"attached death SFX retirement tick mishandles wraparound\n");
+        return false;
+    }
+    return true;
+}
+
 int main(int argc,char** argv) {
     if(argc==1) {
+        if(!testScriptEffectPosition() || !testDeathSfxLifecycle())return 1;
         struct BurnEvent { int id; uint64_t activationSequence; bool emit; };
         std::vector<BurnEvent> events{{13,1,true},{2,2,true},{9,3,true}};
         tak::retailOrderFeatureSmokeNewestFirst(events);

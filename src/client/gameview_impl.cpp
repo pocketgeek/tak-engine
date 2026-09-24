@@ -5,6 +5,7 @@
 #include "client/retailfeatureclock.h"
 #include "client/retailbuilderanimation.h"
 #include "client/retailmovementcallbacks.h"
+#include "client/retaildeathsfx.h"
 #include "client/runtimesettings.h"
 #include <cmath>
 #include <cstdlib>
@@ -1145,7 +1146,8 @@
         smokeCaptureTick_=smoke.tick;
         for(auto it=smokeOwners_.begin();it!=smokeOwners_.end();) {
             const auto* owner=world_.unit(*it);
-            if(!owner || !owner->alive()) {
+            if(!owner || tak::retailAttachedSfxOwnerRemoved(owner->alive(),owner->deadFor,
+                    owner->corpseStatue,tak::sim::World::kCorpseAnimTicks)) {
                 smoke.removedOwners.push_back(*it);it=smokeOwners_.erase(it);
             } else ++it;
         }
@@ -2099,9 +2101,13 @@
         // Drain emit-sfx the VMs stashed (fire/smoke from FireControl-style loops),
         // now serially on the main thread, into the world-space effect system.
         for (auto& [id, a] : anims_) {
-            if (a.pendingPoints.empty() && a.pendingSfx.empty() && a.pendingSnd.empty()) continue;
+            if (a.pendingPoints.empty() && a.pendingSfx.empty() && a.pendingSnd.empty() &&
+                a.pendingDeathEffects.empty()) continue;
             const auto* u = frameUnitP(id);
             if (u && u->type && (noFog_ || cellVisibleR(u->x, u->z))) {
+                for(const auto& event:a.pendingDeathEffects) {
+                    emitDeathScriptSfx(event);
+                }
                 for(auto& event:a.pendingPoints) {
                     event.unitId=u->id;event.player=u->player;event.position=u->worldPosition;
                     event.heading=uint16_t(u->headingWord+32768);event.pitch=u->bodyPitch;event.roll=u->bodyRoll;
@@ -2120,6 +2126,7 @@
             a.pendingPoints.clear();
             a.pendingSfx.clear();
             a.pendingSnd.clear();
+            a.pendingDeathEffects.clear();
         }
     }
 
@@ -2302,9 +2309,20 @@
         }
         const auto random=[&] {return tak::sim::retailCrtRandom(smokeRandom_);};
         for(const auto& tick:ticks) {
-            if(tick.tick<=smokeTick_) {smokeSprites_.clear();featureSmokeSprites_.clear();damageFlames_.clear();pointParticles_.clear();smokeRandom_=1;}
+            if(tick.tick<=smokeTick_) {smokeSprites_.clear();featureSmokeSprites_.clear();damageFlames_.clear();pointParticles_.clear();deathSfxOwnerRetireTicks_.clear();smokeRandom_=1;}
             smokeTick_=tick.tick;
-            for(int owner:tick.removedOwners) {smokeSprites_.erase(owner);damageFlames_.erase(owner);pointParticles_.erase(owner);}
+            for(auto it=deathSfxOwnerRetireTicks_.begin();it!=deathSfxOwnerRetireTicks_.end();) {
+                if(tak::retailTickAtOrAfter(tick.tick,it->second)) {
+                    smokeSprites_.erase(it->first);damageFlames_.erase(it->first);
+                    pointParticles_.erase(it->first);it=deathSfxOwnerRetireTicks_.erase(it);
+                } else ++it;
+            }
+            for(int owner:tick.removedOwners) {
+                const auto death=deathSfxOwnerRetireTicks_.find(owner);
+                if(death!=deathSfxOwnerRetireTicks_.end() &&
+                   !tak::retailTickAtOrAfter(tick.tick,death->second))continue;
+                smokeSprites_.erase(owner);damageFlames_.erase(owner);pointParticles_.erase(owner);
+            }
             for(int id:tick.removedFeatures)featureSmokeSprites_.erase(id);
             const auto updateFeatureSmoke=[&](const FeatureSmokeEmission& event) {
                 const auto found=featureSmokeSprites_.find(event.id);
@@ -2427,6 +2445,24 @@
         // Refresh this unit's persistent flame/smoke; drawUnitFx cycles it smoothly.
         if (anim[0] == 's') { a.smokeFx = ea; a.smokeT = 0; a.smokePiece = piece; }
         else                { a.fireFx = ea;  a.fireT = 0;  a.firePiece = piece; }
+    }
+
+    void GameView::emitDeathScriptSfx(const Anim::PendingDeathEffect& event) {
+        const auto family=tak::retailDeathSfxFamily(event.code);
+        // The corrected native Killed/Dying scan only found attached damage
+        // flames. Codes 263/264 and the smoke codes here belong to live script
+        // timelines and keep their existing simulation-side bridge.
+        if(!family || *family!=tak::RetailDeathSfxFamily::DamageFlame)return;
+        if(tak::retailTickAtOrAfter(front().gameTick,event.ownerRetireTick))return;
+        loadDamageFlameClasses();
+        auto& sprites=damageFlames_[event.ownerId];
+        const auto& variants=damageFlameClasses_[size_t(event.code-260)];
+        if(sprites.size()>=40 || variants.empty())return;
+        const auto* art=variants[size_t(uint64_t(tak::sim::retailCrtRandom(smokeRandom_))*
+                                       variants.size()/32768)];
+        DamageFlameSprite sprite;sprite.position=event.position;sprite.art=art;
+        sprite.clock.start(art->durations);sprites.push_back(sprite);
+        deathSfxOwnerRetireTicks_[event.ownerId]=event.ownerRetireTick;
     }
 
     bool GameView::explodePiece(const UnitR& u, Anim& a, int piece, int32_t flags) {
@@ -2682,8 +2718,37 @@
             // The VM is ticked on the worker pool, so emit-sfx only stashes into this
             // unit's own buffer (std::map nodes are pointer-stable); the main thread
             // drains it into effects_ after the parallel tick.
-            st.vm->onEmitSfx = [buf = &st.pendingSfx, points=&st.pendingPoints,
-                    vm=st.vm.get(),cache=&cobCache_.at(typeId),flying=st.flying](int piece, int32_t sfx) {
+            st.vm->onEmitSfx = [this,id,state=&st,buf = &st.pendingSfx,
+                    points=&st.pendingPoints,vm=st.vm.get(),cache=&cobCache_.at(typeId),
+                    flying=st.flying](int piece, int32_t sfx) {
+                // The authoritative script host is retired as soon as HP reaches
+                // zero, while the display VM runs the Killed/Dying callbacks.
+                // The reset-separated native death scan reaches attached damage
+                // flames 260..262. Capture only those callbacks before piece
+                // poses advance; detached 263/264 are live-script effects.
+                if(state->dying && sfx>=260 && sfx<=262) {
+                    const UnitR* unit=frameUnitP(id);
+                    if(!unit || !unit->type || piece<0 ||
+                       size_t(piece)>=vm->retailPieces().size())return;
+                    const int32_t deadForTicks=std::max(0,int32_t(unit->deadFor*30.0f+0.5f));
+                    if(tak::retailAttachedSfxOwnerRemovedSnapshot(false,deadForTicks,
+                           unit->corpseStatue,tak::sim::World::kCorpseAnimTicks))return;
+                    const auto& model=unit->type->productionModel;
+                    if(std::none_of(model.begin(),model.end(),[&](const auto& node) {
+                        return node.scriptPiece==piece;
+                    }))return;
+                    Anim::PendingDeathEffect event;
+                    event.tick=front().gameTick;
+                    event.code=sfx;
+                    event.ownerId=id;
+                    event.ownerRetireTick=tak::retailAttachedSfxRetirementTick(
+                        event.tick,deadForTicks,tak::sim::World::kCorpseAnimTicks);
+                    event.position=tak::sim::retailScriptEffectPosition(unit->worldPosition,
+                        model,vm->retailPieces(),piece,uint16_t(unit->headingWord+32768),
+                        unit->bodyPitch,unit->bodyRoll);
+                    state->pendingDeathEffects.push_back(event);
+                    return;
+                }
                 if(!flying && sfx>=2 && sfx<=5) {
                     if(piece<0 || size_t(piece)>=cache->pieceVertices.size() ||
                        cache->pieceVertices[size_t(piece)].size()<2)return;
