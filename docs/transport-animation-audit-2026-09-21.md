@@ -57,8 +57,21 @@ implementation descriptions. Current open gates are:
   its passenger at the exact selected shore point while the carrier's full
   footprint remains navigable water. Its paired Lake Lokken route reconstruction
   consumes effective grades produced by World and returns a usable partial
-  route after reporting failure; it is not independent grade generation or a
-  complete native dispatcher/mover/placement comparison. A separate
+  route after reporting failure. The long Vertrans shore route from `(240,120)`
+  to `(240,350)` now also matches retail's reconstructed route in Standard and
+  Crusades when the search hook computes grades with native `0x508cd0` over
+  TNT-derived Lake Lokken cells. The 260 distinct native query cells produce the
+  same one-waypoint route ending inside the 266px unload circle; the 217 cells on the route origin
+  line match World's attempt plane exactly. The route query keeps World's grade-5
+  unexplored-terrain visibility override as a separate input; the narrow
+  off-route sample's remaining differences are all that override. Native feature
+  definitions encountered by the route are only the nonblocking `TarWave05`.
+  Retail's real navigator setter installs the reconstructed path, then native
+  `0x4dc800` and `0x51b2a0` match World for 1,470 consecutive ticks over
+  TNT-derived Lake Lokken terrain in both balances; both movers enter the
+  authored unload circle. This controlled trace postpones terrain scanning so
+  both movers retain matched 0/0 movement modes, and has no live unit-occupancy
+  blockers. A separate
   asset-backed `vertrans` route from `(240,120)` to the water target `(240,140)`
   now matches native reconstruction exactly in standard and Crusades: one
   waypoint, 57 native grade queries, and an endpoint inside the 266px unload
@@ -70,15 +83,17 @@ implementation descriptions. Current open gates are:
   footprints remain physically placeable through a 60-tick coast, and the
   carrier remains passable in its water grid. A separate direct World unload
   from `(240,120)` to shore `(240,350)` also completes in 2,222 ticks in both
-  balances. That long shore route is not yet paired with native. The first
-  grade-plane dump belonged to an abandoned request; the completed search starts
-  at `(240,123)` and targets goal cell `(239,349)`. Feeding that captured attempt
-  into the native emulator currently faults during cost-search initialization
-  because its heap-root pointer is null (`0x414367`). This harness fault leaves
-  route parity unresolved; it is not evidence of a World/native mismatch. The map's
-  `TarWave05` feature is `blocking=0`; the shared overlay honors that flag
-  instead of treating decorative wave art as an obstacle. Full native-vs-World
-  live-map mission and long-shore movement parity remain open.
+  balances. The first grade-plane dump belonged to an abandoned request; the
+  completed search starts at `(240,123)` and targets goal cell `(239,349)`. The
+  old native cost-search heap-root fault (`0x414367`) was a harness sequencing
+  error and is resolved. The map's `TarWave05` feature is `blocking=0`; the
+  shared overlay honors that flag instead of treating decorative wave art as an
+  obstacle. A separate map-backed release test runs retail's unload dispatcher,
+  placement, detach and PARK at the World carrier's completed circle position
+  in both balances. The remaining shoreline gate is one uninterrupted live
+  mission with terrain rescans and dynamic occupancy active from departure
+  through release; these paired route/mover and release fixtures isolate those
+  scheduler inputs.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -214,12 +229,28 @@ scripts without corruption.
 - `python3 tools/re/check_surface_unload_map_route.py build/transport_test --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' --start 240 120 --target 240 140 --carrier vertrans --passenger araarch` (repeat with `--crusades`):
   actual-profile Vertrans route reconstruction; one waypoint matches exactly,
   with 57 native grade queries and the endpoint inside the 266px unload circle.
+- `python3 tools/re/check_surface_unload_map_grades.py --binary build/transport_test --hpitool build/hpitool --retail-root /home/pocket_geek/tak_data`:
+  native `0x508cd0` versus World on all 217 Lake Lokken shore-route origin
+  cells in Standard and Crusades. Exact match, including grade 4 at `(240,337)`;
+  off-route differences are all World grade-5 unexplored-terrain overrides.
+- `python3 tools/re/check_surface_unload_map_route.py build/transport_test --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' --start 240 120 --target 240 350 --carrier vertrans --passenger araarch --native-map-grades` (repeat with `--crusades`):
+  reconstructs the long shore route using native TNT-backed `0x508cd0` grades
+  for all queried cells, retaining World’s grade-5 visibility mask separately.
+  The exact one-waypoint route matches and ends inside the 266px unload circle.
+- Repeat the preceding command with `--native-map-mover-steps 1470` (and
+  `--crusades`): after native `0x4e4ea0` route installation, retail's
+  `0x4dc800` mover plus `0x51b2a0` height update match World on every XYZ,
+  heading, speed, mode and terrain-flag sample through entry into the unload
+  circle. The scan deadline is held beyond this controlled trace, and there are
+  no dynamic occupancy blockers.
 - For each `bin` in `build`, `build-dbg`, `build-o2`, run
   `"$bin/transport_test" --surface-unload-map-travel-type /home/pocket_geek/tak_data 'Lake Lokken' vertrans araarch 240 120 240 350 0` and repeat with final argument `1`:
   full World shore unload in standard and Crusades. It completes at tick 2,222,
   releases at the selected shore point, and keeps both unit footprints valid
-  through the 60-tick coast; native route pairing for this long shore leg is
-  still open.
+  through the 60-tick coast. Native terrain grades, route reconstruction,
+  physical movement into the unload circle, and the actual-map release path are
+  paired in the focused retail harnesses above. A single live run with terrain
+  rescans and dynamic occupancy active through release remains open.
 - `ctest --test-dir build -R '^transport_map_roundtrip(_crusades)?$' --output-on-failure`:
   the shipped Vertrans/Araarch Lake Lokken pickup-and-unload trip in standard
   and Crusades balance.
@@ -7961,10 +7992,16 @@ This exposed an emulation-fixture overlap: the fixed terrain-cell buffer sat
 1 MiB before the unit/type/object tables, so a 480x480 map overwrote those
 tables. `Phase` now allocates cell planes larger than 1 MiB from its emulated
 heap, retaining the fixed address for smaller fixtures that write it directly.
-Native search still consumes the grade plane exported by World. This closes
-route reconstruction parity for these two captured Lake Lokken requests, but
-does not prove that retail and World independently generate the same terrain
-grades. `check_surface_unload_map_release.py` now pairs the completed World
+`check_surface_unload_map_grades.py` compares retail's native `0x508cd0`
+directly against the World attempt plane over the real route origin. The extended
+route checker also reconstructs the same long shore route from native TNT-backed
+grades, with the World grade-5 unexplored-cell visibility mask held as a separate
+input. The route checker leaves the original `0x4e4ea0` navigator setter in
+place and advances the native `0x4dc800` mover and `0x51b2a0` height update over
+the same map. It matches World's full movement state for 1,470 ticks in both
+balances, and both positions enter the 266px unload circle. For this controlled
+trace the scan deadline is postponed equally, leaving movement modes at 0/0;
+there are no live occupancy blockers. `check_surface_unload_map_release.py` pairs the completed World
 shore unload with retail's real `0x507d10` placement test over the map's
 TNT-derived terrain and feature records. In both balances, retail accepts shore
 cell `(240,350)` for the 2x2 passenger footprint and releases at `(3848,5608)`
@@ -7972,9 +8009,9 @@ on transfer tick 18. World requests that same release cell; its first observed
 position `(3849.11,5607.41)` is after PARK movement has started, with the same
 footprint origin `(240,349)`. This checks route-arrival handling, legal coast
 placement, detach, and release. The native arrival is delivered at World's
-completed carrier position, and the native physical route mover is not run over
-the map; independent terrain-grade generation and full physical route parity
-remain open. Reproduce with:
+completed carrier position, so movement and transfer are validated in paired
+fixtures rather than one uninterrupted native mission with active terrain
+rescans and changing occupancy. Reproduce with:
 
 ```sh
 python3 tools/re/check_surface_unload_map_release.py --binary build/transport_test
@@ -7982,8 +8019,16 @@ python3 tools/re/check_surface_unload_map_route.py build/transport_test \
   --map 'Lake Lokken' --start 240 120 --target 240 350 \
   --carrier vertrans --passenger araarch
 python3 tools/re/check_surface_unload_map_route.py build/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
+  --native-map-grades --native-map-mover-steps 1470
+python3 tools/re/check_surface_unload_map_route.py build/transport_test \
   --map 'Lake Lokken' --start 240 120 --target 240 350 \
   --carrier vertrans --passenger araarch --crusades
+python3 tools/re/check_surface_unload_map_route.py build/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
+  --native-map-grades --native-map-mover-steps 1470 --crusades
 for bin in build build-dbg build-o2; do
   python3 tools/re/check_surface_unload_map_route.py "$bin/transport_test" \
     --map 'Lake Lokken' --start 240 120 --target 240 140

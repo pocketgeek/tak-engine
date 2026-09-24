@@ -1931,6 +1931,37 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
             static_cast<unsigned long long>(w.pathStats().failures()));
         for(size_t i=0;i<end;++i)
             std::printf("%d %d\n",orders[i].x.v,orders[i].z.v);
+        if(const char* text=std::getenv("TAK_MAP_SURFACE_STEPS")) {
+            const unsigned stepLimit=unsigned(std::clamp(std::atoi(text),1,2500));
+            auto* stepped=w.unit(tid);
+            stepped->x=orders.front().segmentX;stepped->z=orders.front().segmentZ;
+            stepped->speed=tak::sim::Fixed();
+            stepped->heading=tak::sim::retailHeadingToPort(
+                tak::sim::portHeadingToRetail(stepped->heading));
+            stepped->turnReqBam=0;stepped->groundMoveTick=0;
+            stepped->groundScanTick=tick+stepLimit+1000;
+            stepped->groundMovementMode=0;stepped->groundSpeedMode=0;
+            stepped->groundTerrainFlags=0x1000;
+            const size_t activeGoal=World::currentLeg(stepped->orders);
+            stepped->orders[activeGoal].transportMission.deadline=tick+stepLimit+1000;
+            w.setPathService(false);
+            std::printf("WORLDSEED %d %d %d %d %d %d %d\n",stepped->x.v,
+                stepped->groundY.v,stepped->z.v,
+                int(tak::sim::portHeadingToRetail(stepped->heading)),
+                stepped->speed.v,stepped->baseSpeed.v,stepped->groundTerrainFlags);
+            std::printf("WORLDTYPE %d %d %d %d %d\n",stepped->type->maxVel.v,
+                stepped->type->accel.v,stepped->type->brake.v,stepped->type->turnRate,
+                stepped->type->waterline);
+            for(unsigned step=1;step<=stepLimit;++step) {
+                w.tick(1.f/30);
+                const auto* after=w.unit(tid);
+                std::printf("WORLDSTEP %u %d %d %d %d %d %u %u %u %d\n",step,
+                    after->x.v,after->groundY.v,after->z.v,
+                    int(tak::sim::portHeadingToRetail(after->heading)),after->speed.v,
+                    unsigned(after->groundMovementMode),unsigned(after->groundSpeedMode),
+                    unsigned(after->groundTerrainFlags),after->turnReqBam);
+            }
+        }
         return;
     }
     std::printf("NO_ROUTE\n");
