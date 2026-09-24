@@ -58,18 +58,27 @@ implementation descriptions. Current open gates are:
   footprint remains navigable water. Its paired Lake Lokken route reconstruction
   consumes effective grades produced by World and returns a usable partial
   route after reporting failure; it is not independent grade generation or a
-  complete native dispatcher/mover/placement comparison. Broader live-map
-  shoreline route coverage remains open. Release, Debug, and optimized builds
-  also complete a full World pickup-and-unload trip on Lake Lokken with the
-  shipped `vertrans` and `araarch` definitions in both standard and Crusades
-  balance: the ship reaches the shore passenger through a load order, boards,
-  unloads at the selected point, and both unit footprints remain physically
-  placeable through a 60-tick coast. The same trace now verifies that the
-  carrier footprint remains passable in its water navigation grid. The map's
-  `TarWave05` feature is `blocking=0`; the shared overlay now honors that flag
-  instead of treating decorative wave art as an obstacle. These are real
-  asset/type profiles but remain World-only route traces; full native-vs-World
-  live-map movement parity is still open.
+  complete native dispatcher/mover/placement comparison. A separate
+  asset-backed `vertrans` route from `(240,120)` to the water target `(240,140)`
+  now matches native reconstruction exactly in standard and Crusades: one
+  waypoint, 57 native grade queries, and an endpoint inside the 266px unload
+  circle. This is a short connected-water route, not a shore unload. Release,
+  Debug, and optimized builds also complete a full World pickup-and-unload trip
+  on Lake Lokken with the shipped `vertrans` and `araarch` definitions in both
+  balances: the ship routes from `(240,120)` to the shore passenger at `(240,350)`
+  through a load order, boards, then unloads at that same selected point. Both
+  footprints remain physically placeable through a 60-tick coast, and the
+  carrier remains passable in its water grid. A separate direct World unload
+  from `(240,120)` to shore `(240,350)` also completes in 2,222 ticks in both
+  balances. That long shore route is not yet paired with native. The first
+  grade-plane dump belonged to an abandoned request; the completed search starts
+  at `(240,123)` and targets goal cell `(239,349)`. Feeding that captured attempt
+  into the native emulator currently faults during cost-search initialization
+  because its heap-root pointer is null (`0x414367`). This harness fault leaves
+  route parity unresolved; it is not evidence of a World/native mismatch. The map's
+  `TarWave05` feature is `blocking=0`; the shared overlay honors that flag
+  instead of treating decorative wave art as an obstacle. Full native-vs-World
+  live-map mission and long-shore movement parity remain open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -103,6 +112,9 @@ implementation descriptions. Current open gates are:
   paths, and representative checks that live effects use the right art family,
   placement and lifetime. Feature smoke now follows retail's newest-first burn
   order and updates each burn's existing particles before that burn emits.
+  Headless live-script fixtures cover `verpill`'s detached SFX 264 and
+  Kirenna's (`vermage`) water-transition SFX 263 through skipped render ticks
+  and owner removal, checking authored art, emission position/tick and lifetime.
   Pixel-identical Glide output is not required.
 - Overall animation parity: verify engine-driven callback timelines and final
   rendered behavior across the roster. VM/piece-transform oracle coverage and
@@ -199,6 +211,15 @@ scripts without corruption.
   paired native route reconstruction using World-produced effective grades; the
   World search reports one failure while still supplying the partial route used
   by the successful end-to-end unload.
+- `python3 tools/re/check_surface_unload_map_route.py build/transport_test --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' --start 240 120 --target 240 140 --carrier vertrans --passenger araarch` (repeat with `--crusades`):
+  actual-profile Vertrans route reconstruction; one waypoint matches exactly,
+  with 57 native grade queries and the endpoint inside the 266px unload circle.
+- For each `bin` in `build`, `build-dbg`, `build-o2`, run
+  `"$bin/transport_test" --surface-unload-map-travel-type /home/pocket_geek/tak_data 'Lake Lokken' vertrans araarch 240 120 240 350 0` and repeat with final argument `1`:
+  full World shore unload in standard and Crusades. It completes at tick 2,222,
+  releases at the selected shore point, and keeps both unit footprints valid
+  through the 60-tick coast; native route pairing for this long shore leg is
+  still open.
 - `ctest --test-dir build -R '^transport_map_roundtrip(_crusades)?$' --output-on-failure`:
   the shipped Vertrans/Araarch Lake Lokken pickup-and-unload trip in standard
   and Crusades balance.
@@ -214,6 +235,16 @@ scripts without corruption.
   1,200-tick callback timelines using the renderer-facing VM at 60 Hz, comparing
   its exported poses and visibility with the integer reference.
 - Existing animation/conjuring tests use the new display interpreter.
+- `ctest --test-dir build-dbg -R '^script_transient$' --output-on-failure`
+  (also `build-o2`): the live `verpill` SFX 264 fixture retains its authored
+  asset and emission-time XYZ/tick across two skipped cosmetic ticks and owner
+  retirement, then expires at the authored duration. The Release client omits
+  the local game/dev command path, so this integration test runs in Debug builds.
+- `ctest --test-dir build-dbg -R '^script_transient_263$' --output-on-failure`
+  (also `build-o2`): the live `vermage` water transition emits SFX 263 on Lake
+  Lokken; the detached `deathmagic:purpledeath` effect retains its authored
+  asset and emission-time XYZ/tick across two skipped cosmetic ticks and owner
+  retirement, then expires at the authored duration.
 
 These checks provide broad execution coverage, not a claim of pixel-for-pixel
 comparison of every camera angle, effect blend, or game-driven callback instant.
@@ -223,8 +254,8 @@ protocol **178**'s transport simulation changes and published 0.7.0 (protocol
 
 ## Results in this checkout
 
-- Release, Debug and optimized Debug: all targets rebuilt; **50/50 CTest tests
-  passed in each configuration** (150 passing executions).
+- Release, Debug and optimized Debug: all targets rebuilt; **50/50 Release and
+  52/52 in each Debug configuration** passed (154 passing executions).
 - The Lake Lokken surface unload and its paired route reconstruction pass in
   Release, Debug, and optimized Debug. The route search returns two waypoints
   with one World failure; the World carrier follows that partial route, releases
@@ -7840,16 +7871,55 @@ destructor tick relative to `Killed`/`Dying` is not established. The port uses
 its current rendered-body handoff as the safe cleanup boundary; further native
 timing evidence remains open. No retail GUI was launched.
 
+### Live detached script transient lifecycle (2026-09-24)
+
+The headless `TAK_SCRIPT_TRANSIENT_TEST` fixture drives the shipped `verpill`
+Create script until it emits SFX 264. It deliberately skips two cosmetic render
+ticks, retires the source unit before draining the queued event, and verifies
+that the client still creates the authored `pillaroflight` effect at the
+captured XYZ and event tick. The detached effect survives through its final
+authored tick and expires at the authored duration, independently of its owner.
+CTest runs this fixture with SDL's dummy video and audio drivers; it checks
+behavior and lifecycle, not framebuffer pixels.
+
+SFX 263's native dispatcher, position capture, projection, visibility, and
+shared transient-clock behavior are covered by separate probes. A second
+headless fixture now drives Kirenna's real `vermage::MoveControl` water
+transition on Lake Lokken, which emits SFX 263. It confirms that the client
+retains the authored `deathmagic:purpledeath` asset and emission XYZ/tick across
+skipped cosmetic ticks and owner retirement, with expiry at the authored
+duration. CTest runs this with SDL's dummy video/audio drivers and
+`TAK_SCRIPT_263_TEST=1`; a dry map such as Ulasem Arena cannot trigger the
+transition. This checks behavior and lifecycle, not framebuffer pixels.
+
+Run the integrated checks with:
+
+```sh
+ctest --test-dir build-dbg -R '^script_transient$' --output-on-failure
+ctest --test-dir build-o2 -R '^script_transient$' --output-on-failure
+ctest --test-dir build-dbg -R '^script_transient_263$' --output-on-failure
+ctest --test-dir build-o2 -R '^script_transient_263$' --output-on-failure
+```
+
 ### Lake Lokken native sea-route fixture (2026-09-23)
 
 `check_surface_unload_map_route.py` now exercises the shipped 480x480-cell
 Lake Lokken map. A 4x4 boat route from `(240,120)` to the circle centered at
 `(240,140)` matches retail's reconstructed route at World tick 15: one waypoint
-and 84 native grade queries. The Per Mare Per Terras case still matches at
+and 84 native grade queries with the synthetic boat profile. With the shipped
+`vertrans`/`araarch` profiles, both standard and Crusades match the same single
+waypoint at 57 native grade queries; Vertrans's 266px unload circle contains the
+endpoint. The Per Mare Per Terras case still matches at
 `(40,120)` to `(40,142)`, with four waypoints and 564 grade queries. Both cases
 pass with Release, Debug, and optimized World binaries. The Lake Lokken
-destination is in water, so it checks a connected water crossing rather than
-shore cargo placement.
+paired destination is in water, so it checks a connected water crossing rather
+than shore cargo placement. The separate actual-profile World shore unload
+completes from `(240,120)` to `(240,350)` in both balances at tick 2,222. Its
+native comparison remains open: the completed World search starts at
+`(240,123)` and targets `(239,349)`, while the first grade-plane export was from
+an abandoned request at `(240,121)`. The native emulator faults at `0x414367`
+when the completed attempt reaches cost search because its heap-root pointer is
+null. No long-shore route mismatch has been established.
 
 This exposed an emulation-fixture overlap: the fixed terrain-cell buffer sat
 1 MiB before the unit/type/object tables, so a 480x480 map overwrote those

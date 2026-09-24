@@ -379,6 +379,20 @@ if(TAK_TEST_DATA)
     add_test(NAME turn COMMAND turn_test "${TAK_TEST_DATA}")
     add_test(NAME navblock COMMAND navblock_test "${TAK_TEST_DATA}")
     add_test(NAME placement COMMAND placement_test "${TAK_TEST_DATA}")
+    # The Release client intentionally strips the local game/dev command path.
+    # Keep this headless client integration fixture in Debug configurations.
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_test(NAME script_transient COMMAND takclient game "ulasem arena"
+            --data "${TAK_TEST_DATA}" --firetest --nofog --time 0.1
+            --shot "${CMAKE_CURRENT_BINARY_DIR}/script-transient-test.png")
+        set_tests_properties(script_transient PROPERTIES ENVIRONMENT
+            "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_SCRIPT_TRANSIENT_TEST=1")
+        add_test(NAME script_transient_263 COMMAND takclient game "Lake Lokken"
+            --data "${TAK_TEST_DATA}" --firetest --nofog --time 0.1
+            --shot "${CMAKE_CURRENT_BINARY_DIR}/script-transient-263-test.png")
+        set_tests_properties(script_transient_263 PROPERTIES ENVIRONMENT
+            "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_SCRIPT_263_TEST=1")
+    endif()
 endif()
 target_link_libraries(footprobe PRIVATE tak-formats)
 

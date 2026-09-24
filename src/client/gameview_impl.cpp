@@ -564,6 +564,165 @@
 
     void GameView::fireTest() {
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        if(tak::devFlag("TAK_SCRIPT_263_TEST")) {
+            // Kirenna's live MoveControl script emits detached SFX 263 when its
+            // water movement state changes. Ulasem Arena has no water, so this
+            // fixture is run on a shipped water map (for example Lake Lokken).
+            const auto& map=mapView_.map();
+            const auto* type=registry_.find("vermage");
+            if(!type)throw std::runtime_error("script transient fixture has no vermage type");
+            int waterX=-1,waterZ=-1;
+            const int margin=std::max(type->footX,type->footZ)+2;
+            for(int radius=0;radius<std::max(map.width,map.height) && waterX<0;radius++) {
+                for(int z=std::max(margin,map.height/2-radius);z<std::min(map.height-margin,map.height/2+radius+1) && waterX<0;++z) {
+                    for(int x=std::max(margin,map.width/2-radius);x<std::min(map.width-margin,map.width/2+radius+1);++x) {
+                        if(std::max(std::abs(x-map.width/2),std::abs(z-map.height/2))!=radius)continue;
+                        bool water=true;
+                        for(int dz=-type->footZ/2;dz<type->footZ-type->footZ/2 && water;++dz)
+                            for(int dx=-type->footX/2;dx<type->footX-type->footX/2;++dx) {
+                                const int mx=x+dx,mz=z+dz;
+                                if(map.heights[size_t(mz)*map.width+size_t(mx)]>=map.seaLevel) {water=false;break;}
+                            }
+                        if(water) {waterX=x;waterZ=z;break;}
+                    }
+                }
+            }
+            if(waterX<0)throw std::runtime_error("SFX 263 fixture needs a shipped map with an open-water spawn cell");
+            const float spawnX=(float(waterX)+0.5f)*16.0f;
+            const float spawnZ=(float(waterZ)+0.5f)*16.0f;
+            const int ownerId=spawn("vermage",spawnX,spawnZ,0,localPlayer_);
+            if(ownerId<0)throw std::runtime_error("SFX 263 fixture could not spawn vermage");
+            const auto stepWithoutRender=[&] {
+                simStep(1.0f/30.0f);
+                beginFrame();endFrame();
+            };
+            std::optional<tak::sim::World::ScriptEmission> emission;
+            for(int tick=0;tick<1200 && !emission;++tick) {
+                stepWithoutRender();
+                std::lock_guard<std::mutex> lock(hitQueueMutex_);
+                for(const auto& queued:smokeTickQueue_) {
+                    const auto found=std::find_if(queued.emissions.begin(),queued.emissions.end(),
+                        [&](const auto& event) {return event.unitId==ownerId && event.code==263;});
+                    if(found!=queued.emissions.end()) {emission=*found;break;}
+                }
+            }
+            if(!emission)throw std::runtime_error("vermage live MoveControl emitted no SFX 263 within 1200 ticks on water");
+            const auto* expectedArt=effectFor("deathmagic:purpledeath");
+            if(!expectedArt || expectedArt->durations.empty())
+                throw std::runtime_error("deathmagic:purpledeath authored animation is unavailable");
+            uint32_t duration=0;
+            for(const auto ticks:expectedArt->durations)duration+=std::max(1u,unsigned(ticks));
+            for(int skipped=0;skipped<8 && front().gameTick-emission->tick<2;++skipped)
+                stepWithoutRender();
+            const uint32_t skippedTicks=front().gameTick-emission->tick;
+            if(skippedTicks<2 || skippedTicks>=duration)
+                throw std::runtime_error("SFX 263 fixture did not create a live skipped-render interval");
+            auto* owner=world_.unit(ownerId);
+            if(!owner)throw std::runtime_error("SFX 263 fixture owner vanished before retirement check");
+            owner->deadFor=tak::sim::World::kRetiredTicks;
+            captureFrame();beginFrame();endFrame();
+            const auto* retired=frameUnitP(ownerId);
+            if(!retired || retired->alive() || retired->deadFor*30.0f<tak::sim::World::kRetiredTicks)
+                throw std::runtime_error("SFX 263 fixture failed to retire its source unit");
+            const auto before=effects_.size();
+            cosmeticStep(0);
+            const auto matchesEmission=[&](const EffectInst& effect) {
+                return effect.anim==expectedArt && effect.authoredTiming &&
+                       effect.started==emission->tick && effect.worldPosition==emission->position;
+            };
+            const auto findEffect=[&]() {
+                return std::find_if(effects_.begin()+std::ptrdiff_t(std::min(before,effects_.size())),
+                    effects_.end(),matchesEmission);
+            };
+            if(findEffect()==effects_.end())
+                throw std::runtime_error("delayed live SFX 263 lost its authored asset, XYZ, or callback tick after owner retirement");
+            const auto setAge=[&](uint32_t age) {
+                while(uint32_t(front().gameTick-emission->tick)<age)stepWithoutRender();
+            };
+            setAge(duration-1);updateEffects(0);
+            if(std::none_of(effects_.begin(),effects_.end(),matchesEmission))
+                throw std::runtime_error("detached deathmagic expired before its last authored tick");
+            setAge(duration);updateEffects(0);
+            if(std::any_of(effects_.begin(),effects_.end(),matchesEmission))
+                throw std::runtime_error("detached deathmagic did not expire at its authored duration");
+            std::fprintf(stderr,"PASS: live vermage SFX 263 survives two skipped render ticks and owner retirement with exact XYZ/tick, then expires at authored duration\n");
+            return;
+        }
+        if(tak::devFlag("TAK_SCRIPT_TRANSIENT_TEST")) {
+            // verpill's real Create script emits extended SFX 264 (pillaroflight).
+            // Do not call cosmeticStep while collecting ticks: this deliberately
+            // exercises the same queue used when rendering skips simulation ticks.
+            const int ownerId=spawn("verpill",cx,cz,0,localPlayer_);
+            if(ownerId<0)throw std::runtime_error("script transient fixture could not spawn verpill");
+            const auto stepWithoutRender=[&] {
+                simStep(1.0f/30.0f);
+                beginFrame();endFrame();
+            };
+            std::optional<tak::sim::World::ScriptEmission> emission;
+            for(int tick=0;tick<1200 && !emission;++tick) {
+                stepWithoutRender();
+                std::lock_guard<std::mutex> lock(hitQueueMutex_);
+                for(const auto& queued:smokeTickQueue_) {
+                    const auto found=std::find_if(queued.emissions.begin(),queued.emissions.end(),
+                        [&](const auto& event) {return event.unitId==ownerId && event.code==264;});
+                    if(found!=queued.emissions.end()) {emission=*found;break;}
+                }
+            }
+            if(!emission)throw std::runtime_error("verpill live Create emitted no SFX 264 within 1200 ticks");
+            const auto* expectedArt=effectFor("pillaroflight");
+            if(!expectedArt || expectedArt->durations.empty())
+                throw std::runtime_error("pillaroflight authored animation is unavailable");
+            uint32_t duration=0;
+            for(const auto ticks:expectedArt->durations)duration+=std::max(1u,unsigned(ticks));
+
+            // Advance two more sim ticks without a render/cosmetic pass, then
+            // retire the source unit before consuming its already-captured SFX.
+            for(int skipped=0;skipped<8 && front().gameTick-emission->tick<2;++skipped)
+                stepWithoutRender();
+            const uint32_t skippedTicks=front().gameTick-emission->tick;
+            if(skippedTicks<2 || skippedTicks>=duration) {
+                std::fprintf(stderr,"script transient interval: event=%u front=%u duration=%u\n",
+                    emission->tick,front().gameTick,duration);
+                throw std::runtime_error("script transient fixture did not create a live skipped-render interval");
+            }
+            auto* owner=world_.unit(ownerId);
+            if(!owner)throw std::runtime_error("script transient owner vanished before retirement check");
+            owner->deadFor=tak::sim::World::kRetiredTicks;
+            captureFrame();beginFrame();endFrame();
+            const auto* retired=frameUnitP(ownerId);
+            if(!retired || retired->alive() || retired->deadFor*30.0f<tak::sim::World::kRetiredTicks)
+                throw std::runtime_error("script transient fixture failed to retire its source unit");
+
+            const auto before=effects_.size();
+            cosmeticStep(0);
+            const auto matchesEmission=[&](const EffectInst& effect) {
+                return effect.anim==expectedArt && effect.authoredTiming &&
+                       effect.started==emission->tick && effect.worldPosition==emission->position;
+            };
+            const auto findEffect=[&]() {
+                return std::find_if(effects_.begin()+std::ptrdiff_t(std::min(before,effects_.size())),
+                    effects_.end(),matchesEmission);
+            };
+            auto liveEffect=findEffect();
+            if(liveEffect==effects_.end())
+                throw std::runtime_error("delayed live SFX 264 lost its authored asset, XYZ, or callback tick after owner retirement");
+            const EffectInst captured=*liveEffect;
+
+            const auto setAge=[&](uint32_t age) {
+                while(uint32_t(front().gameTick-emission->tick)<age)stepWithoutRender();
+            };
+            setAge(duration-1);
+            updateEffects(0);
+            if(std::none_of(effects_.begin(),effects_.end(),matchesEmission))
+                throw std::runtime_error("detached pillaroflight expired before its last authored tick");
+            setAge(duration);
+            updateEffects(0);
+            if(std::any_of(effects_.begin(),effects_.end(),matchesEmission))
+                throw std::runtime_error("detached pillaroflight did not expire at its authored duration");
+            (void)captured;
+            std::fprintf(stderr,"PASS: live verpill SFX 264 survives two skipped render ticks and owner retirement with exact XYZ/tick, then expires at authored duration\n");
+            return;
+        }
         if (tak::devFlag("TAK_TRANSPORT_EFFECT_TEST")) {
             tak::sim::World::TransportFx event;
             event.tick=front().gameTick-4;

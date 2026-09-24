@@ -312,6 +312,7 @@ class PathService {
               const std::function<bool(int, uint32_t)>& admit = {});
 
   private:
+    friend struct RetailReplayProbe;
     // A queued request is just its parameters -- no per-cell scratch until it is
     // admitted and handed a pool slot.
     struct Entry {

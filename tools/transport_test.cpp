@@ -70,7 +70,37 @@ struct RetailReplayProbe {
         if (!stream) return;
         auto state=std::make_shared<State>();
         world.paths_.setGradeHost({
-            [&world](int id,bool last) { world.prepareSearchGrade(id,last); },
+            [&world](int id,bool last) {
+                world.prepareSearchGrade(id,last);
+                if(!std::getenv("TAK_DUMP_ATTEMPT_PLANES") || world.activeSearchGrade_<0)
+                    return;
+                const Unit* unit=world.unit(id);
+                if(!unit || !unit->type) return;
+                const auto& attempt=world.paths_.worker_.attempt;
+                const int fx=unit->type->footX,fz=unit->type->footZ;
+                const int startX=attempt.trace.start.x+fx/2;
+                const int startZ=attempt.trace.start.z+fz/2;
+                const PathCell start{startX,startZ};
+                const auto& plane=world.searchGrades_[size_t(world.activeSearchGrade_)];
+                const int width=plane.nav->width(),height=plane.nav->height();
+                const auto costs=world.searchCosts(*unit);
+                std::fprintf(stderr,"ATTEMPTPROFILE %u %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+                    world.tickCounter_,id,unit->type->turnRate,fx,fz,unit->type->roadMult.v,
+                    unit->type->waterMult.v,unit->groundTerrainFlags,
+                    unit->type->transportDist,unit->type->maxWaterDepth,
+                    unit->type->minWaterDepth,unit->type->halfCellTicks,
+                    int(costs.heavyFloater),int(last));
+                std::fprintf(stderr,"ATTEMPTPLANE %u %d %d %d %d %d %d %d %d %d %d %d\n",
+                    world.tickCounter_,id,startX,startZ,attempt.retry,attempt.heading,
+                    attempt.weight,attempt.trace.trafficRadius,width,height,fx,fz);
+                for(int z=0;z<height;++z) {
+                    for(int x=0;x<width;++x) {
+                        const int grade=world.searchGrade(id,x+fx/2,z+fz/2,
+                                                         attempt.retry,start);
+                        std::fprintf(stderr,"%d%c",grade,x+1==width?'\n':' ');
+                    }
+                }
+            },
             [&world,state,stream](int id,int cx,int cz,int retry,PathCell start) {
                 const int result=world.searchGrade(id,cx,cz,retry,start);
                 const Unit* unit=world.unit(id);
@@ -113,6 +143,29 @@ struct RetailReplayProbe {
             },
             [&world](int id) { world.finishSearchGrade(id); }
         });
+    }
+
+    static void dumpCompletedPathAttempt(const World& world,int unitId) {
+        const Unit* unit=world.unit(unitId);
+        if(!unit || !unit->type) return;
+        const auto& attempt=world.paths_.worker_.attempt;
+        const int fx=unit->type->footX,fz=unit->type->footZ;
+        const auto& costs=attempt.cost.costs;
+        std::fprintf(stderr,
+            "WORLDATTEMPT %u %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %zu\n",
+            world.tickCounter_,unitId,
+            attempt.trace.start.x+fx/2,attempt.trace.start.z+fz/2,
+            attempt.trace.goal.x+fx/2,attempt.trace.goal.z+fz/2,
+            attempt.heading,attempt.retry,attempt.weight,attempt.initialDistance,
+            attempt.partialDistance,attempt.phase,attempt.cost.endpoint,
+            attempt.route.flags,costs.ground,costs.road,costs.slope,costs.traffic,
+            costs.shortTurn,costs.minStraight,int(costs.heavyFloater),
+            attempt.route.points.size());
+        for(size_t i=0;i<attempt.route.points.size();++i) {
+            const auto point=attempt.route.points[i];
+            std::fprintf(stderr,"WORLDRAW %zu %d %d\n",i,
+                         point.x+fx/2,point.z+fz/2);
+        }
     }
 };
 }
@@ -1804,31 +1857,63 @@ static void surfaceUnloadRouteFixture(int variant) {
 // search grades exported at the real unload search boundary.
 static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapName,
                                          int startCellX,int startCellZ,
-                                         int goalCellX,int goalCellZ,int footprint) {
+                                         int goalCellX,int goalCellZ,int footprint,
+                                         const char* carrierName=nullptr,
+                                         const char* passengerName=nullptr,
+                                         bool crusades=false) {
     auto vfs=tak::hpi::mountRetailRoot(retailRoot,tak::hpi::OverridePolicy::None);
     const std::string mapPath=tak::hpi::findMap(vfs,mapName);
     if(mapPath.empty()) throw std::runtime_error(std::string("map not found: ")+mapName);
     const auto map=tak::tnt::Map::load(vfs.read(mapPath),mapPath);
-    if(footprint<1 || footprint>16 || startCellX<0 || startCellZ<0 ||
+    if((!carrierName && (footprint<1 || footprint>16)) || startCellX<0 || startCellZ<0 ||
        goalCellX<0 || goalCellZ<0 || startCellX>=map.width || startCellZ>=map.height ||
        goalCellX>=map.width || goalCellZ>=map.height)
         throw std::runtime_error("surface-unload map route coordinates outside the map");
 
+    std::unique_ptr<tak::sim::TypeRegistry> registry;
+    UnitType syntheticCarrier{},syntheticPassenger{};
+    const UnitType* carrierType=nullptr;
+    const UnitType* passengerType=nullptr;
+    if(carrierName || passengerName) {
+        if(!carrierName || !passengerName)
+            throw std::runtime_error("both retail carrier and passenger names are required");
+        registry=std::make_unique<tak::sim::TypeRegistry>();
+        tak::sim::setupRegistry(*registry,vfs,crusades);
+        carrierType=registry->find(carrierName);
+        passengerType=registry->find(passengerName);
+        if(!carrierType || !passengerType)
+            throw std::runtime_error("retail carrier or passenger unit type not found");
+        if(!carrierType->canTransport || carrierType->domain!=UnitType::Domain::Water ||
+           !passengerType->canMove || passengerType->domain==UnitType::Domain::Water)
+            throw std::runtime_error("retail unit profiles are not a surface carrier and land passenger");
+    } else {
+        syntheticCarrier=boatType();syntheticPassenger=footType();
+        syntheticCarrier.domain=UnitType::Domain::Water;syntheticCarrier.floater=true;
+        syntheticCarrier.minWaterDepth=13;syntheticCarrier.maxWaterDepth=10000;
+        syntheticCarrier.footX=syntheticCarrier.footZ=int16_t(footprint);
+        carrierType=&syntheticCarrier;passengerType=&syntheticPassenger;
+    }
+
     World w;w.setVisPlayer(-1);
     w.setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
     tak::sim::registerMapFeatures(w,map,vfs);
+    if(registry) w.buildNavClasses(*registry);
     w.setPathService(true);
-    UnitType carrier=boatType(),passenger=footType();
-    carrier.domain=UnitType::Domain::Water;carrier.floater=true;
-    carrier.minWaterDepth=13;carrier.maxWaterDepth=10000;
-    carrier.footX=carrier.footZ=int16_t(footprint);
+    const int fx=carrierType->footX,fz=carrierType->footZ;
+    if(fx<1 || fz<1 || fx>16 || fz>16)
+        throw std::runtime_error("surface carrier footprint is outside supported range");
     const int startX=startCellX*16,startZ=startCellZ*16;
     const int goalX=goalCellX*16+8,goalZ=goalCellZ*16+8;
-    const int tid=w.spawn(&carrier,startX,startZ),cid=w.spawn(&passenger,startX,startZ);
+    const int tid=w.spawn(carrierType,startX,startZ),cid=w.spawn(passengerType,startX,startZ);
+    if(carrierName) {
+        std::fprintf(stderr,"TRANSPORTPROFILE %d %d %d %d\n",carrierType->transportDist,
+                     carrierType->maxWaterDepth,carrierType->minWaterDepth,
+                     int(carrierType->floater && carrierType->minWaterDepth>0));
+    }
     board(w,tid,cid);w.unloadAt(tid,float(goalX),float(goalZ));
     tak::sim::RetailReplayProbe::dumpSurfaceSearchGrades(w);
     std::printf("MAPROUTE %d %d %d %d %d %d %d %d %d\n",map.width,map.height,
-        map.seaLevel,footprint,startX,startZ,goalX,goalZ,tid);
+        map.seaLevel,fx,startX,startZ,goalX,goalZ,tid);
 
     for(uint32_t tick=1;tick<=20000;++tick) {
         w.tick(1.f/30);
@@ -1836,6 +1921,8 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
         if(!u || u->orders.empty()) break;
         if(w.pathStats().completions()+w.pathStats().failures()==0) continue;
         const auto& orders=u->orders;
+        if(std::getenv("TAK_DUMP_ROUTE_ATTEMPT"))
+            tak::sim::RetailReplayProbe::dumpCompletedPathAttempt(w,tid);
         size_t end=0;
         while(end<orders.size() && !orders[end].unload) ++end;
         std::printf("ROUTE %u %d %d %d %d %zu %llu %llu\n",tick,u->x.v,u->z.v,
@@ -2110,6 +2197,18 @@ int main(int argc,char** argv) {
     }
     if(argc==3 && !std::strcmp(argv[1],"--air-unload-flight-trace")) {
         airUnloadFlightTraceFixture(unsigned(std::clamp(std::atoi(argv[2]),1,10000)));
+        return 0;
+    }
+    if(argc==10 && !std::strcmp(argv[1],"--surface-unload-map-route-type")) {
+        surfaceUnloadMapRouteFixture(argv[2],argv[3],std::atoi(argv[6]),std::atoi(argv[7]),
+                                     std::atoi(argv[8]),std::atoi(argv[9]),0,
+                                     argv[4],argv[5],false);
+        return 0;
+    }
+    if(argc==11 && !std::strcmp(argv[1],"--surface-unload-map-route-type")) {
+        surfaceUnloadMapRouteFixture(argv[2],argv[3],std::atoi(argv[6]),std::atoi(argv[7]),
+                                     std::atoi(argv[8]),std::atoi(argv[9]),0,
+                                     argv[4],argv[5],std::atoi(argv[10])!=0);
         return 0;
     }
     if(argc==8 && !std::strcmp(argv[1],"--surface-unload-map-route")) {

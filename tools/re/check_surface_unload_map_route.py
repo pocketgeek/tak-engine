@@ -16,16 +16,22 @@ import subprocess
 from emuphase import Phase, OBJ, TYPE
 
 
-def check_route(world_binary, retail_root, map_name, start_cell, target_cell, footprint):
+def check_route(world_binary, retail_root, map_name, start_cell, target_cell, footprint,
+                carrier=None, passenger=None, crusades=False):
     env = os.environ.copy()
     env['TAK_DUMP_GRADE_PLANE'] = '1'
-    command = [world_binary, '--surface-unload-map-route', retail_root, map_name,
-               str(start_cell[0]), str(start_cell[1]), str(target_cell[0]),
-               str(target_cell[1]), str(footprint)]
+    if carrier:
+        command = [world_binary, '--surface-unload-map-route-type', retail_root,
+                   map_name, carrier, passenger, str(start_cell[0]), str(start_cell[1]),
+                   str(target_cell[0]), str(target_cell[1]), str(int(crusades))]
+    else:
+        command = [world_binary, '--surface-unload-map-route', retail_root, map_name,
+                   str(start_cell[0]), str(start_cell[1]), str(target_cell[0]),
+                   str(target_cell[1]), str(footprint)]
     world = subprocess.run(command, check=True, capture_output=True, text=True, env=env)
     stderr = world.stderr.splitlines()
     profile = next(line for line in stderr if line.startswith('COSTPROFILE ')).split()
-    turn, fx, fz, road, water, flags, heavy, heading = map(int, profile[1:])
+    turn, fx, fz, road, water, flags, cost_heavy, heading = map(int, profile[1:])
     header_index = next(i for i, line in enumerate(stderr) if line.startswith('GRADEPLANE '))
     width, height, grade_fx, grade_fz, retry, sx, sz, tick, grade_heading = map(
         int, stderr[header_index].split()[1:])
@@ -37,11 +43,27 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                    stderr[header_index + 1 + height:]), \
         'the effective grade plane changed during this search; static comparison is invalid'
 
+    transport_profile = next((line for line in stderr
+                              if line.startswith('TRANSPORTPROFILE ')), None)
+    if transport_profile:
+        transport_dist, max_water, min_water, heavy = map(
+            int, transport_profile.split()[1:])
+        assert transport_dist > 34, transport_profile
+        assert heavy == cost_heavy, (transport_profile, profile)
+        circle_radius = transport_dist - 34
+    else:
+        max_water, min_water, heavy = 10000, 13, 1
+        circle_radius = 116
+
     stdout = world.stdout.splitlines()
     map_header = next(line for line in stdout if line.startswith('MAPROUTE ')).split()
     map_width, map_height, sea, map_foot, start_x, start_z, target_x, target_z, _unit_id = \
         map(int, map_header[1:])
-    assert (map_width, map_height, map_foot, fx, fz) == (width, height, footprint, footprint, footprint)
+    if carrier:
+        assert (map_width, map_height, map_foot, fx, fz) == (width, height, fx, fx, fz)
+    else:
+        assert (map_width, map_height, map_foot, fx, fz) == \
+            (width, height, footprint, footprint, footprint)
     route_index = next(i for i, line in enumerate(stdout) if line.startswith('ROUTE '))
     route_header = list(map(int, stdout[route_index].split()[1:]))
     route_tick, _, _, anchor_x, anchor_z, route_count, completions, failures = route_header
@@ -50,6 +72,11 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     world_points_fixed = [tuple(map(int, line.split()))
                           for line in stdout[route_index + 1:route_index + 1 + route_count]]
     world_route = [(x // 65536, z // 65536) for x, z in world_points_fixed]
+    if transport_profile and world_route:
+        dx = world_route[-1][0] - target_x
+        dz = world_route[-1][1] - target_z
+        assert dx * dx + dz * dz <= circle_radius * circle_radius, \
+            (world_route[-1], (target_x, target_z), circle_radius)
 
     p = Phase(width, height)
     unit = p.unit(sx - fx // 2, sz - fz // 2)
@@ -66,9 +93,9 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     p.uc.mem_write(TYPE + 0x126, struct.pack('<hh', fx, fz))
     p.uc.mem_write(TYPE + 0x18e, struct.pack('<H', turn))
     p.uc.mem_write(TYPE + 0x172, struct.pack('<i', road))
-    p.uc.mem_write(TYPE + 0x260, struct.pack('<I', 0x80000))
+    p.uc.mem_write(TYPE + 0x260, struct.pack('<I', 0x80000 if heavy else 0))
     p.uc.mem_write(TYPE + 0x16e, struct.pack('<i', water))
-    p.uc.mem_write(TYPE + 0x192, struct.pack('<hh', 10000, 13))
+    p.uc.mem_write(TYPE + 0x192, struct.pack('<hh', max_water, min_water))
     p.uc.mem_write(p.GRID + 4, struct.pack('<hh', fx, fz))
 
     query_count = 0
@@ -92,12 +119,14 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     p.icd.hooks[0x4139d0] = grade
     p.icd.hooks[0x4e4ea0] = receive
     _, error = p.icd.call(0x4e2500,
-        (p.HANDLE + 0x1000, target_x * 65536, target_z * 65536, 116), ecx=p.HANDLE)
+        (p.HANDLE + 0x1000, target_x * 65536, target_z * 65536, circle_radius), ecx=p.HANDLE)
     assert error is None, error
     native_goal = tuple(struct.unpack('<hh', p.uc.mem_read(p.HANDLE + 8, 4)))
-    radius, radius_squared = struct.unpack('<ii', p.uc.mem_read(p.HANDLE + 0x0c, 8))
-    assert (native_goal, radius, radius_squared) == (goal_cell, 116, 53), \
-        (native_goal, goal_cell, radius, radius_squared)
+    native_radius, radius_squared = struct.unpack('<ii', p.uc.mem_read(p.HANDLE + 0x0c, 8))
+    expected_radius_squared = int(circle_radius * circle_radius / 256 + 0.5)
+    assert (native_goal, native_radius, radius_squared) == \
+        (goal_cell, circle_radius, expected_radius_squared), \
+        (native_goal, goal_cell, native_radius, radius_squared)
     _, error = p.init()
     assert error is None, error
     p.uc.mem_write(OBJ + 0x165, struct.pack('<I', 10_000_000))
@@ -118,9 +147,12 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     native_route = native_routes[0]
     assert native_route[0] == anchor, (native_route[0], anchor)
     assert native_route[1:] == world_route, (native_route[1:], world_route)
-    print(f'PASS: {map_name} boat unload route matches exactly at World tick {route_tick}; '
-          f'{len(world_route)} waypoints, {query_count} native grade queries, '
-          f'{completions} World completion(s), {failures} World failure(s)')
+    profile_name = f' {carrier}/{passenger}' if carrier else ''
+    arrival = (f', endpoint inside {circle_radius}px unload circle'
+               if transport_profile and world_route else '')
+    print(f'PASS: {map_name}{profile_name} unload route matches exactly at World tick '
+          f'{route_tick}; {len(world_route)} waypoints{arrival}, {query_count} native '
+          f'grade queries, {completions} World completion(s), {failures} World failure(s)')
 
 
 def main():
@@ -131,9 +163,15 @@ def main():
     parser.add_argument('--start', nargs=2, type=int, default=(40, 120), metavar=('X', 'Z'))
     parser.add_argument('--target', nargs=2, type=int, default=(40, 142), metavar=('X', 'Z'))
     parser.add_argument('--footprint', type=int, default=4)
+    parser.add_argument('--carrier', help='use an asset-backed carrier profile instead of the synthetic boat')
+    parser.add_argument('--passenger', help='land passenger profile required with --carrier')
+    parser.add_argument('--crusades', action='store_true', help='load Crusades unit balance')
     args = parser.parse_args()
+    if bool(args.carrier) != bool(args.passenger):
+        parser.error('--carrier and --passenger must be supplied together')
     check_route(args.world_binary, args.retail_root, args.map, tuple(args.start),
-                tuple(args.target), args.footprint)
+                tuple(args.target), args.footprint, args.carrier, args.passenger,
+                args.crusades)
 
 
 if __name__ == '__main__':
