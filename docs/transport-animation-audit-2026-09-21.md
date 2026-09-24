@@ -8109,3 +8109,31 @@ The complete Release CTest suite passes 50/50; complete Debug and optimized
 suites each pass 52/52; the static and fully static suites each pass 36/36.
 These are behavior and lifecycle checks; no pixel-match comparison or retail
 GUI launch was used.
+
+### Projectile model pose and authored asset selection (2026-09-24)
+
+The Archer and bolt appearance audit found that shipped mesh-backed shots use
+their authored 3DO models (`araarrow`, `arabolt`, `verhpoon`), while sprite-only
+shots such as Arapult cannonballs and Taros fireballs use their authored weapon
+art. The standard and Crusades inventories contain no weapon that combines a
+projectile model with `weaponart`, so the World mesh path does not omit a shipped
+foreground sprite. Retail's ballistic and straight-shot draw probes both pass
+the actual XYZ record, all three BAM angles, owner, and selected model to the
+native 3DO renderer; World routes those same model shots through the corresponding
+3D position and pose.
+
+`check_projectile_model_transform.py` now compares the projectile mesh pose with
+retail's native `0x535d50` transform for 4,096 randomized authored vertices and
+roll/yaw/pitch combinations. The maximum coordinate error is 0.00002706 world
+units. Together with the native draw-dispatch probes and the existing model
+transform tests, this closes the mesh orientation and trajectory-pose path for
+the authored arrow. No remaining projectile transform or shipped asset-selection
+mismatch was demonstrated, so this audit made no renderer change. It does not
+compare the final Glide texture sampling or triangle pixels; those remain outside
+the behavioral parity gate.
+
+Reproduce the model-pose check with:
+
+```sh
+python3 tools/re/check_projectile_model_transform.py build-o2/model_transform_test
+```
