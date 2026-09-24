@@ -1932,7 +1932,7 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
         for(size_t i=0;i<end;++i)
             std::printf("%d %d\n",orders[i].x.v,orders[i].z.v);
         if(const char* text=std::getenv("TAK_MAP_SURFACE_STEPS")) {
-            const unsigned stepLimit=unsigned(std::clamp(std::atoi(text),1,2500));
+            const unsigned stepLimit=unsigned(std::clamp(std::atoi(text),1,10000));
             auto* stepped=w.unit(tid);
             stepped->x=orders.front().segmentX;stepped->z=orders.front().segmentZ;
             stepped->speed=tak::sim::Fixed();
@@ -1949,6 +1949,29 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
             stepped->orders[activeGoal].transportMission.deadline=tick+stepLimit+1000;
             int shoreBlocker=0;
             bool shoreBlockerCleared=false;
+            int routeBlocker=0;
+            unsigned routeCompletions=w.pathStats().completions();
+            bool routeBlockerCleared=false;
+            bool routeSearchEnabled=false;
+            const char* routeBlockerEnabled=std::getenv("TAK_MAP_SURFACE_ROUTE_BLOCKER");
+            const bool liveRouteBlocker=routeBlockerEnabled && *routeBlockerEnabled &&
+                *routeBlockerEnabled!='0';
+            std::vector<std::pair<int,int>> initialWaypoints;
+            size_t initialEnd=0;
+            while(initialEnd<stepped->orders.size() && !stepped->orders[initialEnd].unload)
+                ++initialEnd;
+            for(size_t i=0;i<initialEnd;++i)
+                initialWaypoints.emplace_back(stepped->orders[i].x.v,stepped->orders[i].z.v);
+            if(liveRouteBlocker) {
+                const auto target=stepped->orders[activeGoal].missionTarget.value_or(
+                    std::pair{stepped->orders[activeGoal].x,stepped->orders[activeGoal].z});
+                const float bx=(stepped->x.toFloat()+target.first.toFloat())*0.5f;
+                const float bz=(stepped->z.toFloat()+target.second.toFloat())*0.5f;
+                routeBlocker=w.spawn(carrierType,bx,bz);
+                std::printf("WORLD_ROUTE_BLOCKER %d %d %d %d %d %d\n",routeBlocker,
+                    w.unit(routeBlocker)->x.v,w.unit(routeBlocker)->z.v,
+                    int(initialWaypoints.size()),carrierType->footX,carrierType->footZ);
+            }
             if(const char* enabled=std::getenv("TAK_MAP_SURFACE_BLOCK_SHORE")) {
                 if(*enabled && *enabled!='0') {
                     if(!passengerType || !passengerType->canMove || passengerType->canFly)
@@ -1972,9 +1995,55 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
                 stepped->type->waterline);
             std::printf("WORLDSCAN %u %u %u\n",w.tickCount(),stepped->groundScanTick,
                 unsigned(stepped->type->halfCellTicks));
+            bool routeReleaseReported=false;
             for(unsigned step=1;step<=stepLimit;++step) {
                 w.tick(1.f/30);
                 const auto* after=w.unit(tid);
+                if(routeBlocker && !routeReleaseReported && w.unit(tid)->cargo.empty()) {
+                    const int64_t dx=int64_t(after->x.v)-goalX*65536ll;
+                    const int64_t dz=int64_t(after->z.v)-goalZ*65536ll;
+                    const int64_t radius=int64_t(carrierType->transportDist-34)*65536ll;
+                    const bool inUnloadCircle=dx*dx+dz*dz<=radius*radius;
+                    std::printf("WORLD_ROUTE_RELEASE %u %d %d %d %d %d %d %zu %d\n",step,
+                        after->x.v,after->z.v,w.unit(cid)->x.v,w.unit(cid)->z.v,
+                        int(tak::sim::RetailReplayProbe::waterFootprintPassable(w,after)),
+                        int(inUnloadCircle),after->cargo.size(),
+                        int(w.unit(cid)->inTransport==tid));
+                    routeReleaseReported=true;
+                }
+                if(routeBlocker && !routeSearchEnabled && after->bodyBlockStreak>=2) {
+                    w.setPathService(true);
+                    routeSearchEnabled=true;
+                    std::printf("WORLD_ROUTE_SEARCH_ENABLED %u %d %u\n",step,
+                        after->bodyBlockStreak,after->groundScanTick);
+                }
+                if(routeBlocker && w.pathStats().completions()>routeCompletions) {
+                    routeCompletions=w.pathStats().completions();
+                    const auto& orders=after->orders;
+                    size_t pathEnd=0;
+                    while(pathEnd<orders.size() && !orders[pathEnd].unload) ++pathEnd;
+                    std::vector<std::pair<int,int>> points;
+                    for(size_t i=0;i<pathEnd;++i)
+                        points.emplace_back(orders[i].x.v,orders[i].z.v);
+                    const bool changed=points!=initialWaypoints;
+                    std::printf("WORLD_REPATH %u %llu %llu %d %d %d %zu %d %zu %d\n",step,
+                        static_cast<unsigned long long>(w.pathStats().completions()),
+                        static_cast<unsigned long long>(w.pathStats().failures()),
+                        int(changed),after->x.v,after->z.v,pathEnd,
+                        int(after->bodyBlockStreak),after->cargo.size(),
+                        int(w.unit(cid)->inTransport==tid));
+                    if(!routeBlockerCleared && changed) {
+                        w.order(routeBlocker,float(goalX+256),float(goalZ+256),false);
+                        routeBlockerCleared=true;
+                    }
+                }
+                if(routeBlocker) {
+                    const auto* body=w.unit(routeBlocker);
+                    std::printf("WORLD_ROUTE_BODY %u %d %d %d %d %u\n",step,
+                        body->x.v,body->z.v,body->speed.v,
+                        int(tak::sim::portHeadingToRetail(body->heading)),
+                        unsigned(routeBlockerCleared));
+                }
                 std::printf("WORLDSTEP %u %d %d %d %d %d %u %u %u %d %u\n",step,
                     after->x.v,after->groundY.v,after->z.v,
                     int(tak::sim::portHeadingToRetail(after->heading)),after->speed.v,

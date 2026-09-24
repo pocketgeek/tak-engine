@@ -10,7 +10,8 @@ the shipped map without launching a game GUI.
 An optional live-unload composition keeps the native mission and cargo active
 through map-backed movement, arrival wakeup, passenger placement and release.
 An optional blocker trace mirrors one mobile shore occupant through the actual
-native placement routine and the unload retry.
+native placement routine and the unload retry. A World-only dynamic-route case
+blocks a carrier mid-trip, verifies its replacement route, then completes unload.
 """
 import argparse
 import os
@@ -30,7 +31,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 carrier=None, passenger=None, crusades=False, native_map_grades=False,
                 hpitool='build/hpitool', native_map_mover_steps=0,
                 native_live_unload=False, terrain_scan_after=None,
-                shore_blocker=False):
+                shore_blocker=False, live_route_blocker_steps=0):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     if native_live_unload and (map_name.lower() != 'lake lokken' or
@@ -41,12 +42,22 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         raise ValueError('--terrain-scan-after requires --native-live-unload')
     if shore_blocker and (not native_live_unload or not carrier):
         raise ValueError('--shore-blocker requires an asset-backed --native-live-unload trace')
+    if live_route_blocker_steps and (not carrier or not native_map_grades or
+            native_map_mover_steps or native_live_unload or shore_blocker):
+        raise ValueError('--live-route-blocker-steps requires an asset-backed route trace without the paired fixed-route mover')
+    if live_route_blocker_steps and (map_name.lower() != 'lake lokken' or
+            carrier.lower() != 'vertrans' or passenger.lower() != 'araarch'):
+        raise ValueError('--live-route-blocker-steps currently checks Lake Lokken Vertrans/Araarch')
     env = os.environ.copy()
     env['TAK_DUMP_GRADE_PLANE'] = '1'
     if terrain_scan_after is not None:
         env['TAK_MAP_SURFACE_SCAN_AFTER'] = str(terrain_scan_after)
     if shore_blocker:
         env['TAK_MAP_SURFACE_BLOCK_SHORE'] = '1'
+    if live_route_blocker_steps:
+        env['TAK_MAP_SURFACE_ROUTE_BLOCKER'] = '1'
+        env['TAK_MAP_SURFACE_SCAN_AFTER'] = '1'
+        env['TAK_MAP_SURFACE_STEPS'] = str(live_route_blocker_steps)
     if carrier:
         env['TAK_DUMP_ATTEMPT_PLANES'] = '1'
         env['TAK_DUMP_ROUTE_ATTEMPT'] = '1'
@@ -188,6 +199,49 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         assert len(world_blockers) == native_map_mover_steps + 1, (
             len(world_blockers), native_map_mover_steps)
         assert sorted(world_blockers) == list(range(native_map_mover_steps + 1))
+    if live_route_blocker_steps:
+        route_blocker = tuple(map(int, next(line for line in stdout
+            if line.startswith('WORLD_ROUTE_BLOCKER ')).split()[1:]))
+        assert len(route_blocker) == 6, route_blocker
+        blocker_id, blocker_x, blocker_z, initial_waypoints, blocker_fx, blocker_fz = route_blocker
+        assert blocker_id > 0 and initial_waypoints > 0 and blocker_fx == fx and blocker_fz == fz, route_blocker
+        search_enabled = [tuple(map(int, line.split()[1:])) for line in stdout
+                          if line.startswith('WORLD_ROUTE_SEARCH_ENABLED ')]
+        assert len(search_enabled) == 1 and search_enabled[0][1] >= 2, search_enabled
+        repaths = [tuple(map(int, line.split()[1:])) for line in stdout
+                   if line.startswith('WORLD_REPATH ')]
+        assert repaths and all(len(row) == 10 for row in repaths), repaths[:5]
+        changed_repaths = [row for row in repaths if row[3] and row[7] >= 2 and
+                           row[8] == 1 and row[9] == 1]
+        assert changed_repaths and changed_repaths[0][0] >= search_enabled[0][0], (
+            'World did not install a changed route while the boat was body-blocked '
+            'with cargo retained', search_enabled, repaths[:8])
+        route_bodies = {row[0]: row[1:] for row in
+            (tuple(map(int, line.split()[1:])) for line in stdout
+             if line.startswith('WORLD_ROUTE_BODY '))}
+        assert len(route_bodies) == live_route_blocker_steps, len(route_bodies)
+        blocked_state = route_bodies[changed_repaths[0][0]]
+        assert blocked_state[0] == blocker_x and blocked_state[1] == blocker_z, (
+            'the blocker moved before the changed route was installed',
+            route_blocker, changed_repaths[0], blocked_state)
+        release_rows = [tuple(map(int, line.split()[1:])) for line in stdout
+                        if line.startswith('WORLD_ROUTE_RELEASE ')]
+        assert len(release_rows) == 1 and len(release_rows[0]) == 9, release_rows
+        (route_release_step, carrier_x, carrier_z, passenger_x, passenger_z,
+         carrier_water, carrier_in_circle, remaining_cargo, passenger_attached) = release_rows[0]
+        assert route_release_step <= live_route_blocker_steps, route_release_step
+        landing_dx = passenger_x - target_x * 65536
+        landing_dz = passenger_z - target_z * 65536
+        assert landing_dx * landing_dx + landing_dz * landing_dz <= (8 * 65536) ** 2, release_rows[0]
+        assert (carrier_water, carrier_in_circle, remaining_cargo, passenger_attached) == (1, 1, 0, 0), release_rows[0]
+        released_blocker = route_bodies[route_release_step]
+        assert released_blocker[4] == 1, released_blocker
+        blocker_moved = ((released_blocker[0] - blocker_x) ** 2 +
+                         (released_blocker[1] - blocker_z) ** 2) > (64 * 65536) ** 2
+        assert blocker_moved, (route_blocker, released_blocker)
+        print(f'  World hit a live map-backed boat blocker, installed a changed '
+              f'route at physical step {changed_repaths[0][0]}, cleared the blocker, '
+              f'and released Araarch at the selected shore on step {route_release_step}.')
     if transport_profile and world_route:
         dx = world_route[-1][0] - target_x
         dz = world_route[-1][1] - target_z
@@ -856,6 +910,8 @@ def main():
                         help='compare live native/World terrain scans after route delivery; requires --native-live-unload (0..2500 ticks)')
     parser.add_argument('--shore-blocker', action='store_true',
                         help='move one live Araarch away after it blocks map-backed unload placement')
+    parser.add_argument('--live-route-blocker-steps', type=int, default=0,
+                        help='run a World path-service retry around a stationary boat on Lake Lokken (1..10000 physical ticks)')
     parser.add_argument('--hpitool', default='build/hpitool')
     args = parser.parse_args()
     if bool(args.carrier) != bool(args.passenger):
@@ -868,11 +924,14 @@ def main():
         parser.error('--terrain-scan-after must be 0..2500')
     if args.terrain_scan_after is not None and not args.native_live_unload:
         parser.error('--terrain-scan-after requires --native-live-unload')
+    if not 0 <= args.live_route_blocker_steps <= 10000:
+        parser.error('--live-route-blocker-steps must be 0..10000')
     check_route(args.world_binary, args.retail_root, args.map, tuple(args.start),
                 tuple(args.target), args.footprint, args.carrier, args.passenger,
                 args.crusades, args.native_map_grades or bool(args.native_map_mover_steps),
                 str(Path(args.hpitool).resolve()), args.native_map_mover_steps,
-                args.native_live_unload,args.terrain_scan_after,args.shore_blocker)
+                args.native_live_unload,args.terrain_scan_after,args.shore_blocker,
+                args.live_route_blocker_steps)
 
 
 if __name__ == '__main__':
