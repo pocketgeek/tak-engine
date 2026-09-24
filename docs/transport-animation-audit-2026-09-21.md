@@ -96,8 +96,14 @@ implementation descriptions. Current open gates are:
   accepts the same site after the blocker walks clear. World releases one tick
   after retail (2253 versus 2252); carrier mover fields match through tick 2200,
   before the controlled retry window, and are not used as a parity gate during
-  that retry. Full asynchronous route replacement around newly blocked water
-  cells, other maps, and other carrier profiles remain open.
+  that retry. For the captured Lake Lokken Vertrans/Araarch route, retail's
+  `0x416430` worker now installs a replacement from blocker-adjusted map grades
+  on the same navigator/controller while the native unload mission and cargo
+  remain active. All five World waypoints match in Standard and Crusades across
+  Release, Debug, and optimized Debug builds. The replay begins at the captured
+  World replan boundary and explicitly submits the replacement; having the
+  moving carrier detect the blocker and trigger it in one joined timeline, plus
+  other maps and carrier profiles, remains open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -8380,17 +8386,26 @@ retaining World's grade-5 visibility fallback; all 1,479 native search queries
 match the captured World plane. Retail then reconstructs the same five World
 replacement waypoints, ending inside the authored 266px unload circle. World
 moves the blocker clear and releases Araarch at the selected shore on physical
-step 2,350. This pairs the dynamic replacement search and map-backed release;
-the native physical mover continues to be covered by the separately joined
-shoreline trace.
+step 2,350. The optional --native-worker-mission-repath mode takes this captured
+request, keeps a native GROUND_UNLOAD mission and attached Araarch active,
+installs an unobstructed route, switches the native grade callback to the live
+blocker plane, and requests a replacement through real
+0x4e54e0/0x416430/0x4e4ea0 on the same navigator and controller. Both native
+deliveries retain those identities and cargo links; the replacement matches all
+five World and direct-retail waypoints. The grade oracle checks 120 local
+blocker cells and every distinct native query against TNT terrain, occupancy,
+clearance, and the captured World plane. This verifies map-backed asynchronous
+route replacement from the captured replan boundary while the unload mission
+remains live. The carrier is not physically stepped between requests, so
+automatic blocker detection and replan are not yet one continuous native trace.
 
-Standard and Crusades pass with Release, Debug, and optimized Debug binaries
-(six runs). The four transport CTests pass in each build (12/12). No retail GUI
-was launched. Reproduce the Standard case with:
+Standard and Crusades worker replays pass with Release, Debug, and optimized
+Debug binaries (six runs). The four transport CTests pass in each build
+(12/12). No retail GUI was launched. Reproduce the Standard case with:
 
 ```sh
 python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
   --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
   --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
-  --native-map-grades --live-route-blocker-steps 5000
+  --native-map-grades --live-route-blocker-steps 5000 --native-worker-mission-repath
 ```

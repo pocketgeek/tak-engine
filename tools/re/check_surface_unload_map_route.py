@@ -10,8 +10,9 @@ the shipped map without launching a game GUI.
 An optional live-unload composition keeps the native mission and cargo active
 through map-backed movement, arrival wakeup, passenger placement and release.
 An optional blocker trace mirrors one mobile shore occupant through the actual
-native placement routine and the unload retry. A World-only dynamic-route case
-blocks a carrier mid-trip, verifies its replacement route, then completes unload.
+native placement routine and the unload retry. A dynamic-route case blocks a
+carrier mid-trip and verifies its replacement route; an optional native worker
+replay sends that captured request through retail's asynchronous singleton.
 """
 import argparse
 import os
@@ -114,11 +115,258 @@ def replay_native_attempt(width, height, grades, attempt, profile, target_x,
     return list(zip(words[::2], words[1::2]))
 
 
+def replay_native_worker_repath(width, height, base_grades, dynamic_grades,
+                                attempt, profile, target_x, target_z,
+                                circle_radius, sea, position,
+                                mission_backed=False):
+    """Run a map-backed replacement through retail's queued route worker.
+
+    The starting position is the captured World replan boundary. Retail first
+    installs the unobstructed route, then the live grade callback starts
+    returning the blocker plane and the same navigator/controller requests a
+    replacement through 0x4e54e0 and the singleton 0x416430 worker.
+    """
+    from unicorn import UC_HOOK_CODE
+    from unicorn.x86_const import UC_X86_REG_ESI
+
+    (_tick, _unit_id, sx, sz, goal_x, goal_z, heading, retry, weight, *_rest) = attempt
+    (turn, fx, fz, road, water, flags, transport_dist, max_water, min_water,
+     half_cell_ticks, heavy) = profile
+    goal_cell = (goal_x - fx // 2, goal_z - fz // 2)
+    phase = Phase(width, height)
+    native_live = None
+    if not mission_backed:
+        unit = phase.unit(sx - fx // 2, sz - fz // 2)
+    assert phase.construct() is None
+    if mission_backed:
+        from probe_transport_surface_unload_callbacks import SurfaceUnload
+        native_live = SurfaceUnload(placement_result=1, real_mission_removal=True,
+            icd=phase.icd, game=GS, freeze_hooks=False)
+        unit, mover, type_address = (native_live.carrier, native_live.mover,
+                                     native_live.kind)
+        nav, controller = native_live.nav, native_live.controller
+        phase.uc.mem_write(unit + 2, struct.pack('<H', 1))
+        native_live._nextController = controller
+        phase.attach_live_request(unit, mover, nav, controller,
+                                  (sx - fx // 2, sz - fz // 2), (fx, fz))
+    else:
+        phase.plant_request(unit, (sx - fx // 2, sz - fz // 2), goal_cell)
+        mover = struct.unpack('<I', phase.uc.mem_read(unit + 8, 4))[0]
+        nav, controller, type_address = phase.NAV, phase.HANDLE, TYPE
+    phase.uc.mem_write(unit + 0x78, struct.pack('<hh', fx, fz))
+    phase.uc.mem_write(unit + 0x68, struct.pack('<iii', position[0],
+                                                sea * 65536, position[1]))
+    phase.uc.mem_write(unit + 0x7e, struct.pack('<H', heading))
+    phase.uc.mem_write(mover + 0x36, struct.pack('<H', flags))
+    phase.uc.mem_write(type_address + 0x126, struct.pack('<hh', fx, fz))
+    phase.uc.mem_write(type_address + 0x18e, struct.pack('<H', turn))
+    phase.uc.mem_write(type_address + 0x172, struct.pack('<i', road))
+    phase.uc.mem_write(type_address + 0x260, struct.pack('<I', 0x80000 if heavy else 0))
+    phase.uc.mem_write(type_address + 0x16e, struct.pack('<i', water))
+    phase.uc.mem_write(type_address + 0x192, struct.pack('<hh', max_water, min_water))
+    phase.uc.mem_write(type_address + 0x249, bytes([half_cell_ticks]))
+    phase.uc.mem_write(OBJ + 0x1ad, struct.pack('<I', retry))
+    phase.uc.mem_write(phase.GRID + 4, struct.pack('<hh', fx, fz))
+    phase.uc.mem_write(OBJ + 0xb8, struct.pack('<i', attempt[19]))
+
+    if native_live:
+        phase.uc.mem_write(type_address + 0x23e, struct.pack('<H', transport_dist))
+        phase.uc.mem_write(type_address + 0x264, struct.pack('<I', 0x200))
+        phase.uc.mem_write(type_address + 0x14a, struct.pack('<I', 1 << 16))
+        phase.uc.mem_write(type_address + 0x24b, b'\0')
+        phase.uc.mem_write(type_address + 0x226, struct.pack('<h', 100))
+        phase.uc.mem_write(native_live.owner + 0x8c,
+                           struct.pack('<II', width // 2, height // 2))
+        phase.uc.mem_write(native_live.mission + 0x22,
+                           struct.pack('<i', target_x * 65536))
+        phase.uc.mem_write(native_live.mission + 0x26, bytes(4))
+        phase.uc.mem_write(native_live.mission + 0x2a,
+                           struct.pack('<i', target_z * 65536))
+        native_live.put(unit + 0xc4, native_live.mission + 0x12)
+        native_live.put(native_live.passenger + 0xc4, native_live.mission + 0x12)
+        first_slot = unit - 0x138
+        first_page = first_slot & ~0xfff
+        phase.uc.mem_map(first_page, 0x1000)
+        phase.uc.mem_write(first_slot, bytes(0x138))
+        native_live.put(native_live.owner + 0x74, first_slot)
+        native_live.put(native_live.owner + 0x78, first_slot + 3 * 0x138)
+    else:
+        _, error = phase.icd.call(0x4e2500,
+            (controller + 0x1000, target_x * 65536, target_z * 65536,
+             circle_radius), ecx=controller)
+        assert error is None, error
+    if not native_live:
+        native_goal = tuple(struct.unpack('<hh', phase.uc.mem_read(controller + 8, 4)))
+        native_radius, radius_squared = struct.unpack('<ii',
+            phase.uc.mem_read(controller + 0x0c, 8))
+    else:
+        native_goal = native_radius = radius_squared = None
+    expected_radius_squared = int(circle_radius * circle_radius / 256 + 0.5)
+    if not native_live:
+        assert (native_goal, native_radius, radius_squared) == (
+            goal_cell, circle_radius, expected_radius_squared), (
+                native_goal, native_radius, radius_squared, goal_cell,
+                circle_radius, expected_radius_squared)
+
+    blocker_active = [False]
+    def grade(_uc, args):
+        x, z = struct.unpack('<ii', phase.uc.mem_read(args, 8))
+        if not (0 <= x < width and 0 <= z < height):
+            return 3, 0
+        source = dynamic_grades if blocker_active[0] else base_grades
+        value = source(x, z) if callable(source) else source[z * width + x]
+        return 3, value
+
+    pending = [False]
+    # The path scheduler is a fresh emulated singleton. Keep its clock in the
+    # same zero-based range as the other worker probes; only coordinates and
+    # movement profile come from the later captured World boundary.
+    current_tick = [0]
+    requests = []
+    deliveries = []
+    worker_events = []
+
+    def put(address, value):
+        phase.uc.mem_write(address, struct.pack('<I', value & 0xffffffff))
+
+    def read(address):
+        return struct.unpack('<I', phase.uc.mem_read(address, 4))[0]
+
+    def lookup(_uc, _args):
+        worker_events.append(('lookup', current_tick[0], pending[0]))
+        return 0, nav if pending[0] else 0
+
+    def enqueue(_uc, args):
+        requests.append((current_tick[0], struct.unpack('<I',
+            phase.uc.mem_read(args, 4))[0]))
+        pending[0] = True
+        return 1, 0
+
+    def finish(_uc, _args):
+        worker_events.append(('finish', current_tick[0]))
+        pending[0] = False
+        return 1, 0
+
+    def request_weight(_uc, args):
+        address = struct.unpack('<I', phase.uc.mem_read(args, 4))[0]
+        phase.uc.mem_write(address, struct.pack('<I', weight))
+        return 1, address
+
+    def copy_delivery(uc, _address, _size, _data):
+        if uc.reg_read(UC_X86_REG_ESI) != nav:
+            return
+        count = read(nav + 0x10c)
+        words = struct.unpack('<' + 'h' * (count * 2),
+                              uc.mem_read(nav + 12, count * 4)) if count else ()
+        deliveries.append(list(zip(words[::2], words[1::2])))
+
+    def prepare(_uc, _args):
+        worker_events.append(('prepare', current_tick[0]))
+        return 2, 0
+
+    def notify(_uc, _args):
+        worker_events.append(('notify', current_tick[0]))
+        return 1, 0
+
+    phase.icd.hooks[0x4e4f50] = enqueue
+    phase.icd.hooks[0x4e1ee0] = prepare
+    phase.icd.hooks[0x4e2470] = notify
+    phase.icd.hooks[0x4e2060] = finish
+    phase.icd.hooks[0x4139d0] = grade
+    phase.icd.hooks[0x4161b0] = request_weight
+    vtable = read(nav)
+    phase.icd.hooks[read(vtable + 0x18)] = lookup
+    phase.uc.hook_add(UC_HOOK_CODE, copy_delivery,
+                      begin=0x4e4f05, end=0x4e4f05)
+
+    # Configure the native singleton's one-player scan and route-search slot.
+    config = GS + 0x600000
+    put(0x62d558, config)
+    put(config, GS + 0x700000)
+    put(config + 8, config + 0x100)
+    put(config + 0x10c, 4)
+    phase.uc.mem_write(GS + 0x3068, b'\x01\x00')
+    owner = GS + 0x2404
+    pool_first = unit - 0x138
+    put(owner, 1)
+    phase.uc.mem_write(owner + 0xea, b'\x01\x00')
+    put(owner + 0x74, pool_first)
+    put(owner + 0x78, pool_first + 3 * 0x138)
+    put(OBJ + 0x115, pool_first)
+    put(OBJ + 0x225, 12000)
+    put(GS + 0x19e70, OBJ)
+
+    def set_destination(game_tick):
+        current_tick[0] = game_tick
+        _, error = phase.icd.call(0x4e2500,
+            (native_live.mission if native_live else controller + 0x1000,
+             target_x * 65536, target_z * 65536,
+             circle_radius), ecx=controller)
+        assert error is None, ('circle controller update', error)
+        _, error = phase.icd.call(0x4e54e0, (controller,), ecx=nav)
+        assert error is None, ('native route request', error)
+
+    def run_until_delivery(delivery_count, start_tick):
+        for game_tick in range(start_tick, start_tick + 500):
+            current_tick[0] = game_tick
+            put(GS + 0x19f44, game_tick)
+            put(0x634674, int(pending[0]))
+            _, error = phase.icd.call(0x416430, (1,), ecx=OBJ)
+            assert error is None, ('retail route worker', game_tick, error)
+            if len(deliveries) >= delivery_count and not pending[0]:
+                return game_tick
+        raise AssertionError(('retail route worker did not deliver', delivery_count,
+                              requests, deliveries, read(OBJ + 0x5c), pending[0],
+                              worker_events[-20:]))
+
+    first_request = len(requests)
+    if native_live:
+        initial = native_live.dispatch(0)
+        assert initial[0:3] == (1, 1, 0x701), initial
+        controller = read(nav + 4)
+        assert controller == native_live.controller
+        expected_goal = (goal_cell, circle_radius, expected_radius_squared)
+        native_goal = tuple(struct.unpack('<hh', phase.uc.mem_read(controller + 8, 4)))
+        native_radius, radius_squared = struct.unpack('<ii',
+            phase.uc.mem_read(controller + 0x0c, 8))
+        assert (native_goal, native_radius, radius_squared) == expected_goal, (
+            native_goal, native_radius, radius_squared, expected_goal)
+        assert native_live.get(unit + 0x60) == native_live.mission
+        assert native_live.get(unit + 0xac) == native_live.passenger
+        assert native_live.get(native_live.passenger + 0xa8) == unit
+    else:
+        set_destination(0)
+    assert pending[0] and len(requests) > first_request, (pending, requests)
+    delivered_at = run_until_delivery(1, 1)
+    first_route = deliveries[0]
+    assert first_route, ('empty initial route', first_route)
+
+    original_nav, original_controller = read(mover), read(nav + 4)
+    blocker_active[0] = True
+    second_request = len(requests)
+    set_destination(delivered_at + 1)
+    assert pending[0] and len(requests) > second_request, (pending, requests)
+    run_until_delivery(2, delivered_at + 2)
+    second_route = deliveries[1]
+    assert second_route and second_route != first_route, (first_route, second_route)
+    assert read(mover) == original_nav == nav
+    assert read(nav + 4) == original_controller == controller
+    assert read(nav + 0x10c) == len(second_route), (read(nav + 0x10c), second_route)
+    if native_live:
+        assert native_live.get(unit + 0x60) == native_live.mission
+        assert native_live.get(unit + 0xac) == native_live.passenger
+        assert native_live.get(native_live.passenger + 0xa8) == unit
+    end = second_route[-1]
+    assert (end[0] - target_x) ** 2 + (end[1] - target_z) ** 2 <= circle_radius ** 2, second_route
+    return second_route, len(requests), len(deliveries)
+
+
 def check_route(world_binary, retail_root, map_name, start_cell, target_cell, footprint,
                 carrier=None, passenger=None, crusades=False, native_map_grades=False,
                 hpitool='build/hpitool', native_map_mover_steps=0,
                 native_live_unload=False, terrain_scan_after=None,
-                shore_blocker=False, live_route_blocker_steps=0):
+                shore_blocker=False, live_route_blocker_steps=0,
+                native_worker_repath=False, native_worker_mission_repath=False):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     if native_live_unload and (map_name.lower() != 'lake lokken' or
@@ -135,6 +383,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     if live_route_blocker_steps and (map_name.lower() != 'lake lokken' or
             carrier.lower() != 'vertrans' or passenger.lower() != 'araarch'):
         raise ValueError('--live-route-blocker-steps currently checks Lake Lokken Vertrans/Araarch')
+    if native_worker_repath and not live_route_blocker_steps:
+        raise ValueError('--native-worker-repath requires --live-route-blocker-steps')
+    if native_worker_mission_repath and not live_route_blocker_steps:
+        raise ValueError('--native-worker-mission-repath requires --live-route-blocker-steps')
     env = os.environ.copy()
     env['TAK_DUMP_GRADE_PLANE'] = '1'
     if terrain_scan_after is not None:
@@ -450,6 +702,49 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             dx, dz = route[-1][0] - target_x, route[-1][1] - target_z
             assert dx * dx + dz * dz <= circle_radius * circle_radius, (
                 route_name, route[-1], (target_x, target_z), circle_radius)
+        if native_worker_repath:
+            worker_route, worker_request_count, worker_delivery_count = \
+                replay_native_worker_repath(
+                    plane_width, plane_height, native_map_grade,
+                    native_dynamic_grade, dynamic_attempt,
+                    profiles[(dynamic_attempt[0], dynamic_attempt[1])],
+                    target_x, target_z, circle_radius, sea,
+                    (changed_repaths[0][4], changed_repaths[0][5]))
+            assert worker_route == dynamic_native_route, (
+                'retail route worker did not install the direct native dynamic route',
+                worker_route, dynamic_native_route, dynamic_attempt)
+            assert worker_route == dynamic_world_pixels, (
+                'retail route worker did not reproduce the captured World replacement',
+                worker_route, dynamic_world_pixels, dynamic_attempt)
+            assert not dynamic_grade_mismatches, (
+                'retail worker queried a grade that differs from the captured blocker plane',
+                dynamic_grade_mismatches[:20])
+            print(f'  Retail 0x416430 worker delivered the blocked replacement on the '
+                  f'same navigator/controller ({worker_delivery_count} deliveries from '
+                  f'{worker_request_count} worker requests); the replacement changed '
+                  f'the route and matches all {len(worker_route)} World waypoints.')
+        if native_worker_mission_repath:
+            mission_route, mission_request_count, mission_delivery_count = \
+                replay_native_worker_repath(
+                    plane_width, plane_height, native_map_grade,
+                    native_dynamic_grade, dynamic_attempt,
+                    profiles[(dynamic_attempt[0], dynamic_attempt[1])],
+                    target_x, target_z, circle_radius, sea,
+                    (changed_repaths[0][4], changed_repaths[0][5]),
+                    mission_backed=True)
+            assert mission_route == dynamic_native_route, (
+                'native sea-unload mission worker did not install the direct native dynamic route',
+                mission_route, dynamic_native_route, dynamic_attempt)
+            assert mission_route == dynamic_world_pixels, (
+                'native sea-unload mission worker did not reproduce the World replacement',
+                mission_route, dynamic_world_pixels, dynamic_attempt)
+            assert not dynamic_grade_mismatches, (
+                'native sea-unload worker queried a grade that differs from the blocker plane',
+                dynamic_grade_mismatches[:20])
+            print(f'  Retail unload dispatcher kept carrier and Araarch attached through '
+                  f'{mission_delivery_count} worker deliveries ({mission_request_count} '
+                  f'requests); its live mission route replacement matches all '
+                  f'{len(mission_route)} World waypoints.')
         print(f'  World hit a live map-backed boat blocker, installed a changed '
               f'route at physical step {changed_repaths[0][0]}, cleared the blocker, '
               f'and released Araarch at the selected shore on step {route_release_step}.')
@@ -1127,6 +1422,10 @@ def main():
                         help='move one live Araarch away after it blocks map-backed unload placement')
     parser.add_argument('--live-route-blocker-steps', type=int, default=0,
                         help='run a World path-service retry around a stationary boat on Lake Lokken (1..10000 physical ticks)')
+    parser.add_argument('--native-worker-repath', action='store_true',
+                        help='also replay the captured blocker route through retail 0x416430 on one retained navigator/controller; requires --live-route-blocker-steps')
+    parser.add_argument('--native-worker-mission-repath', action='store_true',
+                        help='also replay the blocker route through retail 0x416430 with a live GROUND_UNLOAD mission and attached passenger')
     parser.add_argument('--hpitool', default='build/hpitool')
     args = parser.parse_args()
     if bool(args.carrier) != bool(args.passenger):
@@ -1141,12 +1440,17 @@ def main():
         parser.error('--terrain-scan-after requires --native-live-unload')
     if not 0 <= args.live_route_blocker_steps <= 10000:
         parser.error('--live-route-blocker-steps must be 0..10000')
+    if args.native_worker_repath and not args.live_route_blocker_steps:
+        parser.error('--native-worker-repath requires --live-route-blocker-steps')
+    if args.native_worker_mission_repath and not args.live_route_blocker_steps:
+        parser.error('--native-worker-mission-repath requires --live-route-blocker-steps')
     check_route(args.world_binary, args.retail_root, args.map, tuple(args.start),
                 tuple(args.target), args.footprint, args.carrier, args.passenger,
                 args.crusades, args.native_map_grades or bool(args.native_map_mover_steps),
                 str(Path(args.hpitool).resolve()), args.native_map_mover_steps,
                 args.native_live_unload,args.terrain_scan_after,args.shore_blocker,
-                args.live_route_blocker_steps)
+                args.live_route_blocker_steps, args.native_worker_repath,
+                args.native_worker_mission_repath)
 
 
 if __name__ == '__main__':
