@@ -26,26 +26,60 @@ def digest(values):
     return value
 
 
-def case(index, slice_config=None):
+def case(index, slice_config=None, boat=False):
     rng = random.Random(0x4142c0 + index)
     width, height = (32, 32) if index < 4 else (48, 40)
     start, goal = (2, 2), (width - 4, height - 4)
-    grades = [6] * (width * height)
-    if index % 4 == 1:
-        for z in range(height - 8):
-            grades[z*width + width//2] = 0
-    elif index % 4 == 2:
-        grades = [rng.choice((0, 4, 5, 6, 6, 6, 7)) for _ in grades]
-        # Keep one connected path for the reachability initialization.
-        for x in range(2, width-3): grades[2*width+x] = 6
-        for z in range(2, height-3): grades[z*width+width-4] = 6
-    elif index % 4 == 3:
-        grades = [rng.choice((4, 5, 6, 7)) for _ in grades]
+    if boat:
+        # In the controlled map grade 6 is navigable water and grade 0 is
+        # shoreline/land. Exercise an open crossing, a peninsula, and small
+        # islands while keeping both endpoints in connected water.
+        grades = [6] * (width * height)
+        if index % 4 == 1:
+            for z in range(height // 2 + 4):
+                grades[z*width + width//2] = 0
+            for z in range(height // 2 + 4, height // 2 + 9):
+                grades[z*width + width//2] = 6
+        elif index % 4 == 2:
+            for z in range(height):
+                for x in range(width):
+                    if ((x * 7 + z * 11 + index) % 37) < 5:
+                        grades[z*width+x] = 0
+            for x in range(2, width-3):
+                grades[2*width+x] = 6
+            for z in range(2, height-3):
+                grades[z*width+width-4] = 6
+        elif index % 4 == 3:
+            for z in range(5, height-5):
+                grades[z*width + width//2] = 0
+            for z in range(height//2-2, height//2+3):
+                grades[z*width + width//2] = 6
+    else:
+        grades = [6] * (width * height)
+        if index % 4 == 1:
+            for z in range(height - 8):
+                grades[z*width + width//2] = 0
+        elif index % 4 == 2:
+            grades = [rng.choice((0, 4, 5, 6, 6, 6, 7)) for _ in grades]
+            # Keep one connected path for the reachability initialization.
+            for x in range(2, width-3): grades[2*width+x] = 6
+            for z in range(2, height-3): grades[z*width+width-4] = 6
+        elif index % 4 == 3:
+            grades = [rng.choice((4, 5, 6, 7)) for _ in grades]
     grades[start[1]*width+start[0]] = grades[goal[1]*width+goal[0]] = 6
     p = Phase(width, height)
     unit = p.unit(*start)
     assert p.construct() is None
     p.plant_request(unit, start, goal)
+    if boat:
+        # Match a water-domain floater's native cost profile: water movement
+        # flag, floater type bit, and a 4x4 footprint. Terrain grading remains
+        # a controlled water/land plane, so this isolates routed cost search.
+        mover = struct.unpack('<I', p.uc.mem_read(unit + 8, 4))[0]
+        p.uc.mem_write(unit + 0x78, struct.pack('<hh', 4, 4))
+        p.uc.mem_write(mover + 0x36, struct.pack('<H', 0x1000))
+        p.uc.mem_write(TYPE + 0x260, struct.pack('<I', 0x80000))
+        p.uc.mem_write(TYPE + 0x16e, struct.pack('<i', 0x10000))
     if slice_config:
         p.uc.mem_write(OBJ + 0x1ad, struct.pack('<I', slice_config[2]))
     def grade(uc, args):
@@ -171,6 +205,17 @@ def main():
         assert len(actual) == len(expected), (index, len(actual), len(expected))
         total += len(expected) - 1
     print(f'PASS: {args.cases} cost-search fixtures, {total} pops; every heap entry and cell flag/direction matches')
+    total = 0
+    for index in range(8):
+        data, expected = case(index, boat=True)
+        actual = subprocess.run([args.runner], input=data, capture_output=True,
+                                text=True, check=True).stdout.splitlines()
+        for n, (a, b) in enumerate(zip(actual, expected)):
+            if a != b:
+                raise AssertionError(f'boat case {index}, pop {n+1}: port {a}, retail {b}')
+        assert len(actual) == len(expected), (index, len(actual), len(expected))
+        total += len(expected) - 1
+    print(f'PASS: 8 boat cost-search fixtures, {total} pops; water-domain heap and cell states match retail')
     total = 0
     configs = ((1, 10000, 0), (37, 10000, 0), (503, 10, 0),
                (12000, 1, 0), (37, 10000, 1), (503, 10000, 3), (37, 0, 0))

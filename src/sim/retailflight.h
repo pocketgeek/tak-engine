@@ -81,6 +81,29 @@ RetailFlightGoal retailHoverAttackGoal(RetailFlightVector position,
              target.z+retailScaledCosine(angle,Fixed::fromInt(radius).v)},0x68,angle,0};
 }
 
+// 41ef00 stages 4--6: construction hover point around the placed site. Retail
+// subtracts the first radius draw and adds the second; keeping the helper shared
+// prevents queued and placed flying builders from drifting apart.
+template<class Random>
+RetailFlightGoal retailConstructionHoverGoal(RetailFlightVector position,
+        RetailFlightVector site, int buildDistance, Random random) {
+    uint16_t angle=uint16_t(retailDirection(Fixed::raw(position.x-site.x),
+                                           Fixed::raw(position.z-site.z)).v);
+    const int subtractAngle=int(random(0x2492));
+    const int addAngle=int(random(0x2492));
+    angle=uint16_t(int(angle)-subtractAngle+addAngle);
+    const int inward=int(random(8));
+    const int outward=int(random(8));
+    const int radius=buildDistance-inward+outward;
+    const int32_t fixedRadius=Fixed::fromInt(radius).v;
+    RetailFlightGoal goal;
+    goal.point={std::bit_cast<int32_t>(uint32_t(site.x)+uint32_t(retailScaledSine(angle,fixedRadius))),
+                0,
+                std::bit_cast<int32_t>(uint32_t(site.z)+uint32_t(retailScaledCosine(angle,fixedRadius)))};
+    goal.flags=0x60;goal.heading=angle;goal.radius=0;
+    return goal;
+}
+
 struct RetailLandingState {
     RetailMissionState mission;
     RetailFlightVector anchor;

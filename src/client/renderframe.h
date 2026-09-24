@@ -7,6 +7,7 @@
 // client/main.cpp; kept at global scope so its unqualified use sites there are
 // unchanged.
 
+#include "sim/retailanimationqueries.h"
 #include "sim/sim.h"   // tak::sim::UnitType / Order / Projectile / World::HitFx
 
 #include <array>
@@ -29,6 +30,11 @@ struct UnitR {
     const tak::sim::UnitType* type = nullptr;
     int player = 0;
     float x = 0, z = 0, heading = 0;   // current-tick pose
+    uint16_t headingWord = 0;
+    uint16_t bodyPitch=0,bodyRoll=0;
+    std::array<int32_t,3> aimVelocity{};
+    std::array<int32_t,3> worldPosition{}; // exact, unprojected position for script queries
+    int turnSpeedPercent = 0;
     int turnReqBam = 0;                // tick's requested turn (BAM) for TurnDirection anim
     float hp = 0, mana = 0;
     int veteran = 0;
@@ -36,14 +42,22 @@ struct UnitR {
     int inTransport = 0;
     int8_t squad = 0;
     int stance = 1;
+    uint8_t standingOrder = 3;
     int weaponSlot = 0;
+    std::array<int32_t,3> weaponReloads{};
     bool underConstruction = false, buildBegun = false;
     bool cloaked = false, cloakOn = true, active = true;
     float frozenFor = 0, stonedFor = 0, paralyzedFor = 0;
     float selfDestructT = -1;   // >=0 = self-destruct countdown (seconds) armed
     int buildSiteId = 0, reclaimId = 0, repairId = 0;
     bool conjuring = false;
+    bool hasConstructionEmitter = false;
+    std::array<uint32_t,2> constructionEmissions{};
+    std::vector<tak::sim::RetailConstructionParticle> constructionParticles;
     float buildProgress = 0;
+    int constructionPercentLeft = 0;
+    int scriptHealthPercent = 100;
+    bool yardOpen = false;
     std::vector<const tak::sim::UnitType*> buildQueue;
     std::vector<tak::sim::Order> orders;
     // Construction still pending anywhere in the queue (builds are ordinary
@@ -62,15 +76,51 @@ struct UnitR {
     const tak::sim::UnitType* repeatType = nullptr;
     bool moving_ = false, walking_ = false;   // cached u.moving()/u.walking()
     float speed = 0;                           // px/s (diagnostic use)
+    int horizontalSpeedPercent = 0;
+    int verticalSpeedPercent = 0;
     float flightY = 0;                        // absolute height from the sim flight controller
     uint8_t flightGroundMode = 1;
+    uint16_t movementTerrainFlags = 0; // native mover flags used by GET 28/34
+    uint32_t animationOccupancy = 0;
+    uint32_t animationMoveRate = 0;
+    void captureMoveRate(const tak::sim::Unit& u,int16_t turn) {
+        const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
+            u.groundTerrainFlags&0x1000 ? u.type->waterMult : tak::sim::Fixed::fromInt(1);
+        const auto& v=u.flightVelocity;
+        const int32_t horizontal=u.type->canFly ? int32_t(tak::sim::isqrt64(
+            uint64_t(int64_t(v.x)*v.x)+uint64_t(int64_t(v.z)*v.z))) : u.speed.v;
+        animationMoveRate=tak::sim::retailAnimationMoveRate(u.speed.v,turn,horizontal,
+            (u.type->animationMoveRate1*multiplier).v,(u.type->animationMoveRate2*multiplier).v,
+            movementRefused,u.embarked());
+    }
+    void captureOccupancy(const tak::sim::Unit& u,int sea,uint32_t previous) {
+        animationOccupancy=u.type->maxVel>tak::sim::Fixed() ?
+            tak::sim::retailAnimationOccupancy(previous,u.flightGroundMode,
+                int16_t((u.type->canFly ? u.flightY : u.groundY).floorInt()),
+                uint8_t(sea),uint8_t(u.type->waterline),int16_t(u.type->modelTop>>16)) : 0;
+    }
     bool movementRefused = false;             // retail mover's repeated-refusal bit
     void captureMovement(const tak::sim::Unit& u) {
         moving_ = u.moving(); walking_ = u.walking();
         speed = u.speed.toFloat() * 30.0f;
+        bodyPitch=u.groundPitch;bodyRoll=u.groundRoll;
+        worldPosition={u.x.v,(u.type->canFly ? u.flightY : u.groundY).v,u.z.v};
         flightY = u.flightY.toFloat();
         flightGroundMode = u.flightGroundMode;
+        movementTerrainFlags=u.groundTerrainFlags;
         movementRefused = !u.type->canFly && u.bodyBlockStreak >= 2;
+        const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
+            u.groundTerrainFlags&0x1000 ? u.type->waterMult : tak::sim::Fixed::fromInt(1);
+        const auto maximum=u.baseSpeed*multiplier;
+        const auto step=tak::sim::retailGroundStep(u.heading,u.speed);
+        aimVelocity=u.type->canFly ? std::array<int32_t,3>{u.flightVelocity.x,u.flightVelocity.y,u.flightVelocity.z}
+                                  : std::array<int32_t,3>{step.s.v,0,step.c.v};
+        horizontalSpeedPercent=tak::sim::retailHorizontalAnimationPercent(
+            u.type->canFly ? u.flightVelocity.x : step.s.v,
+            u.type->canFly ? u.flightVelocity.z : step.c.v,
+            maximum.v,movementRefused,u.embarked());
+        verticalSpeedPercent = u.type->canFly ? tak::sim::retailFlightVerticalPercent(
+            u.flightVelocity.y,maximum.v,false,u.embarked()) : 0;
     }
     // Split the authoritative height for the existing body/shadow/effect paths.
     // While taking off below a nearby hill's clearance datum, that datum must
@@ -84,9 +134,7 @@ struct UnitR {
     // refusal. A unit waiting behind another body must not walk in place.
     float animationSpeed() const { return movementRefused || embarked() ? 0.0f : speed; }
     int32_t animationSpeedPercent() const {
-        return type && type->maxVel > tak::sim::Fixed()
-            ? int32_t(std::clamp(animationSpeed() /
-                std::max(type->maxVel.toFloat() * 30.0f, 0.001f) * 100.0f, 0.0f, 100.0f)) : 0;
+        return movementRefused || embarked() ? 0 : horizontalSpeedPercent;
     }
     bool corpsePhase = false;                  // dead, death anim done, body still lies
     uint8_t deathType = 1;                     // killing blow damagetype (3 = gib)
@@ -95,6 +143,9 @@ struct UnitR {
     bool corpseStatue = false;                 // petrified/frozen: the body stays UPRIGHT,
                                                // unlike a normal corpse which lies flat
     bool justFired = false;                    // one-tick: fired a weapon this tick
+    uint32_t firedWeapons = 0;
+    uint32_t fireAnimations = 0;
+    tak::RetailWeaponAnimations weaponAnimations;
     int justBuilt = 0;                         // one-tick: unit id produced this tick, else 0
     bool disco = false, headbang = false;      // cached world_.disco/headbangActive(player)
     bool alliedToLocal = false;                // cached alliedToLocal(player)
@@ -145,7 +196,11 @@ struct Frame {
     std::vector<uint8_t> vis;            // fog (empty for a noFog_ spectator)
     int visW = 0, visH = 0;
     uint32_t visGen = 0;
+    std::vector<uint8_t> effectVisibility;
+    int effectVisW = 0, effectVisH = 0;
+
     std::vector<tak::sim::Projectile> projectiles;
+    std::vector<tak::sim::FlameShot> flames;
     std::vector<tak::sim::World::Storm> storms;   // roaming wandering-weapon hazards
     std::vector<tak::sim::World::HitFx> hits;   // weapon impacts this tick (cosmeticStep FX)
     int winningTeam = -1;                // world_.winningTeam() (victory overlay)

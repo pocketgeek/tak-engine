@@ -1,6 +1,7 @@
 #include "sim/matchsetup.h"
 
 #include "sim/detmath.h"
+#include "gaf/featureburntiming.h"
 #include "sim/footprint.h"
 #include <algorithm>
 #include <cctype>
@@ -95,7 +96,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             if (owns(c.unitId)) world.loadInto(c.unitId, c.targetId);
             break;
         case Cmd::Unload:
-            if (owns(c.unitId)) world.unloadAt(c.unitId, c.x, c.z);
+            if (owns(c.unitId)) world.unloadAt(c.unitId, c.x, c.z, Fixed::raw(c.targetId));
             break;
         case Cmd::SetWeapon:
             if (owns(c.unitId)) world.setWeapon(c.unitId, c.targetId);
@@ -188,8 +189,9 @@ namespace {
 // footprint (for nav blocking). Loaded from the feature TDFs.
 struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx = 1, fz = 1;
                  int reclaimable = 0; float energy = 0; float sacredSite = 0;
+                 uint8_t projectileHeight = 0;
                  // Burning chain (see World::tickBurning).
-                 bool flamable = false; bool hasBurnAnim = false;
+                 bool flamable = false; bool hasBurnAnim = false; uint32_t burnTicks = 0;
                  int spreadChance = 0; int sparkTicks = 0; std::string burnt;
                  // Corpse lifecycle (features/corpses).
                  int decomposeTicks = 0; bool resurrectable = false;
@@ -200,6 +202,7 @@ struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx
 
 std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
     std::unordered_map<std::string, FeatDef> defs;
+    gaf::FeatureBurnTiming burnTiming(vfs);
     try {
         for (const std::string& path : vfs.list("features")) {
             if (std::filesystem::path(path).extension() != ".tdf") continue;
@@ -221,10 +224,12 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     d.fx = int(node.numberOr("footprintx", 1));
                     d.fz = int(node.numberOr("footprintz", 1));
                     d.reclaimable = int(node.numberOr("reclaimable", 0));
+                    d.projectileHeight = uint8_t(int(node.numberOr("height", 0)));
                     d.energy = float(node.numberOr("energy", 0));   // reclaim mana yield
                     d.sacredSite = float(node.numberOr("sacredsite",0));
                     d.flamable = node.numberOr("flamable", 0) != 0;
-                    d.hasBurnAnim = !node.valueOr("seqnameburn", "").empty();
+                    d.burnTicks = burnTiming.duration(node);
+                    d.hasBurnAnim = d.burnTicks != 0;
                     d.spreadChance = int(node.numberOr("spreadchance", 0));
                     d.sparkTicks = int(node.numberOr("sparktime", 0) * 30);
                     d.burnt = node.valueOr("featureburnt", "");
@@ -262,11 +267,13 @@ struct FeatTypeInterner {
         t.name = nm;
         t.flamable = di->second.flamable;
         t.hasBurnAnim = di->second.hasBurnAnim;
+        t.burnTicks = di->second.burnTicks;
         t.spreadChance = di->second.spreadChance;
         t.sparkTicks = di->second.sparkTicks;
         t.energy = di->second.energy;
         t.fx = di->second.fx; t.fz = di->second.fz;
         t.blocking = di->second.blocking != 0;
+        t.projectileHeight = di->second.projectileHeight;
         t.decomposeTicks = di->second.decomposeTicks;
         t.resurrectable = di->second.resurrectable;
         t.reclaimable = di->second.reclaimable != 0;
@@ -307,6 +314,7 @@ static void scanFeaturePlane(World& world, const tak::tnt::Map& map,
         RetailMapFeatureType type;
         if (auto it=defs.find(name);it!=defs.end()) {
             type={name,it->second.fx,it->second.fz,it->second.blocking!=0,it->second.indestructible};
+            type.projectileHeight=it->second.projectileHeight;
             // 4945bb: grade-1 blockers must remain removable through every
             // dead/burnt replacement, including cycles and shared successors.
             type.clearable=!type.indestructible;
@@ -435,6 +443,8 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // on client and referee -- the params ride the mapId, generation is integer-only).
     const bool generated = tak::mapgen::isGeneratedMapId(cfg.mapPath);
     int windMin = 100, windMax = 2000;
+    double mapGravity = 112.0;
+    bool noSeaLevelTrigger = false;
     if (!generated) {
         auto ota = std::filesystem::path(cfg.mapPath);
         ota.replace_extension(".ota");
@@ -444,10 +454,13 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             if (const auto* gh = root.child("globalheader")) {
                 windMin = int(gh->numberOr("minwindspeed", 100));
                 windMax = int(gh->numberOr("maxwindspeed", 2000));
+                mapGravity = gh->numberOr("gravity", 112.0);
+                noSeaLevelTrigger = gh->numberOr("nosealeveltrigger", 0) != 0;
             }
         }
     }
     world.setWindRange(windMin, windMax);
+    world.setBallisticGravityRaw(retailBallisticGravityRaw(mapGravity));
     std::vector<std::pair<float, float>> genStarts;
     tak::tnt::Map map;
     if (generated) {
@@ -459,6 +472,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         map = tak::tnt::Map::load(vfs.read(cfg.mapPath), cfg.mapPath);
     }
     world.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
+    world.setNoSeaLevelTrigger(noSeaLevelTrigger);
     // One nav grid per distinct movement-limit tuple, as retail bakes one per class.
     // After setTerrain (it needs the heights) and before anything blocks a cell.
     world.buildNavClasses(reg);
@@ -932,6 +946,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     tdf::Node root = tdf::parseText(std::string(otaBytes.begin(), otaBytes.end()), base + ".ota");
     const tdf::Node* gh = root.child("globalheader");
     if (!gh) { std::fprintf(stderr, "setupMission: %s no [GlobalHeader]\n", stem.c_str()); return false; }
+    world.setBallisticGravityRaw(retailBallisticGravityRaw(gh->numberOr("gravity",112.0)));
 
     // Map the .ota's sparse, 1-based Player<N> ids to compact 0-based World slots in
     // ascending N order, so gaps (e.g. Player1,2,9,10) don't collide when clamped into

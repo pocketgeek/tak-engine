@@ -1,5 +1,16 @@
 # Model rendering: root cause and correction plan
 
+Current correction (2026-09-21): native renderer vertex probes supersede the
+rotation/translation sign conclusions in this historical investigation. In our
+unmirrored authored-model coordinates, negate all three script rotation axes and
+X/Z script translations. Body pitch and roll both negate, before the piece tree;
+apply `−heading` outside that tree. `modelmath.h` shares these conversions between
+unit rendering, shadows, effect anchors and the model viewer. See
+[the transport/animation audit](transport-animation-audit-2026-09-21.md) for native
+coverage and remaining limitations. The dated sections below retain the earlier
+investigation and must not be used as the current transform specification.
+
+
 Status: **RESOLVED (2026-09-05, commit 7d9d71e).** Final fix = negate BOTH piece X and Y rotations in
 `scriptRot`, and all flyers face `−heading` (flyHalfTurn deleted). Defect C (full-body walk) also landed.
 Scope: `src/client/main.cpp` (render-only). Sim state, heading semantics, and the lockstep hash are untouched.

@@ -400,6 +400,7 @@ int main(int argc, char** argv) {
     std::string missionStem;   // --mpmission <stem>: headless campaign-mission host
     std::string cliCampaign;   // --campaign <stem>: launch straight into a mission (interactive)
     int hostPort = 0, joinPort = 0, winW = kWinW, winH = kWinH, maxFps = 60;
+    bool winSizeExplicit = false;
     int playerColor = -1, aiColor = -1;   // --color / --aicolor slot overrides
     float startTime = 0, followZoom = 0;
     bool demo = false, trace = false,
@@ -448,6 +449,7 @@ int main(int argc, char** argv) {
         else if (a == "--winsize" && i + 2 < argc) {
             winW = std::atoi(argv[++i]);
             winH = std::atoi(argv[++i]);
+            winSizeExplicit = true;
         }
         else if (a == "--maxfps" && i + 1 < argc) maxFps = std::atoi(argv[++i]);
         else if (a == "--novsync") noVsync = true;
@@ -1069,14 +1071,17 @@ int main(int argc, char** argv) {
                 }
                 if (const char* rp = tak::devEnv("TAK_RESUME")) gameView->setResumePath(rp);
             }
-            // Never let the window shrink below what the widest build-icon row
-            // needs (full-size icons), and grow it now if it opened smaller.
+            // Normal windows keep the widest build-icon row visible. An explicit
+            // --winsize is also used by retail-comparison captures, where clipping
+            // the local palette to retail's smaller viewport is intentional.
             {
-                int minW = gameView->minWindowWidth();
-                SDL_SetWindowMinimumSize(win, minW, 480);
+                int minW = winSizeExplicit ? winW : gameView->minWindowWidth();
+                int minH = winSizeExplicit ? winH : 480;
+                SDL_SetWindowMinimumSize(win, minW, minH);
                 int cw, ch;
                 SDL_GetWindowSize(win, &cw, &ch);
-                if (cw < minW) SDL_SetWindowSize(win, minW, ch);
+                if (cw < minW || ch < minH)
+                    SDL_SetWindowSize(win, std::max(cw,minW), std::max(ch,minH));
             }
             if (playerColor >= 0) gameView->setPlayerColor(0, playerColor);
             if (aiColor >= 0) gameView->setPlayerColor(1, aiColor);
@@ -1627,6 +1632,14 @@ int main(int argc, char** argv) {
             static int frames = 0;
             bool ready = shotMsEnv ? (SDL_GetTicks64() - shotT0 >= uint64_t(std::atoi(shotMsEnv)))
                                    : (++frames >= 3);
+#ifndef NDEBUG
+            if(tak::devEnv("TAK_GLOW_TEST") && gameView)ready=ready && gameView->debugGlowDrawCount_>=3;
+            if(tak::devEnv("TAK_POINT_TEST") && gameView)ready=ready && gameView->debugPointDrawCount_>=3;
+            if(tak::devEnv("TAK_SMOKE_TEST") && gameView)ready=ready && gameView->debugSmokeDrawCount_>=2;
+            if(tak::devEnv("TAK_DAMAGE_FLAME_TEST") && gameView)ready=ready && gameView->debugDamageFlameDrawCount_>=1;
+            if(tak::devEnv("TAK_FEATURE_FLAME_TEST") && gameView)ready=ready && gameView->debugFeatureFlameDrawCount_>=2 && gameView->debugFeatureSmokeDrawCount_>=1;
+            if(tak::devEnv("TAK_SHOT_FLAME") && gameView)ready=ready && gameView->debugFlameDrawCount_>=3;
+#endif
             static bool shotArmed = false;
             if (ready && ktPhase < 0) {
                 // Terrain + minimap build asynchronously now: finish them, let the

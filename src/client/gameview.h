@@ -10,6 +10,14 @@
 // Must precede SDL.h: on Windows this pulls in winsock2 (with WIN32_LEAN_AND_MEAN)
 // before SDL's <windows.h> would otherwise pull the incompatible winsock v1.
 #include "net/netcompat.h"
+#include "client/retailsmoke.h"
+#include "client/retailpointparticle.h"
+#include "client/retailglow.h"
+#include "client/retaildebris.h"
+#include "client/retaildebrismodel.h"
+#include "client/retailblood.h"
+#include "sim/retaileffectclock.h"
+#include "sim/retailrng.h"
 
 #include "campaign/campaign.h"
 #include "client/briefingscreen.h"
@@ -42,6 +50,8 @@
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
 #include "client/modelview.h"   // standalone 3DO model viewer (extracted leaf)
 #include "client/renderframe.h"   // UnitR/PlayerR/Frame render snapshot (extracted leaf)
+#include "client/retailaim.h"
+#include "client/retaileffectvisibility.h"
 #include "client/replayfile.h"   // .takrep parser (extracted leaf)
 #include "client/sound.h"     // WAV mixer + music + soundclasses (extracted leaf)
 #include "client/threadpool.h"   // data-parallel worker pool (extracted leaf)
@@ -166,6 +176,13 @@ public:
         : ren_(ren), vfs_(std::move(vfs)), mapView_(ren, vfs_, mapPath),
           installRoot_(installRoot), policy_(policy),
           mapPath_(mapPath), crusades_(crusades), side_(side), aiSide_(aiSide) {
+        if(vfs_.has(mapSibling(".ota"))) {
+            const auto ota=vtdf(mapSibling(".ota"));
+            if(const auto* header=ota.child("globalheader")) {
+                debrisLavaWorld_=header->numberOr("lavaworld",0)!=0;
+                debrisNoSeaTrigger_=header->numberOr("nosealeveltrigger",0)!=0;
+            }
+        }
         // Unit registry: MOVEINFO + units + canbuild (+ Crusades overlay first).
         // The VFS merges base + Iron Plague + community data into one namespace,
         // precedence resolved by the retail newest-date rule.
@@ -748,6 +765,13 @@ public:
     // without having to synthesise shift+right-clicks at guessed coordinates.
     // Returns the unit id, or 0 if there was nothing to order.
     int debugQueueDemo();
+    int debugSmokeDrawCount_ = 0;
+    int debugPointDrawCount_ = 0;
+    int debugGlowDrawCount_ = 0;
+    int debugDamageFlameDrawCount_ = 0;
+    int debugFeatureFlameDrawCount_ = 0;
+    int debugFeatureSmokeDrawCount_ = 0;
+    int debugFlameDrawCount_ = 0; // render-thread screenshot admission only
 #endif
     const std::string& netError() const { return netError_; }
 
@@ -807,6 +831,8 @@ public:
     // prev <- last tick's curr, curr <- now; a large jump (teleport / id reuse / respawn)
     // reseeds so we don't zip across the map. Client-only, viewer-only -- never hashed.
     void captureFrame();
+    void captureTransportEffects();
+    void captureEffectVisibility();
 
     // Interpolated render pose for a unit: glides x/z (and shortest-path heading) between
     // the last two ticks by interpAlpha_ (0..1 through the current tick interval). Falls
@@ -827,6 +853,11 @@ public:
     int frameVisH() const { return front().visH; }
     uint32_t frameVisGeneration() const { return front().visGen; }
     bool cellVisibleR(float x, float z) const;
+    bool effectVisibleR(const std::array<int32_t,3>& position) const;
+    std::unique_ptr<tak::RetailEffectVisibility> effectVisibility_;
+    uint32_t effectVisibilityTick_=0;
+    int effectVisibilityPlayer_=-1;
+
     bool canPickPoint(float x, float z) const { return noFog_ || cellVisibleR(x, z); }
     bool canPickUnit(const UnitR& u) const {
         return !u.embarked() && (alliedToLocal(u.player) || canPickPoint(u.x, u.z));
@@ -904,23 +935,6 @@ public:
     void drawCursorOverlay();
 
 private:
-    // The armed-order (command button / hotkey) -> its cursor. Fight-move reuses the
-    // Attack glyph, matching retail (KINGDOMS.icd).
-    static tak::CursorId cursorForCmd(char cmd) {
-        switch (cmd) {
-            case 'm': return tak::CursorId::Move;
-            case 'f': return tak::CursorId::Attack;    // fight-move = tinted attack
-            case 'a': return tak::CursorId::Attack;
-            case 'p': return tak::CursorId::Patrol;
-            case 'g': return tak::CursorId::Defend;    // guard
-            case 'c': return tak::CursorId::Reclaim;
-            case 'r': return tak::CursorId::Repair;
-            case 'l': return tak::CursorId::Load;
-            case 'u': return tak::CursorId::Unload;
-            default:  return tak::CursorId::Normal;
-        }
-    }
-
     // Which cursor to show this frame, from the current UI/order state and what is under
     // the pointer -- the retail two-level scheme (an armed order beats plain hover).
     // `fightTint` is set when the cursor is the fight-move ('f') Attack glyph, which the
@@ -1038,32 +1052,21 @@ private:
         // Points at the shared per-TYPE CobCache.pieceNames (node-stable in cobCache_,
         // which outlives every Anim), not a per-unit copy -- ~25 MB saved at 38k units.
         const std::vector<std::string>* pieceNames = nullptr;
-        bool walking = false;
         bool dying = false;
         bool producing = false;
         bool building = false;   // mobile builder actively working a site (conjure anim)
         bool firing = false;
         bool flying = false;
         bool airborne = false;   // true while the flight animation should run
+        uint32_t occupancy = 0;  // last native setSFXoccupy notification
+        uint32_t moveRate = 0;   // last native speed-tier notification
         float altitude = 0;      // captured flight height above groundY (body/shadow/effects)
         // Split the captured absolute flight height into datum + altitude for
         // projection and shadows. Vertical movement belongs to the sim controller.
         float groundY = 0;
         bool groundInit = false;
-        // Flyer attitude (bankscale/pitchscale): a smoothed roll into the turn and
-        // pitch into the climb, derived from how the unit is actually moving. Retail
-        // flyers visibly lean; ours flew dead level through every turn and dive.
-        float prevHeading = 0, prevAlt = 0;
-        float bank = 0, pitch = 0;
-        bool attitudeInit = false;
         int flyGate = 8;         // static index that this unit's `fly` gates on
-        int moveGate = 0;        // static index this unit's `walk` gates on (see walkGateOf)
-        bool hasWalk = false;    // has a walk/walk_legs/tread script (vs a Create-ambient mover)
         bool hasAim = false;     // has an AimWeapon script (turret/torso target tracking)
-        int aimTarget = 0;       // unit id the last AimWeapon start tracked (0 = none)
-        int fireSlot = 0;        // multi-weapon: alternate FireWeapon's weapon index so
-                                 // both crews (e.g. araat's two bows) loose over time
-        float aimNext = 0;       // animClock_ time of the next aim refresh
         bool hasFlinch = false;  // has a HitByWeapon script (damage flinch)
         bool hasWind = false;    // has a WindChange script (flags/sails)
         bool hasFlightSM = false;// has BeginFlight/BeginLanding: drive the drake's VTOL
@@ -1072,9 +1075,6 @@ private:
         bool hasActivate = false;// onOffable + has Activate: watch u.active for door swing
         bool hasGateDoors = false;// onOffable + has `open`: a gate -> auto-open on proximity
         bool hasQueryWeapon = false;  // has QueryWeapon: resolve the muzzle emit piece
-        bool flyAmbient = false; // canFly airship driven by Create ambients (MotionControl /
-                                 // rotor loops), NO fly/land state machine: run Create + a
-                                 // moving signal (setSFXoccupy/MoveRate), never reset()
         bool active = true;      // last active/door-open state (onoffable/gate swing edge)
         bool cloaked = false;    // last sim cloak state (StartCloaking/StopCloaking edge)
         bool hasCloakAnim = false;   // COB defines StartCloaking (araspy, npcheket)
@@ -1083,65 +1083,49 @@ private:
         int turnSign = 0;        // last turn-direction sign passed to TurnDirection
         float gateNext = 0;      // animClock_ of the next gate proximity rescan (stagger)
         uint32_t windStamp = 0;  // last windGen_ this unit received (0 = never)
-        bool hasMelee = false;   // has MoveWatcher/MeleeControl: the COB drives its own
-                                 // gait retail-style (Create ambients poll GET 29/28/34
-                                 // and CALL walk_* themselves) -- the manual walk state
-                                 // machine must stay out, and NOTHING may reset the VM
         // emit-sfx (piece, sfxType) captured off the worker thread; drained on the
         // main thread after the parallel VM tick (SDL/effects_ are main-thread only).
         std::vector<std::pair<int, int32_t>> pendingSfx;
+        std::vector<tak::sim::World::ScriptEmission> pendingPoints;
         std::vector<int32_t> pendingSnd;   // COB PLAY_SOUND name indices, drained on main
-        std::vector<std::pair<int, int32_t>> pendingExplode;   // EXPLODE (piece, flags)
+        std::span<const uint8_t> explosionReachability; // shared per-script control-flow map
+        std::span<const tak::cob::PieceState> capturedPose; // transient render/effect snapshot
+        tak::cob::Vm* effectQueryVm=nullptr;
         bool cobSounds = false;   // script plays its own audio: skip the generic stand-ins
         int workId = 0;           // site/target the build anim last fired for (one-shot per job)
-        // Continuous ambient fire/smoke: retail runs one persistent emitter per unit,
-        // so we draw ONE looping flame/smoke, kept alive while the emit-loop re-fires
+        // Continuous ambient fire/smoke approximation: draw one looping effect of
+        // each kind, kept alive while the emit-loop re-fires
         // (fireT/smokeT = seconds since the last emit of each). Smooth, not per-emit.
         const EffectAnim* fireFx = nullptr;
         const EffectAnim* smokeFx = nullptr;
         float fireT = 1e9f, smokeT = 1e9f;
-        float fireLift = 0, smokeLift = 0;   // screen lift of the emitting piece
+        int firePiece = -1, smokePiece = -1;   // follow the animated emitting pieces
         bool usesGlow = false;               // model has an animated glow texture
     };
 
-    // Turn a COB emit-sfx (piece, packed type) into a one-shot world-space effect at
-    // the unit. The Sacred Fire's FireControl loop re-emits every ~0.5s, so the short
-    // flame/smoke puffs stack into a continuous flicker (as retail's persistent
-    // particle emitter does). Cosmetic; not hashed.
+    // Refresh a cosmetic flame/smoke effect attached to its animated COB piece.
+    // Effect classes and lifetimes still need a full native particle comparison.
     void emitSfx(const UnitR& u, Anim& a, int piece, int32_t sfx);
+    void emitPoint(const tak::sim::World::ScriptEmission& event);
     // COB EXPLODE: the piece flies off as a debris chunk (retail icd 0x50dd20)
     // plus the TA-flag extras (SMOKE/FIRE bits, BITMAPn explosion classes).
-    void explodePiece(const UnitR& u, Anim& a, int piece, int32_t flags);
+    bool explodePiece(const UnitR& u, Anim& a, int piece, int32_t flags);
     // Map a packed COB sfx code to the retail effect GAF sequence. (KINGDOMS.icd
     // emitSfx @0x50da20: the 0x100 bit flags the extended emitter family, low bits
     // pick the effect -- 4/5/6 = damage-flame small/med/large from anims/flames.gaf,
-    // 1/2/3 = smoke/steam from anims/smoke.gaf.)
+    // 1/2 = smoke; code 259 is a native no-op.)
     static const char* sfxAnimFor(int32_t sfx) {
         int low = sfx & 0xFF;
         if (sfx & 0x100) {
             if (low == 6) return "flames:flame large";
             if (low == 5) return "flames:flame medium";
             if (low == 4) return "flames:flame small";
-            if (low >= 1 && low <= 3) return "smoke:smoke01";
+            if (low == 1 || low == 2) return "smoke:smoke01";
+            // Code 259 reaches retail 502bd0, which returns without an effect.
             return nullptr;
         }
         return (low == 0 || low == 1) ? "flames:flame large" : nullptr;
     }
-    // Accumulated model-Y (height above the unit's ground origin) of a named piece,
-    // for lifting the effect onto it. Ground-level pieces (the Sacred Fire's root)
-    // give 0; a smokestack piece gives its height.
-    static bool findPieceY(const tak::tdo::Object& o, const std::string& name,
-                           float acc, float& out) {
-        float y = acc + o.y;
-        std::string on = o.name;
-        std::transform(on.begin(), on.end(), on.begin(), ::tolower);
-        if (on == name) { out = y; return true; }
-        for (const auto& c : o.children)
-            if (findPieceY(c, name, y, out)) return true;
-        return false;
-    }
-    float pieceLift(const UnitR& u, const Anim& a, int piece);
-
     // The `fly` script's first instruction is a PUSH_STATIC that gates the
     // whole animation; different flyers use different indices (zonhunt=8,
     // zongod/zonharp=7). Read it straight from the bytecode.
@@ -1155,60 +1139,10 @@ private:
         return 8;
     }
 
-    // Word length of a COB opcode (opcode word + inline args) for the ops that can
-    // precede a walk gate; 0 = one we don't decode (caller stops). Mirrors vm.cpp.
-    static int cobOpLen(uint32_t op) {
-        switch (op) {
-            case 0x10021001: case 0x10021002: case 0x10021004:   // PUSH_CONST/LOCAL/STATIC
-            case 0x10023002: case 0x10023004:                    // POP_LOCAL/STATIC
-                return 2;
-            case 0x10022000: case 0x10024000:                    // CREATE_LOCAL / POP_STACK
-            case 0x10031000: case 0x10032000: case 0x10033000: case 0x10034000:  // + - * /
-            case 0x10035000: case 0x10036000: case 0x10037000: case 0x10038000:  // AND OR XOR NOT
-            case 0x10039000: case 0x1003A000: case 0x1003B000:   // SHL SHR MOD
-                return 1;
-            default: return 0;
-        }
-    }
-
-    // The static index a unit's WALK cycle gates its piece motion on -- the client's
-    // state machine sets this to 1 while moving so the walk script actually animates.
-    // Most ground units (araking/tarnecro/zonlord) read static 0, but a HOVER unit
-    // like the Veruna monarch (vermage) reads static 3 -- retail's MoveWatcher thread
-    // (which we don't run) fills it. The enabling gate is the FIRST PUSH_STATIC before
-    // the walk script's first JUMP_IF_FALSE; decode forward to it, since a few units
-    // (e.g. the Taros tarmind) front-load a loop-counter setup before the gate.
-    // Tries walk / walk_legs / tread.
-    // True if the unit has a leg/tread walk cycle. A mobile unit WITHOUT one (ships'
-    // oars, wheeled war-machines' wheels/props) animates via its Create ambient loop
-    // instead, so registerUnit starts Create for it and the walk state machine leaves
-    // its VM alone (a walk-transition reset would wipe the ambient loop).
-    static bool hasWalkCycle(const tak::cob::File& f) {
-        for (const char* name : {"walk", "walk_legs", "tread"})
-            if (f.scriptIndex(name) >= 0) return true;
-        return false;
-    }
-
-    static int walkGateOf(const tak::cob::File& f) {
-        for (const char* name : {"walk", "walk_legs", "tread"}) {
-            int si = f.scriptIndex(name);
-            if (si < 0) continue;
-            uint32_t e = f.scripts[size_t(si)].entry;
-            for (int guard = 0; guard < 24 && e + 1 < f.code.size(); ++guard) {
-                uint32_t op = f.code[e];
-                if (op == 0x10021004) return int(f.code[e + 1]);   // PUSH_STATIC -> the gate
-                if (op == 0x10066000) break;                       // JUMP_IF_FALSE -> no static gate
-                int len = cobOpLen(op);
-                if (len <= 0) break;                               // unknown op: give up, fall to 0
-                e += uint32_t(len);
-            }
-        }
-        return 0;
-    }
-
     // At max veterancy, a unit with a `veteranmodel` swaps its mesh for the
     // fancier promoted 3DO (same piece structure, so the COB/anim carries over).
     void maybeSwapVeteranModel(const UnitR& u);
+    void configureExplosionHierarchy(Anim& a,const tak::tdo::Object& root);
     void maybeSwapCorpseModel(const UnitR& u);
 
     // Client-side per-unit setup (model + COB animation VM). Takes id+type only (not a
@@ -1239,7 +1173,7 @@ private:
     // was a generic yellow streak before. Same projection as a ghost, but solid,
     // lifted by the shot's altitude and yawed along its flight.
     void drawShotModel(const std::string& name, int player, float x, float z,
-                       float altPx, float facing) {
+                       float altPx, float facing, const tak::sim::Projectile* native=nullptr) {
         const tak::tdo::Model* model = ghostModel(name);
         if (!model) return;
         // These retail bolt meshes have their arrowhead on -Z; the other
@@ -1249,7 +1183,8 @@ private:
         SDL_Texture* atlas = atlasFor(colorSlot_[player & 7]);
         // Projectile roots contain the shot itself, unlike unit roots whose
         // ground-reference plates are suppressed by collect().
-        collect(tris_, atlas, model->root, Xform{}, nullptr, facing, player,
+        const Xform base=native ? modelBodyTransform(native->angles[2],native->angles[0]) : Xform{};
+        collect(tris_, atlas, model->root, base, nullptr, facing, player,
                 false, false);
         if (tris_.empty()) return;
         std::stable_sort(tris_.begin(), tris_.end(),
@@ -1257,6 +1192,12 @@ private:
         float zm = mapView_.zoom();
         float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
         float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm - altPx;
+        if(native) {
+            const int y=std::bit_cast<int16_t>(uint16_t(uint32_t(native->position[1])>>16));
+            (void)heightAbove(x,z);
+            ax=(x-mapView_.offX())*zm;
+            ay=(z-float(y>>1)+float(heightRef_)*0.5f-mapView_.offY())*zm;
+        }
         triBatch_.clear();
         SDL_Texture* cur = nullptr;
         auto flush = [&] {
@@ -1401,11 +1342,11 @@ private:
     // Parsed COB scripts shared per unit type (see registerUnit).
     struct CobCache {
         std::shared_ptr<const tak::cob::File> file;
+        std::vector<uint8_t> explosionReachability;
         std::vector<std::string> pieceNames;
+        std::vector<tak::sim::RetailModelPiece> modelPieces;
+        std::vector<std::vector<std::array<int32_t,3>>> pieceVertices;
         bool hasSounds = false;   // any PLAY_SOUND op: the script provides its own audio
-        int moveGate = 0;         // walk-cycle moving-flag static index (walkGateOf)
-        bool hasWalk = false;     // has a walk/walk_legs/tread script (hasWalkCycle)
-        bool hasMelee = false;    // has MoveWatcher/MeleeControl (retail self-driven gait)
     bool hasCloakAnim = false;   // defines StartCloaking (araspy, npcheket)
         bool hasAim = false;      // has an AimWeapon script
         bool hasFlinch = false;   // has a HitByWeapon script
@@ -1413,8 +1354,6 @@ private:
         bool hasFlightSM = false; // has BeginFlight/BeginLanding (drake VTOL state machine)
         bool hasActivate = false; // has an Activate script (onOffable door/power toggle)
         bool hasQueryWeapon = false;  // has QueryWeapon (muzzle emit piece out-param)
-        bool hasFly = false;      // has a `fly` script
-        bool hasMotionControl = false;  // has MotionControl (airship gait ambient)
         bool hasOpen = false;     // has an `open` door-swing script (gate)
         bool hasTurnDir = false;  // has a TurnDirection script (turn-in-place / steering trim)
     };
@@ -1429,7 +1368,7 @@ private:
     // instances (shoreline waves and the like) have none, and the snapshot's fallback
     // deliberately reports them alive so they keep RENDERING. That must not be confused
     // with "reclaimable" -- see hoverCursor.
-    struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; };
+    struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; uint32_t burnStarted = 0; };
     std::vector<FeatSim> featSimState_;
     uint32_t lastFeatGen_ = UINT32_MAX;   // != any real generation, so the first sync runs
 
@@ -1664,18 +1603,16 @@ private:
                  RadialExtent* ext = nullptr, const PieceMeta* meta = nullptr,
                  bool shadowCull = false) {
         const tak::cob::PieceState* ps = pieceFor(anim, o.name);
-        if (ps && !ps->visible) return;
-        float rr[3];
-        Xform xf = parent.then(o.x + (ps ? ps->move[0] : 0),
-                               o.y + (ps ? ps->move[1] : 0),
-                               o.z + (ps ? ps->move[2] : 0),
-                               scriptRot(ps, rr));
+        // Retail tests visibility per piece; hidden parents still transform
+        // their children (including after a non-subtree EXPLODE).
+        const bool hidden = ps && !ps->visible;
+        Xform xf = scriptTransform(parent,o.x,o.y,o.z,ps);
         // Precomputed when the model was registered; computed here only for a model
         // that has no cached tree (ghost previews, build-icon portraits). Same
         // function either way.
         PieceMeta local;
         if (!meta) { pieceMetaFor(o, isRoot, local); meta = &local; }
-        const bool groundPlate = meta->skip;
+        const bool groundPlate = meta->skip || hidden;
         float cy = std::cos(heading), sy = std::sin(heading);
         for (size_t pi = 0; pi < o.primitives.size(); ++pi) {
             if (groundPlate) break;
@@ -1918,11 +1855,7 @@ private:
     bool pieceModelOrigin(const tak::tdo::Object& o, const Anim* anim,
                           const Xform& parent, const std::string& want, float out[3]) const {
         const tak::cob::PieceState* ps = pieceFor(anim, o.name);
-        float rr[3];
-        Xform xf = parent.then(o.x + (ps ? ps->move[0] : 0),
-                               o.y + (ps ? ps->move[1] : 0),
-                               o.z + (ps ? ps->move[2] : 0),
-                               scriptRot(ps, rr));
+        Xform xf = scriptTransform(parent,o.x,o.y,o.z,ps);
         std::string on = o.name;
         std::transform(on.begin(), on.end(), on.begin(), ::tolower);
         if (on == want) { out[0] = xf.t[0]; out[1] = xf.t[1]; out[2] = xf.t[2]; return true; }
@@ -1941,21 +1874,25 @@ private:
         auto vt = visuals_.find(u.type ? u.type->id : std::string());
         if (vt == visuals_.end() || !u.type) return false;
         float m[3];
-        if (!pieceModelOrigin(vt->second.model.root, &a, Xform{}, pieceName, m)) return false;
+        if (!pieceModelOrigin(vt->second.model.root, &a, modelBodyTransform(u.bodyPitch,u.bodyRoll), pieceName, m)) return false;
         // Match the body rotation, including a building's birth heading.
         float facing = -u.heading;
         float cy = std::cos(facing), sy = std::sin(facing);
         float rx = m[0] * cy + m[2] * sy;
         float rz = -m[0] * sy + m[2] * cy;
-        // Fold the unit's flight altitude into the SAME tilt scaling the renderer
-        // uses: collect() puts altitude in base.t[1], so the model lifts a piece by
-        // (localY+altitude)*cos(tilt). Adding raw altitude at x1.0 here would float
-        // the effect ~0.25*altitude above the drake's actual on-screen mouth/body.
+        // Match the model's projected altitude and local depth at its screen anchor.
         float ry = (m[1] + unitAltById(u.id)) * kProjY + rz * kProjZ;
         outX = u.x + rx;
         outZ = u.z;
         outAlt = ry;
         return true;
+    }
+
+    void scriptEffectOrigin(const UnitR& u, const Anim& a, int piece,
+                            float& x, float& z, float& alt) {
+        x = u.x; z = u.z; alt = unitAltById(u.id) * kProjY;
+        if (a.pieceNames && piece >= 0 && size_t(piece) < a.pieceNames->size())
+            pieceWorldFx(u, a, (*a.pieceNames)[size_t(piece)], x, z, alt);
     }
 
     void drawRing(float wx, float wz, float r);
@@ -2012,6 +1949,7 @@ private:
     std::unordered_map<int, float> birthFx_;
     static constexpr float kBirthFxDur = 0.9f;
     float birthProgress(int id) const;
+    std::map<std::pair<int,int>,SDL_Texture*> lightningTextures_;
     std::map<std::string, std::vector<SDL_Texture*>> textures_;
     std::map<std::string, std::vector<SDL_Texture*>> shadowMasks_;
     std::vector<Tri> tris_;
@@ -2637,6 +2575,9 @@ private:
         float x = 0, z = 0;
         std::string name;    // lowercase feature key (burn art + burnt-swap lookups)
         const FeatArt* burnArt = nullptr;   // seqnameburn playback (lazy, on ignition)
+        const EffectAnim* frontFlame = nullptr;
+        const EffectAnim* backFlame = nullptr;
+        uint32_t burnStarted = 0; // simulation ignition tick
         uint8_t burnVis = 0; // sim says burning: draw burnArt + emit smoke
         // Snapshotted once per frame in syncBurningFeatures, under simMutex_. The
         // draw loop used to ask world_.featureAliveAt() per feature with no lock,
@@ -2654,7 +2595,6 @@ private:
         uint8_t hasSim = 0;
         int simType = -2;    // last-seen sim FeatType index (-2 = not yet synced)
         int simId = -1;      // cell-derived sim feature id (matches World's ids)
-        float lastSmoke = 0; // animClock_ of the last smoke puff
         bool tree = false;   // category=trees (eligible for the wind-sway option)
         bool mana = false;   // category=mana (deposit cluster: kept walkable/buildable)
         bool glowy = false;  // the animated "Sacred Stone" centre -- the actual
@@ -2676,13 +2616,18 @@ private:
         // 30Hz engine ticks. Retail keeps one clock per TYPE (all instances in
         // sync) and loops continuously.
         struct FGeom { int w = 0, h = 0, xoff = 0, yoff = 0; };
+        std::vector<SDL_Texture*> shadowFrames;
+        std::vector<FGeom> shadowGeom;
+        std::vector<uint16_t> shadowDurations;
+        bool shadowLoop = false;
+        bool bodyLoop = false;
         std::vector<FGeom> fgeom;   // per-frame geometry, parallel to frames
         std::vector<int> tickEnd;   // cumulative end tick per frame
         int totalTicks = 0;         // full loop length in 30Hz ticks
     };
     std::map<std::string, tak::tdf::Node> featureDefs_;
     std::map<std::string, tak::gaf::Palette> featurePals_;
-    std::map<std::string, FeatArt> featureArt_;
+    std::map<std::array<std::string, 6>, FeatArt> featureArt_;
 
     // Unit ground shadows: the sprites from data/anims/shadows.gaf named by each
     // unit's FBI `shadowart`, recoloured to translucent black. Loaded once.
@@ -3218,10 +3163,15 @@ private:
     // vanished one can leave its dissipation art behind.
     struct StormTrack { float x = 0, z = 0; const tak::sim::Weapon* w = nullptr; };
     std::unordered_map<int, StormTrack> stormsSeen_;
-    struct EFrame { SDL_Texture* tex = nullptr; int w = 0, h = 0, ax = 0, ay = 0; };
-    struct EffectAnim { std::vector<EFrame> frames; };
+    struct EFrame { SDL_Texture* tex = nullptr; int w = 0, h = 0, ax = 0, ay = 0, ticks = 2; uint8_t encoding = 0; };
+    struct EffectAnim { std::vector<EFrame> frames; std::vector<uint16_t> durations; bool loop=false; };
+    std::vector<std::string> explosionClassOrder_; // numeric COB classes follow authored order
     std::map<std::string, std::vector<std::string>> explosionClasses_;  // class -> anim names
     std::map<std::string, EffectAnim> effectAnims_;                     // anim name -> frames
+    struct NimbusEffect { const EffectAnim* anim = nullptr; uint32_t started = 0; };
+    std::unordered_map<int, NimbusEffect> nimbusEffects_;
+    std::map<std::string, std::string> factionNimbus_;
+    bool factionNimbusLoaded_ = false;
     bool explosionsLoaded_ = false;
     struct EffectInst {
         const EffectAnim* anim = nullptr;
@@ -3230,8 +3180,51 @@ private:
         float dur = 0;     // seconds for one playthrough (0 => use kEffectFps)
         int loops = 1;     // how many times to repeat (ground fire loops)
         float alt = 0;     // extra screen lift (impact on an airborne target)
+        bool authoredTiming = false;
+        uint32_t started = 0;
+        std::optional<std::array<int32_t,3>> worldPosition = std::nullopt;
     };
     std::vector<EffectInst> effects_;
+    struct ExplosionGlow {
+        float x,z,alt; uint32_t started; unsigned kind;
+        std::optional<std::array<int32_t,3>> worldPosition;
+    };
+    std::vector<ExplosionGlow> explosionGlows_;
+    std::deque<tak::sim::World::TransportFx> transportEffectQueue_; // guarded by hitQueueMutex_
+    struct FeatureSmokeEmission {
+        int id=0;
+        std::string type;
+        std::array<int32_t,3> position{};
+        uint32_t age=0;
+    };
+    struct SmokeTick {
+        uint32_t tick=0;
+        int32_t windX=0,windZ=0;
+        std::vector<tak::sim::World::ScriptEmission> emissions;
+        std::vector<int> removedOwners;
+        std::vector<FeatureSmokeEmission> features;
+        std::vector<int> removedFeatures;
+    };
+    struct SmokeSprite { tak::RetailSmokeParticle particle; const EffectAnim* art=nullptr; };
+    std::deque<SmokeTick> smokeTickQueue_; // guarded by hitQueueMutex_
+    std::map<int,uint32_t> featureSmokeOwners_;
+    std::map<int,std::vector<SmokeSprite>> featureSmokeSprites_;
+    std::set<int> smokeOwners_; // simulation-thread emission owners
+    uint32_t smokeCaptureTick_=0;
+    std::map<int,std::vector<SmokeSprite>> smokeSprites_;
+    std::map<int,std::vector<tak::RetailPointParticle>> pointParticles_;
+    struct DamageFlameSprite {
+        std::array<int32_t,3> position{};
+        const EffectAnim* art=nullptr;
+        tak::sim::RetailEffectClock clock;
+        int life=15;
+    };
+    std::map<int,std::vector<DamageFlameSprite>> damageFlames_;
+    std::array<std::vector<const EffectAnim*>,3> damageFlameClasses_;
+    bool damageFlameClassesLoaded_=false;
+    void loadDamageFlameClasses();
+    uint32_t smokeTick_=0,smokeRandom_=1;
+    void consumeSmokeTicks();
     static constexpr float kEffectFps = 20.0f;
 
     // Per-loop playback length of an effect instance, in seconds.
@@ -3241,9 +3234,13 @@ private:
     // Play a named effect anim at (x,z), optionally delayed / stretched / looped.
     // `alt` lifts it on screen (impact on an airborne target).
     void spawnEffectAnim(const std::string& anim, float x, float z,
-                         float delay = 0, float dur = 0, int loops = 1, float alt = 0) {
+                         float delay = 0, float dur = 0, int loops = 1, float alt = 0,
+                         bool authoredTiming = false,
+                         std::optional<std::array<int32_t,3>> worldPosition = {},
+                         std::optional<uint32_t> started = {}) {
         const EffectAnim* ea = effectFor(anim);
-        if (ea) effects_.push_back({ea, x, z, 0.0f, delay, dur, loops, alt});
+        if (ea) effects_.push_back({ea, x, z, 0.0f, delay, dur, loops, alt,
+                                   authoredTiming, started.value_or(front().gameTick), worldPosition});
     }
 
     void loadExplosionClasses();
@@ -3256,10 +3253,15 @@ private:
         loadExplosionClasses();
         auto it = explosionClasses_.find(cls);
         if (it == explosionClasses_.end() || it->second.empty()) return false;
-        const std::string& anim = it->second[salt_++ % it->second.size()];
+        // Native 492fd0 scales one CRT draw into the class variant list.
+        const size_t variant = uint64_t(tak::sim::retailCrtRandom(smokeRandom_)) *
+                               it->second.size() / 32768u;
+        const std::string& anim = it->second[variant];
         const EffectAnim* ea = effectFor(anim);
         if (!ea) return false;
-        effects_.push_back({ea, x, z, 0.0f, 0.0f, 0.0f, 1, alt});
+        // Native explosion classes advance their authored clock once per sim tick.
+        effects_.push_back({ea, x, z, 0.0f, 0.0f, 0.0f, 1, alt,
+                            true, front().gameTick});
         static const bool kLog = tak::devEnv("TAK_FXLOG") != nullptr;
         if (kLog) std::fprintf(stderr, "t=%.2f effect '%s' anim '%s' (%zu frames)\n",
                                animClock_, cls.c_str(), anim.c_str(), ea->frames.size());
@@ -3301,6 +3303,22 @@ private:
         int kind = 0;   // 0 spark/blood (gravity), 1 smoke (rises, fades)
     };
     std::vector<Particle> particles_;
+    struct DetachedPiece {
+        tak::tdo::Object model;
+        std::vector<std::string> names;
+        std::vector<tak::cob::PieceState> poses;
+        tak::RetailDebrisMotion motion;
+        std::vector<tak::RetailBloodParticle> blood;
+        uint32_t tick=0;
+        int player=0;
+    };
+    void buildDetachedShadow(const DetachedPiece& debris, float zoom);
+    void drawDetachedShadow();
+    std::vector<SDL_FPoint> detachedShadowVerts_;
+    std::vector<Tri> detachedMaskedShadows_;
+    std::vector<DetachedPiece> detachedPieces_;
+    bool debrisLavaWorld_=false,debrisNoSeaTrigger_=false;
+    std::deque<tak::RetailBloodParticle> bloodStains_;
     // Spawn a burst of `n` particles at (x,z) with a colour and speed spread.
     void spawnBurst(float x, float z, int n, Uint8 r, Uint8 g, Uint8 b,
                     float spread, float sizeMax, int kind, float baseAlt = 0) {
@@ -3340,6 +3358,7 @@ private:
 
     SoundBank sounds_;
     ThreadPool pool_;                       // for parallel per-unit VM ticks
+    std::vector<std::pair<int,tak::cob::Vm*>> explosionVmTick_;
     std::vector<tak::cob::Vm*> vmTick_;     // scratch list for the parallel pass
     SoundClasses soundClasses_;
     uint32_t salt_ = 0;

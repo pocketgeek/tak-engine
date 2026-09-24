@@ -143,11 +143,7 @@ const tak::cob::PieceState* ModelView::pieceFor(const std::string& objName) cons
 void ModelView::walk(const tak::tdo::Object& o, const Xform& parent) {
     const tak::cob::PieceState* ps = pieceFor(o.name);
     if (ps && !ps->visible) return;
-    float rr[3];
-    Xform xf = parent.then(o.x + (ps ? ps->move[0] : 0),
-                           o.y + (ps ? ps->move[1] : 0),
-                           o.z + (ps ? ps->move[2] : 0),
-                           scriptRot(ps, rr));
+    Xform xf = scriptTransform(parent,o.x,o.y,o.z,ps);
     for (const auto& p : o.primitives) {
         if (p.indices.size() < 3) continue;
         SDL_Texture* tex = nullptr;

@@ -12,9 +12,11 @@ namespace tak::sim {
 // owner. Animation is display-owned; capacity and lifetime affect CRT draws.
 struct RetailConstructionParticle {
     int32_t x=0,y=0,z=0,speed=0,ceiling=0;
+    uint32_t displayAge=0; // Cosmetic clock only; excluded from gameplay hashing.
     bool advance() {
         if (speed<0 ? y<=0 : y>ceiling) return false;
         y=std::bit_cast<int32_t>(uint32_t(y)+uint32_t(speed));
+        ++displayAge;
         return true;
     }
 };

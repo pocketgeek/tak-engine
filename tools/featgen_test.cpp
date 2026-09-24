@@ -11,10 +11,8 @@
 //   * A SPURIOUS bump (e.g. bumping every tick) puts the lock wait straight back and
 //     the optimization is worth nothing.
 //
-// So both directions are asserted here. Only the add path is reachable from outside the
-// class -- igniteFeature/swapFeature are private -- so the ignite path is covered
-// empirically instead (verified by driving a real game: 5 forced ignitions produced 5
-// renderer-side burn-vis transitions).
+// Both directions are asserted here, including ignition timestamps retained for
+// viewers that skip simulation ticks. The test probe reaches private ignition.
 
 #include "sim/sim.h"
 #include "sim/matchsetup.h"
@@ -24,6 +22,12 @@
 
 namespace tak::sim {
 struct RetailReplayProbe {
+    static void ignite(World& world,int id) {
+        world.igniteFeature(world.features_.at(world.featureIdx_.at(id)));
+    }
+    static void visualIgnition(World& world,int id,uint32_t tick) {
+        world.features_.at(world.featureIdx_.at(id)).burnStarted=tick;
+    }
     static int grade(const World& world,int x,int z) { return world.mapFeatureGrade(x,z); }
     static void cache(World& world,int id) { world.prepareSearchGrade(id,false); }
     static int cached(const World& world,int x,int z) {
@@ -80,6 +84,47 @@ int main() {
         check(reused.units().front().corpseUntil==World::kCorpseAnimTicks &&
               reused.stateHash()==fresh.stateHash(),
               "corpse-less death after registry reuse matches a fresh referee");
+    }
+
+    {
+        using namespace tak::sim;
+        World fire;fire.setVisPlayer(-1);
+        FeatType tree;tree.name="tree";tree.flamable=true;tree.hasBurnAnim=true;tree.burnTicks=30;
+        fire.setFeatureTypes({tree});
+        fire.addFeature(77,100,100,10,5,1,1,false,0);
+        for(int i=0;i<17;++i)fire.tick(1.0f/30);
+        const auto generation=fire.featGeneration();
+        RetailReplayProbe::ignite(fire,77);
+        check(fire.feature(77)->burnStarted==17 && fire.featGeneration()!=generation,
+              "ignition preserves the actual simulation tick for late viewers");
+        for(int i=0;i<9;++i)fire.tick(1.0f/30);
+        RetailReplayProbe::ignite(fire,77);
+        check(fire.feature(77)->burnStarted==17,
+              "repeated ignition and skipped visual ticks do not restart the clock");
+        const auto hash=fire.stateHash();
+        RetailReplayProbe::visualIgnition(fire,77,1000);
+        check(fire.stateHash()==hash,"visual ignition timestamp does not affect lockstep hash");
+        for(int i=0;i<20;++i)fire.tick(1.0f/30);
+        check(fire.feature(77)->alive && fire.feature(77)->burnLeft==1,
+              "burn remains present through the final authored display tick");
+        fire.tick(1.0f/30);
+        check(!fire.feature(77)->alive,"burn retires exactly at authored lifetime");
+    }
+
+    for (uint32_t lifetime : {1u,2u}) {
+        using namespace tak::sim;
+        World fire;fire.setVisPlayer(-1);
+        fire.setTerrain(std::vector<uint8_t>(16*16,0),16,16,0);
+        FeatType tree;tree.name="spark-tree";tree.flamable=true;tree.hasBurnAnim=true;
+        tree.burnTicks=lifetime;tree.spreadChance=100;tree.sparkTicks=0;
+        fire.setFeatureTypes({tree});
+        fire.addFeature(85,88,88,10,5,1,1,false,0);
+        fire.addFeature(86,104,88,10,5,1,1,false,0);
+        RetailReplayProbe::ignite(fire,85);
+        fire.tick(1.0f/30);
+        check(bool(fire.feature(86)->burn)==(lifetime>1),
+              lifetime==1 ? "expiry suppresses a simultaneous spark into the adjacent tree"
+                          : "a spark before expiry still ignites the adjacent tree");
     }
 
     World w;

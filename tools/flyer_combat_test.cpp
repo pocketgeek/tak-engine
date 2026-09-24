@@ -1,6 +1,7 @@
 // Landing must not turn ordinary flyers into powered-down combat units.
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
+#include "sim/retailhweffectdata.h"
 #include <cstdio>
 #include <algorithm>
 
@@ -14,6 +15,126 @@ int main(int argc,char** argv) {
     };
     for (bool crusades:{false,true}) {
         tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,crusades);
+        int namedLightning=0;
+        for(const auto& [name,type]:registry.types())for(const auto& weapon:type.weapons) {
+            if(!weapon.lightning || weapon.hwEffectName.empty())continue;
+            ++namedLightning;
+            check(bool(weapon.lightningEffect),"named lightning resolves its authored effect");
+            if(weapon.lightningEffect)
+                check(!weapon.lightningEffect->initial.sources.empty(),"named lightning retains its emitters");
+        }
+        check(namedLightning>0,"shipped named lightning roster is covered");
+        check(registry.find("zonhunt")->hasNimbusArt,"Zhon faction nimbus is available to the simulation");
+        {
+            const auto* rat=registry.find("tarkam");
+            auto victim=*registry.find("tarzom");victim.maxHp=25000;victim.healTime=0;
+            victim.maxVel={};victim.weapon.damage=0;victim.weapons.clear();
+            tak::sim::World world;world.setVisPlayer(-1);
+            world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);world.buildNavClasses(registry);
+            const int from=world.spawn(rat,1000,1000,0,0),target=world.spawn(&victim,1040,1000,0,1);
+            world.attack(from,target,false);
+            for(int tick=0;tick<180;++tick)world.tick(1.f/30);
+            check(world.unit(target)->hp==tak::sim::Fixed::fromInt(victim.maxHp),
+                  "Kamikaze Rat's absent weapon callbacks do not invent bite damage");
+            world.unit(from)->hp={};world.tick(1.f/30);
+            check(world.unit(target)->hp<tak::sim::Fixed::fromInt(victim.maxHp),
+                  "Kamikaze Rat retains its authored death explosion without weapon callbacks");
+        }
+
+        for(const auto& [name,definition]:registry.types())for(size_t slot=0;slot<definition.weapons.size();++slot) {
+            if(!definition.weapons[slot].lightning)continue;
+            auto type=definition;
+            auto victim=*registry.find("tarzom");victim.maxHp=25000;victim.healTime=0;
+            victim.maxVel={};victim.weapon.damage=0;victim.weapons.clear();
+            tak::sim::World world;world.setVisPlayer(-1);
+            world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
+            world.buildNavClasses(registry);
+            const int from=world.spawn(&type,1000,1000,0,0),target=world.spawn(&victim,1180,1000,0,1);
+            world.player(0).mana=100000;world.setWeapon(from,int(slot));world.attack(from,target,false);
+            bool emitted=false,hit=false;
+            for(int tick=0;tick<900 && !hit;++tick) {
+                world.tick(1.f/30.f);
+                for(const auto& shot:world.projectiles())if(shot.fromId==from && shot.slot==int(slot) && shot.wsrc==&type.weapons[slot] && shot.lightningEffect &&
+                    !shot.lightningEffect->particles.empty())emitted=true;
+                hit=world.unit(target)->hp<tak::sim::Fixed::fromInt(victim.maxHp) || world.unit(target)->incapacitated();
+            }
+            std::printf("lightning balance=%s unit=%s slot=%zu emitted=%d hit=%d hash=%016llx\n",
+                crusades?"Crusades":"standard",name.c_str(),slot,int(emitted),int(hit),
+                static_cast<unsigned long long>(world.stateHash()));
+            check(emitted && hit,"selected shipped lightning slot emits and reaches the enemy through live combat");
+        }
+
+        check(tak::hpi::affectsGameplay("gamedata/effects/effects.tdf"),
+              "named effect definitions are protected multiplayer data");
+        {
+            tak::sim::World world;world.setVisPlayer(-1);
+            world.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            world.buildNavClasses(registry);
+            const auto* type=registry.find("zonhunt");
+            const int id=world.spawn(type,1000,1000,0,0);
+            world.order(id,1800,1600,false);
+            bool leaned=false,retained=false;
+            for(int tick=0;tick<120;++tick) {
+                world.tick(1.f/30.f);
+                const auto& unit=*world.unit(id);
+                leaned=leaned || unit.groundRoll!=0 || unit.groundPitch!=0;
+                retained=retained || unit.flightAcceleration!=std::array<int32_t,3>{};
+            }
+            check(leaned && retained,"flying monarch gets authoritative acceleration-driven attitude");
+        }
+        for(const char* name:{"aradrag","credrag","crefire","cresage","tardrag","tarknigh",
+                             "tarmage","tarspout","verdrag","zondrag","zondrake"}) {
+            const auto* definition=registry.find(name);
+            if(!definition) {check(false,"flame roster definition exists");continue;}
+            auto type=*definition;
+            check(!type.weapons.empty() && type.weapons[0].flameKind>=0,"flame subclass loads independently of hit-effect art");
+            auto victim=*registry.find("tarzom");victim.maxHp=25000;victim.healTime=0;
+            victim.maxVel={};victim.weapon.damage=0;victim.weapons.clear();
+            tak::sim::World world;world.setVisPlayer(-1);
+            world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
+            world.buildNavClasses(registry);
+            const int from=world.spawn(&type,1000,1000,0,0),target=world.spawn(&victim,1180,1000,0,1);
+            world.player(0).mana=100000;world.attack(from,target,false);
+            bool emitted=false,hit=false;int kind=-1;
+            for(int tick=0;tick<900 && !hit;++tick) {
+                world.tick(1.f/30.f);
+                for(const auto& flame:world.flames())if(flame.fromId==from && !flame.particles.empty()) {
+                    emitted=true;kind=int(flame.particles.back().kind);
+                }
+                hit=world.unit(target)->hp<tak::sim::Fixed::fromInt(victim.maxHp);
+            }
+            std::printf("flame balance=%s unit=%s emitted=%d hit=%d kind=%d hash=%016llx\n",
+                crusades?"Crusades":"standard",name,int(emitted),int(hit),kind,
+                static_cast<unsigned long long>(world.stateHash()));
+            check(emitted && hit && kind==type.weapons[0].flameKind,
+                "shipped flame weapon emits its subclass and reaches the enemy through live combat");
+        }
+        for(const char* name:{"arassh","tarhel","tarnecro","verarch","vercen","verharp",
+                             "vermage","vertower","zonspide"}) {
+            const auto* definition=registry.find(name);
+            if(!definition || definition->weapons.empty() || !definition->weapons[0].straight)continue;
+            auto type=*definition;
+            const bool naval=type.minWaterDepth>0;
+            auto victim=*registry.find(naval ? "verharp" : "tarzom");victim.maxHp=25000;victim.healTime=0;
+            victim.maxVel={};victim.weapon.damage=0;victim.weapons.clear();
+            tak::sim::World world;world.setVisPlayer(-1);
+            world.setTerrain(std::vector<uint8_t>(128*128,naval ? 20 : 100),128,128,naval ? 100 : 20);
+            world.buildNavClasses(registry);
+            const int from=world.spawn(&type,1000,1000,0,0),target=world.spawn(&victim,1180,1000,0,1);
+            world.player(0).mana=100000;world.attack(from,target,false);
+            bool launched=false,hit=false,moved=false;
+            for(int tick=0;tick<900 && !hit;++tick) {
+                world.tick(1.f/30.f);
+                for(const auto& shot:world.projectiles())if(shot.fromId==from && shot.straight) {
+                    launched=true;moved=moved || shot.age>0;
+                }
+                hit=world.unit(target)->hp<tak::sim::Fixed::fromInt(victim.maxHp) || world.unit(target)->incapacitated();
+            }
+            std::printf("straight balance=%s unit=%s launched=%d moved=%d hit=%d hash=%016llx\n",
+                crusades?"Crusades":"standard",name,int(launched),int(moved),int(hit),
+                static_cast<unsigned long long>(world.stateHash()));
+            check(launched && moved && hit,"shipped ordinary LOS weapon flies and hits through live combat");
+        }
         std::vector<std::string> flyers;
         for (const auto& [id,type]:registry.types())
             if (type.canFly && !type.onOffable && type.weapon.damage>0) flyers.push_back(id);

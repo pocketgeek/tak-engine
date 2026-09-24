@@ -1,4 +1,7 @@
 #include "hpi/hpi.h"
+#include "gaf/nimbus.h"
+#include "gaf/animationtiming.h"
+#include "gaf/featureburntiming.h"
 #include "tdf/tdf.h"
 #include "tnt/mapgen.h"
 
@@ -637,6 +640,8 @@ bool affectsGameplay(const std::string& path) {
         // form (below), so an art-only override hashes identically while a
         // sim-key edit still faults the version gate instead of desyncing.
         if (k.find("weapons/") != std::string::npos) return true;
+        // Named projectile emitters consume the shared deterministic RNG.
+        if (k.starts_with("gamedata/effects/")) return true;
         if (k.find("moveinfo") != std::string::npos || k.find("sidedata") != std::string::npos ||
             k.find("gods") != std::string::npos)
             return true;
@@ -676,6 +681,38 @@ uint64_t gameplayHash(const Vfs& vfs) {
         uint8_t z = 0; mix(&z, 1);
         try { auto b = vfs.read(byKey[k]); mix(b.data(), b.size()); } catch (const std::exception&) {}
     }
+    // Only availability affects launch delay; changing valid nimbus pixels is
+    // still cosmetic. Missing/invalid art must not silently change peer timing.
+    for (const auto& [side, animation] : gaf::factionNimbus(vfs)) {
+        const std::string key = "nimbus-available:" + side;
+        mix(reinterpret_cast<const uint8_t*>(key.data()), key.size());
+        const uint8_t present = !animation.empty();
+        mix(&present, 1);
+    }
+    // Wandering start/end frame clocks control damage admission and lifetime.
+    // Protect timing and availability without disallowing cosmetic recolors.
+    std::set<std::string> stormArt;
+    for(const auto& key:keys) if(key.ends_with(".fbi")) {
+        const auto bytes=vfs.read(byKey[key]);
+        const auto root=tdf::parseText(std::string(bytes.begin(),bytes.end()),key);
+        for(const auto& [section,node]:root.children)
+            for(const char* field:{"wanderstartart","wanderloopart","wanderendart"}) {
+                const auto name=MountSet::key(node.valueOr(field,""));
+                if(!name.empty())stormArt.insert(name);
+            }
+    }
+    for(const auto& name:stormArt) {
+        const auto timing=gaf::animationTiming(vfs,name);
+        const std::string key="storm-timing:"+name;
+        mix(reinterpret_cast<const uint8_t*>(key.data()),key.size());
+        const uint16_t count=uint16_t(timing.size());
+        const uint8_t sizeBytes[]={uint8_t(count),uint8_t(count>>8)};
+        mix(sizeBytes,2);
+        for(uint16_t duration:timing) {
+            const uint8_t durationBytes[]={uint8_t(duration),uint8_t(duration>>8)};
+            mix(durationBytes,2);
+        }
+    }
     // Feature TDFs: hash only the keys the deterministic sim consumes (the
     // exact set matchsetup's FeatDef loader reads), in canonical sorted order.
     // Art keys (filename/seqname/object/world/...) are deliberately absent, so
@@ -687,6 +724,7 @@ uint64_t gameplayHash(const Vfs& vfs) {
             mix(reinterpret_cast<const uint8_t*>(v.data()), v.size());
             uint8_t z = 0; mix(&z, 1);
         };
+        gaf::FeatureBurnTiming burnTiming(vfs);
         static const char* kSimKeys[] = {
             "animating", "blocking", "category", "damage", "decomposetime",
             "energy", "featureburnt", "featuredead", "flamable", "footprintx",
@@ -722,6 +760,7 @@ uint64_t gameplayHash(const Vfs& vfs) {
                 // seqnameburn's NAME is art, but its PRESENCE gates ignition
                 // (retail StartBurning requires a burn anim) -- hash the bit.
                 mixs(node->valueOr("seqnameburn", "").empty() ? "0" : "1");
+                mixs(std::to_string(burnTiming.duration(*node)));
             }
         }
     }

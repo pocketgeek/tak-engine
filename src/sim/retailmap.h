@@ -16,6 +16,7 @@ struct RetailMapFeatureType {
     int footX=1,footZ=1;
     bool blocking=false,indestructible=false;
     bool clearable=false; // No indestructible blocker in the dead/burnt replacement graph.
+    uint8_t projectileHeight=0; // Feature TDF height, stored as a byte by retail.
 };
 
 struct RetailMapFeatureCell : RetailMapBoundaryCell {

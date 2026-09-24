@@ -1,14 +1,28 @@
 #include "client/gameview.h"
 #include "client/artscale.h"
+#include "client/cursorrange.h"
 #include "client/gpuvram.h"
 #include "client/statsfit.h"
 #include "net/protocol.h"
+#include "sim/retailtransport.h"
+#include "sim/retailheight.h"
 #include "util/procmetrics.h"
 
 // Out-of-line GameView method definitions (hud concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
 // unit. Trivial getters, ctors, static, template, constexpr and default-arg
 // methods stay inline in the header. Grouping is by name heuristic.
+
+namespace {
+    int32_t unloadDestinationHeight(const tak::tnt::Map& map,float x,float z) {
+        const int height=map.heights.empty() ? 0 : tak::sim::retailTerrainHeight(
+            tak::sim::Fixed::fromFloat(x).v,tak::sim::Fixed::fromFloat(z).v,
+            map.width,map.height,[&](int cx,int cz) {
+                return map.heights[size_t(cz)*size_t(map.width)+size_t(cx)];
+            });
+        return std::max(height,int(uint8_t(map.seaLevel)))*65536;
+    }
+}
 
     void GameView::rightClickOrder(float wx, float wz, bool queue) {
         if (selection_.empty()) return;
@@ -18,6 +32,7 @@
                 !first->cargo.empty()) {
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::Unload;
+                c.targetId = unloadDestinationHeight(mapView_.map(),wx,wz);
                 c.unitId = first->id;
                 c.x = wx;
                 c.z = wz;
@@ -227,15 +242,16 @@
         // Overlays / lobby: a plain arrow for clicking UI.
         if (inLobbyPhase() || exitMenu_ || options_)
             return tak::CursorId::Normal;
-        // Build/conjure placement: green when it fits, red when blocked (matches the ghost).
+        // Native action mode 14 (armed by selecting a build item) returns
+        // FindSite for a selected builder; placement validity is shown by the
+        // ghost and does not change this cursor slot.
         if (placing_ && mouseX_ >= 0) {
-            float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
-            if (canPlaceLocked(placing_, wx, wz)) return tak::CursorId::Green;
-            // Clearable doodads: the click works (it clears first), so keep it green.
-            std::vector<int> feats;
-            if (clearableAt(placing_, wx, wz, feats) && !feats.empty())
-                return tak::CursorId::Green;
-            return tak::CursorId::Red;
+            const bool selectedBuilder=std::any_of(selection_.begin(),selection_.end(),[&](int id) {
+                const UnitR* unit=frameUnitP(id);
+                return unit && unit->type && unit->type->isBuilder &&
+                       !registry_.buildable(unit->type->id).empty();
+            });
+            return tak::cursorForBuildPlacement(true,selectedBuilder);
         }
         // Right-drag "clear this area": show the broom only once the pointer has moved
         // enough to actually be a box (the same 6px threshold that tells a right-CLICK
@@ -244,7 +260,28 @@
             (std::fabs(mouseX_ - rdSx0_) >= 6.0f || std::fabs(mouseY_ - rdSy0_) >= 6.0f))
             return tak::CursorId::Reclaim;
         if (dragging_) return tak::CursorId::Normal;       // box-select drag
-        if (pendingCmd_)  { fightTint = (pendingCmd_ == 'f'); return cursorForCmd(pendingCmd_); }
+        if (pendingCmd_)  {
+            fightTint = (pendingCmd_ == 'f');
+            if (pendingCmd_ == 'a' && mouseX_ >= 0 && !selection_.empty()) {
+                float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
+                const tak::CursorId targetCursor = hoverCursor(wx, wz);
+                if (targetCursor == tak::CursorId::Attack ||
+                    targetCursor == tak::CursorId::TooFar ||
+                    targetCursor == tak::CursorId::Red)
+                    return targetCursor;
+            }
+            bool hasLoadTransport = false;
+            if (pendingCmd_ == 'l') {
+                for (int id : selection_) {
+                    const UnitR* unit = frameUnitP(id);
+                    if (unit && unit->type && unit->type->canTransport) {
+                        hasLoadTransport = true;
+                        break;
+                    }
+                }
+            }
+            return tak::cursorForArmedCommand(pendingCmd_, hasLoadTransport);
+        }
         if (mouseX_ < 0)  return tak::CursorId::Normal;
         float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
         return hoverCursor(wx, wz);
@@ -290,11 +327,29 @@
             if (ownId  >= 0) return tak::CursorId::Select;
             if (allyId >= 0) return tak::CursorId::Green;
             if (enemy >= 0) {
-                bool canAtk = false;
-                for (int id : selection_)
-                    if (const auto* a = frameUnitP(id))
-                        if (a->type && a->type->weapon.damage > 0) { canAtk = true; break; }
-                return canAtk ? tak::CursorId::Attack : tak::CursorId::Red;
+                const UnitR* target = frameUnitP(enemy);
+                if (!target || !target->type) return tak::CursorId::TooFar;
+                bool unknownRange = false;
+                for (int id : selection_) {
+                    const UnitR* attacker = frameUnitP(id);
+                    if (!attacker || !attacker->type || attacker->type->weapons.empty()) continue;
+                    const auto& type = *attacker->type;
+                    const int slot = type.weaponSwitching
+                        ? std::clamp(attacker->weaponSlot, 0, int(type.weapons.size()) - 1)
+                        : 0;
+                    const auto& weapon = type.weapons[size_t(slot)];
+                    if (tak::client::cursorDamageVs(weapon, *target->type) <= 0.0f ||
+                        (weapon.noAir && target->flightGroundMode == 2))
+                        continue;
+                    const auto range = tak::client::cursorWeaponRange(
+                        weapon, type, attacker->worldPosition, *target->type,
+                        target->worldPosition, target->flightGroundMode);
+                    if (range == tak::client::CursorWeaponRange::InRange)
+                        return tak::CursorId::Attack;
+                    if (range == tak::client::CursorWeaponRange::Unknown)
+                        unknownRange = true;
+                }
+                return unknownRange ? tak::CursorId::Attack : tak::CursorId::TooFar;
             }
 
             // A reclaimable feature under the pointer (reclaimer selected) -> broom.
@@ -716,6 +771,7 @@
                 if (!u || !u->type || !u->type->canTransport || u->cargo.empty()) continue;
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::Unload;
+                c.targetId = unloadDestinationHeight(mapView_.map(),wx,wz);
                 c.unitId = id;
                 c.x = wx;
                 c.z = wz;
@@ -726,21 +782,31 @@
             return;
         }
         if (cmd == 'l') {   // load: the friendly unit under the cursor boards a transport
-            int transportId = -1;
+            int transportId = -1, pid = -1;
+            float best = 24.0f * 24.0f;
             for (int id : selection_) {
-                const auto* u = frameUnitP(id);
-                if (u && u->type && u->type->canTransport &&
-                    int(u->cargo.size()) < u->type->transportCap) { transportId = id; break; }
-            }
-            const auto* t = transportId >= 0 ? frameUnitP(transportId) : nullptr;
-            if (!t) return;
-            int pid = -1; float best = 24.0f * 24.0f;
-            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-                if (!canPickUnit(u)) continue;
-                if (!u.alive() || u.embarked() || u.id == transportId || !u.type) continue;
-                if (u.player != t->player || u.type->canTransport) continue;
-                float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
-                if (d < best) { best = d; pid = u.id; }
+                const auto* t = frameUnitP(id);
+                if (!t || !t->type || !t->alive() || t->embarked() ||
+                    t->underConstruction || !t->type->canTransport) continue;
+                uint32_t count=0,used=0;
+                for (int cid:t->cargo) {
+                    const auto* c=frameUnitP(cid);
+                    if (c && c->alive() && c->inTransport==id && c->type) {
+                        ++count;used+=uint16_t(c->type->transportSize);
+                    }
+                }
+                for (const UnitR* up : front().live) {
+                    const auto& u=*up;
+                    if (!canPickUnit(u) || !u.alive() || u.embarked() ||
+                        u.underConstruction || u.id==id || !u.type || u.player!=t->player ||
+                        u.type->isStructure() || u.type->canFly || u.type->cantBeTransported ||
+                        (!t->type->canFly && !u.type->transportLandEligible)) continue;
+                    if (!tak::sim::retailTransportCapacity(uint16_t(u.type->transportSize),
+                            uint16_t(t->type->maxTransportSize),count,uint16_t(t->type->transportCap),
+                            used,uint16_t(t->type->transportSizeCap))) continue;
+                    const float dx=u.x-wx,dz=u.z-wz,d=dx*dx+dz*dz;
+                    if (d<best) {best=d;pid=u.id;transportId=id;}
+                }
             }
             if (pid < 0) return;
             tak::net::Command c;
@@ -1954,4 +2020,3 @@
             blockText(buf, manaX, bar.y + 52, 1.8f, txt);
         }
     }
-

@@ -20,18 +20,46 @@ struct Settings;   // client/settings.h -- only a pointer is needed here
 
 namespace hpi { class Vfs; }
 
-// The wired retail cursor set. Names map to cursors.gaf sequences in cursors.cpp. The
-// shipped-but-never-selected placeholders (capture/teleport/pickup/resurrect/reanimate,
-// all 1-frame clones of the normal arrow) are omitted.
+// The retail cursor set. Names map to cursors.gaf sequences in cursors.cpp. Keep the
+// native-registered capture/teleport/pickup placeholders addressable even though their
+// shipped art is a one-frame clone of the normal arrow. The unregistered resurrect and
+// reanimate art entries are intentionally omitted.
 // PathIcon is not a pointer at all: it is the bead retail strings along a selected
 // unit's order line (icd 0x4d5700). It rides here because it lives in the same GAF,
 // under the same palette, and wants the same per-frame textures.
 enum class CursorId {
     Normal, Select, Move, Attack, Airstrike, TooFar, Patrol, Defend,
     Repair, Load, Unload, Reclaim, Revive, FindSite, Green, Red, Hourglass,
-    PathIcon,
+    PathIcon, Capture, Teleport, Pickup,
     Count
 };
+
+// Map an armed map command to the cursor it can actually issue. Retail's
+// action-mode 5 selector returns the Load cursor only for a selected
+// cantransport type; with no such unit its native result is the normal arrow.
+inline CursorId cursorForArmedCommand(char cmd, bool hasLoadTransport = false) {
+    switch (cmd) {
+        case 'm': return CursorId::Move;
+        case 'f': case 'a': return CursorId::Attack;
+        case 'p': return CursorId::Patrol;
+        case 'g': return CursorId::Defend;
+        case 'c': return CursorId::Reclaim;
+        case 'r': return CursorId::Repair;
+        case 'l': return hasLoadTransport ? CursorId::Load : CursorId::Normal;
+        case 'u': return CursorId::Unload;
+        default:  return CursorId::Normal;
+    }
+}
+
+// Retail action mode 14 is armed by selecting a build item. Its per-unit cursor
+// selector returns FindSite for a live selected builder with a build-option list.
+inline CursorId cursorForBuildPlacement(bool placementArmed,bool selectedBuilderWithBuildList) {
+    return placementArmed && selectedBuilderWithBuildList ? CursorId::FindSite : CursorId::Normal;
+}
+
+// Sequence registered for a cursor in retail's cursors.gaf loader. Kept public so the
+// complete ID/name table can be checked without opening a renderer.
+const char* cursorSequenceName(CursorId c);
 
 class CursorSet {
 public:
@@ -108,6 +136,7 @@ private:
         // (cursor, tint) combination instead of paying it per combination.
         std::vector<uint8_t> smooth;
         int smoothScale = 0;         // 0 = not built
+        uint16_t delayTicks = 2;     // authored cursors.gaf duration in native 30 Hz ticks
     };
 
     std::array<std::vector<Frame>, size_t(CursorId::Count)> anims_;
@@ -131,7 +160,6 @@ private:
     CursorId hwCur_ = CursorId::Count;
     uint64_t hwStartMs_ = 0;
 
-    static constexpr int kFps = 15;    // retail cursor cadence (KINGDOMS.icd frame delta)
 };
 
 }  // namespace tak

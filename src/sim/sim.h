@@ -1,14 +1,21 @@
 #pragma once
 
 #include "sim/fixed.h"
+#include "cob/emissionpose.h"
 #include "sim/footprint.h"
 #include "sim/retailrng.h"
 #include "sim/retailmotion.h"
 #include "sim/retailpiecepose.h"
+#include "sim/retailprojectile.h"
+#include "sim/retailflame.h"
+#include "sim/retailhweffect.h"
+#include "sim/retaileffectclock.h"
 #include "sim/retailheight.h"
 #include "sim/retailexploration.h"
 #include "sim/retailflight.h"
+#include "sim/retailballistic.h"
 #include "sim/retailwind.h"
+#include "sim/retailweapon.h"
 #include "sim/retailmission.h"
 #include "sim/retailpark.h"
 #include "sim/retailplayer.h"
@@ -36,6 +43,7 @@
 #include <string>
 #include <vector>
 
+namespace tak { struct RetailLightningDefinition; }
 namespace tak::hpi { class Vfs; }
 
 namespace tak::sim {
@@ -68,11 +76,15 @@ struct Weapon {
     // firing only when the heading matched EXACTLY.
     int32_t aimTol = 1024;   // aimtolerance: how close to on-target to fire
     bool ballistic = false;  // FBI weapon type = Ballistic (lobbed arc, not flat)
-    // FBI weapon type = "Line of Sight": a sustained hitscan beam (the drake's
-    // Fire Breath), NOT a lobbed shot. Damage lands instantly along the sightline
-    // and the flame stream is a client-side emitter driven by emitTime -- there is
-    // no traveling projectile object.
+    // Line-of-Sight is a trajectory family; its subtypes have distinct updates.
     bool beam = false;
+    bool straight = false; // Ordinary LOS class, without a specialized subtype.
+    bool lightning = false;
+    std::string hwEffectName;
+    std::shared_ptr<const RetailLightningDefinition> lightningEffect;
+    std::array<uint16_t,3> shotSpin{}; // roll, heading, pitch per collision substep.
+    int8_t flameKind = -1; // -1: other class; 0 fire, 1 bluefire, 2 dieselflame.
+    bool groundBounce = false,waterWeapon = false;
     int32_t emitTime = 0;    // emittime (readInt): ticks the flame/beam is emitted
     // The rest of the retail weapon-class model (FBI `type=`), beyond
     // melee/ballistic/line-of-sight:
@@ -108,8 +120,10 @@ struct Weapon {
     // sub-step -- so a correcting homer really does fly subSteps x nominal.
     int subSteps = 1;
     float buildUp = 0;       // builduptime: channel before the effect lands
+    int32_t buildUpTicks = 0; // native truncation of seconds * 30
     float decay = 0;         // decaytime: fade after it lands
     float duration = 0;      // wandering: seconds the storm roams
+    int32_t durationTicks = 0, variationTicks = 0;
     int32_t maxVariation = 0;// maxvariation (readInt): wander half-width, px/tick
     float variationTime = 0; // wandering: seconds between heading changes
     bool  unitsOnly = false; // unitsonly: the effect skips features (trees/props)
@@ -150,11 +164,11 @@ struct Weapon {
     // Projectile ART (display only -- never hashed, like explosionClass below).
     // Retail draws a shot as authored art: a GAF/TAF sprite (weaponart, 60
     // weapons), or a real 3DO mesh (model, 39 -- arrows, spears, boulders), with
-    // an optional glow (nimbus) and a ground shadow. Without these every shot in
+    // an optional ground shadow. Without these every shot in
     // the game is the same hand-drawn streak.
     std::string weaponArt;    // weaponart: anims/<name>_4444.taf sprite sequence
     std::string shotModel;    // model: objects3d/<name>.3do projectile mesh
-    bool  nimbus = false;     // nimbus: additive glow around the shot
+    bool  nimbus = false;     // nimbus: faction caster effect and conditional buildup delay
     bool  hasBoltColor = false;
     uint8_t inner[3] = {255, 255, 255};    // innercolor: lightning bolt core
     uint8_t middle[3] = {200, 230, 255};   // middlecolor
@@ -171,6 +185,7 @@ struct Weapon {
     // A wandering storm's own three-part animation: the spin-up, the roaming loop,
     // and the dissipation. Without these a tornado is invisible.
     std::string wanderStart, wanderLoop, wanderEnd;
+    std::vector<uint16_t> wanderStartTicks, wanderLoopTicks, wanderEndTicks;
     std::string explosionClass;       // explosionclass: impact effect (gamedata/explosions)
     std::string waterExplosionClass;  // waterexplosionclass: impact effect over water
     // Area-effect shockwave rings emitted at this weapon's impact.
@@ -226,7 +241,9 @@ struct UnitType {
     uint16_t orientation=0,buildAngle=0; // original spawn-heading range in BAM
     std::string name;      // display name, e.g. "Archer"
     std::string side;      // ARA/TAR/VER/ZON/CRE
+    bool hasNimbusArt = false;
     Fixed maxVel = Fixed::fromInt(1);                 // px/tick  (= 30 px/s)
+    Fixed animationMoveRate1=Fixed::fromInt(2),animationMoveRate2=Fixed::fromInt(2);
     Fixed accel = Fixed::fromFloat(15.0f / 900.0f);   // px/tick^2 (= 15 px/s^2)
     Fixed brake = Fixed::fromFloat(15.0f / 900.0f);   // px/tick^2 (= 15 px/s^2)
     // BAM PER TICK -- the raw FBI `turnrate`, which retail stores as an int and which
@@ -242,6 +259,7 @@ struct UnitType {
     int32_t turnInPlaceRate = 0;   // unsigned 16-bit BAM/tick in retail
     int32_t maxHp = 100;        // maxdamage: readInt at +0x1be in retail
     bool canMove = false;
+    uint8_t buildMovementCode=1; // Authored bmcode byte, used by construction visuals.
     bool isBuilder = false;
     // Can this type train units (and therefore hold a rally)? Set for any builder
     // structure; used to decide whether a move/attack/patrol order on a BUILDING
@@ -250,7 +268,8 @@ struct UnitType {
     std::shared_ptr<const cob::File> productionScript;
     std::shared_ptr<const cob::File> simulationScript;
     const cob::File* script() const { return simulationScript ? simulationScript.get() : productionScript.get(); }
-    std::vector<RetailModelPiece> productionModel;
+    std::vector<RetailModelPiece> productionModel; // shared script-piece hierarchy, also used for combat queries
+    std::vector<std::array<int32_t,3>> scriptPieceCenters; // native mirrored SweetSpot bounds centers
     bool commander = false;   // FBI commander=1: the faction's Monarch (loss condition)
     // Buildings vs mobile units: the reliable test is maxVel. The FBI `canmove`
     // flag is set on some buildings too (e.g. the Keep, or the Taros Hell), so a
@@ -270,6 +289,10 @@ struct UnitType {
     // Lowercased target-category tokens (from FBI category/damagecategory/tedclass),
     // matched against a weapon's per-category damage overrides.
     std::vector<std::string> categories;
+    // Native cursor target lookup uses the single FBI damagecategory token
+    // (UnitDef+0x9e); the broader categories list remains useful to the sim's
+    // existing damage model but is not a substitute for this selector field.
+    std::string damageCategory;
     std::vector<int> catIds;    // `categories`, interned; same order (see Weapon::dmgVsIds)
     int32_t sight = 180;      // px (FBI sightdistance, readInt)
     bool canFly = false;
@@ -287,7 +310,10 @@ struct UnitType {
     enum class Domain { Ground, Water, Hover };
     Domain domain = Domain::Ground;   // from FBI movementclass prefix
     bool canTransport = false;
-    int transportCap = 0;     // units carried (FBI transportcapacity)
+    int transportCap = 0;     // passenger count (FBI transportcapacity)
+    int transportSizeCap = 0; // sum of passenger costs (transportsizecapacity)
+    int maxTransportSize = 0; // largest individual passenger (transportsize)
+    bool transportLandEligible = true; // native MinWaterDepth < 0, without changing nav defaults
     // FBI transportdistance: the px radius inside which this transport absorbs a
     // unit that is boarding it. Raw world units == our px (retail stores it as a
     // plain 16-bit with no scaling, the same family as sightdistance/builddistance),
@@ -305,7 +331,9 @@ struct UnitType {
     std::string shadowArt;    // FBI shadowart: shadow sprite name in shadows.gaf
     bool upright=false;
     std::optional<RetailGroundSupport> groundSupport;
+    std::optional<RetailCollisionQuad> projectileQuad;
     bool groundModelLoaded=false;
+    int32_t modelTop=0; // native fixed-point model top, type +0x14a
     uint8_t sightHeight=0; // low byte of the bind-pose model top's integer height
     bool noShadow = false;    // FBI noshadow: casts no ground shadow (walls, spectres)
     bool floater = false;     // FBI floater: rides the water surface. Retail skips the
@@ -329,6 +357,7 @@ struct UnitType {
     // standingmoveorder (default 2) and standingfireorder (default 2) -- Roam and
     // Fire At Will. 147 of the 203 shipped units set standingunitorder; none sets
     // either of the other two, so the 56 that do not are the only ones that roam.
+    uint8_t defaultStandingOrder = 3; // native composite, exposed as COB GET 46
     uint8_t defaultMove = 2;
     uint8_t defaultFire = 2;
     // FBI defaultmissiontype = VTOL_standby: an idle flyer looks for somewhere to
@@ -396,13 +425,14 @@ struct UnitType {
     bool  activateWhenBuilt = true;   // activatewhenbuilt (default on)
     bool  cantBeStoned = false, cantBeFrozen = false;
     bool  cantBeCaptured = false, cantBeTransported = false;
-    int   transportSize = 1;      // transportsize: transport slots this unit occupies
+    int   transportSize = 1;      // transportedsize, default footprint area
     // selfdestructcountdown: seconds between arming a self-destruct and the unit
     // leaving. Three bits in retail (icd 0x4c09e8 masks & 7 into UnitType+0x264
     // bits 21..23), so 0..7. Defaults to 2, which is what the parser leaves when
     // a type omits the key (0x4c0a1f) -- and no shipped type declares it.
     int   selfDestructCountdown = 2;
     uint8_t blood[3] = {150, 30, 10};   // bloodcolor1 (r,g,b) for hit/death spray
+    std::array<uint32_t,3> bloodColors={0xff961e0a,0xff961e0a,0xff961e0a}; // display ARGB
     std::vector<Aura> auras;   // stat auras projected onto nearby units
     Weapon weapon;            // primary (WEAPON1); damage 0 = unarmed
     std::vector<Weapon> weapons;   // all slots (WEAPON1..3)
@@ -433,6 +463,7 @@ struct UnitType {
 // A pathfinding movement class from gamedata/MOVEINFO.tdf: per-class terrain
 // limits that a unit inherits via its FBI `movementclass`.
 struct MoveClass {
+    bool transportLandEligible = true;
     // FootprintX/Z: the real source of a MOBILE unit's size. 125 of our 152 movers
     // carry no footprintx in their own FBI at all -- it comes from here, and not one
     // of them is 1x1 (2x2 through 5x5). Retail copies these into the unit def at
@@ -483,6 +514,8 @@ public:
     }
 
 private:
+    bool effectsLoaded_=false;
+    std::map<std::string,std::shared_ptr<const RetailLightningDefinition>> lightningEffects_;
     std::map<std::string, int> catIds_;
     std::map<std::string, UnitType> types_;
     std::set<std::string> canonicalTypes_;   // ids whose defining .fbi filename == objectname
@@ -549,6 +582,15 @@ struct Order {
     bool hasSegment = false;
     // Owned by the issued ground-move goal, never its intermediate waypoints.
     // Other mission kinds retain their existing handlers until ported.
+    bool transportPickup = false; // carrier-owned air/surface pickup mission
+    bool transportUnloadApproach = false; // native surface unload circle/poll mission
+    bool transportUnloadReleasePending = false; // unload's one-tick empty mission tail
+    bool transportUnloadTransferDeferred = false; // approach arrival wakes unload next tick
+    int transportTicks = 0; // native load/unload effect waits fifteen ticks
+    int transportPassenger = 0;
+    RetailMissionState transportMission{2};
+    uint32_t transportApproachAttempts = 0;
+    Fixed transportX, transportY, transportZ;
     bool groundMission = false;
     // Inactive navigator: either consumed or disabled with stored points intact.
     bool navigationExhausted = false;
@@ -598,6 +640,11 @@ struct Unit {
     // animation needs this rather than a heading-delta (which would truncate to
     // zero for slow turners). Reset each tick; set where the mover turns.
     int32_t turnReqBam = 0;
+    // GET 33 reads the mover's signed applied turn from its previous update.
+    // COB runs before this tick's mover, so publish the completed turn at tick end.
+    int16_t animationTurnBam = 0;
+    // Scratch captured at tick start; intentionally excluded from lockstep state.
+    uint16_t tickStartHeadingBam = 0;
     // FIXED-POINT px/s. Retail's is too: its occupancy test compares two units' speeds
     // with an integer cmp/jl (0x4db79e), and the scaling either side runs through a
     // 64-bit shift-by-16 helper (0x5d3dc0) -- a 16.16 multiply, the same operation as
@@ -612,7 +659,12 @@ struct Unit {
     uint8_t groundSpeedMode=0; // mover +36 bits 8..10
     uint32_t groundMoveTick=0; // mover +2c: last proposed position/mode change
     RetailFlightVector flightVelocity;
+    std::array<int32_t,3> flightAcceleration{}; // retained native banking input
     RetailFlightNavigation flightNavigation;
+    // A native flight-point controller belongs to the mover and can outlive
+    // the mission that installed it (VTOL_UNLOAD's post-transfer step-out).
+    std::optional<RetailFlightGoal> retainedFlightGoal;
+    bool retainedFlightControllerActive=false;
     int flightSectorX=0,flightSectorZ=0; // center sector at the last footprint relocation
     uint32_t scriptOccupancy=0; // last setSFXoccupy notification (unit +100)
     std::optional<RetailLandingState> landing;
@@ -633,6 +685,8 @@ struct Unit {
     // multiplies by 1/30 to PRINT it. Confirmed by emulating the display path
     // (0x4fbfb2: mov 0x9c(%esi),%cx; fildl; fmull 0x5f25d8 where 0x5f25d8 == 1/30):
     // a planted 90 renders as "3.000000" seconds. See docs/retail-engine.md.
+    std::array<tak::RetailAimState,3> weaponAim{{{0,0,0},{0,0,1},{0,0,2}}};
+    std::array<std::array<int32_t,3>,3> weaponAimPoints{}; // display-only captured aim geometry
     int32_t reloads[3] = {0, 0, 0};  // per weapon slot, in ticks
     int   weaponSlot = 0;          // active weapon (0=primary); player-selectable
     // True until the player picks a weapon with Ctrl+W. While set, the sim chooses
@@ -740,6 +794,7 @@ struct Unit {
     // fireState: 0 = hold fire (no auto-acquire, no retaliation -- an explicit
     //   attack order still works), 1 = return fire (never self-acquires, but
     //   shoots what it is handed and does hit back), 2 = fire at will.
+    uint8_t standingOrder = 3; // 0 passive, 1 defensive, 2 offensive, 3 individual defaults
     uint8_t moveState = 2;
     uint8_t fireState = 2;
     int   stance = 1;      // combat stance: 0=offensive (chase freely), 1=defensive
@@ -753,9 +808,19 @@ struct Unit {
     int32_t captureProg = 0; // canCapture units: ticks spent charming the current target
     Fixed homeX = Fixed(), homeZ = Fixed();   // leash anchor (idle position) for auto-chase
     bool  justFired = false;   // set for one tick when the weapon fires
+    tak::RetailWeaponAnimations weaponAnimations;
+    uint32_t fireAnimations = 0; // callback delivery, before script-triggered projectile creation
+    int scriptAimTarget = 0;
+    uint32_t firedWeapons = 0; // display event mask; each bit identifies an actual shot
     std::optional<RetailConstructionSite> retailSite;
     std::optional<RetailConstructionJob> retailBuild;
     std::optional<RetailConstructionEmitter> constructionEmitter;
+    // Ordinary visual effects run on sim ticks but never affect gameplay/hash.
+    std::optional<RetailConstructionEmitter> cosmeticConstructionEmitter;
+    uint32_t constructionVisualRandom=1;
+    // Cumulative cosmetic work events (falling/rising), excluded from stateHash.
+    // Counters preserve completion events when a published snapshot skips ticks.
+    std::array<uint32_t,2> constructionEmissions{};
     bool buildBegun = false;   // construction site: true once the builder arrived
     Fixed conjureRate = Fixed();  // site: hp/TICK the last builder added; drives decay
     bool  beingBuilt = false;  // site: transient -- a builder worked it this tick
@@ -827,6 +892,7 @@ struct FeatType {
     std::string name;        // lowercase TDF section name (client art lookup)
     bool flamable = false;   // TDF flamable=1: can be ignited / spread to
     bool hasBurnAnim = false;// TDF seqnameburn present (retail StartBurning requires it)
+    uint32_t burnTicks = 1; // full-quality authored burn/overlay lifetime
     int  spreadChance = 0;   // TDF spreadchance (percent)
     int  sparkTicks = 0;     // TDF sparktime * 30 (retail stores seconds*30)
     int  burntType = -1;     // TDF featureburnt -> index into the same table
@@ -843,6 +909,7 @@ struct FeatType {
     bool indestructible = false;
     int32_t hp = 0;          // TDF damage= -- readInt in retail, so an int here too
     int  deadType = -1;      // TDF featuredead -> destroyed-replacement (placed neutral)
+    uint8_t projectileHeight = 0; // Native feature collision height.
     std::string object;      // TDF object= (3D corpse mesh; client visual)
 };
 
@@ -866,14 +933,25 @@ struct Feature {
     // event scheme). All hashed.
     int   type = -1;       // index into World's FeatType table (-1 = untyped)
     uint8_t burn = 0;      // 1 = burning
+    uint32_t burnStarted = 0; // cosmetic ignition timestamp; excluded from stateHash
     // INT, because both sides of the comparison are: weapon damage is readInt in
     // retail and so is a feature's `damage` (its hit points).
     int32_t dmg = 0;       // accumulated weapon damage (dies at FeatType.hp)
     int   spreadIn = 0;    // ticks until the single spread event (sparktime-derived)
-    int   burnLeft = 0;    // ticks until burn-out (swap to burntType / die)
+    uint32_t burnLeft = 0;    // ticks until burn-out (swap to burntType / die)
 };
 
 struct Projectile {
+    // Ordinary LOS shots retain their actual 3D fixed-point trajectory.
+    std::array<int32_t,3> position{},velocity{};
+    std::array<uint16_t,3> angles{};
+    uint32_t start=0,end=0,substeps=1;
+    int slot=0;
+    bool straight=false;
+    bool guided3d=false;    // GuidedWeapon's simulation-owned XYZ state.
+    bool ballistic3d=false; // mesh-only native XYZ state; legacy X/Z collision and hash remain separate.
+    std::array<int32_t,3> muzzle{};
+    std::optional<RetailLightningEffect> lightningEffect;
     // Position in the same 16.16 as a unit's: retail's world is 0x100000 per 16px
     // cell, i.e. 65536 per pixel (docs/retail-engine.md), and a projectile is bounded
     // by the map exactly as a unit is, so the range that rules mana out does not bite.
@@ -896,6 +974,16 @@ struct Projectile {
     int fromId = 0;        // firing unit id (for kill attribution / veterancy)
     const Weapon* wsrc = nullptr;   // source weapon (splash + per-category damage)
     WeaponFx fx = WeaponFx::Arrow;   // how the viewer draws it
+};
+
+struct FlameShot {
+    const Weapon* weapon=nullptr;
+    int owner=0,fromId=0,slot=0;
+    std::array<int32_t,3> position{},velocity{},endpoint{};
+    std::array<int32_t,3> muzzle{},aimPoint{}; // display-only native admission endpoints
+    uint32_t start=0,end=0,lifetime=1,speed=0,substeps=1;
+    bool impacted=false,expired=false;
+    std::vector<tak::RetailFlameParticle> particles;
 };
 
 // Walkability grid derived from TNT heights: a cell is blocked when the
@@ -1330,6 +1418,7 @@ public:
     // .ota waterdoesdamage/waterdamage: on two Iron Plague missions the water is
     // lethal, which is the whole point of their terrain. Damage is per second.
     void setWaterDamage(float perSec) { waterDamage_ = perSec; }
+    void setNoSeaLevelTrigger(bool value) { noSeaLevelTrigger_ = value; }
     bool isWater(float x, float z) const {
         if (depth_.empty()) return false;
         int cx = int(x) / 16, cz = int(z) / 16;
@@ -1351,6 +1440,8 @@ public:
         wind_ = {}; wind_.minimum = minimum; wind_.maximum = maximum;
         windEnabled_ = true;
     }
+    void setBallisticGravityRaw(int32_t gravity) { ballisticGravityRaw_=gravity; }
+    int32_t ballisticGravityRaw() const { return ballisticGravityRaw_; }
     const RetailWind& wind() const { return wind_; }
     struct RngObservation {
         uint32_t tick;
@@ -1376,8 +1467,10 @@ public:
         paths_.clear();
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();
-        projectiles_.clear();
+        projectiles_.clear();flames_.clear();
         hits_.clear();
+        transportEffects_.clear();
+        scriptEmissions_.clear();
         features_.clear();
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();
         explorationHeights_.clear();navigationExplored_.clear();
@@ -1499,6 +1592,23 @@ public:
     // updateVisibility/visCompute). Never affects results -- purely scheduling.
     void setSerialThreads(bool s) { serialThreads_ = s; }
     // Deterministic digest of sim state, for lockstep sync checking.
+    struct WeaponAimSolution {
+        uint16_t heading=0,pitch=0;
+        std::array<int32_t,3> target{};
+    };
+    std::optional<WeaponAimSolution> queryWeaponAim(int unitId,int targetId,int slot);
+    std::array<int32_t,3> queryUnitScriptPoint(int unitId,bool sweetSpot,int slot=0);
+    bool projectilePointInUnit(int unitId,const std::array<int32_t,3>& point) const;
+    // Native collision result: 0 clear/bounce, 1 outside map, 2 environmental hit.
+    int projectileEnvironment(const std::array<int32_t,3>& point,int32_t& verticalSpeed,
+                              uint32_t weaponFlags) const;
+    // Build once for the projectile update phase, in player/entity order.
+    std::vector<int> projectileAirGrid();
+    struct ProjectileCollisionResult { int code=0,unitId=0; };
+    ProjectileCollisionResult projectileCollision(const std::array<int32_t,3>& point,
+        int32_t& verticalSpeed,uint32_t weaponFlags,int owner,std::span<const int> airGrid,
+        bool bypassPrimaryGeometry=false,std::optional<std::array<int32_t,3>> targetShot={},
+        uint16_t proximityRadius=0) const;
     uint64_t stateHash() const;
     // Read-only invariant check for the incrementally maintained grade hashes.
     bool searchGradeChecksumsValid() const;
@@ -1626,8 +1736,10 @@ public:
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);
     // Board a friendly transport / sail to (x,z) and disembark.
+    bool canLoadInto(int unitId, int transportId) const;
+    bool scriptYardOpen(int unitId) const;
     void loadInto(int unitId, int transportId);
-    void unloadAt(int transportId, float x, float z);
+    void unloadAt(int transportId, float x, float z, Fixed destinationY = {});
     void tick(float dt);
 
     std::vector<Unit>& units() { return units_; }
@@ -1637,19 +1749,20 @@ public:
     // storm's life so the viewer can play its spin-up, loop and dissipation art.
     struct Storm {
         const Weapon* w = nullptr;
-        Fixed x = Fixed(), z = Fixed();   // 16.16 world units, as a unit's
-        // 16.16, to match the velocity it is multiplied by.
-        Fixed dirX = Fixed(), dirZ = Fixed::fromInt(1);   // FIXED launch direction
-        Fixed jitX = Fixed(), jitZ = Fixed();   // per-tick wander offset, in px
+        Fixed x = Fixed(), y = Fixed(), z = Fixed();
+        std::array<int32_t,3> baseVelocity{}, velocity{};
+        std::array<float,2> variation{};
+        uint32_t substeps = 1;
         int player = 0, fromId = 0;
         int id = 0;
-        // TICKS -- see the note on Unit::reloads.
-        int32_t arm = 0;       // builduptime: it drifts but does not bite yet
-        int32_t left = 0;      // ticks of roaming left (duration)
-        int32_t nextVary = 0;  // ticks until the next wander re-roll
+        enum class Phase { Waiting, Starting, Active, Ending } phase = Phase::Waiting;
+        RetailEffectClock animation;
+        uint32_t start = 0, end = 0, nextVary = 0;
+        uint32_t wanderSeed = 0;
     };
     const std::vector<Storm>& storms() const { return storms_; }
     const std::vector<Projectile>& projectiles() const { return projectiles_; }
+    const std::vector<FlameShot>& flames() const { return flames_; }
     Unit* unit(int id);
     const Unit* unit(int id) const {
         return const_cast<World*>(this)->unit(id);
@@ -1665,6 +1778,26 @@ public:
                    float damage = 0;           // pre-armour damage vs the victim
                    int fromPlayer = 0; };      // display colour for hitscan projectile models
     const std::vector<HitFx>& hits() const { return hits_; }
+    // Cosmetic events captured at the mission callback, before mover updates.
+    struct TransportFx {
+        uint32_t tick = 0;
+        std::array<int32_t,3> passenger{}, carrier{};
+    };
+    const std::vector<TransportFx>& transportEffects() const { return transportEffects_; }
+    // Extended COB effects capture their origin at the emitting instruction.
+    // Display events do not participate in the lockstep hash or consume RNG.
+    struct ScriptEmission {
+        uint32_t tick=0;
+        int unitId=0,player=0,piece=0;
+        int32_t code=0;
+        std::array<int32_t,3> position{};
+        std::vector<cob::EmissionPose> pose;
+        std::array<std::array<int32_t,3>,2> vertices{};
+        uint16_t heading=0,pitch=0,roll=0;
+    };
+    const std::vector<ScriptEmission>& scriptEmissions() const { return scriptEmissions_; }
+
+
     // A mission script asking for a camera shake (the ScreenShake map command).
     // Viewer-only: the sequence number is what the client watches for an edge, and
     // it is deterministic because the script that bumps it runs in lockstep.
@@ -1683,7 +1816,9 @@ public:
 
 private:
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
-    void fire(Unit& u, Unit& target, int slot);
+    void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
+    bool tickScriptWeapon(Unit& u,Unit& target,int slot);
+    void clearScriptWeaponTarget(Unit& u);
     // Convert a unit to another player (contact charm + mind-control weapons).
     void captureUnit(Unit& t, int newPlayer);
     // Apply a weapon's damage at (hx,hz): the direct hit on `primary` plus, if
@@ -1702,18 +1837,9 @@ private:
     // Route a move/attack/patrol order aimed at a production BUILDING into its rally.
     // True when it was consumed that way. See the definition.
     static bool setRally(Unit& u, const Order& o, bool queue);
-    void tickTransport(Unit& u, float dt);
-    // How close a transport must be to its drop point to disembark. Shared by
-    // tickTransport (which enforces it) and unloadAt (which has to approach within
-    // it) -- they disagreed once and the boat pushed at the shore instead of
-    // unloading, so the number lives in one place.
-    static constexpr float kUnloadRange = 150.0f;
+    bool tickTransport(Unit& u, float dt);
     // Drop a queued path search whose orders have been replaced. See the definition.
     void cancelPath(Unit& u);
-    // Nearest point within kUnloadRange of (x,z) that this transport fits in AND can
-    // reach from where it is. False when there is none -- then there is nothing
-    // sensible to approach. See unloadAt.
-    bool approachCell(const Unit& t, float x, float z, float& outX, float& outZ) const;
     void tickConstruction(Unit& u, float dt);
     void tickConjureHover(Unit& builder, const Unit& site);
     void tickRetailConstruction(Unit& u);
@@ -1925,6 +2051,8 @@ private:
     Order* navigationMissionOrder(Unit& u);
     void tickGuardNoMove(Unit& u);
     void tickFlightMovement(Unit& u, bool persistent = false);
+    void tickRetainedFlightMovement(Unit& u);
+    void tickFlightBody(Unit& u);
     void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon);
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
@@ -2091,8 +2219,15 @@ private:
     void tickBurning();
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
     std::vector<Projectile> projectiles_;
+    std::vector<FlameShot> flames_;
+    void tickFlames(std::span<const int> airGrid);
+    void tickStraightProjectiles(std::span<const int> airGrid);
     std::vector<HitFx> hits_;
+    std::vector<TransportFx> transportEffects_;
+    std::vector<ScriptEmission> scriptEmissions_;
     ShakeReq shakeReq_;
+    bool noSeaLevelTrigger_ = false; // OTA: projectile/effect sea-surface bypass.
+    int32_t ballisticGravityRaw_ = 8155; // retail default OTA gravity 112, in native 16.16/tick².
     float waterDamage_ = 0;   // .ota waterdamage when waterdoesdamage=1
     SoundReq soundReq_;
     // [EXPLODEAS] blasts queued during the death sweep and applied just after it

@@ -15,6 +15,14 @@ constexpr uint32_t retailCrtRandom(uint32_t& seed) {
     return (seed >> 16) & 0x7fffu;
 }
 
+// 52f780: a storm owns this stream. Unlike 535cc0, a wrapped negative
+// intermediate is not corrected, and even a zero span consumes a draw.
+inline double retailWanderRandom(uint32_t& seed, float span) {
+    const uint32_t next=seed*16807u-(seed/127773u)*0x7fffffffu;
+    seed=next ? next : 0x7fffffffu;
+    return double(seed)*0x1p-31*double(span);
+}
+
 // 512162..512255: select a uniformly ranked FREE slot, not a random occupied
 // starting index followed by a scan. No free slots means no RNG consumption.
 // The caller owns allocation flags and lifetime; this only selects the slot.

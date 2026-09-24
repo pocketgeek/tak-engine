@@ -42,7 +42,11 @@ def check(binary, count=4000):
     icd.hooks[0x401000] = navigation
     # These calls change orientation/visual banking, not velocity.
     icd.hooks[0x4d91b0] = lambda uc, args: (3, 0)
-    icd.hooks[0x4da620] = lambda uc, args: (2, 0)
+    attitude_inputs = []
+    def attitude(uc, args):
+        attitude_inputs.append(tuple(struct.unpack('<3i', uc.mem_read(u32(args + 4), 12))))
+        return 2, 0
+    icd.hooks[0x4da620] = attitude
     icd.freeze_hooks()
     rng = random.Random(0x4da7d0)
     cases, expected = [], []
@@ -70,10 +74,14 @@ def check(binary, count=4000):
         put(mover + 0x20, speed)
         icd.uc.mem_write(mover + 0x36, struct.pack('<H', 2))
         put(kind + 0x166, lateral, accel)
+        attitude_inputs.clear()
         _, error = icd.call(0x4da7d0, (entity,), ecx=mover)
         if error:
             raise RuntimeError(error)
         expected.append(tuple(struct.unpack('<3i', icd.uc.mem_read(mover + 8, 12))))
+        delta = tuple(struct.unpack('<i', struct.pack('<I', (after-before)&0xffffffff))[0]
+                      for before, after in zip(velocity, expected[-1]))
+        assert attitude_inputs == [delta], (index, attitude_inputs, delta)
         values = (*velocity, *position, *target, *drift, speed, maximum, accel, lateral, heading, int(direct))
         cases.append('v ' + ' '.join(map(str, values)))
     result = subprocess.run([binary, '--oracle'], input='\n'.join(cases) + '\n',
@@ -84,7 +92,7 @@ def check(binary, count=4000):
     for index, (got, want) in enumerate(zip(actual, expected)):
         if got != want:
             raise AssertionError(f'case {index}: {cases[index]}: port {got}, retail {want}')
-    print(f'PASS: {len(cases)} flight velocity cases')
+    print(f'PASS: {len(cases)} flight velocity cases and native attitude-input deltas')
 
 
 def check_navigation(binary, count=4000):

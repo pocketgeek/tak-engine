@@ -174,6 +174,38 @@ const OpInfo* findOp(uint32_t op) {
 
 } // namespace
 
+std::vector<uint8_t> explosionReachability(const File& f) {
+    const size_t count=f.code.size();
+    std::vector<uint8_t> unsafe(count);
+    std::vector<std::vector<size_t>> predecessors(count);
+    std::vector<size_t> work;
+    const auto mark=[&](size_t pc) {
+        if(!unsafe[pc]) {unsafe[pc]=1;work.push_back(pc);}
+    };
+    for(size_t pc=0;pc<count;++pc) {
+        const auto op=f.code[pc];const auto* info=findOp(op);
+        if(!info || op==0x10071000 || op==0x10063000) {mark(pc);continue;}
+        const size_t next=pc+1+info->args;
+        if(next>count) {mark(pc);continue;}
+        const auto edge=[&](size_t target) {
+            if(target>=count)mark(pc);
+            else predecessors[target].push_back(pc);
+        };
+        if(op==0x10065000)continue;
+        if(op==0x10064000) {edge(f.code[pc+1]);continue;}
+        edge(next);
+        if(op==0x10066000)edge(f.code[pc+1]);
+        if(op==0x10061000 || op==0x10062000) {
+            const auto script=f.code[pc+1];
+            if(script>=f.scripts.size())mark(pc);
+            else edge(f.scripts[script].entry);
+        }
+    }
+    for(size_t i=0;i<work.size();++i)
+        for(const auto pc:predecessors[work[i]])mark(pc);
+    return unsafe;
+}
+
 std::string disassemble(const File& f, int script) {
     if (script < 0 || size_t(script) >= f.scripts.size())
         throw std::runtime_error("bad script index");

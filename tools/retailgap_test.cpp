@@ -68,6 +68,12 @@ int main(int argc, char** argv) {
     sim::TypeRegistry reg;
     reg.loadMoveInfo(vfs, "gamedata/moveinfo.tdf");
     reg.loadDir(vfs, "units/");
+    if(argc==3 && std::string(argv[2])=="--blood-palette") {
+        const auto* hunter=reg.find("zonhunt");
+        check(hunter && hunter->bloodColors==std::array<uint32_t,3>{0xffa02300,0xffaa2800,0xffb41e05},
+              "Hunter retains all three authored blood colors");
+        return failures?1:0;
+    }
 
     // ---- 1. [EXPLODEAS] ----------------------------------------------------
     std::printf("[EXPLODEAS death blast]\n");
@@ -182,33 +188,180 @@ int main(int argc, char** argv) {
         else {
             check(demon->weapons[0].kind == sim::Weapon::Kind::Guided &&
                   demon->weapons[0].turnRate > 0, "Fire Ball of Gloom is guided");
-            sim::World w;
+            sim::World w, peer;
             sim::MatchConfig cfg;
             cfg.vfs = &vfs; cfg.mapPath = kMap;
             cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
             cfg.slots[0].team = 0; cfg.slots[1].team = 1;
             sim::setupMatch(w, reg, cfg);
+            sim::setupMatch(peer, reg, cfg);
             // Homing needs an unobstructed firing lane, independent of map trees.
             w.setTerrain(std::vector<uint8_t>(256 * 256, 100), 256, 256, 20);
+            peer.setTerrain(std::vector<uint8_t>(256 * 256, 100), 256, 256, 20);
             int shooter = w.spawn(demon, 1000, 1000, 0, 0);
             int mover = w.spawn(prey, 1000, 1600, 0, 1);   // 600px away, in range
+            int peerShooter = peer.spawn(demon, 1000, 1000, 0, 0);
+            int peerMover = peer.spawn(prey, 1000, 1600, 0, 1);
             if (auto* su = w.unit(shooter)) su->stance = 0;
+            if (auto* su = peer.unit(peerShooter)) su->stance = 0;
             w.attack(shooter, mover, false);
+            peer.attack(peerShooter, peerMover, false);
             // Tick until a shot is in the air.
             int guard = 0;
-            while (w.projectiles().empty() && guard++ < 400) w.tick(1.0f / 30.0f);
+            bool paired=true;
+            while (w.projectiles().empty() && guard++ < 400) {
+                w.tick(1.0f / 30.0f);peer.tick(1.0f / 30.0f);
+                paired=paired && w.stateHash()==peer.stateHash();
+            }
             check(!w.projectiles().empty(), "the demon launched a guided shot");
+            check(paired && w.stateHash()==peer.stateHash(),
+                  "paired World instances retain the same Guided state hash at launch");
             if (!w.projectiles().empty()) {
+                const auto& shot=w.projectiles().front();
+                check(shot.guided3d && shot.targetId==mover && shot.fromId==shooter && shot.slot==0,
+                      "Guided launch stores its owner, slot, target, and native XYZ trajectory");
+                check(shot.position==shot.muzzle && shot.x.v==shot.position[0] &&
+                      shot.z.v==shot.position[2] && shot.start==w.tickCount()+1 && shot.end>shot.start,
+                      "Guided launch keeps the script muzzle, range lifetime, and delayed start");
                 // Jump the target 300px sideways: a straight shot now misses by far
                 // more than the hit radius.
                 if (auto* m = w.unit(mover)) { m->x = tak::sim::Fixed::fromInt(1300); m->orders.clear(); }
+                if (auto* m = peer.unit(peerMover)) { m->x = tak::sim::Fixed::fromInt(1300); m->orders.clear(); }
                 float hp0 = w.unit(mover)->hp.toFloat();
-                for (int i = 0; i < 90; ++i) w.tick(1.0f / 30.0f);   // 3s < reload
+                for (int i = 0; i < 90; ++i) {
+                    w.tick(1.0f / 30.0f);peer.tick(1.0f / 30.0f);   // 3s < reload
+                    paired=paired && w.stateHash()==peer.stateHash();
+                }
                 const sim::Unit* m = w.unit(mover);
                 bool hurt = m && (!m->alive() || m->hp.toFloat() < hp0);
                 check(hurt, "the shot curved onto the dodging target",
                       hurt ? "" : "untouched -- homing did not engage");
+                check(paired && w.stateHash()==peer.stateHash(),
+                      "moving ground-target guidance stays lockstep across paired Worlds");
             }
+        }
+    }
+
+    // ---- 2b.1 guided XYZ against an airborne target and target loss --------
+    {
+        const sim::UnitType* flyerBase=reg.find("zonhunt");
+        const sim::UnitType* demon=reg.find("tarfire");
+        if(!flyerBase || !flyerBase->canFly || !demon || demon->weapons.empty()) {
+            std::printf("  (missing guided shooter or flying target; skipped)\n");
+        } else {
+            auto harmlessFlyer=*flyerBase;
+            harmlessFlyer.weapons.clear();harmlessFlyer.weapon.damage=0;
+            // Unit HP is retail 16.16 Fixed (max < 32768); 100000 wraps at
+            // spawn and makes the target dead before the first aim query.
+            harmlessFlyer.maxHp=30000;harmlessFlyer.healTime=0;
+            harmlessFlyer.categories.clear();harmlessFlyer.catIds.clear();
+            check(demon->weapons[0].kind==sim::Weapon::Kind::Guided &&
+                  demon->weapons[0].flameKind<0 && !demon->weapons[0].beam &&
+                  !demon->weapons[0].noAir && demon->weapons[0].damage>0,
+                  "Fire Ball of Gloom is a projectile-backed Guided weapon that can hit flyers");
+            sim::World w,peer;
+            sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=kMap;
+            cfg.slots={sim::MatchSlot{},sim::MatchSlot{}};
+            cfg.slots[0].team=0;cfg.slots[1].team=1;
+            sim::setupMatch(w,reg,cfg);
+            sim::setupMatch(peer,reg,cfg);
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            peer.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            const int shooter=w.spawn(demon,1000,1000,0,0);
+            const int target=w.spawn(&harmlessFlyer,1000,1600,0,1);
+            const int peerShooter=peer.spawn(demon,1000,1000,0,0);
+            const int peerTarget=peer.spawn(&harmlessFlyer,1000,1600,0,1);
+            if(auto* u=w.unit(shooter))u->stance=0;
+            if(auto* u=peer.unit(peerShooter))u->stance=0;
+            for(auto [world,id]:{std::pair{&w,target},std::pair{&peer,peerTarget}}) {
+                if(auto* u=world->unit(id)) {
+                    u->flightGroundMode=2;
+                    u->flightY=sim::Fixed::fromInt(320);
+                }
+                // An explicit flight mission prevents idle VTOL standby from
+                // beginning a landing during the attacker's aim/build-up ticks.
+                world->order(id,1080,1600,false);
+            }
+            w.attack(shooter,target,false);
+            peer.attack(peerShooter,peerTarget,false);
+            const auto launchAim=w.queryWeaponAim(shooter,target,0);
+            const auto peerLaunchAim=peer.queryWeaponAim(peerShooter,peerTarget,0);
+            check(launchAim.has_value() && peerLaunchAim.has_value() &&
+                  launchAim->heading==peerLaunchAim->heading && launchAim->pitch==peerLaunchAim->pitch &&
+                  launchAim->target==peerLaunchAim->target,
+                  "paired Fire Demons compute the same authored aim solution for the flying target");
+            int guard=0;
+            bool paired=w.stateHash()==peer.stateHash(),sawFireEvent=false;
+            int fireEventTick=0;
+            while(w.projectiles().empty() && guard++<400) {
+                w.tick(1.0f/30.0f);peer.tick(1.0f/30.0f);
+                paired=paired && w.stateHash()==peer.stateHash();
+                const auto* state=w.unit(shooter);
+                if(state && state->firedWeapons) {
+                    sawFireEvent=true;fireEventTick=guard;
+                    if(w.projectiles().empty())break;
+                }
+            }
+            check(sawFireEvent,"Fire Demon releases its Guided weapon against the airborne target");
+            if(w.projectiles().empty()) {
+                const auto* state=w.unit(shooter);
+                std::printf("  (guided air launch diagnostic: aim=%d heading=%u pitch=%u targetOrder=%d scriptTarget=%d fireTick=%d fired=%u reload=%d targetY=%d)\n",
+                    int(launchAim.has_value()),launchAim?launchAim->heading:0,launchAim?launchAim->pitch:0,
+                    state && !state->orders.empty()?state->orders.front().targetId:0,
+                    state?state->scriptAimTarget:0,fireEventTick,state?state->firedWeapons:0,
+                    state?state->reloads[0]:-1,w.unit(target)?w.unit(target)->flightY.v:0);
+            }
+            check(paired && w.stateHash()==peer.stateHash(),
+                  "paired Worlds stay in lockstep while a Guided weapon aims at a flyer");
+            const auto* airborneAtLaunch=w.unit(target);
+            check(airborneAtLaunch && airborneAtLaunch->flightGroundMode==2,
+                  "the flying target stays under active flight control through launch");
+            check(!w.projectiles().empty() && w.projectiles().front().guided3d,
+                  "a Guided shot launches toward a flying target with full XYZ state");
+            bool trackedHeight=false;
+            std::array<int32_t,3> lastVelocity{};
+            if(!w.projectiles().empty()) {
+                lastVelocity=w.projectiles().front().velocity;
+                trackedHeight=lastVelocity[1]!=0;
+                for(int i=0;i<6 && !w.projectiles().empty();++i) {
+                    if(auto* u=w.unit(target)) {
+                        u->x+=sim::Fixed::fromInt(8);
+                        u->flightY+=sim::Fixed::fromInt(4);
+                    }
+                    if(auto* u=peer.unit(peerTarget)) {
+                        u->x+=sim::Fixed::fromInt(8);
+                        u->flightY+=sim::Fixed::fromInt(4);
+                    }
+                    w.tick(1.0f/30.0f);peer.tick(1.0f/30.0f);
+                    paired=paired && w.stateHash()==peer.stateHash();
+                    if(!w.projectiles().empty()) {
+                        const auto& shot=w.projectiles().front();
+                        trackedHeight=trackedHeight || shot.velocity[1]!=lastVelocity[1] ||
+                            shot.position[1]!=shot.muzzle[1];
+                        lastVelocity=shot.velocity;
+                    }
+                }
+            }
+            check(trackedHeight,"flying-target height changes the Guided projectile's simulated Y/velocity");
+            bool lostTargetContinues=false;
+            if(auto* u=w.unit(target)) {u->hp=sim::Fixed();u->deadFor=0;}
+            if(auto* u=peer.unit(peerTarget)) {u->hp=sim::Fixed();u->deadFor=0;}
+            if(!w.projectiles().empty()) {
+                const auto velocity=w.projectiles().front().velocity;
+                const auto position=w.projectiles().front().position;
+                for(int i=0;i<3;++i) {
+                    w.tick(1.0f/30.0f);peer.tick(1.0f/30.0f);
+                    paired=paired && w.stateHash()==peer.stateHash();
+                }
+                if(!w.projectiles().empty()) {
+                    const auto& shot=w.projectiles().front();
+                    lostTargetContinues=shot.guided3d && shot.targetId==target && shot.velocity==velocity &&
+                        shot.position!=position;
+                }
+            }
+            check(lostTargetContinues,"losing the target leaves a Guided shot on its existing XYZ trajectory");
+            check(paired && w.stateHash()==peer.stateHash(),
+                  "flying-target guidance and loss remain lockstep across paired Worlds");
         }
     }
 
@@ -537,17 +690,21 @@ int main(int argc, char** argv) {
             if (auto* tu = w.unit(t)) tu->mana = tower->maxMana;
             for (int i = 0; i < 20; ++i) w.spawn(prey, 1000.0f + (i % 5) * 25, 1120.0f + (i / 5) * 25, 0, 1);
             bool used[3] = {false, false, false};
+            bool eventsMatch=true;
             float prev[3] = {0, 0, 0};
             for (int i = 0; i < 900; ++i) {
                 w.tick(1.0f / 30.0f);
                 const sim::Unit* tu = w.unit(t);
                 if (!tu) break;
                 for (size_t sl = 0; sl < tower->weapons.size() && sl < 3; ++sl) {
-                    if (tu->reloads[sl] > prev[sl] + 0.01f) used[sl] = true;
+                    const bool fired=tu->reloads[sl] > prev[sl] + 0.01f;
+                    if (tu->firedWeapons & (1u<<sl)) used[sl] = true;
+                    eventsMatch=eventsMatch && bool(tu->fireAnimations & (1u<<sl))==fired;
                     prev[sl] = tu->reloads[sl];
                 }
             }
             int n = 0; for (bool b2 : used) if (b2) ++n;
+            check(eventsMatch, "FireWeapon animation slots match reload starts independently of projectile timing");
             check(n > 1, "araat fires BOTH of its weapons independently",
                   std::to_string(n) + " weapons fired");
         }
@@ -1371,15 +1528,15 @@ int main(int argc, char** argv) {
         };
         // standingunitorder = 1 (Defensive): move 0 / fire 2.
         const sim::UnitType* archer = reg.find("araarch");
-        check(archer && archer->defaultMove == 0 && archer->defaultFire == 2,
+        check(archer && archer->defaultStandingOrder == 1 && archer->defaultMove == 0 && archer->defaultFire == 2,
               "araarch (standingunitorder=1) defaults to hold-position + fire-at-will");
         // standingunitorder = 2 (Offensive): move 1 / fire 2 -- a LEASHED chase.
         const sim::UnitType* knight = reg.find("araknigh");
-        check(knight && knight->defaultMove == 1 && knight->defaultFire == 2,
+        check(knight && knight->defaultStandingOrder == 2 && knight->defaultMove == 1 && knight->defaultFire == 2,
               "araknigh (standingunitorder=2) defaults to a leashed chase");
         // standingunitorder = 0 (Passive): move 0 / fire 0 -- holds fire entirely.
         const sim::UnitType* spy = reg.find("araspy");
-        check(spy && spy->defaultMove == 0 && spy->defaultFire == 0,
+        check(spy && spy->defaultStandingOrder == 0 && spy->defaultMove == 0 && spy->defaultFire == 0,
               "araspy (standingunitorder=0) defaults to holding fire");
         // No key at all -> the sentinel path: roam + fire at will. Worth noting
         // what this set turns out to be: almost every unit WITHOUT the key is a
@@ -1387,7 +1544,7 @@ int main(int argc, char** argv) {
         // flyers. So in retail essentially no mobile ground unit roams without a
         // leash -- they are all either hold-position or leashed at 500.
         const sim::UnitType* flyer = reg.find("arafly");
-        check(flyer && flyer->defaultMove == 2 && flyer->defaultFire == 2,
+        check(flyer && flyer->defaultStandingOrder == 3 && flyer->defaultMove == 2 && flyer->defaultFire == 2,
               "arafly (no standingunitorder) defaults to unlimited roam");
         const sim::UnitType* sword = reg.find("arasword");
         check(sword && sword->defaultMove == 1,
@@ -1397,7 +1554,7 @@ int main(int argc, char** argv) {
         if (archer && sword) {
             sim::World w; freshWorld(w);
             int a = w.spawn(archer, 1000, 2600, 0, 0);
-            check(w.unit(a)->moveState == 0 && w.unit(a)->fireState == 2,
+            check(w.unit(a)->standingOrder == 1 && w.unit(a)->moveState == 0 && w.unit(a)->fireState == 2,
                   "the spawned archer carries its type's standing orders");
             float far = float(archer->maxRange()) + 260.0f;
             int prey = w.spawn(sword, 1000 + far, 2600, 0, 1);

@@ -17,7 +17,9 @@
 #include "cob/cob.h"
 #include "cob/vm.h"
 #include "client/renderframe.h"
+#include "client/threadpool.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -47,6 +49,7 @@ static void check(bool ok, const std::string& what, const std::string& detail = 
 static int buggerOffs(const std::string& path, int32_t yardGrant) {
     cob::File f = cob::load(path);
     cob::Vm vm(std::move(f), true);
+    vm.enableRetailAnimation();
     int count = 0;
     vm.onGet = [&](int32_t id, const std::vector<int32_t>&) -> int32_t {
         return id == 18 ? (yardGrant > 0 ? 1 : 0) : 0;
@@ -61,12 +64,13 @@ static int buggerOffs(const std::string& path, int32_t yardGrant) {
     return count;
 }
 
-// Does the wheel spinner see a turn? SuperDynamicWheelSpinner reads unit value
-// 33, tests it against +-910, and spins the two sides of the vehicle at
-// different rates. Observed through the piece turn speeds it sets.
+// The shipped wheel script compares GET 33 against +/-910, but native GET 33
+// clamps its result to +/-100. Preserve retail's unreachable branch rather than
+// feeding fabricated angle units to make the differential engage.
 static int wheelSides(const std::string& path, int32_t turnRate) {
     cob::File f = cob::load(path);
     cob::Vm vm(std::move(f), true);
+    vm.enableRetailAnimation();
     vm.onGet = [&](int32_t id, const std::vector<int32_t>&) -> int32_t {
         if (id == 33) return turnRate;
         if (id == 29) return 100;          // at full speed, so the wheels turn
@@ -91,11 +95,177 @@ static int wheelSides(const std::string& path, int32_t turnRate) {
 }
 
 int main(int argc, char** argv) {
+    if(argc==3 && std::string(argv[1])=="--schedule-bench") {
+        const auto file=std::make_shared<const cob::File>(cob::load(argv[2]));
+        ThreadPool pool;
+        uint64_t expected=0;
+        const auto reachability=cob::explosionReachability(*file);
+        for(int trial=0;trial<6;++trial) {
+            const int mode=trial%3;
+            std::vector<std::unique_ptr<cob::Vm>> units;
+            units.reserve(16000);
+            for(int i=0;i<16000;++i) {
+                auto vm=std::make_unique<cob::Vm>(file,true);vm->enableRetailAnimation();
+                vm->onGet=[](int32_t id,const std::vector<int32_t>&) {
+                    return id==4 || id==29 || id==33 ? 100 : (id==34 ? 1 : 0);
+                };
+                vm->start("Create");vm->start("StartMoving");
+                units.push_back(std::move(vm));
+            }
+            std::vector<double> times;
+            std::vector<cob::Vm*> parallelUnits,serialUnits;
+            parallelUnits.reserve(16000);serialUnits.reserve(16000);
+            for(int frame=0;frame<120;++frame) {
+                const auto begin=std::chrono::steady_clock::now();
+                const auto tick=[&](size_t b,size_t e) {
+                    for(size_t i=b;i<e;++i)units[i]->tick(1.f/30.f);
+                };
+                if(mode==2) {
+                    parallelUnits.clear();serialUnits.clear();
+                    for(const auto& vm:units)
+                        (vm->mayReachExplosion(reachability)?serialUnits:parallelUnits).push_back(vm.get());
+                    pool.parallelFor(parallelUnits.size(),[&](size_t b,size_t e) {
+                        for(size_t i=b;i<e;++i)parallelUnits[i]->tick(1.f/30.f);
+                    },1500);
+                    for(auto* vm:serialUnits)vm->tick(1.f/30.f);
+                } else if(mode==1)pool.parallelFor(units.size(),tick,1500);
+                else tick(0,units.size());
+                const double ms=std::chrono::duration<double,std::milli>(
+                    std::chrono::steady_clock::now()-begin).count();
+                if(frame>=30)times.push_back(ms);
+            }
+            uint64_t hash=1469598103934665603ull;
+            const auto mix=[&](uint32_t value){hash=(hash^value)*1099511628211ull;};
+            for(const auto& vm:units) {
+                for(const auto& piece:vm->retailPieces()) {
+                    mix(piece.visible);
+                    for(int axis=0;axis<3;++axis) {mix(piece.move[axis]);mix(piece.turn[axis]);}
+                }
+                for(auto pc:vm->threadPcs())mix(pc);
+            }
+            if(trial==0)expected=hash;
+            check(hash==expected,"serial/parallel animation benchmark final-state agreement");
+            std::sort(times.begin(),times.end());
+            std::printf("16000 VMs %s trial=%d p50=%.3fms p95=%.3fms max=%.3fms hash=%016llx\n",
+                mode==2?"selective":mode==1?"parallel":"serial",trial,times[times.size()/2],
+                times[times.size()*95/100],times.back(),static_cast<unsigned long long>(hash));
+            std::fflush(stdout);
+        }
+        return fails?1:0;
+    }
+    if(argc==3 && std::string(argv[1])=="--blood-query") {
+        cob::Vm vm(cob::load(argv[2]),true);vm.enableRetailAnimation();
+        for(int i=0;i<64;++i) {
+            vm.call("QueryBlood",{-1});
+            const auto& locals=vm.lastLocals();
+            check(!locals.empty() && locals[0]>=2 && locals[0]<=6,
+                  "Hunter QueryBlood replaces the minus-one argument sentinel");
+        }
+        return fails?1:0;
+    }
+    if(argc==2 && std::string(argv[1])=="--explode-capture") {
+        {
+            cob::File f;f.scripts={{"Idle",0},{"Killed",2},{"Caller",6}};
+            f.code={0x10064000,0,0x10021001,0,0x10071000,0,
+                    0x10062000,1,0,0x10065000};
+            auto reachable=cob::explosionReachability(f);
+            check(!reachable[0] && reachable[2] && reachable[6],
+                  "dormant death script does not serialize an idle loop; CALL reaches explosion");
+            f.code[6]=0x10061000;
+            check(cob::explosionReachability(f)[6],"START_SCRIPT follows explosion reachability");
+            f.code={0x10066000,4,0x10064000,0,0x10071000,0};
+            reachable=cob::explosionReachability(f);
+            check(reachable[0] && reachable[2],"conditional explosion propagates through cyclic paths");
+            f.code={0x10021001,0x10071000,0x10065000};
+            check(!cob::explosionReachability(f)[0],"opcode-shaped constant does not serialize safe code");
+            f.code={0x10064000,999};
+            check(cob::explosionReachability(f)[0],"invalid branch conservatively requires serial execution");
+            f.code={0xdeadbeef};
+            check(cob::explosionReachability(f)[0],"unknown opcode conservatively requires serial execution");
+        }
+        for(bool retail:{false,true})for(bool accepted:{false,true})
+        for(unsigned later:{0u,0x10005000u,0x10006000u})
+        for(unsigned flags:{0u,0x20u,0x40u,0x60u}) {
+            cob::File file;file.pieces={"body","child","sibling"};file.scripts={{"Test",0}};
+            file.code={0x10021001,flags,0x10071000,0};
+            if(later)file.code.insert(file.code.end(),{later,0});
+            file.code.insert(file.code.end(),{0x10021001,0,0x10065000});
+            cob::Vm vm(std::move(file),true);
+            if(retail)vm.enableRetailAnimation();
+            vm.setExplosionDescendants({{1},{},{}});
+            int calls=0;
+            vm.onExplode=[&](int piece,int32_t value) {
+                ++calls;
+                check(piece==0 && unsigned(value)==flags,"EXPLODE callback arguments");
+                check(retail?vm.retailPieces()[0].visible:vm.pieces()[0].visible,
+                      "detached snapshot sees source visibility before hiding");
+                return accepted;
+            };
+            vm.start("Test");vm.tick(1.0f/30.0f);
+            check(calls==1,"EXPLODE callback delivered once");
+            const bool visible=later ? later==0x10005000 : (!accepted || bool(flags&0x20));
+            check(vm.pieces()[0].visible==visible,"EXPLODE admission preserves later SHOW/HIDE ordering");
+            check(vm.pieces()[1].visible==(!accepted || !(flags&64) || bool(flags&32)),
+                  "subtree detachment hides descendants only when debris is requested");
+            check(vm.pieces()[2].visible,"subtree detachment leaves root siblings attached");
+        }
+        for(bool retail:{false,true}) {
+            cob::File file;file.pieces={"body"};
+            file.scripts={{"Idle",0},{"Killed",5}};
+            file.code={0x10021001,100,0x10013000,0x10064000,0,
+                       0x10021001,100,0x10013000,0x10021001,0,
+                       0x10071000,0,0x10021001,0,0x10065000};
+            const auto reachability=cob::explosionReachability(file);
+            cob::Vm vm(std::move(file),true);if(retail)vm.enableRetailAnimation();
+            vm.start("Idle");vm.tick(1.f/30);
+            check(!vm.mayReachExplosion(reachability),"active idle loop retains parallel scheduling");
+            vm.start("Killed");
+            check(vm.mayReachExplosion(reachability),"active death thread requires serial scheduling");
+            bool admitted=false;int explosions=0;
+            vm.onExplode=[&](int,int32_t) {
+                check(admitted,"every executed explosion was classified before the VM tick");
+                ++explosions;return true;
+            };
+            for(int i=0;i<10;++i) {
+                admitted=vm.mayReachExplosion(reachability);vm.tick(1.f/30);
+            }
+            check(explosions==1 && !vm.mayReachExplosion(reachability),
+                  "completed death thread restores parallel scheduling for remaining idle loop");
+        }
+        for(bool retail:{false,true}) {
+            cob::File file;file.pieces={"body"};file.scripts={{"Test",0}};
+            file.code={0x10021001,0,0x10071000,0, // accepted explosion
+                       0x10005000,0,             // SHOW before the next attempt
+                       0x10021001,0,0x10071000,0, // rejected explosion
+                       0x10021001,0,0x10065000};
+            file.scripts.push_back({"QueryBlood",uint32_t(file.code.size())});
+            file.code.insert(file.code.end(),{0x10021001,7,0x10023002,0,
+                                             0x10021001,0,0x10065000});
+            cob::Vm vm(std::move(file),true);
+            if(retail)vm.enableRetailAnimation();
+            int calls=0;
+            vm.onExplode=[&](int,int32_t) {
+                ++calls;
+                check(retail?vm.retailPieces()[0].visible:vm.pieces()[0].visible,
+                      "synchronous creation sees SHOW before the second explosion");
+                if(calls!=1)return false;
+                vm.call("QueryBlood",{-1});
+                check(!vm.lastLocals().empty() && vm.lastLocals()[0]==7,
+                      "QueryBlood can reenter the VM from accepted EXPLODE");
+                return true;
+            };
+            vm.start("Test");vm.tick(1.0f/30.0f);
+            check(calls==2 && vm.pieces()[0].visible,
+                  "nested query preserves the outer script and rejected source visibility");
+        }
+        return fails?1:0;
+    }
     if (argc==3 && std::string(argv[1])=="--hunter-movement") {
         sim::UnitType type;type.maxVel=sim::Fixed::fromInt(5);
-        sim::Unit unit;unit.type=&type;unit.speed=sim::Fixed::fromInt(1);
+        sim::Unit unit;unit.type=&type;unit.baseSpeed=type.maxVel;unit.speed=sim::Fixed::fromInt(1);
         UnitR frame;frame.type=&type;
         cob::Vm vm(cob::load(argv[2]),true);
+        vm.enableRetailAnimation();
         vm.onGet=[&](int32_t id,const std::vector<int32_t>&) {
             return id==29 ? frame.animationSpeedPercent() : 0;
         };
@@ -141,9 +311,10 @@ int main(int argc, char** argv) {
         else {
             std::fclose(probe);
             const int straight = wheelSides(path, 0);
-            const int turning  = wheelSides(path, 2000);   // past the 910 threshold
-            check(turning > straight,
-                  "aracan: turning spins the two sides at different rates",
+            const int turning = wheelSides(path,sim::retailTurnAnimationPercent(2000,2000,0,65536,false));
+            const int reversing = wheelSides(path,sim::retailTurnAnimationPercent(-2000,2000,0,65536,false));
+            check(straight>0 && turning==straight && reversing==straight,
+                  "aracan: retail turn percentages do not cross its unreachable 910 threshold",
                   "distinct wheel rates straight=" + std::to_string(straight) +
                       " turning=" + std::to_string(turning));
         }

@@ -39,7 +39,7 @@ struct Command {
     Cmd kind = Cmd::Move;
     uint8_t player = 0;
     int32_t unitId = 0;
-    int32_t targetId = 0;
+    int32_t targetId = 0; // target unit; for Unload, destination Y in signed 16.16
     float x = 0, z = 0;
     uint8_t queue = 0;
     char type[16] = {};   // unit type id for Train/Build

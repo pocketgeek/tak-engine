@@ -11,6 +11,7 @@
 #include "cob/cob.h"
 #include "cob/vm.h"
 #include "sim/matchsetup.h"
+#include <array>
 #include <cstdio>
 #include <algorithm>
 #include <memory>
@@ -67,8 +68,108 @@ int main(int argc, char** argv) {
     if (argc < 2) { std::printf("usage: conjure_test <install>\n"); return 2; }
     hpi::Vfs vfs = hpi::mountRetailRoot(argv[1]);
     auto f = load(vfs);
+    {
+        const sim::RetailFlightVector builder{sim::Fixed::fromInt(1000).v,0,
+                                                sim::Fixed::fromInt(1000).v};
+        const sim::RetailFlightVector site{sim::Fixed::fromInt(1120).v,0,
+                                            sim::Fixed::fromInt(1060).v};
+        // Captured from native 41ef00 with seed 50 and builddistance 100.
+        const std::array<int,4> values{7132,5832,7,2};
+        const std::array<int,4> bounds{0x2492,0x2492,8,8};
+        std::array<int,4> consumed{};size_t index=0;
+        const auto goal=sim::retailConstructionHoverGoal(builder,site,100,[&](int bound) {
+            if (index>=values.size()) return 0;
+            consumed[index]=bound;
+            return values[index++];
+        });
+        check(index==values.size() && consumed==bounds,
+              "placed conjure orbit consumes the native seed-50 draws in order");
+        check(goal.point.x==68223960 && goal.point.y==0 && goal.point.z==66009400 &&
+              goal.flags==0x60 && goal.heading==43016,
+              "placed conjure orbit matches the native seed-50 goal and heading");
+    }
     for (bool crusades : {false,true}) {
         sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,crusades);
+        {
+            sim::World placement;placement.setVisPlayer(-1);
+            placement.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
+            const auto* barracks=registry.find("arakeep");
+            placement.spawn(registry.find("araking"),720,800,0,0);
+            check(placement.canPlace(barracks,800,800),
+                  "builder beside narrow barracks side does not obstruct placement");
+            placement.spawn(registry.find("arasword"),800,800,0,0);
+            check(!placement.canPlace(barracks,800,800),
+                  "unit inside barracks footprint still blocks placement");
+        }
+        // A rectangular barracks must remain placeable when its builder reaches
+        // a short side. A circular exclusion based on its long side rejects him.
+        for (const auto [dx,dz]:{std::pair{-160,0},std::pair{160,0},
+                                std::pair{0,-192},std::pair{0,192}}) {
+            sim::World placement;placement.setVisPlayer(-1);
+            placement.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
+            const auto* barracks=registry.find("arakeep");
+            auto builderType=*registry.find("araking");
+            builderType.income=0; // Isolate work admission from monarch income.
+            const int builder=placement.spawn(&builderType,800+dx,800+dz,0,0);
+            placement.queueBuild(builder,barracks,800,800,false);
+            check(!placement.unit(builder)->orders.empty(),"barracks construction order accepted");
+            bool started=false;
+            for (int tick=0;tick<300 && !started;++tick) {
+                placement.tick(1.0f/30.0f);
+                started=placement.unit(builder)->buildSiteId!=0;
+            }
+            std::printf("barracks approach balance=%d offset=%d,%d\n",int(crusades),dx,dz);
+            check(started,"ground builder starts rectangular barracks from each side");
+            if (started) {
+                placement.player(0).mana=10000;
+                for (int tick=0;tick<60;++tick) placement.tick(1.0f/30.0f);
+                auto* worker=placement.unit(builder);
+                check(worker->constructionEmissions[0]>0,"successful placed construction emits worker events");
+                const auto* site=placement.unit(worker->buildSiteId);
+                check(site && site->constructionEmissions[1]>0,"successful placed construction emits site events");
+                const auto hash=placement.stateHash();
+                ++worker->constructionEmissions[0];
+                check(placement.stateHash()==hash,"cosmetic construction events do not change lockstep hash");
+                check(worker->cosmeticConstructionEmitter.has_value(),"headless work creates cosmetic particle state");
+                const auto savedEmitter=worker->cosmeticConstructionEmitter;
+                const auto savedRandom=worker->constructionVisualRandom;
+                worker->cosmeticConstructionEmitter.reset();
+                worker->constructionVisualRandom^=0x12345678u;
+                check(placement.stateHash()==hash,"particle contents and cosmetic RNG do not change lockstep hash");
+                worker->cosmeticConstructionEmitter=savedEmitter;
+                worker->constructionVisualRandom=savedRandom;
+                if (site) {
+                    const int siteId=site->id;
+                    const auto workerBefore=worker->constructionEmissions;
+                    const auto siteBefore=site->constructionEmissions;
+                    auto expectedParticles=worker->cosmeticConstructionEmitter;
+                    if (expectedParticles) expectedParticles->advance();
+                    placement.player(0).mana=0;
+                    placement.tick(1.0f/30.0f);
+                    check(placement.unit(builder)->constructionEmissions==workerBefore &&
+                          placement.unit(siteId)->constructionEmissions==siteBefore,
+                          "mana-starved construction emits no work particles");
+                    const auto& actualParticles=placement.unit(builder)->cosmeticConstructionEmitter;
+                    bool matching=expectedParticles && actualParticles &&
+                        expectedParticles->particles.size()==actualParticles->particles.size();
+                    if (matching) for (size_t i=0;i<expectedParticles->particles.size();++i) {
+                        const auto& a=expectedParticles->particles[i];
+                        const auto& b=actualParticles->particles[i];
+                        matching=matching && a.x==b.x && a.y==b.y && a.z==b.z &&
+                            a.speed==b.speed && a.ceiling==b.ceiling && a.displayAge==b.displayAge;
+                    }
+                    check(matching,"particles age on a headless tick without rendering or new emissions");
+                    placement.player(0).mana=10000;
+                    auto* finishing=placement.unit(siteId);
+                    finishing->hp=sim::Fixed::fromFloat(finishing->type->maxHp)-sim::Fixed::raw(1);
+                    placement.tick(1.0f/30.0f);
+                    check(!placement.unit(siteId)->underConstruction &&
+                          placement.unit(builder)->constructionEmissions[0]==workerBefore[0]+1 &&
+                          placement.unit(siteId)->constructionEmissions[1]==siteBefore[1]+1,
+                          "completion tick emits exactly one worker and site event");
+                }
+            }
+        }
         for (const auto& [name,type]:registry.types()) {
             const auto& menu=registry.buildable(name);
             if (type.isStructure() || menu.empty()) continue;
@@ -201,6 +302,7 @@ int main(int argc, char** argv) {
     std::printf("[conjure while ACTIVE -- the client's normal case]\n");
     {
         cob::Vm vm(f);
+        vm.enableRetailAnimation();
         vm.start("Create");
         for (int i = 0; i < 30; ++i) vm.tick(1.0f / 30.0f);
         vm.start("setSFXoccupy", {5});   // active (static 6) -- client sets this while busy
@@ -221,6 +323,7 @@ int main(int argc, char** argv) {
     std::printf("[conjure while NOT active -- documents the freeze the busy test prevents]\n");
     {
         cob::Vm vm(f);
+        vm.enableRetailAnimation();
         vm.start("Create");
         for (int i = 0; i < 30; ++i) vm.tick(1.0f / 30.0f);
         vm.start("setSFXoccupy", {0});   // NOT active (static 6 clear)

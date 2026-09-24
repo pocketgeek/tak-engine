@@ -24,6 +24,7 @@ namespace tak::detmath {
 // Bit-identical across builds. Accurate to well under 1e-5 vs libm.
 float sin(float x);
 float cos(float x);
+double atan(double x);          // double-precision reduction for retail ballistic BAM angles
 float atan2(float y, float x);   // same argument order and range as std::atan2
 
 // hypot replacement: sqrt is correctly rounded, so sqrt(a*a+b*b) is portable

@@ -1,6 +1,7 @@
 #include "client/cursors.h"
 
 #include "client/artscale.h"
+#include "client/cursortiming.h"
 #include "client/settings.h"
 #include "client/gpuvram.h"
 
@@ -20,9 +21,9 @@ std::string lower(std::string s) {
     return s;
 }
 
-// CursorId -> cursors.gaf sequence name (matched case-insensitively, since the GAF
-// mixes cases: "CursorMove" vs "cursorselect"). Derived from KINGDOMS.icd's loader.
-const char* seqName(CursorId c) {
+}  // namespace
+
+const char* cursorSequenceName(CursorId c) {
     switch (c) {
         case CursorId::Normal:    return "cursornormal";
         case CursorId::Select:    return "cursorselect";
@@ -42,11 +43,15 @@ const char* seqName(CursorId c) {
         case CursorId::Red:       return "cursorred";
         case CursorId::Hourglass: return "cursorhourglass";
         case CursorId::PathIcon:  return "pathicon";
+        // Native cursors.gaf registrations (loader calls 0x4bef27, 0x4befae,
+        // 0x4bef8d) create separate capture, teleport, and pickup cursor slots,
+        // even though their shipped pixels are identical to cursornormal.
+        case CursorId::Capture:   return "cursorcapture";
+        case CursorId::Teleport:  return "cursorteleport";
+        case CursorId::Pickup:    return "cursorpickup";
         default:                  return "";
     }
 }
-
-}  // namespace
 
 CursorSet::~CursorSet() {
     releaseHardware();
@@ -76,7 +81,7 @@ bool CursorSet::load(SDL_Renderer* ren, const hpi::Vfs& vfs, const Settings* set
     for (auto& s : seqs) byName[lower(s.name)] = &s;
 
     for (size_t i = 0; i < size_t(CursorId::Count); ++i) {
-        auto it = byName.find(lower(seqName(CursorId(i))));
+        auto it = byName.find(lower(cursorSequenceName(CursorId(i))));
         if (it == byName.end()) continue;               // leave empty; draw() falls back
         for (const auto& fr : it->second->frames) {
             if (fr.width <= 0 || fr.height <= 0) continue;
@@ -91,7 +96,8 @@ bool CursorSet::load(SDL_Renderer* ren, const hpi::Vfs& vfs, const Settings* set
             if (fac == 1) SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
             // LOGICAL size stays the 1x frame: hotspot, offsets and the drawn size are
             // all authored in those units, and the texture being 2x is invisible to them.
-            anims_[i].push_back({t, fr.width, fr.height, fr.xoff, fr.yoff, fr.rgba, {}, 0});
+            anims_[i].push_back({t, fr.width, fr.height, fr.xoff, fr.yoff,
+                                 fr.rgba, {}, 0, fr.retailDelayTicks});
         }
     }
     // Reconstruct now, here, off the frame path -- but only for the HARDWARE cursor.
@@ -126,9 +132,7 @@ void CursorSet::draw(SDL_Renderer* ren, CursorId c, int mouseX, int mouseY, int 
 
     const uint64_t now = SDL_GetTicks64();
     if (c != cur_) { cur_ = c; animStartMs_ = now; }    // restart animation on a change
-    size_t idx = 0;
-    if (frames.size() > 1)
-        idx = size_t((now - animStartMs_) * kFps / 1000) % frames.size();
+    const size_t idx = cursorFrameAt(frames, now - animStartMs_);
 
     const Frame& f = frames[idx];
     // Set the mod every draw (default white = no-op) so a previous tint never lingers.
@@ -260,7 +264,7 @@ bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
 
     const uint64_t now = SDL_GetTicks64();
     if (c != hwCur_) { hwCur_ = c; hwStartMs_ = now; }   // restart animation on a change
-    size_t idx = curs.size() > 1 ? size_t((now - hwStartMs_) * kFps / 1000) % curs.size() : 0;
+    const size_t idx = cursorFrameAt(frames, now - hwStartMs_);
 
     if (curs[idx] != hwSet_) { hwSet_ = curs[idx]; SDL_SetCursor(hwSet_); }
     return true;

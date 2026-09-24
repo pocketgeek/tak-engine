@@ -102,7 +102,8 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   the lift) and `unitScreen` (world→screen, includes flyer altitude). Don't
   hand-roll a flat `offX + sx/zoom`.
 - **Models** are authored front=−z / right=−x (a mirrored basis): `scriptRot`
-  negates piece X and Y, and all movers (flyers included) face `−heading`. See
+  negates all piece angles; X/Z script translations also negate. All movers
+  (flyers included) face `−heading`. See
   `docs/model-rendering-plan.md`.
 - Match the surrounding code's style, naming, and comment density. C++20.
 - Put temporary/scratch files in the system temp dir, never in the repo.

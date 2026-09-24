@@ -28,6 +28,21 @@ struct Parser {
     size_t pos = 0;
     int line = 1;
 
+    void addChild(Node& node,const std::string& key,Node child) {
+        auto previous=node.children.find(key);
+        if(previous==node.children.end())node.childOrder.push_back(key);
+        else {
+            for(auto entry=node.childEntries.rbegin();entry!=node.childEntries.rend();++entry)
+                if(entry->name==key) {
+                    entry->previous=int(node.previousChildren.size());
+                    node.previousChildren.push_back(std::move(previous->second));
+                    break;
+                }
+        }
+        node.childEntries.push_back({key,-1});
+        node.children[key]=std::move(child);
+    }
+
     [[noreturn]] void fail(const std::string& msg) const {
         throw std::runtime_error(origin + ":" + std::to_string(line) + ": " + msg);
     }
@@ -75,8 +90,7 @@ struct Parser {
                 skipWs();
                 Node child;
                 parseBody(child, depth + 1);
-                if (!node.children.count(key)) node.childOrder.push_back(key);
-                node.children[key] = std::move(child);
+                addChild(node,key,std::move(child));
             } else if (c == ';') {
                 advance();  // stray semicolon
             } else {
@@ -132,8 +146,7 @@ struct Parser {
             std::string key = lower(name);
             Node child;
             parseBody(child, 0);
-            if (!root.children.count(key)) root.childOrder.push_back(key);
-            root.children[key] = std::move(child);
+            addChild(root,key,std::move(child));
         }
     }
 };
@@ -161,6 +174,15 @@ double Node::numberOr(const std::string& key, double def) const {
 const Node* Node::child(const std::string& name) const {
     auto it = children.find(lower(name));
     return it == children.end() ? nullptr : &it->second;
+}
+
+std::vector<std::pair<std::string_view,const Node*>> Node::orderedChildren() const {
+    std::vector<std::pair<std::string_view,const Node*>> result;
+    result.reserve(childEntries.size());
+    for(const auto& entry:childEntries)
+        result.emplace_back(entry.name,entry.previous<0 ? &children.at(entry.name) :
+            &previousChildren.at(size_t(entry.previous)));
+    return result;
 }
 
 Node parseText(const std::string& text, const std::string& originName) {

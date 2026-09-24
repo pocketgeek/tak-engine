@@ -127,10 +127,12 @@ int main(int argc,char** argv) {
     emitter.emit(2,0,false,random);
     if (calls!=2 || emitter.particles.size()!=1 || emitter.particles[0].speed!=-65536) return 1;
     emitter.advance(); // Reaching zero keeps the slot until the following update.
+    if (emitter.particles[0].displayAge!=1) return 1;
     emitter.emit(1,0,false,random);
     if (calls!=2 || emitter.particles.size()!=1) return 1;
     emitter.advance();emitter.emit(1,0,false,random);
     if (calls!=4 || emitter.particles.size()!=1) return 1;
+    if (emitter.particles[0].displayAge!=0) return 1;
     World world;world.setVisPlayer(-1);
     world.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
     world.setSacredSites({{10,10,2,2,1.5f}});

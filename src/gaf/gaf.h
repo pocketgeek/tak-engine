@@ -13,7 +13,7 @@ namespace tak::gaf {
 //   entry: u16 numFrames, u16 unk, u32 unk, char name[32],
 //          { u32 framePtr, u32 unk } × numFrames
 //   frame: u16 w, u16 h, s16 xoff, s16 yoff, u8 transparencyIndex,
-//          u8 encoding, u16 numSubframes, u32 unk, u32 dataPtr, u32 unk
+//          u8 encoding, u8 numSubframes, u8 blendFlag, u32 unk, u32 dataPtr, u32 unk
 //
 // encoding: 0 = raw 8-bit indexed, 1 = RLE 8-bit indexed (classic TA),
 //           4 = raw ARGB4444 (TAF), 5 = raw ARGB1555 (TAF).
@@ -32,12 +32,15 @@ struct Frame {
     int xoff = 0, yoff = 0;          // anchor point within the frame
     int delayTicks = 2;              // display duration in 30Hz engine ticks (the u32
                                      // after each frame pointer; waves ship 2 -> 15fps)
+    uint16_t retailDelayTicks = 2;   // native clock reads the authored duration's low word
     std::vector<uint8_t> rgba;       // width*height*4
+    uint8_t encoding = 0, blendFlag = 0; // native frame bytes 9 and 11
 };
 
 struct Sequence {
     std::string name;
     std::vector<Frame> frames;
+    uint8_t loopFlag = 0; // sequence header byte 2; native effect clock tests nonzero
 };
 
 // Decode a whole GAF/TAF file. `pal` is used for 8-bit entries; TAF

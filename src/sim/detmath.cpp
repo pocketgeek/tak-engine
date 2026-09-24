@@ -69,6 +69,26 @@ double sinCore(double x) {
 float sin(float x) { return float(sinCore(double(x))); }
 float cos(float x) { return float(sinCore(double(x) + kHalfPi)); }
 
+// Fixed-operation double precision atan. Reduction bounds |q| by tan(pi/8);
+// the 32-term alternating series has truncation error below 3e-27 there.
+// Double rounding dominates and is stable with FP contraction disabled.
+double atan(double x) {
+    const bool negative=std::signbit(x);
+    if(negative)x=-x;
+    const bool inverse=x>1.0;
+    if(inverse)x=1.0/x;
+    const bool shifted=x>0.4142135623730950488;
+    const double q=shifted ? (x-1.0)/(x+1.0) : x;
+    const double square=q*q;
+    double series=-1.0/63.0;
+    for(int n=30;n>=0;--n)
+        series=(n%2 ? -1.0 : 1.0)/double(2*n+1)+square*series;
+    double angle=q*series;
+    if(shifted)angle=kQtrPi+angle;
+    if(inverse)angle=kHalfPi-angle;
+    return negative ? -angle : angle;
+}
+
 float atan2(float yf, float xf) {
     double y = double(yf), x = double(xf);
     double ax = x < 0.0 ? -x : x;

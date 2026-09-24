@@ -19,7 +19,7 @@ struct FrameHeader {
     uint16_t w, h;
     int16_t xoff, yoff;
     uint8_t transparency, encoding;
-    uint16_t numSubframes;
+    uint8_t numSubframes, blendFlag;
     uint32_t dataPtr;
 };
 
@@ -32,7 +32,8 @@ FrameHeader frameHeader(const std::vector<uint8_t>& d, uint32_t off) {
     f.yoff = s16(&d[off + 6]);
     f.transparency = d[off + 8];
     f.encoding = d[off + 9];
-    f.numSubframes = u16(&d[off + 10]);
+    f.numSubframes = d[off + 10];
+    f.blendFlag = d[off + 11];
     f.dataPtr = u32(&d[off + 16]);
     return f;
 }
@@ -57,6 +58,7 @@ Frame decodeSingle(const std::vector<uint8_t>& d, const FrameHeader& h, const Pa
     fr.height = h.h;
     fr.xoff = h.xoff;
     fr.yoff = h.yoff;
+    fr.encoding = h.encoding;fr.blendFlag = h.blendFlag;
     fr.rgba.assign(size_t(h.w) * h.h * 4, 0);
 
     switch (h.encoding) {
@@ -134,17 +136,10 @@ Frame decodeFrame(const std::vector<uint8_t>& d, uint32_t off, const Palette& pa
     fr.height = h.h;
     fr.xoff = h.xoff;
     fr.yoff = h.yoff;
+    fr.encoding = h.encoding;fr.blendFlag = h.blendFlag;
     fr.rgba.assign(size_t(h.w) * h.h * 4, 0);
-    // Some shipped TAFs carry junk in the HIGH byte of the subframe-count field --
-    // the cannonball sprites (cannbsm/cannbmed/cannblg), the hurricane loop and the
-    // big dust cloud all read 65280 (0xFF00) where a healthy frame reads 0, while
-    // their ordinary single-frame data pointer is perfectly valid. Retail clearly
-    // ignores it; reading the count strictly made us throw away the art for 23
-    // weapons plus a storm effect. No real GAF composites hundreds of subframes, so
-    // an implausible count means "not a composite" -- decode the plain frame.
-    if (h.numSubframes > 255 ||
-        uint64_t(h.dataPtr) + uint64_t(h.numSubframes) * 4 > d.size())
-        return decodeSingle(d, h, pal);
+    // Retail reads byte 10 as the count and preserves byte 11 for blending.
+    need(d,h.dataPtr,uint64_t(h.numSubframes)*4,"subframe pointers");
     for (uint16_t i = 0; i < h.numSubframes; ++i) {
         Frame sub = decodeFrame(d, u32(&d[h.dataPtr + i * 4]), pal);
         int ox = h.xoff - sub.xoff;
@@ -228,6 +223,7 @@ std::vector<Sequence> load(const std::vector<uint8_t>& d, const Palette& pal,
         need(d, e, 40, "entry header");
         Sequence seq;
         uint16_t numFrames = u16(&d[e]);
+        seq.loopFlag = d[e + 2];
         const char* nm = reinterpret_cast<const char*>(&d[e + 8]);
         seq.name.assign(nm, strnlen(nm, 32));
         need(d, e + 40, uint64_t(numFrames) * 8, "frame pointers");
@@ -237,6 +233,7 @@ std::vector<Sequence> load(const std::vector<uint8_t>& d, const Palette& pal,
             // 30Hz engine ticks (retail advances feature anims once per ~30fps
             // frame, holding each GAF frame for this count).
             uint32_t delay = u32(&d[e + 40 + f * 8 + 4]);
+            fr.retailDelayTicks = uint16_t(delay);
             fr.delayTicks = int(std::clamp<uint32_t>(delay, 1, 300));
             if (transparentIndex >= 0) {
                 const uint8_t* key = pal.rgba[transparentIndex];

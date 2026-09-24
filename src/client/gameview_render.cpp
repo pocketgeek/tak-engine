@@ -1,6 +1,12 @@
 #include <set>
 #include <functional>
 #include "client/gameview.h"
+#include "client/retaillightningquad.h"
+#include "client/retailflame.h"
+#include "client/retaileffectframe.h"
+#include "client/retailviewport.h"
+#include "sim/retailhweffectdata.h"
+#include "sim/retailheight.h"
 
 // Out-of-line GameView method definitions (render concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
@@ -399,6 +405,10 @@
             profShadowMs_ += ms;
             airShadowMs += ms;
         };
+#ifndef NDEBUG
+        debugFeatureFlameDrawCount_ = 0;
+        debugFeatureSmokeDrawCount_ = 0;
+#endif
         for (size_t opi = 0; opi < drawOps_.size(); ++opi) {
             if (opi == airShadowOp_) drainAirShadows();
             const DrawOp& op = drawOps_[opi];
@@ -412,29 +422,84 @@
                 const float phase=f.x*0.043f+f.z*0.029f;
                 const float sway=swayTree ? std::sin(animClock_*1.1f+phase)*0.7f+
                                            std::sin(animClock_*2.7f+phase*1.7f)*0.3f : 0;
-                if (f.shadow && shadowsOnFrame_) {
-                    SDL_FRect sd{(f.x - mapView_.offX() - float(f.sxoff)) * zm0 - lfx,
-                                 (f.z - mapView_.offY() - float(f.syoff)) * zm0 - lfy,
-                                 float(f.sw) * zm0, float(f.sh) * zm0};
+                const uint32_t burnAge = int32_t(front().gameTick-f.burnStarted) < 0
+                    ? 0 : front().gameTick-f.burnStarted;
+                const bool overlayBurn = f.burnVis && (f.frontFlame || f.backFlame);
+                const FeatArt* shadowArt = f.burnVis && !overlayBurn ? f.burnArt : f.art;
+                const uint32_t shadowAge = f.burnVis
+                    ? (overlayBurn ? f.burnStarted : burnAge) : front().gameTick;
+                SDL_Texture* shadow = nullptr;
+                FeatArt::FGeom sg;
+                if (shadowArt) {
+                    const auto index = tak::retailEffectFrame(shadowArt->shadowDurations,
+                        shadowArt->shadowLoop, shadowAge);
+                    if (index && *index < shadowArt->shadowFrames.size()) {
+                        shadow = shadowArt->shadowFrames[*index];
+                        sg = shadowArt->shadowGeom[*index];
+                    }
+                }
+                if (shadow && shadowsOnFrame_) {
+                    SDL_FRect sd{(f.x - mapView_.offX() - float(sg.xoff)) * zm0 - lfx,
+                                 (f.z - mapView_.offY() - float(sg.yoff)) * zm0 - lfy,
+                                 float(sg.w) * zm0, float(sg.h) * zm0};
                     if (swayTree) {
                         // Authored feature shadows can extend above or below
                         // their ground anchor. Move the far end with the crown,
                         // leaving the trunk anchor fixed in either orientation.
                         const float shear=sway*float(f.h)*zm0*0.04f;
-                        const float reach=float(f.sh)*0.5f<float(f.syoff)
-                            ? -float(std::max(1,f.syoff))
-                            : float(std::max(1,f.sh-f.syoff));
-                        const float top=-float(f.syoff)/reach*shear;
-                        const float bottom=(float(f.sh)-float(f.syoff))/reach*shear;
+                        const float reach=float(sg.h)*0.5f<float(sg.yoff)
+                            ? -float(std::max(1,sg.yoff))
+                            : float(std::max(1,sg.h-sg.yoff));
+                        const float top=-float(sg.yoff)/reach*shear;
+                        const float bottom=(float(sg.h)-float(sg.yoff))/reach*shear;
                         const SDL_Color white{255,255,255,255};
                         SDL_Vertex v[4]={{{sd.x+top,sd.y},white,{0,0}},
                             {{sd.x+sd.w+top,sd.y},white,{1,0}},
                             {{sd.x+sd.w+bottom,sd.y+sd.h},white,{1,1}},
                             {{sd.x+bottom,sd.y+sd.h},white,{0,1}}};
                         static const int indices[6]={0,1,2,0,2,3};
-                        SDL_RenderGeometry(ren_,f.shadow,v,4,indices,6);
-                    } else SDL_RenderCopyF(ren_, f.shadow, nullptr, &sd);
+                        SDL_RenderGeometry(ren_,shadow,v,4,indices,6);
+                    } else SDL_RenderCopyF(ren_, shadow, nullptr, &sd);
                 }
+                const auto drawFeatureSmoke = [&] {
+                    const auto found=featureSmokeSprites_.find(f.simId);
+                    if(found==featureSmokeSprites_.end())return;
+                    for(const auto& sprite:found->second) {
+                        if(sprite.particle.frame>=sprite.art->frames.size())continue;
+                        const auto& frame=sprite.art->frames[sprite.particle.frame];
+                        const auto& point=sprite.particle.position;
+                        const int x=point[0]>>16,y=point[1]>>16,z=point[2]>>16;
+                        (void)heightAbove(float(x),float(z));
+                        const float sx=(float(x)-mapView_.offX())*zm0;
+                        const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm0;
+                        if(!tak::retailViewportCenterAdmitted(sx,sy,
+                                float(mapViewW(winW_)),float(winH_)))continue;
+                        SDL_FRect dst{sx-frame.ax*zm0,
+                            sy-frame.ay*zm0,
+                            frame.w*zm0,frame.h*zm0};
+                        SDL_SetTextureAlphaMod(frame.tex,frame.encoding==4 ? 255 : 128);
+                        SDL_RenderCopyF(ren_,frame.tex,nullptr,&dst);
+                        SDL_SetTextureAlphaMod(frame.tex,255);
+#ifndef NDEBUG
+                        ++debugFeatureSmokeDrawCount_;
+#endif
+                    }
+                };
+                const auto drawFlame = [&](const EffectAnim* animation) {
+                    if (!f.burnVis || !animation) return;
+                    const auto index = tak::retailEffectFrame(animation->durations, false,
+                        burnAge);
+                    if (!index || *index >= animation->frames.size()) return;
+                    const auto& frame = animation->frames[*index];
+                    SDL_FRect dst{(f.x-mapView_.offX()-frame.ax)*zm0-lfx,
+                                  (f.z-mapView_.offY()-frame.ay)*zm0-lfy,
+                                  frame.w*zm0, frame.h*zm0};
+                    SDL_RenderCopyF(ren_, frame.tex, nullptr, &dst);
+#ifndef NDEBUG
+                    ++debugFeatureFlameDrawCount_;
+#endif
+                };
+                drawFlame(f.backFlame);
                 // Retail feature playback: one shared clock per TYPE (every
                 // instance of a sequence shows the identical frame -- variety
                 // comes from the 16 different wave sequences, not phase), 30Hz
@@ -449,7 +514,7 @@
                     const FeatArt* ba = f.burnArt;
                     tex = ba->tex; fw = ba->w; fh = ba->h; fxo = ba->xoff; fyo = ba->yoff;
                     if (ba->frames.size() > 1 && ba->totalTicks > 0) {
-                        int tick = int(animClock_ * 30.0f) % ba->totalTicks;
+                        int tick = int(burnAge % uint32_t(ba->totalTicks));
                         size_t idx = size_t(std::upper_bound(ba->tickEnd.begin(),
                                                              ba->tickEnd.end(), tick) -
                                             ba->tickEnd.begin());
@@ -462,10 +527,13 @@
                                   (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
                                   float(fw) * zm0, float(fh) * zm0};
                     SDL_RenderCopyF(ren_, tex, nullptr, &dst);
+                    drawFlame(f.frontFlame);
+                    drawFeatureSmoke();
                     continue;
                 }
-                if (f.frames && f.frames->size() > 1 && f.art && f.art->totalTicks > 0) {
-                    int tick = int(animClock_ * 30.0f) % f.art->totalTicks;
+                if (f.frames && !f.frames->empty() && f.art && f.art->totalTicks > 0) {
+                    const uint32_t age = front().gameTick;
+                    int tick = int(age % uint32_t(f.art->totalTicks));
                     size_t idx = size_t(std::upper_bound(f.art->tickEnd.begin(),
                                                          f.art->tickEnd.end(), tick) -
                                         f.art->tickEnd.begin());
@@ -473,6 +541,7 @@
                     tex = (*f.frames)[idx];
                     const auto& g = f.art->fgeom[idx];
                     fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
+                    if (!f.art->bodyLoop && age >= uint32_t(f.art->totalTicks)) tex = nullptr;
                 }
                 SDL_FRect dst{(f.x - mapView_.offX() - float(fxo)) * zm0 - lfx,
                               (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
@@ -494,8 +563,10 @@
                     static const int wIdx[6] = {0, 1, 2, 0, 2, 3};
                     if (tex) SDL_RenderGeometry(ren_, tex, v, 4, wIdx, 6);
                 } else {
-                    SDL_RenderCopyF(ren_, tex, nullptr, &dst);
+                    if (tex) SDL_RenderCopyF(ren_, tex, nullptr, &dst);
                 }
+                drawFlame(f.frontFlame);
+                drawFeatureSmoke();
             } else if (op.u) {
                 drawUnit(*op.u);
             } else if (op.count > 0 && op.tex) {   // null atlas page: skip, no white
@@ -531,6 +602,36 @@
 
         // Projectiles: drawn per weapon family (only where visible).
         float zm = mapView_.zoom();
+#ifndef NDEBUG
+        debugFlameDrawCount_=0;
+#endif
+        if (!front().flames.empty()) (void)heightAbove(0,0);
+        const auto flameInViewport=[&](const std::array<int,2>& point) {
+            const float sx=(float(point[0])-mapView_.offX())*zm;
+            const float sy=(float(point[1])+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            return sx>=0 && sx<=mvw && sy>=0 && sy<=winH;
+        };
+        for(const auto& stream:front().flames) {
+            if(!tak::retailFlameStreamVisible(stream.muzzle,stream.aimPoint,
+                [&](const auto& point) {return flameInViewport(tak::retailFlameEndpointPoint(point));},
+                [&](const auto& point) {return effectVisibleR(point);}))continue;
+            for(const auto& particle:stream.particles) {
+                const char* name=particle.kind==1 ? "bluefire" : particle.kind==2 ? "dieselflame" : "flame";
+                const auto* art=effectFor(name);
+                if(!art || art->frames.empty())continue;
+                const auto projected=tak::retailFlameParticlePoint(particle.position);
+                if(!flameInViewport(projected))continue;
+                const int frame=particle.frame(uint16_t(art->frames.size()));
+                if(frame<0 || size_t(frame)>=art->frames.size())continue;
+                const auto& f=art->frames[size_t(frame)];
+                SDL_FRect dst{(float(projected[0])-mapView_.offX()-f.ax)*zm,
+                    (float(projected[1])+float(heightRef_)*0.5f-mapView_.offY()-f.ay)*zm,f.w*zm,f.h*zm};
+                SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
+#ifndef NDEBUG
+                ++debugFlameDrawCount_;
+#endif
+            }
+        }
         // Wandering storms. These are roaming hazards with their own three-part
         // animation (wanderstartart while it spins up, wanderloopart while it
         // roams); without it a Tornado or a god's vortex tears through an army
@@ -538,20 +639,27 @@
         for (const auto& st : front().storms) {
             if (!st.w) continue;
             if (!noFog_ && !cellVisibleR(st.x.toFloat(), st.z.toFloat())) continue;
-            bool spinUp = st.arm > 0.0f;
-            const std::string& artName = spinUp && !st.w->wanderStart.empty()
-                                             ? st.w->wanderStart : st.w->wanderLoop;
-            if (artName.empty()) continue;
-            const EffectAnim* ea = effectFor(artName);
-            if (!ea || ea->frames.empty()) continue;
-            // The loop cycles; the spin-up plays through once and holds its last
-            // frame until the storm arms.
-            float phase = spinUp ? (st.w->buildUp - st.arm) : st.left;
-            size_t fi = size_t(std::max(0.0f, phase) * 20.0f);
-            fi = spinUp ? std::min(fi, ea->frames.size() - 1) : fi % ea->frames.size();
+            using Phase=tak::sim::World::Storm::Phase;
+            if(st.phase==Phase::Waiting || !st.animation.active)continue;
+            const std::string& artName=st.phase==Phase::Starting ? st.w->wanderStart :
+                st.phase==Phase::Ending ? st.w->wanderEnd : st.w->wanderLoop;
+            if(artName.empty())continue;
+            const EffectAnim* ea=effectFor(artName);
+            if(!ea || st.animation.frame>=ea->frames.size())continue;
+            const size_t fi=st.animation.frame;
             const auto& fr = ea->frames[fi];
-            float sx = (st.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(st.x.toFloat(), st.z.toFloat()) * zm;
-            float sy = (st.z.toFloat() - mapView_.offY()) * zm - terrainLift(st.x.toFloat(), st.z.toFloat()) * zm;
+            // Native 52fd00 refreshes terrain Y at draw time, then projects
+            // signed whole coordinates. Keep that refresh local to rendering:
+            // client visibility must not mutate deterministic simulation state.
+            const auto& terrain=mapView_.map();
+            const int height=terrain.heights.empty() ? 0 : tak::sim::retailTerrainHeight(
+                st.x.v,st.z.v,terrain.width,terrain.height,[&](int x,int z) {
+                    return terrain.heights[size_t(z)*size_t(terrain.width)+size_t(x)];
+                });
+            heightAbove(st.x.toFloat(),st.z.toFloat()); // Initialize map height reference.
+            const int x=st.x.v>>16,z=st.z.v>>16;
+            float sx = (float(x) - mapView_.offX()) * zm;
+            float sy = (float(z-(height>>1)) + float(heightRef_)*0.5f - mapView_.offY()) * zm;
             float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
             // Anchored at the storm's FOOT: these sprites are tall columns whose
             // anchor sits near the base, so the funnel stands on the ground.
@@ -622,19 +730,101 @@
         }
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         for (const auto& p : front().projectiles) {
-            if (!cellVisibleR(p.x.toFloat(), p.z.toFloat())) continue;
+            if(p.straight) {
+                if(front().gameTick<p.start || !p.wsrc)continue;
+                auto whole=[](int32_t v){return int(std::bit_cast<int16_t>(uint16_t(uint32_t(v)>>16)));};
+                const int x=whole(p.position[0]),y=whole(p.position[1]),z=whole(p.position[2]);
+                const bool lightning=p.wsrc->lightning;
+                const int mx=whole(p.muzzle[0]),my=whole(p.muzzle[1]),mz=whole(p.muzzle[2]);
+                if(!noFog_ && !cellVisibleR(float(x),float(z)) &&
+                   !(lightning && cellVisibleR(float(mx),float(mz))))continue;
+                (void)heightAbove(float(x),float(z));
+                const auto& w=*p.wsrc;
+                auto sprite=[&](const std::string& name,float projectedY,bool shadow) {
+                    if(name.empty())return;
+                    const auto* art=effectFor(name);
+                    if(!art || art->frames.empty())return;
+                    const auto index=tak::retailEffectFrame(art->durations,art->loop,uint32_t(p.age));
+                    if(!index || *index>=art->frames.size())return;
+                    const auto& f=art->frames[*index];
+                    // effectFor loaded the native mode for each authored frame:
+                    // format-4 flag FF uses coverage alpha, other format-4 frames
+                    // add. Only shadows override that mode to darken terrain.
+                    if(shadow)SDL_SetTextureBlendMode(f.tex,SDL_BLENDMODE_BLEND);
+                    SDL_SetTextureAlphaMod(f.tex,255);
+                    SDL_FRect dst{(float(x)-mapView_.offX()-f.ax)*zm,
+                        (projectedY-mapView_.offY()-f.ay)*zm,f.w*zm,f.h*zm};
+                    SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
+                };
+                if(lightning)sprite(w.weaponArt,float(z-(y>>1))+float(heightRef_)*0.5f,false);
+                if(lightning && p.lightningEffect && w.lightningEffect) {
+                    const auto& effect=*p.lightningEffect;
+                    const int tw=int(std::bit_ceil(unsigned(effect.width)));
+                    const int th=int(std::bit_ceil(unsigned(effect.height)));
+                    auto& texture=lightningTextures_[{tw,th}];
+                    if(!texture) {
+                        texture=SDL_CreateTexture(ren_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,tw,th);
+                        if(texture)SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+                    }
+                    if(texture) {
+                        std::vector<uint32_t> pixels(size_t(tw)*th,0);
+                        for(int row=0;row<effect.height;++row)for(int col=0;col<effect.width;++col) {
+                            const uint16_t c=w.lightningEffect->palette[effect.pixels[size_t(row)*effect.width+col]];
+                            pixels[size_t(row)*tw+col]=uint32_t((c>>12)&15)*17u<<24 |
+                                uint32_t((c>>8)&15)*17u<<16 | uint32_t((c>>4)&15)*17u<<8 | uint32_t(c&15)*17u;
+                        }
+                        SDL_UpdateTexture(texture,nullptr,pixels.data(),tw*int(sizeof(uint32_t)));
+                        const auto quad=tak::retailLightningQuad(
+                            {mx-int(mapView_.offX()),mz-(my>>1)+int(float(heightRef_)*0.5f-mapView_.offY())},
+                            {x-int(mapView_.offX()),z-(y>>1)+int(float(heightRef_)*0.5f-mapView_.offY())},
+                            int(winW/zm),int(winH/zm),effect.width,effect.height,tw,th);
+                        if(quad) {
+                            SDL_Vertex vertices[4];
+                            for(size_t i=0;i<4;++i)vertices[i]={{(*quad)[i].x*zm,(*quad)[i].y*zm},
+                                {255,255,255,255},{(*quad)[i].u,(*quad)[i].v}};
+                            const int indices[]={0,1,2,0,2,3};
+                            SDL_RenderGeometry(ren_,texture,vertices,4,indices,6);
+                        }
+                    }
+                }
+                if(!lightning && shadowsOnFrame_ && !w.shadowArt.empty())
+                    sprite("shadows:"+w.shadowArt,float(z)-terrainLift(float(x),float(z)),true);
+                if(!lightning && !w.shotModel.empty())
+                    drawShotModel(w.shotModel,p.fromPlayer,float(x),float(z),0,
+                        3.14159265358979323846f-float(p.angles[1])*(6.283185307179586f/65536.f),&p);
+                if(!lightning)sprite(w.weaponArt,float(z-(y>>1))+float(heightRef_)*0.5f,false);
+                continue;
+            }
+            const bool native3d=p.ballistic3d || p.guided3d;
+            const float renderX=native3d ? tak::sim::Fixed::raw(p.position[0]).toFloat() : p.x.toFloat();
+            const float renderZ=native3d ? tak::sim::Fixed::raw(p.position[2]).toFloat() : p.z.toFloat();
+            if (!cellVisibleR(renderX, renderZ)) continue;
             float t = std::clamp(float(p.age) / std::max(float(p.flight), 1.0f), 0.0f, 1.0f);
             // Flyer shots: lift the whole trajectory by the altitude interpolated
             // from the firing unit down to the target (0.8x, matching the sprite
             // lift), so a drake's breath leaves its mouth and arcs to the ground.
-            float palt = (unitAltById(p.fromId) * (1 - t) + unitAltById(p.targetId) * t)
-                         * 0.8f * zm;
+            float palt = p.guided3d ? 0.0f :
+                (unitAltById(p.fromId) * (1 - t) + unitAltById(p.targetId) * t) * 0.8f * zm;
+            const float shotWorldY=p.guided3d ? tak::sim::Fixed::raw(p.position[1]).toFloat() : 0.0f;
+            const float velocityX=p.guided3d ? tak::sim::Fixed::raw(p.velocity[0]).toFloat() : p.vx.toFloat();
+            const float velocityY=p.guided3d ? tak::sim::Fixed::raw(p.velocity[1]).toFloat() : 0.0f;
+            const float velocityZ=p.guided3d ? tak::sim::Fixed::raw(p.velocity[2]).toFloat() : p.vz.toFloat();
+            const float velocityLength=std::max(std::sqrt(velocityX*velocityX+
+                velocityY*velocityY+velocityZ*velocityZ),1e-3f);
+            float nativeSpriteX=0,nativeSpriteY=0;
+            if(p.guided3d) {
+                auto whole=[](int32_t v){return int(std::bit_cast<int16_t>(uint16_t(uint32_t(v)>>16)));};
+                const int x=whole(p.position[0]),y=whole(p.position[1]),z=whole(p.position[2]);
+                (void)heightAbove(float(x),float(z));
+                nativeSpriteX=(float(x)-mapView_.offX())*zm;
+                nativeSpriteY=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            }
             // Ground shadow (shadowgaf/shadowart, 218 weapons) and light pool
             // (lightmap, 36): both sit on the GROUND under the shot, not at its
             // altitude, which is what sells the shot as being up in the air.
             if (p.wsrc) {
-                float gx = (p.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(p.x.toFloat(), p.z.toFloat()) * zm;
-                float gy = (p.z.toFloat() - mapView_.offY()) * zm - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm;
+                float gx = (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
+                float gy = (renderZ - mapView_.offY()) * zm - terrainLift(renderX, renderZ) * zm;
                 if (p.wsrc->lightMap > 0) {
                     // A soft additive pool tinted by the shot's own family, so a
                     // fireball throws warm light on the ground as it passes.
@@ -655,15 +845,17 @@
                     // shadowgaf is always "shadows"; effectFor's "file:sequence"
                     // form picks the named sequence out of it.
                     if (const EffectAnim* sh = effectFor("shadows:" + p.wsrc->shadowArt)) {
-                        // p.age is TICKS now; these animation rates are per SECOND.
-                        const auto& fr = sh->frames[size_t(int(float(p.age) / 30.0f * 12.0f)) % sh->frames.size()];
-                        // effectFor caches its textures additively for glowing
-                        // effects; a shadow has to DARKEN instead.
-                        SDL_SetTextureBlendMode(fr.tex, SDL_BLENDMODE_BLEND);
-                        SDL_SetTextureAlphaMod(fr.tex, 110);
-                        float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
-                        SDL_FRect dst{gx - fw * 0.5f, gy - fh * 0.5f, fw, fh};
-                        SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
+                        const auto index=tak::retailEffectFrame(sh->durations,sh->loop,uint32_t(p.age));
+                        if(index && *index<sh->frames.size()) {
+                            const auto& fr=sh->frames[*index];
+                            // effectFor caches its textures additively for glowing
+                            // effects; a shadow has to DARKEN instead.
+                            SDL_SetTextureBlendMode(fr.tex, SDL_BLENDMODE_BLEND);
+                            SDL_SetTextureAlphaMod(fr.tex, 110);
+                            float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
+                            SDL_FRect dst{gx - fw * 0.5f, gy - fh * 0.5f, fw, fh};
+                            SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
+                        }
                     }
                 }
             }
@@ -672,14 +864,24 @@
             // going. Projectile models point along +z (the arrowhead is at
             // +z and the fletching at -z), opposite the unit-model forward axis.
             if (p.wsrc && !p.wsrc->shotModel.empty()) {
+                if(native3d) {
+                    drawShotModel(p.wsrc->shotModel,p.fromPlayer,renderX,renderZ,0,
+                        3.14159265358979323846f-float(p.angles[1])*(6.283185307179586f/65536.f),&p);
+                    continue;
+                }
                 bool bal = p.wsrc->ballistic;
                 const float flightSec = float(p.flight) / 30.0f;
                 float peak = bal ? std::min(95.0f, flightSec * 55.0f)
                                  : std::min(18.0f, flightSec * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
-                drawShotModel(p.wsrc->shotModel, p.fromPlayer, p.x.toFloat(), p.z.toFloat(),
+                // Ballistic 3DO shots retain the authored spinheading rate too.
+                // The native model draw receives that accumulated heading; mirror
+                // the same 30 Hz COB-unit conversion used for spinning shot art.
+                const float spin = float(p.age) / 30.0f * float(p.wsrc->spinRate) *
+                                   (6.2831853071795864769f / 65536.0f);
+                drawShotModel(p.wsrc->shotModel, p.fromPlayer, renderX, renderZ,
                               h * zm + palt, 3.14159265358979323846f -
-                                  std::atan2(p.vx.toFloat(), p.vz.toFloat()));
+                                  std::atan2(p.vx.toFloat(), p.vz.toFloat()) + spin);
                 continue;
             }
             // Authored projectile art. Retail draws most shots as a real sprite
@@ -698,19 +900,17 @@
                     float peak = bal ? std::min(95.0f, flightSec * 55.0f)
                                      : std::min(18.0f, flightSec * 12.0f);
                     float h = 8 + 4 * peak * t * (1 - t);
-                    float sx = (p.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(p.x.toFloat(), p.z.toFloat()) * zm;
-                    float sy = (p.z.toFloat() - mapView_.offY()) * zm - h * zm
-                               - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm - palt;
-                    const auto& fr = ea->frames[size_t(int(float(p.age) / 30.0f * 20.0f)) % ea->frames.size()];
+                    float sx = p.guided3d ? nativeSpriteX :
+                        (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
+                    float sy = p.guided3d ? nativeSpriteY :
+                        (renderZ - mapView_.offY()) * zm - h * zm
+                            - terrainLift(renderX, renderZ) * zm - palt;
+                    const auto index=tak::retailEffectFrame(ea->durations,ea->loop,uint32_t(p.age));
+                    if(!index || *index>=ea->frames.size())continue;
+                    const auto& fr = ea->frames[*index];
                     float fw = float(fr.w) * zm, fh = float(fr.h) * zm;
-                    SDL_FRect dst{sx - fw * 0.5f, sy - fh * 0.5f, fw, fh};
-                    // nimbus: an additive glow riding under the sprite.
-                    if (p.wsrc->nimbus) {
-                        SDL_SetTextureAlphaMod(fr.tex, 90);
-                        SDL_FRect g{sx - fw, sy - fh, fw * 2, fh * 2};
-                        SDL_RenderCopyF(ren_, fr.tex, nullptr, &g);
-                        SDL_SetTextureAlphaMod(fr.tex, 255);
-                    }
+                    const auto origin=tak::retailEffectSpriteOrigin(sx,sy,fr.ax,fr.ay,zm);
+                    SDL_FRect dst{origin.x,origin.y,fw,fh};
                     if (p.wsrc->spinRate != 0)
                         SDL_RenderCopyExF(ren_, fr.tex, nullptr, &dst,
                                           // age is TICKS and spinRate is raw COB units per second:
@@ -725,12 +925,13 @@
             }
             if (p.fx == tak::sim::WeaponFx::Lightning) {
                 // Flat, fast, jagged blue-white bolt from source toward target.
-                float sx = (p.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(p.x.toFloat(), p.z.toFloat()) * zm;
-                float sy = (p.z.toFloat() - mapView_.offY()) * zm - 12 * zm - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm
-                           - palt;
+                float sx = p.guided3d ? nativeSpriteX :
+                    (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
+                float sy = p.guided3d ? nativeSpriteY :
+                    (renderZ - mapView_.offY()) * zm - 12 * zm - terrainLift(renderX, renderZ) * zm - palt;
                 float len = 22.0f;
-                float bx = -p.vx.toFloat(), bz = -p.vz.toFloat();
-                float bl = std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
+                float bx = -velocityX, bz = -velocityZ;
+                float bl = p.guided3d ? velocityLength : std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
                 bx /= bl; bz /= bl;
                 float px = sx, py = sy;
                 SDL_SetRenderDrawColor(ren_, 210, 230, 255, 255);
@@ -738,25 +939,28 @@
                     float d = len * zm * s / 4.0f;
                     float jitter = ((s * 1327 + int(float(p.age) / 30.0f * 900)) % 7 - 3) * 1.6f * zm;
                     float nx = sx + bx * d - bz * jitter;
-                    float ny = sy + bz * d + bx * jitter - 12 * zm * s / 4.0f;
+                    float ny = sy + bz * d + bx * jitter -
+                        (p.guided3d ? velocityY / velocityLength * d * 0.5f : 12 * zm * s / 4.0f);
                     SDL_RenderDrawLineF(ren_, px, py, nx, ny);
                     px = nx; py = ny;
                 }
             } else if (p.fx == tak::sim::WeaponFx::Fire) {
                 // Flame breath: a short stream of flickering orange/yellow puffs
                 // trailing behind the leading tip, not a single fireball.
-                float bx = -p.vx.toFloat(), bz = -p.vz.toFloat();
-                float bl = std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
-                bx /= bl; bz /= bl;
+                float bx = -velocityX, by = -velocityY, bz = -velocityZ;
+                float bl = p.guided3d ? velocityLength : std::max(std::sqrt(bx * bx + bz * bz), 1e-3f);
+                bx /= bl; by /= bl; bz /= bl;
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
                 for (int s = 0; s < 5; ++s) {
                     float back = s * 6.0f;   // world px behind the tip
                     float wob = ((s * 811 + int(p.age * 1000)) % 5 - 2) * 2.0f;
-                    float fx = p.x.toFloat() + bx * back - bz * wob;
-                    float fz = p.z.toFloat() + bz * back + bx * wob;
-                    float sx = (fx - mapView_.offX()) * zm - terrainLiftX(fx, fz) * zm;
-                    float sy = (fz - mapView_.offY()) * zm - 12 * zm - terrainLift(fx, fz) * zm
-                               - palt;
+                    float fx = renderX + bx * back - bz * wob;
+                    float fz = renderZ + bz * back + bx * wob;
+                    float sx = p.guided3d ? (fx-mapView_.offX())*zm :
+                        (fx - mapView_.offX()) * zm - terrainLiftX(fx, fz) * zm;
+                    float sy = p.guided3d ?
+                        (fz-(shotWorldY+by*back)*0.5f+float(heightRef_)*0.5f-mapView_.offY())*zm :
+                        (fz - mapView_.offY()) * zm - 12 * zm - terrainLift(fx, fz) * zm - palt;
                     float r = (4.0f - s * 0.6f) * zm;   // shrinks toward the tail
                     Uint8 aA = Uint8(200 - s * 30);
                     // outer orange
@@ -778,13 +982,18 @@
                 float peak = bal ? std::min(95.0f, p.flight * 55.0f)
                                  : std::min(18.0f, p.flight * 12.0f);
                 float h = 8 + 4 * peak * t * (1 - t);
-                float sx = (p.x.toFloat() - mapView_.offX()) * zm - terrainLiftX(p.x.toFloat(), p.z.toFloat()) * zm;
-                float sy = (p.z.toFloat() - mapView_.offY()) * zm - h * zm - terrainLift(p.x.toFloat(), p.z.toFloat()) * zm
-                           - palt;
+                float sx = p.guided3d ? nativeSpriteX :
+                    (renderX - mapView_.offX()) * zm - terrainLiftX(renderX, renderZ) * zm;
+                float sy = p.guided3d ? nativeSpriteY :
+                    (renderZ - mapView_.offY()) * zm - h * zm - terrainLift(renderX, renderZ) * zm - palt;
                 SDL_SetRenderDrawColor(ren_, 255, 235, 140, 255);
                 // vx/vz are px per TICK now; the trail length was tuned against px/s.
-                SDL_RenderDrawLineF(ren_, sx, sy, sx - p.vx.toFloat() * 30.0f * 0.035f * zm,
-                                    sy - p.vz.toFloat() * 30.0f * 0.035f * zm + (t < 0.5f ? 2.5f : -2.5f) * zm);
+                const float trailX=p.guided3d ? -velocityX/velocityLength*12.0f :
+                    -p.vx.toFloat()*30.0f*0.035f;
+                const float trailY=p.guided3d ? (-velocityZ+velocityY*0.5f)/velocityLength*12.0f :
+                    -p.vz.toFloat()*30.0f*0.035f;
+                SDL_RenderDrawLineF(ren_,sx,sy,sx+trailX*zm,
+                    sy+trailY*zm+(t<0.5f?2.5f:-2.5f)*zm);
             }
         }
         {
@@ -1472,6 +1681,8 @@
     }
 
     void GameView::destroyGpuTextures() {
+        for(auto& [size,texture]:lightningTextures_)SDL_DestroyTexture(texture);
+        lightningTextures_.clear();
         invalidateRenderTargets();   // colour atlases + the shadow mask
         auto kill = [](SDL_Texture*& t) { if (t) { gpuvram::destroy(t); t = nullptr; } };
         for (auto& [n, frames] : textures_)
@@ -1497,11 +1708,11 @@
         for (auto& [n, s] : shadowTex_) if (s.tex) gpuvram::destroy(s.tex);
         shadowTex_.clear();
         // FeatArt: .tex ALIASES frames[0] (see featureArtFor) -- destroy the
-        // frames + shadow only; FeatureInst merely borrows these pointers.
+        // body/shadow frame arrays only; FeatureInst merely borrows these pointers.
         features_.clear();
         for (auto& [n, a] : featureArt_) {
             for (SDL_Texture* t : a.frames) if (t) gpuvram::destroy(t);
-            if (a.shadow) gpuvram::destroy(a.shadow);
+            for (auto* texture : a.shadowFrames) if (texture) gpuvram::destroy(texture);
         }
         featureArt_.clear();
         for (auto& [n, ea] : effectAnims_)
@@ -1613,20 +1824,9 @@
         // Zero on land and for every type that carries neither canhover nor floater.
         ay += waterSink(u.type, ix, iz) * zm;
         scratch.clear();
-        Xform base;
-        // (Altitude is applied to the screen anchor above, not here: applying it as
-        // a model-space translate disagreed with the screen-space anchor, so a
-        // flyer's height shifted depending on which path drew it.)
-        // Bank and pitch the whole model (bankscale/pitchscale). Composed on the
-        // BASE, before the piece tree, so the animation's own piece rotations ride
-        // on top of the attitude rather than fighting it. Piece X and Y are negated
-        // at the script boundary for the mirrored basis; this is a body attitude, not
-        // a script rotation, so it goes in directly.
-        if (anim && (anim->bank != 0.0f || anim->pitch != 0.0f)) {
-            float att[3] = {anim->pitch, 0.0f, anim->bank};
-            float alt = base.t[1];
-            base = Xform{}.then(0.0f, alt, 0.0f, att);
-        }
+        // Body attitude precedes the animated piece tree for both ground and
+        // flying units. Convert the retail mirrored basis at the same boundary.
+        const Xform base=modelBodyTransform(u.bodyPitch,u.bodyRoll);
         // Retail applies the birth heading to buildings as well as movers.
         // Their scripts can counter-rotate a build pad independently of the body.
         float facing = -ih;
@@ -1764,7 +1964,7 @@
         // corpsePhase && !corpseStatue is exactly "finished falling, lying on the
         // ground", which is the only case the flat-face artifact arises in.
         const bool corpseCull = u.corpsePhase && !u.corpseStatue;
-        collect(scratch, nullptr, root, Xform{}, anim, facing, u.player, false, true,
+        collect(scratch, nullptr, root, modelBodyTransform(u.bodyPitch,u.bodyRoll), anim, facing, u.player, false, true,
                 /*shadow=*/true, nullptr, &meta, corpseCull);
         const float sx = g.ax + kShadowLX * g.alt * zm;
         const float sy = g.ay + (kProjY - kShadowLZ) * g.alt * zm;
@@ -1875,10 +2075,36 @@
             SDL_RenderGeometry(ren_, nullptr, fan.data(), int(fan.size()), nullptr, 0);
             SDL_SetRenderDrawBlendMode(ren_, pbm);
         }
+        auto constructionParticles=[&](bool frontPass) {
+            if (u.constructionParticles.empty()) return;
+            std::string side=u.type->side;
+            std::transform(side.begin(),side.end(),side.begin(),::tolower);
+            const char* name=side=="tar" ? "tarosbuild" : side=="ver" ? "verunabuild" :
+                             side=="zon" ? "zhonbuild" : side=="cre" ? "creonbuild" : "aramonbuild";
+            const auto* effect=effectFor(name);
+            if (!effect || effect->frames.empty()) return;
+            for (const auto& particle:u.constructionParticles) {
+                if ((particle.z>=0)!=frontPass) continue;
+                const auto index=tak::retailEffectFrame(effect->durations,effect->loop,particle.displayAge);
+                if (!index || *index>=effect->frames.size()) continue;
+                const auto& frame=effect->frames[*index];
+                auto high=[](int32_t base,int32_t offset) {
+                    return int32_t(int16_t((uint32_t(base)+uint32_t(offset))>>16));
+                };
+                const auto& origin=u.worldPosition;
+                const int ox=high(origin[0],0),oy=high(origin[1],0),oz=high(origin[2],0);
+                const float dx=float(high(origin[0],particle.x)-ox);
+                const float dy=float(high(origin[2],particle.z)-(high(origin[1],particle.y)>>1)
+                                     -oz+(oy>>1));
+                SDL_FRect rect{ax+(dx-frame.ax)*zm,ay+(dy-frame.ay)*zm,
+                               float(frame.w)*zm,float(frame.h)*zm};
+                SDL_RenderCopyF(ren_,frame.tex,nullptr,&rect);
+            }
+        };
+        constructionParticles(false);
         // Submit the pre-built, depth-sorted vertex runs -- one SDL_RenderGeometry
         // per texture (usually 1 per unit). The veterancy/conjure colour tint was
         // already baked into the vertices on the worker pool.
-        bool conjuring = u.type && (u.underConstruction || birthProgress(u.id) < 1.0f);
         int off = 0;
         for (const auto& r : g.runs) {
             // A null run texture (an atlas page that failed to allocate under
@@ -1891,6 +2117,8 @@
             off += r.second;
         }
 
+        constructionParticles(true);
+
         // Build/reclaim nano-sparkle. Retail sparkles BOTH ends -- the worker unit AND
         // its target -- but only once the job has really STARTED: a placed site shows as
         // a ghost until buildBegun (above), and a reclaim sparkles only once the builder
@@ -1902,18 +2130,6 @@
         };
         auto uFootW = [&] { return std::max(u.type->footX, 1) * 16.0f * zm; };
         auto uFootH = [&] { return std::max(u.type->footZ, 1) * 16.0f * zm; };
-
-        // Retail sparkles BOTH ends of a conjure: the SITE being built AND the
-        // conjuror working it. Sparkle the site when this unit is that site...
-        if (conjuring)
-            sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());
-        // ...and sparkle this unit when it is the conjuror actively working (a build
-        // site, or producing from its queue -- the repeat/infinite conjure path).
-        // Flying conjurors move while hovering around the active site. That
-        // movement must not suppress their end of the build effect.
-        if (u.type && u.type->isBuilder && u.conjuring &&
-            (u.type->canFly || !u.walking()))
-            sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());
 
         // A reclaimer IN RANGE (the reclaim has really started -- range test mirrors
         // World::tickReclaim): sparkle the reclaimer AND the feature it is chewing on.
@@ -2090,11 +2306,16 @@
         std::string seq = def.valueOr(seqKey, "");
         std::string seqShad = def.valueOr(shadKey, "");
         if (seq.empty()) return nullptr;   // e.g. a def without seqnameburn
-        std::string key = file + "|" + seq;
+        const std::string world = def.valueOr("world", "aramon");
+        const bool burn = std::string_view(seqKey) == "seqnameburn";
+        const bool animate = burn || def.numberOr("animating", 0) != 0 ||
+                             def.numberOr("animatable", 0) != 0;
+        const std::array<std::string, 6> key{file, seq, seqShad, world,
+                                           animate ? "1" : "0", burn ? "1" : "0"};
         auto it = featureArt_.find(key);
         if (it != featureArt_.end()) return it->second.tex ? &it->second : nullptr;
         FeatArt a{};
-        const auto* pal = featurePalette(def.valueOr("world", "aramon"));
+        const auto* pal = featurePalette(world);
         if (pal) {
             try {
                 std::string f = file;
@@ -2107,11 +2328,10 @@
                 };
                 for (auto& sq : tak::gaf::load(vread("anims/" + f + ".gaf"), *pal, -1,
                                                "anims/" + f + ".gaf")) {
-                    if (sq.frames.empty() || sq.frames[0].width == 0) continue;
+                    if (sq.frames.empty()) continue;
                     auto& fr = sq.frames[0];
                     if (ieq(sq.name, seq)) {
-                        bool animate = def.numberOr("animating", 0) != 0 ||
-                                       def.numberOr("animatable", 0) != 0;
+                        a.bodyLoop = !animate || sq.loopFlag != 0;
                         size_t nf = animate ? sq.frames.size() : 1;
                         // Keep EVERY frame at its own size/anchor: wave sequences
                         // author their motion through per-frame w/h/xoff/yoff (the
@@ -2120,16 +2340,20 @@
                         int acc = 0;
                         for (size_t fi = 0; fi < nf; ++fi) {
                             auto& ff = sq.frames[fi];
-                            if (ff.width == 0 || ff.height == 0) continue;
+                            // Blank frames still occupy their authored clock slot.
+                            // A transparent backing texture keeps them loadable even
+                            // when the first frame has no drawable geometry.
+                            const bool blank = ff.width == 0 || ff.height == 0;
                             SDL_Texture* t = gpuvram::create(
                                 ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
-                                ff.width, ff.height);
+                                blank ? 1 : ff.width, blank ? 1 : ff.height);
                             if (!t) continue;   // VRAM-pressure alloc fail: drop the frame
-                            premulUpload(t, ff.rgba, ff.width);
+                            if (blank) premulUpload(t, std::vector<uint8_t>(4, 0), 1);
+                            else premulUpload(t, ff.rgba, ff.width);
                             if (bilinear_) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
                             a.frames.push_back(t);
                             a.fgeom.push_back({ff.width, ff.height, ff.xoff, ff.yoff});
-                            acc += std::max(1, ff.delayTicks);
+                            acc += std::max(1, int(ff.retailDelayTicks));
                             a.tickEnd.push_back(acc);
                         }
                         a.totalTicks = acc;
@@ -2139,17 +2363,29 @@
                             a.xoff = a.fgeom[0].xoff; a.yoff = a.fgeom[0].yoff;
                         }
                     } else if (!seqShad.empty() && ieq(sq.name, seqShad)) {
-                        // Shadow: silhouette drawn as translucent black.
-                        std::vector<uint8_t> px = fr.rgba;
-                        for (size_t i = 0; i + 3 < px.size(); i += 4) {
-                            px[i] = px[i + 1] = px[i + 2] = 0;
-                            px[i + 3] = px[i + 3] ? 90 : 0;
+                        // Retail forces burn-shadow sequences nonlooping at load.
+                        a.shadowLoop = std::string_view(seqKey) != "seqnameburn" &&
+                            (!animate || sq.loopFlag != 0);
+                        const size_t count = animate ? sq.frames.size() : 1;
+                        for (size_t index = 0; index < count; ++index) {
+                            const auto& frame = sq.frames[index];
+                            const bool blank = frame.width == 0 || frame.height == 0;
+                            std::vector<uint8_t> px = blank ? std::vector<uint8_t>(4, 0) : frame.rgba;
+                            for (size_t i = 0; i + 3 < px.size(); i += 4) {
+                                px[i] = px[i + 1] = px[i + 2] = 0;
+                                px[i + 3] = px[i + 3] ? 90 : 0;
+                            }
+                            auto* texture = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
+                                SDL_TEXTUREACCESS_STATIC, blank ? 1 : frame.width, blank ? 1 : frame.height);
+                            if (texture) {
+                                premulUpload(texture, px, blank ? 1 : frame.width);
+                                if (bilinear_) SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear);
+                            }
+                            a.shadowFrames.push_back(texture);
+                            a.shadowGeom.push_back({frame.width, frame.height, frame.xoff, frame.yoff});
+                            a.shadowDurations.push_back(frame.retailDelayTicks);
                         }
-                        a.shadow = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
-                                                     SDL_TEXTUREACCESS_STATIC, fr.width,
-                                                     fr.height);
-                        premulUpload(a.shadow, px, fr.width);
-                        if (bilinear_) SDL_SetTextureScaleMode(a.shadow, SDL_ScaleModeLinear);
+                        a.shadow = a.shadowFrames.front();
                         a.sw = fr.width; a.sh = fr.height;
                         a.sxoff = fr.xoff; a.syoff = fr.yoff;
                     }
@@ -2210,6 +2446,7 @@
     void GameView::swapFeatureArt(FeatureInst& fi, const std::string& name) {
         fi.name = name;
         fi.burnArt = nullptr;
+        fi.frontFlame = fi.backFlame = nullptr;
         fi.tree = false;   // a burnt stump/smudge doesn't sway
         auto di = featureDefs_.find(name);
         FeatArt* a = di != featureDefs_.end() ? featureArtFor(di->second) : nullptr;
@@ -2234,10 +2471,8 @@
         // simMutex_ across the whole scan meant the worker waited on art
         // replacement, atlas lookups, texture loads and effect spawns. Render-side
         // acquisition is nonblocking so neither thread waits on the other's work.
-        // Only the LOCKED scans below are gated on the generation counter -- the apply
-        // loop after them still runs every frame, because that is what keeps burning
-        // features emitting smoke on their own timer. Skipping the whole function when
-        // nothing changed would have silently stopped the fire effects.
+        // The generation counter gates the locked scans. The apply loop consumes
+        // that cached state; smoke emission and motion use the simulation tick queue.
         std::vector<FeatSim>& simState = featSimState_;
         const uint32_t featGen = world_.featGeneration();   // atomic; no lock needed
         const bool featDirty = featGen != lastFeatGen_ || simState.size() != features_.size();
@@ -2257,7 +2492,7 @@
             for (const auto& fi : features_) {
                 const auto* sf = world_.feature(fi.simId);
                 simState.push_back(sf ? FeatSim{sf->type, sf->alive && sf->burn != 0,
-                                                sf->alive, sf->fx, sf->fz, true}
+                                                sf->alive, sf->fx, sf->fz, true, sf->burnStarted}
                                       : FeatSim{-1, false, true, 1, 1, false});
             }
             // The type NAMES are read below too, and featureTypes() is filled at map
@@ -2294,26 +2529,28 @@
             const bool b = st.burning;
             if (b && !fi.burnVis) {                             // ignition edge
                 auto di = featureDefs_.find(fi.name);
-                if (di != featureDefs_.end())
+                fi.burnStarted = st.burnStarted;
+                fi.frontFlame = fi.backFlame = nullptr;
+                if (di != featureDefs_.end()) {
                     fi.burnArt = featureArtFor(di->second, "seqnameburn",
                                                "seqnameburnshad");
+                    const auto flame = [&](const char* key) -> const EffectAnim* {
+                        const auto name = di->second.valueOr(key, "");
+                        return name.empty() ? nullptr : effectFor(name);
+                    };
+                    fi.frontFlame = flame("seqnamefrontflame");
+                    fi.backFlame = flame("seqnamebackflame");
+                }
                 static const bool kBurnLog = tak::devEnv("TAK_BURNLOG") != nullptr;
                 if (kBurnLog)
-                    std::fprintf(stderr, "burn-vis %s art=%d\n", fi.name.c_str(),
-                                 fi.burnArt && fi.burnArt->tex ? 1 : 0);
-                // Flame overlays: retail plays seqnamefrontflame/backflame from a
-                // shared flame registry; our looping "flame" effect stands in,
-                // sized to cover the 5s sim burn.
-                spawnEffectAnim("flame", fi.x, fi.z, 0.0f, 0.0f, 7);
-                spawnEffectAnim("flame", fi.x - 8, fi.z + 6, 0.3f, 0.0f, 7);
+                    std::fprintf(stderr, "burn-vis %s art=%d front=%zu back=%zu\n", fi.name.c_str(),
+                                 fi.burnArt && fi.burnArt->tex ? 1 : 0,
+                                 fi.frontFlame ? fi.frontFlame->frames.size() : 0,
+                                 fi.backFlame ? fi.backFlame->frames.size() : 0);
+
             }
             fi.burnVis = b ? 1 : 0;
-            if (b && animClock_ >= fi.lastSmoke + 0.35f &&
-                (noFog_ || cellVisibleR(fi.x, fi.z))) {
-                fi.lastSmoke = animClock_ + float(salt_++ % 20) * 0.01f;
-                spawnBurst(fi.x, fi.z, 2, 90, 80, 80, 12, 2.6f, 1, float(fi.h) * 0.4f);
-                spawnBurst(fi.x, fi.z, 1, 240, 140, 40, 14, 1.8f, 0, 6);
-            }
+
         }
         // Features the SIM created mid-game (corpses) get a visual instance on
         // first sight. No nav blocking here -- the sim owns corpse blocking.
@@ -2784,36 +3021,50 @@
         if (it != effectAnims_.end())
             return it->second.frames.empty() ? nullptr : &it->second;
         EffectAnim ea;
-        const auto* pal = featurePalette("aramon");   // ignored for truecolor TAF
+        // Retail 4bd980 loads fx.pcx into game+17410, passed to effect banks
+        // including smoke and damage flames. Feature palettes are different.
+        tak::gaf::Palette effectPalette;
+        try { effectPalette=tak::gaf::Palette::fromBytes(vread("palettes/fx.pcx"),"palettes/fx.pcx"); }
+        catch(const std::exception&) {} // retain the decoder's missing-palette fallback
         // "file:sequence" targets a specific GAF sequence (e.g. "flames:flame large");
-        // a bare name uses the file of that name and its like-named (or first) sequence.
+        // A bare name uses the file of that name and its like-named sequence.
+        // Native 537550 returns null when the requested name is absent.
         std::string file = animName, seqWant = animName;
         if (auto c = animName.find(':'); c != std::string::npos) {
             file = animName.substr(0, c);
             seqWant = animName.substr(c + 1);
         }
+        seqWant=tak::hpi::MountSet::key(seqWant);
         for (const std::string suf : {"_4444.taf", "_1555.taf", ".taf", ".gaf"}) {
             if (!ea.frames.empty()) break;
             try {
                 std::string ap = "anims/" + file + suf;
-                auto seqs = tak::gaf::load(vread(ap), pal ? *pal : tak::gaf::Palette{}, -1, ap);
+                auto seqs = tak::gaf::load(vread(ap), effectPalette, -1, ap);
                 const tak::gaf::Sequence* seq = nullptr;
                 for (auto& s : seqs) {
-                    if (s.frames.empty()) continue;
-                    if (!seq) seq = &s;
-                    std::string sn = s.name;
-                    std::transform(sn.begin(), sn.end(), sn.begin(), ::tolower);
-                    if (sn == seqWant) { seq = &s; break; }
+                    if (tak::hpi::MountSet::key(s.name) == seqWant) { seq = &s; break; }
                 }
                 if (!seq) continue;
+                ea.loop=seq->loopFlag!=0;
                 for (auto& fr : seq->frames) {
-                    if (fr.width == 0 || fr.height == 0) continue;
+                    // Blank frames still occupy an authored frame index and
+                    // duration. Dropping them shifts every subsequent frame,
+                    // including indices supplied by the simulation storm clock.
+                    const bool blank=fr.width==0 || fr.height==0;
                     SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                        SDL_TEXTUREACCESS_STATIC,
-                                                       fr.width, fr.height);
-                    SDL_UpdateTexture(t, nullptr, fr.rgba.data(), fr.width * 4);
-                    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_ADD);   // fiery glow
-                    ea.frames.push_back({t, fr.width, fr.height, fr.xoff, fr.yoff});
+                                                       blank ? 1 : fr.width, blank ? 1 : fr.height);
+                    const uint32_t transparent=0;
+                    SDL_UpdateTexture(t, nullptr, blank ? static_cast<const void*>(&transparent) :
+                        static_cast<const void*>(fr.rgba.data()), blank ? 4 : fr.width * 4);
+                    // Glide adds only format-4 frames without flag FF. Indexed
+                    // and 1555 sprites use ordinary coverage in the default
+                    // draw mode; SDL alpha preserves their transparent pixels.
+                    SDL_SetTextureBlendMode(t,fr.encoding==4 && fr.blendFlag!=255 ?
+                        SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
+                    ea.durations.push_back(fr.retailDelayTicks);
+                    ea.frames.push_back({t, fr.width, fr.height, fr.xoff, fr.yoff,
+                        int(fr.retailDelayTicks),fr.encoding});
                 }
             } catch (const std::exception&) {}
         }
@@ -2823,11 +3074,73 @@
     }
 
     void GameView::updateEffects(float dt) {
+        const auto& terrain=mapView_.map();
+#ifndef NDEBUG
+        size_t bloodBefore=0;
+        if(tak::devEnv("TAK_BLOOD_TEST"))
+            for(const auto& debris:detachedPieces_)bloodBefore+=debris.blood.size();
+#endif
+        std::erase_if(detachedPieces_,[&](DetachedPiece& debris) {
+            while(int32_t(front().gameTick-debris.tick)>0) {
+                ++debris.tick;
+                const auto result=debris.motion.tick(uint8_t(terrain.seaLevel),8155,debrisLavaWorld_,debrisNoSeaTrigger_,
+                    [&](const auto& position) {
+                        return terrain.heights.empty() ? -1 : tak::retailDebrisTerrainHeight(
+                            position[0],position[2],terrain.width,terrain.height,[&](int x,int z) {
+                                return terrain.heights[size_t(z)*size_t(terrain.width)+size_t(x)];
+                            });
+                    });
+                if(!result.alive) {
+                    loadExplosionClasses();
+                    if(result.light>=0)
+                        explosionGlows_.push_back({0,0,0,debris.tick,unsigned(result.light),debris.motion.position});
+                    if(result.effect>=0 && size_t(result.effect)<explosionClassOrder_.size()) {
+                        const auto& p=debris.motion.position;
+                        if(spawnEffect(explosionClassOrder_[size_t(result.effect)],
+                                       float(p[0])/65536.f,float(p[2])/65536.f)) {
+                            effects_.back().worldPosition=p;effects_.back().started=debris.tick;
+                        }
+                    }
+                    return true;
+                }
+                std::erase_if(debris.blood,[&](auto& particle) {
+                    const auto contact=particle.tick(8155,uint8_t(terrain.seaLevel),[&](const auto& p) {
+                        return terrain.heights.empty() ? -1 : tak::sim::retailTerrainHeight(
+                            p[0],p[2],terrain.width,terrain.height,[&](int x,int z) {
+                                return terrain.heights[size_t(z)*size_t(terrain.width)+size_t(x)];
+                            });
+                    });
+                    if(contact.stain) {
+                        if(bloodStains_.size()==2048)bloodStains_.pop_front();
+                        bloodStains_.push_back(particle);
+                    }
+                    return !contact.alive;
+                });
+            }
+            return false;
+        });
+#ifndef NDEBUG
+        if(bloodBefore && tak::devEnv("TAK_BLOOD_TEST")) {
+            size_t bloodAfter=0;
+            for(const auto& debris:detachedPieces_)bloodAfter+=debris.blood.size();
+            if(!bloodAfter) {
+                if(bloodStains_.size()!=100)
+                    throw std::runtime_error("live blood fixture lost particles before ground contact");
+                std::fprintf(stderr,"PASS: live blood fixture reached 100 persistent stains, no airborne particles\n");
+            }
+        }
+#endif
         for (auto& b : beams_) b.age += dt;
         std::erase_if(beams_, [](const BeamFx& b) { return b.age > b.life; });
+        std::erase_if(explosionGlows_,[this](const ExplosionGlow& glow) {
+            return front().gameTick-glow.started>uint32_t(tak::retailGlowEnvelope(glow.kind).duration);
+        });
         for (auto& e : effects_) e.age += dt;
-        std::erase_if(effects_, [](const EffectInst& e) {
+        std::erase_if(effects_, [this](const EffectInst& e) {
             if (!e.anim || e.anim->frames.empty()) return true;
+            if(e.authoredTiming) {
+                return !tak::retailEffectFrame(e.anim->durations,false,front().gameTick-e.started);
+            }
             float local = e.age - e.delay;
             return local >= effLoopLen(e) * float(std::max(e.loops, 1));
         });
@@ -2866,29 +3179,257 @@
         }
     }
 
+    void GameView::buildDetachedShadow(const DetachedPiece& debris, float zoom) {
+        detachedShadowVerts_.clear();
+        detachedMaskedShadows_.clear();
+        if (!shadowsOnFrame_) return;
+
+        Anim snapshot;
+        snapshot.pieceNames = &debris.names;
+        snapshot.capturedPose = debris.poses;
+        constexpr float radians = 6.28318530717959f / 65536.0f;
+        tris_.clear();
+        // A detached piece is a real model root, not the ground-reference root of
+        // a unit model. Retail sends it through the same projected-model shadow
+        // path as a live unit (4ee700 -> 4ec720); keep the root visible here.
+        collect(tris_, nullptr, debris.model,
+                modelBodyTransform(debris.motion.rotation[0], debris.motion.rotation[2]),
+                &snapshot, -float(debris.motion.rotation[1]) * radians,
+                debris.player, false, false, true);
+
+        const auto& position = debris.motion.position;
+        const int x = position[0] >> 16;
+        const int y = position[1] >> 16;
+        const int z = position[2] >> 16;
+        const float altitude = std::max(0.0f, float(y) - rawHeight(float(x), float(z)));
+        const float zm = zoom;
+        // The body anchor is z - y/2. Retail's shadow projection uses z - y/4,
+        // so relative to that body anchor the detached shadow moves +y/4 in both
+        // screen axes, exactly like buildUnitShadow's altitude offset.
+        const float sx = (float(x) - mapView_.offX()) * zm + kShadowLX * altitude * zm;
+        const float sy = (float(z - (y >> 1)) + float(heightRef_) * 0.5f - mapView_.offY()) * zm +
+                         (kProjY - kShadowLZ) * altitude * zm;
+        detachedShadowVerts_.reserve(tris_.size() * 3);
+        detachedMaskedShadows_.reserve(tris_.size());
+        for (const Tri& triangle : tris_) {
+            if (triangle.tex) {
+                Tri masked = triangle;
+                for (auto& vertex : masked.v)
+                    vertex.position = {sx + vertex.position.x * zm,
+                                       sy + vertex.position.y * zm};
+                detachedMaskedShadows_.push_back(masked);
+            } else {
+                for (const auto& vertex : triangle.v)
+                    detachedShadowVerts_.push_back({sx + vertex.position.x * zm,
+                                                    sy + vertex.position.y * zm});
+            }
+        }
+    }
+
+    void GameView::drawDetachedShadow() {
+        static const SDL_Color color{kShadowLevel, kShadowLevel, kShadowLevel, 255};
+        static const float uv[2] = {0, 0};
+        if (!detachedShadowVerts_.empty())
+            SDL_RenderGeometryRaw(ren_, nullptr, &detachedShadowVerts_[0].x, sizeof(SDL_FPoint),
+                                  &color, 0, uv, 0, int(detachedShadowVerts_.size()),
+                                  nullptr, 0, 0);
+        for (const auto& triangle : detachedMaskedShadows_)
+            SDL_RenderGeometry(ren_, triangle.tex, triangle.v, 3, nullptr, 0);
+    }
+
     void GameView::drawEffects() {
+#ifndef NDEBUG
+        debugGlowDrawCount_=0;
+        if(tak::devEnv("TAK_GLOW_TEST") && explosionGlows_.empty()) {
+            const float cx=mapView_.map().blocksX*16.f,cz=mapView_.map().blocksY*16.f;
+            for(unsigned kind=0;kind<3;++kind)
+                explosionGlows_.push_back({cx+(float(kind)-1)*100,cz,0,front().gameTick,kind});
+        }
+#endif
         drawRings();
         float zm = mapView_.zoom();
+        SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_NONE);
+        const auto drawBlood=[&](const tak::RetailBloodParticle& particle) {
+            if(!noFog_ && !effectVisibleR(particle.position))return;
+            const int x=particle.position[0]>>16,y=particle.position[1]>>16,z=particle.position[2]>>16;
+            const float sx=(float(x)-mapView_.offX())*zm;
+            const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            SDL_SetRenderDrawColor(ren_,uint8_t(particle.color>>16),uint8_t(particle.color>>8),
+                uint8_t(particle.color),uint8_t(particle.color>>24));
+            SDL_RenderDrawPointF(ren_,sx,sy);
+        };
+        for(const auto& stain:bloodStains_)drawBlood(stain);
+        for(const auto& debris:detachedPieces_)for(const auto& particle:debris.blood)drawBlood(particle);
+        for(auto& debris:detachedPieces_) {
+            if(!noFog_ && !effectVisibleR(debris.motion.position))continue;
+            buildDetachedShadow(debris, zm);
+            if (!detachedShadowVerts_.empty() || !detachedMaskedShadows_.empty()) {
+                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_MOD);
+                drawDetachedShadow();
+                SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
+            }
+            Anim snapshot;snapshot.pieceNames=&debris.names;snapshot.capturedPose=debris.poses;
+            tris_.clear();
+            constexpr float radians=6.28318530717959f/65536.f;
+            collect(tris_,atlasFor(colorSlot_[debris.player&7]),debris.model,
+                modelBodyTransform(debris.motion.rotation[0],debris.motion.rotation[2]),
+                &snapshot,-float(debris.motion.rotation[1])*radians,debris.player,false,false);
+            std::stable_sort(tris_.begin(),tris_.end(),
+                [](const Tri& a,const Tri& b) {return a.depth>b.depth;});
+            const auto& position=debris.motion.position;
+            const int x=position[0]>>16,y=position[1]>>16,z=position[2]>>16;
+            const float sx=(float(x)-mapView_.offX())*zm;
+            const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            for(auto& triangle:tris_) {
+                for(auto& vertex:triangle.v) {
+                    vertex.position.x=vertex.position.x*zm+sx;
+                    vertex.position.y=vertex.position.y*zm+sy;
+                }
+                SDL_RenderGeometry(ren_,triangle.tex,triangle.v,3,nullptr,0);
+            }
+        }
+        SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
+        for(const auto& glow:explosionGlows_) {
+            if(!noFog_ && (glow.worldPosition ? !effectVisibleR(*glow.worldPosition) :
+                                               !cellVisibleR(glow.x,glow.z)))continue;
+            const auto envelope=tak::retailGlowEnvelope(glow.kind);
+            const uint32_t elapsed=front().gameTick-glow.started;
+            if(elapsed>uint32_t(envelope.duration))continue;
+            const auto radii=tak::retailGlowRadii(int32_t(elapsed),envelope.duration,envelope.begin,envelope.end);
+            float x=(glow.x-mapView_.offX()-terrainLiftX(glow.x,glow.z))*zm;
+            float y=(glow.z-mapView_.offY()-terrainLift(glow.x,glow.z)-glow.alt)*zm;
+            if(glow.worldPosition) {
+                const auto& p=*glow.worldPosition;
+                x=(float(p[0]>>16)-mapView_.offX())*zm;
+                y=(float((p[2]>>16)-((p[1]>>16)>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            }
+            const auto fan=tak::retailGlowMesh(x,y,float(radii[0])*zm,float(radii[1])*zm,196);
+            std::array<SDL_Vertex,36> triangles;
+            for(unsigned i=0;i<12;++i)for(unsigned j=0;j<3;++j) {
+                const auto& vertex=fan[j==0 ? 0:i+j];
+                triangles[i*3+j]={{vertex.x,vertex.y},{255,255,255,uint8_t(vertex.color>>24)},{0,0}};
+            }
+            SDL_RenderGeometry(ren_,nullptr,triangles.data(),int(triangles.size()),nullptr,0);
+#ifndef NDEBUG
+            ++debugGlowDrawCount_;
+#endif
+        }
+        for (auto it = nimbusEffects_.begin(); it != nimbusEffects_.end();) {
+            const auto* u = frameUnitP(it->first);
+            const auto& effect = it->second;
+            uint32_t elapsed = front().gameTick - effect.started;
+            size_t index = 0;
+            // Retail's faction loader forces nimbus to play once, regardless of
+            // the file's loop flag. Each frame uses its authored tick duration.
+            while (index < effect.anim->frames.size()) {
+                const auto duration = uint32_t(std::max(1, effect.anim->frames[index].ticks));
+                if (elapsed < duration) break;
+                elapsed -= duration;
+                ++index;
+            }
+            if (!u || !u->alive() || index == effect.anim->frames.size()) {
+                it = nimbusEffects_.erase(it);
+                continue;
+            }
+            ++it;
+            if (!noFog_ && !cellVisibleR(u->x, u->z)) continue;
+            const auto whole = [](int32_t value) {
+                return int(std::bit_cast<int16_t>(uint16_t(uint32_t(value) >> 16)));
+            };
+            const int x = whole(u->worldPosition[0]), y = whole(u->worldPosition[1]),
+                      z = whole(u->worldPosition[2]);
+            (void)heightAbove(float(x), float(z));
+            const auto& f = effect.anim->frames[index];
+            SDL_FRect dst{(float(x) - mapView_.offX() - f.ax) * zm,
+                (float(z - (y >> 1)) + float(heightRef_) * 0.5f - mapView_.offY() - f.ay) * zm,
+                f.w * zm, f.h * zm};
+            SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
+        }
         for (const auto& e : effects_) {
             if (!e.anim || e.anim->frames.empty()) continue;
             float local = e.age - e.delay;
             if (local < 0) continue;                // still waiting to start
-            if (!cellVisibleR(e.x, e.z)) continue;
-            float per = effLoopLen(e);
-            float within = local - std::floor(local / per) * per;   // into this loop
-            int nf = int(e.anim->frames.size());
-            int fi = std::clamp(int(within / per * float(nf)), 0, nf - 1);
+            if (e.worldPosition ? !effectVisibleR(*e.worldPosition) :
+                (!noFog_ && !cellVisibleR(e.x,e.z))) continue;
+            const int nf = int(e.anim->frames.size());
+            int fi=0;
+            if(e.authoredTiming) {
+                const auto frame=tak::retailEffectFrame(e.anim->durations,false,front().gameTick-e.started);
+                if(!frame || *frame>=e.anim->frames.size())continue;
+                fi=int(*frame);
+            } else {
+                const float per=effLoopLen(e);
+                const float within=local-std::floor(local/per)*per;
+                fi=std::clamp(int(within/per*float(nf)),0,nf-1);
+            }
             const EFrame& f = e.anim->frames[size_t(fi)];
             float sx = (e.x - mapView_.offX()) * zm - f.ax * zm - terrainLiftX(e.x, e.z) * zm;
             float sy = (e.z - mapView_.offY()) * zm - f.ay * zm - terrainLift(e.x, e.z) * zm
                        - e.alt * zm;
+            if(e.worldPosition) {
+                const auto& position=*e.worldPosition;
+                const int x=position[0]>>16,y=position[1]>>16,z=position[2]>>16;
+                sx=(float(x)-mapView_.offX()-f.ax)*zm;
+                sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY()-f.ay)*zm;
+            }
             SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
             SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
         }
     }
 
     void GameView::drawUnitFx() {
+#ifndef NDEBUG
+        debugSmokeDrawCount_=0;debugDamageFlameDrawCount_=0;debugPointDrawCount_=0;
+#endif
         float zm = mapView_.zoom();
+        if(!smokeSprites_.empty() || !pointParticles_.empty())(void)heightAbove(0,0);
+        for(const auto& [owner,particles]:pointParticles_)for(const auto& particle:particles) {
+            const int x=particle.position[0]>>16,y=particle.position[1]>>16,z=particle.position[2]>>16;
+            const float sx=(float(x)-mapView_.offX())*zm;
+            const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            if(!tak::retailViewportCenterAdmitted(sx,sy,
+                    float(mapViewW(winW_)),float(winH_)))continue;
+            const auto color=particle.color();
+            SDL_SetRenderDrawColor(ren_,color[0],color[1],color[2],color[3]);
+            SDL_RenderDrawPointF(ren_,sx,sy);
+#ifndef NDEBUG
+            ++debugPointDrawCount_;
+#endif
+        }
+        for(const auto& [owner,sprites]:smokeSprites_)for(const auto& sprite:sprites) {
+            const auto& particle=sprite.particle;
+            if(particle.frame>=sprite.art->frames.size())continue;
+            const auto& f=sprite.art->frames[particle.frame];
+            const int x=particle.position[0]>>16,y=particle.position[1]>>16,z=particle.position[2]>>16;
+            const float sx=(float(x)-mapView_.offX())*zm;
+            const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            if(!tak::retailViewportCenterAdmitted(sx,sy,
+                    float(mapViewW(winW_)),float(winH_)))continue;
+            SDL_FRect dst{sx-f.ax*zm,sy-f.ay*zm,f.w*zm,f.h*zm};
+            SDL_SetTextureAlphaMod(f.tex,f.encoding==4 ? 255 : 128);
+            SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
+            SDL_SetTextureAlphaMod(f.tex,255);
+#ifndef NDEBUG
+            ++debugSmokeDrawCount_;
+#endif
+        }
+
+        for(const auto& [owner,sprites]:damageFlames_)for(const auto& sprite:sprites) {
+            if(!sprite.clock.active || sprite.clock.frame>=sprite.art->frames.size())continue;
+            const auto& f=sprite.art->frames[sprite.clock.frame];
+            const int x=sprite.position[0]>>16,y=sprite.position[1]>>16,z=sprite.position[2]>>16;
+            const float sx=(float(x)-mapView_.offX())*zm;
+            const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+            if(!tak::retailViewportCenterAdmitted(sx,sy,
+                    float(mapViewW(winW_)),float(winH_)))continue;
+            SDL_FRect dst{sx-f.ax*zm,sy-f.ay*zm,f.w*zm,f.h*zm};
+            SDL_SetTextureAlphaMod(f.tex,f.encoding==4 ? 255 : 128);
+            SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
+            SDL_SetTextureAlphaMod(f.tex,255);
+#ifndef NDEBUG
+            ++debugDamageFlameDrawCount_;
+#endif
+        }
         const float kLinger = 0.8f;   // seconds after the last emit to keep drawing
         for (auto& [id, a] : anims_) {
             bool fire = a.fireFx && a.fireT < kLinger;
@@ -2897,19 +3438,21 @@
             const auto* u = frameUnitP(id);
             if (!u || !u->type) continue;
             if (!noFog_ && !cellVisibleR(u->x, u->z)) continue;
-            auto draw = [&](const EffectAnim* ea, float lift, float fps) {
+            auto draw = [&](const EffectAnim* ea, int piece, float fps) {
+                float x, z, lift;
+                scriptEffectOrigin(*u, a, piece, x, z, lift);
                 int nf = int(ea->frames.size());
                 int fi = int(animClock_ * fps + float(id) * 0.37f) % nf;
                 if (fi < 0) fi += nf;
                 const EFrame& f = ea->frames[size_t(fi)];
-                float sx = (u->x - mapView_.offX()) * zm - f.ax * zm - terrainLiftX(u->x, u->z) * zm;
-                float sy = (u->z - mapView_.offY()) * zm - f.ay * zm - terrainLift(u->x, u->z) * zm
+                float sx = (x - mapView_.offX()) * zm - f.ax * zm - terrainLiftX(u->x, u->z) * zm;
+                float sy = (z - mapView_.offY()) * zm - f.ay * zm - terrainLift(u->x, u->z) * zm
                            - lift * zm;
                 SDL_FRect dst{sx, sy, f.w * zm, f.h * zm};
                 SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
             };
-            if (smk) draw(a.smokeFx, a.smokeLift, 12.0f);
-            if (fire) draw(a.fireFx, a.fireLift, 18.0f);   // flame over its smoke
+            if (smk) draw(a.smokeFx, a.smokePiece, 12.0f);
+            if (fire) draw(a.fireFx, a.firePiece, 18.0f);   // flame over its smoke
         }
     }
 

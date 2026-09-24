@@ -1,6 +1,8 @@
 #pragma once
 
 #include "cob/cob.h"
+#include "cob/retailpieces.h"
+#include <span>
 
 #include <cstdint>
 #include <functional>
@@ -46,6 +48,11 @@ public:
     explicit Vm(File file, bool deterministicRand = false)
         : Vm(std::make_shared<const File>(std::move(file)), deterministicRand) {}
 
+    ~Vm();
+    // Unit display animations use the retail integer scheduler and piece controller.
+    // Mission scripting retains the general-purpose interpreter and its map hooks.
+    void enableRetailAnimation();
+
     // Start a script by name with integer args; returns false if unknown.
     bool start(const std::string& script, const std::vector<int32_t>& args = {});
 
@@ -72,26 +79,34 @@ public:
     std::function<void(int32_t nameIdx)> onPlaySound;
     // explode (0x10071000): piece flies off as debris (flags = COB explode type;
     // bit 0x20 = no debris entity, high bits add one-shot effects -- icd 0x50dd20).
-    // The VM hides the piece when debris spawns; the hook only STASHES (worker
-    // thread), the host drains on the main thread like onEmitSfx.
-    std::function<void(int piece, int32_t flags)> onExplode;
+    // The hook sees the pose before hiding, matching retail's copy-then-hide.
+    // Return true only when debris creation is accepted. Rejection leaves the
+    // source visible; subsequent script SHOW/HIDE instructions still take effect.
+    std::function<bool(int piece, int32_t flags)> onExplode;
+    // Model hierarchy is display-owned; indices refer to the COB piece table.
+    void setExplosionDescendants(std::vector<std::vector<int>> descendants) {
+        explosionDescendants_=std::move(descendants);
+    }
     void setStatic(size_t i, int32_t v);
-    void reset() { threads_.clear(); }   // stop all threads, keep piece poses
+    void reset();   // stop all threads, keep piece poses
 
     // Advance time by dt seconds: run threads, progress animations.
     void tick(float dt);
 
     const std::vector<PieceState>& pieces() const { return pieces_; }
+    std::span<const RetailPiece> retailPieces() const;
     const File& file() const { return *file_; }
-    size_t threadCount() const { return threads_.size(); }
-    std::vector<uint32_t> threadPcs() const {
-        std::vector<uint32_t> out;
-        for (const auto& t : threads_) out.push_back(t.pc);
-        return out;
-    }
-    int32_t getStatic(size_t i) const { return i < statics_.size() ? statics_[i] : 0; }
+    size_t threadCount() const;
+    std::vector<uint32_t> threadPcs() const;
+    bool mayReachExplosion(std::span<const uint8_t> reachability) const;
+    int32_t getStatic(size_t i) const;
 
 private:
+    struct Native;
+    std::unique_ptr<Native> native_;
+    void exportNativePieces();
+    void hideExplodedPiece(int piece,int32_t flags);
+    std::vector<std::vector<int>> explosionDescendants_;
     struct Thread {
         uint32_t pc = 0;
         std::vector<int32_t> stack;

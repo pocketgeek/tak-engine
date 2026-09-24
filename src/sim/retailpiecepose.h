@@ -67,10 +67,12 @@ inline void retailRotatePiece(std::array<int32_t,3>& point,
 struct RetailModelPiece {
     std::array<int32_t,3> offset{};
     int parent=-1,scriptPiece=-1;
+    std::array<std::array<int32_t,3>,2> emissionVertices{};
+    uint8_t emissionVertexCount=0;
 };
 
 inline std::array<int32_t,3> retailPieceOrigin(std::span<const RetailModelPiece> model,
-        std::span<const cob::RetailPiece> poses,int scriptPiece,uint16_t heading) {
+        std::span<const cob::RetailPiece> poses,int scriptPiece,uint16_t heading,uint16_t pitch=0,uint16_t roll=0) {
     int index=-1;
     for (size_t i=0;i<model.size();++i)
         if (model[i].scriptPiece==scriptPiece) { index=int(i); break; }
@@ -91,7 +93,11 @@ inline std::array<int32_t,3> retailPieceOrigin(std::span<const RetailModelPiece>
         std::array<uint16_t,3> angles{};
         if (parent.scriptPiece>=0)
             for (size_t i=0;i<3;++i) angles[i]=uint16_t(poses[size_t(parent.scriptPiece)].turn[i]);
-        if (parent.parent<0) angles[1]=uint16_t(angles[1]+heading);
+        if (parent.parent<0) {
+            angles[0]=uint16_t(angles[0]+pitch);
+            angles[1]=uint16_t(angles[1]+heading);
+            angles[2]=uint16_t(angles[2]+roll);
+        }
         retailRotatePiece(result,angles);
         auto offset=translated(parent);
         for (size_t i=0;i<3;++i)
@@ -100,5 +106,23 @@ inline std::array<int32_t,3> retailPieceOrigin(std::span<const RetailModelPiece>
     result[2]=std::bit_cast<int32_t>(0u-uint32_t(result[2]));
     return result;
 }
+
+// 4dd2a0: SweetSpot uses mirrored model-space vertex bounds, including zero.
+// The native extrema start at zero, and signed center division truncates to zero.
+struct RetailPieceBounds {
+    std::array<int32_t,3> minimum{},maximum{};
+    void add(const std::array<int32_t,3>& point) {
+        for(size_t axis=0;axis<3;++axis) {
+            minimum[axis]=std::min(minimum[axis],point[axis]);
+            maximum[axis]=std::max(maximum[axis],point[axis]);
+        }
+    }
+    std::array<int32_t,3> center() const {
+        std::array<int32_t,3> result{};
+        for(size_t axis=0;axis<3;++axis)
+            result[axis]=std::bit_cast<int32_t>(uint32_t(minimum[axis])+uint32_t(maximum[axis]))/2;
+        return result;
+    }
+};
 
 } // namespace tak::sim

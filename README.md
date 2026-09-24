@@ -100,6 +100,8 @@ Movement and other selected routines are compared against the retail executable
 with emulation-based checks. The AI is this project's implementation, not a
 complete reproduction of retail AI. See [retail-engine.md](docs/retail-engine.md)
 and [pathfinding-port.md](docs/pathfinding-port.md) for the scope and evidence.
+The [transport and animation audit](docs/transport-animation-audit-2026-09-21.md)
+documents carrier corrections and the all-script retail comparisons.
 
 Rendering uses worker threads, culling, texture atlases, batched shadows, streamed
 terrain, and texture-budget controls. Simulation uses spatial queries, bounded
@@ -471,7 +473,7 @@ Debug builds also support direct playback:
 
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
-compatible engine behavior and game data. Version 0.7.0 uses protocol **177** for the naval combat fixes.
+compatible engine behavior and game data. The current checkout uses protocol **178** for the transport corrections; published 0.7.0 uses **177**.
 Different-protocol peers and replays, including those from 0.6.9 (protocol 176),
 are rejected.
 

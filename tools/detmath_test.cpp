@@ -16,6 +16,7 @@
 #include <string>
 
 #include "sim/detmath.h"
+#include "sim/retailaim.h"
 #include "sim/retailmotion.h"
 #include "sim/retailexploration.h"
 
@@ -93,6 +94,23 @@ int main(int argc, char** argv) {
             });
         mixBits(float(sight.active));
     }
+
+    double preciseAtanMax=0;
+    auto sampleAtan=[&](double x) {
+        const double value=tak::detmath::atan(x);
+        const auto bits=std::bit_cast<uint64_t>(value);
+        for(int j=0;j<8;++j) {g_hash^=(bits>>(j*8))&255;g_hash*=1099511628211ULL;}
+        preciseAtanMax=std::max(preciseAtanMax,std::abs(value-std::atan(x)));
+    };
+    for(int i=-20000;i<=20000;++i)sampleAtan(double(i)/10000);
+    for(int exponent=-1074;exponent<=1023;++exponent) {
+        const double value=std::ldexp(1.0,exponent);
+        sampleAtan(value);sampleAtan(-value);
+    }
+    for(int i=1;i<=4096;++i)
+        mixBits(float(tak::retailBallisticPitch(float(i%317)-158,float(i%101)-50,
+            float(i%593)-296,float(i%59)+0.25f,float(i%13+1)/8,i%2)));
+    if(preciseAtanMax>5e-16) {std::printf("FAIL: double atan error %.17g\n",preciseAtanMax);return 1;}
 
     std::printf("detmath golden %016llx\n", (unsigned long long)g_hash);
     if (hashOnly) return 0;

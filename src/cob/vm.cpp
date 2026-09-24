@@ -1,4 +1,6 @@
 #include "cob/vm.h"
+#include "cob/retailstate.h"
+#include "sim/retailrng.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -32,6 +34,111 @@ float angTowards(float cur, float target, float step) {
 
 } // namespace
 
+struct Vm::Native {
+    RetailScriptState state;
+    uint32_t seed=12345;
+    double ticks=0;
+    explicit Native(const File& file):state(file) {}
+    struct Host {
+        Vm& vm;Native& native;
+        uint32_t random(int32_t bound) { return tak::sim::retailRandom(native.seed,bound); }
+        uint32_t get(int id,const std::array<uint32_t,4>& args) {
+            if (!vm.onGet) return 0;
+            std::vector<int32_t> values;
+            if (std::any_of(args.begin(),args.end(),[](uint32_t value){return value!=0;}))
+                for(auto value:args) values.push_back(std::bit_cast<int32_t>(value));
+            return uint32_t(vm.onGet(id,values));
+        }
+        void set(int id,int value) { if(vm.onSetUnitValue) vm.onSetUnitValue(id,value); }
+        uint32_t sound(int name,int32_t priority) {
+            if(vm.onPlaySound) vm.onPlaySound(name);
+            return uint32_t(priority);
+        }
+        void effect(uint32_t op,int piece,int32_t value) {
+            if(op==0x1000f000 && vm.onEmitSfx) vm.onEmitSfx(piece,value);
+            if(op==0x10071000) {
+                if(!vm.onExplode || vm.onExplode(piece,value))
+                    vm.hideExplodedPiece(piece,value);
+            }
+        }
+    };
+};
+
+Vm::~Vm()=default;
+void Vm::hideExplodedPiece(int piece,int32_t flags) {
+    if(flags&0x20)return;
+    const auto hide=[&](int index) {
+        if(index<0 || size_t(index)>=pieces_.size())return;
+        pieces_[size_t(index)].visible=false;
+        if(native_)native_->state.pieces[size_t(index)].visible=false;
+    };
+    hide(piece);
+    if((flags&64) && piece>=0 && size_t(piece)<explosionDescendants_.size())
+        for(int child:explosionDescendants_[size_t(piece)])hide(child);
+}
+void Vm::enableRetailAnimation() {
+    native_=std::make_unique<Native>(*file_);
+    exportNativePieces();
+}
+void Vm::reset() {
+    threads_.clear();
+    if(native_) {
+        for(auto& t:native_->state.vm.threads) t.flags()=0;
+        native_->state.vm.active=0;
+    }
+}
+std::span<const RetailPiece> Vm::retailPieces() const {
+    return native_ ? std::span<const RetailPiece>(native_->state.pieces) : std::span<const RetailPiece>{};
+}
+size_t Vm::threadCount() const { return native_ ? native_->state.vm.active : threads_.size(); }
+int32_t Vm::getStatic(size_t i) const {
+    if(native_) return i<native_->state.vm.statics.size() ? int32_t(native_->state.vm.statics[i]) : 0;
+    return i<statics_.size() ? statics_[i] : 0;
+}
+std::vector<uint32_t> Vm::threadPcs() const {
+    std::vector<uint32_t> out;
+    if(native_) {
+        for(const auto& t:native_->state.vm.threads) if(t.words[0]) out.push_back(t.words[1]);
+    } else for(const auto& t:threads_) out.push_back(t.pc);
+    return out;
+}
+bool Vm::mayReachExplosion(std::span<const uint8_t> reachability) const {
+    const auto unsafe=[&](size_t pc) {return pc>=reachability.size() || reachability[pc];};
+    if(native_) {
+        for(const auto& thread:native_->state.vm.threads)
+            if(thread.words[0] && unsafe(thread.words[1]))return true;
+    } else {
+        const auto reachable=[&](const auto& thread) {
+            if(thread.dead)return false;
+            if(unsafe(thread.pc))return true;
+            for(auto pc:thread.callStack)if(unsafe(pc))return true;
+            return false;
+        };
+        for(const auto& thread:threads_)if(reachable(thread))return true;
+        for(const auto& thread:pending_)if(reachable(thread))return true;
+    }
+    return false;
+}
+void Vm::exportNativePieces() {
+    for(size_t i=0;i<pieces_.size();++i) {
+        const auto& source=native_->state.pieces[i];auto& target=pieces_[i];
+        target.visible=source.visible;
+        for(int axis=0;axis<3;++axis) {
+            target.move[axis]=float(source.move[axis])*kLinear;
+            target.rot[axis]=float(source.turn[axis])*kAngle;
+            target.moveTarget[axis]=float(source.moveTarget[axis])*kLinear;
+            target.moveSpeed[axis]=std::abs(float(source.moveSpeed[axis]))*30*kLinear;
+            target.moving[axis]=source.moveSpeed[axis]!=0;
+            target.rotTarget[axis]=float(source.turnTarget[axis])*kAngle;
+            target.rotSpeed[axis]=std::abs(float(source.turnSpeed[axis]))*30*kAngle;
+            target.turning[axis]=source.turnTarget[axis]!=-1 && source.turnSpeed[axis]!=0;
+            target.spin[axis]=source.turnTarget[axis]==-1 ? float(source.turnSpeed[axis])*30*kAngle : 0;
+            target.spinTarget[axis]=float(source.spinTarget[axis])*30*kAngle;
+            target.spinAccel[axis]=float(source.spinAcceleration[axis])*900*kAngle;
+        }
+    }
+}
+
 Vm::Vm(std::shared_ptr<const File> file, bool deterministicRand)
     : file_(std::move(file)), detRand_(deterministicRand) {
     statics_.assign(file_->numStatics + 8, 0);
@@ -41,6 +148,16 @@ Vm::Vm(std::shared_ptr<const File> file, bool deterministicRand)
 bool Vm::start(const std::string& script, const std::vector<int32_t>& args) {
     int idx = file_->scriptIndex(script);
     if (idx < 0) return false;
+    if(native_) {
+        if(args.size()>4) throw std::invalid_argument("too many animation callback arguments");
+        std::array<uint32_t,4> values{};
+        for(size_t i=0;i<args.size();++i) values[i]=uint32_t(args[i]);
+        const bool started=native_->state.startArguments(*file_,idx,values,unsigned(args.size()));
+        Native::Host host{*this,*native_};
+        if(started) native_->state.tick(*file_,0,host);
+        exportNativePieces();
+        return started;
+    }
     Thread t;
     t.pc = file_->scripts[size_t(idx)].entry;
     t.locals = args;
@@ -57,6 +174,15 @@ int32_t Vm::call(const std::string& script, const std::vector<int32_t>& args) {
     lastReturn_ = 0;
     int idx = file_->scriptIndex(script);
     if (idx < 0) return 0;
+    if(native_) {
+        std::array<uint32_t,4> values{};
+        for(size_t i=0;i<std::min(args.size(),values.size());++i) values[i]=uint32_t(args[i]);
+        Native::Host host{*this,*native_};
+        native_->state.query(*file_,idx,values,host);
+        for(auto value:values) lastLocals_.push_back(std::bit_cast<int32_t>(value));
+        exportNativePieces();
+        return 0; // retail unit queries return through their argument words
+    }
     Thread t;
     t.pc = file_->scripts[size_t(idx)].entry;
     t.locals = args;
@@ -74,6 +200,10 @@ int32_t Vm::call(const std::string& script, const std::vector<int32_t>& args) {
 }
 
 void Vm::setStatic(size_t i, int32_t v) {
+    if(native_) {
+        if(i<native_->state.vm.statics.size()) native_->state.vm.statics[i]=uint32_t(v);
+        return;
+    }
     if (i >= statics_.size()) statics_.resize(i + 1, 0);
     statics_[i] = v;
 }
@@ -88,6 +218,17 @@ int32_t Vm::pop(Thread& t) {
 void Vm::push(Thread& t, int32_t v) { t.stack.push_back(v); }
 
 void Vm::tick(float dt) {
+    if(native_) {
+        native_->ticks+=std::max(0.0,double(dt))*30.0;
+        if(native_->ticks+1e-7<1) return;
+        Native::Host host{*this,*native_};
+        while(native_->ticks+1e-7>=1) {
+            native_->state.tick(*file_,1,host);
+            native_->ticks-=1;
+        }
+        exportNativePieces();
+        return;
+    }
     now_ += dt;
 
     // Progress piece animations. The sweep is gated on anyMotion_ -- the branchy
@@ -366,13 +507,12 @@ void Vm::run(Thread& t) {
             }
             case 0x10071000: {                                                // EXPLODE
                 // Piece debris (retail icd 0x50dd20): the piece flies off with a
-                // random arc unless flag 0x20. Hide it here so the model shows it
-                // gone; the host's hook draws the flying chunk + effects.
+                // random arc unless flag 0x20. Hide only after the host accepts
+                // creation, before executing any subsequent visibility command.
                 int piece = arg(0);
                 int32_t flags = pop(t);
-                if (!(flags & 0x20) && piece >= 0 && size_t(piece) < pieces_.size())
-                    pieces_[size_t(piece)].visible = false;
-                if (onExplode) onExplode(piece, flags);
+                if (!onExplode || onExplode(piece, flags))
+                    hideExplodedPiece(piece,flags);
                 t.pc += 2; break;
             }
             case 0x10072000: {                                                // PLAY_SOUND

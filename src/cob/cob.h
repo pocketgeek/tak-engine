@@ -40,5 +40,8 @@ File load(const std::vector<uint8_t>& d, const std::string& origin = "<memory>")
 
 // Disassemble one script (by index) to text.
 std::string disassemble(const File& f, int script);
+// Conservative control-flow reachability, indexed by code word. Unknown or
+// malformed instructions are marked unsafe along with EXPLODE itself.
+std::vector<uint8_t> explosionReachability(const File& f);
 
 } // namespace tak::cob
