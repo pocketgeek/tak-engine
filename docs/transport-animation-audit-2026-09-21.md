@@ -35,28 +35,41 @@ implementation descriptions. Current open gates are:
   matches in paired native-air and native-sea traces; World regressions cover
   both carrier classes. Native sea-unload recovery now also resumes the same
   in-range mission through transfer and release after the ten-tick retry. A
-  retry that must reinstall its circle controller now has a native dispatcher
-  trace through controlled arrival and cargo release; physically following the
-  newly requested coastal route remains open.
+  same-trip out-of-range retry now has a composed dispatcher/route/mover trace:
+  native and World agree on the remote `(400,160)` retry start, original
+  `(500,500)` landing site, route, and circle radius. Their physical mover state
+  matches for 1,000 steps, including five route transitions, circle arrival at
+  step 317, cargo release at 334, and mission retirement at 335. Dispatcher
+  retry and route/mover runs are separate emulator fixtures joined by those
+  exact state assertions, not one integrated scheduler trace. Crowded-shore and
+  live-map transport interactions remain open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. Special weapon cases, missing-script behavior, range/visibility-loss
   timing, and full movement/flight callback phase comparisons remain open.
 - Cursors: authored frame timing, software/hardware rendering, enemy weapon-range
   feedback, and the native Revive, Load, and FindSite selector gates are covered.
-  Airstrike remains unmapped: its native gate reads UnitDef `+0x264` and the active
-  WeaponType `+0xc8`, whose authored `dropped` flag has no local equivalent.
-  Capture, Teleport, Pickup, and exact native animation start phase remain open;
-  Hourglass is confined to the native modal file-picker path.
+  Native mode 3's Airstrike gates and active weapon selection are measured. The
+  UnitDef `+0x264` bit comes from a primary WEAPON1 pointer; WeaponType `+0xc8`
+  bit `0x20` comes from FBI `dropped=` and is represented separately from
+  `subtype=Dropped`. The HUD maps the active weapon slot and follows native
+  minimum-slot aggregation for mixed Airstrike selections. No shipped FBI uses
+  `dropped=`, so this primarily covers authored/mod content. Static selector
+  and setter-callsite audits found no gameplay return path for Capture, Pickup,
+  or Teleport; exact animation start phase remains open. Hourglass is confined
+  to the native modal file-picker path.
 - Effects: feature burn art, authored lifetimes, layered flames, shadow clocks
   and tick-owned smoke are integrated. Authored projectile sprites now honor
   each TAF frame's anchor. The native-probed GuidedWeapon XYZ path is now wired
   into World launch/update/collision, lockstep state, and renderer positioning;
   ground- and air-target World regressions and paired native kinematics pass.
-  Remaining work includes other effect and attached-emitter lifecycles, debris
-  details, shared cosmetic RNG/tick phase, native environmental-collision and
-  lifetime comparisons, and paired Glide pixels for projectile, feature-fire
-  and detached effects.
+  Model-backed ballistic shots now check every native 3D substep for unit and
+  environmental collision; an Arabow arrow's native feature-impact dispatch
+  matches the World feature-damage regression. Remaining work includes other
+  effect and attached-emitter lifecycles, debris details, shared cosmetic
+  RNG/tick phase, collision/lifetime comparisons outside the covered projectile
+  paths, and paired Glide pixels for projectile, feature-fire and detached
+  effects.
 - Overall animation parity: verify engine-driven callback timelines and final
   rendered behavior across the roster. VM/piece-transform oracle coverage and
   the current smoke viewport fix do not by themselves prove that requirement.
@@ -160,6 +173,20 @@ Protocol **178** separates the changed transport simulation from published 0.7.0
 
 - Release, Debug and optimized Debug: all targets rebuilt; **46/46 CTest tests
   passed in each configuration** (138 passing executions).
+- The same-trip sea retry route probe passes for 1,000 physical mover steps;
+  retail and World agree on all route points, movement state, cargo release and
+  mission retirement. This is a controlled composition of native dispatcher
+  and mover fixtures, not a full live scheduler run.
+- The native Arabow ballistic probe confirms one environmental-impact dispatch
+  with no unit target. The World regression applies 476 damage to the blocking
+  feature and leaves the selected unit unharmed. Projectile oracles also pass
+  for 512 ballistic launches / 6,912 substeps, 8,192 environment cases, 8,192
+  unit-quad cases, 432 straight-shot and 432 lightning timelines, and guided
+  launch/motion/collision traces. The native probe intercepts the damage routine,
+  so retail damage magnitude itself is not measured here.
+- Cursor probes confirm Airstrike's native gates and active-weapon slot; source
+  tracing finds no gameplay path returning the registered Capture, Pickup or
+  Teleport slots.
 - The current paired native/World probes pass for 36 pickup-dispatch ticks,
   18 surface-pickup callback ticks, 17 air-unload ticks and 19 sea-unload
   ticks. Unload arrival is injected at the navigator boundary; these checks do
@@ -6784,27 +6811,34 @@ client configurations build successfully. Full per-context cursor selection and
 exact native animation start phase remain open; no retail game was launched for
 this check.
 
-### Airstrike cursor selector branch measured (2026-09-22; source traced 2026-09-23)
+### Airstrike cursor selector and source flags traced (2026-09-22–23)
 
 Added `probe_cursor_airstrike.py`. It follows reachable selector mode 3 through
 the retail eligibility gate and confirms native cursor slot 2 (`cursorairstrike`)
 requires UnitDef `+0x264 bit 0x20` and the active weapon's WeaponType `+0xc8 bit
 0x20`; clearing the UnitDef bit returns normal slot 19. Native `0x531280` parses
-the FBI `dropped` key and sets the WeaponType flag. This key is distinct from
-`subtype=Dropped`, which selects the local `Weapon::Kind::Dropped` class. The
-shipped FBI roster contains no `dropped=` entries, and the local weapon model has
-no separate authored `dropped` flag. The source/meaning of the UnitDef bit remains
-unresolved, so there is no supported local Airstrike mapping. The fixture,
-Python compile check, and whitespace validation pass.
+the FBI `dropped` key and sets the WeaponType flag. The UnitDef bit is initialized
+from whether the primary WEAPON1 pointer exists at `0x4c1672..0x4c1698`; the
+weapon gate reads the currently selected slot through `0x519ac0`. This `dropped=`
+key is distinct from `subtype=Dropped`, which selects the local
+`Weapon::Kind::Dropped` class. The shipped FBI roster contains no `dropped=`
+entries, so the mapping primarily covers authored/mod content. The local model
+now preserves the flag by native weapon slot, including the native WEAPON1 gate
+and active-slot behavior when local weapon entries are compressed. Active-slot
+and native parser probes pass.
 
-At the time of this 2026-09-22 probe the HUD had neither Airstrike nor TooFar
-branches. The 2026-09-23 range-cursor change added TooFar; Airstrike remains
-unmapped because its native weapon gate is an authored flag not represented by
-the local weapon model, while the source of the UnitDef gate is still unknown.
-Native cursor registration maps slots 1–21 to Attack, Airstrike, TooFar, Capture,
-Defend, Repair, Patrol, Pickup, Teleport, Revive, Reclaim, Unload, Load, Move,
-Select, FindSite, Red, Green, Normal, Hourglass and PathIcon. Registration is
-asset loading, not proof that each slot has a gameplay selection path.
+The gameplay cursor setter path traced is `0x521cd0 → 0x4dd780`; other setter
+sites observed use Normal, Hourglass or the default cursor. The selector exposes
+no returns for Capture (slot 4), Pickup (8), or Teleport (9). Its Capture order
+mode falls back to Normal, and no alternate gameplay setter callsite for these
+registered slots was found in the audited paths. Native registration maps slots
+1–21 to Attack, Airstrike, TooFar, Capture, Defend, Repair, Patrol, Pickup,
+Teleport, Revive, Reclaim, Unload, Load, Move, Select, FindSite, Red, Green,
+Normal, Hourglass and PathIcon; registration alone does not imply an active
+selection path. The local HUD applies the native smallest-slot rule: Attack takes
+priority over Airstrike, Airstrike takes priority over TooFar, and an all-Airstrike
+selection retains Airstrike when no target-specific result wins. Focused unit
+tests cover these cases and native weapon-slot mapping.
 
 ### Native action-mode 2 Revive and mode-5 Load cursor gates (2026-09-23)
 
@@ -6829,8 +6863,10 @@ input that the local HUD does not have. Mode 5 has a direct local equivalent:
 the armed `l`/Load command and `UnitType::canTransport`; it now shows Load only
 when at least one selected type can transport, matching the native flag gate.
 The `cursorTeleport` sequence is registered, but neither action-mode branch
-returns slot 9, and local types/orders expose no teleport ability or command.
-The separate native Teleport action context remains unmapped.
+returns slot 9, and the audited gameplay setter paths do not assign it. Local
+types/orders expose no teleport ability or command. Capture mode 13 also falls
+back to Normal in the native selector. These slots remain registered placeholders
+without a demonstrated live gameplay cursor path.
 
 ### Native action-mode 14 FindSite cursor (2026-09-23)
 
@@ -6981,15 +7017,19 @@ the normal BallisticWeapon initializer as `0x52be80` (the similarly named
 `0x52c3b0` is a different shot path) and exercised it with the native update
 `0x52bf90`: 512 launch cases and 6,912 substeps pass, including exact XYZ,
 initial angles, truncating gravity, and move-before-collision ordering. The
-probe controls muzzle lookup and collision admission, so native impact
-boundaries still need separate validation. The renderer port now uses retail's
-3D muzzle, relative aim, pitch, gravity, substep motion and angle state to draw
-ballistic 3DO models; it does not change the existing X/Z collision, damage or
-expiry path. The implementation was checked against 512 native launches, 6,912
-substeps and 2,048 launch/tick snapshots; 20 Aramon/Taros Archer aim fixtures
-also match native. `retail_visual_test`, `retailgap`, `naval_combat`, and
-`flyer_combat` passed. A matched live Archer shot, native impact-boundary
-validation, and pixel-level comparison of fire effects remain open.
+probe controls muzzle lookup and collision admission, so its motion rows alone
+do not validate native impact boundaries. The renderer port uses retail's 3D
+muzzle, relative aim, pitch, gravity, substep motion and angle state to draw
+ballistic 3DO models. A follow-up now advances the World collision path at every
+one of those 3D substeps, including environmental impacts. The native
+`0x52bf90`/`0x52a4d0` probe confirms an Arabow arrow contacts a feature top and
+dispatches `0x529c10` with no unit target; the World regression applies the
+authored 476 damage to the blocking feature and leaves the selected unit
+unharmed. 512 native launches, 6,912 substeps and 2,048 launch/tick snapshots
+match for ballistic motion; 20 Aramon/Taros Archer aim fixtures also match
+native. The dispatch probe intercepts the damage routine, so native damage
+magnitude and all terrain/feature impact variants are not yet proved. Matched
+live Archer behavior and pixel-level comparison of fire effects remain open.
 
 ### Retail driver and live sea-carrier round trip (2026-09-23)
 
@@ -7035,10 +7075,10 @@ The final cursor correction now matches native per-axis squared-product high
 dwords before summing, including fractional diagonals and full signed 16.16
 coordinates. Weapon eligibility uses FBI `damagecategory`, not the broader
 simulation category list. Focused extracted-asset cursor tests and `cursor_roster`
-pass in Release, Debug and optimized builds. `Airstrike` remains unmapped because
-native checks UnitDef `+0x264` and the active WeaponType `+0xc8`; the latter is
-set by FBI `dropped`, absent from shipped FBI data and not represented by the
-local weapon model. The UnitDef bit's source remains unresolved.
+pass in Release, Debug and optimized builds. At this earlier checkpoint,
+`Airstrike` remained unmapped because native checks UnitDef `+0x264` and the
+active WeaponType `+0xc8`; the next cursor audit below resolves both sources and
+records the local mapping.
 
 ### Retail direct text input and live air-carrier setup (2026-09-23)
 
@@ -7558,17 +7598,35 @@ World's existing `exactLandingSites` regression exercises the same in-range
 same-trip retry for both air and surface carriers, including the full restarted
 transfer interval and release. The native probe and `transport_test` pass.
 
-The follow-up out-of-range trace moves the carrier 424 px from the selected site
-during the blocked retry. The original mission and destination remain intact;
-retail destroys the old controller, requests a route, and installs a fresh
-`0x5f28d8` circle controller at `(31,31)` with radius 116. After arrival is
-delivered at the navigator boundary, the same mission releases cargo at tick 31
-and retires at tick 32. The allocator fixture now returns distinct controller
-addresses, matching the native replacement lifetime and avoiding an aliasing
-pure-virtual call in the emulator.
+The follow-up out-of-range trace moves the carrier to `(400,160)`, well beyond
+transfer range of the `(500,500)` landing site. The original mission and
+destination remain intact; retail destroys the old controller, requests a route,
+and installs a fresh `0x5f28d8` circle controller at `(31,31)` with radius 116.
+The paired route/mover fixture starts from that exact remote position and landing
+site. Its composed dispatcher and physical traces agree on the route and radius;
+the mover matches for 1,000 physical steps, reaching the replacement circle at
+step 317, releasing cargo at 334 and retiring the mission at 335. The dispatcher
+and mover remain separate emulator fixtures joined by exact state assertions,
+not one integrated live scheduler run. Crowded-shore interactions and live-map
+transport tests remain open.
 
-This still controls route search and physical travel to the replacement circle.
-It proves the native dispatcher/controller reinstallation and resumed transfer,
-not that a ship physically follows the newly requested coastal route. The
-existing 1,000-tick surface route trace covers physical movement on its canonical
-route, but not this retry-generated route.
+### Airstrike HUD and ballistic environmental collision integration (2026-09-23)
+
+The local FBI loader now retains `dropped=` as the native Airstrike cursor flag,
+separate from `subtype=Dropped`, and preserves its original WEAPON1–WEAPON3 slot
+when damage-less entries are omitted from the local weapon vector. Armed attack
+cursor selection applies the native numeric minimum across selected units:
+Attack wins over Airstrike, which wins over TooFar. Unit tests cover active-slot,
+WEAPON1 and mixed-selection behavior; the three native cursor probes pass.
+Shipped FBI content has no `dropped=` entries, so this currently protects
+authored/mod content.
+
+World ballistic projectiles now check the native 3D collision routine at every
+substep, including terrain and features, and keep their 2D impact coordinates on
+the same XYZ trajectory. The native Arabow feature-hit probe confirms one
+environmental impact dispatch with no unit target; the World regression applies
+the authored damage to the blocking feature without reaching its selected unit.
+Native projectile, cursor and retry-route probes all pass. Release, Debug and
+optimized builds pass all 46 CTest cases each (138 passing executions). The full
+screen-by-screen animation and Glide pixel comparisons remain open; no retail
+game GUI was launched for this verification.
