@@ -8213,10 +8213,12 @@ world-unit model loses those details during projection. `drawShotModel` now
 applies a camera-dependent display scale to the elongated projectile models
 used for arrows, bolts, harpoons, and spears (`araarrow*`, `arabolt`, `cregatl1`,
 `araharp1`, `verbal1*`, `verhpoon`, `verspear`, and `zonterspear`). It expands
-the projected cross-section slightly more than length and returns to the
-authored size at close zoom. Projectile coordinates, aim, collision, lifetime,
-and texture selection are unchanged; shells, bombs, and magic beams are not
-scaled.
+the projected cross-section more than length and returns to the authored size
+at close zoom. At the normal test zoom of 1.305, the travel-axis scale is 1.5
+and the perpendicular scale is 3.375; this is a low-resolution readability
+correction, not a claim about retail's exact projectile dimensions. Projectile
+coordinates, aim, collision, lifetime, and texture selection are unchanged;
+shells, bombs, and magic beams are not scaled.
 
 The in-engine Ulasem Arena screenshot fixture reproduces the normal-zoom shot;
 the zoomed crop shows the mesh's tail feathers, shaft, and arrowhead separately.
@@ -8224,7 +8226,13 @@ Release, Debug, and optimized Debug client builds succeed, and the complete
 Debug suite passes 52/52. The final cross-section refinement was then rebuilt
 in Debug and exercised by the same headless screenshot. This is a readability
 approximation for the low-resolution projection, not evidence of retail's exact
-projectile size. No retail GUI was launched, as requested.
+projectile size. That screenshot also exposed a no-fog inconsistency: the 3D
+projectile path still culled by explored-cell visibility when `--nofog` was set.
+It now applies the same no-fog visibility bypass as the straight-projectile
+path. The `araarrow` mid-flight capture at `/tmp/arrow-crossscale-3_5.png` and
+its enlarged crop at `/tmp/arrow-crossscale-crop.png` show the shaft, point, and
+fletching in the headless software renderer. No retail GUI was launched, as
+requested.
 
 ### Joined native VTOL-unload mission and flight trace (2026-09-24)
 

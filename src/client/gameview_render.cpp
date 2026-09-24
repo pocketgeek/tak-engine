@@ -800,7 +800,7 @@
             const bool native3d=p.ballistic3d || p.guided3d;
             const float renderX=native3d ? tak::sim::Fixed::raw(p.position[0]).toFloat() : p.x.toFloat();
             const float renderZ=native3d ? tak::sim::Fixed::raw(p.position[2]).toFloat() : p.z.toFloat();
-            if (!cellVisibleR(renderX, renderZ)) continue;
+            if (!noFog_ && !cellVisibleR(renderX, renderZ)) continue;
             float t = std::clamp(float(p.age) / std::max(float(p.flight), 1.0f), 0.0f, 1.0f);
             // Flyer shots: lift the whole trajectory by the altitude interpolated
             // from the firing unit down to the target (0.8x, matching the sprite

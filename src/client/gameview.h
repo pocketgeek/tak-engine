@@ -1204,11 +1204,11 @@ private:
         // less than 3 units wide. At normal map zoom their arrowheads and
         // fletching collapse into a one-pixel streak, so the shot reads like a
         // laser despite using the correct mesh. Keep the native trajectory,
-        // heading, altitude and texture, but use a small zoom-dependent display
-        // lift so their authored silhouette survives minification. At close
-        // zoom the meshes retain native size. This is deliberately limited to
-        // the arrow/bolt/harpoon/spear families; round shells and magical beams
-        // keep their native scale.
+        // heading, altitude and texture, but enlarge the projected silhouette
+        // perpendicular to its travel axis more than along it. At close zoom
+        // the meshes retain native size. This display-only correction is limited to the
+        // arrow/bolt/harpoon/spear families; round shells and magical beams keep
+        // their native scale.
         static const std::unordered_set<std::string> readableArrowModels = {
             "araarrow", "araarrow2", "araarrow3", "arabolt", "cregatl1",
             "araharp1", "verbal1", "verbal1_vet", "verhpoon", "verspear",
@@ -1218,7 +1218,7 @@ private:
             const float alongScale = std::clamp(
                 2.0f / std::max(mapView_.zoom(), 0.01f), 1.0f, 1.5f);
             const float nearZoom = (alongScale - 1.0f) / 0.5f;
-            const float crossScale = alongScale * (1.0f + 0.35f * nearZoom);
+            const float crossScale = alongScale * (1.0f + 1.25f * nearZoom);
             float modelAxis[3] = {0.0f, 0.0f, 1.0f};
             if (native) base.apply(0.0f, 0.0f, 1.0f, modelAxis);
             const float cs = std::cos(facing), sn = std::sin(facing);
