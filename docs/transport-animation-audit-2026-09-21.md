@@ -8974,8 +8974,11 @@ pending `0x500` after movement, while retail consumes it in dispatcher order.
 Cargo release and PARK occur at tick 487; the empty mission retires at tick
 488. Placement feasibility and effect/cargo/PARK host side effects remain
 controlled fixture seams, and this is one carrier/map profile rather than a
-full route and dynamic-traffic matrix. No production change or retail GUI run
-was needed.
+full route and dynamic-traffic matrix. Call-site hooks show that VTOL unload
+uses the point/circle controller and flight navigator (`0x4e40e0`, `0x4e4540`,
+`0x524af0`); retail does not enter the generic surface path-search worker on
+this flight. Generic air waypoint acquisition is a separate open seam. No
+production change or retail GUI run was needed.
 
 Reproduce with:
 
