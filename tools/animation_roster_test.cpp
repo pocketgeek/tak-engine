@@ -10,6 +10,7 @@
 #include "hpi/hpi.h"
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <map>
 #include <string_view>
@@ -36,6 +37,33 @@ struct Host {
     void effect(uint32_t,int,int32_t) {}
 };
 int main(int argc,char**argv) {
+    if((argc==3 || argc==5) && std::string_view(argv[1])=="--death-sfx-timeline") {
+        auto file=tak::cob::load(std::filesystem::path(argv[2]));
+        const int severity=argc==5 ? std::stoi(argv[3]) : 100;
+        const int damageType=argc==5 ? std::stoi(argv[4]) : 1;
+        tak::cob::Vm dying(file);dying.enableRetailAnimation();
+        int tick=0;
+        dying.onEmitSfx=[&](int piece,int32_t code) {
+            if(code>=260 && code<=262)
+                std::cout<<"E "<<tick<<' '<<piece<<' '<<code<<'\n';
+        };
+        dying.onSetUnitValue=[&](int32_t id,int32_t value) {
+            std::cout<<"U "<<tick<<' '<<id<<' '<<value<<'\n';
+        };
+        dying.onGet=[](int query,const std::vector<int32_t>&) {
+            return query==4 ? 100 : query==18 ? 1 : 0;
+        };
+        dying.start("Create");
+        for(int frame=0;frame<30;++frame)dying.tick(1.f/30);
+        dying.reset();dying.setStatic(0,0);
+        dying.start("Killed",{severity,0,damageType});
+        if(!dying.start("Dying",{damageType}))dying.start("death");
+        for(int frame=0;frame<600;++frame) {
+            tick=frame+1;
+            dying.tick(1.f/30);
+        }
+        return 0;
+    }
     if(argc==2 && std::string_view(argv[1])=="--standing-order") {
         unsigned enabled,standing,move,fire,request;
         while(std::cin>>enabled>>standing>>move>>fire>>request) {

@@ -184,9 +184,10 @@ implementation descriptions. Current open gates are:
   ground- and air-target World regressions and paired native kinematics pass.
   Model-backed ballistic shots now check every native 3D substep for unit and
   environmental collision; an Arabow arrow's native feature-impact dispatch
-  matches the World feature-damage regression. Remaining work includes other
-  effect and attached-emitter lifecycles, debris details, shared cosmetic
-  RNG/tick phase, collision/lifetime comparisons outside the covered projectile
+  matches the World feature-damage regression. Death damage-flame callback and
+  creation-dispatch timelines now match native for three scripts; native owner-
+  removal timing and other effect and attached-emitter lifecycles remain open,
+  along with debris details, shared cosmetic RNG/tick phase, collision/lifetime
   paths, and representative checks that live effects use the right art family,
   placement and lifetime. Feature smoke now follows retail's newest-first burn
   order and updates each burn's existing particles before that burn emits.
@@ -8038,6 +8039,18 @@ ordering, checks all 600 ticks, requires each confirmed flame family, rejects
 live-only families in death callbacks, and verifies attached emissions finish
 before the 120-tick body handoff.
 
+`probe_death_sfx_lifecycle.py` compares the retail VM's actual `0x50da20` death
+SFX dispatch against World for `tarmage`, `tarhel`, and `crefire`, across three
+severities and two damage types. All 312 callbacks and associated
+`SET_UNIT_VALUE` writes match; native emission ends by tick 72. The probe
+controls only the final native creation sink, after retail has run the VM
+callback, piece-origin lookup, and SFX dispatcher. A separate native destructor
+probe confirms teardown drains its attached list, but does not run the outer
+death dispatcher far enough to establish the actual teardown tick. This closes
+callback and creation-dispatch parity for these three flame families; native
+owner-removal timing and other attached-emitter families remain open. No retail
+GUI was launched.
+
 Attached effect owner lists now survive the HP-death edge through the existing
 `kCorpseAnimTicks` body handoff (120 ticks); statue removal remains immediate.
 The sim supplies a raw statue feature ID, while RenderFrame supplies a boolean;
@@ -8051,11 +8064,11 @@ next update, while `SET_UNIT_VALUE 31` starts a one-second model timer that
 sets the same removal bit when it expires. For example, shipped `araking`
 uses value 31 and `araknigh` uses value 26. The exact teardown tick for a
 regular death still depends on the preceding callback schedule and the unit's
-`Dying` branch, which this probe does not run. The confirmed attached death
-flames finish by tick 87, before the port's 120-tick body cleanup. Thus the
-remaining teardown-time difference has not shown a visible effect-lifecycle
-mismatch, and no change is justified from this evidence. No retail GUI was
-launched.
+`Dying` branch, which this probe does not run. The native/World script comparison
+confirms the callback schedule and shows the latest tested flame event at tick
+72, but does not establish when native drains those lists relative to the
+port's 120-tick body cleanup. No teardown-time mismatch is established by this
+probe. No retail GUI was launched.
 
 ### Live detached script transient lifecycle (2026-09-24)
 
