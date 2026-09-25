@@ -119,9 +119,14 @@ implementation descriptions. Current open gates are:
   Replaying that same replacement through the native unload worker while the
   mission and cargo remain active delivers all ten World waypoints. The isolated
   always-on search-state difference remains unexplained. The replay begins at
-  the captured World replan boundary and explicitly submits the replacement;
-  having the moving carrier detect the blocker and trigger it in one joined
-  timeline remains open. Native TNT-backed terrain grading and reconstructed
+  the captured World replan boundary and explicitly submits the replacement.
+  A collision-to-retry probe now uses native `0x507d10` against a live
+  map-backed Vertrans: two placement refusals set mover bit 4, `0x4e5150`
+  queues the retry, and `0x416430` delivers it. The collision-derived retry
+  retains a two-point route rather than the five-point World capture, while a
+  direct-bit control matches all five. This leaves controller sequencing or
+  fixture coverage unresolved and does not establish a gameplay mismatch.
+  Native TNT-backed terrain grading and reconstructed
   routes also match for Aratrans/WATER5 on the same long Lake Lokken shore route
   in Standard and Crusades: 698 distinct native query cells, 906 grade calls,
   one waypoint, and an endpoint inside its 385px unload circle. Other maps and
@@ -140,10 +145,11 @@ implementation descriptions. Current open gates are:
   and then omitted the blocker from its live-body query and occupancy plane; the
   resulting scan mismatch is a fixture error, not evidence of different gameplay.
   That initial trace did not deliver a replacement route in its combined
-  mission context. A later bounded trace now runs retail's actual `0x4e5150`
-  repeated-block retry and `0x416430` worker on the retained mission and matches
-  all five World waypoints using the captured refusal bit. Retail's moving-body
-  collision update producing that bit is still unverified.
+  mission context. The bounded `0x4e5150`/`0x416430` retry matches all five
+  World waypoints when given the captured refusal bit. The separate native
+  collision-driven retry proves retail can produce the bit and deliver a retry,
+  but that replay retains the existing two-point route. Connecting a naturally
+  encountered blocker to the five-point World replacement route remains open.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -8671,7 +8677,7 @@ mission worker, but the native collision-to-bit update itself remains open. No
 production pathfinding change is justified by that remaining gap. No retail GUI
 was launched.
 
-### Native mission-worker retry after the map-backed blocker (2026-09-24)
+### Native collision-driven mission-worker retry after the map-backed blocker (2026-09-25)
 
 The `--native-worker-mission-retry` Lake Lokken case begins at the World
 repeated-block boundary: after two failed shore placements, World has a
@@ -8685,13 +8691,37 @@ replacement route. Retail's original `0x4139d0` dispatcher runs with the cached
 map grades; it needs no `0x4db640` live-body refresh because the map cache
 already marks the occupied footprint blocked and its clearance cells.
 
-This joins the retry scheduler, map-backed search, and mission worker, while
-the standalone direct-search reconstruction remains one waypoint different.
-The refusal bit is sourced from World's captured repeated-placement state, so
-this does not yet prove that retail's moving-body collision update sets that
-bit itself. The result is Standard-only; other maps/carrier profiles and the
-native collision-to-retry bit remain open. No retail GUI was launched.
-Reproduce with:
+The `--native-worker-mission-collision` variant builds native entity slots and
+occupancy cells for the Vertrans blocker, then advances the carrier through the
+real `0x4dc800` mover and `0x507d10` placement check. Retail rejects two
+consecutive footprints, sets mover bit 4, `0x4e5150` enqueues a retry, and
+`0x416430` delivers it. In this collision-derived path, the worker retains the
+existing two-point route instead of the five-point World replacement. Running
+the same fixture with the captured refusal bit seeded directly delivers the
+exact five World waypoints. This isolates the remaining difference to the
+collision-derived controller/fixture sequence; it does not establish a retail
+versus World pathfinding mismatch. The trace is Standard-only, and other maps
+and carrier profiles remain open. No retail GUI was launched.
+
+Reproduce the collision-derived trace with:
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
+  --native-map-grades --live-route-blocker-steps 5000 \
+  --native-worker-mission-retry --native-worker-mission-collision
+```
+
+The captured-bit control is the same command without
+`--native-worker-mission-collision`.
+
+The standalone direct-search reconstruction remains one waypoint different.
+The collision-driven retry and direct-bit control both match all native grade
+queries to the map-backed blocker plane, and the endpoint remains inside the
+same 266px unload circle. No production change was justified by this trace.
+
+Reproduce the direct-bit control with:
 
 ```sh
 python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \

@@ -178,17 +178,19 @@ def replay_native_worker_repath(width, height, base_cached_grades,
                                 dynamic_live_grade, attempt, profile,
                                 target_x, target_z, circle_radius, sea,
                                 position, mission_backed=False,
-                                retry_through_4e5150=False):
+                                retry_through_4e5150=False,
+                                live_blocker_collision=None):
     """Run a map-backed replacement through retail's queued route worker.
 
     The starting position is the captured World replan boundary. Retail first
     installs the unobstructed route, then the same navigator/controller
     requests a replacement through either 0x4e54e0 or 0x4e5150 and the singleton
-    0x416430 worker. The retry variant supplies the captured repeated-refusal
-    mover bit; native body collision itself remains outside this fixture.
+    0x416430 worker. The retry variant can seed the captured repeated-refusal
+    mover bit, or derive it by advancing the real map-backed native mover into
+    a registered live blocker.
     """
     from unicorn import UC_HOOK_CODE
-    from unicorn.x86_const import UC_X86_REG_ESI
+    from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ESI, UC_X86_REG_ESP
 
     (_tick, _unit_id, sx, sz, goal_x, goal_z, heading, retry, weight, *_rest) = attempt
     (turn, fx, fz, road, water, flags, transport_dist, max_water, min_water,
@@ -431,25 +433,191 @@ def replay_native_worker_repath(width, height, base_cached_grades,
     phase.set_grade_plane(dynamic_cached_grades)
     second_request = len(requests)
     if retry_through_4e5150:
-        # The captured World retry follows two consecutive failed footprint
-        # placements. Retail represents that repeated refusal with mover bit 2
-        # (bit mask 4), which makes 0x4e5150 enqueue immediately through its
-        # native 0x4e4f50 boundary. Keep the already-installed mission circle,
-        # navigator and controller intact for the retry.
         retry_tick = delivered_at + 1
         current_tick[0] = retry_tick
         put(GS + 0x19f44, retry_tick)
         put(0x634674, 0)
-        mover_flags = struct.unpack('<H', phase.uc.mem_read(mover + 0x36, 2))[0]
-        phase.uc.mem_write(mover + 0x36, struct.pack('<H', mover_flags | 4))
-        _, error = phase.icd.call(0x4e5150, (), ecx=nav)
-        assert error is None, ('native 0x4e5150 repeated-block retry', error)
+        if live_blocker_collision is not None:
+            data = live_blocker_collision
+            map_data = data['map_data']
+            map_width, map_height, map_sea, map_heights, map_features, feature_count = map_data
+            assert (map_width, map_height, map_sea) == (width, height, sea)
+            (seed_x, seed_y, seed_z, seed_heading, _seed_speed, seed_base,
+             terrain_flags) = data['world_seed']
+            max_velocity, acceleration, braking, unit_turn, waterline = data['world_type']
+            assert terrain_flags == 0x1000 and seed_base > 0
+            class_record = data['water_profile']
+            class_fx, class_fz, max_depth, min_depth, bad_max_depth, bad_min_depth, \
+                max_slope, bad_slope, max_water_slope, bad_water_slope = struct.unpack(
+                    '<6h4B', class_record)
+            assert (class_fx, class_fz) == (fx, fz)
+
+            # Build the same raw cell and sector planes used by the paired map
+            # mover trace. This leaves the original 0x507d10/0x4dc800 code in
+            # charge of checking the ship against a live Vertrans body.
+            records = bytearray(width * height * 14)
+            raw_grades = [0] * (width * height)
+            for z in range(height):
+                for x in range(width):
+                    index = z * width + x
+                    corners = (map_heights[index],
+                               map_heights[z * width + min(x + 1, width - 1)],
+                               map_heights[min(z + 1, height - 1) * width + x],
+                               map_heights[min(z + 1, height - 1) * width + min(x + 1, width - 1)])
+                    low, high = min(corners), max(corners)
+                    offset = index * 14
+                    records[offset + 4:offset + 7] = bytes((map_heights[index], high, low))
+                    struct.pack_into('<H', records, offset + 8, map_features[index])
+                    if low < sea - max_depth or high > sea - min_depth:
+                        grade = 0
+                    else:
+                        slope = high - low
+                        hard = max_water_slope if low < sea else max_slope
+                        soft = bad_water_slope if low < sea else bad_slope
+                        if slope > soft and slope > hard:
+                            grade = 0
+                        elif slope > soft or low < sea - bad_max_depth or high > sea - bad_min_depth:
+                            grade = 4
+                        else:
+                            grade = 6
+                    raw_grades[index] = grade
+            phase.uc.mem_write(phase.cells_addr, bytes(records))
+            phase.set_grade_plane(raw_grades)
+            phase.uc.mem_write(GS + 0x19ef8, bytes((sea,)))
+
+            feature_table = phase._alloc(max(320, feature_count * 320))
+            phase.uc.mem_write(feature_table, bytes(max(320, feature_count * 320)))
+            phase.uc.mem_write(GS + 0x19edc, struct.pack('<I', feature_table))
+            phase.uc.mem_write(GS + 0x19ec0, struct.pack('<I', feature_count))
+
+            sector_stride = (width + 7) // 8
+            sector_rows = (height + 7) // 8
+            sector_records = bytearray(sector_stride * sector_rows * 10)
+            for sector_z in range(sector_rows):
+                for sector_x in range(sector_stride):
+                    block = [map_heights[z * width + x]
+                             for z in range(sector_z * 8, min(height, sector_z * 8 + 8))
+                             for x in range(sector_x * 8, min(width, sector_x * 8 + 8))]
+                    sector_records[(sector_z * sector_stride + sector_x) * 10 + 1] = max(block)
+            sector_grid = phase._alloc(len(sector_records))
+            phase.uc.mem_write(sector_grid, bytes(sector_records))
+            phase.uc.mem_write(GS + 0x19f18, struct.pack('<I', sector_grid))
+            phase.uc.mem_write(GS + 0x19f1c, struct.pack('<I', sector_stride))
+            phase.uc.mem_write(GS + 0x600000, struct.pack('<I', GS + 0x700000))
+            phase.uc.mem_write(GS + 0x19f44, struct.pack('<I', retry_tick))
+
+            # The carrier occupies real slot 1; the blocking Vertrans occupies
+            # slot 2. Map a page below the carrier so retail's id*0x138 table
+            # layout is valid without changing the mission's entity address.
+            entity_base = unit - 0x138
+            blocker_id = 2
+            blocker = entity_base + blocker_id * 0x138
+            blocker_nav = phase._alloc(0x180)
+            phase.uc.mem_write(GS + 0x14e84, struct.pack('<II', entity_base,
+                                                     entity_base + 4 * 0x138))
+            phase.uc.mem_write(unit + 2, struct.pack('<H', 1))
+            phase.uc.mem_write(blocker + 2, struct.pack('<H', blocker_id))
+            phase.uc.mem_write(blocker + 8, struct.pack('<I', blocker_nav))
+            phase.uc.mem_write(blocker + 0xb4, struct.pack('<I', type_address))
+            phase.uc.mem_write(blocker + 0x130, struct.pack('<I', 0x1000000))
+            blocker_x, blocker_z = data['blocker_position']
+            blocker_origin_x = (blocker_x - (fx - 1) * 8 * 65536) // (16 * 65536)
+            blocker_origin_z = (blocker_z - (fz - 1) * 8 * 65536) // (16 * 65536)
+            phase.uc.mem_write(blocker + 0x68, struct.pack('<iii', blocker_x, seed_y, blocker_z))
+            phase.uc.mem_write(blocker + 0x74, struct.pack('<hh', blocker_origin_x,
+                                                       blocker_origin_z))
+            phase.uc.mem_write(blocker + 0x78, struct.pack('<hh', fx, fz))
+            phase.uc.mem_write(blocker + 0x7e, struct.pack('<H', data['blocker_heading']))
+            phase.uc.mem_write(blocker_nav + 0x20, struct.pack('<i', 0))
+            for z in range(max(0, blocker_origin_z), min(height, blocker_origin_z + fz)):
+                for x in range(max(0, blocker_origin_x), min(width, blocker_origin_x + fx)):
+                    phase.uc.mem_write(phase.cells_addr + (z * width + x) * 14,
+                                   struct.pack('<H', blocker_id))
+
+            phase.uc.mem_write(unit + 0x68, struct.pack('<iii', position[0], seed_y, position[1]))
+            origin_x = (position[0] - (fx - 1) * 8 * 65536) // (16 * 65536)
+            origin_z = (position[1] - (fz - 1) * 8 * 65536) // (16 * 65536)
+            phase.uc.mem_write(unit + 0x74, struct.pack('<hh', origin_x, origin_z))
+            phase.uc.mem_write(unit + 0x78, struct.pack('<hh', fx, fz))
+            phase.uc.mem_write(unit + 0x7e, struct.pack('<H', heading))
+            phase.uc.mem_write(unit + 0x12b, struct.pack('<i', seed_base))
+            phase.uc.mem_write(mover + 0x20, struct.pack('<i', seed_base))
+            phase.uc.mem_write(mover + 0x30, struct.pack('<I', retry_tick + 10000))
+            phase.uc.mem_write(mover + 8, bytes(12))
+            phase.uc.mem_write(mover + 0x14, bytes(12))
+            phase.uc.mem_write(mover + 0x36, struct.pack('<H', flags | 1))
+            phase.uc.mem_write(type_address + 0x126, struct.pack('<hh', fx, fz))
+            phase.uc.mem_write(type_address + 0x162, struct.pack('<i', max_velocity))
+            phase.uc.mem_write(type_address + 0x166, struct.pack('<i', braking))
+            phase.uc.mem_write(type_address + 0x16a, struct.pack('<i', acceleration))
+            phase.uc.mem_write(type_address + 0x18a, struct.pack('<I', phase.GRID))
+            phase.uc.mem_write(type_address + 0x18e, struct.pack('<H', unit_turn))
+            phase.uc.mem_write(type_address + 0x192, class_record[4:12])
+            phase.uc.mem_write(type_address + 0x23c, bytes((max_slope, bad_slope,
+                                                         max_water_slope, bad_water_slope)))
+            phase.uc.mem_write(type_address + 0x248, bytes((waterline & 0xff,)))
+            phase.uc.mem_write(type_address + 0x24a, b'\x01')
+            phase.uc.mem_write(phase.GRID + 4, struct.pack('<hh', fx, fz))
+            phase.uc.mem_write(phase.GRID + 8, class_record[4:])
+            phase.icd.hooks[0x51ad20] = lambda _uc, _args: (1, 0)
+            phase.icd.hooks[0x56c640] = lambda _uc, _args: (8, 0)
+
+            collision_rows = []
+            def observe_place(uc, address, _size, _data):
+                if address == 0x507d10:
+                    esp = uc.reg_read(UC_X86_REG_ESP)
+                    collision_rows.append(tuple(struct.unpack('<5I',
+                        uc.mem_read(esp + 4, 20))))
+                elif address == 0x4daf96:
+                    collision_rows.append(('result', uc.reg_read(UC_X86_REG_EAX)))
+            phase.uc.hook_add(UC_HOOK_CODE, observe_place)
+            hooks = phase.icd.hooks
+            phase.icd.hooks = {address: hook for address, hook in hooks.items()
+                           if address != 0x507d10}
+            try:
+                for collision_step in range(1, 5):
+                    game_tick = retry_tick + collision_step
+                    current_tick[0] = game_tick
+                    put(GS + 0x19f44, game_tick)
+                    value, error = phase.icd.call(0x4dc800, (unit,), ecx=mover)
+                    assert error is None, ('native carrier collision mover',
+                                           collision_step, error)
+                    value, error = phase.icd.call(0x51b2a0, (unit,), ecx=mover)
+                    assert error is None, ('native carrier position commit',
+                                           collision_step, error)
+                    move_flags = struct.unpack('<H', phase.uc.mem_read(mover + 0x36, 2))[0]
+                    if move_flags & 4:
+                        break
+            finally:
+                phase.icd.hooks = hooks
+            assert move_flags & 4, ('native 0x4dc800 did not produce repeated live-body refusal',
+                                     collision_rows,
+                                     struct.unpack('<iii', phase.uc.mem_read(unit + 0x68, 12)),
+                                     struct.unpack('<iii', phase.uc.mem_read(blocker + 0x68, 12)),
+                                     hex(move_flags))
+            _, error = phase.icd.call(0x4e5150, (), ecx=nav)
+            assert error is None, ('native 0x4e5150 repeated-block retry', error)
+            assert pending[0] and len(requests) > second_request, (
+                'native mover refusal did not reach 0x4e5150/0x4e4f50',
+                requests, pending[0], hex(move_flags), collision_rows)
+            print(f'  Retail 0x4dc800 produced mover refusal bit 4 after '
+                  f'{collision_step} live-blocker updates and 0x4e5150 enqueued '
+                  f'the mission retry; placement observations={collision_rows[-8:]}.')
+        else:
+            # The captured World retry follows two consecutive failed footprint
+            # placements. Keep this explicit-state control as a diagnostic fallback.
+            mover_flags = struct.unpack('<H', phase.uc.mem_read(mover + 0x36, 2))[0]
+            phase.uc.mem_write(mover + 0x36, struct.pack('<H', mover_flags | 4))
+            _, error = phase.icd.call(0x4e5150, (), ecx=nav)
+            assert error is None, ('native 0x4e5150 repeated-block retry', error)
     else:
         set_destination(delivered_at + 1)
     assert pending[0] and len(requests) > second_request, (pending, requests)
     run_until_delivery(2, delivered_at + 2)
     second_route = deliveries[1]
-    assert second_route and second_route != first_route, (first_route, second_route)
+    assert second_route, ('empty retry route', first_route, second_route)
+    if live_blocker_collision is None:
+        assert second_route != first_route, (first_route, second_route)
     assert dispatch_calls[0] > 0, 'retail worker did not use the original grade dispatcher'
     assert read(mover) == original_nav == nav
     assert read(nav + 4) == original_controller == controller
@@ -469,7 +637,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 native_live_unload=False, terrain_scan_after=None,
                 shore_blocker=False, live_route_blocker_steps=0,
                 native_worker_repath=False, native_worker_mission_repath=False,
-                always_on_route_search=False, native_worker_mission_retry=False):
+                always_on_route_search=False, native_worker_mission_retry=False,
+                native_worker_mission_collision=False):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     native_live_profiles = {
@@ -500,6 +669,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         raise ValueError('--native-worker-mission-retry requires --live-route-blocker-steps')
     if native_worker_mission_retry and always_on_route_search:
         raise ValueError('--native-worker-mission-retry requires the blocked, non-always-on fixture')
+    if native_worker_mission_collision and not native_worker_mission_retry:
+        raise ValueError('--native-worker-mission-collision requires --native-worker-mission-retry')
     if always_on_route_search and not live_route_blocker_steps:
         raise ValueError('--always-on-route-search requires --live-route-blocker-steps')
     env = os.environ.copy()
@@ -921,6 +1092,18 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                   f'requests); its live mission route replacement matches all '
                   f'{len(mission_route)} World waypoints.')
         if native_worker_mission_retry:
+            collision_inputs = None
+            if native_worker_mission_collision:
+                collision_inputs = {
+                    'map_data': route_map,
+                    'world_seed': tuple(map(int, next(line for line in stdout
+                        if line.startswith('WORLDSEED ')).split()[1:])),
+                    'world_type': tuple(map(int, next(line for line in stdout
+                        if line.startswith('WORLDTYPE ')).split()[1:])),
+                    'water_profile': water_profile,
+                    'blocker_position': (blocked_state[0], blocked_state[1]),
+                    'blocker_heading': blocked_state[3],
+                }
             retry_route, retry_request_count, retry_delivery_count = \
                 replay_native_worker_repath(
                     plane_width, plane_height, grades, dynamic_grades,
@@ -928,21 +1111,33 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                     dynamic_profile,
                     target_x, target_z, circle_radius, sea,
                     (changed_repaths[0][4], changed_repaths[0][5]),
-                    mission_backed=True, retry_through_4e5150=True)
-            assert retry_route == dynamic_world_pixels, (
-                'native 0x4e5150 retry worker did not reproduce the captured World replacement',
-                retry_route, dynamic_world_pixels, dynamic_attempt)
+                    mission_backed=True, retry_through_4e5150=True,
+                    live_blocker_collision=collision_inputs)
+            if not native_worker_mission_collision:
+                assert retry_route == dynamic_world_pixels, (
+                    'native 0x4e5150 retry worker did not reproduce the captured World replacement',
+                    retry_route, dynamic_world_pixels, dynamic_attempt)
+            elif retry_route == dynamic_world_pixels:
+                print('  Collision-derived repeated refusal delivered the captured '
+                      'World replacement route.')
+            else:
+                print('  Collision-derived repeated refusal reached 0x4e5150 and '
+                      'delivered a retry, but that request retained the existing '
+                      f'route ({len(retry_route)} points vs {len(dynamic_world_pixels)} '
+                      'captured World points); this fixture does not establish a '
+                      'retail-vs-World path mismatch.')
             assert not live_grade_mismatches, (
                 'native 0x4e5150 retry queried a grade that differs from the blocker plane',
                 live_grade_mismatches[:20])
             assert not live_grade_reads, (
                 'native 0x4e5150 retry unexpectedly needed a live 0x4db640 refresh',
                 live_grade_reads)
-            print(f'  Retail 0x4e5150 consumed the World-captured repeated-block flag and '
-                  f'enqueued the live mission retry; 0x416430 delivered the replacement on the '
-                  f'same navigator/controller ({retry_delivery_count} deliveries from '
-                  f'{retry_request_count} worker requests), matching all '
-                  f'{len(retry_route)} World waypoints with no 0x4db640 refreshes.')
+            if not native_worker_mission_collision:
+                print(f'  Retail 0x4e5150 consumed the World-captured repeated-block flag and '
+                      f'enqueued the live mission retry; 0x416430 delivered the replacement on the '
+                      f'same navigator/controller ({retry_delivery_count} deliveries from '
+                      f'{retry_request_count} worker requests), matching all '
+                      f'{len(retry_route)} World waypoints with no 0x4db640 refreshes.')
         print(f'  World hit a live map-backed boat blocker, installed a changed '
               f'route at physical step {changed_repaths[0][0]}, cleared the blocker, '
               f'and released Araarch at the selected shore on step {route_release_step}.')
@@ -1674,6 +1869,8 @@ def main():
                         help='also replay the blocker route through retail 0x416430 with a live GROUND_UNLOAD mission and attached passenger')
     parser.add_argument('--native-worker-mission-retry', action='store_true',
                         help='seed the captured repeated-block state into native 0x4e5150 and deliver its live mission retry with 0x416430')
+    parser.add_argument('--native-worker-mission-collision', action='store_true',
+                        help='derive the live mission retry from retail 0x4dc800 collision against the map-backed Vertrans blocker')
     parser.add_argument('--always-on-route-search', action='store_true',
                         help='keep World path service enabled throughout the moving blocker trace')
     parser.add_argument('--hpitool', default='build/hpitool')
@@ -1696,6 +1893,8 @@ def main():
         parser.error('--native-worker-mission-repath requires --live-route-blocker-steps')
     if args.native_worker_mission_retry and not args.live_route_blocker_steps:
         parser.error('--native-worker-mission-retry requires --live-route-blocker-steps')
+    if args.native_worker_mission_collision and not args.native_worker_mission_retry:
+        parser.error('--native-worker-mission-collision requires --native-worker-mission-retry')
     if args.native_worker_mission_retry and args.always_on_route_search:
         parser.error('--native-worker-mission-retry requires the blocked, non-always-on fixture')
     if args.always_on_route_search and not args.live_route_blocker_steps:
@@ -1707,7 +1906,8 @@ def main():
                 args.native_live_unload,args.terrain_scan_after,args.shore_blocker,
                 args.live_route_blocker_steps, args.native_worker_repath,
                 args.native_worker_mission_repath, args.always_on_route_search,
-                args.native_worker_mission_retry)
+                args.native_worker_mission_retry,
+                args.native_worker_mission_collision)
 
 
 if __name__ == '__main__':
