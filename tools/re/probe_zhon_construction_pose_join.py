@@ -42,7 +42,8 @@ def names_at(data, offset, count):
     return result
 
 
-def native_display_root_state(cob_path, movement_rows, callback_rows, sample_ticks):
+def native_display_root_state(cob_path, movement_rows, callback_rows, sample_ticks,
+                              capture_context=False):
     data = cob_path.read_bytes()
     header = struct.unpack_from("<10I", data)
     _, script_count, piece_count, code_words, static_count, _, entry_off, \
@@ -217,6 +218,10 @@ def native_display_root_state(cob_path, movement_rows, callback_rows, sample_tic
                 "active_threads": active_threads,
                 "statics": [s32(uc, statics + index * 4) for index in range(static_count)],
             }
+            if capture_context:
+                sampled[tick]["piece_pose"] = [row[:] for row in pose]
+    if capture_context:
+        return sampled, p, piece_index, unit
     return sampled
 
 

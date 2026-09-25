@@ -212,8 +212,8 @@ implementation descriptions. Current open gates are:
   tick retirement; World matches its launch and each active-tick snapshot.
   That projectile-pool fixture stops before impact damage/effects; a separate
   native impact-body trace is documented below.
-  Special weapon cases, broader missing-script behavior, and complete
-  comparisons of flight callback phases and rendered poses remain open. A headless
+  Special weapon cases, broader missing-script behavior, roster-wide engine-
+  driven flight callback inputs, and final projected poses remain open. A headless
   native Araarch trace now confirms that losing visibility does not clear an
   already assigned live target in this path; World's explicit-target behavior
   agrees. Native `0x4dc800` callback-request traces cover all 151 movable
@@ -244,8 +244,9 @@ implementation descriptions. Current open gates are:
   flight-mission probe runs BeginFlight producer `0x416c50` and accepted
   BeginLanding path `0x416cd0/0x417089` through retail's real `0x56c5c0` COB
   dispatcher and scheduler; all 2,170 VM state words match World after the next
-  tick. Its mission/controller services are controlled, and rendered or
-  interpolated poses remain open. A 103-tick
+  tick. Its mission/controller services are controlled; the separate Zonhunt
+  pose-to-model geometry check below does not yet provide equivalent roster-wide
+  coverage. A 103-tick
   persistent `zonhunt` construction trace also captures
   native mover requests: its only declared movement callback, `setSFXoccupy(5)`,
   fires once on tick 1 in both native and World, including through two retargets,
@@ -259,8 +260,9 @@ implementation descriptions. Current open gates are:
   not an independent framebuffer comparison. A new 104-tick display-COB join
   schedules BeginFlight, setSFXoccupy(5), and StartBuilding from the native
   construction-movement callback trace; all script-thread and piece state
-  matches retail in Release, Debug, and optimized builds. Child-piece rendered
-  interpolation and live-camera captures remain open. The pending-shot/dead-
+  matches retail in Release, Debug, and optimized builds. Zonhunt child-piece
+  pose-to-model geometry is checked separately at tick 101; roster-wide pose
+  coverage and controlled-camera screen placement remain open. The pending-shot/dead-
   target sequence now joins target retirement to the next common weapon update;
   broader target-loss cases remain open.
 - Main-menu doors: the Bink decoder uses the chroma matrix measured from
@@ -659,8 +661,9 @@ The broad original request still requires stronger evidence in these areas:
 - Engine-driven animation callback inputs and final poses across the roster.
   Native COB transitions now match World for all 151 movable callback-bearing
   unit scripts, but the test controls callback inputs and stops before position
-  commit. Native flight mission VM state is covered separately; complete live
-  call-in and rendered-pose coverage is not.
+  commit. Native flight mission VM state and Zonhunt's interpolated pose-to-3DO
+  geometry are covered separately; engine-produced call-in coverage and
+  controlled-camera screen placement remain open across the roster.
 - Remaining effect families and their playback, attachment, transition,
   placement, and lifetime behavior. Existing native probes cover representative
   projectiles and attached effects, not every shipped emitter/collision path.
@@ -9195,8 +9198,25 @@ to under 0.000023 world units. In the available retail sample, the Monarch is
 units north; altitude accounts for 85.5 of those units and the remaining
 offset follows from the horizontal orbit around the site. These checks explain
 the observed northward placement without identifying a code discrepancy.
-There is still no same-pose, same-camera, same-site local/retail capture, so
-the final visual comparison remains open. No retail GUI was launched.
+The native model seam is now exercised end to end through geometry: current
+poses emitted by `56d850` at Zonhunt construction tick 101 map by COB/3DO piece
+name into the actual shipped `zonhunt.3do`; native `0x4ee620` refreshes all 48
+pieces and 346 vertices. Those transformed vertices match the World model
+transform helper within 0.00001716 world units. The separate display timeline
+compares complete native and World thread/piece state at 104 boundaries. The
+remaining animation gate is roster-wide engine-driven call-in coverage across
+other live profiles and flying families, plus final projected screen placement
+under a controlled camera. Framebuffer/raster comparison remains diagnostic;
+pixel identity is not required. No retail GUI was launched.
+
+Reproduce the geometry and display-state checks with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/check_native_flyer_model_pose.py \
+  --binary build-o2/model_transform_test --tick 101
+PYTHONPATH=tools/re python3 tools/re/check_zhon_construction_display_timeline.py \
+  --binary build-o2/retail_script_test --ticks 103
+```
 
 ### Native death-state dispatch through owner retirement (2026-09-24)
 
@@ -9695,6 +9715,37 @@ passenger-order continuation is claimed. The Bink/retail GUI remains closed.
 
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_native_passenger_order_dispatch.py
+```
+
+### Native full-map VTOL pickup through boarding (2026-09-25)
+
+`probe_air_pickup_native_fullmap.py` creates native code-1 VTOL_PICKUP and
+code-2 Move_Seek_Pickup orders for a ZONROC and Araarch on Lake Lokken. Retail
+`0x50e740` builds the height-sector plane from the shipped 480×480 TNT data,
+and the probe independently validates every 60×60 sector record. The real
+`0x4d8450` dispatcher selects the passenger, the native flight controller is
+installed, and 1,043 ticks of `0x4dc800` plus `0x51b2a0` move the carrier to
+the passenger. On dispatcher tick 1,044, native code establishes reciprocal
+cargo links and removes the passenger's code-2 pickup order.
+
+At the same dispatcher boundary, native code reaches the `BECARRIED` name
+lookup (`0x4d4bf0` at string `0x615984`). The fixture stops there: the retail
+lookup searches a name-sorted 25-byte descriptor table, so this probe does not
+assign an invented code or handler. The carrier's code-1 order is still active
+at that seam; its post-boarding completion and BECARRIED dispatch remain open.
+The Araarch stays stationary, so this does not cover its pre-boarding ground
+route or mover. Feature definitions, mission-name/eligibility services,
+allocation, the per-type occupancy mask, audio/effect/UI and COB VM sinks are
+controlled fixture boundaries; native pickup selection, flight movement,
+map-sector construction, cargo attachment and passenger pickup-order removal
+execute from KINGDOMS.icd. A 100-tick `--allow-incomplete` control also passes
+with active pursuit and measurable carrier movement before boarding.
+
+```sh
+PYTHONPATH=tools/re python3 -u tools/re/probe_air_pickup_native_fullmap.py \
+  --max-ticks 100 --allow-incomplete
+PYTHONPATH=tools/re python3 -u tools/re/probe_air_pickup_native_fullmap.py \
+  --max-ticks 5000
 ```
 
 ### Tarhel death-effect owner lifecycle (2026-09-25)
