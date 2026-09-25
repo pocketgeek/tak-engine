@@ -2007,10 +2007,32 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
                 stepped->type->waterline);
             std::printf("WORLDSCAN %u %u %u\n",w.tickCount(),stepped->groundScanTick,
                 unsigned(stepped->type->halfCellTicks));
+            std::vector<uint16_t> previousExploration;
+            const int explorationWidth=map.width/2;
+            const int explorationHeight=map.height/2;
+            if(liveRouteBlocker) {
+                const auto& exploration=w.navigationExploration();
+                if(exploration.size()!=size_t(explorationWidth)*size_t(explorationHeight))
+                    throw std::runtime_error("surface route trace exploration dimensions do not match map");
+                previousExploration=exploration;
+                for(size_t i=0;i<previousExploration.size();++i) if(previousExploration[i])
+                    std::printf("WORLDEXP_INIT %d %d %u\n",int(i%size_t(explorationWidth)),
+                        int(i/size_t(explorationWidth)),unsigned(previousExploration[i]));
+            }
             bool routeReleaseReported=false;
             bool routeAttemptReported=false;
             for(unsigned step=1;step<=stepLimit;++step) {
                 w.tick(1.f/30);
+                if(liveRouteBlocker) {
+                    const auto& exploration=w.navigationExploration();
+                    for(size_t i=0;i<exploration.size();++i)
+                        if(exploration[i]!=previousExploration[i]) {
+                            std::printf("WORLDEXP_DELTA %u %d %d %u\n",step,
+                                int(i%size_t(explorationWidth)),
+                                int(i/size_t(explorationWidth)),unsigned(exploration[i]));
+                            previousExploration[i]=exploration[i];
+                        }
+                }
                 const auto* after=w.unit(tid);
                 if(routeBlocker && !routeReleaseReported && w.unit(tid)->cargo.empty()) {
                     const int64_t dx=int64_t(after->x.v)-goalX*65536ll;

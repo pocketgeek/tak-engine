@@ -1680,9 +1680,10 @@ the optimized build after these fixes. No path-search algorithms were changed.
 
 This is not yet complete native weapon-controller parity. The legacy path remains
 for unit definitions with no authoritative weapon script; special weapon event
-flags, lower-slot mana fallback, and target-loss/range handling during delayed
-release still need investigation. Selected-slot reload countdown is now matched
-by the native 52ae90 update probe and the live weapon-switching regression below.
+flags, lower-slot mana fallback, and broader target-retirement/visibility
+interactions during delayed release still need investigation. Selected-slot
+reload countdown is now matched by the native 52ae90 update probe and the live
+weapon-switching regression below.
 The live changes also consume additional simulation CRT draws, intentionally
 changing match hashes.
 
@@ -8577,6 +8578,26 @@ case. The native collision routine was advanced directly, so the global
 projectile-manager's same-tick scheduling is not established. The untracked
 ad-hoc Araarch probe still calls the callbacks in the old reversed order and is
 not authoritative for release timing. No retail GUI was launched.
+
+### Delayed script release across range and visibility changes (2026-09-24)
+
+The native `probe_weapon_gate_loss.py` check confirms the common weapon update
+admits a 400-pixel target, rejects one at 401 pixels, retains SET 23 while the
+live target is out of range, and releases the pending shot after range returns.
+The World `retail_script_test` now drives the same delayed AimWeapon/FireWeapon
+handshake with a live target: after SET 23 becomes pending at 401 pixels, eight
+out-of-range updates create no projectile and spend no mana; moving the target
+back to the inclusive 400-pixel boundary releases exactly one shot and charges
+mana once. The focused `retail_script` CTest passes in Release, Debug, and
+optimized Debug. `weapon_hidden_release_test` adds the fog case: while SET 23
+is pending out of range, the test switches to a player with no vision, confirms
+the target is hidden, then brings it to the inclusive boundary and observes one
+shot and one mana charge. Native `probe_weapon_gate_loss.py` independently
+confirms a hidden live target releases when range returns; `probe_weapon_target_lookup.py`
+confirms a pending-death target is retired without consuming SET 23. Both World
+tests pass. The two CTests pass in Release, Debug, and optimized Debug. Broader
+target-retirement and visibility combinations remain open. No retail GUI was
+launched.
 
 ### Shipped arrow and bolt rendering paths (2026-09-24)
 

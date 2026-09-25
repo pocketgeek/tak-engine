@@ -959,6 +959,52 @@ int main(int argc,char** argv) {
         require(draws==1 && reloadAtCallback>=240 && reloadAtCallback<360,"callback consumes one native reload draw");
         require(world.unit(sid)->mana==17,"mana is spent when the script releases the projectile");
         {
+            // Retail keeps SET 23 pending while the assigned target is just
+            // outside weapon range, then releases the same shot when range is
+            // admitted again. Keep the target at a controlled relative offset
+            // so this covers the weapon gate rather than chase movement.
+            UnitType mobileShooter=shooter;mobileShooter.canMove=true;
+            mobileShooter.maxVel=Fixed::fromInt(1);mobileShooter.turnInPlaceRate=0;
+            UnitType mobileTarget=targetType;mobileTarget.maxVel=Fixed::fromInt(1);
+            World rangeLoss;rangeLoss.setVisPlayer(-1);
+            rangeLoss.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            const int from=rangeLoss.spawn(&mobileShooter,200,200,{},0);
+            const int victim=rangeLoss.spawn(&mobileTarget,300,200,{},1);
+            rangeLoss.attack(from,victim,false);
+            bool fireCallback=false,pendingRelease=false;
+            for(int tick=0;tick<20 && !pendingRelease;++tick) {
+                if(fireCallback) {
+                    const auto* archer=rangeLoss.unit(from);
+                    auto* target=rangeLoss.unit(victim);
+                    target->x=archer->x+Fixed::fromInt(401);target->z=archer->z;
+                }
+                rangeLoss.tick(1.f/30);
+                const auto* archer=rangeLoss.unit(from);
+                fireCallback=fireCallback || archer->fireAnimations!=0;
+                pendingRelease=(archer->weaponAim[0].flags&16)!=0;
+            }
+            require(fireCallback && pendingRelease,"FireWeapon SET 23 becomes pending beyond weapon range");
+            for(int tick=0;tick<8;++tick) {
+                const auto* archer=rangeLoss.unit(from);auto* target=rangeLoss.unit(victim);
+                target->x=archer->x+Fixed::fromInt(401);target->z=archer->z;
+                rangeLoss.tick(1.f/30);
+                archer=rangeLoss.unit(from);
+                require((archer->weaponAim[0].flags&16) && !archer->justFired &&
+                    rangeLoss.projectiles().empty() && archer->mana==20,
+                    "out-of-range ticks retain SET 23 without releasing a shot or mana");
+            }
+            {
+                const auto* archer=rangeLoss.unit(from);auto* target=rangeLoss.unit(victim);
+                target->x=archer->x+Fixed::fromInt(400);target->z=archer->z;
+            }
+            rangeLoss.tick(1.f/30);
+            const auto* archer=rangeLoss.unit(from);
+            require(archer->justFired && !(archer->weaponAim[0].flags&16) &&
+                rangeLoss.projectiles().size()==1 && archer->mana==17,
+                "returning to the inclusive range boundary releases the one pending shot");
+            std::cout<<"PASS: pending script release waits outside native weapon range and resumes at the range boundary\n";
+        }
+        {
             World edge;edge.setVisPlayer(-1);
             edge.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             UnitType stationary=shooter;stationary.canMove=false;
