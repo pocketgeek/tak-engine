@@ -165,10 +165,12 @@ implementation descriptions. Current open gates are:
   insertion, one manager update and compaction per tick, tree impact, and same-
   tick retirement; World matches its launch and each active-tick snapshot.
   The native impact callback's damage/effect body remains outside that fixture.
-  Special weapon cases, broader missing-script behavior, visibility-loss timelines,
-  and full movement/flight callback phase comparisons remain open. A new
-  three-profile native mover sweep covers ground, floater, and flyer callback
-  requests over a changing tick and an unchanged tick; it captures at the
+  Special weapon cases, broader missing-script behavior, full movement/flight
+  callback phase comparisons, and rendered pose parity remain open. A headless
+  native Araarch trace now confirms that losing visibility does not clear an
+  already assigned live target in this path; World's explicit-target behavior
+  agrees. A three-profile native mover sweep covers ground, floater, and flyer
+  callback requests over a changing tick and an unchanged tick; it captures at the
   script-dispatch boundary, so full COB execution and wider roster coverage
   remain open. A 103-tick persistent `zonhunt` construction trace also captures
   native mover requests: its only declared movement callback, `setSFXoccupy(5)`,
@@ -207,8 +209,9 @@ implementation descriptions. Current open gates are:
   environmental collision; an Arabow arrow's native feature-impact dispatch
   matches the World feature-damage regression. Death damage-flame callback and
   creation-dispatch timelines now match native for three scripts. The `tarmage`
-  SET31 path is also traced through its native timer and tick-35 owner/list
-  teardown; its standalone World timeline omits that outer owner gate, so the
+  SET31 path is also traced from retail's native death-state builder through
+  Killed/Dying dispatch, its timer, and tick-35 owner/list teardown; its
+  standalone World timeline omits that outer owner gate, so the
   extra callbacks there do not establish a live mismatch. Other callback-to-
   removal and attached-emitter lifecycles remain open, along with debris details,
   shared cosmetic RNG/tick phase, collision/lifetime
@@ -8906,4 +8909,58 @@ Reproduce with:
 ```sh
 python3 tools/re/check_zhon_construction_flight_trace.py \
   --binary build-o2/conjure_test --install assets/game --persistent
+```
+
+### Zhon monarch script-state timeline (2026-09-24)
+
+The shipped `zonhunt.cob` script now compares against retail over 502 restored
+thread, animation, and RNG boundaries. `Create`, `BeginFlight`/occupancy, and
+the construction callbacks remain aligned; the build-ready updates occur at
+tick 151. This covers native script state, not the world-space build-site
+offset, flight altitude, camera projection, or rendered pose that could explain
+the reported northward placement. The check passes with Release, Debug,
+optimized Debug, and Clang test binaries. No production change is justified by
+the script-state comparison.
+
+Reproduce with:
+
+```sh
+python3 tools/re/check_script_state.py \
+  assets/extracted/all/scripts/zonhunt.cob /tmp/zonhunt-zero.state \
+  --binary build-o2/retail_script_test --ticks 501 --notify Create --timeline
+```
+
+### Native death-state dispatch through owner retirement (2026-09-24)
+
+`probe_native_set31_lifecycle.py --native-death-state` enters retail's
+`0x512610(unit, 1)` and `0x512860` instead of manually starting the two COB
+callbacks. The native dispatcher starts `Killed`, then `Dying`; the real COB
+host writes SET31 at tick 0. The native timer expires at tick 34, and the unit
+update consumes removal and destroys the attached SFX owner/list at tick 35.
+The synthetic model allocator and effect creation sink remain controlled, so
+this verifies lifecycle dispatch and retirement, not the rendered corpse.
+Release, Debug, optimized Debug, and Clang runs pass.
+
+Reproduce with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
+  --native-death-state --world-binary build-o2/animation_roster_test
+```
+
+### Assigned weapon target across a visibility edge (2026-09-24)
+
+The target-loss probe now starts with a live assigned target in a visible cell,
+then clears the current visibility grid and calls retail's `0x51a9a0` again.
+The native lookup retains the same target pointer and does not dispatch
+`TargetCleared`; `0x52ae90` continues to admit the live in-range target behind
+the hidden grid. This only covers an existing target reference. It does not
+test selecting or acquiring a new target through fog, nor the full mission
+caller or a rendered attack timeline. World’s explicit-target path follows the
+same rule. This trace therefore supports no production change by itself.
+
+Reproduce with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_weapon_gate_loss.py
 ```

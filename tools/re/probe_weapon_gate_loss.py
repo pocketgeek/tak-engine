@@ -139,6 +139,18 @@ for body, x, z in ((shooter, 200, 200), (target, 300, 200)):
     fixed(body + 0x70, z)
 p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
 
+# Losing current vision does not retire an already-assigned live target in
+# retail's native lookup. Selection/mission target acquisition is outside this
+# probe; the test starts from an existing weapon target reference.
+p.uc.mem_write(visibility, bytes([2]) * 4096)
+result, error = p.call(0x51a9a0, (shooter, 0))
+assert not error and result == target, (result, error)
+p.uc.mem_write(visibility, bytes(4096))
+result, error = p.call(0x51a9a0, (shooter, 0))
+assert not error and result == target, (result, error)
+assert not trace, trace
+print('PASS: native 51a9a0 retains an assigned live target across a visible-to-hidden FOW edge')
+
 # Range admission is inclusive: 400 is admitted, 401 is rejected.
 for distance, expected in ((400, True), (401, False)):
     fixed(target + 0x68, 200 + distance)

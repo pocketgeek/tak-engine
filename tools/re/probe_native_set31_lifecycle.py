@@ -3,8 +3,16 @@
 
 Retail's COB VM host, 0x51d3e0 unit update, 0x51e380 timer, 0x512ae0
 retirement, and 0x4ee560/0x497380 owner/effect-list destructors execute from
-KINGDOMS.icd. Synthetic game/player/model records and unrelated graphics,
-allocator, and VM-shutdown seams keep the trace headless.
+KINGDOMS.icd. `--native-death-state` additionally enters 0x512610 and 0x512860
+to construct and dispatch a real death state before following owner updates.
+
+The fixture supplies synthetic game/player/unit/FBI/model/owner records,
+the unit-id lookup table, and a one-node attached-SFX list. The position query
+returns a fixed point; effect creation, model allocation, unrelated graphics
+and global callbacks, and VM shutdown are controlled seams (the model allocator
+returns null, and the SFX sink only records requests). The native death builder,
+COB event routing/host, unit updater/timer/removal, and list destructors execute
+from the retail binary. This is a lifecycle trace, not a rendered corpse test.
 """
 import argparse
 from pathlib import Path
@@ -36,6 +44,10 @@ def main():
     parser.add_argument("--script", default="tarmage")
     parser.add_argument("--world-binary", type=Path,
                         default=Path("build-o2/animation_roster_test"))
+    parser.add_argument("--native-death-state", action="store_true",
+                        help="build the death event through retail 0x512610/0x512860")
+    parser.add_argument("--death-type", type=int, default=1,
+                        help="native death-state type (for --native-death-state; default: 1)")
     args = parser.parse_args()
 
     script = args.scripts / f"{args.script}.cob"
@@ -53,7 +65,7 @@ def main():
     global_manager, global_vtable = HEAP + 0xE2000, HEAP + 0xE3000
     sfx_list, sentinel, node = HEAP + 0xF0000, HEAP + 0xF1000, HEAP + 0xF2000
     sfx_vtable = HEAP + 0xF3000
-    events, native_sfx, writes, tick = [], [], [], [0]
+    events, native_sfx, writes, callback_names, callback_dispatches, tick = [], [], [], [], [], [0]
 
     def host_hook(slot, count):
         def invoke(uc, sp):
@@ -151,9 +163,18 @@ def main():
     assert not error and result == 0, ("init", result, error)
 
     names = []
+    name_table, name_text = HEAP + 0x210000, HEAP + 0x220000
+    name_cursor = 0
     for i in range(script_count):
         offset = struct.unpack_from("<I", data, name_offset + i * 4)[0]
-        names.append(data[offset:].split(b"\0", 1)[0].decode("ascii"))
+        raw_name = data[offset:].split(b"\0", 1)[0]
+        names.append(raw_name.decode("ascii"))
+        put(p, name_table + i * 4, name_text + name_cursor)
+        p.uc.mem_write(name_text + name_cursor, raw_name + b"\0")
+        name_cursor += len(raw_name) + 1
+    # 0x56c4a0 resolves the callback names passed by native 0x512610 and
+    # 0x512860 through descriptor +0x1c. Direct index starts above do not use it.
+    put(p, desc + 0x1C, name_table)
     lower_names = [name.lower() for name in names]
 
     def start(name, values):
@@ -183,6 +204,15 @@ def main():
     put(p, game + 0x2478, unit)
     put(p, game + 0x247C, unit)
     put(p, game + 0x2510, HEAP + 0x360000)
+    if args.native_death_state:
+        # 0x512610 creates a native death event containing the unit's numeric
+        # id; 0x512860 resolves it through this inclusive retail unit table.
+        # Put the sole fixture unit at id 1, leaving id 0 null as in retail.
+        put(p, unit + 2, 1)
+        put(p, game + 0x14E84, unit - 0x138)
+        put(p, game + 0x14E88, unit)
+        p.uc.mem_write(unit + 0x10C, struct.pack("<h", -1))
+        p.uc.mem_write(unit + 0x111, b"\x64")
     put(p, owner + 0x17C, sfx_list)
     put(p, sfx_list, sfx_vtable)
     put(p, sfx_list + 8, sentinel)
@@ -198,10 +228,21 @@ def main():
 
     trace = []
     recent = []
-    watched = {0x50D450, 0x56C870, 0x51E380, 0x51DE30, 0x512AE0, 0x4EE560, 0x497380}
+    watched = {0x50D450, 0x56C870, 0x51E380, 0x51DE30, 0x512610, 0x512860,
+               0x512AE0, 0x4EE560, 0x497380}
     def watch(uc, address, size, _):
         if address in watched:
             trace.append((tick[0], address))
+        if address in (0x56C720, 0x56C640):
+            esp = uc.reg_read(UC_X86_REG_ESP)
+            name_ptr = u32(p, esp + 4)
+            callback_dispatches.append((hex(address),
+                                        bytes(uc.mem_read(name_ptr, 32)).split(b"\0", 1)[0].decode(),
+                                        hex(u32(p, esp))))
+        if address == 0x56C4A0:
+            esp = uc.reg_read(UC_X86_REG_ESP)
+            name_ptr = u32(p, esp + 4)
+            callback_names.append(bytes(uc.mem_read(name_ptr, 32)).split(b"\0", 1)[0].decode())
         if address == 0x50DA20:
             esp = uc.reg_read(UC_X86_REG_ESP)
             piece, code = struct.unpack("<2I", uc.mem_read(esp + 4, 8))
@@ -214,11 +255,18 @@ def main():
     p.uc.hook_add(UC_HOOK_CODE, lambda uc, address, size, _: recent.append(address)
                   if 0x401000 <= address < 0x5EA000 else None)
 
-    for name, values in (("Killed", [100, 0, 1]), ("Dying", [1])):
-        if name not in names:
-            continue
-        result, error = start(name, values)
-        assert not error and result == 1, (name, result, error)
+    if args.native_death_state:
+        result, error = p.call(0x512610, (unit, args.death_type))
+        if error:
+            raise RuntimeError(("native death state 0x512610", error,
+                                hex(p.uc.reg_read(UC_X86_REG_EIP)),
+                                [hex(a) for a in recent[-40:]]))
+    else:
+        for name, values in (("Killed", [100, 0, 1]), ("Dying", [1])):
+            if name not in names:
+                continue
+            result, error = start(name, values)
+            assert not error and result == 1, (name, result, error)
 
     snapshots = []
     for frame in range(1, 36):
@@ -238,6 +286,14 @@ def main():
         if u32(p, unit + 0xC0) == 0:
             break
 
+    if args.native_death_state and writes != [(0, 31, 1)]:
+        print("native-death diagnostics:", {
+            "writes": writes, "trace": [(t, hex(a)) for t, a in trace],
+            "callback_names": callback_names,
+            "callback_dispatches": callback_dispatches,
+            "unit_state": hex(u32(p, unit + 0x130)), "owner_timer": f32(p, owner + 0x18),
+            "recent": [hex(a) for a in recent[-40:]],
+        })
     assert writes == [(0, 31, 1)], writes
     assert native_sfx and all(row[0] == 0 and row[2] == 260 for row in native_sfx), native_sfx
     assert len(events) == len(native_sfx), (native_sfx, events)
@@ -252,7 +308,16 @@ def main():
     assert snapshots[34][4] == 0 and snapshots[34][5] == 0, snapshots[34]
     assert snapshots[34][6] == sentinel, snapshots[34]
     vm_updates = [(t, address) for t, address in trace if address == 0x56C870]
-    assert vm_updates == [(0, 0x56C870), (0, 0x56C870)], vm_updates
+    if args.native_death_state:
+        assert [(t, address) for t, address in trace if address in (0x512610, 0x512860)] == [
+            (0, 0x512610), (0, 0x512860)
+        ], trace
+        assert vm_updates == [(0, 0x56C870)], vm_updates
+        assert [(address, name) for address, name, _ in callback_dispatches] == [
+            ("0x56c720", "Killed"), ("0x56c640", "Dying")
+        ], callback_dispatches
+    else:
+        assert vm_updates == [(0, 0x56C870), (0, 0x56C870)], vm_updates
     retirement = [(t, address) for t, address in trace
                   if address in (0x512AE0, 0x4EE560, 0x497380)]
     assert retirement == [(35, 0x512AE0), (35, 0x4EE560), (35, 0x497380)], retirement
@@ -324,12 +389,14 @@ def main():
         set26_render_sfx, set26_direct_sfx
     )
 
-    print(f"PASS: native {args.script} SET31 at tick 0; real 0x56c870 runs only for the two "
-          "immediate callbacks at tick 0, then real 0x51e380 decrements to 0.97 at tick 1 and "
+    callback_summary = (f"retail death builder ({args.death_type}) dispatches {callback_dispatches}"
+                        if args.native_death_state else "manual Killed and Dying starts")
+    print(f"PASS: native {args.script} SET31 at tick 0 via {callback_summary}; real 0x56c870 runs "
+          f"{len(vm_updates)} time(s) at tick 0, then real 0x51e380 decrements to 0.97 at tick 1 and "
           "expires on tick 34; 0x51d3e0 consumes removal on tick 35; native owner/list destructors "
           "clear the attached node (0x502da0 creation sink controlled)")
-    print(f"PASS: render-host timeline records SET31 and stops future VM ticks after the two synchronous "
-          f"death starts ({len(render_sfx)} tick-0 callbacks); direct-VM timeline continues to emit "
+    print(f"PASS: render-host timeline records SET31 and stops future VM ticks after immediate death "
+          f"callbacks ({len(render_sfx)} tick-0 callbacks); direct-VM timeline continues to emit "
           f"{len(world_late)} later callbacks at ticks 14 and 28")
     print(f"PASS: render-host SET26 timeline for {set26_script.name} keeps only its tick-0 effects "
           f"while the direct-VM timeline emits {sum(row[0] > 0 for row in set26_direct_sfx)} later callbacks")
