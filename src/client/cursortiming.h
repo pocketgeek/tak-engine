@@ -28,4 +28,15 @@ size_t cursorFrameAt(const Frames& frames, uint64_t elapsedMilliseconds) {
     return frames.size() - 1;
 }
 
+// Native 0x4d5930 selects end-of-order cursor markers from the global game tick.
+// Its frame interval is twice the first GAF frame's delay, and it does not reset
+// when an order is issued. The marker API uses the first frame duration even if
+// later frames carry different authored delays.
+inline size_t cursorOrderMarkerFrameAt(size_t frameCount, uint16_t firstFrameDelayTicks,
+                                      uint64_t gameTick) {
+    if (!frameCount) return 0;
+    const uint64_t interval = 2 * uint64_t(std::max<uint16_t>(1, firstFrameDelayTicks));
+    return size_t((gameTick / interval) % frameCount);
+}
+
 } // namespace tak

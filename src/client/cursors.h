@@ -126,6 +126,10 @@ public:
     size_t frameCount(CursorId c) const {
         return size_t(c) < anims_.size() ? anims_[size_t(c)].size() : 0;
     }
+    uint16_t firstFrameDelayTicks(CursorId c) const {
+        if (size_t(c) >= anims_.size() || anims_[size_t(c)].empty()) return 0;
+        return anims_[size_t(c)].front().delayTicks;
+    }
 
     // Free the cached SDL_Cursors and restore the default OS arrow. Call when turning
     // hardware mode off (so the software path can hide the arrow and draw its own).

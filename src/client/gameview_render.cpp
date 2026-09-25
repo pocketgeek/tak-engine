@@ -1,6 +1,7 @@
 #include <set>
 #include <functional>
 #include "client/gameview.h"
+#include "client/cursortiming.h"
 #include "client/retaillightningquad.h"
 #include "client/retailflame.h"
 #include "client/retaileffectframe.h"
@@ -3626,7 +3627,9 @@
                     float my = (kz - mapView_.offY()) * zm - terrainLift(kx, kz) * zm;
                     if (mx > -40 && mx < float(mvw) + 40 && my > -40 && my < float(winH) + 40) {
                         size_t n = std::max<size_t>(1, cursors_.frameCount(marker));
-                        cursors_.drawFrame(ren_, marker, size_t(tick / 3) % n,
+                        const size_t markerFrame = tak::cursorOrderMarkerFrameAt(
+                            n, cursors_.firstFrameDelayTicks(marker), tick);
+                        cursors_.drawFrame(ren_, marker, markerFrame,
                                            int(mx), int(my), scale);
                     }
                 }

@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <unordered_map>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -58,6 +59,18 @@ bool checkAssets(const char* root) {
         byName[key] = &sequence;
     }
     const auto normal = byName.at("cursornormal");
+    constexpr std::array<std::tuple<const char*, size_t, uint16_t>, 8> markerSequences{{
+        {"CursorMove", 12, 2}, {"CursorAttack", 10, 2}, {"CursorPatrol", 20, 2},
+        {"CursorDefend", 17, 2}, {"cursorrepair", 10, 2}, {"Cursorload", 10, 3},
+        {"CursorUnload", 10, 3}, {"Cursorreclamate", 16, 3},
+    }};
+    for (const auto& [name, expectedFrames, expectedDelay] : markerSequences) {
+        std::string key = name;
+        for (char& c : key) c = char(std::tolower(static_cast<unsigned char>(c)));
+        const auto it = byName.find(key);
+        if (it == byName.end() || it->second->frames.size() != expectedFrames ||
+            it->second->frames.front().retailDelayTicks != expectedDelay) return false;
+    }
     for (const auto& entry : roster) {
         std::string key = entry.name;
         for (char& c : key) c = char(std::tolower(static_cast<unsigned char>(c)));
@@ -108,6 +121,18 @@ int main(int argc, char** argv) {
         tak::cursorFrameAt(shortCycle, 167) != 2 ||
         tak::cursorFrameAt(shortCycle, 500) != 0)
         return fail("cursor frame clock follows authored 2/3/10 tick boundaries");
+
+    if (tak::cursorOrderMarkerFrameAt(12, 2, 0) != 0 ||
+        tak::cursorOrderMarkerFrameAt(12, 2, 3) != 0 ||
+        tak::cursorOrderMarkerFrameAt(12, 2, 4) != 1 ||
+        tak::cursorOrderMarkerFrameAt(12, 2, 100) != 1 ||
+        tak::cursorOrderMarkerFrameAt(12, 2, 48) != 0 ||
+        tak::cursorOrderMarkerFrameAt(10, 3, 5) != 0 ||
+        tak::cursorOrderMarkerFrameAt(10, 3, 6) != 1 ||
+        tak::cursorOrderMarkerFrameAt(10, 3, 59) != 9 ||
+        tak::cursorOrderMarkerFrameAt(10, 3, 60) != 0 ||
+        tak::cursorOrderMarkerFrameAt(0, 2, 99) != 0)
+        return fail("waypoint marker frames use the global game tick and twice the first GAF delay");
 
     using tak::client::CursorWeaponRange;
     using tak::client::cursorWeaponRange;
@@ -209,7 +234,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && !checkAssets(argv[1]))
         return fail("mapped cursor names or placeholder pixels differ from the shipped GAF");
     if (argc > 2) return fail("usage: cursor_test [extracted-retail-data-root]");
-    std::puts("PASS: retail cursor ID/name roster, authored 30 Hz delays, and native range gates");
+    std::puts("PASS: retail cursor roster, pointer delays, order-marker clock, and native range gates");
     if (argc == 2) std::puts("PASS: all mapped cursor sequences exist; placeholder art matches cursornormal");
     return 0;
 }

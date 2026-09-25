@@ -199,7 +199,10 @@ implementation descriptions. Current open gates are:
   `dropped=`, so this primarily covers authored/mod content. Static selector
   and setter-callsite audits found no gameplay return path for Capture, Pickup,
   or Teleport; exact animation start phase remains open. Hourglass is confined
-  to the native modal file-picker path.
+  to the native modal file-picker path. End-of-order waypoint markers now use
+  retail's global-tick frame interval (`2 × first GAF delay`) instead of the
+  previous fixed three-tick interval; the live mouse-pointer restart phase is
+  still unverified.
 - Effects: feature burn art, authored lifetimes, layered flames, shadow clocks
   and tick-owned smoke are integrated. Authored projectile sprites now honor
   each TAF frame's anchor. The native-probed GuidedWeapon XYZ path is now wired
@@ -8974,4 +8977,22 @@ Reproduce with:
 
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_weapon_gate_loss.py
+```
+
+### Retail waypoint-marker cursor timing (2026-09-25)
+
+Retail `0x4d5930` chooses each order-end marker from the global simulation tick:
+`tick / (2 × first-frame GAF delay) % frame count`. `drawOrderTrails()` used
+`tick / 3` for every cursor. The renderer now uses the native interval: four
+ticks for Move, Attack, Patrol, Defend and Repair, and six ticks for Load,
+Unload and Reclaim. The cursor test checks the native four- and six-tick
+boundaries and the shipped sequence lengths and first-frame delays. The live
+mouse-pointer clock/restart behavior remains a separate open comparison. No
+retail GUI run was needed.
+
+Reproduce with:
+
+```sh
+build-o2/cursor_test assets/extracted/all
+ctest --test-dir build-o2 -R cursor_roster --output-on-failure
 ```
