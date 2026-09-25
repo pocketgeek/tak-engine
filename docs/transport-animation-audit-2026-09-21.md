@@ -120,12 +120,16 @@ implementation descriptions. Current open gates are:
   mission and cargo remain active delivers all ten World waypoints. The isolated
   always-on search-state difference remains unexplained. The replay begins at
   the captured World replan boundary and explicitly submits the replacement.
-  A collision-to-retry probe now uses native `0x507d10` against a live
-  map-backed Vertrans: two placement refusals set mover bit 4, `0x4e5150`
-  queues the retry, and `0x416430` delivers it. The collision-derived retry
-  retains a two-point route rather than the five-point World capture, while a
-  direct-bit control matches all five. This leaves controller sequencing or
-  fixture coverage unresolved and does not establish a gameplay mismatch.
+  A continuous collision-to-retry probe now keeps the native unload mission,
+  controller, and initial route from `WORLDSEED` through the live blocker.
+  Retail reaches the exact World replan position, gets two placement refusals
+  from `0x507d10`, and `0x4e5150`/`0x416430` install all five World replacement
+  waypoints. The earlier two-point result came from a boundary-seeded fixture
+  that created a fresh native route/controller at the World replan position;
+  it did not carry the approach history. That fixture also rewound its worker
+  clock after enqueueing the retry. With continuous native history and a
+  monotonic clock, the collision-driven and captured-bit controls both match.
+  No production pathfinding change is justified by the old fixture result.
   Native TNT-backed terrain grading and reconstructed
   routes also match for Aratrans/WATER5 on the same long Lake Lokken shore route
   in Standard and Crusades: 698 distinct native query cells, 906 grade calls,
@@ -148,11 +152,14 @@ implementation descriptions. Current open gates are:
   and then omitted the blocker from its live-body query and occupancy plane; the
   resulting scan mismatch is a fixture error, not evidence of different gameplay.
   That initial trace did not deliver a replacement route in its combined
-  mission context. The bounded `0x4e5150`/`0x416430` retry matches all five
-  World waypoints when given the captured refusal bit. The separate native
-  collision-driven retry proves retail can produce the bit and deliver a retry,
-  but that replay retains the existing two-point route. Connecting a naturally
-  encountered blocker to the five-point World replacement route remains open.
+  mission context. Both the captured-bit `0x4e5150`/`0x416430` retry and the
+  continuous native collision-driven retry now match all five World waypoints.
+  The continuous case follows retail from the original map start with its first
+  route and controller intact, reaches the same X/Z collision boundary as
+  World, and carries that native state through the two refusals. The previous
+  two-point result used a newly constructed navigator at the World boundary,
+  not the native route history; its worker also ran after a clock rewind. That
+  result was a fixture artifact, not evidence of a gameplay mismatch.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -8701,12 +8708,10 @@ map-backed Vertrans at `(238,235)`. The emulator fixture had not registered that
 blocker in its live-body query and occupancy plane, so its different scan result
 is a fixture omission, not evidence of a retail/gameplay mismatch.
 
-The earlier combined movement-and-worker trace still did not produce the
-native repeated-refusal bit from collision detection. The following bounded
-retry trace now joins that captured state to retail's retry scheduler and
-mission worker, but the native collision-to-bit update itself remains open. No
-production pathfinding change is justified by that remaining gap. No retail GUI
-was launched.
+That earlier combined movement-and-worker trace did not produce the native
+repeated-refusal bit because it lacked the full live-body inputs. The continuous
+native collision and route-history case below supersedes that result and closes
+the collision-to-bit gap. No retail GUI was launched.
 
 ### Native collision-driven mission-worker retry after the map-backed blocker (2026-09-25)
 
@@ -8722,19 +8727,28 @@ replacement route. Retail's original `0x4139d0` dispatcher runs with the cached
 map grades; it needs no `0x4db640` live-body refresh because the map cache
 already marks the occupied footprint blocked and its clearance cells.
 
-The `--native-worker-mission-collision` variant builds native entity slots and
-occupancy cells for the Vertrans blocker, then advances the carrier through the
-real `0x4dc800` mover and `0x507d10` placement check. Retail rejects two
-consecutive footprints, sets mover bit 4, `0x4e5150` enqueues a retry, and
-`0x416430` delivers it. In this collision-derived path, the worker retains the
-existing two-point route instead of the five-point World replacement. Running
-the same fixture with the captured refusal bit seeded directly delivers the
-exact five World waypoints. This isolates the remaining difference to the
-collision-derived controller/fixture sequence; it does not establish a retail
-versus World pathfinding mismatch. The trace is Standard-only, and other maps
+The `--native-worker-mission-collision` variant starts at the original native
+`WORLDSEED`, installs the initial route on the live unload mission/controller,
+and advances that same carrier through the real `0x4dc800` mover and
+`0x507d10` placement check. Retail reaches the World replan X/Z position,
+rejects two consecutive footprints, sets mover bit 4, and `0x4e5150` queues the
+retry for `0x416430`. The native mover reaches that boundary after 771 updates;
+the World fixture installs its replacement at step 1232 because it delays path
+service until its terrain-scan window. Both traces are at the same captured
+collision position, and retail installs all five World replacement waypoints.
+The initial native route is also checked against the captured map route.
+
+The earlier boundary-seeded collision replay started a fresh native
+mission/controller at the captured World replan position and built a two-point
+straight route there, omitting the trip's initial route and approach state. It
+also advanced through the collision at ticks 3–4, then rewound the worker clock
+to tick 3 after the retry had been enqueued at tick 4. With the native route
+history carried through the collision and the worker clock kept monotonic, the
+two-point result disappears. This was a harness artifact; it does not justify
+a production pathfinding change. The trace is Standard-only, and other maps
 and carrier profiles remain open. No retail GUI was launched.
 
-Reproduce the collision-derived trace with:
+Reproduce the continuous native collision-driven trace with:
 
 ```sh
 python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
@@ -8744,13 +8758,20 @@ python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
   --native-worker-mission-retry --native-worker-mission-collision
 ```
 
-The captured-bit control is the same command without
-`--native-worker-mission-collision`.
+Reproduce the captured-bit control with:
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
+  --native-map-grades --live-route-blocker-steps 5000 \
+  --native-worker-mission-retry
+```
 
 The standalone direct-search reconstruction remains one waypoint different.
-The collision-driven retry and direct-bit control both match all native grade
-queries to the map-backed blocker plane, and the endpoint remains inside the
-same 266px unload circle. No production change was justified by this trace.
+Both worker replays match the native grade checks to the map-backed blocker
+plane, and their endpoints remain inside the same 266px unload circle. No
+production change was justified by this trace.
 
 Reproduce the direct-bit control with:
 

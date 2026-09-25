@@ -182,12 +182,11 @@ def replay_native_worker_repath(width, height, base_cached_grades,
                                 live_blocker_collision=None):
     """Run a map-backed replacement through retail's queued route worker.
 
-    The starting position is the captured World replan boundary. Retail first
-    installs the unobstructed route, then the same navigator/controller
-    requests a replacement through either 0x4e54e0 or 0x4e5150 and the singleton
-    0x416430 worker. The retry variant can seed the captured repeated-refusal
-    mover bit, or derive it by advancing the real map-backed native mover into
-    a registered live blocker.
+    The baseline starts at the captured World replan boundary. Collision mode
+    instead starts at WORLDSEED, installs and checks the initial route, then
+    advances that same mission/controller/mover into the registered live
+    blocker before submitting a retry. Both variants use the singleton 0x416430
+    worker; the direct-bit case seeds the captured refusal flag.
     """
     from unicorn import UC_HOOK_CODE
     from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ESI, UC_X86_REG_ESP
@@ -196,6 +195,19 @@ def replay_native_worker_repath(width, height, base_cached_grades,
     (turn, fx, fz, road, water, flags, transport_dist, max_water, min_water,
      half_cell_ticks, heavy) = profile
     goal_cell = (goal_x - fx // 2, goal_z - fz // 2)
+    continuous_seed = (live_blocker_collision.get('world_seed')
+                       if live_blocker_collision and
+                       live_blocker_collision.get('continuous_approach') else None)
+    if continuous_seed:
+        (approach_x, _approach_y, approach_z, approach_heading,
+         approach_speed, _approach_base, _terrain_flags) = continuous_seed
+        position = (approach_x, approach_z)
+        heading = approach_heading
+        attach_start = ((approach_x // 65536) // 16 - fx // 2,
+                        (approach_z // 65536) // 16 - fz // 2)
+    else:
+        approach_speed = None
+        attach_start = (sx - fx // 2, sz - fz // 2)
     phase = Phase(width, height)
     native_live = None
     if not mission_backed:
@@ -211,7 +223,7 @@ def replay_native_worker_repath(width, height, base_cached_grades,
         phase.uc.mem_write(unit + 2, struct.pack('<H', 1))
         native_live._nextController = controller
         phase.attach_live_request(unit, mover, nav, controller,
-                                  (sx - fx // 2, sz - fz // 2), (fx, fz))
+                                  attach_start, (fx, fz))
     else:
         phase.plant_request(unit, (sx - fx // 2, sz - fz // 2), goal_cell)
         mover = struct.unpack('<I', phase.uc.mem_read(unit + 8, 4))[0]
@@ -393,6 +405,9 @@ def replay_native_worker_repath(width, height, base_cached_grades,
         assert error is None, ('native route request', error)
 
     def run_until_delivery(delivery_count, start_tick):
+        if requests and start_tick < requests[-1][0]:
+            raise AssertionError(('native route worker clock would precede its newest request',
+                                  start_tick, requests[-1]))
         for game_tick in range(start_tick, start_tick + 500):
             current_tick[0] = game_tick
             put(GS + 0x19f44, game_tick)
@@ -426,11 +441,17 @@ def replay_native_worker_repath(width, height, base_cached_grades,
     delivered_at = run_until_delivery(1, 1)
     first_route = deliveries[0]
     assert first_route, ('empty initial route', first_route)
+    if continuous_seed and live_blocker_collision.get('initial_route') is not None:
+        expected_initial = live_blocker_collision['initial_route']
+        assert first_route == expected_initial, (
+            'continuous native approach did not retain the initial map-backed route',
+            first_route, expected_initial)
 
     original_nav, original_controller = read(mover), read(nav + 4)
     blocker_active[0] = True
     active_live_grade[0] = dynamic_live_grade
-    phase.set_grade_plane(dynamic_cached_grades)
+    if not continuous_seed:
+        phase.set_grade_plane(dynamic_cached_grades)
     second_request = len(requests)
     if retry_through_4e5150:
         retry_tick = delivered_at + 1
@@ -442,7 +463,7 @@ def replay_native_worker_repath(width, height, base_cached_grades,
             map_data = data['map_data']
             map_width, map_height, map_sea, map_heights, map_features, feature_count = map_data
             assert (map_width, map_height, map_sea) == (width, height, sea)
-            (seed_x, seed_y, seed_z, seed_heading, _seed_speed, seed_base,
+            (seed_x, seed_y, seed_z, seed_heading, seed_speed, seed_base,
              terrain_flags) = data['world_seed']
             max_velocity, acceleration, braking, unit_turn, waterline = data['world_type']
             assert terrain_flags == 0x1000 and seed_base > 0
@@ -541,7 +562,8 @@ def replay_native_worker_repath(width, height, base_cached_grades,
             phase.uc.mem_write(unit + 0x78, struct.pack('<hh', fx, fz))
             phase.uc.mem_write(unit + 0x7e, struct.pack('<H', heading))
             phase.uc.mem_write(unit + 0x12b, struct.pack('<i', seed_base))
-            phase.uc.mem_write(mover + 0x20, struct.pack('<i', seed_base))
+            phase.uc.mem_write(mover + 0x20, struct.pack('<i',
+                seed_speed if continuous_seed else seed_base))
             phase.uc.mem_write(mover + 0x30, struct.pack('<I', retry_tick + 10000))
             phase.uc.mem_write(mover + 8, bytes(12))
             phase.uc.mem_write(mover + 0x14, bytes(12))
@@ -575,7 +597,8 @@ def replay_native_worker_repath(width, height, base_cached_grades,
             phase.icd.hooks = {address: hook for address, hook in hooks.items()
                            if address != 0x507d10}
             try:
-                for collision_step in range(1, 5):
+                collision_step_limit = 5000 if continuous_seed else 4
+                for collision_step in range(1, collision_step_limit + 1):
                     game_tick = retry_tick + collision_step
                     current_tick[0] = game_tick
                     put(GS + 0x19f44, game_tick)
@@ -595,6 +618,14 @@ def replay_native_worker_repath(width, height, base_cached_grades,
                                      struct.unpack('<iii', phase.uc.mem_read(unit + 0x68, 12)),
                                      struct.unpack('<iii', phase.uc.mem_read(blocker + 0x68, 12)),
                                      hex(move_flags))
+            if continuous_seed:
+                native_position = struct.unpack('<iii', phase.uc.mem_read(unit + 0x68, 12))
+                expected_position = live_blocker_collision.get('world_repath_position')
+                if expected_position is not None:
+                    assert (native_position[0], native_position[2]) == expected_position, (
+                        'continuous native collision did not reach the captured World replan position',
+                        native_position, expected_position)
+                phase.set_grade_plane(dynamic_cached_grades)
             _, error = phase.icd.call(0x4e5150, (), ecx=nav)
             assert error is None, ('native 0x4e5150 repeated-block retry', error)
             assert pending[0] and len(requests) > second_request, (
@@ -613,7 +644,11 @@ def replay_native_worker_repath(width, height, base_cached_grades,
     else:
         set_destination(delivered_at + 1)
     assert pending[0] and len(requests) > second_request, (pending, requests)
-    run_until_delivery(2, delivered_at + 2)
+    # The collision-derived branch advances the retail mover for two ticks
+    # after the first route is delivered. Do not rewind the singleton clock to
+    # the direct-bit control's earlier delivery window when running that retry.
+    retry_worker_tick = max(delivered_at + 2, current_tick[0] + 1)
+    run_until_delivery(2, retry_worker_tick)
     second_route = deliveries[1]
     assert second_route, ('empty retry route', first_route, second_route)
     if live_blocker_collision is None:
@@ -1100,6 +1135,12 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             collision_inputs = None
             if native_worker_mission_collision:
                 collision_inputs = {
+                    'continuous_approach': True,
+                    'initial_route': [(x * 16 + (fx % 2) * 8,
+                                       z * 16 + (fz % 2) * 8)
+                                      for x, z in world_raw],
+                    'world_repath_position': (changed_repaths[0][4],
+                                              changed_repaths[0][5]),
                     'map_data': route_map,
                     'world_seed': tuple(map(int, next(line for line in stdout
                         if line.startswith('WORLDSEED ')).split()[1:])),
@@ -1885,7 +1926,7 @@ def main():
     parser.add_argument('--native-worker-mission-retry', action='store_true',
                         help='seed the captured repeated-block state into native 0x4e5150 and deliver its live mission retry with 0x416430')
     parser.add_argument('--native-worker-mission-collision', action='store_true',
-                        help='derive the live mission retry from retail 0x4dc800 collision against the map-backed Vertrans blocker')
+                        help='follow retail from WORLDSEED to the map-backed Vertrans collision, then replay its live mission retry')
     parser.add_argument('--always-on-route-search', action='store_true',
                         help='keep World path service enabled throughout the moving blocker trace')
     parser.add_argument('--hpitool', default='build/hpitool')
