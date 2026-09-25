@@ -129,8 +129,11 @@ implementation descriptions. Current open gates are:
   Native TNT-backed terrain grading and reconstructed
   routes also match for Aratrans/WATER5 on the same long Lake Lokken shore route
   in Standard and Crusades: 698 distinct native query cells, 906 grade calls,
-  one waypoint, and an endpoint inside its 385px unload circle. Other maps and
-  carrier profiles remain open. Per Mare Per Terras now has a second joined
+  one waypoint, and an endpoint inside its 385px unload circle. A separate
+  Lake Lokken VerScout/Araarch route matches World across 867 native grade
+  queries, then matches native mover state for 1,000 physical steps; the paired
+  Vertrans/Araarch mover trace matches for 1,550 steps. Other maps and carrier
+  profiles remain open. Per Mare Per Terras now has a second joined
   Vertrans/Araarch case: native TNT-backed grades, active terrain scans, the
   native unload mission, mover, shoreline placement and release all match the
   World trace through step 78. Its 54 distinct queried cells, 58 grade calls,
@@ -8941,11 +8944,9 @@ python3 tools/re/check_zhon_construction_flight_trace.py \
 The shipped `zonhunt.cob` script now compares against retail over 502 restored
 thread, animation, and RNG boundaries. `Create`, `BeginFlight`/occupancy, and
 the construction callbacks remain aligned; the build-ready updates occur at
-tick 151. This covers native script state, not the world-space build-site
-offset, flight altitude, camera projection, or rendered pose that could explain
-the reported northward placement. The check passes with Release, Debug,
-optimized Debug, and Clang test binaries. No production change is justified by
-the script-state comparison.
+tick 151. The separate height/projection check below found no transform
+mismatch. The script-state check passes with Release, Debug, optimized Debug,
+and Clang test binaries. No production change is justified by this comparison.
 
 Reproduce with:
 
@@ -8954,6 +8955,20 @@ python3 tools/re/check_script_state.py \
   assets/extracted/all/scripts/zonhunt.cob /tmp/zonhunt-zero.state \
   --binary build-o2/retail_script_test --ticks 501 --notify Create --timeline
 ```
+
+### Zhon Monarch flight-height projection (2026-09-25)
+
+Retail projects a unit anchor as `x-cameraX, z-(y>>1)-cameraY`. GameView's
+flight-height split recombines to the same half-height projection relative to
+the terrain datum; there is no Zonhunt-specific build-site position offset.
+Native model-transform checks match the captured Zonhunt hierarchy vertices
+to under 0.000023 world units. In the available retail sample, the Monarch is
+171 units above the site with `dz=-24.027`, predicting a screen offset 109.5
+units north; altitude accounts for 85.5 of those units and the remaining
+offset follows from the horizontal orbit around the site. These checks explain
+the observed northward placement without identifying a code discrepancy.
+There is still no same-pose, same-camera, same-site local/retail capture, so
+the final visual comparison remains open. No retail GUI was launched.
 
 ### Native death-state dispatch through owner retirement (2026-09-24)
 
@@ -8985,6 +9000,13 @@ the attached-effect retirement schedule, preserving the earliest deadline if
 multiple callbacks arrive. A unit without either early-removal edge retains the
 existing 120-tick corpse fallback.
 
+A static audit of all 204 shipped unit COBs found 129 SET26 writes, all
+`(26,1)` in `Dying`; `crebomb` has two mutually exclusive branches, with its
+delayed branch writing only after its sleep loop. The deadline therefore
+starts at the actual SET callback tick. The native next-tick teardown has been
+traced end to end for `crefire`; `crebomb`'s delayed native path remains open.
+The same audit found 38 SET31 writes, all `(31,1)`, one per `Dying` function.
+
 The C++ lifecycle helper checks the SET26/SET31 delay and wrap-safe earliest
 deadline selection. Native `crefire` and `tarmage` probes and the direct-VM
 death-flame comparison pass on the optimized build. The `retail_visual`,
@@ -9003,6 +9025,34 @@ PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
   --native-death-state --world-binary build-o2/animation_roster_test
 PYTHONPATH=tools/re python3 tools/re/probe_death_sfx_lifecycle.py \
   --world-binary build-o2/animation_roster_test
+```
+
+### VerScout Lake Lokken physical transport trace (2026-09-25)
+
+The tick-928 failure in the VerScout fixture was a missing emulation global,
+not a native/World mover difference. Retail startup constructs a global
+path-search service with `0x415f80` and stores it at `GS+0x19e70`; destination
+refresh through `0x4e54e0` calls `0x415f30` on that service. The probe created
+the per-search object but had omitted this separate startup singleton, leaving
+the refresh call's `this` pointer null. The map-backed mover fixture now
+constructs the singleton as retail does and supports the VerScout WATER3 cost
+profile.
+
+On Lake Lokken, the VerScout/Araarch route matches World after 867 native grade
+queries, and all 1,000 native/World physical mover steps match. The existing
+Vertrans/Araarch trace still matches for 1,550 steps. The probes use TNT
+terrain grades; live feature-body passability and changing unit occupancy
+remain outside their coverage. Reproduce with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier verscout --passenger araarch \
+  --native-map-grades --native-map-mover-steps 1000
+PYTHONPATH=tools/re python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
+  --native-map-grades --native-map-mover-steps 1550
 ```
 
 ### Assigned weapon target across a visibility edge (2026-09-24)

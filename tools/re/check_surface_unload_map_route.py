@@ -737,10 +737,15 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         assert (fx, fz, attempt_heavy_profile) == (grade_fx, grade_fz, attempt_heavy)
         assert traffic_radius == 50 // half_cell_ticks, \
             (traffic_radius, half_cell_ticks)
-        expected_min_straight = (max(fx, fz) + 3) * (2 if attempt_heavy else 1)
+        if carrier and carrier.lower() == 'verscout':
+            # Lake Lokken's VerScout uses WATER3, whose authored turn rate
+            # yields a 650 short-turn penalty and 10 minimum-straight cost.
+            expected_costs = (24, 8, 320, 80, 650, 10)
+        else:
+            expected_min_straight = (max(fx, fz) + 3) * (2 if attempt_heavy else 1)
+            expected_costs = (24, 8, 320, 80, 680, expected_min_straight)
         assert (ground_cost, road_cost, slope_cost, traffic_cost, short_turn_cost,
-                min_straight_cost) == (24, 8, 320, 80, 680,
-                                       expected_min_straight), completed_attempt
+                min_straight_cost) == expected_costs, completed_attempt
         grades = [int(value) for line in stderr[header_index + 1:header_index + 1 + height]
                   for value in line.split()]
         assert len(grades) == width * height
@@ -1260,7 +1265,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     independent_grade = None
     if native_map_grades:
         native_grade_profiles = {
-            'lake lokken': {'vertrans', 'aratrans'},
+            'lake lokken': {'vertrans', 'aratrans', 'verscout'},
             'per mare per terras': {'vertrans'},
             'sea dragon spine': {'vertrans'},
         }
@@ -1618,6 +1623,16 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             max_water_slope, bad_water_slope))
         p.icd.hooks[0x51ad20] = lambda _uc, _args: (1, 0)
         p.icd.hooks[0x56c640] = lambda _uc, _args: (8, 0)
+
+        # Retail game startup (0x4e6060) creates this global path-search
+        # singleton before any navigator can call 0x415f30 from
+        # setDestination. Phase.construct() above creates only the per-search
+        # work object, so a mover that refreshes its destination otherwise
+        # calls 0x415f30 with a null this pointer.
+        search_service = p._alloc(0x22b)
+        _, error = p.icd.call(0x415f80, (), ecx=search_service)
+        assert error is None, ('native global path-search constructor', error)
+        p.uc.mem_write(GS + 0x19e70, struct.pack('<I', search_service))
 
         live_release_step = None
         native_arrival_wakes = 0
