@@ -141,7 +141,9 @@ def native_detached_passenger_occupancy_probe(p, carrier, owner,
     put(passenger + 0xa8, '<I', 0)
     put(passenger + 0xb4, '<I', kind)
     put(passenger + 0xb8, '<I', owner)
-    put(passenger + 0x130, '<I', 0x1000000)
+    # Retail's low flag bits are the mover/ground state. A live detached ground
+    # Araarch is in state 1; mode 0 is not registered by the native cell updater.
+    put(passenger + 0x130, '<I', 0x1000001)
     put(mover, '<I', nav)
     put(nav, '<I', 0x5f2a24)
     put(nav + 8, '<I', passenger)
@@ -152,8 +154,19 @@ def native_detached_passenger_occupancy_probe(p, carrier, owner,
     occupied_cells = []
     for z in range(origin_z, origin_z + foot_z):
         for x in range(origin_x, origin_x + foot_x):
-            put(p.cells_addr + (z * p.W + x) * 14, '<H', passenger_id)
             occupied_cells.append((x, z))
+
+    # Register this live entity through the same native cell/sector updater
+    # invoked by retail's mover, rather than planting its four cell ids from
+    # Python. This also seeds the entity's native sector-list links.
+    _, registration_error = p.icd.call(0x5066f0, (passenger,))
+    assert registration_error is None, ('native detached Araarch cell registration',
+                                         registration_error)
+    registered_cell_ids = [struct.unpack('<H', p.uc.mem_read(
+        p.cells_addr + (z * p.W + x) * 14, 2))[0] for x, z in occupied_cells]
+    assert registered_cell_ids == [passenger_id] * len(occupied_cells), (
+        'native detached Araarch cell registration did not populate its footprint',
+        occupied_cells, registered_cell_ids)
 
     args = list(placement_args)
     args[1] = second_passenger_id
@@ -196,28 +209,10 @@ def native_detached_passenger_occupancy_probe(p, carrier, owner,
           f'neighboring two-cell candidates returned '
           f'{ {offset: result for offset, (result, _error) in nearby.items()} }.')
 
-    # Exercise the detached unit's no-order/default update, then see whether
-    # retail itself preserves the cell occupancy through the mover commit.
-    results, errors = {}, []
-    for label, address, call_args, ecx in (
-            ('dispatcher', 0x4d8450, (passenger,), None),
-            ('mover', 0x4dc800, (passenger,), mover),
-            ('position-commit', 0x51b2a0, (passenger,), mover)):
-        hooks = p.icd.hooks
-        placement_hook = hooks.pop(0x507d10, None)
-        try:
-            value, error = p.icd.call(address, call_args, ecx=ecx)
-        finally:
-            if placement_hook is not None:
-                hooks[0x507d10] = placement_hook
-        results[label] = value
-        if error:
-            errors.append((label, error))
-    cell_ids_after = [struct.unpack('<H', p.uc.mem_read(
-        p.cells_addr + (z * p.W + x) * 14, 2))[0] for x, z in occupied_cells]
-    print(f'  Native default update: {results}; footprint cell ids after update='
-          f'{cell_ids_after}; errors={errors}.')
-    return exact_result, nearby, errors, (passenger_id, cell_ids_after), kind
+    print(f'  Native cell registration 0x5066f0: entity mode=1, sector link='
+          f'{hex(struct.unpack("<I", p.uc.mem_read(passenger + 0xa4, 4))[0])}; '
+          f'footprint cell ids={registered_cell_ids}.')
+    return exact_result, nearby, [], (passenger_id, registered_cell_ids), kind
 
 
 def replay_native_attempt(width, height, cached_grades, live_grade, attempt,
@@ -869,7 +864,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 native_worker_repath=False, native_worker_mission_repath=False,
                 always_on_route_search=False, native_worker_mission_retry=False,
                 native_worker_mission_collision=False,
-                probe_native_occupancy=False):
+                probe_native_occupancy=False, native_detach_second=False):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     if not 1 <= native_cargo_count <= 16:
@@ -880,6 +875,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         raise ValueError('multi-cargo native unload is incompatible with --shore-blocker')
     if probe_native_occupancy and (not native_live_unload or native_cargo_count < 2):
         raise ValueError('--probe-native-occupancy requires a multi-cargo native live unload')
+    if native_detach_second and not probe_native_occupancy:
+        raise ValueError('--native-detach-second requires --probe-native-occupancy')
     native_live_profiles = {
         'lake lokken': {('vertrans', 'araarch'), ('verscout', 'araarch'),
                         ('verman', 'araarch'), ('aratrans', 'araarch'),
@@ -1418,6 +1415,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     native_placement_return_hooks = []
     native_occupancy_live_trace = []
     native_occupancy_probe_tick = [0]
+    native_detach_native_entries = []
     if native_live_unload:
         tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
                        f'Maps/{map_name}.tnt')
@@ -1514,6 +1512,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         unit, mover, type_address = native_live.carrier, native_live.mover, native_live.kind
         native_passengers = [native_live.passenger]
         active_native_passenger[0] = native_live.passenger
+        native_detach_events = []
         for index in range(1, native_cargo_count):
             extra = p._alloc(0x140)
             p.uc.mem_write(extra, bytes(0x140))
@@ -1533,10 +1532,18 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                             if index + 1 < len(native_passengers) else 0)
         native_live.put(unit + 0xAC, native_passengers[0])
 
-        def detach_native_passenger(_uc, _sp):
+        def detach_native_passenger(uc, sp):
             cargo = active_native_passenger[0]
+            args = struct.unpack('<5I', uc.mem_read(sp, 20))
             next_cargo = native_live.get(cargo + 0xB0)
             head = native_live.get(unit + 0xAC)
+            event = {'tick': native_live.get(GS + 0x19F44),
+                     'args': args, 'active_cargo': cargo,
+                     'head_before': head,
+                     'owner_before': native_live.get(cargo + 0xA8)}
+            if args[0] != cargo:
+                raise AssertionError(('native detach callback passenger mismatch',
+                                      args, hex(cargo), hex(head)))
             if head == cargo:
                 native_live.put(unit + 0xAC, next_cargo)
             else:
@@ -1554,6 +1561,9 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                                           hex(cargo), hex(head)))
             native_live.put(cargo + 0xA8, 0)
             native_live.put(cargo + 0xB0, 0)
+            event.update({'head_after': native_live.get(unit + 0xAC),
+                          'owner_after': native_live.get(cargo + 0xA8)})
+            native_detach_events.append(event)
             return 5, 0
 
         p.icd.hooks[0x51B4F0] = detach_native_passenger
@@ -2078,6 +2088,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         native_release_positions = {}
         native_release_ticks = {}
         native_occupancy_hold_step = None
+        native_occupancy_hold_results = None
+        native_occupancy_hold_trace = None
         for step, row in enumerate(world_steps, 1):
             p.uc.mem_write(GS + 0x19f44, struct.pack('<I', route_tick + step))
             if shore_blocker:
@@ -2127,6 +2139,84 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                     # the same-Phase occupancy query.
                     native_live.put(native_passengers[1] + 0xB4,
                                     native_occupancy_probe_state[4])
+                    if native_detach_second:
+                        from unicorn import UC_HOOK_CODE
+                        from unicorn.x86_const import UC_X86_REG_ESP
+
+                        cargo2_fixture = native_passengers[1]
+                        cargo2 = unit + 2 * 0x138  # global entity id 3
+                        if cargo2_fixture != cargo2:
+                            p.uc.mem_write(cargo2, bytes(p.uc.mem_read(
+                                cargo2_fixture, 0x138)))
+                            native_live.put(cargo2_fixture + 0xA8, 0)
+                            native_live.put(cargo2_fixture + 0xB0, 0)
+                        native_passengers[1] = cargo2
+                        native_live.put(cargo2 + 2, 3)
+                        native_live.put(cargo2 + 0xA8, 0)
+                        native_live.put(cargo2 + 0xB0, 0)
+                        native_live.put(cargo2 + 0xB4,
+                                        native_occupancy_probe_state[4])
+                        native_live.put(cargo2 + 0xB8, native_live.owner)
+                        p2_mover, p2_nav = p._alloc(0x180), p._alloc(0x180)
+                        p.uc.mem_write(p2_mover, bytes(0x180))
+                        p.uc.mem_write(p2_nav, bytes(0x180))
+                        p.uc.mem_write(cargo2 + 8, struct.pack('<I', p2_mover))
+                        p.uc.mem_write(p2_mover, struct.pack('<I', p2_nav))
+                        p.uc.mem_write(p2_nav, struct.pack('<I', 0x5f2a24))
+                        p.uc.mem_write(p2_nav + 8, struct.pack('<I', cargo2))
+                        first_position = native_release_positions[native_passengers[0]]
+                        p.uc.mem_write(cargo2 + 0x68,
+                                       struct.pack('<iii', *first_position))
+                        p.uc.mem_write(cargo2 + 0x78,
+                                       struct.pack('<hh', *passenger_profile[:2]))
+
+                        # A carried entity keeps its prior sector pointer after
+                        # it leaves the sector chain. Recreate that native
+                        # boarding state so 0x51b5a0 can reinsert this record.
+                        sector_stride = struct.unpack('<I', p.uc.mem_read(
+                            GS + 0x19F1C, 4))[0]
+                        sector_grid = struct.unpack('<I', p.uc.mem_read(
+                            GS + 0x19F18, 4))[0]
+                        sector_x = first_position[0] >> 23
+                        sector_z = first_position[2] >> 23
+                        sector = sector_grid + (sector_z * sector_stride +
+                                                sector_x) * 10
+                        _, error = p.icd.call(0x506650, (cargo2, sector))
+                        assert error is None, ('native passenger-2 sector insertion', error)
+                        _, error = p.icd.call(0x5065F0, (cargo2,), ecx=sector)
+                        assert error is None, ('native passenger-2 board removal', error)
+                        assert struct.unpack('<I', p.uc.mem_read(
+                            cargo2 + 0xA4, 4))[0] == sector
+                        assert struct.unpack('<I', p.uc.mem_read(
+                            sector + 6, 4))[0] != cargo2
+                        native_live.put(cargo2 + 0xA8, unit)
+                        native_live.put(unit + 0xAC, cargo2)
+                        native_live.put(native_live.mission + 0x16, cargo2)
+                        active_native_passenger[0] = cargo2
+
+                        def observe_native_detach_entry(uc, address, _size, _data):
+                            if address not in (0x51B4F0, 0x51B5A0):
+                                return
+                            esp = uc.reg_read(UC_X86_REG_ESP)
+                            if address == 0x51B4F0:
+                                args = struct.unpack('<5I', uc.mem_read(esp + 4, 20))
+                                native_detach_native_entries.append((
+                                    native_occupancy_probe_tick[0], address, args))
+                            else:
+                                record = struct.unpack('<I', uc.mem_read(esp + 4, 4))[0]
+                                payload = bytes(uc.mem_read(record, 7))
+                                native_detach_native_entries.append((
+                                    native_occupancy_probe_tick[0], address,
+                                    record, payload))
+
+                        p.uc.hook_add(UC_HOOK_CODE, observe_native_detach_entry,
+                                      begin=0x51B4F0, end=0x51B5A0)
+                        removed_detach_hook = p.icd.hooks.pop(0x51B4F0, None)
+                        if removed_detach_hook is None:
+                            raise AssertionError('diagnostic detach hook was missing')
+                        print(f'  Native detach variant: passenger 2 is entity id 3 at '
+                              f'{hex(cargo2)} with a valid, removed sector link at '
+                              f'{hex(sector)}; retail 0x51b4f0 is unhooked.')
                     placement_hook = p.icd.hooks.pop(0x507D10, None)
                     if placement_hook is None:
                         raise AssertionError('native placement oracle hook disappeared early')
@@ -2194,6 +2284,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                     native_live.get(unit + 0xac) == native_passengers[1] and
                     native_live.get(native_passengers[1] + 0xa8) == unit):
                 native_occupancy_hold_step = step
+                native_occupancy_hold_results = tuple(native_placement_results[-2:])
+                native_occupancy_hold_trace = tuple(native_occupancy_live_trace[-2:])
                 print(f'  Native GROUND_UNLOAD held passenger 2 at the original shore '
                       f'candidate on physical step {step}; native placement returned '
                       f'strict=0 then allow-moving=1, while its cargo owner and carrier '
@@ -2297,10 +2389,18 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             p1_start_origin = p1_origin
             p2_release_tick = None
             p1_vacate_tick = None
+            native_detach_state = None
+            post_vacancy_placement_tick = None
+            park_cancel_tick = None
             park_attempts = 0
+            # Native GROUND_UNLOAD increments mission+0x52 on each accepted
+            # placement and advances after fifteen successes. Continue only
+            # through that single retail wait boundary and one following poll.
+            post_vacancy_followup_ticks = 15
+            post_vacancy_phase_events = []
             retry_deadline = native_live.get(native_live.mission + 0x0a)
-            continuation_end = min(retry_deadline,
-                                   tick0 + native_map_mover_steps)
+            continuation_tick_cap = 10000
+            continuation_end = continuation_tick_cap
             candidate_x, candidate_z = struct.unpack('<hh', struct.pack(
                 '<I', native_placement_results[-1][0][2]))
             candidate_cells = [(x, z) for z in
@@ -2310,40 +2410,160 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 return [struct.unpack('<H', p.uc.mem_read(
                     p.cells_addr + (z * width + x) * 14, 2))[0]
                     for x, z in candidate_cells]
+            from unicorn import UC_HOOK_MEM_WRITE
+            from unicorn.x86_const import UC_X86_REG_EIP
+            candidate_cell_writes = []
+            candidate_cell_write_hooks = []
+            for cell_x, cell_z in candidate_cells:
+                cell_address = p.cells_addr + (cell_z * width + cell_x) * 14
+
+                def observe_cell_write(uc, _access, address, size, value, _data,
+                                       watched_cell=(cell_x, cell_z)):
+                    candidate_cell_writes.append((
+                        native_occupancy_probe_tick[0],
+                        hex(uc.reg_read(UC_X86_REG_EIP)),
+                        watched_cell, size, value))
+
+                candidate_cell_write_hooks.append(p.uc.hook_add(
+                    UC_HOOK_MEM_WRITE, observe_cell_write,
+                    begin=cell_address, end=cell_address + 1))
             continuation_result_start = len(native_placement_results)
             continuation_trace_start = len(native_occupancy_live_trace)
+            continuation_detach_start = len(native_detach_events)
+            deadline_events = [{'tick': tick0, 'deadline': retry_deadline,
+                                'cargo_head': native_live.get(unit + 0xac),
+                                'second_owner': native_live.get(second + 0xa8)}]
+            vacancy_events = []
+            continuation_placement_events = []
+
+            def candidate_overlaps(origin):
+                return (origin[0] < candidate_x + p1_foot_x and
+                        candidate_x < origin[0] + p1_foot_x and
+                        origin[1] < candidate_z + p1_foot_z and
+                        candidate_z < origin[1] + p1_foot_z)
+
             # The carrier's next live retry is scheduled for tick0+1. The
             # GROUND_PARK order was just dispatched for that tick above, so
-            # process its carrier retry now without dispatching the order a
-            # second time at the same simulation tick.
+            # process it now without dispatching the order a second time at
+            # the same simulation tick. Keep both retail dispatchers and the
+            # actual mover/cell commit running until the first real placement
+            # call after passenger 1 vacates, a release/cancel, or tick 10000.
             for tick in range(tick0 + 1, continuation_end + 1):
                 p.uc.mem_write(GS + 0x19f44, struct.pack('<I', tick))
                 p.uc.mem_write(0x64186c, struct.pack('<I', tick))
                 native_occupancy_probe_tick[0] = tick
-                if tick != tick0 + 1:
+                park_active = native_live.get(p1 + 0x60) == park_order
+                if tick != tick0 + 1 and park_active:
                     _, error = p.icd.call(0x4d8450, (p1,))
                     assert error is None, ('native Araarch GROUND_PARK poll', tick, error)
+                park_active = native_live.get(p1 + 0x60) == park_order
+                current_origin = struct.unpack('<hh', p.uc.mem_read(p1 + 0x74, 4))
+                current_candidate_ids = read_candidate_cells()
+                if (not candidate_overlaps(current_origin) and
+                        2 not in current_candidate_ids and p1_vacate_tick is None):
+                    p1_vacate_tick = tick
+                    vacancy_events.append({
+                        'tick': tick, 'origin': current_origin,
+                        'candidate_cell_ids': current_candidate_ids,
+                        'deadline': native_live.get(native_live.mission + 0x0a),
+                        'cargo_head': native_live.get(unit + 0xac),
+                        'second_owner': native_live.get(second + 0xa8)})
+                if not park_active and p1_vacate_tick is None:
+                    park_cancel_tick = tick
+                    break
+                deadline_before = native_live.get(native_live.mission + 0x0a)
+                result_before = len(native_placement_results)
+                trace_before = len(native_occupancy_live_trace)
+                mission_stage_before = p.uc.mem_read(
+                    native_live.mission + 5, 1)[0]
+                mission_events_before = native_live.get(
+                    native_live.mission + 0x6a)
                 native_placement_trace_active[0] = True
                 try:
-                    native_live.dispatch(tick)
+                    dispatch_row = native_live.dispatch(tick)
                 finally:
                     native_placement_trace_active[0] = False
+                mission_stage_after = (p.uc.mem_read(
+                    native_live.mission + 5, 1)[0]
+                    if native_live.get(unit + 0x60) == native_live.mission else None)
+                mission_events_after = native_live.get(native_live.mission + 0x6a)
+                deadline_after = native_live.get(native_live.mission + 0x0a)
+                if deadline_after != deadline_before:
+                    deadline_events.append({
+                        'tick': tick, 'deadline_before': deadline_before,
+                        'deadline_after': deadline_after,
+                        'candidate_cell_ids': read_candidate_cells(),
+                        'cargo_head': native_live.get(unit + 0xac),
+                        'second_owner': native_live.get(second + 0xa8)})
+                call_events = [
+                    {'tick': trace[0], 'first_origin': trace[1],
+                     'candidate': trace[2], 'overlaps_first': trace[3],
+                     'candidate_cell_ids': trace[4], 'result': result,
+                     'deadline': deadline_after,
+                     'cargo_head': native_live.get(unit + 0xac),
+                     'second_owner': native_live.get(second + 0xa8)}
+                    for trace, (_args, result) in zip(
+                        native_occupancy_live_trace[trace_before:],
+                        native_placement_results[result_before:])]
+                continuation_placement_events.extend(call_events)
+                post_vacancy_call = any(
+                    not event['overlaps_first'] and
+                    2 not in event['candidate_cell_ids']
+                    for event in call_events)
+                if post_vacancy_call:
+                    if post_vacancy_placement_tick is None:
+                        post_vacancy_placement_tick = tick
+                if post_vacancy_placement_tick is not None:
+                    post_vacancy_phase_events.append({
+                        'tick': tick, 'dispatch_row': dispatch_row,
+                        'stage_before': mission_stage_before,
+                        'stage_after': mission_stage_after,
+                        'events_before': mission_events_before,
+                        'events_after': mission_events_after,
+                        'cargo_head': native_live.get(unit + 0xac),
+                        'second_owner': native_live.get(second + 0xa8),
+                        'placement_calls': call_events})
                 if native_live.get(unit + 0xac) != second:
                     p2_release_tick = tick
+                    released_position = struct.unpack('<3i',
+                        p.uc.mem_read(second + 0x68, 12))
+                    native_release_positions[second] = released_position
+                    native_release_ticks[second] = tick
+                    if native_detach_second:
+                        second_sector = native_live.get(second + 0xA4)
+                        native_detach_state = {
+                            'entity': second,
+                            'id': struct.unpack('<H', p.uc.mem_read(second + 2, 2))[0],
+                            'flags': native_live.get(second + 0x130),
+                            'position': released_position,
+                            'owner': native_live.get(second + 0xA8),
+                            'next_sector_unit': native_live.get(second + 0xB0),
+                            'sector_link': second_sector,
+                            'sector_head': native_live.get(second_sector + 6)
+                            if second_sector else 0,
+                            'carrier_cargo_head': native_live.get(unit + 0xAC),
+                            'mission_stage': p.uc.mem_read(
+                                native_live.mission + 5, 1)[0],
+                            'candidate_cells': candidate_cells,
+                            'candidate_cell_ids': read_candidate_cells(),
+                        }
                     break
                 if native_live.get(second + 0xa8) != unit:
                     raise AssertionError(('passenger 2 detached without list release', tick))
                 if native_live.get(unit + 0xac) == second:
                     active_native_passenger[0] = second
-                pos = struct.unpack('<3i', p.uc.mem_read(p1 + 0x68, 12))
-                origin = struct.unpack('<hh', p.uc.mem_read(p1 + 0x74, 4))
-                entity_overlap = (origin[0] < candidate_x + p1_foot_x and
-                                  candidate_x < origin[0] + p1_foot_x and
-                                  origin[1] < candidate_z + p1_foot_z and
-                                  candidate_z < origin[1] + p1_foot_z)
-                candidate_ids = read_candidate_cells()
-                if not entity_overlap and 2 not in candidate_ids:
-                    p1_vacate_tick = tick
+                if (post_vacancy_placement_tick is not None and
+                        tick >= post_vacancy_placement_tick +
+                        post_vacancy_followup_ticks):
+                    break
+                if native_live.get(unit + 0x60) != native_live.mission:
+                    park_cancel_tick = tick
+                    break
+                if not park_active:
+                    # Passenger 1's PARK order completed naturally after its
+                    # footprint cleared. Keep the carrier mission live until
+                    # its next real placement callback or terminal condition.
+                    continue
                 park_attempts = struct.unpack('<I',
                     p.uc.mem_read(park_order + 0x56, 4))[0]
                 _, error = p.icd.call(0x4dc800, (p1,), ecx=p1_mover)
@@ -2351,13 +2571,18 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 _, error = p.icd.call(0x51b2a0, (p1,), ecx=p1_mover)
                 assert error is None, ('native Araarch GROUND_PARK position commit', tick, error)
                 moved_origin = struct.unpack('<hh', p.uc.mem_read(p1 + 0x74, 4))
-                moved_overlap = (moved_origin[0] < candidate_x + p1_foot_x and
-                                 candidate_x < moved_origin[0] + p1_foot_x and
-                                 moved_origin[1] < candidate_z + p1_foot_z and
-                                 candidate_z < moved_origin[1] + p1_foot_z)
                 moved_candidate_ids = read_candidate_cells()
-                if not moved_overlap and 2 not in moved_candidate_ids:
-                    p1_vacate_tick = p1_vacate_tick or tick
+                if (not candidate_overlaps(moved_origin) and
+                        2 not in moved_candidate_ids and p1_vacate_tick is None):
+                    p1_vacate_tick = tick
+                    vacancy_events.append({
+                        'tick': tick, 'origin': moved_origin,
+                        'candidate_cell_ids': moved_candidate_ids,
+                        'deadline': native_live.get(native_live.mission + 0x0a),
+                        'cargo_head': native_live.get(unit + 0xac),
+                        'second_owner': native_live.get(second + 0xa8)})
+            for hook in candidate_cell_write_hooks:
+                p.uc.hook_del(hook)
             final_origin = struct.unpack('<hh', p.uc.mem_read(p1 + 0x74, 4))
             final_position = struct.unpack('<3i', p.uc.mem_read(p1 + 0x68, 12))
             final_overlap = (final_origin[0] < p1_start_origin[0] + p1_foot_x and
@@ -2374,9 +2599,22 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 'final_position': final_position, 'vacate_tick': p1_vacate_tick,
                 'second_release_tick': p2_release_tick, 'end_tick': tick,
                 'retry_deadline': retry_deadline,
+                'final_deadline': native_live.get(native_live.mission + 0x0a),
+                'tick_cap': continuation_tick_cap,
+                'post_vacancy_placement_tick': post_vacancy_placement_tick,
+                'post_vacancy_followup_ticks': post_vacancy_followup_ticks,
+                'post_vacancy_phase_events': post_vacancy_phase_events,
+                'detach_events': native_detach_events[continuation_detach_start:],
+                'native_detach_entries': native_detach_native_entries,
+                'native_detach_state': native_detach_state,
+                'park_cancel_tick': park_cancel_tick,
                 'candidate_cells': candidate_cells,
                 'candidate_cell_ids': read_candidate_cells(),
                 'placements': continuation_placements,
+                'placement_events': continuation_placement_events,
+                'deadline_events': deadline_events,
+                'vacancy_events': vacancy_events,
+                'candidate_cell_writes': candidate_cell_writes,
                 'remaining_cargo': native_live.get(unit + 0xac),
                 'second_owner': native_live.get(second + 0xa8),
                 'park_stage': p.uc.mem_read(park_order + 5, 1)[0],
@@ -2388,41 +2626,86 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             print(f'  Native GROUND_PARK continuation through tick {tick}: Araarch '
                   f'origin {p1_start_origin} -> {final_origin}, first vacated at '
                   f'{p1_vacate_tick} (candidate cells {candidate_cells} now have '
-                  f'ids {read_candidate_cells()}); passenger 2 release tick='
-                  f'{p2_release_tick}, scheduled retry={retry_deadline}, '
+                  f'ids {read_candidate_cells()}); scheduled retry was '
+                  f'{retry_deadline}, final deadline='
+                  f'{native_park_continuation["final_deadline"]}, post-vacancy '
+                  f'placement tick={post_vacancy_placement_tick}, passenger 2 '
+                  f'release tick={p2_release_tick}, park cancel tick={park_cancel_tick}, '
                   f'cargo head={hex(native_live.get(unit + 0xac))}, '
                   f'park stage={native_park_continuation["park_stage"]}, '
                   f'attempts={park_attempts}, route points='
                   f'{native_park_continuation["route_count"]}; new live placement '
-                  f'observations={continuation_placements[-4:]}.')
+                  f'observations={continuation_placement_events}; deadline events='
+                  f'{deadline_events}; vacancy events={vacancy_events}; '
+                  f'candidate-cell writes={candidate_cell_writes}; next '
+                  f'GROUND_UNLOAD phase events={post_vacancy_phase_events}; '
+                  f'native detach hook events='
+                  f'{native_detach_events[continuation_detach_start:]}; native '
+                  f'detach body entries={native_detach_native_entries}; native '
+                  f'detach state={native_detach_state}.')
         if terrain_scan_after is not None:
             assert native_scan_count > 0, ('native live terrain scan did not run',
                                            native_scan_count)
         if native_live and native_occupancy_hold_step is not None:
             first, second = native_passengers[:2]
-            assert len(native_release_positions) == 1, (
-                'occupancy probe released more than its first passenger',
+            assert native_occupancy_hold_results is not None
+            assert len(native_release_positions) in (1, 2), (
+                'occupancy probe released more passengers than the two-cargo fixture',
                 native_release_positions, native_release_ticks)
-            assert native_live.get(unit + 0xac) == second
-            assert native_live.get(second + 0xa8) == unit
-            assert native_live.get(native_live.mission + 0x16) == second
-            assert [result for _args, result in native_placement_results[-2:]] == [0, 1]
-            assert blocked_cargo_held and blocked_cargo_held[-1]
-            second_args = native_placement_results[-1][0]
+            assert first in native_release_positions
+            if p2_release_tick is None:
+                assert second not in native_release_positions
+                assert native_live.get(unit + 0xac) == second
+                assert native_live.get(second + 0xa8) == unit
+                assert native_live.get(native_live.mission + 0x16) == second
+            else:
+                assert second in native_release_positions
+                assert native_release_ticks[second] == p2_release_tick
+                assert native_live.get(unit + 0xac) == 0
+                assert native_live.get(second + 0xa8) == 0
+            if native_detach_second:
+                assert p2_release_tick == 3565, p2_release_tick
+                assert native_detach_state is not None
+                assert native_detach_state['id'] == 3
+                assert native_detach_state['flags'] & 0x01000000
+                assert native_detach_state['owner'] == 0
+                assert native_detach_state['carrier_cargo_head'] == 0
+                assert native_detach_state['sector_link'] != 0
+                assert native_detach_state['sector_head'] == native_detach_state['entity']
+                assert [entry[1] for entry in native_detach_native_entries] == [
+                    0x51B4F0, 0x51B5A0], native_detach_native_entries
+                print(f'  Native detach body state after tick {p2_release_tick}: '
+                      f'{native_detach_state}.')
+            assert [result for _args, result in native_occupancy_hold_results] == [0, 1]
+            assert blocked_cargo_held and any(blocked_cargo_held)
+            second_args = native_occupancy_hold_results[-1][0]
             assert all(args[0] == native_occupancy_probe_state[4] and
                        args[1] == native_live.get(second + 2)
-                       for args, _result in native_placement_results[-2:]), (
+                       for args, _result in native_occupancy_hold_results), (
                 'live retail placement did not use passenger 2 native type/id',
-                native_placement_results[-2:])
-            assert second_args[2] == native_placement_results[-2][0][2], (
+                native_occupancy_hold_results)
+            assert second_args[2] == native_occupancy_hold_results[-2][0][2], (
                 'blocked second passenger was assigned a different placement cell',
-                native_placement_results[-2:],)
+                native_occupancy_hold_results,)
+            assert native_occupancy_hold_trace is not None
+            assert all(trace[2] == (second_args[2] & 0xffff,
+                                    (second_args[2] >> 16) & 0xffff) and
+                       trace[3] and trace[4] == [2] * 4
+                       for trace in native_occupancy_hold_trace), (
+                'native placement did not observe all four occupied passenger-1 cells',
+                native_occupancy_hold_trace)
+            if native_park_continuation:
+                assert (native_park_continuation['post_vacancy_placement_tick'] is None or
+                        native_park_continuation['vacate_tick'] is not None), (
+                    'post-vacancy native retry was observed before cell vacancy',
+                    native_park_continuation)
             print(f'  Occupancy outcome: live native 0x507d10 received Araarch type '
                   f'{hex(second_args[0])}, passenger id {second_args[1]}, and the '
                   f'{second_args[2] & 0xffff},{(second_args[2] >> 16) & 0xffff} '
                   f'candidate already occupied by passenger 1; strict=0 and '
-                  f'allow-moving=1. GROUND_UNLOAD held passenger 2 with its list '
-                  f'link intact and selected no alternate cell.')
+                  f'allow-moving=1. Continuation release tick={p2_release_tick}; '
+                  f'carrier cargo head={hex(native_live.get(unit + 0xac))}, '
+                  f'passenger-2 owner={hex(native_live.get(second + 0xa8))}.')
             map_mover_count = native_occupancy_hold_step
         elif native_live:
             assert live_release_step is not None, (
@@ -2625,6 +2908,8 @@ def main():
                         help='number of linked cargo passengers in the native surface-unload trace (1..16)')
     parser.add_argument('--probe-native-occupancy', action='store_true',
                         help='register the first detached passenger in retail entity/cell tables and test the second landing')
+    parser.add_argument('--native-detach-second', action='store_true',
+                        help='unhook 0x51b4f0 for passenger 2 after preparing its native entity/sector records')
     parser.add_argument('--terrain-scan-after', type=int,
                         help='compare live native/World terrain scans after route delivery; requires --native-live-unload (0..2500 ticks)')
     parser.add_argument('--shore-blocker', action='store_true',
@@ -2656,6 +2941,8 @@ def main():
     if args.probe_native_occupancy and (not args.native_live_unload or
                                         args.native_cargo_count < 2):
         parser.error('--probe-native-occupancy requires --native-live-unload --native-cargo-count 2 or more')
+    if args.native_detach_second and not args.probe_native_occupancy:
+        parser.error('--native-detach-second requires --probe-native-occupancy')
     if args.terrain_scan_after is not None and not 0 <= args.terrain_scan_after <= 2500:
         parser.error('--terrain-scan-after must be 0..2500')
     if args.terrain_scan_after is not None and not args.native_live_unload:
@@ -2684,7 +2971,8 @@ def main():
                 args.native_worker_mission_repath, args.always_on_route_search,
                 args.native_worker_mission_retry,
                 args.native_worker_mission_collision,
-                args.probe_native_occupancy)
+                args.probe_native_occupancy,
+                args.native_detach_second)
 
 
 if __name__ == '__main__':

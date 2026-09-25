@@ -2396,6 +2396,89 @@ static void airUnloadFlightTraceFixture(unsigned steps,bool heightStep=false,
     }
 }
 
+// Asset-backed VTOL unload trace for a real TNT map and shipped unit profiles.
+// The native Python peer feeds these exact coordinates/map records to retail
+// 0x50e740 and the live 0x4d8450/0x4dc800 unload path.
+static void airUnloadMapFlightTraceFixture(const char* retailRoot,const char* mapName,
+        const char* carrierName,const char* passengerName,int startCellX,int startCellZ,
+        int targetCellX,int targetCellZ,unsigned steps,bool crusades) {
+    auto vfs=tak::hpi::mountRetailRoot(retailRoot,tak::hpi::OverridePolicy::None);
+    const std::string mapPath=tak::hpi::findMap(vfs,mapName);
+    if(mapPath.empty()) throw std::runtime_error(std::string("map not found: ")+mapName);
+    const auto map=tak::tnt::Map::load(vfs.read(mapPath),mapPath);
+    if(startCellX<0 || startCellZ<0 || targetCellX<0 || targetCellZ<0 ||
+       startCellX>=map.width || startCellZ>=map.height ||
+       targetCellX>=map.width || targetCellZ>=map.height)
+        throw std::runtime_error("air-unload map trace coordinates outside the map");
+
+    tak::sim::TypeRegistry registry;
+    tak::sim::setupRegistry(registry,vfs,crusades);
+    const auto* carrierType=registry.find(carrierName);
+    const auto* passengerType=registry.find(passengerName);
+    if(!carrierType || !passengerType)
+        throw std::runtime_error("retail air carrier or passenger type not found");
+    if(!carrierType->canFly || !carrierType->canTransport || !passengerType->canMove ||
+       passengerType->canFly)
+        throw std::runtime_error("retail unit profiles are not an aerial carrier and ground passenger");
+
+    World w;w.setVisPlayer(-1);
+    w.setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
+    tak::sim::registerMapFeatures(w,map,vfs);
+    w.buildNavClasses(registry);
+    w.setPathService(false);
+    const int startX=startCellX*16+8,startZ=startCellZ*16+8;
+    const int targetX=targetCellX*16+8,targetZ=targetCellZ*16+8;
+    const int carrierId=w.spawn(carrierType,startX,startZ);
+    const int passengerId=w.spawn(passengerType,startX,startZ);
+    board(w,carrierId,passengerId);
+    auto* carrier=w.unit(carrierId);
+    carrier->baseSpeed=carrierType->maxVel;
+    carrier->speed=tak::sim::Fixed();
+    carrier->heading=tak::sim::retailHeadingToPort(0);
+    carrier->flightNavigation={{carrier->x.v,carrier->flightY.v,carrier->z.v},{},0};
+    const auto terrainAt=[&](int x,int z) {
+        return int(map.heights[size_t(z)*size_t(map.width)+size_t(x)]);
+    };
+    w.unloadAt(carrierId,float(targetX),float(targetZ),
+               tak::sim::Fixed::fromInt(terrainAt(targetCellX,targetCellZ)));
+
+    std::printf("MAPTRACE %d %d %d %s %s %d %d %d %d %d %d %d\n",
+        map.width,map.height,map.seaLevel,carrierName,passengerName,
+        startCellX,startCellZ,targetCellX,targetCellZ,terrainAt(startCellX,startCellZ),
+        terrainAt(targetCellX,targetCellZ),carrierType->cruiseAlt);
+    for(unsigned step=1;step<=steps;++step) {
+        w.tick(1.f/30);
+        carrier=w.unit(carrierId);
+        const auto& n=carrier->flightNavigation;
+        const auto& v=carrier->flightVelocity;
+        const auto* order=carrier->orders.empty()?nullptr:&carrier->orders.front();
+        const tak::sim::RetailMissionState emptyMission{};
+        const auto& mission=order?order->transportMission:emptyMission;
+        const auto* goal=order && order->flightGoal ? &*order->flightGoal :
+            (carrier->retainedFlightGoal ? &*carrier->retainedFlightGoal : nullptr);
+        const bool goalActive=order && order->flightGoal ? true :
+            carrier->retainedFlightControllerActive;
+        const auto* activeGoal=goalActive ? goal : nullptr;
+        const auto* passenger=w.unit(passengerId);
+        const bool passengerParked=passenger && !passenger->orders.empty() &&
+            passenger->orders.front().park.has_value();
+        std::printf("%u %d %d %d %u %d %d %d %d %d %d %d %d %d %d %u ",
+            step,carrier->x.v,carrier->flightY.v,carrier->z.v,
+            unsigned(tak::sim::portHeadingToRetail(carrier->heading)),carrier->speed.v,
+            v.x,v.y,v.z,n.destination.x,n.destination.y,n.destination.z,
+            n.velocity.x,n.velocity.y,n.velocity.z,unsigned(n.heading));
+        std::printf("%u %u %u %u %u %u %u %d %d %d %u %u %u %u %u %u\n",
+            unsigned(order!=nullptr),unsigned(mission.stage),mission.waitMask,
+            mission.deadline,mission.pending,unsigned(order?order->transportTicks:0),
+            unsigned(goalActive),activeGoal?activeGoal->point.x:0,
+            activeGoal?activeGoal->point.y:0,activeGoal?activeGoal->point.z:0,
+            activeGoal?unsigned(activeGoal->flags):0,
+            activeGoal?unsigned(uint16_t(activeGoal->radius)):0,
+            unsigned(carrier->cargo.size()),unsigned(passenger && passenger->embarked()),
+            unsigned(w.transportEffects().size()*2),unsigned(passengerParked));
+    }
+}
+
 int main(int argc,char** argv) {
     if(argc==3 && !std::strcmp(argv[1],"--air-flight-trace")) {
         airFlightTraceFixture(unsigned(std::clamp(std::atoi(argv[2]),1,10000)));
@@ -2433,6 +2516,13 @@ int main(int argc,char** argv) {
         }
         airUnloadFlightTraceFixture(unsigned(std::clamp(std::atoi(argv[2]),1,10000)),
                                     true,&profile);
+        return 0;
+    }
+    if(argc==12 && !std::strcmp(argv[1],"--air-unload-map-flight-trace")) {
+        airUnloadMapFlightTraceFixture(argv[2],argv[3],argv[4],argv[5],
+            std::atoi(argv[6]),std::atoi(argv[7]),std::atoi(argv[8]),std::atoi(argv[9]),
+            unsigned(std::clamp(std::atoi(argv[10]),1,10000)),
+            std::atoi(argv[11])!=0);
         return 0;
     }
     if(argc==10 && !std::strcmp(argv[1],"--surface-unload-map-route-type")) {

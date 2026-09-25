@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Trace VTOL pickup while Araarch has a queued ground move.
 
-This checks the retail order gate with code 27 Move_Ground active and code 30
-Move_Seek_Pickup appended behind it. Retail retires the carrier's VTOL_Pickup
-because code 30 is not yet the passenger's current order. Route-worker
-delivery precedes dispatch so this is not a pending-request cancellation. The
-trace stops at that first retirement and does not prove a later boarding
-sequence. Controlled headless boundaries are path-worker scheduling callbacks,
+This checks code 27 Move_Ground active with code 30 Move_Seek_Pickup appended
+behind it. For each passenger update it runs retail's active dispatcher
+0x4d8450 followed by queued dispatcher 0x4d85e0. At tick 4, VTOL_Pickup
+retires because code 27 is still current; queued code 30 is dispatched,
+returns 8, and is removed before the move completes. The trace stops at that
+native retirement result and does not claim a later boarding sequence.
+Controlled headless boundaries are path-worker scheduling callbacks,
 visibility, feature definitions, effects/UI, and empty COB method tables. No
 retail GUI is launched.
 
@@ -35,7 +36,10 @@ from probe_surface_pickup_native_fullmap import install_native_entity_array
 from probe_surface_pickup_native_map_route import run as run_route
 from probe_transport_air_unload_map_flight import carrier_profile
 from unicorn import UC_HOOK_CODE
-from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_ESI, UC_X86_REG_ESP
+from unicorn.x86_const import (
+    UC_X86_REG_EAX, UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDI,
+    UC_X86_REG_ESI, UC_X86_REG_ESP,
+)
 
 
 def put(uc, address, *values):
@@ -606,36 +610,91 @@ def run(args):
 
     attachment_tick = None
     carrier_retired_tick = None
+    move_completed_tick = None
+    seek_retired_tick = None
+    seek_route_tick = None
+    post_move_wait_dispatches = 0
+    seek_dispatch_states = []
+    initial_route_count = len(route_installs)
     max_ticks = min(max(args.max_ticks, 1), 12000)
-    active_seek_ticks = []
+    dispatcher_returns = []
+    def observe_dispatcher_return(machine, address, _size, _data):
+        if address == 0x4D8501 and machine.reg_read(UC_X86_REG_EBX) == passenger:
+            order = machine.reg_read(UC_X86_REG_ESI)
+            phase_name = "active"
+        elif address == 0x4D8622 and machine.reg_read(UC_X86_REG_EDI) == passenger:
+            order = machine.reg_read(UC_X86_REG_ESI)
+            phase_name = "queued"
+        else:
+            return
+        dispatcher_returns.append((live.get(GS + 0x19F44), order,
+                                   uc.mem_read(order + 4, 1)[0],
+                                   machine.reg_read(UC_X86_REG_EAX),
+                                   uc.mem_read(order + 5, 1)[0], phase_name))
+    for address in (0x4D8501, 0x4D8622):
+        uc.hook_add(UC_HOOK_CODE, observe_dispatcher_return,
+                    begin=address, end=address)
+
     for tick in range(route_worker_tick + 1, route_worker_tick + max_ticks + 1):
         live.put(GS + 0x19F44, tick)
         live.put(0x64186C, tick)
-        # Retail's two dispatchers share the global entity clock. The air
-        # mission samples Araarch's current position before either mover step.
-        # Entity IDs place ZONROC before Araarch in the native update order.
-        _, error = icd.call(0x4D8450, (carrier,))
-        if error:
-            raise RuntimeError(("native VTOL_Pickup dispatcher", tick, error))
+        # Keep the originally constructed VTOL_Pickup order under its real
+        # dispatcher until retail retires it. After that, advance only Araarch;
+        # do not synthesize or reissue a carrier order when code 30 dispatches.
+        if live.get(carrier + 0x60):
+            _, error = icd.call(0x4D8450, (carrier,))
+            if error:
+                raise RuntimeError(("native VTOL_Pickup dispatcher", tick, error))
+            if live.get(carrier + 0x60) == 0 and carrier_retired_tick is None:
+                carrier_retired_tick = tick
+
+        passenger_head_before = live.get(passenger + 0x60)
         _, error = icd.call(0x4D8450, (passenger,))
         if error:
             raise RuntimeError(("native Araarch passenger dispatcher", tick, error))
-        if live.get(passenger + 0x60) == seek_order:
-            active_seek_ticks.append((tick, uc.mem_read(seek_order + 5, 1)[0],
-                                      live.get(seek_order + 6),
-                                      live.get(seek_order + 0x0A)))
+        passenger_head_after = live.get(passenger + 0x60)
+        if passenger_head_before == passenger_order and \
+                passenger_head_after != passenger_order and move_completed_tick is None:
+            move_completed_tick = tick
+
+        # This is the second half of retail's per-unit update: 0x51e1e5 calls
+        # 0x4d8450 for the active chain, then 0x51e1eb calls 0x4d85e0 for the
+        # queued chain. Calling only 0x4d8450 leaves code 30 entirely untested.
+        _, error = icd.call(0x4D85E0, (passenger,))
+        if error:
+            raise RuntimeError(("native Araarch queued-order dispatcher", tick, error))
+        code30_tick_returns = [row for row in dispatcher_returns
+                               if row[0] == tick and row[2] == 30 and
+                               row[5] == "queued"]
+        if code30_tick_returns:
+            seek_dispatch_states.append({
+                "tick": tick,
+                "returns": code30_tick_returns,
+                "head": live.get(passenger + 0x60),
+                "queued": live.get(passenger + 0x64),
+                "stage": uc.mem_read(seek_order + 5, 1)[0],
+                "wait_mask": struct.unpack("<I", uc.mem_read(seek_order + 6, 4))[0],
+                "deadline": live.get(seek_order + 0x0A),
+                "controller": live.get(seek_order + 0x6E),
+                "navigator_controller": live.get(ground_nav + 4),
+                "path_requests": live.get(queue_counter),
+                "route_installs": len(route_installs),
+                "cargo": (live.get(carrier + 0xAC) == passenger and
+                          live.get(passenger + 0xA8) == carrier),
+            })
 
         if live.get(queue_counter) > 0:
             _, error = icd.call(0x416430, (1,), ecx=OBJ)
             if error:
                 raise RuntimeError(("native route worker", tick, error))
 
-        _, error = icd.call(0x4DC800, (carrier,), ecx=flight_mover)
-        if error:
-            raise RuntimeError(("native ZONROC flight mover", tick, error))
-        _, error = icd.call(0x51B2A0, (carrier,), ecx=flight_mover)
-        if error:
-            raise RuntimeError(("native ZONROC position commit", tick, error))
+        if live.get(carrier + 0x60):
+            _, error = icd.call(0x4DC800, (carrier,), ecx=flight_mover)
+            if error:
+                raise RuntimeError(("native ZONROC flight mover", tick, error))
+            _, error = icd.call(0x51B2A0, (carrier,), ecx=flight_mover)
+            if error:
+                raise RuntimeError(("native ZONROC position commit", tick, error))
         _, error = icd.call(0x4DC800, (passenger,), ecx=ground_mover)
         if error:
             raise RuntimeError(("native Araarch GROUND2 mover", tick, error))
@@ -657,37 +716,75 @@ def run(args):
                 live.get(passenger + 0xA8) == carrier:
             attachment_tick = tick
             break
-        if live.get(carrier + 0x60) == 0:
-            carrier_retired_tick = tick
+        queued_after = live.get(passenger + 0x64)
+        if queued_after != seek_order and live.get(passenger + 0x60) != seek_order:
+            if seek_retired_tick is None:
+                seek_retired_tick = tick
+            # Stop at the real retirement result. Later allocator reuse can
+            # make the freed mission's controller fields look nonzero.
             break
+        if len(route_installs) > initial_route_count or \
+                live.get(seek_order + 0x6E) != 0:
+            if seek_route_tick is None:
+                seek_route_tick = tick
+            # The native worker above has now had its tick to install the
+            # route. A controller without an install is still a real route
+            # attempt (for example, a native failure result).
+            break
+        if move_completed_tick is not None and code30_tick_returns and \
+                seek_retired_tick is None and seek_route_tick is None:
+            post_move_wait_dispatches += 1
+            if post_move_wait_dispatches >= 10:
+                break
 
     if attachment_tick is None:
         active_head = live.get(passenger + 0x60)
         queued_head = live.get(passenger + 0x64)
-        if (carrier_retired_tick is None or active_head != passenger_order or
-                queued_head != seek_order or moved_distance <= 0 or
-                live.get(carrier + 0xAC) == passenger or
-                live.get(passenger + 0xA8) == carrier):
-            raise AssertionError(("native VTOL current-order cancellation state",
-                                  carrier_retired_tick, hex(active_head),
-                                  hex(queued_head), hex(passenger_order),
-                                  hex(seek_order), moved_distance,
-                                  live.get(carrier + 0xAC),
-                                  live.get(passenger + 0xA8)))
         if uc.mem_read(passenger_order + 4, 1)[0] != 27 or \
                 uc.mem_read(seek_order + 4, 1)[0] != 30:
             raise AssertionError(("native queued order codes changed",
                                   uc.mem_read(passenger_order + 4, 1)[0],
                                   uc.mem_read(seek_order + 4, 1)[0]))
-        print(f"PASS: native VTOL_Pickup retired at tick {carrier_retired_tick} "
-              f"while Araarch's active order was Move_Ground code 27; queued "
-              f"Move_Seek_Pickup code 30 remained behind it. Araarch moved "
-              f"{moved_distance:.2f}px on its installed GROUND2 route before "
-              f"the carrier canceled. This is the native current-head gate, "
-              f"not a successful boarding trace.")
-        print(f"  Installed route={installed_route}; waypoint pops={nav_pops}; "
-              f"passenger head={hex(active_head)}, queue head={hex(queued_head)}; "
-              f"no reciprocal cargo attachment.")
+        code27_returns = [row for row in dispatcher_returns if row[2] == 27]
+        code30_returns = [row for row in dispatcher_returns
+                          if row[2] == 30 and row[5] == "queued"]
+        if move_completed_tick is None and seek_retired_tick is None and \
+                seek_route_tick is None:
+            raise AssertionError(("native Move_Ground did not complete before bounded trace ended",
+                                  carrier_retired_tick, move_completed_tick,
+                                  moved_distance, code27_returns[-4:],
+                                  code30_returns[-4:], hex(active_head),
+                                  hex(queued_head)))
+        if move_completed_tick is not None and \
+                (moved_distance < 100 or not code27_returns):
+            raise AssertionError(("native Move_Ground did not complete physical travel",
+                                  moved_distance, code27_returns[-4:], nav_pops[-8:]))
+        move_result = (f"Move_Ground code 27 completed at tick {move_completed_tick}"
+                       if move_completed_tick is not None else
+                       f"Move_Ground code 27 was still active at tick {live.get(GS + 0x19F44)}")
+        print(f"PASS: native {move_result}; "
+              f"Araarch traveled {moved_distance:.1f}px; original VTOL_Pickup "
+              f"retired at tick {carrier_retired_tick}; no boarding.")
+        if seek_retired_tick is not None:
+            outcome = f"code 30 retired from the queued list at tick {seek_retired_tick}"
+        elif seek_route_tick is not None:
+            outcome = f"code 30 began route/controller work at tick {seek_route_tick}"
+        elif post_move_wait_dispatches:
+            outcome = (f"code 30 remained queued for {post_move_wait_dispatches} "
+                       "post-completion dispatches without route or attachment")
+        else:
+            outcome = "no code-30 wait/route/retire outcome was observed"
+        print(f"  Queued dispatcher result: {outcome}; active={hex(active_head)}, "
+              f"queued={hex(queued_head)}; route={installed_route}; "
+              f"waypoint pops={len(nav_pops)}.")
+        if seek_dispatch_states:
+            print(f"  First code-30 queued dispatch: {seek_dispatch_states[0]}")
+            if len(seek_dispatch_states) > 1:
+                print(f"  Last code-30 queued dispatch: {seek_dispatch_states[-1]}")
+        print(f"  Last handler returns: Move_Ground={code27_returns[-4:]}, "
+              f"Move_Seek_Pickup={code30_returns[-4:]}")
+        print("  World has no matching queued-load fixture: World::loadInto clears "
+              "the passenger order vector before adding its load order.")
         return
     if not nav_pops:
         raise AssertionError("native GROUND2 mover never popped a route waypoint")
