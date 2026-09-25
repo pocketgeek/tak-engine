@@ -2244,7 +2244,7 @@
         float dt = realDt * animSpeed();
         vmTick_.clear();explosionVmTick_.clear();
         for (auto& [id, a] : anims_) {
-            if(a.vm && tak::retailDeathVmMayAdvance(a.dying,a.deathVmStopRequested)) {
+            if(a.vm && tak::retailOwnerVmMayAdvance(a.ownerVmStopRequested)) {
                 if(a.vm->mayReachExplosion(a.explosionReachability))explosionVmTick_.emplace_back(id,a.vm.get());
                 else vmTick_.push_back(a.vm.get());
             }
@@ -2936,8 +2936,8 @@
                 buf->push_back(idx);
             };
             st.vm->onSetUnitValue = [state=&st](int32_t valueId,int32_t) {
-                if(tak::retailDeathVmStopsOnSetUnitValue(state->dying,valueId))
-                    state->deathVmStopRequested=true;
+                if(tak::retailOwnerVmStopsOnSetUnitValue(valueId))
+                    state->ownerVmStopRequested=true;
             };
             st.vm->onExplode = [this,id, state=&st, vm=st.vm.get()](int piece, int32_t flags) {
                 const auto* unit=frameUnitP(id);

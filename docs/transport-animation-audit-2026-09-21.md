@@ -8113,10 +8113,10 @@ callbacks, and the standalone timeline harness prints SET31 at tick 0 before
 producing 16 more callbacks at ticks 14 and 28. That harness's `onSetUnitValue`
 only prints the write; it directly ticks the COB VM and does not run the native
 unit/model owner timer. It is useful as a direct-VM script parity trace, but its
-later callbacks do not model the render host. GameView now captures SET26 or
-SET31 while `a.dying` and skips subsequent render-frame VM ticks after that
-write. It still starts the synchronous `Killed` and `Dying` callbacks on the
-death edge. SET26 uses the same stop gate because retail's real `0x50d450` host
+later callbacks do not model the render host. GameView mirrors the native
+owner stop after SET26 or SET31 and skips subsequent render-frame VM ticks after
+that write. It still starts the synchronous `Killed` and `Dying` callbacks on
+the death edge. SET26 uses the same stop gate because retail's real `0x50d450` host
 sets the native removal bit, and the native update-edge probe proves removal is
 consumed on the next owner update. The `--death-render-timeline` fixture shares
 the GameView gate: it preserves the eight synchronous tick-0 effects and emits

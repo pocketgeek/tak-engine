@@ -46,15 +46,15 @@ int main(int argc,char**argv) {
         const int damageType=argc==5 ? std::stoi(argv[4]) : 1;
         tak::cob::Vm dying(file);dying.enableRetailAnimation();
         int tick=0;
-        bool inDeathCallbacks=false,deathVmStopRequested=false;
+        bool ownerVmStopRequested=false;
         dying.onEmitSfx=[&](int piece,int32_t code) {
             if(code>=260 && code<=262)
                 std::cout<<"E "<<tick<<' '<<piece<<' '<<code<<'\n';
         };
         dying.onSetUnitValue=[&](int32_t id,int32_t value) {
             std::cout<<"U "<<tick<<' '<<id<<' '<<value<<'\n';
-            if(renderHost && tak::retailDeathVmStopsOnSetUnitValue(inDeathCallbacks,id))
-                deathVmStopRequested=true;
+            if(renderHost && tak::retailOwnerVmStopsOnSetUnitValue(id))
+                ownerVmStopRequested=true;
         };
         dying.onGet=[](int query,const std::vector<int32_t>&) {
             return query==4 ? 100 : query==18 ? 1 : 0;
@@ -62,14 +62,13 @@ int main(int argc,char**argv) {
         dying.start("Create");
         for(int frame=0;frame<30;++frame)dying.tick(1.f/30);
         dying.reset();dying.setStatic(0,0);
-        inDeathCallbacks=true;
         dying.start("Killed",{severity,0,damageType});
         if(!dying.start("Dying",{damageType}))dying.start("death");
         for(int frame=0;frame<600;++frame) {
             tick=frame+1;
             // GameView lets both death call-ins start synchronously, then its
             // render-host VM loop stops on native SET26/31 owner retirement.
-            if(!renderHost || tak::retailDeathVmMayAdvance(inDeathCallbacks,deathVmStopRequested))
+            if(!renderHost || tak::retailOwnerVmMayAdvance(ownerVmStopRequested))
                 dying.tick(1.f/30);
         }
         return 0;

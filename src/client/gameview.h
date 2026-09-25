@@ -1061,7 +1061,7 @@ private:
         // which outlives every Anim), not a per-unit copy -- ~25 MB saved at 38k units.
         const std::vector<std::string>* pieceNames = nullptr;
         bool dying = false;
-        bool deathVmStopRequested = false; // native SET26 removal / SET31 owner timer
+        bool ownerVmStopRequested = false; // native SET26 removal / SET31 owner timer
         bool producing = false;
         bool building = false;   // mobile builder actively working a site (conjure anim)
         bool firing = false;
