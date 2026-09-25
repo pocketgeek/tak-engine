@@ -41,8 +41,12 @@ implementation descriptions. Current open gates are:
   sector-height step: XYZ, altitude, flight dynamics, controller, mission and
   cargo fields match throughout, and native `0x4dc800` relinks the carrier's
   center sector seven times. Its fixture supplies retail's raw and 3x3-dilated
-  sector-height planes and holds terrain rescans, so it does not establish
-  live rescan parity or every map's height transition.
+  sector-height planes and holds terrain rescans, so it does not by itself
+  establish live rescan parity or every map's height transition. A companion
+  map-backed trace builds those planes with retail `0x50e740` from per-cell
+  terrain corners and leaves the native mover scan deadline live. Native and
+  World match for 480 ticks, with eight center-sector relinks and six live
+  scan-deadline advances; additional maps and flight paths remain open.
   A blocked unload retry followed by mission removal and a new destination now
   matches in paired native-air and native-sea traces; World regressions cover
   both carrier classes. Native sea-unload recovery now also resumes the same
@@ -8824,14 +8828,35 @@ The first mismatch in a 500-tick experiment is the already-known arrival
 sampling phase at tick 487 (World exposes pending `0x500` after its mover pass;
 retail consumes it in dispatcher order). The focused height trace stops before
 that event, so the result establishes sector-height movement only. Terrain
-rescans are held and map-sector heights are controlled fixture data; live
-terrain-rescan behavior remains a separate gate. No production change or retail
-GUI run was needed.
+rescans are held and map-sector heights are controlled fixture data in this
+trace; the companion map-backed flight check below covers the live scan path on
+the same ridge. No production change or retail GUI run was needed.
 
 Reproduce with:
 
 ```sh
 python3 tools/re/check_air_unload_heightstep.py \
+  --binary build-o2/transport_test --steps 480
+```
+
+### Map-backed VTOL height-sector scans (2026-09-25)
+
+`check_air_map_height_scan.py` fills retail's per-cell height records and calls
+the real map-sector initializer `0x50e740`, which builds both the raw and
+3x3-dilated planes. It verifies every sector against those cell heights. The
+native air-unload trace then keeps the `0x4dc800` local scan deadline active
+while the carrier crosses the 100-to-220 ridge; each center-sector pointer is
+checked against its current position-derived sector. World and native rows match
+for 480 ticks, with eight sector relinks and six scan-deadline advances (ticks
+71 through 491). The mover's recurring scan updates its local scan timer; it
+does not rebuild the static sector-height grid during flight. This closes the
+map-backed height-grid and local scan path for this controlled ridge, not every
+live map or carrier route. No production change or retail GUI run was needed.
+
+Reproduce with:
+
+```sh
+python3 tools/re/check_air_map_height_scan.py \
   --binary build-o2/transport_test --steps 480
 ```
 
