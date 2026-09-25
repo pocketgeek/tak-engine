@@ -21,8 +21,19 @@ def main():
     ap.add_argument('--ticks',type=int,default=100)
     ap.add_argument('--notify',help='start this script immediately before timed updates')
     ap.add_argument('--timeline',action='store_true',help='exercise production, flight, combat, wind, cloak and death callbacks')
+    ap.add_argument('--zhon-flight-timeline',action='store_true',
+                    help='join the bounded native Zonhunt construction movement callbacks to COB state')
     ap.add_argument('--profile',type=int,choices=range(4),help='controlled idle, road movement, water movement, or damaged veteran host')
-    args=ap.parse_args(); data=args.cob.read_bytes(); saved=args.state.read_bytes()
+    args=ap.parse_args()
+    if args.timeline and args.zhon_flight_timeline:
+        ap.error('--timeline and --zhon-flight-timeline are separate callback schedules')
+    if args.zhon_flight_timeline:
+        if args.cob.stem.lower()!='zonhunt':
+            ap.error('--zhon-flight-timeline requires zonhunt.cob')
+        args.notify=args.notify or 'Create'
+        if args.ticks<1 or args.ticks>10000:
+            ap.error('--zhon-flight-timeline requires 1..10000 ticks')
+    data=args.cob.read_bytes(); saved=args.state.read_bytes()
     h=struct.unpack_from('<10I',data); _,ns,np,nc,nv,_,index,_,_,off=h
     p=Icd(); vm,desc,code,entries,statics,pieces,vtable,scratch=[HEAP+n*0x10000 for n in range(8)]
     # Large dragon/centaur scripts exceed 64 KiB; keep bytecode away from
@@ -94,6 +105,27 @@ def main():
                 (900,'BeginLanding',[]),(900,'setSFXoccupy',[0]),(1050,'Deactivate',[]),
                 (1200,'Killed',[50,0,1]),(1200,'Dying',[1])]:
             if name.lower() in names:events.append((tick,names.index(name.lower()),len(values),values+[0]*(4-len(values))))
+    if args.zhon_flight_timeline:
+        from check_zhon_construction_flight_trace import native_persistent_trace
+        metadata,_movement,_phases,callback_rows=native_persistent_trace(args.ticks,1)
+        if metadata['terrain']!=100:
+            raise AssertionError(('Zhonhunt flight fixture terrain changed',metadata['terrain']))
+        for required in ('BeginFlight','StartBuilding'):
+            if required.lower() not in names:
+                raise AssertionError(('zonhunt callback is missing',required))
+        by_tick=dict(callback_rows)
+        for one_based_tick in range(1,args.ticks+1):
+            zero_based_tick=one_based_tick-1
+            if one_based_tick==1:
+                events.append((zero_based_tick,names.index('beginflight'),0,[0,0,0,0]))
+            for name,values in by_tick.get(one_based_tick,()):
+                script=names.index(name.lower()) if name.lower() in names else None
+                if script is not None:
+                    args_values=list(values)
+                    events.append((zero_based_tick,script,len(args_values),
+                                   args_values+[0]*(4-len(args_values))))
+            if one_based_tick==1:
+                events.append((zero_based_tick,names.index('startbuilding'),0,[0,0,0,0]))
     for tick in range(-1 if notification is not None else 0,args.ticks):
         writes.clear()
         if tick<0: _,error=p.call(0x56c5f0,(notification,0,1),ecx=vm)
@@ -115,7 +147,7 @@ def main():
     env=os.environ.copy()
     if args.profile is not None:env["TAK_SCRIPT_ORACLE_PROFILE"]=str(args.profile)
     with tempfile.NamedTemporaryFile(mode='w',prefix='tak-animation-events-') as timeline:
-        if args.timeline:
+        if args.timeline or args.zhon_flight_timeline:
             for tick,script,count,values in events:
                 timeline.write(' '.join(map(str,[tick,script,count,*values]))+'\n')
             timeline.flush();command.append(timeline.name)
@@ -129,7 +161,11 @@ def main():
         if want!=got:
             index=next(i for i,pair in enumerate(zip(want,got)) if pair[0]!=pair[1])
             raise AssertionError(('tick',tick+1,'word',index,'retail',want[index],'port',got[index]))
-    print(f'PASS: {len(expected)} restored script thread/animation/RNG boundaries; build-ready updates {ready}')
+    if args.zhon_flight_timeline:
+        print(f'PASS: {len(expected)} Zonhunt script-state ticks match retail with native 41ef00/4dc800 '
+              f'construction callbacks at their movement ticks; build-ready updates {ready}')
+    else:
+        print(f'PASS: {len(expected)} restored script thread/animation/RNG boundaries; build-ready updates {ready}')
 
 
 if __name__=='__main__': main()

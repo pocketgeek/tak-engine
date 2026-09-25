@@ -19,7 +19,12 @@ implementation descriptions. Current open gates are:
   captured. Paired native/World pickup dispatcher traces match for 36 air/sea
   ticks; surface pickup callbacks match for 18 ticks. Paired unload dispatcher
   traces match for 17 air ticks and 19 sea ticks, with route arrival controlled
-  at the navigator boundary. Eight deterministic boat unload-circle searches,
+  at the navigator boundary. One integrated sea-pickup gate remains: native
+  `GROUND_PICKUP` creates its real circle controller and submits a route
+  request, but the headless fixture has not attached that request to an
+  initialized native route job/heap. A map-backed ship trace through
+  navigation, boarding, and carrier-order retirement is not yet covered.
+  Eight deterministic boat unload-circle searches,
   five Per Mare Per Terras cases, and one Lake Lokken water-crossing case match
   retail's native reconstructed routes using World-produced grades, including a
   disconnected-water partial route after a World failure. The World air-route end-to-end
@@ -29,7 +34,7 @@ implementation descriptions. Current open gates are:
   strict mobile-footprint check and supplies each terrain cell's four-corner
   maximum/minimum envelope; its ship-specific hull-height callback remains
   controlled. Paired
-  retail/World flight-mover traces now match for 128 ticks on a point flight
+  retail/World flight-mover traces now match for 600 ticks on a point flight
   and 470 ticks of a distant VTOL unload-circle approach. A new integrated
   native-dispatcher/mover comparison matches 1,200 ticks from the distant
   unload approach through transfer, mission retirement, step-out arrival and
@@ -37,6 +42,10 @@ implementation descriptions. Current open gates are:
   arrival event because World stores it in the mission while retail stores it
   on the unit. These controlled traces pin terrain scanning and initial
   navigator state; they do not establish every live-map grade or flight route.
+  The 600-tick point-flight trace matches through controller detach, the final
+  mover step, and braking/coast; it closes the one-step arrival gap previously
+  seen at tick 505. Ordinary flyers use a direct point controller, not the
+  generic surface path-search worker.
   A separate 480-tick VTOL unload comparison now crosses a 100-to-220 terrain
   sector-height step: XYZ, altitude, flight dynamics, controller, mission and
   cargo fields match throughout, and native `0x4dc800` relinks the carrier's
@@ -183,8 +192,8 @@ implementation descriptions. Current open gates are:
   insertion, one manager update and compaction per tick, tree impact, and same-
   tick retirement; World matches its launch and each active-tick snapshot.
   The native impact callback's damage/effect body remains outside that fixture.
-  Special weapon cases, broader missing-script behavior, full movement/flight
-  callback phase comparisons, and rendered pose parity remain open. A headless
+  Special weapon cases, broader missing-script behavior, and complete
+  comparisons of flight callback phases and rendered poses remain open. A headless
   native Araarch trace now confirms that losing visibility does not clear an
   already assigned live target in this path; World's explicit-target behavior
   agrees. A three-profile native mover sweep covers ground, floater, and flyer
@@ -200,7 +209,10 @@ implementation descriptions. Current open gates are:
   shifts from 90.50 pixels north at tick 1 to 107.98 at tick 101 as the monarch
   gains altitude and follows the orbital ground path. The projection equations
   remain equivalent; the 0.5-pixel maximum is integer half-height rounding,
-  not an independent framebuffer comparison. Child-piece timed-turn
+  not an independent framebuffer comparison. A new 104-tick display-COB join
+  schedules BeginFlight, setSFXoccupy(5), and StartBuilding from the native
+  construction-movement callback trace; all script-thread and piece state
+  matches retail in Release, Debug, and optimized builds. Child-piece rendered
   interpolation and live-camera captures remain open. The pending-shot/dead-
   target sequence now joins target retirement to the next common weapon update;
   broader target-loss cases remain open.
@@ -7777,8 +7789,9 @@ update for a distant air unload with retail's actual point-controller setup,
 0x4dc800 mover, heading update, and position commit. The controller uses the
 drop point as its center and the native transportdistance-minus-34 radius. All
 470 ticks match for position, altitude, heading, speed, 3D velocity, and
-navigator outputs, ending immediately before the unload handoff. The same
-harness continues to pass the 128-tick point-flight case. The native air-unload
+navigator outputs, ending immediately before the unload handoff. The generic
+point-flight case was later corrected to use retail's default acceptance radius
+and extended through arrival and coast; see the following section. The native air-unload
 dispatcher trace separately verifies its mission and controller callbacks
 through passenger release.
 
@@ -7796,6 +7809,31 @@ native mission dispatcher during each physical flight tick. At tick 471, World
 starts the transfer and retargets its navigator; that dispatcher transition is
 therefore outside the paired mover window. Live map scanning, nearby-unit
 collision, and full route/arrival integration remain open.
+
+### Ordinary point-flight arrival step (2026-09-25)
+
+The corrected native point-flight fixture uses the controller's default 0.5px
+acceptance radius and follows the flight through arrival and coast. Retail posts
+arrival and detaches the controller before `0x4dc800` commits one final mover
+step. World previously erased the move order and skipped that body update; it
+now retains the accepted destination with an inactive controller, commits the
+same final step, and coasts using the retained-flight path. The paired trace
+matches all 600 ticks exactly for position, altitude, heading, speed, velocity,
+and navigator state in Release, Debug, and optimized builds. The earlier
+128-tick fixture used an artificial 16px radius and ended before arrival, so it
+could not catch the mismatch. This is a controlled direct-flight case, not a
+map or COB pose sweep.
+
+Reproduce with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/check_air_flight_motion_trace.py \
+  --binary build/transport_test --steps 600
+PYTHONPATH=tools/re python3 tools/re/check_air_flight_motion_trace.py \
+  --binary build-dbg/transport_test --steps 600
+PYTHONPATH=tools/re python3 tools/re/check_air_flight_motion_trace.py \
+  --binary build-o2/transport_test --steps 600
+```
 
 ### Authored projectile sprite anchors (2026-09-23)
 
@@ -9018,12 +9056,25 @@ tick 151. The separate height/projection check below found no transform
 mismatch. The script-state check passes with Release, Debug, optimized Debug,
 and Clang test binaries. No production change is justified by this comparison.
 
+`check_zhon_construction_display_timeline.py` adds a separate 104-row join:
+it schedules the display VM callbacks from the native placed-build
+`0x41ef00`/`0x4dc800` trace and compares complete COB thread and piece state at
+each 30-Hz tick. `BeginFlight`, `setSFXoccupy(5)`, and `StartBuilding` remain
+aligned in Release, Debug, and optimized builds. The supported persistent
+construction path also matches through arrival and orbit reacquisition for 103
+ticks. The nonpersistent synthetic endpoint test stops matching after arrival
+because it omits the mission dispatcher that drives the next flight goal; this
+does not establish a retail mismatch. Neither comparison renders a live camera
+frame.
+
 Reproduce with:
 
 ```sh
 python3 tools/re/check_script_state.py \
   assets/extracted/all/scripts/zonhunt.cob /tmp/zonhunt-zero.state \
   --binary build-o2/retail_script_test --ticks 501 --notify Create --timeline
+python3 tools/re/check_zhon_construction_display_timeline.py \
+  --binary build-o2/retail_script_test
 ```
 
 ### Zhon Monarch flight-height projection (2026-09-25)
@@ -9072,11 +9123,18 @@ existing 120-tick corpse fallback.
 
 A static audit of all 204 shipped unit COBs found 129 SET26 writes, all
 `(26,1)` in `Dying`; `crebomb` has two mutually exclusive branches, with its
-delayed branch writing only after its sleep loop. The deadline therefore
-starts at the actual SET callback tick. Native next-tick teardown is traced for
-`crefire` at ticks 0/1 and through `crebomb`'s delayed branch at ticks 146/147.
-The same audit found 38 SET31 writes, all `(31,1)`, one per `Dying` function;
-the `tarmage` native timer/teardown path is traced at ticks 0/35.
+delayed branch writing only after its sleep loop. A native roster probe starts
+each writer's actual Killed/Dying COB handlers, then runs the real owner updater
+and list destructor. All 129 cases write SET26; teardown follows exactly one
+owner update later, including `crebomb`'s delayed and immediate branches at
+146/147 and 0/1. This validates callback execution and owner teardown, not the
+full death-state builder for every unit. The same audit found 38 SET31 writes,
+all `(31,1)`, one per `Dying` function. All 38 were traced through native
+death-state handling: 30 write immediately and eight write after sleeps. The
+display deadline remains `+35` from its pinned presentation snapshot; delayed
+writes consume one owner update before that snapshot advances, so changing it
+to `+34` would retire the display VM early. `tarmage`'s native timer/teardown
+path remains the direct tick-0/35 reference case.
 
 The C++ lifecycle helper checks the SET26/SET31 delay and wrap-safe earliest
 deadline selection. Native `crefire` and `tarmage` probes and the direct-VM
@@ -9084,8 +9142,17 @@ death-flame comparison pass on the optimized build. The `retail_visual`,
 `animation_roster`, `cursor_roster`, and `shadow` tests pass in Release, Debug,
 optimized Debug, and Clang configurations; no retail GUI was launched. The
 native probes validate owner teardown, while the C++ tests validate deadline
-selection; they do not compare a live retail framebuffer. Other SET31 scripts
-and attached-effect families still need runtime coverage.
+selection; they do not compare a live retail framebuffer. Other attached-effect
+families and live rendered lifetimes remain open.
+
+Reproduce the SET26 roster using the locally installed data archives:
+
+```sh
+build-o2/hpitool merge /home/pocket_geek/tak_data /tmp/tak-native-scripts
+PYTHONPATH=tools/re python3 tools/re/probe_native_set26_roster.py \
+  --scripts /tmp/tak-native-scripts/scripts \
+  --world-binary build-o2/animation_roster_test --workers 4
+```
 
 Reproduce with:
 

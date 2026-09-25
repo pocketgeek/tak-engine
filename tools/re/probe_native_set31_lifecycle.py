@@ -46,6 +46,10 @@ def main():
                         default=Path("build-o2/animation_roster_test"))
     parser.add_argument("--native-death-state", action="store_true",
                         help="build the death event through retail 0x512610/0x512860")
+    parser.add_argument("--native-set26-roster", action="store_true",
+                        help="start native Killed/Dying COB handlers and trace SET26 owner teardown")
+    parser.add_argument("--get-unit-value-17", type=int, default=0,
+                        help="override COB GET_UNIT_VALUE 17 for conditional SET26 branches")
     parser.add_argument("--death-type", type=int, default=1,
                         help="native death-state type (for --native-death-state; default: 1)")
     args = parser.parse_args()
@@ -71,7 +75,9 @@ def main():
         def invoke(uc, sp):
             raw = struct.unpack("<" + "I" * count, uc.mem_read(sp, count * 4))
             if slot == 0x54:
-                return count, 100 if raw[0] == 4 else 1 if raw[0] == 18 else 0
+                value = (args.get_unit_value_17 if raw[0] == 17 else
+                         100 if raw[0] == 4 else 1 if raw[0] == 18 else 0)
+                return count, value
             if slot == 0x38:
                 return count, raw[1]
             return count, 0
@@ -274,7 +280,7 @@ def main():
     # well below the separate 600-tick direct-VM sweep.
     delayed_set26_case = args.native_death_state and args.script.lower() == "crebomb"
     set26_owner_case = args.native_death_state and args.script.lower() in ("crefire", "crebomb")
-    update_horizon = 256 if delayed_set26_case else 35
+    update_horizon = 1500 if args.native_set26_roster else (256 if delayed_set26_case else 35)
     snapshots = []
     for frame in range(1, update_horizon + 1):
         tick[0] = frame
@@ -294,8 +300,9 @@ def main():
         if u32(p, unit + 0xC0) == 0:
             break
 
-    expected_native_write = ([(146, 26, 1)] if delayed_set26_case else
-                             [(0, 26 if set26_owner_case else 31, 1)])
+    expected_native_write = (writes if args.native_set26_roster else
+                             ([(146, 26, 1)] if delayed_set26_case else
+                              [(0, 26 if set26_owner_case else 31, 1)]))
     if args.native_death_state and writes != expected_native_write:
         print("native-death diagnostics:", {
             "writes": writes, "trace": [(t, hex(a)) for t, a in trace],
@@ -306,6 +313,32 @@ def main():
             "recent": [hex(a) for a in recent[-40:]],
         })
     assert writes == expected_native_write, writes
+    if args.native_set26_roster:
+        # The direct native callback starts isolate each script's own Killed and
+        # Dying bytecode. The real 0x51d3e0 owner updater, removal edge and list
+        # destructors then run until the callback's SET26 write is consumed.
+        assert "Dying" in names, names
+        if not writes:
+            print(f"NO SET26: native {args.script} Killed/Dying did not write a unit value "
+                  f"within {len(snapshots)} owner updates")
+            return
+        assert len(writes) == 1 and writes[0][1:] == (26, 1), writes
+        write_tick = writes[0][0]
+        retirement_tick = write_tick + 1
+        assert len(snapshots) == retirement_tick, (write_tick, retirement_tick, snapshots[-3:])
+        assert snapshots[-1][0] == retirement_tick and snapshots[-1][4] == 0, snapshots[-1]
+        assert snapshots[-1][5] == 0 and u32(p, unit + 0xC0) == 0, snapshots[-1]
+        assert [(t, address) for t, address in trace
+                if address in (0x512AE0, 0x4EE560, 0x497380)] == [
+                    (retirement_tick, 0x512AE0),
+                    (retirement_tick, 0x4EE560),
+                    (retirement_tick, 0x497380)
+                ], trace
+        vm_updates = [(t, address) for t, address in trace if address == 0x56C870]
+        assert not any(t > write_tick for t, _ in vm_updates), vm_updates
+        print(f"PASS: native {args.script} Killed/Dying writes SET26 at tick {write_tick}; "
+              f"0x51d3e0 retires owner/list at tick {retirement_tick}")
+        return
     if set26_owner_case:
         write_tick = expected_native_write[0][0]
         retirement_tick = write_tick + 1
