@@ -1805,8 +1805,20 @@ void World::tickFlightMovement(Unit& u, bool persistent) {
         else if (plainFlightPatrol(u)) order.mission.pending|=0x500;
         else {
             Order done=order;
+            // The point controller retires on arrival before the native mover
+            // commits this tick. Keep its accepted destination for the final
+            // body step and the ensuing coast-down, as the independent mover
+            // continues after controller detach.
+            if (!done.patrol) {
+                u.retainedFlightGoal=goal;
+                u.retainedFlightControllerActive=false;
+            }
             u.orders.erase(u.orders.begin());
-            if (done.patrol) { done.flightGoal.reset(); u.orders.push_back(done); }
+            if (done.patrol) {
+                u.retainedFlightGoal.reset();
+                done.flightGoal.reset(); u.orders.push_back(done);
+            }
+            tickFlightBody(u);
             return;
         }
     }

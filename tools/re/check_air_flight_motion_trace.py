@@ -27,7 +27,6 @@ def native_trace(steps, unload=False):
     width = 256 if unload else 64
     start = (3000, 100, 3000) if unload else (160, 100, 160)
     target = (4000, 100, 3000) if unload else (800, 100, 800)
-    radius = 116 if unload else 16
     p = Phase(width, width)
     p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
     unit = p.unit(10, 10)
@@ -81,8 +80,11 @@ def native_trace(steps, unload=False):
     put(p.uc, point, *(value << 16 for value in target))
     _, error = p.icd.call(0x4e40e0, (mission, point), ecx=controller)
     assert error is None, error
-    _, error = p.icd.call(0x4e4540, (radius,), ecx=controller)
-    assert error is None, error
+    # The generic point controller has its native default 0.5px acceptance.
+    # VTOL unload installs an explicit transportdistance-34 circle instead.
+    if unload:
+        _, error = p.icd.call(0x4e4540, (116,), ecx=controller)
+        assert error is None, error
     put(p.uc, navigator + 4, controller)
 
     # This synthetic unit has no COB VM. Keep the native movement/navigation,
@@ -90,7 +92,7 @@ def native_trace(steps, unload=False):
     p.icd.hooks[0x56c640] = lambda _uc, _args: (8, 0)
     p.icd.freeze_hooks()
 
-    rows = []
+    rows, attached = [], []
     for tick in range(1, steps + 1):
         put(p.uc, GS + 0x19f44, tick)
         _, error = p.icd.call(0x4dc800, (unit,), ecx=mover)
@@ -102,7 +104,8 @@ def native_trace(steps, unload=False):
         nav_out = words(p.uc, navigator + 0x0c, 6)
         nav_heading = struct.unpack('<H', p.uc.mem_read(navigator + 0x24, 2))[0]
         rows.append((tick, *position, heading, speed, *velocity, *nav_out, nav_heading))
-    return rows
+        attached.append(struct.unpack('<I', p.uc.mem_read(navigator + 4, 4))[0] == controller)
+    return rows, attached
 
 
 def check(binary, steps, unload=False):
@@ -110,13 +113,22 @@ def check(binary, steps, unload=False):
     result = subprocess.run([binary, mode, str(steps)],
                             check=True, capture_output=True, text=True)
     world = [tuple(map(int, line.split())) for line in result.stdout.splitlines()]
-    retail = native_trace(steps, unload)
+    retail, attached = native_trace(steps, unload)
     if len(world) != steps:
         raise AssertionError(f'World emitted {len(world)} rows, expected {steps}')
+    if not unload:
+        if not attached[0]:
+            raise AssertionError('native point controller was not attached at the start')
+        detached = next((index for index, active in enumerate(attached) if not active), None)
+        if detached is None or detached == 0:
+            raise AssertionError('native point controller did not detach during the trace')
+        before, after = retail[detached - 1], retail[detached]
+        if before[1:4] == after[1:4] or after[5] <= 0:
+            raise AssertionError('native mover did not commit a final moving step after detach')
     for index, (got, want) in enumerate(zip(world, retail), 1):
         if len(got) < len(want) or got[:len(want)] != want:
             raise AssertionError({'tick': index, 'World': got[:len(want)], 'retail': want})
-    case = 'VTOL unload-circle' if unload else 'point-flight'
+    case = 'VTOL unload-circle approach' if unload else 'point-flight'
     print(f'PASS: {steps} paired retail/World {case} mover ticks match exactly '
           'for position, altitude, heading, speed, velocity, and navigator outputs')
 
@@ -124,11 +136,13 @@ def check(binary, steps, unload=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', default='build-o2/transport_test')
-    parser.add_argument('--steps', type=int, default=128)
+    parser.add_argument('--steps', type=int, default=None,
+                        help='ticks to trace (defaults to 600 for point flight, 128 for the single-controller unload approach)')
     parser.add_argument('--unload', action='store_true',
                         help='trace the retail transportdistance-34 VTOL unload circle')
     args = parser.parse_args()
-    check(args.binary, max(1, min(args.steps, 10000)), args.unload)
+    steps = args.steps if args.steps is not None else (128 if args.unload else 600)
+    check(args.binary, max(1, min(steps, 10000)), args.unload)
 
 
 if __name__ == '__main__':
