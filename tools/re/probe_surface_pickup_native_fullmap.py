@@ -100,6 +100,98 @@ def observe_attachment_calls(state):
     return calls
 
 
+def dispatch_completed_passenger_order(state, carrier, passenger):
+    """Stage and retire a real passenger order after native boarding.
+
+    The route fixture keeps a synthetic reciprocal order on the passenger so
+    the carrier's pickup handler can find it. Boarding does not consume that
+    placeholder in the native-attachment mode. Clear only that fixture queue
+    head, then use retail's code-2 constructor, insertion, dispatcher, and
+    mission/reference cleanup. This is a completion check after attachment;
+    it does not exercise passenger approach or movement during pickup.
+    """
+    phase, live, uc = state["phase"], state["live"], state["phase"].uc
+    put, get = live.put, live.get
+    placeholder = get(passenger + 0x60)
+    assert placeholder == live.passenger_mission, hex(placeholder)
+    assert get(placeholder + 4) == 1
+    assert get(placeholder + 0x16) == carrier
+    assert get(carrier + 0x60) == 0, "carrier pickup order still owns its queue"
+    assert get(carrier + 0xC4) == 0, "carrier already has a target reference"
+    carrier_ref_before = get(carrier + 0xC4)
+    passenger_ref_before = get(passenger + 0xC4)
+
+    definitions = get(0x62DB84)
+    assert definitions, "retail mission descriptor table is missing"
+    # The full-map fixture's table is controlled. Install only the retail
+    # descriptor row needed to dispatch this staged Move_Seek_Pickup order.
+    put(definitions + 2 * 25 + 4, 0x403430)
+    put(definitions + 2 * 25 + 0x11, 0x200)
+
+    # The fixture owner was zeroed for the carrier transfer fallback. Restore
+    # the valid player-row fields required by real queue insertion.
+    put(live.owner, 1)
+    live.byte(live.owner + 0xEA, 1)
+    put(passenger + 0x60, 0)  # discard the synthetic reciprocal-order head
+
+    passenger_order = phase._alloc(0x80)
+    constructed, error = phase.icd.call(
+        0x4D6C40,
+        (2, carrier, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        ecx=passenger_order)
+    assert error is None, ("native code-2 passenger order constructor", error)
+    assert constructed == passenger_order
+    assert get(passenger_order) == 0x5F2814
+    assert uc.mem_read(passenger_order + 4, 1) == b"\x02"
+    assert get(passenger_order + 0x16) == carrier
+    assert get(passenger_order + 0x5A) == 0x200
+
+    _, error = phase.icd.call(0x4D7750, (passenger, passenger_order))
+    assert error is None, ("native passenger queue insertion", error)
+    assert get(passenger + 0x60) == passenger_order
+    assert get(passenger_order + 0x0E) == passenger
+    assert get(passenger_order + 0x66) == 0
+    assert get(carrier + 0x60) == 0
+    assert get(carrier + 0xC4) == passenger_order + 0x12
+    assert get(passenger + 0xC4) == passenger_ref_before
+
+    # Only this one fixture override is removed: native 4d6ad0 must perform
+    # the passenger queue unlink, and the existing no-op free sink remains.
+    hooks = dict(phase.icd.hooks)
+    fixture_remove = hooks.pop(0x4D6AD0, None)
+    assert fixture_remove is not None and fixture_remove.__name__ == "remove_order"
+    assert 0x4EBA00 in hooks, "controlled no-op free sink was unexpectedly removed"
+    phase.icd.hooks = hooks
+
+    native_entries = []
+    remove_args = []
+
+    def observe_native_cleanup(machine, address, _size, _user):
+        if address in (0x403430, 0x4D6AD0, 0x4D6DA0, 0x519950):
+            native_entries.append(address)
+        if address == 0x4D6AD0:
+            esp = machine.reg_read(UC_X86_REG_ESP)
+            remove_args.append(struct.unpack("<2I", machine.mem_read(esp + 4, 8)))
+
+    uc.hook_add(UC_HOOK_CODE, observe_native_cleanup)
+    live.put(GS + 0x19F44, state["native_tick"] + 1)
+    _, error = phase.icd.call(0x4D8450, (passenger,))
+    assert error is None, ("native attached-passenger dispatch", error)
+
+    assert remove_args == [(passenger, passenger_order)], remove_args
+    assert native_entries == [0x403430, 0x4D6AD0, 0x4D6DA0, 0x519950], (
+        [hex(address) for address in native_entries])
+    assert get(passenger + 0x60) == 0, "completed passenger order remains queued"
+    assert get(carrier + 0x60) == 0, "passenger cleanup changed carrier order ownership"
+    assert get(carrier + 0xC4) == carrier_ref_before, (
+        "native passenger cleanup left a stale carrier reference",
+        hex(get(carrier + 0xC4)))
+    assert get(passenger + 0xC4) == passenger_ref_before
+    assert get(carrier + 0xAC) == passenger, "passenger cleanup cleared carrier cargo"
+    assert get(passenger + 0xA8) == carrier, "passenger cleanup cleared its carrier link"
+    return passenger_order, native_entries
+
+
 def main():
     repo = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -116,6 +208,7 @@ def main():
     state["native_attachment"] = True
     calls = observe_attachment_calls(state)
     native_tick, arrival_tick, native_trace = run_native(state, args.max_ticks)
+    state["native_tick"] = native_tick
 
     native_outer = [entry for entry in calls if entry[0] == 0x51B4F0]
     native_inner = [entry for entry in calls if entry[0] == 0x51B5A0]
@@ -133,6 +226,8 @@ def main():
     assert passenger_mission == state["live"].passenger_mission, (
         "retail attachment unexpectedly changed the fixture passenger order",
         hex(passenger_mission))
+    passenger_order, passenger_cleanup = dispatch_completed_passenger_order(
+        state, carrier, passenger)
     print(
         f"PASS: retail-grade Lake Lokken sea pickup covered all "
         f"{state['width'] * state['height']} TNT cells; the native worker "
@@ -152,6 +247,14 @@ def main():
         f"{parent:#010x}, passenger order pointer={passenger_mission:#010x}, "
         f"passenger flags={passenger_flags:#010x}, "
         f"transfer effects={state['live'].transfer_effects}."
+    )
+    print(
+        f"  Post-boarding passenger check: native code-2 order "
+        f"{passenger_order:#010x} completed through 0x4d8450/0x403430; "
+        f"retail cleanup entries "
+        f"{[hex(address) for address in passenger_cleanup]}; passenger and "
+        "carrier queues and target references are clear, cargo links remain. "
+        "This does not test passenger approach or movement during pickup."
     )
     print(
         f"  World full-map shipped-map roundtrip boarded at tick {world_tick} "

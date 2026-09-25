@@ -32,10 +32,14 @@ implementation descriptions. Current open gates are:
   `0x4d4da0` and creates a passenger-mission-owned circle controller through
   `0x4e2500`; the navigator SetController slot is a controlled sink. This
   confirms order dispatch and controller setup, but not route search or
-  passenger movement. The terminal passenger-order pointer in the full-map
-  trace therefore remains synthetic. The independent World full-map pickup boards
-  at tick 2,178; these tick counts are not compared because the search spaces
-  differ. Additional map/carrier profiles and native feature bodies remain
+  passenger movement. The full-map trace now also stages a real code-2
+  passenger order after native boarding and dispatches it through completion.
+  Real `0x4d6ad0`/`0x4d6da0`/`0x519950` cleanup clears its queue/reference while
+  preserving the cargo links. This is a post-boarding completion check, not an
+  actual passenger approach or movement during pickup. The independent World
+  full-map pickup boards at tick 2,178; these tick counts are not compared
+  because the search spaces differ. Additional map/carrier profiles and native
+  feature bodies remain
   open. The
   separate 70px callback fixture used a synthetic `transportdistance=86`;
   shipped Vertrans uses 300 and its native pickup circle is 284px.
@@ -335,7 +339,12 @@ implementation descriptions. Current open gates are:
   silhouette scaling now also covers the veteran spear aliases
   `verspear_10` and `zonterspearvet`; focused checks confirm both retain the
   same readability scaling as their base meshes without changing native model
-  choice, pose, collision or lifetime. The remaining
+  choice, pose, collision or lifetime. Focused Araarch draw probes confirm
+  `araarrow` follows the native 3DO model path and returns before the yellow-
+  streak fallback; straight-shot launch/draw, ballistic draw, pose, and shipped
+  weapon/build timeline checks pass. The earlier laser-like appearance report
+  has no current reproducible mismatch; it is not an open bug without a clearer
+  case. The remaining
   projectile gaps are other effect lifecycles and uncovered collision/lifetime
   families. Native impact probing follows unit damage into retail's health
   fields: a 476-damage Arabow hit moves the fixture from 1000 to 595 HP, and an
@@ -643,8 +652,10 @@ The broad original request still requires stronger evidence in these areas:
   the passenger's queued load order, its own dispatcher/controller/navigation,
   crowded-shore placement, and cancellation/recovery. Native pickup and unload
   phases, World round trips, and retail live round trips have separate coverage;
-  the full joined trace is still open. The full-map native Lake Lokken pickup
-  also still uses a synthetic terminal passenger-order pointer.
+  the full joined trace is still open. The Lake Lokken pickup fixture begins
+  with a synthetic reciprocal passenger-order placeholder and only stages the
+  real code-2 completion after boarding; it does not run the passenger's
+  pre-boarding approach or movement on that map.
 - Engine-driven animation callback inputs and final poses across the roster.
   Native COB transitions now match World for all 151 movable callback-bearing
   unit scripts, but the test controls callback inputs and stops before position
@@ -9636,17 +9647,28 @@ native and World search spaces differ.
 The entity pool uses two synthetic records and a player row. Feature-definition
 bodies are zero-filled, and visibility, grade-body calls, mover services, and
 the UI feedback effect are controlled. Araarch is stationary and inserted into
-the native sector list; its own ground route is not part of this probe. The
-terminal passenger-order pointer remains a synthetic fixture object, so this
-map trace establishes carrier mission retirement only. A separate reproducible
-probe now completes native passenger-order dispatch/controller setup; it does
-not connect that controller to this map trace's full ground route.
+the native sector list; its own ground route is not part of the pickup trace.
+After the carrier mission retires, the probe replaces the fixture's synthetic
+passenger-order head with a retail code-2 `Move_Seek_Pickup` order, using the
+native `0x4d6c40` constructor and `0x4d7750` queue insertion. It dispatches the
+already-attached Araarch once through `0x4d8450` and the actual `0x403430`
+handler. The existing fixture `0x4d6ad0` replacement is removed for this one
+dispatch so retail's `0x4d6ad0`/`0x4d6da0` cleanup and `0x519950` reference unlink
+execute; the allocator's no-op free sink remains controlled. Assertions verify
+the passenger order is the one removed, both queues and the carrier target
+reference are clear afterward, and the carrier/passenger cargo links remain.
+This is a post-boarding completion check. It does not test passenger approach,
+route search, or movement during pickup; a separate fixture covers pre-boarding
+circle-controller setup, not this map's full passenger route.
 
 ```sh
 PYTHONPATH=tools/re python3 -u tools/re/probe_surface_pickup_native_fullmap.py \
   --hpitool build-o2/hpitool \
   --world-binary build-o2/transport_test
 ```
+
+The full-map command also reports the staged post-boarding passenger-order
+completion and native reference cleanup.
 
 ### Native passenger-order dispatch and approach controller (2026-09-25)
 
