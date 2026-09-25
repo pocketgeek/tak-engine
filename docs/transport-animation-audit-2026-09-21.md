@@ -15,6 +15,20 @@ The original air/sea transport and all-animation goal remains incomplete. The
 sections below record successive findings; later corrections supersede earlier
 implementation descriptions. Current open gates are:
 
+Latest profile checks narrow several of those gates. Lake Lokken joined
+map-backed shore unloads now pass for VerMan/Araarch and Aratrans/Araarch in
+Release, Debug, and optimized Debug, under Standard and Crusades. Native pickup
+also reaches reciprocal attachment and `BeCarried` completion for three air
+carriers: ZONROC, CREAERI, and TARSHIP. The callback-bearing flyer pose sweep
+now covers all 26 shipped pairs. These are still controlled headless traces,
+not proof of every map, carrier order, capacity case, or rendered animation.
+ZONHUNT's placed-construction root and site anchor match the native projection
+in the current fixture; a synchronized capture using the reported map and
+camera is still needed to judge the apparent northward separation in the live
+view. A new client fixture checks weapon impact class selection, authored
+animation lifetime, and fallback particles, but does not synthesize an actual
+projectile hit or judge the beam/arrow's rendered appearance.
+
 - Transport: live retail air and sea pickup/unload round trips have both been
   captured. Paired native/World pickup dispatcher traces match for 36 air/sea
   ticks; surface pickup callbacks match for 18 ticks. Paired unload dispatcher
@@ -377,8 +391,10 @@ implementation descriptions. Current open gates are:
 
 Keep deterministic simulation and retail pathfinding intact throughout. Passing
 CTest and generic network runs is regression evidence, not proof of these gates.
-The latest full CTest sweep passes Release (52/52), Debug (54/54), and optimized
-Debug (54/54).
+The latest full CTest sweep passes Release (52/52), Debug (55/55), and optimized
+Debug (55/55). The weapon impact effect-route client fixture is included in the
+Debug suites; the Release configuration builds the changed client source but
+does not expose the game-mode CLI needed to run that fixture.
 
 ## Transport corrections
 
@@ -9808,4 +9824,113 @@ launched.
 PYTHONPATH=tools/re python3 -u tools/re/probe_native_tarhel_effect_lifecycle.py \
   --scripts assets/extracted/all/scripts \
   --world-binary build-o2/animation_roster_test
+```
+
+### Additional native air-carrier pickup profiles (2026-09-25)
+
+`probe_air_pickup_native_fullmap.py` now accepts shipped transporter profiles
+instead of assuming ZONROC. ZONROC/Araarch remains the control (reciprocal
+attachment and `BeCarried` dispatch at tick 1,044). CREAERI/Araarch attaches
+and retires its pickup and passenger orders at tick 1,462; TARSHIP/Araarch does
+the same at tick 1,817. All three use their parsed retail FBI movement scale,
+the actual sorted native mission registry, and the installed `KINGDOMS.icd`.
+The TARSHIP COB also matches the native mover's declared callbacks against
+World across ten VM boundaries, including direction and speed changes.
+
+These profile checks use a stationary Araarch and a controlled empty COB sink
+for the pickup probe; the separate TARSHIP callback check executes its shipped
+COB methods. They establish air pickup/attachment completion for these three
+carriers, not air unloading, moving-passenger synchronization, multi-cargo
+capacity, or final animation rendering. Release and optimized builds pass the
+pickup profiles.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_fullmap.py \
+  --hpitool build-o2/hpitool --carrier creaeri --passenger araarch
+PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_fullmap.py \
+  --hpitool build-o2/hpitool --carrier tarship --passenger araarch
+```
+
+### Callback-bearing flying-unit model transforms (2026-09-25)
+
+`check_native_flight_model_pose.py --all` discovers 26 shipped FBI/COB pairs
+with flying movement callbacks, then compares captured native COB state and
+named 3DO transforms with the World pose path. All 26 pass in Release, Debug,
+and optimized Debug. Twenty-three produce a changing matched pose in this
+generic mover fixture. TARSHIP, ZONHARP, and ZONHUNT have no matched pose change
+at its sample boundary, but their static transform checks pass. LIFBIRD is
+outside this callback-bearing roster because its COB declares no mover
+callback. The largest measured native/World model-transform difference is
+0.00002599.
+
+This closes the declared-callback transform roster for the sampled mover state;
+it does not cover every animation producer, ambient playback, construction
+script, camera projection, or rendered frame.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/check_native_flight_model_pose.py \
+  --all --script-binary build-o2/retail_script_test \
+  --model-binary build-o2/model_transform_test
+```
+
+### Aratrans joined map-backed shore unload (2026-09-25)
+
+The Lake Lokken `aratrans`/`araarch` route now completes through native unload
+mission, live navigator arrival, placement, passenger release, and mover
+retirement. Standard and Crusades pass in Release, Debug, and optimized Debug.
+Native TNT grading queries 698 cells (906 grade calls); the one-waypoint route
+ends inside the authored 385-pixel unload circle. Native and World agree for
+3,494 physical mover steps, including one navigator arrival wake and 16
+map-backed passenger-placement checks.
+
+The fixture loads the actual base/Crusades FBI override and checks its movement
+profile against the World unit definition. It uses one passenger, defers full
+terrain rescans during this joined mover comparison, and controls pool/player,
+allocator, scheduler request weight, and other host services. It does not test
+capacity accounting or live blockers. A 2,500-step limit was too short for this
+slow carrier; the probe now allows up to 10,000 and the passing invocation uses
+4,000.
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py \
+  build-o2/transport_test --retail-root /home/pocket_geek/tak_data \
+  --map 'Lake Lokken' --start 240 120 --target 240 350 \
+  --carrier aratrans --passenger araarch \
+  --native-map-mover-steps 4000 --native-live-unload
+```
+
+### ZONHUNT construction anchor follow-up (2026-09-25)
+
+The placed-construction trace shows the monarch root piece remains at zero
+relative offset, its native/display COB state matches the World VM at the
+sampled boundaries, and the calculated site-relative screen anchor agrees with
+the native projection to within 0.5 pixels. The native transform for the
+shipped 48-piece `zonhunt.3do` also matches World within 0.00001716 world
+units. The 90–108 world-unit northward separation seen in this fixture follows
+from flight altitude and the monarch's orbit around the construction site; it
+does not establish a mismatch in the live view.
+
+The remaining useful observation is synchronized actual-map and camera data:
+unit and site positions, flight altitude, camera offsets, and GameView's
+projected anchors. The current flat-map fixture does not capture camera or
+framebuffer output, so no production correction is justified from it.
+
+### Weapon impact effect-class route (2026-09-25)
+
+`spawnWeaponImpact` centralizes the production land/water effect-class choice
+and particle fallback used by weapon hits. The headless Lake Lokken fixture
+loads Arapult's authored land and water variants, checks empty-water-class
+fallback, impact position/tick, last-frame and expiry timing, and missing-class
+particle fallback. It passes in Debug and optimized Debug, with a separate
+Release build of the client source.
+
+This fixture calls the production impact helper directly; it does not create a
+real projectile collision or compare retail hit-to-render output, model pixels,
+or arrow/bolt appearance. The earlier “laser beam” report remains unverified
+by this test and is parked for a more specific reproduction.
+
+```sh
+python3 tools/re/check_weapon_impact_effect_route.py --binary build-o2/takclient
+ctest --test-dir build-dbg -R weapon_impact_effect_route --output-on-failure
+ctest --test-dir build-o2 -R weapon_impact_effect_route --output-on-failure
 ```

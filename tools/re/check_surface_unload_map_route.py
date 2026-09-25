@@ -23,9 +23,23 @@ from pathlib import Path
 
 from balance_inputs import class_record, properties, unit_properties
 from emuphase import Phase, OBJ, TYPE, GS
-from check_surface_unload_map_grades import native_grade_reader, native_water_profile
+from check_surface_unload_map_grades import (
+    asset as retail_asset, native_grade_reader, native_water_profile)
 from check_surface_unload_map_release import (
     cat, movement_profile, native_placement_oracle, parse_tnt)
+
+
+def retail_unit_profile(hpitool, retail_root, unit, crusades=False):
+    """Resolve the balance-selected shipped FBI, falling back to base FBI."""
+    unit = unit.lower()
+    if crusades:
+        try:
+            return unit_properties(retail_asset(
+                hpitool, retail_root, f'unitscb/{unit}.fbi').decode('latin1'))
+        except subprocess.CalledProcessError:
+            pass
+    return unit_properties(retail_asset(
+        hpitool, retail_root, f'units/{unit}.fbi').decode('latin1'))
 
 
 def replay_native_attempt(width, height, cached_grades, live_grade, attempt,
@@ -677,15 +691,17 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     native_live_profiles = {
-        'lake lokken': {('vertrans', 'araarch'), ('verscout', 'araarch')},
+        'lake lokken': {('vertrans', 'araarch'), ('verscout', 'araarch'),
+                        ('verman', 'araarch'), ('aratrans', 'araarch')},
         'per mare per terras': {('vertrans', 'araarch')},
         'sea dragon spine': {('vertrans', 'araarch')},
     }
     if native_live_unload and (not carrier or not passenger or
             (carrier.lower(), passenger.lower()) not in
             native_live_profiles.get(map_name.lower(), set())):
-        raise ValueError('--native-live-unload currently checks Lake Lokken Vertrans/VerScout '
-                         'with Araarch, and Vertrans/Araarch on the other supported maps')
+        raise ValueError('--native-live-unload currently checks Lake Lokken '
+                         'Vertrans/VerScout/VerMan/Aratrans with Araarch, and '
+                         'Vertrans/Araarch on the other supported maps')
     if terrain_scan_after is not None and not native_live_unload:
         raise ValueError('--terrain-scan-after requires --native-live-unload')
     if shore_blocker and (not native_live_unload or not carrier):
@@ -1214,11 +1230,27 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 .decode('latin1'),
             cat(hpitool, Path(retail_root), 'data.hpi',
                 f'units/{passenger}.fbi').decode('latin1'))
-        carrier_profile = unit_properties(cat(hpitool, Path(retail_root),
-            'data.hpi', f'units/{carrier}.fbi').decode('latin1'))
+        carrier_profile = retail_unit_profile(hpitool, retail_root, carrier,
+                                              crusades)
         carrier_sight = int(carrier_profile.get('sightdistance', '0'))
         if carrier_sight <= 0:
             raise AssertionError(('carrier sight distance', carrier, carrier_profile))
+        authored_transport_dist = int(float(
+            carrier_profile.get('transportdistance', '0')))
+        if transport_dist != authored_transport_dist:
+            raise AssertionError(('World/native transport distance differs from selected FBI',
+                                  transport_dist, authored_transport_dist, carrier,
+                                  carrier_profile))
+        authored_mover_type = (
+            int(float(carrier_profile.get('maxvelocity', '0')) * 65536),
+            int(float(carrier_profile.get('acceleration', '0')) * 65536),
+            int(float(carrier_profile.get('brakerate', '0')) * 65536),
+            int(float(carrier_profile.get('turnrate', '0'))),
+            int(float(carrier_profile.get('waterline', '0'))))
+        if native_map_mover_steps and world_type != authored_mover_type:
+            raise AssertionError(('World mover inputs differ from selected FBI',
+                                  world_type, authored_mover_type, carrier,
+                                  carrier_profile))
         native_place = native_placement_oracle(live_map_data, passenger_profile)
 
         def checked_placement(args, call_number):
@@ -1306,13 +1338,14 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     independent_grade = None
     if native_map_grades:
         native_grade_profiles = {
-            'lake lokken': {'vertrans', 'aratrans', 'verscout'},
+            'lake lokken': {'vertrans', 'aratrans', 'verscout', 'verman'},
             'per mare per terras': {'vertrans'},
             'sea dragon spine': {'vertrans'},
         }
         supported_carriers = native_grade_profiles.get(map_name.lower(), set())
         if not carrier or carrier.lower() not in supported_carriers:
-            raise ValueError('--native-map-grades currently checks Lake Lokken (Vertrans/Aratrans), '
+            raise ValueError('--native-map-grades currently checks Lake Lokken '
+                             '(Vertrans/Aratrans/VerScout/VerMan), '
                              'Per Mare Per Terras (Vertrans), and Sea Dragon Spine (Vertrans)')
         tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
                        f'Maps/{map_name}.tnt')
@@ -1331,8 +1364,12 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         (class_fx, class_fz, max_depth, min_depth, bad_max_depth,
          bad_min_depth, max_slope, bad_slope, max_water_slope,
          bad_water_slope) = struct.unpack('<6h4B', profile)
-        carrier_fields = unit_properties(cat(hpitool, Path(retail_root),
-            'data.hpi', f'units/{carrier}.fbi').decode('latin1'))
+        carrier_fields = retail_unit_profile(hpitool, retail_root, carrier,
+                                             crusades)
+        if carrier_fields.get('movementclass', '').lower() != movement.lower():
+            raise AssertionError(('native map-grade movement class differs from selected FBI',
+                                  movement, carrier_fields.get('movementclass'),
+                                  carrier_fields))
         carrier_sight = int(float(carrier_fields.get('sightdistance', '0')))
         p.uc.mem_write(type_address + 0x226, struct.pack('<h', carrier_sight))
         # 0x507fb0 reads all of the movement class's soft and hard limits from
@@ -1910,7 +1947,7 @@ def main():
     parser.add_argument('--native-map-grades', action='store_true',
                         help='answer retail route grades with TNT-backed native 0x508cd0')
     parser.add_argument('--native-map-mover-steps', type=int, default=0,
-                        help='also compare this many native physical mover ticks on the map (1..2500)')
+                        help='also compare this many native physical mover ticks on the map (1..10000)')
     parser.add_argument('--native-live-unload', action='store_true',
                         help='keep retail GROUND_UNLOAD active through map-backed movement and passenger release')
     parser.add_argument('--terrain-scan-after', type=int,
@@ -1933,8 +1970,8 @@ def main():
     args = parser.parse_args()
     if bool(args.carrier) != bool(args.passenger):
         parser.error('--carrier and --passenger must be supplied together')
-    if not 0 <= args.native_map_mover_steps <= 2500:
-        parser.error('--native-map-mover-steps must be 0..2500')
+    if not 0 <= args.native_map_mover_steps <= 10000:
+        parser.error('--native-map-mover-steps must be 0..10000')
     if args.native_live_unload and args.native_map_mover_steps == 0:
         parser.error('--native-live-unload requires --native-map-mover-steps')
     if args.terrain_scan_after is not None and not 0 <= args.terrain_scan_after <= 2500:

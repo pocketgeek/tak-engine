@@ -6,14 +6,17 @@ the real VTOL_PICKUP mission dispatcher and passenger-target pursuit
 controller, native flight mover, map-derived height sectors, native cargo
 attachment, the sorted mission descriptor registry, BeCarried dispatch, and
 carrier-order completion. It uses the shipped Lake Lokken TNT height and
-feature-ID plane. Feature definition bodies, passenger eligibility, effect/UI,
-heap allocation, and visibility/mover-side map services are controlled fixture
-boundaries. The passenger is stationary, so this does not test passenger ground
-route movement, other aircraft profiles, moving passengers, unloading, or
-renderer output. No retail GUI is launched.
+feature-ID plane and accepts a shipped flying carrier profile (ZONROC by
+default, or for example CREAERI with --carrier). Feature definition bodies,
+passenger eligibility, effect/UI, heap allocation, and visibility/mover-side
+map services are controlled fixture boundaries. The passenger is stationary,
+so this does not test passenger ground-route movement, moving passengers,
+unloading, carrier COB animation logic, or renderer output. No retail GUI is
+launched.
 
 Run from the repository root:
     PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_fullmap.py
+    PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_fullmap.py --carrier creaeri
 """
 import argparse
 import struct
@@ -27,8 +30,8 @@ from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_ESP
 
 
 MAP = "Lake Lokken"
-CARRIER = "zonroc"
-PASSENGER = "araarch"
+DEFAULT_CARRIER = "zonroc"
+DEFAULT_PASSENGER = "araarch"
 START = (240, 120)
 TARGET = (240, 350)
 SCALE = 16
@@ -37,6 +40,14 @@ BECARRIED_NAME = 0x615984
 
 def fixed(value):
     return int(float(value) * 65536)
+
+
+def native_half_cell_ticks(info):
+    """Mirror retail FBI parsing for UnitType+0x249."""
+    multiplier = max(fixed(info.get("watermultiplier", "1")),
+                     fixed(info.get("roadmultiplier", "1.2")), 65536)
+    best_speed = (multiplier * fixed(info.get("maxvelocity", "0"))) >> 16
+    return 255 if best_speed <= 0 else max(1, min(255, (8 << 16) // best_speed))
 
 
 def u32(uc, address):
@@ -129,7 +140,8 @@ def make_map(phase, root, hpitool):
     return map_data, sectors, stride
 
 
-def init_orders_and_units(phase, map_data, sectors, stride):
+def init_orders_and_units(phase, map_data, sectors, stride, carrier_name,
+                          passenger_name):
     """Create native orders, reciprocal refs, entity-pool units and movers."""
     uc, icd = phase.uc, phase.icd
     def alloc(_uc, stack):
@@ -280,8 +292,8 @@ def init_orders_and_units(phase, map_data, sectors, stride):
     put(uc, owner + 0x74, carrier)
     put(uc, owner + 0x78, passenger + 0x138)
 
-    carrier_info = fbi_info(CARRIER)
-    passenger_info = fbi_info(PASSENGER)
+    carrier_info = fbi_info(carrier_name)
+    passenger_info = fbi_info(passenger_name)
     assert carrier_info.get("canfly") == "1"
     assert carrier_info.get("cantransport") == "1"
     assert passenger_info.get("movementclass", "").upper().startswith("GROUND")
@@ -306,8 +318,9 @@ def init_orders_and_units(phase, map_data, sectors, stride):
         put(uc, empty_descriptor + 4, 0)
         empty_vm_records.append((empty_vm, empty_descriptor))
 
-    # Use authored ZONROC movement/flight/transport fields. The tests only
-    # control native host calls; all flight calculations are retail code.
+    # Use authored selected-carrier movement/flight/transport fields. The
+    # tests only control native host calls; all flight calculations are retail
+    # code.
     put(uc, carrier + 8, carrier_mover)
     put(uc, carrier + 0x12B, fixed(carrier_info["maxvelocity"]))
     put(uc, carrier_kind + 0x162, fixed(carrier_info["maxvelocity"]))
@@ -327,7 +340,8 @@ def init_orders_and_units(phase, map_data, sectors, stride):
         (int(float(carrier_info.get("footprintz", "1"))) << 16))
     uc.mem_write(carrier_kind + 0x18E,
                  struct.pack("<H", int(float(carrier_info["turnrate"]))))
-    byte(uc, carrier_kind + 0x249, 70)
+    half_cell_ticks = native_half_cell_ticks(carrier_info)
+    byte(uc, carrier_kind + 0x249, half_cell_ticks)
     put(uc, carrier_kind + 0x182, fixed(carrier_info.get("moverate1", "1")))
     put(uc, carrier_kind + 0x186, fixed(carrier_info.get("moverate2", "9")))
 
@@ -402,6 +416,8 @@ def init_orders_and_units(phase, map_data, sectors, stride):
         "carrier_nav": carrier_nav, "carrier_order": c_order,
         "passenger_order": p_order, "owner": owner,
         "native_events": native_events, "map_effects": counters,
+        "carrier_name": carrier_name, "passenger_name": passenger_name,
+        "half_cell_ticks": half_cell_ticks,
         "mission_codes": {"VTOL_Pickup": vtol_pickup_code,
                           "Move_Seek_Pickup": move_pickup_code},
     }
@@ -411,7 +427,9 @@ def run(args):
     root = Path(args.retail_root).resolve()
     phase = Phase(480, 480)
     map_data, sectors, stride = make_map(phase, root, Path(args.hpitool).resolve())
-    live = init_orders_and_units(phase, map_data, sectors, stride)
+    carrier_name, passenger_name = args.carrier.lower(), args.passenger.lower()
+    live = init_orders_and_units(phase, map_data, sectors, stride,
+                                 carrier_name, passenger_name)
     icd, uc = live["icd"], live["uc"]
     carrier, passenger = live["carrier"], live["passenger"]
     carrier_mover, carrier_nav = live["carrier_mover"], live["carrier_nav"]
@@ -492,7 +510,8 @@ def run(args):
                   f"installed and both orders remain queued. Boarding is "
                   "correctly outside this short control window.")
             return
-        raise AssertionError(("native air pickup failed before attachment", rows[-8:]))
+        raise AssertionError((f"native {carrier_name} air pickup failed before attachment",
+                              rows[-8:]))
     if u32(uc, carrier + 0xAC) != passenger or u32(uc, passenger + 0xA8) != carrier:
         raise AssertionError("native cargo links are not reciprocal")
     carrier_unlinks = [(remove_tick, unit, order)
@@ -558,14 +577,15 @@ def run(args):
     })
     assert effects[0] >= 2, effects
     print(
-        f"PASS: Lake Lokken native VTOL pickup used retail descriptor IDs "
+        f"PASS: Lake Lokken {carrier_name} native VTOL pickup used retail descriptor IDs "
         f"VTOL_Pickup={live['mission_codes']['VTOL_Pickup']} and "
         f"Move_Seek_Pickup={live['mission_codes']['Move_Seek_Pickup']}; "
         f"{attachment_tick - 1} carrier flight updates over the map-built "
-        f"sectors reached pickup range. It attached {PASSENGER}, dispatched native "
+        f"sectors reached pickup range. It attached {passenger_name}, dispatched native "
         f"BeCarried code 11/handler 0x4024a0, removed the passenger pickup "
         f"order, and retired carrier VTOL_Pickup on tick {carrier_retired_tick}. "
         f"boarding tick {attachment_tick}; map sectors {stride}x{stride}, "
+        f"native half-cell scale {live['half_cell_ticks']}, "
         f"transfer effects {effects[0]}."
     )
     print("  Native BECARRIED lookup/return and BeCarried handler ticks:",
@@ -576,7 +596,8 @@ def run(args):
     print("  Carrier final XYZ:", tuple(value // 65536 for value in
                                            struct.unpack("<3i", uc.mem_read(carrier + 0x68, 12))))
     print("  Controlled boundaries: feature-definition bodies; passenger "
-          "eligibility; allocator/free; audio/effect/UI and script-VM sinks. "
+          "eligibility; allocator/free; audio/effect/UI. COB method lookup "
+          "uses an empty-VM sink, so carrier-specific COB behavior is not tested. "
           "Retail's mission descriptor registration, name lookup, unit order "
           "constructors, carrier/passenger handlers, queue insertion/removal, "
           "flight controller/mover, map-sector construction, cargo attachment, "
@@ -589,6 +610,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--retail-root", default="/home/pocket_geek/tak_data")
     parser.add_argument("--hpitool", default=str(repo / "build-o2/hpitool"))
+    parser.add_argument("--carrier", default=DEFAULT_CARRIER,
+                        help="shipped flying transport profile (default: zonroc)")
+    parser.add_argument("--passenger", default=DEFAULT_PASSENGER,
+                        help="shipped ground passenger profile (default: araarch)")
     parser.add_argument("--max-ticks", type=int, default=5000)
     parser.add_argument("--allow-incomplete", action="store_true",
                         help="accept a moving native pursuit that has not yet boarded at the tick limit")

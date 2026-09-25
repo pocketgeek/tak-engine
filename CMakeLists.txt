@@ -398,6 +398,13 @@ if(TAK_TEST_DATA)
             --shot "${CMAKE_CURRENT_BINARY_DIR}/script-transient-263-test.png")
         set_tests_properties(script_transient_263 PROPERTIES ENVIRONMENT
             "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_SCRIPT_263_TEST=1")
+        add_test(NAME weapon_impact_effect_route COMMAND takclient game "Lake Lokken"
+            --data "${TAK_TEST_DATA}" --firetest --nofog --time 0.1
+            --shot "${CMAKE_CURRENT_BINARY_DIR}/weapon-impact-effect-test.png")
+        set_tests_properties(weapon_impact_effect_route PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_WEAPON_IMPACT_EFFECT_TEST=1"
+            PASS_REGULAR_EXPRESSION "PASS: Arapult land/water authored impact variants"
+            TIMEOUT 120)
     endif()
 endif()
 target_link_libraries(footprobe PRIVATE tak-formats)

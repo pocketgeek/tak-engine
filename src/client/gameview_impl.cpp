@@ -564,6 +564,88 @@
 
     void GameView::fireTest() {
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
+        if (tak::devEnv("TAK_WEAPON_IMPACT_EFFECT_TEST")) {
+            const auto* arapult = registry_.find("arapult");
+            if (!arapult || arapult->weapons.empty())
+                throw std::runtime_error("weapon impact effect fixture has no Arapult weapon");
+            const auto& authored = arapult->weapons.front();
+            if (authored.explosionClass.empty() || authored.waterExplosionClass.empty())
+                throw std::runtime_error("Arapult weapon is missing an authored impact class");
+
+            int landX = -1, landZ = -1, waterX = -1, waterZ = -1;
+            const auto& map = mapView_.map();
+            for (int z = 0; z < map.height && (landX < 0 || waterX < 0); ++z)
+                for (int x = 0; x < map.width && (landX < 0 || waterX < 0); ++x) {
+                    const float wx = (float(x) + 0.5f) * 16.0f;
+                    const float wz = (float(z) + 0.5f) * 16.0f;
+                    if (world_.isWater(wx, wz)) {
+                        if (waterX < 0) { waterX = x; waterZ = z; }
+                    } else if (landX < 0) {
+                        landX = x; landZ = z;
+                    }
+                }
+            if (landX < 0 || waterX < 0)
+                throw std::runtime_error("weapon impact effect fixture needs both land and water");
+
+            const auto testAt = [&](float x, float z, const std::string& expectedClass,
+                                    const tak::sim::Weapon& weapon) {
+                effects_.clear();
+                const size_t particleCount = particles_.size();
+                const uint32_t tick = front().gameTick;
+                spawnWeaponImpact(weapon, x, z, 0.0f);
+                if (effects_.size() != 1 || particles_.size() != particleCount)
+                    throw std::runtime_error("authored impact did not create exactly one effect instance");
+                const auto effect = effects_.back();
+                const auto variants = explosionClasses_.find(expectedClass);
+                if (variants == explosionClasses_.end() || variants->second.empty() ||
+                    std::none_of(variants->second.begin(), variants->second.end(),
+                        [&](const std::string& name) { return effectFor(name) == effect.anim; }) ||
+                    !effect.authoredTiming || effect.started != tick || effect.x != x || effect.z != z)
+                    throw std::runtime_error("impact class did not resolve to its authored variant and location");
+                uint32_t duration = 0;
+                for (const uint16_t frameTicks : effect.anim->durations)
+                    duration += std::max(1u, unsigned(frameTicks));
+                if (!duration) throw std::runtime_error("authored impact animation has no duration");
+
+                effects_.clear();
+                auto atLastFrame = effect;
+                atLastFrame.started = tick - (duration - 1);
+                effects_.push_back(atLastFrame);
+                updateEffects(0);
+                if (effects_.size() != 1)
+                    throw std::runtime_error("authored impact expired before its last frame");
+                effects_.back().started = tick - duration;
+                updateEffects(0);
+                if (!effects_.empty())
+                    throw std::runtime_error("authored impact survived its authored duration");
+                return variants->second.size();
+            };
+
+            const float lx = (float(landX) + 0.5f) * 16.0f;
+            const float lz = (float(landZ) + 0.5f) * 16.0f;
+            const float wx = (float(waterX) + 0.5f) * 16.0f;
+            const float wz = (float(waterZ) + 0.5f) * 16.0f;
+            const size_t landVariants = testAt(lx, lz, authored.explosionClass, authored);
+            const size_t waterVariants = testAt(wx, wz, authored.waterExplosionClass, authored);
+            auto waterFallback = authored;
+            waterFallback.waterExplosionClass.clear();
+            const size_t fallbackVariants = testAt(wx, wz, authored.explosionClass, waterFallback);
+
+            auto missingClass = authored;
+            missingClass.explosionClass = "__missing impact class__";
+            missingClass.waterExplosionClass.clear();
+            effects_.clear();
+            const size_t particlesBeforeFallback = particles_.size();
+            spawnWeaponImpact(missingClass, lx, lz, 0.0f);
+            if (!effects_.empty() || particles_.size() <= particlesBeforeFallback)
+                throw std::runtime_error("missing impact art did not use the procedural fallback");
+            effects_.clear();
+            particles_.resize(particlesBeforeFallback);
+            std::fprintf(stderr,
+                "PASS: Arapult land/water authored impact variants, empty-water fallback, exact tick/location and authored expiry; missing-class particle fallback (%zu/%zu/%zu variants)\n",
+                landVariants, waterVariants, fallbackVariants);
+            return;
+        }
         if(tak::devFlag("TAK_SCRIPT_263_TEST")) {
             // Kirenna's live MoveControl script emits detached SFX 263 when its
             // water movement state changes. Ulasem Arena has no water, so this
@@ -1685,13 +1767,9 @@
             // (water variant over water); fall back to procedural particles when
             // the class or its art is unavailable.
             if (h.weapon) {
-                const std::string& cls = (world_.isWater(h.x, h.z) &&
-                                          !h.weapon->waterExplosionClass.empty())
-                                             ? h.weapon->waterExplosionClass
-                                             : h.weapon->explosionClass;
                 // Lift the blast onto an airborne target (shooting down a flyer).
                 float tAlt = flyerAltAt(h.x, h.z) * 0.8f;
-                if (!spawnEffect(cls, h.x, h.z, tAlt)) spawnImpact(*h.weapon, h.x, h.z, tAlt);
+                spawnWeaponImpact(*h.weapon, h.x, h.z, tAlt);
             }
             // Weapon area-effect: expanding shockwave rings (radiusart, staggered
             // by ringdelay) and ground fire (firestarter) at the impact.
@@ -4107,6 +4185,15 @@
                 }
             }
         } catch (const std::exception&) {}
+    }
+
+    void GameView::spawnWeaponImpact(const tak::sim::Weapon& weapon,
+                                     float x, float z, float alt) {
+        const std::string& cls = (world_.isWater(x, z) &&
+                                  !weapon.waterExplosionClass.empty())
+                                     ? weapon.waterExplosionClass
+                                     : weapon.explosionClass;
+        if (!spawnEffect(cls, x, z, alt)) spawnImpact(weapon, x, z, alt);
     }
 
     void GameView::triggerShake(float mag, float dur) {

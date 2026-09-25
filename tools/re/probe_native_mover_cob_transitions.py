@@ -284,6 +284,7 @@ def native_transition_trace(unit_name, sequence):
         return row
 
     snapshots = [snapshot()]
+    body_angles = [struct.unpack("<3H", uc.mem_read(unit + 0x7C, 6))]
     for tick, step in enumerate(sequence, 1):
         target = step["target"]
         # The point controller copied the original point into +0x26; this is
@@ -316,10 +317,12 @@ def native_transition_trace(unit_name, sequence):
             raise RuntimeError((unit_name, tick, "COB tick", error))
 
         snapshots.append(snapshot())
+        body_angles.append(struct.unpack("<3H", uc.mem_read(unit + 0x7C, 6)))
 
     return {
         "unit": unit_name, "kind": kind, "declared": declared,
         "events": script_events, "snapshots": snapshots,
+        "body_angles": body_angles,
         "accepted_events": [event for event in script_events
                             if event[1].lower() in cob["script_index"]],
     }

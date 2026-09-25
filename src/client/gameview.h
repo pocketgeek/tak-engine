@@ -3300,6 +3300,9 @@ private:
     }
 
     void loadExplosionClasses();
+    // Route a resolved weapon hit through its authored land/water explosion class,
+    // with procedural particles only when the class or animation is unavailable.
+    void spawnWeaponImpact(const tak::sim::Weapon& weapon, float x, float z, float alt = 0);
     // Load a named effect animation from its TAF/GAF (truecolor _4444 preferred).
     const EffectAnim* effectFor(const std::string& animName);
     // Play the named explosion class (a random variant) at (x,z). Returns false
