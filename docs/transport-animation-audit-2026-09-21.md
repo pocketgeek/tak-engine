@@ -26,12 +26,12 @@ implementation descriptions. Current open gates are:
   and reciprocal attachment links; the carrier mission retires. The fixture
   uses two synthesized pool records and a player row, zero-fills feature bodies,
   and controls visibility, grade-body services, mover services, and the UI
-  effect boundary. An isolated check confirms native `0x4d6c40` initializes an
-  Araarch passenger order with the retail mission vtable and a carrier
-  reference, but queue insertion at `0x4d7750`, passenger dispatch, and its own
-  controller/nav/mover are not verified. The terminal passenger order pointer
-  in the full-map trace therefore remains synthetic, and passenger-order
-  retirement is still open. The independent World full-map pickup boards
+  effect boundary. A separate isolated fixture now confirms native
+  `0x4d6c40` initialization and `0x4d7750` queue insertion for an Araarch
+  passenger order, including its retail mission vtable and reciprocal carrier
+  reference. Passenger dispatch, its own controller/nav/mover, and order
+  retirement remain unverified. The terminal passenger order pointer in the
+  full-map trace therefore remains synthetic. The independent World full-map pickup boards
   at tick 2,178; these tick counts are not compared because the search spaces
   differ. Additional map/carrier profiles and native feature bodies remain
   open. The
@@ -9634,11 +9634,15 @@ bodies are zero-filled, and visibility, grade-body calls, mover services, and
 the UI feedback effect are controlled. Araarch is stationary and inserted into
 the native sector list; its own ground route is not part of this probe. The
 terminal passenger-order pointer remains a synthetic fixture object, so only
-carrier mission retirement is established. A separate isolated call to native
-`0x4d6c40` returned an initialized code-2 passenger order with retail vtable
-`0x5f2814` and a native reference wrapper to the carrier. Its fixture failed
-before a reliable queue-head assertion; `0x4d7750` insertion, passenger
-dispatch, and a passenger-owned route/mover remain unverified.
+carrier mission retirement is established. A separate isolated fixture calls
+native `0x4d6c40` then `0x4d7750`: the returned code-2 order has vtable
+`0x5f2814`, flags `0x200`, a target reference to the carrier, and becomes the
+passenger's `+0x60` order-queue head. The carrier's reciprocal reference node
+is installed at `+0xc4`. This requires a player owner record with a nonzero
+first dword and `owner+0xea=1`, plus mission-descriptor entry 2 with handler
+`0x403430`; otherwise retail destroys the child. The isolated fixture did not
+complete passenger dispatch through `0x4d8450`, create its own route/controller,
+or run a passenger mover, and it is not yet a shared reproducible probe.
 
 ```sh
 PYTHONPATH=tools/re python3 -u tools/re/probe_surface_pickup_native_fullmap.py \
