@@ -161,7 +161,7 @@ def main():
     print("Distinct write/retirement offsets:", "; ".join(
         f"{write}/{retire}: {len(values)} run(s)" for (write, retire), values in sorted(offsets.items())
     ))
-    return bool(failures)
+    return bool(failures or no_writes)
 
 
 if __name__ == "__main__":

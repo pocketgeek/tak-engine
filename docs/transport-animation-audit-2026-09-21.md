@@ -19,11 +19,15 @@ implementation descriptions. Current open gates are:
   captured. Paired native/World pickup dispatcher traces match for 36 air/sea
   ticks; surface pickup callbacks match for 18 ticks. Paired unload dispatcher
   traces match for 17 air ticks and 19 sea ticks, with route arrival controlled
-  at the navigator boundary. One integrated sea-pickup gate remains: native
-  `GROUND_PICKUP` creates its real circle controller and submits a route
-  request, but the headless fixture has not attached that request to an
-  initialized native route job/heap. A map-backed ship trace through
-  navigation, boarding, and carrier-order retirement is not yet covered.
+  at the navigator boundary. A narrow native sea-pickup route probe now joins
+  the real `GROUND_PICKUP` controller to an initialized route worker: on Lake
+  Lokken, Vertrans/Araarch receives an 11-waypoint route on worker tick 2 from
+  native TNT-backed grades over 6,275 corridor cells. The surrounding cells
+  are blocked, feature bodies are zero-filled, and no mover or boarding runs;
+  full-map sea pickup through transfer and carrier-order retirement remains
+  open. The separate 70px callback fixture used a synthetic
+  `transportdistance=86`; shipped Vertrans uses 300 and its native pickup
+  circle is 284px.
   Eight deterministic boat unload-circle searches,
   five Per Mare Per Terras cases, and one Lake Lokken water-crossing case match
   retail's native reconstructed routes using World-produced grades, including a
@@ -196,10 +200,13 @@ implementation descriptions. Current open gates are:
   comparisons of flight callback phases and rendered poses remain open. A headless
   native Araarch trace now confirms that losing visibility does not clear an
   already assigned live target in this path; World's explicit-target behavior
-  agrees. A three-profile native mover sweep covers ground, floater, and flyer
-  callback requests over a changing tick and an unchanged tick; it captures at the
-  script-dispatch boundary, so full COB execution and wider roster coverage
-  remain open. A 103-tick persistent `zonhunt` construction trace also captures
+  agrees. Native `0x4dc800` callback-request traces cover all 151 movable
+  shipped COB/FBI pairs that declare movement callbacks; their six raw patterns
+  match the World helper across eight callback inputs. Full COB thread/piece
+  timelines pass for ten representatives across ground, hover, water, and
+  flying families (1,202 boundaries each), with callback events supplied by a
+  controlled schedule rather than routed from every unit's mover. A 103-tick
+  persistent `zonhunt` construction trace also captures
   native mover requests: its only declared movement callback, `setSFXoccupy(5)`,
   fires once on tick 1 in both native and World, including through two retargets,
   arrival and the next hover goal. This verifies the request edge and World
@@ -8018,6 +8025,15 @@ the shared World helper. It captures requests before COB method lookup, so it
 does not prove full COB execution or rendered performance across the roster.
 The Python probe and focused helper CTest pass. No retail GUI was launched.
 
+A later roster pass extends callback-request capture to all 151 movable shipped
+COB/FBI pairs declaring one of those methods. All native mover requests match
+the World helper across six raw request patterns and eight relevant inputs.
+Full native/local COB thread and piece-state comparisons also pass for ten
+representatives across ground, hover, water, and flight (1,202 boundaries per
+script). Those ten callbacks come from a controlled schedule rather than each
+unit's native mover, so an end-to-end mover-to-COB execution comparison across
+all 151 units remains open.
+
 Reproduce with:
 
 ```sh
@@ -9277,4 +9293,28 @@ python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
   --start 240 120 --target 240 350 --carrier verscout --passenger araarch \
   --native-map-grades --native-map-mover-steps 2000 --native-live-unload \
   --terrain-scan-after 1
+```
+
+### Native map-backed sea-pickup route request (2026-09-25)
+
+`probe_surface_pickup_native_map_route.py` joins the native
+`GROUND_PICKUP` dispatcher, its circle controller, the initialized route job,
+and the native `0x416430` worker. On Lake Lokken, retail creates the Vertrans
+goal at cell `(238,348)` with a 284px radius. `0x4e54e0` queues the goal through
+`0x4e4f50`; the first `0x416430` worker tick delivers the stable 11-waypoint
+route from `(3840,1920)` to `(3824,5360)` using TNT-backed `0x508cd0` grades.
+
+This trace covers only the 6,275 cells in a narrow corridor; every outside cell
+is blocked, feature definitions are zero-filled, and the boat mover, arrival,
+passenger transfer, and boarding do not run. It validates real request setup
+and route delivery, not a full-map pickup journey. The earlier 70px callback
+fixture used synthetic `transportdistance=86`; Vertrans's shipped value is 300,
+which produces a 284px native pickup circle. No production change or retail GUI
+run was needed.
+
+Reproduce with the locally installed retail data:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_surface_pickup_native_map_route.py \
+  --retail-root /home/pocket_geek/tak_data --hpitool build-o2/hpitool
 ```
