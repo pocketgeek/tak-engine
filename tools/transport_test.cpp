@@ -2320,9 +2320,14 @@ static void airFlightTraceFixture(unsigned steps) {
 // exercises the native transportdistance-34 circle before its transfer/step-out
 // phase. The Python side pairs this World trace with the retail handler's goal
 // and full 0x4dc800 mover.
-static void airUnloadFlightTraceFixture(unsigned steps) {
+static void airUnloadFlightTraceFixture(unsigned steps,bool heightStep=false) {
     World w;w.setVisPlayer(-1);
-    w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,40);w.setPathService(false);
+    std::vector<uint8_t> terrain(256*256,100);
+    // The bounded height-step trace puts a tall ridge across the direct flight
+    // goal so sector-height refresh is exercised without a long flat replay.
+    if(heightStep)for(int z=0;z<256;++z)for(int x=220;x<256;++x)
+        terrain[size_t(z)*256+x]=220;
+    w.setTerrain(terrain,256,256,40);w.setPathService(false);
     UnitType air=boatType(),passenger=footType();
     air.name="flight unload trace";air.canFly=true;air.cruiseAlt=100;
     air.maxVel=tak::sim::Fixed::raw(120000);
@@ -2376,6 +2381,10 @@ int main(int argc,char** argv) {
     }
     if(argc==3 && !std::strcmp(argv[1],"--air-unload-flight-trace")) {
         airUnloadFlightTraceFixture(unsigned(std::clamp(std::atoi(argv[2]),1,10000)));
+        return 0;
+    }
+    if(argc==3 && !std::strcmp(argv[1],"--air-unload-heightstep-trace")) {
+        airUnloadFlightTraceFixture(unsigned(std::clamp(std::atoi(argv[2]),1,10000)),true);
         return 0;
     }
     if(argc==10 && !std::strcmp(argv[1],"--surface-unload-map-route-type")) {

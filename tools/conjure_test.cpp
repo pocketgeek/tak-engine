@@ -11,6 +11,7 @@
 #include "cob/cob.h"
 #include "cob/vm.h"
 #include "sim/matchsetup.h"
+#include "sim/retailanimationqueries.h"
 #include <array>
 #include <cstdio>
 #include <algorithm>
@@ -185,6 +186,7 @@ static int persistentConstructionFlightTrace(int argc,char** argv) {
     std::printf("PROFILE %d %d %d %d %d %d %d\n",monarch->maxVel.v,
         monarch->accel.v,monarch->brake.v,monarch->roadMult.v,monarch->turnRate,
         int(monarch->cruiseAlt),monarch->buildDist);
+    uint32_t previousAnimationOccupancy=0;
     for(int tick=1;tick<=steps;++tick) {
         rngEvents.clear();
         world.tick(1.0f/30.0f);
@@ -193,7 +195,14 @@ static int persistentConstructionFlightTrace(int argc,char** argv) {
         const auto& velocity=builder->flightVelocity;
         const auto goal=builder->conjureHoverGoal;
         const uint32_t rngState=rngEvents.empty()?0:rngEvents.back().seedAfter;
-        std::printf("TRACE %d %d %d %d %u %d %d %d %d %d %d %d %d %d %d %u %d %d %d %d %d %u %u %d %d %d %u %zu %zu %d\n",
+        const uint32_t animationOccupancy=sim::retailAnimationOccupancy(
+            previousAnimationOccupancy,builder->flightGroundMode,
+            int16_t((builder->type->canFly ? builder->flightY : builder->groundY).floorInt()),
+            uint8_t(world.mapSea()),uint8_t(builder->type->waterline),
+            int16_t(builder->type->modelTop>>16));
+        const bool occupancyChanged=animationOccupancy!=previousAnimationOccupancy;
+        previousAnimationOccupancy=animationOccupancy;
+        std::printf("TRACE %d %d %d %d %u %d %d %d %d %d %d %d %d %d %d %u %d %d %d %d %d %u %u %d %d %d %u %zu %zu %d %u %d\n",
             tick,builder->x.v,builder->flightY.v,builder->z.v,
             unsigned(sim::portHeadingToRetail(builder->heading)),builder->speed.v,
             velocity.x,velocity.y,velocity.z,navigation.destination.x,
@@ -206,7 +215,8 @@ static int persistentConstructionFlightTrace(int argc,char** argv) {
             site->underConstruction?1:0,builder->buildSiteId,
             builder->conjureHoverTarget,rngState,rngEvents.size(),
             builder->orders.size(),!builder->orders.empty() &&
-                builder->orders.front().buildType==&siteType);
+                builder->orders.front().buildType==&siteType,
+            unsigned(animationOccupancy),int(occupancyChanged));
         for(const auto& event:rngEvents)
             std::printf("RNG %u %d %u %u %u\n",event.tick,event.bound,
                 event.seedBefore,event.seedAfter,event.result);

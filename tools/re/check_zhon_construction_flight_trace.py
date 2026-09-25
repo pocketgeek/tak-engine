@@ -10,6 +10,7 @@ retarget. It is headless and does not launch the retail GUI.
 import argparse
 import struct
 import subprocess
+from pathlib import Path
 
 from emu import Icd, HEAP
 
@@ -311,6 +312,17 @@ def native_persistent_trace(steps, seed):
         # The native fixture uses a bump allocator, so release is an inert OS edge.
         return 3, 1
 
+    native_callback_events = []
+    native_callback_rows = []
+
+    def capture_callback(uc, sp):
+        args = struct.unpack('<8I', uc.mem_read(sp, 32))
+        name = bytes(uc.mem_read(args[0], 64)).split(b'\0')[0].decode('ascii')
+        values = tuple(struct.unpack('<i', struct.pack('<I', value))[0]
+                       for value in args[4:4 + args[3]])
+        native_callback_events.append((name, values))
+        return 8, 0
+
     p.hooks.update({stub_cs: one_arg_service,
                     stub_heap_alloc: heap_alloc,
                     stub_heap_free_a: heap_free,
@@ -319,7 +331,7 @@ def native_persistent_trace(steps, seed):
                     # the placed site and its active mission persist.
                     0x429af0: lambda _uc, _sp: (3, 0),
                     0x5d3d12: lambda _uc, _sp: (0, 0),
-                    0x56c640: lambda _uc, _args: (8, 0)})
+                    0x56c640: capture_callback})
     if 0x4e40e0 in p.hooks or 0x4d4d40 in p.hooks:
         raise AssertionError('persistent fixture must use native factory and binder')
     p.freeze_hooks()
@@ -339,9 +351,11 @@ def native_persistent_trace(steps, seed):
                               (get_dword(uc, navigator + 4),
                                get_dword(uc, mission + 0x6a),
                                signed_words(uc, unit + 0x68, 3))}
+        native_callback_events.clear()
         _, error = p.call(0x4dc800, args=(unit,), ecx=mover)
         if error:
             raise RuntimeError({'tick': tick, '4dc800': error})
+        native_callback_rows.append((tick, tuple(native_callback_events)))
         if tick == 82:
             arrival_phases['after_mover'] = (get_dword(uc, navigator + 4),
                                              get_dword(uc, mission + 0x6a),
@@ -372,7 +386,7 @@ def native_persistent_trace(steps, seed):
                      wait_mask, deadline, pending, get_dword(uc, 0x64186c)))
     metadata = {'start': start, 'site': site_position, 'terrain': terrain,
                 'speed': 163840, 'heading': 0}
-    return metadata, rows, arrival_phases
+    return metadata, rows, arrival_phases, native_callback_rows
 
 
 def get_dword(uc, address):
@@ -410,6 +424,18 @@ def retail_random(seed, bound):
     return next_seed, next_seed % bound
 
 
+def cob_methods(unit):
+    script_dir = Path(__file__).resolve().parents[2] / 'assets/extracted/all/scripts'
+    path = script_dir / f'{unit}.cob'
+    data = path.read_bytes()
+    header = struct.unpack_from('<10I', data)
+    names = []
+    for index in range(header[1]):
+        offset = struct.unpack_from('<I', data, header[7] + 4 * index)[0]
+        names.append(data[offset:].split(b'\0', 1)[0].decode('ascii'))
+    return set(names)
+
+
 def expected_persistent_rng(seed, steps):
     state = (seed ^ 0x66e29572) | 1
     events, states = [], []
@@ -433,13 +459,35 @@ def run_persistent_check(binary, install):
     # retargets, then exposes native controller release at tick 82 and the next
     # mission target selection at tick 101.
     seed, steps = 1, 103
-    metadata, retail, arrival_phases = native_persistent_trace(steps, seed)
+    metadata, retail, arrival_phases, native_callbacks = native_persistent_trace(steps, seed)
     profile, world, world_rng = world_persistent_trace(binary, install, steps,
                                                         seed, metadata)
     expected_profile = (163840, 32768, 13107, 0x13333, 400, 150, 100)
     if profile != expected_profile:
         raise AssertionError({'World zonhunt profile': profile,
                               'expected asset profile': expected_profile})
+    movement_callbacks = {'TurnDirection', 'MoveRate', 'setSFXoccupy'}
+    declared_callbacks = cob_methods('zonhunt').intersection(movement_callbacks)
+    if declared_callbacks != {'setSFXoccupy'}:
+        raise AssertionError({'zonhunt movement callback declarations':
+                              sorted(declared_callbacks)})
+    expected_initial_requests = [('TurnDirection', (-91,)),
+                                 ('MoveRate', (3,)),
+                                 ('setSFXoccupy', (5,))]
+    if (len(native_callbacks) != steps or native_callbacks[0] !=
+            (1, tuple(expected_initial_requests))):
+        raise AssertionError({'native zonhunt first-mover callback phase':
+                              native_callbacks[:1],
+                              'expected': [(1, tuple(expected_initial_requests))]})
+    native_occupancy_edges = [(tick, values[0])
+                              for tick, events in native_callbacks
+                              for name, values in events
+                              if name == 'setSFXoccupy' and name in declared_callbacks]
+    world_occupancy_edges = [(row[0], row[30]) for row in world if row[31]]
+    if native_occupancy_edges != world_occupancy_edges:
+        raise AssertionError({'Zhon monarch occupancy callback edges':
+                              {'retail 0x4dc800': native_occupancy_edges,
+                               'World render helper': world_occupancy_edges}})
     expected_events, expected_states = expected_persistent_rng(seed, steps)
     actual_events = [(tick, bound, result)
                      for tick, bound, _before, _after, result in world_rng]
@@ -529,6 +577,8 @@ def run_persistent_check(binary, install):
     print('PASS: 103 exact native/World persistent Zhon construction ticks, '
           'including orbit retargets at 25 and 63, arrival at 82, and the next '
           'target at 101; RNG and movement/navigation match each tick.')
+    print(f'PASS: zonhunt declares {sorted(declared_callbacks)}; native 0x4dc800 '
+          f'and World occupancy helper agree on callback edges {world_occupancy_edges}.')
     print('ARRIVAL: native tick 82 detaches its active point controller '
           f'{after_dispatch[0]:#x}->0 and posts pending 0x{after_dispatch[1]:x}'
           f'->0x{after_mover[1]:x}; the mover still applies body step '

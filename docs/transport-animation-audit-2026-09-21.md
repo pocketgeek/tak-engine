@@ -37,6 +37,12 @@ implementation descriptions. Current open gates are:
   arrival event because World stores it in the mission while retail stores it
   on the unit. These controlled traces pin terrain scanning and initial
   navigator state; they do not establish every live-map grade or flight route.
+  A separate 480-tick VTOL unload comparison now crosses a 100-to-220 terrain
+  sector-height step: XYZ, altitude, flight dynamics, controller, mission and
+  cargo fields match throughout, and native `0x4dc800` relinks the carrier's
+  center sector seven times. Its fixture supplies retail's raw and 3x3-dilated
+  sector-height planes and holds terrain rescans, so it does not establish
+  live rescan parity or every map's height transition.
   A blocked unload retry followed by mission removal and a new destination now
   matches in paired native-air and native-sea traces; World regressions cover
   both carrier classes. Native sea-unload recovery now also resumes the same
@@ -154,7 +160,11 @@ implementation descriptions. Current open gates are:
   three-profile native mover sweep covers ground, floater, and flyer callback
   requests over a changing tick and an unchanged tick; it captures at the
   script-dispatch boundary, so full COB execution and wider roster coverage
-  remain open. The pending-shot/dead-target sequence now joins target
+  remain open. A 103-tick persistent `zonhunt` construction trace also captures
+  native mover requests: its only declared movement callback, `setSFXoccupy(5)`,
+  fires once on tick 1 in both native and World, including through two retargets,
+  arrival and the next hover goal. This verifies the request edge and World
+  helper, not COB thread execution or rendered pose. The pending-shot/dead-target sequence now joins target
   retirement to the next common weapon update; broader target-loss cases remain
   open.
 - Menu video color: the Bink decoder now uses the chroma matrix measured from
@@ -186,9 +196,12 @@ implementation descriptions. Current open gates are:
   Model-backed ballistic shots now check every native 3D substep for unit and
   environmental collision; an Arabow arrow's native feature-impact dispatch
   matches the World feature-damage regression. Death damage-flame callback and
-  creation-dispatch timelines now match native for three scripts; callback-to-
-  removal timing and other effect and attached-emitter lifecycles remain open,
-  along with debris details, shared cosmetic RNG/tick phase, collision/lifetime
+  creation-dispatch timelines now match native for three scripts. The `tarmage`
+  SET31 path is also traced through its native timer and tick-35 owner/list
+  teardown; its standalone World timeline omits that outer owner gate, so the
+  extra callbacks there do not establish a live mismatch. Other callback-to-
+  removal and attached-emitter lifecycles remain open, along with debris details,
+  shared cosmetic RNG/tick phase, collision/lifetime
   paths, and representative checks that live effects use the right art family,
   placement and lifetime. Feature smoke now follows retail's newest-first burn
   order and updates each burn's existing particles before that burn emits.
@@ -8052,8 +8065,10 @@ probe confirms teardown drains its attached list. The new
 it clears the owner pointer, removal flags, and attached SFX list on that update.
 This verifies cleanup relative to the removal bit, not when the script callback
 sets it. Callback and creation-dispatch parity for these three flame families
-is closed; callback-to-removal timing and other attached-emitter families
-remain open. No retail GUI was launched. Reproduce both checks with:
+is closed; the timing of the `SET_UNIT_VALUE 31` path is now covered for
+`tarmage`. Other attached-emitter families and other SET31-bearing death
+scripts remain open. No retail GUI was launched. Reproduce the original two
+checks with:
 
 ```sh
 python3 tools/re/probe_native_death_update_edge.py
@@ -8074,11 +8089,40 @@ next update, while `SET_UNIT_VALUE 31` starts a one-second model timer that
 sets the same removal bit when it expires. For example, shipped `araking`
 uses value 31 and `araknigh` uses value 26. Native VM traces show `SET_UNIT_VALUE`
 31 at tick 0 for `tarmage`/`araking`, 26 at tick 0 for `crefire`, and 26 at tick
-18 for `araknigh`. The update-edge fixture begins after that value has set the
-removal bit; it does not emulate the host-side one-second timer for value 31.
-Therefore the exact callback-to-teardown tick for value 31 remains open. The
-latest tested flame emission is tick 72, but no teardown-time mismatch is
-established by these bounded traces. No retail GUI was launched.
+18 for `araknigh`.
+
+`probe_native_set31_lifecycle.py` now starts the shipped `tarmage` `Killed` and
+`Dying` COB callbacks through retail `0x56c680`, routes `SET_UNIT_VALUE` through
+the real `0x50d450` host, and advances the real outer unit updater `0x51d3e0`.
+The one-unit fixture supplies the death-status bits that route each pass to
+`0x51e380`: the timer is 0.97 after tick 1, 0.01 after tick 33, and zero with
+the removal bit set after tick 34. The trace records exactly two real
+`0x56c870` calls, both at tick 0 for immediate `Killed` and `Dying` starts.
+SET31 sets owner byte `+0x13`; `0x51e380` tests that byte and skips the VM update
+for ticks 1–34 while decrementing the timer. Tick 35 consumes the removal bit through
+`0x512ae0 → 0x4ee560 → 0x497380`; the owner pointer clears and the attached
+one-node SFX list drains. The node is fixture-provided; the real `0x502da0`
+effect-creation sink is controlled after retail's `0x50da20` dispatcher. The
+probe also controls synthetic game/player/model records, unrelated graphics
+and allocator callbacks, the SFX-list update slot, and COB VM shutdown slot
+`+0x60`; the COB callback, unit updater, timer, retirement routine, owner
+destructor, and list destructor run from retail.
+
+For the same `tarmage` input, World matches all eight tick-0 damage-flame
+callbacks, and the standalone timeline harness prints SET31 at tick 0 before
+producing 16 more callbacks at ticks 14 and 28. That harness's `onSetUnitValue`
+only prints the write; it directly ticks the COB VM and does not run the native
+unit/model owner timer. This is an unverified standalone-host delta, not evidence
+of a production mismatch. The native trace establishes that retail suppresses
+these later updates through its SET31 owner timer and retires the tested owner at
+tick 35. The probe does not invoke `0x512610` to build the death state, and does
+not generalize the result to `araking` or other SET31 scripts. No retail GUI was
+launched. Reproduce with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
+  --world-binary build-o2/animation_roster_test
+```
 
 ### Live detached script transient lifecycle (2026-09-24)
 
@@ -8750,4 +8794,48 @@ for bin in build build-dbg build-o2; do
   python3 tools/re/probe_straight_projectile_render.py "$bin/retail_visual_test"
   python3 tools/re/check_projectile_model_transform.py "$bin/model_transform_test"
 done
+```
+
+### VTOL unload across a terrain-sector height boundary (2026-09-25)
+
+The headless 480-tick comparison crosses a terrain step from height 100 to 220
+at world X 3520. The fixture writes both planes used by retail map setup:
+raw sector maxima at record `+0` and the 3x3-dilated maximum at `+1`, which
+native `0x524af0` reads for cruise height. The real `0x4dc800` mover relinks
+the unit's center-sector pointer at each boundary; all seven observed pointers
+match the carrier's position-derived sector. World and native agree on XYZ,
+altitude, vertical and horizontal flight state, navigation destination and
+velocity, controller, mission, and cargo for all 480 ticks.
+
+The first mismatch in a 500-tick experiment is the already-known arrival
+sampling phase at tick 487 (World exposes pending `0x500` after its mover pass;
+retail consumes it in dispatcher order). The focused height trace stops before
+that event, so the result establishes sector-height movement only. Terrain
+rescans are held and map-sector heights are controlled fixture data; live
+terrain-rescan behavior remains a separate gate. No production change or retail
+GUI run was needed.
+
+Reproduce with:
+
+```sh
+python3 tools/re/check_air_unload_heightstep.py \
+  --binary build-o2/transport_test --steps 480
+```
+
+### Zhon construction-flight occupancy callback edge (2026-09-25)
+
+The 103-tick persistent construction trace uses the native movement dispatcher
+with the placed build site and flight controller retained through two orbit
+retargets, arrival at tick 82, and the next target at tick 101. `zonhunt.cob`
+declares `setSFXoccupy` but not the coincident `TurnDirection` or `MoveRate`
+requests. Native and World both issue `setSFXoccupy(5)` once, on tick 1. This
+confirms callback-request ordering and the World occupancy helper for this
+profile; it does not execute the full native COB thread or compare a rendered
+pose, and other builders/flyers remain open.
+
+Reproduce with:
+
+```sh
+python3 tools/re/check_zhon_construction_flight_trace.py \
+  --binary build-o2/conjure_test --install assets/game --persistent
 ```
