@@ -264,6 +264,10 @@ def main():
         [str(args.world_binary), "--death-sfx-timeline", str(script), "100", "1"],
         text=True, capture_output=True, check=True,
     )
+    render_host = subprocess.run(
+        [str(args.world_binary), "--death-render-timeline", str(script), "100", "1"],
+        text=True, capture_output=True, check=True,
+    )
     world_sfx, world_writes = [], []
     for line in world.stdout.splitlines():
         fields = line.split()
@@ -277,14 +281,58 @@ def main():
     assert world_writes == [(0, 31, 1)], world_writes
     late_ticks = {frame: sum(row[0] == frame for row in world_late) for frame in (14, 28)}
     assert late_ticks == {14: 8, 28: 8} and len(world_late) == 16, (late_ticks, world_late)
+    render_sfx, render_writes = [], []
+    for line in render_host.stdout.splitlines():
+        fields = line.split()
+        if fields[0] == "E":
+            render_sfx.append(tuple(map(int, fields[1:])))
+        elif fields[0] == "U":
+            render_writes.append(tuple(map(int, fields[1:])))
+    assert render_sfx == world_initial, (render_sfx, world_initial)
+    assert render_writes == [(0, 31, 1)], render_writes
+
+    # SET26 is the sibling native owner edge: retail marks the unit for removal
+    # on its next owner update. `crefire` writes it immediately, then its direct
+    # COB timeline emits later attached-death effects; GameView's render host must
+    # stop those later display-VM ticks just like SET31.
+    set26_script = args.scripts / "crefire.cob"
+    set26_direct = subprocess.run(
+        [str(args.world_binary), "--death-sfx-timeline", str(set26_script)],
+        text=True, capture_output=True, check=True,
+    )
+    set26_render = subprocess.run(
+        [str(args.world_binary), "--death-render-timeline", str(set26_script)],
+        text=True, capture_output=True, check=True,
+    )
+
+    def parse_timeline(output):
+        effects, writes = [], []
+        for line in output.splitlines():
+            fields = line.split()
+            if fields[0] == "E":
+                effects.append(tuple(map(int, fields[1:])))
+            elif fields[0] == "U":
+                writes.append(tuple(map(int, fields[1:])))
+        return effects, writes
+
+    set26_direct_sfx, set26_direct_writes = parse_timeline(set26_direct.stdout)
+    set26_render_sfx, set26_render_writes = parse_timeline(set26_render.stdout)
+    assert (0, 26, 1) in set26_direct_writes, set26_direct_writes
+    assert any(row[0] > 0 for row in set26_direct_sfx), set26_direct_sfx
+    assert set26_render_writes == [(0, 26, 1)], set26_render_writes
+    assert set26_render_sfx == [row for row in set26_direct_sfx if row[0] == 0], (
+        set26_render_sfx, set26_direct_sfx
+    )
 
     print(f"PASS: native {args.script} SET31 at tick 0; real 0x56c870 runs only for the two "
           "immediate callbacks at tick 0, then real 0x51e380 decrements to 0.97 at tick 1 and "
           "expires on tick 34; 0x51d3e0 consumes removal on tick 35; native owner/list destructors "
           "clear the attached node (0x502da0 creation sink controlled)")
-    print(f"UNVERIFIED STANDALONE-HOST DELTA: animation_roster_test logs SET31 at tick 0 but does not "
-          f"run the owner timer; tick-0 effects match ({len(native_sfx)} callbacks), followed by "
-          f"{len(world_late)} more at ticks 14 and 28")
+    print(f"PASS: render-host timeline records SET31 and stops future VM ticks after the two synchronous "
+          f"death starts ({len(render_sfx)} tick-0 callbacks); direct-VM timeline continues to emit "
+          f"{len(world_late)} later callbacks at ticks 14 and 28")
+    print(f"PASS: render-host SET26 timeline for {set26_script.name} keeps only its tick-0 effects "
+          f"while the direct-VM timeline emits {sum(row[0] > 0 for row in set26_direct_sfx)} later callbacks")
 
 
 if __name__ == "__main__":

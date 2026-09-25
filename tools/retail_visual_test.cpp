@@ -78,6 +78,16 @@ static bool testDeathSfxLifecycle() {
         std::fprintf(stderr,"native no-op/unknown SFX code was admitted as a death effect\n");
         return false;
     }
+    if(!tak::retailDeathVmStopsOnSetUnitValue(true,26) ||
+       !tak::retailDeathVmStopsOnSetUnitValue(true,31) ||
+       tak::retailDeathVmStopsOnSetUnitValue(false,31) ||
+       tak::retailDeathVmStopsOnSetUnitValue(true,30) ||
+       !tak::retailDeathVmMayAdvance(false,true) ||
+       !tak::retailDeathVmMayAdvance(true,false) ||
+       tak::retailDeathVmMayAdvance(true,true)) {
+        std::fprintf(stderr,"death COB VM did not honor its native SET26/SET31 stop boundary\n");
+        return false;
+    }
     if(tak::retailAttachedSfxOwnerRemoved(true,200,-1,120) ||
        tak::retailAttachedSfxOwnerRemoved(false,119,-1,120) ||
        !tak::retailAttachedSfxOwnerRemoved(false,120,-1,120) ||

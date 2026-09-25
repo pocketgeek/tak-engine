@@ -8112,16 +8112,29 @@ For the same `tarmage` input, World matches all eight tick-0 damage-flame
 callbacks, and the standalone timeline harness prints SET31 at tick 0 before
 producing 16 more callbacks at ticks 14 and 28. That harness's `onSetUnitValue`
 only prints the write; it directly ticks the COB VM and does not run the native
-unit/model owner timer. This is an unverified standalone-host delta, not evidence
-of a production mismatch. The native trace establishes that retail suppresses
-these later updates through its SET31 owner timer and retires the tested owner at
-tick 35. The probe does not invoke `0x512610` to build the death state, and does
-not generalize the result to `araking` or other SET31 scripts. No retail GUI was
-launched. Reproduce with:
+unit/model owner timer. It is useful as a direct-VM script parity trace, but its
+later callbacks do not model the render host. GameView now captures SET26 or
+SET31 while `a.dying` and skips subsequent render-frame VM ticks after that
+write. It still starts the synchronous `Killed` and `Dying` callbacks on the
+death edge. SET26 uses the same stop gate because retail's real `0x50d450` host
+sets the native removal bit, and the native update-edge probe proves removal is
+consumed on the next owner update. The `--death-render-timeline` fixture shares
+the GameView gate: it preserves the eight synchronous tick-0 effects and emits
+no later effects, while `--death-sfx-timeline` keeps its direct-VM behavior for
+the existing script parity sweep. A second render-host fixture runs shipped
+`crefire`: its SET26 at tick 0 stops the two later callbacks that remain in the
+direct-VM trace.
+
+This closes the GameView stop condition for the tested SET31 `tarmage` death
+timeline and covers the SET26 render-host latch, but does not invoke `0x512610`
+to build the death state or run a full `araknigh` callback-to-retirement trace.
+It does not generalize the timer behavior to other SET31 scripts. No retail GUI
+was launched. Reproduce with:
 
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
   --world-binary build-o2/animation_roster_test
+build-o2/retail_visual_test
 ```
 
 ### Live detached script transient lifecycle (2026-09-24)

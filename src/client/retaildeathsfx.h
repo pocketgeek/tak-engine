@@ -47,4 +47,16 @@ constexpr bool retailTickAtOrAfter(uint32_t tick,uint32_t deadline) {
     return int32_t(tick-deadline)>=0;
 }
 
+// The display COB VM is paced independently from unit simulation updates, so
+// mirror the native owner stop edges explicitly after a death callback writes
+// either value. SET26 requests unit removal on the next owner update; SET31
+// starts the one-second owner timer that stops subsequent VM updates.
+constexpr bool retailDeathVmStopsOnSetUnitValue(bool dying,int32_t valueId) {
+    return dying && (valueId==26 || valueId==31);
+}
+
+constexpr bool retailDeathVmMayAdvance(bool dying,bool stopRequested) {
+    return !dying || !stopRequested;
+}
+
 } // namespace tak
