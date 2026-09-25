@@ -677,15 +677,15 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     native_live_profiles = {
-        'lake lokken': {('vertrans', 'araarch')},
+        'lake lokken': {('vertrans', 'araarch'), ('verscout', 'araarch')},
         'per mare per terras': {('vertrans', 'araarch')},
         'sea dragon spine': {('vertrans', 'araarch')},
     }
     if native_live_unload and (not carrier or not passenger or
             (carrier.lower(), passenger.lower()) not in
             native_live_profiles.get(map_name.lower(), set())):
-        raise ValueError('--native-live-unload currently checks Vertrans/Araarch on '
-                         'Lake Lokken, Per Mare Per Terras, and Sea Dragon Spine')
+        raise ValueError('--native-live-unload currently checks Lake Lokken Vertrans/VerScout '
+                         'with Araarch, and Vertrans/Araarch on the other supported maps')
     if terrain_scan_after is not None and not native_live_unload:
         raise ValueError('--terrain-scan-after requires --native-live-unload')
     if shore_blocker and (not native_live_unload or not carrier):

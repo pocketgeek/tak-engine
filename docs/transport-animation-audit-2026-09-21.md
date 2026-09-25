@@ -46,7 +46,11 @@ implementation descriptions. Current open gates are:
   map-backed trace builds those planes with retail `0x50e740` from per-cell
   terrain corners and leaves the native mover scan deadline live. Native and
   World match for 480 ticks, with eight center-sector relinks and six live
-  scan-deadline advances; additional maps and flight paths remain open.
+  scan-deadline advances. A joined map-backed VTOL unload then carries that
+  ridge through arrival, passenger release, PARK and mission retirement: 488
+  rows match across Release, Debug and optimized builds, with eight relinks,
+  six live scans and only the expected tick-487 arrival-wake sampling
+  difference. Additional maps and flight paths remain open.
   A blocked unload retry followed by mission removal and a new destination now
   matches in paired native-air and native-sea traces; World regressions cover
   both carrier classes. Native sea-unload recovery now also resumes the same
@@ -147,7 +151,11 @@ implementation descriptions. Current open gates are:
   mission, terrain scans, placement, and release match through step 314, with
   176 distinct grade cells, 219 grade calls, and 74 scan deadlines; Standard
   and Crusades pass across the same three builds. Other maps and carrier
-  profiles remain open. An experimental combined live-blocker trace is
+  profiles remain open. Lake Lokken also has a joined VerScout/Araarch unload:
+  867 native route-grade calls, 1,400 matching mover steps, 691 matched live
+  scan deadlines, 16 native placement checks and passenger release at step
+  1400; its World end-to-end placement/coast fixture also passes. An
+  experimental combined live-blocker trace is
   inconclusive because its emulator initially lacked World exploration updates
   and then omitted the blocker from its live-body query and occupancy plane; the
   resulting scan mismatch is a fixture error, not evidence of different gameplay.
@@ -186,9 +194,16 @@ implementation descriptions. Current open gates are:
   native mover requests: its only declared movement callback, `setSFXoccupy(5)`,
   fires once on tick 1 in both native and World, including through two retargets,
   arrival and the next hover goal. This verifies the request edge and World
-  helper, not COB thread execution or rendered pose. The pending-shot/dead-target sequence now joins target
-  retirement to the next common weapon update; broader target-loss cases remain
-  open.
+  helper, not COB thread execution or rendered pose. A follow-up joins the
+  native movement/callback trace to Zonhunt's display COB at five checkpoints.
+  The root piece stays at zero local transform; its site-relative screen anchor
+  shifts from 90.50 pixels north at tick 1 to 107.98 at tick 101 as the monarch
+  gains altitude and follows the orbital ground path. The projection equations
+  remain equivalent; the 0.5-pixel maximum is integer half-height rounding,
+  not an independent framebuffer comparison. Child-piece timed-turn
+  interpolation and live-camera captures remain open. The pending-shot/dead-
+  target sequence now joins target retirement to the next common weapon update;
+  broader target-loss cases remain open.
 - Menu video color: the Bink decoder now uses the chroma matrix measured from
   retail's Bink DLL. Sixteen sampled frames across idle, hover-in, hover-loop,
   and mouse-out for all four doors pass, with mean RGB error 1.151–2.058/255.
@@ -9143,4 +9158,53 @@ Reproduce with:
 ```sh
 build-o2/cursor_test assets/extracted/all
 ctest --test-dir build-o2 -R cursor_roster --output-on-failure
+```
+
+### Zhon Monarch root-anchor join (2026-09-25)
+
+`probe_zhon_construction_pose_join.py` joins retail's native `41ef00`/`4dc800`
+placed-build movement and callback requests to the shipped `zonhunt.cob`
+running in retail's native display VM. At ticks 1, 25, 63, 82, and 101, the
+root piece `Zon_gpoly` has authored origin `(0,0,0)` and all six COB root
+setter channels remain zero. The display VM is active at each sample with
+gates `(6,9,10)=(1,1,1)`. Native altitude and orbital ground position put the
+root anchor 90.50 pixels north of the site at tick 1 and 107.98 pixels north
+at tick 101 at zoom 1. This explains the reported northward placement for the
+captured movement profile; it does not identify a transform mismatch.
+
+The native projection and GameView altitude-split equations, evaluated from
+the same fixture coordinates, differ by at most 0.5 pixels from half-height
+integer rounding. This is not an independent framebuffer comparison. The
+fixture does not interpolate child-piece timed turns or capture a live camera;
+child poses and the full rendered animation remain open. No production change
+was justified.
+
+Reproduce with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_zhon_construction_pose_join.py
+```
+
+### Lake Lokken VerScout unload through shore release (2026-09-25)
+
+The map-backed `native-live-unload` checker now also covers VerScout/Araarch on
+Lake Lokken. Retail's native search reconstructs the one-waypoint shore route
+from 867 grade queries over 652 cells. The native unload mission, mover,
+terrain scans, placement checks and passenger remain joined through release at
+physical step 1400. All 1,400 native/World mover rows match; 691 terrain-scan
+deadlines and all 16 map-backed placement checks match, with the endpoint
+inside the authored 266px unload circle. The paired path uses the route
+captured from World's completed search; it does not exercise every carrier or
+map. The separate World end-to-end fixture also passes placement and a 60-tick
+coast, though it starts at order issuance and is not a release-tick comparison.
+No production change or retail GUI run was needed.
+
+Reproduce the paired trace with:
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier verscout --passenger araarch \
+  --native-map-grades --native-map-mover-steps 2000 --native-live-unload \
+  --terrain-scan-after 1
 ```
