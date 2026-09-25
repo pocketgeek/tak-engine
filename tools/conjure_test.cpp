@@ -126,9 +126,99 @@ static int constructionFlightTrace(int argc,char** argv) {
     return 0;
 }
 
+// Paired with check_zhon_construction_flight_trace.py's persistent dispatcher
+// pass. Unlike --construction-flight-trace, this starts an unfinished placed
+// site inside build range and leaves the builder's build job active. The unit
+// scripts are disabled in these two fixture types so this isolated trace owns
+// the shared game RNG exactly as native 41ef00 does: one rand(50) mission test
+// per tick, plus the four draws when it creates a new orbit point.
+static int persistentConstructionFlightTrace(int argc,char** argv) {
+    if(argc!=13) {
+        std::fprintf(stderr,"usage: conjure_test --persistent-construction-flight-trace <install> <steps> <terrain> <start-x> <start-y> <start-z> <start-heading> <site-x> <site-z> <speed> <seed>\n");
+        return 2;
+    }
+    const auto number=[](const char* text) { return int32_t(std::strtol(text,nullptr,0)); };
+    const int steps=std::clamp(number(argv[3]),1,10000);
+    const int terrain=std::clamp(number(argv[4]),0,255);
+    const int32_t startX=number(argv[5]),startY=number(argv[6]),startZ=number(argv[7]);
+    const uint16_t startHeading=uint16_t(number(argv[8]));
+    const int32_t siteX=number(argv[9]),siteZ=number(argv[10]);
+    const int32_t speed=number(argv[11]);
+    const uint32_t seed=uint32_t(number(argv[12]));
+    hpi::Vfs vfs=hpi::mountRetailRoot(argv[2],hpi::OverridePolicy::None);
+    sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,false);
+    const auto* monarch=registry.find("zonhunt");const auto* output=registry.find("zonter");
+    if(!monarch || !output || !monarch->canFly) return 2;
+
+    sim::UnitType builderType=*monarch;
+    builderType.simulationScript.reset();builderType.productionScript.reset();
+    sim::UnitType siteType=*output;
+    siteType.buildTime=10000;
+    siteType.simulationScript.reset();siteType.productionScript.reset();
+    sim::World world;world.setVisPlayer(-1);
+    world.setTerrain(std::vector<uint8_t>(128*128,uint8_t(terrain)),128,128,20);
+    world.setPathService(false);
+    const int builderId=world.spawn(&builderType,float(startX)/65536.0f,
+                                    float(startZ)/65536.0f,0,0);
+    const int siteId=world.spawn(&siteType,float(siteX)/65536.0f,
+                                float(siteZ)/65536.0f,0,0);
+    auto* builder=world.unit(builderId);auto* site=world.unit(siteId);
+    builder->x=sim::Fixed::raw(startX);builder->z=sim::Fixed::raw(startZ);
+    builder->flightY=sim::Fixed::raw(startY);builder->baseSpeed=sim::Fixed::raw(speed);
+    builder->speed=sim::Fixed();builder->flightVelocity={};
+    builder->heading=sim::retailHeadingToPort(startHeading);
+    builder->flightNavigation={{startX,startY,startZ},{},startHeading};
+    builder->flightSectorX=startX>>23;builder->flightSectorZ=startZ>>23;
+    site->x=site->homeX=sim::Fixed::raw(siteX);
+    site->z=site->homeZ=sim::Fixed::raw(siteZ);
+    site->underConstruction=site->buildBegun=site->beingBuilt=true;
+    site->hp=sim::Fixed::fromFloat(siteType.maxHp*0.05f);
+    builder->buildSiteId=siteId;
+    sim::Order activeBuild;activeBuild.buildType=&siteType;activeBuild.goal=true;
+    builder->orders.push_back(activeBuild);
+    world.setGameSeed(seed);
+    std::vector<sim::World::RngObservation> rngEvents;
+    world.setRngObserver([&](const sim::World::RngObservation& observation) {
+        rngEvents.push_back(observation);
+    });
+
+    std::printf("PROFILE %d %d %d %d %d %d %d\n",monarch->maxVel.v,
+        monarch->accel.v,monarch->brake.v,monarch->roadMult.v,monarch->turnRate,
+        int(monarch->cruiseAlt),monarch->buildDist);
+    for(int tick=1;tick<=steps;++tick) {
+        rngEvents.clear();
+        world.tick(1.0f/30.0f);
+        builder=world.unit(builderId);site=world.unit(siteId);
+        const auto& navigation=builder->flightNavigation;
+        const auto& velocity=builder->flightVelocity;
+        const auto goal=builder->conjureHoverGoal;
+        const uint32_t rngState=rngEvents.empty()?0:rngEvents.back().seedAfter;
+        std::printf("TRACE %d %d %d %d %u %d %d %d %d %d %d %d %d %d %d %u %d %d %d %d %d %u %u %d %d %d %u %zu %zu %d\n",
+            tick,builder->x.v,builder->flightY.v,builder->z.v,
+            unsigned(sim::portHeadingToRetail(builder->heading)),builder->speed.v,
+            velocity.x,velocity.y,velocity.z,navigation.destination.x,
+            navigation.destination.y,navigation.destination.z,navigation.velocity.x,
+            navigation.velocity.y,navigation.velocity.z,unsigned(navigation.heading),
+            int32_t(uint32_t(builder->x.v)-uint32_t(siteX)),
+            int32_t(uint32_t(builder->z.v)-uint32_t(siteZ)),
+            goal?goal->point.x:0,goal?goal->point.y:0,goal?goal->point.z:0,
+            unsigned(goal?goal->flags:0),unsigned(goal?goal->heading:0),
+            site->underConstruction?1:0,builder->buildSiteId,
+            builder->conjureHoverTarget,rngState,rngEvents.size(),
+            builder->orders.size(),!builder->orders.empty() &&
+                builder->orders.front().buildType==&siteType);
+        for(const auto& event:rngEvents)
+            std::printf("RNG %u %d %u %u %u\n",event.tick,event.bound,
+                event.seedBefore,event.seedAfter,event.result);
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if(argc>1 && std::string(argv[1])=="--construction-flight-trace")
         return constructionFlightTrace(argc,argv);
+    if(argc>1 && std::string(argv[1])=="--persistent-construction-flight-trace")
+        return persistentConstructionFlightTrace(argc,argv);
     if (argc < 2) { std::printf("usage: conjure_test <install>\n"); return 2; }
     hpi::Vfs vfs = hpi::mountRetailRoot(argv[1]);
     auto f = load(vfs);

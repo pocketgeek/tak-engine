@@ -129,10 +129,11 @@ implementation descriptions. Current open gates are:
   inconclusive because its emulator initially lacked World exploration updates
   and then omitted the blocker from its live-body query and occupancy plane; the
   resulting scan mismatch is a fixture error, not evidence of different gameplay.
-  That trace also did not deliver a replacement route in its combined mission
-  context, while the isolated mission-worker replay installs all five World
-  waypoints. Automatic native collision detection and route replacement in one
-  uninterrupted mission-backed trace remain unverified.
+  That initial trace did not deliver a replacement route in its combined
+  mission context. A later bounded trace now runs retail's actual `0x4e5150`
+  repeated-block retry and `0x416430` worker on the retained mission and matches
+  all five World waypoints using the captured refusal bit. Retail's moving-body
+  collision update producing that bit is still unverified.
 - Combat animation: scripted AimWeapon/FireWeapon readiness and delayed SET 23
   release are integrated, with authoritative display aiming and GET 33 turn
   input. AimWeapon, FireWeapon, and TargetCleared now enter the regular script
@@ -8184,61 +8185,46 @@ for bin in build build-dbg build-o2; do
 done
 ```
 
-### Controlled Zhon construction-flight pair (2026-09-23)
+### Zhon construction-flight arrival and retarget parity (2026-09-24)
 
-`check_zhon_construction_flight_trace.py` composes native `41ef00` stages
-5→4, captures the point-controller factory request at `4e40e0` with a minimal
-fixture object, then runs the native radius setter (`4e4540`), navigator
-install (`4d4d40`), and `4dc800` mover through `524af0`. The World side loads
-the retail `zonhunt` profile and follows the installed point. Seed 50 installs
-`(1041.015,100,1007.224)` around the
-site at `(1120,100,1060)`, with flags `0x60` and heading 43016. Both sides use
-the same flat 100-height plane and start at `(1000,161,1000)`; by tick 16 both
-are at `(1012.576,177,995.101)`. All 16 rows match exactly for XYZ, altitude,
-heading, velocity, navigator output, and Monarch-to-site X/Z. The controlled
-movement comparison therefore finds no native/World mismatch over this orbit
-leg and needs no height or position correction on this evidence. The factory
-stub does not initialize every controller subobject, so retarget cleanup is not
-covered by this trace.
+`check_zhon_construction_flight_trace.py --persistent` now runs the actual
+native `41ef00` dispatcher, point-controller factory and binder, `4dc800`
+mover, and construction commit path. The fixture substitutes only OS
+allocation/synchronization calls and the unfinished-work seam. Its paired World
+fixture preserves an active build order and site while disabling the two COB
+threads so the construction mission is the only path-RNG consumer.
 
-The headless trace was extended to 44 consecutive mover ticks and passes at
-both seed 50 and seed `0xdeadbeef`, comparing XYZ, altitude, heading, velocity,
-navigator output, and site-relative X/Z. The native sector pointer is initialized
-once and allowed to follow native mover updates; resetting it every tick had
-been a fixture error. Extending this simple point-order fixture past orbit
-arrival is still not a persistent-construction test: the actual build mission
-regenerates orbit goals, while the synthetic World move order retires at its
-goal. A mission-backed retarget trace remains open.
+The seed-1 trace matches native and World through 103 ticks of position,
+velocity, heading, navigation output, orbit goal, and RNG, including native
+retargets at ticks 25 and 63. At tick 82, retail detaches its controller and
+posts `0x500` but still runs one body step. World previously returned before
+that step because the temporary hover order carries a `buildType`; that was
+the first north/height offset. `tickConjureHover` now uses the persistent flight
+movement path for that temporary flying-build order. World takes the same tick-
+82 step, brakes with retail, and selects the same next hover point at tick 101.
+The trace stays exact through tick 103. Ground builders use their separate
+movement path.
 
-Reproduce after building the focused World mode in each configuration with:
+The original 44-tick mover comparisons still pass at seed 50 and
+`0xdeadbeef`; the full `conjure_test` passes all 4,477 checks in Release,
+Debug, and optimized Debug. Reproduce the persistent and shorter native pairs
+with:
 
 ```sh
-for bin in build build-dbg build-o2; do
-  cmake --build "$bin" --target conjure_test -j4
-  python3 tools/re/check_zhon_construction_flight_trace.py \
-    --binary "$bin/conjure_test" --steps 44
-done
-python3 tools/re/check_zhon_construction_flight_trace.py \
-  --binary build-o2/conjure_test --steps 44 --seed 0xdeadbeef
+PYTHONPATH=tools/re python3 tools/re/check_zhon_construction_flight_trace.py \
+  --binary build-o2/conjure_test --install assets/game --persistent
+PYTHONPATH=tools/re python3 tools/re/check_zhon_construction_flight_trace.py \
+  --binary build-o2/conjure_test --install assets/game --steps 44
+PYTHONPATH=tools/re python3 tools/re/check_zhon_construction_flight_trace.py \
+  --binary build-o2/conjure_test --install assets/game --steps 44 --seed 0xdeadbeef
 ```
 
-This is a controlled mover comparison, not a synchronized render comparison:
-it does not pair the live native frame's body/piece transforms and camera with
-a Glide frame. A synchronized camera/frame pair would only settle the exact
-raster appearance; it is not needed for the behavior-based acceptance.
-
-The pose follow-up found no behavioral mismatch. `zonhunt.cob` passes the
-native script oracle across 1,501 boundaries for the controlled flight/build
-timeline, including piece, thread, and RNG state (`/tmp/animation-timeline-results.json`).
-The captured-model transform check includes `zonhunt` and matches all 2,374
-vertices across 293 retail model pieces to under 0.000023 world units. At tick
-16, both movement traces put the Monarch at `(1012.576,177,995.101)` relative
-to the site at `(1120,100,1060)`. Retail's `screenY = z - y/2` projection puts
-that root 103.4 world-screen units north of the site; 38.5 units of that offset
-come from the 77-unit altitude difference. This is the expected projection
-of the matching map-relative pose, so no behavioral position, height, facing,
-or piece-transform correction is justified. Pixel-synchronized capture is not
-a completion gate. No retail GUI was launched for this audit.
+This is movement, navigation, and mission parity; it is not a synchronized
+render capture. The `zonhunt.cob` oracle still matches across 1,501 boundaries,
+including piece/thread/RNG state. The captured-model transform comparison
+matches all 2,374 vertices across 293 retail pieces to within 0.000023 world
+units. Pixel-level Glide matching is not required, and no retail GUI was
+launched for this check.
 
 ### DroppedBallistic launch and update oracle (2026-09-24)
 
@@ -8617,14 +8603,42 @@ map-backed Vertrans at `(238,235)`. The emulator fixture had not registered that
 blocker in its live-body query and occupancy plane, so its different scan result
 is a fixture omission, not evidence of a retail/gameplay mismatch.
 
-The corrected combined movement-and-worker trace is still open. The independent
-map-backed worker replay remains green: retail's `0x416430` unload worker keeps
-the carrier, navigator, controller, mission, and attached Araarch through both
-requests and installs all five replacement waypoints captured from World. That
-does not yet prove automatic detection and replan during continuous native
-movement. No production pathfinding change is justified by the incomplete
-combined trace. This was Standard only; Crusades was not run. No retail GUI was
-launched.
+The earlier combined movement-and-worker trace still did not produce the
+native repeated-refusal bit from collision detection. The following bounded
+retry trace now joins that captured state to retail's retry scheduler and
+mission worker, but the native collision-to-bit update itself remains open. No
+production pathfinding change is justified by that remaining gap. No retail GUI
+was launched.
+
+### Native mission-worker retry after the map-backed blocker (2026-09-24)
+
+The `--native-worker-mission-retry` Lake Lokken case begins at the World
+repeated-block boundary: after two failed shore placements, World has a
+map-backed Vertrans blocker at `(240,292)` and the carrier at `(240,288)`. It
+keeps the active Vertrans/Araarch unload mission, navigator, controller, and
+cached TNT-plus-occupancy grade plane. The fixture supplies the captured
+repeated-refusal bit (`mover+0x36 & 4`) to retail's real `0x4e5150`; that native
+retry enqueues through `0x4e4f50`, and `0x416430` delivers the replacement on
+the same mission and navigator. The five installed waypoints match World's
+replacement route. Retail's original `0x4139d0` dispatcher runs with the cached
+map grades; it needs no `0x4db640` live-body refresh because the map cache
+already marks the occupied footprint blocked and its clearance cells.
+
+This joins the retry scheduler, map-backed search, and mission worker, while
+the standalone direct-search reconstruction remains one waypoint different.
+The refusal bit is sourced from World's captured repeated-placement state, so
+this does not yet prove that retail's moving-body collision update sets that
+bit itself. The result is Standard-only; other maps/carrier profiles and the
+native collision-to-retry bit remain open. No retail GUI was launched.
+Reproduce with:
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier vertrans --passenger araarch \
+  --native-map-grades --live-route-blocker-steps 5000 \
+  --native-worker-mission-retry
+```
 
 ### Araarch projectile release and impact timing (2026-09-24)
 

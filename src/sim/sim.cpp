@@ -5851,7 +5851,10 @@ void World::tickConjureHover(Unit& b, const Unit& site) {
     hover.x=Fixed::raw(hover.flightGoal->point.x);
     hover.z=Fixed::raw(hover.flightGoal->point.z);
     b.orders.insert(b.orders.begin(),hover);
-    tickFlightMovement(b);
+    // Native construction controllers detach when their orbit point is
+    // reached, but the mission keeps the flyer moving while it brakes and
+    // waits to choose the next point. Keep running the body during that gap.
+    tickFlightMovement(b,true);
     b.conjureHoverGoal=b.orders.front().flightGoal;
     b.orders.erase(b.orders.begin());
     notifyFlightOccupancy(b);

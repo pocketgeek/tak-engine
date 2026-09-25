@@ -177,13 +177,15 @@ def replay_native_worker_repath(width, height, base_cached_grades,
                                 dynamic_cached_grades, base_live_grade,
                                 dynamic_live_grade, attempt, profile,
                                 target_x, target_z, circle_radius, sea,
-                                position, mission_backed=False):
+                                position, mission_backed=False,
+                                retry_through_4e5150=False):
     """Run a map-backed replacement through retail's queued route worker.
 
     The starting position is the captured World replan boundary. Retail first
-    installs the unobstructed route, then the live grade callback starts
-    returning the blocker plane and the same navigator/controller requests a
-    replacement through 0x4e54e0 and the singleton 0x416430 worker.
+    installs the unobstructed route, then the same navigator/controller
+    requests a replacement through either 0x4e54e0 or 0x4e5150 and the singleton
+    0x416430 worker. The retry variant supplies the captured repeated-refusal
+    mover bit; native body collision itself remains outside this fixture.
     """
     from unicorn import UC_HOOK_CODE
     from unicorn.x86_const import UC_X86_REG_ESI
@@ -428,7 +430,22 @@ def replay_native_worker_repath(width, height, base_cached_grades,
     active_live_grade[0] = dynamic_live_grade
     phase.set_grade_plane(dynamic_cached_grades)
     second_request = len(requests)
-    set_destination(delivered_at + 1)
+    if retry_through_4e5150:
+        # The captured World retry follows two consecutive failed footprint
+        # placements. Retail represents that repeated refusal with mover bit 2
+        # (bit mask 4), which makes 0x4e5150 enqueue immediately through its
+        # native 0x4e4f50 boundary. Keep the already-installed mission circle,
+        # navigator and controller intact for the retry.
+        retry_tick = delivered_at + 1
+        current_tick[0] = retry_tick
+        put(GS + 0x19f44, retry_tick)
+        put(0x634674, 0)
+        mover_flags = struct.unpack('<H', phase.uc.mem_read(mover + 0x36, 2))[0]
+        phase.uc.mem_write(mover + 0x36, struct.pack('<H', mover_flags | 4))
+        _, error = phase.icd.call(0x4e5150, (), ecx=nav)
+        assert error is None, ('native 0x4e5150 repeated-block retry', error)
+    else:
+        set_destination(delivered_at + 1)
     assert pending[0] and len(requests) > second_request, (pending, requests)
     run_until_delivery(2, delivered_at + 2)
     second_route = deliveries[1]
@@ -452,7 +469,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 native_live_unload=False, terrain_scan_after=None,
                 shore_blocker=False, live_route_blocker_steps=0,
                 native_worker_repath=False, native_worker_mission_repath=False,
-                always_on_route_search=False):
+                always_on_route_search=False, native_worker_mission_retry=False):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     native_live_profiles = {
@@ -479,6 +496,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         raise ValueError('--native-worker-repath requires --live-route-blocker-steps')
     if native_worker_mission_repath and not live_route_blocker_steps:
         raise ValueError('--native-worker-mission-repath requires --live-route-blocker-steps')
+    if native_worker_mission_retry and not live_route_blocker_steps:
+        raise ValueError('--native-worker-mission-retry requires --live-route-blocker-steps')
+    if native_worker_mission_retry and always_on_route_search:
+        raise ValueError('--native-worker-mission-retry requires the blocked, non-always-on fixture')
     if always_on_route_search and not live_route_blocker_steps:
         raise ValueError('--always-on-route-search requires --live-route-blocker-steps')
     env = os.environ.copy()
@@ -666,6 +687,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                                     changed_repaths[0][0] >= search_enabled[0][0]), (
             'World did not install a changed route while the boat was body-blocked '
             'with cargo retained', search_enabled, repaths[:8])
+        if native_worker_mission_retry:
+            assert changed_repaths[0][7] >= 2, (
+                'native 0x4e5150 retry must be seeded from the captured repeated-block state',
+                changed_repaths[0])
         route_bodies = {row[0]: row[1:] for row in
             (tuple(map(int, line.split()[1:])) for line in stdout
              if line.startswith('WORLD_ROUTE_BODY '))}
@@ -841,7 +866,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 live_grade_reads, live_grade_mismatches[:20],
                 native_grade_mismatches[:20], hex(world_search_plane_hash),
                 hex(native_search_plane_hash))
-            if not always_on_route_search:
+            if not always_on_route_search and not native_worker_mission_retry:
                 raise AssertionError(message)
             print('  Direct captured-attempt mismatch (continuing through worker):',
                   message)
@@ -895,6 +920,29 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                   f'{mission_delivery_count} worker deliveries ({mission_request_count} '
                   f'requests); its live mission route replacement matches all '
                   f'{len(mission_route)} World waypoints.')
+        if native_worker_mission_retry:
+            retry_route, retry_request_count, retry_delivery_count = \
+                replay_native_worker_repath(
+                    plane_width, plane_height, grades, dynamic_grades,
+                    native_map_grade, native_live_grade, dynamic_attempt,
+                    dynamic_profile,
+                    target_x, target_z, circle_radius, sea,
+                    (changed_repaths[0][4], changed_repaths[0][5]),
+                    mission_backed=True, retry_through_4e5150=True)
+            assert retry_route == dynamic_world_pixels, (
+                'native 0x4e5150 retry worker did not reproduce the captured World replacement',
+                retry_route, dynamic_world_pixels, dynamic_attempt)
+            assert not live_grade_mismatches, (
+                'native 0x4e5150 retry queried a grade that differs from the blocker plane',
+                live_grade_mismatches[:20])
+            assert not live_grade_reads, (
+                'native 0x4e5150 retry unexpectedly needed a live 0x4db640 refresh',
+                live_grade_reads)
+            print(f'  Retail 0x4e5150 consumed the World-captured repeated-block flag and '
+                  f'enqueued the live mission retry; 0x416430 delivered the replacement on the '
+                  f'same navigator/controller ({retry_delivery_count} deliveries from '
+                  f'{retry_request_count} worker requests), matching all '
+                  f'{len(retry_route)} World waypoints with no 0x4db640 refreshes.')
         print(f'  World hit a live map-backed boat blocker, installed a changed '
               f'route at physical step {changed_repaths[0][0]}, cleared the blocker, '
               f'and released Araarch at the selected shore on step {route_release_step}.')
@@ -1624,6 +1672,8 @@ def main():
                         help='also replay the captured blocker route through retail 0x416430 on one retained navigator/controller; requires --live-route-blocker-steps')
     parser.add_argument('--native-worker-mission-repath', action='store_true',
                         help='also replay the blocker route through retail 0x416430 with a live GROUND_UNLOAD mission and attached passenger')
+    parser.add_argument('--native-worker-mission-retry', action='store_true',
+                        help='seed the captured repeated-block state into native 0x4e5150 and deliver its live mission retry with 0x416430')
     parser.add_argument('--always-on-route-search', action='store_true',
                         help='keep World path service enabled throughout the moving blocker trace')
     parser.add_argument('--hpitool', default='build/hpitool')
@@ -1644,6 +1694,10 @@ def main():
         parser.error('--native-worker-repath requires --live-route-blocker-steps')
     if args.native_worker_mission_repath and not args.live_route_blocker_steps:
         parser.error('--native-worker-mission-repath requires --live-route-blocker-steps')
+    if args.native_worker_mission_retry and not args.live_route_blocker_steps:
+        parser.error('--native-worker-mission-retry requires --live-route-blocker-steps')
+    if args.native_worker_mission_retry and args.always_on_route_search:
+        parser.error('--native-worker-mission-retry requires the blocked, non-always-on fixture')
     if args.always_on_route_search and not args.live_route_blocker_steps:
         parser.error('--always-on-route-search requires --live-route-blocker-steps')
     check_route(args.world_binary, args.retail_root, args.map, tuple(args.start),
@@ -1652,7 +1706,8 @@ def main():
                 str(Path(args.hpitool).resolve()), args.native_map_mover_steps,
                 args.native_live_unload,args.terrain_scan_after,args.shore_blocker,
                 args.live_route_blocker_steps, args.native_worker_repath,
-                args.native_worker_mission_repath, args.always_on_route_search)
+                args.native_worker_mission_repath, args.always_on_route_search,
+                args.native_worker_mission_retry)
 
 
 if __name__ == '__main__':
