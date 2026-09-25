@@ -1039,6 +1039,21 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         if (native_fx, native_fz) != (fx, fz):
             raise AssertionError(('native map-grade footprint', movement,
                                   (native_fx, native_fz), (fx, fz)))
+        (class_fx, class_fz, max_depth, min_depth, bad_max_depth,
+         bad_min_depth, max_slope, bad_slope, max_water_slope,
+         bad_water_slope) = struct.unpack('<6h4B', profile)
+        carrier_fields = unit_properties(cat(hpitool, Path(retail_root),
+            'data.hpi', f'units/{carrier}.fbi').decode('latin1'))
+        carrier_sight = int(float(carrier_fields.get('sightdistance', '0')))
+        p.uc.mem_write(type_address + 0x226, struct.pack('<h', carrier_sight))
+        # 0x507fb0 reads all of the movement class's soft and hard limits from
+        # the unit type. Setting only the hard depth pair left the bad-depth
+        # thresholds zero, and the boat scanner needs the authored sight range
+        # to probe as far ahead as retail.
+        p.uc.mem_write(type_address + 0x192, struct.pack('<4h', max_depth,
+            min_depth, bad_max_depth, bad_min_depth))
+        p.uc.mem_write(type_address + 0x23c, bytes((max_slope, bad_slope,
+            max_water_slope, bad_water_slope)))
         independent_grade = native_grade_reader(map_data, profile)
 
     query_count = 0
@@ -1319,6 +1334,11 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         p.uc.mem_write(GS + 0x19f1c, struct.pack('<I', sector_stride))
         p.uc.mem_write(GS + 0x600000, struct.pack('<I', GS + 0x700000))
         visibility = struct.unpack('<I', p.uc.mem_read(GS + 0x19ef4, 4))[0]
+        owner = struct.unpack('<I', p.uc.mem_read(unit + 0xb8, 4))[0]
+        player = p.uc.mem_read(owner + 0xeb, 1)[0]
+        p.uc.mem_write(owner + 0x8c, struct.pack('<II', width // 2,
+                                                  height // 2))
+        p.uc.mem_write(GS + 0x306f, bytes((player,)))
         # The World fixture starts with an unexplored map; expose the same
         # initial state to retail when the live scanner is under comparison.
         initial_visibility = 0 if terrain_scan_after is not None else 0xffff
@@ -1343,7 +1363,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         p.uc.mem_write(type_address + 0x126, struct.pack('<hh', fx, fz))
         p.uc.mem_write(type_address + 0x18a, struct.pack('<I', p.GRID))
         p.uc.mem_write(type_address + 0x18e, struct.pack('<H', unit_turn))
-        p.uc.mem_write(type_address + 0x23c, bytes((max_slope, max_water_slope)))
+        p.uc.mem_write(type_address + 0x192, struct.pack('<4h', max_depth,
+            min_depth, bad_max_depth, bad_min_depth))
+        p.uc.mem_write(type_address + 0x23c, bytes((max_slope, bad_slope,
+            max_water_slope, bad_water_slope)))
         p.uc.mem_write(type_address + 0x24a, b'\x01')
         p.uc.mem_write(type_address + 0x248, bytes((waterline & 0xff,)))
         p.uc.mem_write(p.GRID + 4, struct.pack('<hh', fx, fz))
