@@ -22,12 +22,22 @@ The three shipped flying transports now pass native unload-through-release
 traces with their selected FBI profiles and live height scans in both balances
 and all three builds; those use a controlled ridge and direct circle rather than
 a shipped map route. Native pickup reaches reciprocal attachment and
-`BeCarried` completion for all three air carriers. A separate Lake Lokken probe
-now moves Araarch along a validated shoreline while ZONROC tracks and boards
-it; the passenger trajectory is scripted, so ground pathfinding remains open.
+`BeCarried` completion for all three air carriers. Retail's code-30
+  `Move_Seek_Pickup` auto-routes a passenger only for a `GROUND_PICKUP` carrier;
+  with a `VTOL_Pickup` carrier it waits while the flyer pursues. The code-30
+  GROUND2 auto-seek is therefore a ground-carrier behavior. A separate Lake
+  Lokken probe moves Araarch along a validated shoreline while ZONROC tracks and
+  boards it. An ordinary native `Move_Ground` route installs, but ZONROC's
+  `VTOL_Pickup` order retires at tick 4 before attachment when code 30 is not
+  active. Retail's `0x20000` append flag correctly links code 30 behind the
+  active `Move_Ground` order through native `0x4D7750`, and the GROUND2 worker
+  supplies the route before VTOL dispatch. The tested order pair still clears
+  both heads before movement or boarding, so successful queued ground-to-VTOL
+  pickup remains open.
 The callback-bearing flyer
-pose sweep covers all 26 shipped pairs, and LIFBIRD now has a separate idle/fly
-ambient-pose trace. These remain controlled headless traces, not proof of
+pose sweep covers all 26 shipped pairs, LIFBIRD now has a separate idle/fly
+ambient-pose trace, and CREAERI has a native flight-to-ground animation and
+model-pose trace. These remain controlled headless traces, not proof of
 every map, order combination, capacity case, or rendered animation.
 ZONHUNT's placed-construction root and site anchor match the native projection
 in the current fixture; a synchronized capture using the reported map and
@@ -71,8 +81,12 @@ projectile hit or judge the beam/arrow's rendered appearance.
   are not compared
   because the search spaces differ. A moving-target pickup now joins the native
   air dispatcher and flight mover while the Araarch follows a host-scripted
-  shoreline trajectory; its GROUND2 pathfinder/mover and full-map flying route
-  search remain open. Additional maps and native feature bodies remain open. The
+  shoreline trajectory. Native code 30 auto-routes Araarch for a GROUND_PICKUP
+  carrier, but waits for a VTOL_Pickup carrier. The native queued
+  Move_Ground/Move_Seek_Pickup plus live VTOL pursuit reaches route delivery but
+  clears the orders before the passenger moves; successful boarding on that
+  composition remains open. Full-map flying route search,
+  additional maps, and native feature bodies remain open. The
   separate 70px callback fixture used a synthetic `transportdistance=86`;
   shipped Vertrans uses 300 and its native pickup circle is 284px.
   Eight deterministic boat unload-circle searches,
@@ -10106,4 +10120,85 @@ not run a full carrier order, movement, camera projection, or rendered frame.
 ```sh
 ctest --test-dir build-o2 -R '^native_air_transport_animation_pose$' \
   --output-on-failure
+```
+
+### CREAERI flight-to-ground animation boundary (2026-09-25)
+
+CREAERI has no `BeginFlight` or `BeginLanding` script methods, so its distinct
+carrier animation edge is the engine-driven flight-to-ground transition. The
+native `0x4dc800` mover emits `MoveRate(0)` and `setSFXoccupy(4)` at boundary
+18 (COB event tick 17). All 19 native/World COB snapshots match, both
+propellers advance across the transition, and native `0x4ee620` matches the
+World model-transform helper for 24 pieces and 370 vertices within 0.00001522
+world units. Release, Debug, and optimized Debug pass; the optional
+`native_creaeri_landing_pose` CTest is registered when the local ICD, extracted
+CREAERI assets, Python, and Unicorn are available.
+
+This controlled mover transition does not cover a transport order, map route,
+camera projection, rendered frame, or GUI.
+
+```sh
+ctest --test-dir build -R '^native_creaeri_landing_pose$' --output-on-failure
+ctest --test-dir build-dbg -R '^native_creaeri_landing_pose$' --output-on-failure
+ctest --test-dir build-o2 -R '^native_creaeri_landing_pose$' --output-on-failure
+```
+
+### Native placement against a detached passenger footprint (2026-09-25)
+
+The two-passenger Lake Lokken unload probe now registers the first detached
+Araarch in the same retail entity table and marks its four occupied map cells.
+Native `0x507d10` rejects a second passenger at the same `(240,350)` footprint
+(strict result `0`, relaxed/moving result `1`); all four tested nonoverlapping
+placements two cells away return `1`. A no-order `0x4d8450` dispatcher,
+`0x4dc800` mover, and `0x51b2a0` position-commit pass succeeds and preserves
+the four occupancy IDs.
+
+The live `GROUND_UNLOAD` follow-up still receives its paired placement results
+through a separate native placement oracle: strict refusal followed by the
+allow-moving result keeps passenger 2 linked to the carrier at the original
+target, and the mission does not test an alternate cell. Because that mission
+query is cross-phase with the detached entity/cell setup, integrated
+multi-cargo spatial separation remains open.
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data \
+  --map 'Lake Lokken' --start 240 120 --target 240 350 \
+  --carrier aratrans --passenger araarch \
+  --native-map-mover-steps 4500 --native-live-unload \
+  --native-cargo-count 2 --probe-native-occupancy
+```
+
+### VTOL pickup order and GROUND2 route boundary (2026-09-25)
+
+The native `0x403430` `Move_Seek_Pickup` handler only creates a passenger
+GROUND2 route when the referenced carrier has `GROUND_PICKUP` code 21. When
+the carrier has `VTOL_Pickup` code 62, the handler takes the wait/poll path and
+does not submit a route request. This is retail order behavior, not a
+pathfinder failure.
+
+An ordinary code-28 `Move_Ground` order initialized through native `0x4d4da0`
+does admit a GROUND2 request. With ZONROC's VTOL order also active, however,
+the carrier order retires before Araarch attaches. A follow-up used the retail
+append flag `0x20000` before the native `0x4d7750` insertion call. This
+structurally placed `Move_Seek_Pickup` at `passenger+0x64` behind the active
+Move_Ground order at `passenger+0x60`, with a null queue tail. The GROUND2
+worker delivered the two-point route to ZONROC's start before VTOL dispatch.
+At tick 4, dispatch cleared both order heads before Araarch moved: travel was
+zero, there were no waypoint pops, and no cargo attached. Thus the retail
+append mechanism is identified, but this order composition still does not
+complete a queued move-to-aircraft then pickup sequence.
+
+These are O2 Standard Lake Lokken diagnostics for one ZONROC/Araarch pair. The
+route worker, visibility, feature bodies, UI/effects, and COB method tables
+remain controlled. They stop before a successful VTOL boarding on a moving
+GROUND2 passenger.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_ground_route.py \
+  --hpitool build-o2/hpitool --max-ticks 9000
+PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_ground_move.py \
+  --hpitool build-o2/hpitool --max-ticks 9000
+PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_ground_move_seek.py \
+  --hpitool build-o2/hpitool --max-ticks 9000
 ```

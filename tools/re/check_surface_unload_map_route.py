@@ -71,6 +71,155 @@ def retail_unit_profile(hpitool, retail_root, unit, crusades=False):
         hpitool, retail_root, f'units/{unit}.fbi').decode('latin1'))
 
 
+def native_detached_passenger_occupancy_probe(p, carrier, owner,
+                                               passenger_profile,
+                                               passenger_fields,
+                                               moveinfo_text,
+                                               released_position,
+                                               second_passenger_id,
+                                               placement_args):
+    """Run retail placement against one detached Araarch in this same map Phase."""
+    foot_x, foot_z = passenger_profile[:2]
+    class_name = passenger_fields.get('movementclass', '').lower()
+    class_fields = next((properties(block_text) for block_text in
+        re.findall(r'\[[^]]+\]\s*\{([^{}]*)\}', moveinfo_text, re.S)
+        if properties(block_text).get('name', '').lower() == class_name), None)
+    if class_fields is None:
+        raise AssertionError(('missing detached passenger movement class', class_name))
+    class_bytes = class_record(class_fields)
+
+    # The live carrier already occupies id 1. Retail addresses an entity by
+    # base + id * 0x138, so the detached passenger is installed at id 2.
+    entity_base = carrier - 0x138
+    passenger_id = 2
+    passenger = entity_base + passenger_id * 0x138
+    entity_end = entity_base + 4 * 0x138
+    first_page = entity_base & ~0xfff
+    if not any(begin <= first_page and end >= first_page + 0xfff
+               for begin, end, _perms in p.uc.mem_regions()):
+        p.uc.mem_map(first_page, 0x1000)
+    p.uc.mem_write(entity_base, bytes(0x138))
+    p.uc.mem_write(passenger, bytes(0x138))
+    p.uc.mem_write(GS + 0x14e84, struct.pack('<II', entity_base, entity_end))
+    p.uc.mem_write(owner + 0x74, struct.pack('<I', entity_base))
+    p.uc.mem_write(owner + 0x78, struct.pack('<I', entity_end))
+
+    mover, nav, kind, grid = (p._alloc(n) for n in (0x180, 0x180, 0x400, 0x40))
+    for address, size in ((mover, 0x180), (nav, 0x180),
+                          (kind, 0x400), (grid, 0x40)):
+        p.uc.mem_write(address, bytes(size))
+    put = lambda address, fmt, *values: p.uc.mem_write(
+        address, struct.pack(fmt, *values))
+    p.uc.mem_write(grid + 4, class_bytes)
+    put(kind + 0x18a, '<I', grid)
+    put(kind + 0x126, '<hh', foot_x, foot_z)
+    put(kind + 0x192, '<hh', int(class_fields.get('maxwaterdepth', '10000')),
+        int(class_fields.get('minwaterdepth', '-10000')))
+    p.uc.mem_write(kind + 0x23c,
+                   bytes((class_bytes[12], class_bytes[14])))
+    p.uc.mem_write(kind + 0x24a, b'\x01')
+    for key, offset, default in (('maxvelocity', 0x162, 0),
+                                 ('brakerate', 0x166, 0.5),
+                                 ('acceleration', 0x16a, 0.5)):
+        put(kind + offset, '<i', int(float(passenger_fields.get(key, default)) * 65536))
+    for key, offset, default in (('turnrate', 0x18e, 500),
+                                 ('turninplacerate', 0x190, 0)):
+        put(kind + offset, '<H', int(float(passenger_fields.get(key, default))) & 65535)
+    put(kind + 0x172, '<i', int(float(passenger_fields.get('roadmultiplier', 1.2)) * 65536))
+    put(kind + 0x16e, '<i', int(float(passenger_fields.get(
+        'watermultiplier', passenger_fields.get('watermultipliser', 1))) * 65536))
+    put(kind + 0x249, '<B', 6)
+
+    put(passenger + 2, '<H', passenger_id)
+    put(passenger + 8, '<I', mover)
+    put(passenger + 0x68, '<iii', *released_position)
+    origin_x = (released_position[0] // 65536 - (foot_x - 1) * 8) // 16
+    origin_z = (released_position[2] // 65536 - (foot_z - 1) * 8) // 16
+    put(passenger + 0x74, '<hh', origin_x, origin_z)
+    put(passenger + 0x78, '<hh', foot_x, foot_z)
+    put(passenger + 0xa4, '<I', 0)
+    put(passenger + 0xa8, '<I', 0)
+    put(passenger + 0xb4, '<I', kind)
+    put(passenger + 0xb8, '<I', owner)
+    put(passenger + 0x130, '<I', 0x1000000)
+    put(mover, '<I', nav)
+    put(nav, '<I', 0x5f2a24)
+    put(nav + 8, '<I', passenger)
+    put(mover + 0x20, '<i', 0)
+    put(mover + 0x30, '<I', 0x7fffffff)
+    put(mover + 0x36, '<H', 0)
+
+    occupied_cells = []
+    for z in range(origin_z, origin_z + foot_z):
+        for x in range(origin_x, origin_x + foot_x):
+            put(p.cells_addr + (z * p.W + x) * 14, '<H', passenger_id)
+            occupied_cells.append((x, z))
+
+    args = list(placement_args)
+    args[1] = second_passenger_id
+
+    def native_place(call_args):
+        # GROUND_UNLOAD's first stack value is not the passenger type block.
+        return p.icd.call(0x507d10,
+                          (kind, call_args[1], call_args[2],
+                           call_args[3], call_args[4]))
+
+    hooks = p.icd.hooks
+    placement_hook = hooks.pop(0x507d10, None)
+    try:
+        exact_result, exact_error = native_place(args)
+        relaxed_args = list(args)
+        relaxed_args[4] = 1
+        relaxed_result, relaxed_error = native_place(relaxed_args)
+        packed = args[2] & 0xffffffff
+        cell_x, cell_z = struct.unpack('<hh', struct.pack('<I', packed))
+        nearby = {}
+        for dx, dz in ((-2, 0), (2, 0), (0, -2), (0, 2)):
+            candidate = list(args)
+            candidate[2] = ((cell_x + dx) & 0xffff) | (((cell_z + dz) & 0xffff) << 16)
+            nearby[(dx, dz)] = native_place(candidate)
+    finally:
+        if placement_hook is not None:
+            hooks[0x507d10] = placement_hook
+    if exact_error:
+        raise RuntimeError(('same-Phase native 0x507d10 exact occupied-site query',
+                            exact_error))
+    if relaxed_error:
+        raise RuntimeError(('same-Phase native 0x507d10 relaxed occupied-site query',
+                            relaxed_error))
+    if any(error for _result, error in nearby.values()):
+        raise RuntimeError(('same-Phase native 0x507d10 nearby-site query', nearby))
+    print(f'  Same-Phase occupancy probe: entity id {passenger_id} at slot '
+          f'{hex(passenger)} in [{hex(entity_base)}, {hex(entity_end)}), '
+          f'occupying {occupied_cells}; native exact second-passenger candidate '
+          f'returned {exact_result} (allow-moving query {relaxed_result}); '
+          f'neighboring two-cell candidates returned '
+          f'{ {offset: result for offset, (result, _error) in nearby.items()} }.')
+
+    # Exercise the detached unit's no-order/default update, then see whether
+    # retail itself preserves the cell occupancy through the mover commit.
+    results, errors = {}, []
+    for label, address, call_args, ecx in (
+            ('dispatcher', 0x4d8450, (passenger,), None),
+            ('mover', 0x4dc800, (passenger,), mover),
+            ('position-commit', 0x51b2a0, (passenger,), mover)):
+        hooks = p.icd.hooks
+        placement_hook = hooks.pop(0x507d10, None)
+        try:
+            value, error = p.icd.call(address, call_args, ecx=ecx)
+        finally:
+            if placement_hook is not None:
+                hooks[0x507d10] = placement_hook
+        results[label] = value
+        if error:
+            errors.append((label, error))
+    cell_ids_after = [struct.unpack('<H', p.uc.mem_read(
+        p.cells_addr + (z * p.W + x) * 14, 2))[0] for x, z in occupied_cells]
+    print(f'  Native default update: {results}; footprint cell ids after update='
+          f'{cell_ids_after}; errors={errors}.')
+    return exact_result, nearby, errors, (passenger_id, cell_ids_after)
+
+
 def replay_native_attempt(width, height, cached_grades, live_grade, attempt,
                           profile, target_x, target_z, circle_radius, sea,
                           position):
@@ -717,7 +866,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 shore_blocker=False, live_route_blocker_steps=0,
                 native_worker_repath=False, native_worker_mission_repath=False,
                 always_on_route_search=False, native_worker_mission_retry=False,
-                native_worker_mission_collision=False):
+                native_worker_mission_collision=False,
+                probe_native_occupancy=False):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     if not 1 <= native_cargo_count <= 16:
@@ -726,6 +876,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         raise ValueError('--native-cargo-count above one requires --native-live-unload')
     if native_cargo_count > 1 and shore_blocker:
         raise ValueError('multi-cargo native unload is incompatible with --shore-blocker')
+    if probe_native_occupancy and (not native_live_unload or native_cargo_count < 2):
+        raise ValueError('--probe-native-occupancy requires a multi-cargo native live unload')
     native_live_profiles = {
         'lake lokken': {('vertrans', 'araarch'), ('verscout', 'araarch'),
                         ('verman', 'araarch'), ('aratrans', 'araarch'),
@@ -1258,6 +1410,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     active_blocker_state = None
     native_passengers = []
     active_native_passenger = [None]
+    native_occupancy_probe_state = None
     if native_live_unload:
         tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
                        f'Maps/{map_name}.tnt')
@@ -1847,6 +2000,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         previous_native_scan_deadline = native_scan_deadline
         native_release_positions = {}
         native_release_ticks = {}
+        native_occupancy_hold_step = None
         for step, row in enumerate(world_steps, 1):
             p.uc.mem_write(GS + 0x19f44, struct.pack('<I', route_tick + step))
             if shore_blocker:
@@ -1856,6 +2010,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                                          blocker_speed)
                 native_blocker(active_blocker_state)
             if native_live:
+                placement_result_count_before = len(native_placement_results)
                 stage_before_dispatch = p.uc.mem_read(native_live.mission + 5, 1)[0]
                 dispatch_row = native_live.dispatch(route_tick + step)
                 if stage_before_dispatch == 1 and dispatch_row[1] == 2:
@@ -1872,6 +2027,22 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 if next_passenger in native_passengers and \
                         native_live.get(next_passenger + 0xA8) == unit:
                     active_native_passenger[0] = next_passenger
+                if (probe_native_occupancy and native_occupancy_probe_state is None and
+                        native_passengers[0] in native_release_positions):
+                    if native_cargo_count < 2 or not native_placement_results:
+                        raise AssertionError(('occupancy probe lacks its next cargo or placement args',
+                                              native_cargo_count, native_placement_results[-4:]))
+                    first_position = native_release_positions[native_passengers[0]]
+                    next_id = native_live.get(native_passengers[1] + 2)
+                    native_occupancy_probe_state = native_detached_passenger_occupancy_probe(
+                        p, unit, native_live.owner, passenger_profile,
+                        passenger_profile_fields, moveinfo_text, first_position,
+                        next_id, native_placement_results[-1][0])
+                    native_place.set_blocker(first_position[0], first_position[2],
+                                             moving=False)
+                    if native_occupancy_probe_state[0] != 0:
+                        raise AssertionError(('native 0x507d10 accepted an occupied unload cell',
+                                              native_occupancy_probe_state))
             else:
                 value, error = p.icd.call(0x4d8450, (unit,))
                 assert error is None, ('native map mover pre-step', step, error)
@@ -1917,6 +2088,21 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 'native/World real-map mover step', step, native_step,
                 expected_step, row[9])
             movement_parity_steps += 1
+            new_placements = native_placement_results[placement_result_count_before:]
+            same_candidate_pair = (len(new_placements) >= 2 and
+                new_placements[-2][1] == 0 and new_placements[-1][1] == 1 and
+                new_placements[-2][0][2] == new_placements[-1][0][2] and
+                new_placements[-2][0][1] == native_live.get(native_passengers[1] + 2))
+            if (probe_native_occupancy and native_occupancy_probe_state is not None and
+                    same_candidate_pair and
+                    native_live.get(unit + 0xac) == native_passengers[1] and
+                    native_live.get(native_passengers[1] + 0xa8) == unit):
+                native_occupancy_hold_step = step
+                print(f'  Native GROUND_UNLOAD held passenger 2 at the original shore '
+                      f'candidate on physical step {step}; native placement returned '
+                      f'strict=0 then allow-moving=1, while its cargo owner and carrier '
+                      f'list link remained intact.')
+                break
             if native_live and not native_live.get(unit + 0xAC):
                 live_release_step = step
                 break
@@ -1924,7 +2110,27 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         if terrain_scan_after is not None:
             assert native_scan_count > 0, ('native live terrain scan did not run',
                                            native_scan_count)
-        if native_live:
+        if native_live and native_occupancy_hold_step is not None:
+            first, second = native_passengers[:2]
+            assert len(native_release_positions) == 1, (
+                'occupancy probe released more than its first passenger',
+                native_release_positions, native_release_ticks)
+            assert native_live.get(unit + 0xac) == second
+            assert native_live.get(second + 0xa8) == unit
+            assert native_live.get(native_live.mission + 0x16) == second
+            assert [result for _args, result in native_placement_results[-2:]] == [0, 1]
+            assert blocked_cargo_held and blocked_cargo_held[-1]
+            second_args = native_placement_results[-1][0]
+            assert second_args[2] == native_placement_results[-2][0][2], (
+                'blocked second passenger was assigned a different placement cell',
+                native_placement_results[-2:],)
+            print(f'  Occupancy outcome: native 0x507d10 rejected the same '
+                  f'{second_args[2] & 0xffff},{(second_args[2] >> 16) & 0xffff} '
+                  f'candidate used for passenger 1; GROUND_UNLOAD held passenger 2 '
+                  f'with no alternate cell selected. The direct neighboring-site '
+                  f'queries are recorded above; the mission itself did not issue one.')
+            map_mover_count = native_occupancy_hold_step
+        elif native_live:
             assert live_release_step is not None, (
                 'native surface mission did not release Araarch during the map-backed mover trace',
                 {'placement': native_placement_results[-8:],
@@ -2123,6 +2329,8 @@ def main():
                         help='keep retail GROUND_UNLOAD active through map-backed movement and passenger release')
     parser.add_argument('--native-cargo-count', type=int, default=1,
                         help='number of linked cargo passengers in the native surface-unload trace (1..16)')
+    parser.add_argument('--probe-native-occupancy', action='store_true',
+                        help='register the first detached passenger in retail entity/cell tables and test the second landing')
     parser.add_argument('--terrain-scan-after', type=int,
                         help='compare live native/World terrain scans after route delivery; requires --native-live-unload (0..2500 ticks)')
     parser.add_argument('--shore-blocker', action='store_true',
@@ -2151,6 +2359,9 @@ def main():
         parser.error('--native-cargo-count must be 1..16')
     if args.native_cargo_count > 1 and not args.native_live_unload:
         parser.error('--native-cargo-count above one requires --native-live-unload')
+    if args.probe_native_occupancy and (not args.native_live_unload or
+                                        args.native_cargo_count < 2):
+        parser.error('--probe-native-occupancy requires --native-live-unload --native-cargo-count 2 or more')
     if args.terrain_scan_after is not None and not 0 <= args.terrain_scan_after <= 2500:
         parser.error('--terrain-scan-after must be 0..2500')
     if args.terrain_scan_after is not None and not args.native_live_unload:
@@ -2178,7 +2389,8 @@ def main():
                 args.live_route_blocker_steps, args.native_worker_repath,
                 args.native_worker_mission_repath, args.always_on_route_search,
                 args.native_worker_mission_retry,
-                args.native_worker_mission_collision)
+                args.native_worker_mission_collision,
+                args.probe_native_occupancy)
 
 
 if __name__ == '__main__':
