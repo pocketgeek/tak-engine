@@ -9218,6 +9218,30 @@ PYTHONPATH=tools/re python3 tools/re/check_zhon_construction_display_timeline.py
   --binary build-o2/retail_script_test --ticks 103
 ```
 
+### Native flyer callback-to-3DO pose join (2026-09-25)
+
+The VERBALL check extends the model-pose comparison to a non-Zonhunt flying
+unit. It runs retail's `0x4dc800` mover through a controlled flight sequence,
+dispatches its real `TurnDirection(-135)`, `MoveRate(3)`, and
+`setSFXoccupy(5)` call-ins to the attached shipped COB, and captures the
+post-tick wing poses. The wing pieces continue interpolating between native
+COB ticks 4 and 5. All 10 complete native COB boundaries match the World
+script oracle for the same callback schedule; native `0x4ee620` transforms all
+22 shipped `verball.3do` pieces and 133 vertices to within 0.00001149 world
+units of the World transform helper. This complements the complete controlled
+World snapshot comparison and Zonhunt construction-pose check; it does not
+replace either one. The unit targets, speeds, heading and services are
+controlled, with no map pathfinding or camera, texture, projection,
+framebuffer, or GUI comparison.
+
+Reproduce with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/check_native_flight_model_pose.py \
+  --script-binary build-o2/retail_script_test \
+  --model-binary build-o2/model_transform_test
+```
+
 ### Native death-state dispatch through owner retirement (2026-09-24)
 
 `probe_native_set31_lifecycle.py --native-death-state` enters retail's
