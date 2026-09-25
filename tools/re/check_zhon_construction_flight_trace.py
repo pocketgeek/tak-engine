@@ -2,10 +2,12 @@
 """Pair retail's placed-Zhon construction orbit with World flight movement.
 
 One emulator instance executes the actual 41ef00 stage-5 -> stage-4 handoff,
-the point-controller constructor/radius setter/navigator binder, and then the
-real 4dc800 mover (including navigator vfunc 524af0) on a flat 100-height
-plane. World receives that exact start state, site, and installed orbit point,
-using the asset-backed zonhunt profile. No retail GUI is launched.
+captures the point-controller factory request at 4e40e0 with a minimal fixture
+object, then runs the native radius setter, navigator binder, and real 4dc800
+mover (including navigator vfunc 524af0) on a flat 100-height plane. World
+receives that start state, site, and installed orbit point using the asset-backed
+zonhunt profile. The factory stub does not establish controller cleanup across
+retargets. No retail GUI is launched.
 """
 import argparse
 import struct
@@ -162,7 +164,6 @@ def native_trace(steps, seed):
     rows = []
     for tick in range(1, steps + 1):
         put(uc, game + 0x19f44, tick)
-        put(uc, unit + 0xa4, sector)
         _, error = p.call(0x4dc800, args=(unit,), ecx=mover)
         if error:
             raise RuntimeError({'tick': tick, '4dc800': error})
@@ -221,7 +222,7 @@ def main():
         raise AssertionError('expected the 161-to-177 world-unit altitude climb')
     print(f"PASS: {steps} exact native/World Zhon placed-construction flight ticks; "
           f"native 41ef00 goal {metadata['goal']} (heading {metadata['goal_heading']}) "
-          "flows through the installed native controller and 4dc800/524af0; "
+          "is bound through the fixture factory and native navigator to 4dc800/524af0; "
           "XYZ, Y altitude, heading, velocity, navigator output, and site-relative X/Z match")
 
 

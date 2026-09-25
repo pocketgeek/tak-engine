@@ -625,6 +625,60 @@ int main(int argc,char** argv) {
             require(world.feature(treeId)->dmg==476 && world.unit(target)->hp==Fixed::fromInt(2000),
                 "sprite-only ballistic cannon collides with a blocking feature before its selected unit target");
         }
+        {
+            UnitType shooter;shooter.maxHp=100;
+            Weapon arrow;arrow.ballistic=true;arrow.shotModel="araarrow";arrow.projVel=750;
+            arrow.range=450;arrow.damage=213;arrow.reload=100;shooter.weapons={arrow};shooter.weapon=arrow;
+            UnitType targetType;targetType.maxHp=2000;targetType.footX=targetType.footZ=2;
+            targetType.modelTop=80*65536;
+            targetType.projectileQuad=RetailCollisionQuad{{{-20*65536,-20*65536},{20*65536,-20*65536},
+                {20*65536,20*65536},{-20*65536,20*65536}}};
+            World world;world.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
+            RetailMapFeatureType mapTree;mapTree.name="tree";mapTree.projectileHeight=255;
+            std::vector<uint16_t> raw(64*64,0xffff);const int treeId=25*64+28;
+            raw[size_t(treeId)]=0;world.setMapPlacementFeatures(raw,{mapTree});
+            FeatType tree;tree.name="tree";tree.hp=10000;tree.projectileHeight=255;
+            world.setFeatureTypes({tree});world.addFeature(treeId,448,400,0,1,1,1,false,0,false);
+            const int from=world.spawn(&shooter,225,400,0,0);
+            const int target=world.spawn(&targetType,520,400,0,1);
+            world.unit(from)->groundY=world.unit(target)->groundY=Fixed::fromInt(20);
+            world.setStance(from,2);world.setStance(target,2);
+            RetailReplayProbe::shoot(world,from,target);
+            require(world.projectiles().size()==1 && world.projectiles()[0].ballistic3d,
+                "Araarch-speed arrow enters World ballistic flight");
+            const auto launch=world.projectiles()[0];
+            require(launch.position==std::array<int32_t,3>{225*65536,20*65536,400*65536} &&
+                    launch.velocity==std::array<int32_t,3>{819000,20100,0} &&
+                    launch.angles==std::array<uint16_t,3>{0,16384,306} && launch.substeps==2,
+                "World Araarch-speed launch matches native manager probe state");
+            struct Snapshot { std::array<int32_t,3> position,velocity;std::array<uint16_t,3> angles; };
+            constexpr std::array<Snapshot,8> nativeFlight{{
+                {{{16383600,1344806,26214400}},{{819000,16024,0}},{{0,16384,204}}},
+                {{{18021600,1370740,26214400}},{{819000,11948,0}},{{0,16384,152}}},
+                {{{19659600,1388522,26214400}},{{819000,7872,0}},{{0,16384,100}}},
+                {{{21297600,1398152,26214400}},{{819000,3796,0}},{{0,16384,48}}},
+                {{{22935600,1399630,26214400}},{{819000,-280,0}},{{0,16384,65533}}},
+                {{{24573600,1392956,26214400}},{{819000,-4356,0}},{{0,16384,65481}}},
+                {{{26211600,1378130,26214400}},{{819000,-8432,0}},{{0,16384,65429}}},
+                {{{27849600,1355152,26214400}},{{819000,-12508,0}},{{0,16384,65377}}},
+            }};
+            for(unsigned tick=1;tick<=9;++tick) {
+                world.tick(1.f/30.f);
+                if(tick<9) {
+                    require(world.projectiles().size()==1 && world.feature(treeId)->dmg==0 &&
+                            world.unit(target)->hp==Fixed::fromInt(2000),
+                        "World keeps the matching native projectile active through tick 8");
+                    const auto& shot=world.projectiles()[0];const auto& reference=nativeFlight[tick-1];
+                    require(shot.position==reference.position && shot.velocity==reference.velocity &&
+                            shot.angles==reference.angles,
+                        "World ballistic state matches the native manager at every active tick");
+                }
+            }
+            require(world.projectiles().empty() && world.feature(treeId)->dmg==213 &&
+                    world.unit(target)->hp==Fixed::fromInt(2000),
+                "World feature impact and projectile retirement match native manager tick 9");
+            std::cout<<"PASS: Araarch-speed World projectile matches native pool trajectory and retires on tick 9\n";
+        }
         std::cout<<"PASS: authored ballistic arrows collide with features before their selected unit target\n";
         std::cout<<"PASS: sprite-only ballistic shots use native XYZ motion and feature collision\n";
         {

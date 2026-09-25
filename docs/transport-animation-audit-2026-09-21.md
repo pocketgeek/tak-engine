@@ -144,12 +144,18 @@ implementation descriptions. Current open gates are:
   remains gated one pixel beyond it. Araarch's native projectile timing now
   matches World when callbacks run in retail order: SET23 at tick 39, release at
   tick 40, identical age-zero position/velocity/angles, tree impact at age 9,
-  and clear-target impact at age 11. The native impact callback was stepped
-  directly, so global projectile-manager scheduling remains open. Special
-  weapon cases, broader missing-script behavior, visibility-loss timelines,
-  and full movement/flight callback phase comparisons remain open. One native
-  pending-shot/dead-target sequence now joins target retirement to the next
-  common weapon update; broader target-loss cases remain open.
+  and clear-target impact at age 11. A separate native pool trace now covers
+  insertion, one manager update and compaction per tick, tree impact, and same-
+  tick retirement; World matches its launch and each active-tick snapshot.
+  The native impact callback's damage/effect body remains outside that fixture.
+  Special weapon cases, broader missing-script behavior, visibility-loss timelines,
+  and full movement/flight callback phase comparisons remain open. A new
+  three-profile native mover sweep covers ground, floater, and flyer callback
+  requests over a changing tick and an unchanged tick; it captures at the
+  script-dispatch boundary, so full COB execution and wider roster coverage
+  remain open. The pending-shot/dead-target sequence now joins target
+  retirement to the next common weapon update; broader target-loss cases remain
+  open.
 - Menu video color: the Bink decoder now uses the chroma matrix measured from
   retail's Bink DLL. Sixteen sampled frames across idle, hover-in, hover-loop,
   and mouse-out for all four doors pass, with mean RGB error 1.151–2.058/255.
@@ -7893,6 +7899,24 @@ captures the native sequence `TurnDirection(-135)`, `MoveRate(1)`,
 second unchanged tick is silent. The helper CTest also checks same-sign turn
 changes, reversal and stop.
 
+The follow-up headless profile sweep runs the actual native mover for two ticks
+each on shipped ARAARCH, VERTRANS, and VERBALL FBI/COB pairs. It confirms
+`TurnDirection(-40) → MoveRate(1) → setSFXoccupy(4)` for ARAARCH,
+`TurnDirection(-40) → MoveRate(1) → setSFXoccupy(2)` for VERTRANS, and
+`TurnDirection(-135) → MoveRate(3) → setSFXoccupy(5)` for VERBALL; each is
+silent on the unchanged second tick. The test verifies the callback methods
+declared by each shipped COB and compares each profile's request sequence to
+the shared World helper. It captures requests before COB method lookup, so it
+does not prove full COB execution or rendered performance across the roster.
+The Python probe and focused helper CTest pass. No retail GUI was launched.
+
+Reproduce with:
+
+```sh
+python3 tools/re/check_movement_callback_order.py --binary build-o2/retail_movement_animation_test
+ctest --test-dir build-o2 -R '^retail_movement_animation$' --output-on-failure
+```
+
 `BeginFlight` call-ins now carry a display-only serial through the render
 snapshot. The display VM receives every call-in, including one that occurs while
 the flyer is still landed, and avoids duplicating the later airborne-mode
@@ -8140,17 +8164,29 @@ done
 
 ### Controlled Zhon construction-flight pair (2026-09-23)
 
-`check_zhon_construction_flight_trace.py` now composes native `41ef00` stages
-5→4, the real point-controller constructor and setters (`4e40e0`, `4e4540`),
-the native navigator install (`4d4d40`), and 16 `4dc800` mover ticks through
-`524af0`. The World side loads the retail `zonhunt` profile and follows the
-exact installed point. Seed 50 installs `(1041.015,100,1007.224)` around the
+`check_zhon_construction_flight_trace.py` composes native `41ef00` stages
+5→4, captures the point-controller factory request at `4e40e0` with a minimal
+fixture object, then runs the native radius setter (`4e4540`), navigator
+install (`4d4d40`), and `4dc800` mover through `524af0`. The World side loads
+the retail `zonhunt` profile and follows the installed point. Seed 50 installs
+`(1041.015,100,1007.224)` around the
 site at `(1120,100,1060)`, with flags `0x60` and heading 43016. Both sides use
 the same flat 100-height plane and start at `(1000,161,1000)`; by tick 16 both
 are at `(1012.576,177,995.101)`. All 16 rows match exactly for XYZ, altitude,
 heading, velocity, navigator output, and Monarch-to-site X/Z. The controlled
-trace therefore finds no native/World construction-flight mismatch over this
-orbit leg, and needs no height or position correction on this evidence.
+movement comparison therefore finds no native/World mismatch over this orbit
+leg and needs no height or position correction on this evidence. The factory
+stub does not initialize every controller subobject, so retarget cleanup is not
+covered by this trace.
+
+The headless trace was extended to 44 consecutive mover ticks and passes at
+both seed 50 and seed `0xdeadbeef`, comparing XYZ, altitude, heading, velocity,
+navigator output, and site-relative X/Z. The native sector pointer is initialized
+once and allowed to follow native mover updates; resetting it every tick had
+been a fixture error. Extending this simple point-order fixture past orbit
+arrival is still not a persistent-construction test: the actual build mission
+regenerates orbit goals, while the synthetic World move order retires at its
+goal. A mission-backed retarget trace remains open.
 
 Reproduce after building the focused World mode in each configuration with:
 
@@ -8158,8 +8194,10 @@ Reproduce after building the focused World mode in each configuration with:
 for bin in build build-dbg build-o2; do
   cmake --build "$bin" --target conjure_test -j4
   python3 tools/re/check_zhon_construction_flight_trace.py \
-    --binary "$bin/conjure_test" --steps 16
+    --binary "$bin/conjure_test" --steps 44
 done
+python3 tools/re/check_zhon_construction_flight_trace.py \
+  --binary build-o2/conjure_test --steps 44 --seed 0xdeadbeef
 ```
 
 This is a controlled mover comparison, not a synchronized render comparison:
@@ -8577,9 +8615,39 @@ position `(225,141.25,200)`, velocity `(815300,-80300,0)`, and angles
 clear target, both hit at age 11. This resolves the reported one-tick gap as a
 probe-ordering issue and gives no reason to change production code for this
 case. The native collision routine was advanced directly, so the global
-projectile-manager's same-tick scheduling is not established. The untracked
-ad-hoc Araarch probe still calls the callbacks in the old reversed order and is
-not authoritative for release timing. No retail GUI was launched.
+projectile-manager's same-tick scheduling is covered by the following pool
+trace. The untracked ad-hoc Araarch probe still calls the callbacks in the old
+reversed order and is not authoritative for release timing. No retail GUI was
+launched.
+
+### Native projectile pool scheduling (2026-09-24)
+
+`tools/re/probe_projectile_manager_timeline.py` creates one Araarch-speed shell
+through retail's real projectile pool initialization (`0x52aa20`), slot
+allocation (`0x529a90`), aim (`0x52bdf0`), and ballistic initializer
+(`0x52be80`). It then calls the global pool manager (`0x52afd0`) once on each
+tick. Each tick dispatches one live shell update (`0x52bf90`) and one pool
+compaction (`0x52a800`). The native update reaches map collision (`0x52a4d0`):
+the shell remains in the pool through ticks 1–8, hits the height-255 tree at
+`(448,400)` on tick 9 at `(449.945,20.203,400)`, and the real compactor reduces
+the pool count to zero on that same tick. Its XYZ position, velocity, and angle
+state at every manager tick match the retail ballistic stepping helper.
+
+The matching World case is in `retail_script_test`. It checks the same launch
+state, compares all eight live-tick XYZ/velocity/angle snapshots against the
+native trace, then confirms tree damage and projectile removal on tick 9. No
+native-versus-World scheduling mismatch was reproduced, so this work does not
+justify a production change.
+
+The fixture initializes the manager and allocates the slot through their native
+pool entry points, but writes the launch caller's owner/start metadata directly;
+it does not yet join common weapon release to pool insertion in one trace. At
+impact, the probe records the real collision result and entry into `0x529c10`,
+then substitutes the omitted damage/effect side effects by setting the
+projectile retirement bit before native compaction. This verifies the real
+collision-to-manager-removal schedule, while native impact damage/effects and
+the code that normally sets that bit remain unverified. It is headless Unicorn
+emulation only; no GUI or Wine launch was used.
 
 ### Delayed script release across range and visibility changes (2026-09-24)
 
