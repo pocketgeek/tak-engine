@@ -713,12 +713,19 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 carrier=None, passenger=None, crusades=False, native_map_grades=False,
                 hpitool='build/hpitool', native_map_mover_steps=0,
                 native_live_unload=False, terrain_scan_after=None,
+                native_cargo_count=1,
                 shore_blocker=False, live_route_blocker_steps=0,
                 native_worker_repath=False, native_worker_mission_repath=False,
                 always_on_route_search=False, native_worker_mission_retry=False,
                 native_worker_mission_collision=False):
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
+    if not 1 <= native_cargo_count <= 16:
+        raise ValueError('--native-cargo-count must be 1..16')
+    if native_cargo_count > 1 and not native_live_unload:
+        raise ValueError('--native-cargo-count above one requires --native-live-unload')
+    if native_cargo_count > 1 and shore_blocker:
+        raise ValueError('multi-cargo native unload is incompatible with --shore-blocker')
     native_live_profiles = {
         'lake lokken': {('vertrans', 'araarch'), ('verscout', 'araarch'),
                         ('verman', 'araarch'), ('aratrans', 'araarch'),
@@ -1249,17 +1256,63 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     blocked_placement_states = []
     blocked_cargo_held = []
     active_blocker_state = None
+    native_passengers = []
+    active_native_passenger = [None]
     if native_live_unload:
         tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
                        f'Maps/{map_name}.tnt')
         live_map_data = parse_tnt(tnt_data)
-        passenger_profile = movement_profile(
-            cat(hpitool, Path(retail_root), 'data.hpi', 'gamedata/moveinfo.tdf')
-                .decode('latin1'),
-            cat(hpitool, Path(retail_root), 'data.hpi',
-                f'units/{passenger}.fbi').decode('latin1'))
+        moveinfo_text = cat(hpitool, Path(retail_root), 'data.hpi',
+                            'gamedata/moveinfo.tdf').decode('latin1')
+        passenger_unit_path = f'units/{passenger}.fbi'
+        if crusades:
+            try:
+                passenger_unit_path = f'unitscb/{passenger}.fbi'
+                passenger_unit_text = cat(hpitool, Path(retail_root), 'data.hpi',
+                                          passenger_unit_path).decode('latin1')
+            except subprocess.CalledProcessError:
+                passenger_unit_path = f'units/{passenger}.fbi'
+                passenger_unit_text = cat(hpitool, Path(retail_root), 'data.hpi',
+                                          passenger_unit_path).decode('latin1')
+        else:
+            passenger_unit_text = cat(hpitool, Path(retail_root), 'data.hpi',
+                                      passenger_unit_path).decode('latin1')
+        passenger_profile_fields = retail_unit_profile(
+            hpitool, retail_root, passenger, crusades)
+        passenger_profile = movement_profile(moveinfo_text, passenger_unit_text)
         carrier_profile = retail_unit_profile(hpitool, retail_root, carrier,
                                               crusades)
+        capacity_count = int(float(carrier_profile.get('transportcapacity', '0')))
+        capacity_size = int(float(carrier_profile.get('transportsizecapacity', '0')))
+        capacity_passenger = int(float(carrier_profile.get('transportsize', '0')))
+        passenger_size = int(float(passenger_profile_fields.get(
+            'transportedsize', str(passenger_profile[0] * passenger_profile[1]))))
+        if capacity_count <= 0 or capacity_size <= 0 or capacity_passenger <= 0:
+            raise AssertionError(('carrier capacity profile', carrier, carrier_profile))
+        max_cargo_count = (min(capacity_count, capacity_size // passenger_size)
+                           if passenger_size <= capacity_passenger else 0)
+        if native_cargo_count > max_cargo_count:
+            raise ValueError((f'{native_cargo_count} passengers exceed the selected FBI capacity',
+                              carrier, capacity_count, capacity_size,
+                              capacity_passenger, passenger_size))
+        capacity_inputs = [
+            f'{passenger_size} {capacity_passenger} {count} {capacity_count} '
+            f'{count * passenger_size} {capacity_size}'
+            for count in range(max_cargo_count + 1)
+        ]
+        capacity_result = subprocess.run(
+            [world_binary, '--capacity'], input='\n'.join(capacity_inputs) + '\n',
+            check=True, capture_output=True, text=True)
+        capacity_rows = [line.strip() for line in capacity_result.stdout.splitlines()]
+        expected_capacity_rows = ['1'] * max_cargo_count + ['0']
+        if capacity_rows != expected_capacity_rows:
+            raise AssertionError(('FBI capacity boundary disagrees with production helper',
+                                  carrier, capacity_inputs, capacity_rows,
+                                  expected_capacity_rows))
+        print(f'  Selected FBI capacity: {capacity_count} passengers, '
+              f'{capacity_size} total size, {capacity_passenger} per passenger; '
+              f'{passenger_size}-size {passenger} admits {max_cargo_count}; '
+              f'production capacity helper rejects one more.')
         carrier_sight = int(carrier_profile.get('sightdistance', '0'))
         if carrier_sight <= 0:
             raise AssertionError(('carrier sight distance', carrier, carrier_profile))
@@ -1290,8 +1343,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 if native_live:
                     blocked_cargo_held.append(
                         native_live.get(native_live.carrier + 0xac) ==
-                        native_live.passenger and
-                        native_live.get(native_live.passenger + 0xa8) ==
+                        active_native_passenger[0] and
+                        native_live.get(active_native_passenger[0] + 0xa8) ==
                         native_live.carrier)
             return result
 
@@ -1299,6 +1352,51 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         native_live = SurfaceUnload(placement_result=checked_placement,
             real_mission_removal=True, icd=p.icd, game=GS, freeze_hooks=False)
         unit, mover, type_address = native_live.carrier, native_live.mover, native_live.kind
+        native_passengers = [native_live.passenger]
+        active_native_passenger[0] = native_live.passenger
+        for index in range(1, native_cargo_count):
+            extra = p._alloc(0x140)
+            p.uc.mem_write(extra, bytes(0x140))
+            # The placement oracle reserves entity id 2 for live blockers.
+            # Give additional cargo distinct native ids so the placement
+            # routine does not mistake a reserved passenger for itself.
+            native_live.put(extra + 2, index + 2)
+            native_live.put(extra + 0x130, 0x1000000)
+            native_live.put(extra + 0xA8, unit)
+            native_live.put(extra + 0xB4, type_address)
+            native_passengers.append(extra)
+        # Retail cargo is a linked list: +0xAC is the head, with owner and
+        # next pointers at passenger +0xA8 and +0xB0.
+        for index, cargo in enumerate(native_passengers):
+            native_live.put(cargo + 0xB0,
+                            native_passengers[index + 1]
+                            if index + 1 < len(native_passengers) else 0)
+        native_live.put(unit + 0xAC, native_passengers[0])
+
+        def detach_native_passenger(_uc, _sp):
+            cargo = active_native_passenger[0]
+            next_cargo = native_live.get(cargo + 0xB0)
+            head = native_live.get(unit + 0xAC)
+            if head == cargo:
+                native_live.put(unit + 0xAC, next_cargo)
+            else:
+                previous = head
+                seen = set()
+                while previous and previous not in seen:
+                    seen.add(previous)
+                    following = native_live.get(previous + 0xB0)
+                    if following == cargo:
+                        native_live.put(previous + 0xB0, next_cargo)
+                        break
+                    previous = following
+                else:
+                    raise AssertionError(('released cargo is absent from native list',
+                                          hex(cargo), hex(head)))
+            native_live.put(cargo + 0xA8, 0)
+            native_live.put(cargo + 0xB0, 0)
+            return 5, 0
+
+        p.icd.hooks[0x51B4F0] = detach_native_passenger
     else:
         unit = p.unit(sx - fx // 2, sz - fz // 2)
         mover = None
@@ -1747,6 +1845,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         native_scan_count = 0
         movement_parity_steps = 0
         previous_native_scan_deadline = native_scan_deadline
+        native_release_positions = {}
+        native_release_ticks = {}
         for step, row in enumerate(world_steps, 1):
             p.uc.mem_write(GS + 0x19f44, struct.pack('<I', route_tick + step))
             if shore_blocker:
@@ -1760,6 +1860,18 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 dispatch_row = native_live.dispatch(route_tick + step)
                 if stage_before_dispatch == 1 and dispatch_row[1] == 2:
                     native_arrival_wakes += 1
+                for cargo in native_passengers:
+                    if cargo in native_release_positions or \
+                            native_live.get(cargo + 0xA8) == unit:
+                        continue
+                    released_cargo = struct.unpack('<3i',
+                        p.uc.mem_read(cargo + 0x68, 12))
+                    native_release_positions[cargo] = released_cargo
+                    native_release_ticks[cargo] = step
+                next_passenger = native_live.get(native_live.mission + 0x16)
+                if next_passenger in native_passengers and \
+                        native_live.get(next_passenger + 0xA8) == unit:
+                    active_native_passenger[0] = next_passenger
             else:
                 value, error = p.icd.call(0x4d8450, (unit,))
                 assert error is None, ('native map mover pre-step', step, error)
@@ -1805,7 +1917,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 'native/World real-map mover step', step, native_step,
                 expected_step, row[9])
             movement_parity_steps += 1
-            if native_live and not native_live.get(unit + 0xac):
+            if native_live and not native_live.get(unit + 0xAC):
                 live_release_step = step
                 break
         map_mover_count = len(world_steps)
@@ -1830,25 +1942,54 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             native_live.dispatch(route_tick + live_release_step + 1)
             assert native_live.get(unit + 0x60) == 0, (
                 'native surface mission did not retire after its one-tick release tail',
-                hex(native_live.get(unit + 0x60)))
-            released = struct.unpack('<3i',
-                                     p.uc.mem_read(native_live.passenger + 0x68, 12))
-            released_origin = (
-                int((released[0] / 65536 - (passenger_profile[0] - 1) * 8) // 16),
-                int((released[2] / 65536 - (passenger_profile[1] - 1) * 8) // 16))
-            assert released_origin == target_cell, (
-                'retail unload did not release Araarch at the selected map shore cell',
-                released, released_origin, target_cell)
+                hex(native_live.get(unit + 0x60)),
+                native_live.get(native_live.mission + 4),
+                native_live.get(native_live.mission + 5),
+                native_live.get(native_live.mission + 0x16),
+                hex(native_live.get(unit + 0xAC)))
+            assert len(native_release_positions) == native_cargo_count, (
+                'native GROUND_UNLOAD did not release every linked passenger',
+                len(native_release_positions), native_cargo_count,
+                native_release_ticks, native_live.get(unit + 0xAC),
+                native_live.get(native_live.mission + 0x16),
+                native_placement_results[-8:])
+            released_positions = [native_release_positions[cargo]
+                                  for cargo in native_passengers]
+            released_origins = [
+                (int((position[0] / 65536 -
+                      (passenger_profile[0] - 1) * 8) // 16),
+                 int((position[2] / 65536 -
+                      (passenger_profile[1] - 1) * 8) // 16))
+                for position in released_positions]
+            assert released_origins[0] == target_cell, (
+                'retail unload did not release first Araarch at the selected map shore cell',
+                released_positions[0], released_origins[0], target_cell)
             assert native_placement_results, native_placement_results
+            assert all(native_live.get(cargo + 0xA8) == 0
+                       for cargo in native_passengers)
+            assert native_live.get(unit + 0xAC) == 0
+            assert all(native_release_ticks[native_passengers[index]] <
+                       native_release_ticks[native_passengers[index + 1]]
+                       for index in range(native_cargo_count - 1)), (
+                'native cargo list was not released in order', native_release_ticks)
+            if native_cargo_count > 1:
+                print(f'  Retail cargo list auto-advanced through '
+                      f'{native_cargo_count} passengers on successive ticks '
+                      f'{[native_release_ticks[cargo] for cargo in native_passengers]}. '
+                      'This fixture does not maintain released cargo in a live retail '
+                      'entity-occupancy list, so it cannot establish spatial separation '
+                      'between the landing footprints.')
             if not shore_blocker:
                 assert all(result == 1 for _, result in native_placement_results), \
                     native_placement_results
-            assert native_live.get(unit + 0xac) == 0
-            assert native_live.get(native_live.passenger + 0xa8) == 0
             if shore_blocker:
                 assert native_arrival_wakes >= 1, \
                     ('native navigator arrival never woke the blocked unload mission',
                      native_arrival_wakes)
+            elif native_cargo_count > 1:
+                assert native_arrival_wakes >= 1, (
+                    'native navigator did not wake unload for the linked cargo manifest',
+                    native_arrival_wakes)
             else:
                 assert native_arrival_wakes == 1, \
                     ('native navigator arrival did not wake the unload mission exactly once',
@@ -1980,6 +2121,8 @@ def main():
                         help='also compare this many native physical mover ticks on the map (1..10000)')
     parser.add_argument('--native-live-unload', action='store_true',
                         help='keep retail GROUND_UNLOAD active through map-backed movement and passenger release')
+    parser.add_argument('--native-cargo-count', type=int, default=1,
+                        help='number of linked cargo passengers in the native surface-unload trace (1..16)')
     parser.add_argument('--terrain-scan-after', type=int,
                         help='compare live native/World terrain scans after route delivery; requires --native-live-unload (0..2500 ticks)')
     parser.add_argument('--shore-blocker', action='store_true',
@@ -2004,6 +2147,10 @@ def main():
         parser.error('--native-map-mover-steps must be 0..10000')
     if args.native_live_unload and args.native_map_mover_steps == 0:
         parser.error('--native-live-unload requires --native-map-mover-steps')
+    if not 1 <= args.native_cargo_count <= 16:
+        parser.error('--native-cargo-count must be 1..16')
+    if args.native_cargo_count > 1 and not args.native_live_unload:
+        parser.error('--native-cargo-count above one requires --native-live-unload')
     if args.terrain_scan_after is not None and not 0 <= args.terrain_scan_after <= 2500:
         parser.error('--terrain-scan-after must be 0..2500')
     if args.terrain_scan_after is not None and not args.native_live_unload:
@@ -2026,7 +2173,8 @@ def main():
                 tuple(args.target), args.footprint, args.carrier, args.passenger,
                 args.crusades, args.native_map_grades or bool(args.native_map_mover_steps),
                 str(Path(args.hpitool).resolve()), args.native_map_mover_steps,
-                args.native_live_unload,args.terrain_scan_after,args.shore_blocker,
+                args.native_live_unload,args.terrain_scan_after,args.native_cargo_count,
+                args.shore_blocker,
                 args.live_route_blocker_steps, args.native_worker_repath,
                 args.native_worker_mission_repath, args.always_on_route_search,
                 args.native_worker_mission_retry,

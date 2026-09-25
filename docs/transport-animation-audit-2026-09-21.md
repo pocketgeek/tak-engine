@@ -21,8 +21,11 @@ shore-release trace in both balances and Release, Debug, and optimized Debug.
 The three shipped flying transports now pass native unload-through-release
 traces with their selected FBI profiles and live height scans in both balances
 and all three builds; those use a controlled ridge and direct circle rather than
-a shipped map route. Native pickup also reaches reciprocal attachment and
-`BeCarried` completion for all three air carriers. The callback-bearing flyer
+a shipped map route. Native pickup reaches reciprocal attachment and
+`BeCarried` completion for all three air carriers. A separate Lake Lokken probe
+now moves Araarch along a validated shoreline while ZONROC tracks and boards
+it; the passenger trajectory is scripted, so ground pathfinding remains open.
+The callback-bearing flyer
 pose sweep covers all 26 shipped pairs, and LIFBIRD now has a separate idle/fly
 ambient-pose trace. These remain controlled headless traces, not proof of
 every map, order combination, capacity case, or rendered animation.
@@ -66,8 +69,10 @@ projectile hit or judge the beam/arrow's rendered appearance.
   mount update; worker/player scheduling and visual pose remain controlled.
   The independent World full-map pickup boards at tick 2,178; these tick counts
   are not compared
-  because the search spaces differ. Additional maps, full air route search and
-  moving-passenger joins, and native feature bodies remain open. The
+  because the search spaces differ. A moving-target pickup now joins the native
+  air dispatcher and flight mover while the Araarch follows a host-scripted
+  shoreline trajectory; its GROUND2 pathfinder/mover and full-map flying route
+  search remain open. Additional maps and native feature bodies remain open. The
   separate 70px callback fixture used a synthetic `transportdistance=86`;
   shipped Vertrans uses 300 and its native pickup circle is 284px.
   Eight deterministic boat unload-circle searches,
@@ -392,12 +397,18 @@ projectile hit or judge the beam/arrow's rendered appearance.
   rendered behavior across the roster. VM/piece-transform oracle coverage and
   the current smoke viewport fix do not by themselves prove that requirement.
 
+The native ZONROC `BeginFlight` call-in now also has a dedicated script-to-model
+pose check. It covers that mission-driven transition separately from the generic
+flyer mover callbacks; camera projection and rendered behavior remain open.
+
 Keep deterministic simulation and retail pathfinding intact throughout. Passing
 CTest and generic network runs is regression evidence, not proof of these gates.
-The latest full CTest sweep passes Release (53/53), Debug (56/56), and optimized
-Debug (56/56). The weapon impact effect-route client fixture is included in the
-Debug suites; the Release configuration builds the changed client source but
-does not expose the game-mode CLI needed to run that fixture.
+The latest full CTest sweep before registering the optional ZONROC pose test
+passes Release (53/53), Debug (56/56), and optimized Debug (56/56). The new
+`native_air_transport_animation_pose` test then passed individually in all three
+builds. The weapon impact effect-route client fixture is included in the Debug
+suites; the Release configuration builds the changed client source but does not
+expose the game-mode CLI needed to run that fixture.
 
 ## Transport corrections
 
@@ -9967,9 +9978,10 @@ movement inputs against World. Its path-cost assertion now derives turn and
 heavy-slope costs from the selected unit profile; this admits authored
 per-carrier turning values while still checking the full cost tuple. The 10
 carriers × 2 balances × 3 builds yield 60 passing joined traces. Each trace
-exercises one Araarch, so capacities are reported for roster completeness but
-multi-passenger loading and capacity saturation remain untested. Live blockers
-and other maps remain separate gates.
+exercises one Araarch. A separate two-passenger trace checks native linked-list
+unload sequencing and the production capacity-helper boundary, but not native
+boarding rejection at capacity or spatial separation after release. Live
+blockers and other maps remain separate gates.
 
 ```sh
 python3 tools/re/check_surface_unload_map_route.py \
@@ -10027,4 +10039,71 @@ movement, a flight-state transition, camera projection, or rendered pixels.
 
 ```sh
 ctest --test-dir build-o2 -R '^native_lifbird_ambient_pose$' --output-on-failure
+```
+
+### Moving-target native air pickup on Lake Lokken (2026-09-25)
+
+`probe_air_pickup_native_moving_target.py` starts the real ZONROC VTOL pickup
+dispatcher on Lake Lokken's shipped TNT and moves Araarch 112 pixels along a
+shoreline strip whose full 2×2 footprint is validated by native `0x507d10`.
+Retail follows the passenger's updated position, attaches it, retires the
+pickup order, and installs `BeCarried`. Standard attaches on tick 1,044 and
+Crusades on tick 1,011; Release, Debug, and optimized Debug pass in both
+balances.
+
+Araarch's smooth shoreline trajectory is host-scripted. The trace therefore
+establishes that the native flyer tracks a moving passenger, but does not test
+Araarch's ground route search/mover or a map-wide flying route search.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_moving_target.py
+PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_moving_target.py --crusades
+```
+
+### Multi-passenger surface unload sequencing (2026-09-25)
+
+`check_surface_unload_map_route.py --native-cargo-count 2` seeds two linked
+Araarch records, then runs the full Lake Lokken Aratrans GROUND_UNLOAD trace.
+Retail advances the same live mission through both cargo entries, detaches them
+in sequence, and retires the carrier order. All six Release/Debug/optimized
+Debug × Standard/Crusades traces pass. The optimized Standard trace releases
+at physical mover steps 3,494 and 3,511 and performs 32 native map-backed
+placement checks.
+
+The selected Aratrans FBI limits are count/total-size/largest-passenger
+50/200/16 in Standard and 100/400/16 in Crusades. Araarch costs 4, so the
+production capacity helper accepts up to those profiles' computed limit and
+rejects one more. NpcBotl's count cap of one is also checked against that
+helper in both balances and all three builds.
+
+This fixture does not maintain released cargo in a live retail entity
+occupancy list. Both recorded landing origins are `(240,350)`, and reserving
+the first footprint makes the second passenger wait at the fixed unload point.
+The trace covers linked-list scheduling, sequential detach, and the capacity
+helper boundary; it does not establish spatial separation of passengers or
+multi-cargo placement on other maps.
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py \
+  build-o2/transport_test --hpitool build-o2/hpitool \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier aratrans --passenger araarch \
+  --native-map-mover-steps 5000 --native-live-unload --native-cargo-count 2
+```
+
+### ZONROC BeginFlight model-pose join (2026-09-25)
+
+The optional `native_air_transport_animation_pose` CTest calls retail's
+`0x416c50` BeginFlight producer for ZONROC, advances its COB once, and compares
+the full 1,742-word native checkpoint with World. All six named wing pieces
+advance. Retail `0x4ee620` and the World geometry helper match for all 43 model
+pieces and 368 vertices within 0.00001529 world units. Release, Debug, and
+optimized Debug pass.
+
+The mission services and GET profile are controlled by the fixture. It does
+not run a full carrier order, movement, camera projection, or rendered frame.
+
+```sh
+ctest --test-dir build-o2 -R '^native_air_transport_animation_pose$' \
+  --output-on-failure
 ```

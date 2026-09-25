@@ -558,6 +558,28 @@ if(TAK_BUILD_CLIENT)
         endif()
       endif()
     endif()
+    # ZONROC's mission-driven BeginFlight pose is separate from the generic
+    # mover callback roster. Keep the retail COB/model join available when
+    # the local ICD, extracted assets, and Unicorn emulator are installed.
+    if(TAK_TEST_DATA AND EXISTS "${TAK_TEST_DATA}/KINGDOMS.icd" AND
+       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts/zonroc.cob" AND
+       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/objects3d/zonroc.3do")
+      find_package(Python3 COMPONENTS Interpreter QUIET)
+      if(Python3_Interpreter_FOUND)
+        execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import unicorn"
+          RESULT_VARIABLE _tak_zonroc_unicorn_status
+          OUTPUT_QUIET ERROR_QUIET)
+        if("${_tak_zonroc_unicorn_status}" STREQUAL "0")
+          add_test(NAME native_air_transport_animation_pose
+            COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_SOURCE_DIR}/tools/re/check_native_air_transport_animation_pose.py"
+              --script-binary "$<TARGET_FILE:retail_script_test>"
+              --model-binary "$<TARGET_FILE:model_transform_test>"
+              --icd "${TAK_TEST_DATA}/KINGDOMS.icd")
+          set_tests_properties(native_air_transport_animation_pose PROPERTIES TIMEOUT 60)
+        endif()
+      endif()
+    endif()
 
     target_link_libraries(takclient PRIVATE tak-formats ${_tak_sdl2})
     # We provide our own main() and call SDL_SetMainReady(). Define SDL_MAIN_HANDLED for
