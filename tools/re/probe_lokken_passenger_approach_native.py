@@ -5,15 +5,17 @@ The default run constructs and dispatches actual code-30 orders, then follows
 the native PathNavigator route/mover over full Lake Lokken TNT terrain until
 the pickup circle. ``--near-circle-pair`` seeds the passenger at the verified
 map-valid endpoint and dispatches both real pickup handlers through native
-boarding; it uses a zero-filled +0xc0 mount/pose-anchor table and stops before
-the attached passenger's display update. Worker/player scheduling callbacks
-remain controlled, so the two modes are complementary headless probes rather
-than one uninterrupted game trace.
+boarding. ``--continuous-pair`` dispatches both handlers while Araarch follows
+that full-map route to boarding. Both paired modes use a zero-filled +0xc0
+mount/pose-anchor table and stop before the attached passenger's display update.
+Worker/player scheduling callbacks remain controlled.
 
 Run from the repository root:
     PYTHONPATH=tools/re python3 tools/re/probe_lokken_passenger_approach_native.py
     PYTHONPATH=tools/re python3 tools/re/probe_lokken_passenger_approach_native.py \\
         --near-circle-pair --max-ticks 200
+    PYTHONPATH=tools/re python3 tools/re/probe_lokken_passenger_approach_native.py \\
+        --continuous-pair --max-ticks 9000
 """
 import argparse
 import hashlib
@@ -43,7 +45,10 @@ parser.add_argument('--setup-only', action='store_true',
                     help='stop after the first and next-tick native passenger dispatches')
 parser.add_argument('--near-circle-pair', action='store_true',
                     help='start at the previously verified map-valid passenger endpoint and dispatch both pickup handlers')
+parser.add_argument('--continuous-pair', action='store_true',
+                    help='dispatch both pickup handlers while Araarch follows its full-map route to boarding')
 args = parser.parse_args()
+paired_dispatch=args.near_circle_pair or args.continuous_pair
 root=Path(args.retail_root).resolve()
 hpitool=Path(args.hpitool).resolve()
 state=run_route(root,hpitool,full_map=True,native_attachment=True)
@@ -52,7 +57,7 @@ get,byte=live.get,live.byte
 def put(address,*values): uc.mem_write(address,struct.pack('<'+'I'*len(values),*(v&0xffffffff for v in values)))
 pool,carrier,passenger=install_native_entity_array(state)
 
-if args.near_circle_pair:
+if paired_dispatch:
     # Desktop units have a per-entity +0xc0 mount/pose-anchor table consulted
     # by 0x4dd370 during ground motion. The headless entity-pool copy omits
     # that presentation service. Supply a zeroed, bounded table to keep its
@@ -370,7 +375,7 @@ def observe_carrier_dispatch(machine,address,_size,_data):
             get(carrier_order+0x6E),get(carrier+0xAC),get(passenger+0xA8),
             get(passenger+0xD0)))
 uc.hook_add(UC_HOOK_CODE,observe_carrier_dispatch)
-if args.near_circle_pair:
+if paired_dispatch:
     _,error=phase.icd.call(0x4D8450,(carrier,))
     if error: raise RuntimeError(('native carrier GROUND_PICKUP initialization',tick,error))
     assert get(carrier+0x60)==carrier_order
@@ -456,14 +461,14 @@ terminal_reason='tick-limit'; plateau_ticks=1500; circle_event_tick=None
 for i in range(1,args.max_ticks+1):
     now=tick+i
     put(GS+0x19F44,now); put(0x64186c,now)
-    if args.near_circle_pair and get(carrier+0x60)==carrier_order:
+    if paired_dispatch and get(carrier+0x60)==carrier_order:
         _,error=phase.icd.call(0x4D8450,(carrier,))
         if error: raise RuntimeError(('native Vertrans GROUND_PICKUP dispatcher',now,error))
     event_before=get(passenger_order+0x6A)
     order_before=(get(passenger+0x60),uc.mem_read(passenger_order+5,1)[0],event_before)
     _,error=phase.icd.call(0x4D8450,(passenger,))
     if error: raise RuntimeError(('Araarch native dispatcher',now,error))
-    if (args.near_circle_pair and get(carrier+0xAC)==passenger and
+    if (paired_dispatch and get(carrier+0xAC)==passenger and
             get(passenger+0xA8)==carrier):
         # The passenger is cargo now. Its ordinary ground mover is no longer
         # the next retail update; the display/mount pose updater owns it.
@@ -483,8 +488,8 @@ for i in range(1,args.max_ticks+1):
         if error: raise RuntimeError(('native route worker',now,error))
     _,error=phase.icd.call(0x4DC800,(passenger,),ecx=mover)
     if error:
-        if args.near_circle_pair:
-            print('NEAR_CIRCLE_PARTIAL',{'tick':now,
+        if paired_dispatch:
+            print('PAIRED_PICKUP_PARTIAL',{'tick':now,
                 'passenger_order':(hex(get(passenger+0x60)),
                     uc.mem_read(passenger_order+5,1)[0],hex(get(passenger_order+0x6A)),
                     hex(get(passenger_order+0x6E))),
@@ -544,7 +549,7 @@ assert order_head==passenger_order or terminal_reason in (
     'passenger-order-retired','native-attachment')
 attached=(get(carrier+0xAC)==passenger and get(passenger+0xA8)==carrier)
 assert (get(carrier+0xAC)==0 and get(passenger+0xA8)==0) or attached
-if args.near_circle_pair and terminal_reason=='native-attachment':
+if paired_dispatch and terminal_reason=='native-attachment':
     assert attached, 'native dispatcher retired pickup order without cargo links'
     assert get(carrier+0x60)==0, 'native carrier pickup order was not retired'
     assert get(passenger+0x60)!=passenger_order, 'passenger pickup order was not replaced'
@@ -552,6 +557,13 @@ if args.near_circle_pair and terminal_reason=='native-attachment':
         'retail did not replace Move_Seek_Pickup with BeCarried')
     assert any(row[1]==0x51B4F0 for row in carrier_dispatch_sites), carrier_dispatch_sites
     assert any(row[1]==0x51B5A0 for row in carrier_dispatch_sites), carrier_dispatch_sites
+if args.continuous_pair:
+    assert max_displacement>4000, max_displacement
+    assert circle_event_tick is not None, 'native circle-arrival event was not consumed'
+    assert any(sample[1] for sample in predicate_samples), predicate_samples[-20:]
+    attachment_ticks={row[0] for row in carrier_dispatch_sites
+                      if row[1] in (0x51B4F0,0x51B5A0)}
+    assert attachment_ticks=={tick+i}, attachment_ticks
 if order_head==passenger_order:
     assert get(carrier+0xC4)==passenger_order+0x12
 elif terminal_reason=='native-attachment':
@@ -560,10 +572,10 @@ elif terminal_reason=='native-attachment':
     pass
 else:
     assert not get(carrier+0xC4)
-if args.near_circle_pair:
+if paired_dispatch:
     carried_order=get(passenger+0x60)
     assert terminal_reason=='native-attachment', terminal_reason
-    print('NEAR_CIRCLE_HANDOFF',{'anchor_table':hex(passenger_anchor_table),
+    print('PAIRED_PICKUP_RESULT',{'anchor_table':hex(passenger_anchor_table),
         'ticks':i,'terminal_reason':terminal_reason,
         'passenger_head':hex(get(passenger+0x60)),
         'passenger_head_code':uc.mem_read(carried_order+4,1)[0],
@@ -578,10 +590,11 @@ if args.near_circle_pair:
         'carrier_dispatch_tail':carrier_dispatch_sites[-30:],
         'cargo':(hex(get(carrier+0xAC)),hex(get(passenger+0xA8))),
         'passenger_unit_events':hex(get(passenger+0xD0))},flush=True)
+    source='seeded at the verified endpoint' if args.near_circle_pair else 'moving on the full-map route'
     print(f'PASS: native GROUND_PICKUP code {ground_pickup_code} and '
-          f'Move_Seek_Pickup code {move_pickup_code} attach at the verified '
-          f'Lake Lokken circle endpoint on tick {tick+i}; the passenger ground '
-          'mover stops at the attachment boundary.')
+          f'Move_Seek_Pickup code {move_pickup_code} attach after Araarch is '
+          f'{source}, on tick {tick+i}; the passenger ground mover stops at '
+          'the attachment boundary.')
 assert route_installs,('native SetRoute was not observed',worker_events[-30:],
                   native_request_events,get(nav+0x114),get(0x634674+4*player_index))
 if not nav_pops and terminal_reason!='native-attachment':
@@ -592,7 +605,7 @@ if not nav_pops and terminal_reason!='native-attachment':
         'position',position,'start',start_position,'last_move_tick',last_move_tick,
         'native_requests',native_request_events,'queue_count',get(0x634674+4*player_index)))
 
-if args.near_circle_pair:
+if paired_dispatch:
     world_tick=None
 else:
     world_tick,_world_output=run_world(Path(args.world_binary).resolve(),root)

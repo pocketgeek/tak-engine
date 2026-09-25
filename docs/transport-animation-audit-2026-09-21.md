@@ -40,14 +40,14 @@ implementation descriptions. Current open gates are:
   `GROUND_PICKUP` code 21 and `Move_Seek_Pickup` code 30 orders. Its full-map
   route installs five waypoints, moves Araarch to `(3560.8,1840.4)`, 270.7 px
   from the 284 px pickup circle, and raises the native circle-arrival event.
-  A paired-dispatch fixture seeded at that exact map-valid endpoint then runs
-  both real handlers, calls native `0x51b4f0`/`0x51b5a0`, retires code 21, and
-  replaces passenger code 30 with `BeCarried` code 11 at fixture tick 21. The
-  handoff fixture uses a zero-filled per-entity `+0xc0` mount/pose table and
-  stops before the attached passenger's display/mount update. These two legs
-  verify route-to-circle and native boarding separately, not one uninterrupted
-  passenger walk-and-board trace. The independent World full-map pickup boards
-  at tick 2,178; these tick counts are not compared
+  A continuous paired-dispatch trace runs both real handlers while Araarch
+  moves; it calls native `0x51b4f0`/`0x51b5a0` at tick 6,306, retires code 21,
+  and replaces passenger code 30 with `BeCarried` code 11. Circle arrival is
+  accepted at tick 6,286. The headless fixture supplies a zero-filled per-entity
+  `+0xc0` mount/pose table and stops before the attached passenger's display/
+  mount update; worker/player scheduling and visual pose remain controlled.
+  The independent World full-map pickup boards at tick 2,178; these tick counts
+  are not compared
   because the search spaces differ. Additional map/carrier profiles and native
   feature bodies remain
   open. The
