@@ -560,9 +560,9 @@ def run(args):
     print(
         f"PASS: Lake Lokken native VTOL pickup used retail descriptor IDs "
         f"VTOL_Pickup={live['mission_codes']['VTOL_Pickup']} and "
-        f"Move_Seek_Pickup={live['mission_codes']['Move_Seek_Pickup']}, "
-        f"completed {attachment_tick - 1} carrier flight updates over the "
-        f"map-built sectors, attached {PASSENGER}, dispatched native "
+        f"Move_Seek_Pickup={live['mission_codes']['Move_Seek_Pickup']}; "
+        f"{attachment_tick - 1} carrier flight updates over the map-built "
+        f"sectors reached pickup range. It attached {PASSENGER}, dispatched native "
         f"BeCarried code 11/handler 0x4024a0, removed the passenger pickup "
         f"order, and retired carrier VTOL_Pickup on tick {carrier_retired_tick}. "
         f"boarding tick {attachment_tick}; map sectors {stride}x{stride}, "

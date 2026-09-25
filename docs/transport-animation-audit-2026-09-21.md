@@ -35,9 +35,19 @@ implementation descriptions. Current open gates are:
   passenger movement. The full-map trace now also stages a real code-2
   passenger order after native boarding and dispatches it through completion.
   Real `0x4d6ad0`/`0x4d6da0`/`0x519950` cleanup clears its queue/reference while
-  preserving the cargo links. This is a post-boarding completion check, not an
-  actual passenger approach or movement during pickup. The independent World
-  full-map pickup boards at tick 2,178; these tick counts are not compared
+  preserving the cargo links. That remains a post-boarding cleanup check. A
+  newer Lake Lokken native Araarch trace uses the actual sorted-registry
+  `GROUND_PICKUP` code 21 and `Move_Seek_Pickup` code 30 orders. Its full-map
+  route installs five waypoints, moves Araarch to `(3560.8,1840.4)`, 270.7 px
+  from the 284 px pickup circle, and raises the native circle-arrival event.
+  A paired-dispatch fixture seeded at that exact map-valid endpoint then runs
+  both real handlers, calls native `0x51b4f0`/`0x51b5a0`, retires code 21, and
+  replaces passenger code 30 with `BeCarried` code 11 at fixture tick 21. The
+  handoff fixture uses a zero-filled per-entity `+0xc0` mount/pose table and
+  stops before the attached passenger's display/mount update. These two legs
+  verify route-to-circle and native boarding separately, not one uninterrupted
+  passenger walk-and-board trace. The independent World full-map pickup boards
+  at tick 2,178; these tick counts are not compared
   because the search spaces differ. Additional map/carrier profiles and native
   feature bodies remain
   open. The
