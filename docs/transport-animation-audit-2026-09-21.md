@@ -226,8 +226,12 @@ implementation descriptions. Current open gates are:
   boundaries in Release, Debug, and optimized builds. Same-target ticks are
   silent; reversal calls `TurnDirection(41)`; stopping calls
   `TurnDirection(0)` and `MoveRate(0)`; water resume calls `MoveRate(1)`; and
-  Aradrag occupancy changes `5→4→5`. The fixture controls target, speed, and
-  state and stops before native position commit `0x51b2a0`. A separate native
+  Aradrag occupancy changes `5→4→5`. The full-roster wrapper now runs all 151
+  movable callback-bearing COB/FBI pairs through that attached native path:
+  1,280 complete VM boundaries match across 97 ground, 10 hover, 18 water, and
+  26 flying units. Target, speed, mode/state, sectors and COB GET values are
+  controlled, and the mover fixture stops before native position commit
+  `0x51b2a0`. A separate native
   flight-mission probe runs BeginFlight producer `0x416c50` and accepted
   BeginLanding path `0x416cd0/0x417089` through retail's real `0x56c5c0` COB
   dispatcher and scheduler; all 2,170 VM state words match World after the next
@@ -315,6 +319,11 @@ implementation descriptions. Current open gates are:
   Headless live-script fixtures cover `verpill`'s detached SFX 264 and
   Kirenna's (`vermage`) water-transition SFX 263 through skipped render ticks
   and owner removal, checking authored art, emission position/tick and lifetime.
+  Drake's Fire Breath is a LOS `FlameEmitter` using the `flame` sequence, not a
+  ballistic model; shipped `zondrake` passes the 11-profile fire roster in both
+  balances. Native/local emission, scan, particle, draw-admission and delayed
+  impact probes pass compositionally. No single paired shot with identical
+  native/World geometry and random inputs is established.
   The shipped arrow, bolt, harpoon, and spear 3DO selection/pose path also has
   passing native draw and 4,096-case pose checks; all 145 moving shot slots in
   Standard and Crusades resolve their referenced models. The zoomed-out
@@ -9477,6 +9486,27 @@ python3 tools/re/probe_native_mover_cob_transitions.py \
 python3 tools/re/probe_native_mover_cob_transitions.py \
   --script-binary build-dbg/retail_script_test
 python3 tools/re/probe_native_mover_cob_transitions.py \
+  --script-binary build-o2/retail_script_test
+```
+
+The full-roster wrapper discovers FBI records with `canmove` enabled and a
+matching shipped COB that declares `TurnDirection`, `MoveRate`, or
+`setSFXoccupy`, then runs the same attached-native-COB comparison for each
+pair. The shipped assets currently yield 151 pairs: 97 ground, 10 hover, 18
+water, and 26 flying. All 1,280 complete VM boundaries match the World script
+VM. Each pair sees same-target updates, a reversal, stop, and resume; hover and
+flying pairs also cross their controlled occupancy/state modes. The test
+executes retail's mover, callback-name dispatcher, COB scheduler, and shipped
+COB bytecode. Its host inputs remain synthetic: it rewrites the point
+controller target, supplies a controlled speed and unit mode/state, uses a
+small uniform sector fixture and profile-specific COB GET values, and stops
+before native position commit. Thus this roster closes native mover-to-COB
+state comparison for these controlled edges, while actual map grades, mission
+producers, physical flight/shore routes, and rendered poses remain separate
+coverage.
+
+```sh
+python3 tools/re/probe_native_mover_cob_roster.py \
   --script-binary build-o2/retail_script_test
 ```
 
