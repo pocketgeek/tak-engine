@@ -26,12 +26,14 @@ implementation descriptions. Current open gates are:
   and reciprocal attachment links; the carrier mission retires. The fixture
   uses two synthesized pool records and a player row, zero-fills feature bodies,
   and controls visibility, grade-body services, mover services, and the UI
-  effect boundary. A separate isolated fixture now confirms native
-  `0x4d6c40` initialization and `0x4d7750` queue insertion for an Araarch
-  passenger order, including its retail mission vtable and reciprocal carrier
-  reference. Passenger dispatch, its own controller/nav/mover, and order
-  retirement remain unverified. The terminal passenger order pointer in the
-  full-map trace therefore remains synthetic. The independent World full-map pickup boards
+  effect boundary. A separate isolated fixture now executes native code-1
+  carrier-pickup and code-2 passenger-order construction/insertion, then one
+  `0x4d8450` passenger dispatch. Retail's `0x403430` handler reaches
+  `0x4d4da0` and creates a passenger-mission-owned circle controller through
+  `0x4e2500`; the navigator SetController slot is a controlled sink. This
+  confirms order dispatch and controller setup, but not route search or
+  passenger movement. The terminal passenger-order pointer in the full-map
+  trace therefore remains synthetic. The independent World full-map pickup boards
   at tick 2,178; these tick counts are not compared because the search spaces
   differ. Additional map/carrier profiles and native feature bodies remain
   open. The
@@ -637,19 +639,21 @@ range.
 
 The broad original request still requires stronger evidence in these areas:
 
-- Complete air/sea transport mission scheduling and crowded-shore placement,
-  including paired live-map carrier/passenger movement and cancellation. The
-  Lake Lokken World round trip now covers a real shipped sea carrier and
-  passenger in both balance modes; it does not compare their full route and
-  mover trace against retail. Current controlled native traces cover dispatcher
-  and mover phases separately, not the complete live-map trip.
-- Actual game-driven animation callback ordering and arguments across the roster;
-  controlled callback schedules establish VM parity, not the correctness of every
-  engine call site.
-- Animation/effect behavior beyond piece transforms: playback rate, model
-  attachment, state transitions, and the correct effect class, placement and
-  lifetime. A few screenshots are smoke tests, so representative behavior still
-  needs review; pixel-identical output is not required.
+- A paired, map-backed retail/World air and sea pickup-to-unload trip, including
+  the passenger's queued load order, its own dispatcher/controller/navigation,
+  crowded-shore placement, and cancellation/recovery. Native pickup and unload
+  phases, World round trips, and retail live round trips have separate coverage;
+  the full joined trace is still open. The full-map native Lake Lokken pickup
+  also still uses a synthetic terminal passenger-order pointer.
+- Engine-driven animation callback inputs and final poses across the roster.
+  Native COB transitions now match World for all 151 movable callback-bearing
+  unit scripts, but the test controls callback inputs and stops before position
+  commit. Native flight mission VM state is covered separately; complete live
+  call-in and rendered-pose coverage is not.
+- Remaining effect families and their playback, attachment, transition,
+  placement, and lifetime behavior. Existing native probes cover representative
+  projectiles and attached effects, not every shipped emitter/collision path.
+  Pixel-identical output is not required.
 
 These items remain part of the goal, not excluded from its definition of success.
 
@@ -9633,21 +9637,42 @@ The entity pool uses two synthetic records and a player row. Feature-definition
 bodies are zero-filled, and visibility, grade-body calls, mover services, and
 the UI feedback effect are controlled. Araarch is stationary and inserted into
 the native sector list; its own ground route is not part of this probe. The
-terminal passenger-order pointer remains a synthetic fixture object, so only
-carrier mission retirement is established. A separate isolated fixture calls
-native `0x4d6c40` then `0x4d7750`: the returned code-2 order has vtable
-`0x5f2814`, flags `0x200`, a target reference to the carrier, and becomes the
-passenger's `+0x60` order-queue head. The carrier's reciprocal reference node
-is installed at `+0xc4`. This requires a player owner record with a nonzero
-first dword and `owner+0xea=1`, plus mission-descriptor entry 2 with handler
-`0x403430`; otherwise retail destroys the child. The isolated fixture did not
-complete passenger dispatch through `0x4d8450`, create its own route/controller,
-or run a passenger mover, and it is not yet a shared reproducible probe.
+terminal passenger-order pointer remains a synthetic fixture object, so this
+map trace establishes carrier mission retirement only. A separate reproducible
+probe now completes native passenger-order dispatch/controller setup; it does
+not connect that controller to this map trace's full ground route.
 
 ```sh
 PYTHONPATH=tools/re python3 -u tools/re/probe_surface_pickup_native_fullmap.py \
   --hpitool build-o2/hpitool \
   --world-binary build-o2/transport_test
+```
+
+### Native passenger-order dispatch and approach controller (2026-09-25)
+
+`probe_native_passenger_order_dispatch.py` constructs both a code-1 carrier
+`GROUND_PICKUP` order and the code-2 passenger `Move_Seek_Pickup` order with
+native `0x4d6c40`, then inserts them using native `0x4d7750`. The executable
+installs reciprocal reference nodes at carrier `+0xc4` and passenger `+0xc4`.
+One native `0x4d8450(passenger)` dispatch reaches the real `0x403430` handler,
+which snapshots the carrier's position into the passenger mission and calls
+real `0x4d4da0`. Retail allocates and initializes its `0x5f28d8` circle
+controller through `0x4e2500`, stores it at passenger-order `+0x6e`, and passes
+it to the passenger navigator's SetController slot. The observed one-cell
+fixture gives circle origin `(6, 6)`, radius `134`, event mask `0x789`, and
+deadline `130` at game tick `100`.
+
+Mission-object memory is supplied by the fixture; malloc/free, mission-name
+lookup, passenger eligibility, deterministic RNG, and the navigator
+SetController slot are controlled boundaries. Both order constructors,
+reference linking, queue insertion, dispatcher, handler, approach routine,
+circle-controller constructor, and mission-side controller binding execute
+from `KINGDOMS.icd`. This test stops after controller installation: no map
+search, route movement, sector/body service, passenger mover tick, or full-map
+passenger-order continuation is claimed. The Bink/retail GUI remains closed.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_native_passenger_order_dispatch.py
 ```
 
 ### Tarhel death-effect owner lifecycle (2026-09-25)
