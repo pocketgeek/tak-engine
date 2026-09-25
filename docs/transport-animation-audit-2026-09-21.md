@@ -10403,3 +10403,19 @@ unload back near the starting position, and subsequent move through completion.
 Release client, server, and transport test rebuilt; transport, shipped roster,
 and Standard/Crusades map roundtrip tests all pass. This corrects use of stale
 command-time range; it does not establish full native queued-command parity.
+
+### Queue an unload while pickup is running (2026-09-25)
+
+The armed Unload command and World command handler previously rejected an empty
+cargo list even when queueing behind a pickup. Both now accept queued unloads
+before cargo arrives, and the transport panel keeps Unload available during
+pickup. Immediate unload still requires cargo; only transport types can accept
+an unload. This lets the existing mission handler inspect cargo when the queued
+order actually runs.
+
+New air and surface integration cases failed before the change and now pass:
+issue pickup, immediately queue unload through applyCommand, then observe boarding
+and delivery at the requested destination. Release client/server rebuilt and all
+four transport suites passed, including both map-roundtrip balance modes. The
+existing native action-mode probe also passes its cantransport-to-Unload cursor
+gate; that probe does not prove the entire native queued-command sequence.

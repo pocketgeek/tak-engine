@@ -839,6 +839,29 @@ static void loadOrderQueueing() {
     check(reachedNextMove,"move queued after unload survives route completion and transfer");
 }
 
+static void queueUnloadDuringPickup() {
+    for(bool air:{false,true}) {
+        World w;w.setVisPlayer(-1);w.setPathService(true);
+        w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        UnitType carrier=boatType(),passenger=footType();
+        carrier.canFly=air;carrier.cruiseAlt=100;
+        const int tid=w.spawn(&carrier,200,440),cid=w.spawn(&passenger,240,440);
+        w.loadInto(cid,tid);
+        tak::net::Command unload;unload.kind=tak::net::Cmd::Unload;
+        unload.unitId=tid;unload.x=650;unload.z=440;unload.queue=1;
+        tak::sim::TypeRegistry registry;tak::sim::applyCommand(w,registry,unload);
+        bool boarded=false,released=false;
+        for(int tick=0;tick<3000 && !released;++tick) {
+            w.tick(1.f/30);
+            boarded|=w.unit(cid)->inTransport==tid;
+            released=boarded && !w.unit(cid)->embarked();
+        }
+        check(boarded && released && w.unit(cid)->x.toFloat()>600,
+              air ? "air pickup followed by queued unload boards and delivers the passenger" :
+                    "surface pickup followed by queued unload boards and delivers the passenger");
+    }
+}
+
 static void transportEffectEvents() {
     for(bool air:{false,true}) {
         World w;w.setVisPlayer(-1);
@@ -2833,6 +2856,7 @@ int main(int argc,char** argv) {
     boardingLimits();
     transferLifecycle();
     loadOrderQueueing();
+    queueUnloadDuringPickup();
     pickupTransferInterruption();
     unloadTransferInterruption();
     transportEffectEvents();

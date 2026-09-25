@@ -782,7 +782,8 @@ namespace {
             bool any = false;
             for (int id : selection_) {
                 const auto* u = frameUnitP(id);
-                if (!u || !u->type || !u->type->canTransport || u->cargo.empty()) continue;
+                if (!u || !u->type || !u->type->canTransport ||
+                    (!queue && u->cargo.empty())) continue;
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::Unload;
                 c.targetId = unloadDestinationHeight(mapView_.map(),wx,wz);
@@ -1201,7 +1202,8 @@ namespace {
         if (reclaimer) add("CLEAR", 'c');
         if (front->type->canTransport) {
             if (int(front->cargo.size()) < front->type->transportCap) add("LOAD", 'l');
-            if (!front->cargo.empty()) add("UNLOAD", 'u');
+            // Keep the command available to queue a destination during pickup.
+            add("UNLOAD", 'u');
         }
         // Combat stance radio: offensive/defensive/passive. Gated on the FBI's
         // unitstandorders, which is what retail's panel consults -- not on a

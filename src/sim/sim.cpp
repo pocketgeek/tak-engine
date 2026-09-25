@@ -2627,7 +2627,10 @@ void World::loadInto(int unitId, int transportId, bool queue) {
 
 void World::unloadAt(int transportId, float x, float z, Fixed destinationY, bool queue) {
     Unit* t = unit(transportId);
-    if (!t || !t->alive() || t->cargo.empty()) return;
+    if (!t || !t->alive() || !t->type || !t->type->canTransport ||
+        (!queue && t->cargo.empty())) return;
+    // A queued pickup can supply cargo before this mission becomes active.
+    // Inspect cargo in the unload handler, not while appending the command.
     if (!queue) {
         t->orders.clear();
         // A search for the orders just discarded is still queued, and cases 1 and 3 below
