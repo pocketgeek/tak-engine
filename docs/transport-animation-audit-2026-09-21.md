@@ -256,6 +256,17 @@ Native movement-class `MinWaterDepth` defaults to -10000 (`4dfb10`). A separate
 transport eligibility bit preserves that classification without changing the
 existing navigation-grid defaults.
 
+### Unmapped native passenger-state gates (2026-09-25)
+
+Retail's `0x519f50` is called during load-order validation (`0x403476`) and by
+`GROUND_PICKUP` (`0x4088f4`, `0x408aa9`). It also requires both unit records'
+`+0x108` float to equal zero and rejects either record when bit 4 is set at
+`+0x114`. Those raw checks have not been tied to a reachable initialized unit
+state or a World field, so they do not yet demonstrate a gameplay mismatch.
+The 4,096-case capacity probe and native air/sea selection probe pass; mapping
+these state gates needs a live record or a traced setter before changing
+`World::canLoadInto()`.
+
 Pickup and unloading use the carrier's `transportdistance`, including the ship
 and airship differences. The native transfer stages (`408cxx`/`408fxx`,
 `41ad4d`, `41b29b`) wait fifteen ticks before attaching or detaching a passenger.
