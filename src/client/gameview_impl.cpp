@@ -2260,6 +2260,16 @@
         // Drain emit-sfx the VMs stashed (fire/smoke from FireControl-style loops),
         // now serially on the main thread, into the world-space effect system.
         for (auto& [id, a] : anims_) {
+            if(a.ownerSfxRetirementPending) {
+                auto it=deathSfxOwnerRetireTicks_.find(id);
+                if(it==deathSfxOwnerRetireTicks_.end())
+                    deathSfxOwnerRetireTicks_.emplace(id,a.ownerSfxRetirementTick);
+                else it->second=tak::retailEarlierTick(it->second,a.ownerSfxRetirementTick);
+                for(auto& event:a.pendingDeathEffects)
+                    event.ownerRetireTick=tak::retailEarlierTick(event.ownerRetireTick,
+                                                                 a.ownerSfxRetirementTick);
+                a.ownerSfxRetirementPending=false;
+            }
             if (a.pendingPoints.empty() && a.pendingSfx.empty() && a.pendingSnd.empty() &&
                 a.pendingDeathEffects.empty()) continue;
             const auto* u = frameUnitP(id);
@@ -2621,7 +2631,10 @@
                                        variants.size()/32768)];
         DamageFlameSprite sprite;sprite.position=event.position;sprite.art=art;
         sprite.clock.start(art->durations);sprites.push_back(sprite);
-        deathSfxOwnerRetireTicks_[event.ownerId]=event.ownerRetireTick;
+        auto it=deathSfxOwnerRetireTicks_.find(event.ownerId);
+        if(it==deathSfxOwnerRetireTicks_.end())
+            deathSfxOwnerRetireTicks_.emplace(event.ownerId,event.ownerRetireTick);
+        else it->second=tak::retailEarlierTick(it->second,event.ownerRetireTick);
     }
 
     bool GameView::explodePiece(const UnitR& u, Anim& a, int piece, int32_t flags) {
@@ -2935,9 +2948,17 @@
             st.vm->onPlaySound = [buf = &st.pendingSnd](int32_t idx) {
                 buf->push_back(idx);
             };
-            st.vm->onSetUnitValue = [state=&st](int32_t valueId,int32_t) {
-                if(tak::retailOwnerVmStopsOnSetUnitValue(valueId))
+            st.vm->onSetUnitValue = [this,state=&st](int32_t valueId,int32_t) {
+                if(tak::retailOwnerVmStopsOnSetUnitValue(valueId)) {
                     state->ownerVmStopRequested=true;
+                    if(const auto deadline=tak::retailOwnerVmRetirementTick(
+                           front().gameTick,valueId)) {
+                        state->ownerSfxRetirementTick=state->ownerSfxRetirementPending
+                            ? tak::retailEarlierTick(state->ownerSfxRetirementTick,*deadline)
+                            : *deadline;
+                        state->ownerSfxRetirementPending=true;
+                    }
+                }
             };
             st.vm->onExplode = [this,id, state=&st, vm=st.vm.get()](int piece, int32_t flags) {
                 const auto* unit=frameUnitP(id);

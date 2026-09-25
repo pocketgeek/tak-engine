@@ -82,7 +82,14 @@ static bool testDeathSfxLifecycle() {
        !tak::retailOwnerVmStopsOnSetUnitValue(31) ||
        tak::retailOwnerVmStopsOnSetUnitValue(30) ||
        tak::retailOwnerVmMayAdvance(true) ||
-       !tak::retailOwnerVmMayAdvance(false)) {
+       !tak::retailOwnerVmMayAdvance(false) ||
+       tak::retailOwnerVmRetirementDelayTicks(26)!=1 ||
+       tak::retailOwnerVmRetirementDelayTicks(31)!=35 ||
+       tak::retailOwnerVmRetirementDelayTicks(30)!=-1 ||
+       tak::retailOwnerVmRetirementTick(100,26)!=101 ||
+       tak::retailOwnerVmRetirementTick(100,31)!=135 ||
+       tak::retailOwnerVmRetirementTick(0xfffffff0u,31)!=0x13u ||
+       tak::retailOwnerVmRetirementTick(100,30).has_value()) {
         std::fprintf(stderr,"death COB VM did not honor its native SET26/SET31 stop boundary\n");
         return false;
     }
@@ -101,6 +108,12 @@ static bool testDeathSfxLifecycle() {
     if(retirement!=0xfffffffeu || tak::retailTickAtOrAfter(0xfffffffdu,retirement) ||
        !tak::retailTickAtOrAfter(0u,retirement)) {
         std::fprintf(stderr,"attached death SFX retirement tick mishandles wraparound\n");
+        return false;
+    }
+    if(tak::retailEarlierTick(120,1)!=1 || tak::retailEarlierTick(1,120)!=1 ||
+       tak::retailEarlierTick(0xfffffffeu,1)!=0xfffffffeu ||
+       tak::retailEarlierTick(1,0xfffffffeu)!=0xfffffffeu) {
+        std::fprintf(stderr,"attached death SFX owner deadlines do not preserve the earliest wrap-safe tick\n");
         return false;
     }
     return true;

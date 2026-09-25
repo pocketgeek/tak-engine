@@ -47,6 +47,24 @@ constexpr bool retailTickAtOrAfter(uint32_t tick,uint32_t deadline) {
     return int32_t(tick-deadline)>=0;
 }
 
+constexpr uint32_t retailEarlierTick(uint32_t a,uint32_t b) {
+    return retailTickAtOrAfter(a,b) ? b : a;
+}
+
+// Native owner cleanup follows the SET_UNIT_VALUE stop request: SET26 marks
+// removal for the next unit update; SET31's 1.0-second timer reaches removal
+// on its 35th owner update at the 30 Hz unit cadence.
+constexpr int retailOwnerVmRetirementDelayTicks(int32_t valueId) {
+    return valueId==26 ? 1 : valueId==31 ? 35 : -1;
+}
+
+constexpr std::optional<uint32_t> retailOwnerVmRetirementTick(uint32_t writeTick,
+                                                               int32_t valueId) {
+    const int delay=retailOwnerVmRetirementDelayTicks(valueId);
+    if(delay<0)return std::nullopt;
+    return writeTick+uint32_t(delay);
+}
+
 // The display COB VM is paced independently from unit simulation updates, so
 // mirror the native owner stop edges explicitly after either host write. SET26
 // requests unit removal on the next owner update; SET31 starts the one-second

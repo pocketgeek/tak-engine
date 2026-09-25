@@ -215,8 +215,11 @@ implementation descriptions. Current open gates are:
   SET31 path is also traced from retail's native death-state builder through
   Killed/Dying dispatch, its timer, and tick-35 owner/list teardown; its
   standalone World timeline omits that outer owner gate, so the
-  extra callbacks there do not establish a live mismatch. Other callback-to-
-  removal and attached-emitter lifecycles remain open, along with debris details,
+  extra callbacks there do not establish a live mismatch. GameView now retires
+  attached display effects at the native owner-cleanup deadlines measured for
+  `crefire` SET26 (tick 1) and `tarmage` SET31 (tick 35), rather than retaining
+  them to the 120-tick corpse fallback. Other callback-to-removal and
+  attached-emitter lifecycles remain open, along with debris details,
   shared cosmetic RNG/tick phase, collision/lifetime
   paths, and representative checks that live effects use the right art family,
   placement and lifetime. Feature smoke now follows retail's newest-first burn
@@ -8103,11 +8106,13 @@ PYTHONPATH=tools/re python3 tools/re/probe_death_sfx_lifecycle.py \
   --world-binary build-o2/animation_roster_test
 ```
 
-Attached effect owner lists now survive the HP-death edge through the existing
-`kCorpseAnimTicks` body handoff (120 ticks); statue removal remains immediate.
-The sim supplies a raw statue feature ID, while RenderFrame supplies a boolean;
-the cleanup guard handles and tests those representations separately so an
-ordinary `false` snapshot value is not read as feature ID zero.
+World's generic attached-effect fallback survives the HP-death edge through
+the existing `kCorpseAnimTicks` body handoff (120 ticks); statue removal
+remains immediate. The native SET26/SET31 paths below retire the display-side
+owner effects sooner. The sim supplies a raw statue feature ID, while
+RenderFrame supplies a boolean; the cleanup guard handles and tests those
+representations separately so an ordinary `false` snapshot value is not read
+as feature ID zero.
 
 `probe_attached_sfx_teardown.py` verifies that native model teardown synchronously
 drains the smoke/damage-flame owner list through its vtable destructor. The
@@ -8155,8 +8160,14 @@ direct-VM trace.
 This closes the GameView stop condition for the tested SET31 `tarmage` death
 timeline and covers the SET26 render-host latch, but does not invoke `0x512610`
 to build the death state or run a full `araknigh` callback-to-retirement trace.
-It does not generalize the timer behavior to other SET31 scripts. No retail GUI
-was launched. Reproduce with:
+The display-side effect list now uses those same tick-35/tick-1 retirement
+deadlines. A static audit of the 204 shipped unit COBs found 38 SET31 writes;
+each is `(31, 1)` and each script has one such write in `Dying`. Native timer
+and owner teardown were run through `tarmage`, while the SET26 path was run
+through `crefire`; the other SET31 scripts still need full native runtime
+coverage. Repeating SET31 resets the native one-second timer, but the audited
+shipped death callbacks do not repeat it. Other attached-emitter families
+remain open. No retail GUI was launched. Reproduce with:
 
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
@@ -8960,6 +8971,38 @@ Reproduce with:
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
   --native-death-state --world-binary build-o2/animation_roster_test
+```
+
+### Attached death-effect retirement deadline (2026-09-25)
+
+The native death-state probe covers both early owner-removal edges that affect
+attached damage flames. `crefire` emits one attached flame and writes SET26 at
+tick 0; retail's real outer unit updater drains the model owner/list at tick 1.
+`tarmage` writes SET31 at tick 0; the native one-second timer expires at tick
+34 and owner/list teardown runs at tick 35. GameView records the corresponding
+deadline from the display VM's SET_UNIT_VALUE callback and uses it to shorten
+the attached-effect retirement schedule, preserving the earliest deadline if
+multiple callbacks arrive. A unit without either early-removal edge retains the
+existing 120-tick corpse fallback.
+
+The C++ lifecycle helper checks the SET26/SET31 delay and wrap-safe earliest
+deadline selection. Native `crefire` and `tarmage` probes and the direct-VM
+death-flame comparison pass on the optimized build. The `retail_visual`,
+`animation_roster`, `cursor_roster`, and `shadow` tests pass in Release, Debug,
+optimized Debug, and Clang configurations; no retail GUI was launched. The
+native probes validate owner teardown, while the C++ tests validate deadline
+selection; they do not compare a live retail framebuffer. Other SET31 scripts
+and attached-effect families still need runtime coverage.
+
+Reproduce with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
+  --native-death-state --script crefire --world-binary build-o2/animation_roster_test
+PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
+  --native-death-state --world-binary build-o2/animation_roster_test
+PYTHONPATH=tools/re python3 tools/re/probe_death_sfx_lifecycle.py \
+  --world-binary build-o2/animation_roster_test
 ```
 
 ### Assigned weapon target across a visibility edge (2026-09-24)

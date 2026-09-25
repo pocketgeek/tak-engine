@@ -1062,6 +1062,8 @@ private:
         const std::vector<std::string>* pieceNames = nullptr;
         bool dying = false;
         bool ownerVmStopRequested = false; // native SET26 removal / SET31 owner timer
+        bool ownerSfxRetirementPending = false;
+        uint32_t ownerSfxRetirementTick = 0;
         bool producing = false;
         bool building = false;   // mobile builder actively working a site (conjure anim)
         bool firing = false;

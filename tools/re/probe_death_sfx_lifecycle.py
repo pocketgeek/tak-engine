@@ -204,8 +204,9 @@ def main():
                     raise AssertionError((name, severity, damage_type, native_rows, world))
                 if not native_rows or expected_code not in {code for _, _, code in native_rows}:
                     raise AssertionError((name, severity, damage_type, "no attached damage-flame emission"))
-                # World retains an attached death SFX until the 120-tick corpse
-                # handoff; every confirmed native emitter event must occur first.
+                # The direct-VM timeline is bounded by the 120-tick corpse
+                # animation window. This is not the attached owner's actual
+                # SET26/SET31 retirement deadline, which has a separate probe.
                 if max(tick for tick, _, _ in native_rows) >= 120:
                     raise AssertionError((name, "death SFX extends beyond World handoff", native_rows))
                 native_writes = [(tick, value_id, value) for tick, value_id, value in writes]
@@ -230,9 +231,9 @@ def main():
                    check=True)
     print(f"PASS: {compared} native/World death damage-flame callbacks and unit-value writes "
           f"match across tarmage/tarhel/crefire and 6 severity/type inputs; latest event tick {latest} "
-          "precedes World’s 120-tick owner handoff")
-    print("LIMIT: the native outer unit-update edge that calls 0x4ee560 is not in this "
-          "fixture; destructor timing remains an explicit boundary, not a parity claim")
+          "falls inside the 120-tick direct-VM corpse window")
+    print("LIMIT: this direct-VM callback comparison does not model the live SET26/SET31 "
+          "owner-retirement deadline or rendered attached-effect lifetime")
 
 
 if __name__ == "__main__":

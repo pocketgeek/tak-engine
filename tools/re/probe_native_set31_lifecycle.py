@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare a shipped SET31 death callback and owner lifetime in retail and World.
+"""Trace shipped SET26/SET31 death callbacks and owner lifetimes in retail.
 
 Retail's COB VM host, 0x51d3e0 unit update, 0x51e380 timer, 0x512ae0
 retirement, and 0x4ee560/0x497380 owner/effect-list destructors execute from
@@ -286,15 +286,37 @@ def main():
         if u32(p, unit + 0xC0) == 0:
             break
 
-    if args.native_death_state and writes != [(0, 31, 1)]:
+    set26_owner_case = args.native_death_state and args.script.lower() == "crefire"
+    expected_native_write = [(0, 26 if set26_owner_case else 31, 1)]
+    if args.native_death_state and writes != expected_native_write:
         print("native-death diagnostics:", {
             "writes": writes, "trace": [(t, hex(a)) for t, a in trace],
+            "native_sfx": native_sfx, "effects": events,
             "callback_names": callback_names,
             "callback_dispatches": callback_dispatches,
             "unit_state": hex(u32(p, unit + 0x130)), "owner_timer": f32(p, owner + 0x18),
             "recent": [hex(a) for a in recent[-40:]],
         })
-    assert writes == [(0, 31, 1)], writes
+    assert writes == expected_native_write, writes
+    if set26_owner_case:
+        assert native_sfx == [(0, 16, 260)], native_sfx
+        assert events == [(0, 0, (100, 200, 300), view)], events
+        assert len(snapshots) == 1 and snapshots[0][0] == 1, snapshots
+        assert snapshots[0][4] == 0 and snapshots[0][5] == 0, snapshots[0]
+        assert snapshots[0][6] == sentinel and u32(p, unit + 0xC0) == 0, snapshots[0]
+        assert [(t, address) for t, address in trace
+                if address in (0x512AE0, 0x4EE560, 0x497380)] == [
+                    (1, 0x512AE0), (1, 0x4EE560), (1, 0x497380)
+                ], trace
+        vm_updates = [(t, address) for t, address in trace if address == 0x56C870]
+        assert vm_updates == [(0, 0x56C870)], vm_updates
+        assert [(address, name) for address, name, _ in callback_dispatches] == [
+            ("0x56c720", "Killed"), ("0x56c640", "Dying")
+        ], callback_dispatches
+        assert not [t for t, address in trace if address == 0x51E380], trace
+        print("PASS: retail crefire death dispatcher writes SET26 with one attached flame at tick 0; "
+              "0x51d3e0 removes the unit and drains its native owner/list on tick 1")
+        return
     assert native_sfx and all(row[0] == 0 and row[2] == 260 for row in native_sfx), native_sfx
     assert len(events) == len(native_sfx), (native_sfx, events)
     # Retail's dispatcher passes the view/model object into the creation sink;
