@@ -1,4 +1,5 @@
 #include "client/mainmenu.h"
+#include "client/dooranimation.h"
 #include "client/videofilter.h"
 #include "client/runtimesettings.h"
 #include "client/artscale.h"
@@ -66,13 +67,10 @@ fs::path ciResolve(fs::path base, std::initializer_list<const char*> parts) {
     return base;
 }
 
-// Per-door hover video state: hold the idle clip (`*4`), play hover-in (`*5`) once,
-// loop (`*6`) while hovered, then play hover-out (`*7`) back to idle.
-enum class DoorState { Idle, In, Loop, Out };
-
 struct Door {
     std::string name;                 // gui gadget id
-    SDL_Rect rect{};                  // 640x480 layout space
+    SDL_Rect rect{};                  // video placement from the GUI gadget
+    menu::DoorHotspot hotspot{nullptr, -1, -1, 0, 0}; // retail click/hover area
     std::string vbase;                // video basename: "machine"/"girl"/"knight"
     std::string sound;                // click sound (gui states, e.g. "skirmish.wav")
     std::string tip;                  // help caption (gui cmd, e.g. "Play the Machine")
@@ -83,7 +81,7 @@ struct Door {
     SDL_Texture* vtex = nullptr;      // streaming frame texture (video size)
     int vw = 0, vh = 0;
     double fps = 30.0, accum = 0.0;
-    DoorState state = DoorState::Idle;
+    menu::DoorState state = menu::DoorState::Idle;
     bool videoOk = false;
     bool hover = false;
     std::vector<uint8_t> rgba;
@@ -313,7 +311,7 @@ struct MainMenu::Impl {
     }
 
     // Open clip <base><n>.bik and show its first frame; returns false if unavailable.
-    bool startClip(Door& d, int n, DoorState st) {
+    bool startClip(Door& d, int n, menu::DoorState st) {
         std::string path = findBik(d.vbase, n);
         if (path.empty()) return false;
         std::ifstream f(path, std::ios::binary);
@@ -331,23 +329,43 @@ struct MainMenu::Impl {
 
     void updateDoor(Door& d, double dt) {
         if (!d.videoOk) return;
-        if (d.hover && (d.state == DoorState::Idle || d.state == DoorState::Out))
-            startClip(d, 5, DoorState::In);
-        else if (!d.hover && (d.state == DoorState::In || d.state == DoorState::Loop))
-            startClip(d, 7, DoorState::Out);
+        switch (menu::doorTransitionForHover(d.state, d.hover)) {
+        case menu::DoorTransition::StartIn:
+            startClip(d, 5, menu::DoorState::In);
+            break;
+        case menu::DoorTransition::StartOut:
+            startClip(d, 7, menu::DoorState::Out);
+            break;
+        default:
+            break;
+        }
 
-        if (d.state == DoorState::Idle) return;   // hold the idle frame
+        if (d.state == menu::DoorState::Idle) return;   // hold the idle frame
         d.accum += dt;
         double spf = 1.0 / std::max(1.0, d.fps);
         int guard = 0;
         while (d.accum >= spf && guard++ < 8) {
             d.accum -= spf;
             if (d.vid.nextFrame(d.rgba)) { setDoorTex(d); continue; }
-            // clip ended -> advance the state machine
-            if (d.state == DoorState::In) startClip(d, 6, DoorState::Loop);
-            else if (d.state == DoorState::Loop) { d.vid.rewind();
-                if (d.vid.nextFrame(d.rgba)) setDoorTex(d); }
-            else if (d.state == DoorState::Out) { startClip(d, 4, DoorState::Idle); break; }
+            // Retail lets hover-in finish even if the pointer leaves, then notices
+            // the exit on the next update after entering the loop state.
+            switch (menu::doorTransitionAtClipEnd(d.state)) {
+            case menu::DoorTransition::StartLoop:
+                startClip(d, 6, menu::DoorState::Loop);
+                break;
+            case menu::DoorTransition::RestartLoop:
+                d.vid.rewind();
+                if (d.vid.nextFrame(d.rgba)) setDoorTex(d);
+                break;
+            case menu::DoorTransition::StartIdle:
+                startClip(d, 4, menu::DoorState::Idle);
+                break;
+            case menu::DoorTransition::None:
+            case menu::DoorTransition::StartIn:
+            case menu::DoorTransition::StartOut:
+                break;
+            }
+            if (d.state == menu::DoorState::Idle) break;
         }
     }
 
@@ -383,6 +401,8 @@ struct MainMenu::Impl {
             Door d;
             d.name = s.gadget;
             d.rect = {g->x, g->y, g->w, g->h};
+            if (const auto* hit = menu::retailDoorHotspot(s.gadget))
+                d.hotspot = *hit;
             d.vbase = s.vbase;
             d.action = s.act;
             d.sound = clickSound(*g);
@@ -392,7 +412,9 @@ struct MainMenu::Impl {
             doors.push_back(std::move(d));
         }
         // Open each door's idle clip so it rests on the animated idle frame.
-        for (auto& d : doors) d.videoOk = video::BinkVideo::available() && startClip(d, 4, DoorState::Idle);
+        for (auto& d : doors)
+            d.videoOk = video::BinkVideo::available() &&
+                        startClip(d, 4, menu::DoorState::Idle);
 
         struct BtnSpec { const char* gadget; Choice act; };
         const BtnSpec btns[] = {{"Options", Choice::Options}, {"Exit", Choice::Exit}};
@@ -439,7 +461,7 @@ struct MainMenu::Impl {
         for (auto& d : doors) {
             // Credits has no separate idle GAF: its resting artwork is already
             // painted into MainBG. Overlay video only while it is animated.
-            const bool idleNoArt = (d.state == DoorState::Idle && !d.gaf);
+            const bool idleNoArt = (d.state == menu::DoorState::Idle && !d.gaf);
             if (d.videoOk && d.vtex && !kNoDoorVid && !idleNoArt) {
                 // Like the buttons, the door video is authored bigger than its gui
                 // hotspot and anchored at the gadget origin -- draw it at native size,
@@ -916,7 +938,8 @@ struct MainMenu::Impl {
         auto in = [&](const SDL_Rect& r) {
             return gx >= r.x && gx < r.x + r.w && gy >= r.y && gy < r.y + r.h;
         };
-        for (auto& d : doors) d.hover = in(d.rect);
+        for (auto& d : doors)
+            d.hover = menu::insideRetailDoorHotspot(d.hotspot, gx, gy);
         for (auto& b : buttons) b.hover = in(b.rect);
     }
 

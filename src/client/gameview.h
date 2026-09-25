@@ -48,6 +48,7 @@
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
+#include "client/projectilemodelscale.h"
 #include "client/modelview.h"   // standalone 3DO model viewer (extracted leaf)
 #include "client/renderframe.h"   // UnitR/PlayerR/Frame render snapshot (extracted leaf)
 #include "client/retailaim.h"
@@ -1212,16 +1213,10 @@ private:
         // the meshes retain native size. This display-only correction is limited to the
         // arrow/bolt/harpoon/spear families; round shells and magical beams keep
         // their native scale.
-        static const std::unordered_set<std::string> readableArrowModels = {
-            "araarrow", "araarrow2", "araarrow3", "arabolt", "cregatl1",
-            "araharp1", "verbal1", "verbal1_vet", "verhpoon", "verspear",
-            "zonterspear"
-        };
-        if (readableArrowModels.contains(name)) {
-            const float alongScale = std::clamp(
-                2.0f / std::max(mapView_.zoom(), 0.01f), 1.0f, 1.5f);
-            const float nearZoom = (alongScale - 1.0f) / 0.5f;
-            const float crossScale = alongScale * (1.0f + 1.25f * nearZoom);
+        const auto displayScale = tak::projectileModelDisplayScale(name, mapView_.zoom());
+        if (displayScale.along > 1.0f) {
+            const float alongScale = displayScale.along;
+            const float crossScale = displayScale.across;
             float modelAxis[3] = {0.0f, 0.0f, 1.0f};
             if (native) base.apply(0.0f, 0.0f, 1.0f, modelAxis);
             const float cs = std::cos(facing), sn = std::sin(facing);

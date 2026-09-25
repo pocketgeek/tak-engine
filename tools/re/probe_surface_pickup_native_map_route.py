@@ -60,7 +60,7 @@ EXPECTED_ROUTE = [
 ]
 
 
-def install_pickup_fixture_on_phase(phase):
+def install_pickup_fixture_on_phase(phase, native_attachment=False):
     """Use the existing dispatcher fixture on Phase's ICD without freezing hooks."""
     fixture_module = importlib.import_module(
         "probe_transport_surface_pickup_callbacks")
@@ -75,36 +75,39 @@ def install_pickup_fixture_on_phase(phase):
     phase.icd.hooks[0x56C640] = lambda _uc, _args: (8, 0)
     try:
         pickup = fixture_module.SurfacePickup()
-        # 0x51b4f0 resolves native unit IDs through the retail player's
-        # contiguous entity array. This standalone probe keeps the fixture
-        # entities in a synthetic heap, so provide the same attachment effects
-        # at that established host boundary instead of fabricating that array.
-        def attach(uc, stack_args):
-            import struct
-            passenger, carrier, _sentinel, _flags, _mode = struct.unpack(
-                "<5I", uc.mem_read(stack_args, 20))
-            assert (passenger, carrier) == (pickup.passenger, pickup.carrier), (
-                hex(passenger), hex(carrier))
-            pickup.put(carrier + 0xAC, passenger)
-            pickup.put(passenger + 0xA8, carrier)
-            pickup.put(passenger + 0x60, 0)
-            pickup.put(passenger + 0x130,
-                       pickup.get(passenger + 0x130) | 0x02000000)
-            for offset in (0x68, 0x6C, 0x70):
-                pickup.put(passenger + offset, pickup.get(carrier + offset))
-            return 5, 0
-        phase.icd.hooks[0x51B4F0] = attach
+        if not native_attachment:
+            # 0x51b4f0 resolves native unit IDs through the game's global
+            # contiguous entity pool. The default route-only probe keeps
+            # fixture entities in a synthetic heap, so model its established
+            # attachment boundary. The full-map mission probe instead places
+            # both entities in actual 0x138-byte entity-pool slots and lets the
+            # retail attachment routine execute.
+            def attach(uc, stack_args):
+                import struct
+                passenger, carrier, _sentinel, _flags, _mode = struct.unpack(
+                    "<5I", uc.mem_read(stack_args, 20))
+                assert (passenger, carrier) == (pickup.passenger, pickup.carrier), (
+                    hex(passenger), hex(carrier))
+                pickup.put(carrier + 0xAC, passenger)
+                pickup.put(passenger + 0xA8, carrier)
+                pickup.put(passenger + 0x60, 0)
+                pickup.put(passenger + 0x130,
+                           pickup.get(passenger + 0x130) | 0x02000000)
+                for offset in (0x68, 0x6C, 0x70):
+                    pickup.put(passenger + offset, pickup.get(carrier + offset))
+                return 5, 0
+            phase.icd.hooks[0x51B4F0] = attach
     finally:
         fixture_module.Icd = original_icd_factory
         phase.icd.freeze_hooks = original_freeze_hooks
     return pickup
 
 
-def run(retail_root, hpitool):
+def run(retail_root, hpitool, *, full_map=False, native_attachment=False):
     root = Path(retail_root)
     phase = Phase(480, 480)
     assert phase.construct() is None
-    live = install_pickup_fixture_on_phase(phase)
+    live = install_pickup_fixture_on_phase(phase, native_attachment)
     uc, icd = phase.uc, phase.icd
     put, get, byte = live.put, live.get, live.byte
     carrier, passenger, kind, mission = (
@@ -225,15 +228,17 @@ def run(retail_root, hpitool):
         (START[0] - foot_x // 2, START[1] - foot_z // 2),
         (foot_x, foot_z))
 
-    # Cache only native grades in the narrow route corridor; all other cells
-    # remain grade 0 to make the boundary explicit and deterministic.
+    # Cache native grades in the narrow route corridor by default; the optional
+    # full-map continuation grades the entire shipped TNT plane.
     put(0x62D55C, GS)
     uc.mem_write(phase.GRID + 8, packed_profile[4:])
     native_grade = native_grade_reader(map_data, packed_profile)
     grades = [0] * (width * height)
     grade_count = 0
-    for z in range(*CORRIDOR_Z):
-        for x in range(*CORRIDOR_X):
+    grade_x = (0, width) if full_map else CORRIDOR_X
+    grade_z = (0, height) if full_map else CORRIDOR_Z
+    for z in range(*grade_z):
+        for x in range(*grade_x):
             grades[z * width + x] = native_grade(x, z)
             grade_count += 1
     phase.set_grade_plane(grades)
@@ -354,7 +359,13 @@ def run(retail_root, hpitool):
     }
 
     route = deliveries[0]
-    assert route == EXPECTED_ROUTE, route
+    if full_map:
+        assert route == [
+            (3840, 1920), (4064, 2144), (4064, 3440),
+            (3840, 3664), (3840, 5360),
+        ], route
+    else:
+        assert route == EXPECTED_ROUTE, route
     assert route[0] == (START[0] * scale, START[1] * scale), route[0]
     end_x, end_z = route[-1]
     dx = end_x - TARGET[0] * scale
@@ -362,11 +373,8 @@ def run(retail_root, hpitool):
     assert dx * dx + dz * dz <= circle_radius * circle_radius, (
         route[-1], TARGET, circle_radius)
 
-    # The controlled 70px fixture encodes kind+0x23e = 86. Retail subtracts
-    # 16px when constructing GROUND_PICKUP's circle; actual Vertrans encodes
-    # transportdistance 300 and therefore yields 284px for this native goal.
-    fixture_distance = 86
-    assert fixture_distance - 16 == 70
+    # Retail subtracts 16px when constructing GROUND_PICKUP's circle. In this
+    # fixture the type is set to 300px to match shipped Vertrans.
 
     print(
         f"PASS: Lake Lokken {CARRIER}/{PASSENGER} native GROUND_PICKUP "
@@ -375,18 +383,27 @@ def run(retail_root, hpitool):
         f"0x416430 delivered {len(route)} waypoints on worker tick {delivered_at}."
     )
     print(f"  Route: {route}")
+    if full_map:
+        print(
+            f"  Native 0x508cd0 grades cover all {grade_count} TNT cells "
+            f"({width}x{height}); no off-map or off-corridor cells are blocked. "
+            "Feature-definition bodies are zero-filled."
+        )
+    else:
+        print(
+            f"  Native 0x508cd0 grades cover {grade_count} TNT cells in "
+            f"x={CORRIDOR_X[0]}..{CORRIDOR_X[1]-1}, "
+            f"z={CORRIDOR_Z[0]}..{CORRIDOR_Z[1]-1}; cells outside the corridor "
+            "are blocked. Feature-definition bodies are zero-filled."
+        )
     print(
-        f"  Native 0x508cd0 grades cover {grade_count} TNT cells in "
-        f"x={CORRIDOR_X[0]}..{CORRIDOR_X[1]-1}, "
-        f"z={CORRIDOR_Z[0]}..{CORRIDOR_Z[1]-1}; cells outside the corridor "
-        "are blocked. Feature-definition bodies are zero-filled."
-    )
-    print(
-        f"  Radius inputs: synthetic 70px fixture uses transportdistance "
-        f"{fixture_distance}; shipped Vertrans uses {transport_distance}, "
-        f"so native GROUND_PICKUP radius is {transport_distance}-16="
-        f"{circle_radius}. This route-phase checkpoint ends before physical "
-        "mover/boarding; probe_surface_pickup_native_mission.py continues it."
+        f"  Shipped Vertrans transportdistance {transport_distance} produces "
+        f"the native GROUND_PICKUP circle radius {transport_distance}-16="
+        f"{circle_radius}. "
+        + ("The full-map continuation uses native unit IDs and attachment."
+           if full_map and native_attachment else
+           "This route-phase checkpoint ends before physical mover/boarding; "
+           "probe_surface_pickup_native_mission.py continues it.")
     )
     # Keep the route probe directly reusable by the map-backed mission probe.
     # These are live emulator objects, so callers must continue immediately and

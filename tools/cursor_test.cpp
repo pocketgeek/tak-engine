@@ -99,9 +99,10 @@ int main(int argc, char** argv) {
 
     if (tak::cursorForArmedCommand('l', false) != tak::CursorId::Normal ||
         tak::cursorForArmedCommand('l', true) != tak::CursorId::Load ||
+        tak::cursorForArmedCommand('u', true) != tak::CursorId::Unload ||
         tak::cursorForArmedCommand('m') != tak::CursorId::Move ||
         tak::cursorForArmedCommand('g') != tak::CursorId::Defend)
-        return fail("armed Load cursor requires a selected transport, other command glyphs remain mapped");
+        return fail("armed Load and Unload commands use their matching native cursor sequences");
     if (tak::cursorForArmedAttack(tak::CursorId::Attack,true,false)!=tak::CursorId::Attack ||
         tak::cursorForArmedAttack(tak::CursorId::TooFar,true,false)!=tak::CursorId::Airstrike ||
         tak::cursorForArmedAttack(tak::CursorId::TooFar,false,false)!=tak::CursorId::TooFar ||

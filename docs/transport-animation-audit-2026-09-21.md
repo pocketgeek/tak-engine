@@ -19,19 +19,19 @@ implementation descriptions. Current open gates are:
   captured. Paired native/World pickup dispatcher traces match for 36 air/sea
   ticks; surface pickup callbacks match for 18 ticks. Paired unload dispatcher
   traces match for 17 air ticks and 19 sea ticks, with route arrival controlled
-  at the navigator boundary. An integrated native sea-pickup probe now follows
-  Lake Lokken Vertrans/Araarch's real `GROUND_PICKUP` request through its
-  11-waypoint route, 2,620 mover ticks, circle arrival, transfer effect,
-  passenger attachment and carrier-order retirement. Native route grades cover
-  6,275 TNT-backed corridor cells; cells outside are blocked and feature
-  bodies are zero-filled. The mover uses shipped WATER4 limits and TNT terrain,
-  while established harness boundaries control mover-side service requests and
-  the attachment sink because this fixture lacks retail's contiguous player
-  entity array. The independent World load-order roundtrip passes in Release,
-  Debug and optimized builds, including shore unload and post-release coast.
-  Native and World pickup tick counts are not compared because their search
-  spaces differ. Full-map native pickup grades/features, the real entity-array
-  attachment path, and additional map/carrier profiles remain open. The
+  at the navigator boundary. A full-map native Lake Lokken pickup now grades
+  all 230,400 TNT cells, installs five real waypoints, moves the Vertrans for
+  1,728 ticks, and boards the Araarch through native `0x51b4f0`/`0x51b5a0` at
+  tick 1,731 using the native global entity-pool resolver, payload arguments,
+  and reciprocal attachment links; the carrier mission retires. The fixture
+  uses two synthesized pool records and a player row, zero-fills feature bodies,
+  and controls visibility, grade-body services, mover services, and the UI
+  effect boundary. The Araarch's terminal passenger order pointer remains a
+  synthetic fixture object, so full passenger-order retirement is not
+  established. The independent World full-map pickup boards
+  at tick 2,178; these tick counts are not compared because the search spaces
+  differ. Additional map/carrier profiles and native feature bodies remain
+  open. The
   separate 70px callback fixture used a synthetic `transportdistance=86`;
   shipped Vertrans uses 300 and its native pickup circle is 284px.
   Eight deterministic boat unload-circle searches,
@@ -218,10 +218,18 @@ implementation descriptions. Current open gates are:
   shipped COBs through the retail scheduler: Tarblack (ground), Tarlich
   (hover), Tarcship (water), and Aradrag (flying). Each declared callback
   starts and matches local COB thread/piece state; a second unchanged tick
-  confirms edge suppression. Release, Debug, and optimized builds pass. This
-  verifies representative request-to-script integration, but the callbacks
-  are replayed at the dispatch boundary rather than run by one uninterrupted
-  native mover-to-COB call; stop/reversal edges remain open. A 103-tick
+  confirms edge suppression. The stronger
+  `probe_native_mover_cob_transitions.py` now attaches those shipped COB VMs to
+  the native unit and runs `0x4dc800` through retail's actual script lookup and
+  scheduler. Full COB thread and piece state matches World for Tarblack
+  (ground), Tarlich (hover), Tarcship (water), and Aradrag (flight) over 8–10
+  boundaries in Release, Debug, and optimized builds. Same-target ticks are
+  silent; reversal calls `TurnDirection(41)`; stopping calls
+  `TurnDirection(0)` and `MoveRate(0)`; water resume calls `MoveRate(1)`; and
+  Aradrag occupancy changes `5→4→5`. The fixture controls target, speed, and
+  state and stops before native position commit `0x51b2a0`; mission-side
+  `BeginFlight`/`BeginLanding` producers and rendered/interpolated poses remain
+  open. A 103-tick
   persistent `zonhunt` construction trace also captures
   native mover requests: its only declared movement callback, `setSFXoccupy(5)`,
   fires once on tick 1 in both native and World, including through two retargets,
@@ -239,11 +247,16 @@ implementation descriptions. Current open gates are:
   interpolation and live-camera captures remain open. The pending-shot/dead-
   target sequence now joins target retirement to the next common weapon update;
   broader target-loss cases remain open.
-- Menu video color: the Bink decoder now uses the chroma matrix measured from
-  retail's Bink DLL. Sixteen sampled frames across idle, hover-in, hover-loop,
-  and mouse-out for all four doors pass, with mean RGB error 1.151–2.058/255.
-  This checks representative decoded colors; exact door-state timing and every
-  decoded frame are not covered by that color oracle.
+- Main-menu doors: the Bink decoder uses the chroma matrix measured from
+  retail's Bink DLL. All 348 frames in the 16 door clips pass decoded-frame
+  comparison, with worst mean RGB error 2.086/255; native BinkWait cadence is
+  33.00 ms against the encoded 33.33 ms interval. A headless native-method
+  trace now verifies retail's four door hit rectangles, inclusive edges,
+  hover/click state changes, and leave/re-enter timing. The local menu shares
+  those rectangles and transitions, covered by `door_animation_test` in all
+  three builds. The native-method fixture supplies synthetic Bink/button
+  records and does not exercise the outer SDL/Windows event dispatch or compare
+  the final menu composite.
 - Build icon aspect: all 171 shipped build portraits measured across the three
   containing HPI archives are 63–64 by 47–49 pixels, matching the authored
   4:3 shape within one-pixel variations. The HUD uses a 4:3 icon box and scales
@@ -258,7 +271,13 @@ implementation descriptions. Current open gates are:
   minimum-slot aggregation for mixed Airstrike selections. No shipped FBI uses
   `dropped=`, so this primarily covers authored/mod content. Static selector
   and setter-callsite audits found no gameplay return path for Capture, Pickup,
-  or Teleport; exact animation start phase remains open. Hourglass is confined
+  or Teleport. Their shipped GAF sequences each have one frame, and the native
+  updater preserves that frame, so no visible start phase remains to match for
+  these modes. The registration audit confirms slot 12 is `cursorload` and
+  slot 13 is `cursorunload`; native command tags map LOAD to mode 6/slot 12 and
+  UNLOAD to mode 5/slot 13. The earlier mode-5-as-Load label was a test error;
+  product mapping was already correct. Live pointer pixels remain un-compared.
+  Hourglass is confined
   to the native modal file-picker path. End-of-order waypoint markers now use
   retail's global-tick frame interval (`2 × first GAF delay`) instead of the
   previous fixed three-tick interval. The live software and hardware pointer
@@ -292,10 +311,24 @@ implementation descriptions. Current open gates are:
   and owner removal, checking authored art, emission position/tick and lifetime.
   The shipped arrow, bolt, harpoon, and spear 3DO selection/pose path also has
   passing native draw and 4,096-case pose checks; all 145 moving shot slots in
-  Standard and Crusades resolve their referenced models. The remaining
+  Standard and Crusades resolve their referenced models. The zoomed-out
+  silhouette scaling now also covers the veteran spear aliases
+  `verspear_10` and `zonterspearvet`; focused checks confirm both retain the
+  same readability scaling as their base meshes without changing native model
+  choice, pose, collision or lifetime. The remaining
   projectile gaps are other effect lifecycles and uncovered collision/lifetime
-  families, plus the newly traced impact-damage behavior whose World fix now
-  passes cross-build validation, not the arrow-to-yellow-streak fallback.
+  families. Native impact probing follows unit damage into retail's health
+  fields: a 476-damage Arabow hit moves the fixture from 1000 to 595 HP, and an
+  Arapult splash leaves HP 281/673/1000/281 for the center, near enemy,
+  out-of-radius enemy, and same-owner unit. Native feature impact increments
+  the map cell's damage word by 1250 per hit up to 3750 under a synthetic 5000
+  threshold. A fourth impact now executes native removal/replacement and model
+  cloning: feature type changes 0→1, damage resets to 0, and the replacement
+  cell flag is set. The probe uses synthetic leaf model trees and shimmed C
+  heap frees; authored feature rendering and replacement effect callbacks
+  remain open.
+  The World fix passes cross-build validation; this is not the arrow-to-yellow-
+  streak fallback.
   Pixel-identical Glide output is not required.
 - Overall animation parity: verify engine-driven callback timelines and final
   rendered behavior across the roster. VM/piece-transform oracle coverage and
@@ -303,6 +336,8 @@ implementation descriptions. Current open gates are:
 
 Keep deterministic simulation and retail pathfinding intact throughout. Passing
 CTest and generic network runs is regression evidence, not proof of these gates.
+The latest full CTest sweep passes Release (52/52), Debug (54/54), and optimized
+Debug (54/54).
 
 ## Transport corrections
 
@@ -7185,17 +7220,20 @@ priority over Airstrike, Airstrike takes priority over TooFar, and an all-Airstr
 selection retains Airstrike when no target-specific result wins. Focused unit
 tests cover these cases and native weapon-slot mapping.
 
-### Native action-mode 2 Revive and mode-5 Load cursor gates (2026-09-23)
+### Native action-mode 2 Revive, mode-5 Unload, and mode-6 Load gates (2026-09-23)
 
 `tools/re/probe_cursor_action_modes.py` runs the installed `0x4dd780` cursor
-selector for action modes 2 and 5. Mode 2 returns slot 10 (`cursorrevive`) for
+selector for action modes 2, 5, and 6. Mode 2 returns slot 10 (`cursorrevive`) for
 a `canmove` type (`UnitDef+0x264 bit 0x100`) with either `canresurrect` (bit
 `0x1000`) or `cananimate` (bit `0x20000000`), provided the native map-cell and
 corpse predicates pass. A movable type without either ability falls back to
 slot 14 (`cursormove`); either ability without `canmove` falls back to slot 19
-(`cursornormal`). Mode 5 returns slot 13 (`cursorload`) for `cantransport`
-(bit `0x200`) and slot 19 otherwise. The parser flag mappings were checked at
-the native `0x4c06xx–0x4c07xx` writes.
+(`cursornormal`). Mode 5 returns slot 13 (`cursorunload`) for `cantransport`
+(bit `0x200`) and slot 19 otherwise; mode 6 returns slot 12 (`cursorload`) for
+a valid passenger target. The native parser maps the UI tags UNLOAD to mode 5
+and LOAD to mode 6. The earlier audit mislabeled mode 5 as Load; local product
+mapping was already correct. The parser flag mappings were checked at the
+native `0x4c06xx–0x4c07xx` writes.
 
 The focused emulator fixture supplies a visible point cell, stubs the action
 eligibility and corpse-cell predicates to true, and executes the selector's
@@ -7204,9 +7242,9 @@ native predicates. Locally, `UnitR` snapshots already carry caster abilities,
 corpse phase/type, position and owner, but the HUD has no mode-2/Revive armed
 command; the sim currently chooses eligible nearby corpses automatically.
 Adding a default hover Revive glyph would therefore ignore a native action-mode
-input that the local HUD does not have. Mode 5 has a direct local equivalent:
-the armed `l`/Load command and `UnitType::canTransport`; it now shows Load only
-when at least one selected type can transport, matching the native flag gate.
+input that the local HUD does not have. Mode 6 has a direct local equivalent:
+the armed `l`/Load command and `UnitType::canTransport`; it shows Load only when
+at least one selected type can transport, matching the native capability gate.
 The `cursorTeleport` sequence is registered, but neither action-mode branch
 returns slot 9, and the audited gameplay setter paths do not assign it. Local
 types/orders expose no teleport ability or command. Capture mode 13 also falls
@@ -9266,6 +9304,29 @@ build-o2/cursor_test assets/extracted/all
 ctest --test-dir build-o2 -R cursor_roster --output-on-failure
 ```
 
+### Native cursor registration and action routes (2026-09-25)
+
+`probe_cursor_legacy_start_phase.py` reads retail's actual cursor registration
+stores and GAF timing metadata, then runs the table setter and live-pointer
+updater. Native registration puts `cursorload` at slot 12 and `cursorunload` at
+slot 13. The UI command parser maps LOAD to selector mode 6, which returns slot
+12 for a valid passenger target; UNLOAD maps to mode 5, which returns slot 13
+for a selected transport. The earlier mode-5-as-Load probe label was wrong; the
+product's Load/Unload mappings were already correct. A C++ cursor regression
+now checks the armed Unload command explicitly.
+
+The selector has one direct gameplay caller, and Capture, Pickup and Teleport
+have no evidenced gameplay route through it. Their shipped GAF sequences each
+contain one frame, which the native updater preserves. Thus they have no visible
+start phase to reproduce; live input-to-pointer pixels remain un-compared. The
+probe uses synthetic manager records and does not simulate the complete cursor
+manager initialization.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_cursor_legacy_start_phase.py
+PYTHONPATH=tools/re python3 tools/re/probe_cursor_action_modes.py
+```
+
 ### Zhon Monarch root-anchor join (2026-09-25)
 
 `probe_zhon_construction_pose_join.py` joins retail's native `41ef00`/`4dc800`
@@ -9377,7 +9438,7 @@ water (Tarcship) and flying (Aradrag). Initial callback starts and the next
 unchanged tick's edge suppression match in Release, Debug and optimized builds.
 The probe replays captured requests instead of attaching a COB to one
 uninterrupted native mover call; stop/reversal edges and BeginFlight/
-BeginLanding remain outside this trace.
+BeginLanding remain outside that original trace.
 
 ```sh
 python3 tools/re/check_native_mover_cob_join.py \
@@ -9389,6 +9450,28 @@ python3 tools/re/check_native_mover_cob_join.py \
 python3 tools/re/check_native_mover_cob_join.py \
   --binary build-o2/retail_script_test \
   --helper-binary build-o2/retail_movement_animation_test
+```
+
+The follow-up `probe_native_mover_cob_transitions.py` attaches each shipped COB
+VM to the native unit before calling `0x4dc800`. Retail's own `0x56c640`
+dispatcher resolves callback names and starts the method in the attached COB
+scheduler. Complete thread/piece state then matches the World VM for Tarblack
+(ground), Tarlich (hover), Tarcship (water), and Aradrag (flight), over 8–10
+boundaries per unit. Same-target ticks are silent, reversal invokes
+`TurnDirection(41)`, stop invokes `TurnDirection(0)` and `MoveRate(0)`, water
+resume invokes `MoveRate(1)`, and Aradrag occupancy changes `5→4→5`. Release,
+Debug and optimized builds pass. The fixture controls target, speed, and state,
+then stops before native position commit `0x51b2a0`; it does not cover
+mission-side `BeginFlight`/`BeginLanding` producers or rendered/interpolated
+poses.
+
+```sh
+python3 tools/re/probe_native_mover_cob_transitions.py \
+  --script-binary build/retail_script_test
+python3 tools/re/probe_native_mover_cob_transitions.py \
+  --script-binary build-dbg/retail_script_test
+python3 tools/re/probe_native_mover_cob_transitions.py \
+  --script-binary build-o2/retail_script_test
 ```
 
 ### Ballistic projectile animation and draw selection (2026-09-25)
@@ -9415,24 +9498,38 @@ PYTHONPATH=tools/re python3 tools/re/probe_ballistic_sprite_timeline.py \
 
 `probe_ballistic_impact_body.py` runs the native impact body through per-target
 damage and splash dispatch. An Arabow arrow with authored damage 476 returns
-405 with the CRT roll fixed at zero. An Arapult shell dispatches damage to the
-center enemy, a same-owner unit and a farther enemy, and reaches feature and
-effect dispatch plus projectile retirement. Native `0x52a330` uses the CRT
-`rand()` recurrence with per-thread state seeded during process setup. World
+405 with the CRT roll fixed at zero. With the native unit damage path enabled,
+the fixture's HP word changes from 1000 to 595 and its damage fraction becomes
+0.405. An Arapult shell dispatches damage to the center enemy, a same-owner
+unit and a farther enemy, and reaches feature and effect dispatch plus
+projectile retirement. A second run bypasses the unit-mutation hook and verifies
+remaining HP of 281 for the center, 673 for the near enemy, 1000 for the
+out-of-radius enemy, and 281 for the same-owner unit. With a synthetic feature
+damage threshold of 5000, native impacts add 1250 to its map-cell damage word
+on each of three calls, leaving 3750 damage and the same feature ID. Native
+`0x52a330` uses the CRT `rand()` recurrence with per-thread state seeded during
+process setup. World
 reproduces that recurrence and spread distribution from match-seeded state;
 the retail roll sequence is not promised because the retail CRT state is not a
 lockstep input and can have other consumers.
 
-The probe intercepts the HP and feature mutation sinks, so it verifies native
-call arguments and dispatch, not the resulting HP/feature state. World now
-applies the verified asymmetric integer damage spread once per eligible damage
-recipient, using the CRT stream separately from `gameRng_` so pathfinding's RNG
-sequence is unchanged. Ordinary area damage also includes same-owner units, as
-in the native Arapult trace; mind-control still excludes allies. Regression
-coverage checks the native spread endpoints and one CRT draw per damaged
-recipient. Full CTest passes in Release (51/51), Debug (53/53) and optimized
-Debug (53/53). Resulting native HP/feature mutations and broader
-collision/effect lifecycle cases remain open.
+The dispatch-only pass intercepts feature mutation, while the health and
+feature-accumulation checks run retail's native mutation paths. A fourth-hit
+case crosses the 5000 damage threshold: native `0x4961a0 → 0x494ce0 → 0x494f00
+→ 0x496380 → 0x4964b8` tears down the old feature through `0x4ee560`, places
+replacement type 1 through `0x495360`, and clones its piece tree via
+`0x4ee290/0x4ee760/0x4ee7a0`. The final cell has type 1, zero damage, and flag
+`0x08`; projectile retirement also runs. The two piece roots are synthetic
+empty leaves, heap frees are shimmed, and the replacement effect pointer is
+null. Map/terrain lookup, weapon damage lookup, and impact-environment services
+remain controlled; authored feature rendering and dynamic replacement effects
+are not covered. Broader collision/effect results also remain open. World applies the verified
+asymmetric integer damage spread once per eligible damage recipient, using the
+CRT stream separately from `gameRng_` so pathfinding's RNG sequence is
+unchanged. Ordinary area damage also includes same-owner units, as in the
+native Arapult trace; mind-control still excludes allies. Regression coverage
+checks the native spread endpoints and one CRT draw per damaged recipient. Full
+CTest passes in Release (52/52), Debug (54/54) and optimized Debug (54/54).
 
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_ballistic_impact_body.py
@@ -9458,4 +9555,31 @@ PYTHONPATH=tools/re python3 tools/re/probe_cursor_native_restart.py
 cmake --build build-o2 --target cursor_test takclient -j4
 build-o2/cursor_test assets/extracted/all
 ctest --test-dir build-o2 -R cursor_roster --output-on-failure
+```
+
+### Full-map native sea pickup and transfer (2026-09-25)
+
+`probe_surface_pickup_native_fullmap.py` runs Lake Lokken's TNT-backed route
+and pickup with retail's native grade routine over the complete 480×480 map.
+The native worker installs five waypoints at tick 3. Vertrans enters its
+284-pixel pickup circle at tick 1,667 and attaches Araarch at tick 1,731 after
+1,728 mover ticks from route delivery. The native transfer functions
+`0x51b4f0` and `0x51b5a0` both execute once and resolve IDs through the game's
+global entity pool. The probe asserts the transfer payload, reciprocal carrier
+and passenger links, four transfer effects, and carrier mission retirement.
+The World full-map roundtrip boards at tick 2,178 and completes shore unload,
+placement, and coast; those tick counts are not required to match because
+native and World search spaces differ.
+
+The entity pool uses two synthetic records and a player row. Feature-definition
+bodies are zero-filled, and visibility, grade-body calls, mover services, and
+the UI feedback effect are controlled. Araarch is stationary and inserted into
+the native sector list; its own ground route is not part of this probe. The
+terminal passenger-order pointer remains a synthetic fixture object, so only
+carrier mission retirement is established.
+
+```sh
+PYTHONPATH=tools/re python3 -u tools/re/probe_surface_pickup_native_fullmap.py \
+  --hpitool build-o2/hpitool \
+  --world-binary build-o2/transport_test
 ```

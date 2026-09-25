@@ -1,4 +1,5 @@
 #include "client/modelmath.h"
+#include "client/projectilemodelscale.h"
 #include "client/retaildebrismodel.h"
 #include <array>
 #include <bit>
@@ -25,6 +26,19 @@ static std::array<float,3> point(std::span<const std::array<int32_t,15>> chain) 
         uint16_t(root[13]),uint16_t(root[12]),uint16_t(root[14]));
 }
 int main(int argc,char** argv) {
+    {
+        constexpr float zoom = 1.3f;
+        const auto spear = tak::projectileModelDisplayScale("verspear", zoom);
+        const auto veteranSpear = tak::projectileModelDisplayScale("verspear_10", zoom);
+        const auto zhonSpear = tak::projectileModelDisplayScale("zonterspear", zoom);
+        const auto veteranZhonSpear = tak::projectileModelDisplayScale("zonterspearvet", zoom);
+        const auto unrelated = tak::projectileModelDisplayScale("zonbolo_10", zoom);
+        if (spear.along != veteranSpear.along || spear.across != veteranSpear.across ||
+            zhonSpear.along != veteranZhonSpear.along ||
+            zhonSpear.across != veteranZhonSpear.across ||
+            !(veteranSpear.along > 1.0f && veteranSpear.across > veteranSpear.along) ||
+            unrelated.along != 1.0f || unrelated.across != 1.0f) return 1;
+    }
     {
         tak::tdo::Object source;
         source.name="arm";source.x=3;source.y=4;source.z=5;

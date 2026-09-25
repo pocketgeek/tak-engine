@@ -36,9 +36,10 @@ enum class CursorId {
     Count
 };
 
-// Map an armed map command to the cursor it can actually issue. Retail's
-// action-mode 5 selector returns the Load cursor only for a selected
-// cantransport type; with no such unit its native result is the normal arrow.
+// Map an armed map command to the cursor it can actually issue. Retail's UI
+// command parser maps LOAD to selector mode 6 / cursorload, and UNLOAD to mode
+// 5 / cursorunload. The armed Load glyph is shown only when selection includes
+// a cantransport unit; without one, native selection resolves to the normal arrow.
 inline CursorId cursorForArmedCommand(char cmd, bool hasLoadTransport = false) {
     switch (cmd) {
         case 'm': return CursorId::Move;

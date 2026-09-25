@@ -109,6 +109,20 @@ def run_native(state, max_ticks):
     phase, live, uc = state["phase"], state["live"], state["phase"].uc
     carrier, passenger, nav, mover = live.carrier, live.passenger, live.nav, live.mover
     configure_map_mover(state)
+    if state.get("native_attachment"):
+        # 0x51b5a0 removes the passenger from its 128px sector occupancy list
+        # through passenger+0xa4. Give the stationary Araarch a genuine native
+        # sector-list membership via 0x506650; leaving this pointer null would
+        # make the real attachment routine dereference address 0x6 in
+        # 0x5065f0. The grid itself contains native-format records built above.
+        sector_grid = live.get(GS + 0x19F18)
+        sector_stride = live.get(GS + 0x19F1C)
+        sector_x, sector_z = TARGET[0] // 8, TARGET[1] // 8
+        passenger_sector = sector_grid + (sector_z * sector_stride + sector_x) * 10
+        _, error = phase.icd.call(0x506650, (passenger, passenger_sector))
+        assert error is None, ("native Araarch sector insertion", error)
+        assert live.get(passenger + 0xA4) == passenger_sector
+        assert live.get(passenger_sector + 6) == passenger
     # Point the ground target at the authored map location. The route probe's
     # dispatch used this same object position when it installed the circle.
     live.put(passenger + 0x68, TARGET[0] * 16 * 65536)
@@ -180,7 +194,8 @@ def run_native(state, max_ticks):
         "carrier": struct.unpack("<3i", uc.mem_read(carrier + 0x68, 12)),
     }
     assert not live.get(carrier + 0x60), "carrier pickup order did not retire after boarding"
-    assert live.get(passenger + 0x60) == 0, "native passenger pickup order did not retire"
+    if not state.get("native_attachment"):
+        assert live.get(passenger + 0x60) == 0, "native passenger pickup order did not retire"
     assert live.get(carrier + 0xAC) == passenger, "native carrier cargo link is missing"
     assert live.get(passenger + 0xA8) == carrier, "native reciprocal cargo link is missing"
     assert 2 in stage_seen, ("native pickup never entered transfer stage", sorted(stage_seen))

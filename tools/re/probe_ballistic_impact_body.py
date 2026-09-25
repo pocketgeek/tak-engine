@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """Exercise retail 0x529c10 impact dispatch without launching the game.
 
-Only engine-facing services are substituted: map/cell lookup, weapon damage
-lookup, final unit/feature mutation, effect queue insertion, and projectile
-COM releases. Retail impact, splash scan, per-hit damage math, feature scan,
-and projectile retirement run from KINGDOMS.icd.
+Map/cell lookup, weapon damage lookup, effect queue insertion, and projectile
+COM releases use controlled services. Dispatch-only cases also substitute unit
+and feature damage callbacks; native_mutation cases run the native unit damage
+and HP update path. The feature-threshold replacement case also runs native
+feature placement, accumulation, removal, replacement, and piece-tree
+clone/teardown. It supplies a synthetic empty leaf piece tree and cdecl heap
+shims, while map/terrain services stay controlled; it performs no authored
+feature rendering or Glide submission. Retail impact, splash scan, per-hit
+damage math, and projectile retirement run from KINGDOMS.icd.
 """
 import pathlib
 import re
 import struct
 
 from emu import HEAP, Icd
+from unicorn import UC_HOOK_CODE
 from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_FPCW
 
 
@@ -49,7 +55,8 @@ def shipped_profile(unit, weapon, expected):
     return block
 
 
-def make_probe(base_damage, aoe, edge, effect=False, units=()):
+def make_probe(base_damage, aoe, edge, effect=False, units=(), native_mutation=False,
+               native_allocators=False):
     p = Icd()
     uc = p.uc
     names = ("game", "shot", "weapon", "owner", "units", "kind", "app",
@@ -107,15 +114,49 @@ def make_probe(base_damage, aoe, edge, effect=False, units=()):
 
     hooks = {
         0x50E660: map_cell, 0x50E600: map_index,
-        0x531E50: damage_lookup, 0x51A140: apply_damage,
+        0x531E50: damage_lookup,
         0x50A7D0: environment_event, 0x4931E0: feature_point,
-        0x4961A0: feature_damage, 0x48C870: effect_check,
+        0x48C870: effect_check,
         0x48C0B0: effect_dispatch, 0x5D4444: lambda emu, sp: (0, 0),
         0x51F340: lambda emu, sp: (2, 1), 0x4099E0: lambda emu, sp: (3, 0),
         VT + 0x14: lambda emu, sp: (1, 0),
     }
+    if not native_mutation:
+        hooks[0x51A140] = apply_damage
+        hooks[0x4961A0] = feature_damage
     dtor = HEAP + 0xFE000
     hooks[dtor] = reference_release
+    if native_allocators:
+        # Feature instance setup/destruction allocates and frees native piece
+        # arrays. Keep those calls cdecl-correct and inside Unicorn's mapped
+        # heap; the engine's Windows process heap is not initialized here.
+        allocation = {"next": HEAP + 0x180000}
+
+        def allocate(emu, size):
+            size = max(size, 1)
+            address = (allocation["next"] + 15) & ~15
+            allocation["next"] = address + size
+            assert allocation["next"] < HEAP + 0x400000, (hex(address), size)
+            emu.mem_write(address, bytes(size))
+            logs.append(("native-alloc", address, size))
+            return address
+
+        def alloc_tagged(emu, sp):
+            return 0, allocate(emu, read32(emu, sp + 4))
+
+        def alloc(emu, sp):
+            return 0, allocate(emu, read32(emu, sp))
+
+        def free(emu, sp):
+            logs.append(("native-free", read32(emu, sp)))
+            return 0, 0
+
+        # These binary routines are cdecl. Returning 0 args from Icd's call
+        # shim preserves the caller's cleanup (an stdcall-style pop corrupts
+        # the native constructor's stack).
+        hooks[0x5BA3D0] = alloc_tagged
+        hooks[0x5BA3E0] = alloc
+        hooks[0x5BA5D0] = free
     p.hooks.update(hooks)
     p.freeze_hooks()
     uc.reg_write(UC_X86_REG_FPCW, 0x027F)
@@ -148,8 +189,12 @@ def make_probe(base_damage, aoe, edge, effect=False, units=()):
             put16(uc, c + 8, 0xFFFF)
     for unit_id, (x, z, player) in enumerate(units, start=1):
         target = U + unit_id * STRIDE
+        put16(uc, target + 2, unit_id)
         put(uc, target + 0xB4, K)
+        put(uc, target + 0xB8, IF)
         put(uc, target + 0x130, 0x01000000)
+        put16(uc, target + 0x10C, 1000)
+        putf(uc, target + 0x108, 1.0)
         uc.mem_write(target + 0xFD, bytes((player,)))
         putf(uc, target + 0xE4, 1.0)
         put(uc, target + 0x68, x * 65536)
@@ -161,6 +206,7 @@ def make_probe(base_damage, aoe, edge, effect=False, units=()):
     for off in (0x13A, 0x13E, 0x142, 0x146, 0x14A, 0x14E):
         put(uc, K + off, 0)
     put(uc, K + 0x9E, 0)
+    put(uc, K + 0x1BE, 1000)
     uc.mem_write(K + 0x268, bytes(4))
 
     # The native area pass resolves the one feature at the impact tile.
@@ -182,6 +228,7 @@ def make_probe(base_damage, aoe, edge, effect=False, units=()):
     put(uc, W + 0x40, VT)
     put(uc, VT, 0)
     put(uc, VT + 0x14, VT + 0x14)
+    put(uc, IF, VT)
     if effect:
         put(uc, W + 0x80, 0x4343)
         put(uc, W + 0x84, 0x4242)
@@ -215,6 +262,17 @@ def run():
     assert len([r for r in direct if r[0] == "release"]) == 3
     print(f"Arabow arrow direct hit: native final damage={hit[2]} from authored 476 (RNG fixed at 0); releases=3; retired=0x{read32(p.uc, shot + 0xD8):x}")
 
+    p, (_, shot, units, stride), direct_native = make_probe(
+        476, 0, 1.0, units=((256, 256, 1),), native_mutation=True)
+    victim = units + stride
+    _, error = p.call(0x529C10, (shot, victim, 1, 1, 0))
+    assert error is None, error
+    hp = struct.unpack("<h", p.uc.mem_read(victim + 0x10C, 2))[0]
+    damage_fraction = struct.unpack("<f", p.uc.mem_read(victim + 0x108, 4))[0]
+    assert hp == 595 and abs(damage_fraction - 0.405) < 1e-6, (hp, damage_fraction)
+    assert read32(p.uc, victim + 0x130) & 0x01000000
+    print(f"Arabow arrow native health mutation: HP 1000→{hp}; damage fraction={damage_fraction:.3f}; unit remains alive")
+
     p, (_, shot, units, stride), area = make_probe(
         1250, 100, 0.1, effect=True,
         units=((256, 256, 1), (281, 256, 1), (308, 256, 1), (260, 256, 0)))
@@ -228,6 +286,136 @@ def run():
     assert len([r for r in area if r[0] == "release"]) == 3
     assert read32(p.uc, shot + 0xD8) & 2
     print(f"Arapult shell environment impact: native unit damages={by_id} (same-owner unit 4 is included); feature-dispatch=1; effect-create=1; releases=3; retired=0x{read32(p.uc, shot + 0xD8):x}")
+
+    p, (_, shot, units, stride), area_native = make_probe(
+        1250, 100, 0.1, effect=True, native_mutation=True,
+        units=((256, 256, 1), (281, 256, 1), (308, 256, 1), (260, 256, 0)))
+    # Leave the impact tile empty so the retail unit splash scan can be tested
+    # independently of the feature damage callback and feature vtable.
+    cells = HEAP + 8 * 0x10000
+    impact_cell = cells + (16 * GRID + 16) * 14
+    put16(p.uc, impact_cell + 8, 0xFFFF)
+    put16(p.uc, impact_cell + 10, 0xFFFF)
+    _, error = p.call(0x529C10, (shot, 0, 1, 1, 0))
+    assert error is None, error
+    remaining = {i: struct.unpack("<h", p.uc.mem_read(units + i * stride + 0x10C, 2))[0]
+                 for i in range(1, 5)}
+    assert remaining == {1: 281, 2: 673, 3: 1000, 4: 281}, remaining
+    assert len([r for r in area_native if r[0] == "effect-create"]) == 1
+    print(f"Arapult native splash health: remaining HP={remaining}; same-owner unit 4 is hit; out-of-radius unit 3 is untouched")
+
+    p, (_, shot, _, _), feature_native = make_probe(
+        1250, 100, 0.1, native_mutation=True, units=())
+    uc = p.uc
+    weapon = HEAP + 2 * 0x10000
+    cells = HEAP + 8 * 0x10000
+    definitions = HEAP + 9 * 0x10000
+    feature_cell = cells + (16 * GRID + 16) * 14
+    put16(uc, definitions + 0x126, 5000)
+    put16(uc, weapon + 0x88, 1250)
+    accumulated = []
+    for damage_total in (1250, 2500, 3750):
+        put(uc, shot + 0xD8, 0)
+        _, error = p.call(0x529C10, (shot, 0, 1, 1, 0))
+        assert error is None, error
+        feature_id = struct.unpack("<H", uc.mem_read(feature_cell + 8, 2))[0]
+        damage = struct.unpack("<H", uc.mem_read(feature_cell + 10, 2))[0]
+        assert feature_id == 0 and damage == damage_total, (feature_id, damage)
+        assert read32(uc, shot + 0xD8) & 2
+        accumulated.append(damage)
+    print(f"Native feature damage accumulation: {accumulated} below threshold 5000; feature ID unchanged")
+
+    # Native feature destruction must begin from a placed feature instance.
+    # A manually seeded cell has no live piece tree and skips the teardown
+    # branch in 0x496380, so initialize type 0 with retail's placement routine.
+    p, (_, shot, _, _), feature_replace = make_probe(
+        1250, 100, 0.1, native_mutation=True, native_allocators=True)
+    uc = p.uc
+    cells = HEAP + 8 * 0x10000
+    definitions = HEAP + 9 * 0x10000
+    feature_entries = HEAP + 15 * 0x10000
+    weapon = HEAP + 2 * 0x10000
+    feature_cell = cells + (16 * GRID + 16) * 14
+    put16(uc, feature_cell + 8, 0xFFFF)
+    put16(uc, feature_cell + 10, 0)
+    put16(uc, definitions + 0x126, 5000)
+    put16(uc, definitions + 0x12C, 1)  # type 0 is replaced by type 1
+    put16(uc, weapon + 0x88, 1250)
+
+    # Native 0x4ee760 counts the +0x30/+0x2c child links before 0x4ee290
+    # clones a model tree. Each definition therefore gets one valid 0x38-byte
+    # leaf with no children or vertex array: structurally sufficient, but not
+    # an authored 3DO feature model.
+    for feature_id, root in ((0, HEAP + 0xF1000), (1, HEAP + 0xF1040)):
+        uc.mem_write(root, bytes(0x38))
+        put(uc, definitions + feature_id * 0x140 + 0x110, root)
+
+    native_calls = []
+    watched = {
+        0x4961A0, 0x494CE0, 0x494F00, 0x496380, 0x4964B8,
+        0x4EE560, 0x494A80, 0x496518, 0x495360, 0x4EE290,
+        0x4EE760, 0x4EE7A0, 0x4F13A0,
+    }
+
+    def watch_native_calls(emu, address, _size, _user_data):
+        if address in watched:
+            native_calls.append(address)
+
+    for address in watched:
+        uc.hook_add(UC_HOOK_CODE, watch_native_calls,
+                    begin=address, end=address)
+
+    _, error = p.call(0x495360, (feature_cell, 0, 0, 0, 10))
+    assert error is None, error
+    assert struct.unpack("<H", uc.mem_read(feature_cell + 8, 2))[0] == 0
+    assert uc.mem_read(feature_cell + 0xD, 1)[0] & 0x08
+    feature_slot = struct.unpack("<H", uc.mem_read(feature_cell + 10, 2))[0]
+    feature_state = feature_entries + feature_slot * 0x60
+    assert read32(uc, feature_state + 4) != 0
+
+    for damage_total in (1250, 2500, 3750):
+        put(uc, shot + 0xD8, 0)
+        _, error = p.call(0x529C10, (shot, 0, 1, 1, 0))
+        assert error is None, error
+        feature_id = struct.unpack("<H", uc.mem_read(feature_cell + 8, 2))[0]
+        accumulated_damage = struct.unpack(
+            "<H", uc.mem_read(feature_state + 0x26, 2))[0]
+        assert feature_id == 0 and accumulated_damage == damage_total, (
+            feature_id, accumulated_damage, damage_total)
+
+    native_calls.clear()
+    put(uc, shot + 0xD8, 0)
+    _, error = p.call(0x529C10, (shot, 0, 1, 1, 0))
+    assert error is None, error
+    expected_calls = [
+        0x4961A0, 0x494CE0, 0x494F00, 0x496380, 0x4964B8,
+        0x4EE560, 0x494A80, 0x496518, 0x495360, 0x494A80,
+        0x4EE290, 0x4EE760, 0x4EE7A0, 0x4F13A0,
+    ]
+    call_iter = iter(native_calls)
+    assert all(any(actual == expected for actual in call_iter)
+               for expected in expected_calls), [hex(address) for address in native_calls]
+    replacement_id = struct.unpack("<H", uc.mem_read(feature_cell + 8, 2))[0]
+    replacement_slot = struct.unpack("<H", uc.mem_read(feature_cell + 10, 2))[0]
+    replacement_state = feature_entries + replacement_slot * 0x60
+    replacement_damage = struct.unpack(
+        "<H", uc.mem_read(replacement_state + 0x26, 2))[0]
+    cell_flags = uc.mem_read(feature_cell + 0xD, 1)[0]
+    assert (replacement_id, replacement_damage) == (1, 0), (
+        replacement_id, replacement_damage)
+    assert cell_flags & 0x08
+    assert read32(uc, replacement_state + 4) != 0
+    assert read32(uc, replacement_state + 0x38) == 0
+    assert read32(uc, shot + 0xD8) & 2
+    frees = [row for row in feature_replace if row[0] == "native-free"]
+    assert frees, "native 0x4ee560 teardown did not release piece arrays"
+    print("Native feature threshold replacement: type 0→1 at 5000 damage; "
+          f"cell damage={replacement_damage}; flags=0x{cell_flags:02x}; "
+          f"native piece free requests={len(frees)} (shimmed); projectile retired")
+    print("Native feature calls: 0x4961a0→0x494ce0→0x494f00→0x496380 "
+          "(0x4ee560 teardown)→0x495360 replacement→0x4ee290 clone; "
+          "synthetic leaf tree and allocator/free hooks; +0x38 effect callback "
+          "is null; terrain origin and renderer remain controlled")
 
 
 if __name__ == "__main__":
