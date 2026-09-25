@@ -29,6 +29,35 @@ from check_surface_unload_map_release import (
     cat, movement_profile, native_placement_oracle, parse_tnt)
 
 
+def expected_path_costs(turn_rate, footprint, road_mult, water_mult,
+                        movement_flags, heavy_slope):
+    """Reconstruct the World retail-cost inputs from its unit profile."""
+    ground, road, slope, traffic = 24, 8, (320 if heavy_slope else 48), 80
+    if road_mult >= 81920:
+        ground = 24 * road_mult // 65536
+        slope = slope * road_mult // 65536
+        traffic = 80 * road_mult // 65536
+
+    effective_turn = turn_rate
+    if movement_flags & 0x800:
+        effective_turn = (turn_rate * road_mult // 65536) & 0xFFFF
+    elif movement_flags & 0x1000:
+        effective_turn = (turn_rate * water_mult // 65536) & 0xFFFF
+    min_straight = footprint + 3
+    if effective_turn >= 1000:
+        short_turn = 16
+        min_straight = footprint
+    elif effective_turn > 200:
+        short_turn = 16 + 120 * (1000 - effective_turn) // 800
+        min_straight = footprint + 3 * (1000 - effective_turn) // 800
+    else:
+        short_turn = 136
+    if heavy_slope:
+        short_turn *= 5
+        min_straight *= 2
+    return ground, road, slope, traffic, short_turn, min_straight
+
+
 def retail_unit_profile(hpitool, retail_root, unit, crusades=False):
     """Resolve the balance-selected shipped FBI, falling back to base FBI."""
     unit = unit.lower()
@@ -692,7 +721,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     native_live_profiles = {
         'lake lokken': {('vertrans', 'araarch'), ('verscout', 'araarch'),
-                        ('verman', 'araarch'), ('aratrans', 'araarch')},
+                        ('verman', 'araarch'), ('aratrans', 'araarch'),
+                        ('creiron', 'araarch'), ('arawar', 'araarch'),
+                        ('crester', 'araarch'), ('npcbotl', 'araarch'),
+                        ('npcrixx', 'araarch'), ('verharp', 'araarch')},
         'per mare per terras': {('vertrans', 'araarch')},
         'sea dragon spine': {('vertrans', 'araarch')},
     }
@@ -700,7 +732,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             (carrier.lower(), passenger.lower()) not in
             native_live_profiles.get(map_name.lower(), set())):
         raise ValueError('--native-live-unload currently checks Lake Lokken '
-                         'Vertrans/VerScout/VerMan/Aratrans with Araarch, and '
+                         'Vertrans/VerScout/VerMan/Aratrans/Creiron/Arawar/Crester/'
+                         'NpcBotl/NpcRixx/VerHarp with Araarch, and '
                          'Vertrans/Araarch on the other supported maps')
     if terrain_scan_after is not None and not native_live_unload:
         raise ValueError('--terrain-scan-after requires --native-live-unload')
@@ -788,13 +821,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         assert (fx, fz, attempt_heavy_profile) == (grade_fx, grade_fz, attempt_heavy)
         assert traffic_radius == 50 // half_cell_ticks, \
             (traffic_radius, half_cell_ticks)
-        if carrier and carrier.lower() == 'verscout':
-            # Lake Lokken's VerScout uses WATER3, whose authored turn rate
-            # yields a 650 short-turn penalty and 10 minimum-straight cost.
-            expected_costs = (24, 8, 320, 80, 650, 10)
-        else:
-            expected_min_straight = (max(fx, fz) + 3) * (2 if attempt_heavy else 1)
-            expected_costs = (24, 8, 320, 80, 680, expected_min_straight)
+        expected_costs = expected_path_costs(
+            turn, fx, road, water, flags, bool(cost_heavy))
         assert (ground_cost, road_cost, slope_cost, traffic_cost, short_turn_cost,
                 min_straight_cost) == expected_costs, completed_attempt
         grades = [int(value) for line in stderr[header_index + 1:header_index + 1 + height]
@@ -1338,14 +1366,16 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     independent_grade = None
     if native_map_grades:
         native_grade_profiles = {
-            'lake lokken': {'vertrans', 'aratrans', 'verscout', 'verman'},
+            'lake lokken': {'vertrans', 'aratrans', 'verscout', 'verman', 'creiron',
+                            'arawar', 'crester', 'npcbotl', 'npcrixx', 'verharp'},
             'per mare per terras': {'vertrans'},
             'sea dragon spine': {'vertrans'},
         }
         supported_carriers = native_grade_profiles.get(map_name.lower(), set())
         if not carrier or carrier.lower() not in supported_carriers:
             raise ValueError('--native-map-grades currently checks Lake Lokken '
-                             '(Vertrans/Aratrans/VerScout/VerMan), '
+                             '(Vertrans/Aratrans/VerScout/VerMan/Creiron/Arawar/'
+                             'Crester/NpcBotl/NpcRixx/VerHarp), '
                              'Per Mare Per Terras (Vertrans), and Sea Dragon Spine (Vertrans)')
         tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
                        f'Maps/{map_name}.tnt')

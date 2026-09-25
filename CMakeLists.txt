@@ -536,6 +536,28 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(model_transform_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(model_transform_test PRIVATE ${_tak_sdl2})
     add_test(NAME model_transform COMMAND model_transform_test)
+    # The retail-backed COB/3DO trace is an optional local regression. It uses
+    # Unicorn and the extracted LIFBIRD assets, so keep it out of environments
+    # that only have the C++ build dependencies installed.
+    if(TAK_TEST_DATA AND EXISTS "${TAK_TEST_DATA}/KINGDOMS.icd" AND
+       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts/lifbird.cob" AND
+       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/objects3d/lifbird.3do")
+      find_package(Python3 COMPONENTS Interpreter QUIET)
+      if(Python3_Interpreter_FOUND)
+        execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import unicorn"
+          RESULT_VARIABLE _tak_unicorn_status
+          OUTPUT_QUIET ERROR_QUIET)
+        if("${_tak_unicorn_status}" STREQUAL "0")
+          add_test(NAME native_lifbird_ambient_pose
+            COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_SOURCE_DIR}/tools/re/check_native_lifbird_ambient_pose.py"
+              --script-binary "$<TARGET_FILE:retail_script_test>"
+              --model-binary "$<TARGET_FILE:model_transform_test>"
+              --icd "${TAK_TEST_DATA}/KINGDOMS.icd")
+          set_tests_properties(native_lifbird_ambient_pose PROPERTIES TIMEOUT 60)
+        endif()
+      endif()
+    endif()
 
     target_link_libraries(takclient PRIVATE tak-formats ${_tak_sdl2})
     # We provide our own main() and call SDL_SetMainReady(). Define SDL_MAIN_HANDLED for

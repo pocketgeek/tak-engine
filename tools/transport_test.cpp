@@ -2320,7 +2320,16 @@ static void airFlightTraceFixture(unsigned steps) {
 // exercises the native transportdistance-34 circle before its transfer/step-out
 // phase. The Python side pairs this World trace with the retail handler's goal
 // and full 0x4dc800 mover.
-static void airUnloadFlightTraceFixture(unsigned steps,bool heightStep=false) {
+struct AirUnloadFlightTraceProfile {
+    int32_t maxVelocityRaw=120000,accelerationRaw=20000,brakeRaw=60000;
+    int32_t turnRate=10000,cruiseAlt=100,transportDistance=150;
+    int32_t footprintX=1,footprintZ=1;
+    int32_t waterMultiplierRaw=0x10000,roadMultiplierRaw=0x13333;
+    int32_t halfCellTicks=70;
+};
+
+static void airUnloadFlightTraceFixture(unsigned steps,bool heightStep=false,
+        const AirUnloadFlightTraceProfile* profile=nullptr) {
     World w;w.setVisPlayer(-1);
     std::vector<uint8_t> terrain(256*256,100);
     // The bounded height-step trace puts a tall ridge across the direct flight
@@ -2333,6 +2342,19 @@ static void airUnloadFlightTraceFixture(unsigned steps,bool heightStep=false) {
     air.maxVel=tak::sim::Fixed::raw(120000);
     air.accel=tak::sim::Fixed::raw(20000);air.brake=tak::sim::Fixed::raw(60000);
     air.turnRate=10000;
+    if(profile) {
+        air.maxVel=tak::sim::Fixed::raw(profile->maxVelocityRaw);
+        air.accel=tak::sim::Fixed::raw(profile->accelerationRaw);
+        air.brake=tak::sim::Fixed::raw(profile->brakeRaw);
+        air.turnRate=profile->turnRate;
+        air.cruiseAlt=profile->cruiseAlt;
+        air.transportDist=profile->transportDistance;
+        air.footX=profile->footprintX;
+        air.footZ=profile->footprintZ;
+        air.waterMult=tak::sim::Fixed::raw(profile->waterMultiplierRaw);
+        air.roadMult=tak::sim::Fixed::raw(profile->roadMultiplierRaw);
+        air.halfCellTicks=profile->halfCellTicks;
+    }
     const int carrier=w.spawn(&air,3000,3000),cargo=w.spawn(&passenger,3000,3000);
     board(w,carrier,cargo);
     auto* u=w.unit(carrier);
@@ -2385,6 +2407,32 @@ int main(int argc,char** argv) {
     }
     if(argc==3 && !std::strcmp(argv[1],"--air-unload-heightstep-trace")) {
         airUnloadFlightTraceFixture(unsigned(std::clamp(std::atoi(argv[2]),1,10000)),true);
+        return 0;
+    }
+    if(argc==13 && !std::strcmp(argv[1],"--air-unload-heightstep-profile")) {
+        AirUnloadFlightTraceProfile profile;
+        profile.maxVelocityRaw=std::atoi(argv[3]);
+        profile.accelerationRaw=std::atoi(argv[4]);
+        profile.brakeRaw=std::atoi(argv[5]);
+        profile.turnRate=std::atoi(argv[6]);
+        profile.cruiseAlt=std::atoi(argv[7]);
+        profile.transportDistance=std::atoi(argv[8]);
+        profile.footprintX=std::atoi(argv[9]);
+        profile.footprintZ=std::atoi(argv[10]);
+        profile.waterMultiplierRaw=std::atoi(argv[11]);
+        profile.roadMultiplierRaw=std::atoi(argv[12]);
+        const int64_t bestSpeed=(int64_t(std::max(profile.waterMultiplierRaw,
+            std::max(profile.roadMultiplierRaw,0x10000)))*profile.maxVelocityRaw)>>16;
+        profile.halfCellTicks=bestSpeed<=0?255:int32_t(std::clamp<int64_t>(
+            (int64_t(8)<<16)/bestSpeed,1,255));
+        if(profile.maxVelocityRaw<=0 || profile.accelerationRaw<0 ||
+           profile.brakeRaw<0 || profile.turnRate<0 || profile.cruiseAlt<0 ||
+           profile.transportDistance<=34 || profile.footprintX<1 || profile.footprintZ<1) {
+            std::fprintf(stderr,"invalid air-unload carrier profile\n");
+            return 2;
+        }
+        airUnloadFlightTraceFixture(unsigned(std::clamp(std::atoi(argv[2]),1,10000)),
+                                    true,&profile);
         return 0;
     }
     if(argc==10 && !std::strcmp(argv[1],"--surface-unload-map-route-type")) {

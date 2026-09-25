@@ -15,13 +15,17 @@ The original air/sea transport and all-animation goal remains incomplete. The
 sections below record successive findings; later corrections supersede earlier
 implementation descriptions. Current open gates are:
 
-Latest profile checks narrow several of those gates. Lake Lokken joined
-map-backed shore unloads now pass for VerMan/Araarch and Aratrans/Araarch in
-Release, Debug, and optimized Debug, under Standard and Crusades. Native pickup
-also reaches reciprocal attachment and `BeCarried` completion for three air
-carriers: ZONROC, CREAERI, and TARSHIP. The callback-bearing flyer pose sweep
-now covers all 26 shipped pairs. These are still controlled headless traces,
-not proof of every map, carrier order, capacity case, or rendered animation.
+Latest profile checks narrow several of those gates. All ten shipped water
+transports now pass Lake Lokken's map-backed route, native grade, and joined
+shore-release trace in both balances and Release, Debug, and optimized Debug.
+The three shipped flying transports now pass native unload-through-release
+traces with their selected FBI profiles and live height scans in both balances
+and all three builds; those use a controlled ridge and direct circle rather than
+a shipped map route. Native pickup also reaches reciprocal attachment and
+`BeCarried` completion for all three air carriers. The callback-bearing flyer
+pose sweep covers all 26 shipped pairs, and LIFBIRD now has a separate idle/fly
+ambient-pose trace. These remain controlled headless traces, not proof of
+every map, order combination, capacity case, or rendered animation.
 ZONHUNT's placed-construction root and site anchor match the native projection
 in the current fixture; a synchronized capture using the reported map and
 camera is still needed to judge the apparent northward separation in the live
@@ -62,9 +66,8 @@ projectile hit or judge the beam/arrow's rendered appearance.
   mount update; worker/player scheduling and visual pose remain controlled.
   The independent World full-map pickup boards at tick 2,178; these tick counts
   are not compared
-  because the search spaces differ. Additional map/carrier profiles and native
-  feature bodies remain
-  open. The
+  because the search spaces differ. Additional maps, full air route search and
+  moving-passenger joins, and native feature bodies remain open. The
   separate 70px callback fixture used a synthetic `transportdistance=86`;
   shipped Vertrans uses 300 and its native pickup circle is 284px.
   Eight deterministic boat unload-circle searches,
@@ -391,8 +394,8 @@ projectile hit or judge the beam/arrow's rendered appearance.
 
 Keep deterministic simulation and retail pathfinding intact throughout. Passing
 CTest and generic network runs is regression evidence, not proof of these gates.
-The latest full CTest sweep passes Release (52/52), Debug (55/55), and optimized
-Debug (55/55). The weapon impact effect-route client fixture is included in the
+The latest full CTest sweep passes Release (53/53), Debug (56/56), and optimized
+Debug (56/56). The weapon impact effect-route client fixture is included in the
 Debug suites; the Release configuration builds the changed client source but
 does not expose the game-mode CLI needed to run that fixture.
 
@@ -9933,4 +9936,95 @@ by this test and is parked for a more specific reproduction.
 python3 tools/re/check_weapon_impact_effect_route.py --binary build-o2/takclient
 ctest --test-dir build-dbg -R weapon_impact_effect_route --output-on-failure
 ctest --test-dir build-o2 -R weapon_impact_effect_route --output-on-failure
+```
+
+### Full shipped surface-carrier unload roster on Lake Lokken (2026-09-25)
+
+The asset-backed joined unload test now covers every shipped water-moving
+transporter from a water start at cell `(240,120)` to Araarch at `(240,350)`.
+All ten profiles match the native `0x508cd0` grade route and remain paired
+through live `GROUND_UNLOAD` arrival, release, and the physical mover. Every
+carrier/balance combination passes in Release, Debug, and optimized Debug: 60
+joined traces total. Each run observes one navigator arrival wake and 16
+map-backed passenger-placement checks. The route is one waypoint and ends
+inside the selected FBI unload circle.
+
+| Carrier | Movement class | Shipped capacity | O2 Standard / Crusades release steps |
+| --- | --- | ---: | ---: |
+| Aratrans | WATER5 | 50 | 3494 / 3494 |
+| Arawar | WATER4 | 18 | 1286 / 1286 |
+| Creiron | WATER3 | 12 | 1293 / 1386 |
+| Crester | WATER3 | 20 | 1861 / 1622 |
+| NpcBotl | WATER3 | 1 | 1076 / 1076 |
+| NpcRixx | WATER4 | 12 | 1244 / 1244 |
+| VerHarp | WATER4 | 16 | 1076 / 1076 |
+| VerMan | WATER4 | 20 | 1205 / 1205 |
+| VerScout | WATER3 | 4 | 945 / 945 |
+| Vertrans | WATER4 | 32 | 1488 / 1488 |
+
+The grade probe resolves the actual base or `unitscb` FBI and checks its
+movement inputs against World. Its path-cost assertion now derives turn and
+heavy-slope costs from the selected unit profile; this admits authored
+per-carrier turning values while still checking the full cost tuple. The 10
+carriers × 2 balances × 3 builds yield 60 passing joined traces. Each trace
+exercises one Araarch, so capacities are reported for roster completeness but
+multi-passenger loading and capacity saturation remain untested. Live blockers
+and other maps remain separate gates.
+
+```sh
+python3 tools/re/check_surface_unload_map_route.py \
+  build-o2/transport_test --hpitool build-o2/hpitool \
+  --retail-root /home/pocket_geek/tak_data --map 'Lake Lokken' \
+  --start 240 120 --target 240 350 --carrier creiron --passenger araarch \
+  --native-map-mover-steps 5000 --native-live-unload
+```
+
+### Profiled air unload for all three shipped flying transports (2026-09-25)
+
+`probe_transport_air_unload_map_flight.py` now accepts each shipped flying
+transporter's retail FBI profile and uses the selected Crusades override when
+present. ZONROC, CREAERI, and TARSHIP each match World through a live native
+height scan, ridge flight, unload-circle arrival, passenger release, PARK, and
+mission retirement. All 18 profile/balance/build combinations pass across
+Release, Debug, and optimized Debug.
+
+| Carrier | Standard ticks | Crusades ticks |
+| --- | ---: | ---: |
+| ZONROC | 288 | 252 |
+| CREAERI | 376 | 376 |
+| TARSHIP | 412 | 460 |
+
+This uses a controlled 100-to-220 height ridge and a direct unload circle,
+not a shipped-map route search. Landing feasibility, effects, detach, and PARK
+installation remain host hooks. The flight mover runs retail's live height
+scan over its native `0x50e740` sector table, with its selected max velocity,
+acceleration, braking, turn rate, cruise altitude, transport distance,
+footprint, multipliers, and half-cell interval populated from the FBI.
+The sector check permits any sector actually overlapped by the carrier's
+grid-origin footprint; this is needed for the large ZONROC footprint and
+continues to reject pointers outside the unit's occupied rectangle.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_transport_air_unload_map_flight.py \
+  --binary build-o2/transport_test --carrier tarship --crusades --steps 600
+```
+
+### LIFBIRD ambient idle and flight animation (2026-09-25)
+
+LIFBIRD's shipped `Create` starts `FlightControl`, `AnimationControl`, and
+`StaticAnim`; it has no generic mover callback, so the 26-unit flyer callback
+roster could not observe these animations. The new headless check runs both
+idle and positive-speed profiles for 500 updates. All 501 native COB scheduler
+boundaries match World for each profile. Idle advances the body and head; the
+fly loop advances all six named wing pieces. Native and World 3DO transforms
+also match at five idle and seven flying sample ticks, with a worst delta of
+0.00000811 world units. Release, Debug, and optimized Debug pass, and the
+optional `native_lifbird_ambient_pose` CTest is registered when the retail ICD,
+extracted bird assets, Python, and Unicorn are available.
+
+The host controls LIFBIRD's speed reads; the test does not connect live map
+movement, a flight-state transition, camera projection, or rendered pixels.
+
+```sh
+ctest --test-dir build-o2 -R '^native_lifbird_ambient_pose$' --output-on-failure
 ```
