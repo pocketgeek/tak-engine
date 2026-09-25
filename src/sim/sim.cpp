@@ -2641,7 +2641,11 @@ void World::unloadAt(int transportId, float x, float z, Fixed destinationY, bool
     // exact drop point before its unload handler wakes.
     const bool inRange=retailTransportInRange((Fixed::fromFloat(x)-t->x).v,
         (Fixed::fromFloat(z)-t->z).v,uint16_t(t->type->transportDist));
-    if (!inRange && t->type->canFly) {
+    // Earlier queued orders can move the carrier out of today's range. Keep
+    // the approach mission so its activation checks the then-current position
+    // and installs the native circle, rather than moving to the drop point.
+    const bool needsApproach=!inRange || (queue && !t->orders.empty());
+    if (needsApproach && t->type->canFly) {
         Order approach;
         approach.x=Fixed::fromFloat(x);approach.z=Fixed::fromFloat(z);
         approach.goal=true;approach.unload=true;approach.transportUnloadApproach=true;
@@ -2651,7 +2655,7 @@ void World::unloadAt(int transportId, float x, float z, Fixed destinationY, bool
         t->orders.push_back(std::move(approach));
         return;
     }
-    if (!inRange) {
+    if (needsApproach) {
         // Keep the approach as its own order. replaceLeg rebuilds the active route
         // from waypoints; the unload flag must stay queued behind that routed leg.
         Order mv;

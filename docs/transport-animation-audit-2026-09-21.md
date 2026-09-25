@@ -10388,3 +10388,18 @@ PYTHONPATH=tools/re python3 tools/re/probe_cairbray_zonroc_unload.py \
   --binary build-o2/transport_test --retail-root /home/pocket_geek/tak_data \
   --hpitool build/hpitool --steps 1200
 ```
+
+### Queued unload range is checked at activation (2026-09-25)
+
+A queued unload previously omitted its approach when the carrier was within
+transfer range at command issue time. An earlier queued move could then take
+it outside that range, leaving a bare unload to use ordinary point movement
+instead of the native transport-distance-minus-34 circle approach. Deferred
+unloads now retain the existing approach mission, which checks the carrier's
+position when activated. Immediate in-range unloads retain their existing path.
+
+The transport regression checks the circle mission and runs a move away,
+unload back near the starting position, and subsequent move through completion.
+Release client, server, and transport test rebuilt; transport, shipped roster,
+and Standard/Crusades map roundtrip tests all pass. This corrects use of stale
+command-time range; it does not establish full native queued-command parity.

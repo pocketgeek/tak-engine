@@ -808,6 +808,35 @@ static void loadOrderQueueing() {
     }
     check(released && !unloading.unit(unloadPassenger)->embarked(),
           "queued carrier route completes before passengers disembark");
+
+    World returning;returning.setVisPlayer(-1);returning.setPathService(true);
+    returning.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+    const int returningCarrier=returning.spawn(&carrier,200,440);
+    const int returningPassenger=returning.spawn(&passenger,200,440);
+    board(returning,returningCarrier,returningPassenger);
+    returning.order(returningCarrier,700,440,false);
+    returning.unloadAt(returningCarrier,240,440,{},true);
+    check(returning.unit(returningCarrier)->orders.size()==3 &&
+          returning.unit(returningCarrier)->orders[1].transportUnloadApproach &&
+          returning.unit(returningCarrier)->orders[1].missionRadius==112,
+          "queued unload retains the native circle approach despite being in range at issue time");
+    returning.order(returningCarrier,800,700,true);
+    bool reachedPriorMove=false,returned=false;
+    for(int tick=0;tick<2500 && !returned;++tick) {
+        returning.tick(1.f/30);
+        reachedPriorMove|=returning.unit(returningCarrier)->x.toFloat()>650;
+        returned=returning.unit(returningCarrier)->cargo.empty();
+    }
+    check(reachedPriorMove && returned &&
+          returning.unit(returningPassenger)->x.toFloat()<400,
+          "queued nearby unload approaches its site after an earlier move takes the carrier away");
+    bool reachedNextMove=false;
+    for(int tick=0;tick<2500 && !reachedNextMove;++tick) {
+        returning.tick(1.f/30);
+        reachedNextMove=returning.unit(returningCarrier)->x.toFloat()>750 &&
+            returning.unit(returningCarrier)->z.toFloat()>650;
+    }
+    check(reachedNextMove,"move queued after unload survives route completion and transfer");
 }
 
 static void transportEffectEvents() {
