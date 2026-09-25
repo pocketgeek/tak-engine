@@ -217,7 +217,7 @@ def native_detached_passenger_occupancy_probe(p, carrier, owner,
         p.cells_addr + (z * p.W + x) * 14, 2))[0] for x, z in occupied_cells]
     print(f'  Native default update: {results}; footprint cell ids after update='
           f'{cell_ids_after}; errors={errors}.')
-    return exact_result, nearby, errors, (passenger_id, cell_ids_after)
+    return exact_result, nearby, errors, (passenger_id, cell_ids_after), kind
 
 
 def replay_native_attempt(width, height, cached_grades, live_grade, attempt,
@@ -478,12 +478,14 @@ def replay_native_worker_repath(width, height, base_cached_grades,
 
     blocker_active = [False]
     active_live_grade = [base_live_grade]
+    active_grade_footprint = [(fx, fz)]
 
     def query_live_grade(_uc, args):
         _who, world_x, _world_y, world_z = struct.unpack(
             '<Iiii', phase.uc.mem_read(args, 16))
-        x = ((world_x >> 19) - fx) // 2
-        z = ((world_z >> 19) - fz) // 2
+        grade_fx, grade_fz = active_grade_footprint[0]
+        x = ((world_x >> 19) - grade_fx) // 2
+        z = ((world_z >> 19) - grade_fz) // 2
         if not (0 <= x < width and 0 <= z < height):
             return 4, 0
         return 4, active_live_grade[0](x, z)
@@ -885,7 +887,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                         ('crester', 'araarch'), ('npcbotl', 'araarch'),
                         ('npcrixx', 'araarch'), ('verharp', 'araarch')},
         'per mare per terras': {('vertrans', 'araarch')},
-        'sea dragon spine': {('vertrans', 'araarch')},
+        'sea dragon spine': {('vertrans', 'araarch'), ('arawar', 'araarch')},
     }
     if native_live_unload and (not carrier or not passenger or
             (carrier.lower(), passenger.lower()) not in
@@ -893,7 +895,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         raise ValueError('--native-live-unload currently checks Lake Lokken '
                          'Vertrans/VerScout/VerMan/Aratrans/Creiron/Arawar/Crester/'
                          'NpcBotl/NpcRixx/VerHarp with Araarch, and '
-                         'Vertrans/Araarch on the other supported maps')
+                         'Vertrans/Araarch plus Arawar/Araarch on Sea Dragon Spine')
     if terrain_scan_after is not None and not native_live_unload:
         raise ValueError('--terrain-scan-after requires --native-live-unload')
     if shore_blocker and (not native_live_unload or not carrier):
@@ -1411,6 +1413,11 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
     native_passengers = []
     active_native_passenger = [None]
     native_occupancy_probe_state = None
+    native_placement_trace_active = [False]
+    native_real_placement_enabled = [False]
+    native_placement_return_hooks = []
+    native_occupancy_live_trace = []
+    native_occupancy_probe_tick = [0]
     if native_live_unload:
         tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
                        f'Maps/{map_name}.tnt')
@@ -1550,6 +1557,75 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             return 5, 0
 
         p.icd.hooks[0x51B4F0] = detach_native_passenger
+        if probe_native_occupancy:
+            from unicorn import UC_HOOK_CODE
+            from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ESP
+
+            def observe_native_placement(uc, address, _size, _data):
+                if (address != 0x507D10 or not native_placement_trace_active[0] or
+                        not native_real_placement_enabled[0]):
+                    return
+                esp = uc.reg_read(UC_X86_REG_ESP)
+                return_address = struct.unpack('<I', uc.mem_read(esp, 4))[0]
+                args = struct.unpack('<5I', uc.mem_read(esp + 4, 20))
+                first_record = unit + 0x138
+                first_id = struct.unpack('<H', uc.mem_read(first_record + 2, 2))[0]
+                first_flags = struct.unpack('<I',
+                    uc.mem_read(first_record + 0x130, 4))[0]
+                first_origin = struct.unpack('<hh',
+                    uc.mem_read(first_record + 0x74, 4))
+                candidate_x, candidate_z = struct.unpack(
+                    '<hh', struct.pack('<I', args[2]))
+                occupied_cell_ids = [struct.unpack('<H', uc.mem_read(
+                    p.cells_addr + (z * width + x) * 14, 2))[0]
+                    for z in range(candidate_z, candidate_z + passenger_profile[1])
+                    for x in range(candidate_x, candidate_x + passenger_profile[0])]
+                foot_x, foot_z = passenger_profile[:2]
+                first_position = struct.unpack('<3i', uc.mem_read(first_record + 0x68, 12))
+                position_origin = (
+                    (first_position[0] // 65536 - (foot_x - 1) * 8) // 16,
+                    (first_position[2] // 65536 - (foot_z - 1) * 8) // 16)
+                first_cells = [struct.unpack('<H', uc.mem_read(
+                    p.cells_addr + (z * width + x) * 14, 2))[0]
+                    for z in range(first_origin[1], first_origin[1] + foot_z)
+                    for x in range(first_origin[0], first_origin[0] + foot_x)]
+                overlaps_first = (first_origin[0] < candidate_x + foot_x and
+                                  candidate_x < first_origin[0] + foot_x and
+                                  first_origin[1] < candidate_z + foot_z and
+                                  candidate_z < first_origin[1] + foot_z)
+                assert (first_id == 2 and first_flags & 0x1000000 and
+                        first_origin == position_origin and first_cells == [2] *
+                        (foot_x * foot_z)), (
+                    'live Araarch is not consistently registered in retail '
+                    'entity/map-cell occupancy', hex(first_record), first_id,
+                    hex(first_flags), first_origin, position_origin, first_cells)
+                native_occupancy_live_trace.append((
+                    native_occupancy_probe_tick[0], first_origin,
+                    (candidate_x, candidate_z), overlaps_first,
+                    occupied_cell_ids))
+                handle = []
+
+                def observe_placement_return(machine, return_ip, _return_size, _user):
+                    result = machine.reg_read(UC_X86_REG_EAX)
+                    native_placement_results.append((args, result))
+                    placement_blocker_states.append(active_blocker_state)
+                    if not result:
+                        blocked_placement_states.append(active_blocker_state)
+                        if native_live:
+                            blocked_cargo_held.append(
+                                native_live.get(native_live.carrier + 0xAC) ==
+                                active_native_passenger[0] and
+                                native_live.get(active_native_passenger[0] + 0xA8) ==
+                                native_live.carrier)
+                    machine.hook_del(handle[0])
+
+                handle.append(uc.hook_add(UC_HOOK_CODE, observe_placement_return,
+                                          begin=return_address,
+                                          end=return_address))
+                native_placement_return_hooks.append((args, return_address, handle[0]))
+
+            p.uc.hook_add(UC_HOOK_CODE, observe_native_placement,
+                          begin=0x507D10, end=0x507D10)
     else:
         unit = p.unit(sx - fx // 2, sz - fz // 2)
         mover = None
@@ -1620,14 +1696,15 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             'lake lokken': {'vertrans', 'aratrans', 'verscout', 'verman', 'creiron',
                             'arawar', 'crester', 'npcbotl', 'npcrixx', 'verharp'},
             'per mare per terras': {'vertrans'},
-            'sea dragon spine': {'vertrans'},
+            'sea dragon spine': {'vertrans', 'arawar'},
         }
         supported_carriers = native_grade_profiles.get(map_name.lower(), set())
         if not carrier or carrier.lower() not in supported_carriers:
             raise ValueError('--native-map-grades currently checks Lake Lokken '
                              '(Vertrans/Aratrans/VerScout/VerMan/Creiron/Arawar/'
                              'Crester/NpcBotl/NpcRixx/VerHarp), '
-                             'Per Mare Per Terras (Vertrans), and Sea Dragon Spine (Vertrans)')
+                             'Per Mare Per Terras (Vertrans), and Sea Dragon Spine '
+                             '(Vertrans/Arawar)')
         tnt_data = cat(hpitool, Path(retail_root), 'maps.hpi',
                        f'Maps/{map_name}.tnt')
         map_data = parse_tnt(tnt_data)
@@ -2012,7 +2089,12 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             if native_live:
                 placement_result_count_before = len(native_placement_results)
                 stage_before_dispatch = p.uc.mem_read(native_live.mission + 5, 1)[0]
-                dispatch_row = native_live.dispatch(route_tick + step)
+                native_placement_trace_active[0] = probe_native_occupancy
+                native_occupancy_probe_tick[0] = route_tick + step
+                try:
+                    dispatch_row = native_live.dispatch(route_tick + step)
+                finally:
+                    native_placement_trace_active[0] = False
                 if stage_before_dispatch == 1 and dispatch_row[1] == 2:
                     native_arrival_wakes += 1
                 for cargo in native_passengers:
@@ -2038,6 +2120,20 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                         p, unit, native_live.owner, passenger_profile,
                         passenger_profile_fields, moveinfo_text, first_position,
                         next_id, native_placement_results[-1][0])
+                    # The callback fixture initially gives every passenger the
+                    # carrier's type pointer. Retail 0x408d50 reads +0xb4 from
+                    # the actual cargo record before calling 0x507d10, so give
+                    # passenger 2 the authored Araarch placement type used by
+                    # the same-Phase occupancy query.
+                    native_live.put(native_passengers[1] + 0xB4,
+                                    native_occupancy_probe_state[4])
+                    placement_hook = p.icd.hooks.pop(0x507D10, None)
+                    if placement_hook is None:
+                        raise AssertionError('native placement oracle hook disappeared early')
+                    native_real_placement_enabled[0] = True
+                    print('  GROUND_UNLOAD now uses retail 0x507d10 directly for '
+                          'passenger 2; the detached passenger remains active in '
+                          'the same Phase entity and cell occupancy tables.')
                     native_place.set_blocker(first_position[0], first_position[2],
                                              moving=False)
                     if native_occupancy_probe_state[0] != 0:
@@ -2107,6 +2203,198 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 live_release_step = step
                 break
         map_mover_count = len(world_steps)
+        native_park_continuation = None
+        if native_live and native_occupancy_hold_step is not None:
+            # Continue this exact integrated Phase. Give the now-detached first
+            # Araarch retail's native code-33 order, then advance its actual
+            # navigator, mover and position commit while GROUND_UNLOAD retries
+            # passenger 2 through the real 0x507d10.
+            first, second = native_passengers[:2]
+            p1 = unit + 0x138
+            p1_mover = struct.unpack('<I', p.uc.mem_read(p1 + 8, 4))[0]
+            p1_nav = struct.unpack('<I', p.uc.mem_read(p1_mover, 4))[0]
+            p1_kind = native_occupancy_probe_state[4]
+            p1_grid = struct.unpack('<I', p.uc.mem_read(p1_kind + 0x18a, 4))[0]
+            p1_foot_x, p1_foot_z = passenger_profile[:2]
+            p1_fields = passenger_profile_fields
+            p1_class_name = p1_fields.get('movementclass', '').lower()
+            p1_class_fields = next((properties(block_text) for block_text in
+                re.findall(r'\[[^]]+\]\s*\{([^{}]*)\}', moveinfo_text, re.S)
+                if properties(block_text).get('name', '').lower() == p1_class_name), None)
+            if p1_class_fields is None:
+                raise AssertionError(('missing Araarch GROUND_PARK movement class',
+                                      p1_class_name))
+            p1_class_bytes = class_record(p1_class_fields)
+            p.uc.mem_write(p1_grid + 4, p1_class_bytes)
+            p.uc.mem_write(p1_kind + 0x126,
+                           struct.pack('<hh', p1_foot_x, p1_foot_z))
+            p.uc.mem_write(p1_kind + 0x260, bytes(4))  # Araarch is ground-bound.
+            p.uc.mem_write(p1_kind + 0x192, p1_class_bytes[4:12])
+            p.uc.mem_write(p1_kind + 0x23c,
+                           bytes((p1_class_bytes[12], p1_class_bytes[14])))
+            p.uc.mem_write(p1_kind + 0x24a, b'\x01')
+            p1_max_velocity = int(float(p1_fields.get('maxvelocity', '0')) * 65536)
+            p1_acceleration = int(float(p1_fields.get('acceleration', '0.5')) * 65536)
+            p1_braking = int(float(p1_fields.get('brakerate', '0.5')) * 65536)
+            p1_road = int(float(p1_fields.get('roadmultiplier', '1.2')) * 65536)
+            p1_water = int(float(p1_fields.get(
+                'watermultiplier', p1_fields.get('watermultipliser', '1'))) * 65536)
+            p1_turn = int(float(p1_fields.get('turnrate', '500')))
+            for offset, value in ((0x162, p1_max_velocity),
+                                  (0x166, p1_braking),
+                                  (0x16a, p1_acceleration),
+                                  (0x172, p1_road), (0x16e, p1_water)):
+                p.uc.mem_write(p1_kind + offset, struct.pack('<i', value))
+            p.uc.mem_write(p1_kind + 0x18e, struct.pack('<H', p1_turn & 0xffff))
+            p.uc.mem_write(p1 + 0x12b, struct.pack('<i', p1_max_velocity))
+            p.uc.mem_write(p1_mover, struct.pack('<II', p1_nav, p.GRID))
+            p.uc.mem_write(p1_mover + 0x20, struct.pack('<i', 0))
+            p.uc.mem_write(p1_mover + 0x36, struct.pack('<H', 1))
+            p.uc.mem_write(p.GRID + 4, struct.pack('<hh', p1_foot_x, p1_foot_z))
+            p.uc.mem_write(p.GRID + 8, p1_class_bytes)
+
+            # Install the real retail code-33 handler descriptor and order.
+            definitions = struct.unpack('<I', p.uc.mem_read(0x62db84, 4))[0]
+            if not definitions:
+                raise AssertionError('retail mission descriptor table is missing')
+            p.uc.mem_write(definitions + 33 * 25 + 4,
+                           struct.pack('<I', 0x407ca0))
+            p.uc.mem_write(definitions + 33 * 25 + 0x11,
+                           struct.pack('<I', 0x200))
+            park_order = p._alloc(0x80)
+            _, error = p.icd.call(0x4d6c40,
+                (33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ecx=park_order)
+            assert error is None, ('native Araarch GROUND_PARK constructor', error)
+            # Same unload-derived values as World::releasePassenger: two-cargo
+            # Araarch landing gives padding 38; mobile parks are temporary.
+            p.uc.mem_write(park_order + 0x4e, struct.pack('<I', 38))
+            p.uc.mem_write(park_order + 0x52, struct.pack('<I', 0))
+            p.uc.mem_write(park_order + 0x56, struct.pack('<I', 0))
+            _, error = p.icd.call(0x4d7750, (p1, park_order))
+            assert error is None, ('native Araarch GROUND_PARK insertion', error)
+            assert struct.unpack('<I', p.uc.mem_read(p1 + 0x60, 4))[0] == park_order
+
+            p1_origin = struct.unpack('<hh', p.uc.mem_read(p1 + 0x74, 4))
+            p1_position = struct.unpack('<3i', p.uc.mem_read(p1 + 0x68, 12))
+            tick0 = route_tick + native_occupancy_hold_step
+            p.uc.mem_write(GS + 0x19f44, struct.pack('<I', tick0 + 1))
+            p.uc.mem_write(0x64186c, struct.pack('<I', tick0 + 1))
+            native_occupancy_probe_tick[0] = tick0 + 1
+            _, error = p.icd.call(0x4d8450, (p1,))
+            assert error is None, ('native Araarch GROUND_PARK dispatch', error)
+            park_stage = p.uc.mem_read(park_order + 5, 1)[0]
+            park_nav_controller = struct.unpack('<I', p.uc.mem_read(p1_nav + 4, 4))[0]
+            park_route_count = struct.unpack('<I', p.uc.mem_read(p1_nav + 0x10c, 4))[0]
+            print(f'  Native GROUND_PARK order {hex(park_order)} dispatched at tick '
+                  f'{tick0 + 1}: stage={park_stage}, controller={hex(park_nav_controller)}, '
+                  f'route points={park_route_count}, Araarch origin={p1_origin}, '
+                  f'position={p1_position}.')
+
+            park_route_words = struct.unpack('<4h', p.uc.mem_read(p1_nav + 12, 8))
+            print(f'  Native GROUND_PARK supplied route words {park_route_words}; '
+                  'advancing its installed route directly with the native mover.')
+
+            p1_start_origin = p1_origin
+            p2_release_tick = None
+            p1_vacate_tick = None
+            park_attempts = 0
+            retry_deadline = native_live.get(native_live.mission + 0x0a)
+            continuation_end = min(retry_deadline,
+                                   tick0 + native_map_mover_steps)
+            candidate_x, candidate_z = struct.unpack('<hh', struct.pack(
+                '<I', native_placement_results[-1][0][2]))
+            candidate_cells = [(x, z) for z in
+                range(candidate_z, candidate_z + p1_foot_z) for x in
+                range(candidate_x, candidate_x + p1_foot_x)]
+            def read_candidate_cells():
+                return [struct.unpack('<H', p.uc.mem_read(
+                    p.cells_addr + (z * width + x) * 14, 2))[0]
+                    for x, z in candidate_cells]
+            continuation_result_start = len(native_placement_results)
+            continuation_trace_start = len(native_occupancy_live_trace)
+            # The carrier's next live retry is scheduled for tick0+1. The
+            # GROUND_PARK order was just dispatched for that tick above, so
+            # process its carrier retry now without dispatching the order a
+            # second time at the same simulation tick.
+            for tick in range(tick0 + 1, continuation_end + 1):
+                p.uc.mem_write(GS + 0x19f44, struct.pack('<I', tick))
+                p.uc.mem_write(0x64186c, struct.pack('<I', tick))
+                native_occupancy_probe_tick[0] = tick
+                if tick != tick0 + 1:
+                    _, error = p.icd.call(0x4d8450, (p1,))
+                    assert error is None, ('native Araarch GROUND_PARK poll', tick, error)
+                native_placement_trace_active[0] = True
+                try:
+                    native_live.dispatch(tick)
+                finally:
+                    native_placement_trace_active[0] = False
+                if native_live.get(unit + 0xac) != second:
+                    p2_release_tick = tick
+                    break
+                if native_live.get(second + 0xa8) != unit:
+                    raise AssertionError(('passenger 2 detached without list release', tick))
+                if native_live.get(unit + 0xac) == second:
+                    active_native_passenger[0] = second
+                pos = struct.unpack('<3i', p.uc.mem_read(p1 + 0x68, 12))
+                origin = struct.unpack('<hh', p.uc.mem_read(p1 + 0x74, 4))
+                entity_overlap = (origin[0] < candidate_x + p1_foot_x and
+                                  candidate_x < origin[0] + p1_foot_x and
+                                  origin[1] < candidate_z + p1_foot_z and
+                                  candidate_z < origin[1] + p1_foot_z)
+                candidate_ids = read_candidate_cells()
+                if not entity_overlap and 2 not in candidate_ids:
+                    p1_vacate_tick = tick
+                park_attempts = struct.unpack('<I',
+                    p.uc.mem_read(park_order + 0x56, 4))[0]
+                _, error = p.icd.call(0x4dc800, (p1,), ecx=p1_mover)
+                assert error is None, ('native Araarch GROUND_PARK mover', tick, error)
+                _, error = p.icd.call(0x51b2a0, (p1,), ecx=p1_mover)
+                assert error is None, ('native Araarch GROUND_PARK position commit', tick, error)
+                moved_origin = struct.unpack('<hh', p.uc.mem_read(p1 + 0x74, 4))
+                moved_overlap = (moved_origin[0] < candidate_x + p1_foot_x and
+                                 candidate_x < moved_origin[0] + p1_foot_x and
+                                 moved_origin[1] < candidate_z + p1_foot_z and
+                                 candidate_z < moved_origin[1] + p1_foot_z)
+                moved_candidate_ids = read_candidate_cells()
+                if not moved_overlap and 2 not in moved_candidate_ids:
+                    p1_vacate_tick = p1_vacate_tick or tick
+            final_origin = struct.unpack('<hh', p.uc.mem_read(p1 + 0x74, 4))
+            final_position = struct.unpack('<3i', p.uc.mem_read(p1 + 0x68, 12))
+            final_overlap = (final_origin[0] < p1_start_origin[0] + p1_foot_x and
+                             p1_start_origin[0] < final_origin[0] + p1_foot_x and
+                             final_origin[1] < p1_start_origin[1] + p1_foot_z and
+                             p1_start_origin[1] < final_origin[1] + p1_foot_z)
+            continuation_placements = [
+                (*trace, result)
+                for trace, (_args, result) in zip(
+                    native_occupancy_live_trace[continuation_trace_start:],
+                    native_placement_results[continuation_result_start:])]
+            native_park_continuation = {
+                'first_origin': p1_start_origin, 'final_origin': final_origin,
+                'final_position': final_position, 'vacate_tick': p1_vacate_tick,
+                'second_release_tick': p2_release_tick, 'end_tick': tick,
+                'retry_deadline': retry_deadline,
+                'candidate_cells': candidate_cells,
+                'candidate_cell_ids': read_candidate_cells(),
+                'placements': continuation_placements,
+                'remaining_cargo': native_live.get(unit + 0xac),
+                'second_owner': native_live.get(second + 0xa8),
+                'park_stage': p.uc.mem_read(park_order + 5, 1)[0],
+                'park_attempts': park_attempts,
+                'controller': park_nav_controller,
+                'route_count': struct.unpack('<I', p.uc.mem_read(p1_nav + 0x10c, 4))[0],
+                'final_overlap': final_overlap,
+            }
+            print(f'  Native GROUND_PARK continuation through tick {tick}: Araarch '
+                  f'origin {p1_start_origin} -> {final_origin}, first vacated at '
+                  f'{p1_vacate_tick} (candidate cells {candidate_cells} now have '
+                  f'ids {read_candidate_cells()}); passenger 2 release tick='
+                  f'{p2_release_tick}, scheduled retry={retry_deadline}, '
+                  f'cargo head={hex(native_live.get(unit + 0xac))}, '
+                  f'park stage={native_park_continuation["park_stage"]}, '
+                  f'attempts={park_attempts}, route points='
+                  f'{native_park_continuation["route_count"]}; new live placement '
+                  f'observations={continuation_placements[-4:]}.')
         if terrain_scan_after is not None:
             assert native_scan_count > 0, ('native live terrain scan did not run',
                                            native_scan_count)
@@ -2121,14 +2409,20 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             assert [result for _args, result in native_placement_results[-2:]] == [0, 1]
             assert blocked_cargo_held and blocked_cargo_held[-1]
             second_args = native_placement_results[-1][0]
+            assert all(args[0] == native_occupancy_probe_state[4] and
+                       args[1] == native_live.get(second + 2)
+                       for args, _result in native_placement_results[-2:]), (
+                'live retail placement did not use passenger 2 native type/id',
+                native_placement_results[-2:])
             assert second_args[2] == native_placement_results[-2][0][2], (
                 'blocked second passenger was assigned a different placement cell',
                 native_placement_results[-2:],)
-            print(f'  Occupancy outcome: native 0x507d10 rejected the same '
+            print(f'  Occupancy outcome: live native 0x507d10 received Araarch type '
+                  f'{hex(second_args[0])}, passenger id {second_args[1]}, and the '
                   f'{second_args[2] & 0xffff},{(second_args[2] >> 16) & 0xffff} '
-                  f'candidate used for passenger 1; GROUND_UNLOAD held passenger 2 '
-                  f'with no alternate cell selected. The direct neighboring-site '
-                  f'queries are recorded above; the mission itself did not issue one.')
+                  f'candidate already occupied by passenger 1; strict=0 and '
+                  f'allow-moving=1. GROUND_UNLOAD held passenger 2 with its list '
+                  f'link intact and selected no alternate cell.')
             map_mover_count = native_occupancy_hold_step
         elif native_live:
             assert live_release_step is not None, (

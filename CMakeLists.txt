@@ -580,6 +580,28 @@ if(TAK_BUILD_CLIENT)
         endif()
       endif()
     endif()
+    # The accepted-site BeginLanding producer has a distinct ZONROC wing pose
+    # from BeginFlight, so keep its mission-to-COB-to-model join independently
+    # repeatable when the local retail assets and emulator are available.
+    if(TAK_TEST_DATA AND EXISTS "${TAK_TEST_DATA}/KINGDOMS.icd" AND
+       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts/zonroc.cob" AND
+       EXISTS "${CMAKE_SOURCE_DIR}/assets/extracted/all/objects3d/zonroc.3do")
+      find_package(Python3 COMPONENTS Interpreter QUIET)
+      if(Python3_Interpreter_FOUND)
+        execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import unicorn"
+          RESULT_VARIABLE _tak_zonroc_landing_unicorn_status
+          OUTPUT_QUIET ERROR_QUIET)
+        if("${_tak_zonroc_landing_unicorn_status}" STREQUAL "0")
+          add_test(NAME native_zonroc_landing_pose
+            COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_SOURCE_DIR}/tools/re/check_native_zonroc_landing_pose.py"
+              --script-binary "$<TARGET_FILE:retail_script_test>"
+              --model-binary "$<TARGET_FILE:model_transform_test>"
+              --icd "${TAK_TEST_DATA}/KINGDOMS.icd")
+          set_tests_properties(native_zonroc_landing_pose PROPERTIES TIMEOUT 60)
+        endif()
+      endif()
+    endif()
     # CREAERI has no BeginFlight/BeginLanding call-ins; its engine-driven
     # flight-to-ground mover edge animates the propellers and ground occupancy.
     if(TAK_TEST_DATA AND EXISTS "${TAK_TEST_DATA}/KINGDOMS.icd" AND

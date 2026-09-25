@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Join queued Araarch Move_Ground and Move_Seek_Pickup to VTOL pickup.
+"""Trace VTOL pickup while Araarch has a queued ground move.
 
-This tests the retail queue pattern where a point Move_Ground precedes a
-Move_Seek_Pickup wait order. Araarch walks to ZONROC's initial cell through a
-native full-map GROUND2 route and mover; code 30 should then enter its VTOL
-wait/poll state while ZONROC's VTOL_Pickup pursues and boards it. Route worker
-delivery precedes carrier dispatch so the VTOL mission cannot cancel a pending
-route request. Controlled headless boundaries are path-worker scheduling
-callbacks, visibility, feature definitions, effects/UI, and empty COB method
-tables. No retail GUI is launched.
+This checks the retail order gate with code 27 Move_Ground active and code 30
+Move_Seek_Pickup appended behind it. Retail retires the carrier's VTOL_Pickup
+because code 30 is not yet the passenger's current order. Route-worker
+delivery precedes dispatch so this is not a pending-request cancellation. The
+trace stops at that first retirement and does not prove a later boarding
+sequence. Controlled headless boundaries are path-worker scheduling callbacks,
+visibility, feature definitions, effects/UI, and empty COB method tables. No
+retail GUI is launched.
 
 Run from the repository root:
     PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_ground_move_seek.py
@@ -128,12 +128,12 @@ def register_orders(phase, carrier, passenger, carrier_name, passenger_name,
               bytes(uc.mem_read(pickup_name, 80)).split(b"\0")[0].lower())
     if pickup != (30, 0x403430, b"move_seek_pickup"):
         raise AssertionError(("retail Move_Seek_Pickup registry", pickup))
-    move_row = descriptors + 28 * 25
+    move_row = descriptors + 27 * 25
     move_name = get(move_row + 0x15)
-    move = (28, get(move_row + 4),
+    move = (27, get(move_row + 4),
             bytes(uc.mem_read(move_name, 80)).split(b"\0")[0].lower())
-    if move[0] != 28 or move[2] != b"move_ground_formation":
-        raise AssertionError(("retail ordinary Move_Ground registry", move))
+    if move != (27, 0x402B00, b"move_ground"):
+        raise AssertionError(("retail Move_Ground registry", move))
 
     # Remove the previous synthetic route fixture's carrier/passenger pair.
     carrier_old, passenger_old = get(carrier + 0x60), get(passenger + 0x60)
@@ -159,12 +159,20 @@ def register_orders(phase, carrier, passenger, carrier_name, passenger_name,
 
     def construct(code, target, order):
         result, error = icd.call(
-            0x4D6C40, (code, 0 if code == 28 else target,
-                       target if code == 28 else 0,
+            0x4D6C40, (code, 0 if code == 27 else target,
+                       target if code == 27 else 0,
                        0, 0, 0, 0, 0, 0, 0, 0, 0), ecx=order)
         if error or result != order:
             raise RuntimeError(("native transport/move order constructor",
                                 code, result, error))
+        if uc.mem_read(order + 4, 1)[0] != code:
+            raise AssertionError(("native order constructor mission code",
+                                  code, uc.mem_read(order + 4, 1)[0]))
+        if code == 27 and struct.unpack("<3i", uc.mem_read(order + 0x22, 12)) != \
+                struct.unpack("<3i", uc.mem_read(target, 12)):
+            raise AssertionError(("native Move_Ground point constructor",
+                                  struct.unpack("<3i", uc.mem_read(order + 0x22, 12)),
+                                  struct.unpack("<3i", uc.mem_read(target, 12))))
 
     def insert(unit, order, label):
         _, error = icd.call(0x4D7750, (unit, order))
@@ -174,7 +182,7 @@ def register_orders(phase, carrier, passenger, carrier_name, passenger_name,
     # Install the point move first as the active mission. Retail's 0x20000
     # insertion flag sends the subsequent code-30 order to unit+0x64 rather
     # than interrupting the active move at unit+0x60.
-    construct(28, goal, passenger_order)
+    construct(27, goal, passenger_order)
     insert(passenger, passenger_order, "Move_Ground")
     construct(30, carrier, seek_order)
     putter(seek_order + 0x5A, get(seek_order + 0x5A) | 0x20000)
@@ -597,6 +605,7 @@ def run(args):
     uc.hook_add(UC_HOOK_CODE, observe_pop, begin=0x4E50A0, end=0x4E50A0)
 
     attachment_tick = None
+    carrier_retired_tick = None
     max_ticks = min(max(args.max_ticks, 1), 12000)
     active_seek_ticks = []
     for tick in range(route_worker_tick + 1, route_worker_tick + max_ticks + 1):
@@ -649,24 +658,37 @@ def run(args):
             attachment_tick = tick
             break
         if live.get(carrier + 0x60) == 0:
-            raise AssertionError(("VTOL_Pickup retired before attachment", tick,
-                                 {"Araarch_position": pos,
-                                  "ZONROC_position": struct.unpack(
-                                      "<3i", uc.mem_read(carrier + 0x68, 12)),
-                                  "Araarch_travel_px": moved_distance,
-                                  "GROUND2_waypoints": installed_route,
-                                  "native_waypoint_pops": nav_pops,
-                                  "passenger_order_head": hex(
-                                      live.get(passenger + 0x60)),
-                                  "carrier_order_head": hex(
-                                      live.get(carrier + 0x60))}))
+            carrier_retired_tick = tick
+            break
 
     if attachment_tick is None:
-        raise AssertionError(("native moving Araarch was not boarded",
-                              max_ticks, "passenger", last_passenger,
-                              "carrier", struct.unpack("<3i", uc.mem_read(carrier + 0x68, 12)),
-                              "route", installed_route,
-                              "pops", nav_pops[-8:]))
+        active_head = live.get(passenger + 0x60)
+        queued_head = live.get(passenger + 0x64)
+        if (carrier_retired_tick is None or active_head != passenger_order or
+                queued_head != seek_order or moved_distance <= 0 or
+                live.get(carrier + 0xAC) == passenger or
+                live.get(passenger + 0xA8) == carrier):
+            raise AssertionError(("native VTOL current-order cancellation state",
+                                  carrier_retired_tick, hex(active_head),
+                                  hex(queued_head), hex(passenger_order),
+                                  hex(seek_order), moved_distance,
+                                  live.get(carrier + 0xAC),
+                                  live.get(passenger + 0xA8)))
+        if uc.mem_read(passenger_order + 4, 1)[0] != 27 or \
+                uc.mem_read(seek_order + 4, 1)[0] != 30:
+            raise AssertionError(("native queued order codes changed",
+                                  uc.mem_read(passenger_order + 4, 1)[0],
+                                  uc.mem_read(seek_order + 4, 1)[0]))
+        print(f"PASS: native VTOL_Pickup retired at tick {carrier_retired_tick} "
+              f"while Araarch's active order was Move_Ground code 27; queued "
+              f"Move_Seek_Pickup code 30 remained behind it. Araarch moved "
+              f"{moved_distance:.2f}px on its installed GROUND2 route before "
+              f"the carrier canceled. This is the native current-head gate, "
+              f"not a successful boarding trace.")
+        print(f"  Installed route={installed_route}; waypoint pops={nav_pops}; "
+              f"passenger head={hex(active_head)}, queue head={hex(queued_head)}; "
+              f"no reciprocal cargo attachment.")
+        return
     if not nav_pops:
         raise AssertionError("native GROUND2 mover never popped a route waypoint")
     if moved_distance < 100:

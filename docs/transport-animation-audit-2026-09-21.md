@@ -27,17 +27,17 @@ a shipped map route. Native pickup reaches reciprocal attachment and
   with a `VTOL_Pickup` carrier it waits while the flyer pursues. The code-30
   GROUND2 auto-seek is therefore a ground-carrier behavior. A separate Lake
   Lokken probe moves Araarch along a validated shoreline while ZONROC tracks and
-  boards it. An ordinary native `Move_Ground` route installs, but ZONROC's
-  `VTOL_Pickup` order retires at tick 4 before attachment when code 30 is not
-  active. Retail's `0x20000` append flag correctly links code 30 behind the
-  active `Move_Ground` order through native `0x4D7750`, and the GROUND2 worker
-  supplies the route before VTOL dispatch. The tested order pair still clears
-  both heads before movement or boarding, so successful queued ground-to-VTOL
-  pickup remains open.
+  boards it. A corrected queue fixture uses ordinary `Move_Ground` code 27,
+  then appends `Move_Seek_Pickup` code 30 with retail's `0x20000` flag. Araarch
+  begins moving, but the active VTOL pickup retires because the passenger's
+  current head is still code 27. This establishes the native current-head
+  check; full queued-command issuance and World parity remain to be verified.
 The callback-bearing flyer
 pose sweep covers all 26 shipped pairs, LIFBIRD now has a separate idle/fly
-ambient-pose trace, and CREAERI has a native flight-to-ground animation and
-model-pose trace. These remain controlled headless traces, not proof of
+ambient-pose trace, CREAERI has a native flight-to-ground animation and
+model-pose trace, and ZONROC's accepted-site `BeginLanding` now joins the
+mission callback through its wing pose and model transform. These remain
+controlled headless traces, not proof of
 every map, order combination, capacity case, or rendered animation.
 ZONHUNT's placed-construction root and site anchor match the native projection
 in the current fixture; a synchronized capture using the reported map and
@@ -75,17 +75,20 @@ projectile hit or judge the beam/arrow's rendered appearance.
   moves; it calls native `0x51b4f0`/`0x51b5a0` at tick 6,306, retires code 21,
   and replaces passenger code 30 with `BeCarried` code 11. Circle arrival is
   accepted at tick 6,286. The headless fixture supplies a zero-filled per-entity
-  `+0xc0` mount/pose table and stops before the attached passenger's display/
-  mount update; worker/player scheduling and visual pose remain controlled.
+  `+0xc0` drawable/model-owner pointer and does not run the graphics traversal.
+  A separate native trace confirms ordinary ground/VTOL pickup sets the carried
+  cargo `+0x130` `0x8000` bit; the carrier's draw traversal skips passenger pose
+  refresh and recursive drawable submission while it is set. Full raster output
+  remains untested, and worker/player scheduling remains controlled.
   The independent World full-map pickup boards at tick 2,178; these tick counts
   are not compared
   because the search spaces differ. A moving-target pickup now joins the native
   air dispatcher and flight mover while the Araarch follows a host-scripted
   shoreline trajectory. Native code 30 auto-routes Araarch for a GROUND_PICKUP
   carrier, but waits for a VTOL_Pickup carrier. The native queued
-  Move_Ground/Move_Seek_Pickup plus live VTOL pursuit reaches route delivery but
-  clears the orders before the passenger moves; successful boarding on that
-  composition remains open. Full-map flying route search,
+  Move_Ground/Move_Seek_Pickup plus live VTOL pursuit has not yet been followed
+  through pickup after the active Move completes; its active VTOL order retires
+  while code 27 is still current. Full-map flying route search,
   additional maps, and native feature bodies remain open. The
   separate 70px callback fixture used a synthetic `transportdistance=86`;
   shipped Vertrans uses 300 and its native pickup circle is 284px.
@@ -9825,6 +9828,17 @@ BeCarried dispatch execute from `KINGDOMS.icd`. A 100-tick
 `--allow-incomplete` control also passes with active pursuit and measurable
 carrier movement before boarding.
 
+The full-map attach also confirms the cargo render gate. Native `VTOL_Pickup`
+passes `-1` to `0x51b4f0`; its transfer record carries `0xff`, which
+`0x51b5a0` converts to passenger flag `Unit+0x130 & 0x8000`. The shipped
+`GROUND_PICKUP` attach call passes the same `-1`. `BeCarried` (`0x4024a0`)
+does not clear that bit. In the native draw path, `0x4ee700` refreshes cargo
+poses only when the bit is clear, and `0x4ec7b0` recursively submits a cargo
+drawable through `0x4ec720` only when the bit is clear and its altitude gate
+passes. Thus ordinary attached transport cargo is intentionally hidden by this
+gate. The probe did not run the full graphics/raster services; this conclusion
+comes from the native transfer trace and disassembled renderer branches.
+
 ```sh
 PYTHONPATH=tools/re python3 -u tools/re/probe_air_pickup_native_fullmap.py \
   --max-ticks 100 --allow-incomplete
@@ -9992,10 +10006,11 @@ movement inputs against World. Its path-cost assertion now derives turn and
 heavy-slope costs from the selected unit profile; this admits authored
 per-carrier turning values while still checking the full cost tuple. The 10
 carriers × 2 balances × 3 builds yield 60 passing joined traces. Each trace
-exercises one Araarch. A separate two-passenger trace checks native linked-list
-unload sequencing and the production capacity-helper boundary, but not native
-boarding rejection at capacity or spatial separation after release. Live
-blockers and other maps remain separate gates.
+exercises one Araarch. Separate two-passenger traces check native linked-list
+unload sequencing, the production capacity-helper boundary, and live placement
+against the first released passenger. Native boarding rejection at capacity
+and following the first passenger's PARK movement until the second release
+remain open. Live blockers and other maps remain separate gates.
 
 ```sh
 python3 tools/re/check_surface_unload_map_route.py \
@@ -10090,12 +10105,12 @@ production capacity helper accepts up to those profiles' computed limit and
 rejects one more. NpcBotl's count cap of one is also checked against that
 helper in both balances and all three builds.
 
-This fixture does not maintain released cargo in a live retail entity
+This initial fixture does not maintain released cargo in a live retail entity
 occupancy list. Both recorded landing origins are `(240,350)`, and reserving
 the first footprint makes the second passenger wait at the fixed unload point.
-The trace covers linked-list scheduling, sequential detach, and the capacity
-helper boundary; it does not establish spatial separation of passengers or
-multi-cargo placement on other maps.
+The later same-Phase occupancy probe below corrects this limitation; following
+the first passenger's PARK movement until the second release and testing other
+maps remain open.
 
 ```sh
 python3 tools/re/check_surface_unload_map_route.py \
@@ -10145,20 +10160,31 @@ ctest --test-dir build-o2 -R '^native_creaeri_landing_pose$' --output-on-failure
 
 ### Native placement against a detached passenger footprint (2026-09-25)
 
-The two-passenger Lake Lokken unload probe now registers the first detached
-Araarch in the same retail entity table and marks its four occupied map cells.
-Native `0x507d10` rejects a second passenger at the same `(240,350)` footprint
-(strict result `0`, relaxed/moving result `1`); all four tested nonoverlapping
-placements two cells away return `1`. A no-order `0x4d8450` dispatcher,
-`0x4dc800` mover, and `0x51b2a0` position-commit pass succeeds and preserves
-the four occupancy IDs.
+The two-passenger Lake Lokken unload probe installs the first detached Araarch
+in the same live retail entity pool and cell-occupancy plane used by the
+continuing `GROUND_UNLOAD` mission. At passenger 2's real native `0x507d10`
+call, the fixture verifies the first Araarch is alive at `(240,350)` and all
+four footprint cells contain entity id 2. Standard and Crusades O2 traces both
+reach this check after 3,496 physical mover steps. Retail returns strict `0`
+and allow-moving `1` for passenger 2 at that occupied point; the second
+passenger stays linked, and the mission selects no alternate cell. This
+supersedes the earlier cross-Phase observation.
 
-The live `GROUND_UNLOAD` follow-up still receives its paired placement results
-through a separate native placement oracle: strict refusal followed by the
-allow-moving result keeps passenger 2 linked to the carrier at the original
-target, and the mission does not test an alternate cell. Because that mission
-query is cross-phase with the detached entity/cell setup, integrated
-multi-cargo spatial separation remains open.
+This proves that the mission's actual placement call sees the detached unit's
+occupancy. It does not yet follow passenger 1's `GROUND_PARK` mover until its
+footprint clears and prove passenger 2 then releases; that continued
+multi-cargo trace remains open.
+
+A bounded same-Phase continuation installs passenger 1's native code-33
+`GROUND_PARK` order and advances its real mover/position commit through the
+scheduled retry deadline at tick 3,527. The preceding native placement attempt
+at candidate `(240,350)` returns strict `0` and allow-moving `1`. No new
+`0x507d10` call occurs on tick 3,527; after that tick's mover update passenger
+1 has moved from `(240,350)` to `(239,349)`, but the candidate cells still hold
+`[2,2,2,2]`, so the footprint has not cleared. Passenger 2 remains linked to
+the carrier. The deadline-bounded run therefore confirms real PARK movement,
+but does not establish a post-vacancy placement retry or passenger 2 release;
+those remain open. The bounded continuation passes in O2 Standard and Crusades.
 
 ```sh
 python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
@@ -10167,6 +10193,12 @@ python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
   --carrier aratrans --passenger araarch \
   --native-map-mover-steps 4500 --native-live-unload \
   --native-cargo-count 2 --probe-native-occupancy
+python3 tools/re/check_surface_unload_map_route.py build-o2/transport_test \
+  --retail-root /home/pocket_geek/tak_data \
+  --map 'Lake Lokken' --start 240 120 --target 240 350 \
+  --carrier aratrans --passenger araarch \
+  --native-map-mover-steps 4500 --native-live-unload \
+  --native-cargo-count 2 --probe-native-occupancy --crusades
 ```
 
 ### VTOL pickup order and GROUND2 route boundary (2026-09-25)
@@ -10177,28 +10209,78 @@ the carrier has `VTOL_Pickup` code 62, the handler takes the wait/poll path and
 does not submit a route request. This is retail order behavior, not a
 pathfinder failure.
 
-An ordinary code-28 `Move_Ground` order initialized through native `0x4d4da0`
-does admit a GROUND2 request. With ZONROC's VTOL order also active, however,
-the carrier order retires before Araarch attaches. A follow-up used the retail
-append flag `0x20000` before the native `0x4d7750` insertion call. This
-structurally placed `Move_Seek_Pickup` at `passenger+0x64` behind the active
-Move_Ground order at `passenger+0x60`, with a null queue tail. The GROUND2
-worker delivered the two-point route to ZONROC's start before VTOL dispatch.
-At tick 4, dispatch cleared both order heads before Araarch moved: travel was
-zero, there were no waypoint pops, and no cargo attached. Thus the retail
-append mechanism is identified, but this order composition still does not
-complete a queued move-to-aircraft then pickup sequence.
+An earlier probe mistook registry code 28 (`Move_Ground_Formation`) for
+ordinary `Move_Ground`; that fixture was discarded. Native descriptor lookup
+gives ordinary `Move_Ground` code 27 (handler `0x402b00`). The corrected probe
+uses that constructor and verifies the mission code and destination. It then
+sets retail's `0x20000` append flag before native `0x4d7750`, placing code 30
+at `passenger+0x64` behind code 27 at `passenger+0x60`.
+
+The route worker installs two points; Araarch moves 1.25 pixels on the first
+physical update. ZONROC's code-62 handler returns 8 and retires at tick 4
+because the passenger's current head is still code 27, despite code 30 being
+queued behind it. Move_Ground and the queued code-30 entry remain on the
+passenger; no cargo attaches. This establishes the native active-order gate
+but does not follow the rest of the move, observe code 30 becoming current, or
+compare a full queued-command input against World.
 
 These are O2 Standard Lake Lokken diagnostics for one ZONROC/Araarch pair. The
 route worker, visibility, feature bodies, UI/effects, and COB method tables
-remain controlled. They stop before a successful VTOL boarding on a moving
-GROUND2 passenger.
+remain controlled. They do not establish successful VTOL boarding after a
+queued GROUND2 move.
 
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_ground_route.py \
   --hpitool build-o2/hpitool --max-ticks 9000
-PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_ground_move.py \
-  --hpitool build-o2/hpitool --max-ticks 9000
 PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_ground_move_seek.py \
   --hpitool build-o2/hpitool --max-ticks 9000
+```
+
+### ZONROC accepted-site BeginLanding model-pose join (2026-09-25)
+
+The retail `0x416cd0` accepted-site producer dispatches `EndTransport` then
+`BeginLanding` to the attached ZONROC COB. After one native VM tick, all 1,742
+COB state words match World, all six named wing pieces advance, and retail's
+`0x4ee620` transform matches the World geometry helper for 43 pieces and 368
+vertices within 0.00001903 world units. Release, Debug, and optimized Debug
+pass. The optional `native_zonroc_landing_pose` CTest is registered when the
+local ICD, extracted ZONROC assets, Python, and Unicorn are available.
+
+The accepted site, mission services, and GET profile are controlled by the
+fixture. This check does not run a full transport order, movement, camera
+projection, rendered frame, or GUI.
+
+```sh
+ctest --test-dir build -R '^native_zonroc_landing_pose$' --output-on-failure
+ctest --test-dir build-dbg -R '^native_zonroc_landing_pose$' --output-on-failure
+ctest --test-dir build-o2 -R '^native_zonroc_landing_pose$' --output-on-failure
+```
+
+### Sea Dragon Spine Arawar shore unload (2026-09-25)
+
+The map-backed native-grade and joined `GROUND_UNLOAD` profiles now include
+Arawar/Araarch on Sea Dragon Spine. From water cell `(240,95)` to shore point
+`(240,120)`, retail and World reconstruct the same three-waypoint route using
+183 distinct native grade cells across 226 calls. In Standard and Crusades,
+the joined trace keeps the retail mission, navigator, mover, and passenger
+placement live through 61 matching terrain-scan deadlines, 16 native
+map-backed placement checks, and cargo release at physical step 260. Release,
+Debug, and optimized Debug all pass both balances (six traces).
+
+This adds a second carrier profile on Sea Dragon Spine. The case uses one
+Araarch, has no traffic blocker, and does not cover other maps for Arawar.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/check_surface_unload_map_route.py \
+  build-o2/transport_test --retail-root /home/pocket_geek/tak_data \
+  --hpitool build-o2/hpitool --map 'Sea Dragon Spine' \
+  --start 240 95 --target 240 120 --carrier arawar --passenger araarch \
+  --native-map-grades --native-map-mover-steps 1500 --native-live-unload \
+  --terrain-scan-after 1
+PYTHONPATH=tools/re python3 tools/re/check_surface_unload_map_route.py \
+  build-o2/transport_test --retail-root /home/pocket_geek/tak_data \
+  --hpitool build-o2/hpitool --map 'Sea Dragon Spine' \
+  --start 240 95 --target 240 120 --carrier arawar --passenger araarch \
+  --native-map-grades --native-map-mover-steps 1500 --native-live-unload \
+  --terrain-scan-after 1 --crusades
 ```
