@@ -185,7 +185,7 @@ implementation descriptions. Current open gates are:
   Model-backed ballistic shots now check every native 3D substep for unit and
   environmental collision; an Arabow arrow's native feature-impact dispatch
   matches the World feature-damage regression. Death damage-flame callback and
-  creation-dispatch timelines now match native for three scripts; native owner-
+  creation-dispatch timelines now match native for three scripts; callback-to-
   removal timing and other effect and attached-emitter lifecycles remain open,
   along with debris details, shared cosmetic RNG/tick phase, collision/lifetime
   paths, and representative checks that live effects use the right art family,
@@ -8045,11 +8045,20 @@ severities and two damage types. All 312 callbacks and associated
 `SET_UNIT_VALUE` writes match; native emission ends by tick 72. The probe
 controls only the final native creation sink, after retail has run the VM
 callback, piece-origin lookup, and SFX dispatcher. A separate native destructor
-probe confirms teardown drains its attached list, but does not run the outer
-death dispatcher far enough to establish the actual teardown tick. This closes
-callback and creation-dispatch parity for these three flame families; native
-owner-removal timing and other attached-emitter families remain open. No retail
-GUI was launched.
+probe confirms teardown drains its attached list. The new
+`probe_native_death_update_edge.py` also runs the actual update chain
+`0x5130d0 → 0x512ae0 → 0x4ee560 → 0x497380` with the native removal bit set;
+it clears the owner pointer, removal flags, and attached SFX list on that update.
+This verifies cleanup relative to the removal bit, not when the script callback
+sets it. Callback and creation-dispatch parity for these three flame families
+is closed; callback-to-removal timing and other attached-emitter families
+remain open. No retail GUI was launched. Reproduce both checks with:
+
+```sh
+python3 tools/re/probe_native_death_update_edge.py
+PYTHONPATH=tools/re python3 tools/re/probe_death_sfx_lifecycle.py \
+  --world-binary build-o2/animation_roster_test
+```
 
 Attached effect owner lists now survive the HP-death edge through the existing
 `kCorpseAnimTicks` body handoff (120 ticks); statue removal remains immediate.
@@ -8062,13 +8071,13 @@ drains the smoke/damage-flame owner list through its vtable destructor. The
 death dispatcher starts `Dying`; `SET_UNIT_VALUE 26` requests teardown on the
 next update, while `SET_UNIT_VALUE 31` starts a one-second model timer that
 sets the same removal bit when it expires. For example, shipped `araking`
-uses value 31 and `araknigh` uses value 26. The exact teardown tick for a
-regular death still depends on the preceding callback schedule and the unit's
-`Dying` branch, which this probe does not run. The native/World script comparison
-confirms the callback schedule and shows the latest tested flame event at tick
-72, but does not establish when native drains those lists relative to the
-port's 120-tick body cleanup. No teardown-time mismatch is established by this
-probe. No retail GUI was launched.
+uses value 31 and `araknigh` uses value 26. Native VM traces show `SET_UNIT_VALUE`
+31 at tick 0 for `tarmage`/`araking`, 26 at tick 0 for `crefire`, and 26 at tick
+18 for `araknigh`. The update-edge fixture begins after that value has set the
+removal bit; it does not emulate the host-side one-second timer for value 31.
+Therefore the exact callback-to-teardown tick for value 31 remains open. The
+latest tested flame emission is tick 72, but no teardown-time mismatch is
+established by these bounded traces. No retail GUI was launched.
 
 ### Live detached script transient lifecycle (2026-09-24)
 
