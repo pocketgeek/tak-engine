@@ -175,6 +175,10 @@ def setup_native(root, hpitool, map_data, profile, passenger_profile, start, sit
     native.put(passenger_kind + 0x12A, HEAP + 0xBA000)
     uc.mem_write(HEAP + 0xB9000, bytes(0x1000))
     uc.mem_write(HEAP + 0xBA000, bytes(0x1000))
+    # 0x507d10 branches on UnitDef+0x24a. Mobile units set this byte to one;
+    # without it, ZONROC is checked as a building and the body update falsely
+    # rejects each changed cell, entering retail's collision-braking path.
+    native.byte(native.kind + 0x24A, 1)
     native.put(native.kind + 0x126, footprint)
     native.put(native.carrier + 0x78, footprint)
     native.put(native.passenger + 0xB4, passenger_kind)
@@ -341,6 +345,11 @@ def compare(binary, root, hpitool, steps):
         differences = [i for i, (a, b) in enumerate(zip(world, retail)) if a != b]
         if (differences == [20] and world[17] == retail[17] == 0 and
                 world[20] == 0x500 and retail[20] == 0):
+            continue
+        if (differences == [19] and world[16] == retail[16] == 0 and
+                world[19] == 0xFFFFFFFF and retail[19] == 0):
+            # World serializes an inactive scan deadline as its sentinel;
+            # the native mission record's unused slot remains zero.
             continue
         raise AssertionError({"tick": index, "fields": differences,
                               "World": world, "retail": retail})

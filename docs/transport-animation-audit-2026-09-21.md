@@ -10367,20 +10367,13 @@ A separate O2 Standard trace uses Cairbray's actual TNT, shipped ZONROC/Araarch
 profiles, retail `0x50e740` height sectors, live `0x4dc800` movement, and
 unhooked `0x507d10` placement. The independently checked 24×28 native sector
 table is correct, and retail accepts Araarch's flat, feature-free GROUND2 site
-at `(97,153)`. World and retail rows match through tick 231. At tick 232, while
-the carrier is still about 640 pixels from the landing site, World remains at
-about 3.90 px/tick while retail drops to about 1.95 px/tick and changes mover
-flags from 2 to 10. At the exact post-tick-231 pose, the input position,
-heading, speed, velocity, goal, and FBI maximum speed/acceleration/braking
-fields match. Initializing native `moverate1/2` to the World FBI-derived
-defaults (`2 × maxvelocity`) does not remove the split.
-
-The first divergence occurs in retail `0x4dc800` during its scheduled
-terrain/body update path. The current trace does not isolate which input or
-world service causes the speed-mode change, and it stops before the unload
-site, placement, or passenger release. It is a reproducible diagnostic, not a
-passing unload profile and not yet evidence of a production movement defect;
-no mover correction is justified from this fixture alone.
+at `(97,153)`. The initial synthetic ZONROC `UnitDef` omitted mobile flag
+`+0x24a`, which caused `0x507d10` to take its building-placement path. That
+false rejection triggered retail's collision-braking branch at tick 232. After
+setting the mobile flag in the fixture, all 377 World/native rows match through
+the height-sector scans, 11 sector relinks, landing, passenger release, PARK,
+and mission retirement. This was a probe-fixture omission; no production mover
+change was needed.
 
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_cairbray_zonroc_unload.py \
