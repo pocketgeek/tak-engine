@@ -782,6 +782,32 @@ static void loadOrderQueueing() {
           replace.unit(replaceCarrier)->orders.size()==1 &&
           replace.unit(replaceCarrier)->orders.front().transportPickup,
           "ordinary load still replaces prior passenger and carrier orders");
+
+    World unloading;unloading.setVisPlayer(-1);
+    unloading.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+    const int unloadCarrier=unloading.spawn(&carrier,200,440);
+    const int unloadPassenger=unloading.spawn(&passenger,200,440);
+    board(unloading,unloadCarrier,unloadPassenger);
+    unloading.order(unloadCarrier,460,440,false);
+    tak::net::Command unload;unload.kind=tak::net::Cmd::Unload;
+    unload.unitId=unloadCarrier;unload.x=480;unload.z=440;unload.queue=1;
+    tak::net::Writer unloadWriter;unloadWriter.cmd(unload);
+    tak::net::Reader unloadReader(unloadWriter.b.data(),unloadWriter.b.size());
+    const auto queuedUnload=unloadReader.cmd();
+    tak::sim::applyCommand(unloading,registry,queuedUnload);
+    const auto& unloadOrders=unloading.unit(unloadCarrier)->orders;
+    check(unloadReader.ok && queuedUnload.queue==1 && unloadOrders.size()==3 &&
+          unloadOrders[0].groundMission && !unloadOrders[0].unload &&
+          unloadOrders[1].transportUnloadApproach && !unloadOrders[1].unload &&
+          unloadOrders[2].unload,
+          "shift-unload appends its route and transfer behind the carrier's current order");
+    bool released=false;
+    for(int tick=0;tick<400 && !released;++tick) {
+        unloading.tick(1.f/30);
+        released=unloading.unit(unloadCarrier)->cargo.empty();
+    }
+    check(released && !unloading.unit(unloadPassenger)->embarked(),
+          "queued carrier route completes before passengers disembark");
 }
 
 static void transportEffectEvents() {

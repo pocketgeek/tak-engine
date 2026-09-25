@@ -1749,12 +1749,13 @@ public:
     void setSquad(int unitId, int squad);   // control squad: 0 none, +N group N, -N formation N
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);
-    // Board a friendly transport; queue=true appends the reciprocal pickup after
-    // both units' current orders instead of replacing them.
+    // Board/unload through a friendly transport; queue=true appends the paired
+    // pickup orders or unload route after current orders instead of replacing them.
     bool canLoadInto(int unitId, int transportId) const;
     bool scriptYardOpen(int unitId) const;
     void loadInto(int unitId, int transportId, bool queue = false);
-    void unloadAt(int transportId, float x, float z, Fixed destinationY = {});
+    void unloadAt(int transportId, float x, float z, Fixed destinationY = {},
+                  bool queue = false);
     void tick(float dt);
 
     std::vector<Unit>& units() { return units_; }

@@ -36,10 +36,11 @@ a shipped map route. Native pickup reaches reciprocal attachment and
   dispatcher. Its controller field is null and there is no cargo attachment;
   the fixture reports one pending path request whose owner is not isolated.
   The trace stops before code 27 completes. The command path now preserves
-  Shift-load queueing on both units: `Cmd::Load` carries the flag, and
-  `World::loadInto(..., true)` appends the passenger load and carrier pickup
-  behind existing orders. The transport integration test verifies the serialized
-  flag, preserved routes, and boarding after both queued movement legs complete.
+  Shift-load and Shift-unload queueing: `Cmd::Load` carries the flag, and
+  `World::loadInto(..., true)` appends passenger/carrier orders; `Cmd::Unload`
+  carries the flag, and `World::unloadAt(..., true)` appends the carrier's
+  approach and transfer. The transport integration test verifies serialization,
+  preserved routes, boarding, and disembarkation after queued movement completes.
   This does not yet compare retail when both units have coordinated queued legs;
   the diagnostic above has an already-active carrier pickup. Reproduce that
   native diagnostic with
@@ -10267,9 +10268,9 @@ trace stops before code 27 completes.
 
 These are O2 Standard Lake Lokken diagnostics for one ZONROC/Araarch pair. The
 route worker, visibility, feature bodies, UI/effects, and COB method tables
-remain controlled. A separate World regression now confirms that a queued load
-is appended behind existing passenger and carrier movement and boards after
-both routes complete. The native diagnostic above still covers a different
+remain controlled. Separate World regressions now confirm that queued load and
+unload orders preserve existing movement and finish boarding/disembarkation
+after those routes complete. The native diagnostic above still covers a different
 ordering: carrier pickup is already active while a GROUND2 move is ahead of
 `Move_Seek_Pickup`. Retail's result for coordinated queued movement on both
 units remains unverified.

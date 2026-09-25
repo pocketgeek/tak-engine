@@ -2625,13 +2625,15 @@ void World::loadInto(int unitId, int transportId, bool queue) {
     }
 }
 
-void World::unloadAt(int transportId, float x, float z, Fixed destinationY) {
+void World::unloadAt(int transportId, float x, float z, Fixed destinationY, bool queue) {
     Unit* t = unit(transportId);
     if (!t || !t->alive() || t->cargo.empty()) return;
-    t->orders.clear();
-    // A search for the orders just discarded is still queued, and cases 1 and 3 below
-    // re-request nothing -- so it would land on the bare unload and rewrite it.
-    cancelPath(*t);
+    if (!queue) {
+        t->orders.clear();
+        // A search for the orders just discarded is still queued, and cases 1 and 3 below
+        // re-request nothing -- so it would land on the bare unload and rewrite it.
+        cancelPath(*t);
+    }
     // Retail routes surface carriers to a circle centered on the exact drop point,
     // with radius transportdistance-34 (408e84/408d50). VTOL_UNLOAD installs the
     // same-radius flight controller before it steps out for transfer. Keep that

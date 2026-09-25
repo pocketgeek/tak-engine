@@ -36,6 +36,7 @@ namespace {
                 c.unitId = first->id;
                 c.x = wx;
                 c.z = wz;
+                c.queue = queue ? 1 : 0;
                 issue(c);
                 return;
             }
@@ -788,6 +789,7 @@ namespace {
                 c.unitId = id;
                 c.x = wx;
                 c.z = wz;
+                c.queue = queue ? 1 : 0;
                 issue(c);
                 any = true;
             }
