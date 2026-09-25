@@ -9003,9 +9003,10 @@ existing 120-tick corpse fallback.
 A static audit of all 204 shipped unit COBs found 129 SET26 writes, all
 `(26,1)` in `Dying`; `crebomb` has two mutually exclusive branches, with its
 delayed branch writing only after its sleep loop. The deadline therefore
-starts at the actual SET callback tick. The native next-tick teardown has been
-traced end to end for `crefire`; `crebomb`'s delayed native path remains open.
-The same audit found 38 SET31 writes, all `(31,1)`, one per `Dying` function.
+starts at the actual SET callback tick. Native next-tick teardown is traced for
+`crefire` at ticks 0/1 and through `crebomb`'s delayed branch at ticks 146/147.
+The same audit found 38 SET31 writes, all `(31,1)`, one per `Dying` function;
+the `tarmage` native timer/teardown path is traced at ticks 0/35.
 
 The C++ lifecycle helper checks the SET26/SET31 delay and wrap-safe earliest
 deadline selection. Native `crefire` and `tarmage` probes and the direct-VM
@@ -9021,6 +9022,8 @@ Reproduce with:
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
   --native-death-state --script crefire --world-binary build-o2/animation_roster_test
+PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
+  --native-death-state --script crebomb --world-binary build-o2/animation_roster_test
 PYTHONPATH=tools/re python3 tools/re/probe_native_set31_lifecycle.py \
   --native-death-state --world-binary build-o2/animation_roster_test
 PYTHONPATH=tools/re python3 tools/re/probe_death_sfx_lifecycle.py \

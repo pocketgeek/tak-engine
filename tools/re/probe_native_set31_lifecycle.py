@@ -268,8 +268,15 @@ def main():
             result, error = start(name, values)
             assert not error and result == 1, (name, result, error)
 
+    # cremomb's retail Dying callback intentionally runs a long countdown,
+    # with 32-ms sleeps inside its decrement loop, before it writes SET26.
+    # Allow that actual callback to finish, but keep the trace bounded
+    # well below the separate 600-tick direct-VM sweep.
+    delayed_set26_case = args.native_death_state and args.script.lower() == "crebomb"
+    set26_owner_case = args.native_death_state and args.script.lower() in ("crefire", "crebomb")
+    update_horizon = 256 if delayed_set26_case else 35
     snapshots = []
-    for frame in range(1, 36):
+    for frame in range(1, update_horizon + 1):
         tick[0] = frame
         put(p, game + 0x19F44, frame)
         # The callback runs at tick 0; each outer unit update advances the
@@ -281,13 +288,14 @@ def main():
                                 [hex(a) for a in recent[-25:]]))
         snapshot = (frame, u32(p, unit + 0x130), f32(p, owner + 0x18),
                     u32(p, owner + 0x17C), u32(p, sfx_list + 8),
-                    u32(p, sfx_list + 12), u32(p, 0x640210))
+                    u32(p, sfx_list + 12), u32(p, 0x640210),
+                    u32(p, sentinel), u32(p, sentinel + 4))
         snapshots.append(snapshot)
         if u32(p, unit + 0xC0) == 0:
             break
 
-    set26_owner_case = args.native_death_state and args.script.lower() == "crefire"
-    expected_native_write = [(0, 26 if set26_owner_case else 31, 1)]
+    expected_native_write = ([(146, 26, 1)] if delayed_set26_case else
+                             [(0, 26 if set26_owner_case else 31, 1)])
     if args.native_death_state and writes != expected_native_write:
         print("native-death diagnostics:", {
             "writes": writes, "trace": [(t, hex(a)) for t, a in trace],
@@ -299,23 +307,46 @@ def main():
         })
     assert writes == expected_native_write, writes
     if set26_owner_case:
-        assert native_sfx == [(0, 16, 260)], native_sfx
-        assert events == [(0, 0, (100, 200, 300), view)], events
-        assert len(snapshots) == 1 and snapshots[0][0] == 1, snapshots
-        assert snapshots[0][4] == 0 and snapshots[0][5] == 0, snapshots[0]
-        assert snapshots[0][6] == sentinel and u32(p, unit + 0xC0) == 0, snapshots[0]
+        write_tick = expected_native_write[0][0]
+        retirement_tick = write_tick + 1
+        if delayed_set26_case:
+            # This unit's Dying script takes its ordinary long countdown path
+            # (unit value 17 is clear), then requests removal at tick 146. No
+            # damage flame is attached by this COB; the fixture's preexisting
+            # owner-list node lets the native destructor path be observed.
+            assert not native_sfx and not events, (native_sfx, events)
+            assert len(snapshots) == retirement_tick, (len(snapshots), snapshots[-3:])
+            assert [t for t, address in trace if address == 0x56C870] == list(range(0, retirement_tick)), trace
+            assert [t for t, address in trace if address == 0x51E380] == list(range(1, retirement_tick)), trace
+            assert all(snapshot[3] == sfx_list and snapshot[4] == sentinel and snapshot[5] == 1
+                       and snapshot[7] == node and snapshot[8] == node
+                       for snapshot in snapshots[:-1]), snapshots
+        else:
+            assert native_sfx == [(0, 16, 260)], native_sfx
+            assert events == [(0, 0, (100, 200, 300), view)], events
+            assert len(snapshots) == 1, snapshots
+        assert snapshots[-1][0] == retirement_tick, snapshots[-1]
+        assert snapshots[-1][4] == 0 and snapshots[-1][5] == 0, snapshots[-1]
+        assert snapshots[-1][6] == sentinel and u32(p, unit + 0xC0) == 0, snapshots[-1]
         assert [(t, address) for t, address in trace
                 if address in (0x512AE0, 0x4EE560, 0x497380)] == [
-                    (1, 0x512AE0), (1, 0x4EE560), (1, 0x497380)
+                    (retirement_tick, 0x512AE0),
+                    (retirement_tick, 0x4EE560),
+                    (retirement_tick, 0x497380)
                 ], trace
         vm_updates = [(t, address) for t, address in trace if address == 0x56C870]
-        assert vm_updates == [(0, 0x56C870)], vm_updates
+        if not delayed_set26_case:
+            assert vm_updates == [(0, 0x56C870)], vm_updates
         assert [(address, name) for address, name, _ in callback_dispatches] == [
             ("0x56c720", "Killed"), ("0x56c640", "Dying")
         ], callback_dispatches
-        assert not [t for t, address in trace if address == 0x51E380], trace
-        print("PASS: retail crefire death dispatcher writes SET26 with one attached flame at tick 0; "
-              "0x51d3e0 removes the unit and drains its native owner/list on tick 1")
+        if not delayed_set26_case:
+            assert not [t for t, address in trace if address == 0x51E380], trace
+            print("PASS: retail crefire death dispatcher writes SET26 with one attached flame at tick 0; "
+                  "0x51d3e0 removes the unit and drains its native owner/list on tick 1")
+        else:
+            print("PASS: retail cremomb Killed/Dying runs the long Dying countdown, writes SET26 at tick 146, "
+                  "then 0x51d3e0 removes the unit and drains its native owner/list on tick 147")
         return
     assert native_sfx and all(row[0] == 0 and row[2] == 260 for row in native_sfx), native_sfx
     assert len(events) == len(native_sfx), (native_sfx, events)
