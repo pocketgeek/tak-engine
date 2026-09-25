@@ -113,14 +113,31 @@ int main(int argc, char** argv) {
         tak::cursorForBuildPlacement(true,false) != tak::CursorId::Normal)
         return fail("FindSite requires armed build placement and a selected builder");
 
-    const std::vector<TimedFrame> shortCycle{{2}, {3}, {10}};
-    if (tak::cursorFrameAt(shortCycle, 0) != 0 ||
-        tak::cursorFrameAt(shortCycle, 66) != 0 ||
-        tak::cursorFrameAt(shortCycle, 67) != 1 ||
-        tak::cursorFrameAt(shortCycle, 166) != 1 ||
-        tak::cursorFrameAt(shortCycle, 167) != 2 ||
-        tak::cursorFrameAt(shortCycle, 500) != 0)
-        return fail("cursor frame clock follows authored 2/3/10 tick boundaries");
+    const std::array<std::vector<TimedFrame>, 2> liveSequences{{
+        std::vector<TimedFrame>{{2}, {2}, {2}},
+        std::vector<TimedFrame>{{2}, {2}, {2}}
+    }};
+    tak::CursorAnimationClock<2> liveClock;
+    // The software and hardware entry points share this clock. Retail advances
+    // the first selected frame on the first 30 Hz update, retains each sequence's
+    // frame index, and keeps consuming the one countdown while another is active.
+    if (liveClock.frameAt(0, 0, liveSequences) != 0 ||
+        liveClock.frameAt(0, 34, liveSequences) != 1 ||       // native update: A -> frame 1
+        liveClock.frameAt(1, 67, liveSequences) != 0 ||       // switch: retain A, select B
+        liveClock.frameAt(1, 100, liveSequences) != 0 ||
+        liveClock.frameAt(1, 134, liveSequences) != 1 ||     // shared timer expires on B
+        liveClock.frameAt(0, 167, liveSequences) != 1 ||     // returning resumes A at frame 1
+        liveClock.frameAt(0, 200, liveSequences) != 1 ||
+        liveClock.frameAt(0, 234, liveSequences) != 2)       // shared timer then advances A
+        return fail("live cursor switches retain sequence frames and share retail countdown");
+
+    tak::CursorAnimationClock<1> cappedClock;
+    const std::array<std::vector<TimedFrame>, 1> cappedSequence{{
+        std::vector<TimedFrame>{{1}, {1}, {1}, {1}, {1}, {1}, {1}, {1}}
+    }};
+    if (cappedClock.frameAt(0, 0, cappedSequence) != 0 ||
+        cappedClock.frameAt(0, 1000, cappedSequence) != 3)
+        return fail("live cursor manager caps a delayed catch-up to five native updates");
 
     if (tak::cursorOrderMarkerFrameAt(12, 2, 0) != 0 ||
         tak::cursorOrderMarkerFrameAt(12, 2, 3) != 0 ||
@@ -227,9 +244,21 @@ int main(int argc, char** argv) {
 
     const std::vector<TimedFrame> load(10, {3});
     const std::vector<TimedFrame> revive(22, {10});
-    if (tak::cursorFrameAt(load, 99) != 0 || tak::cursorFrameAt(load, 100) != 1 ||
-        tak::cursorFrameAt(revive, 333) != 0 || tak::cursorFrameAt(revive, 334) != 1)
-        return fail("load/revive cursors retain their slower retail cadence");
+    const std::array<std::vector<TimedFrame>, 1> loadSequence{{load}};
+    const std::array<std::vector<TimedFrame>, 1> reviveSequence{{revive}};
+    tak::CursorAnimationClock<1> loadClock, reviveClock;
+    if (loadClock.frameAt(0, 0, loadSequence) != 0 ||
+        loadClock.frameAt(0, 34, loadSequence) != 1 ||
+        loadClock.frameAt(0, 134, loadSequence) != 1 ||
+        loadClock.frameAt(0, 167, loadSequence) != 2 ||
+        reviveClock.frameAt(0, 0, reviveSequence) != 0 ||
+        reviveClock.frameAt(0, 34, reviveSequence) != 1 ||
+        reviveClock.frameAt(0, 134, reviveSequence) != 1 ||
+        reviveClock.frameAt(0, 234, reviveSequence) != 1 ||
+        reviveClock.frameAt(0, 334, reviveSequence) != 1 ||
+        reviveClock.frameAt(0, 367, reviveSequence) != 1 ||
+        reviveClock.frameAt(0, 400, reviveSequence) != 2)
+        return fail("load/revive cursors retain their slower authored retail cadence");
 
     if (argc == 2 && !checkAssets(argv[1]))
         return fail("mapped cursor names or placeholder pixels differ from the shipped GAF");

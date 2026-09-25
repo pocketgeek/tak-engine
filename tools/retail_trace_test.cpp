@@ -466,6 +466,11 @@ static int selfTest() {
               "full entity pool consumes no CRT draw");
         check(retailAllocateSlot(seed,4,2,[](int i) { return i==0 || i==2; })==1
               && seed==2745024, "allocation ranks free slots using the independent CRT stream");
+        check(retailDamageWithSpread(476.0f,0)==405 &&
+              retailDamageWithSpread(476.0f,16384)==476 &&
+              retailDamageWithSpread(476.0f,32767)==546 &&
+              retailDamageWithSpread(6.0f,0)==6,
+              "native per-hit CRT spread has retail endpoints and truncation");
         RetailRectGoal rect{2,6,3,7};
         check(!rect.accepts(4,5) && rect.distance(4,5)==32 && rect.accepts(2,5),
               "rectangle interior is not an accepted perimeter goal");

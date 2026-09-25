@@ -695,9 +695,18 @@ int main(int argc,char** argv) {
             const int bomberId=dropped.spawn(&bomber,400,400,0,0);
             const int targetId=dropped.spawn(&targetType,800,400,0,1);
             dropped.unit(bomberId)->flightY=Fixed::fromInt(100);
+            dropped.setGameSeed(0);
             const auto expected=retailDroppedBallisticLaunch(
                 {400*65536,100*65536,400*65536},{800*65536,0,400*65536},
                 dropped.ballisticGravityRaw());
+            uint32_t damageRoll=0;
+            int damageDraws=0;
+            dropped.setCrtRngObserver([&](const World::RngObservation& row) {
+                if (row.retailReturnAddress==0x52a3ba) {
+                    if (damageDraws==0) damageRoll=row.result;
+                    ++damageDraws;
+                }
+            });
             RetailReplayProbe::shoot(dropped,bomberId,targetId);
             require(dropped.projectiles().size()==1 && dropped.projectiles()[0].ballistic3d,
                 "DroppedBallistic creates a native XYZ projectile");
@@ -710,7 +719,9 @@ int main(int argc,char** argv) {
                 dropped.tick(1.f/30.f);
                 impacts+=unsigned(dropped.hits().size());
             }
-            require(impacts==1 && dropped.unit(targetId)->hp==Fixed::fromInt(75) &&
+            const int expectedDamage=retailDamageWithSpread(25.0f,damageRoll);
+            require(impacts==1 && damageDraws==1 &&
+                    dropped.unit(targetId)->hp==Fixed::fromInt(100-expectedDamage) &&
                     dropped.projectiles().empty(),
                 "dropped ballistic reaches and damages its ground target once, with no expiry detonation");
             std::cout<<"PASS: gravity-driven dropped ballistic path, target impact and one-shot retirement\n";

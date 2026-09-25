@@ -68,8 +68,32 @@ def install_pickup_fixture_on_phase(phase):
     original_freeze_hooks = phase.icd.freeze_hooks
     fixture_module.Icd = lambda: phase.icd
     phase.icd.freeze_hooks = lambda: None
+    # Native map-backed movement asks these two game-side services. Match the
+    # established native surface-mover fixture boundaries before Phase later
+    # freezes its hook table for the route-worker replay.
+    phase.icd.hooks[0x51AD20] = lambda _uc, _args: (1, 0)
+    phase.icd.hooks[0x56C640] = lambda _uc, _args: (8, 0)
     try:
         pickup = fixture_module.SurfacePickup()
+        # 0x51b4f0 resolves native unit IDs through the retail player's
+        # contiguous entity array. This standalone probe keeps the fixture
+        # entities in a synthetic heap, so provide the same attachment effects
+        # at that established host boundary instead of fabricating that array.
+        def attach(uc, stack_args):
+            import struct
+            passenger, carrier, _sentinel, _flags, _mode = struct.unpack(
+                "<5I", uc.mem_read(stack_args, 20))
+            assert (passenger, carrier) == (pickup.passenger, pickup.carrier), (
+                hex(passenger), hex(carrier))
+            pickup.put(carrier + 0xAC, passenger)
+            pickup.put(passenger + 0xA8, carrier)
+            pickup.put(passenger + 0x60, 0)
+            pickup.put(passenger + 0x130,
+                       pickup.get(passenger + 0x130) | 0x02000000)
+            for offset in (0x68, 0x6C, 0x70):
+                pickup.put(passenger + offset, pickup.get(carrier + offset))
+            return 5, 0
+        phase.icd.hooks[0x51B4F0] = attach
     finally:
         fixture_module.Icd = original_icd_factory
         phase.icd.freeze_hooks = original_freeze_hooks
@@ -361,8 +385,24 @@ def run(retail_root, hpitool):
         f"  Radius inputs: synthetic 70px fixture uses transportdistance "
         f"{fixture_distance}; shipped Vertrans uses {transport_distance}, "
         f"so native GROUND_PICKUP radius is {transport_distance}-16="
-        f"{circle_radius}. No mover or boarding trace is included."
+        f"{circle_radius}. This route-phase checkpoint ends before physical "
+        "mover/boarding; probe_surface_pickup_native_mission.py continues it."
     )
+    # Keep the route probe directly reusable by the map-backed mission probe.
+    # These are live emulator objects, so callers must continue immediately and
+    # must not serialize or reuse them after the Unicorn instance is discarded.
+    return {
+        "phase": phase, "live": live, "root": root, "hpitool": hpitool,
+        "map_data": map_data, "packed_profile": packed_profile,
+        "foot_x": foot_x, "foot_z": foot_z, "profile_limits": (
+            max_depth, min_depth, bad_max_depth, bad_min_depth,
+            max_slope, bad_slope, max_water_slope, bad_water_slope),
+        "carrier_fbi": carrier_fbi, "transport_distance": transport_distance,
+        "route": route, "controller": controller, "grades": grades,
+        "grade_count": grade_count, "delivered_at": delivered_at,
+        "feature_count": feature_count, "width": width, "height": height,
+        "sea": sea,
+    }
 
 
 def main():

@@ -131,8 +131,7 @@ void CursorSet::draw(SDL_Renderer* ren, CursorId c, int mouseX, int mouseY, int 
     if (scale < 1) scale = 1;
 
     const uint64_t now = SDL_GetTicks64();
-    if (c != cur_) { cur_ = c; animStartMs_ = now; }    // restart animation on a change
-    const size_t idx = cursorFrameAt(frames, now - animStartMs_);
+    const size_t idx = animClock_.frameAt(size_t(c), now, anims_);
 
     const Frame& f = frames[idx];
     // Set the mod every draw (default white = no-op) so a previous tint never lingers.
@@ -263,8 +262,7 @@ bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
     if (curs.empty()) return false;
 
     const uint64_t now = SDL_GetTicks64();
-    if (c != hwCur_) { hwCur_ = c; hwStartMs_ = now; }   // restart animation on a change
-    const size_t idx = cursorFrameAt(frames, now - hwStartMs_);
+    const size_t idx = animClock_.frameAt(size_t(c), now, anims_);
 
     if (curs[idx] != hwSet_) { hwSet_ = curs[idx]; SDL_SetCursor(hwSet_); }
     return true;
@@ -278,7 +276,6 @@ void CursorSet::releaseHardware() {
     hwFailed_.clear();   // a different scale may be accepted where this one was not
     hwScale_ = 0;
     hwSet_ = nullptr;
-    hwCur_ = CursorId::Count;
     SDL_SetCursor(SDL_GetDefaultCursor());   // don't leave a freed cursor active
 }
 

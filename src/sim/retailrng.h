@@ -15,6 +15,15 @@ constexpr uint32_t retailCrtRandom(uint32_t& seed) {
     return (seed >> 16) & 0x7fffu;
 }
 
+// 0x52a330 applies retail's per-recipient damage spread after attack, armour,
+// and area-falloff scaling. The CRT draw is supplied by the caller even when
+// scaledDamage is too small to produce a non-zero spread.
+inline int retailDamageWithSpread(float scaledDamage, uint32_t crtRoll) {
+    const int range = int(scaledDamage * 0.15f);
+    const int offset = int((2ll * range * crtRoll) / 32768ll) - range;
+    return int(scaledDamage + float(offset));
+}
+
 // 52f780: a storm owns this stream. Unlike 535cc0, a wrapped negative
 // intermediate is not corrected, and even a zero span consumes a draw.
 inline double retailWanderRandom(uint32_t& seed, float span) {

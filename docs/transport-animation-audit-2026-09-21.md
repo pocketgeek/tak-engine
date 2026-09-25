@@ -19,15 +19,21 @@ implementation descriptions. Current open gates are:
   captured. Paired native/World pickup dispatcher traces match for 36 air/sea
   ticks; surface pickup callbacks match for 18 ticks. Paired unload dispatcher
   traces match for 17 air ticks and 19 sea ticks, with route arrival controlled
-  at the navigator boundary. A narrow native sea-pickup route probe now joins
-  the real `GROUND_PICKUP` controller to an initialized route worker: on Lake
-  Lokken, Vertrans/Araarch receives an 11-waypoint route on worker tick 2 from
-  native TNT-backed grades over 6,275 corridor cells. The surrounding cells
-  are blocked, feature bodies are zero-filled, and no mover or boarding runs;
-  full-map sea pickup through transfer and carrier-order retirement remains
-  open. The separate 70px callback fixture used a synthetic
-  `transportdistance=86`; shipped Vertrans uses 300 and its native pickup
-  circle is 284px.
+  at the navigator boundary. An integrated native sea-pickup probe now follows
+  Lake Lokken Vertrans/Araarch's real `GROUND_PICKUP` request through its
+  11-waypoint route, 2,620 mover ticks, circle arrival, transfer effect,
+  passenger attachment and carrier-order retirement. Native route grades cover
+  6,275 TNT-backed corridor cells; cells outside are blocked and feature
+  bodies are zero-filled. The mover uses shipped WATER4 limits and TNT terrain,
+  while established harness boundaries control mover-side service requests and
+  the attachment sink because this fixture lacks retail's contiguous player
+  entity array. The independent World load-order roundtrip passes in Release,
+  Debug and optimized builds, including shore unload and post-release coast.
+  Native and World pickup tick counts are not compared because their search
+  spaces differ. Full-map native pickup grades/features, the real entity-array
+  attachment path, and additional map/carrier profiles remain open. The
+  separate 70px callback fixture used a synthetic `transportdistance=86`;
+  shipped Vertrans uses 300 and its native pickup circle is 284px.
   Eight deterministic boat unload-circle searches,
   five Per Mare Per Terras cases, and one Lake Lokken water-crossing case match
   retail's native reconstructed routes using World-produced grades, including a
@@ -195,7 +201,8 @@ implementation descriptions. Current open gates are:
   and clear-target impact at age 11. A separate native pool trace now covers
   insertion, one manager update and compaction per tick, tree impact, and same-
   tick retirement; World matches its launch and each active-tick snapshot.
-  The native impact callback's damage/effect body remains outside that fixture.
+  That projectile-pool fixture stops before impact damage/effects; a separate
+  native impact-body trace is documented below.
   Special weapon cases, broader missing-script behavior, and complete
   comparisons of flight callback phases and rendered poses remain open. A headless
   native Araarch trace now confirms that losing visibility does not clear an
@@ -205,7 +212,16 @@ implementation descriptions. Current open gates are:
   match the World helper across eight callback inputs. Full COB thread/piece
   timelines pass for ten representatives across ground, hover, water, and
   flying families (1,202 boundaries each), with callback events supplied by a
-  controlled schedule rather than routed from every unit's mover. A 103-tick
+  controlled schedule rather than routed from every unit's mover. An added
+  `check_native_mover_cob_join.py` probe captures native mover requests at the
+  script-dispatch boundary and replays callbacks actually declared by four
+  shipped COBs through the retail scheduler: Tarblack (ground), Tarlich
+  (hover), Tarcship (water), and Aradrag (flying). Each declared callback
+  starts and matches local COB thread/piece state; a second unchanged tick
+  confirms edge suppression. Release, Debug, and optimized builds pass. This
+  verifies representative request-to-script integration, but the callbacks
+  are replayed at the dispatch boundary rather than run by one uninterrupted
+  native mover-to-COB call; stop/reversal edges remain open. A 103-tick
   persistent `zonhunt` construction trace also captures
   native mover requests: its only declared movement callback, `setSFXoccupy(5)`,
   fires once on tick 1 in both native and World, including through two retargets,
@@ -245,8 +261,11 @@ implementation descriptions. Current open gates are:
   or Teleport; exact animation start phase remains open. Hourglass is confined
   to the native modal file-picker path. End-of-order waypoint markers now use
   retail's global-tick frame interval (`2 × first GAF delay`) instead of the
-  previous fixed three-tick interval; the live mouse-pointer restart phase is
-  still unverified.
+  previous fixed three-tick interval. The live software and hardware pointer
+  now share retail's native per-sequence frame indices and single countdown;
+  switching cursor IDs preserves each sequence's frame instead of restarting.
+  A headless probe joins the native setter and updater; it stubs frame-delay
+  lookup and does not compare cursor pixels.
 - Effects: feature burn art, authored lifetimes, layered flames, shadow clocks
   and tick-owned smoke are integrated. Authored projectile sprites now honor
   each TAF frame's anchor. The native-probed GuidedWeapon XYZ path is now wired
@@ -275,8 +294,9 @@ implementation descriptions. Current open gates are:
   passing native draw and 4,096-case pose checks; all 145 moving shot slots in
   Standard and Crusades resolve their referenced models. The remaining
   projectile gaps are other effect lifecycles and uncovered collision/lifetime
-  families, not the arrow-to-yellow-streak fallback. Pixel-identical Glide
-  output is not required.
+  families, plus the newly traced impact-damage behavior whose World fix now
+  passes cross-build validation, not the arrow-to-yellow-streak fallback.
+  Pixel-identical Glide output is not required.
 - Overall animation parity: verify engine-driven callback timelines and final
   rendered behavior across the roster. VM/piece-transform oracle coverage and
   the current smoke viewport fix do not by themselves prove that requirement.
@@ -9304,17 +9324,138 @@ goal at cell `(238,348)` with a 284px radius. `0x4e54e0` queues the goal through
 `0x4e4f50`; the first `0x416430` worker tick delivers the stable 11-waypoint
 route from `(3840,1920)` to `(3824,5360)` using TNT-backed `0x508cd0` grades.
 
-This trace covers only the 6,275 cells in a narrow corridor; every outside cell
-is blocked, feature definitions are zero-filled, and the boat mover, arrival,
-passenger transfer, and boarding do not run. It validates real request setup
-and route delivery, not a full-map pickup journey. The earlier 70px callback
-fixture used synthetic `transportdistance=86`; Vertrans's shipped value is 300,
-which produces a 284px native pickup circle. No production change or retail GUI
-run was needed.
+This route-phase trace covers only the 6,275 cells in a narrow corridor; every
+outside cell is blocked and feature definitions are zero-filled. It ends before
+the mover and boarding, while the integrated mission probe below continues this
+route through pickup arrival and attachment. The earlier 70px callback fixture
+used synthetic `transportdistance=86`; Vertrans's shipped value is 300, which
+produces a 284px native pickup circle. No production change or retail GUI run
+was needed.
 
 Reproduce with the locally installed retail data:
 
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_surface_pickup_native_map_route.py \
   --retail-root /home/pocket_geek/tak_data --hpitool build-o2/hpitool
+```
+
+### Native Lake Lokken sea pickup through passenger attachment (2026-09-25)
+
+`probe_surface_pickup_native_mission.py` continues the native route-worker
+probe through 2,620 physical mover ticks, pickup-circle arrival at tick 2552,
+transfer effect creation, Araarch attachment and carrier-order retirement at
+tick 2622. The route worker uses retail `0x508cd0` grades over 6,275
+TNT-backed corridor cells; outside cells are blocked and feature-definition
+bodies are zero-filled. Native movement uses the shipped WATER4 limits and
+TNT terrain, while mover-side service requests and the synthetic-heap
+attachment sink at `0x51b4f0` are controlled boundaries. The probe therefore
+does not establish full-map native pickup or the real per-player entity-array
+attachment path. Its native tick count is not compared with World because the
+native route corridor and World's full-map route differ. The separate World
+load-order roundtrip passes in Release, Debug and optimized builds, boarding
+at tick 2178 and completing routed shore unload, placement and a 60-tick coast.
+
+Reproduce the native and optimized World traces with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_surface_pickup_native_mission.py \
+  --retail-root /home/pocket_geek/tak_data --hpitool build-o2/hpitool \
+  --world-binary build-o2/transport_test
+```
+
+The World roundtrip also passes with `build/transport_test` and
+`build-dbg/transport_test` in place of the optimized binary.
+
+### Native mover callback to COB integration (2026-09-25)
+
+`check_native_mover_cob_join.py` captures movement callbacks at retail's
+`0x56c640` script-dispatch boundary, filters them against each shipped COB's
+method table, then runs the matching callbacks through retail's COB scheduler
+and compares complete thread/piece rows with the local VM. Four units cover
+all three movement callback names across ground (Tarblack), hover (Tarlich),
+water (Tarcship) and flying (Aradrag). Initial callback starts and the next
+unchanged tick's edge suppression match in Release, Debug and optimized builds.
+The probe replays captured requests instead of attaching a COB to one
+uninterrupted native mover call; stop/reversal edges and BeginFlight/
+BeginLanding remain outside this trace.
+
+```sh
+python3 tools/re/check_native_mover_cob_join.py \
+  --binary build/retail_script_test \
+  --helper-binary build/retail_movement_animation_test
+python3 tools/re/check_native_mover_cob_join.py \
+  --binary build-dbg/retail_script_test \
+  --helper-binary build-dbg/retail_movement_animation_test
+python3 tools/re/check_native_mover_cob_join.py \
+  --binary build-o2/retail_script_test \
+  --helper-binary build-o2/retail_movement_animation_test
+```
+
+### Ballistic projectile animation and draw selection (2026-09-25)
+
+`probe_ballistic_sprite_timeline.py` joins retail's native projectile launch,
+12 updates/24 admitted substeps, authored animation clocks, current-frame
+lookup, and draw dispatch for Arapult cannonballs, Aratre cannonballs, and
+Verbal bolts/shadows. All nine weapon/build combinations pass across Release,
+Debug and optimized builds. It validates animation timing and exact art/model
+selection and projected draw inputs, not GAF/TAF raster pixels, Glide blending,
+or a live retail framebuffer. Collision, visibility and raster sinks are
+controlled; the separate native impact-body trace below observes `0x529c10`.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_ballistic_sprite_timeline.py \
+  build-o2/retail_visual_test --profile arapult
+PYTHONPATH=tools/re python3 tools/re/probe_ballistic_sprite_timeline.py \
+  build-o2/retail_visual_test --profile aratre
+PYTHONPATH=tools/re python3 tools/re/probe_ballistic_sprite_timeline.py \
+  build-o2/retail_visual_test --profile verbal
+```
+
+### Native ballistic impact damage and splash (2026-09-25)
+
+`probe_ballistic_impact_body.py` runs the native impact body through per-target
+damage and splash dispatch. An Arabow arrow with authored damage 476 returns
+405 with the CRT roll fixed at zero. An Arapult shell dispatches damage to the
+center enemy, a same-owner unit and a farther enemy, and reaches feature and
+effect dispatch plus projectile retirement. Native `0x52a330` uses the CRT
+`rand()` recurrence with per-thread state seeded during process setup. World
+reproduces that recurrence and spread distribution from match-seeded state;
+the retail roll sequence is not promised because the retail CRT state is not a
+lockstep input and can have other consumers.
+
+The probe intercepts the HP and feature mutation sinks, so it verifies native
+call arguments and dispatch, not the resulting HP/feature state. World now
+applies the verified asymmetric integer damage spread once per eligible damage
+recipient, using the CRT stream separately from `gameRng_` so pathfinding's RNG
+sequence is unchanged. Ordinary area damage also includes same-owner units, as
+in the native Arapult trace; mind-control still excludes allies. Regression
+coverage checks the native spread endpoints and one CRT draw per damaged
+recipient. Full CTest passes in Release (51/51), Debug (53/53) and optimized
+Debug (53/53). Resulting native HP/feature mutations and broader
+collision/effect lifecycle cases remain open.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_ballistic_impact_body.py
+ctest --test-dir build --output-on-failure
+ctest --test-dir build-dbg --output-on-failure
+ctest --test-dir build-o2 --output-on-failure
+```
+
+### Native live-pointer cursor clock (2026-09-25)
+
+`probe_cursor_native_restart.py` executes the live-pointer setter dispatch
+through `0x575e30` into the native sequence selector, then runs `0x58a080`.
+Native cursor state keeps a separate frame index per registered sequence and a
+shared countdown; switching A→B→A retains A's frame while B consumes the same
+countdown. `CursorSet` now shares this clock across software and hardware
+rendering and caps delayed catch-up at five 30 Hz updates. The probe stubs only
+the native frame-delay lookup to a uniform two ticks and uses synthetic IDs;
+authored variable delays and the catch-up limit have separate SDL-free
+regressions. No cursor pixels or live pointer input are compared.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_cursor_native_restart.py
+cmake --build build-o2 --target cursor_test takclient -j4
+build-o2/cursor_test assets/extracted/all
+ctest --test-dir build-o2 -R cursor_roster --output-on-failure
 ```

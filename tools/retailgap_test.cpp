@@ -1064,11 +1064,33 @@ int main(int argc, char** argv) {
             int gun = w.spawn(pult, 600, 900, 0, 0);
             int mark = w.spawn(vic, 900, 900, 0, 1);
             int bystander = w.spawn(vic, 916, 900, 0, 1);   // beside the aim point
+            int friendly = w.spawn(vic, 900, 916, 0, 0);    // retail blast also hits allies
             float by0 = w.unit(bystander)->hp.toFloat();
+            float friendly0 = w.unit(friendly)->hp.toFloat();
+            int damageSpreadDraws = 0;
+            bool perRecipientDrawsMatch = true;
+            int spreadDamageTicks = 0;
+            w.setCrtRngObserver([&](const sim::World::RngObservation& row) {
+                if (row.retailReturnAddress == 0x52a3ba) ++damageSpreadDraws;
+            });
             w.attack(gun, mark, false);
             bool flew = false, moved = false;
+            float previousTargetHp[3]{w.unit(mark)->hp.toFloat(), by0, friendly0};
             for (int i = 0; i < 30 * 20; ++i) {
+                const int drawsBefore = damageSpreadDraws;
                 w.tick(1.0f / 30.0f);
+                const int drawsThisTick = damageSpreadDraws - drawsBefore;
+                int damagedRecipients = 0;
+                const int targetIds[3]{mark, bystander, friendly};
+                for (size_t j = 0; j < 3; ++j) {
+                    const float hp = w.unit(targetIds[j])->hp.toFloat();
+                    if (hp < previousTargetHp[j]) ++damagedRecipients;
+                    previousTargetHp[j] = hp;
+                }
+                if (drawsThisTick > 0) {
+                    ++spreadDamageTicks;
+                    if (drawsThisTick != damagedRecipients) perRecipientDrawsMatch = false;
+                }
                 if (!moved && !w.projectiles().empty()) {
                     flew = true;
                     // Yank the target well clear, so the shell cannot connect.
@@ -1079,8 +1101,16 @@ int main(int argc, char** argv) {
             }
             check(flew, "the catapult actually fired");
             float by1 = w.unit(bystander)->hp.toFloat();
+            float friendly1 = w.unit(friendly)->hp.toFloat();
             check(by1 < by0, "the shell still lands and splashes the aim point",
                   std::to_string(int(by0)) + " -> " + std::to_string(int(by1)));
+            check(friendly1 < friendly0,
+                  "retail ballistic splash damages a same-owner nearby unit",
+                  std::to_string(int(friendly0)) + " -> " + std::to_string(int(friendly1)));
+            check(spreadDamageTicks > 0 && perRecipientDrawsMatch,
+                  "ballistic impact consumes exactly one deterministic CRT draw per damaged splash recipient",
+                  std::to_string(damageSpreadDraws) + " draws across " +
+                      std::to_string(spreadDamageTicks) + " damage ticks");
         }
     }
     // ...but a shot that CONNECTS must not also crater on the same tick (the

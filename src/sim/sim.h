@@ -1443,6 +1443,7 @@ public:
     void setGameSeed(uint32_t seed) {
         gameRng_ = initialGameRng_ = retailSeed(seed);
         windRng_ = initialWindRng_ = seed;
+        damageCrtUsed_ = false;
     }
     void setWindRange(int minimum, int maximum) {
         minimum = std::clamp(minimum, 0, 32767);
@@ -1501,6 +1502,7 @@ public:
         deathBlasts_.clear();
         gameRng_ = initialGameRng_;
         windRng_ = initialWindRng_;
+        damageCrtUsed_ = false;
         const int windMin = wind_.minimum, windMax = wind_.maximum;
         wind_ = {}; wind_.minimum = windMin; wind_.maximum = windMax;
         nextId_ = 1;
@@ -2183,6 +2185,7 @@ private:
     // Wind and restored construction particles share retail's CRT stream.
     // Allocation and render-cadence consumers are not yet fully integrated.
     uint32_t windRng_ = 0, initialWindRng_ = 0;
+    bool damageCrtUsed_ = false;
     std::function<void(const RngObservation&)> rngObserver_;
     std::function<void(const RngObservation&)> crtRngObserver_;
     bool retailAllocation_=false;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "client/cursortiming.h"
+
 // Retail Total Annihilation: Kingdoms animated mouse cursors. Loads anims/cursors.gaf
 // and draws the context-sensitive pointer (point / attack / move / reclaim / guard /
 // ...). The cursor set, the per-context selection, the hotspot (each GAF frame's anchor)
@@ -99,9 +101,10 @@ public:
 
     // Draw `c` with its hotspot on the pixel (mouseX,mouseY) in renderer-output space.
     // `scale` (1..4) integer-magnifies the sprite AND its hotspot (nearest-neighbour, so
-    // the pixel art stays crisp). Multi-frame cursors animate from wall-clock time;
-    // switching cursor restarts it. `tint` colour-mods the sprite (default white =
-    // untinted); fight-move reuses the Attack glyph with a tint to read apart from attack.
+    // the pixel art stays crisp). Live cursor sequences use retail's wall-clock sequence
+    // state: switching cursors resumes their saved frame index and shares the countdown.
+    // `tint` colour-mods the sprite (default white = untinted); fight-move reuses the
+    // Attack glyph with a tint to read apart from attack.
     void draw(SDL_Renderer* ren, CursorId c, int mouseX, int mouseY,
               int scale = 1, SDL_Color tint = SDL_Color{255, 255, 255, 255});
 
@@ -115,11 +118,9 @@ public:
     // then fall back to draw() and hide the OS arrow.
     bool applyHardware(CursorId c, int scale, SDL_Color tint = SDL_Color{255, 255, 255, 255});
 
-    // Draw one specific frame at (x,y), WITHOUT touching the pointer's animation
-    // state. draw() restarts the animation whenever the cursor id changes, so using
-    // it to stamp dozens of path beads per frame would reset the real pointer's
-    // animation every time. Retail picks the bead's frame from the game tick and
-    // steps it once per bead along the line, so the caller supplies the index.
+    // Draw one specific frame at (x,y), WITHOUT touching the live pointer's animation
+    // state. Retail picks each path bead's frame from the game tick and steps it once
+    // per bead along the line, so the caller supplies the index.
     void drawFrame(SDL_Renderer* ren, CursorId c, size_t frame, int x, int y,
                    int scale = 1, SDL_Color tint = SDL_Color{255, 255, 255, 255}) const;
     // How many frames `c` has (0 if it did not load).
@@ -159,8 +160,7 @@ private:
 
     std::array<std::vector<Frame>, size_t(CursorId::Count)> anims_;
     bool ok_ = false;
-    CursorId cur_ = CursorId::Count;   // != any real id, so the first draw seeds the clock
-    uint64_t animStartMs_ = 0;
+    CursorAnimationClock<size_t(CursorId::Count)> animClock_;
 
     // Hardware-cursor cache: (CursorId << 32 | packed-RGBA-tint) -> one SDL_Cursor per
     // frame, built for hwScale_. hwSet_ is the currently-applied cursor (skip redundant
@@ -175,8 +175,6 @@ private:
     std::unordered_set<uint64_t> hwFailed_;
     int hwScale_ = 0;                  // scale the cache was built for (0 = empty)
     SDL_Cursor* hwSet_ = nullptr;
-    CursorId hwCur_ = CursorId::Count;
-    uint64_t hwStartMs_ = 0;
 
 };
 

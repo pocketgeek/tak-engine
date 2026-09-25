@@ -3405,10 +3405,15 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             return;
         }
         if (benchmarkMode() && e.type && e.type->commander) return;   // benchmark: Monarchs are invincible
-        // base × attacker-attack (↑) ÷ victim-armour (↓); armour = veterancy × aura.
+        // Base × attacker attack (↑) ÷ victim armour (↓) × splash falloff. Retail
+        // 0x52a330 then consumes one CRT draw per recipient and applies its
+        // asymmetric ±15% integer spread before the HP update. Keep this stream
+        // separate from gameRng_: pathfinding shares the latter's exact sequence.
         float armour = std::max(e.vetMul() * e.armBuff, 0.01f);
-        float dealt = w.damageVs(e.type) * atkMul / armour * scale;
-        e.hp -= Fixed::fromFloat(dealt);
+        float scaledDamage = w.damageVs(e.type) * atkMul / armour * scale;
+        damageCrtUsed_ = true;
+        const int dealt = retailDamageWithSpread(scaledDamage, crtRand(0x52a3ba));
+        e.hp -= Fixed::fromInt(dealt);
         if (e.hp <= Fixed()) {
             e.overkill = fxMax(e.overkill, -e.hp);          // retail severity input
             e.deathType = uint8_t(w.dmgType);                  // 3 = explosion -> gib
@@ -3496,7 +3501,8 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     int splashed = 0;
     forEachNear(hx, hz, r, [&](int idx) {
         Unit& e = units_[size_t(idx)];
-        if (!e.alive() || e.embarked() || !e.type || allied(e.player, fromPlayer)) return;
+        if (!e.alive() || e.embarked() || !e.type ||
+            (w.mindControl && allied(e.player, fromPlayer))) return;
         if (&e == primary) return;   // already took the direct hit
         float dx = e.x.toFloat() - hx, dz = e.z.toFloat() - hz;
         float d = std::sqrt(dx * dx + dz * dz);
@@ -9654,6 +9660,10 @@ uint64_t World::stateHash() const {
         if (cell.feature==0xfffe) { mix(cell.backX);mix(cell.backZ); }
     }
     mix(uint64_t(gameRng_));   // shared RNG stream position must agree
+    // Retail's CRT seed is per-process and not a lockstep input. World uses its
+    // match-seeded CRT stream for damage spread; once combat consumes it, include
+    // that future-affecting state in the peer hash.
+    if (damageCrtUsed_) { mix(0x444d47524354ull); mix(windRng_); }
     mix(windEnabled_);
     if (retailAllocation_) {
         mix(0x534c4f5453ull);
