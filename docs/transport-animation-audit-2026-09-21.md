@@ -8942,6 +8942,37 @@ python3 tools/re/check_air_map_height_scan.py \
   --binary build-o2/transport_test --steps 480
 ```
 
+### Map-backed air unload through passenger release (2026-09-25)
+
+`probe_transport_air_unload_map_flight.py` joins the live native `VTOL_UNLOAD`
+dispatcher, circle controller, carrier mover, and World unload trace over the
+same 100-to-220 terrain ridge. Retail's `0x50e740` builds the sector-height
+planes from the map cell records before the unload controller is created;
+the controller allocation is verified not to overlap the sector table. The
+real `0x4dc800` mover keeps its terrain-scan deadline active throughout the
+flight. Eight sector relinks and six live scans occur before terminal state.
+
+All 488 rows match through ridge flight, arrival, passenger release, PARK, and
+mission retirement in Release, Debug, and optimized builds. The sole sampled
+difference is the expected arrival-wake phase at tick 487: World exposes
+pending `0x500` after movement, while retail consumes it in dispatcher order.
+Cargo release and PARK occur at tick 487; the empty mission retires at tick
+488. Placement feasibility and effect/cargo/PARK host side effects remain
+controlled fixture seams, and this is one carrier/map profile rather than a
+full route and dynamic-traffic matrix. No production change or retail GUI run
+was needed.
+
+Reproduce with:
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_transport_air_unload_map_flight.py \
+  --binary build/transport_test --steps 600
+PYTHONPATH=tools/re python3 tools/re/probe_transport_air_unload_map_flight.py \
+  --binary build-dbg/transport_test --steps 600
+PYTHONPATH=tools/re python3 tools/re/probe_transport_air_unload_map_flight.py \
+  --binary build-o2/transport_test --steps 600
+```
+
 ### Zhon construction-flight occupancy callback edge (2026-09-25)
 
 The 103-tick persistent construction trace uses the native movement dispatcher
