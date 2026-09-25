@@ -227,9 +227,12 @@ implementation descriptions. Current open gates are:
   silent; reversal calls `TurnDirection(41)`; stopping calls
   `TurnDirection(0)` and `MoveRate(0)`; water resume calls `MoveRate(1)`; and
   Aradrag occupancy changes `5→4→5`. The fixture controls target, speed, and
-  state and stops before native position commit `0x51b2a0`; mission-side
-  `BeginFlight`/`BeginLanding` producers and rendered/interpolated poses remain
-  open. A 103-tick
+  state and stops before native position commit `0x51b2a0`. A separate native
+  flight-mission probe runs BeginFlight producer `0x416c50` and accepted
+  BeginLanding path `0x416cd0/0x417089` through retail's real `0x56c5c0` COB
+  dispatcher and scheduler; all 2,170 VM state words match World after the next
+  tick. Its mission/controller services are controlled, and rendered or
+  interpolated poses remain open. A 103-tick
   persistent `zonhunt` construction trace also captures
   native mover requests: its only declared movement callback, `setSFXoccupy(5)`,
   fires once on tick 1 in both native and World, including through two retargets,
@@ -300,7 +303,10 @@ implementation descriptions. Current open gates are:
   extra callbacks there do not establish a live mismatch. GameView now retires
   attached display effects at the native owner-cleanup deadlines measured for
   `crefire` SET26 (tick 1) and `tarmage` SET31 (tick 35), rather than retaining
-  them to the 120-tick corpse fallback. Other callback-to-removal and
+  them to the 120-tick corpse fallback. `tarhel`'s death builder now also
+  matches five SFX 260/261 callback rows at tick 0, and its native SET31 owner
+  timer/list teardown runs at update 35 in the headless trace. That fixture
+  controls SFX node allocation/insertion; other callback-to-removal and
   attached-emitter lifecycles remain open, along with debris details,
   shared cosmetic RNG/tick phase, collision/lifetime
   paths, and representative checks that live effects use the right art family,
@@ -9474,6 +9480,25 @@ python3 tools/re/probe_native_mover_cob_transitions.py \
   --script-binary build-o2/retail_script_test
 ```
 
+### Flight mission callbacks into native COB (2026-09-25)
+
+`probe_native_flight_mission_cob.py` runs retail's `0x416c50` BeginFlight
+producer and the accepted-site branch of `0x416cd0/0x417089` for BeginLanding.
+An Araarch COB VM is attached at `unit+0xbc`; native `0x56c5c0` resolves the
+method names and advances retail's scheduler. After the next VM tick, all 2,170
+thread, static, piece, and write-state words match the World-side VM oracle for
+both callbacks. The BeginLanding fixture also observes native EndTransport;
+Araarch declares no method with that name, so neither scheduler starts one.
+
+Mission allocations, controller/goal creation, first-site acceptance, and
+height/velocity services are controlled; this is not a full match, route search,
+or transport round trip, and it does not compare rendered model poses.
+
+```sh
+PYTHONPATH=tools/re python3 tools/re/probe_native_flight_mission_cob.py \
+  --binary build-o2/retail_script_test
+```
+
 ### Ballistic projectile animation and draw selection (2026-09-25)
 
 `probe_ballistic_sprite_timeline.py` joins retail's native projectile launch,
@@ -9526,9 +9551,9 @@ remain controlled; authored feature rendering and dynamic replacement effects
 are not covered. Broader collision/effect results also remain open. World applies the verified
 asymmetric integer damage spread once per eligible damage recipient, using the
 CRT stream separately from `gameRng_` so pathfinding's RNG sequence is
-unchanged. Ordinary area damage also includes same-owner units, as in the
-native Arapult trace; mind-control still excludes allies. Regression coverage
-checks the native spread endpoints and one CRT draw per damaged recipient. Full
+  unchanged. Ordinary area damage also includes same-owner units, as in the
+  native Arapult trace; mind-control still excludes allies. Regression coverage
+  checks the native spread endpoints and one CRT draw per damaged recipient. Full
 CTest passes in Release (52/52), Debug (54/54) and optimized Debug (54/54).
 
 ```sh
@@ -9582,4 +9607,26 @@ carrier mission retirement is established.
 PYTHONPATH=tools/re python3 -u tools/re/probe_surface_pickup_native_fullmap.py \
   --hpitool build-o2/hpitool \
   --world-binary build-o2/transport_test
+```
+
+### Tarhel death-effect owner lifecycle (2026-09-25)
+
+`probe_native_tarhel_effect_lifecycle.py` runs Tarhel's native death builder
+through `0x512610`, Killed/Dying dispatch, attached SFX 260/261 callbacks,
+SET31, the owner timer, and list teardown. Its five tick-0 callback rows match
+the World render-host trace. Native SET31 is set at tick 0; the owner timer
+expires on update 34, and update 35 executes `0x512ae0/0x4ee560/0x497380`.
+Native `0x497400` then unlinks all five nodes inserted by the controlled
+creation sink. The direct VM-only timeline also emits callbacks at ticks
+18/36/54/72; those are correctly suppressed by the World render-host owner
+gate after SET31.
+
+The fixture controls the unit/model/XYZ and SFX allocation/list-insertion sink;
+it does not run native SFX constructors or compare pixels. No retail GUI is
+launched.
+
+```sh
+PYTHONPATH=tools/re python3 -u tools/re/probe_native_tarhel_effect_lifecycle.py \
+  --scripts assets/extracted/all/scripts \
+  --world-binary build-o2/animation_roster_test
 ```
