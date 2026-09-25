@@ -57,6 +57,7 @@ namespace {
                     c.kind = tak::net::Cmd::Load;
                     c.unitId = id;
                     c.targetId = friendlyTransport;
+                    c.queue = queue ? 1 : 0;
                     issue(c);
                 }
                 return;
@@ -825,6 +826,7 @@ namespace {
             c.kind = tak::net::Cmd::Load;
             c.unitId = pid;
             c.targetId = transportId;
+            c.queue = queue ? 1 : 0;
             issue(c);
             voice(transportId, "move");
             return;

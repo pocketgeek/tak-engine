@@ -734,6 +734,56 @@ static void transferLifecycle() {
     check(!w.unit(cid)->alive(),"cargo is lost when its carrier dies");
 }
 
+static void loadOrderQueueing() {
+    World w;w.setVisPlayer(-1);
+    w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+    UnitType carrier=boatType(),passenger=footType();
+    const int tid=w.spawn(&carrier,200,440),cid=w.spawn(&passenger,430,400);
+    w.order(cid,460,400,false);
+    w.order(tid,460,440,false);
+
+    tak::net::Command command;command.kind=tak::net::Cmd::Load;
+    command.unitId=cid;command.targetId=tid;command.queue=1;
+    tak::net::Writer writer;writer.cmd(command);
+    tak::net::Reader reader(writer.b.data(),writer.b.size());
+    const auto delivered=reader.cmd();
+    tak::sim::TypeRegistry registry;
+    tak::sim::applyCommand(w,registry,delivered);
+
+    const auto* passengerUnit=w.unit(cid);
+    const auto* carrierUnit=w.unit(tid);
+    check(reader.ok && delivered.queue==1,
+          "queued-load flag survives command serialization");
+    check(passengerUnit->orders.size()==2 &&
+          passengerUnit->orders.front().groundMission &&
+          passengerUnit->orders.back().load && passengerUnit->orders.back().goal,
+          "shift-load appends boarding behind the passenger's current order");
+    check(carrierUnit->orders.size()==2 &&
+          carrierUnit->orders.front().groundMission &&
+          carrierUnit->orders.back().transportPickup &&
+          carrierUnit->orders.back().targetId==cid,
+          "shift-load appends the matching pickup behind the carrier's current order");
+    bool boarded=false;
+    for(int tick=0;tick<300 && !boarded;++tick) {
+        w.tick(1.f/30);
+        boarded=w.unit(cid)->inTransport==tid;
+    }
+    check(boarded,"queued passenger and carrier routes advance into boarding");
+
+    World replace;replace.setVisPlayer(-1);
+    replace.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+    const int replaceCarrier=replace.spawn(&carrier,200,440);
+    const int replacePassenger=replace.spawn(&passenger,430,400);
+    replace.order(replacePassenger,460,400,false);
+    replace.order(replaceCarrier,460,440,false);
+    replace.loadInto(replacePassenger,replaceCarrier);
+    check(replace.unit(replacePassenger)->orders.size()==1 &&
+          replace.unit(replacePassenger)->orders.front().load &&
+          replace.unit(replaceCarrier)->orders.size()==1 &&
+          replace.unit(replaceCarrier)->orders.front().transportPickup,
+          "ordinary load still replaces prior passenger and carrier orders");
+}
+
 static void transportEffectEvents() {
     for(bool air:{false,true}) {
         World w;w.setVisPlayer(-1);
@@ -2727,6 +2777,7 @@ int main(int argc,char** argv) {
     if(argc==2) retailRoster(argv[1]);
     boardingLimits();
     transferLifecycle();
+    loadOrderQueueing();
     pickupTransferInterruption();
     unloadTransferInterruption();
     transportEffectEvents();

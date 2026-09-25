@@ -35,9 +35,14 @@ a shipped map route. Native pickup reaches reciprocal attachment and
   queued code 30 is then dispatched, returns 8, and is removed by the queued
   dispatcher. Its controller field is null and there is no cargo attachment;
   the fixture reports one pending path request whose owner is not isolated.
-  The trace stops before code 27 completes. `World::loadInto` clears passenger
-  orders before adding a load order, so there is no equivalent World fixture
-  for this queued sequence. Reproduce with
+  The trace stops before code 27 completes. The command path now preserves
+  Shift-load queueing on both units: `Cmd::Load` carries the flag, and
+  `World::loadInto(..., true)` appends the passenger load and carrier pickup
+  behind existing orders. The transport integration test verifies the serialized
+  flag, preserved routes, and boarding after both queued movement legs complete.
+  This does not yet compare retail when both units have coordinated queued legs;
+  the diagnostic above has an already-active carrier pickup. Reproduce that
+  native diagnostic with
   `PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_ground_move_seek.py --hpitool build-o2/hpitool --max-ticks 9000`.
 The callback-bearing flyer
 pose sweep covers all 26 shipped pairs, LIFBIRD now has a separate idle/fly
@@ -10262,10 +10267,12 @@ trace stops before code 27 completes.
 
 These are O2 Standard Lake Lokken diagnostics for one ZONROC/Araarch pair. The
 route worker, visibility, feature bodies, UI/effects, and COB method tables
-remain controlled. `World::loadInto` clears passenger orders before adding a
-load order, so it has no equivalent queued-command sequence for this fixture;
-World parity and successful VTOL boarding after a queued GROUND2 move remain
-unverified.
+remain controlled. A separate World regression now confirms that a queued load
+is appended behind existing passenger and carrier movement and boards after
+both routes complete. The native diagnostic above still covers a different
+ordering: carrier pickup is already active while a GROUND2 move is ahead of
+`Move_Seek_Pickup`. Retail's result for coordinated queued movement on both
+units remains unverified.
 
 ```sh
 PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_ground_route.py \

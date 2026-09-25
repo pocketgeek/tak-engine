@@ -1749,10 +1749,11 @@ public:
     void setSquad(int unitId, int squad);   // control squad: 0 none, +N group N, -N formation N
     // Attack order on an enemy unit.
     void attack(int unitId, int targetId, bool queue);
-    // Board a friendly transport / sail to (x,z) and disembark.
+    // Board a friendly transport; queue=true appends the reciprocal pickup after
+    // both units' current orders instead of replacing them.
     bool canLoadInto(int unitId, int transportId) const;
     bool scriptYardOpen(int unitId) const;
-    void loadInto(int unitId, int transportId);
+    void loadInto(int unitId, int transportId, bool queue = false);
     void unloadAt(int transportId, float x, float z, Fixed destinationY = {});
     void tick(float dt);
 

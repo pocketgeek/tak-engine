@@ -2595,11 +2595,13 @@ bool World::canLoadInto(int unitId,int transportId) const {
         count,uint16_t(t->type->transportCap),used,uint16_t(t->type->transportSizeCap));
 }
 
-void World::loadInto(int unitId, int transportId) {
+void World::loadInto(int unitId, int transportId, bool queue) {
     if (!canLoadInto(unitId,transportId)) return;
     Unit* u=unit(unitId);
-    u->orders.clear();
-    cancelPath(*u);          // a route for the orders just discarded would eat the load
+    if (!queue) {
+        u->orders.clear();
+        cancelPath(*u);      // a route for the orders just discarded would eat the load
+    }
     Order o;
     o.targetId = transportId;
     o.load = true;
@@ -2610,7 +2612,7 @@ void World::loadInto(int unitId, int transportId) {
     {
         // GROUND_PICKUP and VTOL_PICKUP both own a reciprocal carrier mission.
         // Only its active passenger may enter the transfer stage.
-        if(carrier->orders.empty() || !carrier->orders.front().transportPickup) {
+        if(!queue && (carrier->orders.empty() || !carrier->orders.front().transportPickup)) {
             carrier->orders.clear();cancelPath(*carrier);
         }
         if(std::none_of(carrier->orders.begin(),carrier->orders.end(),

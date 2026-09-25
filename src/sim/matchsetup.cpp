@@ -93,7 +93,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             if (owns(c.unitId)) world.guard(c.unitId, c.targetId, c.queue);
             break;
         case Cmd::Load:
-            if (owns(c.unitId)) world.loadInto(c.unitId, c.targetId);
+            if (owns(c.unitId)) world.loadInto(c.unitId, c.targetId, c.queue != 0);
             break;
         case Cmd::Unload:
             if (owns(c.unitId)) world.unloadAt(c.unitId, c.x, c.z, Fixed::raw(c.targetId));
