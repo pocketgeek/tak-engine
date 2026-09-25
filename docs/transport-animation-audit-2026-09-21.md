@@ -147,7 +147,9 @@ implementation descriptions. Current open gates are:
   and clear-target impact at age 11. The native impact callback was stepped
   directly, so global projectile-manager scheduling remains open. Special
   weapon cases, broader missing-script behavior, visibility-loss timelines,
-  and full movement/flight callback phase comparisons remain open.
+  and full movement/flight callback phase comparisons remain open. One native
+  pending-shot/dead-target sequence now joins target retirement to the next
+  common weapon update; broader target-loss cases remain open.
 - Menu video color: the Bink decoder now uses the chroma matrix measured from
   retail's Bink DLL. Sixteen sampled frames across idle, hover-in, hover-loop,
   and mouse-out for all four doors pass, with mean RGB error 1.151–2.058/255.
@@ -8598,6 +8600,18 @@ confirms a pending-death target is retired without consuming SET 23. Both World
 tests pass. The two CTests pass in Release, Debug, and optimized Debug. Broader
 target-retirement and visibility combinations remain open. No retail GUI was
 launched.
+
+### Pending shot after target death (2026-09-25)
+
+`probe_weapon_gate_loss.py` now joins native target retirement (`0x51a9a0`) to
+the following common weapon update (`0x52ae90`). With SET 23 pending, the
+retirement step clears the dead target, dispatches one `TargetCleared`, and
+preserves the pending bit. The next update sees no target and does not call
+readiness, `FireWeapon`, or the projectile sink. The native probe passes, and
+`retail_script` plus `weapon_hidden_release` pass in optimized Debug. This
+closes the dead-target/pending-release sequence; other target-loss and
+visibility combinations remain open. No production change or retail GUI run
+was needed.
 
 ### Shipped arrow and bolt rendering paths (2026-09-24)
 

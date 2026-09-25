@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Exercise native target-range admission and independent SET-23 release.
+"""Exercise native target-range admission, retirement, and SET-23 release.
 
 The real 52ae90, 51a9a0, 5306a0, 530580, 52fe30 and 530140 execute. Only the
-weapon geometry, aim-readiness result, display transport and projectile sink
-are controlled. This proves the common weapon-update scheduling for a live
-unit target; it does not emulate the mission caller or retail fog map.
+weapon geometry, aim-readiness result, display transport, projectile sink, and
+the no-target result after 51a9a0 retires a dead reference are controlled. The
+probe covers the common update for live and retired targets; it does not emulate
+the mission caller or retail fog map.
 """
 import struct
 from emu import Icd, HEAP
@@ -45,6 +46,12 @@ def geometry(_uc, _sp):
 def target_point(uc, sp):
     source, output, slot = struct.unpack('<3I', uc.mem_read(sp, 12))
     assert source == shooter and slot == 0
+    # The native target-retirement routine below clears this reference before
+    # the next common update. Model its resulting "no target" target-point
+    # result while leaving the controller, readiness and release gates native.
+    if struct.unpack('<H', uc.mem_read(record + 4, 2))[0] == 0:
+        trace.append(('target_point_no_target',))
+        return 3, 0
     uc.mem_write(output, bytes(12))
     trace.append(('target_point',))
     return 3, 1
@@ -179,3 +186,35 @@ assert not error, error
 assert ('projectile',) in trace, trace
 assert not (word(record + 0x1a) & 16)
 print('PASS: returning in range resumes the pending SET-23 projectile release')
+
+# A pending release belongs to its assigned target. Retail first retires a
+# dead unit reference in 51a9a0; the following common update must not release
+# the saved SET-23 acknowledgement without a target.
+put(target + 0x130, 0x1000000)
+p.uc.mem_write(record + 4, struct.pack('<2H', 2, 0x8000))
+fixed(target + 0x68, 1000)
+short(record + 0x14, 10)
+short(record + 0x1a, 0xe8 | 16)
+trace.clear()
+_, error = p.call(0x52ae90, (shooter,))
+assert not error, error
+assert not any(event[0] in ('ready', 'FireWeapon', 'projectile') for event in trace), trace
+assert word(record + 0x1a) & 16
+
+put(target + 0x130, 0)
+trace.clear()
+result, error = p.call(0x51a9a0, (shooter, 0))
+assert not error, error
+assert result == 0
+assert struct.unpack('<2H', p.uc.mem_read(record + 4, 4)) == (0, 0x8000)
+assert word(record + 0x1a) & 16
+assert [event[0] for event in trace] == ['TargetCleared'], trace
+print('PASS: native target retirement clears a dead target and preserves its pending SET 23')
+
+trace.clear()
+_, error = p.call(0x52ae90, (shooter,))
+assert not error, error
+assert ('target_point_no_target',) in trace
+assert not any(event[0] in ('ready', 'FireWeapon', 'projectile') for event in trace), trace
+assert word(record + 0x1a) & 16
+print('PASS: native common update cannot release the pending shot after target retirement')
