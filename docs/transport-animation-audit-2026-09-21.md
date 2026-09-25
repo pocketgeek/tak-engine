@@ -9741,29 +9741,35 @@ passenger-order continuation is claimed. The Bink/retail GUI remains closed.
 PYTHONPATH=tools/re python3 tools/re/probe_native_passenger_order_dispatch.py
 ```
 
-### Native full-map VTOL pickup through boarding (2026-09-25)
+### Native full-map VTOL pickup through BeCarried completion (2026-09-25)
 
-`probe_air_pickup_native_fullmap.py` creates native code-1 VTOL_PICKUP and
-code-2 Move_Seek_Pickup orders for a ZONROC and Araarch on Lake Lokken. Retail
+`probe_air_pickup_native_fullmap.py` creates a ZONROC `VTOL_Pickup` order and
+an Araarch `Move_Seek_Pickup` order on Lake Lokken using their actual sorted
+registry IDs (62 and 30). Retail's three descriptor registration wrappers
+populate all 76 native 25-byte rows, including `BeCarried` at code 11 with
+handler `0x4024a0`; native `0x4d4bf0` resolves the initial pickup names. Retail
 `0x50e740` builds the height-sector plane from the shipped 480×480 TNT data,
 and the probe independently validates every 60×60 sector record. The real
-`0x4d8450` dispatcher selects the passenger, the native flight controller is
-installed, and 1,043 ticks of `0x4dc800` plus `0x51b2a0` move the carrier to
-the passenger. On dispatcher tick 1,044, native code establishes reciprocal
-cargo links and removes the passenger's code-2 pickup order.
+`0x4d8450` dispatcher selects the passenger and installs native flight
+pursuit; 1,043 updates of `0x4dc800` plus `0x51b2a0` move the carrier to it.
 
-At the same dispatcher boundary, native code reaches the `BECARRIED` name
-lookup (`0x4d4bf0` at string `0x615984`). The fixture stops there: the retail
-lookup searches a name-sorted 25-byte descriptor table, so this probe does not
-assign an invented code or handler. The carrier's code-1 order is still active
-at that seam; its post-boarding completion and BECARRIED dispatch remain open.
-The Araarch stays stationary, so this does not cover its pre-boarding ground
-route or mover. Feature definitions, mission-name/eligibility services,
-allocation, the per-type occupancy mask, audio/effect/UI and COB VM sinks are
-controlled fixture boundaries; native pickup selection, flight movement,
-map-sector construction, cargo attachment and passenger pickup-order removal
-execute from KINGDOMS.icd. A 100-tick `--allow-incomplete` control also passes
-with active pursuit and measurable carrier movement before boarding.
+On dispatcher tick 1,044, the native attachment creates reciprocal cargo
+links, looks up `BECARRIED` through the retail sorted registry at string
+`0x615984`, and dispatches handler `0x4024a0` on the Araarch's code-11
+`BeCarried` order. The original passenger code-30 order is absent from both
+current and queued lists. On that same tick, native `0x4d6ad0` unlinks the
+carrier's code-62 order; afterward both carrier order lists are empty and the
+Araarch's current list contains only `BeCarried`. Thus the carrier pickup
+order completes during the boarding dispatch at tick 1,044. The Araarch stays
+stationary, so this still does not cover its pre-boarding ground route or
+mover, unloading, other aircraft, or rendering. Feature-definition bodies,
+passenger eligibility, allocation/free, audio/effect/UI, COB VM requests, and
+visibility/mover-side services remain controlled fixture boundaries; native
+descriptor registration/name lookup, order construction and dispatch, flight
+movement, map-sector construction, cargo attachment, order cleanup and
+BeCarried dispatch execute from `KINGDOMS.icd`. A 100-tick
+`--allow-incomplete` control also passes with active pursuit and measurable
+carrier movement before boarding.
 
 ```sh
 PYTHONPATH=tools/re python3 -u tools/re/probe_air_pickup_native_fullmap.py \

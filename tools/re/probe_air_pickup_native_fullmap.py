@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Drive a native VTOL pickup over Lake Lokken through native boarding.
+"""Drive native VTOL pickup through BeCarried and carrier-order completion.
 
 This bounded headless probe combines retail order creation/queue insertion,
 the real VTOL_PICKUP mission dispatcher and passenger-target pursuit
 controller, native flight mover, map-derived height sectors, native cargo
-attachment, and passenger pickup-order removal. It uses the shipped Lake
-Lokken TNT height and feature-ID plane. Feature definition bodies, unit
-eligibility, mission-name lookup, audio/transfer effects, heap allocation,
-and visibility/mover-side map services are controlled fixture boundaries.
-The flight follows a direct pursuit goal; this does not test passenger ground
-route movement, other aircraft profiles, moving passengers, post-boarding
-BECARRIED dispatch, or renderer output. No retail GUI is launched.
+attachment, the sorted mission descriptor registry, BeCarried dispatch, and
+carrier-order completion. It uses the shipped Lake Lokken TNT height and
+feature-ID plane. Feature definition bodies, passenger eligibility, effect/UI,
+heap allocation, and visibility/mover-side map services are controlled fixture
+boundaries. The passenger is stationary, so this does not test passenger ground
+route movement, other aircraft profiles, moving passengers, unloading, or
+renderer output. No retail GUI is launched.
 
 Run from the repository root:
     PYTHONPATH=tools/re python3 tools/re/probe_air_pickup_native_fullmap.py
@@ -22,7 +22,8 @@ from pathlib import Path
 from emuphase import GS, Phase
 from check_movement_callback_order import fbi_info
 from check_surface_unload_map_release import cat, parse_tnt
-from unicorn.x86_const import UC_X86_REG_ECX
+from unicorn import UC_HOOK_CODE
+from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_ESP
 
 
 MAP = "Lake Lokken"
@@ -32,10 +33,6 @@ START = (240, 120)
 TARGET = (240, 350)
 SCALE = 16
 BECARRIED_NAME = 0x615984
-
-
-class PostBoardingMissionBoundary(Exception):
-    """Stop before the fixture would have to invent a BECARRIED table row."""
 
 
 def fixed(value):
@@ -142,9 +139,9 @@ def init_orders_and_units(phase, map_data, sectors, stride):
     def free(_uc, _stack):
         return 0, 0
 
-    # ``malloc/free`` remain bounded arena sinks. Mission lookup and transport
-    # eligibility are game services that require the shipped descriptor/order
-    # records or player command path; the test supplies just their answers.
+    # ``malloc/free`` remain bounded arena sinks. Order descriptors and names
+    # are registered and looked up from retail; passenger eligibility remains
+    # a controlled service boundary.
     carrier_kind = phase._alloc(0x400)
     passenger_kind = phase._alloc(0x400)
     # Retail 0x507400's map/footprint scan indexes a per-type byte mask at
@@ -155,7 +152,6 @@ def init_orders_and_units(phase, map_data, sectors, stride):
         occupancy_mask = phase._alloc(0x1000)
         put(uc, kind + 0x12A, occupancy_mask)
     owner = phase._alloc(0x400)
-    definitions = phase._alloc(25 * 3)
     player_entities = phase._alloc(3 * 0x138)
     carrier, passenger = player_entities + 0x138, player_entities + 2 * 0x138
     carrier_mover, passenger_mover = (phase._alloc(0x400) for _ in range(2))
@@ -164,30 +160,6 @@ def init_orders_and_units(phase, map_data, sectors, stride):
     empty_vm_records = []
     carrier_order, passenger_order = (phase._alloc(0x100) for _ in range(2))
     game = GS
-
-    def mission_name(_uc, stack):
-        key = u32(_uc, stack)
-        destination = _uc.reg_read(UC_X86_REG_ECX)
-        if key == BECARRIED_NAME:
-            # Native attachment and old-order removal have already happened.
-            # Preserve that state, but don't fabricate a descriptor index for
-            # the dynamically sorted BECARRIED registry.
-            raise PostBoardingMissionBoundary
-        # In the loaded native table, code 1 is the carrier pickup handler,
-        # code 2 is Move_Seek_Pickup. The VTOL handler asks specifically for
-        # the latter when collecting passengers.
-        names = {0x604C00: 1, 0x604DE4: 2, 0x604CF8: 2}
-        if key not in names:
-            raise AssertionError(("unexpected mission name lookup", hex(key),
-                                  "tick", u32(_uc, GS + 0x19F44),
-                                  "carrier_order", hex(u32(_uc, carrier + 0x60)),
-                                  "passenger_order", hex(u32(_uc, passenger + 0x60)),
-                                  "cargo_links", hex(u32(_uc, carrier + 0xAC)),
-                                  hex(u32(_uc, passenger + 0xA8)),
-                                  "carrier_xyz", struct.unpack(
-                                      "<3i", _uc.mem_read(carrier + 0x68, 12))))
-        byte(_uc, destination, names[key])
-        return 1, destination
 
     def eligible(_uc, stack):
         return 1, int(u32(_uc, stack) == passenger)
@@ -203,7 +175,6 @@ def init_orders_and_units(phase, map_data, sectors, stride):
     icd.hooks.update({
         0x4EB9E0: alloc,
         0x4EBA00: free,
-        0x4D4BF0: mission_name,
         0x519F50: eligible,
         0x535CC0: lambda _uc, _stack: (1, 0),
         0x50A9C0: feedback,
@@ -214,14 +185,92 @@ def init_orders_and_units(phase, map_data, sectors, stride):
     })
 
     put(uc, 0x62D55C, game)
-    put(uc, 0x62DB84, definitions)
+    # Register the same three retail descriptor groups that populate the
+    # sorted mission registry before constructing any orders. This gives the
+    # fixture the retail IDs/handlers and lets BECARRIED resolve natively.
+    byte(uc, 0x62DB80, 0)
+    put(uc, 0x62DB84, 0, 0, 0)
+    for registration in (0x402740, 0x4092E0, 0x421850):
+        _, error = icd.call(registration)
+        if error:
+            raise RuntimeError(("native mission descriptor registration",
+                                hex(registration), error))
+    descriptors = u32(uc, 0x62DB84)
+    descriptor_end = u32(uc, 0x62DB88)
+    descriptor_count = (descriptor_end - descriptors) // 25
+    if descriptor_count != 76:
+        raise AssertionError(("native mission descriptor count",
+                              descriptor_count))
+
+    def native_mission_code(name_address):
+        output = phase._alloc(4)
+        _, error = icd.call(0x4D4BF0, (name_address,), ecx=output)
+        if error:
+            raise RuntimeError(("native mission-name lookup",
+                                hex(name_address), error))
+        code = uc.mem_read(output, 1)[0]
+        if code == 0:
+            raise AssertionError(("retail mission name was not registered",
+                                  hex(name_address)))
+        row = descriptors + code * 25
+        row_name = u32(uc, row + 0x15)
+        actual_name = bytes(uc.mem_read(row_name, 80)).split(b"\0")[0]
+        requested_name = bytes(uc.mem_read(name_address, 80)).split(b"\0")[0]
+        if actual_name.lower() != requested_name.lower():
+            raise AssertionError(("native mission code/name mismatch", code,
+                                  actual_name, requested_name))
+        return code, u32(uc, row + 4)
+
+    vtol_pickup_code, vtol_pickup_handler = native_mission_code(0x604DE4)
+    move_pickup_code, move_pickup_handler = native_mission_code(0x604CF8)
+    if (vtol_pickup_code, vtol_pickup_handler) != (62, 0x41A680):
+        raise AssertionError(("retail VTOL_Pickup descriptor",
+                              vtol_pickup_code, hex(vtol_pickup_handler)))
+    if (move_pickup_code, move_pickup_handler) != (30, 0x403430):
+        raise AssertionError(("retail Move_Seek_Pickup descriptor",
+                              move_pickup_code, hex(move_pickup_handler)))
+    # Check the sorted row that runtime attachment will look up, without
+    # manufacturing or assigning a BECARRIED code in the fixture.
+    be_carried_rows = []
+    for row in range(descriptors, descriptor_end, 25):
+        name = u32(uc, row + 0x15)
+        label = bytes(uc.mem_read(name, 80)).split(b"\0")[0]
+        if label.lower() == b"becarried":
+            be_carried_rows.append(((row - descriptors) // 25,
+                                    u32(uc, row + 4)))
+    if be_carried_rows != [(11, 0x4024A0)]:
+        raise AssertionError(("retail BeCarried descriptor", be_carried_rows))
+
+    native_events = {"lookup_sites": [], "lookup_returns": [],
+                     "handlers": [], "removals": []}
+
+    def observe_native_order_code(machine, address, _size, _user):
+        tick = u32(machine, GS + 0x19F44)
+        esp = machine.reg_read(UC_X86_REG_ESP)
+        if address == 0x4D4A5B:
+            # The retail caller pushes the BECARRIED name immediately before
+            # calling its sorted descriptor lookup at 0x4d4bf0.
+            if u32(machine, esp) == BECARRIED_NAME:
+                native_events["lookup_sites"].append(tick)
+        elif address == 0x4D4A60:
+            # Return site immediately after the unhooked native name lookup.
+            if native_events["lookup_sites"] and \
+                    native_events["lookup_sites"][-1] == tick:
+                native_events["lookup_returns"].append(tick)
+        elif address == 0x4024A0:
+            unit, order = struct.unpack("<II", machine.mem_read(esp + 4, 8))
+            native_events["handlers"].append((tick, unit, order))
+        elif address == 0x4D6AD0:
+            unit, order = struct.unpack("<II", machine.mem_read(esp + 4, 8))
+            native_events["removals"].append((tick, unit, order))
+
+    for address in (0x4D4A5B, 0x4D4A60, 0x4024A0, 0x4D6AD0):
+        uc.hook_add(UC_HOOK_CODE, observe_native_order_code,
+                    begin=address, end=address)
+
     put(uc, game + 0x19F30, 1)
     put(uc, game + 0x174C8, 101)
     put(uc, game + 0x174CC, 102)
-    put(uc, definitions + 25 + 4, 0x41A680)
-    put(uc, definitions + 25 + 0x11, 0x200)
-    put(uc, definitions + 50 + 4, 0x403430)
-    put(uc, definitions + 50 + 0x11, 0x200)
 
     # Native entity resolver used by 0x51b4f0 -> 0x51b5a0 (IDs 1 and 2).
     put(uc, game + 0x14E84, player_entities)
@@ -322,14 +371,14 @@ def init_orders_and_units(phase, map_data, sectors, stride):
             raise RuntimeError(("native sector insertion", unit, error))
         assert u32(uc, unit + 0xA4) == sector
 
-    # Actual native code-2 Move_Seek_Pickup and code-1 carrier VTOL_PICKUP
-    # orders. The passenger order's carrier pointer becomes a reciprocal
+    # Actual native Move_Seek_Pickup and VTOL_Pickup orders. The passenger
+    # order's carrier pointer becomes a reciprocal
     # reference during insertion, and the carrier order references the target.
     p_order = phase._alloc(0x100)
     c_order = phase._alloc(0x100)
     for code, target, order, unit in (
-            (2, carrier, p_order, passenger),
-            (1, passenger, c_order, carrier)):
+            (move_pickup_code, carrier, p_order, passenger),
+            (vtol_pickup_code, passenger, c_order, carrier)):
         result, error = icd.call(
             0x4D6C40, (code, target, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
             ecx=order)
@@ -342,6 +391,8 @@ def init_orders_and_units(phase, map_data, sectors, stride):
                                 error))
     assert u32(uc, passenger + 0x60) == p_order
     assert u32(uc, carrier + 0x60) == c_order
+    assert uc.mem_read(p_order + 4, 1)[0] == move_pickup_code
+    assert uc.mem_read(c_order + 4, 1)[0] == vtol_pickup_code
     assert u32(uc, carrier + 0xC4) == p_order + 0x12
     assert u32(uc, passenger + 0xC4) == c_order + 0x12
     return {
@@ -349,8 +400,10 @@ def init_orders_and_units(phase, map_data, sectors, stride):
         "carrier_kind": carrier_kind, "passenger_kind": passenger_kind,
         "carrier_mover": carrier_mover, "passenger_mover": passenger_mover,
         "carrier_nav": carrier_nav, "carrier_order": c_order,
-        "passenger_order": p_order, "owner": owner, "definitions": definitions,
-        "map_effects": counters,
+        "passenger_order": p_order, "owner": owner,
+        "native_events": native_events, "map_effects": counters,
+        "mission_codes": {"VTOL_Pickup": vtol_pickup_code,
+                          "Move_Seek_Pickup": move_pickup_code},
     }
 
 
@@ -374,31 +427,18 @@ def run(args):
     uc.mem_write(options, bytes(0x100))
 
     # Start at a real Lake Lokken cell and follow the stationary Araarch via
-    # retail's pursuit controller. Each tick is the ordinary dispatcher/mover
-    # order: one native carrier mission dispatch, then the real flight update.
+    # retail's pursuit controller. Each tick dispatches the carrier and, after
+    # boarding, the attached passenger's BeCarried order before the real mover.
     tick = 0
     rows = []
     controller_seen = False
     attachment_tick = None
+    carrier_retired_tick = None
     selected = False
-    postboarding_boundary = False
     for _step in range(args.max_ticks):
         tick += 1
         put(uc, GS + 0x19F44, tick)
-        try:
-            _, error = icd.call(0x4D8450, (carrier,))
-        except PostBoardingMissionBoundary:
-            postboarding_boundary = True
-            attachment_tick = tick
-            position = struct.unpack("<3i", uc.mem_read(carrier + 0x68, 12))
-            controller = u32(uc, carrier_nav + 4)
-            stage = uc.mem_read(carrier_order + 5, 1)[0] \
-                if u32(uc, carrier + 0x60) == carrier_order else -1
-            events = u32(uc, carrier_order + 0x6A) \
-                if u32(uc, carrier + 0x60) == carrier_order else 0
-            rows.append((tick, *position, stage, events, controller,
-                         u32(uc, carrier + 0xAC), u32(uc, passenger + 0xA8)))
-            break
+        _, error = icd.call(0x4D8450, (carrier,))
         if error:
             raise RuntimeError(("native VTOL pickup dispatcher", tick, error))
         controller = u32(uc, carrier_nav + 4)
@@ -422,15 +462,22 @@ def run(args):
         controller = u32(uc, carrier_nav + 4)
         if u32(uc, carrier + 0xAC) == passenger and \
                 u32(uc, passenger + 0xA8) == carrier:
-            attachment_tick = tick
+            if attachment_tick is None:
+                attachment_tick = tick
+            if carrier_retired_tick is None and u32(uc, carrier + 0x60) == 0:
+                carrier_retired_tick = tick
+            _, error = icd.call(0x4D8450, (passenger,))
+            if error:
+                raise RuntimeError(("native attached-passenger dispatcher",
+                                    tick, error))
         rows.append((tick, *position, stage, events, controller,
                      u32(uc, carrier + 0xAC), u32(uc, passenger + 0xA8)))
-        if attachment_tick is not None:
+        if attachment_tick is not None and carrier_retired_tick is not None:
             break
     if not selected or not controller_seen:
         raise AssertionError("native VTOL pickup never installed pursuit controller")
     if attachment_tick is None:
-        if args.allow_incomplete and not postboarding_boundary:
+        if args.allow_incomplete:
             final_position = struct.unpack("<3i", uc.mem_read(carrier + 0x68, 12))
             if final_position == initial_position:
                 raise AssertionError(("bounded native mover made no progress",
@@ -446,40 +493,95 @@ def run(args):
                   "correctly outside this short control window.")
             return
         raise AssertionError(("native air pickup failed before attachment", rows[-8:]))
-    if not postboarding_boundary:
-        raise AssertionError(("native pickup did not reach post-boarding descriptor seam",
-                              attachment_tick, rows[-1]))
     if u32(uc, carrier + 0xAC) != passenger or u32(uc, passenger + 0xA8) != carrier:
         raise AssertionError("native cargo links are not reciprocal")
-    if u32(uc, passenger + 0x60) != 0:
-        raise AssertionError(("native boarding did not remove passenger pickup order",
-                              hex(u32(uc, passenger + 0x60))))
-    if u32(uc, carrier + 0x60) != carrier_order:
-        raise AssertionError(("carrier pickup order retired before boarding sample",
+    carrier_unlinks = [(remove_tick, unit, order)
+                       for remove_tick, unit, order
+                       in live["native_events"]["removals"]
+                       if unit == carrier and order == carrier_order]
+    if carrier_retired_tick != attachment_tick:
+        raise AssertionError(("native VTOL_Pickup completion boundary",
+                              attachment_tick, carrier_retired_tick,
+                              carrier_unlinks,
                               hex(u32(uc, carrier + 0x60))))
-    assert u32(uc, carrier + 0xAC) == passenger
-    assert u32(uc, passenger + 0xA8) == carrier
+    if [remove_tick for remove_tick, _unit, _order in carrier_unlinks] != [attachment_tick]:
+        raise AssertionError(("native carrier-order unlink tick",
+                              attachment_tick, carrier_unlinks))
+    if u32(uc, carrier + 0x60) != 0:
+        raise AssertionError(("native carrier VTOL_Pickup order remains queued",
+                              hex(u32(uc, carrier + 0x60))))
+    if (carrier, carrier_order) not in [
+            (unit, order) for _remove_tick, unit, order
+            in live["native_events"]["removals"]]:
+        raise AssertionError(("native carrier order unlink was not observed",
+                              live["native_events"]["removals"][-8:]))
+    passenger_head = u32(uc, passenger + 0x60)
+    if not passenger_head or uc.mem_read(passenger_head + 4, 1)[0] != 11:
+        raise AssertionError(("native BeCarried order was not installed on passenger",
+                              hex(passenger_head)))
+    carried_handlers = live["native_events"]["handlers"]
+    if live["native_events"]["lookup_sites"] != [attachment_tick] or \
+            live["native_events"]["lookup_returns"] != [attachment_tick]:
+        raise AssertionError(("native BECARRIED name lookup did not return",
+                              attachment_tick,
+                              live["native_events"]["lookup_sites"],
+                              live["native_events"]["lookup_returns"]))
+    if not any(handler_tick >= attachment_tick and handler_unit == passenger and
+               handler_order == passenger_head
+               for handler_tick, handler_unit, handler_order in carried_handlers):
+        raise AssertionError(("native BeCarried handler was not dispatched",
+                              attachment_tick, passenger_head,
+                              carried_handlers[-8:]))
+    def order_list(unit, offset):
+        result = []
+        order = u32(uc, unit + offset)
+        while order and len(result) < 32:
+            code = uc.mem_read(order + 4, 1)[0]
+            row = u32(uc, 0x62DB84) + code * 25
+            name_ptr = u32(uc, row + 0x15)
+            name = bytes(uc.mem_read(name_ptr, 80)).split(b"\0")[0]
+            result.append((hex(order), code,
+                           name.decode("ascii", "replace")))
+            order = u32(uc, order + 0x66)
+        return result
+
+    passenger_orders = order_list(passenger, 0x60) + order_list(passenger, 0x64)
+    if any(int(pointer, 16) == passenger_order
+           for pointer, _code, _name in passenger_orders):
+        raise AssertionError(("passenger Move_Seek_Pickup order remains queued",
+                              hex(passenger_order), passenger_orders))
+    print("Native order lists after boarding:", {
+        "carrier_current": order_list(carrier, 0x60),
+        "carrier_queued": order_list(carrier, 0x64),
+        "passenger_current": order_list(passenger, 0x60),
+        "passenger_queued": order_list(passenger, 0x64),
+    })
     assert effects[0] >= 2, effects
     print(
-        f"PASS: Lake Lokken native VTOL pickup selected {PASSENGER} with real "
-        f"code-1/code-2 orders, installed native pursuit, completed "
-        f"{len(rows) - int(postboarding_boundary)} native flight updates over "
-        f"the map-built sectors, attached the passenger, and removed its code-2 "
-        f"pickup order. The carrier code-1 order remains active at this seam; "
-        f"native BECARRIED name lookup is reached and intentionally left "
-        f"unresolved rather than assigned a fabricated descriptor code. "
-        f"boarding dispatcher tick {attachment_tick}; "
-        f"map sectors {stride}x{stride}, transfer effects {effects[0]}."
+        f"PASS: Lake Lokken native VTOL pickup used retail descriptor IDs "
+        f"VTOL_Pickup={live['mission_codes']['VTOL_Pickup']} and "
+        f"Move_Seek_Pickup={live['mission_codes']['Move_Seek_Pickup']}, "
+        f"completed {attachment_tick - 1} carrier flight updates over the "
+        f"map-built sectors, attached {PASSENGER}, dispatched native "
+        f"BeCarried code 11/handler 0x4024a0, removed the passenger pickup "
+        f"order, and retired carrier VTOL_Pickup on tick {carrier_retired_tick}. "
+        f"boarding tick {attachment_tick}; map sectors {stride}x{stride}, "
+        f"transfer effects {effects[0]}."
     )
+    print("  Native BECARRIED lookup/return and BeCarried handler ticks:",
+          live["native_events"]["lookup_returns"],
+          [handler_tick for handler_tick, handler_unit, handler_order
+           in carried_handlers if handler_unit == passenger and
+           handler_order == passenger_head])
     print("  Carrier final XYZ:", tuple(value // 65536 for value in
                                            struct.unpack("<3i", uc.mem_read(carrier + 0x68, 12))))
-    print("  Controlled boundaries: feature-definition bodies; mission-name and "
-          "passenger-eligibility lookup; allocator/free; audio/effect/UI and "
-          "script-VM sinks. Unit order, carrier mission handlers, flight "
-          "controller/mover, map-sector construction, cargo attachment, and "
-          "passenger pickup-order removal execute from KINGDOMS.icd. Native "
-          "dispatch reaches the BECARRIED descriptor lookup, whose name-sorted "
-          "registry is deliberately not approximated here.")
+    print("  Controlled boundaries: feature-definition bodies; passenger "
+          "eligibility; allocator/free; audio/effect/UI and script-VM sinks. "
+          "Retail's mission descriptor registration, name lookup, unit order "
+          "constructors, carrier/passenger handlers, queue insertion/removal, "
+          "flight controller/mover, map-sector construction, cargo attachment, "
+          "and BeCarried dispatch execute from KINGDOMS.icd. The Araarch stays "
+          "stationary; its ground approach/movement is outside this test.")
 
 
 def main():
