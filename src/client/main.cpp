@@ -15,6 +15,7 @@
 #include "net/netcompat.h"
 
 #include "campaign/campaign.h"
+#include <utility>
 #include "client/briefingscreen.h"
 #include "client/artscale.h"
 #include "client/videofilter.h"
@@ -670,7 +671,7 @@ int main(int argc, char** argv) {
     std::string menuReplayError;    // refused replay -> shown on the picker when it reopens
     for (;;) {
     if (tak::termRequested()) { quitApp = true; break; }   // SIGTERM/SIGINT between sessions
-    if (fromMenu) { serverHost = launchServerHost;
+    if (fromMenu || !pendingCampaign.empty()) { serverHost = launchServerHost;
                     serverPort = launchServerPort; args = launchArgs;
                     menuMusic.start(vfs, 15);   // front-end BGM (idempotent; loops into the lobby)
                     // A pending Next/Retry re-enters the game directly, skipping the menu.
@@ -693,11 +694,10 @@ int main(int argc, char** argv) {
     // Direct launch into a mission (`--campaign <stem>`): same host path as a menu
     // pick, resolving the campaign id so a win still advances persisted progress.
     if (!cliCampaign.empty()) {
-        campaignStem = cliCampaign;
+        campaignStem = std::exchange(cliCampaign, {});
         if (args.empty()) args.push_back("athri cay");   // GameView needs a map; the mission overrides it
         for (const auto& c : tak::loadCampaigns(vfs)) {
-            for (const auto& m : c.missions)
-                if (m.stem == campaignStem) { campaignId = c.id; break; }
+            if (tak::campaignChapter(c, campaignStem)) campaignId = c.id;
             if (!campaignId.empty()) break;
         }
     }
@@ -791,26 +791,14 @@ int main(int argc, char** argv) {
         // -- no interactive lobby, and mpAutoMode is forced to 1 below.
     }
 
-    // Campaign mission: play the intro movie, then the briefing, before spinning up
-    // the server and world. A BACK from the briefing skips the launch -- back to the
-    // front-end for a menu pick, or exit for a --campaign launch.
+    // The chapter movie precedes loading. Retail's briefing is an overlay on the
+    // loaded, paused battlefield; GameView shows it before releasing the server's
+    // first-tick loading barrier.
     if (!campaignStem.empty() && !mpHeadless) {
-        std::string title = "MISSION";
-        for (const auto& c : tak::loadCampaigns(vfs))
-            if (c.id == campaignId) {
-                if (campaignStem == c.altFinal) title = "ALT ENDING";
-                for (int i = 0; i < c.count(); ++i)
-                    if (c.missions[size_t(i)].stem == campaignStem)
-                        title = "MISSION " + std::to_string(i + 1);
-            }
         menuMusic.setVolume(0, 0);   // hush the front-end track under the movie's own audio
         tak::MainMenu::playIntro(ren, dataRoot, (campaignStem + ".bik").c_str());
         menuMusic.setVolume(settings.masterVol, settings.bgmVol);
-        if (!tak::BriefingScreen::run(ren, vfs, campaignStem, title, &settings, &menuMusic)) {
-            campaignStem.clear(); campaignId.clear();
-            if (fromMenu) continue;   // back to the front-end picker
-            quitApp = true; break;    // a --campaign launch has nowhere to go back to
-        }
+        menuMusic.stop();   // the loaded-world briefing uses the game's music
     }
 
     if (mode == "game" && serverHost.empty() && !mpHeadless && !localHarness) {
@@ -1483,6 +1471,10 @@ int main(int argc, char** argv) {
                 // autoOv (computed once per session above) drives the lobby: 0 =
                 // UI-driven, 1 = auto-host, etc. TAK_MPAUTO can override it.
                 gameView->mpAutoStep(autoOv, serverMapId, crusades);
+                if (gameView->consumeBriefingPause()) {
+                    last=SDL_GetPerformanceCounter();
+                    dt=0;   // paused reading time is not animation time
+                }
             } else {
                 gameView->update(dt);
             }
@@ -1822,16 +1814,12 @@ int main(int argc, char** argv) {
         for (const auto& c : tak::loadCampaigns(vfs)) {
             if (c.id != campaignId) continue;
             int completedIdx = -1;   // which slot was just beaten (kAltMission for the alt branch)
-            if (campaignStem == c.altFinal) {   // terminal alt branch
-                title = "ALT ENDING"; finalMission = true; completedIdx = tak::kAltMission;
-            } else for (int i = 0; i < c.count(); ++i)
-                if (c.missions[size_t(i)].stem == campaignStem) {
-                    title = "MISSION " + std::to_string(i + 1);
-                    if (i + 1 >= c.count()) finalMission = true;
-                    completedIdx = i;
-                    if (i + 1 < c.count()) nextStem = c.missions[size_t(i + 1)].stem;  // "play next" convenience
-                    break;
-                }
+            if (const auto chapter=tak::campaignChapter(c,campaignStem)) {
+                title=chapter->title;
+                nextStem=chapter->nextStem;
+                finalMission=nextStem.empty();
+                completedIdx=chapter->alternate ? tak::kAltMission : chapter->index;
+            }
             // Victory: record THIS mission as completed. Nothing is ever locked -- this
             // only tracks what's been beaten.
             if (oc > 0 && completedIdx != -1 &&
@@ -1894,7 +1882,7 @@ int main(int argc, char** argv) {
     // at 4K leaves a multi-hundred-MB texture allocated on a VRAM-tight GPU, which can
     // stall the menu's present. It's rebuilt on demand when the next game needs AA.
     if (aaTex) { gpuvram::destroy(aaTex); aaTex = nullptr; aaW = aaH = 0; }
-    if (quitApp || !fromMenu) break;
+    if (quitApp || (!fromMenu && pendingCampaign.empty())) break;
     }  // ---- end outer session loop ----
 
     if (aaTex) gpuvram::destroy(aaTex);

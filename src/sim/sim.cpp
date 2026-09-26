@@ -161,6 +161,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // Native +0x190 is an unsigned word, with zero for an omitted key.
             t.turnInPlaceRate = uint16_t(int32_t(info->numberOr("turninplacerate", 0)));
             t.maxHp = float(info->numberOr("maxdamage", 100));
+            t.experiencePoints = int32_t(info->numberOr("experiencepoints", 666));
             t.isBuilder = info->numberOr("builder", 0) != 0;
             t.commander = info->numberOr("commander", 0) != 0;   // the Monarch
             t.buildCost = float(info->numberOr("buildcost", 0));
@@ -3577,6 +3578,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             e.deathType = uint8_t(w.dmgType);                  // 3 = explosion -> gib
         }
         if (fromId) e.lastHitBy = fromId;
+        e.lastHitPlayer = fromPlayer;
         if (w.status != Weapon::Status::None && e.type) {
             bool immune =
                 (w.status == Weapon::Status::Frozen && e.type->cantBeFrozen) ||
@@ -4411,11 +4413,12 @@ void World::captureUnit(Unit& t, int newPlayer) {
         if (newPlayer >= 0 && newPlayer < int(players_.size()))
             players_[size_t(newPlayer)].unitCount++;
     }
+    if (mission_) mission_->unitCaptured(*this,t.id);
     t.player = newPlayer;
     gPlayersValid_=false;
     t.orders.clear();
     t.hp = fxMax(t.hp, Fixed::fromFloat(t.type->maxHp * 0.5f));
-    t.lastHitBy = 0;
+    t.lastHitBy = 0; t.lastHitPlayer = -1;
     t.squad = 0;             // no longer in its old owner's control group
     t.buildQueue.clear();    // and not still producing for them
     t.buildProgress = 0;
@@ -8763,6 +8766,13 @@ void World::tick(float dt) {
             refreshMovingSearchBody(u);
             if (u.player >= 0 && u.player < int(players_.size()))
                 players_[size_t(u.player)].losses++;   // end-of-game "Losses" column
+            // Native512c4c uses the player captured by the damaging shot.
+            // A killer converted after impact must not move its earlier score.
+            if(!scoreAutomaticDisabled_ && u.type && !u.underConstruction && u.lastHitPlayer>=0 && u.lastHitPlayer<int(players_.size()) &&
+               u.lastHitPlayer!=u.player) {
+                auto& score=players_[size_t(u.lastHitPlayer)].score;
+                score=std::bit_cast<int32_t>(uint32_t(score)+uint32_t(u.type->experiencePoints));
+            }
             // Award the destroyed unit's experiencepoints to the killer, then set
             // its veteran level = accumulatedXP / the killer's OWN experiencepoints,
             // capped at 10 (retail KINGDOMS.icd). No HP-pool change — veterancy
@@ -8899,7 +8909,7 @@ void World::tick(float dt) {
                 // What the player sees, reported from retail: the unit does not
                 // blow up. It quietly leaves your command and fades, with no
                 // wreck left behind.
-                u.hp = Fixed(); u.lastHitBy = 0; u.deathType = Unit::kDeathSelfDestruct;
+                u.hp = Fixed(); u.lastHitBy = 0; u.lastHitPlayer = -1; u.deathType = Unit::kDeathSelfDestruct;
             }
         }
         // Deadly water (.ota waterdoesdamage): a ground unit standing in it is
@@ -10103,7 +10113,13 @@ uint64_t World::stateHash() const {
         mix(uint32_t(wind_.x)); mix(uint32_t(wind_.z)); mix(uint32_t(wind_.speed));
         mix(wind_.heading); mix(wind_.flags); mix(wind_.generation);
     }
-    if (mission_) mission_->foldHash(h);   // mission triggers/vars/outcome are lockstep state
+    if (mission_) {
+        // GET40 makes scores and future attribution authoritative in campaigns.
+        mix(scoreAutomaticDisabled_);
+        for(const auto& p:players_) mix(uint32_t(p.score));
+        for(const auto& u:units_) mix(uint32_t(u.lastHitPlayer));
+        mission_->foldHash(h);
+    }
     if (scenario_) scenario_->foldHash(h); // scenario flags/timers/outcome are lockstep state
     for (uint8_t d : forcedDefeat_) { h ^= (d + 1u); h *= 1099511628211ULL; }
     return h;

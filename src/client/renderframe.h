@@ -179,6 +179,7 @@ struct PlayerR {
         // 4b221e truncates; it does not round up to the next fill level.
         return int(std::clamp(double(mana)/double(storage),0.0,1.0)*double(count-1));
     }
+    int32_t score = 0;
     int kills = 0, unitCount = 0, team = 0;
     int built = 0, losses = 0;      // end-of-game scoreboard counters
     float defeatedAt = -1;          // world clock at elimination (-1 = still in)
@@ -210,10 +211,7 @@ struct Frame {
     uint64_t tickMs = 0;                 // wall-clock of this tick (for interpolation)
     float tickDurMs = 1000.0f / 30.0f;
     uint32_t gen = 0;                    // capture generation (UnitR.gen == this => live this tick)
-    // Mission-script one-shots, SNAPSHOTTED rather than read live. The render
-    // thread used to reach into world_.shakeRequest()/soundRequest() directly,
-    // which races the worker -- and soundRequest carries a std::string, so that
-    // is a torn read of a heap pointer, not just a stale float.
+    // Shake state is snapshotted; mission audio uses an ordered event queue
+    // captured under the worker's lock so skipped snapshots cannot drop lines.
     tak::sim::World::ShakeReq shakeReq;
-    tak::sim::World::SoundReq soundReq;
 };

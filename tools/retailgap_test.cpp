@@ -837,7 +837,7 @@ int main(int argc, char** argv) {
                 if (w.missionOutcome()) break;
             }
         };
-        // takmission28_dh is an escort: NPCDERN must cross Z=11 (victory) and losing
+        // takmission28_dh is an escort: NPCDERN must reach within two cells of Z=11 (victory) and losing
         // every Dern is defeat. Neither condition was parsed, so it could not be
         // won OR lost. (It is also one of the 11 missions that ship no .cob.)
         const sim::UnitType* dern = reg.find("npcdern");
@@ -859,10 +859,10 @@ int main(int argc, char** argv) {
                 int moved = 0;
                 for (auto& u : w.units())
                     if (u.alive() && u.type == dern)
-                        if (auto* p = w.unit(u.id)) { p->z = tak::sim::Fixed::fromInt(5 * 16); ++moved; }
+                        if (auto* p = w.unit(u.id)) { p->z = tak::sim::Fixed::fromInt(11 * 16); ++moved; }
                 tickM(w, 2.0f);
                 check(moved > 0 && w.missionOutcome() > 0,
-                      "getting it across the line is a VICTORY");
+                      "getting it within the native two-cell line tolerance is a VICTORY");
             }
         }
         // takmission11_dh: the human plays Taros and must keep TARPRIE2 alive.

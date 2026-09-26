@@ -1085,6 +1085,21 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     std::vector<uint8_t> cobBytes;
     if (vfs.has(base + ".cob")) cobBytes = vfs.read(base + ".cob");
     auto ms = std::make_unique<MissionScript>(std::move(cobBytes), *gh, reg, human, stem, otaToWorld);
+    // Native commander conditions compare the unit name with the owning
+    // player's authored sidedata commander (ZONHURT is not ZONHUNT).
+    std::vector<const UnitType*> commanders(slots.size(),nullptr);
+    if(vfs.has("gamedata/sidedata.tdf")) {
+        const auto bytes=vfs.read("gamedata/sidedata.tdf");
+        const auto sides=tdf::parseText(std::string(bytes.begin(),bytes.end()),"gamedata/sidedata.tdf");
+        for(size_t i=0;i<slots.size();++i)
+            for(const auto& [key,side]:sides.children) {
+                auto name=side.valueOr("name","");
+                std::transform(name.begin(),name.end(),name.begin(),::tolower);
+                if(slots[i].faction>=0 && slots[i].faction<5 && name==kingdoms[slots[i].faction])
+                    commanders[i]=reg.find(side.valueOr("commander",""));
+            }
+    }
+    ms->setPlayerCommanders(std::move(commanders));
     ms->setInitialOrders(std::move(initialOrders));
     ms->setIdents(std::move(idents));
     world.setMission(std::move(ms));

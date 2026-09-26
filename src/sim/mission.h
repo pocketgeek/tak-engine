@@ -10,6 +10,7 @@
 // docs/campaign-design.md for the reverse-engineered scripting/win-lose model.
 
 #include "cob/cob.h"
+#include "sim/retailcampaignconditions.h"
 #include "cob/vm.h"
 #include "tdf/tdf.h"
 
@@ -38,6 +39,8 @@ public:
                   const TypeRegistry& reg, int humanPlayer, std::string origin,
                   std::vector<int> playerMap = {});
 
+    void setPlayerCommanders(std::vector<const UnitType*> types) { playerCommanders_=std::move(types); }
+
     bool ok() const { return vm_ != nullptr; }
 
     // Per-placed-unit `InitialMission=` order queues from the .ota, applied at start()
@@ -50,6 +53,7 @@ public:
     void start(World& w);              // run the "Start" script once (initial spawns/triggers)
     void step(World& w, float dt);     // tick the VM, sweep triggers, evaluate conditions
     void unitBuilt(World& w, int id);  // a unit finished building -> UnitCreated(id, 0)
+    void unitCaptured(World& w, int id); // called before changing ownership
     void unitDied(World& w, int id);   // a unit died -> UnitDestroyed(id)
 
     int outcome() const { return outcome_; }   // 0 running / +1 victory / -1 defeat
@@ -62,18 +66,13 @@ private:
 
     // A parsed `.ota` victory/defeat rule. `kind` names the retail *Condition_* class;
     // `type` (optional unit type) + up to 4 numeric args carry its parameters.
-    struct Cond {
-        enum Kind { MoveUnitToRadius, KillEnemyCommander, DestroyAllUnits, KillAllMobileUnits,
-                    KillAllOfType, KillUnitType, VictoryTimerRunsOut, UnitTypePassesX, UnitTypePassesZ,
-                    CommanderKilled, AllUnitsKilled, AllUnitsKilledOfType, UnitTypeKilled,
-                    DeathTimerRunsOut, AnyUnitPassesX, AnyUnitPassesZ } kind;
-        const UnitType* type = nullptr;
-        float a = 0, b = 0, c = 0, d = 0;
-        bool victory = false;
-        // "Destroy all X" rules only arm once such a unit has actually existed, so a
-        // mission can't win/lose at t=0 before the target has spawned (many scripts
-        // create their enemies in Start / a trigger).
-        bool armed = false;
+    std::vector<const UnitType*> playerCommanders_; // authored sidedata commander per compact player slot
+    struct Cond : RetailCampaignConditionState {
+        Kind kind=DestroyAllUnits;
+        const UnitType* type=nullptr;
+        int32_t a=0,b=0,c=0;
+        bool victory=false,wildcard=false;
+        bool soundPlayed=false; // native +8: cosmetic latch, independent of completion
     };
 
     // ---- VM callback plumbing ----
@@ -89,7 +88,9 @@ private:
     // ---- per-step evaluation ----
     void sweepTriggers(World& w);
     void evalConditions(World& w, float dt);
+    void emitConditionSound(World& w, Cond& condition);
     void parseConditions(const tak::tdf::Node& header);
+    int conditionOwner(int player) const;
 
     const UnitType* findType(const std::string& name) const;   // registry lookup (lowercased)
     static float cellToWorld(float cell) { return cell * 16.0f + 8.0f; }   // .ota cell -> world px

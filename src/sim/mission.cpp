@@ -2,6 +2,7 @@
 #include "sim/mission.h"
 
 #include "sim/sim.h"
+#include "sim/footprint.h"
 
 #include <algorithm>
 #include <cctype>
@@ -69,10 +70,10 @@ MissionScript::MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node
     // (an alchemist's death, a dragon's arrival, Monsara's cry) and we dropped all
     // of them on the floor -- the mission VM had no sound hook at all. The sim
     // cannot play audio, so record the request and let the viewer act on it.
-    vm_->onPlaySound = [this](int32_t nameIdx,int32_t) {
+    vm_->onPlaySound = [this](int32_t nameIdx,int32_t flags) {
         if (!world_) return;
-        const std::string& n = cob_.name(size_t(nameIdx < 0 ? 0 : nameIdx));
-        if (!n.empty()) world_->requestSound(n);
+        const std::string& n = cob_.name(size_t(nameIdx));
+        if (!n.empty()) world_->requestSound(n,flags);
     };
     parseConditions(header);
 }
@@ -136,7 +137,41 @@ void MissionScript::unitBuilt(World& w, int id) {
     vm_->start("UnitCreated", {id, 0});
 }
 
+int MissionScript::conditionOwner(int player) const {
+    const int enemy=playerMap_.size()>2 ? playerMap_[2] : 1;
+    return player==human_ ? 0 : player==enemy ? 1 : 2;
+}
+
+void MissionScript::unitCaptured(World& w,int id) {
+    const Unit* u=w.unit(id);
+    if (!u || conditionOwner(u->player)!=1) return;
+    for (auto& c:conds_)
+        if(c.kind==Cond::CaptureUnitType && u->type==c.type) {
+            c.met=true;emitConditionSound(w,c);
+        }
+}
+
 void MissionScript::unitDied(World& w, int id) {
+    if (const Unit* victim=w.unit(id)) {
+        const int owner=conditionOwner(victim->player);
+        for(auto& c:conds_) {
+            bool survivor=false;
+            if(c.kind==Cond::KillAllMobileUnits || c.kind==Cond::KillAllOfType || c.kind==Cond::AllUnitsKilledOfType) {
+                for(const auto& u:w.units()) {
+                    if(u.id==id || !u.alive() || u.hp<=Fixed() || !u.type)continue;
+                    const int side=conditionOwner(u.player);
+                    if(c.kind==Cond::AllUnitsKilledOfType ? side>1 : side!=1)continue;
+                    if(c.kind==Cond::KillAllMobileUnits ? u.type->isStructure() : u.type!=c.type)continue;
+                    survivor=true;break;
+                }
+            }
+            retailCampaignDeath(c.kind,c,owner,victim->type==c.type,
+                victim->player>=0 && size_t(victim->player)<playerCommanders_.size() &&
+                    victim->type && victim->type==playerCommanders_[size_t(victim->player)],
+                victim->type && !victim->type->isStructure(),survivor);
+            emitConditionSound(w,c);
+        }
+    }
     if (!vm_ || cob_.scriptIndex("UnitDestroyed") < 0) return;
     world_ = &w; getUnitContext_ = id;
     vm_->start("UnitDestroyed", {id});
@@ -165,7 +200,13 @@ int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32
     if (ieq(verb, "setattribute")) { if (a.size() >= 2) doSetAttribute(w, rest, a[0], a[1]); return 0; }
     if (ieq(verb, "writevalue"))   { if (!a.empty()) vars_[lower(rest)] = a[0]; return 0; }
     if (ieq(verb, "readvalue"))    { auto it = vars_.find(lower(rest)); return it != vars_.end() ? it->second : 0; }
-    if (ieq(verb, "capture"))      { if (!a.empty()) if (Unit* u = w.unit(a[0])) u->player = a.size() >= 2 ? a[1] : human_; return 0; }
+    if (ieq(verb, "capture")) {
+        if (!a.empty()) if (Unit* u=w.unit(a[0])) {
+            const int next=a.size()>=2 ? a[1] : human_;
+            if(u->player!=next) { unitCaptured(w,u->id);u->player=next; }
+        }
+        return 0;
+    }
     if (ieq(verb, "kill"))         { if (!a.empty()) if (Unit* u = w.unit(a[0])) u->hp = Fixed(); return 0; }
     if (ieq(verb, "screenshake")) {
         // Dramatic beats -- quakes, collapses -- asked for a shake and got nothing.
@@ -251,7 +292,7 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders)
             float x = num(), y = num();
             w.patrolTo(unitId, cellToWorld(x), cellToWorld(y), queue); queue = true;
         } else if (c == 's') {                            // hand the unit to the human player
-            u->player = human_;
+            if(u->player!=human_) { unitCaptured(w,unitId);u->player=human_; }
         } else if (c == 'd') {                            // self-destruct / remove
             u->hp = Fixed();
         } else if (c == 'w') {                            // w N (wait N s) / wa (wait-for-attack)
@@ -345,9 +386,8 @@ int32_t MissionScript::getValue(World& w, int32_t valId, const std::vector<int32
         case 36:   // a unit's Z cell
             if (Unit* u = w.unit(a1)) return int32_t(u->z.toFloat()) / 16;
             return 0;
-        case 40:   // a global counter, tested against 2500 to gate a late VO line;
-                   // elapsed mission TICKS is the only reading that fits (~83s).
-            return clock_;   // already ticks
+        case 40:   // native 4d42f3: score of the requested zero-based player slot
+            return a1>=0 && a1<w.numPlayers() ? w.player(a1).score : 0;
         default:
             // id 31 (one use, semantics unclear) and anything else: 0.
             return 0;
@@ -356,6 +396,7 @@ int32_t MissionScript::getValue(World& w, int32_t valId, const std::vector<int32
 
 void MissionScript::setUnitValue(int32_t valId, int32_t value) {
     if (valId == 2) outcome_ = value ? 1 : -1;   // scripted force victory / defeat
+    if (valId == 40 && world_) world_->setScriptScore(value); // native 4d3ffe/4d4011
 }
 
 // ---- triggers --------------------------------------------------------------
@@ -388,161 +429,117 @@ void MissionScript::sweepTriggers(World& w) {
 // ---- data-driven win/lose conditions --------------------------------------
 
 void MissionScript::parseConditions(const tak::tdf::Node& h) {
-    auto add = [&](Cond::Kind k, bool vic, const UnitType* t, float a, float b, float c, float d) {
-        conds_.push_back({k, t, a, b, c, d, vic});
+    auto text=[&](const char* key){return h.valueOr(key,"");};
+    auto integer=[](const std::string& value) {
+        const long long n=std::strtoll(value.c_str(),nullptr,0);
+        return int32_t(std::clamp(n,-2147483648LL,2147483647LL));
     };
-    // Each key appears at most once per header; parse the ones we model.
-    auto has = [&](const char* key) { return h.value(key) != nullptr; };
-    auto str = [&](const char* key) { return h.valueOr(key, ""); };
-    // Comma-separated arg list "TYPE, x, z, r": the (optional) name token -> `type`,
-    // the numbers packed into out[0..] in order (independent of the type's position).
-    auto args = [&](const std::string& v, std::string& type, float out[4]) {
-        std::string cur; int ni = 0; type.clear();
-        auto flush = [&] {
-            size_t a = cur.find_first_not_of(" \t"), b = cur.find_last_not_of(" \t");
-            std::string t = a == std::string::npos ? "" : cur.substr(a, b - a + 1);
-            cur.clear();
-            if (t.empty()) return;
-            if (!std::isdigit((unsigned char)t[0]) && t[0] != '-') type = t;
-            else if (ni < 4) out[ni++] = std::strtof(t.c_str(), nullptr);
-        };
-        for (char ch : v) { if (ch == ',') flush(); else cur += ch; }
-        flush();
+    auto add=[&](Cond::Kind kind,bool victory,const char* key,bool typed,int numbers,bool positive=false) {
+        const std::string value=text(key);
+        if(value.empty())return;
+        Cond c;c.kind=kind;c.victory=victory;
+        size_t begin=0;
+        if(typed) {
+            const auto comma=value.find(',');
+            std::string name=value.substr(0,comma);
+            const auto first=name.find_first_not_of(" \t"),last=name.find_last_not_of(" \t");
+            name=first==std::string::npos?"":name.substr(first,last-first+1);
+            c.type=findType(name);
+            c.wildcard=ieq(name,"ANYTYPE") && (kind==Cond::MoveUnitToRadius || kind==Cond::UnitTypePassesX || kind==Cond::UnitTypePassesZ);
+            begin=comma==std::string::npos?value.size():comma+1;
+        }
+        int32_t* fields[]={&c.a,&c.b,&c.c};
+        for(int i=0;i<numbers && i<3;++i) {
+            const auto comma=value.find(',',begin);
+            *fields[i]=integer(value.substr(begin,comma==std::string::npos?comma:comma-begin));
+            begin=comma==std::string::npos?value.size():comma+1;
+        }
+        if(positive && ((kind==Cond::AnyUnitPassesX || kind==Cond::AnyUnitPassesZ) ? c.a<0 : c.a<=0))return;
+        if(!typed && !numbers && integer(value)==0)return;
+        c.remaining=c.a;
+        conds_.push_back(c);
     };
-    float a[4] = {0, 0, 0, 0};
-    std::string ty;
-    if (has("MoveUnitToRadius")) { args(str("MoveUnitToRadius"), ty, a); add(Cond::MoveUnitToRadius, true, findType(ty), a[0], a[1], a[2], 0); }
-    if (has("KillEnemyCommander")) add(Cond::KillEnemyCommander, true, nullptr, 0, 0, 0, 0);
-    if (has("DestroyAllUnits"))    add(Cond::DestroyAllUnits, true, nullptr, 0, 0, 0, 0);
-    if (has("KillAllMobileUnits")) add(Cond::KillAllMobileUnits, true, nullptr, 0, 0, 0, 0);
-    if (has("KillAllOfType"))      add(Cond::KillAllOfType, true, findType(str("KillAllOfType")), 0, 0, 0, 0);
-    if (has("KillUnitType"))       { args(str("KillUnitType"), ty, a); add(Cond::KillUnitType, true, findType(ty), a[0], 0, 0, 0); }
-    if (has("VictoryTimerRunsOut")) add(Cond::VictoryTimerRunsOut, true, nullptr, std::strtof(str("VictoryTimerRunsOut").c_str(), nullptr), 0, 0, 0);
-    if (has("CommanderKilled"))    add(Cond::CommanderKilled, false, nullptr, 0, 0, 0, 0);
-    if (has("AllUnitsKilled"))     add(Cond::AllUnitsKilled, false, nullptr, 0, 0, 0, 0);
-    if (has("DeathTimerRunsOut"))  add(Cond::DeathTimerRunsOut, false, nullptr, std::strtof(str("DeathTimerRunsOut").c_str(), nullptr), 0, 0, 0);
-    // The escort/protect family. These are the most common conditions we did not
-    // parse at all: AllUnitsKilledOfType alone appears in 21 of the 74 missions, so
-    // the wagon-escort and protect-the-NPC missions could neither be won nor lost.
-    //   AllUnitsKilledOfType=<T>      -- DEFEAT once every unit of T is dead. The
-    //     type is always something on YOUR side (the escorted NPC, or your own
-    //     troops in a mission where you play that kingdom).
-    //   UnitTypePassesX/Z=<T>,<v>     -- VICTORY when a unit of T crosses the cell
-    //     line v. Which SIDE counts as "across" depends on where it started, so the
-    //     starting side is captured when the condition arms.
-    //   UnitTypeKilled=<T>,<n>        -- DEFEAT once n units of T have died.
-    if (has("AllUnitsKilledOfType"))
-        add(Cond::AllUnitsKilledOfType, false, findType(str("AllUnitsKilledOfType")), 0, 0, 0, 0);
-    if (has("UnitTypePassesX")) { args(str("UnitTypePassesX"), ty, a); add(Cond::UnitTypePassesX, true, findType(ty), a[0], 0, 0, 0); }
-    if (has("UnitTypePassesZ")) { args(str("UnitTypePassesZ"), ty, a); add(Cond::UnitTypePassesZ, true, findType(ty), a[0], 0, 0, 0); }
-    if (has("UnitTypeKilled"))  { args(str("UnitTypeKilled"), ty, a); add(Cond::UnitTypeKilled, false, findType(ty), a[0], 0, 0, 0); }
+    // Match native parser order. Victory is the conjunction of every rule;
+    // defeat is the disjunction. Boolean zero and nonpositive timers disable.
+    add(Cond::KillEnemyCommander,true,"KillEnemyCommander",false,0);
+    add(Cond::DestroyAllUnits,true,"DestroyAllUnits",false,0);
+    add(Cond::KillAllMobileUnits,true,"KillAllMobileUnits",false,0);
+    add(Cond::BuildUnitType,true,"BuildUnitType",true,0);
+    add(Cond::CaptureUnitType,true,"CaptureUnitType",true,0);
+    add(Cond::KillAllOfType,true,"KillAllOfType",true,0);
+    add(Cond::KillUnitType,true,"KillUnitType",true,1);
+    add(Cond::MoveUnitToRadius,true,"MoveUnitToRadius",true,3);
+    add(Cond::UnitTypePassesX,true,"UnitTypePassesX",true,1);
+    add(Cond::UnitTypePassesZ,true,"UnitTypePassesZ",true,1);
+    add(Cond::VictoryTimerRunsOut,true,"VictoryTimerRunsOut",false,1,true);
+    add(Cond::CommanderKilled,false,"CommanderKilled",false,0);
+    add(Cond::AllUnitsKilled,false,"AllUnitsKilled",false,0);
+    add(Cond::AllUnitsKilledOfType,false,"AllUnitsKilledOfType",true,0);
+    add(Cond::UnitTypeKilled,false,"UnitTypeKilled",true,1);
+    add(Cond::DeathTimerRunsOut,false,"DeathTimerRunsOut",false,1,true);
+    add(Cond::AnyUnitPassesX,false,"AnyUnitPassesX",false,1,true);
+    add(Cond::AnyUnitPassesZ,false,"AnyUnitPassesZ",false,1,true);
+    // 522f48 skips the default DestroyAllUnits in campaign mode (1).
+    // Empty victory lists stay pending for a scripted win, e.g. takx13_mt.
+    // The default defeat AllUnitsKilled at522f78 is unconditional.
+    if(std::none_of(conds_.begin(),conds_.end(),[](const Cond& c){return !c.victory;})) {
+        Cond c;c.kind=Cond::AllUnitsKilled;conds_.push_back(c);
+    }
+}
+
+void MissionScript::emitConditionSound(World& w, Cond& condition) {
+    // Native non-timer victory classes retain an independent soundplayed +8
+    // flag. DestroyAllUnits can become false again, so completion alone cannot
+    // replace this once-only cosmetic latch. Defeat/timer rules have no cue.
+    if(!condition.victory || condition.kind==Cond::VictoryTimerRunsOut ||
+       !condition.met || condition.soundPlayed)return;
+    condition.soundPlayed=true;
+    w.requestSound("Victory Condition",7);
 }
 
 void MissionScript::evalConditions(World& w, float) {
-    auto enemyAliveMobile = [&](bool mobileOnly) {
-        for (const auto& u : w.units())
-            if (u.alive() && !w.allied(u.player, human_) && (!mobileOnly || (u.type && u.type->canMove)))
-                return true;
-        return false;
-    };
-    auto humanHasAnyMobile = [&] {
-        for (const auto& u : w.units())
-            if (u.alive() && u.player == human_ && u.type && u.type->canMove) return true;
-        return false;
-    };
-    auto enemyOfTypeAlive = [&](const UnitType* t) {
-        for (const auto& u : w.units())
-            if (u.alive() && u.type == t && !w.allied(u.player, human_)) return true;
-        return false;
-    };
-    for (Cond& c : conds_) {
-        bool met = false;
-        switch (c.kind) {
-            case Cond::MoveUnitToRadius: {   // a human-owned unit of c.type within c.c cells of (c.a,c.b)
-                float cx = cellToWorld(c.a), cz = cellToWorld(c.b), rr = c.c * 16.0f;
-                for (const auto& u : w.units())
-                    if (u.alive() && u.type == c.type &&
-                        (u.x.toFloat() - cx) * (u.x.toFloat() - cx) + (u.z.toFloat() - cz) * (u.z.toFloat() - cz) <= rr * rr) { met = true; break; }
-                break;
+    auto ready=[](const Unit& u){return u.alive() && u.hp>Fixed() && u.type && !u.underConstruction && !u.embarked();};
+    bool victory=std::any_of(conds_.begin(),conds_.end(),[](const Cond& c){return c.victory;});
+    bool defeat=false;
+    for(Cond& c:conds_) {
+        switch(c.kind) {
+        case Cond::DestroyAllUnits:
+            c.met=std::none_of(w.units().begin(),w.units().end(),[&](const Unit& u){return u.alive() && u.hp>Fixed() && conditionOwner(u.player)==1;});
+            break;
+        case Cond::AllUnitsKilled:
+            c.met=std::none_of(w.units().begin(),w.units().end(),[&](const Unit& u){return conditionOwner(u.player)==0 && ready(u);});
+            break;
+        case Cond::VictoryTimerRunsOut:case Cond::DeathTimerRunsOut:
+            c.met=uint32_t(clock_)>=uint32_t(c.a)*30u;break;
+        case Cond::BuildUnitType:
+            for(const auto& u:w.units())if(u.alive() && u.hp>Fixed() && conditionOwner(u.player)==0 && u.type==c.type && !u.underConstruction)c.met=true;
+            break;
+        case Cond::MoveUnitToRadius:
+            for(const auto& u:w.units()) {
+                if(conditionOwner(u.player)!=0 || !ready(u) || (!c.wildcard && u.type!=c.type))continue;
+                if(retailCampaignRadius(u.x.v,u.z.v,int32_t(uint32_t(c.a)<<20),int32_t(uint32_t(c.b)<<20),int32_t(uint32_t(c.c)<<20)))c.met=true;
             }
-            // "Destroy all" rules arm once the target exists, then fire when it's gone --
-            // never at t=0 before the enemy/human force has been placed or spawned.
-            case Cond::DestroyAllUnits:
-                if (enemyAliveMobile(false)) c.armed = true;
-                met = c.armed && !enemyAliveMobile(false);
-                break;
-            case Cond::KillAllMobileUnits:
-                if (enemyAliveMobile(true)) c.armed = true;
-                met = c.armed && !enemyAliveMobile(true);
-                break;
-            case Cond::KillAllOfType:
-                if (enemyOfTypeAlive(c.type)) c.armed = true;
-                met = c.armed && !enemyOfTypeAlive(c.type);
-                break;
-            case Cond::VictoryTimerRunsOut: met = clock_ >= int32_t(c.a * 30.0f); break;
-            case Cond::CommanderKilled: {
-                // Losing your MONARCH, not your last soldier. 15 missions use this,
-                // and treating it as "all units dead" meant a mission whose whole
-                // premise is protecting its hero only ended when the last straggler
-                // fell. Arms once the commander has actually been placed.
-                bool alive = false;
-                for (const auto& u : w.units())
-                    if (u.alive() && u.type && u.type->commander && u.player == human_) {
-                        alive = true;
-                        break;
-                    }
-                if (alive) c.armed = true;
-                met = c.armed && !alive;
-                break;
+            break;
+        case Cond::UnitTypePassesX:case Cond::UnitTypePassesZ:
+        case Cond::AnyUnitPassesX:case Cond::AnyUnitPassesZ: {
+            const bool enemy=c.kind==Cond::AnyUnitPassesX || c.kind==Cond::AnyUnitPassesZ;
+            const bool x=c.kind==Cond::UnitTypePassesX || c.kind==Cond::AnyUnitPassesX;
+            for(const auto& u:w.units()) {
+                if(!u.alive() || u.hp<=Fixed() || !u.type || conditionOwner(u.player)!=(enemy?1:0))continue;
+                if(!enemy && !c.wildcard && u.type!=c.type)continue;
+                const int coordinate=x?footprintOrigin(u.x,u.type->footX):footprintOrigin(u.z,u.type->footZ);
+                if(retailCampaignAxis(coordinate,c.a))c.met=true;
             }
-            case Cond::AllUnitsKilled:
-                if (humanHasAnyMobile()) c.armed = true;
-                met = c.armed && !humanHasAnyMobile();
-                break;
-            case Cond::DeathTimerRunsOut:   met = clock_ >= int32_t(c.a * 30.0f); break;
-            case Cond::AllUnitsKilledOfType: {
-                bool any = false;
-                for (const auto& u : w.units())
-                    if (u.alive() && u.type == c.type) { any = true; break; }
-                if (any) c.armed = true;          // don't lose before it has spawned
-                met = c.armed && !any;
-                break;
-            }
-            case Cond::UnitTypeKilled: {
-                // Count the dead of this type. Dead units linger as corpse records,
-                // so counting them directly is both simple and replay-stable.
-                int dead = 0;
-                for (const auto& u : w.units())
-                    if (!u.alive() && u.type == c.type) ++dead;
-                met = dead >= int(c.a);
-                break;
-            }
-            case Cond::UnitTypePassesX:
-            case Cond::UnitTypePassesZ: {
-                bool isX = c.kind == Cond::UnitTypePassesX;
-                float line = cellToWorld(c.a);
-                // Arm on the first sighting and remember which side of the line the
-                // escort started on; the objective is to reach the OTHER side.
-                if (!c.armed) {
-                    for (const auto& u : w.units())
-                        if (u.alive() && u.type == c.type) {
-                            c.armed = true;
-                            c.b = ((isX ? u.x.toFloat() : u.z.toFloat()) < line) ? -1.0f : 1.0f;
-                            break;
-                        }
-                    break;   // never satisfied on the tick it arms
-                }
-                for (const auto& u : w.units()) {
-                    if (!u.alive() || u.type != c.type) continue;
-                    float p = isX ? u.x.toFloat() : u.z.toFloat();
-                    if (c.b < 0 ? p >= line : p <= line) { met = true; break; }
-                }
-                break;
-            }
-            default: break;   // KillEnemyCommander -> TODO
+            break;
         }
-        if (met) { outcome_ = c.victory ? 1 : -1; return; }
+        default:break; // Event conditions retain their native completion latch.
+        }
+        emitConditionSound(w,c);
+        if(c.victory)victory=bool(victory && c.met);
+        else defeat=bool(defeat || c.met);
     }
+    if(victory)outcome_=1;
+    else if(defeat)outcome_=-1;
 }
 
 // ---- lockstep hash ---------------------------------------------------------
@@ -551,10 +548,15 @@ void MissionScript::foldHash(uint64_t& h) const {
     auto mix = [&](uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
     mix(uint64_t(int64_t(outcome_)));
     for (const Region& r : regions_) mix(r.armed ? 1u : 0u);
-    // Both the armed flag and the captured crossing side are live condition state.
+    mix(uint32_t(clock_));
+    for(const UnitType* type:playerCommanders_) {
+        if(type)for(unsigned char ch:type->id)mix(ch);
+        mix(0);
+    }
+    // Event counters and completion latches must survive lockstep checks.
     for (const Cond& c : conds_) {
-        mix(c.armed ? 1u : 0u);
-        mix(uint64_t(int64_t(c.b * 4.0f)));
+        mix(c.met ? 1u : 0u);
+        mix(uint32_t(c.remaining));
     }
     mix(uint64_t(pendingSpawns_.size()));   // timed reinforcements still pending
     for (const auto& s : pendingSpawns_) {
@@ -562,7 +564,9 @@ void MissionScript::foldHash(uint64_t& h) const {
         mix(uint64_t(uint32_t(s.player)));
     }
     if (vm_) for (size_t i = 0; i < cob_.numStatics; ++i) mix(uint64_t(uint32_t(vm_->getStatic(i))));
-    for (const auto& [k, v] : vars_) { for (char ch : k) mix(uint64_t((unsigned char)ch)); mix(uint64_t(uint32_t(v))); }
+    std::vector<std::pair<std::string,int32_t>> variables(vars_.begin(),vars_.end());
+    std::sort(variables.begin(),variables.end());
+    for (const auto& [k, v] : variables) { for (char ch : k) mix(uint64_t((unsigned char)ch)); mix(uint64_t(uint32_t(v))); }
 }
 
 }  // namespace tak::sim

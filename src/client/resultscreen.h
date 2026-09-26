@@ -24,6 +24,7 @@ enum class ResultChoice { Menu, Retry, Next };
 struct ResultRow {
     std::string name;
     int colorSlot = 0;    // team-colour palette slot, for the row's logo swatch
+    int32_t score = 0;    // accumulated authored victim experiencepoints
     int built = 0;        // units put into the field
     int kills = 0;        // enemy units destroyed
     int losses = 0;       // own units destroyed

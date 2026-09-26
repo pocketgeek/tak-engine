@@ -1,7 +1,14 @@
+> Historical design notes below include superseded implementation inventories.
+> For the current native-backed screen behavior, see
+> [campaign presentation](campaign-presentation-2026-09-26.md).
+> Results already use the authored victory/defeat plates; the 2026-09-26 pass
+> replaces the old list picker and front-end briefing with the retail book and
+> loaded-world initial pause, and replaces the guessed score formula.
+
 # Campaign system — design & RE notes
 
-How the retail Book of Darien (base) and Iron Plague campaigns work, and the plan
-to rebuild them. Reverse-engineered by static analysis of `KINGDOMS.icd` + the
+Current campaign implementation and evidence for the retail Book of Darien
+(base) and Iron Plague campaigns. Updated 2026-09-26. Reverse-engineered by static analysis of `KINGDOMS.icd` + the
 shipped mission data (`missions.hpi`, `IPMissions.hpi`, `camps/*.tdf`); see the
 per-area findings below. Nothing here is copied from retail code/data.
 
@@ -12,12 +19,10 @@ is an orphaned older build (PE link Dec 1999, FileVersion **2.0.0.1**,
 `...\Final_Release\Kingdoms.pdb`); `KINGDOMS.icd` is the shipped final patch (Feb
 2000, **3.0.0.1**, `...\V3Final_Release\`) and a strict superset. The install's
 `Kingdoms.exe` stub composes `Kingdoms.ICD` — nothing ever loads `ironplague.icd`.
-v3.0 adds exactly two things over 2.0, **both already handled by us**: the
-campaign-picker front-end (`SelectPlayerAndCampaign` / `PlayerCampaignDialogue`)
-and the Crusades unit-balance overlay (our `--crusades`). **One engine covers
-both campaigns; there is no Iron-Plague-only code path.** Iron Plague is content
-(the `takx*` maps + new unit FBIs), not a separate executable. Keep RE-ing against
-`KINGDOMS.icd` only.
+This audit uses the final patched `KINGDOMS.icd` for both campaigns. The
+`SelectPlayerAndCampaign` / `PlayerCampaignDialogue` names refer to player/profile
+selection, not a character-dialogue overlay. Crusades balance remains selectable
+through the existing engine setting.
 
 ## 1. Data model
 
@@ -56,7 +61,7 @@ A **mission** is a bundle keyed by the stem:
 ### `.ota` `[GlobalHeader]` keys that matter
 
 - `kingdom=` — the **terrain tileset / world** (aramon/veruna/taros/zhon/creon/caves/
-  volcano) *and* which victory screen shows. **Not** the player's faction.
+  volcano). The victory plate follows the local player's faction, not this terrain key.
 - `ismission=` (0/1) — a scripting-mode flag (most campaign missions are `0`), not
   the campaign marker.
 - `lineofsight=` (fog on/off), `mapping=` (minimap pre-revealed), `maxunits=`.
@@ -68,21 +73,19 @@ A **mission** is a bundle keyed by the stem:
 
 ### Text / audio wiring
 
-- Objectives: the `.txt` (already shown as a 30 s corner briefing).
+- Objectives: the `.txt`, displayed by the initial briefing and in-game objectives panel.
 - Localized mission names/briefings: `translate/missions.tdf`, `unitmissions.tdf` (`english.hpi`).
-- Briefing VO: loose `Sounds/<stem>.wav` (only a few shipped).
+- Narrative audio: movie soundtracks and explicit mission `PLAY_SOUND` events. A
+  WAV sharing a mission stem is not automatically a request to play it at briefing.
 - Per-mission AI tuning: `ai/mission<NN>.txt`.
 
 ## 2. Mission scripting (COB)
 
-**Correction the RE forced:** a mission `.cob` is an ordinary COB v6 module whose
-`MAP_COMMAND` / `PLAY_SOUND` opcodes take a **per-cob string-table index** as their
-first operand — the name-table entry is a *text command string* (`"Create ZONTER"`,
-`"SetMission m 130 74"`, `"<stem>.wav"`). Today `src/cob/cob.cpp` never parses that
-table (stops at `nPieces=0`) and `main.cpp:mapCommand()` treats the operand as a
-fixed integer subcommand — which only works for `takmission01_mt.cob`'s indices and
-is wrong for every other mission. **Fix: parse the COB name table; dispatch
-`MAP_COMMAND` on the verb string; resolve `PLAY_SOUND` to that name's `.wav`.**
+A mission `.cob` is an ordinary COB v6 module. `MAP_COMMAND` and `PLAY_SOUND`
+resolve their inline operands through the module's name table. The current
+`MissionScript` dispatches the authored command string and arguments. The old
+Debug-only numeric interpreter was removed; `--mission` now aliases the same
+server-driven campaign launch used by the menu and `--campaign`.
 
 ### Engine-invoked entry points
 `Start` (once at load) · `TriggerHit(regionId, unitId, ownerByte)` (unit enters an
@@ -112,156 +115,110 @@ Example (`takmission01`): `SetMission s, w 4, m 133 68, m 129 68, w 3, m 133 68,
 **force victory / force defeat** (scripted override of the data-driven rules).
 
 ### PLAY_SOUND
-`PLAY_SOUND <nameIdx>` plays `nameTable[nameIdx]` as a `.wav` (character VO / the
-`<stem>.wav` briefing). Currently stubbed → mission audio is silent.
+`PLAY_SOUND <nameIdx>` resolves `nameTable[nameIdx]` as a WAV and preserves its
+authored flags. The native mission host submits global, nonlooping audio with
+priority from the low three flag bits. Ordered events survive multiple requests
+per tick and render snapshots that skip ticks. See the
+[campaign dialogue audit](campaign-dialogue-2026-09-26.md), including missing assets.
 
 ## 3. Win / lose — **data-driven**
 
 Win/lose is primarily evaluated by the engine from `.ota [GlobalHeader]` condition
-keys (each is a `VictoryCondition_*` / `DefeatCondition_*` object checked every tick):
+keys. Some conditions poll current state; others latch creation/capture/death
+events. Victory conditions combine with AND; defeat conditions combine with OR:
 
 - **Victory:** `DestroyAllUnits`, `KillAllMobileUnits`, `KillAllOfType=<T>`,
   `KillUnitType=<T>,<n>`, `KillEnemyCommander`, `MoveUnitToRadius=<T>,<X>,<Z>,<r>`
   (escort), `UnitTypePassesX/Z=<T>,<v>`, `VictoryTimerRunsOut=<s>`, `CaptureUnitType`,
-  `BuildUnitType`, `AllUnitsKilledOfType`.
+  `BuildUnitType`.
 - **Defeat:** `CommanderKilled`, `AllUnitsKilled`, `AllUnitsKilledOfType`,
   `UnitTypeKilled=<T>,<n>`, `DeathTimerRunsOut=<s>`, `AnyUnitPassesX/Z`.
 - **Scripted override:** the COB can force the result with `SET_UNIT_VALUE(2, 1|0)`.
 
-Today the engine only honours the scripted `value==1` (victory) and last-team-standing;
-`value==0` (defeat) and *all* the data-driven conditions are unimplemented.
+The implementation and focused native comparisons are recorded in the
+[condition audit](campaign-conditions-2026-09-26.md). Passing a selection of
+missions or reproducing a lockstep hash is not evidence that every mission has
+been played from beginning to end against retail.
 
-## 4. UX flow (retail)
+## 4. Campaign presentation
 
-```
-MainMenu (PlayStory "girl" door → Choice::Campaign)
-  → Select profile + campaign        [PlayerCampaignDialogue.gui]  (resume at saved index)
-  → per mission i:
-       intro movie   Movies/<stem>.bik           (fullscreen, skippable — BEFORE briefing)
-       briefing      [Briefing.gui] + .txt lines (+ optional <stem>.wav VO) → Proceed
-       load          [loadscreen.gui]
-       play          <stem>.tnt/.ota/.cob
-         WIN  → singleplayerwin.gaf banner → Victory.bik → victory<kingdom>.gui
-                → Proceed: persist index, next mission (posttakmission24 after M24;
-                  PostTakCredits after the final) ; or Main Menu
-         LOSE → singleplayerlose.gaf → Defeat.gui → Restart (reload) / Main Menu
-```
-In-mission: `F2MenuSinglePlayer.gui` (pause) → `GameInfoBriefing.gui` (re-read
-objectives); `SinglePlayerExitMenu.gui` **Restart** = retry, **Exit Battle** = menu.
+The retail book picker is `BOD.gui`, with chapter illustrations selected from the
+`Story1` sequence. It is distinct from the player/profile chooser. The engine uses
+that authored book art, typography, and chapter navigation, while retaining its
+existing ability to choose any chapter without unlocking it first. Completion is
+tracked in portable settings. Iron Plague's alternate finale remains selectable.
 
-Dialogue/narration is **movie/data-driven**, not COB-driven: the intro `.bik` carries
-the voiced story; on-map lines come from `.ota` message triggers; Iron Plague adds an
-in-engine portrait widget (`playercampaigndialogue.gaf`). **Progress** lives in the
-Windows registry/ini in retail (`FavoriteCampaign`, `InitialMission`, per profile);
-our portable replacement: a small per-profile/per-campaign record `{campaignFile,
-highestUnlocked, lastPlayed}` via the existing `tak::Settings` persistence.
+Chapter movies play before loading. Native in-game constructor `4b3360` creates
+`Briefing.gui` after the game has loaded; `4b51e0` pauses and fills the chapter,
+title, and objective lines. The engine now presents that overlay on the loaded
+battlefield. It withholds the initial network Loaded acknowledgement until the
+briefing is dismissed, while polling keepalives. The referee therefore cannot
+advance the mission while the player reads. Rejoins and spectators skip this
+initial modal. The existing objectives panel remains available during play.
 
-## 5. Current engine — reuse vs. build
+Narration and dialogue use the authored movie soundtrack or explicit script sound
+requests. The earlier claim that Iron Plague requires a missing in-engine portrait
+widget was wrong: `PlayerCampaignDialogue.gui` is a profile chooser. No invented
+portrait, dialogue text, or replacement clips are added.
 
-**Reusable substrate (works today):** COB mission VM + event wiring
-(`main.cpp:1428-1458`), region arming + `TriggerHit` sweep (`3091-3112`), `.txt`
-briefing panel, the `.crt` skirmish-scenario win/spawn system (`1491-1614`),
-outcome→banner→menu, and the Bink player (`MainMenu::playIntro`).
+The result screen uses the authored faction victory/defeat plate. Victory records
+that chapter's completion; Next follows campaign-list order, Retry replays the
+same chapter, and either finale is terminal. Direct Debug campaign launches now
+honor Next/Retry as well as menu launches. Chapter titles and the alternate title
+come from the shipped translations rather than generic mission-number labels.
+See the [presentation audit](campaign-presentation-2026-09-26.md) for native
+addresses, rendering checks, and remaining differences.
 
-**Missing / wrong (the spine):**
-| Need | State |
-|---|---|
-| `camps/*.tdf` loader + campaign state machine + progress persistence | MISSING |
-| Release-valid mission launch (missions are `#ifndef NDEBUG` only, `9749-9754`) | MISSING |
-| Mission players/factions from `PlayerN` defs; **AI for mission enemies** (AI is server-only; missions run local free-run with none) | MISSING |
-| COB name-table parse + verb-string `MAP_COMMAND` dispatch + `PLAY_SOUND` | WRONG/PARTIAL |
-| Data-driven `VictoryCondition_*` / `DefeatCondition_*` evaluator (+ scripted `SET_UNIT_VALUE(2,0)` defeat) | MISSING |
-| Per-mission buildable-set filter from the `.tdf` | MISSING |
-| Per-mission intro movie; win/lose → next/retry; victory/defeat screens | MISSING |
+## 5. Architecture and limits
 
-## 6. Key architecture decision — where a mission runs
+Campaigns run through the shared authoritative server simulation. The client and
+referee independently construct the same mission world and execute its script;
+client-owned presentation consumes cosmetic events. Mission conditions, rather
+than skirmish last-team-standing, determine the campaign result. Script-driven
+reinforcements can revive otherwise empty factions. Strategic opponents use this
+project's AI with mission tuning; this is not a port of retail strategic AI.
 
-Skirmish today = client + an auto-launched local `takserver` (server = authoritative
-sim + AI + determinism). The old mission path = client-only local free-run sim with
-the COB script in the viewer and **no AI**. A campaign needs the COB script to drive
-the authoritative sim (spawns/orders/triggers/win-lose) *and* AI for `strategic`
-opponents. Two ways:
+The mission `.tdf` restricts the player's build menu. Server-side enforcement of
+that restriction and a general mapping between arbitrary room seats and mission
+human slots are separate limitations. The obsolete client-only mission runner is
+gone. Campaign progress remains local portable settings, not retail's Windows
+registry/profile format.
 
-- **A. Through the server** (consistent with the project's server-authoritative
-  design): the server loads the mission (units, `PlayerN` slots, `.tdf`, the COB
-  script, victory rules), runs script + AI, relays to the client (which owns the
-  campaign UI: movies, briefing, objectives, progression). Reuses server AI + one
-  sim path. Cost: move the mission COB VM + rule evaluation to the server.
-- **B. Local client sim** (extend the existing debug path to Release): client runs
-  sim + COB script + a **new local mission-AI** for strategic opponents. Faster to a
-  playable mission; cost: a second sim path + a local AI, diverging from SP-skirmish.
+This audit targets mission conditions, presentation, and dialogue. It does not
+claim that every scripting verb, AI decision, or complete campaign playthrough
+has been compared to retail. Native tests run extracted routines under controlled
+inputs; asset-backed tests establish loading and rendering of the installed data.
+No retail GUI was launched for this pass.
 
-Recommendation: **A** — it matches "AI is server-side only / SP auto-launches a local
-server", keeps a single sim path, and gets AI for free; the COB VM move is the main lift.
+## Integration validation
 
-## 7. Phased plan
+Final builds completed for all targets in Release, optimized Debug and regular
+Debug. All **207 CTest runs passed** (67/70/70), including campaign conditions,
+audio events, authored chapter selection, scoring and existing mission regressions.
 
-Status (2026-09-07): phases 1–7 are **done and verified** (bar one data-absent
-item). A campaign mission runs over the real takserver/takclient in lockstep
-(`err=none`, reproducible hash); the full front-end loop — pick → intro movie →
-briefing (+ VO) → play (objectives panel) → post-mission cutscene → victory/defeat
-→ next/retry, with end-of-campaign credits — works from the main menu (or `takclient
-game --campaign <stem>`); the conjure menu is restricted per mission; and the
-mission-runner sim has condition guards, the full `SetMission` verb set, and proper
-compacted-slot diplomacy. The Iron Plague dialogue widget is the sole open item and
-is **not implementable against this install** (see phase 7 below).
+The optional `campaign_test assets/game --startup` sweep loaded and ran the first
+30 ticks of all **74 chapters in both balance modes**: 148 successful openings.
+This found and fixed Iron Plague chapter 13's erroneous immediate victory; that
+mission has no explicit victory list and must wait for its script. This sweep is
+an opening regression, not a complete campaign playthrough.
 
-1. **Scripting core (no campaign yet).** ✅ COB name table (`src/cob`);
-   verb-string `MAP_COMMAND` dispatch (Create/SetMission/SetTrigger/GetUtype/
-   WriteValue-ReadValue/SetAttribute/Capture/ScreenShake); `SetMission` order
-   mini-language — m/ma/a/p(patrol-loop)/s/d/**w(timed wait)**/o(stance)/v done;
-   **wa (wait-for-attack) and b (timed reinforcement) still TODO**. `MissionScript`
-   in `src/sim/mission.{h,cpp}`; `Order.wait` + `World::orderWait`/`patrolTo` back the
-   pacing. Exercised by `tools/missiontool` (WIN/LOSE/TRIGGER-march all pass).
-2. **Data-driven win/lose.** ✅ `.ota` `VictoryCondition_*`/`DefeatCondition_*` →
-   evaluator ticked in the sim; scripted `SET_UNIT_VALUE(2,0/1)` honoured. Win and
-   lose paths pass in `missiontool`. (Condition *guards* — don't win before the
-   target existed — still TODO.)
-3. **Mission players + AI (the §6 decision).** ✅ `PlayerN` slots parsed into
-   `setupMission` (`src/sim/matchsetup.cpp`); enemies are script-driven (no skirmish
-   AI). Server hosts a mission referee (`server.cpp`), client builds the same
-   deterministic world (`startMpGame`), and both run the in-sim god script in
-   lockstep — the mission is authoritative on the server, which broadcasts
-   `MissionOutcome` (kNetVersion 17). Headless driver: `takclient … --mpmission <stem>`.
-   First-pass diplomacy (opponents team 1, everyone else allied); proper
-   neutral/ally roles and non-zero human slots are TODO.
-4. **Per-mission unit restriction.** ✅ `missions/<stem>.tdf` (a list of allowed unit
-   ids) is loaded into `missionAllowed_` on launch; `GameView::conjureMenu` intersects
-   `registry_.buildable(builder)` with it, so a builder only offers permitted units
-   (the click handler reads the same filtered `iconRects_`). UI-only; empty/absent =
-   unrestricted. Verified: mission 1 = 10 allowed types; a real conjuror's 9-unit menu
-   drops to 8 where a unit isn't permitted (takmission43_ph/47_ph).
-5. **Campaign spine.** ✅ `camps/*.tdf` loader (`src/campaign/campaign.{h,cpp}`,
-   `loadCampaigns` — Book of Darien 48, The Iron Plague 25, ipalt 25); progress
-   persisted in `tak::Settings` (`campaignDone`, `campaign.<id>=n`); win→advance
-   handled in `main()`.
-6. **Front-end flow.** ✅ `Choice::Campaign` → `CampaignScreen`
-   (`src/client/campaignscreen.{h,cpp}`): campaign tabs + completed/current(PLAY)/
-   LOCKED rows. A pick runs the full sequence: intro movie (`MainMenu::playIntro` on
-   `Movies/<stem>.bik`) → `BriefingScreen` (objectives from `missions/<stem>.txt`) →
-   the autoMode-8 lockstep mission → `ResultScreen` (VICTORY/DEFEAT → next/retry/menu,
-   chaining via `pendingCampaign` without bouncing through the menu). On victory
-   `world_.missionOutcome()` drives the banner and bumps persisted progress. Our own
-   block-font screens rather than the retail `Briefing`/`victory<kingdom>` `.gui`
-   (deferred to polish). Modals auto-proceed under the dummy video driver (headless).
-7. **Polish.** ✅ mostly done:
-   - `SetMission` `wa` (ambush hold, `Order.waitAttack`) + `b` (timed reinforcement,
-     `MissionScript::pendingSpawns_`) verbs.
-   - Condition guards (`Cond::armed`) so a mission can't resolve before its target
-     exists; compacted-slot diplomacy (opponents team 1, human/allies/neutrals team 0),
-     shared by placements and the script's Create refs.
-   - In-mission objectives panel (`GameView::drawObjectivesPanel`, O to toggle);
-     briefing VO (`Sounds/<stem>.wav`); `posttakmission24`-style post-mission cutscenes
-     (`post<stem>.bik`) + end-of-campaign credits (`PostTakCredits.bik`/`CREDITS.BIK`);
-     `ipalt` folded into Iron Plague as an alt-ending branch row.
-   - **Iron Plague dialogue widget — NOT implementable against this install.** Mission
-     cobs contain no `PLAY_SOUND`, there are no `Sounds/takx*.wav`, the `.ota` has no
-     message/dialogue fields, and there is no message MAP_COMMAND (§2). In-mission
-     character dialogue has no script/data hook here; mission narrative is carried by
-     the briefing VO where a `Sounds/<stem>.wav` ships. Left for a future asset set.
-   - Still deferred: retail `.gui` briefing/victory art (our block-font screens stand
-     in); commander-specific CommanderKilled; server-side enforcement of the unit
-     restriction (today UI-only); non-zero human room slot.
+Release-server/optimized-Debug-client checks exercised loaded briefings in base
+chapter 1, Iron Plague chapter 1 and Iron Plague chapter 13. Each screenshot path
+asserted that rendering and dismissing the briefing left the tick-zero simulation
+hash unchanged. Both campaign book screenshots and the battlefield briefing were
+visually reviewed. The normal base-chapter launch and legacy `--mission` alias
+repeated the same ten-second state hash, `d10fe3f010796c06`, without desync.
 
-Each phase is independently testable and lands behind the existing `--mission` /
-`--mpmission` / menu paths before the front-end goes live.
+Native comparisons include 7,205 condition cases, 512 mission-audio routing
+cases plus objective-cue checks, 112 chapter-art cases, 216 death-score cases and
+full score GET/SET host checks. Their controlled scope is detailed in the linked
+reports; they do not imply an end-to-end retail GUI comparison.
+
+GCC/Clang determinism checks retained golden `dcef618cd2e4d558`. The harness skipped
+ARM cross-build checks because target build dependencies were unavailable.
+Protocol **183** requires matching client/server builds and rejects earlier
+protocol recordings under the existing replay-version policy.
+
+Two fresh ordinary skirmish multiplayer runs also retained the pre-change hash
+`3c4e5e85a939988c`. Mission-only score and condition state does not change the
+ordinary skirmish checksum. No pathfinding implementation was changed.

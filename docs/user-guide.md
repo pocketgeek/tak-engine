@@ -118,6 +118,24 @@ scale. Spawns respect map capacity, player caps, and unit-specific limits, so
 the requested rate does not guarantee a particular final unit count. A slow
 simulation can take longer than 60 seconds of wall-clock time.
 
+### Campaigns
+
+The campaign door opens the authored chapter book. Choose a campaign tab, then
+use the page arrows, **Left/Right**, or **Page Up/Page Down** to browse chapters.
+**Home/End** selects the first/last chapter; **Tab** switches campaigns;
+**Enter** plays the selected chapter and **Escape** returns to the menu.
+Every chapter remains selectable, including Iron Plague's alternate ending.
+
+After the chapter movie and loading screen, the briefing appears over the paused
+battlefield. **Enter**, **Space**, **Escape**, or a left click dismisses it and
+starts the mission. The mouse wheel and **Up/Down/Page Up/Page Down** scroll long
+objectives. **O** toggles the objectives panel during play. Mission sounds follow
+their script events; a missing authored sound is not replaced with another clip.
+
+Victory records chapter completion. **Next** follows the authored campaign order;
+**Retry** reloads the same chapter. See the [campaign notes](campaign-design.md)
+for the retail comparisons and remaining differences.
+
 ### Command line
 
 A **release `takclient`** has a minimal command line:
@@ -267,8 +285,8 @@ Debug builds also support direct playback:
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
 compatible engine behavior and game data. Released 0.7.1 uses protocol **179**;
-current development builds use **182** for authoritative area clearing, following
-the naval placement corrections.
+current development builds use **183** for corrected campaign conditions, following
+the area-clearing and naval fixes.
 These builds cannot mix in a match. Version 0.7.0 uses **177**.
 All multiplayer clients and servers must run the same compatible build.
 Different-protocol peers and replays, including those from 0.6.9 (protocol 176),

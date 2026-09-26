@@ -21,7 +21,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/lobby.jpg"><img src="docs/img/lobby.jpg" alt="The create-game screen with map selection and preview"></a><br><sub>Maps and match setup</sub></td>
-    <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign mission picker"></a><br><sub>Campaign selection</sub></td>
+    <td width="50%"><a href="docs/img/campaign.png"><img src="docs/img/campaign.png" alt="The Book of Darien campaign mission picker"></a><br><sub>Campaign selection</sub></td>
   </tr>
 </table>
 
@@ -228,8 +228,8 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-Released **0.7.1 uses protocol 179**; current development builds use **182**
-for authoritative area clearing, following the naval placement corrections. These builds
+Released **0.7.1 uses protocol 179**; current development builds use **183**
+for corrected campaign conditions, following the area-clearing and naval fixes. These builds
 cannot mix in a match.
 Version 0.7.0 uses 177. Older incompatible clients and recordings are rejected.
 The connection checks gameplay definitions, but
@@ -276,6 +276,7 @@ AI is this project's implementation, rather than a reproduction of retail AI.
 For the evidence and remaining scope, see the [retail engine notes](docs/retail-engine.md),
 [pathfinding work](docs/pathfinding-port.md),
 [guessed-behavior corrections](docs/guessed-fallback-audit-2026-09-26.md),
+[campaign implementation and comparisons](docs/campaign-design.md),
 [transport and animation audit](docs/transport-animation-audit-2026-09-21.md), and
 [naval building placement correction](docs/naval-building-placement.md).
 

@@ -7,6 +7,7 @@
 // mission and tracks how far the player has got. See docs/campaign-design.md.
 
 #include <string>
+#include <optional>
 #include <vector>
 
 namespace tak {
@@ -31,6 +32,7 @@ struct Campaign {
     // the campaign's earlier missions and is offered alongside the normal finale once
     // the campaign is at its last mission. Empty when there is no branch.
     std::string altFinal;
+    std::string altTitle;
     bool empty() const { return missions.empty(); }
     int count() const { return int(missions.size()); }
 };
@@ -41,6 +43,16 @@ bool loadCampaign(const hpi::Vfs& vfs, const std::string& file, Campaign& out);
 // Every `camps/*.tdf` in the VFS, ordered for display: Book of Darien, then The Iron
 // Plague, then the alt-ending branch, then any others alphabetically.
 std::vector<Campaign> loadCampaigns(const hpi::Vfs& vfs);
+
+// Resolve a playable chapter, including the alternate finale, without assuming
+// that numeric filename suffixes describe campaign order.
+struct CampaignChapter {
+    int index = 0;
+    bool alternate = false;
+    std::string title;
+    std::string nextStem;   // empty at either ending
+};
+std::optional<CampaignChapter> campaignChapter(const Campaign& campaign, const std::string& stem);
 
 // A mission's objective lines from `missions/<stem>.txt`: one per line, with the retail
 // bullet glyph and surrounding whitespace stripped, blank lines dropped. Empty if the

@@ -42,6 +42,10 @@
     }
 
     void GameView::startMpGame(const tak::net::RoomView& room, uint32_t seed) {
+        {
+            std::lock_guard<std::mutex> lock(hitQueueMutex_);
+            missionSoundQueue_.clear();
+        }
         replaySaved_ = false;   // a fresh game gets a fresh recording
         int maxSlot = 0;
         for (int i = 0; i < tak::net::kMaxSlots; ++i)
@@ -189,6 +193,78 @@
         loadGui(side_);
         loadScreen_->step("WAITING FOR PLAYERS", 100);
         startAtMonarch();
+    }
+
+    bool GameView::showInitialCampaignBriefing(const std::string& stem) {
+        if (stem.empty()) return true;
+        // Headless synchronization runs do not need a modal render; screenshot
+        // runs still exercise the loaded-world briefing and its first-tick gate.
+        const char* driver=SDL_GetCurrentVideoDriver();
+        if (driver && std::strcmp(driver,"dummy")==0 && !tak::devEnv("TAK_SHOT_BRIEFING")) return true;
+#ifndef NDEBUG
+        const bool verifyBriefing=tak::devEnv("TAK_SHOT_BRIEFING")!=nullptr;
+        const auto briefingHash=verifyBriefing ? world_.stateHash() : 0;
+#endif
+        // mpAutoStep can run with the whole-frame AA target bound. A modal must
+        // present to the actual window, then restore the caller's render state.
+        struct RenderState {
+            SDL_Renderer* renderer;
+            SDL_Texture* target;
+            float scaleX,scaleY;
+            SDL_Rect viewport,clip;
+            SDL_bool clipped;
+            explicit RenderState(SDL_Renderer* r):renderer(r),target(SDL_GetRenderTarget(r)),clipped(SDL_RenderIsClipEnabled(r)) {
+                SDL_RenderGetScale(r,&scaleX,&scaleY);
+                SDL_RenderGetViewport(r,&viewport);SDL_RenderGetClipRect(r,&clip);
+                SDL_SetRenderTarget(r,nullptr);SDL_RenderSetScale(r,1,1);
+                SDL_RenderSetViewport(r,nullptr);SDL_RenderSetClipRect(r,nullptr);
+            }
+            ~RenderState() {
+                SDL_SetRenderTarget(renderer,target);SDL_RenderSetScale(renderer,scaleX,scaleY);
+                SDL_RenderSetViewport(renderer,&viewport);SDL_RenderSetClipRect(renderer,clipped?&clip:nullptr);
+            }
+        } renderState(ren_);
+        std::string title=stem;
+        int chapterNumber=0;
+        for (const auto& campaign:tak::loadCampaigns(vfs_))
+            if (const auto chapter=tak::campaignChapter(campaign,stem)) {
+                title=chapter->title;chapterNumber=chapter->index+1;break;
+            }
+
+        // No Loaded acknowledgement has been sent: the referee cannot advance
+        // its first tick. Poll only the connection while the player reads, so a
+        // long briefing cannot trip keepalive or silently consume mission time.
+        auto loading=std::move(loadScreen_);
+        world_.prepareInitialVisibility();
+        int width=0,height=0;
+        SDL_GetRendererOutputSize(ren_,&width,&height);
+        prepare(width,height);   // apply the new map's initial camera before capture
+        finishTerrain();
+        captureFrame();beginFrame();cosmeticStep(0);
+        const bool objectives=showObjectives_;
+        showObjectives_=false;   // the modal itself owns the objective text
+        draw(width,height);
+        showObjectives_=objectives;
+        std::unique_ptr<SDL_Texture,decltype(&gpuvram::destroy)> background(nullptr,&gpuvram::destroy);
+        if (width>0 && height>0) {
+            std::vector<uint8_t> pixels(size_t(width)*height*4);
+            if (SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_ABGR8888,pixels.data(),width*4)==0) {
+                background.reset(gpuvram::create(ren_,SDL_PIXELFORMAT_ABGR8888,SDL_TEXTUREACCESS_STATIC,width,height));
+                if (background) SDL_UpdateTexture(background.get(),nullptr,pixels.data(),width*4);
+            }
+        }
+        const bool dismissed=tak::BriefingScreen::run(ren_,vfs_,stem,title,settings_,nullptr,
+            background.get(),[this]{return mp_->poll();},chapterNumber);
+        briefingPaused_=true;
+        loadScreen_=std::move(loading);
+#ifndef NDEBUG
+        if (verifyBriefing) {
+            if (world_.tickCount()!=0 || world_.stateHash()!=briefingHash)
+                throw std::runtime_error("initial briefing changed authoritative mission state");
+            std::fprintf(stderr,"PASS: loaded campaign briefing preserves tick-zero state\n");
+        }
+#endif
+        return dismissed;
     }
 
     bool GameView::mpStep() {
@@ -749,6 +825,7 @@ void GameView::autoplayStep() {
             mpStep();   // drain the replay this frame
         } else if (mp_->starting() && !mpSetupDone_) {
             startMpGame(mp_->startRoom(), mp_->startSeed());
+            if (!mp_->isSpectator() && !showInitialCampaignBriefing(mp_->startRoom().mission)) return false;
             if (mp_->isSpectator()) {
                 // Host-spectator (create-as-spectator): watch-only, no fog, no slot,
                 // no resume ticket, and nothing to report loaded.

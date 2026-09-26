@@ -537,6 +537,8 @@ public:
     // table: one player per used slot (sim player index == slot), teams/colours
     // per slot, a monarch spawned at a start position each, seeded starting mana.
     void startMpGame(const tak::net::RoomView& room, uint32_t seed);
+    bool showInitialCampaignBriefing(const std::string& stem);
+    bool consumeBriefingPause() { const bool value=briefingPaused_;briefingPaused_=false;return value; }
 
     // One networked frame: pump the connection, send this frame's local orders,
     // and simulate every tick the server has delivered a bundle for. Returns
@@ -773,6 +775,7 @@ public:
     static constexpr size_t kMaxPendingHits = 4096;
     std::mutex hitQueueMutex_;
     std::deque<tak::sim::World::HitFx> hitQueue_;
+    std::deque<tak::sim::World::SoundReq> missionSoundQueue_;
     int frameWinningTeam() const { return front().winningTeam; }
     // world_.discoActive/headbangActive(p) == players_[p].{disco,headbang}Left > 0.
     bool frameDiscoActive(int p) const { return framePlayer(p).discoLeft > 0; }
@@ -1944,6 +1947,7 @@ private:
     char pendingCmd_ = 0;   // armed order awaiting a click: 'f' fight-move,
                             // 'm' move, 'a' attack, 'p' patrol, 'g' guard
     bool paused_ = false;
+    bool briefingPaused_ = false;  // reset the render clock after the startup modal
     bool exitMenu_ = false;          // in-game exit overlay (Esc) is open
     bool canReturnToMenu_ = false;   // launched from the front-end -> offer MAIN MENU
     std::vector<std::pair<SDL_FRect, std::function<void()>>> exitHots_;   // overlay hit-rects (screen space)
@@ -2362,7 +2366,6 @@ public:
     // override the room's setting for that mission.
     bool missionFullVision_ = false, missionPreMapped_ = false;
     uint32_t shakeSeqSeen_ = 0;   // last mission ScreenShake sequence acted on
-    uint32_t soundSeqSeen_ = 0;   // last mission PLAY_SOUND sequence acted on
 private:
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
     std::optional<std::pair<float,float>> initialCamera_;

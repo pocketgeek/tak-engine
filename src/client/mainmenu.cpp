@@ -1332,7 +1332,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     }
                     // Open the campaign / mission picker in place; a picked mission
                     // returns Choice::Campaign (handled by the campaign_ router above).
-                    d_->campaign_ = std::make_unique<CampaignScreen>(d_->ren, d_->vfs, *settings);
+                    d_->campaign_ = std::make_unique<CampaignScreen>(d_->ren, d_->vfs, *settings,0,
+                        [this](const std::string& sound){d_->loadSfx(sound);d_->playSfx(sound);});
                 }
                 else if (c != Choice::None && c != Choice::Campaign) {
                     d_->flushSfx(w, h);   // let the click sound finish before we tear down

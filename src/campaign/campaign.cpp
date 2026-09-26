@@ -159,9 +159,31 @@ std::vector<Campaign> loadCampaigns(const hpi::Vfs& vfs) {
     auto ip = std::find_if(camps.begin(), camps.end(), [&](const Campaign& c) { return idIs(c, "the iron plague"); });
     if (ipalt != camps.end() && ip != camps.end() && !ipalt->missions.empty()) {
         ip->altFinal = ipalt->missions.back().stem;
+        ip->altTitle = ipalt->missions.back().title;
         camps.erase(ipalt);
     }
     return camps;
+}
+
+std::optional<CampaignChapter> campaignChapter(const Campaign& campaign, const std::string& stem) {
+    if (stem.empty()) return {};
+    for (size_t i=0;i<campaign.missions.size();++i) {
+        const auto& mission=campaign.missions[i];
+        if (mission.stem!=stem) continue;
+        CampaignChapter chapter;
+        chapter.index=int(i);
+        chapter.title=mission.title.empty() ? "CHAPTER "+std::to_string(i+1) : mission.title;
+        if (i+1<campaign.missions.size()) chapter.nextStem=campaign.missions[i+1].stem;
+        return chapter;
+    }
+    if (!campaign.altFinal.empty() && campaign.altFinal==stem) {
+        CampaignChapter chapter;
+        chapter.index=std::max(0,campaign.count()-1);
+        chapter.alternate=true;
+        chapter.title=campaign.altTitle.empty() ? "ALTERNATE ENDING" : campaign.altTitle;
+        return chapter;
+    }
+    return {};
 }
 
 }  // namespace tak

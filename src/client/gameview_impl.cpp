@@ -330,6 +330,7 @@
                                                    : "PLAYER " + std::to_string(p + 1);
             row.colorSlot = colorSlot_[p & 7];
             row.built = pr.built;
+            row.score = pr.score;
             row.kills = pr.kills;
             row.losses = pr.losses;
             row.defeated = pr.defeated;
@@ -1702,7 +1703,7 @@
             PlayerR& r = fb.players[size_t(p)];
             r.captureEconomy(pl);
             r.kills = pl.kills; r.unitCount = pl.unitCount;
-            r.built = pl.built; r.losses = pl.losses;
+            r.built = pl.built; r.losses = pl.losses; r.score = pl.score;
             // sim keeps these in TICKS now; the scoreboard wants seconds.
             r.defeatedAt = pl.defeatedAt < 0 ? -1.0f : float(pl.defeatedAt) / 30.0f;
             r.team = pl.team; r.defeated = pl.defeated; r.godSummoned = pl.godSummoned;
@@ -1724,7 +1725,14 @@
             }
         }
         fb.shakeReq = world_.shakeRequest();       // copied under the worker's lock
-        fb.soundReq = world_.soundRequest();       // ditto (carries a std::string)
+        {
+            auto sounds=world_.takeSoundRequests();
+            std::lock_guard<std::mutex> lock(hitQueueMutex_);
+            for(auto& sound:sounds) {
+                if(missionSoundQueue_.size()>=256)missionSoundQueue_.pop_front();
+                missionSoundQueue_.push_back(std::move(sound));
+            }
+        }
         fb.winningTeam = world_.winningTeam();
         fb.gameTick = world_.tickCount();
         fb.wind = world_.wind();
@@ -1833,17 +1841,23 @@
         if (newTick_) {
             const auto& sr = front().shakeReq;     // snapshot, not live world_
             if (sr.seq != shakeSeqSeen_) { shakeSeqSeen_ = sr.seq; triggerShake(sr.mag, sr.dur); }
-            // Scripted mission VO. The name is a bare wav ("monsara1.wav"); play it
-            // unpositioned, as narration rather than a world sound. A few of the
-            // named lines are simply absent from this install -- skip those.
-            const auto& qr = front().soundReq;     // snapshot, not live world_
-            if (qr.seq != soundSeqSeen_) {
-                soundSeqSeen_ = qr.seq;
-                std::string n = qr.name;
-                std::transform(n.begin(), n.end(), n.begin(), ::tolower);
-                if (auto dot = n.rfind(".wav"); dot != std::string::npos) n.erase(dot);
-                if (!n.empty() && sounds_.has(n)) sounds_.play(n);
+        }
+        std::vector<tak::sim::World::SoundReq> missionSounds;
+        {
+            std::lock_guard<std::mutex> lock(hitQueueMutex_);
+            while(!missionSoundQueue_.empty() &&
+                  int32_t(front().gameTick-missionSoundQueue_.front().tick)>=0) {
+                missionSounds.push_back(std::move(missionSoundQueue_.front()));
+                missionSoundQueue_.pop_front();
             }
+        }
+        for(const auto& request:missionSounds) {
+            auto name=request.name;
+            std::transform(name.begin(),name.end(),name.begin(),::tolower);
+            if(name.ends_with(".wav"))name.resize(name.size()-4);
+            // Native mission host 4d3580: always global, non-looping, authored
+            // low-three-bit priority. SoundBank enforces the 0/1 free-voice gate.
+            if(!name.empty())sounds_.play(name,1.f,1.f,tak::retailSoundPriority(request.flags),false);
         }
         // Drained, not gated on newTick_: the whole point is to pick up impacts
         // from ticks whose snapshots the render never saw.

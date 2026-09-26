@@ -117,13 +117,6 @@ std::string mmss(int sec) {
     return b;
 }
 
-// Score. Retail's exact formula isn't recoverable from the shipped data, so this is
-// ours: it rewards fielding an army and killing with it, and charges for what you
-// threw away. Floored at zero so a wipe reads as 0 rather than a negative.
-int scoreOf(const ResultRow& r) {
-    return std::max(0, r.built * 2 + r.kills * 10 - r.losses * 3);
-}
-
 }  // namespace
 
 ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool victory,
@@ -267,7 +260,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
                 text(body, std::to_string(row.kills), col(g.kills, y), rc, true);
                 text(body, std::to_string(row.losses), col(g.losses, y), rc, true);
                 text(body, mmss(row.timeSec), col(g.time, y), rc, true);
-                text(body, std::to_string(scoreOf(row)), col(g.score, y), rc, true);
+                text(body, std::to_string(row.score), col(g.score, y), rc, true);
             }
         } else {
             // No table (a replay, or a game that ended before anyone was set up):

@@ -261,6 +261,7 @@ struct UnitType {
     // uses while moving (KINGDOMS.icd 0x4d91b0 picks between the two on an in-place
     // flag). An omitted key has rate zero, including when a facing target is set.
     int32_t turnInPlaceRate = 0;   // unsigned 16-bit BAM/tick in retail
+    int32_t experiencePoints = 666; // native Type+1c2, awarded to player score on a kill
     int32_t maxHp = 100;        // maxdamage: readInt at +0x1be in retail
     bool canMove = false;
     uint8_t buildMovementCode=1; // Authored bmcode byte, used by construction visuals.
@@ -821,6 +822,7 @@ struct Unit {
                            // the digit 0 key = 10). A unit is in exactly one squad. A
                            // formation (squad<0) moves at its slowest member's speed and
                            // its stragglers rejoin. Set via Cmd::SetSquad; folded in the hash.
+    int lastHitPlayer = -1; // score attribution captured at impact; mission script input
     int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
     int32_t captureProg = 0; // canCapture units: ticks spent charming the current target
     Fixed homeX = Fixed(), homeZ = Fixed();   // leash anchor (idle position) for auto-chase
@@ -1211,6 +1213,7 @@ struct Player {
     // it: summoning used to live in the CLIENT, which had one, and that is exactly
     // why it desynced -- see summonReadyGods().
     const UnitType* godType = nullptr;
+    int32_t score = 0;   // authored kill points; GET40 reads this in campaign scripts
     int   kills = 0;     // enemy units this player has destroyed (F4 overlay)
     // End-of-game scoreboard counters (retail's victory/defeat screen columns).
     // Derived from hashed events and incremented in exactly one place each, so they
@@ -1453,6 +1456,9 @@ public:
     Player& player(int i) { return players_[size_t(i)]; }
     const Player& player(int i) const { return players_[size_t(i)]; }
     int numPlayers() const { return int(players_.size()); }
+    // Retail mission SET40 replaces player0 score and disables all automatic scoring.
+    void setScriptScore(int32_t value) { players_[0].score=value; scoreAutomaticDisabled_=true; }
+    bool scoreAutomaticDisabled() const { return scoreAutomaticDisabled_; }
     // Initialize before spawning units. Match/replay peers supply the same seed.
     void setGameSeed(uint32_t seed) {
         gameRng_ = initialGameRng_ = retailSeed(seed);
@@ -1489,12 +1495,14 @@ public:
     // replayed spawns get the SAME unit ids as the original run. setTerrain and
     // setPlayerCount (called by setupMatch afterwards) rebuild nav/vis/players.
     void resetForReplay() {
+        scoreAutomaticDisabled_=false;
         unitScripts_.clear();unitScriptById_.clear();
         paths_.clear();
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();
         projectiles_.clear();flames_.clear();
         hits_.clear();
+        pendingSounds_.clear();soundReq_={};
         transportEffects_.clear();
         scriptEmissions_.clear();
         features_.clear();
@@ -1604,6 +1612,9 @@ public:
 
     // Which player the fog-of-war grid tracks (default 0 = local player).
     void setVisPlayer(int t) { visPlayer_ = t; }
+    // Draw a loaded, paused campaign before its first simulation tick. This
+    // initializes only the local display fog, never authoritative exploration.
+    void prepareInitialVisibility() { if (!visHavePass_) updateVisibility(); }
     // Fog-of-war memory (client display only, never hashed): true = a seen cell stays
     // EXPLORED (dimmed) when it leaves sight; false = NOT EXPLORED -- it reverts to dark.
     void setFogExplored(bool e) { fogExplored_ = e; }
@@ -1833,12 +1844,20 @@ public:
     // it is deterministic because the script that bumps it runs in lockstep.
     struct ShakeReq { float mag = 0, dur = 0; uint32_t seq = 0; };
     const ShakeReq& shakeRequest() const { return shakeReq_; }
-    // A mission script's PLAY_SOUND (scripted story VO). Viewer-only, same edge
-    // protocol as the shake: the sim cannot play audio, so it records what was
-    // asked for and the client acts on the sequence change.
-    struct SoundReq { std::string name; uint32_t seq = 0; };
+    // Mission audio is an ordered presentation event stream, not latest-only
+    // snapshot state: two lines in one tick and skipped render frames must not
+    // discard requests. Bounded storage also serves headless worlds with no viewer.
+    struct SoundReq { std::string name; uint32_t seq = 0, tick = 0; int32_t flags = 7; };
     const SoundReq& soundRequest() const { return soundReq_; }
-    void requestSound(std::string n) { soundReq_.name = std::move(n); ++soundReq_.seq; }
+    void requestSound(std::string n, int32_t flags = 7) {
+        soundReq_.name=std::move(n);++soundReq_.seq;
+        soundReq_.tick=tickCounter_;soundReq_.flags=flags;
+        if(pendingSounds_.size()>=256)pendingSounds_.erase(pendingSounds_.begin());
+        pendingSounds_.push_back(soundReq_);
+    }
+    std::vector<SoundReq> takeSoundRequests() {
+        std::vector<SoundReq> out;out.swap(pendingSounds_);return out;
+    }
     void requestShake(float mag, float dur) {
         shakeReq_.mag = mag; shakeReq_.dur = dur; ++shakeReq_.seq;
     }
@@ -2267,6 +2286,7 @@ private:
     int32_t ballisticGravityRaw_ = 8155; // retail default OTA gravity 112, in native 16.16/tick².
     float waterDamage_ = 0;   // .ota waterdamage when waterdoesdamage=1
     SoundReq soundReq_;
+    std::vector<SoundReq> pendingSounds_;
     // [EXPLODEAS] blasts queued during the death sweep and applied just after it
     // (applyHit mutates units_, which the sweep is walking). Transient within one
     // tick -- always empty at tick end, so it needs no hashing.
@@ -2292,6 +2312,7 @@ private:
     // Damages everything it passes on a fixed cadence. Hashed.
     std::vector<Storm> storms_;
     int stormSeq_ = 0;        // id source, so the viewer can track a storm's life
+    bool scoreAutomaticDisabled_=false;
     std::vector<Player> players_ = []{
         std::vector<Player> v(4);
         for (int i = 0; i < 4; ++i) v[size_t(i)].team = i;
