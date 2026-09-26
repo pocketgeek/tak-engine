@@ -3208,17 +3208,15 @@ private:
     void voice(int unitId, const std::string& event);
 
     // --- GAF/TAF impact effects (gamedata/explosions -> data/anims/*.taf) ------
-    // A hitscan shot's visible flash: instant-hit weapons (Line of Sight) spawn no
-    // projectile, so this is the ONLY thing drawn for them. Lives ~0.15s and fades.
+    // Legacy status-shot presentation, pending native status flight integration.
+    // Ordinary shots, lightning and flames already use simulation projectiles.
     struct BeamFx {
         float x1 = 0, z1 = 0, x2 = 0, z2 = 0;
         float alt1 = 0, alt2 = 0;
-        std::string model;          // hitscan arrows/harpoons still draw their authored mesh
+        std::string model;
+        std::string sprite;
         int player = 0;
-        // Retail treats a Line-of-Sight shot as a VIRTUAL projectile: the damage is
-        // instant, but the bolt is drawn from the muzzle out to a head travelling at
-        // weaponvelocity, and it expires when that head reaches the victim. So the
-        // lifetime is per-shot (distance / velocity), not a fixed flash.
+        // Cosmetic travel time; this does not delay the simulation's hit.
         float life = 0.16f;
         uint8_t inner[3] = {255, 255, 255};
         uint8_t middle[3] = {200, 230, 255};

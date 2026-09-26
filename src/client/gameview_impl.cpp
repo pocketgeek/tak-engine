@@ -715,6 +715,35 @@
                 throw std::runtime_error("missing impact art did not use the procedural fallback");
             effects_.clear();
             particles_.resize(particlesBeforeFallback);
+            // Exercise the Harpy's status-shot presentation through the real
+            // hit consumer. It used to draw a beam and discard its direct WAV.
+            const auto* harpy = registry_.find("zonharp");
+            if (!harpy || harpy->weapons.empty())
+                throw std::runtime_error("Harpy presentation fixture has no weapon");
+            const auto& spell = harpy->weapons.front();
+            tak::sim::World::HitFx hit;
+            hit.weapon = &spell;
+            hit.fromX = cx - 120; hit.fromZ = cz;
+            hit.x = cx + 120; hit.z = cz;
+            hitQueue_.push_back(hit);
+            cosmeticStep(0);
+            if (beams_.empty() || beams_.back().sprite != spell.weaponArt ||
+                !effectFor(beams_.back().sprite) || !sounds_.has(spell.soundHit) ||
+                sounds_.peakOf(spell.soundHit) <= 0)
+                throw std::runtime_error("Harpy authored projectile/sound failed to load");
+            auto cob = tak::cob::load(vfs_.read("scripts/zonharp.cob"));
+            tak::cob::Vm vm(std::move(cob), true);
+            vm.enableRetailAnimation();
+            std::string firedSound;
+            vm.onPlaySound = [&](int32_t index) { firedSound = vm.file().name(uint32_t(index)); };
+            vm.start("FireWeapon", {0});
+            vm.tick(1.0f / 30.0f);
+            std::transform(firedSound.begin(), firedSound.end(), firedSound.begin(), ::tolower);
+            if (firedSound != "swoosh2" || !sounds_.has(firedSound) || sounds_.peakOf(firedSound) <= 0)
+                throw std::runtime_error("Harpy firing script did not supply playable SWOOSH2");
+            beams_.back().age = beams_.back().life * 0.5f;
+            lookAt(cx, cz);
+            std::fprintf(stderr, "PASS: Harpy FireballD sprite, direct ARROW08 impact, scripted SWOOSH2 fire\n");
             std::fprintf(stderr,
                 "PASS: Arapult land/water authored impact variants, empty-water fallback, exact tick/location and authored expiry; missing-class particle fallback (%zu/%zu/%zu variants)\n",
                 landVariants, waterVariants, fallbackVariants);
@@ -1899,6 +1928,7 @@
                 (noFog_ || cellVisibleR(h.x, h.z))) {
                 BeamFx b;
                 b.model = h.weapon->shotModel;
+                b.sprite = h.weapon->weaponArt.empty() ? h.weapon->shotArt : h.weapon->weaponArt;
                 b.player = h.fromPlayer;
                 b.x1 = h.fromX; b.z1 = h.fromZ;
                 b.x2 = h.x;     b.z2 = h.z;
@@ -1930,6 +1960,9 @@
                 const std::string* wav = soundClasses_.pick(h.weapon->soundHit, body, salt_++);
                 if (!wav) wav = soundClasses_.pick(h.weapon->soundHit, "default", salt_++);
                 if (wav) sounds_.playWorld(*wav, h.x, h.z);
+                // soundhit names a WAV directly; soundhitclass names a table.
+                else if (sounds_.has(h.weapon->soundHit))
+                    sounds_.playWorld(h.weapon->soundHit, h.x, h.z);
             }
             // Impact visual: play the weapon's real GAF/TAF explosion effect
             // (water variant over water); fall back to procedural particles when

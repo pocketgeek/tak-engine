@@ -890,6 +890,27 @@
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
                 continue;
             }
+            if (!b.sprite.empty()) {
+                // Status LOS classes share retail's ordinary projectile draw
+                // routine (52c8c0): weaponart is a travelling sprite, not a beam.
+                if (const auto* art = effectFor(b.sprite)) {
+                    const auto index = tak::retailEffectFrame(art->durations, art->loop,
+                                                             uint32_t(b.age * 30.0f));
+                    if (index && *index < art->frames.size()) {
+                        const auto& fr = art->frames[*index];
+                        const float x = b.x1 + (b.x2 - b.x1) * t;
+                        const float z = b.z1 + (b.z2 - b.z1) * t;
+                        const float alt = b.alt1 + (b.alt2 - b.alt1) * t;
+                        const float sx = (x - mapView_.offX() - terrainLiftX(x, z)) * zm;
+                        const float sy = (z - mapView_.offY() - terrainLift(x, z) - 12 - alt) * zm;
+                        const auto origin = tak::retailEffectSpriteOrigin(sx, sy, fr.ax, fr.ay, zm);
+                        SDL_FRect dst{origin.x, origin.y, fr.w * zm, fr.h * zm};
+                        SDL_SetTextureAlphaMod(fr.tex, 255);
+                        SDL_RenderCopyF(ren_, fr.tex, nullptr, &dst);
+                    }
+                }
+                continue;
+            }
             float f = 1.0f - std::max(0.0f, (t - 0.75f) / 0.25f);
             auto sx = [&](float x, float z) {
                 return (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
