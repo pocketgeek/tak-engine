@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 180;      // 180: water-yard building placement follows retail waterline rules
+constexpr uint32_t kNetVersion = 181;      // 181: reject building yards extending into the map border
+                                           // 180: water-yard building placement follows retail waterline rules
                                            // 179: nonblocking map features no longer obstruct navigation
                                            // 178: retail transports; Unload targetId carries fixed-point destination Y
                                            // 176: infinite mobile production accepts only Stop

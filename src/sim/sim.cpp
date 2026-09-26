@@ -4988,6 +4988,11 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
     // and land units require land, rather than always testing the ground grid.
     const NavGrid& grid = navFor(type);
     int cx = footprintOrigin(x, type->footX), cz = footprintOrigin(z, type->footZ);
+    // Retail 507400 checks the entire building rectangle before its yard masks.
+    // Even ignored '.' rows need the one-cell map border: the yard transition
+    // at 507ae0 uses these same bounds and otherwise can never open the factory.
+    if (type->isStructure() && (cx < 1 || cz < 1 ||
+        cx + type->footX >= terW_ || cz + type->footZ >= terH_)) return false;
     // Retain the legacy mixed-yard check for custom shoreline structures.
     bool waterYard = false;
     if (!type->yardMap.empty())
@@ -5075,6 +5080,8 @@ bool World::clearableForPlacement(const UnitType* type, float x, float z,
     const NavGrid& grid = navFor(type);
     if (grid.empty()) return false;
     int cx = footprintOrigin(x, type->footX), cz = footprintOrigin(z, type->footZ);
+    if (cx < 1 || cz < 1 || cx + type->footX >= terW_ || cz + type->footZ >= terH_)
+        return false;
     // Which live features could be cleared, indexed by the cells they cover.
     auto featureAt = [&](int gx, int gz) -> const Feature* {
         for (const auto& f : features_) {

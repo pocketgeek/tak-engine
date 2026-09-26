@@ -145,6 +145,20 @@ void seafortPlacementCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, boo
     cfg.slots={{true,2,0,1.0f,false,false}};
     sim::setupMatch(world,reg,cfg);
 
+    // The reported replay placed its fort at (1600,112). Its four ignored
+    // leading rows hid an off-map yard, which could never open for production.
+    for (float z : {112.f,128.f,144.f}) {
+        if (world.canPlace(seafort,1600,z)) {
+            std::printf("      off-map/border Sea Fort at z=%.0f accepted: FAIL\n",z);
+            ++failures;
+        }
+        std::vector<int> clearable;
+        if (world.clearableForPlacement(seafort,1600,z,clearable)) ++failures;
+    }
+    if (!world.canPlace(seafort,1600,160)) {
+        std::printf("      first valid Sea Fort yard row: FAIL\n"); ++failures;
+    }
+
     // Map-backed open-water Sea Fort site; center of the 6x18 yard at (1472,464).
     const float sx=1472, sz=464;
     const bool placeable=world.canPlace(seafort,sx,sz);
@@ -201,6 +215,33 @@ void seafortPlacementCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, boo
         }
     } else ++failures;
 }
+// Exercise the complete shipped production scripts at the nearest valid yard
+// row to the reported fort. Each ship must finish and make room for the next.
+void seafortProductionCase(const hpi::Vfs& vfs,const sim::TypeRegistry& reg) {
+    const auto* fort=reg.find("verasy");
+    if (!fort) { ++failures;return; }
+    for (const auto& name:reg.buildable("verasy")) {
+        const auto* ship=reg.find(name);
+        if (!ship) { ++failures;continue; }
+        sim::World world;world.setVisPlayer(-1);
+        sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=hpi::findMap(vfs,"Varro Passage");
+        cfg.slots={{true,2,0,1.f,false,false}};
+        sim::setupMatch(world,reg,cfg);
+        const int id=world.spawn(fort,1600,160,std::nullopt,0);
+        world.train(id,ship,2);
+        for (int tick=0;tick<18000 && !world.unit(id)->buildQueue.empty();++tick) {
+            world.player(0).mana=100000; // isolate placement, readiness and launch
+            world.tick(1.f/30);
+        }
+        int completed=0;
+        for (const auto& u:world.units())
+            completed+=u.alive() && u.type==ship && !u.underConstruction;
+        const bool ok=completed==2 && world.unit(id)->buildQueue.empty();
+        std::printf("      Sea Fort produces two %s: %s\n",name.c_str(),ok?"PASS":"FAIL");
+        if (!ok) ++failures;
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -213,6 +254,7 @@ int main(int argc, char** argv) {
         std::printf("balance: %s\n",crusades ? "Crusades" : "standard");
         for (const auto& c : kCases) runCase(vfs, reg, c);
         seafortPlacementCase(vfs,reg,crusades);
+        seafortProductionCase(vfs,reg);
         for (const char* id:{"aralode","tarlode","verlode","zonlode","crelode"}) {
             const auto* type=reg.find(id);
             if (!type) { ++failures;continue; }

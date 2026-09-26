@@ -40,7 +40,7 @@ their previous handling; their complete foundation rules are outside this fix.
 Ground-unit navigation and movement algorithms are unchanged.
 
 The change affects authoritative build and AI decisions, so development builds
-use protocol **180**. Released 0.7.1 uses **179**; clients and servers must update
+use protocol **181**. Released 0.7.1 uses **179**; clients and servers must update
 together.
 
 ## Validation
@@ -58,3 +58,27 @@ Veruna Priestess after the correction. Controlled terrain also checks shallow
 water, deep water, exposed ground, blocked `C` cells, ignored `.` cells, and
 ordinary land-building placement. An offscreen client capture confirms the
 Priestess actively conjuring the Sea Fort at the map-backed site.
+
+## Map-edge production stall
+
+The follow-up report was reproduced from the player's Varro Passage replay,
+with every recorded state-hash checkpoint matching. The Sea Fort at `(1600,112)`
+finished construction but remained at `ready=false`, `yardOpen=false`, and
+`buggerOff=true`; eleven ships accumulated in its queue without an output site.
+Its 6x18 footprint began at row -2. The four ignored leading rows had allowed
+placement to pass even though the full yard extended beyond the map.
+
+Retail building placement at `0x507400` checks the entire footprint before
+examining yard masks: both origins must be at least 1, and the exclusive ends
+must be less than the map dimensions. Yard transitions at `0x507ae0` require
+the same bounds. The engine now applies those bounds to building placement and
+to placement requiring feature clearance. This prevents constructing a factory
+whose yard can never open; it does not relocate an already built factory.
+Ground movement and pathfinding are unchanged.
+
+Eleven boundary cases were checked against the original executable without
+launching the game. The regression rejects the reported site and the next two
+rows, then accepts `(1600,160)`, three tiles south. At that valid site it queues
+and completes two of each Sea Fort ship in both balance modes, checking that the
+first output clears enough space for the second. Protocol 181 distinguishes
+this additional authoritative placement change from protocol 180.
