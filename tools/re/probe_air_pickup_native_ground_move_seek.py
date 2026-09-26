@@ -783,8 +783,7 @@ def run(args):
                 print(f"  Last code-30 queued dispatch: {seek_dispatch_states[-1]}")
         print(f"  Last handler returns: Move_Ground={code27_returns[-4:]}, "
               f"Move_Seek_Pickup={code30_returns[-4:]}")
-        print("  World has no matching queued-load fixture: World::loadInto clears "
-              "the passenger order vector before adding its load order.")
+        print("  This native-only trace does not compare World queued-load behavior.")
         return
     if not nav_pops:
         raise AssertionError("native GROUND2 mover never popped a route waypoint")

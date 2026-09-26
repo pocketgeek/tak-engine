@@ -418,6 +418,40 @@ static void mobileProducerFacesSite() {
     }
 }
 
+static void repairParticles() {
+    World w;w.setVisPlayer(-1);
+    w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+    UnitType builder;builder.id="repair-worker";builder.maxHp=100;
+    builder.isBuilder=builder.canMove=true;builder.buildDist=200;builder.workerTime=10;
+    builder.modelTop=32*65536;
+    UnitType target;target.id="repair-target";target.maxHp=1000;
+    target.buildTime=100;target.buildCost=100;target.modelTop=32*65536;
+    const int bid=w.spawn(&builder,200,200),tid=w.spawn(&target,250,200);
+    w.unit(tid)->hp=Fixed::fromInt(100);w.player(0).mana=0;
+    w.repair(bid,tid,false);
+    for(int i=0;i<10;++i)w.tick(1.f/30);
+    check(w.unit(bid)->constructionEmissions[0]==0 &&
+          w.unit(tid)->constructionEmissions[1]==0,
+          "unfunded repair emits no worker or target particles");
+    w.player(0).mana=1000;
+    for(int i=0;i<10;++i)w.tick(1.f/30);
+    const auto* b=w.unit(bid);const auto* t=w.unit(tid);
+    check(t->hp>Fixed::fromInt(100) && b->constructionEmissions[0]>0 &&
+          b->constructionEmissions[0]==t->constructionEmissions[1] &&
+          b->cosmeticConstructionEmitter && t->cosmeticConstructionEmitter &&
+          !b->cosmeticConstructionEmitter->particles.empty() &&
+          !t->cosmeticConstructionEmitter->particles.empty(),
+          "successful repair emits particles at both worker and target");
+    const auto emitted=b->constructionEmissions[0];
+    w.unit(tid)->hp=Fixed::fromInt(1000);
+    for(int i=0;i<180;++i)w.tick(1.f/30);
+    check(b->constructionEmissions[0]==emitted &&
+          t->constructionEmissions[1]==emitted &&
+          (!b->cosmeticConstructionEmitter || b->cosmeticConstructionEmitter->particles.empty()) &&
+          (!t->cosmeticConstructionEmitter || t->cosmeticConstructionEmitter->particles.empty()),
+          "finished repair stops emission and lets existing particles drain");
+}
+
 int main() {
     std::printf("production_test\n");
     {
@@ -442,6 +476,7 @@ int main() {
         check(count(0,&limited)==1 && count(1,&limited)==1,
               "benchmark can replace a dead limited unit without exceeding its cap");
     }
+    repairParticles();
     mobileProducerFacesSite();
     productionNeedsMana();
     outputExistsDuringConstruction();

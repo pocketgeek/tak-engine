@@ -10603,3 +10603,33 @@ TAK_CONJURE_BUILDER=araking (or zonhunt), TAK_SHOT_MS=500, and
 `build-o2/takclient game 'Ulasem Arena' --data assets/game --testbuild --nofog --shot /tmp/reclaim.png`.
 No retail GUI was launched. Optimized Debug client rebuilt; Release client
 rebuild also performed for the capture-harness source change.
+
+### Repair particle emission wired into World (2026-09-25)
+
+The RepairUnit registry row `5eb9cb` names handler `407190`. Its success branch
+`4076d0..4076f0` calls the model emitter once for the worker (direction 0, default
+art) and once for the target (direction 1, default art), followed by a one-tick
+wake. An ephemeral Unicorn check exercised zero and nonzero repair results:
+failed work produces neither request; success produces exactly those two calls.
+
+World::tickRepair restored HP and debited mana but emitted no particles. It now
+calls the existing emitter for falling worker and rising target particles only
+after affordable, in-range repair work succeeds. Existing particle snapshots,
+faction art, front/back rendering and expiry handle display. Repair HP, mana,
+range, movement and completion logic are unchanged.
+
+A focused case in the existing production test failed before the engine change
+and passes afterward. It checks no emission without funds, paired live particles
+during successful repair, and no new emission plus eventual particle expiry when
+repair finishes. Release takclient, takserver and affected test targets rebuilt;
+all six selected CTests passed: production, retail_visual, transport,
+transport_roster and both transport_map_roundtrip balances. git diff --check
+passed. No new standalone fixture or retail GUI launch. Repair rendering has not
+yet been visually captured; this establishes the missing emission connection.
+
+The existing native queued-ground-move/air-pickup probe also passed in both
+balances. It retires pickup at tick four while Move_Ground remains active, as
+previously observed, so it does not justify changing carrier waiting behavior.
+Corrected its stale output claiming World always clears passenger orders:
+World now honors the queue flag. The probe is still explicitly native-only and
+does not claim a joined World comparison for that ordering.

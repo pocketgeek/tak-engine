@@ -5615,6 +5615,10 @@ void World::tickRepair(Unit& b, float dt) {
     tm.debitMana(cost);
     t->hp = fxMin(Fixed::fromFloat(t->type->maxHp),
                   t->hp + Fixed::fromFloat(t->type->maxHp * dt / std::max(total, 0.01f)));
+    // Native RepairUnit 4076d0..4076f0 emits only after successful repair:
+    // falling particles at the worker and rising particles at the target.
+    emitConstruction(b, false);
+    emitConstruction(*t, true);
     if (t->hp >= Fixed::fromFloat(t->type->maxHp)) endRepair();   // mended: on to the next order
 }
 
