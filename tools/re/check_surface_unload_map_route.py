@@ -1772,17 +1772,20 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         return 3, value
 
     p.icd.hooks[0x4139d0] = grade
-    captured_weight = completed_attempt[8]
+    # Only asset-backed carriers export a completed World attempt. Synthetic
+    # routes retain the native scheduler weight from the controlled Phase.
+    if completed_attempt is not None:
+        captured_weight = completed_attempt[8]
 
-    def request_weight(_uc, args):
-        address = struct.unpack('<I', p.uc.mem_read(args, 4))[0]
-        p.uc.mem_write(address, struct.pack('<I', captured_weight))
-        return 1, address
+        def request_weight(_uc, args):
+            address = struct.unpack('<I', p.uc.mem_read(args, 4))[0]
+            p.uc.mem_write(address, struct.pack('<I', captured_weight))
+            return 1, address
 
-    # Match the request's scheduler weight from the actual World boundary. The
-    # standalone fixture does not have retail's full player queue, and the
-    # weight can differ for another movement/footprint class.
-    p.icd.hooks[0x4161b0] = request_weight
+        # Match the request's scheduler weight from the actual World boundary. The
+        # standalone fixture does not have retail's full player queue, and the
+        # weight can differ for another movement/footprint class.
+        p.icd.hooks[0x4161b0] = request_weight
     # Let native reconstruction deliver through retail's actual navigator
     # setter. Replacing 0x4e4ea0 with a callback would capture the route but
     # leave the mover without its installed controller/path.

@@ -2658,6 +2658,10 @@ static void airFlightTraceFixture(unsigned steps) {
     u->flightVelocity={};
     u->flightNavigation={{160<<16,100<<16,160<<16},{},0};
     w.order(id,800,800,false);
+    // This fixture starts after controller installation, matching the native
+    // direct 0x4e40e0 call rather than dispatching an ordinary VTOL_Move.
+    u->orders.front().flightMoveMission=false;
+    u->orders.front().mission={};
     for(unsigned step=1;step<=steps;++step) {
         w.tick(1.f/30);
         u=w.unit(id);
