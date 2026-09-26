@@ -21,7 +21,14 @@
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) stopBenchmark();
             return;
         }
-        if (inLobbyPhase()) { lobbyInput(e, winW, winH); return; }
+        if (inLobbyPhase()) {
+            if (!missionStem_.empty()) {
+                // Hidden lobby controls must not react behind the loading plate.
+                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)
+                    menuRequested_ = true;
+            } else lobbyInput(e, winW, winH);
+            return;
+        }
         // Benchmark results overlay: topmost of all. DONE / Esc / any click returns to menu.
         if (benchStatsShown_) {
             if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }

@@ -25,6 +25,21 @@
         manageMusic();
         discoSound();     // fire the disco track from a monarch when its player starts dancing
         headbangSound();  // ...and the metal track on headbang
+        // Campaigns use a private server, but its connection/room handshake is
+        // an implementation detail. Keep the loading plate up before GameStarting
+        // as well as during world setup; never expose the multiplayer lobby.
+        if (!missionStem_.empty() && inLobbyPhase()) {
+            if (!loadScreen_) {
+                loadScreen_ = std::make_unique<tak::LoadScreen>(ren_, vfs_, missionStem_, settings_);
+                loadScreen_->step("PREPARING MISSION", 0);
+            }
+            loadScreen_->draw();
+            if (!netError_.empty()) {
+                hudBanner(netError_, 150, 2.0f, {255, 140, 120, 255}, winW);
+                hudBanner("ESC TO RETURN", 190, 2.0f, {240, 240, 240, 255}, winW);
+            }
+            return;
+        }
         // The loading plate owns the screen from world setup until the first tick,
         // so the wait on the other players isn't a frozen lobby frame. It presents
         // itself, so return before the world is drawn over it.
