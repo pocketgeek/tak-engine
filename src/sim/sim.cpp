@@ -1935,10 +1935,51 @@ void World::tickGuardNoMove(Unit& u) {
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
 }
 
+bool World::flightLandingFree(const Unit& self,Fixed x,Fixed z) const {
+    const auto& grid=navFor(self.type);
+    const int foot=footCells(self.type);
+    if (!grid.empty() && !grid.fits(footprintCell(x,foot),footprintCell(z,foot),foot)) return false;
+    if (!cellFree(x,z,self.id,foot)) return false;
+    // Ground traffic's occupancy plane deliberately excludes flyers. Landing
+    // additionally sees grounded aircraft and descents that already claimed a
+    // footprint, including earlier units processed in this very tick.
+    const int x0=footprintOrigin(x,self.type->footX),z0=footprintOrigin(z,self.type->footZ);
+    const int x1=x0+self.type->footX,z1=z0+self.type->footZ;
+    const auto blocks=[&](const Unit& other) {
+        if (other.id==self.id || !other.alive() || other.embarked() ||
+            !other.type || !other.type->canFly) return false;
+        const bool descending=other.landing && !other.landing->canceled &&
+                              other.landing->mission.stage==3;
+        if (other.flightGroundMode!=1 && !descending) return false;
+        const int ox=footprintOrigin(other.x,other.type->footX);
+        const int oz=footprintOrigin(other.z,other.type->footZ);
+        return x0<ox+other.type->footX && ox<x1 && z0<oz+other.type->footZ && oz<z1;
+    };
+    if (bodyIndexEnabled_ && x0>=0 && z0>=0 && x1<=hW_ && z1<=hH_) {
+        if (!bodyIndexValid_) rebuildBodyIndex();
+        for (int tz=z0/8;tz<(z1+7)/8;++tz)
+            for (int tx=x0/8;tx<(x1+7)/8;++tx)
+                for (int index:bodyTiles_[size_t(tz)*bodyTilesW_+tx])
+                    if (blocks(units_[size_t(index)])) return false;
+    } else {
+        for (const auto& other:units_) if (blocks(other)) return false;
+    }
+    return true;
+}
+
 void World::tickGroundMission(Unit& u) {
     // Other mission kinds continue through their existing handlers.
     if (!u.orders.empty() && !u.orders.front().landing) {
         u.standbyActive=false; u.landing.reset();
+    }
+    // A moving ground body can enter a site after descent began. Recheck before
+    // accepting touchdown and let the existing landing search choose another
+    // point; do not change the ground movement/traffic rules to reserve it.
+    if (u.landing && u.landing->mission.stage==3 && !flightLandingFree(u,u.x,u.z)) {
+        std::erase_if(u.orders,[](const Order& order){return order.landing;});
+        auto& mission=u.landing->mission;
+        mission.stage=2;mission.waitMask=0;mission.deadline=0xffffffffu;
+        mission.pending&=~0x700u;u.missionEvents&=~0x700u;
     }
     struct Host {
         World& w; Unit& u;
@@ -2122,11 +2163,7 @@ void World::tickGroundMission(Unit& u) {
             return std::clamp(int(double(speed)*100/u.baseSpeed.v+0.5),0,100);
         }
         bool landable(RetailFlightVector point) {
-            const auto& grid=w.navFor(u.type);
-            if (grid.empty()) return true;
-            const int foot=footCells(u.type);
-            const Fixed x=Fixed::raw(point.x),z=Fixed::raw(point.z);
-            return grid.fits(footprintCell(x,foot),footprintCell(z,foot),foot) && w.cellFree(x,z,u.id,foot);
+            return w.flightLandingFree(u,Fixed::raw(point.x),Fixed::raw(point.z));
         }
         int groundHeight(RetailFlightVector point) {
             if (w.heights_.empty()) return 0;

@@ -2084,6 +2084,7 @@ private:
     void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon);
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
+    bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
     bool acquireTarget(Unit& u, bool missionPoll);
     bool combatLineOfSight(const Unit& from, const Unit& to) const;
     int findTarget(Unit& u, bool missionPoll, bool groundResponse = false);

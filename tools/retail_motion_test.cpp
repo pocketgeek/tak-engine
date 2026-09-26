@@ -673,6 +673,71 @@ int main(int argc, char** argv) {
               "landing arrival retires its controller, emits one callback, and restores grounded standby");
     }
     {
+        // Exercise the real standby/controller path: settled flyers and an
+        // earlier descent must both exclude a second landing on the same cells.
+        for (bool simultaneous : {false,true}) {
+            World world;world.setVisPlayer(-1);
+            world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            UnitType flyer;flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
+            flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
+            flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.footX=2;flyer.footZ=3;
+            const int first=world.spawn(&flyer,256,256);
+            const int second=world.spawn(&flyer,256,256);
+            for (int id : {first,second}) {
+                auto* u=world.unit(id);
+                u->flightGroundMode=(id==second || simultaneous) ? 2 : 1;
+                u->flightY=Fixed::fromInt(u->flightGroundMode==2 ? 180 : 100);
+                u->standbyActive=true;u->standbyState={1,0,0xffffffffu,0,0};
+            }
+            world.tick(1.0f/30.0f);
+            check(world.unit(second)->flightLandingCallbackSerial==0,
+                  simultaneous ? "simultaneous flyers reserve distinct landing footprints"
+                               : "a landed flyer blocks another flyer's descent");
+            bool overlap=false;
+            for (int tick=0;tick<1800;++tick) {
+                world.tick(1.0f/30.0f);
+                const auto& a=*world.unit(first);const auto& b=*world.unit(second);
+                if(a.flightGroundMode!=1 || b.flightGroundMode!=1)continue;
+                const int ax=footprintOrigin(a.x,flyer.footX),az=footprintOrigin(a.z,flyer.footZ);
+                const int bx=footprintOrigin(b.x,flyer.footX),bz=footprintOrigin(b.z,flyer.footZ);
+                overlap |= ax<bx+flyer.footX && bx<ax+flyer.footX &&
+                           az<bz+flyer.footZ && bz<az+flyer.footZ;
+            }
+            check(!overlap,"landed aircraft never share footprint cells");
+            check(world.unit(first)->flightGroundMode==1 && world.unit(second)->flightGroundMode==1,
+                  "blocked aircraft finds another landing site and settles");
+        }
+    }
+    {
+        World world;world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        UnitType flyer;flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
+        flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
+        flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.footX=flyer.footZ=2;
+        UnitType overhead=flyer;overhead.vtolStandby=false;
+        const int id=world.spawn(&flyer,256,256);
+        const int above=world.spawn(&overhead,256,256);
+        world.unit(above)->flightGroundMode=2;world.unit(above)->flightY=Fixed::fromInt(300);
+        auto* u=world.unit(id);u->flightGroundMode=2;u->flightY=Fixed::fromInt(180);
+        u->standbyActive=true;u->standbyState={1,0,0xffffffffu,0,0};
+        world.tick(1.0f/30.0f);
+        check(world.unit(id)->landing && world.unit(id)->landing->mission.stage==3,
+              "an airborne nonlanding flyer does not block the ground below it");
+        UnitType ground;ground.canMove=true;ground.maxVel=Fixed::fromInt(1);
+        ground.footX=ground.footZ=2;
+        const int blocker=world.spawn(&ground,256,256);
+        world.tick(1.0f/30.0f);
+        u=world.unit(id);
+        check(u->landing && u->landing->mission.stage==2 && u->flightGroundMode==2,
+              "a new ground obstruction interrupts an in-progress descent");
+        for(int tick=0;tick<1800;++tick)world.tick(1.0f/30.0f);
+        u=world.unit(id);const auto* b=world.unit(blocker);
+        const int ux=footprintOrigin(u->x,2),uz=footprintOrigin(u->z,2);
+        const int bx=footprintOrigin(b->x,2),bz=footprintOrigin(b->z,2);
+        check(u->flightGroundMode==1 && (ux>=bx+2 || bx>=ux+2 || uz>=bz+2 || bz>=uz+2),
+              "interrupted descent relocates instead of landing on the intruding unit");
+    }
+    {
         World world; world.setVisPlayer(-1);
         world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType fighter; fighter.canMove=true; fighter.maxHp=10000;
