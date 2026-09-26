@@ -112,6 +112,31 @@ bool run(bool exerciseDisplayVm,const char* scriptPath) {
 }
 
 int main(int argc,char** argv) {
+    {
+        using Call=tak::RetailFactoryAnimationCall;
+        bool active=false;int site=0;
+        std::vector<Call> calls;
+        const auto update=[&](bool constructing,bool queued,int output) {
+            tak::updateRetailFactoryAnimation(active,site,constructing,queued,output,
+                [&](Call call){calls.push_back(call);});
+        };
+        update(true,true,0); // a queued order cannot open an unfinished factory
+        update(false,true,0); // open the yard before an output is ready
+        update(false,true,41);
+        update(false,true,41); // repeated render snapshot
+        update(false,true,42); // consecutive product without an empty queue
+        update(false,false,0); // completion then yard closure
+        update(false,false,0);
+        update(false,true,0); // cancelled before creating an output
+        update(false,false,0);
+        const std::vector<Call> expected{Call::Activate,Call::StartBuilding,
+            Call::StopBuilding,Call::StartBuilding,Call::StopBuilding,Call::Deactivate,
+            Call::Activate,Call::Deactivate};
+        if(calls!=expected || active || site) {
+            std::fprintf(stderr,"factory output/yard callback sequence mismatch\n");return 1;
+        }
+    }
+
     if(argc==1)return run(false,nullptr) ? 0 : 1;
     if(argc==2)return run(true,argv[1]) ? 0 : 1;
     std::fprintf(stderr,"usage: retail_builder_animation_test [unit-script.cob]\n");

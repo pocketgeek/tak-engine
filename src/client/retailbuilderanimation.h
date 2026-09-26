@@ -24,4 +24,24 @@ void updateRetailBuilderAnimation(bool& wasBuilding, int& lastWorkId,
     transition(working);
 }
 
+enum class RetailFactoryAnimationCall { Activate, Deactivate, StartBuilding, StopBuilding };
+
+// Queue activation owns the yard; output-site transitions own build callbacks.
+// When the final output completes, StopBuilding precedes Deactivate.
+template<class Transition>
+void updateRetailFactoryAnimation(bool& active,int& lastSite,bool underConstruction,
+        bool queued,int productionSite,Transition&& transition) {
+    const bool nextActive=!underConstruction && queued;
+    const int site=underConstruction ? 0 : productionSite;
+    if (site!=lastSite && lastSite) transition(RetailFactoryAnimationCall::StopBuilding);
+    if (nextActive!=active) {
+        active=nextActive;
+        transition(active ? RetailFactoryAnimationCall::Activate : RetailFactoryAnimationCall::Deactivate);
+    }
+    if (site!=lastSite) {
+        lastSite=site;
+        if (site) transition(RetailFactoryAnimationCall::StartBuilding);
+    }
+}
+
 } // namespace tak

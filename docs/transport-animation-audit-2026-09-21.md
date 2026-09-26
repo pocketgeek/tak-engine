@@ -10702,3 +10702,29 @@ Twenty-four extracted scripts define WindChange, including Aratrans, Arawar,
 Vertrans, VerScout, VerMan, faction keeps/gates and NPC flags. No new fixtures.
 Release client rebuilt; retail_script, retail_visual and animation_roster CTests
 passed; git diff --check passed. No retail GUI or wind-specific rendered capture.
+
+### Factory display follows exported production callbacks (2026-09-25)
+
+The display previously called internal startbuild/start_building and stopbuild/
+stop_building routines directly from queue state. The simulation's script host
+instead activates a completed factory through Activate/Deactivate, while output
+creation/completion separately calls StartBuilding/StopBuilding. Shipped Arakeep
+Activate enters RequestState -> Go -> startbuild -> OpenYard; Stop runs CloseYard
+and stopbuild. Bypassing that controller skips its state and interruption logic.
+Nine extracted factory scripts exposing the internal build routines and
+QueryBuildInfo all also expose Activate/Deactivate.
+
+GameView now uses the exported activation callbacks, waits until the factory is
+built, and mirrors per-output build callbacks. A shared transition helper preserves
+StopBuilding before final Deactivate and StopBuilding/StartBuilding between
+consecutive output sites without closing the yard. Create-owned ambient threads
+remain running. This changes display callbacks only, not production, pathfinding,
+resource use or simulation script timing.
+
+The existing builder-animation test now covers a queued unfinished factory,
+activation before an output exists, repeated snapshots, consecutive outputs,
+completion/shutdown order and cancellation before output. Release client and
+builder test rebuilt; production, retail_builder_animation, retail_script,
+animation_roster and gate_scripts CTests all passed; git diff --check passed.
+No new standalone fixture or retail launch. No factory-specific rendered capture
+was taken in this pass.

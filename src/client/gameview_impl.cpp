@@ -2236,32 +2236,18 @@
             // the old test skipped every factory and none of them ever animated
             // while training.
             if (u.type && isStructure(u.type)) {
-                bool busy = !u.buildQueue.empty();
-                if (busy != a.producing) {
-                    a.producing = busy;
-                    // Do NOT reset() the VM here. A building's Create script starts
-                    // persistent ambient threads (flag wave, SmokeControl,
-                    // DamageFlameControl); reset() clears every thread, so after a
-                    // factory produced even once its flags/smoke stopped for the rest
-                    // of the game -- the same regression the ship/MeleeControl movers
-                    // already guard against. The production hook is a self-contained
-                    // pose loop that coexists with those ambients.
-                    //
-                    // Name order matters. `startbuild` is the Aramon (and most-faction)
-                    // spelling; `start_building` is the Veruna factory (vercastl)
-                    // spelling. OpenYard/CloseYard are deliberately NOT in the chain:
-                    // they are value-only stubs (they set the pathfinding yard flags
-                    // 18/19 but MOVE no piece), so on a unit that defines both they
-                    // return true and MASK the real door animation. Activate is the
-                    // last-resort producer hook.
-                    if (busy) {
-                        a.vm->start("startbuild") || a.vm->start("start_building") ||
-                            a.vm->start("Activate");
-                    } else {
-                        a.vm->start("stopbuild") || a.vm->start("stop_building") ||
-                            a.vm->start("Deactivate");
-                    }
-                }
+                // Use exported state-machine entry points rather than internal
+                // door routines; keep Create-owned ambient threads running.
+                tak::updateRetailFactoryAnimation(a.producing,a.workId,u.underConstruction,
+                    !u.buildQueue.empty(),u.productionSiteId,[&](auto call) {
+                        using Call=tak::RetailFactoryAnimationCall;
+                        switch(call) {
+                        case Call::Activate: a.vm->start("Activate");break;
+                        case Call::Deactivate: a.vm->start("Deactivate");break;
+                        case Call::StartBuilding: a.vm->start("StartBuilding",{0,0});break;
+                        case Call::StopBuilding: a.vm->start("StopBuilding");break;
+                        }
+                    });
             }
             // On/off structures: the doors/power state swing via the COB Activate/
             // Deactivate scripts (RequestState->Go->[open + hide doors + OpenYard], and
