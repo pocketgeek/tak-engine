@@ -223,11 +223,21 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
                         bool rightAlign = false) {
             if (s.empty()) return;
             float sc = lay.scale * (r.h / 20.0f);
-            float tw = f.ok() ? float(f.width(s, sc)) : blockTextWidth(s, lay.scale * 1.6f);
+            if (!f.ok()) sc = lay.scale * 1.6f;
+            float tw = f.ok() ? float(f.width(s, sc)) : blockTextWidth(s, sc);
+            const float available = std::max(1.0f, (r.w - 2) * lay.scale);
+            if (tw > available) {
+                sc *= available / tw;
+                tw = f.ok() ? float(f.width(s, sc)) : blockTextWidth(s, sc);
+            }
             float x = lay.px(r.x) + (rightAlign ? (r.w * lay.scale - tw) : 0);
-            float y = lay.py(r.y + r.h * 0.15f);
+            // draw() takes a baseline, not the gadget's top. Use common font
+            // bounds so names, digits and times share one baseline in each row.
+            float top = 0, height = 7 * sc;
+            if (f.ok()) f.vbounds("Ag0123456789", sc, top, height);
+            float y = lay.py(r.y) + (r.h * lay.scale - height) * 0.5f - top;
             if (f.ok()) f.draw(ren, s, x, y, sc, c);
-            else drawBlockText(ren, s, x, y, lay.scale * 1.6f, c);
+            else drawBlockText(ren, s, x, y, sc, c);
         };
 
         // Column headers, then one row per player.
