@@ -40,6 +40,11 @@ def main():
         )
     if result.returncode != 0 or "PASS: Arapult land/water authored impact variants" not in result.stdout:
         raise SystemExit(result.stdout or f"client exited {result.returncode} without probe output")
+    firing = result.stdout.split("BASILISK_AUDIO_BEGIN\n", 1)[1].split("BASILISK_AUDIO_IMPACT\n", 1)[0]
+    impact = result.stdout.split("BASILISK_AUDIO_IMPACT\n", 1)[1].split("BASILISK_AUDIO_END\n", 1)[0]
+    if "SND " in firing or "SND arrow08" not in impact:
+        raise SystemExit("Basilisk must cast silently and retain its ARROW08 impact:\n" + result.stdout)
+    print("PASS: Basilisk silent cast and authored impact sound")
     print(next(line for line in result.stdout.splitlines()
                if line.startswith("PASS: Arapult land/water authored impact variants")))
 

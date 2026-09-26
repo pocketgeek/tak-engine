@@ -741,6 +741,22 @@
             std::transform(firedSound.begin(), firedSound.end(), firedSound.begin(), ::tolower);
             if (firedSound != "swoosh2" || !sounds_.has(firedSound) || sounds_.peakOf(firedSound) <= 0)
                 throw std::runtime_error("Harpy firing script did not supply playable SWOOSH2");
+            const auto* basilisk = registry_.find("zonbasil");
+            if (!basilisk || basilisk->weapons.empty())
+                throw std::runtime_error("Basilisk presentation fixture has no weapon");
+            const int basiliskId = spawn("zonbasil", ax + 80, az, 0, localPlayer_);
+            if (basiliskId < 0) throw std::runtime_error("Basilisk fixture failed to spawn");
+            captureFrame(); beginFrame(); endFrame();
+            std::printf("BASILISK_AUDIO_BEGIN\n");
+            sounds_.setVerbose(true);
+            weaponAnimationQueue_.push(front().gameTick, basiliskId, {}, 1, ax + 80, az);
+            cosmeticStep(0);
+            std::printf("BASILISK_AUDIO_IMPACT\n");
+            hit.weapon = &basilisk->weapons.front();
+            hitQueue_.push_back(hit);
+            cosmeticStep(0);
+            sounds_.setVerbose(false);
+            std::printf("BASILISK_AUDIO_END\n");
             beams_.back().age = beams_.back().life * 0.5f;
             lookAt(cx, cz);
             std::fprintf(stderr, "PASS: Harpy FireballD sprite, direct ARROW08 impact, scripted SWOOSH2 fire\n");
@@ -2172,6 +2188,10 @@
                 // spell cracks) now play those instead -- doubling both was wrong.
                 bool scripted = it != anims_.end() && it->second.cobSounds;
                 if (scripted) { /* the attack script provides the sound */ }
+                else if (w.beam && !w.straight && !w.lightning && w.flameKind < 0) {
+                    // Status spells use their authored script/impact sounds.
+                    // A silent cast (Basilisk) must not acquire a bow-shot sound.
+                }
                 else if (w.melee)
                     sounds_.playWorld("ahitfl0" + std::to_string(1 + (salt_++ % 3)), shot.x, shot.z);
                 else if (w.fx == Fx::Fire)
