@@ -39,8 +39,10 @@ enum class CursorId {
 // Map an armed map command to the cursor it can actually issue. Retail's UI
 // command parser maps LOAD to selector mode 6 / cursorload, and UNLOAD to mode
 // 5 / cursorunload. The armed Load glyph is shown only when selection includes
-// a cantransport unit; without one, native selection resolves to the normal arrow.
-inline CursorId cursorForArmedCommand(char cmd, bool hasLoadTransport = false) {
+// exactly one transport and the world hover resolves to an eligible passenger. Empty ground
+// uses the normal pointer (native selector mode 6's point-target branch).
+inline CursorId cursorForArmedCommand(char cmd, bool hasSingleLoadTransport = false,
+                                     bool hasEligibleLoadTarget = false) {
     switch (cmd) {
         case 'm': return CursorId::Move;
         case 'f': case 'a': return CursorId::Attack;
@@ -48,7 +50,7 @@ inline CursorId cursorForArmedCommand(char cmd, bool hasLoadTransport = false) {
         case 'g': return CursorId::Defend;
         case 'c': return CursorId::Reclaim;
         case 'r': return CursorId::Repair;
-        case 'l': return hasLoadTransport ? CursorId::Load : CursorId::Normal;
+        case 'l': return hasSingleLoadTransport && hasEligibleLoadTarget ? CursorId::Load : CursorId::Normal;
         case 'u': return CursorId::Unload;
         default:  return CursorId::Normal;
     }

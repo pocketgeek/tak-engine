@@ -64,8 +64,12 @@ def main():
     icd.hooks[0x50E660] = lambda _uc, _args: (1, resolved_cell)
     icd.hooks[0x497100] = lambda _uc, _args: (1, 1)
     icd.hooks[0x496FD0] = lambda _uc, _args: (1, 1)
-    icd.hooks[0x519F50] = lambda _uc, _args: (1, 1)
-    icd.hooks[0x520B60] = lambda _uc, _args: (1, 1)
+    boarding_allowed = [1]
+    icd.hooks[0x519F50] = lambda _uc, _args: (1, boarding_allowed[0])
+    # Keep 520b60 real: it counts selected transports in the local roster.
+    put_u32(uc, game + 0x2478, unit)
+    put_u32(uc, game + 0x247C, unit)
+    put_u32(uc, unit + 0x130, 0x01000010)
     icd.freeze_hooks()
 
     cases = (
@@ -89,6 +93,24 @@ def main():
         assert error is None, (label, error)
         assert got == expected, (label, hex(flags), got, expected)
         print(f"mode {mode}, UnitDef+264={flags:#010x}: cursor slot {got} ({label})")
+
+    put_u32(uc, unit_type + 0x264, 0x200)
+    for carriers in (0, 1, 2):
+        put_u32(uc, unit + 0x130, 0x01000010 if carriers else 0x01000000)
+        second = unit + 0x138
+        put_u32(uc, second + 0x130, 0x01000010)
+        put_u32(uc, second + 0xB4, unit_type)
+        put_u32(uc, game + 0x247C, second if carriers == 2 else unit)
+        for has_target in (False, True):
+            for allowed in (0, 1):
+                boarding_allowed[0] = allowed
+                got, error = icd.call(SELECTOR, args=(
+                    6, unit, target if has_target else 0, 0 if has_target else point))
+                expected = LOAD if carriers == 1 and has_target and allowed else NORMAL
+                assert error is None, error
+                assert got == expected, (carriers, has_target, allowed, got, expected)
+                print(f"Load: carriers={carriers}, target={has_target}, "
+                      f"boarding={allowed} -> cursor {got}")
 
     print("Native UI command tags map LOAD to action mode 6 and UNLOAD to mode 5.")
     print("Native cursor IDs: mode 6 -> slot 12 (Cursorload); mode 5 -> slot 13 (CursorUnload).")

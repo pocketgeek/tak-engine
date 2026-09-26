@@ -98,7 +98,9 @@ int main(int argc, char** argv) {
         return fail("cursor enum and retail sequence roster size");
 
     if (tak::cursorForArmedCommand('l', false) != tak::CursorId::Normal ||
-        tak::cursorForArmedCommand('l', true) != tak::CursorId::Load ||
+        tak::cursorForArmedCommand('l', true, false) != tak::CursorId::Normal ||
+        tak::cursorForArmedCommand('l', false, true) != tak::CursorId::Normal ||
+        tak::cursorForArmedCommand('l', true, true) != tak::CursorId::Load ||
         tak::cursorForArmedCommand('u', true) != tak::CursorId::Unload ||
         tak::cursorForArmedCommand('m') != tak::CursorId::Move ||
         tak::cursorForArmedCommand('g') != tak::CursorId::Defend)

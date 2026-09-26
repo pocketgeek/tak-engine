@@ -11636,3 +11636,23 @@ The activation-query review also confirms native GET 1 reads the activation bit.
 A scan of 204 extracted COB files found no direct constant GET 1 call, versus
 198 files with direct GET 17 calls. This scan is not proof about dynamically
 computed queries; no speculative product change was made on that basis.
+
+## Armed Load cursor eligibility (2026-09-25)
+
+The mode-6 selector at 4ddd8f returns Normal for a point without a unit.
+With a unit target it requires boarding eligibility (519f50), then 520b60
+requires exactly one selected transport. The previous UI showed Load anywhere
+with any selected carrier. It now checks visible hovered passengers using the
+render snapshot and the same boarding restrictions as World, including paralysis,
+construction, water-only passengers, submerged model tops and remaining capacity.
+Armed Load click filtering shares that eligibility check. No simulation or
+pathfinding rules changed.
+
+The existing native action-mode probe now leaves 520b60 unhooked and exercises
+zero, one and two selected carriers, empty ground, and accepted/rejected boarding
+predicates. All twelve combinations pass; only one carrier with an accepted unit
+target returns Load. This isolates cursor selection; the boarding predicate itself
+is covered by the existing transport tests and native eligibility work above.
+
+Validation: rebuilt `takclient` and `cursor_test` in Release and optimized builds;
+all six cursor/transport CTests pass in each (1.32s and 1.34s respectively).

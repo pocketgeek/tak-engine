@@ -848,6 +848,7 @@ public:
     // is LIVE this tick (captured with this frame's gen). Use to replace world_.unit(id) in
     // render/HUD reads (the null check keeps working).
     const UnitR* frameUnitP(int id) const;
+    bool canLoadPassenger(const UnitR& passenger, const UnitR& carrier) const;
     // Player snapshot accessors (mirror world_.player()/numPlayers() for the HUD).
     const PlayerR& framePlayer(int p) const;
     int frameNumPlayers() const { return front().numPlayers; }

@@ -24,6 +24,27 @@ namespace {
     }
 }
 
+    bool GameView::canLoadPassenger(const UnitR& u,const UnitR& t) const {
+        if(u.id==t.id || !u.alive() || !t.alive() || u.embarked() || t.embarked() ||
+           !u.type || !t.type || u.underConstruction || t.underConstruction ||
+           u.paralyzedFor>0 || t.paralyzedFor>0) return false;
+        if(u.type->isStructure() || u.type->canFly || u.type->cantBeTransported ||
+           !t.type->canTransport || u.player!=t.player ||
+           (!t.type->canFly && !u.type->transportLandEligible)) return false;
+        if(int64_t(u.worldPosition[1])+u.type->modelTop<=
+           int64_t(uint8_t(mapView_.map().seaLevel))*65536) return false;
+        uint32_t count=0,used=0;
+        for(int id:t.cargo) {
+            const auto* c=frameUnitP(id);
+            if(c && c->alive() && c->inTransport==t.id && c->type) {
+                ++count;used+=uint16_t(c->type->transportSize);
+            }
+        }
+        return tak::sim::retailTransportCapacity(uint16_t(u.type->transportSize),
+            uint16_t(t.type->maxTransportSize),count,uint16_t(t.type->transportCap),
+            used,uint16_t(t.type->transportSizeCap));
+    }
+
     void GameView::rightClickOrder(float wx, float wz, bool queue) {
         if (selection_.empty()) return;
         const auto* first = frameUnitP(selection_.front());
@@ -282,17 +303,30 @@ namespace {
                 }
                 return tak::cursorForArmedAttack(ordinaryCursor,hasAirstrike,allAirstrike);
             }
-            bool hasLoadTransport = false;
-            if (pendingCmd_ == 'l') {
-                for (int id : selection_) {
-                    const UnitR* unit = frameUnitP(id);
-                    if (unit && unit->type && unit->type->canTransport) {
-                        hasLoadTransport = true;
-                        break;
+            const UnitR* loadTransport=nullptr;
+            int transportCount=0;
+            bool hasLoadTarget=false;
+            if(pendingCmd_=='l') {
+                for(int id:selection_) {
+                    const auto* unit=frameUnitP(id);
+                    if(unit && unit->alive() && !unit->embarked() && unit->type &&
+                       unit->type->canTransport) {
+                        ++transportCount;
+                        loadTransport=unit;
+                    }
+                }
+                // Native 520b60 requires exactly one selected carrier.
+                if(transportCount==1 && mouseX_>=0) {
+                    for(const UnitR* unit:front().live) {
+                        if(canPickUnit(*unit) && unitUnderCursor(*unit,mouseX_,mouseY_) &&
+                           canLoadPassenger(*unit,*loadTransport)) {
+                            hasLoadTarget=true;
+                            break;
+                        }
                     }
                 }
             }
-            return tak::cursorForArmedCommand(pendingCmd_, hasLoadTransport);
+            return tak::cursorForArmedCommand(pendingCmd_,transportCount==1,hasLoadTarget);
         }
         if (mouseX_ < 0)  return tak::CursorId::Normal;
         float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
@@ -804,22 +838,9 @@ namespace {
                 const auto* t = frameUnitP(id);
                 if (!t || !t->type || !t->alive() || t->embarked() ||
                     t->underConstruction || !t->type->canTransport) continue;
-                uint32_t count=0,used=0;
-                for (int cid:t->cargo) {
-                    const auto* c=frameUnitP(cid);
-                    if (c && c->alive() && c->inTransport==id && c->type) {
-                        ++count;used+=uint16_t(c->type->transportSize);
-                    }
-                }
                 for (const UnitR* up : front().live) {
                     const auto& u=*up;
-                    if (!canPickUnit(u) || !u.alive() || u.embarked() ||
-                        u.underConstruction || u.id==id || !u.type || u.player!=t->player ||
-                        u.type->isStructure() || u.type->canFly || u.type->cantBeTransported ||
-                        (!t->type->canFly && !u.type->transportLandEligible)) continue;
-                    if (!tak::sim::retailTransportCapacity(uint16_t(u.type->transportSize),
-                            uint16_t(t->type->maxTransportSize),count,uint16_t(t->type->transportCap),
-                            used,uint16_t(t->type->transportSizeCap))) continue;
+                    if (!canPickUnit(u) || !canLoadPassenger(u,*t)) continue;
                     const float dx=u.x-wx,dz=u.z-wz,d=dx*dx+dz*dz;
                     if (d<best) {best=d;pid=u.id;transportId=id;}
                 }
