@@ -10455,3 +10455,25 @@ fix establishes sequence selection, not playback timing or rendered visual parit
 The existing four-fps clock still needs replacing after checking native update
 cadence and non-looping model-texture rendering semantics. Native `421ea0` updates
 registered clocks through `5373d0`; its call site is `526438`.
+
+### Model texture playback clock (2026-09-25)
+
+Replaced the fixed four-fps wall clock with each sequence's authored low-word
+frame durations and loop flag, sampled using the existing retailEffectFrame
+helper at the captured simulation tick. Atlas rendering, unpacked model rendering,
+and cutout shadow masks share the selected per-sequence frame. Atlas repainting
+still occurs only when the selection changes or the atlas is rebuilt.
+Removed the completed-visible-glow-unit gate: retail's registered texture list is
+advanced unconditionally by `421ea0` from simulation tick body `526438` (the tick
+boundary is `526351`). This also allows animated projectile textures to advance
+without a visible completed glow unit. Paused simulation holds the sampled frame.
+
+All 44 animated sequences in the extracted texture banks loop and have ten-tick
+frame durations (three frames per second at normal 30-tick simulation speed).
+An ephemeral direct emulation check loaded each shipped sequence's metadata into
+`537390`, then called the actual registered-list update `421ea0`: 7,724 samples
+across two loops per sequence matched the authored-duration selection. No new
+fixture files were added. The existing native clock probe also passed 147,456
+updates and matched the shared C++ clock on 1,280 native timelines. The existing
+retail_visual CTest passed. No retail GUI or controlled visual capture was used;
+these checks prove timing/selection, not complete rendered animation parity.

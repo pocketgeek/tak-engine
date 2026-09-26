@@ -3115,7 +3115,13 @@
                     // every other multi-frame model texture registers an animation.
                     const size_t n = seq.frames.size();
                     const bool playerColours = n == 10 && name.find("logo") != std::string::npos;
-                    if (n > 1 && !playerColours) animatedTex_.insert(name);
+                    if (n > 1 && !playerColours) {
+                        animatedTex_.insert(name);
+                        auto& animation = modelTextureAnimations_[name];
+                        animation.loop = seq.loopFlag != 0;
+                        for (const auto& frame : seq.frames)
+                            animation.durations.push_back(frame.retailDelayTicks);
+                    }
                     // Sample the actual 10 player-colour RGBs once, from a logo/
                     // insignia texture (mostly pure player colour), so the HUD and
                     // minimap can match whatever colour a player renders in.

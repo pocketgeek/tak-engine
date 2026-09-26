@@ -196,20 +196,15 @@
         // Build the texture atlas for every colour slot in view (main thread; the
         // parallel pass below only reads the finished atlas pointers).
         const double _atl0 = double(SDL_GetPerformanceCounter());
-        bool builtGlow = false;
         uint32_t atlasSeen = 0;   // build each in-view colour slot's atlas ONCE, not per unit
         for (const auto* u : visUnits_) {
             int slot = colorSlot_[u->player & 7];
             uint32_t bit = (slot >= 0 && slot < 32) ? (1u << slot) : 0u;
             if (!bit || !(atlasSeen & bit)) { atlasFor(slot); atlasSeen |= bit; }
-            if (!u->underConstruction)
-                if (auto it = anims_.find(u->id);
-                    it != anims_.end() && it->second.usesGlow)
-                    builtGlow = true;
         }
-        // Cycle lodestone/mana/fire crystal frames -- but only once a built glow-unit
-        // is on screen, so a still-conjuring lodestone stays dark until it's finished.
-        animateGlowTextures(builtGlow);
+        // Retail updates registered model textures every simulation tick,
+        // independently of visibility or the construction state of any unit.
+        animateGlowTextures();
         profAtlasMs_ += (double(SDL_GetPerformanceCounter()) - _atl0) /
                         (double(SDL_GetPerformanceFrequency()) / 1000.0);
         profUnits_ += uint64_t(visUnits_.size());   // so PROF ms/frame can be read per unit
@@ -1644,14 +1639,17 @@
         return nullptr;
     }
 
-    void GameView::animateGlowTextures(bool live) {
+    void GameView::animateGlowTextures() {
         AaScaleReset _sr(ren_);   // bakes render at 1:1 even when whole-frame AA is on
         if (animatedTex_.empty()) return;
-        int frame = live ? int(animClock_ * 4.0f) : 0;   // ~4 fps
-        // Nothing to do until the ~4fps index actually moves (or an atlas was
-        // rebuilt). The atlases hold last frame's pixels, which are still correct.
-        if (!glowDirty_ && frame == glowFrame_) return;
-        glowFrame_ = frame;
+        bool changed = glowDirty_;
+        for (auto& [name, animation] : modelTextureAnimations_) {
+            const size_t frame = tak::retailEffectFrame(animation.durations,
+                animation.loop, front().gameTick).value_or(animation.durations.size());
+            changed |= frame != animation.frame;
+            animation.frame = frame;
+        }
+        if (!changed) return;
         glowDirty_ = false;
         SDL_Texture* prev = SDL_GetRenderTarget(ren_);
         bool onAny = false;
@@ -1665,11 +1663,13 @@
                 if (rit == atlasRect_.end() || tit == textures_.end() ||
                     tit->second.size() < 2)
                     continue;
-                SDL_Texture* f = tit->second[size_t(frame) % tit->second.size()];
+                const size_t frame = modelTextureAnimations_.at(name).frame;
+                SDL_Texture* f = frame < tit->second.size() ? tit->second[frame] : nullptr;
                 SDL_Rect r = rit->second;
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
                 SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
                 SDL_RenderFillRect(ren_, &r);          // clear the region (transparent)
+                if (!f) continue;  // expired non-looping sequence
                 SDL_BlendMode fb;
                 SDL_GetTextureBlendMode(f, &fb);
                 SDL_SetTextureBlendMode(f, SDL_BLENDMODE_NONE);

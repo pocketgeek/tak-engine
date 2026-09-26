@@ -1467,22 +1467,18 @@ private:
     std::unordered_map<std::string, SDL_Rect> atlasRect_;  // name -> content rect
     int atlasW_ = 0, atlasH_ = 0;
     std::vector<SDL_Texture*> atlasTex_;   // per colour slot; nullptr until built
-    // animateGlowTextures() advances at ~4fps but used to repaint every atlas on
-    // EVERY frame -- at 240Hz that is ~60 redundant repaints per visible change,
-    // each one a render-target switch (a pipeline flush) plus a fill+copy per
-    // animated region. These remember what is already painted; glowDirty_ forces a
-    // repaint when an atlas is (re)built underneath us.
-    int glowFrame_ = -1;
+    // Per-sequence authored clocks; atlas pixels are updated only on a frame
+    // change or atlas rebuild. Geometry workers read the selected frame.
     bool glowDirty_ = true;
     bool atlasLaidOut_ = false;
-    std::set<std::string> animatedTex_;    // multi-frame glow textures (cycle over time)
-
-    // Re-render the current frame of each animated glow texture (lodestone/mana/
-    // sacred-fire crystal) into its rect in every built atlas, so the glow cycles
-    // over time instead of showing a single frame baked at atlas-build time. `live`
-    // (a built glow-unit is on screen) advances it; otherwise it holds frame 0 so a
-    // still-conjuring lodestone doesn't glow until it's finished.
-    void animateGlowTextures(bool live);
+    std::set<std::string> animatedTex_;
+    struct ModelTextureAnimation {
+        std::vector<uint16_t> durations;
+        bool loop = false;
+        size_t frame = 0;
+    };
+    std::map<std::string, ModelTextureAnimation> modelTextureAnimations_;
+    void animateGlowTextures();
 
     // Per-type on-screen sprite box (offset from the draw anchor, px @ zoom 1), the
     // union over facings of the projected model bounds. Drives click-selection so a
@@ -1689,9 +1685,9 @@ private:
                         // Unpacked previews/projectiles use the same animation
                         // frame as the atlas, or the remapped player logo colour.
                         const size_t ci = animatedTex_.count(name)
-                            ? size_t(std::max(0, glowFrame_)) % it->second.size()
-                            : size_t(colorSlot_[player & 7]);
-                        tex = it->second[ci < it->second.size() ? ci : 0];
+                            ? modelTextureAnimations_.at(name).frame
+                            : (it->second.size() == 1 ? 0 : size_t(colorSlot_[player & 7]));
+                        tex = ci < it->second.size() ? it->second[ci] : nullptr;
                     }
                 }
             }
@@ -1708,9 +1704,9 @@ private:
                     animated=animatedTex_.count(name)!=0;
                 }
                 if (masks) {
-                    const size_t frame=animated ? size_t(std::max(0,glowFrame_))
-                                                : size_t(colorSlot_[player & 7]);
-                    shadowMask=(*masks)[frame % masks->size()];
+                    const size_t frame=animated ? modelTextureAnimations_.at(name).frame
+                                                : size_t(colorSlot_[player & 7]) % masks->size();
+                    shadowMask=frame < masks->size() ? (*masks)[frame] : nullptr;
                 }
             }
             // Transform each of this primitive's vertices ONCE. The fan below
