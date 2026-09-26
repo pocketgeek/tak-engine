@@ -114,31 +114,111 @@ production queues, match options, and AI behavior in more detail.
 
 ## Controls
 
-Commands follow the shipped `Keys.TDF` defaults. Change bindings through
-**Settings → Controls** or the in-game menu.
+These are the engine's default bindings. Command, selection, view, and emote
+bindings can be changed in **Settings → Controls** (click a row and press a
+new key; right-click clears it). Number-key squads, **Esc**, chat, pause, and
+speed controls are fixed. Orders requiring a target are armed by the key and
+issued with a left-click; **Shift** queues the order.
 
-| Action | Default input |
+### Orders and unit actions
+
+| Key | Action |
 | --- | --- |
-| Select units | Left-click or drag a selection box |
-| Move / attack | Right-click; hold **Shift** to queue |
-| Fight-move / move / attack | **F** / **M** / **A**, then click the destination |
-| Patrol / guard / stop | **P** / **G** / **S** |
-| Select all your units | **Ctrl+A** |
-| Select every selected type | **Ctrl+Z** includes all types in the current selection |
-| Assign / recall a group | **Ctrl+1–0** / **1–0** |
-| Assign a formation | **Alt+1–0**; moves at its slowest member's speed |
-| Move the camera | Arrow keys, middle-drag, screen edges, or minimap |
-| Zoom | Mouse wheel, toward the cursor |
-| Pause / scoreboard | **Pause** / **F4** |
-| Cancel an armed command | **Esc** |
+| **M** | Move |
+| **A** | Attack |
+| **F** | Fight-move |
+| **P** | Patrol |
+| **G** | Guard |
+| **H** | Heal / repair a friendly unit |
+| **L** / **U** | Load a passenger / unload at a destination |
+| **S** / **C** | Stop / clear orders; both clear the selected units' queues |
+| **W** | Cycle the active weapon of a selected unit with multiple weapons |
+| **K** | Toggle cloak for selected units that can cloak |
+| **O** | Open / close selected gates |
+| **Ctrl+Shift+D** | Toggle self-destruct for selected units; press again to cancel |
 
-Click a build icon to queue production or place a construction site, depending
-on the builder. **Shift** queues five; **Ctrl+Shift** queues ten at training
-buildings. **Ctrl+click** starts infinite production. A mobile builder producing
-an infinite queue accepts **Stop** to clear it before taking other orders.
+### Selection
 
-See the [full controls reference](docs/user-guide.md#controls) for formations,
-minimap commands, reclaim sweeps, queue removal, speed controls, and emotes.
+These shortcuts select your own units. Category selections replace the current
+selection. **N** requires a current selection to cycle from.
+
+| Key | Select |
+| --- | --- |
+| **Ctrl+A** | All your units |
+| **Ctrl+Z** | All units of every type in the current selection |
+| **Ctrl+U** | All your units on screen |
+| **Ctrl+X** | On-screen units matching the first selected unit's type |
+| **Ctrl+M** | Your monarch, and follow it with the camera |
+| **Ctrl+B** | Builders, including builder structures |
+| **Ctrl+F** | Factories / builder structures |
+| **Ctrl+E** | Mobile melee units |
+| **Ctrl+G** | Mobile magic users with a personal mana pool |
+| **Ctrl+N** | Boats / water-domain units |
+| **Ctrl+R** | Units with ballistic weapons |
+| **Ctrl+T** | Armed mobile troops, excluding boats and monarchs |
+| **Ctrl+W** | Armed units, excluding monarchs |
+| **Ctrl+Y** | Flying units |
+| **N** | Next unit |
+
+### Groups and formations
+
+| Key | Action |
+| --- | --- |
+| **Ctrl+1–0** | Assign the selection to a group |
+| **Alt+1–0** | Assign the selection to a formation |
+| **Ctrl+Shift+1–0** / **Alt+Shift+1–0** | Append to a group / formation |
+| **1–0** | Recall the group or formation; **0** is squad 10 |
+| **Ctrl+Esc** | Remove selected units from their squads |
+
+A unit belongs to one squad at a time. Each number holds either a group or a
+formation; formations move at their slowest member's speed. Recall skips
+builders, but units they produce inherit their squad.
+
+### Camera, information, and game controls
+
+| Key | Action |
+| --- | --- |
+| **Arrow keys** | Pan the camera |
+| **T** | Toggle camera tracking of the selection |
+| **Tab** | Toggle the full-screen map; press again to return |
+| **F1** | Toggle unit information |
+| **F4** | Toggle unit counts / status |
+| **O**, with no units selected | Toggle campaign objectives when available |
+| **Pause** | Pause / resume the game or replay |
+| **+** / **−** (also **=** and keypad **+/−**) | Change game / replay speed |
+| **Enter** (also keypad Enter) | Open chat; press again to send; **Esc** cancels |
+| **Esc** | Close unit information, cancel placement / an armed order, clear selection, then open the game menu as applicable |
+| **Shift+D** | Monarch disco emote |
+| **Shift+H** | Monarch headbang emote |
+
+Live game speed ranges from 0.5× to 4×. Only the host can change it, and the
+lobby's in-game speed option must be unlocked. Chat is available in live
+networked games (single-player also uses a local server), not replay playback.
+
+### Mouse and construction
+
+| Input | Action |
+| --- | --- |
+| **Left-click / left-drag** | Select a unit / box-select |
+| **Shift** + selection | Add to the selection |
+| **Ctrl** + selection | Remove from the selection |
+| **Right-click** | Contextual move, attack, or other applicable order; **Shift** queues |
+| **Middle-drag / screen edges** | Pan the camera |
+| **Mouse wheel** | Zoom toward the cursor |
+| **Minimap left-click / drag** | Move the camera; an armed order instead targets that location |
+| **Minimap right-click** | Move the selection there; **Shift** queues |
+| **Build icon left-click / right-click** | Add / remove one queued unit at a training building |
+| **Shift** / **Ctrl+Shift** + build-icon click | Add or remove five / ten queued units |
+| **Ctrl+left-click** a build icon | Start infinite production; toggle it at stationary producers |
+| **Left-click** while placing | Place the construction site |
+| **Shift+left-click / drag** while placing | Queue a site / a line of sites |
+| **Right-click / Esc** while placing | Cancel placement |
+| **Right-drag** with a reclaim-capable mobile builder | Reclaim an area; **Shift** appends the sweep |
+
+Mobile builders use build icons to arm placement instead of ordinary factory
+queues. A mobile builder producing an infinite queue accepts only **Stop**
+until that queue is cleared. See the [user guide](docs/user-guide.md#controls)
+for construction and reclaim details.
 
 ## Multiplayer and replays
 

@@ -244,7 +244,7 @@ struct MainMenu::Impl {
 
     // Turn a GAF sequence/frame into an SDL texture (same pipeline as the in-game HUD).
     SDL_Texture* gafTex(const std::string& gafName, const std::string& seq, int frame,
-                        int* appliedFactor = nullptr) {
+                        int* appliedFactor = nullptr, bool menuBackground = false) {
         if (gafName.empty() || seq.empty()) return nullptr;
         std::string base = gafName;
         if (base.size() >= 4 && base.substr(base.size() - 4) == ".gaf")
@@ -252,12 +252,38 @@ struct MainMenu::Impl {
         std::string gp = "anims/" + base + ".gaf";
         try {
             auto pal = palette(base);
-            for (auto& sq : gaf::load(vfs.read(gp), pal, -1, gp)) {
+            auto sequences = gaf::load(vfs.read(gp), pal, -1, gp);
+            for (auto& sq : sequences) {
                 if (sq.name != seq) continue;
                 if (frame < 0 || size_t(frame) >= sq.frames.size()) frame = 0;
                 if (sq.frames.empty()) return nullptr;
                 auto& f = sq.frames[size_t(frame)];
                 if (f.width == 0 || f.height == 0) return nullptr;
+                // MainBG contains black rectangles reserved for these buttons.
+                // Fill them at source resolution before filtering; otherwise the
+                // background's black edge bleeds outside the separately scaled art.
+                if (menuBackground) for (const char* name : {"Options", "Exit"}) {
+                    const auto* g = gui.find(name);
+                    if (!g || g->imgs.empty()) continue;
+                    const auto& im = g->imgs[0];
+                    if (im.gaf != gafName) continue;
+                    for (const auto& button : sequences) {
+                        if (button.name != im.seq || im.frame < 0 ||
+                            size_t(im.frame) >= button.frames.size()) continue;
+                        const auto& face = button.frames[size_t(im.frame)];
+                        for (int y = 0; y < face.height; ++y)
+                            for (int x = 0; x < face.width; ++x) {
+                                const int dx = g->x + x, dy = g->y + y;
+                                if (dx < 0 || dy < 0 || dx >= f.width || dy >= f.height) continue;
+                                const auto* src = &face.rgba[(size_t(y) * face.width + x) * 4];
+                                auto* dst = &f.rgba[(size_t(dy) * f.width + dx) * 4];
+                                const unsigned alpha = src[3];
+                                for (int c = 0; c < 3; ++c)
+                                    dst[c] = uint8_t((src[c] * alpha + dst[c] * (255 - alpha) + 127) / 255);
+                                dst[3] = 255;
+                            }
+                    }
+                }
                 return tak::art::makeTexture(ren, f.rgba, f.width, f.height, appliedFactor);
             }
         } catch (...) {}
@@ -379,7 +405,7 @@ struct MainMenu::Impl {
         // Background: the root gadget's first image (MainScreen.gaf/MainBG).
         if (!gui.gadgets.empty() && !gui.gadgets[0].imgs.empty()) {
             auto& im = gui.gadgets[0].imgs[0];
-            bg = gafTex(im.gaf, im.seq, im.frame);
+            bg = gafTex(im.gaf, im.seq, im.frame, nullptr, true);
             // The background is the opaque base layer -- ignore any palette-index-0
             // "transparency" in the map art so it doesn't punch through to black.
             if (bg) SDL_SetTextureBlendMode(bg, SDL_BLENDMODE_NONE);
