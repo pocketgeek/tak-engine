@@ -148,8 +148,10 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.1 uses protocol 179**; 0.7.0 uses 177. Older incompatible clients
-and recordings are rejected. The connection checks gameplay definitions, but
+Released **0.7.1 uses protocol 179**; current development builds use **180**
+for corrected naval building placement. These builds cannot mix in a match.
+Version 0.7.0 uses 177. Older incompatible clients and recordings are rejected.
+The connection checks gameplay definitions, but
 that fingerprint does not cover every file: keep gameplay overrides, scripts,
 models, and maps compatible too.
 
@@ -189,8 +191,9 @@ pathfinding parity is a continuing constraint on engine changes. The skirmish
 AI is this project's implementation, rather than a reproduction of retail AI.
 
 For the evidence and remaining scope, see the [retail engine notes](docs/retail-engine.md),
-[pathfinding work](docs/pathfinding-port.md), and
-[transport and animation audit](docs/transport-animation-audit-2026-09-21.md).
+[pathfinding work](docs/pathfinding-port.md),
+[transport and animation audit](docs/transport-animation-audit-2026-09-21.md), and
+[naval building placement correction](docs/naval-building-placement.md).
 
 ## Build and contribute
 

@@ -4988,18 +4988,34 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
     // and land units require land, rather than always testing the ground grid.
     const NavGrid& grid = navFor(type);
     int cx = footprintOrigin(x, type->footX), cz = footprintOrigin(z, type->footZ);
-    // Water structures (Veruna's Sea Fort / Floating Tower) encode a shoreline
-    // footprint in their yardmap: 'w' cells are the slipway that MUST sit over water
-    // (where the ships launch), solid cells ('o'/'c'/'C') the land-side base, '.' is
-    // off-footprint. Honouring that stops a naval building from being placed on dry
-    // land (all its 'w' cells would fail the water test) AND lets it sit correctly on
-    // a coast (which the old whole-footprint-on-land check wrongly rejected). Only
-    // yardmaps that actually contain 'w' take this path, so every land building keeps
-    // its exact previous placement rule (and hash).
+    // Retain the legacy mixed-yard check for custom shoreline structures.
     bool waterYard = false;
     if (!type->yardMap.empty())
         for (char c : type->yardMap) if (c == 'w' || c == 'W') { waterYard = true; break; }
-    if (waterYard) {
+    // Native yard decoding gives w/C/Y the water bit (0x10), including the
+    // Sea Fort's closed C cells. For a wholly water-based yard, 507400 sets
+    // the foundation at sea-waterline and rejects any cell whose four-corner
+    // maximum rises above it. A ship's minimum sailing depth is irrelevant.
+    // Keep mixed land/water custom yards on their existing placement path.
+    const bool waterOnlyYard = !type->yardMap.empty() &&
+        type->yardMap.find_first_of("wCY") != std::string::npos &&
+        type->yardMap.find_first_not_of("wCY. ") == std::string::npos;
+    if (waterOnlyYard) {
+        const int ceiling = seaLevel_ - uint8_t(type->waterline);
+        for (int j = 0; j < type->footZ; ++j)
+            for (int i = 0; i < type->footX; ++i) {
+                const char cell = type->yardMap[size_t(j) * type->footX + i];
+                if (cell == '.' || cell == ' ') continue;
+                const int gx = cx + i, gz = cz + j;
+                if (gx < 0 || gz < 0 || gx + 1 >= terW_ || gz + 1 >= terH_)
+                    return false;
+                const size_t at = size_t(gz) * terW_ + gx;
+                if (!obst_.empty() && obst_[at]) return false;
+                const int high = std::max({heights_[at], heights_[at + 1],
+                                          heights_[at + terW_], heights_[at + terW_ + 1]});
+                if (high > ceiling) return false;
+            }
+    } else if (waterYard) {
         for (int j = 0; j < type->footZ; ++j)
             for (int i = 0; i < type->footX; ++i) {
                 char c = type->yardMap[size_t(j) * type->footX + i];
@@ -5036,6 +5052,8 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
         const auto bodies=searchBodyRect(cx,cz,type->footX,type->footZ);
         for (size_t i=0;i<bodies.cells.size();++i) {
             if (!type->yardMap.empty() && type->yardMap[i]=='.') continue;
+            // Native Y has no occupancy bits; w and C both test bodies.
+            if (waterOnlyYard && type->yardMap[i]=='Y') continue;
             if (bodies.cells[i]) return false;
         }
         return true;

@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 179;      // 179: nonblocking map features no longer obstruct navigation
+constexpr uint32_t kNetVersion = 180;      // 180: water-yard building placement follows retail waterline rules
+                                           // 179: nonblocking map features no longer obstruct navigation
                                            // 178: retail transports; Unload targetId carries fixed-point destination Y
                                            // 176: infinite mobile production accepts only Stop
                                            // 175: data-driven hover attack positioning for flyers

@@ -32,7 +32,9 @@
 #include "sim/sim.h"
 #include "sim/footprint.h"
 #include "client/renderframe.h"
+#include "tnt/tnt.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -129,6 +131,76 @@ void runCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Case& c) {
                 badMonarch ? "  (INCLUDING A MONARCH)" : "");
     if (bad) ++failures;
 }
+
+void seafortPlacementCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, bool crusades) {
+    const std::string mapPath=hpi::findMap(vfs,"Varro Passage");
+    const auto map=tnt::Map::load(vfs.read(mapPath),mapPath);
+    const auto* seafort=reg.find("verasy");
+    const auto* builder=reg.find("verliege");
+    if (!seafort || !builder) { ++failures; return; }
+
+    sim::World world;
+    world.setVisPlayer(-1);
+    sim::MatchConfig cfg; cfg.vfs=&vfs; cfg.mapPath=mapPath;
+    cfg.slots={{true,2,0,1.0f,false,false}};
+    sim::setupMatch(world,reg,cfg);
+
+    // Map-backed open-water Sea Fort site; center of the 6x18 yard at (1472,464).
+    const float sx=1472, sz=464;
+    const bool placeable=world.canPlace(seafort,sx,sz);
+    std::printf("  Varro Passage Sea Fort (%s) open-water canPlace: %s\n",
+                crusades?"Crusades":"Standard",placeable?"PASS":"FAIL");
+    if (!placeable) { ++failures; return; }
+
+    // Match the in-game Varro fixture: the Priestess stands 80px away, within its
+    // 200px build distance, then starts the site through the ordinary API.
+    const int bid=world.spawn(builder,1392,464,0,0);
+    const int sid=world.startBuild(bid,seafort,sx,sz,sim::World::Approach::None);
+    const bool started=sid && world.unit(sid) && world.unit(sid)->type==seafort &&
+                       world.unit(sid)->underConstruction && builder->buildDist>=80;
+    std::printf("      Veruna Priestess startBuild at (1392,464): %s\n",started?"PASS":"FAIL");
+    if (!started) ++failures;
+
+    // Controlled terrain checks use the shipped Sea Fort yardmap on an otherwise
+    // empty 64x64 grid, isolating water depth and occupied cells.
+    const int x0=10,z0=10;
+    const float tx=float(x0*16+seafort->footX*8),tz=float(z0*16+seafort->footZ*8);
+    auto flat=[&](sim::World& w,int height) {
+        constexpr int kSyntheticW=64,kSyntheticH=64;
+        std::vector<uint8_t> h(size_t(kSyntheticW)*kSyntheticH,uint8_t(height));
+        w.setTerrain(h,kSyntheticW,kSyntheticH,map.seaLevel);
+        w.buildNavClasses(reg);
+    };
+    sim::World deep,shallow,dry,land;
+    flat(deep,map.seaLevel-30);
+    flat(shallow,map.seaLevel-1);
+    flat(dry,map.seaLevel);
+    if (!deep.canPlace(seafort,tx,tz) || !shallow.canPlace(seafort,tx,tz) ||
+        dry.canPlace(seafort,tx,tz)) { std::printf("      waterline depths: FAIL\n"); ++failures; }
+    int ci=-1,di=-1;
+    for (size_t i=0;i<seafort->yardMap.size();++i) {
+        if (ci<0 && seafort->yardMap[i]=='C') ci=int(i);
+        if (di<0 && seafort->yardMap[i]=='.') di=int(i);
+    }
+    if (ci<0 || di<0) { ++failures; }
+    else {
+        deep.blockCells(x0+ci%seafort->footX,z0+ci/seafort->footX,1,1,true);
+        const bool occupiedRejected=!deep.canPlace(seafort,tx,tz);
+        deep.blockCells(x0+ci%seafort->footX,z0+ci/seafort->footX,1,1,false);
+        deep.blockCells(x0+di%seafort->footX,z0+di/seafort->footX,1,1,true);
+        const bool dotIgnored=deep.canPlace(seafort,tx,tz);
+        if (!occupiedRejected || !dotIgnored) { std::printf("      C occupancy / dot exclusion: FAIL\n"); ++failures; }
+    }
+    if (const auto* keep=reg.find("aracastl")) {
+        flat(land,map.seaLevel+20);
+        if (!land.canPlace(keep,float(24*16+keep->footX*8),
+                           float(24*16+keep->footZ*8)) ||
+            deep.canPlace(keep,float(24*16+keep->footX*8),
+                          float(24*16+keep->footZ*8))) {
+            std::printf("      ordinary Keep land rule: FAIL\n"); ++failures;
+        }
+    } else ++failures;
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -140,6 +212,7 @@ int main(int argc, char** argv) {
         sim::setupRegistry(reg, vfs, crusades);
         std::printf("balance: %s\n",crusades ? "Crusades" : "standard");
         for (const auto& c : kCases) runCase(vfs, reg, c);
+        seafortPlacementCase(vfs,reg,crusades);
         for (const char* id:{"aralode","tarlode","verlode","zonlode","crelode"}) {
             const auto* type=reg.find(id);
             if (!type) { ++failures;continue; }
