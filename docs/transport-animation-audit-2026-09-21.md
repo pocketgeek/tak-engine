@@ -22,7 +22,7 @@ missed weapon events, transported-passenger effects and authored death effects.
 The chronological entries below document their scope and validation. The earlier
 read-only Git restriction has been lifted for the current session.
 
-The most recent full Release sweep passes all 56 CTests (29.63 seconds), including
+The most recent full Release sweep passes all 56 CTests (30.54 seconds), including
 the recent animation, pickup-cancellation, boarding target-clear and transport reload fixes at the end of this audit. Existing
 native/World ridge-flight unload comparisons also pass all three shipped air
 carrier profiles in both balances: ZONROC, CREAERI and TARSHIP. This includes
@@ -498,16 +498,18 @@ Native movement-class `MinWaterDepth` defaults to -10000 (`4dfb10`). A separate
 transport eligibility bit preserves that classification without changing the
 existing navigation-grid defaults.
 
-### Unmapped native passenger-state gates (2026-09-25)
+### Native passenger-state gates (2026-09-25)
 
 Retail's `0x519f50` is called during load-order validation (`0x403476`) and by
-`GROUND_PICKUP` (`0x4088f4`, `0x408aa9`). It also requires both unit records'
-`+0x108` float to equal zero and rejects either record when bit 4 is set at
-`+0x114`. Those raw checks have not been tied to a reachable initialized unit
-state or a World field, so they do not yet demonstrate a gameplay mismatch.
-The 4,096-case capacity probe and native air/sea selection probe pass; mapping
-these state gates needs a live record or a traced setter before changing
-`World::canLoadInto()`.
+`GROUND_PICKUP` (`0x4088f4`, `0x408aa9`). It requires both unit records' `+0x108`
+float to equal zero and rejects either record when bit 4 is set at `+0x114`.
+The latter is now mapped: the original Paralyze mission `0x402170` sets mask
+`0x10` through `0x51e4d0` and clears it on expiry. Boarding now rejects a
+paralyzed passenger or carrier, including revalidation during pickup. The
+isolated native chain and air/sea regression checks are documented below.
+The exact `+0x108` field mapping remains outside this check; existing World
+validation already excludes unfinished units. Do not infer an additional
+restriction from that raw offset without tracing its construction lifecycle.
 
 Pickup and unloading use the carrier's `transportdistance`, including the ship
 and airship differences. The native transfer stages (`408cxx`/`408fxx`,
@@ -11570,3 +11572,29 @@ script/visual checks pass (0.05 seconds). All three GitHub platform builds for
 the preceding commit 73e047c have now passed; a945cc9's determinism workflow
 also passed. Logs: /tmp/tak-hit-callback-final-tests.log and
 /tmp/tak-hit-callback-o2-final-tests.log.
+
+
+## Reject paralyzed boarding participants (2026-09-25)
+
+Resolved the previously unmapped unit+114 mask 0x10: native Paralyze 402170 calls
+51e4d0 with mask 0x10 and enable=1 while active, and enable=0 when its duration
+expires. Native boarding eligibility 519f50 checks that mask on both carrier and
+passenger. World::canLoadInto now rejects either participant with paralyzedFor>0.
+This also reaches existing pickup revalidation without changing its wake timing.
+
+The existing transport test covers air and sea carriers, rejection without
+mutating either order queue, paralysis after pickup initialization preventing
+attachment, carrier-mission retirement, and successful boarding after recovery
+and a fresh order. Focused transport checks pass. An isolated native execution
+runs the original Paralyze handler, original flag setter and original boarding
+eligibility: each participant changes eligibility 1 -> 0 -> 1 across paralysis
+and expiry. Target cleanup, navigator detach, wake scheduling, network event
+notification and cargo counting are controlled boundaries. Log:
+/tmp/tak-paralyzed-boarding-native.log. No new standalone fixture or retail GUI
+launch was introduced, and no pathfinding code changed.
+
+Final validation: all 56 Release CTests pass (30.54 seconds); optimized transport
+passes (0.07 seconds). Release and optimized client/server binaries rebuilt.
+Logs: /tmp/tak-paralyzed-boarding-full-tests.log and
+/tmp/tak-paralyzed-boarding-o2-tests.log. The preceding 3d1af62 commit's GitHub
+determinism and macOS checks have passed; Linux and Windows were still running.

@@ -2593,6 +2593,9 @@ bool World::canLoadInto(int unitId,int transportId) const {
     const Unit* u=unit(unitId);const Unit* t=unit(transportId);
     if (!u || !t || u==t || !u->alive() || !t->alive() || u->embarked() || t->embarked() ||
         !u->type || !t->type || u->underConstruction || t->underConstruction) return false;
+    // Paralyze sets unit+114 bit 0x10 (402202 -> 51e4d0), which
+    // native 519f50 rejects on either member of the boarding pair.
+    if(u->paralyzedFor>0 || t->paralyzedFor>0)return false;
     if (u->type->isStructure() || u->type->canFly || u->type->cantBeTransported ||
         !t->type->canTransport || u->player!=t->player) return false;
     // 51a099: a surface carrier cannot board a water-only passenger. A flying

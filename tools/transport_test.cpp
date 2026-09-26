@@ -662,6 +662,30 @@ static void boardingLimits() {
     std::vector<int> ids;
     for(int i=0;i<3;++i) ids.push_back(w.spawn(&passenger,420,400+i*16));
     check(w.canLoadInto(ids[0],tid),"eligible passenger can board");
+    for(bool air:{false,true}) {
+        World gated;gated.setVisPlayer(-1);
+        gated.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        auto transport=boatType();transport.canFly=air;transport.cruiseAlt=100;
+        const int t=gated.spawn(&transport,400,400),p=gated.spawn(&passenger,420,400);
+        for(int disabled:{p,t}) {
+            gated.unit(disabled)->paralyzedFor=90;
+            check(!gated.canLoadInto(p,t),"paralyzed passenger or carrier cannot start boarding");
+            gated.loadInto(p,t);
+            check(gated.unit(p)->orders.empty() && gated.unit(t)->orders.empty(),
+                  "rejected paralyzed boarding leaves both order queues unchanged");
+            gated.unit(disabled)->paralyzedFor=0;
+        }
+        gated.loadInto(p,t);gated.tick(1.f/30);
+        gated.unit(p)->paralyzedFor=90;
+        for(int tick=0;tick<60;++tick)gated.tick(1.f/30);
+        check(!gated.unit(p)->embarked() && gated.unit(t)->cargo.empty() &&
+              std::none_of(gated.unit(t)->orders.begin(),gated.unit(t)->orders.end(),
+                  [](const auto& order){return order.transportPickup;}),
+              "paralysis after pickup starts prevents attachment and retires the carrier mission");
+        gated.unit(p)->paralyzedFor=0;gated.loadInto(p,t);
+        for(int tick=0;tick<180 && !gated.unit(p)->embarked();++tick)gated.tick(1.f/30);
+        check(gated.unit(p)->embarked(),"recovered passenger can board after a new load command");
+    }
     check(!w.canLoadInto(tid,tid),"carrier cannot board itself");
     passenger.transportSize=5;
     check(!w.canLoadInto(ids[0],tid),"individual size limit applies before boarding");
