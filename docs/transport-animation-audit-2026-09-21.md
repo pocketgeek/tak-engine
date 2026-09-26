@@ -22,7 +22,7 @@ missed weapon events, transported-passenger effects and authored death effects.
 The chronological entries below document their scope and validation. The earlier
 read-only Git restriction has been lifted for the current session.
 
-Current Release verification passes all 56 CTests (29.17 seconds), including
+The most recent full Release sweep passes all 56 CTests (29.17 seconds), including
 the recent animation, pickup-cancellation, boarding target-clear and transport reload fixes at the end of this audit. Existing
 native/World ridge-flight unload comparisons also pass all three shipped air
 carrier profiles in both balances: ZONROC, CREAERI and TARSHIP. This includes
@@ -11507,3 +11507,23 @@ CTests pass (29.17 seconds), and optimized retail_script passes (0.03 seconds).
 Logs: /tmp/tak-cloak-pose-full-tests.log and /tmp/tak-cloak-pose-o2-tests.log.
 Following the user's permission update, findmnt was checked again: this running
 session still mounts /home/pocket_geek/TAK/.git with ro. No Git write was attempted.
+
+
+## Damage-flinch callback type (2026-09-25)
+
+The renderer passed HitByWeapon damage type 0 for every ordinary hit and 4 for
+all status effects. Native 51a4d2..51a52a calls the export only for damage packet
+types 1, 2 and 3 and preserves that type as its first argument. The display now
+passes the weapon's normal/fire/explosion type and excludes status-only and
+mind-control hits. This is a callback selection/argument fix, not a claim that
+all hit direction and damage arguments or splash-recipient callbacks have been
+audited.
+
+An isolated execution of the original callback block, with only the COB queue
+boundary substituted and an observation stop after that block, checks types
+0 through 15. Only 1/2/3 notify, with arguments (type,400,0,25) for heading zero
+and damage 25. Log: /tmp/tak-flinch-type-native.log. Release and optimized Debug
+clients rebuilt; existing retail_visual and animation_roster tests pass
+(0.39 seconds). No new persistent fixture was added. The server/simulation is
+unchanged by this follow-up. Before this follow-up, a945cc9's GitHub determinism
+workflow passed; Linux, Windows and macOS builds were still running.

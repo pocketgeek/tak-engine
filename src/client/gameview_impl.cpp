@@ -1953,21 +1953,20 @@
             }
             // (mission ScreenShake is handled once per tick, below the hit loop)
             // Damage flinch (retail HitByWeapon callin): args are
-            // (damageType, cos*400, sin*400, damage) -- the scripts themselves
-            // gate on damage>10 and skip damageType 4 (paralyze), so status
-            // weapons map there and everything else passes 0. Direction is the
+            // (damageType, cos*400, sin*400, damage). Native 51a4d2 admits
+            // only normal/fire/explosion packets (1/2/3), passing their actual
+            // type; status-only packets do not start this callback. Direction is the
             // bearing from the victim to the attacker, in rendered-facing space
             // (same convention as the aim driver).
-            if (h.victimId)
+            if (h.victimId && h.weapon && h.weapon->status==tak::sim::Weapon::Status::None &&
+                h.weapon->dmgType>=1 && h.weapon->dmgType<=3 && !h.weapon->mindControl)
                 if (auto fi = anims_.find(h.victimId);
                     fi != anims_.end() && fi->second.hasFlinch && fi->second.vm)
                     if (const UnitR* v = frameUnitP(h.victimId);
                         v && v->alive() && v->type) {
-                        int dtype = (h.weapon && h.weapon->status !=
-                                     tak::sim::Weapon::Status::None) ? 4 : 0;
                         float ang = std::atan2(h.fromX - v->x, h.fromZ - v->z) - v->heading;
                         fi->second.vm->start("HitByWeapon",
-                            {dtype, int32_t(std::cos(ang) * 400.0f),
+                            {h.weapon->dmgType, int32_t(std::cos(ang) * 400.0f),
                              int32_t(std::sin(ang) * 400.0f), int32_t(h.damage)});
                     }
         }
