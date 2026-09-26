@@ -2214,10 +2214,10 @@
                         if (!a.flying) {
                             // Ground builder.
                             if (working) a.vm->start("StartBuilding") || a.vm->start("startbuild");
-                            else {
-                                a.vm->start("StopBuilding");
-                                a.vm->start("restore_x") || a.vm->start("RestoreAfterDelay");
-                            }
+                            // The script's own controller restores the pose after
+                            // StopBuilding. Starting restore_x here races that
+                            // controller and bypasses its attack/movement guards.
+                            else a.vm->start("StopBuilding");
                         } else if (a.hasFlightSM) {
                             // SM flyer (arafly/zonhunt monarch): StartBuilding sets unit
                             // value 5 and fires RequestState->Go, raising statics 9/10;

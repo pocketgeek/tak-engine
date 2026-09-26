@@ -10658,3 +10658,27 @@ The builder-animation helper already includes repairId; this inspection does not
 prove all World/COB callback timing. No speculative pose change was made. Release
 and optimized Debug client rebuilds plus existing visual/production/navblock
 checks are used to validate the rendering change. No retail GUI was launched.
+
+### Let ground-builder scripts restore their own poses (2026-09-25)
+
+GameView's mobile-builder transition called StopBuilding and then independently
+started restore_x (or RestoreAfterDelay) for every ground builder. Removed the
+second call. The shipped Araking COB's StopBuilding clears its building latch;
+MeleeControl calls restore_x itself only when its movement/attack/building guards
+permit it. Starting that routine externally races the controller and bypasses
+those guards. Native KINGDOMS contains the StopBuilding entry-point name, but no
+restore_x or RestoreAfterDelay lookup name; those are script-internal routines.
+The same client stop path serves construction, repair and reclaim.
+
+The ordinary rendered unit tree reads its Anim display VM via pieceFor; captured
+pose overrides in the inspected paths serve debris/effect queries, not replacement
+of that live unit pose. The display builder helper already includes repairId, so
+there was no evidence for adding a second repair start callback in the renderer.
+
+Existing builder-animation tests pass with both the shipped Araking and Zonhunt
+COBs. Seven relevant CTests pass (retail_script, movement/builder animation,
+door animation, animation roster, gate scripts, native air-transport pose).
+Release client rebuilt and git diff --check passed. These checks plus script
+inspection support removal of the unsolicited callback; a synchronized before/
+after retail restoration capture was not performed. No new fixture or retail
+GUI launch.
