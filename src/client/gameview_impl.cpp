@@ -2094,24 +2094,28 @@
                         a.vm->start("Killed", {int32_t(u.severity), 0, dtype});
                         a.vm->start("Dying", {dtype}) || a.vm->start("death");
                     }
-                    const std::string& id = u.type->id;
-                    if (a.cobSounds) { /* the Dying script plays its own death cry */ }
-                    else if (sounds_.has(id + "die1")) sounds_.playWorld(id + "die1", u.x, u.z);
-                    else if (sounds_.has(id + "die2")) sounds_.playWorld(id + "die2", u.x, u.z);
-                    // Death effect: a real GAF explosion sized to the unit (bigger
-                    // footprint => bigger blast), plus blood particles for flesh.
-                    int foot = std::max(u.type->footX, u.type->footZ);
-                    const char* deathCls = foot >= 3 ? "large explosion"
-                                         : foot == 2 ? "medium explosion"
-                                                     : "small explosion";
-                    float dAlt = unitAltById(u.id) * 0.8f;   // a flyer explodes mid-air
-                    spawnEffect(deathCls, u.x, u.z, dAlt);
-                    if (u.type->bodyType == "flesh") {
-                        spawnEffect("blood explosion", u.x, u.z, dAlt);
-                        spawnBurst(u.x, u.z, 14, u.type->blood[0], u.type->blood[1],
-                                   u.type->blood[2], 40, 2.2f, 0, dAlt);
-                    } else
-                        spawnBurst(u.x, u.z, 10, 110, 100, 90, 30, 2.4f, 1, dAlt);
+                    // Stone/frozen deaths keep their held pose. They do not
+                    // emit the ordinary death cry, blast, blood or smoke either.
+                    if (dtype < 14) {
+                        const std::string& id = u.type->id;
+                        if (a.cobSounds) { /* the Dying script plays its own death cry */ }
+                        else if (sounds_.has(id + "die1")) sounds_.playWorld(id + "die1", u.x, u.z);
+                        else if (sounds_.has(id + "die2")) sounds_.playWorld(id + "die2", u.x, u.z);
+                        // Death effect: a real GAF explosion sized to the unit (bigger
+                        // footprint => bigger blast), plus blood particles for flesh.
+                        int foot = std::max(u.type->footX, u.type->footZ);
+                        const char* deathCls = foot >= 3 ? "large explosion"
+                                             : foot == 2 ? "medium explosion"
+                                                         : "small explosion";
+                        float dAlt = unitAltById(u.id) * 0.8f;   // a flyer explodes mid-air
+                        spawnEffect(deathCls, u.x, u.z, dAlt);
+                        if (u.type->bodyType == "flesh") {
+                            spawnEffect("blood explosion", u.x, u.z, dAlt);
+                            spawnBurst(u.x, u.z, 14, u.type->blood[0], u.type->blood[1],
+                                       u.type->blood[2], 40, 2.2f, 0, dAlt);
+                        } else
+                            spawnBurst(u.x, u.z, 10, 110, 100, 90, 30, 2.4f, 1, dAlt);
+                    }
                     // (The mission "UnitDestroyed" hook now fires deterministically in
                     // simStep on the sim thread -- see the death-edge detection there --
                     // rather than here off the render-side death animation.)

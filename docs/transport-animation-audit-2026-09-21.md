@@ -10815,3 +10815,24 @@ build-o2/takclient game 'Ulasem Arena' --data assets/game --firetest --nofog
 --time 20 --shot /tmp/tak-shot-nimbus.png. This is a software-rendered engine
 capture, not a retail comparison; skipped-tick delivery is checked by the
 handoff regression, while this capture checks the normal shot-to-loaded-art path.
+
+
+### Statue/frozen death presentation excludes ordinary effects (2026-09-25)
+
+The display already held the unit pose and skipped Killed/Dying for death types
+14/15, but then unconditionally spawned the ordinary death explosion plus blood
+or smoke, and could play the fallback death cry. Moved those presentation effects
+behind the same ordinary-death condition. This corrects the contradictory blast
+and blood on a unit being preserved as a stone/frozen statue; ordinary deaths
+retain their existing presentation.
+
+Rechecked local native death dispatch: 512697/5126a0 send types 14/15 to 51275f,
+which zeros severity/corpse output instead of invoking Killed at 512752. The
+received death path gates Dying on positive severity at 512a75. No new fixture,
+simulation change, pathfinding change or retail GUI launch. The existing native
+comparison is evidence for suppressing ordinary death-script presentation, not
+a claim that all ordinary-death fallback effects match retail.
+
+Release and optimized Debug takclient rebuilt. retail_visual, retail_script,
+animation_roster and cobanim CTests passed; git diff --check passed. No new
+statue-transition rendered capture was taken for this guard change.
