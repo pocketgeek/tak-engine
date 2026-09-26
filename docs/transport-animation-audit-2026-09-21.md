@@ -10899,3 +10899,30 @@ passed (0.84 seconds). The live transport-effect regression passed, including
 hidden-cargo destruction, under SDL dummy video/audio on Ulasem Arena. Log:
 /tmp/tak-cargo-death-live.log; generated capture /tmp/tak-cargo-death.png was not
 used as a retail comparison. git diff --check passed.
+
+
+### Death visuals use authored effects instead of a blanket body blast (2026-09-25)
+
+Removed the renderer's unconditional footprint-sized death explosion and its
+extra blood/smoke burst. It ran for every ordinary death independently of the
+shipped script, adding a fiery blast even to an infantry fall. Native death
+packet dispatch selects Killed/Dying; the shipped Araarch Killed distinguishes
+explosion death (piece explosions), fire death (damage-flame emissions), and
+ordinary death (corpse output), while Dying plays its fall and authored piece
+operation. The renderer already handles those EXPLODE/EMIT_SFX paths. Units with
+EXPLODEAS separately enqueue an authored weapon impact in World. Those paths
+remain intact; only the additional guessed body effects were removed.
+
+The existing live transport-effect regression now includes an ordinary,
+unembarked Araarch control and verifies that the death edge adds no unrequested
+body sprites or generic particles before advancing the authored scripts. This
+reuses the effect-count regression for the same renderer bug. No new fixture.
+The native Tarhel death callback/attached-effect lifecycle comparison still
+passes, including its five emitted effects and owner teardown. It uses a
+controlled SFX creation sink and is not a pixel comparison. No retail GUI launch.
+
+Release and optimized Debug clients rebuilt. Nine targeted Release CTests passed
+(0.87 seconds), and the live transport/ordinary-death effect regression passed
+under SDL dummy video/audio on Ulasem Arena. Logs:
+/tmp/tak-authored-death-tests.log, /tmp/tak-authored-death-native.log and
+/tmp/tak-authored-death-live.log. git diff --check passed.

@@ -917,7 +917,18 @@
             cosmeticStep(0);
             if(effects_.size()!=effectsBefore || particles_.size()!=particlesBefore)
                 throw std::runtime_error("hidden destroyed cargo spawned ordinary death effects");
-            std::fprintf(stderr,"PASS: transport effect clocks and cargo hide/release; hidden destroyed cargo emits no ordinary death effects\n");
+            // Control: an ordinary unembarked archer also gets no fabricated
+            // body blast before its authored Killed/Dying scripts are advanced.
+            const int ordinary=spawn("araarch",cx+40,cz,0,localPlayer_);
+            if(ordinary<0)throw std::runtime_error("ordinary death control failed to spawn");
+            world_.unit(ordinary)->deadFor=0;
+            world_.unit(ordinary)->deathType=1;
+            captureFrame();beginFrame();endFrame();
+            const auto ordinaryEffects=effects_.size(),ordinaryParticles=particles_.size();
+            cosmeticStep(0);
+            if(effects_.size()!=ordinaryEffects || particles_.size()!=ordinaryParticles)
+                throw std::runtime_error("ordinary death fabricated effects outside its authored script");
+            std::fprintf(stderr,"PASS: transport effects and cargo hide/release; cargo and ordinary death do not fabricate body blasts\n");
             return;
         }
 #endif
@@ -2144,28 +2155,16 @@
                         a.vm->start("Killed", {int32_t(u.severity), 0, dtype});
                         a.vm->start("Dying", {dtype}) || a.vm->start("death");
                     }
-                    // Stone/frozen deaths keep their held pose. They do not
-                    // emit the ordinary death cry, blast, blood or smoke either.
+                    // Stone/frozen deaths do not play the fallback death cry.
                     if (dtype < 14) {
                         const std::string& id = u.type->id;
                         if (a.cobSounds) { /* the Dying script plays its own death cry */ }
                         else if (sounds_.has(id + "die1")) sounds_.playWorld(id + "die1", u.x, u.z);
                         else if (sounds_.has(id + "die2")) sounds_.playWorld(id + "die2", u.x, u.z);
-                        // Death effect: a real GAF explosion sized to the unit (bigger
-                        // footprint => bigger blast), plus blood particles for flesh.
-                        int foot = std::max(u.type->footX, u.type->footZ);
-                        const char* deathCls = foot >= 3 ? "large explosion"
-                                             : foot == 2 ? "medium explosion"
-                                                         : "small explosion";
-                        float dAlt = unitAltById(u.id) * 0.8f;   // a flyer explodes mid-air
-                        spawnEffect(deathCls, u.x, u.z, dAlt);
-                        if (u.type->bodyType == "flesh") {
-                            spawnEffect("blood explosion", u.x, u.z, dAlt);
-                            spawnBurst(u.x, u.z, 14, u.type->blood[0], u.type->blood[1],
-                                       u.type->blood[2], 40, 2.2f, 0, dAlt);
-                        } else
-                            spawnBurst(u.x, u.z, 10, 110, 100, 90, 30, 2.4f, 1, dAlt);
                     }
+                    // Killed/Dying own death pieces and emitted effects. Units
+                    // with EXPLODEAS also produce their authored weapon impact
+                    // through the simulation. Do not add a generic body blast.
                     // (The mission "UnitDestroyed" hook now fires deterministically in
                     // simStep on the sim thread -- see the death-edge detection there --
                     // rather than here off the render-side death animation.)
