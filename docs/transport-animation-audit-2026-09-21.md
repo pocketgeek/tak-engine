@@ -43,6 +43,24 @@ trips but do not establish equivalence to that different native setup. Broader
 engine-driven pose/effect lifecycle coverage also remains as described below;
 standalone script equality is not proof of every runtime callback producer.
 
+## Current scope checklist (2026-09-25)
+
+This checklist separates the requested behavior from historical diagnostic gaps.
+Later entries remain authoritative when an older entry describes a fixed issue.
+
+| Requested area | Current evidence | Remaining work or limit |
+| --- | --- | --- |
+| Air and sea transports | World round trips; native pickup/unload dispatch and movement comparisons; all shipped carrier profiles; capacity, shore occupancy, cancellation, paralysis and production-order regressions | Join ordinary primary-queue passenger/carrier movement through pickup. The old secondary-list diagnostic does not establish that sequence. |
+| Unit animation behavior | Shipped script/pose roster; integrated movement, flight, construction, gates, weapon selection, hits, cloak and death fixes; 56-test Release sweep | Continue checking engine callback producers against the native lifecycle. Script-only roster equality cannot certify every gameplay transition. |
+| Projectiles, including Drake fire | Native direct, ballistic, guided, flame and sprite/model behavior checks; authored effect/anchor/lifetime fixes | Representative behavior is covered; the user deferred further arrow/bolt laser diagnosis pending a clearer report. Pixel identity is not required. |
+| Cursors | Selection-context checks, all 21 registered IDs, authored timing, waypoint clocks and retained live-pointer frame/countdown behavior | Native input-to-pointer pixels were not paired; do not treat pixel matching as an additional requirement. |
+| Flying height and Zhon conjuring placement | Native root-anchor, hierarchy/projection, flight and placed-site traces | The reported apparent northward separation has not been reproduced with matching camera, construction vector and tick. Current evidence does not justify another offset change. |
+| Builds and delivery | Fixes through f1e78b0 committed and pushed; current Release/optimized binaries built; all 56 Release tests pass | Latest GitHub Linux/Windows builds were still running; determinism and macOS passed. |
+
+The retail GUI remains prohibited by the user's latest instruction. Existing
+headless native routines are available. No new fixture is warranted merely to
+make a coverage table greener; regression additions should support engine fixes.
+
 ## Earlier completion audit
 
 The sections below record successive findings; later corrections supersede
@@ -507,9 +525,12 @@ The latter is now mapped: the original Paralyze mission `0x402170` sets mask
 `0x10` through `0x51e4d0` and clears it on expiry. Boarding now rejects a
 paralyzed passenger or carrier, including revalidation during pickup. The
 isolated native chain and air/sea regression checks are documented below.
-The exact `+0x108` field mapping remains outside this check; existing World
-validation already excludes unfinished units. Do not infer an additional
-restriction from that raw offset without tracing its construction lifecycle.
+The `+0x108` field is the construction remainder: GET 17 reads it at 50d1ab,
+429af0 advances it, and completion 429990 clears it at 429a27. World stores that
+remainder in retailSite->progress.remaining and clears underConstruction when
+completion applies. Existing eligibility already excludes unfinished units;
+this trace identifies no additional missing gate. Current native comparisons
+pass 8,192 work cases and 8,192 completion cases.
 
 Pickup and unloading use the carrier's `transportdistance`, including the ship
 and airship differences. The native transfer stages (`408cxx`/`408fxx`,
@@ -11598,3 +11619,20 @@ passes (0.07 seconds). Release and optimized client/server binaries rebuilt.
 Logs: /tmp/tak-paralyzed-boarding-full-tests.log and
 /tmp/tak-paralyzed-boarding-o2-tests.log. The preceding 3d1af62 commit's GitHub
 determinism and macOS checks have passed; Linux and Windows were still running.
+
+
+## Construction eligibility field resolved (2026-09-25)
+
+Source/native audit identifies unit+108 as the unfinished-construction remainder,
+not an additional unknown transport state. GET 17 at 50d1ab reads it; the original
+completion routine clears it at 429a27. Existing construction work/completion
+oracles compare that same field to World progress and currently pass all 8,192
+cases each. World completion clears underConstruction, and canLoadInto already
+rejects an unfinished passenger or carrier. No engine change or new fixture was
+needed. Logs: /tmp/tak-construction-state-work.log and
+/tmp/tak-construction-state-completion.log.
+
+The activation-query review also confirms native GET 1 reads the activation bit.
+A scan of 204 extracted COB files found no direct constant GET 1 call, versus
+198 files with direct GET 17 calls. This scan is not proof about dynamically
+computed queries; no speculative product change was made on that basis.
