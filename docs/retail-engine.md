@@ -1087,10 +1087,13 @@ span/coverage buffer. The whole silhouette is rasterised into it and blended
 ONCE. Drawing the triangles individually with alpha instead stacks them wherever
 the silhouette folds over itself, which reads as obviously wrong next to retail.
 
-We reproduce it with a coverage mask: clear the batch's bounding box to white,
-draw every shadow triangle opaque at 0.55 grey with blending off, then composite
-that rect once with `SDL_BLENDMODE_MOD`. Bounding box, not full screen -- a
-7680x2160 clear and blit twice a frame is most of the cost and none of the gain.
+The accelerated renderer now rasterizes independent per-unit silhouettes into
+bounded, reused atlas pages and composites each silhouette once. Animated cutout
+coverage and the renderer's antialiasing scale are preserved. Texture batching
+within disjoint tiles reduces GPU state changes. Software rendering and bounded
+allocation failures retain the direct MOD fallback, whose overlapping faces can
+still darken repeatedly. See `shadow-performance-2026-09-25.md` for measurements,
+limits, and the remaining ground-unit ordering approximation.
 
 ### Probe the shear sign on a GROUND unit, never on a flyer
 

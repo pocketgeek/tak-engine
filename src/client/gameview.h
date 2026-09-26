@@ -116,6 +116,7 @@
 #endif
 
 
+#include "client/shadowmask.h"
 #include "client/appglobals.h"   // kProjY/kProjZ, kSortZ/kSortY
 
 class GameView {
@@ -974,11 +975,15 @@ private:
     // std::string allocations and a case fold each -- and then again for the
     // shadow pass. At ~1500 units that is six figures of throwaway string work a
     // frame for answers that were fixed when the model loaded.
+    struct ShadowMaskFrame {
+        SDL_Texture* texture=nullptr;
+        SDL_FRect uv{0,0,1,1};
+    };
     struct PieceMeta {
         bool skip = false;                  // ground plate / *off duplicate: draws nothing
         std::vector<std::string> primTex;   // lowercased per primitive ("" = untextured)
         std::vector<const SDL_Rect*> primAtlas; // immutable atlas layout; shared by all colour slots
-        std::vector<const std::vector<SDL_Texture*>*> primShadowMasks;
+        std::vector<const std::vector<ShadowMaskFrame>*> primShadowMasks;
         std::vector<bool> primAnimated;
         std::vector<PieceMeta> children;    // 1:1 with Object::children
     };
@@ -1318,11 +1323,8 @@ private:
         std::vector<std::pair<SDL_Texture*, int>> runs; // (texture, vertex count)
         float ax = 0, ay = 0, occY = 0, alt = 0;
         bool canFly = false;
-        // The projected silhouette, built HERE (on the worker) rather than on the
-        // render thread. Measured at 1162 units: the serial version cost ~145ms of
-        // a ~208ms draw -- the whole submit phase -- because every unit walked its
-        // model a second time on the main thread while the body walk was already
-        // parallel. Same traversal, same pool, so it costs what the body costs.
+        // Workers emit projected shadow geometry alongside the body. The shadow
+        // collector skips body-only lighting, texture lookup and depth records.
         // POSITIONS ONLY (8 bytes/vertex), not SDL_Vertex (20). Every shadow vertex
         // carries the same flat grey and an unused texcoord, so storing them per-vertex
         // was 12 bytes of identical data each -- ~8.5 MB a frame of pure duplication at
@@ -1332,17 +1334,35 @@ private:
         // software backends; the validation lives in SDL_render.c above the backend, so
         // it behaves the same for D3D/Metal too.
         std::vector<SDL_FPoint> shadowVerts;
-        std::vector<Tri> maskedShadows; // only alpha-cutout faces need UVs/textures
+        std::vector<SDL_Vertex> maskedShadowVerts; // only cutout faces need UVs/textures
+        std::vector<std::pair<SDL_Texture*,int>> maskedShadowRuns; // adjacent masks, original order
+        std::array<float,4> shadowBounds{}; // min x/y, max x/y; worker-built
+        SDL_Texture* shadowAtlasPage = nullptr;
+        SDL_Rect shadowAtlasSrc{};
+        SDL_FRect shadowAtlasDst{};
     };
+    std::optional<bool> batchShadowMasks_;
     void drawUnitShadow(const UnitGeom& g) {
-        profShadowVerts_ += g.shadowVerts.size() + g.maskedShadows.size()*3;
+        if (!batchShadowMasks_.has_value()) {
+            SDL_RendererInfo info{};
+            batchShadowMasks_=SDL_GetRendererInfo(ren_,&info)==0 && (info.flags&SDL_RENDERER_ACCELERATED)!=0;
+        }
+        profShadowVerts_ += g.shadowVerts.size() + g.maskedShadowVerts.size();
+        if (shadowSilhouetteAtlasActive_ && g.shadowAtlasPage) {
+            SDL_RenderCopyF(ren_, g.shadowAtlasPage, &g.shadowAtlasSrc, &g.shadowAtlasDst);
+            return;
+        }
         static const SDL_Color color{kShadowLevel,kShadowLevel,kShadowLevel,255};
         static const float uv[2] = {0,0};
         if (!g.shadowVerts.empty())
             SDL_RenderGeometryRaw(ren_,nullptr,&g.shadowVerts[0].x,sizeof(SDL_FPoint),
                                   &color,0,uv,0,int(g.shadowVerts.size()),nullptr,0,0);
-        for (const auto& tri:g.maskedShadows)
-            SDL_RenderGeometry(ren_,tri.tex,tri.v,3,nullptr,0);
+        int offset=0;
+        for (const auto& run:g.maskedShadowRuns) {
+            tak::submitShadowMaskRun(ren_,run.first,g.maskedShadowVerts.data()+offset,
+                                     run.second,*batchShadowMasks_);
+            offset+=run.second;
+        }
     }
     std::vector<const UnitR*> visUnits_;
     // unitBatch_: the cross-unit body batch. overlayBatch_: a reusable scratch vertex
@@ -1688,8 +1708,9 @@ private:
                 }
             }
             SDL_Texture* shadowMask = nullptr;
+            SDL_FRect shadowUV{0,0,1,1};
             if (shadow) {
-                const std::vector<SDL_Texture*>* masks=nullptr;
+                const std::vector<ShadowMaskFrame>* masks=nullptr;
                 bool animated=false;
                 if (pi<meta->primShadowMasks.size()) {
                     masks=meta->primShadowMasks[pi];
@@ -1702,7 +1723,9 @@ private:
                 if (masks) {
                     const size_t frame=animated ? modelTextureAnimations_.at(name).frame
                                                 : size_t(colorSlot_[player & 7]) % masks->size();
-                    shadowMask=frame < masks->size() ? (*masks)[frame] : nullptr;
+                    if(frame < masks->size()) {
+                        shadowMask=(*masks)[frame].texture;shadowUV=(*masks)[frame].uv;
+                    }
                 }
             }
             // Transform each of this primitive's vertices ONCE. The fan below
@@ -1850,7 +1873,9 @@ private:
                     if (shadowMask) {
                         static const SDL_FPoint uv[4] = {{0,0},{1,0},{1,1},{0,1}};
                         for (int k=0;k<3;++k) {
-                            tri.v[k].tex_coord = uv[idx[k] & 3];
+                            const auto point=uv[idx[k] & 3];
+                            tri.v[k].tex_coord = {shadowUV.x+point.x*shadowUV.w,
+                                                  shadowUV.y+point.y*shadowUV.h};
                             tri.v[k].color = {255,255,255,255};
                         }
                     }
@@ -1994,7 +2019,20 @@ private:
     float birthProgress(int id) const;
     std::map<std::pair<int,int>,SDL_Texture*> lightningTextures_;
     std::map<std::string, std::vector<SDL_Texture*>> textures_;
-    std::map<std::string, std::vector<SDL_Texture*>> shadowMasks_;
+    std::map<std::string, std::vector<ShadowMaskFrame>> shadowMasks_;
+    struct ShadowMaskPage { SDL_Texture* texture;int width,height,x=0,y=0,rowHeight=0;
+        SDL_Texture* coverage=nullptr; };
+    std::vector<ShadowMaskPage> shadowMaskPages_;
+    std::unordered_map<SDL_Texture*,SDL_Texture*> shadowCoverageTextures_;
+    // Bounded per-unit silhouette targets. Their 2048-square pages are
+    // reused each frame and discarded with other render targets on device loss.
+    struct ShadowSilhouettePage { SDL_Texture* texture=nullptr; int x=0,y=0,rowHeight=0; };
+    std::vector<ShadowSilhouettePage> shadowSilhouettePages_;
+    int shadowSilhouetteWidth_=0,shadowSilhouetteHeight_=0;
+    bool shadowSilhouetteAtlasActive_ = false;
+    std::vector<SDL_FPoint> shadowAtlasOpaqueScratch_;
+    std::unordered_map<SDL_Texture*,std::vector<SDL_Vertex>> shadowAtlasMaskScratch_;
+    ShadowMaskFrame addShadowMask(std::span<const uint8_t> rgba,int width,int height);
     std::vector<Tri> tris_;
     std::vector<SDL_Vertex> triBatch_;   // reused per-unit vertex batch
     std::vector<UnitGeom> geomPool_;              // reused across frames (keeps capacity)

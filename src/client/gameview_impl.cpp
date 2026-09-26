@@ -419,6 +419,31 @@
     }
 
     void GameView::testBuild() {
+        // Repeatable rendering workload for the shadow performance regression.
+        // This entry point is only reached by the local development harness.
+        if (const char* countText=tak::devEnv("TAK_SHADOW_BENCH")) {
+            const int count=std::clamp(std::atoi(countText),1,16000);
+            const char* only=tak::devEnv("TAK_SHADOW_BENCH_TYPE");
+            const char* roster[]={"zonter","araarch","aralode","tarlode","zonroc","versword"};
+            const int columns=std::max(1,int(std::ceil(std::sqrt(float(count)*1.6f))));
+            const int rows=(count+columns-1)/columns;
+            int spawned=0;
+            for(int i=0;i<count;++i) {
+                const char* name=only ? only : roster[i%6];
+                const auto* type=registry_.find(name);
+                if(!type || world_.atUnitCap(localPlayer_) || world_.atTypeCap(localPlayer_,type)) continue;
+                const float x=5000+(float(i%columns)-float(columns-1)*0.5f)*40;
+                const float z=5000+(float(i/columns)-float(rows-1)*0.5f)*40;
+                if(spawn(name,x,z,float(i%8)*0.785398163f,localPlayer_)) ++spawned;
+            }
+            noFog_=true;edgeScrollOn_=false;
+            const float zoom=std::min(1.5f,std::min(1400.f/(columns*40),760.f/(rows*40)));
+            mapView_.setZoom(zoom);
+            mapView_.setOffset(5000-760/zoom,5000-terrainLift(5000,5000)-420/zoom);
+            std::fprintf(stderr,"shadow benchmark: requested=%d spawned=%d columns=%d zoom=%.3f type=%s\n",
+                count,spawned,columns,zoom,only ? only : "mixed");
+            return;
+        }
         // Capture the reclaim particle fix through the existing local build harness.
         if (tak::devFlag("TAK_RECLAIM_CAPTURE")) {
             const char* name=tak::devEnv("TAK_CONJURE_BUILDER");
@@ -3207,7 +3232,7 @@
                         sampledColors_ = true;
                     }
                     std::vector<SDL_Texture*> frames;
-                    std::vector<SDL_Texture*> masks(n,nullptr);
+                    std::vector<ShadowMaskFrame> masks(n);
                     bool hasMask=false;
                     for (size_t i = 0; i < n; ++i) {
                         auto& f = seq.frames[i];
@@ -3224,14 +3249,8 @@
                         if (cutout) {
                             // MOD leaves white texels untouched; opaque texels
                             // multiply the ground by the usual shadow level.
-                            auto pixels=tak::shadowMaskPixels(f.rgba,kShadowLevel);
-                            auto* mask=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
-                                SDL_TEXTUREACCESS_STATIC,f.width,f.height);
-                            if (mask) {
-                                SDL_UpdateTexture(mask,nullptr,pixels.data(),f.width*4);
-                                SDL_SetTextureBlendMode(mask,SDL_BLENDMODE_MOD);
-                                masks[i]=mask; hasMask=true;
-                            }
+                            masks[i]=addShadowMask(f.rgba,f.width,f.height);
+                            hasMask |= masks[i].texture!=nullptr;
                         }
                     }
                     if (hasMask) shadowMasks_[name]=std::move(masks);
@@ -3239,6 +3258,88 @@
                 }
             } catch (const std::exception&) {}
         }
+    }
+
+    GameView::ShadowMaskFrame GameView::addShadowMask(std::span<const uint8_t> rgba,
+                                                      int width,int height) {
+        SDL_RendererInfo info{};SDL_GetRendererInfo(ren_,&info);
+        const auto makeCoverage=[&](int w,int h) -> SDL_Texture* {
+            if(!(info.flags&SDL_RENDERER_ACCELERATED) || !SDL_RenderTargetSupported(ren_))return nullptr;
+            constexpr size_t limit=16u*1024u*1024u;
+            size_t used=0;
+            for(const auto& page:shadowMaskPages_)
+                if(page.coverage)used+=size_t(page.width)*page.height*4;
+            const size_t bytes=size_t(w)*h*4;
+            if(bytes>limit || used>limit-bytes || gpuvram::blocked() || !gpuvram::wouldFit(bytes))return nullptr;
+            auto* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,w,h);
+            if(texture)SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+            return texture;
+        };
+        const auto standalone=[&]() -> ShadowMaskFrame {
+            auto* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
+                SDL_TEXTUREACCESS_STATIC,width,height);
+            if(!texture)return {};
+            const auto pixels=tak::shadowMaskPixels(rgba,kShadowLevel);
+            if(SDL_UpdateTexture(texture,nullptr,pixels.data(),width*4)!=0) {
+                gpuvram::destroy(texture);return {};
+            }
+            SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_MOD);
+            // A full page cannot receive later atlas frames. Ownership remains
+            // common to both paths so GPU reset destroys every texture once.
+            auto* coverage=makeCoverage(width,height);
+            if(coverage) {
+                const auto alpha=tak::shadowCoveragePixels(rgba);
+                if(SDL_UpdateTexture(coverage,nullptr,alpha.data(),width*4)!=0) {
+                    gpuvram::destroy(coverage);coverage=nullptr;
+                } else shadowCoverageTextures_[texture]=coverage;
+            }
+            shadowMaskPages_.push_back({texture,width,height,width,height,0,coverage});
+            return {texture,{0,0,1,1}};
+        };
+        // Keep the software rasterizer's existing standalone sampling path;
+        // its batching/sampling behavior differs from the accelerated backend.
+        if(!(info.flags&SDL_RENDERER_ACCELERATED))return standalone();
+        const int paddedWidth=width+2,paddedHeight=height+2;
+        ShadowMaskPage* page=nullptr;
+        for(auto& candidate:shadowMaskPages_) {
+            if(candidate.x+paddedWidth>candidate.width) {
+                candidate.x=0;candidate.y+=candidate.rowHeight;candidate.rowHeight=0;
+            }
+            if(candidate.y+paddedHeight<=candidate.height && paddedWidth<=candidate.width) {
+                page=&candidate;break;
+            }
+        }
+        if(!page) {
+            const int maxWidth=info.max_texture_width>0 ? info.max_texture_width : 1024;
+            const int maxHeight=info.max_texture_height>0 ? info.max_texture_height : 1024;
+            if(paddedWidth>maxWidth || paddedHeight>maxHeight)return standalone();
+            const int pageWidth=std::max(paddedWidth,std::min(1024,maxWidth));
+            const int pageHeight=std::max(paddedHeight,std::min(1024,maxHeight));
+            auto* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
+                SDL_TEXTUREACCESS_STATIC,pageWidth,pageHeight);
+            if(!texture)return standalone();
+            SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_MOD);
+            auto* coverage=makeCoverage(pageWidth,pageHeight);
+            if(coverage)shadowCoverageTextures_[texture]=coverage;
+            shadowMaskPages_.push_back({texture,pageWidth,pageHeight,0,0,0,coverage});
+            page=&shadowMaskPages_.back();
+        }
+        // Replicate a one-texel border: UV endpoints retain the standalone
+        // texture's clamp behavior instead of sampling its atlas neighbor.
+        const auto pixels=tak::paddedShadowMaskPixels(rgba,width,height,kShadowLevel);
+        const SDL_Rect rect{page->x,page->y,paddedWidth,paddedHeight};
+        if(SDL_UpdateTexture(page->texture,&rect,pixels.data(),paddedWidth*4)!=0)return standalone();
+        if(page->coverage) {
+            const auto alpha=tak::paddedShadowCoveragePixels(rgba,width,height);
+            if(SDL_UpdateTexture(page->coverage,&rect,alpha.data(),paddedWidth*4)!=0) {
+                shadowCoverageTextures_.erase(page->texture);
+                gpuvram::destroy(page->coverage);page->coverage=nullptr;
+            }
+        }
+        ShadowMaskFrame frame{page->texture,{float(page->x+1)/page->width,
+            float(page->y+1)/page->height,float(width)/page->width,float(height)/page->height}};
+        page->x+=paddedWidth;page->rowHeight=std::max(page->rowHeight,paddedHeight);
+        return frame;
     }
 
     const tak::cob::PieceState* GameView::pieceFor(const Anim* a, const std::string& objName) const {

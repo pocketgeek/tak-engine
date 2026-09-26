@@ -237,49 +237,253 @@
                    dancing(u) || headbanging(u);
         };
 
+        // Retail-style per-unit silhouette coverage. Each projected
+        // unit is rasterized into its own atlas tile, so folds inside one model form
+        // one silhouette while later units still darken the scene independently.
+        // Bounded targets retain the output AA scale; unsupported or exhausted
+        // targets fall back to the direct geometry path.
+        shadowSilhouetteAtlasActive_ = false;
+        size_t shadowAtlasPackedUnits=0,shadowAtlasPackedPages=0;
+        const char* shadowAtlasFallback="not requested";
+        const auto buildShadowSilhouetteAtlas = [&]() -> bool {
+            const auto fail=[&](const char* why) { shadowAtlasFallback=why; return false; };
+            SDL_RendererInfo info{};
+            if (SDL_GetRendererInfo(ren_, &info) != 0 ||
+                !(info.flags & SDL_RENDERER_ACCELERATED) ||
+                !SDL_RenderTargetSupported(ren_)) return fail("renderer has no accelerated targets");
+            float scaleX=1.0f, scaleY=1.0f;
+            SDL_RenderGetScale(ren_, &scaleX, &scaleY);
+            if (!(scaleX > 0.0f) || !(scaleY > 0.0f) ||
+                !std::isfinite(scaleX) || !std::isfinite(scaleY)) return fail("invalid output scale");
+            int pageW=info.max_texture_width>0 ? std::min(2048,info.max_texture_width) : 2048;
+            int pageH=info.max_texture_height>0 ? std::min(2048,info.max_texture_height) : 2048;
+            if (pageW < 16 || pageH < 16) return fail("renderer target size too small");
+            for (auto& page:shadowSilhouettePages_) page.x=page.y=page.rowHeight=0;
+            constexpr size_t kMaxPages=4;
+            size_t pageBytes=size_t(pageW)*size_t(pageH)*4;
+            if (!pageBytes || pageBytes > SIZE_MAX/kMaxPages) return fail("invalid page allocation size");
+
+            struct Work {
+                UnitGeom* geom;
+                size_t page;
+                int slotX,slotY,pixelX,pixelY,width,height;
+            };
+            std::vector<Work> work;
+            work.reserve(items.size());
+            for (const auto& item:items) {
+                if (!item.u) continue;
+                const int slot=geomSlot(item.u->id);
+                if (slot<0) continue;
+                UnitGeom& g=geomPool_[size_t(slot)];
+                g.shadowAtlasPage=nullptr;
+                if (g.shadowVerts.empty() && g.maskedShadowVerts.empty()) continue;
+                // Every masked run needs the paired black/original-alpha texture.
+                // If a page could not be created, the caller uses the original path
+                // for the complete frame instead of mixing partially baked shadows.
+                for (const auto& run:g.maskedShadowRuns)
+                    if (!run.first || shadowCoverageTextures_.find(run.first)==shadowCoverageTextures_.end())
+                        return fail("coverage texture unavailable");
+                const auto [minX,minY,maxX,maxY]=g.shadowBounds;
+                if (!std::isfinite(minX) || !std::isfinite(minY) ||
+                    !std::isfinite(maxX) || !std::isfinite(maxY)) return fail("invalid projected bounds");
+                const double leftD=std::floor(double(minX)*scaleX);
+                const double topD=std::floor(double(minY)*scaleY);
+                const double rightD=std::ceil(double(maxX)*scaleX);
+                const double bottomD=std::ceil(double(maxY)*scaleY);
+                if (leftD < double(std::numeric_limits<int>::min()/2) || topD < double(std::numeric_limits<int>::min()/2) ||
+                    rightD > double(std::numeric_limits<int>::max()/2) || bottomD > double(std::numeric_limits<int>::max()/2))
+                    return fail("projected bounds exceed page coordinates");
+                if (rightD-leftD>pageW-2 || bottomD-topD>pageH-2)
+                    return fail("shadow exceeds bounded page");
+                const int pixelX=int(leftD),pixelY=int(topD);
+                const int width=std::max(1,int(rightD)-pixelX);
+                const int height=std::max(1,int(bottomD)-pixelY);
+                if (width+2>pageW || height+2>pageH) return fail("one unit exceeds page size");
+
+                work.push_back({&g,0,0,0,pixelX,pixelY,width,height});
+            }
+            if (work.empty()) return fail("no visible unit shadows");
+            // Small scenes should not clear a 16 MiB target for one monarch.
+            // Grow pages as needed, retaining their size until a renderer reset
+            // so camera movement across a threshold cannot churn allocations.
+            int wantedW=std::min(pageW,256),wantedH=std::min(pageH,256);
+            uint64_t area=0;
+            for (const Work& w:work) {
+                area+=uint64_t(w.width+2)*uint64_t(w.height+2);
+                while (wantedW<w.width+2) wantedW=std::min(pageW,wantedW*2);
+                while (wantedH<w.height+2) wantedH=std::min(pageH,wantedH*2);
+            }
+            while (area>uint64_t(wantedW)*wantedH*3/4 && (wantedW<pageW || wantedH<pageH)) {
+                wantedW=std::min(pageW,wantedW*2);wantedH=std::min(pageH,wantedH*2);
+            }
+            wantedW=std::max(wantedW,shadowSilhouetteWidth_);
+            wantedH=std::max(wantedH,shadowSilhouetteHeight_);
+            if (wantedW!=shadowSilhouetteWidth_ || wantedH!=shadowSilhouetteHeight_) {
+                for (auto& page:shadowSilhouettePages_) gpuvram::destroy(page.texture);
+                shadowSilhouettePages_.clear();
+                shadowSilhouetteWidth_=wantedW;shadowSilhouetteHeight_=wantedH;
+            }
+            pageW=wantedW;pageH=wantedH;
+            pageBytes=size_t(pageW)*size_t(pageH)*4;
+            // Height-ordered shelves avoid wasting a tall row on mostly short
+            // shadows. Tile order does not affect scene composition order.
+            std::stable_sort(work.begin(),work.end(),[](const Work& a,const Work& b) {
+                return a.height!=b.height ? a.height>b.height : a.width>b.width;
+            });
+            for (Work& w:work) {
+                size_t chosen=SIZE_MAX;
+                int slotX=0,slotY=0;
+                auto tryPage=[&](size_t p) {
+                    auto& page=shadowSilhouettePages_[p];
+                    int x=page.x,y=page.y,row=page.rowHeight;
+                    if (x+w.width+2>pageW) {x=0;y+=row;row=0;}
+                    if (y+w.height+2>pageH) return false;
+                    slotX=x;slotY=y;
+                    page.x=x+w.width+2;page.y=y;
+                    page.rowHeight=std::max(row,w.height+2);
+                    chosen=p;
+                    return true;
+                };
+                for (size_t p=0;p<shadowSilhouettePages_.size();++p)
+                    if (tryPage(p)) break;
+                if (chosen==SIZE_MAX) {
+                    if (shadowSilhouettePages_.size()>=kMaxPages) return fail("page limit reached");
+                    if (gpuAllocBlocked() || !gpuvram::wouldFit(pageBytes)) return fail("VRAM budget reached");
+                    SDL_Texture* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
+                        SDL_TEXTUREACCESS_TARGET,pageW,pageH);
+                    if (!texture) { noteGpuAllocFail(); return fail("target page allocation failed"); }
+                    SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+                    SDL_SetTextureColorMod(texture,0,0,0);
+                    SDL_SetTextureAlphaMod(texture,255-kShadowLevel);
+                    SDL_SetTextureScaleMode(texture,SDL_ScaleModeNearest);
+                    shadowSilhouettePages_.push_back({texture,0,0,0});
+                    if (!tryPage(shadowSilhouettePages_.size()-1)) return fail("new page could not fit tile");
+                }
+                w.page=chosen;w.slotX=slotX;w.slotY=slotY;
+                ++shadowAtlasPackedUnits;
+            }
+
+            size_t usedPages=0;
+            for (const Work& w:work) usedPages=std::max(usedPages,w.page+1);
+            shadowAtlasPackedPages=usedPages;
+
+            SDL_Texture* previousTarget=SDL_GetRenderTarget(ren_);
+            SDL_Rect previousViewport{};
+            SDL_Rect previousClip{};
+            float previousScaleX=1.0f,previousScaleY=1.0f;
+            SDL_BlendMode previousBlend=SDL_BLENDMODE_NONE;
+            Uint8 previousR=0,previousG=0,previousB=0,previousA=255;
+            SDL_RenderGetViewport(ren_,&previousViewport);
+            const SDL_bool clipWasEnabled=SDL_RenderIsClipEnabled(ren_);
+            if (clipWasEnabled) SDL_RenderGetClipRect(ren_,&previousClip);
+            SDL_RenderGetScale(ren_,&previousScaleX,&previousScaleY);
+            SDL_GetRenderDrawBlendMode(ren_,&previousBlend);
+            SDL_GetRenderDrawColor(ren_,&previousR,&previousG,&previousB,&previousA);
+            const auto restoreRenderer=[&] {
+                SDL_SetRenderTarget(ren_,previousTarget);
+                SDL_RenderSetScale(ren_,previousScaleX,previousScaleY);
+                SDL_RenderSetViewport(ren_,&previousViewport);
+                SDL_RenderSetClipRect(ren_,clipWasEnabled ? &previousClip : nullptr);
+                SDL_SetRenderDrawBlendMode(ren_,previousBlend);
+                SDL_SetRenderDrawColor(ren_,previousR,previousG,previousB,previousA);
+            };
+
+            bool ok=true;
+            auto& opaque=shadowAtlasOpaqueScratch_;
+            for (size_t p=0;p<usedPages && ok;++p) {
+                if (SDL_SetRenderTarget(ren_,shadowSilhouettePages_[p].texture)!=0) {ok=false;break;}
+                SDL_RenderSetScale(ren_,1.0f,1.0f);
+                SDL_RenderSetViewport(ren_,nullptr);
+                SDL_RenderSetClipRect(ren_,nullptr);
+                SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_NONE);
+                SDL_SetRenderDrawColor(ren_,0,0,0,0);
+                if (SDL_RenderClear(ren_)!=0) {ok=false;break;}
+                // Tiles on a page never overlap. Batch opaque faces from every
+                // unit first, then group cutout faces by their coverage page. This
+                // avoids per-unit texture changes without changing unit silhouette
+                // coverage or the separate per-unit composite pass.
+                opaque.clear();
+                auto& maskBatches=shadowAtlasMaskScratch_;
+                for (auto& [texture,vertices]:maskBatches) vertices.clear();
+                for (const Work& w:work) if (w.page==p) {
+                    const size_t base=opaque.size();
+                    opaque.resize(base+w.geom->shadowVerts.size());
+                    for (size_t i=0;i<w.geom->shadowVerts.size();++i) {
+                        const auto& point=w.geom->shadowVerts[i];
+                        opaque[base+i]={point.x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f,
+                                        point.y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f};
+                    }
+                    int offset=0;
+                    for (const auto& run:w.geom->maskedShadowRuns) {
+                        SDL_Texture* coverage=shadowCoverageTextures_.at(run.first);
+                        auto& batch=maskBatches[coverage];
+                        const size_t oldSize=batch.size();
+                        batch.resize(oldSize+size_t(run.second));
+                        for (int i=0;i<run.second;++i) {
+                            SDL_Vertex v=w.geom->maskedShadowVerts[size_t(offset+i)];
+                            v.position.x=v.position.x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f;
+                            v.position.y=v.position.y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f;
+                            batch[oldSize+size_t(i)]=v;
+                        }
+                        offset+=run.second;
+                    }
+                }
+                SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_NONE);
+                SDL_Color opaqueBlack{0,0,0,255};
+                static const float zeroUv[2]={0.0f,0.0f};
+                if (!opaque.empty() && SDL_RenderGeometryRaw(ren_,nullptr,&opaque[0].x,
+                    sizeof(SDL_FPoint),&opaqueBlack,0,zeroUv,0,int(opaque.size()),nullptr,0,0)!=0) {
+                    ok=false;break;
+                }
+                for (auto& [coverage,vertices]:maskBatches) {
+                    if (vertices.empty()) continue;
+                    if (SDL_RenderGeometry(ren_,coverage,vertices.data(),
+                                           int(vertices.size()),nullptr,0)!=0) {ok=false;break;}
+                }
+            }
+            restoreRenderer();
+            if (!ok) return fail("target draw operation failed");
+            shadowAtlasPackedPages=usedPages;
+            for (const Work& w:work) {
+                UnitGeom& g=*w.geom;
+                g.shadowAtlasPage=shadowSilhouettePages_[w.page].texture;
+                g.shadowAtlasSrc={w.slotX+1,w.slotY+1,w.width,w.height};
+                g.shadowAtlasDst={float(w.pixelX)/scaleX,float(w.pixelY)/scaleY,
+                                  float(w.width)/scaleX,float(w.height)/scaleY};
+            }
+            return true;
+        };
+
         // Pass 1: every normal unit's shadow, as a projected silhouette of its model,
-        // one untextured MOD draw per unit. (It used to describe soft blobs and batched
-        // FBI shadow sprites; neither survives -- retail's Glide path projects the model
-        // and never uses the sprite art for units.)
+        // matching the model projection used by retail's Glide renderer.
         //
         // GROUND units only sit under all bodies. An airborne flyer's shadow is held
         // back and drawn between the ground bodies and the air bodies, so it falls ON
         // what is beneath it, which is where retail's per-unit draw order puts it.
-        // (Special units draw their own shadow inside drawUnit in pass 2.)
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         const double _sh0 = double(SDL_GetPerformanceCounter());
+        if (!kNoShadow && !tak::devEnv("TAK_SHADOW_DIRECT")) {
+            shadowSilhouetteAtlasActive_=buildShadowSilhouetteAtlas();
+            shadowAtlasFallback=shadowSilhouetteAtlasActive_ ? "active" : shadowAtlasFallback;
+            static int lastState=-1;
+            static const char* lastReason=nullptr;
+            static size_t lastUnits=SIZE_MAX,lastPages=SIZE_MAX;
+            const int state=shadowSilhouetteAtlasActive_ ? 1 : 0;
+            if (tak::devEnv("TAK_PROF") && (shadowAtlasFallback!=lastReason || state!=lastState ||
+                shadowAtlasPackedUnits!=lastUnits || shadowAtlasPackedPages!=lastPages)) {
+                std::fprintf(stderr,"shadow-atlas %s: %zu units, %zu pages (%s)\n",
+                    state ? "active" : "fallback",shadowAtlasPackedUnits,shadowAtlasPackedPages,
+                    shadowAtlasFallback);
+                lastState=state;lastUnits=shadowAtlasPackedUnits;lastPages=shadowAtlasPackedPages;
+                lastReason=shadowAtlasFallback;
+            }
+        }
         airShadows_.clear();
         airShadowOp_ = SIZE_MAX;
-        // Draw each unit's shadow STRAIGHT from the buffer its worker filled, with a
-        // MULTIPLY blend. One SDL_RenderGeometry per unit rather than one for everybody.
-        //
-        // That sounds backwards -- ~1150 draw calls instead of 1 -- but the batch was
-        // never the cheap option. Profiled, the shadow pass split 1.6ms assembling the
-        // batch against 3.2ms drawing it: concatenating every unit's vertices into one
-        // array copies 13.5 MB per frame, and SDL then copies the whole thing AGAIN into
-        // its own vertex buffer. Skipping our copy removes that half outright. The draw
-        // calls cost nothing measurable, because the render state is identical across
-        // them and SDL coalesces them into the same GL batch anyway. Measured at ~1150
-        // visible units: shadow 4.7ms -> 3.1ms, 51 -> 56 fps.
-        //
-        // Output is IDENTICAL, not merely close: the same vertices are submitted exactly
-        // once either way, and MOD (dst = src * dst) is commutative, so how the triangles
-        // are grouped into calls cannot change a pixel. Verified rather than argued --
-        // drawing both ways into the same frame and reading both back gives 0 differing
-        // pixels over 22,263 shadow pixels of real geometry.
-        //
-        // There used to be a coverage MASK here: rasterise every shadow triangle into a
-        // full-screen render target, then composite it once, so a silhouette that folds
-        // over itself (a wing across a body) could not darken twice. That is what
-        // retail's span buffer buys. It was dropped because the per-frame render-target
-        // round trip is genuinely expensive at 2x AA on a 7680x2160 desktop -- a 133 MB
-        // texture cleared, drawn into and blitted back every frame.
-        //
-        // MOD with the same 0.55 grey gets the level exactly right everywhere the
-        // silhouette does not overlap itself, which is most of it -- strictly closer to
-        // retail than the per-triangle ALPHA this originally used, where no part of the
-        // shadow was the right darkness. Where it does overlap it goes to 0.30 instead
-        // of 0.55, on a fold, which is the trade for losing the round trip.
+        // Composite each unit's baked silhouette once. The direct fallback uses
+        // compact worker buffers and ordered cutout runs, avoiding a second
+        // full-scene copy. Ground and airborne layers retain their existing
+        // placement relative to bodies and scenery.
         if (!kNoShadow) {
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_MOD);
             for (const auto& it : items) {
@@ -287,7 +491,7 @@
                 const int gs = geomSlot(it.u->id);
                 if (gs < 0) continue;
                 const UnitGeom& gsh = geomPool_[size_t(gs)];
-                if (gsh.shadowVerts.empty() && gsh.maskedShadows.empty()) continue;
+                if (gsh.shadowVerts.empty() && gsh.maskedShadowVerts.empty()) continue;
                 // An AIRBORNE flyer's shadow falls on whatever is beneath it, so drawing
                 // it here -- before any body -- lets every ground unit and feature paint
                 // over it. Retail has no global shadow pre-pass at all: the Glide path
@@ -1684,6 +1888,12 @@
     void GameView::invalidateRenderTargets() {
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
         atlasTex_.clear();
+        for (auto& page:shadowSilhouettePages_) gpuvram::destroy(page.texture);
+        shadowSilhouettePages_.clear();
+        shadowSilhouetteWidth_=shadowSilhouetteHeight_=0;
+        shadowAtlasOpaqueScratch_.clear();
+        shadowAtlasMaskScratch_.clear();
+        shadowSilhouetteAtlasActive_=false;
         glowDirty_ = true;   // whatever was painted died with the atlases
     }
 
@@ -1695,8 +1905,12 @@
         for (auto& [n, frames] : textures_)
             for (SDL_Texture* t : frames) if (t) gpuvram::destroy(t);
         textures_.clear();
-        for (auto& [name,frames]:shadowMasks_)
-            for (auto* texture:frames) if (texture) gpuvram::destroy(texture);
+        for (auto& page:shadowMaskPages_) {
+            if(page.texture)gpuvram::destroy(page.texture);
+            if(page.coverage)gpuvram::destroy(page.coverage);
+        }
+        shadowCoverageTextures_.clear();
+        shadowMaskPages_.clear();
         shadowMasks_.clear();
         for (auto& row : guiTex_)
             for (SDL_Texture* t : row) if (t) gpuvram::destroy(t);
@@ -1810,7 +2024,8 @@
         // shadow pass submits whatever is there -- a ghost site would have drawn
         // the shadow of whatever unit last used its slot.
         g.shadowVerts.clear();
-        g.maskedShadows.clear();
+        g.maskedShadowVerts.clear();
+        g.maskedShadowRuns.clear();
         g.canFly = u.type && u.type->canFly;
         if (u.underConstruction && !u.buildBegun) return;   // ghost drawn serially
         auto ut = unitType_.find(u.id);   // defensive: a throw here would abort
@@ -1954,7 +2169,8 @@
                             zm, scratch);
         else {
             g.shadowVerts.clear();
-            g.maskedShadows.clear();
+            g.maskedShadowVerts.clear();
+            g.maskedShadowRuns.clear();
         }
     }
 
@@ -1964,7 +2180,8 @@
                                    const Anim* anim, float facing, float zm,
                                    std::vector<Tri>& scratch) {
         g.shadowVerts.clear();
-        g.maskedShadows.clear();
+        g.maskedShadowVerts.clear();
+        g.maskedShadowRuns.clear();
         if (u.underConstruction || !castsBlobShadow(u.type)) return;
         scratch.clear();
         // Only a body that is actually LYING FLAT culls. See the shadow branch in
@@ -1978,22 +2195,143 @@
         // corpsePhase && !corpseStatue is exactly "finished falling, lying on the
         // ground", which is the only case the flat-face artifact arises in.
         const bool corpseCull = u.corpsePhase && !u.corpseStatue;
-        collect(scratch, nullptr, root, modelBodyTransform(u.bodyPitch,u.bodyRoll), anim, facing, u.player, false, true,
-                /*shadow=*/true, nullptr, &meta, corpseCull);
         const float sx = g.ax + kShadowLX * g.alt * zm;
         const float sy = g.ay + (kProjY - kShadowLZ) * g.alt * zm;
-        g.shadowVerts.reserve(scratch.size() * 3);
-        for (const Tri& t : scratch) {
-            if (t.tex) {
-                auto tri=t;
-                for (auto& v:tri.v)
-                    v.position={sx+v.position.x*zm,sy+v.position.y*zm};
-                g.maskedShadows.push_back(tri);
-            } else {
-                for (int k=0;k<3;++k)
-                    g.shadowVerts.push_back({sx+t.v[k].position.x*zm,
-                                             sy+t.v[k].position.y*zm});
+        const float cy=std::cos(facing),sn=std::sin(facing);
+        // This traversal emits opaque positions directly. The body collector's
+        // texture/atlas lookup, UVs, colours, depth and full Tri staging are not
+        // needed for an opaque shadow. Keep its piece/fan order and arithmetic.
+        struct ShadowVertex { SDL_FPoint position;float x,y,z;bool valid; };
+        thread_local std::vector<ShadowVertex> vertices;
+        const auto collectShadow=[&](auto&& self,const tak::tdo::Object& object,
+                                     const Xform& parent,const PieceMeta* cached,bool isRoot)->void {
+            const auto* piece=pieceFor(anim,object.name);
+            const Xform transform=scriptTransform(parent,object.x,object.y,object.z,piece);
+            PieceMeta local;
+            if (!cached) { pieceMetaFor(object,isRoot,local);cached=&local; }
+            if (!cached->skip && !(piece && !piece->visible)) {
+                for (size_t primitiveIndex=0;primitiveIndex<object.primitives.size();++primitiveIndex) {
+                    const auto& primitive=object.primitives[primitiveIndex];
+                    if (primitive.indices.size()<3) continue;
+                    SDL_Texture* mask=nullptr;
+                    SDL_FRect maskUV{0,0,1,1};
+                    const std::vector<ShadowMaskFrame>* masks=nullptr;
+                    bool animated=false;
+                    const auto& name=primitiveIndex<cached->primTex.size()
+                        ? cached->primTex[primitiveIndex] : primitive.texture;
+                    if (primitiveIndex<cached->primShadowMasks.size()) {
+                        masks=cached->primShadowMasks[primitiveIndex];
+                        animated=cached->primAnimated[primitiveIndex];
+                    } else {
+                        const auto found=shadowMasks_.find(name);
+                        if (found!=shadowMasks_.end()) masks=&found->second;
+                        animated=animatedTex_.count(name)!=0;
+                    }
+                    if (masks) {
+                        const size_t frame=animated ? modelTextureAnimations_.at(name).frame
+                            : size_t(colorSlot_[u.player&7])%masks->size();
+                        if (frame<masks->size()) {mask=(*masks)[frame].texture;maskUV=(*masks)[frame].uv;}
+                    }
+                    vertices.resize(primitive.indices.size());
+                    for (size_t i=0;i<primitive.indices.size();++i) {
+                        auto& vertex=vertices[i];
+                        const size_t index=size_t(primitive.indices[i])*3;
+                        vertex.valid=index+2<object.vertices.size();
+                        if (!vertex.valid) continue;
+                        float position[3];
+                        transform.apply(object.vertices[index],object.vertices[index+1],
+                                        object.vertices[index+2],position);
+                        vertex.x=position[0]*cy+position[2]*sn;
+                        vertex.y=position[1];
+                        vertex.z=-position[0]*sn+position[2]*cy;
+                        vertex.position={vertex.x+kShadowLX*vertex.y,
+                                         -(vertex.z+kShadowLZ*vertex.y)*kProjZ};
+                    }
+                    for (size_t i=1;i+1<primitive.indices.size();++i) {
+                        const size_t indices[3]={0,i,i+1};
+                        const auto& a=vertices[0];const auto& b=vertices[i];const auto& c=vertices[i+1];
+                        if (!a.valid || !b.valid || !c.valid) continue;
+                        if (corpseCull) {
+                            const float ax=b.x-a.x,ay=b.y-a.y,az=b.z-a.z;
+                            const float bx=c.x-a.x,by=c.y-a.y,bz=c.z-a.z;
+                            const float ny=az*bx-ax*bz,nz=ax*by-ay*bx;
+                            if (ny*kSortY-nz*kSortZ<=0.0f) continue;
+                        }
+                        if (mask) {
+                            if (g.maskedShadowRuns.empty() || g.maskedShadowRuns.back().first!=mask)
+                                g.maskedShadowRuns.push_back({mask,0});
+                            g.maskedShadowRuns.back().second+=3;
+                            static constexpr SDL_FPoint uv[4]={{0,0},{1,0},{1,1},{0,1}};
+                            for (int k=0;k<3;++k) {
+                                const auto& point=vertices[indices[k]].position;
+                                g.maskedShadowVerts.push_back({{sx+point.x*zm,sy+point.y*zm},
+                                    {255,255,255,255},{maskUV.x+uv[indices[k]&3].x*maskUV.w,
+                                                      maskUV.y+uv[indices[k]&3].y*maskUV.h}});
+                            }
+                        } else {
+                            for (size_t index:indices) {
+                                const auto& point=vertices[index].position;
+                                g.shadowVerts.push_back({sx+point.x*zm,sy+point.y*zm});
+                            }
+                        }
+                    }
+                }
             }
+            // Hidden parents still transform their visible children.
+            for (size_t i=0;i<object.children.size();++i)
+                self(self,object.children[i],transform,
+                     i<cached->children.size() ? &cached->children[i] : nullptr,false);
+        };
+        collectShadow(collectShadow,root,modelBodyTransform(u.bodyPitch,u.bodyRoll),&meta,true);
+        float minX=std::numeric_limits<float>::infinity();
+        float minY=std::numeric_limits<float>::infinity();
+        float maxX=-minX,maxY=-minY;
+        for (const SDL_FPoint& p:g.shadowVerts) {
+            minX=std::min(minX,p.x); minY=std::min(minY,p.y);
+            maxX=std::max(maxX,p.x); maxY=std::max(maxY,p.y);
+        }
+        for (const SDL_Vertex& v:g.maskedShadowVerts) {
+            minX=std::min(minX,v.position.x); minY=std::min(minY,v.position.y);
+            maxX=std::max(maxX,v.position.x); maxY=std::max(maxY,v.position.y);
+        }
+        g.shadowBounds={minX,minY,maxX,maxY};
+
+        // Differential validation of the optimized path, including alpha masks
+        // and corpse culling. Disabled during normal rendering and profiling.
+        static const bool verify=tak::devEnv("TAK_SHADOW_VERIFY")!=nullptr;
+        if (verify) {
+            collect(scratch,nullptr,root,modelBodyTransform(u.bodyPitch,u.bodyRoll),anim,facing,
+                    u.player,false,true,true,nullptr,&meta,corpseCull);
+            size_t opaque=0,masked=0,maskRun=0;
+            int inRun=0;
+            auto samePoint=[](SDL_FPoint a,SDL_FPoint b){return a.x==b.x && a.y==b.y;};
+            for (const auto& triangle:scratch) {
+                if (triangle.tex) {
+                    if (maskRun<g.maskedShadowRuns.size() && inRun==g.maskedShadowRuns[maskRun].second) {
+                        ++maskRun;inRun=0;
+                    }
+                    if (maskRun>=g.maskedShadowRuns.size() ||
+                        g.maskedShadowRuns[maskRun].first!=triangle.tex ||
+                        inRun+3>g.maskedShadowRuns[maskRun].second || masked+3>g.maskedShadowVerts.size())
+                        throw std::runtime_error("shadow fast path mask/order mismatch");
+                    inRun+=3;
+                    for (int k=0;k<3;++k) {
+                        const auto& before=triangle.v[k];const auto& after=g.maskedShadowVerts[masked++];
+                        if (!samePoint(after.position,{sx+before.position.x*zm,sy+before.position.y*zm}) ||
+                            !samePoint(after.tex_coord,before.tex_coord) ||
+                            after.color.r!=before.color.r || after.color.g!=before.color.g ||
+                            after.color.b!=before.color.b || after.color.a!=before.color.a)
+                            throw std::runtime_error("shadow fast path masked vertex mismatch");
+                    }
+                } else for (const auto& vertex:triangle.v) {
+                    if (opaque>=g.shadowVerts.size() || !samePoint(g.shadowVerts[opaque++],
+                        {sx+vertex.position.x*zm,sy+vertex.position.y*zm}))
+                        throw std::runtime_error("shadow fast path opaque vertex/order mismatch");
+                }
+            }
+            if (opaque!=g.shadowVerts.size() || masked!=g.maskedShadowVerts.size() ||
+                (masked && (maskRun+1!=g.maskedShadowRuns.size() || inRun!=g.maskedShadowRuns.back().second)))
+                throw std::runtime_error("shadow fast path triangle count mismatch");
         }
     }
 
@@ -2033,11 +2371,8 @@
             SDL_Rect top{0, 0, outW, line};   // only pixels above the wall top show
             SDL_RenderSetClipRect(ren_, &top);
         }
-        // No shadow here. Pass 1 already drew EVERY casting unit's shadow, specials
-        // included. Drawing a second one here would land on top of that and, under the
-        // MOD blend, darken it twice over. (This used to say the pass composited a
-        // coverage mask; the mask is gone, but the conclusion is unchanged -- one
-        // shadow per unit, drawn in pass 1.)
+        // Shadows are emitted once by the dedicated ground/air passes. Special
+        // body rendering must not composite the same shadow a second time.
         // Disco dance floor: a pulsing, hue-cycling glow disc under a dancing monarch.
         if (dancing(u)) {
             float t = animClock_;
