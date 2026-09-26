@@ -1232,6 +1232,19 @@ int main(int argc, char** argv) {
                          gameView->netDelay(), gameView->netRttMs(), f, s,
                          f ? 100.0 * double(s) / double(f) : 0.0);
         }
+        // --shot also works for the multiplayer/campaign harness, which bypasses
+        // the interactive render loop. Capture the final synchronized snapshot.
+        if (!shot.empty()) {
+            int w=0,h=0;
+            SDL_GetRendererOutputSize(ren,&w,&h);
+            gameView->prepare(w,h);
+            gameView->finishTerrain();
+            gameView->beginFrame();
+            gameView->cosmeticStep(0);
+            gameView->draw(w,h);
+            screenshot(ren,w,h,shot);
+            gameView->endFrame();
+        }
         mp->disconnect();
         return gameView->netError().empty() ? 0 : 1;
     }

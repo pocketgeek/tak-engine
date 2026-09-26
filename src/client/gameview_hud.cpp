@@ -1794,48 +1794,61 @@ namespace {
     void GameView::drawObjectivesPanel(int winW, int /*winH*/) {
         if (missionObjectives_.empty()) return;
         const float x0 = 12, top = 92;
-        if (!showObjectives_) {
-            hudFont_.draw(ren_, "[O] OBJECTIVES", x0, top, 1.2f, {160, 168, 186, 210});
-            return;
-        }
-        const float s = 1.4f, lh = 15 * s;
-        const float maxW = std::min(360.0f, winW * 0.32f);
-        // Word-wrap each objective to the panel width (proportional font -> measure).
-        std::vector<std::pair<std::string, bool>> lines;   // (text, isFirstOfObjective)
-        for (const std::string& obj : missionObjectives_) {
+        // Integer-sized glyphs have predictable bounds: the decorative book font
+        // uses baseline offsets that made the old 21px rows overlap each other.
+        const float s = 2.0f, lh = 22.0f;
+        const float maxW = std::min(480.0f, winW * 0.40f);
+        std::vector<std::pair<std::string, bool>> lines;
+        if (showObjectives_) for (const std::string& obj : missionObjectives_) {
             std::string line, word;
             bool first = true;
+            auto flush = [&] {
+                if (line.empty()) return;
+                lines.push_back({line, first});
+                first = false;
+                line.clear();
+            };
             auto push = [&] {
                 if (word.empty()) return;
-                std::string cand = line.empty() ? word : line + " " + word;
-                if (hudFont_.width(cand, s) <= maxW) line = cand;
-                else { lines.push_back({line, first}); first = false; line = word; }
+                if (!line.empty() && blockWidth(line + " " + word, s) > maxW) flush();
+                if (!line.empty()) line += ' ';
+                for (char c : word) {
+                    if (blockWidth(line + c, s) > maxW) flush();
+                    line += c;
+                }
                 word.clear();
             };
-            for (char c : obj) { if (c == ' ') push(); else word += c; }
+            for (char c : obj) {
+                if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+                    push();
+                    if (c == '\n') flush();
+                } else word += c;
+            }
             push();
-            if (!line.empty()) lines.push_back({line, first});
+            flush();
         }
-        float panelW = maxW + 34, panelH = 26 + float(lines.size()) * lh + 22;
+        const float panelW = showObjectives_ ? maxW + 34 : blockWidth("[O] OBJECTIVES", s) + 20;
+        const float panelH = showObjectives_ ? 52 + float(lines.size()) * lh : 30;
         SDL_FRect bg{x0 - 6, top - 6, panelW, panelH};
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren_, 14, 13, 18, 205);
+        SDL_SetRenderDrawColor(ren_, 14, 13, 18, 235);
         SDL_RenderFillRectF(ren_, &bg);
-        SDL_SetRenderDrawColor(ren_, 96, 84, 60, 235);
+        SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
         SDL_RenderDrawRectF(ren_, &bg);
-        float y = top;
-        hudFont_.draw(ren_, "OBJECTIVES", x0, y, 1.35f, {224, 196, 120, 255});
-        y += 20;
+        blockText(showObjectives_ ? "OBJECTIVES" : "[O] OBJECTIVES",
+                  x0, top, s, {240, 214, 148, 255});
+        if (!showObjectives_) return;
+        float y = top + 26;
         for (const auto& [text, isFirst] : lines) {
             if (isFirst) {
-                SDL_FRect dot{x0 + 2, y + 4, 4, 4};
-                SDL_SetRenderDrawColor(ren_, 210, 180, 90, 255);
+                SDL_FRect dot{x0 + 2, y + 5, 4, 4};
+                SDL_SetRenderDrawColor(ren_, 240, 214, 148, 255);
                 SDL_RenderFillRectF(ren_, &dot);
             }
-            hudFont_.draw(ren_, text, x0 + 14, y, s, {206, 212, 228, 255});
+            blockText(text, x0 + 14, y, s, {240, 242, 248, 255});
             y += lh;
         }
-        hudFont_.draw(ren_, "[O] hide", x0, y + 4, 1.1f, {140, 146, 162, 200});
+        blockText("[O] hide", x0, y + 4, s, {190, 198, 212, 255});
     }
 
     void GameView::drawPanel(int winW, int winH) {

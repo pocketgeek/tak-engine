@@ -1435,7 +1435,9 @@
                         if (o.targetId > 0) targets.insert(o.targetId);
             for (int tid : targets) {
                 const auto* t = frameUnitP(tid);
-                if (!t || !t->alive() || !t->type) continue;
+                // Orders survive loss of sight, but must not reveal a hidden
+                // target's current location through the fog.
+                if (!t || !t->alive() || !t->type || !canPickUnit(*t)) continue;
                 SDL_FPoint p = unitScreen(frameUnit(tid));   // includes flyer altitude
                 float cx = p.x, cy = p.y + 12.0f * zms;   // undo unitScreen's body bias
                 if (cx < -40 || cx > mvw + 40 || cy < -40 || cy > winH + 40) continue;
