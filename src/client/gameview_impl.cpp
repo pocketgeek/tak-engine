@@ -1537,9 +1537,13 @@
             smokeTickQueue_.push_back(std::move(smoke));
             // Capture every simulation step, including steps whose render
             // snapshot will be superseded before the next display frame.
-            for (const auto& unit:world_.units())
+            for (const auto& unit:world_.units()) {
                 weaponAnimationQueue_.push(world_.tickCount(),unit.id,unit.weaponAnimations,
                     unit.firedWeapons,unit.x.toFloat(),unit.z.toFloat());
+                if(unit.alive() && unit.type && unit.type->canFly)
+                    flightAnimationQueue_.capture(world_.tickCount(),unit.id,unit.flightGroundMode==2,
+                        unit.flightBeginCallbackSerial,unit.flightLandingCallbackSerial);
+            }
         }
         if (!world_.transportEffects().empty()) {
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
@@ -1997,8 +2001,12 @@
         std::deque<tak::sim::World::TransportFx> transportEffects;
         std::unordered_map<int,std::vector<tak::RetailWeaponAnimation>> weaponAnimations;
         std::unordered_map<int,std::vector<tak::WeaponAnimationQueue::Shot>> weaponShots;
+        std::unordered_map<int,std::vector<tak::RetailFlightAnimationQueue::Snapshot>> flightSnapshots;
         {
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
+            flightAnimationQueue_.drain(front().gameTick,[&](const auto& snapshot) {
+                flightSnapshots[snapshot.unit].push_back(snapshot);
+            });
             weaponAnimationQueue_.drain(front().gameTick,[&](int unit,const auto& callback) {
                 weaponAnimations[unit].push_back(callback);
             },[&](int unit,const auto& shot) {
@@ -2177,21 +2185,29 @@
                     // with tools/re/emuphase.py + the cob VM; pinned by conjure_test,
                     // which drives this exact sequence through the real Vm. No reset()
                     // -- the loops must keep running.
+                    const auto startFlightCallback=[&](auto call) {
+                        switch (call) {
+                            case tak::RetailFlightAnimationCall::BeginFlight:
+                                a.vm->start("BeginFlight");
+                                break;
+                            case tak::RetailFlightAnimationCall::BeginLanding:
+                                a.vm->start("BeginLanding");
+                                break;
+                            case tak::RetailFlightAnimationCall::EndTransport:
+                                a.vm->start("EndTransport");
+                                break;
+                        }
+                    };
+                    if(const auto snapshots=flightSnapshots.find(u.id);snapshots!=flightSnapshots.end())
+                        for(const auto& snapshot:snapshots->second)
+                            tak::updateRetailFlightAnimation(a.flightAnimation,snapshot.airborne,
+                                snapshot.beginFlightSerial,snapshot.landingSerial,
+                                u.type->canTransport,startFlightCallback);
+                    // Also initialize newly registered units and retain the
+                    // existing mode fallback when no transition packet is due.
                     tak::updateRetailFlightAnimation(a.flightAnimation,air,
                         u.flightBeginCallbackSerial,u.flightLandingCallbackSerial,
-                        u.type->canTransport,[&](auto call) {
-                            switch (call) {
-                                case tak::RetailFlightAnimationCall::BeginFlight:
-                                    a.vm->start("BeginFlight");
-                                    break;
-                                case tak::RetailFlightAnimationCall::BeginLanding:
-                                    a.vm->start("BeginLanding");
-                                    break;
-                                case tak::RetailFlightAnimationCall::EndTransport:
-                                    a.vm->start("EndTransport");
-                                    break;
-                            }
-                        });
+                        u.type->canTransport,startFlightCallback);
                 }
                 // Other flyers (Priest and ambient birds) run their own
                 // Create-started controllers, polling speed/vertical motion.

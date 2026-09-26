@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
+#include <unordered_map>
 
 namespace tak {
 
@@ -55,5 +57,36 @@ void updateRetailFlightAnimation(RetailFlightAnimationState& state,
         state.landingCallbackPending = airborne;
     }
 }
+
+// Preserve the ordering of transitions on different simulation ticks when the
+// renderer skips snapshots. Callers synchronize capture/drain across threads.
+class RetailFlightAnimationQueue {
+public:
+    struct Snapshot {
+        uint32_t tick;
+        int unit;
+        bool airborne;
+        uint32_t beginFlightSerial,landingSerial;
+    };
+private:
+    std::unordered_map<int,Snapshot> latest_;
+    std::deque<Snapshot> pending_;
+public:
+    void capture(uint32_t tick,int unit,bool airborne,uint32_t begin,uint32_t landing) {
+        const auto previous=latest_.find(unit);
+        if(previous!=latest_.end() && previous->second.airborne==airborne &&
+           previous->second.beginFlightSerial==begin && previous->second.landingSerial==landing)return;
+        Snapshot snapshot{tick,unit,airborne,begin,landing};
+        latest_.insert_or_assign(unit,snapshot);
+        if(pending_.size()>=65536)pending_.pop_front();
+        pending_.push_back(snapshot);
+    }
+    template<class Consume> void drain(uint32_t throughTick,Consume&& consume) {
+        while(!pending_.empty() && int32_t(throughTick-pending_.front().tick)>=0) {
+            consume(pending_.front());
+            pending_.pop_front();
+        }
+    }
+};
 
 } // namespace tak

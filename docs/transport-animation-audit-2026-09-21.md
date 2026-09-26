@@ -11005,3 +11005,21 @@ draw selections. No new standalone fixture or retail GUI launch.
 Release and optimized Debug clients rebuilt. Four targeted Release animation
 CTests passed (0.35s), as did the optimized Debug weapon_impact_effect_route
 renderer test with the new arrow check (1.41s). git diff --check passed.
+
+## Flight callback ordering across skipped render frames (2026-09-25)
+
+Fixed a client animation ordering defect: landing on one simulation tick and
+taking off on a later tick before the next rendered frame previously collapsed
+into final counters, which dispatched BeginFlight before BeginLanding. The client
+now captures changed flight states after each simulation tick and drains them in
+order through the displayed frame. The existing helper retains initialization
+and physical-touchdown duplicate suppression. World movement, flight physics,
+and pathfinding are unchanged. This preserves cross-tick ordering; it does not
+claim to reconstruct multiple callbacks within one simulation tick.
+
+Extended the existing retail_visual regression to check landing then takeoff
+across skipped frames, future-frame gating, once-only delivery, and no repeated
+landing on physical touchdown. Release and optimized Debug takclient and
+retail_visual_test rebuilt successfully. The five Release tests retail_script,
+retail_visual, animation_roster, cobanim, and conjure passed (0.92 seconds).
+No retail GUI was launched and no new standalone fixture was added.

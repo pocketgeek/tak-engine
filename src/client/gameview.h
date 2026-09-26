@@ -3232,6 +3232,7 @@ private:
         std::optional<std::array<int32_t,3>> worldPosition;
     };
     std::vector<ExplosionGlow> explosionGlows_;
+    tak::RetailFlightAnimationQueue flightAnimationQueue_; // guarded by hitQueueMutex_
     tak::WeaponAnimationQueue weaponAnimationQueue_; // guarded by hitQueueMutex_
     std::deque<tak::sim::World::TransportFx> transportEffectQueue_; // guarded by hitQueueMutex_
     struct FeatureSmokeEmission {

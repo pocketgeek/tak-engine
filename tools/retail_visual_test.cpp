@@ -306,6 +306,37 @@ int main(int argc,char** argv) {
         if(argc==1)
             std::puts("PASS: flight/landing call-ins are mirrored once and suppress duplicate mode-transition fallbacks");
     }
+    {
+        using Call=tak::RetailFlightAnimationCall;
+        tak::RetailFlightAnimationQueue queue;
+        tak::RetailFlightAnimationState state;
+        std::vector<Call> calls;
+        const auto start=[&](Call call){calls.push_back(call);};
+        const auto consume=[&](const auto& snapshot) {
+            if(snapshot.unit!=7)std::abort();
+            tak::updateRetailFlightAnimation(state,snapshot.airborne,
+                snapshot.beginFlightSerial,snapshot.landingSerial,true,start);
+        };
+        queue.capture(1,7,true,1,0);queue.drain(1,consume);calls.clear();
+        // Landing and takeoff happen on separate sim ticks, with no rendered
+        // frame between. Collapsing these to counters reverses their order.
+        queue.capture(2,7,true,1,1);
+        queue.capture(3,7,false,1,1);
+        queue.capture(4,7,true,2,1);
+        queue.drain(4,consume);
+        tak::updateRetailFlightAnimation(state,true,2,1,true,start);
+        if(calls!=std::vector<Call>{Call::EndTransport,Call::BeginLanding,Call::BeginFlight}) {
+            std::fprintf(stderr,"skipped render frames reordered landing and takeoff callbacks\n");return 1;
+        }
+        calls.clear();queue.drain(4,consume);
+        queue.capture(5,7,true,2,1);queue.capture(6,7,true,2,2);
+        queue.drain(5,consume);
+        if(!calls.empty())return 1; // unchanged and future snapshots do not replay
+        queue.drain(6,consume);
+        if(calls!=std::vector<Call>{Call::EndTransport,Call::BeginLanding})return 1;
+        calls.clear();queue.capture(7,7,false,2,2);queue.drain(7,consume);
+        if(!calls.empty())return 1; // physical touchdown must not duplicate landing
+    }
     if(argc==2 && std::strcmp(argv[1],"--smoke-viewport")==0) {
         float x,y,width,height;
         while(std::scanf("%f %f %f %f",&x,&y,&width,&height)==4)
