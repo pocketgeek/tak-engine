@@ -1,4 +1,5 @@
 #include "client/retailquality.h"
+#include "client/weaponanimationqueue.h"
 #include "client/retaileffectframe.h"
 #include "client/retailfeatureclock.h"
 #include "client/retaileffectvisibility.h"
@@ -122,6 +123,36 @@ static bool testDeathSfxLifecycle() {
 int main(int argc,char** argv) {
     if(argc==1) {
         if(!testScriptEffectPosition() || !testDeathSfxLifecycle())return 1;
+        {
+            // Three simulation steps between display frames: an intervening
+            // shot and target clear must not disappear with the old snapshot.
+            tak::WeaponAnimationQueue queue;
+            tak::RetailWeaponAnimations events;
+            events.add(tak::RetailWeaponAnimation::Aim,2,0x1200,0x3400);
+            queue.push(100,7,events);
+            events.clear();events.add(tak::RetailWeaponAnimation::Fire,2);
+            queue.push(101,7,events);
+            events.clear();events.add(tak::RetailWeaponAnimation::Clear,2);
+            queue.push(102,7,events);
+            events.clear();events.add(tak::RetailWeaponAnimation::Aim,0);
+            queue.push(103,8,events);
+            std::vector<std::tuple<int,int,int,int,int>> actual;
+            const auto collect=[&](int id,const tak::RetailWeaponAnimation& e) {
+                actual.emplace_back(id,int(e.kind),e.slot,e.heading,e.pitch);
+            };
+            queue.drain(102,collect);
+            const decltype(actual) expected{{7,tak::RetailWeaponAnimation::Aim,2,0x1200,0x3400},
+                {7,tak::RetailWeaponAnimation::Fire,2,0,0},
+                {7,tak::RetailWeaponAnimation::Clear,2,0,0}};
+            if(actual!=expected) {
+                std::fprintf(stderr,"skipped render snapshots lost weapon callbacks or aiming arguments\n");return 1;
+            }
+            queue.drain(102,collect);
+            if(actual!=expected)return 1; // another render frame cannot replay callbacks
+            queue.drain(103,collect);
+            if(actual.size()!=4 || std::get<0>(actual.back())!=8)return 1;
+        }
+
         struct BurnEvent { int id; uint64_t activationSequence; bool emit; };
         std::vector<BurnEvent> events{{13,1,true},{2,2,true},{9,3,true}};
         tak::retailOrderFeatureSmokeNewestFirst(events);

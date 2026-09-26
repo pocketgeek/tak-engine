@@ -11,6 +11,7 @@
 // before SDL's <windows.h> would otherwise pull the incompatible winsock v1.
 #include "net/netcompat.h"
 #include "client/retailsmoke.h"
+#include "client/weaponanimationqueue.h"
 #include "client/retailpointparticle.h"
 #include "client/retailglow.h"
 #include "client/retaildebris.h"
@@ -3232,6 +3233,7 @@ private:
         std::optional<std::array<int32_t,3>> worldPosition;
     };
     std::vector<ExplosionGlow> explosionGlows_;
+    tak::WeaponAnimationQueue weaponAnimationQueue_; // guarded by hitQueueMutex_
     std::deque<tak::sim::World::TransportFx> transportEffectQueue_; // guarded by hitQueueMutex_
     struct FeatureSmokeEmission {
         int id=0;

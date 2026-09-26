@@ -10750,3 +10750,34 @@ comparison. No new fixture or retail GUI launch.
 
 Release takclient rebuilt successfully. All 56 existing Release CTests passed
 (30.22 seconds); git diff --check passed. No rendered gate capture this pass.
+
+
+### Weapon callbacks survive skipped render snapshots (2026-09-25)
+
+GameView previously copied each unit's one-tick weapon callback list into its
+latest render snapshot. Both the simulation worker and accelerated replay can
+advance multiple simulation ticks before rendering, overwriting an intervening
+AimWeapon, FireWeapon or TargetCleared. Watching snapshot generations prevented
+duplicates but could not recover those lost events.
+
+The client now captures weapon callback packets after every simulation step,
+alongside transport and smoke events. Its synchronized queue retains original
+unit, slot, aim angles and per-unit order, and drains only through the currently
+pinned render tick. Consumed callbacks are not replayed on additional display
+frames. Dead/unregistered units still do not receive display callbacks. A
+65,536-packet bound discards the oldest packets only on prolonged rendering
+stalls; this is cosmetic state and does not affect simulation or pathfinding.
+The redundant per-snapshot callback copy was removed.
+
+A regression in the existing retail_visual_test simulates three updates between
+display frames and verifies aim/fire/clear delivery, preserved slot and angle
+arguments, no duplicate delivery, and holding a future unit's event until its
+snapshot tick. This checks the handoff responsible for the demonstrated loss;
+it does not claim exact historical pose playback during a long render stall.
+Shipped script input inventory also found no new missing literal GET_UNIT_VALUE
+handler: used IDs are covered, including LIFBIRD vertical speed and Veruna
+standing-order queries. No new fixture program or retail launch.
+
+Release takclient and affected render-snapshot tests rebuilt. Ten targeted CTests
+passed (retail_visual, retail_script, animation_roster, cobanim, placement and
+transport selections; 6.24 seconds). git diff --check passed.

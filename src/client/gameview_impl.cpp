@@ -1466,6 +1466,10 @@
         {
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
             smokeTickQueue_.push_back(std::move(smoke));
+            // Capture every simulation step, including steps whose render
+            // snapshot will be superseded before the next display frame.
+            for (const auto& unit:world_.units())
+                weaponAnimationQueue_.push(world_.tickCount(),unit.id,unit.weaponAnimations);
         }
         if (!world_.transportEffects().empty()) {
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
@@ -1561,7 +1565,7 @@
             s.corpseStatue = u.corpseStatue >= 0;
             // UnitR::speed is documented px/s and consumers (the flyer altitude servo,
             // the MotionControl percentage) rely on that; the sim keeps px/TICK now.
-            s.justFired = u.justFired; s.firedWeapons = u.firedWeapons; s.fireAnimations = u.fireAnimations; s.weaponAnimations = u.weaponAnimations; s.justBuilt = u.justBuilt;
+            s.justFired = u.justFired; s.firedWeapons = u.firedWeapons; s.fireAnimations = u.fireAnimations; s.justBuilt = u.justBuilt;
             s.disco = world_.discoActive(u.player);
             s.headbang = world_.headbangActive(u.player);
             s.alliedToLocal = alliedToLocal(u.player);
@@ -1922,8 +1926,12 @@
         }
         // Drain mission-time events even when whole render snapshots were skipped.
         std::deque<tak::sim::World::TransportFx> transportEffects;
+        std::unordered_map<int,std::vector<tak::RetailWeaponAnimation>> weaponAnimations;
         {
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
+            weaponAnimationQueue_.drain(front().gameTick,[&](int unit,const auto& callback) {
+                weaponAnimations[unit].push_back(callback);
+            });
             while (!transportEffectQueue_.empty() &&
                    int32_t(front().gameTick-transportEffectQueue_.front().tick)>=0) {
                 transportEffects.push_back(transportEffectQueue_.front());
@@ -2170,8 +2178,8 @@
                 [&](uint32_t surface) { a.vm->start("setSFXoccupy",{int32_t(surface)}); });
             // The simulation owns readiness and callback order. Do not recompute
             // aim from interpolated render poses or a separate display handshake.
-            if (newTick_) for (unsigned i=0;i<u.weaponAnimations.count;++i) {
-                const auto& event=u.weaponAnimations.events[i];
+            if (const auto callbacks=weaponAnimations.find(u.id);callbacks!=weaponAnimations.end())
+            for (const auto& event:callbacks->second) {
                 switch(event.kind) {
                 case tak::RetailWeaponAnimation::Aim:
                     a.vm->start("AimWeapon",{event.heading,event.pitch,event.slot});
