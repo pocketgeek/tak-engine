@@ -428,6 +428,36 @@ int main(int argc, char** argv) {
         sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,crusades);
         const auto* monarch=registry.find("zonhunt");
         sim::UnitType output=*registry.find("zonter");output.buildTime=10000;
+        for (const char* flyerName : {"zonhunt","arafly","tarpries","tarprie2"}) {
+            const auto* flyer=registry.find(flyerName);
+            check(flyer && flyer->canFly && flyer->isBuilder,"shipped flying builder is registered");
+            if(!flyer)continue;
+            sim::World approachWorld;approachWorld.setVisPlayer(-1);
+            approachWorld.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
+            approachWorld.buildNavClasses(registry);
+            const int worker=approachWorld.spawn(flyer,1000,1000,0,0);
+            approachWorld.queueBuild(worker,registry.find("zonter"),1300,1000,false);
+            approachWorld.tick(1.f/30);
+            const auto* unit=approachWorld.unit(worker);
+            check(unit->flightGroundMode==2 && unit->flightBeginCallbackSerial==1,
+                  "each shipped flying builder starts a placed-build takeoff");
+            if(!unit->orders.empty()) {
+                const auto& goal=unit->orders.front();
+                check(goal.flightGoal && goal.flightGoal->flags==0x30 &&
+                      goal.flightGoal->radius==int(flyer->buildDist)*2 &&
+                      goal.flightGoal->point.x==goal.buildX.v && goal.flightGoal->point.z==goal.buildZ.v,
+                      "each flying builder approaches the site with its authored doubled radius");
+            } else check(false,"flying builder retains its distant approach");
+            sim::World remote;remote.setVisPlayer(-1);
+            remote.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
+            remote.buildNavClasses(registry);
+            const int remoteWorker=remote.spawn(flyer,1000,1000,0,0);
+            const int remoteSite=remote.startBuild(remoteWorker,registry.find("zonter"),1600,1000);
+            check(remoteSite!=0,"direct flying build accepts a distant site for approach");
+            for(int tick=0;tick<5;++tick)remote.tick(1.0f/30.0f);
+            check(remoteSite && !remote.unit(remoteSite)->buildBegun,
+                  "direct flying build does not perform work before reaching the native admission radius");
+        }
         for (const auto [dx,dz] : {std::pair{128,0},std::pair{0,128},std::pair{-128,0},std::pair{0,-128},
                                   std::pair{128,128},std::pair{-128,128},std::pair{-128,-128},std::pair{128,-128},
                                   std::pair{64,0},std::pair{0,64}}) {
@@ -437,8 +467,24 @@ int main(int argc, char** argv) {
             const int id=world.spawn(monarch,1000,1000,0,0);
             world.queueBuild(id,&output,float(1000+dx),float(1000+dz),false);
             check(!world.unit(id)->orders.empty(),"placed conjure accepts the selected site");
+            world.tick(1.0f/30.0f);
+            const auto* takingOff=world.unit(id);
+            check(takingOff->flightGroundMode==2 && takingOff->flightBeginCallbackSerial==1,
+                  "placed flying construction starts takeoff before its site exists");
+            check(!takingOff->buildSiteId && !takingOff->orders.empty(),
+                  "first placed-build update retains the approach mission");
+            check(takingOff->flightY==sim::Fixed::fromInt(101),
+                  "already-satisfied flying build approach still applies the native first climb step");
+            if (!takingOff->orders.empty()) {
+                const auto& approach=takingOff->orders.front();
+                check(approach.flightGoal && approach.flightGoal->flags==0x30 &&
+                      approach.flightGoal->radius==int(monarch->buildDist)*2 &&
+                      approach.flightGoal->point.x==approach.buildX.v &&
+                      approach.flightGoal->point.z==approach.buildZ.v,
+                      "flying pre-site approach uses the snapped site and twice builddistance");
+            }
             std::set<std::pair<int,int>> hoverPositions;
-            for (int tick=0;tick<300;++tick) {
+            for (int tick=1;tick<300;++tick) {
                 world.tick(1.0f/30.0f);
                 const auto* b=world.unit(id);
                 if (tick>90 && b->buildSiteId)

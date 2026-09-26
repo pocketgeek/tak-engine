@@ -22,7 +22,7 @@ missed weapon events, transported-passenger effects and authored death effects.
 The chronological entries below document their scope and validation. The earlier
 read-only Git restriction has been lifted for the current session.
 
-The most recent full Release sweep passes all 56 CTests (49.60 seconds), including
+The most recent full Release sweep passes all 56 CTests (31.71 seconds), including
 the recent animation, pickup-cancellation, boarding target-clear and transport reload fixes at the end of this audit. Existing
 native/World ridge-flight unload comparisons also pass all three shipped air
 carrier profiles in both balances: ZONROC, CREAERI and TARSHIP. This includes
@@ -38,8 +38,9 @@ preceding moves and board all three air carrier profiles in both balances.
 Pickup and boarding elapsed ticks agree after matching speed, randomized arrival
 radius and native warm-up; ordinary flight orders now use that mission in the
 engine. Corpse reclaim now shares the verified repair/reclaim script lifecycle.
-The user's reconfirmed Zhon placement/takeoff issue remains active; pre-site
-approach geometry is the current concrete discrepancy under investigation.
+The user reconfirmed the Zhon placement/takeoff issue. Native execution identified
+incorrect pre-site approach geometry and missing takeoff callbacks; the latest
+entry records the correction and its validation limits.
 
 ## Current scope checklist (2026-09-25)
 
@@ -52,8 +53,8 @@ Later entries remain authoritative when an older entry describes a fixed issue.
 | Unit animation behavior | Shipped script/pose roster; integrated movement, flight, construction, gates, weapon selection, hits, cloak and death fixes; 56-test Release sweep | Continue checking engine callback producers against the native lifecycle. Script-only roster equality cannot certify every gameplay transition. |
 | Projectiles, including Drake fire | Native direct, ballistic, guided, flame and sprite/model behavior checks; authored effect/anchor/lifetime fixes | Representative behavior is covered; the user deferred further arrow/bolt laser diagnosis pending a clearer report. Pixel identity is not required. |
 | Cursors | Selection-context checks, all 21 registered IDs, authored timing, waypoint clocks and retained live-pointer frame/countdown behavior | Native input-to-pointer pixels were not paired; do not treat pixel matching as an additional requirement. |
-| Flying height and Zhon conjuring placement | Native root-anchor, hierarchy/projection, flight and placed-site traces | The reported apparent northward separation has not been reproduced with matching camera, construction vector and tick. Current evidence does not justify another offset change. |
-| Builds and delivery | Cursor fix fc5ffc1 pushed; current Release/optimized binaries rebuilt with non-gate activation; all 56 Release tests pass | GitHub Linux/Windows builds for fc5ffc1 are still running; macOS passed. |
+| Flying height and Zhon conjuring placement | Native root-anchor, hierarchy/projection, flight and placed-site traces | Correct pre-site approach, takeoff callbacks and admitted working orbit; no arbitrary render offset or increased climb rate. The reported visual separation still needs comparison in the user’s original situation. |
+| Builds and delivery | Ordinary flying move and corpse reclaim fix 948c6de pushed; all 56 Release tests pass | GitHub Linux, macOS, Windows and determinism workflows passed for 948c6de. Zhon correction rebuilt in Release and optimized builds; new CI will run on push. |
 
 The retail GUI remains prohibited by the user's latest instruction. Existing
 headless native routines are available. No new fixture is warranted merely to
@@ -11808,3 +11809,53 @@ Validation for this batch: all 56 Release tests pass (49.60s); optimized transpo
 script tests and corrected retail_motion pass. Both client/server builds rebuilt.
 Logs: /tmp/tak-flight-work-final-tests.log, /tmp/tak-flight-work-o2-tests.log,
 /tmp/tak-flight-motion-o2-tests.log.
+
+
+## Flying placed-build approach and takeoff (2026-09-25)
+
+The user reconfirmed that Zhon's monarch appears too far north of her conjure
+site and stays low too long during takeoff. Original 41ef00 stage 0 calls
+416c50 to activate the builder and request BeginFlight before approaching;
+it changes the ground mode without jumping Y. Stage 1 targets the snapped
+construction site with flags 0x30 and radius twice the authored builddistance.
+World instead targeted a close working-ring point with flags 0x60 and radius 0,
+and omitted the initial takeoff callbacks. prepareBuildApproach now follows
+the measured native approach for all flying builders. Native snapping uses the
+output type's footprint, matching makeBuildOrder (checked with both 2x2 and
+3x4 outputs).
+
+The legacy construction reach gate also held a newly admitted flyer outside
+its tighter working orbit. Flying construction now admits work inside twice
+builddistance and retains admission while orbiting; direct startBuild callers
+still cannot work on distant fresh sites. Ground reach and pathfinding are
+unchanged. The navigation arrival branch now runs the independent flight body
+on the update when the approach radius is already satisfied. Original 4dc800
+still advances/climbs then; World previously only reduced scalar speed.
+
+Existing regressions check all four shipped flying builders in both balances,
+20 Zhon placement vectors, first-update climb from terrain Y100 to Y101,
+exactly-once Activate/BeginFlight callbacks and rejection of work 600 units
+away. The climb kernel itself already matched all 120 native updates from a
+common ground-height start; it has not been accelerated. Logs:
+/tmp/tak-zhon-build-approach-native.log,
+/tmp/tak-zhon-build-approach-footprint-native.log,
+/tmp/tak-zhon-build-takeoff-native.log,
+/tmp/tak-zhon-build-arrival-body-native.log and
+/tmp/tak-zhon-ground-altitude-check.log.
+
+This fixes measured approach and transition differences. It does not establish
+that the user's original visual separation is gone: a fully paired fresh-build
+sequence, including site-creation dispatch timing, has not been measured. The
+existing site-created dispatch continuation is unchanged. No retail GUI was
+launched, and no render offset was added.
+
+Validation: all 56 Release CTests pass (31.71s); optimized conjure/script tests
+pass (0.66s). Release all targets and optimized client/server rebuilt. The
+cross-compiler determinism check passes the available GCC/Clang variants;
+ARM cross-builds were skipped because their toolchain headers/libraries are
+unavailable. The rebuilt optimized client also completed the existing Ulasem
+Arena Crusades conjure capture at --time 2: the site is active, the monarch
+moves around it, and the trace shows continued ascent (Y245 at tick31, Y261 at
+tick47). Capture: /tmp/zhon-approach-after.png; trace:
+/tmp/zhon-approach-after.log. This is a local smoke check, not a paired retail
+visual comparison.

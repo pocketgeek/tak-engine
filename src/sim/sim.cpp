@@ -5157,14 +5157,17 @@ bool World::prepareBuildApproach(Unit& u) {
         goal.x=Fixed::fromInt(x*16+u.type->footX*8);
         goal.z=Fixed::fromInt(z*16+u.type->footZ*8);
         if (u.type->canFly) {
-            // Flying construction works at builddistance from the site centre
-            // (retail 41ef00), rather than at the ground footprint perimeter.
-            // Choose the initial hover point on the builder's side of the site.
-            const uint16_t angle=uint16_t(retailDirection(u.x-goal.buildX,u.z-goal.buildZ).v);
-            const int32_t radius=Fixed::fromInt(u.type->buildDist>0 ? u.type->buildDist : 40).v;
-            goal.x=goal.buildX+Fixed::raw(retailScaledSine(angle,radius));
-            goal.z=goal.buildZ+Fixed::raw(retailScaledCosine(angle,radius));
-            goal.flightGoal=RetailFlightGoal{{goal.x.v,0,goal.z.v},0x60,angle,0};
+            // 41ef00 takes off before approaching an unplaced site. Its first
+            // controller targets the snapped site with radius 2*builddistance;
+            // the tighter, facing orbit belongs to the later working stages.
+            if (auto script=unitScripts_.find(u.id);script!=unitScripts_.end() && !script->second.activated) {
+                script->second.activated=true;notifyUnitScript(u,"Activate");
+            }
+            notifyUnitScript(u,"BeginFlight");
+            u.flightGroundMode=2;
+            goal.x=goal.buildX;goal.z=goal.buildZ;
+            goal.flightGoal=RetailFlightGoal{{goal.x.v,0,goal.z.v},0x30,0,
+                int16_t(uint16_t(u.type->buildDist)*2)};
         }
         goal.segmentX=Fixed::fromInt(u.x.floorInt());
         goal.segmentZ=Fixed::fromInt(u.z.floorInt());
@@ -6028,7 +6031,14 @@ void World::tickConstruction(Unit& b, float dt) {
     float reach = std::max(half + 40.0f,
                            b.type->buildDist > 0 ? b.type->buildDist + half : 0.0f);
     float gd = dx * dx + dz * dz;
-    if (gd > reach * reach) {                          // out of range: still walking there
+    // Flying construction admits the site at 2*builddistance, then works
+    // while entering its tighter orbit. Retain admission once work begins;
+    // direct startBuild callers must still approach a distant fresh site.
+    const float flyingReach=2.0f*b.type->buildDist;
+    const bool outOfReach=b.type->canFly
+        ? !site->buildBegun && gd>=flyingReach*flyingReach
+        : gd>reach*reach;
+    if (outOfReach) {                                  // out of range: still walking there
         // Give-up watchdog: if the builder gets no closer (~20px, squared 400) for ~8s,
         // it can't reach the site -- abandon it and pop the next queued build. Uses the
         // same fixed-dt / squared-distance idiom as the deleted movement watchdogs, so
@@ -7850,7 +7860,10 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             if (legGoal.buildRectangle && legGoal.flightGoal &&
                 legGoal.flightGoal->accepts({u.x.v,u.flightY.v,u.z.v})) {
                 u.orders[currentLeg(u.orders)].mission.pending |= 0x100;
-                u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+                // Arrival retires the approach controller, not the independent
+                // flight body. Native 4dc800 still moves/climbs on this update.
+                tickFlightMovement(u,true);
+                notifyFlightOccupancy(u);
                 return;
             }
             tickFlightMovement(u); notifyFlightOccupancy(u); return;

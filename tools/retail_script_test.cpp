@@ -980,6 +980,31 @@ int main(int argc,char** argv) {
         require(impacts.unit(direct)->weaponAnimations.count==0 && impacts.unit(splash)->weaponAnimations.count==0,
             "status damage does not produce direct or splash flinch callbacks");
 
+        auto takeoffFile=std::make_shared<tak::cob::File>();
+        takeoffFile->numStatics=2;
+        takeoffFile->scripts={{"Activate",0},{"BeginFlight",8}};
+        takeoffFile->code={0x10021004,0,0x10021001,1,0x10031000,0x10023004,0,0x10065000,
+                          0x10021004,1,0x10021001,1,0x10031000,0x10023004,1,0x10065000};
+        UnitType flyingBuilder;flyingBuilder.maxHp=100;flyingBuilder.canFly=true;
+        flyingBuilder.canMove=true;flyingBuilder.isBuilder=true;
+        flyingBuilder.maxVel=Fixed::fromInt(2);flyingBuilder.accel=Fixed::fromFloat(0.5f);
+        flyingBuilder.brake=Fixed::fromFloat(0.2f);flyingBuilder.cruiseAlt=150;
+        flyingBuilder.buildDist=100;flyingBuilder.simulationScript=takeoffFile;
+        UnitType placedOutput;placedOutput.maxHp=100;placedOutput.buildTime=10000;
+        World takeoffWorld;takeoffWorld.setVisPlayer(-1);
+        takeoffWorld.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
+        const int flyingWorker=takeoffWorld.spawn(&flyingBuilder,1000,1000,0);
+        takeoffWorld.queueBuild(flyingWorker,&placedOutput,1120,1056,false);
+        takeoffWorld.tick(1.f/30);
+        require(RetailReplayProbe::scriptStatics(takeoffWorld,flyingWorker)==std::vector<uint32_t>{1,1},
+            "placed flying build activates and requests BeginFlight in the authoritative script");
+        require(takeoffWorld.unit(flyingWorker)->flightBeginCallbackSerial==1 &&
+            takeoffWorld.unit(flyingWorker)->flightGroundMode==2,
+            "placed build publishes one takeoff callback before construction starts");
+        for(int tick=0;tick<4;++tick)takeoffWorld.tick(1.f/30);
+        require(RetailReplayProbe::scriptStatics(takeoffWorld,flyingWorker)==std::vector<uint32_t>{1,1},
+            "ongoing placed construction does not restart takeoff callbacks");
+
         auto repairFile=std::make_shared<tak::cob::File>();
         repairFile->numStatics=4;
         repairFile->scripts={{"StartBuilding",0},{"StopBuilding",18}};
