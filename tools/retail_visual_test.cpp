@@ -163,6 +163,15 @@ int main(int argc,char** argv) {
                actual.size()!=4)return 1;
             queue.drain(105,collect,collectShot);
             if(shots.size()!=1)return 1;
+            events.clear();
+            events.add(tak::RetailWeaponAnimation::Clear,0);
+            for(int i=0;i<20;++i)events.add(tak::RetailWeaponAnimation::Switch,(i+1)%3);
+            queue.push(106,7,events);
+            events.clear();actual.clear();
+            queue.drain(106,collect,collectShot);
+            if(actual.size()!=21 || std::get<1>(actual[0])!=tak::RetailWeaponAnimation::Clear)return 1;
+            for(size_t i=1;i<actual.size();++i)
+                if(std::get<1>(actual[i])!=tak::RetailWeaponAnimation::Switch || std::get<2>(actual[i])!=int(i%3))return 1;
         }
 
         struct BurnEvent { int id; uint64_t activationSequence; bool emit; };

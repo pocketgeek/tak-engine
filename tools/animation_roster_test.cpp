@@ -91,6 +91,12 @@ int main(int argc,char**argv) {
     auto vfs=tak::hpi::mountRetailRoot(argv[1]);
     tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,false);
     int scripts=0,failures=0;
+    // Aradrag has 3s, 2.5s, and 5s weapons. The renderer used to notify
+    // the first slot's 3000ms, shortening the script's restore delay.
+    if(const auto* dragon=registry.find("aradrag");!dragon || dragon->maxWeaponReloadMs!=5000) {
+        std::printf("FAIL Aradrag SetMaxReloadTime must include its third weapon\n");
+        ++failures;
+    }
     size_t serialFrames=0,parallelFrames=0,explosions=0;
     std::map<int32_t,size_t> emissions;
     for(const auto& [name,type]:registry.types()) {
@@ -120,7 +126,7 @@ int main(int argc,char**argv) {
             reference.startArguments(*file,script,values,unsigned(args.size()));
             reference.tick(*file,0,host);
         };
-        notify("Create");notify("SetMaxReloadTime",{1000});
+        notify("Create");notify("SetMaxReloadTime",{type.maxWeaponReloadMs});
         bool matches=true;
         for(int tick=0;tick<1200 && matches;++tick) {
             host.phase=(tick/300)%4;

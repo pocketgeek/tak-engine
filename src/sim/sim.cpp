@@ -361,6 +361,8 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 wp.hoverAttackDistance = int(w->numberOr("hoverattackdistance", 0));
                 wp.hoverAttackAltitude = int(w->numberOr("hoverattackaltitude", 0));
                 wp.reload = float(w->numberOr("reloadtime", 1));
+                wp.switchReloadTicks = uint16_t(int32_t(w->numberOr(
+                    "switchreloadtime", w->numberOr("reloadtime", 0))*30.0));
                 wp.projVel = float(w->numberOr("weaponvelocity", 0));
                 // See Weapon::subSteps. Integer ceil: no shipped weaponvelocity is a
                 // multiple of 480, so this is bit-identical to retail's fixed-point
@@ -561,6 +563,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 const auto* w = root.child("WEAPON" + std::to_string(slot));
                 if (!w) continue;
                 Weapon wp = parseWeapon(w);
+                // 5307e9 truncates reloadtime*30 into a 16-bit tick count;
+                // 52aae0 takes the maximum over all three slots, even when a
+                // slot has no damage, then converts ticks to milliseconds.
+                const auto reloadTicks=uint16_t(int32_t(w->numberOr("reloadtime",0)*30.0));
+                t.maxWeaponReloadMs=std::max(t.maxWeaponReloadMs,int32_t(reloadTicks)*1000/30);
                 t.weaponAirstrikeCursor[size_t(slot-1)] = wp.cursorAirstrike;
                 if (wp.damage > 0) {
                     t.weaponNativeSlotForLocal[t.weapons.size()] = uint8_t(slot-1);
@@ -574,6 +581,10 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             if (const auto* ea = root.child("EXPLODEAS")) {
                 t.explodeAs = parseWeapon(ea);
                 t.hasExplodeAs = t.explodeAs.damage > 0;
+            }
+            if (const auto* sd = root.child("SELFDESTRUCTAS")) {
+                t.selfDestructAs = parseWeapon(sd);
+                t.hasSelfDestructAs = true;
             }
             // totalallowed: per-player cap on live units of this type (the five
             // dragons, the five gods and the Aerial Juggernaut all carry 1).
@@ -839,6 +850,8 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
         if (unitScriptById_.size()<=size_t(u.id)) unitScriptById_.resize(size_t(u.id)+1,nullptr);
         unitScriptById_[size_t(u.id)]=&it->second;
         it->second.state.vm.start(*type->script(),type->script()->scriptIndex("Create"));
+        it->second.state.startArguments(*type->script(),type->script()->scriptIndex("SetMaxReloadTime"),
+                                       {uint32_t(type->maxWeaponReloadMs),0,0,0},1);
     }
     return u.id;
 }
@@ -2599,14 +2612,19 @@ void World::loadInto(int unitId, int transportId, bool queue) {
     if (!canLoadInto(unitId,transportId)) return;
     Unit* u=unit(unitId);
     if (!queue) {
-        u->orders.clear();
-        cancelPath(*u);      // a route for the orders just discarded would eat the load
+        // 4d78a0 replaces ordinary construction missions when a fresh
+        // Move_Seek_Pickup is issued. Production lives outside orders here,
+        // so retire that work too instead of resuming it after unloading.
+        if(u->productionSiteId)notifyUnitScript(*u,"StopBuilding");
+        cancelBuilds(unitId);
+        stop(unitId);
     }
     Order o;
     o.targetId = transportId;
     o.load = true;
     o.goal = true;
     o.transportMission={};
+    o.transportProductionAhead=queue ? uint32_t(u->buildQueue.size()) : 0;
     u->orders.push_back(o);
     Unit* carrier=unit(transportId);
     {
@@ -2706,12 +2724,11 @@ bool World::tickTransport(Unit& u, float dt) {
             u.orders.erase(u.orders.begin(),u.orders.begin()+long(pickupLeg)+1);
         };
         Unit* passenger=unit(o.targetId);
-        if(!passenger || !canLoadInto(passenger->id,u.id) || passenger->orders.empty() ||
-            !passenger->orders.front().load || passenger->orders.front().targetId!=u.id) {
-            removePickup();return true;
-        }
-        if(u.type->canFly || !o.controller) {o.x=passenger->x;o.z=passenger->z;}
+        if(passenger && (u.type->canFly || !o.controller)) {o.x=passenger->x;o.z=passenger->z;}
         auto& mission=o.transportMission;
+        // Native 519a60 invalidates target references at the death edge and
+        // posts event 8 to their owning missions (519a30).
+        if(!passenger || !passenger->alive())mission.pending|=8;
         auto advancePickup=[&] {
             if(u.type->canFly) {
                 if(o.flightGoal)tickFlightMovement(u,true);
@@ -2722,11 +2739,27 @@ bool World::tickTransport(Unit& u, float dt) {
         };
         auto advanceApproach=[&] {
             if(!u.type->canFly)return false; // the ground navigator keeps moving
+            if(!passenger)return advancePickup();
             o.flightGoal=retailPickupPursuitGoal({passenger->x.v,passenger->groundY.v,passenger->z.v},
                 uint16_t(u.type->transportDist));
             tickFlightMovement(u,true);notifyFlightOccupancy(u);
             return true;
         };
+        if(tickCounter_>=mission.deadline) {
+            mission.deadline=0xffffffffu;mission.pending|=1;
+        }
+        const uint32_t events=(u.missionEvents|mission.pending)&mission.waitMask;
+        if(mission.waitMask && !events)
+            return mission.stage==1 && (mission.waitMask&0x700u) ? advanceApproach() : advancePickup();
+        u.missionEvents&=~events;mission.pending&=~events;mission.waitMask=0;
+        // 4d8450 only enters the carrier handler after an admitted wake.
+        // A passenger order change must not bypass this sleep, and event 8
+        // explicitly aborts both native pickup handlers before stage dispatch.
+        if((events&8u) || !passenger || !canLoadInto(passenger->id,u.id) || passenger->orders.empty() ||
+            !passenger->orders.front().load || passenger->orders.front().transportProductionAhead ||
+            passenger->orders.front().targetId!=u.id) {
+            removePickup();return true;
+        }
         // Both native carrier handlers initialize, then wait one tick before
         // approach. The passenger's Move_Seek_Pickup never owns this timer.
         if(mission.stage==0) {
@@ -2737,13 +2770,6 @@ bool World::tickTransport(Unit& u, float dt) {
             if(u.type->canFly)notifyUnitScript(u,"BeginFlight");
             return advancePickup();
         }
-        if(tickCounter_>=mission.deadline) {
-            mission.deadline=0xffffffffu;mission.pending|=1;
-        }
-        const uint32_t events=(u.missionEvents|mission.pending)&mission.waitMask;
-        if(mission.waitMask && !events)
-            return mission.stage==1 && (mission.waitMask&0x700u) ? advanceApproach() : advancePickup();
-        u.missionEvents&=~events;mission.pending&=~events;mission.waitMask=0;
         if(mission.stage==2) {
             const int result=retailPickupTransfer(mission,o.transportTicks,o.transportApproachAttempts,
                 tickCounter_,u.type->canFly,passenger->speed.v,[&] {
@@ -2758,6 +2784,10 @@ bool World::tickTransport(Unit& u, float dt) {
             // Stage 3 attaches immediately when the fifteenth effect wait ends.
             // The carrier owns completion even when it updates before its cargo.
             cancelPath(*passenger);
+            // Native BeCarried (4024e2) retires weapon targets on boarding.
+            // Pickup bypasses tickCombat, so its usual target-clear path has
+            // not run. Publish the same callback to the display as well.
+            if(passenger->scriptAimTarget)clearScriptWeaponTarget(*passenger);
             passenger->inTransport=u.id;
             u.cargo.push_back(passenger->id);
             passenger->orders.clear();passenger->speed=Fixed();
@@ -2796,7 +2826,7 @@ bool World::tickTransport(Unit& u, float dt) {
             const Unit* candidate=unit(pending.targetId);
             if(!candidate || !canLoadInto(candidate->id,u.id) || candidate->orders.empty())continue;
             const auto& request=candidate->orders.front();
-            if(!request.load || request.targetId!=u.id)continue;
+            if(!request.load || request.transportProductionAhead || request.targetId!=u.id)continue;
             if(retailTransportInRange((candidate->x-u.x).v,(candidate->z-u.z).v,
                     uint16_t(u.type->transportDist)))nearby.emplace_back(candidate->id,i);
         }
@@ -2839,12 +2869,17 @@ bool World::tickTransport(Unit& u, float dt) {
         return advanceApproach();
     }
     if (o.load) {
+        // Mobile production is stored separately from movement orders. An
+        // appended pickup is not the current retail mission until that work
+        // finishes or is canceled; do not dispatch it ahead of production.
+        if(o.transportProductionAhead) {brakeGround(u);return true;}
         Unit* t=unit(o.targetId);
         auto remove=[&] {
             cancelPath(u);
             u.orders.erase(u.orders.begin(),u.orders.begin()+long(pickupLeg)+1);
         };
         auto& mission=o.transportMission;
+        if(!t || !t->alive())mission.pending|=8;
         bool discardPrefix=false,request=false;
         auto detach=[&] {
             cancelPath(u);o.controller=0;o.navigationExhausted=true;
@@ -3217,9 +3252,19 @@ void World::setWeapon(int unitId, int slot) {
     Unit* u = unit(unitId);
     if (!u || !u->type) return;
     int n = int(u->type->weapons.size());
-    if (n > 0) {
-        u->weaponSlot = std::clamp(slot, 0, n - 1);
-        u->weaponAuto = false;   // the player has taken the choice over
+    // 51a8b0 accepts only a different, present weapon on a switching unit.
+    // Re-selecting the current slot must not restart its reload countdown.
+    if (!u->type->weaponSwitching || slot < 0 || slot >= std::min(n,3) ||
+        slot == u->weaponSlot) return;
+    if(u->scriptAimTarget)clearScriptWeaponTarget(*u,true);
+    u->weaponSlot = slot;
+    u->weaponAuto = false;
+    u->reloads[size_t(slot)] = u->type->weapons[size_t(slot)].switchReloadTicks;
+    const auto script=unitScripts_.find(u->id);
+    if(script!=unitScripts_.end()) {
+        const auto& file=*u->type->script();
+        script->second.state.startArguments(file,file.scriptIndex("SwitchWeapon"),{uint32_t(slot),0,0,0},1);
+        u->pendingWeaponAnimations.push_back({tak::RetailWeaponAnimation::Switch,uint8_t(slot),0,0});
     }
 }
 
@@ -3252,7 +3297,14 @@ void World::setStance(int unitId, int stance) {
 void World::setCloak(int unitId, bool on) {
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type || !u->type->canCloak) return;
+    if(u->cloakOn==on)return;
     u->cloakOn = on;
+    // Native Cloak/Decloak missions (402560/4025b0) notify the script when
+    // the requested mode changes, independently of visibility or mana payment.
+    if(auto it=unitScripts_.find(u->id);it!=unitScripts_.end()) {
+        const auto& file=*u->type->script();
+        it->second.state.startArguments(file,file.scriptIndex(on ? "StartCloaking" : "StopCloaking"),{},0);
+    }
 }
 
 void World::setActive(int unitId, bool on) {
@@ -4017,16 +4069,6 @@ bool World::acquireTarget(Unit& u,bool missionPoll) {
 }
 
 void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
-    // One tick per tick. The referee always steps at exactly 1/kServerHz and game
-    // speed changes the CADENCE, not dt, so a tick is the sim's real unit of time
-    // and the countdown no longer depends on dt at all -- which is both retail's
-    // representation and one less float in the checksum.
-    // 52ae90 skips unselected and absent slots before updating their reload.
-    // Independent multi-weapon units select all slots; switchers freeze the
-    // inactive timers until the player selects those weapons again.
-    const bool reloadAll=!u.type->weaponSwitching && u.type->weapons.size()>1;
-    for(size_t slot=0;slot<std::min(size_t(3),u.type->weapons.size());++slot)
-        if((reloadAll || int(slot)==u.weaponSlot) && u.reloads[slot]>0)--u.reloads[slot];
     if (u.type->onOffable && !u.active) return;   // explicitly powered down
 
     if (!u.standbyActive && !u.guardNoMoveActive) acquireTarget(u, false);
@@ -5116,6 +5158,14 @@ bool World::prepareBuildApproach(Unit& u) {
 void World::cancelBuilds(int builderId) {
     Unit* b = unit(builderId);
     if (!b) return;
+    // Retire the authoritative job as well as its presentation target.
+    // Otherwise replacement orders leave tickRetailConstruction running.
+    if(b->retailBuild) {
+        if(b->retailBuild->working)notifyUnitScript(*b,"StopBuilding");
+        b->retailBuild.reset();
+        b->constructionHolding=false;
+        b->standbyAllowed=true;
+    }
     // Drop every pending build from the order queue (see queueBuild): a fresh
     // move/attack/stop cancels queued construction.
     b->orders.erase(std::remove_if(b->orders.begin(), b->orders.end(),
@@ -5131,7 +5181,9 @@ void World::cancelBuilds(int builderId) {
         Unit* site = unit(b->buildSiteId);
         // A site that never actually started building is just a ghost — remove
         // it so its marker/ghost doesn't linger.
-        if (site && site->underConstruction && !site->buildBegun) {
+        // Retail GetBuilt sites own their abandonment/decay lifecycle, even
+        // before their first affordable work tick. Only legacy ghosts vanish.
+        if (site && site->underConstruction && !site->buildBegun && !site->retailSite) {
             if (site->type && site->type->isStructure()) {
                 blockFoot(*site->type, site->x.toFloat(), site->z.toFloat(), false);
             }
@@ -5997,6 +6049,12 @@ void World::decayConstruction(Unit& u, float dt) {
     u.deadFor = kRetiredTicks;   // fully gone, no death anim
 }
 
+static void retireProductionItem(Unit& builder,size_t index) {
+    for(auto& order:builder.orders)
+        if(order.transportProductionAhead>index)--order.transportProductionAhead;
+    builder.buildQueue.erase(builder.buildQueue.begin()+long(index));
+}
+
 void World::train(int builderId, const UnitType* type, int count) {
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !type) return;
@@ -6250,7 +6308,7 @@ void World::dequeue(int builderId, const UnitType* type, int count) {
             if (b->buildQueue[size_t(i)] == type) { idx = i; break; }
         if (idx < 0) break;
         if (idx == 0) { b->buildProgress = 0; b->productionSiteId = 0; }   // canceling the in-progress front
-        b->buildQueue.erase(b->buildQueue.begin() + idx);
+        retireProductionItem(*b,size_t(idx));
     }
     // If the queue no longer holds a type set to infinite-repeat, stop repeating it
     // so the count actually reaches zero instead of refilling next tick.
@@ -6276,6 +6334,7 @@ void World::setRepeat(int builderId, const UnitType* type) {
         // ctrl+click the +++ icon again: stop now and clear what's pending.
         b->repeatType = nullptr;
         b->buildQueue.clear();
+        for(auto& order:b->orders)order.transportProductionAhead=0;
         b->buildProgress = 0;
         b->productionSiteId = 0;
     } else {
@@ -7227,7 +7286,7 @@ std::optional<World::WeaponAimSolution> World::queryWeaponAim(int unitId,int tar
     return result;
 }
 
-void World::clearScriptWeaponTarget(Unit& u) {
+void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
     const auto it=unitScripts_.find(u.id);
     if(it!=unitScripts_.end()) {
         const auto& file=*u.type->script();
@@ -7235,7 +7294,8 @@ void World::clearScriptWeaponTarget(Unit& u) {
             // 51a7f0 retires all targets, but only the selected callback can
             // acknowledge/reset a switcher's weapon state.
             if(u.type->weaponSwitching && int(slot)!=u.weaponSlot)continue;
-            u.weaponAnimations.add(tak::RetailWeaponAnimation::Clear,int(slot));
+            if(fromCommand)u.pendingWeaponAnimations.push_back({tak::RetailWeaponAnimation::Clear,uint8_t(slot),0,0});
+            else u.weaponAnimations.add(tak::RetailWeaponAnimation::Clear,int(slot));
             // Native 51a7f0 starts TargetCleared with immediate=0. The callback
             // thread runs in the next regular COB pass, not inline in target
             // retirement; its SET 21 remains script-owned and takes effect there.
@@ -7371,7 +7431,11 @@ void World::initializeRetailSite(Unit& site,int builderId) {
 
 void World::tickProduction(Unit& u, float dt) {
     (void)dt;
-    if (u.underConstruction || u.incapacitated() || u.hp <= Fixed() || u.buildQueue.empty()) return;
+    if (u.underConstruction || u.incapacitated() || u.embarked() ||
+        u.hp <= Fixed() || u.buildQueue.empty()) return;
+    // Production queued after a boarding request must not overtake it either.
+    if(!u.orders.empty() && u.orders.front().load &&
+       !u.orders.front().transportProductionAhead)return;
     const UnitType* t = u.buildQueue.front();
     const int producerId=u.id, player=u.player;
     const int32_t total=std::max(1,int32_t(t->buildTime/std::max(u.type->workerTime,0.01f)*kTick+0.5f));
@@ -7443,7 +7507,7 @@ void World::tickProduction(Unit& u, float dt) {
         if (result==RetailConstructionResult::Completed) {
             notifyUnitScript(*producer,"StopBuilding");
             producer->productionSiteId=0;producer->buildProgress=0;
-            producer->buildQueue.erase(producer->buildQueue.begin());
+            retireProductionItem(*producer,0);
             if (producer->buildQueue.empty()) {
                 if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) it->second.activated=false;
                 notifyUnitScript(*producer,"Deactivate");
@@ -7473,7 +7537,7 @@ void World::tickProduction(Unit& u, float dt) {
     site->underConstruction=false;
     producer->productionSiteId=0;
     producer->buildProgress=0;
-    producer->buildQueue.erase(producer->buildQueue.begin());
+    retireProductionItem(*producer,0);
     if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) {
         const auto& file=*producer->type->script();
         it->second.state.vm.start(file,file.scriptIndex("StopBuilding"));
@@ -7979,7 +8043,12 @@ void World::tick(float dt) {
     // re-anchor of the segment). The fix is to improve the mover until units stop
     // needing a search -- at which point this zero costs nothing -- NOT to put the
     // budget back. Deliberate call: be faithful now, sharpen the steering later.
-    for (auto& u : units_) { u.justFired = false; u.firedWeapons = 0; u.fireAnimations = 0; u.weaponAnimations.clear(); u.justBuilt = 0; }
+    for (auto& u : units_) {
+        u.justFired=false;u.firedWeapons=0;u.fireAnimations=0;u.weaponAnimations.clear();u.justBuilt=0;
+        for(const auto& event:u.pendingWeaponAnimations)
+            u.weaponAnimations.add(event.kind,event.slot,event.heading,event.pitch);
+        u.pendingWeaponAnimations.clear();
+    }
     if (mission_ || scenario_) justDied_.clear();   // deaths this tick, fed to mission/scenario below
     transportEffects_.clear();
     scriptEmissions_.clear();
@@ -8031,7 +8100,8 @@ void World::tick(float dt) {
         if (!tm.retailResources) { tm.creditMana(tm.income*dt);continue; }
         float demand=0;
         for (const auto& builder:units_) {
-            if (builder.player!=int(player) || !builder.alive() || builder.underConstruction) continue;
+            if (builder.player!=int(player) || !builder.alive() || builder.underConstruction ||
+                builder.embarked()) continue;
             int target=0;
             float worker=0;
             if (builder.retailBuild && builder.retailBuild->working) {
@@ -8086,7 +8156,7 @@ void World::tick(float dt) {
     // from orphan decay while the producer still owns an active build.
     for (const auto& producer:units_)
         if (producer.alive() && producer.hp>Fixed() && !producer.incapacitated() &&
-            !producer.underConstruction && !producer.buildQueue.empty() && producer.productionSiteId)
+            !producer.embarked() && !producer.underConstruction && !producer.buildQueue.empty() && producer.productionSiteId)
             if (auto* site=unit(producer.productionSiteId);site && site->alive() &&
                 (site->hp>Fixed() || site->retailSite) && site->player==producer.player) site->beingBuilt=true;
     for (size_t i = 0; i < units_.size(); ++i) {
@@ -8436,8 +8506,17 @@ void World::tick(float dt) {
             // queue: applyHit walks units_ and can kill others, and we are mid-sweep
             // over units_ -- draining after the loop keeps that safe and keeps the
             // order deterministic (sweep order, which is id order).
-            if (u.type->hasExplodeAs)
-                deathBlasts_.push_back({&u.type->explodeAs, u.x.toFloat(), u.z.toFloat(), u.player, u.id});
+            // Native 512d5a requires positive severity for the death weapon.
+            // Stone/frozen packets have zero severity (51275f), so they
+            // preserve the body without a blast.
+            // 52ac00 selects UnitDef+1ba for type 5 and +1b6 otherwise.
+            // A missing SELFDESTRUCTAS does not fall back to EXPLODEAS.
+            const bool selfDestruct=u.deathType==Unit::kDeathSelfDestruct;
+            const Weapon* deathWeapon=selfDestruct
+                ? (u.type->hasSelfDestructAs ? &u.type->selfDestructAs : nullptr)
+                : (u.type->hasExplodeAs ? &u.type->explodeAs : nullptr);
+            if (deathWeapon && u.deathType!=14 && u.deathType!=15)
+                deathBlasts_.push_back({deathWeapon, u.x.toFloat(), u.z.toFloat(), u.player, u.id});
             // Corpse window: the body lies reclaimable (and, if its corpse def
             // says so, resurrectable) until decomposetime runs out. Gibbed
             // (overkill >= maxHp -- placeholder severity rule pending the icd
@@ -8640,6 +8719,18 @@ void World::tick(float dt) {
         }
 
         if (u.underConstruction) continue;   // silent until finished
+        // Retail 51d9d4 updates weapon timers independently of transport
+        // missions; 52ae90 decrements before checking whether a weapon can aim.
+        // One tick per tick. The referee always steps at exactly 1/kServerHz and game
+        // speed changes the CADENCE, not dt, so a tick is the sim's real unit of time
+        // and the countdown no longer depends on dt at all -- which is both retail's
+        // representation and one less float in the checksum.
+        // 52ae90 skips unselected and absent slots before updating their reload.
+        // Independent multi-weapon units select all slots; switchers freeze the
+        // inactive timers until the player selects those weapons again.
+        const bool reloadAll=!u.type->weaponSwitching && u.type->weapons.size()>1;
+        for(size_t slot=0;slot<std::min(size_t(3),u.type->weapons.size());++slot)
+            if((reloadAll || int(slot)==u.weaponSlot) && u.reloads[slot]>0)--u.reloads[slot];
         if (u.embarked()) {                  // riding a transport
             Unit* t = unit(u.inTransport);
             if (t && t->alive()) { u.x = t->x; u.z = t->z; updateBodyIndex(u); }
@@ -9375,6 +9466,7 @@ uint64_t World::stateHash() const {
             }
             mix(order.transportUnloadApproach);
             if(order.load || order.unload || order.transportUnloadApproach) {
+            mix(order.transportProductionAhead);
             mix(order.transportPickup);mix(order.transportUnloadReleasePending);
             mix(order.transportUnloadTransferDeferred);
             mix(order.transportTicks);mix(order.transportPassenger);

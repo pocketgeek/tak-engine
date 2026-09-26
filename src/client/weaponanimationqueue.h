@@ -26,7 +26,7 @@ public:
             const auto& packet=packets_.front();
             if (packet.shot.weapons) fire(packet.unit,packet.shot);
             for(unsigned i=0;i<packet.callbacks.count;++i)
-                consume(packet.unit,packet.callbacks.events[i]);
+                consume(packet.unit,packet.callbacks.at(i));
             packets_.pop_front();
         }
     }

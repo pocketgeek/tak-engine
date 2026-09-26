@@ -940,7 +940,36 @@
             cosmeticStep(0);
             if(effects_.size()!=ordinaryEffects || particles_.size()!=ordinaryParticles)
                 throw std::runtime_error("ordinary death fabricated effects outside its authored script");
-            std::fprintf(stderr,"PASS: transport effects and cargo hide/release; cargo and ordinary death do not fabricate body blasts\n");
+            // A statue must retain its death-edge pose, including any piece
+            // turn/move already in progress when script threads are stopped.
+            for(int deathType:{14,15}) {
+                const int statue=spawn("zonhunt",cx+60,cz,0,localPlayer_);
+                if(statue<0)throw std::runtime_error("statue animation control failed to spawn");
+                auto& animation=anims_.at(statue);
+                animation.vm->start("setSFXoccupy",{5});
+                animation.vm->start("BeginFlight");
+                animation.vm->start("StartBuilding");
+                bool moving=false;
+                for(int tick=0;tick<120 && !moving;++tick) {
+                    animation.vm->tick(1.f/30);
+                    for(const auto& piece:animation.vm->pieces())
+                        for(int axis=0;axis<3;++axis)
+                            moving|=piece.moving[axis] || piece.turning[axis] || piece.spin[axis]!=0;
+                }
+                if(!moving)throw std::runtime_error("statue control never began piece motion");
+                world_.unit(statue)->deadFor=0;
+                world_.unit(statue)->deathType=deathType;
+                captureFrame();beginFrame();endFrame();cosmeticStep(0);
+                const auto frozenPose=animation.vm->pieces();
+                for(int tick=0;tick<30;++tick)animFrame(1.f/30);
+                const auto& afterPose=animation.vm->pieces();
+                for(size_t piece=0;piece<frozenPose.size();++piece)
+                    for(int axis=0;axis<3;++axis)
+                        if(frozenPose[piece].move[axis]!=afterPose[piece].move[axis] ||
+                           frozenPose[piece].rot[axis]!=afterPose[piece].rot[axis])
+                            throw std::runtime_error("statue continued piece animation after death");
+            }
+            std::fprintf(stderr,"PASS: transport effects, cargo hide/release, authored deaths, and frozen statue poses\n");
             return;
         }
 #endif
@@ -2137,8 +2166,10 @@
                     if (dtype >= 14) {
                         // Petrified/frozen: retail skips Killed AND Dying
                         // (severity forced 0) -- the victim simply freezes in
-                        // its current pose and stands as the statue. The reset
-                        // above already halted every thread; nothing plays.
+                        // its current pose and stands as the statue. reset()
+                        // stops threads but leaves in-flight piece turns/moves
+                        // active, so also stop display VM advancement.
+                        a.ownerVmStopRequested=true;
                     } else {
                         a.vm->start("Killed", {int32_t(u.severity), 0, dtype});
                         a.vm->start("Dying", {dtype}) || a.vm->start("death");
@@ -2244,6 +2275,9 @@
                 case tak::RetailWeaponAnimation::Clear:
                     a.vm->start("TargetCleared",{event.slot});
                     break;
+                case tak::RetailWeaponAnimation::Switch:
+                    a.vm->start("SwitchWeapon",{event.slot});
+                    break;
                 }
             }
             // Native 4d4520 passes wind bearing minus unit bearing in the
@@ -2323,9 +2357,11 @@
             // npcheket -- fold their pieces with MOVE_NOWs in the `cloak` script
             // that StartCloaking starts. We were never calling either, so a
             // cloaking spy just went transparent in its walking pose.
-            if (a.hasCloakAnim && u.cloaked != a.cloaked) {
-                a.cloaked = u.cloaked;
-                a.vm->start(u.cloaked ? "StartCloaking" : "StopCloaking");
+            // Native callbacks follow the requested mode. Enemy proximity or
+            // insufficient mana can reveal a unit without restoring its pose.
+            if (a.hasCloakAnim && u.cloakOn != a.cloakOn) {
+                a.cloakOn = u.cloakOn;
+                a.vm->start(u.cloakOn ? "StartCloaking" : "StopCloaking");
             }
             // (The VM itself is advanced in the parallel pass below.)
         }
@@ -3096,8 +3132,7 @@
             unitType_[id]=typeId;
             // Install effect sinks before immediate retail notifications run.
             st.vm->start("Create");
-            if (st.hasAim && type->weapon.reload>0)
-                st.vm->start("SetMaxReloadTime",{int32_t(type->weapon.reload*1000.0f)});
+            st.vm->start("SetMaxReloadTime",{type->maxWeaponReloadMs});
         }
         unitType_[id] = typeId;
     }

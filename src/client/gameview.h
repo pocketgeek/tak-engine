@@ -1088,7 +1088,7 @@ private:
                                  // the generic reset()+fly/land flyer path
         bool hasActivate = false;// onOffable + has Activate: watch u.active for door swing
         bool active = true;      // last active/door-open state (onoffable/gate swing edge)
-        bool cloaked = false;    // last sim cloak state (StartCloaking/StopCloaking edge)
+        bool cloakOn = false;    // last requested cloak mode (not temporary invisibility)
         bool hasCloakAnim = false;   // COB defines StartCloaking (araspy, npcheket)
         bool hasTurnDir = false; // has a TurnDirection script (rudder/sail trim,
                                  // turn-in-place lean); 116 of 187 unit COBs define it

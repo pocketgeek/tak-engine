@@ -1364,6 +1364,115 @@ static void retailRoster(const char* root) {
     auto vfs=tak::hpi::mountRetailRoot(root);
     for(bool crusades:{false,true}) {
         tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,crusades);
+        for(bool air:{false,true}) {
+            World w;w.setVisPlayer(-1);
+            w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
+            auto carrier=boatType(),target=footType();carrier.canFly=air;carrier.cruiseAlt=100;
+            target.maxHp=10000;
+            const auto* archer=registry.find("araarch");
+            if(!archer)continue;
+            const int tid=w.spawn(&carrier,400,400),cid=w.spawn(archer,430,400),
+                enemy=w.spawn(&target,430,600,0,1);
+            w.attack(cid,enemy,false);
+            for(int tick=0;tick<120 && !w.unit(cid)->scriptAimTarget;++tick)w.tick(1.f/30);
+            check(w.unit(cid)->scriptAimTarget==enemy,"armed passenger has an active scripted aim before pickup");
+            w.loadInto(cid,tid);
+            w.unit(cid)->reloads[0]=3;
+            int clears=0;
+            for(int tick=0;tick<180 && !w.unit(cid)->embarked();++tick) {
+                w.tick(1.f/30);
+                if(tick==0)check(w.unit(cid)->reloads[0]==2,
+                    "passenger reload advances while executing pickup");
+                const auto& events=w.unit(cid)->weaponAnimations;
+                for(size_t i=0;i<events.count;++i)
+                    clears+=events.events[i].kind==tak::RetailWeaponAnimation::Clear;
+            }
+            check(w.unit(cid)->embarked(),"armed passenger boards through its real load order");
+            check(!w.unit(cid)->scriptAimTarget && clears==1,
+                  "boarding clears the old aim target and emits one TargetCleared callback");
+            w.unit(cid)->reloads[0]=3;
+            for(int tick=0;tick<5;++tick)w.tick(1.f/30);
+            check(w.unit(cid)->embarked() && w.unit(cid)->reloads[0]==0,
+                  "passenger reload finishes while aboard without underflow");
+            w.unloadAt(tid,430,450);
+            check(runUntilUnloaded(w,tid),"armed passenger can unload after clearing its old aim");
+            w.attack(cid,enemy,false);
+            bool fired=false;
+            for(int tick=0;tick<300 && !fired;++tick) {
+                w.tick(1.f/30);fired=w.unit(cid)->firedWeapons!=0;
+            }
+            check(fired,"unloaded passenger can acquire aim and fire again");
+        }
+        for(bool air:{false,true}) {
+            const auto* builder=registry.find("zonsham");
+            const auto* output=registry.find("zonter");
+            check(builder && output,"transported conjurer assets are available");
+            if(!builder || !output)continue;
+            World w;w.setVisPlayer(-1);
+            w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
+            auto carrier=boatType();carrier.canFly=air;carrier.cruiseAlt=100;
+            carrier.maxTransportSize=64;carrier.transportSizeCap=64;
+            UnitType product=*output;product.buildTime=100000;
+            const int tid=w.spawn(&carrier,400,400),cid=w.spawn(builder,430,400);
+            w.train(cid,&product,1);
+            for(int tick=0;tick<90 && !w.unit(cid)->productionSiteId;++tick)w.tick(1.f/30);
+            check(w.unit(cid)->productionSiteId!=0,"conjurer starts a finite production job before boarding");
+            w.loadInto(cid,tid);
+            check(w.unit(cid)->buildQueue.empty() && !w.unit(cid)->productionSiteId &&
+                  w.unit(cid)->buildProgress==0,
+                  "replacement boarding cancels the conjurer's finite production job");
+            for(int tick=0;tick<180 && !w.unit(cid)->embarked();++tick)w.tick(1.f/30);
+            check(w.unit(cid)->embarked(),"finite-production conjurer boards the carrier");
+            // Direct World callers can still supply deferred production while
+            // aboard; it must not create or advance a site until disembarking.
+            w.train(cid,&product,1);
+            const int progress=w.unit(cid)->buildProgress;
+            for(int tick=0;tick<5;++tick)w.tick(1.f/30);
+            check(w.unit(cid)->buildProgress==progress && !w.unit(cid)->productionSiteId,
+                  "embarked conjurer cannot advance production from inside cargo");
+            w.unloadAt(tid,340,400);
+            check(runUntilUnloaded(w,tid),"finite-production conjurer unloads normally");
+            const int resumed=w.unit(cid)->buildProgress;
+            for(int tick=0;tick<5;++tick)w.tick(1.f/30);
+            check(w.unit(cid)->buildProgress>resumed,
+                  "unloaded conjurer can start the new deferred production job");
+        }
+        for(bool air:{false,true}) {
+            World w;w.setVisPlayer(-1);
+            w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
+            auto carrier=boatType();carrier.canFly=air;carrier.cruiseAlt=100;
+            carrier.maxTransportSize=64;carrier.transportSizeCap=64;
+            const auto* builder=registry.find("zonsham");
+            UnitType product=*registry.find("zonter");product.buildTime=100000;
+            const int tid=w.spawn(&carrier,400,400),cid=w.spawn(builder,430,400);
+            w.train(cid,&product,2);
+            w.tick(1.f/30);
+            w.loadInto(cid,tid,true);
+            for(int tick=0;tick<30;++tick)w.tick(1.f/30);
+            check(!w.unit(cid)->embarked() && w.unit(cid)->buildProgress>0,
+                  "queued boarding cannot overtake earlier finite production");
+            check(std::none_of(w.unit(tid)->orders.begin(),w.unit(tid)->orders.end(),
+                  [](const auto& order){return order.transportPickup;}),
+                  "carrier rejects pickup while passenger's earlier production owns its turn");
+            w.dequeue(cid,&product,2);
+            for(int tick=0;tick<30;++tick)w.tick(1.f/30);
+            check(w.unit(cid)->buildQueue.empty() &&
+                  std::none_of(w.unit(cid)->orders.begin(),w.unit(cid)->orders.end(),
+                    [](const auto& order){return order.load;}),
+                  "canceling preceding production releases boarding to retire its missing pickup");
+            product.buildTime=10;product.buildCost=1;
+            w.orderWait(tid,3,false);
+            w.train(cid,&product,1);
+            w.loadInto(cid,tid,true);
+            for(int tick=0;tick<300 && !w.unit(cid)->embarked();++tick)w.tick(1.f/30);
+            if(!w.unit(cid)->embarked() || !w.unit(cid)->buildQueue.empty())
+                std::printf("queued-production air=%d balance=%d cargo=%d queue=%zu progress=%d site=%d mana=%.1f passengerOrders=%zu carrierOrders=%zu\n",
+                    air,crusades,w.unit(cid)->inTransport,w.unit(cid)->buildQueue.size(),
+                    w.unit(cid)->buildProgress,w.unit(cid)->productionSiteId,w.player(0).mana,
+                    w.unit(cid)->orders.size(),w.unit(tid)->orders.size());
+            check(w.unit(cid)->embarked() && w.unit(cid)->buildQueue.empty(),
+                  "completed finite production releases queued boarding when carrier pickup is still pending");
+        }
         int carriers=0;
         for(const auto& [name,type]:registry.types()) {
             if(!type.canTransport) continue;
@@ -1599,6 +1708,52 @@ static void passengerCancellationWait() {
             check(w.unit(cid)->orders.empty(),"passenger discovers canceled carrier pickup at its deadline");
         }
     }
+    // The reciprocal carrier has the same dispatcher gate: changing the
+    // passenger's orders does not bypass a sleeping pickup mission.
+    for(bool air:{false,true})for(bool wake:{false,true}) {
+        World w;w.setVisPlayer(-1);w.setGameSeed(71);
+        w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
+        UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
+        const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,1000,400);
+        w.loadInto(cid,tid);w.tick(1.f/30);w.tick(1.f/30);
+        const auto deadline=w.unit(tid)->orders.front().transportMission.deadline;
+        w.stop(cid);w.tick(1.f/30);
+        check(!w.unit(tid)->orders.empty(),"sleeping carrier retains pickup after passenger Stop");
+        if(wake) {
+            w.unit(tid)->missionEvents|=8;w.tick(1.f/30);
+            check(w.unit(tid)->orders.empty() && !(w.unit(tid)->missionEvents&8),
+                  "carrier cancellation consumes its subscribed wake event");
+        } else {
+            for(uint32_t now=4;now<deadline;++now)w.tick(1.f/30);
+            check(!w.unit(tid)->orders.empty(),"carrier retains canceled passenger until pickup deadline");
+            w.tick(1.f/30);
+            check(w.unit(tid)->orders.empty(),"carrier cancels invalid pickup on its deadline");
+        }
+    }
+    for(bool air:{false,true}) {
+        World w;w.setVisPlayer(-1);
+        w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
+        UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
+        const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,1000,400);
+        w.loadInto(cid,tid);w.tick(1.f/30);w.tick(1.f/30);
+        w.unit(tid)->missionEvents|=8;w.tick(1.f/30);
+        check(w.unit(tid)->orders.empty(),"pickup target-loss event aborts even with a valid passenger record");
+    }
+
+    // Reference invalidation on death posts event 8, unlike changing orders.
+    for(bool air:{false,true})for(bool passengerDies:{false,true}) {
+        World w;w.setVisPlayer(-1);
+        w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
+        UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
+        const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,1000,400);
+        w.loadInto(cid,tid);w.tick(1.f/30);w.tick(1.f/30);
+        const int waiting=passengerDies ? tid : cid;
+        check(!w.unit(waiting)->orders.empty(),"reciprocal pickup is waiting before target death");
+        w.unit(passengerDies ? cid : tid)->deadFor=0;
+        w.tick(1.f/30);
+        check(w.unit(waiting)->orders.empty(),"target death wakes reciprocal pickup before its polling deadline");
+    }
+
 }
 
 static void passengerMissionSchedule() {

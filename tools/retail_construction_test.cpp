@@ -224,8 +224,13 @@ int main(int argc,char** argv) {
     if (factory.unit(outputId)->maximumHp()!=1000 || factory.unit(outputId)->hp!=Fixed::fromInt(1000)) return 1;
     // An abandoned site waits for its mission deadline. A new work event
     // postpones decay for thirty ticks, even if no progress was affordable.
-    construction.unit(builderId)->retailBuild.reset();
-    construction.unit(builderId)->buildSiteId=0;
+    construction.unit(builderId)->constructionHolding=true;
+    construction.unit(builderId)->standbyAllowed=false;
+    construction.cancelBuilds(builderId);
+    if (construction.unit(builderId)->retailBuild || construction.unit(builderId)->buildSiteId ||
+        construction.unit(builderId)->constructionHolding || !construction.unit(builderId)->standbyAllowed) {
+        std::puts("FAIL: cancelBuilds must retire the active retail construction job");return 1;
+    }
     auto& abandoned=*construction.unit(siteId)->retailSite;
     abandoned.mission.emplace();abandoned.mission->stage=2;
     abandoned.mission->waitMask=0x10000001u;abandoned.mission->deadline=32;

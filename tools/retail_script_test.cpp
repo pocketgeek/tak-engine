@@ -18,6 +18,7 @@
 
 namespace tak::sim {
 struct RetailReplayProbe {
+    static const auto& scriptStatics(const World& world,int id) { return world.unitScripts_.at(id).state.vm.statics; }
     static void emitScript(World& world,int id) {world.notifyUnitScript(*world.unit(id),"Emit");}
     static void clearScriptEvents(World& world) {world.scriptEmissions_.clear();}
 
@@ -935,6 +936,34 @@ int main(int argc,char** argv) {
     {
         using namespace tak::sim;
         auto require=[](bool ok,const char* message) {if(!ok)throw std::runtime_error(message);};
+        auto cloakFile=std::make_shared<tak::cob::File>();
+        cloakFile->numStatics=1;cloakFile->scripts={{"StartCloaking",0},{"StopCloaking",5}};
+        cloakFile->code={0x10021001,1,0x10023004,0,0x10065000,
+                         0x10021001,2,0x10023004,0,0x10065000};
+        UnitType cloaker;cloaker.maxHp=100;cloaker.canCloak=true;
+        cloaker.cloakCost=100000;cloaker.minCloakDist=200;cloaker.simulationScript=cloakFile;
+        UnitType enemy;enemy.maxHp=100;
+        World cloakWorld;cloakWorld.setVisPlayer(-1);
+        cloakWorld.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
+        const int spy=cloakWorld.spawn(&cloaker,200,200,{},0);
+        const int nearby=cloakWorld.spawn(&enemy,240,200,{},1);
+        cloakWorld.setCloak(spy,true);
+        require(RetailReplayProbe::scriptStatics(cloakWorld,spy)[0]==0,
+            "cloak command queues its pose callback without running it inline");
+        cloakWorld.tick(1.f/30);
+        require(!cloakWorld.unit(spy)->cloaked && RetailReplayProbe::scriptStatics(cloakWorld,spy)[0]==1,
+            "StartCloaking reaches the script even when a nearby enemy prevents invisibility");
+        cloakWorld.unit(nearby)->hp={};cloakWorld.player(0).mana=0;
+        cloakWorld.tick(1.f/30);
+        require(!cloakWorld.unit(spy)->cloaked && RetailReplayProbe::scriptStatics(cloakWorld,spy)[0]==1,
+            "insufficient cloak mana does not restore the uncloaked script pose");
+        cloakWorld.setCloak(spy,false);
+        require(RetailReplayProbe::scriptStatics(cloakWorld,spy)[0]==1,
+            "decloak callback is also deferred to the script phase");
+        cloakWorld.tick(1.f/30);
+        require(RetailReplayProbe::scriptStatics(cloakWorld,spy)[0]==2,
+            "StopCloaking reaches the script when the requested mode is disabled");
+
         auto file=std::make_shared<tak::cob::File>();
         file->numStatics=5;file->scripts={{"ReadMovement",0}};
         const int ids[]={28,29,30,33,34};
@@ -1183,6 +1212,29 @@ int main(int argc,char** argv) {
             require(loss.unit(from)->justFired==!clearAcknowledges,
                 "a missing TargetCleared callback preserves the pending shot for the next admitted target");
         }
+        {
+            UnitType type=shooter;type.weaponSwitching=true;type.weapons.assign(3,weapon);
+            World switching;switching.setVisPlayer(-1);
+            switching.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            const int from=switching.spawn(&type,200,200,{},0);
+            auto* unit=switching.unit(from);
+            switching.setStance(from,2);
+            unit->scriptAimTarget=123;unit->weaponAim[0].set(23);
+            switching.setWeapon(from,1);
+            require(unit->scriptAimTarget==0 && (unit->weaponAim[0].flags&16),
+                "weapon switch retires the target but queues its script callback without running inline");
+            for(int i=0;i<20;++i)switching.setWeapon(from,(i+2)%3);
+            switching.tick(1.f/30);
+            require(!(unit->weaponAim[0].flags&16),"next script update executes the old slot's TargetCleared");
+            const auto& callbacks=unit->weaponAnimations;
+            require(callbacks.count==22 && callbacks.at(0).kind==tak::RetailWeaponAnimation::Clear &&
+                callbacks.at(0).slot==0,"command target-clear survives the tick boundary before switch callbacks");
+            for(size_t i=1;i<callbacks.count;++i)
+                require(callbacks.at(i).kind==tak::RetailWeaponAnimation::Switch && callbacks.at(i).slot==i%3,
+                    "repeated weapon selections retain every display callback in order");
+            switching.tick(1.f/30);
+            require(unit->weaponAnimations.count==0,"command callbacks are published once");
+        }
         for(int interruption=0;interruption<3;++interruption) {
             UnitType type=shooter;type.weaponSwitching=true;type.weapons.assign(2,weapon);
             World delayed;delayed.setVisPlayer(-1);
@@ -1207,16 +1259,17 @@ int main(int argc,char** argv) {
             if(interruption==2) {
                 delayed.stop(from);delayed.tick(1.f/30);
                 require(delayed.unit(from)->weaponAim[0].flags&16,
-                    "Stop queues TargetCleared but does not run the script inline");
+                    "Stop after switching back has no newly assigned target to retire");
                 delayed.tick(1.f/30);
-                require(!(delayed.unit(from)->weaponAim[0].flags&16),"TargetCleared SET 21 cancels an already-pending release");
+                require(delayed.unit(from)->weaponAim[0].flags&16,
+                    "an already-retired target does not queue a second TargetCleared for a late acknowledgement");
             }
             if(interruption!=1)delayed.attack(from,target,false);
             delayed.tick(1.f/30);
-            require(delayed.unit(from)->justFired==(interruption!=2),
-                "retargeting or reselection releases pending SET 23 unless explicitly canceled");
+            require(delayed.unit(from)->justFired,
+                "retargeting or reselection releases SET 23 that arrived after the target-clear callback");
             require(delayed.unit(from)->fireAnimations==0,"resuming a pending release does not start another FireWeapon callback");
-            require(delayed.unit(from)->mana==(interruption==2?20:17),"resumed acknowledgement charges mana exactly once");
+            require(delayed.unit(from)->mana==17,"resumed acknowledgement charges mana exactly once");
             require(!(delayed.unit(from)->weaponAim[0].flags&16),"pending release is retired or canceled");
             delayed.tick(1.f/30);
             require(!delayed.unit(from)->justFired,"resumed release is not repeated on the next update");
@@ -1245,20 +1298,21 @@ int main(int argc,char** argv) {
         }
         for(bool switching:{false,true}) {
             UnitType type;type.maxHp=100;type.weaponSwitching=switching;
-            Weapon gun;gun.range=400;gun.damage=1;type.weapons.assign(3,gun);type.weapon=gun;
+            Weapon gun;gun.range=400;gun.damage=1;gun.switchReloadTicks=13;
+            type.weapons.assign(3,gun);type.weapon=gun;
             World timers;timers.setVisPlayer(-1);
             timers.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int id=timers.spawn(&type,200,200);auto* unit=timers.unit(id);
             unit->reloads[0]=4;unit->reloads[1]=5;unit->reloads[2]=6;
             timers.setWeapon(id,1);timers.tick(1.f/30);
-            require(unit->reloads[0]==(switching?4:3) && unit->reloads[1]==4 &&
+            require(unit->reloads[0]==(switching?4:3) && unit->reloads[1]==(switching?12:4) &&
                 unit->reloads[2]==(switching?6:5),"only selected reload advances unless all slots are independent");
             timers.setWeapon(id,2);timers.tick(1.f/30);
-            require(unit->reloads[0]==(switching?4:2) && unit->reloads[1]==(switching?4:3) &&
-                unit->reloads[2]==(switching?5:4),"switching transfers the active reload clock");
+            require(unit->reloads[0]==(switching?4:2) && unit->reloads[1]==(switching?12:3) &&
+                unit->reloads[2]==(switching?12:4),"switching starts the new weapon's switch reload clock");
             timers.setWeapon(id,0);timers.tick(1.f/30);
-            require(unit->reloads[0]==(switching?3:1) && unit->reloads[1]==(switching?4:2) &&
-                unit->reloads[2]==(switching?5:3),"reselecting a weapon resumes its saved reload countdown");
+            require(unit->reloads[0]==(switching?12:1) && unit->reloads[1]==(switching?12:2) &&
+                unit->reloads[2]==(switching?12:3),"returning to a weapon replaces its saved countdown with switch reload");
         }
 
     }

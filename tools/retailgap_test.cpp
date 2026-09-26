@@ -112,6 +112,48 @@ int main(int argc, char** argv) {
         check(a && (!a->alive() || a->hp.toFloat() < aHp0), "adjacent enemy took the blast");
         check(b && (!b->alive() || b->hp.toFloat() < aHp0), "second adjacent enemy took the blast");
         check(far && far->alive() && far->hp.toFloat() >= farHp0, "distant enemy untouched");
+
+        // Stone/frozen packets suppress death weapons; self-destruction
+        // selects a separate weapon block, absent from the shipped rat.
+        for(int special:{14,15,5}) {
+            sim::World quiet;
+            sim::setupMatch(quiet,reg,cfg);
+            const int source=quiet.spawn(rat,500,500,0,0);
+            const int neighbor=quiet.spawn(victim,520,500,0,1);
+            auto* dying=quiet.unit(source);
+            dying->deathType=special;
+            dying->stonedFor=special==14 ? 100 : 0;
+            dying->frozenFor=special==15 ? 100 : 0;
+            dying->hp=sim::Fixed();
+            const auto hp=quiet.unit(neighbor)->hp;
+            quiet.tick(1.f/30);
+            check(!quiet.unit(source)->alive(),"special death control reached the death transition");
+            check(quiet.hits().empty() && quiet.unit(neighbor)->hp==hp,
+                  special==14 ? "stone death emits no death blast or damage" :
+                  special==15 ? "frozen death emits no death blast or damage" :
+                                "self-destruct does not reuse the ordinary death weapon");
+        }
+
+        // An explicit self-destruct weapon must retain its own art and damage.
+        sim::UnitType custom=*rat;
+        custom.hasSelfDestructAs=true;
+        custom.selfDestructAs=rat->explodeAs;
+        custom.selfDestructAs.damage=100;
+        custom.selfDestructAs.explosionClass="small explosion";
+        sim::World explicitWeapon;
+        sim::setupMatch(explicitWeapon,reg,cfg);
+        const int source=explicitWeapon.spawn(&custom,500,500,0,0);
+        const int neighbor=explicitWeapon.spawn(victim,520,500,0,1);
+        const auto hp=explicitWeapon.unit(neighbor)->hp;
+        explicitWeapon.unit(source)->deathType=sim::Unit::kDeathSelfDestruct;
+        explicitWeapon.unit(source)->hp=sim::Fixed();
+        explicitWeapon.tick(1.f/30);
+        check(std::any_of(explicitWeapon.hits().begin(),explicitWeapon.hits().end(),
+                         [&](const auto& hit){return hit.weapon==&custom.selfDestructAs;}),
+              "self-destruct publishes its own authored weapon effect");
+        check(explicitWeapon.unit(neighbor)->alive() && explicitWeapon.unit(neighbor)->hp<hp &&
+              explicitWeapon.unit(neighbor)->hp>hp-sim::Fixed::fromInt(150),
+              "self-destruct uses its separate low damage, not the ordinary lethal blast");
     }
 
     // ---- 1b. weapon-class parse ------------------------------------------
@@ -662,6 +704,21 @@ int main(int argc, char** argv) {
         const sim::UnitType* prey = reg.find("arasword");
         if (!king || !prey || king->weapons.size() < 3) std::printf("  (missing defs; skipped)\n");
         else {
+            sim::World selection;
+            const int selected = selection.spawn(king, 1000, 1000, 0, 0);
+            auto* selectedUnit = selection.unit(selected);
+            const auto expectedSwitch = uint16_t(int32_t(king->weapons[1].reload*30.0));
+            check(king->weapons[1].switchReloadTicks == expectedSwitch,
+                  "Elsin's switch reload defaults to the authored reloadtime");
+            selection.setWeapon(selected,1);
+            check(selectedUnit->weaponSlot == 1 && selectedUnit->reloads[1] == expectedSwitch,
+                  "changing weapon starts its retail switch reload");
+            selectedUnit->reloads[1] = 7;
+            selection.setWeapon(selected,1);
+            selection.setWeapon(selected,-1);
+            selection.setWeapon(selected,3);
+            check(selectedUnit->weaponSlot == 1 && selectedUnit->reloads[1] == 7,
+                  "repeated and invalid selections preserve the selected weapon countdown");
             auto runFight = [&](bool manualSlot0) {
                 sim::World w;
                 sim::MatchConfig cfg;

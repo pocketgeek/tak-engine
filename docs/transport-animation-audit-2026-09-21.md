@@ -11,13 +11,19 @@ not a completion gate.
 
 ## Latest verification (2026-09-25)
 
-The original air/sea transport and animation goal remains active. Engine fixes
-through `178e246` are committed and pushed. Recent fixes cover gate activation,
+The original air/sea transport and animation goal remains active. This batch
+adds verified statue-pose and death-weapon selection fixes, weapon restore and
+switch timing, ordered switch callbacks, and cloak-mode callbacks. Transport
+fixes cover pickup cancellation scheduling, boarding target retirement, reloads
+while aboard, cargo production, finite-production queue ordering, and active
+construction cancellation. Earlier fixes through `3ac65d3` cover gate and
 factory callbacks, wind heading, builder restoration, repair/reclaim effects,
 missed weapon events, transported-passenger effects and authored death effects.
-The chronological entries below document their scope and validation.
+The chronological entries below document their scope and validation. The earlier
+read-only Git restriction has been lifted for the current session.
 
-Current Release verification passes all 56 CTests (28.37 seconds). Existing
+Current Release verification passes all 56 CTests (29.17 seconds), including
+the recent animation, pickup-cancellation, boarding target-clear and transport reload fixes at the end of this audit. Existing
 native/World ridge-flight unload comparisons also pass all three shipped air
 carrier profiles in both balances: ZONROC, CREAERI and TARSHIP. This includes
 flight, release, PARK callback and mission retirement, with the existing
@@ -10847,8 +10853,8 @@ handoff regression, while this capture checks the normal shot-to-loaded-art path
 
 ### Statue/frozen death presentation excludes ordinary effects (2026-09-25)
 
-The display already held the unit pose and skipped Killed/Dying for death types
-14/15, but then unconditionally spawned the ordinary death explosion plus blood
+The display skipped Killed/Dying for death types 14/15 (the later statue-pose
+entry corrects the claim that this fully held the pose), but then unconditionally spawned the ordinary death explosion plus blood
 or smoke, and could play the fallback death cry. Moved those presentation effects
 behind the same ordinary-death condition. This corrects the contradictory blast
 and blood on a unit being preserved as a stone/frozen statue; ordinary deaths
@@ -11023,3 +11029,481 @@ landing on physical touchdown. Release and optimized Debug takclient and
 retail_visual_test rebuilt successfully. The five Release tests retail_script,
 retail_visual, animation_roster, cobanim, and conjure passed (0.92 seconds).
 No retail GUI was launched and no new standalone fixture was added.
+
+## Stop in-progress piece motion at statue death (2026-09-25)
+
+The display death edge reset script threads for stone/frozen deaths, but
+Vm::reset intentionally preserves in-progress piece moves, turns and spins.
+animFrame continued advancing those pieces after death, contradicting the
+intended statue-pose preservation. Set the existing owner VM stop flag on the
+statue death branch, so the display keeps its exact death-edge pose. This does
+not change ordinary death scripts, transport movement, simulation or pathfinding.
+
+Extended the existing TAK_TRANSPORT_EFFECT_TEST client check with both death
+types 14 and 15. It starts the shipped ZONHUNT flight/build animation, requires
+active piece motion, takes the death transition, then compares every piece move
+and rotation across 30 display-animation updates. Before the fix it failed with
+“statue continued piece animation after death” (exit 1); after the fix both types
+and the existing transport/death checks pass (exit 0). This is an actual client
+animation regression, not a new standalone fixture or a retail GUI comparison.
+
+Release and optimized Debug takclient rebuilt successfully. Five existing Release
+CTests passed: retail_script, retail_visual, animation_roster, cobanim and conjure
+(0.91 seconds). Logs: /tmp/tak-statue-before.log, /tmp/tak-statue-fixed.log,
+/tmp/tak-statue-release.log and /tmp/tak-statue-o2-fixed.log.
+
+## Suppress statue death weapons (2026-09-25)
+
+World queued EXPLODEAS unconditionally, so a stone/frozen unit could retain its
+statue while emitting a blast and damaging nearby enemies. Native death
+finalization at 512d5a skips 52ac00 when severity is zero; the stone/frozen packet
+setup at 51275f supplies that zero. The engine now excludes death types 14 and 15
+from the death-weapon queue. Ordinary death weapons are unchanged. No movement
+or pathfinding logic changed. This is a simulation behavior change, so both
+client and server binaries were rebuilt.
+
+An isolated invocation of the original 512d5a..512d9c gate confirmed emission for
+positive-severity completed ordinary/self-destruct deaths and suppression for
+zero-severity stone/frozen packets and unfinished construction. Only the
+demonstrated statue defect is changed here; the unfinished construction control
+follows a separate existing engine lifecycle and is not claimed as a new fix.
+No retail GUI was launched. Native check output is in
+/tmp/tak-native-death-blast-gate.log.
+
+The existing retailgap test now checks a shipped Tarkam death weapon with both
+statue types, requiring the source to reach the death transition, no impact
+event, and unchanged nearby enemy HP. Both statue cases failed before the fix
+and pass afterward; the original ordinary-death damage controls still pass.
+The whole Release build completed and all 56 CTests passed (47.63 seconds).
+Optimized Debug takclient, takserver and retailgap_test rebuilt, its retailgap
+test passed (31.05 seconds), and the existing live client transport/death test
+passed including both statue poses. Logs: /tmp/tak-death-blast-before.log,
+/tmp/tak-death-blast-full.log, /tmp/tak-death-blast-o2-test.log and
+/tmp/tak-statue-final.log. Commit/push remains pending under the current
+read-only .git restriction; the broader transport/animation goal remains active.
+
+## Select the authored self-destruct weapon (2026-09-25)
+
+Native UnitDef loading treats EXPLODEAS and SELFDESTRUCTAS as separate blocks
+(4c16b7 and 4c1720), storing their weapon records at +1b6 and +1ba. Missing
+SELFDESTRUCTAS explicitly stores null at 4c175e. Death finalization passes the
+type-5 distinction to 52ac00, which selects exactly one slot without fallback.
+An isolated execution of that selector confirmed all four combinations of
+ordinary/self-destruct death with the separate slot absent/present. Output:
+/tmp/tak-native-selfdestruct-weapon.log.
+
+The engine previously parsed only EXPLODEAS and applied it to self-destruction.
+The shipped Tarkam therefore emitted its large damaging blast on self-destruct,
+although its FBI has no SELFDESTRUCTAS. The existing retailgap test reproduced
+this before the change (one failing assertion, all prior statue checks passing).
+The engine now parses the separate block and selects it for type 5, emitting no
+blast when it is absent. The same existing test checks the shipped no-fallback
+case and an explicitly supplied separate weapon with distinct art and low damage.
+This does not change the countdown or ordinary death weapons. It is a simulation
+change as well as an effect-selection fix. No new standalone fixture or retail
+GUI session was introduced.
+
+Verification: the Release build completed and all 56 CTests passed (47.08
+seconds). Optimized Debug takclient, takserver and retailgap_test rebuilt; its
+retailgap test passed (31.14 seconds). The explicit-weapon damage control uses
+100 damage against a 2,500-HP swordsman; its initial one-point value rounded to
+zero after falloff and was corrected before the final passing runs. The
+regression checks both a published impact referencing the separate weapon and
+small, nonlethal actual damage. Logs: /tmp/tak-selfdestruct-before.log,
+/tmp/tak-selfdestruct-full.log and /tmp/tak-selfdestruct-o2-test.log.
+Commit/push remains pending under the current read-only .git restriction.
+
+## Initialize animation restore timing from all weapon slots (2026-09-25)
+
+The callback-producer audit found that GameView supplied only WEAPON1's reload
+to SetMaxReloadTime, while World did not initialize that callback at all. Native
+52aae0 takes the maximum unsigned 16-bit reload tick count across all three
+weapon slots, converts it to milliseconds, and queues SetMaxReloadTime even
+when the maximum is zero. The type parser now retains that maximum (including
+zero-damage weapon blocks), and both World and the display send it after Create.
+Native 5307e9 stores trunc(reloadtime*30) as the slot's 16-bit tick count.
+
+This affects actual authored pose restoration: Aradrag's weapon reloads are
+3, 2.5 and 5 seconds. Its SetMaxReloadTime script doubles the parameter into
+static 10; RestoreAfterDelay sleeps on that static before clearing aim. The
+display previously supplied 3000ms, producing a six-second restore delay; the
+correct 5000ms produces ten seconds. World previously kept Create's default
+five-second delay because it never sent the callback.
+
+An isolated run of original 52aae0 confirmed five slot combinations, including
+Aradrag's 90/75/150 ticks, absent slots, a one-tick (33ms) value and the uint16
+maximum. Output: /tmp/tak-max-reload-native.log. The existing animation roster
+test now uses each type's real maximum instead of a hardcoded 1000ms and checks
+Aradrag's third-slot maximum explicitly. No new standalone fixture or retail GUI
+launch was introduced. This changes script initialization, not pathfinding.
+
+Verification: the full Release build completed and all 56 CTests passed
+(47.17 seconds). Optimized Debug takclient, takserver and animation_roster_test
+rebuilt; the animation roster test passed (0.36 seconds). Logs:
+/tmp/tak-max-reload-release.log, /tmp/tak-max-reload-full.log and
+/tmp/tak-max-reload-o2-test.log. Changes remain uncommitted under the session's
+read-only .git restriction. This callback fix does not close the separate
+coordinated queued-transport comparison described above.
+
+## Respect pickup cancellation wake scheduling (2026-09-25)
+
+Carrier pickup validated its passenger before checking the mission's wait mask
+and deadline. Stopping the passenger therefore canceled an approaching carrier
+on the next update, even while the native pickup mission was asleep. It also
+consumed event 8 without honoring that event's explicit abort meaning.
+
+Reusing the existing native passenger-order setup, the original 4d6ad0 removed
+the passenger order, then the original 4d8450 dispatched the carrier. Both
+GROUND_PICKUP and VTOL_PICKUP remained queued at ticks 101..129 and canceled at
+the armed tick-130 deadline; supplying subscribed event 8 at tick 105 canceled
+at 105. The air case used the authoritative non-local branch. Mission-name
+lookup, allocation, navigator installation and feedback remain controlled as
+in the existing probe; this establishes dispatcher timing, not full physical
+queued travel. Output: /tmp/tak-carrier-cancel-native.log.
+
+Native 519a60/519a30 separately invalidates references when a unit dies, clearing
+the target and posting pending event 8 to the owning mission. A direct call with
+the existing reciprocal orders confirmed both results. The engine now mirrors
+that wake for dead/missing transport targets on both passenger and carrier
+missions, while ordinary passenger order changes wait for the subscribed wake.
+Validation and explicit event-8 abort run after that wake is admitted. Existing
+physical movement and pathfinding algorithms are unchanged.
+
+The existing transport test now checks air/sea passenger Stop during carrier
+sleep, deadline cancellation, early-event cancellation, event-8 abort with a
+still-valid target record, and prompt reciprocal cancellation on target death.
+Before the scheduling fix, ten assertions failed; the final tests pass in
+Release and optimized Debug. The existing native/World pickup comparison still
+passes all 36 air/sea ticks through attachment and retirement. No new standalone
+fixture or retail GUI launch was introduced. Logs:
+/tmp/tak-carrier-cancel-before.log, /tmp/tak-carrier-cancel-after.log,
+/tmp/tak-carrier-cancel-o2-test.log and /tmp/tak-carrier-cancel-pickup-native.log.
+
+The full Release build completed and all 56 CTests passed (48.61 seconds).
+Optimized Debug takclient, takserver and transport_test rebuilt; its transport
+CTest passed (0.08 seconds). Full-suite log: /tmp/tak-carrier-cancel-full.log.
+Commit/push remains pending under the read-only .git restriction. The complete
+coordinated queued travel comparison remains open; this fix closes the specific
+observed cancellation scheduling mismatch, not that broader verification gap.
+
+## Clear an armed passenger's target on boarding (2026-09-25)
+
+Pickup bypasses tickCombat, so the usual old-target retirement did not run for
+an armed passenger entering cargo. World retained scriptAimTarget and omitted
+the corresponding display TargetCleared callback. Native BeCarried stage 0
+(4024e2) calls 519b70 for all weapon slots, retiring their live target records
+through 51a7f0 and queueing TargetCleared. An isolated execution of that complete
+path confirmed all three target records become the native empty sentinel and
+callbacks are queued for slots 0, 1 and 2. Output:
+/tmp/tak-boarding-clear-native.log.
+
+Successful World attachment now retires a passenger's active script aim target
+through the existing shared clear path, which also publishes the display event.
+The existing transport roster test exercises a real scripted Araarch attack,
+air/sea pickup, the once-only clear, unloading, and subsequent aim/fire under
+both balances. All four boarding-clear assertions failed before the fix and
+pass afterward. The control target uses 10,000 HP, within the signed 16.16 range;
+an initial oversized test HP value was corrected before recording the valid
+before/after result. Existing carrier profile trips remain part of this test.
+No new standalone fixture or retail GUI launch was introduced. Movement and
+pathfinding code are unchanged.
+
+The full Release build completed and all 56 CTests passed (48.72 seconds).
+Optimized Debug takclient, takserver and transport_test rebuilt; transport and
+transport_roster passed (0.32 seconds). The existing native/World pickup trace
+still matches all 36 air/sea ticks. Logs: /tmp/tak-boarding-clear-full.log,
+/tmp/tak-boarding-clear-o2-test.log and /tmp/tak-boarding-clear-pickup-native.log.
+Commit/push remains pending under the session's read-only .git restriction.
+
+## Advance weapon reloads during transport (2026-09-25)
+
+Reload advancement lived inside tickCombat, which is bypassed during pickup,
+unload and carriage. An Archer could remain aboard indefinitely without finishing
+its reload. Native's player/unit update calls 52ae90 at 51d9d4 independently of
+mission handling; 52ae90 decrements selected slots before weapon eligibility at
+52fe30. An isolated execution of 52ae90 with unattached/attached records and
+slot selections 0, 1 and all three confirmed the same countdown in all six
+cases. The eligibility call was controlled to return false; no firing or aiming
+behavior is claimed by that check. Log: /tmp/tak-transport-reload-native.log.
+
+World now advances reloads before transport and incapacitation early exits,
+retaining the existing selected-slot rules and zero clamp. Unfinished construction
+still skips this update. This does not enable combat for transported passengers
+or alter movement/pathfinding. The existing real-Archer transport roster case
+now checks countdown during pickup and completion while aboard, followed by
+successful unload and firing in both balances and air/sea cases. The four aboard
+checks failed before the engine change (/tmp/tak-transport-reload-before.log).
+No standalone fixture was added and retail GUI was not launched.
+
+Full Release build and all 56 CTests passed (49.01 seconds). Optimized Debug
+takclient, takserver and transport_test rebuilt; transport and transport_roster
+passed (0.33 seconds). Logs: /tmp/tak-transport-reload-full.log and
+/tmp/tak-transport-reload-o2-test.log. Commit/push remains pending under the
+session's read-only .git restriction.
+
+## Queued passenger head validation (2026-09-25)
+
+Reviewed the apparent cancellation when a carrier reaches its queued pickup
+before its passenger finishes an earlier move. This is not a demonstrated engine
+bug: GROUND_PICKUP at 4088cf and VTOL_PICKUP at 41a84f read only the passenger's
+primary mission head (+60), compare its code with Move_Seek_Pickup, and require
+its target to be this carrier. They do not search the appended +66 chain.
+World's front-order validation in tickTransport follows that rule.
+
+An ephemeral execution of both original handlers supplied a Move_Ground head
+with a valid Move_Seek_Pickup appended behind it. Both returned 8 (cancel).
+Making the same boarding order the head reached stage dispatch instead (return
+7 using an out-of-range stage control). Mission-name lookup and eligibility
+were controlled; stage dispatch was deliberately bypassed to isolate validation.
+All four cases passed; log: /tmp/tak-queued-pickup-head-native.log. No engine
+change, test extension or standalone fixture was warranted. This closes the
+specific head-validation question, not the full coordinated queued movement
+comparison. No retail GUI launch was used.
+
+## Prevent production while a builder is aboard (2026-09-25)
+
+The independent tickProduction pass ran before transport processing and did not
+exclude cargo. A real ZONSHAM with a finite production job continued advancing
+that job while carried. The existing roster test reproduced it under both
+balances and air/sea pickup: all four boarding controls passed and all four
+no-work-aboard assertions failed. The synthetic carrier's individual and total
+size limits were set to 64 to admit the Shaman; the initial undersized carrier
+was corrected before recording the valid reproduction.
+
+Production now returns while embarked. The resource demand pass excludes
+carried builders, and carried producers no longer protect an unfinished site
+from ordinary orphan decay. Existing queues are retained. Native BeCarried
+(4024a0) services attachment/weapon retirement and waits; it performs no build
+work. This change addresses production executing inside cargo; it does not
+establish full retail equivalence for cancellation or retention of prior finite
+production queues. No new standalone fixture or retail GUI launch was used.
+Log: /tmp/tak-cargo-production-before.log.
+
+Full Release build and all 56 CTests passed (48.67 seconds); optimized Debug
+client/server and transport/conjure targets rebuilt and the three corresponding
+CTests passed (0.96 seconds). An additional roster check verifies unloading and
+resumption of the retained job. Its first drop point overlapped the construction
+area and unloading failed; moving the drop point to clear ground on the opposite
+side of the carrier made all four unload/resume cases pass in Release. No
+placement or pathfinding code was changed. Logs: /tmp/tak-cargo-production-full.log,
+/tmp/tak-cargo-production-o2-test.log and /tmp/tak-cargo-resume-test.log.
+
+The final unload/resume roster check also passed in optimized Debug (0.25
+seconds): /tmp/tak-cargo-resume-o2-test.log. Commit/push remains pending under
+the session's read-only .git restriction.
+
+## Replacement boarding cancels finite construction (2026-09-25)
+
+Follow-up supersedes the prior section's retained-job behavior for non-queued
+boarding commands. Native 4d78a0 calls 4d6a50 before inserting a non-queued
+Move_Seek_Pickup. The real MobileBuild descriptor flags (0x80508) do not contain
+the protected-mission bit 4, so both the current build and queued builds are
+removed. The queued branch instead appends through 4d77f0.
+
+An isolated execution of 4d78a0, its real constructor, queue-clearing/destruction
+and insertion routines confirmed both cases with two MobileBuild mission
+records: non-queued freed both and left only boarding; queued retained both and
+appended boarding. Allocation/free and weapon-controller retirement were
+controlled boundaries; the old records were not executing active build cleanup
+callbacks. Log: /tmp/tak-boarding-build-queue-native.log. This proves command
+queue retention, not every construction cancellation callback or queued travel.
+
+World loadInto now uses its existing construction cancellation and Stop cleanup
+for a valid replacement boarding command, including retirement of its separate
+finite production queue/site reference and a StopBuilding notification for an
+active production site. Queued load does not take that cleanup branch. The prior
+cargo guard remains necessary for deferred production supplied by direct World
+callers; the updated roster check explicitly distinguishes this from retaining
+an old job after a replacement command. The Shaman air/sea cases in both
+balances reproduced missing cancellation before the change. They also check
+boarding, no site creation/work inside cargo, and production after unloading.
+Log: /tmp/tak-boarding-cancel-before.log. No standalone fixture or retail GUI
+launch was introduced; pathfinding algorithms are unchanged.
+
+Full Release build and all 56 CTests passed (48.61 seconds). Optimized Debug
+client/server and transport/conjure targets rebuilt; transport, transport_roster
+and conjure passed (0.96 seconds). Logs: /tmp/tak-boarding-cancel-full.log and
+/tmp/tak-boarding-cancel-o2-test.log. Commit/push remains pending under the
+session's read-only .git restriction.
+
+Still to inspect: World keeps finite production outside its movement order
+chain. A Shift-queued load preserves that production state, but this command
+retention check alone does not prove that boarding waits for it to finish.
+
+## Keep queued boarding behind finite mobile production (2026-09-25)
+
+The queue-retention follow-up exposed a real World ordering bug: production is
+stored outside orders, so Shift-load could board a conjurer before earlier
+finite outputs completed. All four air/sea and balance variants of the existing
+Shaman roster check reproduced premature boarding before the change.
+
+A queued passenger order now records the number of finite outputs ahead of it.
+Completion and dequeue retirement advance that count; canceling repeat production
+clears it. Passenger dispatch waits while earlier outputs remain. Carrier
+validation treats those earlier outputs as the passenger's current work, so an
+early carrier pickup cancels, consistent with the native head-only validation
+already established. Production added after an active boarding request also
+waits behind it. The ordering state is included in the simulation checksum.
+
+The native command append/destruction checks and pickup head validation provide
+the relevant ordering rules; this is not a new end-to-end native construction
+and transport trace. Existing captured test2-late save records additionally show
+ZONTRAIN 1154/1296 and ZONLORD 1477 with MobileBuild missions. BuildingBuild has
+different protected flags (0x8010c), so it must not be substituted for the mobile
+mission (0x80508) in the earlier cancellation evidence.
+
+The extended roster test checks premature pickup cancellation, dequeue releasing
+the pending passenger order, and successful pickup after finite construction
+when the carrier's pickup remains queued behind a wait. No new standalone
+fixture or retail GUI launch was used. Movement/pathfinding algorithms are
+unchanged. Before-fix log: /tmp/tak-queued-production-before.log.
+
+Nearby passenger selection also excludes queued loads with unfinished production
+ahead of them. The successful completion control initially could not finish its
+output before the carrier's wait ended: first the build duration was too long,
+then its mana demand exceeded the Shaman world's stored supply. The control now
+uses buildTime=10 and buildCost=1 on its copied output definition; normal game
+asset values are unchanged. The optimized transport, roster and conjure checks
+pass with that corrected control (/tmp/tak-queued-production-o2-final-test.log).
+The earlier failed control logs do not establish an engine completion failure.
+
+Final Release build and all 56 CTests passed (49.14 seconds); optimized Debug
+client/server and transport/conjure targets rebuilt, with all three related
+CTests passing (0.96 seconds). Existing native/World pickup dispatch still
+matches all 36 air/sea ticks. Logs: /tmp/tak-queued-production-full-final.log,
+/tmp/tak-queued-production-o2-final-test.log and
+/tmp/tak-queued-production-pickup-native.log. Commit/push remains pending under
+the session's read-only .git restriction. The full coordinated queued-travel
+comparison remains open; these fixes establish production-versus-boarding order.
+
+## Retire active retail construction on cancellation (2026-09-25)
+
+cancelBuilds removed buildSiteId and queued work but left retailBuild alive.
+tickRetailConstruction could therefore continue its authoritative job after a
+replacement command, including the recently corrected replacement boarding path.
+The existing construction test previously abandoned a site by manually resetting
+both fields; routing that case through public cancelBuilds reproduced the defect.
+Before-fix log: /tmp/tak-cancel-retail-build-before.log.
+
+Cancellation now sends StopBuilding when the retail job is working, resets the
+job, releases constructionHolding and restores standbyAllowed, matching the
+existing job-retirement path. The existing test then continues through its
+site-abandonment deadline and decay checks instead of bypassing cancellation.
+
+An isolated execution of native MobileBuild 405560 with cancellation event 2
+runs 51e4d0, clears the building bit, and queues StopBuilding through 56c5c0.
+Repeating cancellation produces no duplicate callback. Only the COB notification
+boundary was controlled; the handler and state transition ran from the retail
+binary. Log: /tmp/tak-cancel-retail-build-native.log. No new standalone fixture,
+retail GUI launch or pathfinding change was introduced.
+
+The public-cancellation regression also exposed legacy ghost cleanup deleting a
+real retail GetBuilt site: those sites do not depend on the legacy buildBegun
+flag. Cancellation now excludes retailSite records from immediate ghost removal,
+leaving their own abandonment/decay mission in control, including when work was
+not yet affordable. The same existing deadline/decay test verifies this behavior.
+The intermediate construction check failed until this related cleanup was fixed;
+transport and conjure checks already passed at that intermediate stage.
+
+Final Release build and all 56 CTests passed (49.23 seconds). Optimized Debug
+client/server and the construction, transport and conjure test targets rebuilt;
+all four related CTests passed (0.96 seconds). Logs:
+/tmp/tak-cancel-retail-build-full-final.log and
+/tmp/tak-cancel-retail-build-o2-final-test.log. Commit/push remains pending under
+the session's read-only .git restriction.
+
+
+## Weapon-selection reload timing (2026-09-25)
+
+The weapon-switch audit found that World::setWeapon changed the selection without
+starting the newly selected weapon's reload. Native 51a8b0 loads WeaponType+9e
+into the selected live weapon's reload word. The loader at 530806..53082b reads
+switchreloadtime, defaults it to reloadtime, multiplies by 30 and truncates to an
+unsigned word. The engine now loads that field and applies it on a valid change.
+Repeated selection does not reset the timer; invalid slots and non-switching
+units are ignored rather than clamped to another weapon.
+
+The existing retailgap Elsin selection case now checks the authored fallback,
+new-slot countdown, repeated selection and invalid selections. Isolated native
+51a8b0 execution confirms a new-slot value of 73 and preservation of a partially
+elapsed value of 7 for repeated/invalid selections. In that execution only the
+old-target retirement and COB callback boundaries were substituted; selection
+and reload assignment ran from the original binary. Log:
+/tmp/tak-switch-reload-native.log. No retail GUI was launched.
+
+This closes the switch reload omission, not the entire weapon-switch animation
+audit. Native old-target retirement still needs a command-to-display handoff:
+per-tick animation clearing currently discards callbacks emitted directly by a
+command before World::tick. The native SwitchWeapon export also needs its
+simulation/display handling assessed (no shipped script exported it in the
+previous roster scan). No pathfinding code changed.
+
+Validation: the first full sweep exposed an older timer test that assumed saved
+reload countdowns resume when switching back. Updated that existing assertion
+to the native replacement behavior, using an explicit 13-tick switch delay to
+distinguish it from ordinary reloadtime. Final Release sweep: all 56 CTests pass
+(30.30 seconds). Release and optimized Debug client/server rebuilt; optimized
+retailgap and retail_script tests pass (33.30 and 0.03 seconds). Logs:
+/tmp/tak-switch-reload-tests-final.log,
+/tmp/tak-switch-reload-o2-tests.log,
+/tmp/tak-switch-reload-o2-script-tests.log. Git remains read-only.
+
+
+## Weapon-switch callback handoff (2026-09-25)
+
+The command now retires the selected old target before changing weapon slots,
+queues TargetCleared on the authoritative script, and queues SwitchWeapon with
+the newly selected slot. Both callbacks run in the normal script phase rather
+than inline in the command. Command display events are retained separately until
+the next World tick; that tick prepends them to combat events before publication.
+The display VM consumes SwitchWeapon in the same ordered stream as AimWeapon,
+FireWeapon and TargetCleared. Missing exports remain no-ops.
+
+Repeated switching can exceed the ordinary nine-event combat packet. The packet
+retains its inline storage for ordinary updates and uses overflow storage only
+for larger command bursts. The existing script and display tests verify a
+21-switch burst, old-slot retirement, deferred script acknowledgement, ordered
+publication, copying through the render queue, and no repeat on a later tick.
+An existing interruption test incorrectly assumed switching preserved the old
+target until a later Stop. It now checks that an already-retired target produces
+no second clear, while a late SET 23 remains script-owned. The separate existing
+active-target cancellation tests still verify cancellation by TargetCleared.
+
+An isolated execution ran both original 51a8b0 and 51a7f0, substituting only the
+COB notification boundary. Switching 0 -> 1 -> 2 -> 2 produced exactly
+TargetCleared(0), SwitchWeapon(1), SwitchWeapon(2), confirming old-slot ordering
+and no duplicate on re-selection. Log: /tmp/tak-switch-callback-native.log.
+This supersedes the pending weapon-switch handoff entry above. It adds no new
+standalone fixture, launches no retail GUI, and changes no pathfinding code.
+
+Final validation: all 56 Release CTests pass (30.40 seconds); optimized Debug
+retail_script and retail_visual pass (0.05 seconds). Release and optimized
+client/server binaries rebuilt. Logs: /tmp/tak-switch-callback-full-tests.log
+and /tmp/tak-switch-callback-o2-tests.log. Commit/push remains pending because
+.git is read-only. The wider transport/animation completion audit remains open.
+
+
+## Cloak pose follows the requested mode (2026-09-25)
+
+Native Cloak/Decloak missions 402560/4025b0 toggle unit+130 bit 0x200 and queue
+StartCloaking/StopCloaking only on a requested-mode transition. They do not wait
+for successful mana payment or inspect nearby enemies. The renderer was instead
+watching actual invisibility, incorrectly restoring the visible pose whenever an
+enemy or insufficient mana exposed the unit. It now watches cloakOn. The
+simulation script now receives those callbacks too, deferred to its regular
+script phase; duplicate mode requests do not queue another callback.
+
+The existing retail_script test checks the deferred callbacks, cloak pose with a
+nearby enemy, retention when mana is insufficient, and explicit decloak. An
+isolated execution of both original handlers, substituting only the COB
+notification boundary, confirms Start, repeated Start, Stop, repeated Stop yield
+exactly StartCloaking then StopCloaking. Log: /tmp/tak-cloak-pose-native.log.
+This corrects callback selection; the renderer still samples cloak mode from its
+published snapshot, as it does for other non-weapon state transitions.
+No new standalone fixture, retail GUI launch or pathfinding edit was needed.
+
+Validation: Release and optimized Debug client/server rebuilt. All 56 Release
+CTests pass (29.17 seconds), and optimized retail_script passes (0.03 seconds).
+Logs: /tmp/tak-cloak-pose-full-tests.log and /tmp/tak-cloak-pose-o2-tests.log.
+Following the user's permission update, findmnt was checked again: this running
+session still mounts /home/pocket_geek/TAK/.git with ro. No Git write was attempted.

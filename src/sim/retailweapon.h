@@ -4,23 +4,32 @@
 #include <bit>
 #include <cstdint>
 #include <cstdlib>
+#include <vector>
 
 namespace tak {
-// Ordered display callbacks emitted by the authoritative weapon update. At most
-// three clears, three aim starts and three fires occur in one unit update.
+// Ordered display callbacks emitted by authoritative commands and combat.
+// Ordinary combat needs at most three clears, three aim starts and three fires.
 struct RetailWeaponAnimation {
-    enum Kind : uint8_t { Aim, Fire, Clear };
+    enum Kind : uint8_t { Aim, Fire, Clear, Switch };
     Kind kind=Clear;
     uint8_t slot=0;
     uint16_t heading=0,pitch=0;
 };
 struct RetailWeaponAnimations {
     std::array<RetailWeaponAnimation,9> events{};
-    uint8_t count=0;
-    void clear() { count=0; }
+    // Commands may switch repeatedly before a simulation update. Keep the
+    // ordinary combat packet inline without dropping or overflowing that burst.
+    std::vector<RetailWeaponAnimation> overflow;
+    size_t count=0;
+    const RetailWeaponAnimation& at(size_t i) const {
+        return i<events.size() ? events.at(i) : overflow.at(i-events.size());
+    }
+    void clear() { count=0;overflow.clear(); }
     void add(RetailWeaponAnimation::Kind kind,int slot,uint16_t heading=0,uint16_t pitch=0) {
         // Native display packets retain the high byte of each aiming angle.
-        events.at(count++)={kind,uint8_t(slot),uint16_t(heading&0xff00),uint16_t(pitch&0xff00)};
+        const RetailWeaponAnimation event{kind,uint8_t(slot),uint16_t(heading&0xff00),uint16_t(pitch&0xff00)};
+        if(count<events.size())events[count]=event;else overflow.push_back(event);
+        ++count;
     }
 };
 

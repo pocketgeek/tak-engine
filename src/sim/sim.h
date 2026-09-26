@@ -65,6 +65,7 @@ struct Weapon {
     std::string name;
     int32_t range = 0;       // px (readInt)
     float reload = 1;        // seconds
+    uint16_t switchReloadTicks = 30; // native switchreloadtime, defaulting to reloadtime
     int32_t damage = 0;      // DAMAGE.default (readInt; the dump prints it %i) (base, used when no category matches)
     float projVel = 0;       // px/s; 0 = instant (melee)
     bool melee = false;
@@ -438,6 +439,7 @@ struct UnitType {
     std::vector<Aura> auras;   // stat auras projected onto nearby units
     Weapon weapon;            // primary (WEAPON1); damage 0 = unarmed
     std::vector<Weapon> weapons;   // all slots (WEAPON1..3)
+    int32_t maxWeaponReloadMs=0; // SetMaxReloadTime: max of all native weapon-slot reload ticks
     bool hasPrimaryWeaponBlock=false; // native UnitDef+264 bit 0x20 is set by WEAPON1 presence
     std::array<bool,3> weaponAirstrikeCursor{}; // FBI `dropped=` bit on native WeaponType slots
     std::array<uint8_t,3> weaponNativeSlotForLocal{}; // compressed local damage vector -> FBI slot
@@ -445,6 +447,10 @@ struct UnitType {
     // (Kamikaze Rat's 320-radius blast, Grenadier/Fire Demon/Balloon death pops).
     Weapon explodeAs;
     bool hasExplodeAs = false;
+    // Self-destruction selects its own authored block, with no normal-death
+    // fallback when [SELFDESTRUCTAS] is absent (native UnitDef+1ba).
+    Weapon selfDestructAs;
+    bool hasSelfDestructAs = false;
     // totalallowed: per-player cap on LIVE units of this type (dragons/gods/
     // juggernaut carry 1). 0 = unlimited.
     int totalAllowed = 0;
@@ -588,6 +594,7 @@ struct Order {
     // Owned by the issued ground-move goal, never its intermediate waypoints.
     // Other mission kinds retain their existing handlers until ported.
     bool transportPickup = false; // carrier-owned air/surface pickup mission
+    uint32_t transportProductionAhead = 0; // finite outputs preceding a queued boarding order
     bool transportUnloadApproach = false; // native surface unload circle/poll mission
     bool transportUnloadReleasePending = false; // unload's one-tick empty mission tail
     bool transportUnloadTransferDeferred = false; // approach arrival wakes unload next tick
@@ -816,6 +823,7 @@ struct Unit {
     Fixed homeX = Fixed(), homeZ = Fixed();   // leash anchor (idle position) for auto-chase
     bool  justFired = false;   // set for one tick when the weapon fires
     tak::RetailWeaponAnimations weaponAnimations;
+    std::vector<tak::RetailWeaponAnimation> pendingWeaponAnimations; // command callbacks for next display tick
     uint32_t fireAnimations = 0; // callback delivery, before script-triggered projectile creation
     int scriptAimTarget = 0;
     uint32_t firedWeapons = 0; // display event mask; each bit identifies an actual shot
@@ -1835,7 +1843,7 @@ private:
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot);
-    void clearScriptWeaponTarget(Unit& u);
+    void clearScriptWeaponTarget(Unit& u,bool fromCommand=false);
     // Convert a unit to another player (contact charm + mind-control weapons).
     void captureUnit(Unit& t, int newPlayer);
     // Apply a weapon's damage at (hx,hz): the direct hit on `primary` plus, if
