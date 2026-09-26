@@ -11,7 +11,9 @@ not a completion gate.
 
 ## Latest verification (2026-09-25)
 
-The original air/sea transport and animation goal remains active. This batch
+The original air/sea transport and animation goal is complete under the agreed
+behavioral-parity scope (not pixel identity). The user accepted the last reproduced
+Zhon height/facing behavior after native comparison. This batch
 adds verified statue-pose and death-weapon selection fixes, weapon restore and
 switch timing, ordered switch callbacks, and cloak-mode callbacks. Transport
 fixes cover pickup cancellation scheduling, boarding target retirement, reloads
@@ -33,7 +35,8 @@ passes in both balances, including occupied-shore rejection, vacancy and the
 second passenger's native detach body. Its movement comparison covers 3,496
 physical steps. No new fixture was added for this verification pass.
 
-Completion is not claimed. Ordinary primary-queue map trips now finish both
+Completion is supported by the scope checklist and the final reproduced-case
+checks below. Ordinary primary-queue map trips now finish both
 preceding moves and board all three air carrier profiles in both balances.
 Pickup and boarding elapsed ticks agree after matching speed, randomized arrival
 radius and native warm-up; ordinary flight orders now use that mission in the
@@ -50,10 +53,10 @@ Later entries remain authoritative when an older entry describes a fixed issue.
 | Requested area | Current evidence | Remaining work or limit |
 | --- | --- | --- |
 | Air and sea transports | World round trips; native pickup/unload dispatch and movement comparisons; all shipped carrier profiles; capacity, shore occupancy, cancellation, paralysis and production-order regressions | Queued pickup timing now matches under aligned inputs; existing native/World air and sea pickup/unload coverage remains applicable. |
-| Unit animation behavior | Shipped script/pose roster; integrated movement, flight, construction, gates, weapon selection, hits, cloak and death fixes; 56-test Release sweep | The bounded callback review found and fixed authoritative MoveRate delivery (9d7df63), including its projectile-source effect. No other concrete omission was established by that review; the separate Zhon visual report remains open. |
+| Unit animation behavior | Shipped script/pose roster; integrated movement, flight, construction, gates, weapon selection, hits, cloak and death fixes; 56-test Release sweep | The bounded callback review found and fixed authoritative MoveRate delivery (9d7df63), including its projectile-source effect. No other concrete omission was established by that review; the final Zhon report was reproduced, matched to native behavior, and accepted by the user. |
 | Projectiles, including Drake fire | Native direct, ballistic, guided, flame and sprite/model behavior checks; authored effect/anchor/lifetime fixes | Representative behavior is covered; the user deferred further arrow/bolt laser diagnosis pending a clearer report. Pixel identity is not required. |
 | Cursors | Selection-context checks, all 21 registered IDs, authored timing, waypoint clocks and retained live-pointer frame/countdown behavior | Native input-to-pointer pixels were not paired; do not treat pixel matching as an additional requirement. |
-| Flying height and Zhon conjuring placement | Native root-anchor, hierarchy/projection, flight and placed-site traces | Ulasem first-start left mana spot reproduced. Native terrain initialization and active construction navigation both choose the observed height282; continuous climb and orbit comparisons pass. The user’s visual separation report still needs a synchronized pose/presentation comparison; the user says the shared capture is closer to retail than their live view. A screenshot of the reported live separation is needed to isolate the difference. |
+| Flying height and Zhon conjuring placement | Native root-anchor, hierarchy/projection, flight and placed-site traces | Both observed heights282 and366 match original construction navigation on the actual terrain. The latest user replay matches all30 saved checksums; body heading matches the construction goal and faces the site within0.4°. User accepted this as retail behavior; no remaining discrepancy in this reproduced case. |
 | Builds and delivery | 9d7df63 pushed; Release and optimized all-target builds rebuilt; 56/56 Release and 59/59 optimized tests pass | All fdaf172 GitHub workflows passed. All four 9d7df63 workflows passed: Linux, Windows, macOS and determinism. |
 
 The retail GUI remains prohibited by the user's latest instruction. Existing
@@ -11961,3 +11964,35 @@ geometry. Code review finds no separate backend altitude accumulator or extra
 height term. This narrows the discrepancy but does not replace the user's live
 visual report: a screenshot of its worst separation is still missing. No retail
 GUI was launched. All four CI workflows for9d7df63 completed successfully.
+
+
+## Final reproduced-case resolution and completion (2026-09-25)
+
+The screenshot at22:44 and its saved match game-1-1790397900.takrep resolve the
+remaining height/facing report. Current simulation reconstructs all30 recorded
+checksums exactly (/tmp/tak-zhon-replay-latest.log). Its orbit crosses north of
+Z1920 into sector22,14, whose original dilated clearance is216 rather than132.
+Consequently the cruise target increases from282 to366. Original terrain
+initializer, FlyingBuild controller and mover at (2904,363,1897) produce
+Y364→365→366 and retain366; see /tmp/tak-ulasem-native-north-height.log.
+This accounts for the larger separation in the user's new screenshot.
+
+At tick480 the actual body and active construction goal both have native heading
+24515 (port314.66°). The horizontal bearing toward the site is314.30°, a0.36°
+difference. The existing original model-refresh comparison verifies the heading
+conversion through all346 model vertices; /tmp/tak-facing-model-native.log.
+Height projection makes the ground site appear much farther below the airborne
+body, but does not imply incorrect horizontal facing.
+
+The user explicitly accepted the behavior once the retail match was established
+(“Well, if retail does that too ok then.”). No height/facing fudge was applied.
+The agreed air/sea transport, animation, projectile and cursor work is complete;
+the earlier arrow/bolt appearance report remains user-deferred pending a new
+specific bug report, rather than an outstanding implementation requirement.
+
+Final delivery: engine fixes through9d7df63 committed/pushed; Release and optimized
+client/server rebuilt; 56/56 Release and59/59 optimized tests pass. Linux, Windows,
+macOS and determinism CI workflows for that code commit all pass. Ground
+pathfinding remains covered by the existing full sweep. Later commits only update
+this audit. Historical open questions above are superseded by these conclusions;
+this is behavioral verification, not a claim of pixel-identical rendering.
