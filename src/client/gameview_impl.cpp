@@ -418,6 +418,35 @@
     }
 
     void GameView::testBuild() {
+        // Capture the reclaim particle fix through the existing local build harness.
+        if (tak::devFlag("TAK_RECLAIM_CAPTURE")) {
+            const char* name=tak::devEnv("TAK_CONJURE_BUILDER");
+            if (!name) name="araking";
+            const auto* type=registry_.find(name);
+            if (!type || !type->canReclaim) return;
+            for (const auto& feature:world_.features()) {
+                if (!feature.alive || feature.manaYield<250 || feature.work.toFloat()<250) continue;
+                const float x=feature.x.toFloat(),z=feature.z.toFloat();
+                for (const auto& [dx,dz]:std::array<std::pair<float,float>,4>{
+                         {{-96,0},{96,0},{0,-96},{0,96}}}) {
+                    if (!world_.canPlace(type,x+dx,z+dz)) continue;
+                    const int id=spawn(name,x+dx,z+dz,0,localPlayer_);
+                    tak::net::Command command;
+                    command.kind=tak::net::Cmd::Reclaim;command.player=localPlayer_;
+                    command.unitId=id;command.targetId=feature.id;
+                    tak::sim::applyCommand(world_,registry_,command);
+                    selection_={id};noFog_=true;edgeScrollOn_=false;
+                    mapView_.setZoom(3);
+                    mapView_.setOffset(x+dx-500/3.f,
+                        z+dz-terrainLift(x+dx,z+dz)-400/3.f);
+                    std::printf("reclaim capture: %s #%d at %.0f,%.0f -> feature %d at %.0f,%.0f\n",
+                        name,id,x+dx,z+dz,feature.id,x,z);
+                    return;
+                }
+            }
+            std::fprintf(stderr,"reclaim capture: no suitable feature/site\n");
+            return;
+        }
         if (tak::devFlag("TAK_CONJURE_TEST")) {
             const char* builder=tak::devEnv("TAK_CONJURE_BUILDER");
             const char* target=tak::devEnv("TAK_CONJURE_TARGET");

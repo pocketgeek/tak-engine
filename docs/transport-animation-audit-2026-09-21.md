@@ -10581,3 +10581,25 @@ real command path passes, so no production order-switching bug was established
 and no speculative engine change was made. These tests verify lifecycle for the
 recent emitter integration, not rendered appearance. The planned rendered reclaim
 capture is still outstanding. git diff --check passed; no retail launch.
+
+### Reclaim emitter rendered in the engine (2026-09-25)
+
+Added a small TAK_RECLAIM_CAPTURE branch to the existing local testBuild harness
+specifically to inspect the new worker-particle integration. It finds an authored
+positive-energy map feature and a legal nearby builder position, issues the normal
+Cmd::Reclaim, and sets the camera. No additional test framework or CTest was added.
+The first 500-energy filter found no suitable site; 250 admits the common trees.
+
+Optimized Debug client captures on Ulasem Arena used Araking and Zonhunt at
+(104,184), reclaiming feature 7052 at (200,184). Inspected both images:
+`/tmp/reclaim-araking-arena.png` shows distributed gold worker sparkles;
+`/tmp/reclaim-zonhunt-arena.png` shows distributed purple worker sparkles. Neither
+has the former separate tree-anchor sparkle. This verifies the sim particle
+snapshot reaches the normal faction-art renderer. It does not establish native
+pixel/timing parity, falling motion from a single still, or airborne reclaim.
+
+Reproduce with SDL_AUDIODRIVER=dummy TAK_RECLAIM_CAPTURE=1
+TAK_CONJURE_BUILDER=araking (or zonhunt), TAK_SHOT_MS=500, and
+`build-o2/takclient game 'Ulasem Arena' --data assets/game --testbuild --nofog --shot /tmp/reclaim.png`.
+No retail GUI was launched. Optimized Debug client rebuilt; Release client
+rebuild also performed for the capture-harness source change.
