@@ -6,7 +6,7 @@
 
 _Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit of OpenRA and the Robot War Engine._
 
-[![version](https://img.shields.io/badge/version-0.7.0-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.1-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599c?style=flat-square&logo=cplusplus&logoColor=white)](CMakeLists.txt)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![multiplayer](https://img.shields.io/badge/multiplayer-deterministic%20lockstep-b03a2e?style=flat-square)](#multiplayer)
@@ -42,7 +42,7 @@ _Cavedog's 1999 fantasy RTS — reborn in clean-room C++20 / SDL2, in the spirit
 A modern, cross-platform engine recreation for **Total Annihilation: Kingdoms**
 (Cavedog Entertainment, 1999), in the spirit of OpenRA and Robot War Engine.
 
-**Version 0.7.0** — reported by `takclient --version` and `takserver --version`
+**Version 0.7.1** — reported by `takclient --version` and `takserver --version`
 (and shown in the window title / server banner). The release version is set in
 one place, `project(... VERSION ...)` in `CMakeLists.txt`, and is separate from
 the multiplayer wire protocol version, which is gated independently at connect.
@@ -473,7 +473,8 @@ Debug builds also support direct playback:
 
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
-compatible engine behavior and game data. The current checkout uses protocol **178** for the transport corrections; published 0.7.0 uses **177**.
+compatible engine behavior and game data. Version 0.7.1 uses protocol **179**; version 0.7.0 uses **177**.
+All multiplayer clients and servers must run the same compatible build.
 Different-protocol peers and replays, including those from 0.6.9 (protocol 176),
 are rejected.
 
