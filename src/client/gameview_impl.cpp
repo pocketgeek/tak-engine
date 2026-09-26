@@ -1,5 +1,4 @@
 #include "client/retailaim.h"
-#include "client/retaileffectframe.h"
 #include "gaf/nimbus.h"
 #include "client/gameview.h"
 #include "client/shadowmask.h"
@@ -1508,12 +1507,6 @@
             else s.constructionParticles.clear();
             s.buildSiteId = u.buildSiteId; s.productionSiteId = u.productionSiteId;
             s.reclaimId = u.reclaimId; s.repairId = u.repairId;
-            s.reclaimTarget.reset();
-            if (u.reclaimId > 0) {
-                if (const auto* target=world_.feature(u.reclaimId); target && target->alive)
-                    s.reclaimTarget=UnitR::ReclaimTarget{
-                        target->x.toFloat(),target->z.toFloat(),target->fx,target->fz};
-            }
             s.yardOpen = world_.scriptYardOpen(u.id);
             s.scriptHealthPercent = int32_t(int16_t(u.hp.floorInt()))*100/std::max(u.maximumHp(),1);
             s.constructionPercentLeft = u.retailSite
@@ -3200,29 +3193,6 @@
 
     bool GameView::headbanging(const UnitR& u) const {
         return isMonarchType(u.type) && u.headbang;
-    }
-
-    void GameView::drawReclaimSparkle(const std::string& sideLower, float cx, float cy) {
-        // Legacy reclaim fallback: one anchored faction sprite.
-        // Construction uses distributed emitters in drawUnit. Native emitter
-        // coverage for these remaining fallback callers still needs verification.
-        static const std::map<std::string, std::string> kSparkly = {
-            {"ara", "aramonbuild"}, {"tar", "tarosbuild"},
-            {"ver", "verunabuild"}, {"zon", "zhonbuild"}, {"cre", "creonbuild"}};
-        auto it = kSparkly.find(sideLower);
-        const EffectAnim* ea = effectFor(it == kSparkly.end() ? std::string("aramonbuild") : it->second);
-        if (!ea || ea->frames.empty()) return;
-        const float zm = mapView_.zoom();
-        // Repeat the fallback while work is active, using authored durations.
-        // A paused or slowed simulation must also pause or slow this effect.
-        const auto fi = tak::retailEffectFrame(ea->durations, true, front().gameTick);
-        if (!fi || *fi >= ea->frames.size()) return;
-        const auto& fr = ea->frames[*fi];
-        // Native size (x zoom): drawn once, anchored on the unit, like any 2D effect
-        // anim -- no footprint fill, no 2x blow-up.
-        SDL_FRect d{cx - float(fr.ax) * zm, cy - float(fr.ay) * zm,
-                    float(fr.w) * zm, float(fr.h) * zm};
-        SDL_RenderCopyF(ren_, fr.tex, nullptr, &d);
     }
 
     tak::tdf::Node GameView::vtdf(const std::string& p) const {

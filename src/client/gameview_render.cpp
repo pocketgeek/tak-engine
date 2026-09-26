@@ -2132,28 +2132,6 @@
 
         constructionParticles(true);
 
-        // Reclaim's legacy worker sparkle. Retail 40658e emits only at the
-        // worker; construction's two-ended particles are rendered separately.
-        auto sideLower = [&] {
-            std::string s = u.type ? u.type->side : std::string();
-            std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-            return s;
-        };
-
-        // Show the worker effect only once reclaim is in range, matching
-        // World::tickReclaim's work gate.
-        if (u.type && u.reclaimTarget) {
-            // Target and worker belong to the same pinned simulation frame.
-            // A busy simulation thread must not suppress this frame's effect.
-            const auto* feat = &*u.reclaimTarget;
-            float dxr = feat->x - u.x, dzr = feat->z - u.z;
-            float reach = 24.0f + 8.0f * float(std::max(feat->fx, feat->fz)) +
-                          (u.type->buildDist > 0 ? u.type->buildDist : 0.0f);
-            if (dxr * dxr + dzr * dzr <= reach * reach) {
-                drawReclaimSparkle(sideLower(), ax, ay);
-            }
-        }
-
         // Occluded: re-draw the hidden lower part as a faint, flat player-coloured
         // silhouette through the wall, so a unit behind cover is never fully lost.
         if (occluded) {

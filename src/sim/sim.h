@@ -841,6 +841,7 @@ struct Unit {
     // memory-lean and the faster choice; front-pops become erase(begin()). Element
     // order (all that stateHash folds in) is preserved, so lockstep is byte-identical.
     int reclaimId = 0;                 // builder: feature being reclaimed (0 = none)
+    uint8_t reclaimEffectDelay = 0;    // worker particle cadence while actively reclaiming
     int repairId = 0;                  // builder: damaged friendly being repaired (0 = none)
     std::vector<int> cargo;
     std::vector<Order> orders;

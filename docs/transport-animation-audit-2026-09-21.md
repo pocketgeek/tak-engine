@@ -10531,3 +10531,38 @@ next emitter change needs that countdown relationship established first.
 Release client rebuilt; retail_visual and git diff --check passed. No retail GUI
 launch or visual capture. Earlier notes describing reclaim sparkles at both ends
 were an implementation description and are superseded by this native evidence.
+
+### Reclaim worker particle integration (2026-09-25)
+
+Native feature loader `494040..49404a` reads `energy` into definition `+128`.
+Reclaim initializes its countdown to trunc(energy + 15), subtracts two per work
+dispatch, and emits one falling worker particle while the resulting count exceeds
+15. This explains the worker-only emitter and its two-tick wake cadence; zero
+energy does not produce that emission.
+
+Production feature reclaim now requests the shared construction particle emitter
+at two-active-work-tick intervals, only while positive-energy work remains. The
+per-job cadence resets on new work, cancellation and completion and participates
+in state hashing. Existing particle motion, owner-relative projection, front/back
+partition, faction art and expiry now render reclaim as distributed falling
+particles instead of a single looping sprite. Removed the old sprite helper and
+the now-unneeded feature-target render snapshot. Existing particles drain after
+work ends. This uses the existing sim-to-render particle snapshot and does not
+look up live simulation targets from the renderer.
+
+Scope: feature reclaim only. Corpse reclaim is unchanged. Current World reclaim
+uses an energy-proportional mana drip and work rate rather than retail's mission
+countdown and completion delay. This patch deliberately ties effects to actual
+World work and does not claim exact whole-job retail timing or change income,
+reclaim duration, pathfinding, or footprint release. Native reclaim mission timing
+is therefore still an open limitation, separate from particle representation.
+
+The existing navblock test now checks multiple two-tick worker emissions, live
+particles, unchanged feature/footprint removal, and emission cessation plus
+particle expiry after completion. No standalone fixture was added. Existing
+native particle tests passed 4,096 emitter/motion/expiry cases and 2,048 draw
+projection/partition cases. Full Release build/test results follow below.
+Full Release rebuild succeeded, including takclient and takserver. All 56 Release
+CTests passed (47.78 seconds), including the extended navblock reclaim checks,
+transport/map round trips, animation roster, flying combat and native landing
+poses. git diff --check passed. No retail launch or rendered reclaim capture.

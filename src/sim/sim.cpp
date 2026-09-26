@@ -5124,6 +5124,7 @@ void World::cancelBuilds(int builderId) {
                                               o.repairTarget != 0;
                                    }),
                     b->orders.end());
+    b->reclaimEffectDelay = 0;
     b->reclaimId = 0;            // a fresh move/attack/stop drops any reclaim job
     b->repairId = 0;             // ...and any repair job
     if (b->buildSiteId) {
@@ -5458,6 +5459,7 @@ void World::tickReclaim(Unit& b, float dt) {
         // The job is over. Retire its order; the next one (which may be another
         // reclaim) simply becomes current.
         b.reclaimId = 0;
+        b.reclaimEffectDelay = 0;
         if (!b.orders.empty() && b.orders.front().reclaimFeat) b.orders.erase(b.orders.begin());
     };
     if (b.reclaimId < 0) {
@@ -5524,6 +5526,15 @@ void World::tickReclaim(Unit& b, float dt) {
     // Per TICK, like the corpse drain: kReclaimRate is work/second.
     const Fixed d = fxMin(f.work, Fixed::fromFloat(kReclaimRate / kTick));
     f.work -= d;
+    // Retail Reclaim (406529..40658e) requests one falling worker particle
+    // every two work ticks, and none during its final completion delay.
+    // Keep emission tied to our active work; reclaim economics are unchanged.
+    if (f.work > Fixed() && f.manaYield > 0) {
+        if (b.reclaimEffectDelay == 0) {
+            emitConstruction(b, false);
+            b.reclaimEffectDelay = 1;
+        } else --b.reclaimEffectDelay;
+    }
     players_[size_t(b.player)].creditMana(
         // DIVIDE IN DOUBLE. `(d / f.workFull)` in fixed point truncates the
         // proportion every tick, and the remainder is never paid: a shipped
@@ -8653,8 +8664,10 @@ void World::tick(float dt) {
             buildDue_.push_back(u.id);
         // Reclaim needs no deferral: consuming a feature spawns nothing, so
         // nothing can reallocate units_ underneath us.
-        if (!u.orders.empty() && u.orders.front().reclaimFeat && u.reclaimId == 0)
+        if (!u.orders.empty() && u.orders.front().reclaimFeat && u.reclaimId == 0) {
             u.reclaimId = u.orders.front().reclaimFeat;
+            u.reclaimEffectDelay = 0;
+        }
         if (!u.orders.empty() && u.orders.front().repairTarget && u.repairId == 0)
             u.repairId = u.orders.front().repairTarget;
 
@@ -9501,6 +9514,7 @@ uint64_t World::stateHash() const {
             mix(queued->id.size());
             for (unsigned char c : queued->id) mix(c);
         }
+        mix(u.reclaimEffectDelay);
         mix(uint64_t(uint32_t(u.repairId)));   // build-power target -> HP/mana divergence
         mix(uint64_t(uint32_t(int32_t(u.squad))));   // control squad: formation<0 drives movement
     }

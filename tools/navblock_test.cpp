@@ -219,10 +219,32 @@ int main(int argc, char** argv) {
     reclaimer.id = "reclaimer"; reclaimer.maxHp = 100;
     reclaimer.isBuilder = reclaimer.canMove = reclaimer.canReclaim = true;
     reclaimer.maxVel = sim::Fixed::fromInt(1); reclaimer.buildDist = 200;
+    reclaimer.modelTop = 32 * 65536;
     const int builder = treeWorld.spawn(&reclaimer, 144, 176, 0, 0);
     treeWorld.reclaim(builder, 10 * 32 + 12, false);
-    for (int i = 0; i < 600 && tree && tree->alive; ++i) treeWorld.tick(1.f / 30);
+    uint32_t emissions=0;
+    int lastEmission=-1;
+    bool cadence=true,particles=false;
+    for (int i = 0; i < 600 && tree && tree->alive; ++i) {
+        treeWorld.tick(1.f / 30);
+        const auto* worker=treeWorld.unit(builder);
+        if (worker->constructionEmissions[0]!=emissions) {
+            cadence &= worker->constructionEmissions[0]==emissions+1 &&
+                       (lastEmission<0 || i-lastEmission==2);
+            lastEmission=i;
+            emissions=worker->constructionEmissions[0];
+        }
+        particles |= worker->cosmeticConstructionEmitter &&
+                     !worker->cosmeticConstructionEmitter->particles.empty();
+    }
+    check(emissions>1 && cadence && particles,
+          "active reclaim emits falling worker particles every two ticks");
     check(tree && !tree->alive, "multi-cell feature can be reclaimed");
+    for(int i=0;i<180;++i)treeWorld.tick(1.f/30);
+    const auto* worker=treeWorld.unit(builder);
+    check(worker->constructionEmissions[0]==emissions &&
+          worker->cosmeticConstructionEmitter && worker->cosmeticConstructionEmitter->particles.empty(),
+          "completed reclaim stops emission and existing particles drain");
     bool freed = true;
     for (int z = 10; z < 12; ++z)
         for (int x = 12; x < 14; ++x) freed &= treeWorld.nav().walkable(x, z);

@@ -51,8 +51,6 @@ struct UnitR {
     float frozenFor = 0, stonedFor = 0, paralyzedFor = 0;
     float selfDestructT = -1;   // >=0 = self-destruct countdown (seconds) armed
     int buildSiteId = 0, productionSiteId = 0, reclaimId = 0, repairId = 0;
-    struct ReclaimTarget { float x, z; int fx, fz; };
-    std::optional<ReclaimTarget> reclaimTarget;
     bool conjuring = false;
     bool hasConstructionEmitter = false;
     std::array<uint32_t,2> constructionEmissions{};
