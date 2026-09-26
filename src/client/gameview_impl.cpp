@@ -2961,14 +2961,6 @@
             };
             a.flying = type && type->canFly;
         } catch (const std::exception&) { /* unit stays unanimated */ }
-        // Flag units whose model uses an animated glow texture (lodestone/mana/crystal)
-        // so the glow only cycles once built -- held static while still conjuring.
-        if (auto vt = visuals_.find(typeId); vt != visuals_.end())
-            for (const auto& tn : vt->second.model.textures()) {
-                std::string t = tn;
-                std::transform(t.begin(), t.end(), t.begin(), ::tolower);
-                if (animatedTex_.count(t)) { a.usesGlow = true; break; }
-            }
         if (a.vm) {
             Anim& st = anims_[id] = std::move(a);
             // The VM is ticked on the worker pool, so emit-sfx only stashes into this

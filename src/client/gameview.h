@@ -1116,7 +1116,6 @@ private:
         const EffectAnim* smokeFx = nullptr;
         float fireT = 1e9f, smokeT = 1e9f;
         int firePiece = -1, smokePiece = -1;   // follow the animated emitting pieces
-        bool usesGlow = false;               // model has an animated glow texture
     };
 
     // Refresh a cosmetic flame/smoke effect attached to its animated COB piece.

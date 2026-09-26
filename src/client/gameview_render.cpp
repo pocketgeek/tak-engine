@@ -1781,7 +1781,14 @@
         for (const auto& [name, r] : atlasRect_) {
             auto it = textures_.find(name);
             if (it == textures_.end() || it->second.empty()) continue;
-            size_t ci = size_t(slot) < it->second.size() ? size_t(slot) : 0;
+            // Atlases can also be created after the main animation update
+            // (projectiles, debris and previews). Start with the selected frame,
+            // not a player-colour index that lasts until the next repaint.
+            const auto animation = modelTextureAnimations_.find(name);
+            const size_t ci = animation != modelTextureAnimations_.end()
+                ? animation->second.frame
+                : (size_t(slot) < it->second.size() ? size_t(slot) : 0);
+            if (ci >= it->second.size()) continue;
             SDL_Rect dst = r;
             SDL_RenderCopy(ren_, it->second[ci], nullptr, &dst);
         }

@@ -10477,3 +10477,20 @@ fixture files were added. The existing native clock probe also passed 147,456
 updates and matched the shared C++ clock on 1,280 native timelines. The existing
 retail_visual CTest passed. No retail GUI or controlled visual capture was used;
 these checks prove timing/selection, not complete rendered animation parity.
+
+### Atlas creation uses the selected animated frame (2026-09-25)
+
+The atlas initialization path still chose every texture by player colour, even
+for animated sequences. Atlases created after the main per-frame animation
+update (for example by a projectile or debris draw) could therefore display a
+player-indexed frame until the next update. atlasFor now initializes animated
+regions with the same selected per-sequence frame used by the update and unpacked
+rendering paths, including leaving an expired non-looping region empty. Static
+textures and player logos retain their existing selection. Removed the unused
+per-unit usesGlow flag and its model scan, left over from the former visibility
+gate. Release client rebuilt; existing retail_visual and four transport CTests
+passed. No simulation or pathfinding changes and no new fixtures.
+Optimized Debug client also rebuilt. Its existing headless weapon-impact route
+check passed with the updated renderer (Arapult land/water variants, fallback,
+location and authored expiry). This is a rendering integration smoke check,
+not a pixel assertion specifically targeting late-created atlas contents.
