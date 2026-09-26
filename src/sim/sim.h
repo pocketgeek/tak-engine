@@ -851,6 +851,7 @@ struct Unit {
     int reclaimId = 0;                 // builder: feature being reclaimed (0 = none)
     uint8_t reclaimEffectDelay = 0;    // worker particle cadence while actively reclaiming
     int repairId = 0;                  // builder: damaged friendly being repaired (0 = none)
+    bool workScriptWorking = false; // repair/reclaim requested StartBuilding
     std::vector<int> cargo;
     std::vector<Order> orders;
     // RALLY orders for a production building: what the units it makes should do once
@@ -1871,6 +1872,8 @@ private:
     void tickRetailGetBuilt(Unit& u);
     void completeRetailConstruction(Unit& builder,Unit& site);
     void notifyUnitScript(Unit& u,const char* name);
+    void startWorkAnimation(Unit& u,Fixed targetX,Fixed targetZ);
+    void stopWorkAnimation(Unit& u);
     void notifyFlightOccupancy(Unit& u);
     bool prepareBuildApproach(Unit& u);
     Order makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const;

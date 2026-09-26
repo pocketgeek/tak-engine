@@ -23,6 +23,9 @@ struct RetailReplayProbe {
     }
     static const auto& scriptStatics(const World& world,int id) { return world.unitScripts_.at(id).state.vm.statics; }
     static void emitScript(World& world,int id) {world.notifyUnitScript(*world.unit(id),"Emit");}
+    static void repairTick(World& world,int id) {world.tickRepair(*world.unit(id),1.f/30);}
+    static void reclaimTick(World& world,int id) {world.tickReclaim(*world.unit(id),1.f/30);}
+    static void scriptTick(World& world,int id) {world.tickUnitScript(*world.unit(id));}
     static void clearScriptEvents(World& world) {world.scriptEmissions_.clear();}
 
     static void shoot(World& world,int from,int target) {world.fire(*world.unit(from),*world.unit(target),0);}
@@ -976,6 +979,119 @@ int main(int argc,char** argv) {
         RetailReplayProbe::hit(impacts,blast,300,200,0,direct);
         require(impacts.unit(direct)->weaponAnimations.count==0 && impacts.unit(splash)->weaponAnimations.count==0,
             "status damage does not produce direct or splash flinch callbacks");
+
+        auto repairFile=std::make_shared<tak::cob::File>();
+        repairFile->numStatics=4;
+        repairFile->scripts={{"StartBuilding",0},{"StopBuilding",18}};
+        repairFile->code={0x10022000,0x10022000,
+            0x10021002,0,0x10023004,0,0x10021002,1,0x10023004,1,
+            0x10021004,2,0x10021001,1,0x10031000,0x10023004,2,0x10065000,
+            0x10021004,3,0x10021001,1,0x10031000,0x10023004,3,0x10065000};
+        UnitType repairer;repairer.maxHp=100;repairer.isBuilder=true;repairer.canMove=true;
+        repairer.workerTime=1;repairer.simulationScript=repairFile;
+        UnitType damaged;damaged.maxHp=100;damaged.buildTime=100;damaged.buildCost=100;
+        World repairWorld;repairWorld.setVisPlayer(-1);
+        repairWorld.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
+        const int worker=repairWorld.spawn(&repairer,200,200,0);
+        const int repaired=repairWorld.spawn(&damaged,220,200,0);
+        repairWorld.unit(repaired)->hp=Fixed::fromInt(50);
+        repairWorld.unit(worker)->repairId=repaired;
+        repairWorld.player(0).mana=0;
+        const uint16_t repairHeading=uint16_t(retailDirection(Fixed::fromInt(-20),Fixed()).v-
+            portHeadingToRetail(repairWorld.unit(worker)->heading));
+        RetailReplayProbe::repairTick(repairWorld,worker);
+        require(repairWorld.unit(worker)->workScriptWorking &&
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==0,
+            "repair requests its pose before mana payment and defers script execution");
+        RetailReplayProbe::scriptTick(repairWorld,worker);
+        require(RetailReplayProbe::scriptStatics(repairWorld,worker)==
+            std::vector<uint32_t>{repairHeading,1,1,0},
+            "repair StartBuilding receives captured relative heading and stance arguments");
+        RetailReplayProbe::repairTick(repairWorld,worker);
+        RetailReplayProbe::scriptTick(repairWorld,worker);
+        require(RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==1,
+            "ongoing repair does not restart its pose each update");
+        repairWorld.unit(repaired)->hp=Fixed::fromInt(100);
+        RetailReplayProbe::repairTick(repairWorld,worker);
+        require(!repairWorld.unit(worker)->workScriptWorking &&
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==1,
+            "completed repair stops its controller");
+        repairWorld.unit(repaired)->hp=Fixed::fromInt(50);
+        repairWorld.unit(worker)->repairId=repaired;
+        RetailReplayProbe::repairTick(repairWorld,worker);
+        RetailReplayProbe::scriptTick(repairWorld,worker);
+        repairWorld.cancelBuilds(worker);repairWorld.cancelBuilds(worker);
+        require(!repairWorld.unit(worker)->workScriptWorking &&
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==2 &&
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==2,
+            "repair cancellation stops its controller exactly once");
+
+        repairWorld.addFeature(99,220,200,0,12,1,1,false,-1,false);
+        repairWorld.unit(worker)->reclaimId=99;
+        RetailReplayProbe::reclaimTick(repairWorld,worker);
+        RetailReplayProbe::scriptTick(repairWorld,worker);
+        require(repairWorld.unit(worker)->workScriptWorking &&
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==3,
+            "feature reclaim starts its authored controller even with no mana yield");
+        RetailReplayProbe::reclaimTick(repairWorld,worker);
+        RetailReplayProbe::scriptTick(repairWorld,worker);
+        require(RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==3,
+            "ongoing reclaim does not restart its pose each update");
+        RetailReplayProbe::reclaimTick(repairWorld,worker);
+        require(!repairWorld.unit(worker)->workScriptWorking &&
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==3,
+            "completed reclaim stops its controller");
+        repairWorld.addFeature(100,220,200,0,12,1,1,false,-1,false);
+        repairWorld.unit(worker)->reclaimId=100;
+        RetailReplayProbe::reclaimTick(repairWorld,worker);
+        RetailReplayProbe::scriptTick(repairWorld,worker);
+        repairWorld.cancelBuilds(worker);repairWorld.cancelBuilds(worker);
+        require(!repairWorld.unit(worker)->workScriptWorking &&
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==4,
+            "reclaim cancellation stops its controller exactly once");
+
+        TypeRegistry workRegistry;
+        tak::net::Command workCommand;workCommand.unitId=worker;workCommand.player=0;
+        workCommand.kind=tak::net::Cmd::Repair;workCommand.targetId=repaired;
+        applyCommand(repairWorld,workRegistry,workCommand);
+        for(int tick=0;tick<4;++tick)repairWorld.tick(1.f/30);
+        require(repairWorld.unit(worker)->repairId==repaired &&
+            repairWorld.unit(worker)->workScriptWorking,
+            "Repair command reaches its controller through the ordinary update loop");
+        const auto firstWorkCounts=RetailReplayProbe::scriptStatics(repairWorld,worker);
+        const int replacement=repairWorld.spawn(&damaged,220,210,0);
+        repairWorld.unit(replacement)->hp=Fixed::fromInt(50);
+        workCommand.targetId=replacement;applyCommand(repairWorld,workRegistry,workCommand);
+        require(!repairWorld.unit(worker)->workScriptWorking &&
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==firstWorkCounts[3]+1,
+            "replacement Repair command retires the previous controller immediately");
+        for(int tick=0;tick<4;++tick)repairWorld.tick(1.f/30);
+        require(repairWorld.unit(worker)->repairId==replacement &&
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==firstWorkCounts[2]+1,
+            "replacement target starts its own repair controller once");
+        repairWorld.unit(replacement)->x=Fixed::fromInt(450);
+        RetailReplayProbe::repairTick(repairWorld,worker);
+        require(!repairWorld.unit(worker)->workScriptWorking,
+            "repair controller retires when its target moves out of reach");
+        repairWorld.unit(replacement)->x=Fixed::fromInt(220);
+        RetailReplayProbe::repairTick(repairWorld,worker);
+        RetailReplayProbe::scriptTick(repairWorld,worker);
+        repairer.canReclaim=true;
+        repairWorld.addFeature(101,220,200,0,100,1,1,false,-1,false);
+        workCommand.kind=tak::net::Cmd::Reclaim;workCommand.targetId=101;
+        applyCommand(repairWorld,workRegistry,workCommand);
+        require(!repairWorld.unit(worker)->workScriptWorking,
+            "Reclaim command retires the preceding repair controller");
+        for(int tick=0;tick<4;++tick)repairWorld.tick(1.f/30);
+        require(repairWorld.unit(worker)->reclaimId==101 &&
+            repairWorld.unit(worker)->workScriptWorking,
+            "Reclaim command starts its controller through the ordinary update loop");
+        const auto beforeStop=RetailReplayProbe::scriptStatics(repairWorld,worker);
+        workCommand.kind=tak::net::Cmd::Stop;applyCommand(repairWorld,workRegistry,workCommand);
+        applyCommand(repairWorld,workRegistry,workCommand);
+        require(!repairWorld.unit(worker)->workScriptWorking &&
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==beforeStop[3]+1,
+            "Stop command retires the reclaim controller once");
 
         auto activationFile=std::make_shared<tak::cob::File>();
         activationFile->numStatics=1;

@@ -22,7 +22,7 @@ missed weapon events, transported-passenger effects and authored death effects.
 The chronological entries below document their scope and validation. The earlier
 read-only Git restriction has been lifted for the current session.
 
-The most recent full Release sweep passes all 56 CTests (49.03 seconds), including
+The most recent full Release sweep passes all 56 CTests (49.51 seconds), including
 the recent animation, pickup-cancellation, boarding target-clear and transport reload fixes at the end of this audit. Existing
 native/World ridge-flight unload comparisons also pass all three shipped air
 carrier profiles in both balances: ZONROC, CREAERI and TARSHIP. This includes
@@ -33,15 +33,15 @@ passes in both balances, including occupied-shore rejection, vacancy and the
 second passenger's native detach body. Its movement comparison covers 3,496
 physical steps. No new fixture was added for this verification pass.
 
-Completion is not claimed. In particular, coordinated queued movement before
-pickup is not established by the older native diagnostic: it manually assigns
-code 30 to the secondary mission list with flag 0x20000, where it dispatches
-concurrently with the primary ground move. This is not ordinary Shift append.
-An ephemeral native check confirms 4d77f0 appends to the primary chain and keeps
-the pickup deferred for 100 updates while the current move waits. World tests cover successful queued
-trips but do not establish equivalence to that different native setup. Broader
-engine-driven pose/effect lifecycle coverage also remains as described below;
-standalone script equality is not proof of every runtime callback producer.
+Completion is not claimed. Ordinary primary-queue map trips now finish both
+preceding moves and board all three air carrier profiles in both balances in
+native and World runs. Timing differs; initialization and ordinary-move dispatch
+still need alignment before claiming joined timing parity. The latest map-trip
+entry below records the inputs and results. The older secondary-list diagnostic
+with flag 0x20000 remains unsuitable as evidence of Shift append. Broader
+engine-driven pose/effect lifecycle review also remains; repair and feature
+reclaim now have their missing simulation callbacks, while the separate corpse
+reclaim branch still needs native lifecycle verification.
 
 ## Current scope checklist (2026-09-25)
 
@@ -50,7 +50,7 @@ Later entries remain authoritative when an older entry describes a fixed issue.
 
 | Requested area | Current evidence | Remaining work or limit |
 | --- | --- | --- |
-| Air and sea transports | World round trips; native pickup/unload dispatch and movement comparisons; all shipped carrier profiles; capacity, shore occupancy, cancellation, paralysis and production-order regressions | Join ordinary primary-queue passenger/carrier movement through pickup. The old secondary-list diagnostic does not establish that sequence. |
+| Air and sea transports | World round trips; native pickup/unload dispatch and movement comparisons; all shipped carrier profiles; capacity, shore occupancy, cancellation, paralysis and production-order regressions | Complete primary queued trips now board all air profiles in native and World; align the remaining timing differences described in the latest map-trip entry. |
 | Unit animation behavior | Shipped script/pose roster; integrated movement, flight, construction, gates, weapon selection, hits, cloak and death fixes; 56-test Release sweep | Continue checking engine callback producers against the native lifecycle. Script-only roster equality cannot certify every gameplay transition. |
 | Projectiles, including Drake fire | Native direct, ballistic, guided, flame and sprite/model behavior checks; authored effect/anchor/lifetime fixes | Representative behavior is covered; the user deferred further arrow/bolt laser diagnosis pending a clearer report. Pixel identity is not required. |
 | Cursors | Selection-context checks, all 21 registered IDs, authored timing, waypoint clocks and retained live-pointer frame/countdown behavior | Native input-to-pointer pixels were not paired; do not treat pixel matching as an additional requirement. |
@@ -11684,3 +11684,63 @@ follows the active state and needed no change. Native evidence is recorded in
 Validation: all 56 Release CTests pass (49.03s); optimized retail_script passes
 (0.03s). Release and optimized takclient/takserver rebuilt successfully. Logs:
 /tmp/tak-activation-release-tests.log and /tmp/tak-activation-o2-binaries.log.
+
+## Ordinary primary-queue map trip (2026-09-25)
+
+An ephemeral adaptation of the existing Lake Lokken ground-move diagnostic uses
+4d77f0 to append Move_Seek_Pickup after Move_Ground and VTOL_Pickup after
+VTOL_Move. Both secondary queues remain empty. The passenger starts at
+(3840,5600), the carrier at (3840,1920), and both preceding moves target
+(3840,5760). The passenger faces south initially. The ground corridor has native
+GROUND2 grade 6 throughout. An earlier candidate at (3840,5280) was rejected:
+it had grade 0, yet the old native setup admitted a direct route through it.
+That candidate cannot establish route parity and was not used to change World.
+
+Original native route search, physical movers, primary dispatcher, mission
+removal, pickup and reciprocal attachment execute through boarding. The old
+secondary-list retirement and new-route stopping rules were removed. A
+zero-filled carrier mount table is supplied, as already done for the passenger;
+visual mount animation is not compared. Native Araarch finishes its preceding
+move at tick 140 and enters pickup wait (stage 1, deadline 170, mask 0x89) while
+the carrier is still moving. All profiles/balances reach reciprocal attachment,
+retire pickup and install BeCarried. An ephemeral World counterpart on the same
+terrain also finishes the passenger move, waits for its carrier and boards:
+
+| Carrier/balance | Native boarding tick | World boarding tick |
+| --- | ---: | ---: |
+| ZONROC base | 1107 | 1212 |
+| ZONROC Crusades | 1111 | 1216 |
+| CREAERI base/Crusades | 1584 | 1729 |
+| TARSHIP base/Crusades | 2014 | 2210 |
+
+World enters passenger wait at tick 123. These timing differences remain to be
+explained by aligning initialization and ordinary-move dispatch; this is evidence
+of the complete queued lifecycle, not tick-identical whole-World parity. Native
+controlled boundaries remain worker scheduling/UI/effect services, visibility,
+feature-definition bodies and empty COB tables. World uses the shipped registry
+and no instantiated feature bodies. Logs are
+/tmp/tak-valid-primary-{zonroc,creaeri,tarship}-{base,crusades}.log and
+/tmp/tak-valid-primary-world.log. No permanent fixture or transport code was added.
+
+## Repair and feature-reclaim script poses (2026-09-25)
+
+Native RepairUnit (40749b) and Reclaim (406411) invoke 4d4ab0 to request
+StartBuilding(relativeHeading,1) before productive work. Clearing the work bit
+invokes StopBuilding via 51e4d0. World's simulation omitted these callbacks,
+although the renderer synthesized a work pose from job state. The simulation now
+starts once in work range and stops on completion, invalidation or cancellation;
+repair also stops when its target leaves reach. The work state is included in
+both state hashes. Rates, targeting and pathfinding are unchanged.
+
+The existing retail_script regression covers deferred start arguments, no repeated
+start during work or mana starvation, finish/cancel edges and actual commands
+Repair -> replacement Repair -> Reclaim -> Stop. Native producer checks pass
+(/tmp/tak-repair-pose-native.log). An inclusive scan of all 32 extracted
+builder/canmove types found that their StartBuilding exports ignore the arguments
+or are absent, so the renderer's omitted arguments do not require another shipped
+pose fix (/tmp/tak-builder-start-arguments.log). Corpse reclaim uses a separate
+legacy simulation branch and remains to be checked against its native lifecycle.
+
+All 56 Release CTests pass (49.51s); optimized retail_script passes (0.03s).
+Release and optimized clients/servers rebuilt. Logs:
+/tmp/tak-work-pose-tests.log and /tmp/tak-work-pose-o2-binaries.log.

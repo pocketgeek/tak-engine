@@ -5186,6 +5186,7 @@ void World::cancelBuilds(int builderId) {
         b->constructionHolding=false;
         b->standbyAllowed=true;
     }
+    stopWorkAnimation(*b);
     // Drop every pending build from the order queue (see queueBuild): a fresh
     // move/attack/stop cancels queued construction.
     b->orders.erase(std::remove_if(b->orders.begin(), b->orders.end(),
@@ -5530,6 +5531,7 @@ void World::tickReclaim(Unit& b, float dt) {
     auto advance = [&] {
         // The job is over. Retire its order; the next one (which may be another
         // reclaim) simply becomes current.
+        stopWorkAnimation(b);
         b.reclaimId = 0;
         b.reclaimEffectDelay = 0;
         if (!b.orders.empty() && b.orders.front().reclaimFeat) b.orders.erase(b.orders.begin());
@@ -5584,6 +5586,8 @@ void World::tickReclaim(Unit& b, float dt) {
     float reach = 24.0f + 8.0f * float(std::max(f.fx, f.fz)) +
                   (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
     if (dx * dx + dz * dz > reach * reach) return;   // still walking there
+    // Native Reclaim calls the same stance producer as RepairUnit (406411).
+    startWorkAnimation(b,f.x,f.z);
     // Never the RECLAIM order itself -- that entry IS the job, and it is what
     // holds the queue back until the feature is gone (advance() retires it).
     if (b.orders.empty() || !b.orders.front().reclaimFeat) dropLeg(b);
@@ -5650,6 +5654,7 @@ void World::repair(int builderId, int targetId, bool queue) {
 void World::tickRepair(Unit& b, float dt) {
     Unit* t = unit(b.repairId);
     auto endRepair = [&] {
+        stopWorkAnimation(b);
         b.repairId = 0;
         if (!b.orders.empty() && b.orders.front().repairTarget) b.orders.erase(b.orders.begin());
     };
@@ -5668,9 +5673,13 @@ void World::tickRepair(Unit& b, float dt) {
     float reach = std::max(half + 40.0f,
                            b.type->buildDist > 0 ? b.type->buildDist + half : 0.0f);
     if (dx * dx + dz * dz > reach * reach) {
+        stopWorkAnimation(b);
         if (b.orders.empty()) order(b.id, t->x.toFloat(), t->z.toFloat(), false);   // (re)walk toward it
         return;
     }
+    // Native RepairUnit requests the build stance once it reaches the target
+    // (40749b -> 4d4ab0), before facing and before any affordable repair work.
+    startWorkAnimation(b,t->x,t->z);
     // ...but never the REPAIR order itself: that entry is the job.
     if (b.orders.empty() || !b.orders.front().repairTarget) dropLeg(b);
     b.speed = Fixed();
@@ -7367,6 +7376,23 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
         aim.projectileCreated();
     }
     return true;
+}
+
+void World::startWorkAnimation(Unit& u,Fixed targetX,Fixed targetZ) {
+    if(u.workScriptWorking)return;
+    u.workScriptWorking=true;
+    if(auto script=unitScripts_.find(u.id);script!=unitScripts_.end()) {
+        const auto& file=*u.type->script();
+        const uint16_t heading=uint16_t(retailDirection(u.x-targetX,u.z-targetZ).v);
+        script->second.state.startArguments(file,file.scriptIndex("StartBuilding"),
+            {uint16_t(heading-portHeadingToRetail(u.heading)),1,0,0},2);
+    }
+}
+
+void World::stopWorkAnimation(Unit& u) {
+    if(!u.workScriptWorking)return;
+    u.workScriptWorking=false;
+    notifyUnitScript(u,"StopBuilding");
 }
 
 void World::notifyUnitScript(Unit& u,const char* name) {
@@ -9286,6 +9312,7 @@ void World::hashTrace() const {
         hUnitMisc = fnv(hUnitMisc, u.standingOrder);
         hUnitMisc = fnv(hUnitMisc, uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
         hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(u.repairId)));
+        hUnitMisc = fnv(hUnitMisc, u.workScriptWorking);
         hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(int32_t(u.squad))));
     }
     uint64_t hProj = fnv(seed, projectiles_.size());
@@ -9632,6 +9659,7 @@ uint64_t World::stateHash() const {
         }
         mix(u.reclaimEffectDelay);
         mix(uint64_t(uint32_t(u.repairId)));   // build-power target -> HP/mana divergence
+        mix(u.workScriptWorking);
         mix(uint64_t(uint32_t(int32_t(u.squad))));   // control squad: formation<0 drives movement
     }
     checkpoint("units");
