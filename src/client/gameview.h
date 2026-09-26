@@ -2264,25 +2264,12 @@ private:
     // move. NOTE: the FBI `canmove` flag is unreliable -- some buildings (the Keep,
     // arakeep) set canmove=1 with NO velocity -- so key off maxVel, not type->canMove.
     static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= tak::sim::Fixed(); }
-    // Retail's shadow rule, and ONLY retail's: it skips the whole shadow block for
-    // FBI `noshadow` (KINGDOMS.icd 0x4ec8d8) and, independently, for every `floater`
-    // (0x4ecac0) -- which is why five ships carry a shadowart they never show.
-    // Buildings are NOT excluded here: two of them (npcflag, vermort) declare a
-    // shadow sprite and retail draws it.
+    // Retail Glide skips both `noshadow` and `floater` types (KINGDOMS.icd
+    // 0x4ec8d8 / 0x4ecac6). We deliberately allow floating units to cast the
+    // same animated silhouettes as land units. The explicit noShadow flag and
+    // the global Shadows option still apply; this is a presentation-only addition.
     static bool castsShadow(const tak::sim::UnitType* t) {
-        // Those two are the WHOLE test. The Glide shadow block reads the type and
-        // bails on exactly two bits of UnitDef+0x260: 0x2000000 (noshadow, the
-        // guard at 0x4ec8d8) and 0x80000 (floater, 0x4ecac6). There is no canfly
-        // bit test and no building test anywhere in it, so a flyer and a keep
-        // both cast.
-        //
-        // We DID exclude canfly once, on the strength of the drawable-build code
-        // at 0x4ee340, which installs shadow art only when noshadow and canfly
-        // are both clear. That reading was sound but it describes the SOFTWARE
-        // renderer's sprite shadow, a path the Glide renderer never takes for
-        // units -- which is why 24 flying types carry a `shadowgaf` that looked
-        // like dead data and is not.
-        return t && !t->noShadow && !t->floater;
+        return t && !t->noShadow;
     }
     // EVERY unit that casts at all casts a projected silhouette -- there is no
     // second kind of shadow in the Glide renderer we target. The shadow is emitted

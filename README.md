@@ -168,6 +168,8 @@ The shadow option controls unit, scenery, and projectile shadows. Shadows follow
 animated poses, including swaying trees; shading baked into terrain artwork
 remains visible. Version 0.7.1 uses per-unit shadow silhouettes on supported
 accelerated renderers, with a fallback for unsupported or exhausted targets.
+Development builds after 0.7.1 also add boat shadows, an intentional enhancement
+over retail Glide, controlled by the same Shadows option.
 
 **Settings → Benchmark** provides a repeatable eight-AI load test and reports
 frame rate, simulation speed, memory, and other available performance metrics.

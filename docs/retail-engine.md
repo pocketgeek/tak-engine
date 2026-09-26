@@ -1040,6 +1040,11 @@ The exclusions are only two, both bits of `UnitDef+0x260`: `noshadow`
 (`0x2000000`, tested at `0x4ec8d8`) and `floater` (`0x80000`, at `0x4ecac6`).
 There is no `canfly` test and no building test, so flyers and keeps both cast.
 
+**Engine enhancement (2026-09-26):** TAK Engine now allows floaters to cast
+animated silhouette shadows too, while retaining the `noshadow` exclusion and
+the global Shadows option. This intentionally differs from retail Glide; it
+does not change the retail findings above.
+
 `ShadowScale` (a 0..3 setting at settings+0x19) maps to 1/2/4 at `0x4ecb83` and
 becomes the divisor `0x4ec250` applies to the projected coordinates -- a shadow
 resolution knob. `DrawShadows` is the bool at settings+0xf, reaching the draw as

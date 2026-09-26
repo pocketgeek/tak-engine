@@ -95,6 +95,8 @@ camera, and interface preferences are set in the in-game **Options** screen
 scale, cursor size and **hardware cursor**, smooth motion, and edge scrolling.
 The shadow toggle controls unit, scenery, and projectile shadows. Shading baked
 into terrain artwork remains visible; swaying trees also deform their shadows.
+Development builds after 0.7.1 also add boat shadows, an intentional enhancement
+over retail Glide, controlled by the same Shadows option.
 
 Two of those exist because the art is from 1999 and modern displays are not.
 **SMOOTH GUI ART** edge-directed-upscales the static interface art, faction
