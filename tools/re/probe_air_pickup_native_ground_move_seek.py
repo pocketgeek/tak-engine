@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Trace VTOL pickup while Araarch has a queued ground move.
+"""Trace VTOL pickup with a secondary-list passenger pickup request.
 
-This checks code 27 Move_Ground active with code 30 Move_Seek_Pickup appended
-behind it. For each passenger update it runs retail's active dispatcher
-0x4d8450 followed by queued dispatcher 0x4d85e0. At tick 4, VTOL_Pickup
+This explicitly sets flag 0x20000, putting code 30 Move_Seek_Pickup on
+unit+0x64 while code 27 Move_Ground occupies the primary unit+0x60 list.
+It does NOT reproduce ordinary Shift-queue append (4d77f0, primary-list tail).
+For each passenger update it runs retail's active dispatcher 0x4d8450
+followed by secondary dispatcher 0x4d85e0. At tick 4, VTOL_Pickup
 retires because code 27 is still current; queued code 30 is dispatched,
 returns 8, and is removed before the move completes. The trace stops at that
 native retirement result and does not claim a later boarding sequence.
@@ -184,8 +186,8 @@ def register_orders(phase, carrier, passenger, carrier_name, passenger_name,
             raise RuntimeError(("native transport/move order insertion", label, error))
 
     # Install the point move first as the active mission. Retail's 0x20000
-    # insertion flag sends the subsequent code-30 order to unit+0x64 rather
-    # than interrupting the active move at unit+0x60.
+    # secondary-list flag sends code 30 to unit+0x64. This is concurrent
+    # dispatch, not ordinary append behind the move on the primary chain.
     construct(27, goal, passenger_order)
     insert(passenger, passenger_order, "Move_Ground")
     construct(30, carrier, seek_order)
@@ -197,7 +199,7 @@ def register_orders(phase, carrier, passenger, carrier_name, passenger_name,
             (carrier_order, passenger_order):
         raise AssertionError("native pickup order heads were not installed")
     if get(passenger + 0x64) != seek_order or get(seek_order + 0x66):
-        raise AssertionError(("native 0x20000 queue insertion did not append code 30",
+        raise AssertionError(("native 0x20000 insertion did not install secondary code 30",
                               hex(get(passenger + 0x64)), hex(seek_order),
                               hex(get(seek_order + 0x66))))
     if get(carrier + 0xC4) != seek_order + 0x12 or \
@@ -783,7 +785,7 @@ def run(args):
                 print(f"  Last code-30 queued dispatch: {seek_dispatch_states[-1]}")
         print(f"  Last handler returns: Move_Ground={code27_returns[-4:]}, "
               f"Move_Seek_Pickup={code30_returns[-4:]}")
-        print("  This native-only trace does not compare World queued-load behavior.")
+        print("  This secondary-list trace does not compare ordinary primary-list Shift-load behavior.")
         return
     if not nav_pops:
         raise AssertionError("native GROUND2 mover never popped a route waypoint")

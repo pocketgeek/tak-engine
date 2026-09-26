@@ -28,9 +28,11 @@ second passenger's native detach body. Its movement comparison covers 3,496
 physical steps. No new fixture was added for this verification pass.
 
 Completion is not claimed. In particular, coordinated queued movement before
-pickup is not established by the older native diagnostic: that case starts with
-an already-active carrier pickup and retires both pickup requests while the
-passenger's ground move remains active. World tests cover successful queued
+pickup is not established by the older native diagnostic: it manually assigns
+code 30 to the secondary mission list with flag 0x20000, where it dispatches
+concurrently with the primary ground move. This is not ordinary Shift append.
+An ephemeral native check confirms 4d77f0 appends to the primary chain and keeps
+the pickup deferred for 100 updates while the current move waits. World tests cover successful queued
 trips but do not establish equivalence to that different native setup. Broader
 engine-driven pose/effect lifecycle coverage also remains as described below;
 standalone script equality is not proof of every runtime callback producer.
@@ -10280,7 +10282,7 @@ An earlier probe mistook registry code 28 (`Move_Ground_Formation`) for
 ordinary `Move_Ground`; that fixture was discarded. Native descriptor lookup
 gives ordinary `Move_Ground` code 27 (handler `0x402b00`). The corrected probe
 uses that constructor and verifies the mission code and destination. It then
-sets retail's `0x20000` append flag before native `0x4d7750`, placing code 30
+sets retail's `0x20000` secondary-list flag before native `0x4d7750`, placing code 30
 at `passenger+0x64` behind code 27 at `passenger+0x60`.
 
 The route worker installs two points; Araarch moves 1.25 pixels on the first
@@ -10952,3 +10954,26 @@ Release and optimized Debug clients rebuilt. Nine targeted Release CTests passed
 under SDL dummy video/audio on Ulasem Arena. Logs:
 /tmp/tak-authored-death-tests.log, /tmp/tak-authored-death-native.log and
 /tmp/tak-authored-death-live.log. git diff --check passed.
+
+
+### Secondary mission list distinguished from ordinary queue append (2026-09-25)
+
+The earlier native Move_Ground/Move_Seek_Pickup diagnostic manually set 0x20000
+and called 4d7750. That flag chooses unit+64, a separate list executed by
+4d85e0 alongside the current primary mission. Calling it an ordinary appended
+Shift-load was incorrect. Its observed tick-4 cancellation is real for that
+constructed arrangement, but does not demonstrate an engine Shift-load bug.
+
+Native 4d77f0 sets 0x1000 and links a new order into the primary unit+60 chain
+through +66, preserving the current head. Generic insertion 4d78a0 separately
+handles whether old orders are cleared and selects this primary append path.
+An ephemeral Unicorn check called 4d77f0 with a sleeping Move_Ground head and
+Move_Seek_Pickup tail, then executed both 4d8450 and 4d85e0 for 100 updates.
+The primary chain remained intact, the secondary list stayed empty, and the
+pickup stage remained untouched. This establishes append/defer semantics, not
+a complete moving-carrier/passenger pickup trajectory.
+
+Corrected the existing diagnostic's description/comment/output and current audit
+status. No new fixture program and no engine change were warranted by this
+finding. Full coordinated movement/boarding parity remains unproven. Retail was
+not launched; only isolated routines from the local binary were executed.
