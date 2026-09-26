@@ -10728,3 +10728,25 @@ builder test rebuilt; production, retail_builder_animation, retail_script,
 animation_roster and gate_scripts CTests all passed; git diff --check passed.
 No new standalone fixture or retail launch. No factory-specific rendered capture
 was taken in this pass.
+
+
+### Gate display follows authoritative activation (2026-09-25)
+
+Removed GameView's independent six-Hz gate proximity policy. It opened doors for
+nearby same-owner units without excluding corpses, embarked passengers or airborne
+flyers, and ignored manual activation entirely. The simulation already owns manual
+activation and automatic AI gate control (tickAutomaticGates -> gateWantsOpen),
+with ground occupancy, moving approaches and stationary passage occupants handled
+there. The client now mirrors captured active-state edges through Activate and
+Deactivate, as it already does for other on/off units. A newly visible gate still
+starts its display latch closed so an already-active snapshot opens its doors.
+Unused proximity-timer and script-name detection fields were removed.
+
+This changes only display activation; simulation, gate occupancy and pathfinding
+are untouched. Existing gate script tests cover both balances, manual activation,
+occupied closure, automatic approach/clearance and full World traversal. Those
+checks validate the state producer and scripts; they are not a rendered client
+comparison. No new fixture or retail GUI launch.
+
+Release takclient rebuilt successfully. All 56 existing Release CTests passed
+(30.22 seconds); git diff --check passed. No rendered gate capture this pass.

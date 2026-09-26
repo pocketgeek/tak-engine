@@ -2249,42 +2249,12 @@
                         }
                     });
             }
-            // On/off structures: the doors/power state swing via the COB Activate/
-            // Deactivate scripts (RequestState->Go->[open + hide doors + OpenYard], and
-            // the reverse). OpenYard/CloseYard alone move NO piece, so they are not the
-            // hook. A GATE auto-opens on friendly footprint occupancy (retail 0x40a020):
-            // it is purely cosmetic for us -- the gate's passage cells ('c' in the
-            // yardmap) are never blocked, so units pass regardless -- so we drive it
-            // CLIENT-side (no hashed state) from the render frame rather than the sim.
-            // Non-gate onoffables follow the sim's u.active (the O/ToggleGate order).
-            if (u.type && u.type->onOffable && a.hasActivate) {
-                if (a.hasGateDoors) {
-                    // Rescan a few times a second (not the O(units) sweep every tick).
-                    if (animClock_ >= a.gateNext) {
-                        a.gateNext = animClock_ + 0.2f;
-                        float halfW = u.type->footX * 8.0f + 24.0f;   // half-extent + margin
-                        float halfD = u.type->footZ * 8.0f + 24.0f;
-                        bool wantOpen = false;
-                        for (const UnitR* op : front().live) {
-                            // isStructure (maxVel <= tak::sim::Fixed()), NOT !canMove: walls set canmove=1
-                            // with no velocity, and a wall abuts every gate -- the canMove
-                            // test would latch the gate open forever (CLAUDE.md gotcha).
-                            if (op == &u || !op->type || isStructure(op->type)) continue;
-                            if (op->player != u.player) continue;
-                            if (std::abs(op->x - u.x) < halfW && std::abs(op->z - u.z) < halfD) {
-                                wantOpen = true;
-                                break;
-                            }
-                        }
-                        if (wantOpen != a.active) {
-                            a.active = wantOpen;
-                            a.vm->start(wantOpen ? "Activate" : "Deactivate");
-                        }
-                    }
-                } else if (u.active != a.active) {
-                    a.active = u.active;
-                    a.vm->start(u.active ? "Activate" : "Deactivate");
-                }
+            // The simulation owns activation, including manual gate commands and
+            // automatic AI gate occupancy checks. Mirror its edge so door poses
+            // agree with the authoritative yard handshake below.
+            if (u.type && u.type->onOffable && a.hasActivate && u.active != a.active) {
+                a.active = u.active;
+                a.vm->start(u.active ? "Activate" : "Deactivate");
             }
             // Cloak pose. StartCloaking/StopCloaking are real engine entry points
             // (they appear in the icd's call-script-by-name sites alongside Create
@@ -2905,7 +2875,6 @@
                 cc.hasFlightSM = cc.file->scriptIndex("BeginFlight") >= 0;
                 cc.hasActivate = cc.file->scriptIndex("Activate") >= 0;
                 cc.hasQueryWeapon = cc.file->scriptIndex("QueryWeapon") >= 0;
-                cc.hasOpen = cc.file->scriptIndex("open") >= 0;
                 cc.hasTurnDir = cc.file->scriptIndex("TurnDirection") >= 0;
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
@@ -2917,14 +2886,12 @@
             a.hasWind = ci->second.hasWind;
             a.hasFlightSM = ci->second.hasFlightSM;
             a.hasActivate = ci->second.hasActivate;
-            a.hasGateDoors = type && type->onOffable && ci->second.hasOpen;
             a.hasTurnDir = ci->second.hasTurnDir;
             a.hasQueryWeapon = ci->second.hasQueryWeapon;
-            // Seed the door/active latch. A gate starts CLOSED (Create leaves its
-            // doors shut) so proximity opens it; other onoffable units mirror the
-            // sim's initial u.active (= activateWhenBuilt) so a unit built inactive
-            // doesn't fire a spurious Deactivate the first frame it's seen.
-            a.active = a.hasGateDoors ? false : (type ? type->activateWhenBuilt : true);
+            // Gate Create leaves the doors closed; replay an active snapshot's
+            // Activate even when the gate became active before it was visible.
+            // Other on/off units retain their authored initial state.
+            a.active = type && type->gate ? false : (type ? type->activateWhenBuilt : true);
             a.vm = std::make_unique<tak::cob::Vm>(ci->second.file);
             a.vm->enableRetailAnimation();
             a.explosionReachability=ci->second.explosionReachability;
