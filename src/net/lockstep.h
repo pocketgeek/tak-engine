@@ -22,7 +22,6 @@ enum class Cmd : uint8_t {
     Disco,         // cosmetic emote: player's monarchs dance for 10s (Shift+D).
                    // Synced via lockstep so all peers see it; affects no sim state.
     Reclaim,       // mobile builder unitId reclaims feature targetId for mana
-                   // (right-click-drag issues one per feature in the box, queue=1)
     Stance,        // set unitId's combat stance to targetId (0=offensive/1=defensive/
                    // 2=passive) -- gates auto-acquire and chase leash
     Cloak,         // canCloak unitId: targetId != 0 enables cloaking, 0 disables
@@ -33,6 +32,7 @@ enum class Cmd : uint8_t {
     SetSquad,      // assign unitId to a control squad: targetId = 0 none, +N group N,
                    // -N formation N (N=1..10). A unit is in exactly one squad; formations
                    // move at their slowest member's speed and their stragglers rejoin.
+    ReclaimArea,   // persistent area clear: x/z through x2/z2, chooses each next target in sim
 };
 
 struct Command {
@@ -43,6 +43,7 @@ struct Command {
     float x = 0, z = 0;
     uint8_t queue = 0;
     char type[16] = {};   // unit type id for Train/Build
+    float x2 = 0, z2 = 0; // ReclaimArea upper rectangle endpoint
 };
 
 } // namespace tak::net

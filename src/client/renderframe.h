@@ -70,7 +70,7 @@ struct UnitR {
     // Construction OR reclaim still queued.
     bool hasQueuedWork() const {
         for (const auto& o : orders)
-            if (o.buildType || o.reclaimFeat || o.repairTarget) return true;
+            if (o.buildType || o.reclaimFeat || o.reclaimArea || o.repairTarget) return true;
         return false;
     }
     std::vector<int> cargo;

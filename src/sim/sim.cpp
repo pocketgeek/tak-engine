@@ -1654,7 +1654,7 @@ Order* World::groundMissionOrder(Unit& u) {
     const auto plain = [](const Order& o) {
         return !o.targetId && !o.attackMove && !o.patrol && !o.guard && !o.load &&
                (!o.unload || o.transportUnloadApproach) &&
-               !o.buildType && !o.reclaimFeat && !o.repairTarget && !o.wait && !o.waitAttack;
+               !o.buildType && !o.reclaimFeat && !o.reclaimArea && !o.repairTarget && !o.wait && !o.waitAttack;
     };
     if (!plain(u.orders.front())) return nullptr;
     Order& goal = u.orders[currentLeg(u.orders)];
@@ -3490,7 +3490,7 @@ float Weapon::damageVs(const UnitType* t) const {
 }
 
 void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId,
-                     Unit* primary) {
+                     Unit* primary, std::optional<std::array<int32_t,3>> position) {
 
     // Record the impact for the viewer (hit sound / effect).
     {
@@ -3500,6 +3500,14 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         hf.fromX = from ? from->x.toFloat() : hx;
         hf.fromZ = from ? from->z.toFloat() : hz;
         hf.fromPlayer = fromPlayer;
+        // Capture display geometry before damage/death callbacks and before the
+        // next movement tick. Never infer height from another nearby aircraft.
+        if (position) hf.position = position;
+        else if (primary) hf.position = std::array<int32_t,3>{Fixed::fromFloat(hx).v,
+            (primary->type && primary->type->canFly ? primary->flightY : primary->groundY).v,
+            Fixed::fromFloat(hz).v};
+        if (from) hf.fromPosition = std::array<int32_t,3>{from->x.v,
+            (from->type && from->type->canFly ? from->flightY : from->groundY).v,from->z.v};
         hits_.push_back(hf);
     }
     // Attacker's veteran attack multiplier boosts damage dealt (retail scales the
@@ -3898,7 +3906,17 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
     if (w.melee || w.beam || w.projVel <= 0) {
         // Legacy delivery for the remaining classes; flames use the native
         // advancing front above. Other Line-of-Sight subclasses remain separate.
+        // The aim pass already queried these attachment points. Reuse them for
+        // status-shot presentation without another script call at release.
+        const bool captured=w.beam && scriptTriggered && slot >= 0 && slot < 3;
+        const auto muzzle=captured ? u.weaponMuzzlePoints[size_t(slot)] : std::array<int32_t,3>{};
+        const auto aimPoint=captured ? u.weaponAimPoints[size_t(slot)] : std::array<int32_t,3>{};
+        const size_t event=hits_.size();
         applyHit(w, target.x.toFloat(), target.z.toFloat(), u.player, u.id, &target);
+        if (captured) {
+            hits_[event].fromPosition=muzzle;
+            hits_[event].position=aimPoint;
+        }
         return;
     }
     // Dropped: the bomb is RELEASED, not fired. Native
@@ -5286,7 +5304,7 @@ void World::cancelBuilds(int builderId) {
     // move/attack/stop cancels queued construction.
     b->orders.erase(std::remove_if(b->orders.begin(), b->orders.end(),
                                    [](const Order& o) {
-                                       return o.buildType != nullptr || o.reclaimFeat != 0 ||
+                                       return o.buildType != nullptr || o.reclaimFeat != 0 || o.reclaimArea ||
                                               o.repairTarget != 0;
                                    }),
                     b->orders.end());
@@ -5578,6 +5596,103 @@ void World::tickBurning() {
 // Reclaim rate: work is consumed at a flat rate (retail ties reclaim duration to
 // the feature's `energy`, not the builder's worktime). ~2s for a 250-value tree.
 static constexpr float kReclaimRate = 120.0f;   // work units per second
+
+void World::reclaimArea(int builderId,float x0,float z0,float x1,float z1,bool queue) {
+    Unit* b=unit(builderId);
+    if (!b || !b->alive() || !b->type || !b->type->isBuilder ||
+        !b->type->canMove || !b->type->canReclaim ||
+        !std::isfinite(x0) || !std::isfinite(z0) || !std::isfinite(x1) || !std::isfinite(z1)) return;
+    const float limitX=float(std::max(0,hW_-1)*16),limitZ=float(std::max(0,hH_-1)*16);
+    RetailReclaimArea area;
+    area.minX=Fixed::fromFloat(std::clamp(std::min(x0,x1),0.0f,limitX)).v;
+    area.maxX=Fixed::fromFloat(std::clamp(std::max(x0,x1),0.0f,limitX)).v;
+    area.minZ=Fixed::fromFloat(std::clamp(std::min(z0,z1),0.0f,limitZ)).v;
+    area.maxZ=Fixed::fromFloat(std::clamp(std::max(z0,z1),0.0f,limitZ)).v;
+    if (!queue) { cancelPath(*b); b->orders.clear(); }
+    Order o;
+    o.x=Fixed::raw(area.minX);o.z=Fixed::raw(area.minZ);
+    o.goal=true;o.issuedTick=tickCounter_;o.reclaimArea=area;
+    b->orders.push_back(o);
+}
+
+void World::tickReclaimArea(Unit& b) {
+    if (b.orders.empty() || !b.orders.front().reclaimArea) return;
+    auto& area=*b.orders.front().reclaimArea;
+    // Native ReclaimArea stage 1 first approaches the closest point of the
+    // rectangle. Use the existing movement controller, without changing routing.
+    if (!area.approached) {
+        area.approached=true;
+        const Fixed x=Fixed::raw(std::clamp(b.x.v,area.minX,area.maxX));
+        const Fixed z=Fixed::raw(std::clamp(b.z.v,area.minZ,area.maxZ));
+        if (x!=b.x || z!=b.z) {
+            auto pending=std::move(b.orders);
+            b.orders.clear();
+            order(b.id,x.toFloat(),z.toFloat(),true);
+            b.orders.insert(b.orders.end(),std::make_move_iterator(pending.begin()),
+                            std::make_move_iterator(pending.end()));
+            return;
+        }
+    }
+    // Visibility for an authoritative order must not read the client's async
+    // display fog. Re-evaluate the existing retail sight footprints, on demand,
+    // identically on the headless server and all clients.
+    const int width=hW_/2,height=hH_/2;
+    std::vector<uint8_t> visible(size_t(width)*height,0);
+    for (const auto& u:units_) {
+        if (!u.alive() || !u.type || u.underConstruction || u.embarked() || !allied(u.player,b.player)) continue;
+        RetailSightFootprint sight=u.sightFootprint;
+        sight.active=false;
+        // Before the first exploration pass, initialize the same authored sight.
+        if (sight.x<0 || sight.z<0) {
+            sight.distance=int16_t(u.type->sight);sight.sightHeight=u.type->sightHeight;
+            sight.x=int16_t(u.x.floorInt()/32);sight.z=int16_t(u.z.floorInt()/32);
+            const Fixed y=u.type->canFly?u.flightY:u.groundY;
+            sight.eyeHeight=std::max(y.floorInt(),seaLevel_+1)+sight.sightHeight;
+        }
+        retailSightFootprint(sight,true,false,width,height,uint8_t(b.player),
+            [&](int x,int z){return explorationHeights_[size_t(z)*width+x];},
+            [&](int x,int z,int,uint16_t){visible[size_t(z)*width+x]=1;},
+            [&](int x,int z,bool){return !visible[size_t(z)*width+x];});
+    }
+    // Resolve footprint cells to their actual anchor. Selecting only centres
+    // misses multi-cell trees and rubble intersecting the selection rectangle.
+    std::unordered_map<int,int> targets;
+    for (const auto& f:features_) {
+        if (!f.alive || !f.id || f.work<=Fixed()) continue;
+        if (f.type>=0 && (size_t(f.type)>=featTypes_.size() || !featTypes_[size_t(f.type)].reclaimable)) continue;
+        const int x=footprintOrigin(f.x,f.fx),z=footprintOrigin(f.z,f.fz);
+        targets.emplace(z*hW_+x,f.id);
+    }
+    for (const auto& [id,p]:corpseFootprints_) {
+        const Unit* corpse=unit(id);
+        if (!corpse || corpse->alive() || corpse->deadFor>=corpse->corpseUntil ||
+            p.type<0 || size_t(p.type)>=featTypes_.size() || !featTypes_[size_t(p.type)].reclaimable) continue;
+        targets.emplace(p.z*hW_+p.x,-id);
+    }
+    auto targetAt=[&](int32_t x,int32_t z) {
+        const int cx=x>>20,cz=z>>20;
+        if (cx<0 || cz<0 || cx>=hW_ || cz>=hH_ ||
+            cx/2>=width || cz/2>=height || !visible[size_t(cz/2)*width+cx/2]) return 0;
+        int ax=cx,az=cz;
+        if (!mapPlacementCells_.empty()) {
+            const auto& cell=mapPlacementCells_[size_t(cz)*hW_+cx];
+            if (cell.feature==0xfffe) {ax-=cell.backX;az-=cell.backZ;}
+            else if (cell.feature>=mapPlacementTypes_.size()) return 0;
+        }
+        const auto found=targets.find(az*hW_+ax);
+        return found==targets.end()?0:found->second;
+    };
+    const auto point=retailReclaimAreaTarget(area,b.x.v,b.z.v,[&](int32_t x,int32_t z){return targetAt(x,z)!=0;});
+    if (!point) { b.orders.erase(b.orders.begin());return; }
+    const int target=targetAt(point->first,point->second);
+    area.approached=false;
+    // Keep the area behind one ordinary reclaim child. Completion (or another
+    // builder removing the feature) wakes it to choose from the NEW position.
+    const size_t oldSize=b.orders.size();
+    reclaim(b.id,target,true);
+    if (b.orders.size()>oldSize) std::rotate(b.orders.begin(),b.orders.end()-1,b.orders.end());
+    else b.orders.erase(b.orders.begin());
+}
 
 void World::reclaim(int builderId, int featureId, bool queue) {
     Unit* b = unit(builderId);
@@ -7238,7 +7353,7 @@ void World::tickStraightProjectiles(std::span<const int> airGrid) {
             const auto hit=projectileCollision(p.position,p.velocity[1],flags,p.fromPlayer,airGrid);
             if(hit.code==2) {
                 applyHit(w,Fixed::raw(p.position[0]).toFloat(),Fixed::raw(p.position[2]).toFloat(),
-                    p.fromPlayer,p.fromId,unit(hit.unitId));
+                    p.fromPlayer,p.fromId,unit(hit.unitId),p.position);
                 p.spent=true;break;
             }
         }
@@ -7280,7 +7395,7 @@ void World::tickFlames(std::span<const int> airGrid) {
             const auto hit=collision(flame.position);
             if(hit.code==2) {
                 applyHit(w,Fixed::raw(flame.position[0]).toFloat(),Fixed::raw(flame.position[2]).toFloat(),
-                    flame.owner,flame.fromId,unit(hit.unitId));
+                    flame.owner,flame.fromId,unit(hit.unitId),flame.position);
                 flame.impacted=true;break;
             }
         }
@@ -7394,11 +7509,13 @@ std::optional<World::WeaponAimSolution> World::queryWeaponAim(int unitId,int tar
     const auto& weapon=u->type->weapons[size_t(slot)];
     const std::array<int32_t,3> origin{u->x.v,(u->type->canFly ? u->flightY : u->groundY).v,u->z.v};
     WeaponAimSolution result;
+    result.source=origin;
     result.target={target->x.v,(target->type->canFly ? target->flightY : target->groundY).v,target->z.v};
     const auto heading=portHeadingToRetail(u->heading);
     result.heading=uint16_t(retailDirection(target->x-u->x,target->z-u->z).v-heading);
     if(weapon.ballistic || weapon.beam || weapon.kind==Weapon::Kind::Guided) {
         const auto source=queryUnitScriptPoint(unitId,false,slot);
+        result.source=source;
         const auto sweetSpot=queryUnitScriptPoint(targetId,true);
         const auto step=retailGroundStep(target->heading,target->speed);
         const std::array<int32_t,3> velocity=target->type->canFly ?
@@ -7450,6 +7567,7 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
     if(!solution)return true;
     u.scriptAimTarget=target.id;
     u.weaponAimPoints[size_t(slot)]=solution->target;
+    u.weaponMuzzlePoints[size_t(slot)]=solution->source;
     auto& aim=u.weaponAim[size_t(slot)];const auto& weapon=u.type->weapons[size_t(slot)];
     const bool dropped=weapon.kind==Weapon::Kind::Dropped;
     if(!dropped && aim.start(solution->heading,solution->pitch)) {
@@ -8400,7 +8518,7 @@ void World::tick(float dt) {
             p.age=int32_t(tickCounter_-p.start);
             if(hit) {
                 applyHit(*p.wsrc,Fixed::raw(p.position[0]).toFloat(),
-                    Fixed::raw(p.position[2]).toFloat(),p.fromPlayer,p.fromId,unit(hitUnit));
+                    Fixed::raw(p.position[2]).toFloat(),p.fromPlayer,p.fromId,unit(hitUnit),p.position);
                 p.spent=true;p.life=0;
             } else if(p.life>0)--p.life;
             continue;
@@ -8430,7 +8548,7 @@ void World::tick(float dt) {
                 p.position=state.position;p.velocity=state.velocity;p.angles=state.angles;
                 p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
                 if(hit.code==2)
-                    applyHit(*p.wsrc,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId));
+                    applyHit(*p.wsrc,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId),p.position);
                 // Native retires an out-of-map shell without damage and dispatches
                 // exactly one impact when collision returns 2.
                 p.spent=true;p.life=-1;stopped=true;break;
@@ -8934,6 +9052,7 @@ void World::tick(float dt) {
         // version called it inline and read the order queue out of freed memory.
         if (!u.orders.empty() && u.orders.front().buildType && !u.orders.front().buildRectangle && u.buildSiteId == 0)
             buildDue_.push_back(u.id);
+        tickReclaimArea(u);
         // Reclaim needs no deferral: consuming a feature spawns nothing, so
         // nothing can reallocate units_ underneath us.
         if (!u.orders.empty() && u.orders.front().reclaimFeat && u.reclaimId == 0) {
@@ -9637,6 +9756,12 @@ uint64_t World::stateHash() const {
             mix(u.standbyState.deadline); mix(u.standbyState.pending); mix(u.standbyState.flags);
         }
         for (const auto& order : u.orders) {
+            if (order.reclaimArea) {
+                mix(0x41524541u);
+                const auto& a=*order.reclaimArea;
+                mix(uint32_t(a.minX));mix(uint32_t(a.minZ));mix(uint32_t(a.maxX));mix(uint32_t(a.maxZ));
+                mix(a.approached);
+            }
             if (order.park) {
                 mix(0x5041524bu);const auto& p=*order.park;
                 mix(p.target);mix(p.padding);mix(p.attempts);mix(uint32_t(p.permanent));mix(p.ring.has_value());

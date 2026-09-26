@@ -169,52 +169,17 @@
     }
 
     void GameView::issueReclaimBox(float x0, float z0, float x1, float z1, bool queue) {
-        int builderId = firstReclaimer();
-        const auto* b = frameUnitP(builderId);
-        if (!b) return;
-        float minx = std::min(x0, x1), maxx = std::max(x0, x1);
-        float minz = std::min(z0, z1), maxz = std::max(z0, z1);
-        std::vector<std::pair<float, int>> targets;
-        {   // Live read under the lock: one-shot on the drag release, and the worker can
-            // reallocate this vector (corpse push_back) under the scan.
-            std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-            if (useSimThread_) lk.lock();
-            for (const auto& f : world_.features()) {
-                if (!canPickPoint(f.x.toFloat(), f.z.toFloat())) continue;
-                if (!f.alive || f.x.toFloat() < minx || f.x.toFloat() > maxx || f.z.toFloat() < minz || f.z.toFloat() > maxz) continue;
-                float dx = f.x.toFloat() - b->x, dz = f.z.toFloat() - b->z;
-                targets.push_back({dx * dx + dz * dz, f.id});
-            }
-        }
-        // Corpses, statues and building rubble in the box too (negative id =
-        // dead-unit record -- see World::reclaim).
-        for (const UnitR* _cp : front().live) {
-            const UnitR& cu = *_cp;
-            if (!canPickPoint(cu.x, cu.z)) continue;
-            if (cu.alive() || !cu.corpsePhase || cu.corpseFeat < 0 || !cu.type) continue;
-            if (size_t(cu.corpseFeat) >= world_.featureTypes().size() ||
-                !world_.featureTypes()[size_t(cu.corpseFeat)].reclaimable)
-                continue;
-            if (cu.x < minx || cu.x > maxx || cu.z < minz || cu.z > maxz) continue;
-            float dx = cu.x - b->x, dz = cu.z - b->z;
-            targets.push_back({dx * dx + dz * dz, -cu.id});
-        }
-        std::sort(targets.begin(), targets.end());
-        bool first = true;
-        for (auto& [d, fid] : targets) {
-            tak::net::Command c;
-            c.kind = tak::net::Cmd::Reclaim;
-            c.unitId = builderId;
-            c.targetId = fid;
-            c.queue = uint8_t((first && !queue) ? 0 : 1);   // first clears, rest append
-            issue(c);
-            first = false;
-        }
-        if (!targets.empty()) {
-            notice_ = "RECLAIM " + std::to_string(targets.size());
-            noticeTimer_ = 2;
-            voice(builderId, "move");
-        }
+        const int builderId = firstReclaimer();
+        if (!frameUnitP(builderId)) return;
+        tak::net::Command c;
+        c.kind = tak::net::Cmd::ReclaimArea;
+        c.unitId = builderId;
+        c.x = x0; c.z = z0; c.x2 = x1; c.z2 = z1;
+        c.queue = uint8_t(queue);
+        issue(c);
+        notice_ = "CLEAR AREA";
+        noticeTimer_ = 2;
+        voice(builderId, "move");
     }
 
     std::pair<int, size_t> GameView::keytestPickOwnUnit() const {
@@ -627,6 +592,12 @@
     void GameView::fireTest() {
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         if (tak::devEnv("TAK_WEAPON_IMPACT_EFFECT_TEST")) {
+            // Every shipped travelling projectile has authoritative XYZ. Only
+            // deliberately incomplete synthetic Weapon fixtures use the old 2D path.
+            for(const auto& [id,type]:registry_.types())for(const auto& weapon:type.weapons)
+                if(weapon.projVel>0 && !weapon.melee && !weapon.beam &&
+                   weapon.kind==tak::sim::Weapon::Kind::Normal && !weapon.ballistic)
+                    throw std::runtime_error("production weapon reaches legacy 2D path: "+id);
             const auto* arapult = registry_.find("arapult");
             if (!arapult || arapult->weapons.empty())
                 throw std::runtime_error("weapon impact effect fixture has no Arapult weapon");
@@ -662,11 +633,11 @@
                 throw std::runtime_error("ordinary arrow created an unrequested muzzle flash");
 
             const auto testAt = [&](float x, float z, const std::string& expectedClass,
-                                    const tak::sim::Weapon& weapon) {
+                                    const tak::sim::Weapon& weapon, bool struckUnit=false) {
                 effects_.clear();
                 const size_t particleCount = particles_.size();
                 const uint32_t tick = front().gameTick;
-                spawnWeaponImpact(weapon, x, z, 0.0f);
+                spawnWeaponImpact(weapon, x, z, 0.0f, {}, struckUnit);
                 if (effects_.size() != 1 || particles_.size() != particleCount)
                     throw std::runtime_error("authored impact did not create exactly one effect instance");
                 const auto effect = effects_.back();
@@ -703,7 +674,14 @@
             const size_t waterVariants = testAt(wx, wz, authored.waterExplosionClass, authored);
             auto waterFallback = authored;
             waterFallback.waterExplosionClass.clear();
-            const size_t fallbackVariants = testAt(wx, wz, authored.explosionClass, waterFallback);
+            const size_t directVariants = testAt(wx, wz, authored.explosionClass, authored, true);
+            effects_.clear();
+            spawnWeaponImpact(waterFallback,wx,wz);
+            if(!effects_.empty()) throw std::runtime_error("missing water class substituted land art");
+            const std::array<int32_t,3> airborne{int32_t(lx*65536),193*65536+123,int32_t(lz*65536)};
+            spawnWeaponImpact(authored,lx,lz,0,airborne,true);
+            if(effects_.size()!=1 || effects_.back().worldPosition!=airborne)
+                throw std::runtime_error("airborne impact lost captured contact XYZ");
 
             auto missingClass = authored;
             missingClass.explosionClass = "__missing impact class__";
@@ -711,8 +689,8 @@
             effects_.clear();
             const size_t particlesBeforeFallback = particles_.size();
             spawnWeaponImpact(missingClass, lx, lz, 0.0f);
-            if (!effects_.empty() || particles_.size() <= particlesBeforeFallback)
-                throw std::runtime_error("missing impact art did not use the procedural fallback");
+            if (!effects_.empty() || particles_.size() != particlesBeforeFallback)
+                throw std::runtime_error("missing impact art created an unauthored effect");
             effects_.clear();
             particles_.resize(particlesBeforeFallback);
             // Exercise the Harpy's status-shot presentation through the real
@@ -725,9 +703,12 @@
             hit.weapon = &spell;
             hit.fromX = cx - 120; hit.fromZ = cz;
             hit.x = cx + 120; hit.z = cz;
+            hit.fromPosition=std::array<int32_t,3>{int32_t((cx-120)*65536),200*65536,int32_t(cz*65536)};
+            hit.position=std::array<int32_t,3>{int32_t((cx+120)*65536),80*65536,int32_t(cz*65536)};
             hitQueue_.push_back(hit);
             cosmeticStep(0);
-            if (beams_.empty() || beams_.back().sprite != spell.weaponArt ||
+            if (beams_.empty() || beams_.back().fromPosition != hit.fromPosition ||
+                beams_.back().position != hit.position || beams_.back().sprite != spell.weaponArt ||
                 !effectFor(beams_.back().sprite) || !sounds_.has(spell.soundHit) ||
                 sounds_.peakOf(spell.soundHit) <= 0)
                 throw std::runtime_error("Harpy authored projectile/sound failed to load");
@@ -761,8 +742,8 @@
             lookAt(cx, cz);
             std::fprintf(stderr, "PASS: Harpy FireballD sprite, direct ARROW08 impact, scripted SWOOSH2 fire\n");
             std::fprintf(stderr,
-                "PASS: Arapult land/water authored impact variants, empty-water fallback, exact tick/location and authored expiry; missing-class particle fallback (%zu/%zu/%zu variants)\n",
-                landVariants, waterVariants, fallbackVariants);
+                "PASS: Arapult land/water authored impact variants, direct-hit class, exact tick/contact XYZ and authored expiry; missing-class silence (%zu/%zu/%zu variants)\n",
+                landVariants, waterVariants, directVariants);
             return;
         }
         if(tak::devFlag("TAK_SCRIPT_263_TEST")) {
@@ -1449,64 +1430,6 @@
         // scenario step, so no race on its queue); postNotice defers to main.
         if (auto* sc = world_.scenario())
             for (auto& m : sc->drainMessages()) postNotice(m.text, 8);
-        if (missionVm_) {
-            missionVm_->tick(dt);
-            // Engine sweep: armed regions fire TriggerHit per player unit
-            // inside. One-shot story triggers disarm themselves in-script;
-            // viccheck re-arms its counting region every loop.
-            trigTimer_ -= dt;
-            if (trigTimer_ <= 0) {
-                trigTimer_ = 0.3f;
-                for (auto& [rid, r] : regions_) {
-                    if (!r.armed) continue;
-                    for (auto& u : world_.units()) {
-                        if (!u.alive() || u.embarked() || u.player != 0) continue;
-                        int cx = int(u.x.toFloat()) / 16, cz = int(u.z.toFloat()) / 16;
-                        bool inside = r.rect
-                            ? (cx >= r.a && cz >= r.b && cx <= r.c && cz <= r.d)
-                            : ((cx - r.a) * (cx - r.a) + (cz - r.b) * (cz - r.b) <=
-                               r.c * r.c);
-                        if (inside && missionVm_->threadCount() < 200)
-                            missionVm_->start("TriggerHit", {rid, u.id, 0});
-                    }
-                }
-            }
-            if (trace_) {
-                static float dbg = 0;
-                dbg += dt;
-                if (dbg > 2) {
-                    dbg = 0;
-                    std::printf("MSTAT s0=%d threads=%zu pcs:",
-                                missionVm_->getStatic(0), missionVm_->threadCount());
-                    std::map<uint32_t, int> hist;
-                    for (auto pc : missionVm_->threadPcs()) ++hist[pc];
-                    for (auto& [pc, n] : hist) std::printf(" %u x%d", pc, n);
-                    std::printf("\n");
-                }
-            }
-            for (auto& u : world_.units()) {
-                if (u.player != 0) continue;
-                if (u.justBuilt) missionVm_->start("UnitCreated", {u.justBuilt, 0});
-                bool wasBuilding = building_.count(u.id) != 0;
-                if (u.underConstruction) building_.insert(u.id);
-                else if (wasBuilding) {
-                    building_.erase(u.id);
-                    missionVm_->start("UnitCreated", {u.id, 0});
-                }
-                if (u.alive()) missionAliveP0_.insert(u.id);
-            }
-            // Death edge: a tracked player-0 unit that is now dead (or removed) fires the
-            // mission "UnitDestroyed" hook. Done here on the SIM thread (deterministic, all
-            // peers agree) instead of render-side in cosmeticStep, where it raced the sim
-            // thread under Stage B and diverged from the referee.
-            for (auto it = missionAliveP0_.begin(); it != missionAliveP0_.end();) {
-                const auto* mu = world_.unit(*it);
-                if (!mu || !mu->alive()) {
-                    missionVm_->start("UnitDestroyed", {*it});
-                    it = missionAliveP0_.erase(it);
-                } else ++it;
-            }
-        }
         if (amphib_) {
             auto* t = world_.unit(transportId_);
             if (t && t->alive()) {
@@ -1948,15 +1871,25 @@
                 b.player = h.fromPlayer;
                 b.x1 = h.fromX; b.z1 = h.fromZ;
                 b.x2 = h.x;     b.z2 = h.z;
-                b.alt1 = unitAltById(h.weapon ? 0 : 0) * 0.0f;   // set below
+                if(h.fromPosition) {
+                    b.x1=float((*h.fromPosition)[0]>>16);b.z1=float((*h.fromPosition)[2]>>16);
+                }
+                if(h.position) {
+                    b.x2=float((*h.position)[0]>>16);b.z2=float((*h.position)[2]>>16);
+                }
                 b.lightning = h.weapon->fx == tak::sim::WeaponFx::Lightning;
                 for (int i = 0; i < 3; ++i) {
                     b.inner[i] = h.weapon->inner[i];
                     b.middle[i] = h.weapon->middle[i];
                     b.outer[i] = h.weapon->outer[i];
                 }
-                b.alt1 = flyerAltAt(b.x1, b.z1) * 0.8f;
-                b.alt2 = flyerAltAt(b.x2, b.z2) * 0.8f;
+                auto lift = [&](const auto& position,float x,float z) {
+                    return position ? float((*position)[1] >> 16) * 0.5f -
+                        float(heightRef_) * 0.5f - terrainLift(x,z) - 12.f : 0.f;
+                };
+                b.alt1 = lift(h.fromPosition,b.x1,b.z1);
+                b.alt2 = lift(h.position,b.x2,b.z2);
+                b.fromPosition=h.fromPosition;b.position=h.position;
                 // Lifetime = flight time of the virtual shot. Clamped so a zero or
                 // silly weaponvelocity can't leave a bolt on screen for a minute.
                 float bdx = b.x2 - b.x1, bdz = b.z2 - b.z1;
@@ -1981,12 +1914,9 @@
                     sounds_.playWorld(h.weapon->soundHit, h.x, h.z);
             }
             // Impact visual: play the weapon's real GAF/TAF explosion effect
-            // (water variant over water); fall back to procedural particles when
-            // the class or its art is unavailable.
+            // (water variant over water). Missing art does not request extra particles.
             if (h.weapon) {
-                // Lift the blast onto an airborne target (shooting down a flyer).
-                float tAlt = flyerAltAt(h.x, h.z) * 0.8f;
-                spawnWeaponImpact(*h.weapon, h.x, h.z, tAlt);
+                spawnWeaponImpact(*h.weapon, h.x, h.z, 0, h.position, h.victimId != 0);
             }
             // Weapon area-effect: expanding shockwave rings (radiusart, staggered
             // by ringdelay) and ground fire (firestarter) at the impact.
@@ -2007,7 +1937,9 @@
                 // Spray blood from the victim's SweetSpot (its body centre) rather
                 // than the ground hit point -- retail asks the COB for that piece
                 // (SweetSpot -> out-param local 0) and homes hit effects to it.
-                float bx = h.x, bz = h.z, ba = flyerAltAt(h.x, h.z) * 0.8f;
+                float bx = h.x, bz = h.z;
+                float ba = h.position ? float((*h.position)[1] >> 16) * 0.5f -
+                    float(heightRef_) * 0.5f - terrainLift(bx,bz) : 0.f;
                 if (h.victimId && (noFog_ || cellVisibleR(h.x, h.z)))
                     if (auto vi = anims_.find(h.victimId); vi != anims_.end() &&
                         vi->second.vm && vi->second.pieceNames)
@@ -2125,7 +2057,6 @@
             if (it->second >= kBirthFxDur || !bu || !bu->alive()) it = birthFx_.erase(it);
             else ++it;
         }
-        if (briefTimer_ > 0) briefTimer_ -= dt;
         animClock_ += dt;
 
         // (Corpses: the sim keeps the dead-unit record for the corpse window and
@@ -2164,7 +2095,6 @@
             for (const auto& shot:shots->second)
             for (int slot=0;slot<int(u.type->weapons.size()) && slot<32;++slot) {
                 if (!(shot.weapons & (uint32_t(1)<<slot))) continue;
-                using Fx = tak::sim::WeaponFx;
                 const auto& w = u.type->weapons[size_t(slot)];
                 // These native initializers start one faction nimbus on the
                 // caster, restarting any prior instance. Remote/wandering
@@ -2183,23 +2113,9 @@
                         if (const auto* art = effectFor(name->second))
                             nimbusEffects_[u.id] = {art, shot.tick};
                 }
-                // Generic firing sounds are a stand-in for units whose COB carries no
-                // PLAY_SOUND of its own; units with script audio (attack swooshes,
-                // spell cracks) now play those instead -- doubling both was wrong.
-                bool scripted = it != anims_.end() && it->second.cobSounds;
-                if (scripted) { /* the attack script provides the sound */ }
-                else if (w.beam && !w.straight && !w.lightning && w.flameKind < 0) {
-                    // Status spells use their authored script/impact sounds.
-                    // A silent cast (Basilisk) must not acquire a bow-shot sound.
-                }
-                else if (w.melee)
-                    sounds_.playWorld("ahitfl0" + std::to_string(1 + (salt_++ % 3)), shot.x, shot.z);
-                else if (w.fx == Fx::Fire)
-                    sounds_.playWorld(sounds_.has("firedrag") ? "firedrag" : "fireflsh", shot.x, shot.z);
-                else if (w.fx == Fx::Lightning)
-                    sounds_.playWorld("lightng" + std::to_string(1 + (salt_++ % 3)), shot.x, shot.z);
-                else
-                    sounds_.playWorld("bow2", shot.x, shot.z);
+                // FireWeapon/Attack COB callbacks own firing audio, including
+                // deliberately silent branches. Native 530140 dispatches the
+                // callback; it does not infer sounds from the weapon's visual kind.
                 // Projectile creation already resolves the authoritative muzzle.
                 // Script emissions and authored weapon art supply firing effects;
                 // a generic puff here adds a flash even to ordinary arrows.
@@ -3026,9 +2942,6 @@
                     for(const auto& child:object.children)self(self,child,index);
                 };
                 appendModel(appendModel,visuals_.at(typeId).model.root,-1);
-                if (!cc.file->names.empty())
-                    for (uint32_t w : cc.file->code)
-                        if (w == 0x10072000) { cc.hasSounds = true; break; }
                 cc.hasAim = cc.file->scriptIndex("AimWeapon") >= 0;
                 cc.hasCloakAnim = cc.file->scriptIndex("StartCloaking") >= 0;
                 cc.hasFlinch = cc.file->scriptIndex("HitByWeapon") >= 0;
@@ -3039,7 +2952,6 @@
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
             a.pieceNames = &ci->second.pieceNames;
-            a.cobSounds = ci->second.hasSounds;
             a.hasCloakAnim = ci->second.hasCloakAnim;
             a.hasAim = ci->second.hasAim;
             a.hasFlinch = ci->second.hasFlinch;
@@ -3208,7 +3120,7 @@
         // registerUnit mutates the client render maps (visuals_/cobCache_/anims_/unitType_),
         // which the render thread + the animFrame VM pool read/iterate. It must run ONLY on
         // the main thread. When spawn() is reached from the SIM WORKER (summonGod / mission
-        // reinforcements / mapCommand, all inside simStep), skip it: the main thread's
+        // scripted reinforcements, all inside simStep), skip it: the main thread's
         // cosmeticStep lazily registers every live snapshot unit, so it is redundant there.
         if (std::this_thread::get_id() == mainThreadId_) {
             registerUnit(id, type);
@@ -3569,16 +3481,6 @@
         return it != anims_.end() ? it->second.altitude : 0.0f;
     }
 
-    float GameView::flyerAltAt(float x, float z) const {
-        float best = 24.0f * 24.0f, alt = 0.0f;
-        for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-            if (!u.alive() || !u.type || !u.type->canFly) continue;
-            float dx = u.x - x, dz = u.z - z, d = dx * dx + dz * dz;
-            if (d < best) { best = d; alt = unitAltById(u.id); }
-        }
-        return alt;
-    }
-
     SDL_FPoint GameView::unitScreen(const UnitR& u) {
         float zm = mapView_.zoom();
         float ix, iz, ih; interpPose(u, ix, iz, ih);   // match the gliding model position
@@ -3871,7 +3773,7 @@
             if (o.patrol) return "PATROLLING";
             if (o.load) return "LOADING";
             if (o.unload) return "UNLOADING";
-            if (o.reclaimFeat) return "CLEARING AREA";
+            if (o.reclaimFeat || o.reclaimArea) return "CLEARING AREA";
             if (o.targetId != 0) return "ATTACKING";
             if (o.attackMove) return "SEEKING TO ATTACK";
             return "MOVING";
@@ -4244,74 +4146,6 @@
         return out;
     }
 
-    int GameView::rosterIndexOf(int unitId) {
-        auto* u = frameUnitP(unitId);
-        if (!u || !u->type) return -1;
-        for (size_t i = 0; i < missionRoster_.size(); ++i)
-            if (missionRoster_[i] == u->type->id) return int(i);
-        return -1;
-    }
-
-    int32_t GameView::mapCommand(int sub, const std::vector<int32_t>& a) {
-        switch (sub) {
-            case 0:   // define (and arm) region: rect or circle, cells
-                if (a.size() == 5) regions_[a[0]] = {a[1], a[2], a[3], a[4], true, true};
-                else if (a.size() == 4)
-                    regions_[a[0]] = {a[1], a[2], a[3], 0, false, true};
-                return 0;
-            case 1:   // disarm region (one-shot triggers disarm themselves)
-                if (!a.empty()) {
-                    auto it = regions_.find(a[0]);
-                    if (it != regions_.end()) it->second.armed = false;
-                }
-                return 0;
-            case 2: {   // nearest unit of player a[0] to cell (a[1],a[2])
-                if (a.size() < 3) return 0;
-                int player = std::clamp(a[0] - 1, 0, 3);
-                float wx = float(a[1]) * 16 + 8, wz = float(a[2]) * 16 + 8;
-                int best = 0;
-                float bestD = 1e18f;
-                for (auto& u : world_.units()) {
-                    if (!u.alive() || u.player != player) continue;
-                    float dx = u.x.toFloat() - wx, dz = u.z.toFloat() - wz;
-                    if (dx * dx + dz * dz < bestD) { bestD = dx * dx + dz * dz; best = u.id; }
-                }
-                return best;
-            }
-            case 4: {   // HEURISTIC: spawn a reinforcement for player a[0]
-                if (a.size() < 3) return 0;
-                int player = std::clamp(a[0] - 1, 0, 3);
-                auto& pool = reinfPool_[player];
-                if (pool.empty()) return 0;
-                const std::string& type = pool[size_t(reinfIdx_++) % pool.size()];
-                float wx = float(a[1]) * 16 + 8, wz = float(a[2]) * 16 + 8;
-                int id = spawn(type, wx + float(reinfIdx_ % 3) * 18,
-                               wz + float(reinfIdx_ % 2) * 18, 3.14159f, player);
-                if (id >= 0 && player == 0 && hudFont_.ok()) postNotice("REINFORCEMENTS!", 6);
-                if (trace_) std::printf("SPAWN4 %s player%d at %d,%d -> id %d\n",
-                                        type.c_str(), player, a[1], a[2], id);
-                return id;
-            }
-            case 3: case 5: {   // HEURISTIC: activate spawned unit - join force
-                if (a.empty()) return 0;
-                const auto* u = frameUnitP(a[0]);
-                if (!u) return 0;
-                float bx = 0, bz = 0;
-                int n = 0;
-                for (auto& o : world_.units())
-                    if (o.alive() && o.player == u->player && o.id != u->id && o.type &&
-                        o.type->canMove) { bx += o.x.toFloat(); bz += o.z.toFloat(); ++n; }
-                if (n) world_.attackMove(a[0], bx / float(n), bz / float(n), false);
-                return 0;
-            }
-            case 8: case 9: case 12: case 13: case 14:
-                if (a.empty()) return missionTowerIdx_;   // type-constant heuristic
-                return 0;
-            default:
-                return 0;
-        }
-    }
-
     void GameView::voice(int unitId, const std::string& event) {
         // Retail command feedback: one WEIGHTED draw from the sound class's
         // event pool -- the symbolic "_NN-note" entry (weight 100) vs the voice
@@ -4370,12 +4204,15 @@
     }
 
     void GameView::spawnWeaponImpact(const tak::sim::Weapon& weapon,
-                                     float x, float z, float alt) {
-        const std::string& cls = (world_.isWater(x, z) &&
-                                  !weapon.waterExplosionClass.empty())
+                                     float x, float z, float alt,
+                                     std::optional<std::array<int32_t,3>> position, bool struckUnit) {
+        // Native 529c10: only an environmental water hit selects the water
+        // class. A direct hit uses the ordinary class even above water; a -1
+        // (missing) selected class requests no visual, not a generic substitute.
+        const std::string& cls = (world_.isWater(x, z) && !struckUnit)
                                      ? weapon.waterExplosionClass
                                      : weapon.explosionClass;
-        if (!spawnEffect(cls, x, z, alt)) spawnImpact(weapon, x, z, alt);
+        if (spawnEffect(cls, x, z, alt) && position) effects_.back().worldPosition = position;
     }
 
     void GameView::triggerShake(float mag, float dur) {

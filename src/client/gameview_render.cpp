@@ -882,9 +882,15 @@
                 // Line-of-sight describes hit delivery, not appearance. Crossbow
                 // bolts and harpoons use the same model path as travelling shots.
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+                tak::sim::Projectile position;
+                const bool captured=b.fromPosition && b.position;
+                if(captured)for(size_t axis=0;axis<3;++axis)
+                    position.position[axis]=int32_t(double((*b.fromPosition)[axis])+
+                        (double((*b.position)[axis])-double((*b.fromPosition)[axis]))*t);
                 drawShotModel(b.model,b.player,b.x1+(b.x2-b.x1)*t,b.z1+(b.z2-b.z1)*t,
                               (8+b.alt1+(b.alt2-b.alt1)*t)*zm,
-                              3.14159265358979323846f-std::atan2(b.x2-b.x1,b.z2-b.z1));
+                              3.14159265358979323846f-std::atan2(b.x2-b.x1,b.z2-b.z1),
+                              captured ? &position : nullptr);
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_ADD);
                 continue;
             }
@@ -900,7 +906,12 @@
                         const float z = b.z1 + (b.z2 - b.z1) * t;
                         const float alt = b.alt1 + (b.alt2 - b.alt1) * t;
                         const float sx = (x - mapView_.offX() - terrainLiftX(x, z)) * zm;
-                        const float sy = (z - mapView_.offY() - terrainLift(x, z) - 12 - alt) * zm;
+                        float sy = (z - mapView_.offY() - terrainLift(x, z) - 12 - alt) * zm;
+                        if(b.fromPosition && b.position) {
+                            const float y1=float((*b.fromPosition)[1]>>16);
+                            const float y2=float((*b.position)[1]>>16);
+                            sy=(z-(y1+(y2-y1)*t)*0.5f+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                        }
                         const auto origin = tak::retailEffectSpriteOrigin(sx, sy, fr.ax, fr.ay, zm);
                         SDL_FRect dst{origin.x, origin.y, fr.w * zm, fr.h * zm};
                         SDL_SetTextureAlphaMod(fr.tex, 255);
@@ -1022,11 +1033,9 @@
             const float renderZ=native3d ? tak::sim::Fixed::raw(p.position[2]).toFloat() : p.z.toFloat();
             if (!noFog_ && !cellVisibleR(renderX, renderZ)) continue;
             float t = std::clamp(float(p.age) / std::max(float(p.flight), 1.0f), 0.0f, 1.0f);
-            // Flyer shots: lift the whole trajectory by the altitude interpolated
-            // from the firing unit down to the target (0.8x, matching the sprite
-            // lift), so a drake's breath leaves its mouth and arcs to the ground.
-            float palt = native3d ? 0.0f :
-                (unitAltById(p.fromId) * (1 - t) + unitAltById(p.targetId) * t) * 0.8f * zm;
+            // Legacy 2D fixture shots have no vertical trajectory. Production
+            // weapons carry native XYZ; do not invent a height from live units.
+            const float palt = 0.0f;
             const float shotWorldY=native3d ? tak::sim::Fixed::raw(p.position[1]).toFloat() : 0.0f;
             const float velocityX=native3d ? tak::sim::Fixed::raw(p.velocity[0]).toFloat() : p.vx.toFloat();
             const float velocityY=native3d ? tak::sim::Fixed::raw(p.velocity[1]).toFloat() : 0.0f;
@@ -1629,19 +1638,6 @@
         if (showCounts_) drawUnitCounts(winW);
         if (showHDebug_) drawHDebug();
 
-        // Mission briefing (first 30s) and event notices.
-        if (briefTimer_ > 0 && hudFont_.ok()) {
-            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-            SDL_FRect bg{float(winW) - 560, 8, 552,
-                         14.0f + 16.0f * float(briefing_.size())};
-            SDL_SetRenderDrawColor(ren_, 10, 10, 20, 170);
-            SDL_RenderFillRectF(ren_, &bg);
-            float y = 24;
-            for (const auto& l : briefing_) {
-                hudFont_.draw(ren_, l, bg.x + 8, y, 1.4f, {220, 215, 180, 255});
-                y += 16;
-            }
-        }
         if (mp_ && hudFont_.ok()) {
             // Dev net-status readout (TAK_NETDEBUG): off by default -- it sat over the
             // bottom-right mana panel. The BEHIND-BY lag warning below always shows.
@@ -3944,7 +3940,7 @@
                 tak::CursorId marker = tak::CursorId::Move;
                 bool haveMarker = true;
                 if (o.buildType)            haveMarker = false;   // the site ghost says it
-                else if (o.reclaimFeat)     marker = tak::CursorId::Reclaim;
+                else if (o.reclaimFeat || o.reclaimArea) marker = tak::CursorId::Reclaim;
                 else if (o.repairTarget)    marker = tak::CursorId::Repair;
                 else if (o.load)            marker = tak::CursorId::Load;
                 else if (o.unload)          marker = tak::CursorId::Unload;

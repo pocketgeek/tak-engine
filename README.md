@@ -228,8 +228,8 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-Released **0.7.1 uses protocol 179**; current development builds use **181**
-for corrected naval building placement and full-yard map bounds. These builds
+Released **0.7.1 uses protocol 179**; current development builds use **182**
+for authoritative area clearing, following the naval placement corrections. These builds
 cannot mix in a match.
 Version 0.7.0 uses 177. Older incompatible clients and recordings are rejected.
 The connection checks gameplay definitions, but
@@ -275,6 +275,7 @@ AI is this project's implementation, rather than a reproduction of retail AI.
 
 For the evidence and remaining scope, see the [retail engine notes](docs/retail-engine.md),
 [pathfinding work](docs/pathfinding-port.md),
+[guessed-behavior corrections](docs/guessed-fallback-audit-2026-09-26.md),
 [transport and animation audit](docs/transport-animation-audit-2026-09-21.md), and
 [naval building placement correction](docs/naval-building-placement.md).
 

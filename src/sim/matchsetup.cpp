@@ -116,6 +116,9 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::Reclaim:
             if (owns(c.unitId)) { redirect(); world.reclaim(c.unitId, c.targetId, c.queue); }
             break;
+        case Cmd::ReclaimArea:
+            if (owns(c.unitId)) { redirect(); world.reclaimArea(c.unitId, c.x, c.z, c.x2, c.z2, c.queue); }
+            break;
         case Cmd::Stance:
             if (owns(c.unitId)) world.setStance(c.unitId, c.targetId);
             break;

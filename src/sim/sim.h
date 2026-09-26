@@ -1,4 +1,5 @@
 #pragma once
+#include "sim/retailreclaimarea.h"
 
 #include "sim/fixed.h"
 #include "cob/emissionpose.h"
@@ -563,6 +564,7 @@ struct Order {
     // reclaim was already running, so an area reclaim queued behind anything else
     // sat there forever. One queue, like everything else.
     int reclaimFeat = 0;
+    std::optional<RetailReclaimArea> reclaimArea;
     // This order is a REPAIR: mend unit `repairTarget`. repairId was a single int,
     // so a second queued repair simply overwrote the first and it was lost. Same
     // shape as the build and reclaim lists, same fix.
@@ -700,6 +702,7 @@ struct Unit {
     // (0x4fbfb2: mov 0x9c(%esi),%cx; fildl; fmull 0x5f25d8 where 0x5f25d8 == 1/30):
     // a planted 90 renders as "3.000000" seconds. See docs/retail-engine.md.
     std::array<tak::RetailAimState,3> weaponAim{{{0,0,0},{0,0,1},{0,0,2}}};
+    std::array<std::array<int32_t,3>,3> weaponMuzzlePoints{}; // display-only captured QueryWeapon geometry
     std::array<std::array<int32_t,3>,3> weaponAimPoints{}; // display-only captured aim geometry
     int32_t reloads[3] = {0, 0, 0};  // per weapon slot, in ticks
     int   weaponSlot = 0;          // active weapon (0=primary); player-selectable
@@ -1415,6 +1418,7 @@ public:
     // Order a mobile builder to reclaim feature `featureId` (queue = append to its
     // reclaim queue, for an area drag). Grants the feature's mana as it consumes it.
     void reclaim(int builderId, int featureId, bool queue);
+    void reclaimArea(int builderId, float x0, float z0, float x1, float z1, bool queue);
     // Order a mobile builder to repair damaged friendly `targetId` (restores HP at
     // the builder's work rate, draining mana proportionally). tickRepair runs it.
     void repair(int builderId, int targetId, bool queue);
@@ -1618,7 +1622,7 @@ public:
     // Deterministic digest of sim state, for lockstep sync checking.
     struct WeaponAimSolution {
         uint16_t heading=0,pitch=0;
-        std::array<int32_t,3> target{};
+        std::array<int32_t,3> target{}, source{};
     };
     std::optional<WeaponAimSolution> queryWeaponAim(int unitId,int targetId,int slot);
     std::array<int32_t,3> queryUnitScriptPoint(int unitId,bool sweetSpot,int slot=0);
@@ -1728,7 +1732,7 @@ public:
     // test that several places need.
     static bool hasQueuedWork(const Unit& u) {
         for (const Order& o : u.orders)
-            if (o.buildType || o.reclaimFeat || o.repairTarget) return true;
+            if (o.buildType || o.reclaimFeat || o.reclaimArea || o.repairTarget) return true;
         return false;
     }
     void attackMove(int unitId, float x, float z, bool queue);
@@ -1801,7 +1805,8 @@ public:
                    const UnitType* target = nullptr;
                    int victimId = 0;            // primary struck unit (0 = ground hit)
                    float fromX = 0, fromZ = 0;  // attacker pos for hitscan presentation
-                   int fromPlayer = 0; };      // display colour for hitscan projectile models
+                   int fromPlayer = 0;         // display colour for hitscan projectile models
+                   std::optional<std::array<int32_t,3>> position, fromPosition; };
     const std::vector<HitFx>& hits() const { return hits_; }
     // Cosmetic events captured at the mission callback, before mover updates.
     struct TransportFx {
@@ -1849,7 +1854,8 @@ private:
     // Apply a weapon's damage at (hx,hz): the direct hit on `primary` plus, if
     // the weapon has areaofeffect, splash on other enemies of `fromPlayer` scaled
     // from full at the centre to `edge` at the rim. Per-category damage per victim.
-    void applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId, Unit* primary);
+    void applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId, Unit* primary,
+                  std::optional<std::array<int32_t,3>> position = {});
 
     void tickProduction(Unit& u, float dt);
     void initializeRetailSite(Unit& site, int builderId);
@@ -1884,6 +1890,7 @@ private:
     // A builder chips reclaim work off its target feature, drips mana, then removes
     // the feature and advances its reclaim queue.
     void tickReclaim(Unit& b, float dt);
+    void tickReclaimArea(Unit& b);
     void tickAbilities(float dt);   // reclaim / resurrect on nearby corpses
     void tickAuras(float dt);       // AdjustArmor/Attack stat auras
     void tickHealAuras();           // AdjustJoy passive repair aura (1 Hz)

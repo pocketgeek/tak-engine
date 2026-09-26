@@ -173,7 +173,7 @@ public:
 
     GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,
              const std::string& installRoot, tak::hpi::OverridePolicy policy,
-             bool demo, bool scenario, bool mission,
+             bool demo, bool scenario,
              bool bare, const std::string& side = "ara", const std::string& aiSide = "tar",
              bool crusades = false)
         // (side_ initialized below before loadPanel uses it; vfs_ must precede
@@ -230,121 +230,11 @@ public:
         loadGui(side_);
 
 #ifndef NDEBUG
-        if (!bare && !mission && !scenario && tak::devFlag("TAK_PATROL_PERF")) {
+        if (!bare && !scenario && tak::devFlag("TAK_PATROL_PERF")) {
             setupPatrolPerf();
             return;
         }
 #endif
-        if (mission) {
-            world_.setTerrain(mapView_.map().heights, mapView_.map().width,
-                              mapView_.map().height, mapView_.map().seaLevel,
-                              &mapView_.map().features);
-            tak::sim::registerMapFeatures(world_, mapView_.map(), vfs_, &registry_);
-            try {
-                auto ota = vtdf(mapSibling(".ota"));
-                const auto* gh = ota.child("globalheader");
-                const auto* md = gh ? gh->child("map data") : nullptr;
-                const auto* units = md ? md->child("units") : nullptr;
-                std::printf("mission: %s\n",
-                            gh ? gh->valueOr("missiondescription", "").c_str() : "");
-                int n = 0;
-                float cx = 0, cz = 0;
-                int pc = 0;
-                if (units)
-                    for (const auto& key : units->childOrder) {
-                        const auto& u = units->children.at(key);
-                        std::string id = u.valueOr("unitname", "");
-                        std::transform(id.begin(), id.end(), id.begin(), ::tolower);
-                        int playerSlot = int(u.numberOr("player", 1));
-                        float x = float(u.numberOr("xpos", 0)) * 16 + 8;
-                        float z = float(u.numberOr("zpos", 0)) * 16 + 8;
-                        int player = std::clamp(playerSlot - 1, 0, 3);
-                        int uid = spawn(id, x, z, 3.14159f, player);
-                        if (uid >= 0) {
-                            ++n;
-                            float hpp = float(u.numberOr("healthpercentage", 100));
-                            if (auto* su = world_.unit(uid)) {
-                                su->hp = tak::sim::Fixed::fromFloat(su->hp.toFloat() * hpp / 100.0f);
-                                if (su->type->canMove &&
-                                    su->type->domain ==
-                                        tak::sim::UnitType::Domain::Ground)
-                                    reinfPool_[player].push_back(id);
-                            }
-                            if (player == 0) { cx += x; cz += z; ++pc; }
-                        }
-                    }
-                std::printf("mission: %d units spawned\n", n);
-                if (pc) mapView_.setOffset(cx / float(pc) - 640 / 0.9f,
-                                           cz / float(pc) - 400 / 0.9f);
-            } catch (const std::exception& e) {
-                std::fprintf(stderr, "mission load: %s\n", e.what());
-            }
-            loadFeatures();
-            // Mission scripts: run the authentic COB event handlers.
-            try {
-                std::string cobPath = mapSibling(".cob");
-                auto roster = vtdf(mapSibling(".tdf"));
-                for (const auto& name : roster.childOrder) {
-                    std::string n = name;
-                    std::transform(n.begin(), n.end(), n.begin(), ::tolower);
-                    missionRoster_.push_back(n);
-                    if (n == "verat" || n == "araat" || n == "tarat" || n == "zonat")
-                        missionTowerIdx_ = int(missionRoster_.size()) - 1;
-                }
-                missionVm_ = std::make_unique<tak::cob::Vm>(tak::cob::load(vread(cobPath), cobPath),
-                                                            /*deterministicRand=*/true);
-                missionVm_->onMapCommand = [this](int sub, const std::vector<int32_t>& a)
-                    -> int32_t { return mapCommand(sub, a); };
-                missionVm_->onGet = [this](int32_t valId, const std::vector<int32_t>& a)
-                    -> int32_t {
-                    if (valId == 30 && !a.empty()) {
-                        int idx = rosterIndexOf(a[0]);
-                        if (trace_) {
-                            static int lg = 0;
-                            if (lg++ < 8)
-                                std::printf("GET30 unit=%d -> roster %d (tower=%d)\n",
-                                            a[0], idx, missionTowerIdx_);
-                        }
-                        return idx;
-                    }
-                    return 0;
-                };
-                missionVm_->onSetUnitValue = [this](int32_t valId, int32_t value) {
-                    if (valId == 2 && value == 1 && outcome_ == 0) outcome_ = 1;
-                };
-                missionVm_->start("Start");
-                std::printf("mission scripts: running\n");
-                std::vector<uint8_t> tb;
-                if (vhas(mapSibling(".txt"))) tb = vread(mapSibling(".txt"));
-                std::istringstream bf(std::string(tb.begin(), tb.end()));
-                std::string line;
-                while (std::getline(bf, line) && briefing_.size() < 8) {
-                    std::string clean;
-                    for (char c : line)
-                        if (uint8_t(c) >= 32 && uint8_t(c) < 127) clean += c;
-                    while (!clean.empty() && clean.back() == ' ') clean.pop_back();
-                    if (clean.empty()) continue;
-                    // Wrap to ~54 chars per line for the panel.
-                    std::string cur = "- ";
-                    std::istringstream ws(clean);
-                    std::string word;
-                    while (ws >> word) {
-                        if (cur.size() + word.size() > 42) {
-                            briefing_.push_back(cur);
-                            cur = "  ";
-                        }
-                        cur += word + " ";
-                    }
-                    if (cur.size() > 2) briefing_.push_back(cur);
-                }
-                if (briefing_.size() > 10) briefing_.resize(10);
-                briefTimer_ = 30;
-            } catch (const std::exception& e) {
-                std::fprintf(stderr, "mission cob: %s\n", e.what());
-            }
-            return;
-        }
-
         if (scenario) {
             world_.setTerrain(mapView_.map().heights, mapView_.map().width,
                               mapView_.map().height, mapView_.map().seaLevel,
@@ -1113,7 +1003,6 @@ private:
         std::span<const uint8_t> explosionReachability; // shared per-script control-flow map
         std::span<const tak::cob::PieceState> capturedPose; // transient render/effect snapshot
         tak::cob::Vm* effectQueryVm=nullptr;
-        bool cobSounds = false;   // script plays its own audio: skip the generic stand-ins
         int workId = 0;           // site/target the build anim last fired for (one-shot per job)
         // Continuous ambient fire/smoke approximation: draw one looping effect of
         // each kind, kept alive while the emit-loop re-fires
@@ -1416,7 +1305,6 @@ private:
         std::vector<std::string> pieceNames;
         std::vector<tak::sim::RetailModelPiece> modelPieces;
         std::vector<std::vector<std::array<int32_t,3>>> pieceVertices;
-        bool hasSounds = false;   // any PLAY_SOUND op: the script provides its own audio
     bool hasCloakAnim = false;   // defines StartCloaking (araspy, npcheket)
         bool hasAim = false;      // has an AimWeapon script
         bool hasFlinch = false;   // has a HitByWeapon script
@@ -2330,9 +2218,6 @@ private:
     // units or units with no live anim). Used to lift a flyer's projectiles/effects
     // so they leave/strike at the altitude the unit is drawn, not the ground.
     float unitAltById(int id) const;
-    // Render altitude of an airborne unit at ~this world point, else 0. Used to lift
-    // an impact blast onto a flyer (the hit record only carries the impact point).
-    float flyerAltAt(float x, float z) const;
 
     // Screen position of a unit's drawn body centre, matching the render lift:
     // terrain relief (uLift*) plus, for a flyer, its cruise altitude (the sprite is
@@ -3203,9 +3088,7 @@ private:
 
     void drawGhost();
 
-    int rosterIndexOf(int unitId);
 
-    int32_t mapCommand(int sub, const std::vector<int32_t>& a);
 
     void voice(int unitId, const std::string& event);
 
@@ -3215,6 +3098,7 @@ private:
     struct BeamFx {
         float x1 = 0, z1 = 0, x2 = 0, z2 = 0;
         float alt1 = 0, alt2 = 0;
+        std::optional<std::array<int32_t,3>> fromPosition, position;
         std::string model;
         std::string sprite;
         int player = 0;
@@ -3322,12 +3206,13 @@ private:
 
     void loadExplosionClasses();
     // Route a resolved weapon hit through its authored land/water explosion class,
-    // with procedural particles only when the class or animation is unavailable.
-    void spawnWeaponImpact(const tak::sim::Weapon& weapon, float x, float z, float alt = 0);
+    // Missing classes/art remain silent, as in the native impact dispatcher.
+    void spawnWeaponImpact(const tak::sim::Weapon& weapon, float x, float z, float alt = 0,
+                           std::optional<std::array<int32_t,3>> position = {}, bool struckUnit = false);
     // Load a named effect animation from its TAF/GAF (truecolor _4444 preferred).
     const EffectAnim* effectFor(const std::string& animName);
     // Play the named explosion class (a random variant) at (x,z). Returns false
-    // if the class/art is unavailable (caller then falls back to particles).
+    // if the class/art is unavailable; absence does not request substitute art.
     bool spawnEffect(const std::string& cls, float x, float z, float alt = 0) {
         if (cls.empty()) return false;
         loadExplosionClasses();
@@ -3417,21 +3302,6 @@ private:
             particles_.push_back(p);
         }
     }
-    // An impact effect scaled to the weapon: fire/lightning tinted, aoe-sized.
-    void spawnImpact(const tak::sim::Weapon& w, float x, float z, float baseAlt = 0) {
-        using Fx = tak::sim::WeaponFx;
-        float sc = 1.0f + std::min(float(w.aoe), 200.0f) / 40.0f;
-        int n = int(6 + std::min(float(w.aoe), 200.0f) / 6);
-        if (w.fx == Fx::Fire) {
-            spawnBurst(x, z, n, 240, 130, 40, 34 * sc, 2.4f * sc, 0, baseAlt);
-            spawnBurst(x, z, n / 2, 90, 80, 80, 20 * sc, 3.0f * sc, 1, baseAlt);   // smoke
-        } else if (w.fx == Fx::Lightning) {
-            spawnBurst(x, z, n, 200, 225, 255, 40 * sc, 2.0f * sc, 0, baseAlt);
-        } else {
-            spawnBurst(x, z, n, 210, 200, 170, 26 * sc, 2.0f * sc, 0, baseAlt);   // dust
-            spawnBurst(x, z, n / 3, 110, 100, 90, 16 * sc, 2.6f * sc, 1, baseAlt);
-        }
-    }
     void updateParticles(float dt);
     void drawParticles();
     std::vector<SDL_Vertex> partBatch_;   // reused particle-quad batch
@@ -3460,19 +3330,7 @@ private:
     float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
     Font hudFont_, bigFont_, statFont_;
 
-    struct Region { int a, b, c, d; bool rect; bool armed; };
-    std::unique_ptr<tak::cob::Vm> missionVm_;
-    std::vector<std::string> missionRoster_;
-    std::map<int, Region> regions_;
-    int missionTowerIdx_ = -1;
-    std::set<int> building_;
-    std::set<int> missionAliveP0_;   // player-0 units seen alive (for the UnitDestroyed edge)
-    std::map<int, std::vector<std::string>> reinfPool_;
-    int reinfIdx_ = 0;
-    std::vector<std::string> briefing_;
-    float briefTimer_ = 0;
     std::string notice_;
     float noticeTimer_ = 0;
     float animClock_ = 0;
-    float trigTimer_ = 0;
 };

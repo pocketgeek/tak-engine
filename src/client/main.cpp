@@ -356,6 +356,7 @@ int main(int argc, char** argv) {
             "    game single-player: no --server -> auto-hosts a private game vs a server AI.\n"
             "    game multiplayer:   add --server host [--serverport N] [--name X].\n"
             "    game --campaign <stem>: play a campaign mission (e.g. takmission01_mt).\n"
+            "    game <stem> --mission: legacy alias for the same campaign launch.\n"
             "  common: [--side X --aiside Y] [--overrides none|cosmetic|full] [--shot out.png]\n"
             "  (debug build: all dev/test flags below are available.)\n"
             "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ overrides/.\n");
@@ -491,6 +492,21 @@ int main(int argc, char** argv) {
         }
         else args.push_back(a);
     }
+    // Retain --mission as an alias, but retire the standalone runner that
+    // guessed numeric MAP_COMMAND meanings. All campaign launches now share
+    // the menu's authoritative server setup and in-sim mission interpreter.
+    if (missionFlag) {
+        if (cliCampaign.empty()) {
+            if (args.empty()) {
+                std::fprintf(stderr,"--mission requires a mission stem (or use --campaign <stem>)\n");
+                return 1;
+            }
+            cliCampaign=std::filesystem::path(args.front()).stem().string();
+            std::transform(cliCampaign.begin(),cliCampaign.end(),cliCampaign.begin(),::tolower);
+            args.clear();
+        }
+        mode="game";
+    }
     if (!shot.empty() || mpHeadless) SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
     (void)hostPort; (void)joinPort; (void)joinAddr;   // --host/--join retired (see --server)
 
@@ -509,11 +525,15 @@ int main(int argc, char** argv) {
     // no server) are DEBUG-only. A release build has none of them.
     bool localHarness = false;
 #ifndef NDEBUG
-    localHarness = demo || scenario || missionFlag || navy || amphib || firetest ||
+    localHarness = demo || scenario || navy || amphib || firetest ||
                    facetest || guardtest || lodetest || keytest ||
                    soundtest || misstest || creon || testbuild ||
                    (tak::devEnv("TAK_FFA") != nullptr) || tak::devFlag("TAK_PATROL_PERF");
 #endif
+    if (missionFlag && localHarness) {
+        std::fprintf(stderr,"--mission cannot be combined with standalone scenario/test harness flags\n");
+        return 1;
+    }
     // Create the window + renderer up front so the front-end menu can drive the
     // single-player / multiplayer setup that follows it.
     if (shot.empty()) SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
@@ -990,7 +1010,7 @@ int main(int argc, char** argv) {
             // ordinary game launch does exactly this for the same reason.
             gameView = std::make_unique<GameView>(ren, std::move(rvfs),
                                                   mapPath, dataRoot, rpol,
-                                                  false, false, false, /*bare=*/true, "ara", "tar",
+                                                  false, false, /*bare=*/true, "ara", "tar",
                                                   rf.crusades);
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
             gameView->setSettings(&settings);    // Options edits + persists them
@@ -1052,7 +1072,7 @@ int main(int argc, char** argv) {
             gameView = std::make_unique<GameView>(ren,
                                                   fromMenu ? tak::hpi::mountRetailRoot(dataRoot, pol) : std::move(vfs),
                                                   mapPath, dataRoot, pol, demo,
-                                                  scenario, missionFlag,
+                                                  scenario,
                                                   navy || amphib || firetest || facetest || mp,
                                                   side, aiSide, crusades);
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
@@ -1094,7 +1114,7 @@ int main(int argc, char** argv) {
             // LOCAL sim -- debug builds only, and never for a server-driven game
             // (localHarness is false whenever a server is involved).
             if (localHarness) {
-                if (!missionFlag) gameView->cancelInitialCamera();
+                gameView->cancelInitialCamera();
                 if (doMarch) gameView->marchTo(marchX, marchZ);
                 if (testbuild) gameView->testBuild();
                 if (navy) gameView->navyDemo();

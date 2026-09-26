@@ -2,7 +2,7 @@
 
 namespace tak::net {
 
-// The 35-byte Command wire format, matching the classic lockstep layout.
+// Base command layout is unchanged; area reclaim appends its second endpoint.
 void Writer::cmd(const Command& c) {
     u8(uint8_t(c.kind));
     u8(c.player);
@@ -12,6 +12,7 @@ void Writer::cmd(const Command& c) {
     f32(c.z);
     u8(c.queue);
     b.insert(b.end(), c.type, c.type + 16);
+    if (c.kind == Cmd::ReclaimArea) { f32(c.x2); f32(c.z2); }
 }
 
 Command Reader::cmd() {
@@ -26,6 +27,7 @@ Command Reader::cmd() {
     if (avail(16)) { std::memcpy(c.type, p, 16); p += 16; }
     else ok = false;
     c.type[15] = 0;
+    if (c.kind == Cmd::ReclaimArea) { c.x2 = f32(); c.z2 = f32(); }
     return c;
 }
 

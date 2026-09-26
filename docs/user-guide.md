@@ -142,6 +142,9 @@ harness, …) plus the `TAK_*` diagnostic env vars. Debug `--help` lists the mai
 `none` = pure retail, `cosmetic` = only art/sound/music, `full` = everything including
 gameplay data.
 
+The legacy `game <stem> --mission` spelling now launches through the same campaign
+server path as `--campaign <stem>`; it no longer uses a separate mission interpreter.
+
 ### Controls
 
 The [complete default hotkey and mouse reference](../README.md#controls) is in
@@ -264,8 +267,8 @@ Debug builds also support direct playback:
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
 compatible engine behavior and game data. Released 0.7.1 uses protocol **179**;
-current development builds use **181** for corrected naval building placement
-and full-yard map bounds.
+current development builds use **182** for authoritative area clearing, following
+the naval placement corrections.
 These builds cannot mix in a match. Version 0.7.0 uses **177**.
 All multiplayer clients and servers must run the same compatible build.
 Different-protocol peers and replays, including those from 0.6.9 (protocol 176),

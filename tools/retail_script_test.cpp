@@ -727,6 +727,18 @@ int main(int argc,char** argv) {
             for(unsigned tick=0;tick<80 && !dropped.projectiles().empty();++tick) {
                 dropped.tick(1.f/30.f);
                 impacts+=unsigned(dropped.hits().size());
+                for(const auto& hit:dropped.hits()) {
+                    require(hit.position.has_value() &&
+                        Fixed::raw((*hit.position)[0]).toFloat()==hit.x &&
+                        Fixed::raw((*hit.position)[2]).toFloat()==hit.z &&
+                        (*hit.position)[1]>0 && (*hit.position)[1]<=20*65536,
+                        "dropped impact captures projectile contact XYZ above the target origin");
+                    const auto saved=*hit.position;
+                    const auto oldGround=dropped.unit(targetId)->groundY;
+                    dropped.unit(targetId)->groundY=Fixed::fromInt(400);
+                    require(*hit.position==saved,"impact position survives later target height changes");
+                    dropped.unit(targetId)->groundY=oldGround;
+                }
             }
             const int expectedDamage=retailDamageWithSpread(25.0f,damageRoll);
             require(impacts==1 && damageDraws==1 &&

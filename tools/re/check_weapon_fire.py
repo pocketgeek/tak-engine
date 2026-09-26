@@ -30,7 +30,15 @@ def display(uc,sp):
     assert read(sp)==unit
     trace.append(('display',read(sp+4)&255));return 2,0
 
-p.hooks.update({0x5d4444:random_sink,0x56c640:callback,0x4ea560:display})
+def unexpected_sound(uc,sp):
+    raise AssertionError('native FireWeapon invented audio outside its script callback')
+
+# Both named unit routes and resolved positional/global sound submissions.
+# FireWeapon itself must not supply a guessed weapon-kind sound when its
+# authored callback is silent (the controlled callback above emits nothing).
+p.hooks.update({0x5d4444:random_sink,0x56c640:callback,0x4ea560:display,
+                0x50a9c0:unexpected_sound,0x50a7d0:unexpected_sound,
+                0x50a720:unexpected_sound,0x50a6b0:unexpected_sound})
 p.freeze_hooks();put(unit+0xb4,kind);put(record,weapon)
 rng=random.Random(0x530140);rows=[];expected=[]
 cases=[(n,r) for n in (0,1,4,5,6,30,32767,54613,65535) for r in (0,1,16384,32767)]
@@ -51,4 +59,21 @@ actual=[tuple(map(int,line.split())) for line in result.stdout.splitlines()]
 assert len(actual)==len(expected),(len(actual),len(expected))
 for i,(a,e) in enumerate(zip(actual,expected)):
     assert a==e,(rows[i],a,e)
-print(f'PASS: {len(rows)} native FireWeapon reloads/events, one CRT draw even for zero spread, script/display callback order and slot identity')
+print(f'PASS: {len(rows)} native FireWeapon reloads/events, one CRT draw even for zero spread, script/display callback order and slot identity; no fabricated firing audio')
+
+# The display receiver likewise just invokes FireWeapon. Exercise it with a
+# silent callback so guessed audio in either half of dispatch is detectable.
+game=HEAP+0x80000
+units=HEAP+0xa0000
+display_unit=units+0x138
+packet=HEAP+0xc0000
+put(0x62d55c,game)
+put(game+0x14e84,units);put(game+0x14e88,units+0x138*2)
+put(display_unit+0x130,0x1000000)
+put(display_unit+0xbc,HEAP+0xd0000)
+for slot in range(256):
+    p.uc.mem_write(packet,bytes([0x10,1,0,slot]))
+    trace.clear()
+    _,error=p.call(0x4ea640,(packet,));assert not error,error
+    assert len(trace)==1 and trace[0][0:2]==('script',slot),trace
+print('PASS: 256 native display FireWeapon callbacks, no fabricated firing audio')
