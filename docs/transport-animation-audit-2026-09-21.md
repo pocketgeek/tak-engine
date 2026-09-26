@@ -10682,3 +10682,23 @@ Release client rebuilt and git diff --check passed. These checks plus script
 inspection support removal of the unsolicited callback; a synchronized before/
 after retail restoration capture was not performed. No new fixture or retail
 GUI launch.
+
+### WindChange heading convention corrected (2026-09-25)
+
+Native `4d4520` sends WindChange(speed, windHeading - unitHeading), taking both
+headings from native unsigned 16-bit fields and leaving their integer difference
+unnormalized. The client subtracted the port/display heading from the native wind
+heading through floating-point radians. The heading conventions differ by 32768,
+so this could orient flags and sails half a turn from the native request.
+GameView now converts the body heading with portHeadingToRetail and subtracts it
+from the captured native wind bearing directly; speed also comes directly from
+the captured wind state. Cosmetic wind drift and simulation wind generation are
+unchanged.
+
+An ephemeral Unicorn check called the whole native `4d4520` callback producer and
+intercepted script submission for 1,016 boundary/random heading pairs. All speed,
+argument-count and relative-bearing requests matched the corrected calculation.
+Twenty-four extracted scripts define WindChange, including Aratrans, Arawar,
+Vertrans, VerScout, VerMan, faction keeps/gates and NPC flags. No new fixtures.
+Release client rebuilt; retail_script, retail_visual and animation_roster CTests
+passed; git diff --check passed. No retail GUI or wind-specific rendered capture.

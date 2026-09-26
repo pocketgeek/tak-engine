@@ -2185,17 +2185,14 @@
                     break;
                 }
             }
-            // Wind delivery (retail WindChange(speed, heading)): the script TURNs
-            // flag/sail pieces straight to arg1, so pass the wind bearing in
-            // rendered-facing space, relative to the body heading.
+            // Native 4d4520 passes wind bearing minus unit bearing in the
+            // retail heading convention, without normalizing that difference.
             if (a.hasWind && a.windStamp != windGen_) {
                 a.windStamp = windGen_;
-                constexpr float kTau = 6.2831853f;
-                float w = windHeading_ - u.heading;
-                while (w > kTau / 2) w -= kTau;
-                while (w < -kTau / 2) w += kTau;
-                a.vm->start("WindChange", {int32_t(windSpeed_),
-                                           int32_t(w * (65536.0f / kTau))});
+                const auto bodyHeading=tak::sim::portHeadingToRetail(
+                    tak::sim::bamFromRadians(u.heading));
+                const int32_t relativeHeading=int32_t(front().wind.heading)-int32_t(bodyHeading);
+                a.vm->start("WindChange", {front().wind.speed,relativeHeading});
             }
             // Builders: the conjure/build animation while actively working a site
             // (constructing, repairing, or reclaiming). Retail drives this via the COB
