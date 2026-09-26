@@ -3210,7 +3210,7 @@
 
     void GameView::drawEffects() {
 #ifndef NDEBUG
-        debugGlowDrawCount_=0;
+        debugGlowDrawCount_=0;debugNimbusDrawCount_=0;
         if(tak::devEnv("TAK_GLOW_TEST") && explosionGlows_.empty()) {
             const float cx=mapView_.map().blocksX*16.f,cz=mapView_.map().blocksY*16.f;
             for(unsigned kind=0;kind<3;++kind)
@@ -3303,6 +3303,7 @@
                 continue;
             }
             ++it;
+            if (u->embarked()) continue;
             if (!noFog_ && !cellVisibleR(u->x, u->z)) continue;
             const auto whole = [](int32_t value) {
                 return int(std::bit_cast<int16_t>(uint16_t(uint32_t(value) >> 16)));
@@ -3315,6 +3316,9 @@
                 (float(z - (y >> 1)) + float(heightRef_) * 0.5f - mapView_.offY() - f.ay) * zm,
                 f.w * zm, f.h * zm};
             SDL_RenderCopyF(ren_, f.tex, nullptr, &dst);
+#ifndef NDEBUG
+            ++debugNimbusDrawCount_;
+#endif
         }
         for (const auto& e : effects_) {
             if (!e.anim || e.anim->frames.empty()) continue;
@@ -3354,52 +3358,67 @@
 #endif
         float zm = mapView_.zoom();
         if(!smokeSprites_.empty() || !pointParticles_.empty())(void)heightAbove(0,0);
-        for(const auto& [owner,particles]:pointParticles_)for(const auto& particle:particles) {
-            const int x=particle.position[0]>>16,y=particle.position[1]>>16,z=particle.position[2]>>16;
-            const float sx=(float(x)-mapView_.offX())*zm;
-            const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
-            if(!tak::retailViewportCenterAdmitted(sx,sy,
-                    float(mapViewW(winW_)),float(winH_)))continue;
-            const auto color=particle.color();
-            SDL_SetRenderDrawColor(ren_,color[0],color[1],color[2],color[3]);
-            SDL_RenderDrawPointF(ren_,sx,sy);
+        for(const auto& [owner,particles]:pointParticles_) {
+            // Native cargo's hidden flag skips the owner's entire drawable,
+            // including attached effect lists. Keep their lifetime state intact.
+            if(const auto* unit=frameUnitP(owner);unit && unit->embarked())continue;
+            for(const auto& particle:particles) {
+                const int x=particle.position[0]>>16,y=particle.position[1]>>16,z=particle.position[2]>>16;
+                const float sx=(float(x)-mapView_.offX())*zm;
+                const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                if(!tak::retailViewportCenterAdmitted(sx,sy,
+                        float(mapViewW(winW_)),float(winH_)))continue;
+                const auto color=particle.color();
+                SDL_SetRenderDrawColor(ren_,color[0],color[1],color[2],color[3]);
+                SDL_RenderDrawPointF(ren_,sx,sy);
 #ifndef NDEBUG
-            ++debugPointDrawCount_;
+                ++debugPointDrawCount_;
 #endif
+            }
         }
-        for(const auto& [owner,sprites]:smokeSprites_)for(const auto& sprite:sprites) {
-            const auto& particle=sprite.particle;
-            if(particle.frame>=sprite.art->frames.size())continue;
-            const auto& f=sprite.art->frames[particle.frame];
-            const int x=particle.position[0]>>16,y=particle.position[1]>>16,z=particle.position[2]>>16;
-            const float sx=(float(x)-mapView_.offX())*zm;
-            const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
-            if(!tak::retailViewportCenterAdmitted(sx,sy,
-                    float(mapViewW(winW_)),float(winH_)))continue;
-            SDL_FRect dst{sx-f.ax*zm,sy-f.ay*zm,f.w*zm,f.h*zm};
-            SDL_SetTextureAlphaMod(f.tex,f.encoding==4 ? 255 : 128);
-            SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
-            SDL_SetTextureAlphaMod(f.tex,255);
+        for(const auto& [owner,sprites]:smokeSprites_) {
+            // Native cargo's hidden flag skips the owner's entire drawable,
+            // including attached effect lists. Keep their lifetime state intact.
+            if(const auto* unit=frameUnitP(owner);unit && unit->embarked())continue;
+            for(const auto& sprite:sprites) {
+                const auto& particle=sprite.particle;
+                if(particle.frame>=sprite.art->frames.size())continue;
+                const auto& f=sprite.art->frames[particle.frame];
+                const int x=particle.position[0]>>16,y=particle.position[1]>>16,z=particle.position[2]>>16;
+                const float sx=(float(x)-mapView_.offX())*zm;
+                const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                if(!tak::retailViewportCenterAdmitted(sx,sy,
+                        float(mapViewW(winW_)),float(winH_)))continue;
+                SDL_FRect dst{sx-f.ax*zm,sy-f.ay*zm,f.w*zm,f.h*zm};
+                SDL_SetTextureAlphaMod(f.tex,f.encoding==4 ? 255 : 128);
+                SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
+                SDL_SetTextureAlphaMod(f.tex,255);
 #ifndef NDEBUG
-            ++debugSmokeDrawCount_;
+                ++debugSmokeDrawCount_;
 #endif
+            }
         }
 
-        for(const auto& [owner,sprites]:damageFlames_)for(const auto& sprite:sprites) {
-            if(!sprite.clock.active || sprite.clock.frame>=sprite.art->frames.size())continue;
-            const auto& f=sprite.art->frames[sprite.clock.frame];
-            const int x=sprite.position[0]>>16,y=sprite.position[1]>>16,z=sprite.position[2]>>16;
-            const float sx=(float(x)-mapView_.offX())*zm;
-            const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
-            if(!tak::retailViewportCenterAdmitted(sx,sy,
-                    float(mapViewW(winW_)),float(winH_)))continue;
-            SDL_FRect dst{sx-f.ax*zm,sy-f.ay*zm,f.w*zm,f.h*zm};
-            SDL_SetTextureAlphaMod(f.tex,f.encoding==4 ? 255 : 128);
-            SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
-            SDL_SetTextureAlphaMod(f.tex,255);
+        for(const auto& [owner,sprites]:damageFlames_) {
+            // Native cargo's hidden flag skips the owner's entire drawable,
+            // including attached effect lists. Keep their lifetime state intact.
+            if(const auto* unit=frameUnitP(owner);unit && unit->embarked())continue;
+            for(const auto& sprite:sprites) {
+                if(!sprite.clock.active || sprite.clock.frame>=sprite.art->frames.size())continue;
+                const auto& f=sprite.art->frames[sprite.clock.frame];
+                const int x=sprite.position[0]>>16,y=sprite.position[1]>>16,z=sprite.position[2]>>16;
+                const float sx=(float(x)-mapView_.offX())*zm;
+                const float sy=(float(z-(y>>1))+float(heightRef_)*0.5f-mapView_.offY())*zm;
+                if(!tak::retailViewportCenterAdmitted(sx,sy,
+                        float(mapViewW(winW_)),float(winH_)))continue;
+                SDL_FRect dst{sx-f.ax*zm,sy-f.ay*zm,f.w*zm,f.h*zm};
+                SDL_SetTextureAlphaMod(f.tex,f.encoding==4 ? 255 : 128);
+                SDL_RenderCopyF(ren_,f.tex,nullptr,&dst);
+                SDL_SetTextureAlphaMod(f.tex,255);
 #ifndef NDEBUG
-            ++debugDamageFlameDrawCount_;
+                ++debugDamageFlameDrawCount_;
 #endif
+            }
         }
         const float kLinger = 0.8f;   // seconds after the last emit to keep drawing
         for (auto& [id, a] : anims_) {
@@ -3407,7 +3426,7 @@
             bool smk = a.smokeFx && a.smokeT < kLinger;
             if (!fire && !smk) continue;
             const auto* u = frameUnitP(id);
-            if (!u || !u->type) continue;
+            if (!u || !u->type || u->embarked()) continue;
             if (!noFog_ && !cellVisibleR(u->x, u->z)) continue;
             auto draw = [&](const EffectAnim* ea, int piece, float fps) {
                 float x, z, lift;

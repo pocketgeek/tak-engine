@@ -841,6 +841,7 @@
             std::fprintf(stderr,"PASS: live verpill SFX 264 survives two skipped render ticks and owner retirement with exact XYZ/tick, then expires at authored duration\n");
             return;
         }
+#ifndef NDEBUG
         if (tak::devFlag("TAK_TRANSPORT_EFFECT_TEST")) {
             tak::sim::World::TransportFx event;
             event.tick=front().gameTick-4;
@@ -872,9 +873,45 @@
                 }
             }
             effects_.push_back(passenger);effects_.push_back(carrier);
-            std::fprintf(stderr,"PASS: transport queue preserves delayed event ticks/XYZ, consumes once, and expires both loaded effects exactly\n");
+            // Exercise the actual draw paths across a passenger's visibility
+            // transition. This is separate from detached transport-beam effects.
+            const int passengerId=spawn("araarch",cx,cz,0,localPlayer_);
+            const int carrierId=spawn("zonroc",cx+80,cz,0,localPlayer_);
+            const auto* art=effectFor("bigsmoke");
+            if(passengerId<0 || carrierId<0 || !art || art->frames.empty())
+                throw std::runtime_error("transport attached-effect assets unavailable");
+            smokeSprites_.clear();pointParticles_.clear();damageFlames_.clear();nimbusEffects_.clear();
+            const std::array<int32_t,3> point{int32_t(cx*65536),0,int32_t(cz*65536)};
+            tak::RetailSmokeParticle smoke;smoke.position=point;
+            smokeSprites_[passengerId].push_back({smoke,art});
+            tak::RetailPointParticle wake;wake.position=point;
+            pointParticles_[passengerId].push_back(wake);
+            DamageFlameSprite flame;flame.position=point;flame.art=art;flame.clock.start(art->durations);
+            damageFlames_[passengerId].push_back(flame);
+            nimbusEffects_[passengerId]={art,world_.tickCount()};
+            int width=0,height=0;SDL_GetRendererOutputSize(ren_,&width,&height);
+            winW_=width;winH_=height; // draw normally sets these before culling
+            mapView_.setZoom(1);
+            mapView_.setOffset(cx-float(mapViewW(width))*0.5f,cz-float(height-barH())*0.5f);
+            for(bool aboard:{false,true,false}) {
+                world_.unit(passengerId)->inTransport=aboard ? carrierId : 0;
+                captureFrame();beginFrame();endFrame();
+                drawUnitFx();drawEffects();
+                const int expected=aboard ? 0 : 1;
+                if(debugSmokeDrawCount_!=expected || debugPointDrawCount_!=expected ||
+                   debugDamageFlameDrawCount_!=expected || debugNimbusDrawCount_!=expected) {
+                    std::fprintf(stderr,"cargo effects: aboard=%d smoke=%d points=%d flames=%d nimbus=%d\n",
+                        int(aboard),debugSmokeDrawCount_,debugPointDrawCount_,debugDamageFlameDrawCount_,debugNimbusDrawCount_);
+                    throw std::runtime_error("passenger attached effects did not hide aboard and resume after unloading");
+                }
+            }
+            if(smokeSprites_[passengerId].size()!=1 || pointParticles_[passengerId].size()!=1 ||
+               damageFlames_[passengerId].size()!=1 || !nimbusEffects_.contains(passengerId))
+                throw std::runtime_error("boarding discarded attached effect lifetime state");
+            std::fprintf(stderr,"PASS: transport queue preserves event clocks; passenger smoke, points, flames and nimbus hide aboard and resume after unloading\n");
             return;
         }
+#endif
         if(tak::devEnv("TAK_FEATURE_CACHE_TEST")) {
             auto definition = featureDefs_.at("vertree01");
             definition.values["animating"] = "0";

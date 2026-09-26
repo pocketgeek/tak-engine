@@ -771,6 +771,7 @@ public:
     int debugSmokeDrawCount_ = 0;
     int debugPointDrawCount_ = 0;
     int debugGlowDrawCount_ = 0;
+    int debugNimbusDrawCount_ = 0;
     int debugDamageFlameDrawCount_ = 0;
     int debugFeatureFlameDrawCount_ = 0;
     int debugFeatureSmokeDrawCount_ = 0;

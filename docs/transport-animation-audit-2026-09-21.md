@@ -10836,3 +10836,38 @@ a claim that all ordinary-death fallback effects match retail.
 Release and optimized Debug takclient rebuilt. retail_visual, retail_script,
 animation_roster and cobanim CTests passed; git diff --check passed. No new
 statue-transition rendered capture was taken for this guard change.
+
+
+### Transport cargo hides its attached effect draw lists (2026-09-25)
+
+The unit render pass excluded embarked models, but the separate effect passes
+still drew their owner-attached nimbus, smoke, point particles and damage flames.
+Native 4ee700 skips direct submission for attached units; the carrier's 4ec7b0
+cargo recursion rejects the hidden-cargo flag at 4eccb4 and 4ed1e9. Nimbus
+(4eccea) and the attached lists (4ed176/4ed185) are inside that skipped drawable.
+Thus hiding only the passenger mesh could leave a visible passenger effect at its
+stored position while it was aboard.
+
+Added embarked-owner checks to these effect draw paths and the legacy attached
+fire/smoke path. The checks suppress drawing without deleting effect state, so
+still-live effects can draw after release. Detached effects and transfer beams
+remain independent of the hidden passenger. This does not alter transport
+missions, the simulation's script updates, effect aging or pathfinding.
+
+The existing TAK_TRANSPORT_EFFECT_TEST now exercises actual draw admission for
+smoke, points, damage flames and nimbus across a manually staged passenger
+snapshot: visible -> embarked -> released. It also checks retained effect state.
+The test seeds representative loaded sprites; it does not repeat the real boarding
+mission or claim that those particular units naturally emit every tested family.
+Its first run exposed an unset test viewport (draw normally initializes it),
+which was corrected before interpreting draw counts. No new fixture program or
+retail GUI launch. The existing native nimbus projection probe still passes its
+4,096 cases; that probe validates projection, not cargo admission.
+
+Release and optimized Debug clients rebuilt successfully. Seven targeted Release
+CTests passed (transport selections, retail_visual and animation_roster; 0.84s).
+The extended live draw test passed with SDL dummy video/audio on Ulasem Arena:
+TAK_TRANSPORT_EFFECT_TEST=1 TAK_SHOT_MS=500 build-o2/takclient game
+'Ulasem Arena' --data assets/game --firetest --nofog --shot /tmp/tak-cargo-fx.png.
+Log: /tmp/tak-cargo-fx-live.log. This checks actual draw-call admission; the
+screenshot was not used for a retail pixel comparison. git diff --check passed.
