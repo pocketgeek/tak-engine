@@ -8,12 +8,14 @@
 
 namespace tak {
 // Ordered display callbacks emitted by authoritative commands and combat.
-// Ordinary combat needs at most three clears, three aim starts and three fires.
+// Aim/fire updates need at most three clears, three starts and three fires;
+// incoming hits and command bursts may add further callbacks.
 struct RetailWeaponAnimation {
-    enum Kind : uint8_t { Aim, Fire, Clear, Switch };
+    enum Kind : uint8_t { Aim, Fire, Clear, Switch, Hit };
     Kind kind=Clear;
     uint8_t slot=0;
     uint16_t heading=0,pitch=0;
+    uint16_t damage=0; // HitByWeapon packet damage; slot carries its damage type
 };
 struct RetailWeaponAnimations {
     std::array<RetailWeaponAnimation,9> events{};
@@ -25,9 +27,9 @@ struct RetailWeaponAnimations {
         return i<events.size() ? events.at(i) : overflow.at(i-events.size());
     }
     void clear() { count=0;overflow.clear(); }
-    void add(RetailWeaponAnimation::Kind kind,int slot,uint16_t heading=0,uint16_t pitch=0) {
+    void add(RetailWeaponAnimation::Kind kind,int slot,uint16_t heading=0,uint16_t pitch=0,uint16_t damage=0) {
         // Native display packets retain the high byte of each aiming angle.
-        const RetailWeaponAnimation event{kind,uint8_t(slot),uint16_t(heading&0xff00),uint16_t(pitch&0xff00)};
+        const RetailWeaponAnimation event{kind,uint8_t(slot),uint16_t(heading&0xff00),uint16_t(pitch&0xff00),damage};
         if(count<events.size())events[count]=event;else overflow.push_back(event);
         ++count;
     }

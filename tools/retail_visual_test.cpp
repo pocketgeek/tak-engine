@@ -172,6 +172,14 @@ int main(int argc,char** argv) {
             if(actual.size()!=21 || std::get<1>(actual[0])!=tak::RetailWeaponAnimation::Clear)return 1;
             for(size_t i=1;i<actual.size();++i)
                 if(std::get<1>(actual[i])!=tak::RetailWeaponAnimation::Switch || std::get<2>(actual[i])!=int(i%3))return 1;
+            events.add(tak::RetailWeaponAnimation::Hit,3,0x4000,0,123);
+            queue.push(107,7,events);
+            bool retainedHit=false;
+            queue.drain(107,[&](int id,const auto& event) {
+                if(event.kind==tak::RetailWeaponAnimation::Hit)
+                    retainedHit=id==7 && event.slot==3 && event.heading==0x4000 && event.damage==123;
+            },collectShot);
+            if(!retainedHit)return 1;
         }
 
         struct BurnEvent { int id; uint64_t activationSequence; bool emit; };

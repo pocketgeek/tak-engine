@@ -3426,7 +3426,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     // Record the impact for the viewer (hit sound / effect).
     {
         HitFx hf{hx, hz, &w, primary ? primary->type : nullptr};
-        if (primary) { hf.victimId = primary->id; hf.damage = w.damageVs(primary->type); }
+        if (primary) hf.victimId = primary->id;
         const Unit* from = fromId ? unit(fromId) : nullptr;
         hf.fromX = from ? from->x.toFloat() : hx;
         hf.fromZ = from ? from->z.toFloat() : hz;
@@ -3477,6 +3477,24 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         damageCrtUsed_ = true;
         const int dealt = retailDamageWithSpread(scaledDamage, crtRand(0x52a3ba));
         e.hp -= Fixed::fromInt(dealt);
+        // 52a40a forms the hit bearing from the impact position, relative to
+        // the victim's current native heading. 51a140 retains its high byte;
+        // 51a4d2 notifies each normal/fire/explosion recipient, including splash.
+        if(w.status==Weapon::Status::None && w.dmgType>=1 && w.dmgType<=3) {
+            if(auto script=unitScripts_.find(e.id);script!=unitScripts_.end()) {
+                const auto& file=*e.type->script();
+                const int callback=file.scriptIndex("HitByWeapon");
+                if(callback>=0) {
+                    const uint16_t bearing=uint16_t(retailDirection(Fixed::fromFloat(hx)-e.x,
+                        Fixed::fromFloat(hz)-e.z).v-portHeadingToRetail(e.heading))&0xff00u;
+                    const uint16_t damage=uint16_t(dealt);
+                    e.weaponAnimations.add(tak::RetailWeaponAnimation::Hit,w.dmgType,bearing,0,damage);
+                    script->second.state.startArguments(file,callback,
+                        {uint32_t(w.dmgType),uint32_t(retailScaledCosine(bearing,400)),
+                         uint32_t(retailScaledSine(bearing,400)),damage},4);
+                }
+            }
+        }
         if (e.hp <= Fixed()) {
             e.overkill = fxMax(e.overkill, -e.hp);          // retail severity input
             e.deathType = uint8_t(w.dmgType);                  // 3 = explosion -> gib
@@ -8046,7 +8064,7 @@ void World::tick(float dt) {
     for (auto& u : units_) {
         u.justFired=false;u.firedWeapons=0;u.fireAnimations=0;u.weaponAnimations.clear();u.justBuilt=0;
         for(const auto& event:u.pendingWeaponAnimations)
-            u.weaponAnimations.add(event.kind,event.slot,event.heading,event.pitch);
+            u.weaponAnimations.add(event.kind,event.slot,event.heading,event.pitch,event.damage);
         u.pendingWeaponAnimations.clear();
     }
     if (mission_ || scenario_) justDied_.clear();   // deaths this tick, fed to mission/scenario below

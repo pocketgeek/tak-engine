@@ -22,7 +22,7 @@ missed weapon events, transported-passenger effects and authored death effects.
 The chronological entries below document their scope and validation. The earlier
 read-only Git restriction has been lifted for the current session.
 
-The most recent full Release sweep passes all 56 CTests (29.17 seconds), including
+The most recent full Release sweep passes all 56 CTests (29.63 seconds), including
 the recent animation, pickup-cancellation, boarding target-clear and transport reload fixes at the end of this audit. Existing
 native/World ridge-flight unload comparisons also pass all three shipped air
 carrier profiles in both balances: ZONROC, CREAERI and TARSHIP. This includes
@@ -11527,3 +11527,46 @@ clients rebuilt; existing retail_visual and animation_roster tests pass
 (0.39 seconds). No new persistent fixture was added. The server/simulation is
 unchanged by this follow-up. Before this follow-up, a945cc9's GitHub determinism
 workflow passed; Linux, Windows and macOS builds were still running.
+
+
+## Capture each damage recipient's flinch callback (2026-09-25)
+
+The former impact-level display callback covered only the primary victim,
+passed nominal pre-armour damage, and recomputed its bearing from the attacker's
+position and the victim's later render pose. Native 52a40a..52a449 instead forms
+a bearing from the impact position to each recipient relative to that victim's
+heading and passes resolved damage through 51a140's word/angle-byte packet.
+Native 51a4d2 then supplies that packet to HitByWeapon.
+
+The simulation now queues HitByWeapon on each applicable recipient's script and
+publishes the same captured arguments through the existing ordered weapon
+animation handoff. Normal/fire/explosion hits include splash recipients; status
+and mind-control paths do not produce these callbacks. The renderer consumes
+the retained event with retail's integer sine/cosine helpers, so later motion
+and skipped render frames cannot change the arguments. The obsolete nominal
+HitFx damage field and impact-level flinch dispatch were removed. Impact sounds
+and projectile hit effects remain in their existing impact queue.
+
+An isolated original 52a40a geometry block plus 51a140 packet construction,
+substituting only packet consumption, confirms bearings 128 and 64 (high byte)
+for a centered direct hit and a splash recipient twenty pixels east, with
+native heading 32768. Both packets retain damage 25 and type 3. Log:
+/tmp/tak-hit-callback-native.log. Existing script/display tests now cover both
+recipients, resolved damage, deferred script execution, rotation after impact,
+status suppression and render-queue preservation. The initial splash test
+needed a normal World tick to populate its spatial index before direct test
+injection; after that setup correction the focused checks pass.
+No standalone fixture or retail GUI launch was added.
+
+Full validation: all 56 Release CTests pass (29.63 seconds); optimized Debug
+retail_script, retail_visual and retailgap pass (32.64 seconds). Logs:
+/tmp/tak-hit-callback-full-tests.log and /tmp/tak-hit-callback-o2-tests.log.
+Final cleanup switches remaining test event loops to the overflow-safe accessor;
+this matters now that a victim may receive many hit callbacks in one tick.
+
+Final rebuild includes Release and optimized client/server. After the accessor
+cleanup, Release script/visual/transport checks pass (0.12 seconds) and optimized
+script/visual checks pass (0.05 seconds). All three GitHub platform builds for
+the preceding commit 73e047c have now passed; a945cc9's determinism workflow
+also passed. Logs: /tmp/tak-hit-callback-final-tests.log and
+/tmp/tak-hit-callback-o2-final-tests.log.

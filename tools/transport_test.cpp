@@ -1385,7 +1385,7 @@ static void retailRoster(const char* root) {
                     "passenger reload advances while executing pickup");
                 const auto& events=w.unit(cid)->weaponAnimations;
                 for(size_t i=0;i<events.count;++i)
-                    clears+=events.events[i].kind==tak::RetailWeaponAnimation::Clear;
+                    clears+=events.at(i).kind==tak::RetailWeaponAnimation::Clear;
             }
             check(w.unit(cid)->embarked(),"armed passenger boards through its real load order");
             check(!w.unit(cid)->scriptAimTarget && clears==1,

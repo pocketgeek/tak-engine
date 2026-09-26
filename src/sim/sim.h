@@ -1799,8 +1799,7 @@ public:
     struct HitFx { float x = 0, z = 0; const Weapon* weapon = nullptr;
                    const UnitType* target = nullptr;
                    int victimId = 0;            // primary struck unit (0 = ground hit)
-                   float fromX = 0, fromZ = 0;  // attacker pos (viewer flinch direction)
-                   float damage = 0;           // pre-armour damage vs the victim
+                   float fromX = 0, fromZ = 0;  // attacker pos for hitscan presentation
                    int fromPlayer = 0; };      // display colour for hitscan projectile models
     const std::vector<HitFx>& hits() const { return hits_; }
     // Cosmetic events captured at the mission callback, before mover updates.

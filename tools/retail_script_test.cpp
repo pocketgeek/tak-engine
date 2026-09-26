@@ -18,6 +18,9 @@
 
 namespace tak::sim {
 struct RetailReplayProbe {
+    static void hit(World& world,const Weapon& weapon,float x,float z,int from,int target) {
+        world.applyHit(weapon,x,z,0,from,world.unit(target));
+    }
     static const auto& scriptStatics(const World& world,int id) { return world.unitScripts_.at(id).state.vm.statics; }
     static void emitScript(World& world,int id) {world.notifyUnitScript(*world.unit(id),"Emit");}
     static void clearScriptEvents(World& world) {world.scriptEmissions_.clear();}
@@ -936,6 +939,44 @@ int main(int argc,char** argv) {
     {
         using namespace tak::sim;
         auto require=[](bool ok,const char* message) {if(!ok)throw std::runtime_error(message);};
+        auto hitFile=std::make_shared<tak::cob::File>();
+        hitFile->numStatics=4;hitFile->scripts={{"HitByWeapon",0}};
+        for(uint32_t i=0;i<4;++i)
+            hitFile->code.insert(hitFile->code.end(),{0x10021002,i,0x10023004,i});
+        hitFile->code.push_back(0x10065000);
+        UnitType victimType;victimType.maxHp=1000;victimType.simulationScript=hitFile;
+        World impacts;impacts.setVisPlayer(-1);
+        impacts.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        const int direct=impacts.spawn(&victimType,300,200,0.f,1);
+        const int splash=impacts.spawn(&victimType,320,200,0.f,1);
+        impacts.tick(1.f/30); // populate the spatial index used by splash recipients
+        impacts.unit(direct)->armBuff=2;
+        Weapon blast;blast.damage=100;blast.aoe=100;blast.edge=0;blast.dmgType=3;
+        RetailReplayProbe::hit(impacts,blast,300,200,0,direct);
+        for(int id:{direct,splash}) {
+            const auto* victim=impacts.unit(id);
+            const auto& callbacks=victim->weaponAnimations;
+            require(callbacks.count==1 && callbacks.at(0).kind==tak::RetailWeaponAnimation::Hit,
+                "direct and splash damage each publish one HitByWeapon callback");
+            const auto& hit=callbacks.at(0);
+            require(hit.slot==3 && hit.damage==1000-victim->hp.floorInt() && hit.damage!=100,
+                "flinch captures resolved recipient damage rather than the nominal weapon value");
+            require(hit.heading==(id==direct?32768:16384),
+                "flinch bearing comes from impact position and victim heading at the hit");
+            require(RetailReplayProbe::scriptStatics(impacts,id)[0]==0,
+                "damage queues the simulation callback without running it inline");
+        }
+        const uint16_t directDamage=impacts.unit(direct)->weaponAnimations.at(0).damage;
+        impacts.unit(direct)->heading=Bam(12345);
+        impacts.tick(1.f/30);
+        require(RetailReplayProbe::scriptStatics(impacts,direct)==std::vector<uint32_t>{3,uint32_t(-400),0,directDamage},
+            "script receives captured hit arguments despite subsequent victim rotation");
+        for(int id:{direct,splash})impacts.unit(id)->weaponAnimations.clear();
+        blast.status=Weapon::Status::Paralyzed;
+        RetailReplayProbe::hit(impacts,blast,300,200,0,direct);
+        require(impacts.unit(direct)->weaponAnimations.count==0 && impacts.unit(splash)->weaponAnimations.count==0,
+            "status damage does not produce direct or splash flinch callbacks");
+
         auto cloakFile=std::make_shared<tak::cob::File>();
         cloakFile->numStatics=1;cloakFile->scripts={{"StartCloaking",0},{"StopCloaking",5}};
         cloakFile->code={0x10021001,1,0x10023004,0,0x10065000,
@@ -1037,7 +1078,7 @@ int main(int argc,char** argv) {
         for(int tick=1;tick<=20;++tick) {
             world.tick(1.f/30);const auto* u=world.unit(sid);
             for(unsigned i=0;i<u->weaponAnimations.count;++i) {
-                const auto& event=u->weaponAnimations.events[i];
+                const auto& event=u->weaponAnimations.at(i);
                 require(event.slot==0,"display callback preserves the selected slot");
                 callbacks.push_back(event.kind);
             }
@@ -1140,7 +1181,7 @@ int main(int argc,char** argv) {
                 blocked.tick(1.f/30);
                 const auto& events=blocked.unit(from)->weaponAnimations;
                 for(unsigned i=0;i<events.count;++i)
-                    aimed|=events.events[i].kind==tak::RetailWeaponAnimation::Aim;
+                    aimed|=events.at(i).kind==tak::RetailWeaponAnimation::Aim;
             }
             require(aimed,"clearing the terrain obstruction admits the pending AimWeapon callback");
             std::cout<<"PASS: blocked-LOS World gate suppresses callbacks and projectile until the wall clears\n";
@@ -1289,7 +1330,7 @@ int main(int argc,char** argv) {
             std::vector<int> cleared;
             const auto& events=clearing.unit(from)->weaponAnimations;
             for(unsigned i=0;i<events.count;++i)
-                if(events.events[i].kind==tak::RetailWeaponAnimation::Clear)cleared.push_back(events.events[i].slot);
+                if(events.at(i).kind==tak::RetailWeaponAnimation::Clear)cleared.push_back(events.at(i).slot);
             require(cleared==(switching?std::vector<int>{1}:std::vector<int>{0,1,2}),
                 "target-clear callback respects selected versus independent weapon slots");
             if(switching)require(clearing.unit(from)->weaponAim[0].flags==0xe8 &&

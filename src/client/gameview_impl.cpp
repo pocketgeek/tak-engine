@@ -7,6 +7,7 @@
 #include "client/retailmovementcallbacks.h"
 #include "client/retaildeathsfx.h"
 #include "client/runtimesettings.h"
+#include "sim/retailmotion.h"
 #include <cmath>
 #include <cstdlib>
 
@@ -1952,23 +1953,6 @@
                            h.target->blood[2], 26, 1.8f, 0, ba);
             }
             // (mission ScreenShake is handled once per tick, below the hit loop)
-            // Damage flinch (retail HitByWeapon callin): args are
-            // (damageType, cos*400, sin*400, damage). Native 51a4d2 admits
-            // only normal/fire/explosion packets (1/2/3), passing their actual
-            // type; status-only packets do not start this callback. Direction is the
-            // bearing from the victim to the attacker, in rendered-facing space
-            // (same convention as the aim driver).
-            if (h.victimId && h.weapon && h.weapon->status==tak::sim::Weapon::Status::None &&
-                h.weapon->dmgType>=1 && h.weapon->dmgType<=3 && !h.weapon->mindControl)
-                if (auto fi = anims_.find(h.victimId);
-                    fi != anims_.end() && fi->second.hasFlinch && fi->second.vm)
-                    if (const UnitR* v = frameUnitP(h.victimId);
-                        v && v->alive() && v->type) {
-                        float ang = std::atan2(h.fromX - v->x, h.fromZ - v->z) - v->heading;
-                        fi->second.vm->start("HitByWeapon",
-                            {h.weapon->dmgType, int32_t(std::cos(ang) * 400.0f),
-                             int32_t(std::sin(ang) * 400.0f), int32_t(h.damage)});
-                    }
         }
         // Sim-driven feature fire: burn-anim playback, smoke, burnt-art swaps.
         syncBurningFeatures();
@@ -2276,6 +2260,11 @@
                     break;
                 case tak::RetailWeaponAnimation::Switch:
                     a.vm->start("SwitchWeapon",{event.slot});
+                    break;
+                case tak::RetailWeaponAnimation::Hit:
+                    a.vm->start("HitByWeapon",{event.slot,
+                        tak::sim::retailScaledCosine(event.heading,400),
+                        tak::sim::retailScaledSine(event.heading,400),event.damage});
                     break;
                 }
             }
