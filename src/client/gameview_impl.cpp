@@ -908,7 +908,16 @@
             if(smokeSprites_[passengerId].size()!=1 || pointParticles_[passengerId].size()!=1 ||
                damageFlames_[passengerId].size()!=1 || !nimbusEffects_.contains(passengerId))
                 throw std::runtime_error("boarding discarded attached effect lifetime state");
-            std::fprintf(stderr,"PASS: transport queue preserves event clocks; passenger smoke, points, flames and nimbus hide aboard and resume after unloading\n");
+            // A passenger destroyed aboard must not spawn visible death
+            // sprites/bursts at the carrier's position or run its death scripts.
+            world_.unit(passengerId)->inTransport=carrierId;
+            world_.unit(passengerId)->deadFor=0;
+            captureFrame();beginFrame();endFrame();
+            const auto effectsBefore=effects_.size(),particlesBefore=particles_.size();
+            cosmeticStep(0);
+            if(effects_.size()!=effectsBefore || particles_.size()!=particlesBefore)
+                throw std::runtime_error("hidden destroyed cargo spawned ordinary death effects");
+            std::fprintf(stderr,"PASS: transport effect clocks and cargo hide/release; hidden destroyed cargo emits no ordinary death effects\n");
             return;
         }
 #endif
@@ -2113,6 +2122,10 @@
                     a.dying = true;
                     a.vm->reset();
                     a.vm->setStatic(0, 0);
+                    // Destroyed cargo remains hidden. Native 512860 propagates
+                    // a zero-severity/type-8 death packet to attached passengers,
+                    // bypassing their ordinary Killed/Dying presentation.
+                    if (u.embarked()) continue;
                     // Retail order (icd 0x512610): Killed(severity, corpseOut,
                     // deathType) runs first -- deathType 3 (explosion kill)
                     // EXPLODEs every piece there; no shipped script reads the

@@ -10871,3 +10871,31 @@ TAK_TRANSPORT_EFFECT_TEST=1 TAK_SHOT_MS=500 build-o2/takclient game
 'Ulasem Arena' --data assets/game --firetest --nofog --shot /tmp/tak-cargo-fx.png.
 Log: /tmp/tak-cargo-fx-live.log. This checks actual draw-call admission; the
 screenshot was not used for a retail pixel comparison. git diff --check passed.
+
+
+### Destroyed hidden cargo skips ordinary death presentation (2026-09-25)
+
+World already marks embarked passengers dead when their carrier is lost and
+retains their hidden attachment. The display nevertheless started Killed/Dying
+and spawned its generic death blast/blood for those hidden units. Suppressed
+ordinary death presentation for a dead embarked unit after stopping its display
+VM. Carrier death continues to use its own presentation; this changes no
+simulation cleanup, cargo capacity or pathfinding state.
+
+Native 512860 walks attached cargo at 512913. It clears each cargo drawable's
++13 state at 512925, constructs a packet with severity zero (512938) and type 8
+(512944), and recursively dispatches that packet at 51294f. Its subsequent
+Killed/Dying gates require positive severity, so hidden cargo is not an ordinary
+visible death animation. Rechecked those branches in the local ICD; no retail
+GUI launch.
+
+Extended the existing transport-effect live regression with a staged dead
+embarked passenger, requiring cosmeticStep to leave visible effect/burst counts
+unchanged. This checks the actual renderer edge; existing transport tests cover
+carrier-loss simulation separately. No new fixture program.
+
+Release and optimized Debug clients rebuilt; seven targeted Release CTests
+passed (0.84 seconds). The live transport-effect regression passed, including
+hidden-cargo destruction, under SDL dummy video/audio on Ulasem Arena. Log:
+/tmp/tak-cargo-death-live.log; generated capture /tmp/tak-cargo-death.png was not
+used as a retail comparison. git diff --check passed.
