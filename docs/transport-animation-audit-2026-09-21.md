@@ -10509,3 +10509,25 @@ establish which native corpse-reclaim emitter should be implemented.
 Release client rebuilt; retail_visual passed and the existing native clock probe
 passed 147,456 updates plus 1,280 paired C++ timelines. No new fixtures or retail
 launch. An interactive paused-reclaim capture was not performed.
+
+### Reclaim target sparkle removed from production (2026-09-25)
+
+Native mission registry row `5eb9fd` maps Reclaim to `406250` (the following
+`406670` handler is ReclaimArea). The reclaim handler has one construction-emitter
+call, `40658e`: worker drawable `+c0`, falling direction 0, default faction art 0.
+It does not emit a matching particle at the feature. The production renderer now
+removes that unsupported target sparkle while retaining the worker fallback.
+Construction's actual two-ended particle rendering is unchanged.
+
+An ephemeral Unicorn check executed the real `40657c..406593` guard with remaining
+values -1,0,1,14,15,16,17,30,300. Exactly the values above 15 emitted one worker
+request. No fixtures added. Native reclaim initializes its countdown at `4063bf`
+from feature-definition float `+128` plus 15; `406539` subtracts two each dispatch
+and schedules the next wake with argument 2 to `4d6a10`. This countdown is not yet
+represented by World's energy-based work drain. Therefore this change does not
+claim native emission cadence, particle placement, or corpse-reclaim parity; the
+next emitter change needs that countdown relationship established first.
+
+Release client rebuilt; retail_visual and git diff --check passed. No retail GUI
+launch or visual capture. Earlier notes describing reclaim sparkles at both ends
+were an implementation description and are superseded by this native evidence.

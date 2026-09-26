@@ -2132,18 +2132,16 @@
 
         constructionParticles(true);
 
-        // Build/reclaim nano-sparkle. Retail sparkles BOTH ends -- the worker unit AND
-        // its target -- but only once the job has really STARTED: a placed site shows as
-        // a ghost until buildBegun (above), and a reclaim sparkles only once the builder
-        // is in range (not while it walks/flies over).
+        // Reclaim's legacy worker sparkle. Retail 40658e emits only at the
+        // worker; construction's two-ended particles are rendered separately.
         auto sideLower = [&] {
             std::string s = u.type ? u.type->side : std::string();
             std::transform(s.begin(), s.end(), s.begin(), ::tolower);
             return s;
         };
 
-        // A reclaimer IN RANGE (the reclaim has really started -- range test mirrors
-        // World::tickReclaim): sparkle the reclaimer AND the feature it is chewing on.
+        // Show the worker effect only once reclaim is in range, matching
+        // World::tickReclaim's work gate.
         if (u.type && u.reclaimTarget) {
             // Target and worker belong to the same pinned simulation frame.
             // A busy simulation thread must not suppress this frame's effect.
@@ -2152,10 +2150,7 @@
             float reach = 24.0f + 8.0f * float(std::max(feat->fx, feat->fz)) +
                           (u.type->buildDist > 0 ? u.type->buildDist : 0.0f);
             if (dxr * dxr + dzr * dzr <= reach * reach) {
-                drawReclaimSparkle(sideLower(), ax, ay);   // the reclaimer
-                float fsx = (feat->x - mapView_.offX()) * zm - terrainLiftX(feat->x, feat->z) * zm;
-                float fsy = (feat->z - mapView_.offY()) * zm - terrainLift(feat->x, feat->z) * zm;
-                drawReclaimSparkle(sideLower(), fsx, fsy);         // the feature
+                drawReclaimSparkle(sideLower(), ax, ay);
             }
         }
 
