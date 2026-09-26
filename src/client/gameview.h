@@ -1087,7 +1087,6 @@ private:
                                  // state machine (Create ambients + statics) instead of
                                  // the generic reset()+fly/land flyer path
         bool hasActivate = false;// onOffable + has Activate: watch u.active for door swing
-        bool hasQueryWeapon = false;  // has QueryWeapon: resolve the muzzle emit piece
         bool active = true;      // last active/door-open state (onoffable/gate swing edge)
         bool cloaked = false;    // last sim cloak state (StartCloaking/StopCloaking edge)
         bool hasCloakAnim = false;   // COB defines StartCloaking (araspy, npcheket)
@@ -1401,7 +1400,6 @@ private:
         bool hasWind = false;     // has a WindChange script
         bool hasFlightSM = false; // has BeginFlight/BeginLanding (drake VTOL state machine)
         bool hasActivate = false; // has an Activate script (onOffable door/power toggle)
-        bool hasQueryWeapon = false;  // has QueryWeapon (muzzle emit piece out-param)
         bool hasTurnDir = false;  // has a TurnDirection script (turn-in-place / steering trim)
     };
     std::unordered_map<std::string, CobCache> cobCache_;

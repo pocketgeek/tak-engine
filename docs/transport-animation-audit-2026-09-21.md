@@ -10977,3 +10977,31 @@ Corrected the existing diagnostic's description/comment/output and current audit
 status. No new fixture program and no engine change were warranted by this
 finding. Full coordinated movement/boarding parity remains unproven. Retail was
 not launched; only isolated routines from the local binary were executed.
+
+
+### Removed unrequested generic muzzle flashes (2026-09-25)
+
+GameView added four bright generic particles to every visible non-melee shot
+except FlameWeapon, including ordinary Araarch arrows. It also synchronously
+called the display VM's QueryWeapon solely to position this extra puff. Native
+BallisticWeapon launch at 52be80 resolves QueryWeapon, initializes the selected
+model/art and shadow clocks, and does not emit that blanket flash. Araarch's
+shipped bow weapon defines its arrow model and water impact, while FireWeapon
+runs the authored attack motion. The generic puff had no corresponding authored
+trigger.
+
+Removed that display-only burst and its redundant QueryWeapon call/cache flags.
+World's authoritative muzzle resolution, projectile models/sprites, script
+emissions, spell nimbus and impact effects remain in place. This is not a claim
+that a newly reported beam/arrow defect was reproduced. Simulation and
+pathfinding are unchanged.
+
+The existing weapon-impact renderer regression now feeds a real Araarch's firing
+event through the normal consumer and requires no added generic particles, then
+continues its authored impact/expiry checks. The existing Veruna bolt native
+probe passes launch, 12 updates/24 substeps, animation clock and 13 shadow/model
+draw selections. No new standalone fixture or retail GUI launch.
+
+Release and optimized Debug clients rebuilt. Four targeted Release animation
+CTests passed (0.35s), as did the optimized Debug weapon_impact_effect_route
+renderer test with the new arrow check (1.41s). git diff --check passed.

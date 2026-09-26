@@ -623,6 +623,18 @@
             if (landX < 0 || waterX < 0)
                 throw std::runtime_error("weapon impact effect fixture needs both land and water");
 
+            // Exercise the actual firing-event consumer: an ordinary arrow
+            // does not create an extra generic muzzle particle burst.
+            const float ax=(float(landX)+0.5f)*16.f,az=(float(landZ)+0.5f)*16.f;
+            const int archer=spawn("araarch",ax,az,0,localPlayer_);
+            if(archer<0)throw std::runtime_error("arrow firing-effect control failed to spawn");
+            captureFrame();beginFrame();endFrame();
+            const auto beforeArrow=particles_.size();
+            weaponAnimationQueue_.push(front().gameTick,archer,{},1,ax,az);
+            cosmeticStep(0);
+            if(particles_.size()!=beforeArrow)
+                throw std::runtime_error("ordinary arrow created an unrequested muzzle flash");
+
             const auto testAt = [&](float x, float z, const std::string& expectedClass,
                                     const tak::sim::Weapon& weapon) {
                 effects_.clear();
@@ -2090,41 +2102,9 @@
                     sounds_.playWorld("lightng" + std::to_string(1 + (salt_++ % 3)), shot.x, shot.z);
                 else
                     sounds_.playWorld("bow2", shot.x, shot.z);
-                // Muzzle world point. Retail asks the COB which piece a weapon fires
-                // from -- QueryWeapon writes the emit-piece index to its out-param
-                // local 0 (e.g. the tower's emitCan, the drake's emitjim mouth anchor)
-                // -- and spawns the flash/emit there. We resolve that piece to a world
-                // position via the model tree; without QueryWeapon (or on failure) we
-                // fall back to a point just ahead of the unit along its facing.
-                float fx = u.x + std::sin(u.heading) * 11.0f;
-                float fz = u.z + std::cos(u.heading) * 11.0f;
-                float falt = unitAltById(u.id) * 0.8f;   // flyer-effect lift (as death/unitScreen)
-                // Muzzle/beam visuals are culled off-screen anyway, and the QueryWeapon
-                // COB query + model-tree walk aren't free -- skip them for fogged/off-
-                // screen shooters so a big off-screen battle doesn't tax the main thread.
-                bool vis = noFog_ || cellVisibleR(u.x, u.z);
-                if (vis && !w.melee && it != anims_.end() && it->second.hasQueryWeapon &&
-                    it->second.vm && it->second.pieceNames) {
-                    auto& fa = it->second;
-                    fa.vm->call("QueryWeapon", {0, slot}); // local0=piece OUT, local1=weapon slot
-                    const auto& ll = fa.vm->lastLocals();
-                    int piece = ll.empty() ? -1 : ll[0];
-                    if (piece >= 0 && piece < int(fa.pieceNames->size())) {
-                        float wx, wz, wa;
-                        if (pieceWorldFx(u, fa, (*fa.pieceNames)[size_t(piece)], wx, wz, wa)) {
-                            fx = wx; fz = wz; falt = wa;
-                        }
-                    }
-                }
-                // Muzzle flash: a quick bright puff at the weapon (skip melee swings).
-                if (vis && !w.melee && w.flameKind<0) {
-                    Uint8 mr = 255, mg = 235, mb = 150;   // arrow/generic = warm
-                    if (w.fx == Fx::Lightning) { mr = 200; mg = 225; mb = 255; }
-                    else if (w.fx == Fx::Fire) { mr = 255; mg = 150; mb = 60; }
-                    spawnBurst(fx, fz, 4, mr, mg, mb, 14, 1.4f, 0, falt);
-                }
-
-
+                // Projectile creation already resolves the authoritative muzzle.
+                // Script emissions and authored weapon art supply firing effects;
+                // a generic puff here adds a flash even to ordinary arrows.
             }
             if (it == anims_.end()) continue;
             auto& a = it->second;
@@ -2939,7 +2919,6 @@
                 cc.hasWind = cc.file->scriptIndex("WindChange") >= 0;
                 cc.hasFlightSM = cc.file->scriptIndex("BeginFlight") >= 0;
                 cc.hasActivate = cc.file->scriptIndex("Activate") >= 0;
-                cc.hasQueryWeapon = cc.file->scriptIndex("QueryWeapon") >= 0;
                 cc.hasTurnDir = cc.file->scriptIndex("TurnDirection") >= 0;
                 ci = cobCache_.emplace(typeId, std::move(cc)).first;
             }
@@ -2952,7 +2931,6 @@
             a.hasFlightSM = ci->second.hasFlightSM;
             a.hasActivate = ci->second.hasActivate;
             a.hasTurnDir = ci->second.hasTurnDir;
-            a.hasQueryWeapon = ci->second.hasQueryWeapon;
             // Gate Create leaves the doors closed; replay an active snapshot's
             // Activate even when the gate became active before it was visible.
             // Other on/off units retain their authored initial state.
