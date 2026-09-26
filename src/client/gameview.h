@@ -1686,9 +1686,11 @@ private:
                     // Fallback for any texture not packed into the atlas.
                     auto it = textures_.find(name);
                     if (it != textures_.end() && !it->second.empty()) {
-                        // Each texture carries one variant per player colour; a
-                        // player's slot is remappable (--color / --aicolor).
-                        size_t ci = size_t(colorSlot_[player & 7]);
+                        // Unpacked previews/projectiles use the same animation
+                        // frame as the atlas, or the remapped player logo colour.
+                        const size_t ci = animatedTex_.count(name)
+                            ? size_t(std::max(0, glowFrame_)) % it->second.size()
+                            : size_t(colorSlot_[player & 7]);
                         tex = it->second[ci < it->second.size() ? ci : 0];
                     }
                 }

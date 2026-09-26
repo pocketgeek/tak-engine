@@ -10434,3 +10434,24 @@ The missing-draw condition is established by the removed try_lock branch;
 no controlled contention screenshot was captured. This is a snapshot integration
 fix. Reclaim's legacy anchored sprite and model-texture animation timing still
 need retail behavior investigation; neither was changed or certified here.
+
+### Model texture sequence classification (2026-09-25)
+
+Production loader now retains every frame of model texture sequences. Native
+`4be8e3..4be978` initializes sequences with more than one frame, classifies only
+10-frame sequences containing the lowercased substring `logo` as player colours,
+and registers all other multi-frame sequences for animation. The substring at
+`614698` is `logo`; `5d4670` performs the substring search. The previous loader
+retained only one frame unless the sequence contained exactly ten frames, then
+animated only selected keywords. Scanning extracted texture banks identifies 30
+sequence classifications affected, including five-frame build pads and fire/green
+arrows, eight-frame Lokken crystals, and five-frame `tesla2`.
+Unpacked model rendering now uses the same animation frame as atlas rendering,
+instead of selecting a player-colour frame for animated textures.
+
+Validation: Release takclient and retail_visual_test rebuilt; retail_visual CTest
+passed; git diff --check passed. No new fixtures and no retail GUI launch. This
+fix establishes sequence selection, not playback timing or rendered visual parity.
+The existing four-fps clock still needs replacing after checking native update
+cadence and non-looping model-texture rendering semantics. Native `421ea0` updates
+registered clocks through `5373d0`; its call site is `526438`.

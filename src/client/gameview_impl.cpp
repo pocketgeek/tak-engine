@@ -3110,25 +3110,12 @@
                     std::string name = seq.name;
                     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                     if (textures_.count(name)) continue;
-                    // 10-frame sequences are EITHER per-player colours (insignia --
-                    // frames span distinct hues) OR an animated glow (lodestone/mana/
-                    // sacred-fire crystal -- frames share a hue, a moving sparkle).
-                    // Keep all 10 for both; classify by hue spread so the glow cycles
-                    // over time (animatedTex_) while insignia stay picked-by-player.
-                    size_t n = seq.frames.size() == 10 ? 10 : 1;
-                    // The animated glows (lodestone/mana/sacred-fire/crystal crystals)
-                    // are the mana/lodestone/crystal-named textures whose 10 frames
-                    // pulse ONE hue over time. The "*logo*" textures (incl. the
-                    // lodestone side-panel logos) are per-PLAYER-colour -- their 10
-                    // frames are the 10 player colours, picked by slot, NOT animated.
-                    if (n == 10 && name.find("logo") == std::string::npos) {
-                        for (const char* g :
-                             {"lode", "mana", "sacred", "crystal", "lightning", "stone"})
-                            if (name.find(g) != std::string::npos) {
-                                animatedTex_.insert(name);
-                                break;
-                            }
-                    }
+                    // Retail 4be8e3..4be978 retains every multi-frame sequence.
+                    // Only ten-frame names containing "logo" select player colours;
+                    // every other multi-frame model texture registers an animation.
+                    const size_t n = seq.frames.size();
+                    const bool playerColours = n == 10 && name.find("logo") != std::string::npos;
+                    if (n > 1 && !playerColours) animatedTex_.insert(name);
                     // Sample the actual 10 player-colour RGBs once, from a logo/
                     // insignia texture (mostly pure player colour), so the HUD and
                     // minimap can match whatever colour a player renders in.
