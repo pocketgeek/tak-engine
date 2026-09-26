@@ -33,7 +33,7 @@ struct Host {
         }
     }
     void set(int,int) {}
-    uint32_t sound(int,int32_t priority) {return uint32_t(priority);}
+    uint32_t sound(int,int32_t) {return 0;}
     void effect(uint32_t,int,int32_t) {}
 };
 int main(int argc,char**argv) {

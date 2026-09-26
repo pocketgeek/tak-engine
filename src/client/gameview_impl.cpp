@@ -735,7 +735,7 @@
             tak::cob::Vm vm(std::move(cob), true);
             vm.enableRetailAnimation();
             std::string firedSound;
-            vm.onPlaySound = [&](int32_t index) { firedSound = vm.file().name(uint32_t(index)); };
+            vm.onPlaySound = [&](int32_t index,int32_t) { firedSound = vm.file().name(uint32_t(index)); };
             vm.start("FireWeapon", {0});
             vm.tick(1.0f / 30.0f);
             std::transform(firedSound.begin(), firedSound.end(), firedSound.begin(), ::tolower);
@@ -2235,13 +2235,8 @@
                         a.vm->start("Killed", {int32_t(u.severity), 0, dtype});
                         a.vm->start("Dying", {dtype}) || a.vm->start("death");
                     }
-                    // Stone/frozen deaths do not play the fallback death cry.
-                    if (dtype < 14) {
-                        const std::string& id = u.type->id;
-                        if (a.cobSounds) { /* the Dying script plays its own death cry */ }
-                        else if (sounds_.has(id + "die1")) sounds_.playWorld(id + "die1", u.x, u.z);
-                        else if (sounds_.has(id + "die2")) sounds_.playWorld(id + "die2", u.x, u.z);
-                    }
+                    // Death audio belongs to Killed/Dying, including deliberately
+                    // silent branches. Do not invent a cry from a filename.
                     // Killed/Dying own death pieces and emitted effects. Units
                     // with EXPLODEAS also produce their authored weapon impact
                     // through the simulation. Do not add a generic body blast.
@@ -2513,13 +2508,16 @@
                     emitPoint(event);
                 }
                 for (auto& [piece, sfx] : a.pendingSfx) emitSfx(*u, a, piece, sfx);
-                // COB PLAY_SOUND: resolve the name-table index to a wav stem. This is
-                // how retail plays per-unit action sounds -- the Beast Handler's whip
-                // crack when a conjure starts, attack swooshes, death cries.
-                for (int32_t si : a.pendingSnd) {
-                    std::string nm = a.vm->file().name(uint32_t(si));
-                    std::transform(nm.begin(), nm.end(), nm.begin(), ::tolower);
-                    if (!nm.empty() && sounds_.has(nm)) sounds_.playWorld(nm, u->x, u->z);
+            }
+            if (u && u->type && !a.pendingSnd.empty()) {
+                const bool visible=noFog_ || cellVisibleR(u->x,u->z);
+                const bool selected=std::find(selection_.begin(),selection_.end(),id)!=selection_.end();
+                for (const auto& [index,flags]:a.pendingSnd) {
+                    if (!tak::retailUnitSoundAudible(flags,visible,selected)) continue;
+                    const auto& name=a.vm->file().name(uint32_t(index));
+                    const int priority=tak::retailSoundPriority(flags);
+                    if (priority==7) sounds_.play(name,1.f,1.f,priority,(flags&32)!=0);
+                    else sounds_.playWorld(name,u->x,u->z,priority);
                 }
             }
             a.pendingPoints.clear();
@@ -3162,8 +3160,8 @@
                 }
                 buf->push_back({piece, sfx});
             };
-            st.vm->onPlaySound = [buf = &st.pendingSnd](int32_t idx) {
-                buf->push_back(idx);
+            st.vm->onPlaySound = [buf = &st.pendingSnd](int32_t idx,int32_t flags) {
+                buf->emplace_back(idx,flags);
             };
             st.vm->onSetUnitValue = [this,state=&st](int32_t valueId,int32_t) {
                 if(tak::retailOwnerVmStopsOnSetUnitValue(valueId)) {

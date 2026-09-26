@@ -1109,7 +1109,7 @@ private:
         // retirement tick because their native effect lists are unit-attached.
         std::vector<PendingDeathEffect> pendingDeathEffects;
         std::vector<tak::sim::World::ScriptEmission> pendingPoints;
-        std::vector<int32_t> pendingSnd;   // COB PLAY_SOUND name indices, drained on main
+        std::vector<std::pair<int32_t,int32_t>> pendingSnd; // name index + flags, drained on main
         std::span<const uint8_t> explosionReachability; // shared per-script control-flow map
         std::span<const tak::cob::PieceState> capturedPose; // transient render/effect snapshot
         tak::cob::Vm* effectQueryVm=nullptr;

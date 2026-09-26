@@ -61,8 +61,9 @@ struct Vm::Native {
         }
         void set(int id,int value) { if(vm.onSetUnitValue) vm.onSetUnitValue(id,value); }
         uint32_t sound(int name,int32_t priority) {
-            if(vm.onPlaySound) vm.onPlaySound(name);
-            return uint32_t(priority);
+            if(vm.onPlaySound) vm.onPlaySound(name,priority);
+            // Native unit sound host 50def0 always returns zero.
+            return 0;
         }
         void effect(uint32_t op,int piece,int32_t value) {
             if(op==0x1000f000 && vm.onEmitSfx) vm.onEmitSfx(piece,value);
@@ -541,12 +542,9 @@ void Vm::run(Thread& t) {
                 t.pc += 2; break;
             }
             case 0x10072000: {                                                // PLAY_SOUND
-                // Inline arg = COB name-table index (the wav stem); the popped stack
-                // value is a priority we don't model. Retail plays each unit's own
-                // sounds this way (attack swooshes, the Beast Handler's build whip,
-                // death cries) -- see the name table in cob::File.
-                pop(t);
-                if (onPlaySound) onPlaySound(arg(0));
+                // Preserve the authored sound class/flags for the audio host.
+                const int32_t flags=pop(t);
+                if (onPlaySound) onPlaySound(arg(0),flags);
                 push(t, 0);
                 t.pc += 2;
                 break;

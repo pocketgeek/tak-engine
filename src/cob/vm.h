@@ -75,9 +75,9 @@ public:
     // sfxType is the packed COB code (e.g. 256|6 = large flame, 256|1 = smoke).
     std::function<void(int piece, int32_t sfxType)> onEmitSfx;
     // play-sound (0x10072000): play the wav named by COB name-table index `nameIdx`
-    // at the unit. Like onEmitSfx, the hook only STASHES on the (worker) VM thread;
+    // with its authored class/flags. Like onEmitSfx, the hook only STASHES on the (worker) VM thread;
     // the host drains it on the main thread.
-    std::function<void(int32_t nameIdx)> onPlaySound;
+    std::function<void(int32_t nameIdx, int32_t flags)> onPlaySound;
     // explode (0x10071000): piece flies off as debris (flags = COB explode type;
     // bit 0x20 = no debris entity, high bits add one-shot effects -- icd 0x50dd20).
     // The hook sees the pose before hiding, matching retail's copy-then-hide.

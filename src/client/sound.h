@@ -1,19 +1,19 @@
 #pragma once
 
-// 8-channel positional WAV mixer + music player, and the soundclasses TDF map.
-// Extracted verbatim from client/main.cpp: kept at global scope and header-only
-// (every method stays inline, exactly as in the original) so its unqualified use
-// sites there are unchanged. The audio-callback mixer and the procedural-DSP
-// track builders are delicate and cannot be verified in a headless build, so this
-// was moved verbatim rather than split into a translation unit of its own.
+// 32-voice positional WAV mixer + music player, and the soundclasses TDF map.
+// Script sound classes control voice admission; output-channel panning remains
+// independent of the number of simultaneous voices. PCM mixing is also exercised
+// with a paused dummy device by death_sound_test.
 
 #include <SDL.h>
 
+#include "client/retailsound.h"
 #include "client/options.h"   // tak::detectOutputChannels / tak::openAudioDevice
 #include "hpi/hpi.h"          // tak::hpi::Vfs
 #include "tdf/tdf.h"          // tak::tdf::parseText (SoundClasses::load)
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -26,9 +26,10 @@
 #include <string>
 #include <vector>
 
-// Minimal 8-channel WAV mixer over an SDL audio device (the game's WAVs are
+// Minimal 32-voice WAV mixer over an SDL audio device (the game's WAVs are
 // 11025 Hz 8-bit mono). Failing to open audio is non-fatal: play() no-ops.
 class SoundBank {
+    friend struct SoundBankTestAccess;
 public:
     const tak::hpi::Vfs* vfs_ = nullptr;   // runtime read-path (owned by main)
 
@@ -124,8 +125,8 @@ public:
     }
 
     // Non-positional (UI, music-adjacent) — centred across all speakers.
-    void play(const std::string& name, float gain = 1.0f, float rate = 1.0f) {
-        playAt(name, 0.0f, 0.0f, false, 0, 0, gain, rate);
+    void play(const std::string& name, float gain = 1.0f, float rate = 1.0f, int priority = 7, bool looping = false) {
+        playAt(name, 0.0f, 0.0f, false, 0, 0, gain, rate, priority, looping);
     }
     // Peak amplitude (0..1) of a loaded sample, for normalizing UI feedback:
     // computed once per sound and cached.
@@ -149,10 +150,10 @@ public:
     // Left/right from x; front(up)/rear(down) from z on surround setups. The sound is
     // tagged positional, so setListener re-pans it every frame as the camera moves --
     // it tracks its world source for its whole duration, not just at trigger time.
-    void playWorld(const std::string& name, float x, float z) {
+    void playWorld(const std::string& name, float x, float z, int priority = 3) {
         float pan = std::clamp((x - listenX_) / listenHW_, -1.0f, 1.0f);
         float depth = std::clamp((z - listenZ_) / listenHH_, -1.0f, 1.0f);
-        playAt(name, pan, depth, true, x, z);
+        playAt(name, pan, depth, true, x, z, 1.f, 1.f, priority);
     }
 
     // Play the synthesised 10-second disco loop as a positional SFX from (x,z) -- the
@@ -372,29 +373,33 @@ public:
 
     void playAt(const std::string& name, float pan, float depth,
                 bool positional = false, float wx = 0, float wz = 0,
-                float gain = 1.0f, float rate = 1.0f) {
+                float gain = 1.0f, float rate = 1.0f, int priority = 3, bool looping = false) {
         std::string n = name;
         std::transform(n.begin(), n.end(), n.begin(), ::tolower);
         auto it = index_.find(n);
         if (it == index_.end()) return;
         if (verbose_) std::printf("SND %s\n", n.c_str());
         const auto* samples = load(n, it->second);
-        if (!samples || !dev_) return;
+        if (!samples || samples->empty() || !dev_) return;
         SDL_LockAudioDevice(dev_);
-        for (auto& c : channels_)
-            if (c.pos >= (c.data ? c.data->size() : 0)) {
-                c.data = samples;
-                c.pos = 0;
-                c.pan = pan;
-                c.depth = depth;
-                c.positional = positional;
-                c.wx = wx;
-                c.wz = wz;
-                c.gain = gain;
-                c.fpos = 0;
-                c.step = uint32_t(std::clamp(rate, 0.25f, 4.0f) * 65536.0f);
-                break;
-            }
+        std::array<tak::SoundVoice,32> voices;
+        bool free=false;
+        for (size_t i=0;i<voices.size();++i) {
+            const auto& c=channels_[i];
+            const bool active=c.data && (c.looping || c.pos<c.data->size());
+            voices[i]={active,c.looping,c.priority,c.started};
+            free|=!active;
+        }
+        // Retail class 0/1 chatter requires a free voice, even if it could
+        // otherwise preempt a lower class. Classes 2..7 use priority eviction.
+        const int slot=(priority<=1 && !free) ? -1 : tak::retailSoundVoice(voices,priority);
+        if (slot>=0) {
+            auto& c=channels_[size_t(slot)];
+            c.data=samples;c.pos=0;c.pan=pan;c.depth=depth;
+            c.positional=positional;c.wx=wx;c.wz=wz;c.gain=gain;
+            c.fpos=0;c.step=uint32_t(std::clamp(rate,0.25f,4.f)*65536.f);
+            c.priority=priority;c.started=++soundSequence_;c.looping=looping;
+        }
         SDL_UnlockAudioDevice(dev_);
     }
 
@@ -407,6 +412,9 @@ private:
         bool positional = false;    // true = re-pan every frame from (wx,wz)
         float gain = 1.0f;          // per-sound boost (UI clicks undo the /2 headroom)
         uint32_t step = 65536;      // 16.16 playback rate (pitch); 65536 = native
+        int priority=0;
+        uint64_t started=0;
+        bool looping=false;
         uint64_t fpos = 0;          // 16.16 fractional read position
     };
     // Recompute a channel's pan/depth from its world point and the current listener.
@@ -505,7 +513,11 @@ private:
             channelGains(c.pan, c.depth, g);
             for (int f = 0; f < frames; ++f) {
                 c.pos = size_t(c.fpos >> 16);
-                if (c.pos >= c.data->size()) break;
+                if (c.pos >= c.data->size()) {
+                    if (!c.looping || c.data->empty()) break;
+                    c.fpos%=uint64_t(c.data->size())<<16;
+                    c.pos=size_t(c.fpos>>16);
+                }
                 int s = int(float((*c.data)[c.pos]) * c.gain) / 2 * sfxVol_ / 256;
                 c.fpos += c.step;
                 for (int ci = 0; ci < ch; ++ci)
@@ -626,7 +638,8 @@ private:
     std::map<std::string, std::string> index_;
     std::map<std::string, std::vector<int16_t>> cache_;
     std::map<std::string, float> peaks_;   // per-sound peak (UI normalization)
-    Channel channels_[8];
+    Channel channels_[32];
+    uint64_t soundSequence_=0;
     std::vector<std::string> playlist_;
     std::vector<int16_t> music_;
     size_t musicPos_ = 0, musicTrack_ = 0;
