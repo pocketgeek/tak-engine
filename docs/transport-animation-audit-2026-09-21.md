@@ -9,11 +9,37 @@ timing. It does not require pixel-identical rendering. Visual captures are
 useful for checking representative behavior; pixel comparisons are diagnostic,
 not a completion gate.
 
-## Current completion status
+## Latest verification (2026-09-25)
 
-The original air/sea transport and all-animation goal remains incomplete. The
-sections below record successive findings; later corrections supersede earlier
-implementation descriptions. Current open gates are:
+The original air/sea transport and animation goal remains active. Engine fixes
+through `178e246` are committed and pushed. Recent fixes cover gate activation,
+factory callbacks, wind heading, builder restoration, repair/reclaim effects,
+missed weapon events, transported-passenger effects and authored death effects.
+The chronological entries below document their scope and validation.
+
+Current Release verification passes all 56 CTests (28.37 seconds). Existing
+native/World ridge-flight unload comparisons also pass all three shipped air
+carrier profiles in both balances: ZONROC, CREAERI and TARSHIP. This includes
+flight, release, PARK callback and mission retirement, with the existing
+controlled landing/attachment boundaries; it is not a shipped-map flight-route
+search comparison. The existing Lake Lokken Aratrans/Araarch two-passenger probe
+passes in both balances, including occupied-shore rejection, vacancy and the
+second passenger's native detach body. Its movement comparison covers 3,496
+physical steps. No new fixture was added for this verification pass.
+
+Completion is not claimed. In particular, coordinated queued movement before
+pickup is not established by the older native diagnostic: that case starts with
+an already-active carrier pickup and retires both pickup requests while the
+passenger's ground move remains active. World tests cover successful queued
+trips but do not establish equivalence to that different native setup. Broader
+engine-driven pose/effect lifecycle coverage also remains as described below;
+standalone script equality is not proof of every runtime callback producer.
+
+## Earlier completion audit
+
+The sections below record successive findings; later corrections supersede
+earlier implementation descriptions and statements of missing coverage. This
+older inventory is retained as evidence history, not a current bug list:
 
 Latest profile checks narrow several of those gates. All ten shipped water
 transports now pass Lake Lokken's map-backed route, native grade, and joined
