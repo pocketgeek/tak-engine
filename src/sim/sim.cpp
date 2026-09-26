@@ -7443,26 +7443,39 @@ void World::notifyUnitScript(Unit& u,const char* name) {
     state.state.notify(file,file.scriptIndex(name),host);
 }
 
-void World::notifyFlightOccupancy(Unit& u) {
+void World::notifyMovementRate(Unit& u) {
+    if (!u.type || u.type->isStructure() || !u.alive() || u.underConstruction) return;
+    const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
+        u.groundTerrainFlags&0x1000 ? u.type->waterMult : Fixed::fromInt(1);
+    const auto& v=u.flightVelocity;
+    const int32_t horizontal=u.type->canFly ? int32_t(isqrt64(
+        uint64_t(int64_t(v.x)*v.x)+uint64_t(int64_t(v.z)*v.z))) : u.speed.v;
+    int32_t slow=(u.type->animationMoveRate1*multiplier).v;
+    int32_t fast=(u.type->animationMoveRate2*multiplier).v;
     if (u.retailBuild && u.retailBuild->flying) {
-        auto& job=*u.retailBuild;
-        uint32_t rate=0;
-        if (u.speed.v || u.turnReqBam) {
-            const auto& v=u.flightVelocity;
-            const int32_t horizontal=int32_t(std::sqrt(double(v.x)*v.x+double(v.z)*v.z));
-            rate=horizontal<=job.flyingSlowSpeed ? 1u : 2u+uint32_t(horizontal>job.flyingFastSpeed);
-        }
-        if (((job.flyingOwnerFlags>>2)&3u)!=rate) {
-            const auto it=unitScripts_.find(u.id);
-            if (it!=unitScripts_.end()) {
-                auto& script=it->second;const auto& file=*u.type->script();
-                ScriptHost host{*this,u,script};
-                if (script.state.startArguments(file,file.scriptIndex("MoveRate"),{rate,0,0,0},1))
-                    script.state.tick(file,0,host);
-            }
-            job.flyingOwnerFlags=(job.flyingOwnerFlags&~0xcu)|(rate<<2);
-        }
+        slow=u.retailBuild->flyingSlowSpeed;fast=u.retailBuild->flyingFastSpeed;
     }
+    const int16_t turn=std::bit_cast<int16_t>(uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam));
+    const uint32_t rate=retailAnimationMoveRate(u.speed.v,turn,horizontal,
+        slow,fast,u.bodyBlockStreak>=2,u.embarked());
+    if (u.retailBuild && u.retailBuild->flying) {
+        auto& flags=u.retailBuild->flyingOwnerFlags;
+        flags=(flags&~0xcu)|(rate<<2);
+    }
+    const auto it=unitScripts_.find(u.id);
+    if (it==unitScripts_.end() || it->second.movementRate==rate) return;
+    auto& script=it->second;script.movementRate=rate;
+    const auto& file=*u.type->script();
+    ScriptHost host{*this,u,script};
+    // Native 4db350 executes this edge at zero elapsed time before occupancy.
+    // It can move QueryWeapon pieces (Verharp's emitjim), so it also belongs
+    // to the authoritative VM, not just the display animation.
+    if (script.state.startArguments(file,file.scriptIndex("MoveRate"),{rate,0,0,0},1))
+        script.state.tick(file,0,host);
+}
+
+void World::notifyFlightOccupancy(Unit& u) {
+    notifyMovementRate(u);
     // 4dc600 reports airborne mode after the mover, with an immediate
     // zero-elapsed script pass. Landed/water transitions need their own host.
     if (u.flightGroundMode!=2) return;
@@ -8544,6 +8557,7 @@ void World::tick(float dt) {
                 auto* subject=world.unit(id);
                 if (!subject || !subject->type) return;
                 auto& u=*subject;
+                world.notifyMovementRate(u);
                 if (u.alive() && !u.embarked() && !u.type->canFly && !u.type->isStructure() &&
                     u.flightGroundMode==1 && (u.type->canHover || u.x!=x || u.z!=z || u.heading!=heading))
                     u.groundY=world.surfaceHeight(u,world.tickCount(),&u.groundPitch,&u.groundRoll);
@@ -8757,8 +8771,17 @@ void World::tick(float dt) {
                 const int builderId=u.id;
                 const int siteId=startBuild(builderId,arrived.buildType,arrived.buildX.toFloat(),
                                              arrived.buildZ.toFloat(),Approach::None);
-                if (siteId) turnBuilderToSite(*unit(builderId),*unit(siteId));
-                else popBuildOrder(*unit(builderId));
+                if (siteId) {
+                    auto& builder=*unit(builderId);
+                    if (builder.type->canFly) {
+                        // The native unit update runs its independent mover
+                        // after FlyingBuild allocates the site. Continue the
+                        // accepted navigator output without another controller
+                        // or a ground-builder pivot on this same update.
+                        tickFlightBody(builder);
+                        notifyFlightOccupancy(builder);
+                    } else turnBuilderToSite(builder,*unit(siteId));
+                } else popBuildOrder(*unit(builderId));
                 // spawn invalidates references; re-establish slot order before
                 // continuing so a later newborn receives its first update today.
                 if (retailAllocation_) {
@@ -9463,6 +9486,7 @@ uint64_t World::stateHash() const {
     for (const auto& [id,factory]:unitScripts_) {
         mix(0x434f42564dull); mix(uint32_t(id));
         mix(factory.activated); mix(factory.ready); mix(factory.yardOpen); mix(factory.buggerOff);
+        if (factory.movementRate) { mix(0x4d4f5645u);mix(factory.movementRate); }
         const auto& state=factory.state;
         mix(state.vm.active); mix(uint32_t(state.vm.ticksPerSecond));
         for (auto value:state.vm.statics) mix(value);

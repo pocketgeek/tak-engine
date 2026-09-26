@@ -1874,6 +1874,7 @@ private:
     void notifyUnitScript(Unit& u,const char* name);
     void startWorkAnimation(Unit& u,Fixed targetX,Fixed targetZ);
     void stopWorkAnimation(Unit& u);
+    void notifyMovementRate(Unit& u);
     void notifyFlightOccupancy(Unit& u);
     bool prepareBuildApproach(Unit& u);
     Order makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const;
@@ -2307,6 +2308,7 @@ private:
     struct UnitScript {
         cob::RetailScriptState state;
         bool activated=false,ready=false,yardOpen=false,buggerOff=false;
+        uint32_t movementRate=0;
         explicit UnitScript(const cob::File& file):state(file) {}
     };
     std::map<int,UnitScript> unitScripts_;

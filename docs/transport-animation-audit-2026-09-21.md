@@ -22,7 +22,7 @@ missed weapon events, transported-passenger effects and authored death effects.
 The chronological entries below document their scope and validation. The earlier
 read-only Git restriction has been lifted for the current session.
 
-The most recent full Release sweep passes all 56 CTests (31.71 seconds), including
+The most recent full Release sweep passes all 56 CTests (31.81 seconds), including
 the recent animation, pickup-cancellation, boarding target-clear and transport reload fixes at the end of this audit. Existing
 native/World ridge-flight unload comparisons also pass all three shipped air
 carrier profiles in both balances: ZONROC, CREAERI and TARSHIP. This includes
@@ -11859,3 +11859,77 @@ moves around it, and the trace shows continued ascent (Y245 at tick31, Y261 at
 tick47). Capture: /tmp/zhon-approach-after.png; trace:
 /tmp/zhon-approach-after.log. This is a local smoke check, not a paired retail
 visual comparison.
+
+
+## Site creation movement and authoritative MoveRate (2026-09-25)
+
+Original parent unit update 51e1e4..51e215, FlyingBuild handler 41ef00 stage 2,
+and mover 4dc800 execute in order: primary handler, allocate site, mover. An
+already admitted flying builder moves and climbs on the site-allocation update.
+World skipped that body update and applied a ground-style heading pivot instead.
+Successful flying allocation now re-fetches the builder after spawn and runs its
+retained navigator body and occupancy update. Ground allocation remains unchanged.
+The existing placement vectors check uninterrupted Y100→101→102 through site
+creation. Native evidence: /tmp/tak-flying-build-allocation-order.log.
+
+The bounded callback review found a concrete authoritative/display mismatch in
+MoveRate. Verharp's moving-water sail/endsail callbacks translate its QueryWeapon
+piece emitjim by Y=-692241/Z=-2112039 in fixed point. Native Create plus movement
+and AimWeapon retains this offset; without MoveRate, the piece remains at zero.
+The visible VM received movement callbacks, but the simulation only delivered
+MoveRate in the captured flying-construction path. Ordinary weapon source queries
+could consequently disagree with the drawn launcher by about 10.56 vertical and
+32.23 longitudinal world units. Native evidence:
+/tmp/tak-verharp-moverate-query.py and /tmp/tak-verharp-moverate-query.log.
+
+The simulation now delivers movement-tier edges generically at the mover tail,
+and before flight occupancy. The rate cache is authoritative and hashed. This
+preserves edge-only notification and existing flying-construction thresholds.
+An existing script regression drives an ordinary move and stop, verifies the
+query-piece update, and checks that unchanged tiers do not restart callbacks.
+
+## Exact Ulasem first-start placement report (2026-09-25)
+
+The user retested fdaf172 and still reports excessive northward/height separation.
+The concrete case is Ulasem Arena's first start, building a lodestone on the mana
+spot to its left. setupMatch resolves start (2992,1904) and deposit (2832,1968).
+The local capture /tmp/zhon-start1-left-mana-wide.png reproduces that setup, with
+trace /tmp/zhon-start1-left-mana-wide.log. At tick227 the monarch is approximately
+(2924.6,282,1946.9), while the site ground height is 63.
+
+Original map initializer 50e740 was run over the actual 640×640 TNT corner records
+with sea level42. Its sector heights match World's calculation: at the start,
+raw121/dilated216, and at the site/current orbit sector, raw66/dilated132. Thus
+terrain-neighborhood construction itself is not the source of a discrepancy.
+The latter clearance plus authored cruisealt150 gives282, the observed altitude.
+Evidence: /tmp/tak-ulasem-native-sectors.py and .log. A follow-up runs original FlyingBuild41ef00, its controller/navigation and mover
+4dc800 with that actual terrain. The working orbit starts with siteY63, but the
+native controller and navigation destination becomeY282. Starting at
+(2924,279,1947), native advances Y280→281→282 and holds282. Evidence:
+/tmp/tak-ulasem-native-build-height.py and .log. This verifies construction's
+consumption of the clearance, not just the sector grid. No altitude adjustment
+is justified for this reproduced case. The user still reports visual separation;
+there is no synchronized rendered retail comparison at this exact location.
+
+
+Validation for the follow-up: Release all-target rebuild and 56/56 CTests pass
+(31.81s); optimized all-target rebuild and 59/59 CTests pass (58.74s). The existing
+persistent native/World Zhon construction check passes 103 exact updates,
+including RNG, navigation, orbit retargets, arrival and callback edges; log
+/tmp/tak-moverate-zhon-native.log. Captured flying-construction import restores
+the MoveRate cache from saved owner flags so it does not synthesize a fresh edge.
+All GitHub workflows for fdaf172 passed (Linux, Windows, macOS, determinism).
+The user’s exact visual report remains open despite the verified matching
+construction altitude; the retail GUI was not launched.
+
+
+The captured-state validation exposed an existing probe import bug: renumbered
+unit scripts were restored into the map but not its fast lookup table, leaving
+them frozen. A temporary fdaf172 build reproduced the same six-frame script
+mismatch, ruling out the new MoveRate delivery as its cause. The probe now clears
+the discarded temporary slot and installs the restored pointer under the captured
+ID. After this repair, all six captured carrier frames959..964 match the older
+record, including script threads, movement and flying-construction fields.
+Evidence: /tmp/tak-moverate-import-cache-port.jsonl compared with the existing
+probe-orbit131 recording. Release and optimized probes were rebuilt; no new
+capture format or fixture was introduced.

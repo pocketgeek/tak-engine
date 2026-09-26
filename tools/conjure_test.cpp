@@ -483,8 +483,12 @@ int main(int argc, char** argv) {
                       approach.flightGoal->point.z==approach.buildZ.v,
                       "flying pre-site approach uses the snapped site and twice builddistance");
             }
+            world.tick(1.0f/30.0f);
+            const auto* allocating=world.unit(id);
+            check(allocating->buildSiteId!=0 && allocating->flightY==sim::Fixed::fromInt(102),
+                  "site-allocation update continues the native flight body without pausing ascent");
             std::set<std::pair<int,int>> hoverPositions;
-            for (int tick=1;tick<300;++tick) {
+            for (int tick=2;tick<300;++tick) {
                 world.tick(1.0f/30.0f);
                 const auto* b=world.unit(id);
                 if (tick>90 && b->buildSiteId)

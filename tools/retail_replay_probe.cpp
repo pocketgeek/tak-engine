@@ -229,7 +229,14 @@ struct RetailReplayProbe {
         const auto it=world.unitScripts_.find(id);
         return it==world.unitScripts_.end() ? nullptr : &it->second.state;
     }
-    static void discardColdFactory(World& world,int id) { world.unitScripts_.erase(id); }
+    static void discardColdFactory(World& world,int id) {
+        if (size_t(id)<world.unitScriptById_.size()) world.unitScriptById_[size_t(id)]=nullptr;
+        world.unitScripts_.erase(id);
+    }
+    static void movementRate(World& world,int id,uint32_t ownerFlags) {
+        if (auto it=world.unitScripts_.find(id);it!=world.unitScripts_.end())
+            it->second.movementRate=(ownerFlags>>2)&3u;
+    }
     static void factory(World& world,int id,const std::string& hex,const UnitType* target,
                         const std::optional<std::array<unsigned,4>>& values) {
         auto* unit=world.unit(id);
@@ -247,6 +254,10 @@ struct RetailReplayProbe {
         auto [it,inserted]=world.unitScripts_.try_emplace(id,*unit->type->script());
         if (!inserted) throw std::runtime_error("duplicate factory restore");
         it->second.state.restore(*unit->type->script(),bytes);
+        // Restored units have captured slot IDs, not their temporary spawn IDs.
+        // Keep the fast script lookup coherent with the restored map node.
+        if (world.unitScriptById_.size()<=size_t(id)) world.unitScriptById_.resize(size_t(id)+1,nullptr);
+        world.unitScriptById_[size_t(id)]=&it->second;
         if (target) { unit->buildQueue.push_back(target); it->second.activated=true; }
         if (values) {
             it->second.activated=(*values)[0]!=0;
@@ -1180,6 +1191,7 @@ int main(int argc, char** argv) {
                     throw std::runtime_error("invalid flying construction owner/target");
                 job.flying=true;job.working=working!=0;job.mission.stage=uint8_t(stage);
                 u->retailBuild=job;u->buildSiteId=job.target;u->missionEvents=events;
+                RetailReplayProbe::movementRate(world,id,job.flyingOwnerFlags);
                 u->flightY=Fixed::raw(y);u->flightVelocity=velocity;
                 u->flightNavigation={{u->x.v,y,u->z.v},{},32768};
                 goal.flags=uint16_t(flags);goal.radius=int16_t(radius);goal.heading=uint16_t(heading);

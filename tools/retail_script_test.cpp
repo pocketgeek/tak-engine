@@ -1612,6 +1612,41 @@ int main(int argc,char** argv) {
         using namespace tak::sim;
         auto require=[](bool ok,const char* message) {if(!ok)throw std::runtime_error(message);};
         auto file=std::make_shared<tak::cob::File>();
+        file->numStatics=2;file->pieces={"root","emitjim"};
+        file->scripts={{"QueryWeapon",0},{"MoveRate",5}};
+        file->code={0x10021001,1,0x10023002,0,0x10065000,
+            0x10021004,0,0x10021001,1,0x10031000,0x10023004,0,
+            0x10021002,0,0x10023004,1,
+            // Verharp sail/endsail's query-piece offsets, observed in native COB.
+            0x10021001,0xfff56fef,0x1000b000,1,1,
+            0x10021001,0xffdfc5d9,0x1000b000,1,2,0x10065000};
+        UnitType type;type.simulationScript=file;type.maxHp=100;
+        type.maxVel=Fixed::fromInt(4);type.accel=type.brake=Fixed::fromInt(1);
+        type.turnRate=type.turnInPlaceRate=10000;
+        type.animationMoveRate1=type.animationMoveRate2=Fixed::fromInt(100);
+        type.productionModel={{{0,0,0},-1,0},{{0,0,0},0,1}};
+        World world;world.setVisPlayer(-1);
+        world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        const int id=world.spawn(&type,200,200);
+        world.order(id,800,200,false);world.tick(1.f/30);
+        require(RetailReplayProbe::scriptStatics(world,id)==std::vector<uint32_t>{1,1},
+            "ordinary mover immediately delivers its first MoveRate edge to simulation COB");
+        const auto source=world.queryUnitScriptPoint(id,false);
+        require(source[1]==world.unit(id)->groundY.v-692241,
+            "movement animation updates authoritative QueryWeapon source before the next shot");
+        for(int tick=0;tick<8;++tick)world.tick(1.f/30);
+        require(RetailReplayProbe::scriptStatics(world,id)==std::vector<uint32_t>{1,1},
+            "unchanged movement tier does not restart its authored controller");
+        world.stop(id);
+        for(int tick=0;tick<30;++tick)world.tick(1.f/30);
+        require(RetailReplayProbe::scriptStatics(world,id)==std::vector<uint32_t>{2,0},
+            "stopping emits exactly one MoveRate zero transition");
+        std::cout<<"PASS: authoritative movement callback updates weapon source and preserves edge delivery\n";
+    }
+    {
+        using namespace tak::sim;
+        auto require=[](bool ok,const char* message) {if(!ok)throw std::runtime_error(message);};
+        auto file=std::make_shared<tak::cob::File>();
         file->scripts={{"Create",0}};
         file->code={0x10021001,21,0x10021001,0,0x10082000,
                     0x10021001,22,0x10021001,1,0x10082000,
