@@ -2141,8 +2141,6 @@
             std::transform(s.begin(), s.end(), s.begin(), ::tolower);
             return s;
         };
-        auto uFootW = [&] { return std::max(u.type->footX, 1) * 16.0f * zm; };
-        auto uFootH = [&] { return std::max(u.type->footZ, 1) * 16.0f * zm; };
 
         // A reclaimer IN RANGE (the reclaim has really started -- range test mirrors
         // World::tickReclaim): sparkle the reclaimer AND the feature it is chewing on.
@@ -2154,12 +2152,10 @@
             float reach = 24.0f + 8.0f * float(std::max(feat->fx, feat->fz)) +
                           (u.type->buildDist > 0 ? u.type->buildDist : 0.0f);
             if (dxr * dxr + dzr * dzr <= reach * reach) {
-                sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());   // the reclaimer
+                drawReclaimSparkle(sideLower(), ax, ay);   // the reclaimer
                 float fsx = (feat->x - mapView_.offX()) * zm - terrainLiftX(feat->x, feat->z) * zm;
                 float fsy = (feat->z - mapView_.offY()) * zm - terrainLift(feat->x, feat->z) * zm;
-                sprinkleBuildFx(sideLower(), fsx, fsy,
-                                std::max(feat->fx, 1) * 16.0f * zm,
-                                std::max(feat->fz, 1) * 16.0f * zm);         // the feature
+                drawReclaimSparkle(sideLower(), fsx, fsy);         // the feature
             }
         }
 

@@ -10494,3 +10494,18 @@ Optimized Debug client also rebuilt. Its existing headless weapon-impact route
 check passed with the updated renderer (Arapult land/water variants, fallback,
 location and authored expiry). This is a rendering integration smoke check,
 not a pixel assertion specifically targeting late-created atlas contents.
+
+### Reclaim fallback follows simulation time (2026-09-25)
+
+The existing reclaim sparkle now samples authored frame durations at the captured
+simulation tick instead of advancing at a hardcoded wall-clock 15 fps. It holds
+while paused and follows simulation speed. This retains the existing repeating,
+anchored fallback and does not claim native emitter/placement parity. Renamed the
+helper drawReclaimSparkle and removed ignored footprint arguments so its remaining
+scope is explicit. The snapshot currently captures feature targets only; corpse
+reclaim has no corresponding visual target. That observation alone does not
+establish which native corpse-reclaim emitter should be implemented.
+
+Release client rebuilt; retail_visual passed and the existing native clock probe
+passed 147,456 updates plus 1,280 paired C++ timelines. No new fixtures or retail
+launch. An interactive paused-reclaim capture was not performed.

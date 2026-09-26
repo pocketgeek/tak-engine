@@ -1,4 +1,5 @@
 #include "client/retailaim.h"
+#include "client/retaileffectframe.h"
 #include "gaf/nimbus.h"
 #include "client/gameview.h"
 #include "client/shadowmask.h"
@@ -3201,9 +3202,8 @@
         return isMonarchType(u.type) && u.headbang;
     }
 
-    void GameView::sprinkleBuildFx(const std::string& sideLower, float cx, float cy, float fpw, float fph) {
-        (void)fpw; (void)fph;
-        // Legacy reclaim/resurrection fallback: one anchored faction sprite.
+    void GameView::drawReclaimSparkle(const std::string& sideLower, float cx, float cy) {
+        // Legacy reclaim fallback: one anchored faction sprite.
         // Construction uses distributed emitters in drawUnit. Native emitter
         // coverage for these remaining fallback callers still needs verification.
         static const std::map<std::string, std::string> kSparkly = {
@@ -3213,10 +3213,11 @@
         const EffectAnim* ea = effectFor(it == kSparkly.end() ? std::string("aramonbuild") : it->second);
         if (!ea || ea->frames.empty()) return;
         const float zm = mapView_.zoom();
-        // 15 fps, from the shipped data: every buildsparkly frame carries delayTicks=2
-        // (2/30Hz), uniform across all factions -- read straight off the TAF, not guessed.
-        size_t fi = size_t(animClock_ * 15.0f) % ea->frames.size();
-        const auto& fr = ea->frames[fi];
+        // Repeat the fallback while work is active, using authored durations.
+        // A paused or slowed simulation must also pause or slow this effect.
+        const auto fi = tak::retailEffectFrame(ea->durations, true, front().gameTick);
+        if (!fi || *fi >= ea->frames.size()) return;
+        const auto& fr = ea->frames[*fi];
         // Native size (x zoom): drawn once, anchored on the unit, like any 2D effect
         // anim -- no footprint fill, no 2x blow-up.
         SDL_FRect d{cx - float(fr.ax) * zm, cy - float(fr.ay) * zm,

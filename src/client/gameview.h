@@ -1599,7 +1599,7 @@ private:
     // (cx,cy), fpw x fph screen px. Retail draws this over BOTH the worker unit and its
     // build/reclaim target; kBuildFxScale enlarges the little sprites so the effect reads,
     // and the cloud spreads a little past the footprint like the retail effect.
-    void sprinkleBuildFx(const std::string& sideLower, float cx, float cy, float fpw, float fph);
+    void drawReclaimSparkle(const std::string& sideLower, float cx, float cy);
 
     void drawUnit(const UnitR& u);
 
