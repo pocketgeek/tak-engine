@@ -758,6 +758,54 @@ static void transferLifecycle() {
     check(!w.unit(cid)->alive(),"cargo is lost when its carrier dies");
 }
 
+// Ordinary moves use the same VTOL mission for transports, builders and armed
+// flyers: queued work starts at the coarse circle; the final move refines it.
+static void ordinaryFlightMoves() {
+    using namespace tak::sim;
+    for (int role=0;role<3;++role) {
+        UnitType air=boatType();air.canFly=true;air.cruiseAlt=100;
+        air.accel=Fixed::raw(20000);air.brake=Fixed::raw(60000);
+        air.isBuilder=role==1;
+        if(role==2) air.weapons.emplace_back();
+        for(bool queued:{false,true}) {
+            World w;w.setVisPlayer(-1);
+            w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            const int id=w.spawn(&air,160,160);
+            w.unit(id)->baseSpeed=air.maxVel;
+            w.unit(id)->flightY=Fixed::fromInt(200);
+            w.order(id,800,800,false);
+            if(queued)w.orderWait(id,300,true);
+            bool coarse=false,precise=false,completed=false;
+            for(int tick=0;tick<1200;++tick) {
+                w.tick(1.f/30);
+                const auto& u=*w.unit(id);
+                if(!u.orders.empty() && u.orders.front().flightMoveMission) {
+                    const auto& o=u.orders.front();
+                    coarse|=o.flightGoal && (o.flightGoal->flags&0x10) &&
+                        o.flightGoal->radius>=80 && o.flightGoal->radius<=144;
+                    precise|=o.mission.stage==4 && o.flightGoal &&
+                        o.flightGoal->flags==0x20 && o.flightGoal->radius==0;
+                    continue;
+                }
+                const double distance=std::hypot(u.x.toFloat()-808,u.z.toFloat()-808);
+                check(queued ? distance>16 && distance<160 : distance<4,
+                      queued ? "queued flight hands off inside coarse arrival circle" :
+                               "terminal flight reaches precise destination");
+                completed=true;break;
+            }
+            check(coarse && completed && (queued ? !precise : precise),
+                  "all flying roles execute coarse move and terminal refinement");
+        }
+        World converted;const int id=converted.spawn(&air,160,160);
+        converted.attackMove(id,800,800,false);
+        check(!converted.unit(id)->orders.front().flightMoveMission,
+              "fight conversion retains its combat movement handler");
+        converted.patrolTo(id,800,800,false);
+        check(!converted.unit(id)->orders.front().flightMoveMission,
+              "patrol conversion retains its looping handler");
+    }
+}
+
 static void loadOrderQueueing() {
     World w;w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
@@ -3034,6 +3082,7 @@ int main(int argc,char** argv) {
     if(argc==2) retailRoster(argv[1]);
     boardingLimits();
     transferLifecycle();
+    ordinaryFlightMoves();
     loadOrderQueueing();
     queueUnloadDuringPickup();
     pickupTransferInterruption();

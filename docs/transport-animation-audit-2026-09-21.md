@@ -22,7 +22,7 @@ missed weapon events, transported-passenger effects and authored death effects.
 The chronological entries below document their scope and validation. The earlier
 read-only Git restriction has been lifted for the current session.
 
-The most recent full Release sweep passes all 56 CTests (49.51 seconds), including
+The most recent full Release sweep passes all 56 CTests (49.60 seconds), including
 the recent animation, pickup-cancellation, boarding target-clear and transport reload fixes at the end of this audit. Existing
 native/World ridge-flight unload comparisons also pass all three shipped air
 carrier profiles in both balances: ZONROC, CREAERI and TARSHIP. This includes
@@ -34,14 +34,12 @@ second passenger's native detach body. Its movement comparison covers 3,496
 physical steps. No new fixture was added for this verification pass.
 
 Completion is not claimed. Ordinary primary-queue map trips now finish both
-preceding moves and board all three air carrier profiles in both balances in
-native and World runs. Timing differs; initialization and ordinary-move dispatch
-still need alignment before claiming joined timing parity. The latest map-trip
-entry below records the inputs and results. The older secondary-list diagnostic
-with flag 0x20000 remains unsuitable as evidence of Shift append. Broader
-engine-driven pose/effect lifecycle review also remains; repair and feature
-reclaim now have their missing simulation callbacks, while the separate corpse
-reclaim branch still needs native lifecycle verification.
+preceding moves and board all three air carrier profiles in both balances.
+Pickup and boarding elapsed ticks agree after matching speed, randomized arrival
+radius and native warm-up; ordinary flight orders now use that mission in the
+engine. Corpse reclaim now shares the verified repair/reclaim script lifecycle.
+The user's reconfirmed Zhon placement/takeoff issue remains active; pre-site
+approach geometry is the current concrete discrepancy under investigation.
 
 ## Current scope checklist (2026-09-25)
 
@@ -50,7 +48,7 @@ Later entries remain authoritative when an older entry describes a fixed issue.
 
 | Requested area | Current evidence | Remaining work or limit |
 | --- | --- | --- |
-| Air and sea transports | World round trips; native pickup/unload dispatch and movement comparisons; all shipped carrier profiles; capacity, shore occupancy, cancellation, paralysis and production-order regressions | Complete primary queued trips now board all air profiles in native and World; align the remaining timing differences described in the latest map-trip entry. |
+| Air and sea transports | World round trips; native pickup/unload dispatch and movement comparisons; all shipped carrier profiles; capacity, shore occupancy, cancellation, paralysis and production-order regressions | Queued pickup timing now matches under aligned inputs; existing native/World air and sea pickup/unload coverage remains applicable. |
 | Unit animation behavior | Shipped script/pose roster; integrated movement, flight, construction, gates, weapon selection, hits, cloak and death fixes; 56-test Release sweep | Continue checking engine callback producers against the native lifecycle. Script-only roster equality cannot certify every gameplay transition. |
 | Projectiles, including Drake fire | Native direct, ballistic, guided, flame and sprite/model behavior checks; authored effect/anchor/lifetime fixes | Representative behavior is covered; the user deferred further arrow/bolt laser diagnosis pending a clearer report. Pixel identity is not required. |
 | Cursors | Selection-context checks, all 21 registered IDs, authored timing, waypoint clocks and retained live-pointer frame/countdown behavior | Native input-to-pointer pixels were not paired; do not treat pixel matching as an additional requirement. |
@@ -11744,3 +11742,69 @@ legacy simulation branch and remains to be checked against its native lifecycle.
 All 56 Release CTests pass (49.51s); optimized retail_script passes (0.03s).
 Release and optimized clients/servers rebuilt. Logs:
 /tmp/tak-work-pose-tests.log and /tmp/tak-work-pose-o2-binaries.log.
+
+## Corpse reclaim and queued-flight timing follow-up (2026-09-25)
+
+Native 512ee0 selects normal, stone and frozen corpse feature IDs and places them
+through 495360. Reclaim resolves those records through the ordinary feature table
+and invokes 4d4ab0, including zero-energy features. World's negative-ID corpse
+branch now requests the same StartBuilding work pose; the shared completion and
+cancellation path already supplies StopBuilding. The existing script test covers
+actual Reclaim commands on all three corpse modes, successful completion and Stop.
+Release and optimized retail_script pass (0.03s each). Native evidence:
+/tmp/tak-corpse-reclaim-native.log. This closes the previously unverified corpse
+callback producer; corpse economics and timing were not altered.
+
+The queued-flight timing comparison initially gave World spawned speed variation
+while native unit+12b used the FBI's nominal speed. Matching both participants'
+base speeds reduces World boarding ticks to 1133/1137 (ZONROC), 1619 (CREAERI)
+and 2053 (TARSHIP). The remaining difference begins in ordinary move completion:
+World::order's flying branch never sets flightMoveMission, leaving normal moves
+on generic arrival handling. The existing native-style mission was only reached
+through certain patrol conversions. Native 418647 retires queued moves at the
+coarse arrival boundary; an unqueued move installs a precise controller first.
+That missing ordinary-move wiring is now a concrete engine task, rather than an
+unexplained discrepancy between boarding timers. Logs:
+/tmp/tak-aligned-primary-world.log and /tmp/tak-trace-primary-native.log.
+
+## Ordinary flying moves and joined pickup timing (2026-09-25)
+
+Ordinary flying orders now enter the VTOL_Move mission for transports, armed
+flyers and flying builders. Queued moves hand off at the authored randomized
+coarse circle. A terminal move installs the native precise controller
+(flags 0x20, radius 0), finishes it and retains coast-down before standby.
+Fight/patrol conversions clear the ordinary-move flag, and target/build/repair/
+reclaim orders keep their own handlers. Existing transport regressions cover
+all three roles with queued and terminal destinations. The motion test's manual
+ordinary-to-patrol flag mutation was replaced by public patrolTo; its existing
+arrival/next-goal assertions are unchanged.
+
+The native diagnostic forces rand(n)=0, whereas World uses its real RNG. Matching
+its coarse radius to World's first move (128 for ZONROC/TARSHIP, 80 for CREAERI),
+matching nominal base speeds, and subtracting the native path-worker warm-up
+of three ticks gives matching pickup admission and boarding times:
+
+| Carrier/balance | Pickup, native and World | Boarding, native and World |
+| --- | ---: | ---: |
+| ZONROC base | 1075 | 1092 |
+| ZONROC Crusades | 1079 | 1096 |
+| CREAERI base/Crusades | 1564 | 1581 |
+| TARSHIP base/Crusades | 1970 | 1987 |
+
+Both participants finish their preceding orders and the air carrier owns the
+same 17-update transfer interval. This closes the queued-pickup lifecycle timing
+gap under the stated controls; it is not a claim that every ground-mover step
+or script pose in these partially initialized native records was compared.
+Logs: /tmp/tak-aligned-primary-{zonroc,creaeri,tarship}-{base,crusades}.log and
+/tmp/tak-fixed-primary-world.log. No ground pathfinding changes were made.
+
+The user reconfirmed the Zhon northward separation and slow-looking takeoff in
+the latest game. A native/World construction trace starting exactly at ground
+height matches all 120 vertical updates (1 unit/tick); increasing climb speed
+is not justified. Investigation has instead identified different pre-site
+approach controller geometry, still awaiting its own fix/validation.
+
+Validation for this batch: all 56 Release tests pass (49.60s); optimized transport/
+script tests and corrected retail_motion pass. Both client/server builds rebuilt.
+Logs: /tmp/tak-flight-work-final-tests.log, /tmp/tak-flight-work-o2-tests.log,
+/tmp/tak-flight-motion-o2-tests.log.

@@ -1592,6 +1592,8 @@ void World::order(int unitId, float x, float z, bool queue) {
     };
     if (u->type->canFly) {
         u->orders.push_back({Fixed::fromFloat(x), Fixed::fromFloat(z), 0});
+        u->orders.back().flightMoveMission = true;
+        u->orders.back().mission.flags = 0x3000400u;
         markGoal();
         return;
     }
@@ -1689,8 +1691,14 @@ int World::flightGround(const Unit& u) const {
 }
 
 static bool plainFlightPatrol(const Unit& u) {
-    return u.type && u.type->canFly && !u.type->isBuilder && u.type->weapons.empty() &&
-        !u.orders.empty() && (u.orders.front().patrol || u.orders.front().flightMoveMission) && !u.orders.front().targetId;
+    if (!u.type || !u.type->canFly || u.orders.empty()) return false;
+    const auto& order=u.orders.front();
+    if (order.targetId || order.buildType || order.buildRectangle || order.reclaimFeat ||
+        order.repairTarget || u.retailBuild) return false;
+    // Ordinary VTOL_Move is shared by armed aircraft, flying builders and
+    // transports. The patrol handler below only covers plain patrols.
+    return order.flightMoveMission ||
+        (order.patrol && !u.type->isBuilder && u.type->weapons.empty());
 }
 
 void World::tickFlightPatrol(Unit& u) {
@@ -1731,8 +1739,21 @@ void World::tickFlightPatrol(Unit& u) {
                     if (events&0x700) return 1;
                     m.waitMask=0x700;m.sleep(w.tickCounter_,random(10)+5);return 2;
                 }
-                if (m.stage==3 && u.orders.size()>1) return 5;
-                throw std::runtime_error("unsupported terminal flight move mission");
+                if (m.stage==3) {
+                    if (u.orders.size()>1) return 5;
+                    // 41865c: the final move refines its coarse arrival with
+                    // an ordinary precise point controller before retiring.
+                    order.flightGoal=RetailFlightGoal{{order.x.v,u.flightY.v,order.z.v}};
+                    m.pending&=~0x700u;
+                    m.waitMask=0x700;
+                    return 1;
+                }
+                if (m.stage==4) {
+                    u.retainedFlightGoal=order.flightGoal;
+                    u.retainedFlightControllerActive=false;
+                    return 5;
+                }
+                return 7;
             }
             if (m.stage==0) {
                 const bool anchored=std::any_of(u.orders.begin(),u.orders.end(),[](const Order& o) {return (o.mission.flags&0x4000u)!=0;});
@@ -3094,7 +3115,10 @@ void World::attackMove(int unitId, float x, float z, bool queue) {
     }
     size_t before = queue ? u->orders.size() : 0;
     order(unitId, x, z, queue);
-    for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].attackMove = true;
+    for (size_t i = before; i < u->orders.size(); ++i) {
+        u->orders[i].attackMove = true;
+        u->orders[i].flightMoveMission = false;
+    }
 }
 
 void World::patrol(int unitId, float x, float z) {
@@ -3165,6 +3189,7 @@ void World::patrolTo(int unitId, float x, float z, bool queue) {
     for (size_t i = before; i < u->orders.size(); ++i) {
         u->orders[i].patrol = true;
         u->orders[i].attackMove = true;
+        u->orders[i].flightMoveMission = false;
     }
 }
 
@@ -5555,6 +5580,9 @@ void World::tickReclaim(Unit& b, float dt) {
         float reach = 24.0f + 8.0f * float(std::max(c->type->footX, c->type->footZ)) +
                       (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
         if (dx * dx + dz * dz > reach * reach) return;   // still walking there
+        // Retail corpses/statues occupy the ordinary feature table, so their
+        // reclaim mission requests the same work stance as a tree or rock.
+        startWorkAnimation(b,c->x,c->z);
         b.speed = Fixed();
         int ct = c->corpseStatue >= 0 ? c->corpseStatue : corpseTypeOf(c->type);
         const FeatType* cd = ct >= 0 ? &featTypes_[size_t(ct)] : nullptr;

@@ -736,8 +736,10 @@ int main(int argc, char** argv) {
         ++unit->flightVelocity.x;
         check(world.stateHash() != hash, "persistent flight momentum participates in lockstep hash");
         --unit->flightVelocity.x;
+        // Switch through the public patrol command so its mission kind is
+        // converted as well as its flags before injecting the arrival stage.
+        world.patrolTo(id,768,256,false);
         auto& order = unit->orders.front();
-        order.patrol = true;
         order.mission = {2,0x701,100,0,0};
         order.flightGoal = RetailFlightGoal{{unit->x.v,unit->flightY.v,unit->z.v},0x30,0,80};
         const auto before = unit->x;

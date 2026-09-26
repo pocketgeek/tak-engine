@@ -1093,6 +1093,39 @@ int main(int argc,char** argv) {
             RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==beforeStop[3]+1,
             "Stop command retires the reclaim controller once");
 
+        FeatType body;body.name="work-corpse";body.reclaimable=true;
+        FeatType stone=body;stone.name="work-stone";
+        FeatType frozen=body;frozen.name="work-frozen";
+        repairWorld.setFeatureTypes({body,stone,frozen});
+        damaged.corpse=body.name;
+        repairWorld.mapCorpse(&damaged,0);
+        for(int mode=0;mode<3;++mode) {
+            const auto beforeCorpse=RetailReplayProbe::scriptStatics(repairWorld,worker);
+            const int corpse=repairWorld.spawn(&damaged,220,200,0);
+            auto& dead=*repairWorld.unit(corpse);
+            dead.hp=Fixed();dead.deadFor=120;dead.corpseUntil=1000;
+            dead.corpseWork=Fixed::fromInt(20);dead.corpseStatue=mode ? mode : -1;
+            workCommand.kind=tak::net::Cmd::Reclaim;workCommand.targetId=-corpse;
+            applyCommand(repairWorld,workRegistry,workCommand);
+            for(int tick=0;tick<2;++tick)repairWorld.tick(1.f/30);
+            require(repairWorld.unit(worker)->workScriptWorking &&
+                RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==beforeCorpse[2]+1,
+                "corpse/stone/frozen Reclaim command starts the authored work controller");
+            if(mode==1) {
+                workCommand.kind=tak::net::Cmd::Stop;
+                applyCommand(repairWorld,workRegistry,workCommand);
+                require(repairWorld.unit(corpse)->corpseUntil!=0,
+                    "stopping corpse reclaim preserves its unfinished target");
+            } else {
+                for(int tick=0;tick<8;++tick)repairWorld.tick(1.f/30);
+                require(repairWorld.unit(corpse)->corpseUntil==0,
+                    "completed corpse reclaim retires its target");
+            }
+            require(!repairWorld.unit(worker)->workScriptWorking &&
+                RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==beforeCorpse[3]+1,
+                "corpse reclaim completion or cancellation stops its controller once");
+        }
+
         auto activationFile=std::make_shared<tak::cob::File>();
         activationFile->numStatics=1;
         activationFile->scripts={{"Activate",0},{"Deactivate",8}};
