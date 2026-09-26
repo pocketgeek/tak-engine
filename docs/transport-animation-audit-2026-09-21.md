@@ -53,8 +53,8 @@ Later entries remain authoritative when an older entry describes a fixed issue.
 | Unit animation behavior | Shipped script/pose roster; integrated movement, flight, construction, gates, weapon selection, hits, cloak and death fixes; 56-test Release sweep | The bounded callback review found and fixed authoritative MoveRate delivery (9d7df63), including its projectile-source effect. No other concrete omission was established by that review; the separate Zhon visual report remains open. |
 | Projectiles, including Drake fire | Native direct, ballistic, guided, flame and sprite/model behavior checks; authored effect/anchor/lifetime fixes | Representative behavior is covered; the user deferred further arrow/bolt laser diagnosis pending a clearer report. Pixel identity is not required. |
 | Cursors | Selection-context checks, all 21 registered IDs, authored timing, waypoint clocks and retained live-pointer frame/countdown behavior | Native input-to-pointer pixels were not paired; do not treat pixel matching as an additional requirement. |
-| Flying height and Zhon conjuring placement | Native root-anchor, hierarchy/projection, flight and placed-site traces | Ulasem first-start left mana spot reproduced. Native terrain initialization and active construction navigation both choose the observed height282; continuous climb and orbit comparisons pass. The user’s visual separation report still needs a synchronized pose/presentation comparison; confirmation of the shared local capture is pending. |
-| Builds and delivery | 9d7df63 pushed; Release and optimized all-target builds rebuilt; 56/56 Release and 59/59 optimized tests pass | All fdaf172 GitHub workflows passed. The four 9d7df63 workflows are currently queued/running; inspect their live results before claiming CI complete. |
+| Flying height and Zhon conjuring placement | Native root-anchor, hierarchy/projection, flight and placed-site traces | Ulasem first-start left mana spot reproduced. Native terrain initialization and active construction navigation both choose the observed height282; continuous climb and orbit comparisons pass. The user’s visual separation report still needs a synchronized pose/presentation comparison; the user says the shared capture is closer to retail than their live view. A screenshot of the reported live separation is needed to isolate the difference. |
+| Builds and delivery | 9d7df63 pushed; Release and optimized all-target builds rebuilt; 56/56 Release and 59/59 optimized tests pass | All fdaf172 GitHub workflows passed. All four 9d7df63 workflows passed: Linux, Windows, macOS and determinism. |
 
 The retail GUI remains prohibited by the user's latest instruction. Existing
 headless native routines are available. No new fixture is warranted merely to
@@ -11933,3 +11933,31 @@ record, including script threads, movement and flying-construction fields.
 Evidence: /tmp/tak-moverate-import-cache-port.jsonl compared with the existing
 probe-orbit131 recording. Release and optimized probes were rebuilt; no new
 capture format or fixture was introduced.
+
+
+## Recorded user match and accelerated presentation (2026-09-25)
+
+The user clarified that the monarch starts low and rises northward over several
+seconds. The recent recorded match game-1-1790396410.takrep uses standard balance,
+fixed starts, seed1784082605, and first queues zonlode at tick87, clicked position
+(2836.492,1965.655). A temporary fdaf172 simulation build reconstructs all 58 saved
+checksums exactly. Evidence: /tmp/tak-zhon-replay-parent.log. Thus this diagnostic
+reproduces the actual recorded simulation, not merely a similar setup. Current
+code has intentionally different hashes; its replay has nearly identical first
+construction positions with the corrected uninterrupted climb.
+
+Original FlyingBuild approach was also checked for a possible takeoff gate:
+41ef00 stage0 starts callbacks and immediately proceeds; no script-completion
+wait exists. Original4e43d0 accepts the radius200 horizontal approach at Y68,69,
+150,282 and366 alike, and rejects an outside horizontal position even at cruise.
+Evidence: /tmp/tak-flying-build-radius-height.log. Delaying construction until
+cruise or speeding ascent is not supported by this original path.
+
+Software replay capture: /tmp/zhon-user-replay-windowed.png. Accelerated OpenGL
+capture with 4X AA: /tmp/zhon-user-replay-accelerated.png. The latter used the
+existing shot path with only SDL_CreateRenderer flags changed under the debugger;
+no production source or new fixture was added. Both use the same projected model
+geometry. Code review finds no separate backend altitude accumulator or extra
+height term. This narrows the discrepancy but does not replace the user's live
+visual report: a screenshot of its worst separation is still missing. No retail
+GUI was launched. All four CI workflows for9d7df63 completed successfully.
