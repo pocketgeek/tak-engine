@@ -258,6 +258,33 @@ int main(int argc, char** argv) {
             check(calls==2 && vm.pieces()[0].visible,
                   "nested query preserves the outer script and rejected source visibility");
         }
+        {
+            cob::File file;file.pieces.resize(70,"piece");file.scripts={{"Test",0}};
+            file.code={0x10021001,30*65536,0x10021001,30*65536,
+                       0x10001000,69,0,0x10021001,777,0x1000f000,69,
+                       0x10021001,0,0x10065000};
+            file.scripts.push_back({"Immediate",uint32_t(file.code.size())});
+            file.code.insert(file.code.end(),{0x10021001,7*65536,0x1000b000,69,0,
+                0x10006000,69,0x10021001,778,0x1000f000,69,
+                0x10021001,0,0x10065000});
+            cob::Vm vm(std::move(file),true);vm.enableRetailAnimation();
+            int callbacks=0;
+            vm.onEmitSfx=[&](int piece,int32_t code) {
+                ++callbacks;
+                check(piece==69,"high-index piece callback preserved");
+                check(code==777 ? vm.pieces()[69].moveTarget[0]==0 :
+                      vm.pieces()[69].move[0]==30 && vm.pieces()[69].visible,
+                      "callbacks retain pose from previous export boundary");
+            };
+            vm.start("Test");
+            for(int i=0;i<31;++i)vm.tick(1.f/30);
+            check(vm.pieces()[69].move[0]==30 && !vm.pieces()[69].moving[0] &&
+                  vm.pieces()[69].moveSpeed[0]==0,
+                  "high-index motion exports its final settling state");
+            vm.call("Immediate");
+            check(callbacks==2 && vm.pieces()[69].move[0]==7 && !vm.pieces()[69].visible,
+                  "query exports immediate movement and visibility before returning");
+        }
         return fails?1:0;
     }
     if (argc==3 && std::string(argv[1])=="--hunter-movement") {

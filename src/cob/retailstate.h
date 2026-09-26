@@ -69,6 +69,11 @@ struct RetailScriptState {
         uint32_t get(int id,const std::array<uint32_t,4>& args) { return host.get(id,args); }
         void set(int id,int value) { host.set(id,value); }
         uint32_t sound(int name,int32_t priority) { return host.sound(name,priority); }
+        // Display hosts may track converted poses. Gameplay hosts have no hook;
+        // their instantiation keeps the same piece update and callback ordering.
+        void changed(size_t piece) {
+            if constexpr(requires { host.pieceChanged(piece); }) host.pieceChanged(piece);
+        }
         void piece(uint32_t op,int piece,int axis,int32_t target,int32_t speed) {
             auto& p=state.pieces.at(size_t(piece));
             p.command(op,axis,target,speed,state.vm.ticksPerSecond);
@@ -77,6 +82,7 @@ struct RetailScriptState {
                 if (p.active) state.activePieces_|=bit;
                 else state.activePieces_&=~bit;
             }
+            changed(size_t(piece));
         }
         void effect(uint32_t op,int piece,int32_t arg) {
             auto& p=state.pieces.at(size_t(piece));
@@ -89,8 +95,9 @@ struct RetailScriptState {
             case 0x1000a000: p.rendered=false; break;
             case 0x1000d000: p.shaded=true; break;
             case 0x1000e000: p.shaded=false; break;
-            default: host.effect(op,piece,arg); break;
+            default: host.effect(op,piece,arg); return;
             }
+            changed(size_t(piece));
         }
     };
 
@@ -112,10 +119,15 @@ struct RetailScriptState {
             const unsigned i=std::countr_zero(pending);
             const uint64_t bit=uint64_t(1)<<i;
             pending&=~bit;
+            adapter.changed(i);
             pieces[i].tick(elapsed);
             if (!pieces[i].active) activePieces_&=~bit;
         }
-        for (size_t i=64;i<pieces.size();++i) pieces[i].tick(elapsed);
+        for (size_t i=64;i<pieces.size();++i) {
+            if constexpr(requires { host.pieceChanged(i); })
+                if (pieces[i].active) adapter.changed(i);
+            pieces[i].tick(elapsed);
+        }
     }
 
     // 56c5f0 with immediate=1 starts a notification and runs ALL threads

@@ -380,6 +380,8 @@ if(TAK_TEST_DATA)
     add_test(NAME flyer_combat COMMAND flyer_combat_test "${TAK_TEST_DATA}")
     add_test(NAME gate_scripts COMMAND retail_script_test --gates "${TAK_TEST_DATA}")
     add_test(NAME cobanim COMMAND cobanim_test "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts")
+    set_tests_properties(animation_roster cobanim explode_capture PROPERTIES
+        ENVIRONMENT "TAK_VERIFY_NATIVE_EXPORT=1")
     add_test(NAME retailgap COMMAND retailgap_test "${TAK_TEST_DATA}")
     add_test(NAME conjure COMMAND conjure_test "${TAK_TEST_DATA}")
     add_test(NAME turn COMMAND turn_test "${TAK_TEST_DATA}")

@@ -429,10 +429,8 @@
                     }
                 }
                 SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_NONE);
-                SDL_Color opaqueBlack{0,0,0,255};
-                static const float zeroUv[2]={0.0f,0.0f};
-                if (!opaque.empty() && SDL_RenderGeometryRaw(ren_,nullptr,&opaque[0].x,
-                    sizeof(SDL_FPoint),&opaqueBlack,0,zeroUv,0,int(opaque.size()),nullptr,0,0)!=0) {
+                if (shadowOpaqueSubmit_.draw(ren_,opaque,
+                        !tak::devFlag("TAK_SHADOW_SDL_SUBMIT"))!=0) {
                     ok=false;break;
                 }
                 for (auto& [coverage,vertices]:maskBatches) {

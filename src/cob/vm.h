@@ -31,6 +31,7 @@ struct PieceState {
     bool moving[3] = {false, false, false};
     float rotTarget[3] = {0, 0, 0}, rotSpeed[3] = {0, 0, 0};
     bool turning[3] = {false, false, false};
+    bool operator==(const PieceState&) const = default;
 };
 
 class Vm {

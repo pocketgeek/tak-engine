@@ -1,4 +1,5 @@
 #include "client/shadowmask.h"
+#include "client/shadowopaque.h"
 #include <SDL.h>
 #include <array>
 #include <cstdio>
@@ -115,6 +116,62 @@ static bool unitCoverageParity(SDL_Renderer* renderer) {
     return ok;
 }
 
+// Compare native position-only submission with SDL and then draw textured and
+// coloured SDL geometry to detect leaked client-array/current-colour state.
+static bool opaqueSubmissionParity(SDL_Renderer* renderer) {
+    auto* target=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,64,64);
+    auto* texture=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,1,1);
+    if (!target || !texture) {SDL_DestroyTexture(target);SDL_DestroyTexture(texture);return false;}
+    const std::array<uint8_t,4> texel={40,120,220,128};
+    SDL_UpdateTexture(texture,nullptr,texel.data(),4);
+    SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+    const SDL_Color white{255,255,255,255};
+    const SDL_Vertex textured[3]={{{1,1},white,{0,0}},{{9,1},white,{1,0}},{{1,9},white,{0,1}}};
+    const SDL_Vertex colored[3]={{{12,1},{200,30,80,255},{0,0}},
+        {{20,1},{20,230,60,255},{0,0}},{{12,9},{80,90,250,255},{0,0}}};
+    std::array<uint8_t,64*64*4> expected{},actual{};
+    tak::OpaqueShadowSubmit submit;
+    bool ok=true;
+    for (float scale:{1.f,2.f}) for (float aa:{1.f,2.f})
+        for (float offset:{0.f,0.125f,0.5f}) for (bool clipped:{false,true}) {
+        SDL_FPoint points[9]={{2+offset,3+offset},{24+offset,4+offset},{9+offset,25+offset},
+            {2+offset,3+offset},{24+offset,4+offset},{9+offset,25+offset},
+            {4+offset,8+offset},{24+offset,27+offset},{1+offset,23+offset}};
+        for (auto& point:points) {point.x*=aa;point.y*=aa;}
+        for (bool native:{false,true}) {
+            ok &= SDL_SetRenderTarget(renderer,target)==0;
+            SDL_RenderSetScale(renderer,1,1);SDL_RenderSetViewport(renderer,nullptr);SDL_RenderSetClipRect(renderer,nullptr);
+            SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(renderer,190,160,130,255);SDL_RenderClear(renderer);
+            SDL_RenderSetScale(renderer,scale,scale);
+            SDL_Rect viewport{1,2,int(60/scale),int(60/scale)},clip{3,4,20,21};
+            SDL_RenderSetViewport(renderer,&viewport);SDL_RenderSetClipRect(renderer,clipped?&clip:nullptr);
+            // Prime with a textured batch before switching to opaque coverage.
+            SDL_RenderGeometry(renderer,texture,textured,3,nullptr,0);
+            ok &= submit.draw(renderer,points,native)==0;
+            SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+            SDL_RenderGeometry(renderer,nullptr,colored,3,nullptr,0);
+            SDL_RenderGeometry(renderer,texture,textured,3,nullptr,0);
+            SDL_RenderSetScale(renderer,1,1);SDL_RenderSetViewport(renderer,nullptr);SDL_RenderSetClipRect(renderer,nullptr);
+            ok &= SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,
+                native?actual.data():expected.data(),64*4)==0;
+        }
+        if (expected!=actual) {
+            std::printf("FAIL: opaque submission scale=%.1f offset=%.3f clipped=%d\n",scale,offset,clipped);
+            ok=false;
+        }
+    }
+    SDL_RendererInfo info{};SDL_GetRendererInfo(renderer,&info);
+    if (std::strcmp(info.name,"opengl")==0 && !submit.active()) {
+        std::puts("FAIL: OpenGL opaque submission was not exercised");ok=false;
+    }
+    SDL_SetRenderTarget(renderer,nullptr);SDL_RenderSetScale(renderer,1,1);
+    SDL_RenderSetViewport(renderer,nullptr);SDL_RenderSetClipRect(renderer,nullptr);
+    SDL_DestroyTexture(target);SDL_DestroyTexture(texture);
+    std::printf("%s: opaque shadow submission pixels and following SDL draws on %s\n",ok?"PASS":"FAIL",info.name);
+    return ok;
+}
+
 // Combining adjacent mask triangles must preserve overlap darkening and the
 // transparent/partially covered texels, not just their projected positions.
 static bool maskedRunBatchParity() {
@@ -154,6 +211,7 @@ static bool maskedRunBatchParity() {
             mode ? batched.data() : separate.data(),24*4)==0;
     }
     ok &= separate==batched;
+    ok &= opaqueSubmissionParity(renderer);
     if(batch) {
         ok &= unitCoverageParity(renderer);
         const bool atlasOK=atlasSamplingParity(renderer);

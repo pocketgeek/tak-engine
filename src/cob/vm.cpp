@@ -3,6 +3,7 @@
 #include "sim/retailrng.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace tak::cob {
@@ -38,10 +39,19 @@ struct Vm::Native {
     RetailScriptState state;
     uint32_t seed=12345;
     double ticks=0;
-    explicit Native(const File& file):state(file) {}
+    std::vector<uint8_t> dirty;
+    std::vector<size_t> changed;
+    explicit Native(const File& file):state(file),dirty(file.pieces.size(),1) {
+        changed.reserve(file.pieces.size());
+        for(size_t i=0;i<file.pieces.size();++i) changed.push_back(i);
+    }
+    void pieceChanged(size_t i) {
+        if (!dirty[i]) {dirty[i]=1;changed.push_back(i);}
+    }
     struct Host {
         Vm& vm;Native& native;
         uint32_t random(int32_t bound) { return tak::sim::retailRandom(native.seed,bound); }
+        void pieceChanged(size_t i) { native.pieceChanged(i); }
         uint32_t get(int id,const std::array<uint32_t,4>& args) {
             if (!vm.onGet) return 0;
             std::vector<int32_t> values;
@@ -120,8 +130,7 @@ bool Vm::mayReachExplosion(std::span<const uint8_t> reachability) const {
     return false;
 }
 void Vm::exportNativePieces() {
-    for(size_t i=0;i<pieces_.size();++i) {
-        const auto& source=native_->state.pieces[i];auto& target=pieces_[i];
+    const auto convert=[](const RetailPiece& source,PieceState& target) {
         target.visible=source.visible;
         for(int axis=0;axis<3;++axis) {
             target.move[axis]=float(source.move[axis])*kLinear;
@@ -136,7 +145,23 @@ void Vm::exportNativePieces() {
             target.spinTarget[axis]=float(source.spinTarget[axis])*30*kAngle;
             target.spinAccel[axis]=float(source.spinAcceleration[axis])*900*kAngle;
         }
+    };
+    // Preserve the old export boundaries: callbacks inside a script tick still
+    // observe the preceding exported pose. Only the conversion work is sparse.
+    for (size_t i:native_->changed) {
+        convert(native_->state.pieces[i],pieces_[i]);
+        native_->dirty[i]=0;
     }
+    native_->changed.clear();
+#ifndef NDEBUG
+    static const bool verify=std::getenv("TAK_VERIFY_NATIVE_EXPORT")!=nullptr;
+    if (verify) for (size_t i=0;i<pieces_.size();++i) {
+        PieceState expected;
+        convert(native_->state.pieces[i],expected);
+        if (!(expected==pieces_[i]))
+            throw std::runtime_error("sparse native piece export differs from full conversion");
+    }
+#endif
 }
 
 Vm::Vm(std::shared_ptr<const File> file, bool deterministicRand)
