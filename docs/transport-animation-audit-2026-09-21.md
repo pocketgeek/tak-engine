@@ -10781,3 +10781,37 @@ standing-order queries. No new fixture program or retail launch.
 Release takclient and affected render-snapshot tests rebuilt. Ten targeted CTests
 passed (retail_visual, retail_script, animation_roster, cobanim, placement and
 transport selections; 6.24 seconds). git diff --check passed.
+
+
+### Actual firing events survive skipped snapshots (2026-09-25)
+
+The callback queue did not by itself preserve unit-fired effects: faction nimbus,
+generic firing sounds and fallback muzzle bursts still depended on the latest
+snapshot's justFired/firedWeapons flags. Extended the same per-tick handoff with
+actual discharged weapon slots, the simulation tick and shooter X/Z. These are
+separate from FireWeapon callbacks, which can precede the physical shot while the
+script waits to set its fire flag.
+
+GameView consumes actual shots once. Nimbus starts from the original shot tick,
+so delayed delivery displays its correct authored age or expires it instead of
+restarting the full glow. Generic sound uses captured firing X/Z. Fallback muzzle
+bursts retain the existing current-display-pose behavior; this change preserves
+their trigger, not a historical muzzle pose or particle rewind. Removed the unused
+one-tick firing fields from UnitR. Simulation, damage and pathfinding are unchanged.
+
+The existing visual handoff regression now includes a shot-only packet after its
+FireWeapon callback, checks original tick/weapon mask/position, verifies that it
+waits for the render snapshot and confirms it is not delivered twice. No new
+fixture program or retail launch.
+
+Release and optimized Debug clients rebuilt; affected snapshot tests rebuilt.
+Ten targeted Release CTests passed (6.47 seconds), and git diff --check passed.
+The existing projectile scene with ZONHUNT and TAK_NIMBUS_CAPTURE=3 stopped at
+simulation tick 28, caster 1, nimbus age 3. Inspected /tmp/tak-shot-nimbus.png:
+purple nimbus surrounds the firing monarch and the lightning connects toward
+the target. Command: SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+TAK_PROJECTILE_TEST=zonhunt TAK_NIMBUS_CAPTURE=3 TAK_SHOT_MS=500
+build-o2/takclient game 'Ulasem Arena' --data assets/game --firetest --nofog
+--time 20 --shot /tmp/tak-shot-nimbus.png. This is a software-rendered engine
+capture, not a retail comparison; skipped-tick delivery is checked by the
+handoff regression, while this capture checks the normal shot-to-loaded-art path.

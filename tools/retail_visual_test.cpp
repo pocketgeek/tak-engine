@@ -136,21 +136,33 @@ int main(int argc,char** argv) {
             queue.push(102,7,events);
             events.clear();events.add(tak::RetailWeaponAnimation::Aim,0);
             queue.push(103,8,events);
+            events.clear();
+            // FireWeapon's callback may precede actual discharge. Capture the
+            // later shot even though that tick has no new script callbacks.
+            queue.push(104,7,events,4,123.0f,456.0f);
+            std::vector<std::pair<int,tak::WeaponAnimationQueue::Shot>> shots;
+            const auto collectShot=[&](int id,const auto& shot) { shots.emplace_back(id,shot); };
             std::vector<std::tuple<int,int,int,int,int>> actual;
             const auto collect=[&](int id,const tak::RetailWeaponAnimation& e) {
                 actual.emplace_back(id,int(e.kind),e.slot,e.heading,e.pitch);
             };
-            queue.drain(102,collect);
+            queue.drain(102,collect,collectShot);
             const decltype(actual) expected{{7,tak::RetailWeaponAnimation::Aim,2,0x1200,0x3400},
                 {7,tak::RetailWeaponAnimation::Fire,2,0,0},
                 {7,tak::RetailWeaponAnimation::Clear,2,0,0}};
             if(actual!=expected) {
                 std::fprintf(stderr,"skipped render snapshots lost weapon callbacks or aiming arguments\n");return 1;
             }
-            queue.drain(102,collect);
+            queue.drain(102,collect,collectShot);
             if(actual!=expected)return 1; // another render frame cannot replay callbacks
-            queue.drain(103,collect);
-            if(actual.size()!=4 || std::get<0>(actual.back())!=8)return 1;
+            queue.drain(103,collect,collectShot);
+            if(actual.size()!=4 || std::get<0>(actual.back())!=8 || !shots.empty())return 1;
+            queue.drain(104,collect,collectShot);
+            if(shots.size()!=1 || shots[0].first!=7 || shots[0].second.tick!=104 ||
+               shots[0].second.weapons!=4 || shots[0].second.x!=123 || shots[0].second.z!=456 ||
+               actual.size()!=4)return 1;
+            queue.drain(105,collect,collectShot);
+            if(shots.size()!=1)return 1;
         }
 
         struct BurnEvent { int id; uint64_t activationSequence; bool emit; };

@@ -147,9 +147,6 @@ struct UnitR {
     int corpseFeat = -1;                       // resolved corpse/statue FeatType index
     bool corpseStatue = false;                 // petrified/frozen: the body stays UPRIGHT,
                                                // unlike a normal corpse which lies flat
-    bool justFired = false;                    // one-tick: fired a weapon this tick
-    uint32_t firedWeapons = 0;
-    uint32_t fireAnimations = 0;
     int justBuilt = 0;                         // one-tick: unit id produced this tick, else 0
     bool disco = false, headbang = false;      // cached world_.disco/headbangActive(player)
     bool alliedToLocal = false;                // cached alliedToLocal(player)

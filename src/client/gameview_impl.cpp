@@ -1469,7 +1469,8 @@
             // Capture every simulation step, including steps whose render
             // snapshot will be superseded before the next display frame.
             for (const auto& unit:world_.units())
-                weaponAnimationQueue_.push(world_.tickCount(),unit.id,unit.weaponAnimations);
+                weaponAnimationQueue_.push(world_.tickCount(),unit.id,unit.weaponAnimations,
+                    unit.firedWeapons,unit.x.toFloat(),unit.z.toFloat());
         }
         if (!world_.transportEffects().empty()) {
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
@@ -1565,7 +1566,7 @@
             s.corpseStatue = u.corpseStatue >= 0;
             // UnitR::speed is documented px/s and consumers (the flyer altitude servo,
             // the MotionControl percentage) rely on that; the sim keeps px/TICK now.
-            s.justFired = u.justFired; s.firedWeapons = u.firedWeapons; s.fireAnimations = u.fireAnimations; s.justBuilt = u.justBuilt;
+            s.justBuilt = u.justBuilt;
             s.disco = world_.discoActive(u.player);
             s.headbang = world_.headbangActive(u.player);
             s.alliedToLocal = alliedToLocal(u.player);
@@ -1710,9 +1711,8 @@
 
     void GameView::cosmeticStep(float dt) {
         // Reads the render SNAPSHOT (front()/frameHits()), never live world_, so it is safe
-        // on the main thread while the sim worker ticks. One-tick EVENTS (impacts, justFired)
-        // are gated on newTick_ so they fire once per published tick even if cosmeticStep is
-        // called more than once against the same pinned snapshot.
+        // on the main thread while the sim worker ticks. Transient combat events
+        // arrive through queues so skipped snapshots cannot discard them.
         // Deferred replay write, requested by the sim thread when the result landed.
         // Done HERE because this runs on the main thread, which is the only one that
         // may read the net client's recorded bundles while it is still connected.
@@ -1927,10 +1927,13 @@
         // Drain mission-time events even when whole render snapshots were skipped.
         std::deque<tak::sim::World::TransportFx> transportEffects;
         std::unordered_map<int,std::vector<tak::RetailWeaponAnimation>> weaponAnimations;
+        std::unordered_map<int,std::vector<tak::WeaponAnimationQueue::Shot>> weaponShots;
         {
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
             weaponAnimationQueue_.drain(front().gameTick,[&](int unit,const auto& callback) {
                 weaponAnimations[unit].push_back(callback);
+            },[&](int unit,const auto& shot) {
+                weaponShots[unit].push_back(shot);
             });
             while (!transportEffectQueue_.empty() &&
                    int32_t(front().gameTick-transportEffectQueue_.front().tick)>=0) {
@@ -1994,9 +1997,10 @@
             if (u.alive()) maybeSwapVeteranModel(u);
             else if (u.corpsePhase) maybeSwapCorpseModel(u);
             auto it = anims_.find(u.id);
-            if (u.justFired && newTick_ && u.type)
+            if (const auto shots=weaponShots.find(u.id);u.type && shots!=weaponShots.end())
+            for (const auto& shot:shots->second)
             for (int slot=0;slot<int(u.type->weapons.size()) && slot<32;++slot) {
-                if (!(u.firedWeapons & (uint32_t(1)<<slot))) continue;
+                if (!(shot.weapons & (uint32_t(1)<<slot))) continue;
                 using Fx = tak::sim::WeaponFx;
                 const auto& w = u.type->weapons[size_t(slot)];
                 // These native initializers start one faction nimbus on the
@@ -2014,7 +2018,7 @@
                     const auto name = factionNimbus_.find(side);
                     if (name != factionNimbus_.end() && !name->second.empty())
                         if (const auto* art = effectFor(name->second))
-                            nimbusEffects_[u.id] = {art, front().gameTick};
+                            nimbusEffects_[u.id] = {art, shot.tick};
                 }
                 // Generic firing sounds are a stand-in for units whose COB carries no
                 // PLAY_SOUND of its own; units with script audio (attack swooshes,
@@ -2022,13 +2026,13 @@
                 bool scripted = it != anims_.end() && it->second.cobSounds;
                 if (scripted) { /* the attack script provides the sound */ }
                 else if (w.melee)
-                    sounds_.playWorld("ahitfl0" + std::to_string(1 + (salt_++ % 3)), u.x, u.z);
+                    sounds_.playWorld("ahitfl0" + std::to_string(1 + (salt_++ % 3)), shot.x, shot.z);
                 else if (w.fx == Fx::Fire)
-                    sounds_.playWorld(sounds_.has("firedrag") ? "firedrag" : "fireflsh", u.x, u.z);
+                    sounds_.playWorld(sounds_.has("firedrag") ? "firedrag" : "fireflsh", shot.x, shot.z);
                 else if (w.fx == Fx::Lightning)
-                    sounds_.playWorld("lightng" + std::to_string(1 + (salt_++ % 3)), u.x, u.z);
+                    sounds_.playWorld("lightng" + std::to_string(1 + (salt_++ % 3)), shot.x, shot.z);
                 else
-                    sounds_.playWorld("bow2", u.x, u.z);
+                    sounds_.playWorld("bow2", shot.x, shot.z);
                 // Muzzle world point. Retail asks the COB which piece a weapon fires
                 // from -- QueryWeapon writes the emit-piece index to its out-param
                 // local 0 (e.g. the tower's emitCan, the drake's emitjim mouth anchor)
