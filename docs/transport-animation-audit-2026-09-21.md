@@ -10419,3 +10419,18 @@ and delivery at the requested destination. Release client/server rebuilt and all
 four transport suites passed, including both map-roundtrip balance modes. The
 existing native action-mode probe also passes its cantransport-to-Unload cursor
 gate; that probe does not prove the entire native queued-command sequence.
+
+### Reclaim drawing uses the pinned scene snapshot (2026-09-25)
+
+The reclaim sparkle draw path previously tried to lock the simulation mutex
+and omitted both worker and target sparkles when the worker owned it. It also
+combined a live feature position with an older rendered unit position. UnitR
+now captures the live feature's position and footprint during frame publication;
+the draw path consumes that copy without accessing the simulation. Publication
+clears the optional target when the order ends or the feature disappears.
+
+Release takclient and retail_visual_test rebuilt, and retail_visual passes.
+The missing-draw condition is established by the removed try_lock branch;
+no controlled contention screenshot was captured. This is a snapshot integration
+fix. Reclaim's legacy anchored sprite and model-texture animation timing still
+need retail behavior investigation; neither was changed or certified here.

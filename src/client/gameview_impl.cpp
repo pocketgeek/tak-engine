@@ -1507,6 +1507,12 @@
             else s.constructionParticles.clear();
             s.buildSiteId = u.buildSiteId; s.productionSiteId = u.productionSiteId;
             s.reclaimId = u.reclaimId; s.repairId = u.repairId;
+            s.reclaimTarget.reset();
+            if (u.reclaimId > 0) {
+                if (const auto* target=world_.feature(u.reclaimId); target && target->alive)
+                    s.reclaimTarget=UnitR::ReclaimTarget{
+                        target->x.toFloat(),target->z.toFloat(),target->fx,target->fz};
+            }
             s.yardOpen = world_.scriptYardOpen(u.id);
             s.scriptHealthPercent = int32_t(int16_t(u.hp.floorInt()))*100/std::max(u.maximumHp(),1);
             s.constructionPercentLeft = u.retailSite

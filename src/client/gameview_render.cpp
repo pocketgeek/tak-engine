@@ -2139,32 +2139,20 @@
 
         // A reclaimer IN RANGE (the reclaim has really started -- range test mirrors
         // World::tickReclaim): sparkle the reclaimer AND the feature it is chewing on.
-        if (u.type && u.reclaimId != 0) {
-            // Copy, do not hold: world_.feature() hands back a pointer INTO the
-            // feature vector, which the worker can reallocate.
-            struct { bool ok = false; float x = 0, z = 0; int fx = 0, fz = 0; } fc;
-            {
-                std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-                // This sparkle is optional for the current frame. Never stall
-                // camera/input behind a long simulation tick to draw it.
-                if (!useSimThread_ || lk.try_lock()) {
-                    if (const auto* f = world_.feature(u.reclaimId))
-                        fc = {f->alive, f->x.toFloat(), f->z.toFloat(), f->fx, f->fz};
-                }
-            }
-            const auto* feat = &fc;
-            if (fc.ok) {
-                float dxr = feat->x - u.x, dzr = feat->z - u.z;
-                float reach = 24.0f + 8.0f * float(std::max(feat->fx, feat->fz)) +
-                              (u.type->buildDist > 0 ? u.type->buildDist : 0.0f);
-                if (dxr * dxr + dzr * dzr <= reach * reach) {
-                    sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());   // the reclaimer
-                    float fsx = (feat->x - mapView_.offX()) * zm - terrainLiftX(feat->x, feat->z) * zm;
-                    float fsy = (feat->z - mapView_.offY()) * zm - terrainLift(feat->x, feat->z) * zm;
-                    sprinkleBuildFx(sideLower(), fsx, fsy,
-                                    std::max(feat->fx, 1) * 16.0f * zm,
-                                    std::max(feat->fz, 1) * 16.0f * zm);         // the feature
-                }
+        if (u.type && u.reclaimTarget) {
+            // Target and worker belong to the same pinned simulation frame.
+            // A busy simulation thread must not suppress this frame's effect.
+            const auto* feat = &*u.reclaimTarget;
+            float dxr = feat->x - u.x, dzr = feat->z - u.z;
+            float reach = 24.0f + 8.0f * float(std::max(feat->fx, feat->fz)) +
+                          (u.type->buildDist > 0 ? u.type->buildDist : 0.0f);
+            if (dxr * dxr + dzr * dzr <= reach * reach) {
+                sprinkleBuildFx(sideLower(), ax, ay, uFootW(), uFootH());   // the reclaimer
+                float fsx = (feat->x - mapView_.offX()) * zm - terrainLiftX(feat->x, feat->z) * zm;
+                float fsy = (feat->z - mapView_.offY()) * zm - terrainLift(feat->x, feat->z) * zm;
+                sprinkleBuildFx(sideLower(), fsx, fsy,
+                                std::max(feat->fx, 1) * 16.0f * zm,
+                                std::max(feat->fz, 1) * 16.0f * zm);         // the feature
             }
         }
 
