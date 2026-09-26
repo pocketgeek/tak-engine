@@ -250,6 +250,44 @@ int main(int argc, char** argv) {
         for (int x = 12; x < 14; ++x) freed &= treeWorld.nav().walkable(x, z);
     check(freed, "reclaim frees the original footprint");
 
+    // Replacing active reclaim must switch the work and its emitter together.
+    treeWorld.addFeature(1001,208,176,1000,1000,1,1,false);
+    treeWorld.addFeature(1002,240,176,1000,1000,1,1,false);
+    tak::net::Command reclaimCommand;
+    reclaimCommand.kind=tak::net::Cmd::Reclaim;
+    reclaimCommand.unitId=builder;
+    reclaimCommand.player=0;
+    reclaimCommand.targetId=1001;
+    sim::applyCommand(treeWorld,reg,reclaimCommand);
+    for(int i=0;i<6;++i)treeWorld.tick(1.f/30);
+    const auto oldWork=treeWorld.feature(1001)->work;
+    reclaimCommand.targetId=1002;
+    sim::applyCommand(treeWorld,reg,reclaimCommand);
+    for(int i=0;i<6;++i)treeWorld.tick(1.f/30);
+    check(treeWorld.feature(1001)->work==oldWork &&
+          treeWorld.feature(1002)->work<sim::Fixed::fromInt(1000) &&
+          treeWorld.unit(builder)->reclaimId==1002,
+          "replacement reclaim switches work and effects to the new target");
+    const auto newWork=treeWorld.feature(1002)->work;
+    const auto stoppedEmissions=treeWorld.unit(builder)->constructionEmissions[0];
+    reclaimCommand.kind=tak::net::Cmd::Stop;
+    sim::applyCommand(treeWorld,reg,reclaimCommand);
+    for(int i=0;i<180;++i)treeWorld.tick(1.f/30);
+    worker=treeWorld.unit(builder);
+    check(treeWorld.feature(1002)->work==newWork &&
+          worker->constructionEmissions[0]==stoppedEmissions &&
+          worker->cosmeticConstructionEmitter->particles.empty(),
+          "Stop cancels reclaim work and emission while old particles drain");
+
+    treeWorld.addFeature(1003,208,176,0,60,1,1,false);
+    reclaimCommand.kind=tak::net::Cmd::Reclaim;
+    reclaimCommand.targetId=1003;
+    sim::applyCommand(treeWorld,reg,reclaimCommand);
+    for(int i=0;i<60;++i)treeWorld.tick(1.f/30);
+    check(!treeWorld.feature(1003)->alive &&
+          treeWorld.unit(builder)->constructionEmissions[0]==stoppedEmissions,
+          "zero-energy reclaim completes without worker particles");
+
     std::printf(failures ? "\nFAILED (%d)\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;
 }

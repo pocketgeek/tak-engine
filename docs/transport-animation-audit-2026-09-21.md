@@ -10566,3 +10566,18 @@ Full Release rebuild succeeded, including takclient and takserver. All 56 Releas
 CTests passed (47.78 seconds), including the extended navblock reclaim checks,
 transport/map round trips, animation roster, flying combat and native landing
 poses. git diff --check passed. No retail launch or rendered reclaim capture.
+
+### Reclaim particle command lifecycle verification (2026-09-25)
+
+Extended the existing navblock regression for the worker-particle fix with actual
+Cmd::Reclaim replacement, Cmd::Stop, and zero-energy feature cases. Replacement
+leaves the old feature's work unchanged and advances the new target; Stop freezes
+remaining work and emission counts while existing particles drain; zero-energy
+reclaim completes without particles. The rebuilt navblock CTest passed.
+
+An initial diagnostic called World::reclaim/stop directly and failed: those helper
+calls bypass applyCommand's redirect/cancelBuilds contract. Repeating through the
+real command path passes, so no production order-switching bug was established
+and no speculative engine change was made. These tests verify lifecycle for the
+recent emitter integration, not rendered appearance. The planned rendered reclaim
+capture is still outstanding. git diff --check passed; no retail launch.
