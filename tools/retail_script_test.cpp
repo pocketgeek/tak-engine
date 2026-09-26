@@ -977,6 +977,28 @@ int main(int argc,char** argv) {
         require(impacts.unit(direct)->weaponAnimations.count==0 && impacts.unit(splash)->weaponAnimations.count==0,
             "status damage does not produce direct or splash flinch callbacks");
 
+        auto activationFile=std::make_shared<tak::cob::File>();
+        activationFile->numStatics=1;
+        activationFile->scripts={{"Activate",0},{"Deactivate",8}};
+        // Count both transitions so duplicate command notifications are visible.
+        activationFile->code={0x10021004,0,0x10021001,1,0x10031000,0x10023004,0,0x10065000,
+                               0x10021004,0,0x10021001,10,0x10031000,0x10023004,0,0x10065000};
+        UnitType fire;fire.maxHp=100;fire.onOffable=true;fire.activateWhenBuilt=false;
+        fire.simulationScript=activationFile;
+        World activationWorld;activationWorld.setVisPlayer(-1);
+        activationWorld.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
+        const int fireId=activationWorld.spawn(&fire,200,200);
+        activationWorld.setActive(fireId,true);
+        require(RetailReplayProbe::scriptStatics(activationWorld,fireId)[0]==1,
+            "non-gate activation starts its authored controller immediately");
+        activationWorld.setActive(fireId,true);
+        require(RetailReplayProbe::scriptStatics(activationWorld,fireId)[0]==1,
+            "repeated activation does not start a duplicate controller");
+        activationWorld.setActive(fireId,false);
+        activationWorld.setActive(fireId,false);
+        require(RetailReplayProbe::scriptStatics(activationWorld,fireId)[0]==11,
+            "non-gate deactivation reaches its controller exactly once");
+
         auto cloakFile=std::make_shared<tak::cob::File>();
         cloakFile->numStatics=1;cloakFile->scripts={{"StartCloaking",0},{"StopCloaking",5}};
         cloakFile->code={0x10021001,1,0x10023004,0,0x10065000,

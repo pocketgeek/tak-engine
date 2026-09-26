@@ -3315,12 +3315,11 @@ void World::setActive(int unitId, bool on) {
     if (!u || !u->alive() || !u->type || !u->type->onOffable) return;
     if (u->active==on) return;
     u->active = on;
-    if (u->type->gate) {
-        // 51e4d0 notifies the script immediately on an active-bit edge.
-        if (auto script=unitScripts_.find(u->id);script!=unitScripts_.end())
-            script->second.activated=on;
-        notifyUnitScript(*u,on ? "Activate" : "Deactivate");
-    }
+    // 51e4d0 notifies every script on an active-bit edge, including
+    // non-gate on/off units such as the Sacred Fire's emitter controller.
+    if (auto script=unitScripts_.find(u->id);script!=unitScripts_.end())
+        script->second.activated=on;
+    notifyUnitScript(*u,on ? "Activate" : "Deactivate");
 }
 
 void World::setSquad(int unitId, int squad) {

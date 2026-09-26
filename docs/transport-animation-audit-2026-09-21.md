@@ -22,7 +22,7 @@ missed weapon events, transported-passenger effects and authored death effects.
 The chronological entries below document their scope and validation. The earlier
 read-only Git restriction has been lifted for the current session.
 
-The most recent full Release sweep passes all 56 CTests (30.54 seconds), including
+The most recent full Release sweep passes all 56 CTests (49.03 seconds), including
 the recent animation, pickup-cancellation, boarding target-clear and transport reload fixes at the end of this audit. Existing
 native/World ridge-flight unload comparisons also pass all three shipped air
 carrier profiles in both balances: ZONROC, CREAERI and TARSHIP. This includes
@@ -55,7 +55,7 @@ Later entries remain authoritative when an older entry describes a fixed issue.
 | Projectiles, including Drake fire | Native direct, ballistic, guided, flame and sprite/model behavior checks; authored effect/anchor/lifetime fixes | Representative behavior is covered; the user deferred further arrow/bolt laser diagnosis pending a clearer report. Pixel identity is not required. |
 | Cursors | Selection-context checks, all 21 registered IDs, authored timing, waypoint clocks and retained live-pointer frame/countdown behavior | Native input-to-pointer pixels were not paired; do not treat pixel matching as an additional requirement. |
 | Flying height and Zhon conjuring placement | Native root-anchor, hierarchy/projection, flight and placed-site traces | The reported apparent northward separation has not been reproduced with matching camera, construction vector and tick. Current evidence does not justify another offset change. |
-| Builds and delivery | Fixes through f1e78b0 committed and pushed; current Release/optimized binaries built; all 56 Release tests pass | Latest GitHub Linux/Windows builds were still running; determinism and macOS passed. |
+| Builds and delivery | Cursor fix fc5ffc1 pushed; current Release/optimized binaries rebuilt with non-gate activation; all 56 Release tests pass | GitHub Linux/Windows builds for fc5ffc1 are still running; macOS passed. |
 
 The retail GUI remains prohibited by the user's latest instruction. Existing
 headless native routines are available. No new fixture is warranted merely to
@@ -11656,3 +11656,31 @@ is covered by the existing transport tests and native eligibility work above.
 
 Validation: rebuilt `takclient` and `cursor_test` in Release and optimized builds;
 all six cursor/transport CTests pass in each (1.32s and 1.34s respectively).
+
+## Primary queued pickup transition and non-gate activation (2026-09-25)
+
+An ephemeral native check now uses ordinary 4d77f0 append for both units,
+leaving their secondary lists empty. The original 4d8450 dispatcher and
+4d6ad0 removal advance the passenger from its preceding move to 403430 while
+its carrier still has a move before VTOL_Pickup. With preceding movement
+completion supplied at tick 10, the passenger reaches stage 1, deadline 40,
+mask 0x89; at tick 40 it reaches stage 0 with deadline 45. The carrier's queued
+pickup remains intact. Eligibility, the empty navigator detach, display
+notification and heap free are controlled boundaries. This checks primary
+queue admission and the wait transition, not joined native physical movement.
+The ephemeral World run additionally boards after earlier moves for air and
+surface carriers with either unit update order (236 ticks for surface, 305/310
+for air). No transport engine change or permanent fixture was warranted.
+
+Native 51e4d0 issues Activate/Deactivate for every active-bit transition, not
+only gates. Shipped ZONFIRE uses those exports to start and stop FireControl.
+World::setActive formerly skipped the simulation callbacks for non-gates;
+it now delivers them and updates the script activation state. Repeated identical
+commands still do nothing. The existing retail_script regression verifies
+immediate activation and exactly-once transitions. Renderer handling already
+follows the active state and needed no change. Native evidence is recorded in
+/tmp/tak-nongate-activation-native.log.
+
+Validation: all 56 Release CTests pass (49.03s); optimized retail_script passes
+(0.03s). Release and optimized takclient/takserver rebuilt successfully. Logs:
+/tmp/tak-activation-release-tests.log and /tmp/tak-activation-o2-binaries.log.
