@@ -1430,6 +1430,7 @@ int main(int argc, char** argv) {
         // wall-clock goes, once a second, so a stall can be localised on real
         // hardware that the headless software renderer can't show.
         static const bool prof = tak::devEnv("TAK_PROF") != nullptr;
+        static const bool profFrames = tak::devFlag("TAK_PROF_FRAMES");
         static double pUpd = 0, pDraw = 0, pPres = 0, pAcc = 0;
         static int pFrames = 0;
         auto pnow = [] { return double(SDL_GetPerformanceCounter()) /
@@ -1440,7 +1441,7 @@ int main(int argc, char** argv) {
         double t1 = prof ? pnow() : 0;
         // Hoisted out of the gameView block so the spike logger can report the REAL
         // update (t1->t2) and draw (t2->t3) intervals separately.
-        double t2 = t1, t3 = t1;
+        double t2 = t1, t3 = t1, animationMs = 0;
         if (gameView) {
             // Real-time camera/audio every frame, BEFORE the sim step -- so pan,
             // edge-scroll, follow, shake and music stay smooth even when a net
@@ -1470,7 +1471,9 @@ int main(int argc, char** argv) {
             // longer piles onto the 1-in-8 net frame that runs the sim tick.
             if (!benchFrozen) {
                 gameView->benchmarkCamera(dt, w, h);   // benchmark flythrough (no-op otherwise)
+                const double animationStart = prof ? pnow() : 0;
                 gameView->animFrame(dt);
+                if (prof) animationMs = pnow() - animationStart;
                 gameView->benchmarkSample();   // perf samples at each 10s milestone (no-op unless benchmarking)
             }
             t2 = prof ? pnow() : 0;
@@ -1505,6 +1508,10 @@ int main(int argc, char** argv) {
         SDL_RenderPresent(ren);
         if (prof) {
             double t5 = pnow();
+            if (profFrames)
+                std::printf("FRAME ms=%.3f update=%.3f anim=%.3f draw=%.3f present=%.3f tick=%u live=%zu wall_ms=%llu\n",
+                    t5-t0,t2-t1,animationMs,t3-t2,t5-t4,profTick,profLive,
+                    static_cast<unsigned long long>(SDL_GetTicks64()));
             // Per-frame spike log. The PROF line below is a one-second AVERAGE, which
             // is exactly the wrong shape for a periodic hitch -- a 200ms stall twice a
             // second vanishes into a mean. This prints the frames that are outliers

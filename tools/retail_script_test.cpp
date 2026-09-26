@@ -80,6 +80,8 @@ struct RetailReplayProbe {
     static bool yard(World& world,int id,const char* request) {
         world.rebuildOccupancy();
         world.notifyUnitScript(*world.unit(id),request);
+        if (world.scriptYardOpen(id)!=world.unitScripts_.at(id).yardOpen)
+            throw std::runtime_error("indexed yard state differs from the script record");
         return world.unitScripts_.at(id).yardOpen;
     }
 };
@@ -1701,6 +1703,22 @@ int main(int argc,char** argv) {
                 !(world.unit(producer)->missionEvents&4)) return 1;
         }
         std::cout<<"PASS: factory yard transitions wait for occupied blocking cells\n";
+        {
+            World world;world.setVisPlayer(-1);
+            world.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);
+            UnitType factory;factory.id="yard-index";factory.maxHp=100;
+            factory.footX=factory.footZ=1;factory.yardMap="c";factory.simulationScript=script;
+            const int id=world.spawn(&factory,128,128);
+            if (world.scriptYardOpen(-1) || world.scriptYardOpen(id+1000) || world.scriptYardOpen(id)) return 1;
+            if (!RetailReplayProbe::yard(world,id,"Open") || !world.scriptYardOpen(id)) return 1;
+            world.unit(id)->hp={};world.tick(1.f/30);
+            if (world.scriptYardOpen(id)) return 1;
+            world.resetForReplay();
+            const int replacement=world.spawn(&factory,128,128);
+            if (replacement!=id || world.scriptYardOpen(replacement)) return 1;
+            if (!RetailReplayProbe::yard(world,replacement,"Open")) return 1;
+            std::cout<<"PASS: indexed yard reads survive script retirement and replay ID reuse\n";
+        }
         {
             World world;world.setVisPlayer(-1);
             world.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);

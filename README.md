@@ -258,7 +258,8 @@ over retail Glide, controlled by the same Shadows option.
 frame rate, simulation speed, memory, and other available performance metrics.
 Testing targets up to **16,000 total units**, not a guarantee of real-time play
 at that population. Map, unit mix, orders, hardware, and graphics settings all
-matter. See the [performance notes](docs/performance-2026-09-20.md).
+matter. See the [latest profiling results](docs/performance-2026-09-26.md) and
+[earlier performance notes](docs/performance-2026-09-20.md).
 
 ## Project status
 

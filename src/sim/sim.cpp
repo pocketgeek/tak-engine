@@ -2643,6 +2643,11 @@ bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float
 }
 
 bool World::scriptYardOpen(int unitId) const {
+    // Every render snapshot reads this for every unit. Spawn/removal already
+    // maintain the same node-stable index used by tickUnitScript; avoid a tree
+    // walk for each live script. Retain lookup for records outside that index.
+    if (size_t(unitId)<unitScriptById_.size())
+        if (const auto* script=unitScriptById_[size_t(unitId)]) return script->yardOpen;
     const auto it=unitScripts_.find(unitId);
     return it!=unitScripts_.end() && it->second.yardOpen;
 }
@@ -9522,7 +9527,16 @@ uint64_t World::stateHash() const {
         (void)section;
 #endif
     };
+    // Preserve all eight serialized bytes, but combine their multiplications
+    // when the whole word is zero. This also covers sparse piece/unit fields,
+    // not only unused VM stack words.
+    constexpr uint64_t zeroWordFactor=[] {
+        uint64_t factor=1;
+        for (int i=0;i<8;++i) factor*=1099511628211ULL;
+        return factor;
+    }();
     auto mix = [&h](uint64_t v) {
+        if (v==0) { h*=zeroWordFactor;return; }
         for (int i = 0; i < 8; ++i) {
             h ^= (v >> (i * 8)) & 0xFF;
             h *= 1099511628211ULL;
@@ -9552,17 +9566,8 @@ uint64_t World::stateHash() const {
         const auto& state=factory.state;
         mix(state.vm.active); mix(uint32_t(state.vm.ticksPerSecond));
         for (auto value:state.vm.statics) mix(value);
-        // Every word is serialized as eight bytes, including unused stack
-        // words. Eight zero-byte FNV steps equal one multiplication modulo 2^64.
-        constexpr uint64_t zeroWordFactor=[] {
-            uint64_t factor=1;
-            for (int i=0;i<8;++i) factor*=1099511628211ULL;
-            return factor;
-        }();
-        for (const auto& thread:state.vm.threads) for (auto value:thread.words) {
-            if (value==0) h*=zeroWordFactor;
-            else mix(value);
-        }
+        for (const auto& thread:state.vm.threads)
+            for (auto value:thread.words) mix(value);
         for (const auto& piece:state.pieces) {
             mix(piece.active); mix(piece.visible); mix(piece.cached); mix(piece.shaded); mix(piece.rendered);
             for (const auto* values:{&piece.moveTarget,&piece.moveSpeed,&piece.turnTarget,&piece.turnSpeed,

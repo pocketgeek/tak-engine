@@ -14,6 +14,7 @@
         const auto spots = tak::sim::setupMatch(world_, registry_, cfg);
         if (world_.units().size() != 16000)
             throw std::runtime_error("patrol performance map must fit exactly 16000 units");
+        world_.setUnitCap(2000);
         for (const auto& u : world_.units())
             if (u.type && !u.type->isStructure())
                 world_.patrol(u.id, float(world_.nav().width() * 16) - u.x.toFloat(),
@@ -22,7 +23,10 @@
         world_.setVisPlayer(-1);
         edgeScrollOn_ = false;
         patrolPerfAccum_ = 0.0f;
-        mapView_.setZoom(0.9f);
+        float zoom = 0.9f;
+        if (const char* value = tak::devEnv("TAK_PATROL_PERF_ZOOM"))
+            zoom = std::clamp(float(std::atof(value)), 0.1f, 3.0f);
+        mapView_.setZoom(zoom);
         if (!spots.empty()) lookAt(spots[0].first, spots[0].second);
         std::printf("PATROL_PERF initial=%zu balance=%s (local, no AI/combat/network)\n",
                     world_.units().size(), crusades_ ? "crusades" : "standard");
