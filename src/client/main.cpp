@@ -1058,11 +1058,23 @@ int main(int argc, char** argv) {
             // When looping back to the menu, keep this function's vfs alive for the
             // next session (+ its findMap); hand the game its own fresh mount.
             gameView = std::make_unique<GameView>(ren,
-                                                  fromMenu ? tak::hpi::mountRetailRoot(dataRoot, pol) : std::move(vfs),
+                                                  // Campaign result/progression and the next
+                                                  // session still need the front-end catalog.
+                                                  (fromMenu || !campaignStem.empty())
+                                                      ? tak::hpi::mountRetailRoot(dataRoot, pol) : std::move(vfs),
                                                   mapPath, dataRoot, pol, demo,
                                                   scenario,
                                                   navy || amphib || firetest || facetest || mp,
                                                   side, aiSide, crusades);
+#ifndef NDEBUG
+            if (tak::devEnv("TAK_SHOT_BRIEFING") && !campaignId.empty()) {
+                const auto campaigns=tak::loadCampaigns(vfs);
+                if (std::none_of(campaigns.begin(),campaigns.end(),[&](const auto& c) {
+                    return c.id==campaignId && tak::campaignChapter(c,campaignStem).has_value();
+                })) throw std::runtime_error("campaign catalog lost before result/progression");
+                std::fprintf(stderr,"PASS: campaign catalog retained for result/progression\n");
+            }
+#endif
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
             gameView->setSettings(&settings);     // in-game Options edits + persists these
             if (mp) {

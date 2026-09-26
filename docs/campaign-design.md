@@ -222,3 +222,9 @@ protocol recordings under the existing replay-version policy.
 Two fresh ordinary skirmish multiplayer runs also retained the pre-change hash
 `3c4e5e85a939988c`. Mission-only score and condition state does not change the
 ordinary skirmish checksum. No pathfinding implementation was changed.
+
+A final direct-launch check also asserts that the front-end campaign catalog
+survives GameView construction. Command-line campaign sessions now retain it for
+result/progression and subsequent Next/Retry sessions instead of moving it away.
+Both the normal command-line launch and legacy alias passed that assertion,
+briefing tick-zero invariance, and the same repeated campaign state hash above.
