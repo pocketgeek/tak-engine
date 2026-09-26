@@ -10633,3 +10633,28 @@ previously observed, so it does not justify changing carrier waiting behavior.
 Corrected its stale output claiming World always clears passenger orders:
 World now honors the queue flag. The probe is still explicitly native-only and
 does not claim a joined World comparison for that ordering.
+
+### Route every live construction/repair particle through drawUnit (2026-09-25)
+
+The main draw classifier only selected under-construction units and active
+build/reclaim workers for interleaved model/effect rendering. A repair target (and
+a repair worker without another special draw condition) instead went through the
+ordinary geometry batches, which never submit constructionParticles. Completed
+or cancelled workers likewise lost the visible remainder of their particles.
+The classifier now includes every unit with a nonempty captured particle vector,
+so both repair ends and surviving particles reach the existing front/back passes.
+
+Added a repair variant to the existing conjure capture setup, selected with
+TAK_CONJURE_REPAIR=1; it spawns a half-health target and issues Cmd::Repair.
+Inspected `/tmp/repair-araking.png` from the optimized Debug client on Ulasem Arena:
+gold particles are visible around both Araking and Araarch. Invocation used
+TAK_CONJURE_TEST=1, TAK_CONJURE_REPAIR=1, TAK_CONJURE_BUILDER=araking,
+TAK_CONJURE_TARGET=araarch, TAK_SHOT_MS=500, SDL_AUDIODRIVER=dummy and the usual
+`game 'Ulasem Arena' --data assets/game --testbuild --nofog --shot` arguments.
+The screenshot uses SDL's headless software backend and verifies the normal draw
+classification, not native pixels or an accelerated-driver comparison.
+
+The builder-animation helper already includes repairId; this inspection does not
+prove all World/COB callback timing. No speculative pose change was made. Release
+and optimized Debug client rebuilds plus existing visual/production/navblock
+checks are used to validate the rendering change. No retail GUI was launched.

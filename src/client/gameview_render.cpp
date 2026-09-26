@@ -229,11 +229,12 @@
         auto special = [&](const UnitR& u, const UnitGeom& g) {
             bool occluded = !g.canFly && g.occY < g.ay - 2.0f;
             bool conjuring = u.underConstruction && u.type;
-            // A worker (conjuring a site or reclaiming) routes through drawUnit too, so
-            // the build/reclaim nano-sparkle -- drawn there over BOTH the worker and its
-            // target -- shows for any builder/reclaimer, not just occluded/dancing ones.
+            // Repair targets and completed/cancelled workers can still have
+            // particles even without an active construction/reclaim order.
+            // Interleave those particles with the model through drawUnit.
             bool working = u.type && (u.buildSiteId != 0 || u.reclaimId != 0);
-            return occluded || conjuring || working || dancing(u) || headbanging(u);
+            return occluded || conjuring || working || !u.constructionParticles.empty() ||
+                   dancing(u) || headbanging(u);
         };
 
         // Pass 1: every normal unit's shadow, as a projected silhouette of its model,

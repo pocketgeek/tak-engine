@@ -528,7 +528,14 @@
                     return;
                 }
             }
-            world_.queueBuild(id,targetType,siteX,siteZ,false);
+            if (tak::devFlag("TAK_CONJURE_REPAIR")) {
+                const int targetId=spawn(target,siteX,siteZ,0,localPlayer_);
+                world_.unit(targetId)->hp=tak::sim::Fixed::fromFloat(targetType->maxHp*0.5f);
+                tak::net::Command command;command.kind=tak::net::Cmd::Repair;
+                command.unitId=id;command.targetId=targetId;command.player=localPlayer_;
+                tak::sim::applyCommand(world_,registry_,command);
+                std::printf("repair capture: worker #%d -> target #%d\n",id,targetId);
+            } else world_.queueBuild(id,targetType,siteX,siteZ,false);
             if (const auto* u=world_.unit(id))
                 std::printf("conjure fixture: %s #%d at %.0f,%.0f -> %s at %.0f,%.0f; orders=%zu\n",
                             builder,id,u->x.toFloat(),u->z.toFloat(),target,siteX,siteZ,u->orders.size());
