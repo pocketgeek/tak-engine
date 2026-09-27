@@ -1720,6 +1720,7 @@
         if (!fb.hits.empty()) {
             std::lock_guard<std::mutex> hq(hitQueueMutex_);
             for (const auto& h : fb.hits) {
+                pendingMonarchAlerts_ |= h.attackedMonarchPlayers;
                 if (hitQueue_.size() >= kMaxPendingHits) hitQueue_.pop_front();
                 hitQueue_.push_back(h);
             }
@@ -1862,11 +1863,15 @@
         // Drained, not gated on newTick_: the whole point is to pick up impacts
         // from ticks whose snapshots the render never saw.
         std::vector<tak::sim::World::HitFx> hitsToShow;
+        uint8_t monarchAlerts = 0;
         {
             std::lock_guard<std::mutex> hq(hitQueueMutex_);
+            monarchAlerts = std::exchange(pendingMonarchAlerts_, uint8_t(0));
             hitsToShow.assign(hitQueue_.begin(), hitQueue_.end());
             hitQueue_.clear();
         }
+        if (monarchAlert_.admit(monarchAlerts, localPlayer_, spectating_, SDL_GetTicks64()))
+            sounds_.play("alarmmon", 1.f, 1.f, 7, false);
         for (const auto& h : hitsToShow) {
             // Instant-hit weapons (FBI type = Line of Sight) spawn no projectile, so
             // nothing was ever drawn for them -- the Aramon King's Thunder, the Creon

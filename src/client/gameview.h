@@ -57,6 +57,7 @@
 #include "client/retailflightanimation.h"
 #include "client/retaileffectvisibility.h"
 #include "client/replayfile.h"   // .takrep parser (extracted leaf)
+#include "client/monarchalert.h"
 #include "client/sound.h"     // WAV mixer + music + soundclasses (extracted leaf)
 #include "client/threadpool.h"   // data-parallel worker pool (extracted leaf)
 #include "client/gpuvram.h"   // central GPU-texture VRAM accountant + hard cap
@@ -777,6 +778,8 @@ public:
     static constexpr size_t kMaxPendingHits = 4096;
     std::mutex hitQueueMutex_;
     std::deque<tak::sim::World::HitFx> hitQueue_;
+    uint8_t pendingMonarchAlerts_ = 0; // guarded by hitQueueMutex_; survives queue overflow
+    tak::MonarchAlert monarchAlert_;
     std::deque<tak::sim::World::SoundReq> missionSoundQueue_;
     int frameWinningTeam() const { return front().winningTeam; }
     // world_.discoActive/headbangActive(p) == players_[p].{disco,headbang}Left > 0.

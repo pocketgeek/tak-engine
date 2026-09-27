@@ -3490,6 +3490,7 @@ float Weapon::damageVs(const UnitType* t) const {
 void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId,
                      Unit* primary, std::optional<std::array<int32_t,3>> position) {
 
+    const size_t hitIndex = hits_.size();
     // Record the impact for the viewer (hit sound / effect).
     {
         HitFx hf{hx, hz, &w, primary ? primary->type : nullptr};
@@ -3552,6 +3553,12 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         damageCrtUsed_ = true;
         const int dealt = retailDamageWithSpread(scaledDamage, crtRand(0x52a3ba));
         e.hp -= Fixed::fromInt(dealt);
+        // Retail 409f7a..409fb2 routes the local monarch's hit to AlarmMon.
+        // Keep ownership at impact, including splash and fatal hits; no visibility
+        // gate and no simulation/RNG changes for this presentation event.
+        if (dealt > 0 && e.type && e.type->commander && e.player >= 0 && e.player < 8 &&
+            (fromPlayer != e.player || w.dmgType == 1))
+            hits_[hitIndex].attackedMonarchPlayers |= uint8_t(1u << e.player);
         // 52a40a forms the hit bearing from the impact position, relative to
         // the victim's current native heading. 51a140 retains its high byte;
         // 51a4d2 notifies each normal/fire/explosion recipient, including splash.

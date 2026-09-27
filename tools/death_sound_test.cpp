@@ -1,4 +1,5 @@
 #include "client/sound.h"
+#include "client/monarchalert.h"
 #include "client/retaildeathsfx.h"
 #include "cob/vm.h"
 #include "sim/matchsetup.h"
@@ -45,6 +46,15 @@ int main(int argc,char** argv) {
     }
     int failures=0;
     const auto check=[&](bool ok,const char* message) {if(!ok){++failures;std::cerr<<"FAIL "<<message<<'\n';}};
+    {
+        tak::MonarchAlert alert;
+        check(!alert.admit(2,0,false,100), "other player's monarch does not alert");
+        check(!alert.admit(1,0,true,100), "spectators do not hear a local monarch alarm");
+        check(alert.admit(1,0,false,100), "first local monarch hit alerts immediately");
+        check(!alert.admit(1,0,false,15099), "monarch alarm cooldown is 15 real seconds");
+        check(alert.admit(1,0,false,15100), "monarch alarm repeats at cooldown boundary");
+        check(!alert.admit(0,0,false,40000), "cooldown expiry alone does not play an alarm");
+    }
     SDL_SetMainReady();
     SDL_setenv("SDL_AUDIODRIVER","dummy",1);
     if(SDL_Init(SDL_INIT_AUDIO)!=0)return 2;
@@ -83,6 +93,9 @@ int main(int argc,char** argv) {
         auto vfs=tak::hpi::mountRetailRoot(argv[1]);
         std::set<std::string> checkedSounds;
         SoundBank decoder;
+        check(vfs.has("sounds/alarmmon.wav"), "retail monarch alarm exists");
+        check(SoundBankTestAccess::decodes(decoder,vfs.read("sounds/alarmmon.wav")),
+              "retail monarch alarm decodes to PCM");
         int decoded=0,missingShipped=0;
         const auto auditSound=[&](std::string sound) {
             std::transform(sound.begin(),sound.end(),sound.begin(),::tolower);

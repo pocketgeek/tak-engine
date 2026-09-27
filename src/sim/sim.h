@@ -1814,6 +1814,7 @@ public:
     // for the material-specific hit sound). Cleared at the start of each tick.
     struct HitFx { float x = 0, z = 0; const Weapon* weapon = nullptr;
                    const UnitType* target = nullptr;
+                   uint8_t attackedMonarchPlayers = 0; // cosmetic, includes splash recipients
                    int victimId = 0;            // primary struck unit (0 = ground hit)
                    float fromX = 0, fromZ = 0;  // attacker pos for hitscan presentation
                    int fromPlayer = 0;         // display colour for hitscan projectile models

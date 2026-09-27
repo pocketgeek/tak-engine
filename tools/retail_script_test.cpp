@@ -956,6 +956,26 @@ int main(int argc,char** argv) {
     {
         using namespace tak::sim;
         auto require=[](bool ok,const char* message) {if(!ok)throw std::runtime_error(message);};
+        {
+            UnitType monarch;monarch.maxHp=1000;monarch.commander=true;
+            UnitType soldier;soldier.maxHp=1000;
+            World alerts;alerts.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);
+            int primary=alerts.spawn(&soldier,200,200,0,1);
+            int ruler=alerts.spawn(&monarch,216,200,0,1);
+            alerts.tick(1.f/30); // build the spatial index before testing splash
+            Weapon blast;blast.damage=100;blast.aoe=64;blast.dmgType=3;
+            RetailReplayProbe::hit(alerts,blast,200,200,0,primary);
+            require(alerts.hits().back().attackedMonarchPlayers==2,
+                "splash monarch damage records owner even when primary is not a monarch");
+            alerts.clearHits();blast.aoe=0;blast.damage=0;
+            RetailReplayProbe::hit(alerts,blast,216,200,0,ruler);
+            require(alerts.hits().back().attackedMonarchPlayers==0,"zero damage does not alert");
+            blast.damage=2000;
+            RetailReplayProbe::hit(alerts,blast,216,200,0,ruler);
+            require(alerts.hits().back().attackedMonarchPlayers==2,"fatal monarch hit retains alarm");
+            alerts.tick(1.f/30);
+            require(alerts.hits().empty(),"monarch events clear with tick impacts");
+        }
         auto hitFile=std::make_shared<tak::cob::File>();
         hitFile->numStatics=4;hitFile->scripts={{"HitByWeapon",0}};
         for(uint32_t i=0;i<4;++i)
