@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.6-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.7-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -29,7 +29,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured in v0.7.6. Army and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured in v0.7.7. Army and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -41,43 +41,45 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.6
+## New in 0.7.7
 
-- **Stream title and lobby music:** broadcasts now include the front-end music
-  at your current music/master volume, switching to mixed game audio when the
-  match starts. YouTube receives stereo AAC at 44.1 kHz / 128 Kbps.
-- **Monarch attack warning:** the original AlarmMon sound plays when your monarch
-  takes damage, including off-screen and splash hits, with a 15-second cooldown.
-- **Group recall:** press **1–0** once to select a group or formation without
-  moving the camera; press the same number again to track it. Holding a number
-  does not count as a second press.
-- **Scoring documentation:** the results screen already uses retail's authored
-  kill values; the guide now explains scoring and the differences between balance modes.
+- **Build through trees and rocks:** reclaim-capable mobile builders clear
+  reclaimable obstacles from a valid construction footprint, then build. This
+  works with queued sites and build lines; Stop cancels the job.
+- **Upgrade lodestones in place:** all five factions can replace their completed
+  basic lodestone with their advanced one on the same mana spot. The old building
+  dissolves and the new one materializes within the advanced building's normal
+  build time, with its normal mana cost and construction effects.
+- **Clearer, more accurate cursors:** construction assist, repair, reclaim, and
+  transport feedback checks the selected units and target. Unrestricted builders
+  can assist construction they own, including types outside their build menu;
+  restricted builders still require the target in their build menu.
+- **Building destruction:** corrected immediate ruin handoff for sixteen building
+  types, including the Aramon Keep, restored missing ruin meshes, and preserved
+  retail's separate rules for model position and blocked footprint.
+- **Fog and range:** previously explored terrain stays mapped under fog. The
+  **Double Sight/Radar** lobby option doubles both distances in skirmish and
+  multiplayer; campaigns keep their authored ranges.
+- **Match endings:** defeated players reach results after three seconds without
+  pausing survivors. Results show only starting participants, including defeated
+  players, and omit the generic “Enter: Continue” prompt.
+- **Factory orders:** selected production buildings show their rally/queued
+  orders while Shift is held, and expose move/patrol commands where applicable.
 
-See the [0.7.6 validation report](docs/release-0.7.6-validation.md) for test and remote-sweep results.
+See the [0.7.7 validation report](docs/release-0.7.7-validation.md) for builds,
+tests, and remote multiplayer sweeps, and the
+[construction, cursor, and ruin audit](docs/construction-cursors-2026-09-27.md)
+for retail comparisons and their scope.
 
-### Also included from 0.7.5
-
-- **YouTube streaming:** start from Settings or F9, paste a stream key, and stream
-  through the bundled encoder. Defaults are **Max 3840 / 60 FPS**; the width cap
-  preserves ultrawide aspect ratios. Streaming survives menu/match transitions,
-  supports hardware encoding, and recovers from connection failures.
-- **Performance:** reused unit geometry and shadow tiles, reduced animation
-  conversion and snapshot/checksum work, and faster GPU-assisted stream capture.
-  Streaming now keeps refresh-rate pacing when VSync is enabled.
-- **Live statistics:** Real Time and Game Time, living player units and kills,
-  separate client/local-server CPU percentages, and whole-device GPU usage.
-- **Campaigns:** corrected mission conditions and dialogue routing, more readable
-  objectives, and a loading screen during mission setup instead of a lobby flash.
-- **Combat and presentation:** corrected Harpy effects and weapon/death sound
-  routing, fixed results-screen text alignment and title-button seams, and stopped
-  stationary buildings rotating toward their targets.
-- **Naval play:** corrected Sea Fort water placement and factory-yard validation.
-  Animated boat shadows are now included as an optional enhancement over retail.
+Recent releases also added **YouTube streaming** with title/lobby music,
+**Max 3840 / 60 FPS** defaults, hardware encoding, and VSync pacing; improved
+rendering/shadow performance and campaign presentation; corrected naval
+construction and combat; and restored the monarch-under-attack warning.
+Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.6** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.7** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -137,6 +139,10 @@ Each ordinary skirmish starts with your Monarch. Build your economy and army;
 Zhon's mobile conjurers replace the conventional keep-based production chain.
 Unless **Monarch Expendable** is enabled, losing your Monarch loses the game.
 The lobby supports a maximum of **2,000 live units per player**.
+**Double Sight/Radar** doubles every unit's sight and radar distance in skirmish
+and multiplayer. It does not change weapon range or campaign missions.
+Terrain you have explored remains visible under fog after your units leave;
+enemy units outside current sight remain untargetable.
 
 | AI | What to expect |
 | --- | --- |
@@ -269,7 +275,18 @@ networked games (single-player also uses a local server), not replay playback.
 | **Right-drag** with a reclaim-capable mobile builder | Reclaim an area; **Shift** appends the sweep |
 
 Mobile builders use build icons to arm placement instead of ordinary factory
-queues. A mobile builder producing an infinite queue accepts only **Stop**
+queues. A reclaim-capable builder automatically clears trees, rocks, and other
+reclaimable obstacles from a valid site before construction starts. Terrain,
+other units, and unreclaimable obstacles can still prevent placement.
+
+To upgrade a lodestone, choose your faction's advanced version and place it on
+your completed basic lodestone's mana spot. Its larger footprint must fit. The
+old building dissolves during the first half of construction; the new one
+materializes during the second half. The upgrade uses the normal advanced cost
+and build time, needs no extra unit-cap slot, and produces no mana until complete.
+Cancellation or destruction does not restore the consumed basic lodestone.
+
+A mobile builder producing an infinite queue accepts only **Stop**
 until that queue is cleared. See the [user guide](docs/user-guide.md#controls)
 for construction and reclaim details.
 
@@ -281,11 +298,9 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-**The current development build uses protocol 187** for automatic construction-site clearing, in-place lodestone upgrades and the doubled sight/radar
-match option. All participants need that build. Released **0.7.6 and 0.7.5 use protocol 184**, incorporating stationary building combat, campaign,
-area-clearing, and naval fixes. Version 0.7.1 uses 179; these versions cannot
-mix in a match.
-Version 0.7.0 uses 177. Older incompatible clients and recordings are rejected.
+**Version 0.7.7 uses protocol 187** for the construction, assist, building-death,
+and sight/radar changes. Versions 0.7.6 and 0.7.5 use protocol 184; these builds
+cannot share a match. Older incompatible clients and recordings are rejected.
 The connection checks gameplay definitions, but
 that fingerprint does not cover every file: keep gameplay overrides, scripts,
 models, and maps compatible too.

@@ -1,14 +1,14 @@
 # README screenshots
 
-Captured on 2026-09-26 from TAK Engine **v0.7.6**, prepared from commit
-`56047fe` with the release version update.
+Captured on 2026-09-27 from TAK Engine **v0.7.7**, tagged at commit
+`901aa8b`.
 All seven images are actual engine output at 1600 × 1000, encoded as JPEG at
 quality 90 with full chroma resolution. No units, effects, or UI were added to
 the images afterward.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.7.6 |
+| `title.jpg` | Title menu showing version 0.7.7 |
 | `gameplay.jpg` | Aramon local development demo on Ulasem Arena, one simulated second in; camera zoomed to 2× |
 | `naval.jpg` | Development naval demo on Cairbray Coast Landing, eight simulated seconds in; ships on water |
 | `lobby.jpg` | Create-game screen with Ulasem Arena preview |

@@ -42,6 +42,17 @@ rosters. `hpitool where <dir> <path>` helps inspect archive resolution, and
 
 ## Playing
 
+Mobile builders that can reclaim automatically clear reclaimable trees, rocks,
+and other obstacles from an otherwise valid building footprint before starting
+construction. Shift-queued sites and build lines use the same sequence; Stop
+cancels it. Unreclaimable features, unsuitable terrain, and occupying units still
+block placement. This automatic clearing is an engine convenience beyond retail.
+
+Construction assistance follows the retail builder restriction: an unrestricted
+builder can assist unfinished construction owned by the same player; a
+`builderlimited` unit must also have that target in its build menu. The cursor
+indicates whether the selected units can perform the action.
+
 To upgrade a lodestone, select a builder that offers the faction's advanced
 lodestone and place it on your completed basic lodestone's mana spot. This works
 for all five factions, including Creon's Mana Amplifier, with either balance set.
