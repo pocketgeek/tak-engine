@@ -2161,7 +2161,7 @@
         if (vt==visuals_.end()) {clear();return;}
         const Anim* anim = nullptr;
         auto at = anims_.find(u.id);
-        if (at != anims_.end() && !u.replacementModel) anim = &at->second;
+        if (at != anims_.end() && !u.replacementModel && !u.corpsePhase) anim = &at->second;
 
         float zm = mapView_.zoom();
         int slot = colorSlot_[u.player & 7];
@@ -3019,7 +3019,7 @@
             for (const auto& fi : features_) {
                 const auto* sf = world_.feature(fi.simId);
                 simState.push_back(sf ? FeatSim{sf->type, sf->alive && sf->burn != 0,
-                                                sf->alive, sf->fx, sf->fz, true, sf->burnStarted}
+                                                sf->alive, sf->fx, sf->fz, true, sf->burnStarted, world_.featureReclaimable(*sf)}
                                       : FeatSim{-1, false, true, 1, 1, false});
             }
             // The type NAMES are read below too, and featureTypes() is filled at map
@@ -3046,6 +3046,7 @@
                 fi.x = float((fi.simId % mapView_.map().width) * 16 + fi.fx * 8);
                 fi.z = float((fi.simId / mapView_.map().width) * 16 + fi.fz * 8);
             }
+            fi.reclaimable=st.reclaimable;
             fi.hasSim = st.hasSim ? 1 : 0;    // ...and whether it is reclaimable at all
             if (st.type < 0) continue;
             if (fi.simType == -2) fi.simType = st.type;        // first sight

@@ -324,6 +324,7 @@
         static const char* kSides[5] = {"ara", "tar", "ver", "zon", "cre"};
         for (int i = 0; i < 5; ++i) if (side_ == kSides[i]) st.faction = i;
         for (int p = 0; p < f.numPlayers && p < int(f.players.size()); ++p) {
+            if (resultParticipants_ && !(*resultParticipants_ & (1u<<p))) continue;
             const PlayerR& pr = f.players[size_t(p)];
             tak::ResultRow row;
             row.name = !playerName_[p & 7].empty() ? playerName_[p & 7]
@@ -385,6 +386,67 @@
     }
 
     void GameView::testBuild() {
+#ifndef NDEBUG
+        if (tak::devFlag("TAK_CURSOR_TEST")) {
+            noFog_=true;edgeScrollOn_=false;
+            world_.setPlayerCount(8);
+            const int builder=spawn("araking",1800,2100,0,0);
+            const int soldier=spawn("arasword",1650,2100,0,0);
+            const int site=spawn("creacad",2000,2000,0,0);
+            world_.unit(site)->underConstruction=true;world_.unit(site)->buildBegun=true;
+            world_.unit(site)->hp=tak::sim::Fixed::fromInt(10);
+            mapView_.setZoom(1);
+            mapView_.setOffset(1400,1500);
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            const auto point=[&](int id) {
+                const auto* u=frameUnitP(id);const auto p=unitScreen(*u);
+                const auto& box=unitHitBox(u->type);const float zoom=mapView_.zoom();
+                mouseX_=p.x+(box.x+box.w*.5f)*zoom;
+                mouseY_=p.y+(12+box.y+box.h*.5f)*zoom;
+            };
+            const auto expect=[&](tak::CursorId expected,const char* message) {
+                bool tint=false;const auto got=desiredCursor(tint);
+                if (got!=expected) throw std::runtime_error(std::string(message)+": cursor "+
+                    std::to_string(int(got))+" expected "+std::to_string(int(expected)));
+                std::fprintf(stderr,"PASS: %s\n",message);
+            };
+            publish();point(site);selection_={soldier};
+            expect(tak::CursorId::Green,"non-builder cannot assist unfinished construction");
+            selection_={builder};
+            expect(tak::CursorId::Repair,"unrestricted builder can assist own construction");
+            const auto* original=world_.unit(builder)->type;
+            auto restricted=*original;restricted.builderLimited=true;
+            world_.unit(builder)->type=&restricted;publish();point(site);
+            expect(tak::CursorId::Green,"restricted builder cannot assist an unavailable type");
+            pendingCmd_='r';expect(tak::CursorId::Normal,"armed repair refuses unavailable construction");
+            pendingCmd_=0;world_.unit(builder)->type=original;publish();point(site);
+            rightClickOrder(2000,2000,false);
+            if (world_.unit(builder)->buildSiteId!=site) throw std::runtime_error("assist cursor click did not assist");
+            world_.cancelBuilds(builder);world_.stop(builder);
+            world_.unit(site)->underConstruction=false;world_.unit(site)->hp=tak::sim::Fixed::fromInt(10);
+            publish();point(site);
+            expect(tak::CursorId::Repair,"damaged friendly advertises repair");
+            rightClickOrder(2000,2000,false);
+            if (world_.unit(builder)->orders.empty() || world_.unit(builder)->orders.back().repairTarget!=site)
+                throw std::runtime_error("repair cursor click did not repair");
+            world_.stop(builder);selection_.clear();
+            expect(tak::CursorId::Select,"unselected building uses its displayed bounds");
+            selection_={soldier};pendingCmd_='r';
+            expect(tak::CursorId::Normal,"non-builder cannot arm repair");
+            pendingCmd_='u';expect(tak::CursorId::Normal,"non-transport cannot arm unload");
+            pendingCmd_='c';expect(tak::CursorId::Normal,"non-reclaimer cannot arm reclaim");
+            pendingCmd_=0;
+            resultParticipants_=uint8_t((1u<<0)|(1u<<3));
+            playerName_[0]="PLAYER";playerName_[3]="AI";
+            world_.player(3).defeated=true;publish();
+            const auto results=resultStats();
+            if (results.rows.size()!=2 || results.rows[1].name!="AI" || !results.rows[1].defeated)
+                throw std::runtime_error("sparse results roster lost a participant or included an empty slot");
+            std::fprintf(stderr,"PASS: sparse results show participants, including defeated players\n");
+            resultParticipants_.reset();selection_={builder};
+            return;
+        }
+#endif
         // Repeatable rendering workload for the shadow performance regression.
         // This entry point is only reached by the local development harness.
         if (const char* countText=tak::devEnv("TAK_SHADOW_BENCH")) {
@@ -1532,7 +1594,7 @@
         for(auto it=smokeOwners_.begin();it!=smokeOwners_.end();) {
             const auto* owner=world_.unit(*it);
             if(!owner || tak::retailAttachedSfxOwnerRemoved(owner->alive(),owner->deadFor,
-                    owner->corpseStatue,tak::sim::World::kCorpseAnimTicks)) {
+                    owner->corpseStatue,owner->corpseAnimationTicks())) {
                 smoke.removedOwners.push_back(*it);it=smokeOwners_.erase(it);
             } else ++it;
         }
@@ -1684,8 +1746,9 @@
             s.buildQueue = u.buildQueue; s.orders = u.orders; s.rally = u.rally;
             s.cargo = u.cargo; s.repeatType = u.repeatType;
             s.captureMovement(u);
+            s.corpseAnimationTicks=u.corpseAnimationTicks();
             s.corpsePhase = !u.alive() && u.deadFor < u.corpseUntil &&
-                            u.deadFor >= (u.corpseStatue >= 0 ? 0 : tak::sim::World::kCorpseAnimTicks);
+                            u.deadFor >= u.corpseAnimationTicks();
             s.deathType = u.deathType;
             s.severity = u.severity;
             s.corpseFeat = u.corpseStatue >= 0 ? u.corpseStatue
@@ -3089,7 +3152,7 @@
                        size_t(piece)>=vm->retailPieces().size())return;
                     const int32_t deadForTicks=std::max(0,int32_t(unit->deadFor*30.0f+0.5f));
                     if(tak::retailAttachedSfxOwnerRemovedSnapshot(false,deadForTicks,
-                           unit->corpseStatue,tak::sim::World::kCorpseAnimTicks))return;
+                           unit->corpseStatue,unit->corpseAnimationTicks))return;
                     const auto& model=unit->type->productionModel;
                     if(std::none_of(model.begin(),model.end(),[&](const auto& node) {
                         return node.scriptPiece==piece;
@@ -3099,7 +3162,7 @@
                     event.code=sfx;
                     event.ownerId=id;
                     event.ownerRetireTick=tak::retailAttachedSfxRetirementTick(
-                        event.tick,deadForTicks,tak::sim::World::kCorpseAnimTicks);
+                        event.tick,deadForTicks,unit->corpseAnimationTicks);
                     event.position=tak::sim::retailScriptEffectPosition(unit->worldPosition,
                         model,vm->retailPieces(),piece,uint16_t(unit->headingWord+32768),
                         unit->bodyPitch,unit->bodyRoll);

@@ -1136,7 +1136,7 @@ int main(int argc, char** argv) {
                     throw std::runtime_error("invalid build planner catalogue");
                 unsigned actual=0;for (const auto& entry:cache->entries) actual+=unsigned(entry.inputs.count);
                 if (population!=actual) throw std::runtime_error("build planner population disagrees");
-                auto& planner=cache->planner.emplace();planner.limited=limited!=0;
+                auto& planner=cache->planner.emplace(tak::sim::RetailBuildCache::Planner{});planner.limited=limited!=0;
                 for (unsigned i=0;i<count;++i) {
                     RetailBuildCache::PlannerType type;
                     unsigned weight,special,size;

@@ -24,6 +24,30 @@ namespace {
     }
 }
 
+    bool GameView::hasReclaimTarget(float wx,float wz) const {
+        for (const auto& f:features_) {
+            if (!f.hasSim || !f.aliveVis || !f.reclaimable || !canPickPoint(f.x,f.z)) continue;
+            const float dx=f.x-wx,dz=f.z-wz,r=18.f+8.f*std::max(f.fx,f.fz);
+            if (dx*dx+dz*dz<r*r) return true;
+        }
+        for (const auto* u:front().live) {
+            if (u->alive() || !u->corpsePhase || u->corpseFeat<0 || !canPickPoint(u->x,u->z)) continue;
+            const auto& f=world_.featureTypes().at(size_t(u->corpseFeat));
+            const float dx=u->x-wx,dz=u->z-wz,r=18.f+8.f*std::max(f.fx,f.fz);
+            if (f.reclaimable && dx*dx+dz*dz<r*r) return true;
+        }
+        return false;
+    }
+
+    bool GameView::canAssistSite(const UnitR& b,const UnitR& site) const {
+        if (b.id==site.id || !b.alive() || b.embarked() || b.underConstruction ||
+            !b.type || !b.type->isBuilder || b.type->isStructure() || b.repeatType ||
+            !site.alive() || !site.type || !site.underConstruction ||
+            b.player!=site.player) return false;
+        const auto& menu=registry_.buildable(b.type->id);
+        return !b.type->builderLimited || std::find(menu.begin(),menu.end(),site.type->id)!=menu.end();
+    }
+
     bool GameView::canLoadPassenger(const UnitR& u,const UnitR& t) const {
         if(u.id==t.id || !u.alive() || !t.alive() || u.embarked() || t.embarked() ||
            !u.type || !t.type || u.underConstruction || t.underConstruction ||
@@ -63,15 +87,19 @@ namespace {
             }
             // Clicking a friendly transport = board it.
             int friendlyTransport = -1;
-            float bestT = 24 * 24;
+            float bestT = 1e30f;
             for (const UnitR* _up : front().live) {
                 const UnitR& u = *_up;
                 if (!canPickUnit(u)) continue;
                 if (!u.alive() || !first || u.player != first->player || !u.type ||
                     !u.type->canTransport)
                     continue;
-                float dx = u.x - wx, dz = u.z - wz;
-                if (dx * dx + dz * dz < bestT) { bestT = dx * dx + dz * dz; friendlyTransport = u.id; }
+                float d=0;
+                if (unitUnderCursor(u,mouseX_,mouseY_,&d) && d<bestT &&
+                    std::any_of(selection_.begin(),selection_.end(),[&](int id) {
+                        const auto* passenger=frameUnitP(id);
+                        return passenger && canLoadPassenger(*passenger,u);
+                    })) {bestT=d;friendlyTransport=u.id;}
             }
             if (friendlyTransport >= 0) {
                 for (int id : selection_) {
@@ -92,17 +120,16 @@ namespace {
             // Either case consumes the click (no move fallthrough).
             {
                 int siteId = -1;   float bestSite = 1e18f;
-                int allyId = -1;   float bestAlly = 22.0f * 22.0f;
+                int allyId = -1;   float bestAlly = 1e30f;
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
                     if (!canPickUnit(u)) continue;
                     if (!u.alive() || u.embarked() || !u.type || !first ||
                         !world_.allied(u.player, first->player)) continue;
-                    float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
+                    float d=0;
+                    if (!unitUnderCursor(u,mouseX_,mouseY_,&d)) continue;
                     if (u.underConstruction) {
-                        // Any allied conjure (yours or a teammate's) can be revived.
-                        float r = 20.0f + 8.0f * float(std::max(u.type->footX, u.type->footZ));
-                        if (d < r * r && d < bestSite) { bestSite = d; siteId = u.id; }
+                        if (d < bestSite) { bestSite = d; siteId = u.id; }
                     } else if (d < bestAlly) { bestAlly = d; allyId = u.id; }
                 }
                 if (siteId >= 0) {
@@ -110,10 +137,7 @@ namespace {
                     bool any = false;
                     for (int id : selection_) {
                         const auto* bu = frameUnitP(id);
-                        if (!bu || !bu->type || !bu->type->isBuilder) continue;
-                        const auto& menu = registry_.buildable(bu->type->id);
-                        if (std::find(menu.begin(), menu.end(), st->type->id) == menu.end())
-                            continue;
+                        if (!bu || !canAssistSite(*bu,*st)) continue;
                         tak::net::Command c;
                         c.kind = tak::net::Cmd::Assist;
                         c.unitId = id; c.targetId = siteId; c.queue = queue;
@@ -124,6 +148,16 @@ namespace {
                     return;   // non-builders / can't-build-it: nothing happens
                 }
                 if (allyId >= 0) {
+                    const auto* target=frameUnitP(allyId);
+                    bool repaired=false;
+                    if (target && target->hp<target->type->maxHp) for (int id:selection_) {
+                        const auto* b=frameUnitP(id);
+                        if (!b || !b->type || !b->type->isBuilder || b->type->isStructure() ||
+                            b->underConstruction || b->id==allyId || b->repeatType) continue;
+                        tak::net::Command c;c.kind=tak::net::Cmd::Repair;c.unitId=id;
+                        c.targetId=allyId;c.queue=queue;issue(c);repaired=true;
+                    }
+                    if (repaired) return;
                     bool any = false;
                     for (int id : selection_) {
                         const auto* gu = frameUnitP(id);
@@ -141,14 +175,14 @@ namespace {
             // Clicking near an enemy = attack; else formation move. (Allies are
             // not enemies -- clicking one falls through to a move, not an attack.)
             int enemy = -1;
-            float best = 20 * 20;
+            float best = 1e30f;
             for (const UnitR* _up : front().live) {
                 const UnitR& u = *_up;
                 if (!canPickUnit(u)) continue;
                 if (!u.alive() || u.embarked() || !first ||
                     world_.allied(u.player, first->player)) continue;
-                float dx = u.x - wx, dz = u.z - wz;
-                if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
+                float d=0;
+                if (unitUnderCursor(u,mouseX_,mouseY_,&d) && d<best) {best=d;enemy=u.id;}
             }
             // A reclaimer clicking directly on a reclaimable feature (with no enemy
             // there) reclaims just that one -- retail's single Reclaim.
@@ -160,7 +194,7 @@ namespace {
                     std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
                     if (useSimThread_) lk.lock();
                     for (const auto& f : world_.features()) {
-                        if (!f.alive || !canPickPoint(f.x.toFloat(), f.z.toFloat())) continue;
+                        if (!world_.featureReclaimable(f) || !canPickPoint(f.x.toFloat(), f.z.toFloat())) continue;
                         float dx = f.x.toFloat() - wx, dz = f.z.toFloat() - wz, d = dx * dx + dz * dz;
                         float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
                         if (d < r * r && d < bestF) { bestF = d; fid = f.id; fhit = true; }
@@ -271,7 +305,8 @@ namespace {
         if (placing_ && mouseX_ >= 0) {
             const bool selectedBuilder=std::any_of(selection_.begin(),selection_.end(),[&](int id) {
                 const UnitR* unit=frameUnitP(id);
-                return unit && unit->type && unit->type->isBuilder &&
+                return unit && unit->alive() && !unit->embarked() && !unit->underConstruction &&
+                       unit->type && unit->type->isBuilder &&
                        !registry_.buildable(unit->type->id).empty();
             });
             return tak::cursorForBuildPlacement(true,selectedBuilder);
@@ -289,12 +324,14 @@ namespace {
                 bool anySelected=false,hasAirstrike=false,allAirstrike=!selection_.empty();
                 for(int id:selection_) {
                     const UnitR* unit=frameUnitP(id);
-                    if(!unit || !unit->alive() || !unit->type)continue;
+                    if(!unit || !unit->alive() || unit->embarked() || unit->underConstruction || !unit->type ||
+                       !unit->type->hasPrimaryWeaponBlock || (unit->repeatType && !unit->type->isStructure()))continue;
                     anySelected=true;
                     const bool airstrike=tak::client::unitHasAirstrikeCursor(
                         *unit->type,unit->weaponSlot);
                     hasAirstrike|=airstrike;allAirstrike&=airstrike;
                 }
+                if (!anySelected) return tak::CursorId::Normal;
                 allAirstrike&=anySelected;
                 tak::CursorId ordinaryCursor=tak::CursorId::Normal;
                 if(mouseX_>=0 && !selection_.empty()) {
@@ -325,6 +362,42 @@ namespace {
                         }
                     }
                 }
+            }
+            const bool capable=std::any_of(selection_.begin(),selection_.end(),[&](int id) {
+                const auto* u=frameUnitP(id);
+                if (!u || !u->alive() || u->embarked() || u->underConstruction || !u->type) return false;
+                switch (pendingCmd_) {
+                    case 'm': return u->type->canMove;
+                    case 'p': return u->type->canPatrol;
+                    case 'g': return u->type->canGuard;
+                    case 'c': return u->type->canReclaim;
+                    case 'r': return u->type->isBuilder && !u->type->isStructure();
+                    case 'u': return u->type->canTransport;
+                    default: return true;
+                }
+            });
+            if (!capable) return tak::CursorId::Normal;
+            if (pendingCmd_=='c') {
+                float wx,wz;pickWorld(mouseX_,mouseY_,wx,wz);
+                return hasReclaimTarget(wx,wz) ? tak::CursorId::Reclaim : tak::CursorId::Normal;
+            }
+            // Repair and guard are target-dependent in the native selector.
+            if (pendingCmd_=='r' || pendingCmd_=='g') {
+                bool eligible=false;
+                for (const auto* target:front().live) {
+                    if (!canPickUnit(*target) || !target->alive() || target->embarked() ||
+                        !target->type || !unitUnderCursor(*target,mouseX_,mouseY_)) continue;
+                    for (int id:selection_) {
+                        const auto* u=frameUnitP(id);
+                        if (!u || !u->alive() || u->embarked() || u->underConstruction ||
+                            !u->type || u->id==target->id || !world_.allied(u->player,target->player)) continue;
+                        eligible|=pendingCmd_=='r'
+                            ? canAssistSite(*u,*target) || (u->type->isBuilder && !u->type->isStructure() &&
+                                !target->underConstruction && target->hp<target->type->maxHp)
+                            : u->type->canGuard;
+                    }
+                }
+                if (!eligible) return tak::CursorId::Normal;
             }
             return tak::cursorForArmedCommand(pendingCmd_,transportCount==1,hasLoadTarget);
         }
@@ -368,17 +441,45 @@ namespace {
                     if (d < bEnemy) { bEnemy = d; enemy = u.id; }
                 }
             }
-            if (loadId >= 0) return tak::CursorId::Load;
-            if (siteId >= 0) return tak::CursorId::Repair;   // assist a build/revive
+            if (loadId >= 0) {
+                const auto* transport=frameUnitP(loadId);
+                for (int id:selection_) {
+                    const auto* passenger=frameUnitP(id);
+                    if (passenger && canLoadPassenger(*passenger,*transport)) return tak::CursorId::Load;
+                }
+                return tak::CursorId::Select;
+            }
+            if (siteId >= 0) {
+                const auto* site=frameUnitP(siteId);
+                for (int id:selection_) {
+                    const auto* builder=frameUnitP(id);
+                    if (builder && canAssistSite(*builder,*site)) return tak::CursorId::Repair;
+                }
+                return tak::CursorId::Green;
+            }
+            if (ownId>=0 || allyId>=0) {
+                const auto* target=frameUnitP(ownId>=0 ? ownId : allyId);
+                if (target && target->hp<target->type->maxHp) for (int id:selection_) {
+                    const auto* builder=frameUnitP(id);
+                    if (builder && builder->alive() && !builder->embarked() && !builder->underConstruction &&
+                        builder->id!=target->id && builder->type && builder->type->isBuilder &&
+                        builder->type->buildMovementCode && !builder->type->isStructure() && !builder->repeatType)
+                        return tak::CursorId::Repair;
+                }
+            }
             if (ownId  >= 0) return tak::CursorId::Select;
             if (allyId >= 0) return tak::CursorId::Green;
             if (enemy >= 0) {
                 const UnitR* target = frameUnitP(enemy);
                 if (!target || !target->type) return tak::CursorId::TooFar;
-                bool unknownRange = false;
+                bool unknownRange = false,canAttack=false;
                 for (int id : selection_) {
                     const UnitR* attacker = frameUnitP(id);
-                    if (!attacker || !attacker->type || attacker->type->weapons.empty()) continue;
+                    if (!attacker || !attacker->alive() || attacker->embarked() || attacker->underConstruction ||
+                        !attacker->type || !attacker->type->hasPrimaryWeaponBlock ||
+                        (attacker->repeatType && !attacker->type->isStructure())) continue;
+                    canAttack=true;
+                    if (attacker->type->weapons.empty()) continue;
                     const auto& type = *attacker->type;
                     const int slot = type.weaponSwitching
                         ? std::clamp(attacker->weaponSlot, 0, int(type.weapons.size()) - 1)
@@ -397,32 +498,24 @@ namespace {
                     if (range == tak::client::CursorWeaponRange::Unknown)
                         unknownRange = true;
                 }
+                if (!canAttack) return tak::CursorId::Normal;
                 return unknownRange ? tak::CursorId::Attack : tak::CursorId::TooFar;
             }
 
-            // A reclaimable feature under the pointer (reclaimer selected) -> broom.
-            if (haveReclaimer()) {
-                // RENDER-SIDE snapshot, not world_.features(). This runs every frame (and
-                // again under hardware-cursor mode), and the sim worker both mutates
-                // feature fields and push_backs corpses onto that vector -- a reallocation
-                // under this loop, not merely a torn read. features_ is ours, and
-                // syncBurningFeatures keeps aliveVis and the footprint current under the
-                // lock. Locking here instead would be correct but would put a per-frame
-                // simMutex_ wait back into the HUD, which is what the feature-sync
-                // generation counter just removed.
-                for (const auto& f : features_) {
-                    // hasSim, NOT just aliveVis. features_ holds every VISUAL feature,
-                    // including decoration with no sim feature behind it (shoreline
-                    // waves and the like); the snapshot reports those alive so they keep
-                    // drawing. Testing aliveVis alone put the broom over scenery that no
-                    // click could reclaim -- world_.features(), which this replaced, only
-                    // ever contained real sim features.
-                    if (!f.hasSim || !f.aliveVis || !canPickPoint(f.x, f.z)) continue;
-                    float dx = f.x - wx, dz = f.z - wz;
-                    float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
-                    if (dx * dx + dz * dz < r * r) return tak::CursorId::Reclaim;
+            for (const auto* corpse:front().live) {
+                if (corpse->alive() || !corpse->corpsePhase || corpse->corpseFeat<0 ||
+                    !canPickPoint(corpse->x,corpse->z)) continue;
+                const auto& feature=world_.featureTypes().at(size_t(corpse->corpseFeat));
+                const float dx=corpse->x-wx,dz=corpse->z-wz,r=18.f+8.f*std::max(feature.fx,feature.fz);
+                if (!feature.resurrectable || dx*dx+dz*dz>=r*r) continue;
+                for (int id:selection_) {
+                    const auto* caster=frameUnitP(id);
+                    if (!caster || !caster->alive() || caster->embarked() || caster->underConstruction || !caster->type) continue;
+                    if ((caster->type->canResurrect && caster->player==corpse->player) ||
+                        (caster->type->canAnimate && caster->type->animateType)) return tak::CursorId::Revive;
                 }
             }
+            if (haveReclaimer() && hasReclaimTarget(wx,wz)) return tak::CursorId::Reclaim;
 
             // Empty ground: plain arrow. The Move cursor shows ONLY when the move order
             // is armed (Move button / hotkey), not merely from having a unit selected.
@@ -433,8 +526,7 @@ namespace {
         for (const UnitR* _up : front().live) { const UnitR& u = *_up;
             if (!canPickUnit(u)) continue;
             if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_) continue;
-            float dx = u.x - wx, dz = u.z - wz;
-            if (dx * dx + dz * dz < 22.0f * 22.0f) return tak::CursorId::Select;
+            if (!u.underConstruction && unitUnderCursor(u,mouseX_,mouseY_)) return tak::CursorId::Select;
         }
         return tak::CursorId::Normal;
     }
@@ -773,7 +865,7 @@ namespace {
                 std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
                 if (useSimThread_) lk.lock();
                 for (const auto& f : world_.features()) {
-                    if (!f.alive || !canPickPoint(f.x.toFloat(), f.z.toFloat())) continue;
+                    if (!world_.featureReclaimable(f) || !canPickPoint(f.x.toFloat(), f.z.toFloat())) continue;
                     float dx = f.x.toFloat() - wx, dz = f.z.toFloat() - wz, d = dx * dx + dz * dz;
                     float r = 18.0f + 8.0f * float(std::max(f.fx, f.fz));
                     if (d < r * r && d < bestF) { bestF = d; fid = f.id; fhit = true; }
@@ -801,31 +893,26 @@ namespace {
             voice(builderId, "move");
             return;
         }
-        if (cmd == 'r') {   // repair: heal the damaged friendly under the cursor
-            int builderId = -1;
-            for (int id : selection_) {
-                const auto* u = frameUnitP(id);
-                if (u && u->type && u->type->isBuilder && u->type->canMove &&
-                    u->player == localPlayer_) { builderId = id; break; }
+        if (cmd == 'r') { // repair or resume construction, using the cursor's eligibility
+            int worker=-1,targetId=-1;float best=precise ? 1e30f : 96.f*96.f;
+            for (const auto* target:front().live) {
+                if (!canPickUnit(*target) || !target->alive() || target->embarked() || !target->type) continue;
+                float d=(target->x-wx)*(target->x-wx)+(target->z-wz)*(target->z-wz);
+                if (precise && !unitUnderCursor(*target,mouseX_,mouseY_,&d)) continue;
+                if (d>=best) continue;
+                for (int id:selection_) {
+                    const auto* b=frameUnitP(id);
+                    if (!b || !b->alive() || b->embarked() || b->underConstruction || !b->type ||
+                        !b->type->isBuilder || b->type->isStructure() || b->repeatType ||
+                        b->id==target->id || !world_.allied(b->player,target->player)) continue;
+                    if (target->underConstruction ? !canAssistSite(*b,*target) : target->hp>=target->type->maxHp) continue;
+                    worker=id;targetId=target->id;best=d;break;
+                }
             }
-            if (builderId < 0) return;
-            int tid = -1; float best = 28.0f * 28.0f;
-            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-                if (!canPickUnit(u)) continue;
-                if (!u.alive() || u.embarked() || u.id == builderId || !u.type) continue;
-                if (!world_.allied(u.player, localPlayer_)) continue;
-                if (u.underConstruction || u.hp >= u.type->maxHp) continue;   // only damaged
-                float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
-                if (d < best) { best = d; tid = u.id; }
-            }
-            if (tid < 0) return;
+            if (targetId<0) return;
             tak::net::Command c;
-            c.kind = tak::net::Cmd::Repair;
-            c.unitId = builderId;
-            c.targetId = tid;
-            c.queue = queue ? 1 : 0;
-            issue(c);
-            voice(builderId, "move");
+            c.kind=frameUnitP(targetId)->underConstruction ? tak::net::Cmd::Assist : tak::net::Cmd::Repair;
+            c.unitId=worker;c.targetId=targetId;c.queue=queue;issue(c);voice(worker,"move");
             return;
         }
         if (cmd == 'u') {   // unload: selected transport(s) sail to (wx,wz), disembark

@@ -162,9 +162,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
     ResultChoice proceed = ResultChoice::Menu;
     if (victory && hasNext) proceed = ResultChoice::Next;
     else if (!victory) proceed = ResultChoice::Retry;
-    const char* proceedHint = proceed == ResultChoice::Next   ? "ENTER: NEXT MISSION"
-                              : proceed == ResultChoice::Retry ? ""
-                                                               : "ENTER: CONTINUE";
+    const char* proceedHint = proceed == ResultChoice::Next ? "ENTER: NEXT MISSION" : "";
 
     for (;;) {
         if (termRequested()) { freeAll(); return ResultChoice::Menu; }

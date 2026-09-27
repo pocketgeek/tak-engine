@@ -52,6 +52,7 @@ def main():
                         help="override COB GET_UNIT_VALUE 17 for conditional SET26 branches")
     parser.add_argument("--death-type", type=int, default=1,
                         help="native death-state type (for --native-death-state; default: 1)")
+    parser.add_argument("--instant-corpse", action="store_true", help="verify immediate bitmap-only building death")
     args = parser.parse_args()
 
     script = args.scripts / f"{args.script}.cob"
@@ -147,6 +148,15 @@ def main():
     p.hooks[0x56A120] = lambda uc, sp: (1, 0)
     put(p, 0x62D558, global_manager)
     put(p, global_manager, global_vtable)
+    corpse_requests=[]
+    if args.instant_corpse:
+        def corpse_request(uc, sp):
+            corpse_requests.append(struct.unpack("<5I",uc.mem_read(sp,20)))
+            return 5,1
+        # Keep the native retirement decision; map stamping is covered separately.
+        p.hooks[0x512EE0]=corpse_request
+        put(p,vtable+0x2C,0x50DD20)
+        p.hooks[0x492C80]=lambda uc,sp:(3,0)
     p.freeze_hooks()
 
     put(p, 0x62D55C, game)
@@ -300,6 +310,14 @@ def main():
         if u32(p, unit + 0xC0) == 0:
             break
 
+    if args.instant_corpse:
+        assert args.native_death_state and "Dying" not in names
+        assert not writes,writes
+        assert (0,0x512AE0) in trace,trace
+        assert u32(p,unit+0xC0)==0
+        assert len(corpse_requests)==1 and corpse_requests[0][1]==1,corpse_requests
+        print(f"PASS: {args.script} death type {args.death_type}: immediate native retirement and corpse 1")
+        return
     expected_native_write = (writes if args.native_set26_roster else
                              ([(146, 26, 1)] if delayed_set26_case else
                               [(0, 26 if set26_owner_case else 31, 1)]))

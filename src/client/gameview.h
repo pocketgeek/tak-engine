@@ -745,6 +745,8 @@ public:
     // is LIVE this tick (captured with this frame's gen). Use to replace world_.unit(id) in
     // render/HUD reads (the null check keeps working).
     const UnitR* frameUnitP(int id) const;
+    bool hasReclaimTarget(float wx,float wz) const;
+    bool canAssistSite(const UnitR& builder,const UnitR& site) const;
     bool canLoadPassenger(const UnitR& passenger, const UnitR& carrier) const;
     // Player snapshot accessors (mirror world_.player()/numPlayers() for the HUD).
     const PlayerR& framePlayer(int p) const;
@@ -1357,7 +1359,7 @@ private:
     // instances (shoreline waves and the like) have none, and the snapshot's fallback
     // deliberately reports them alive so they keep RENDERING. That must not be confused
     // with "reclaimable" -- see hoverCursor.
-    struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; uint32_t burnStarted = 0; };
+    struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; uint32_t burnStarted = 0; bool reclaimable = false; };
     std::vector<FeatSim> featSimState_;
     uint32_t lastFeatGen_ = UINT32_MAX;   // != any real generation, so the first sync runs
 
@@ -1892,6 +1894,7 @@ private:
         x = u.x; z = u.z; alt = unitAltById(u.id) * kProjY;
         if (a.pieceNames && piece >= 0 && size_t(piece) < a.pieceNames->size())
             pieceWorldFx(u, a, (*a.pieceNames)[size_t(piece)], x, z, alt);
+
     }
 
     void drawRing(float wx, float wz, float r);
@@ -2016,6 +2019,7 @@ private:
     bool showCounts_ = false;   // F4: per-faction live unit counts
     bool spectating_ = false;   // watching a live net game (no control, no fog)
     std::string playerName_[8];   // net games: display name per player (from lobby)
+    std::optional<uint8_t> resultParticipants_; // frozen starting roster; keep defeated/disconnected players
     bool playerAi_[8] = {};       // net games: which players are server-run AI
     bool showHDebug_ = false;   // terrain-height / lift diagnostic overlay (TAK_HDEBUG env)
     float fps_ = 0;             // smoothed render FPS, shown on the F4 overlay
@@ -2389,9 +2393,7 @@ private:
     // indestructible feature) -- those are refusals retail makes too and we keep.
     bool clearableAt(const tak::sim::UnitType* type, float x, float z,
                      std::vector<int>& outFeatures);
-    // Queue reclaims for `feats`, then the build. Pure client macro: it emits only
-    // the existing Reclaim and Build commands, so the SIM is untouched and stays
-    // byte-for-byte what retail does.
+    // Submit one Build command; the simulation clears the footprint first.
     void issueClearThenBuild(int builderId, const tak::sim::UnitType* type,
                              float x, float z, const std::vector<int>& feats, bool queue);
     // HUD notice setter that is safe to call from the sim worker: the worker's sim events
@@ -2604,6 +2606,7 @@ private:
         // aliveVis. Conflating the two made the broom cursor appear over scenery that no
         // click could ever reclaim.
         uint8_t hasSim = 0;
+        bool reclaimable = false;
         int simType = -2;    // last-seen sim FeatType index (-2 = not yet synced)
         int simId = -1;      // cell-derived sim feature id (matches World's ids)
         bool tree = false;   // category=trees (eligible for the wind-sway option)

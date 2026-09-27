@@ -264,8 +264,10 @@ struct UnitType {
     int32_t experiencePoints = 666; // native Type+1c2, awarded to player score on a kill
     int32_t maxHp = 100;        // maxdamage: readInt at +0x1be in retail
     bool canMove = false;
+    bool canGuard = false, canPatrol = false; // authored command capability flags
     uint8_t buildMovementCode=1; // Authored bmcode byte, used by construction visuals.
     bool isBuilder = false;
+    bool builderLimited = false; // native assist is restricted to the build menu only when set
     // Can this type train units (and therefore hold a rally)? Set for any builder
     // structure; used to decide whether a move/attack/patrol order on a BUILDING
     // means "set the rally" rather than "do nothing".
@@ -326,6 +328,7 @@ struct UnitType {
     int32_t transportDist = 0;   // readInt
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     std::string bodyType = "default";   // FBI bodytype (flesh/armor/wood/..) = hit-sound material
+    bool instantCorpse = false; // proven constant Killed + no Dying callback
     std::string corpse;       // FBI corpse feature name
     std::string stoneFeat;    // FBI stone= statue feature (death while petrified)
     std::string frozenFeat;   // FBI frozen= statue feature (death while frozen)
@@ -747,6 +750,7 @@ struct Unit {
     int32_t buildStuckD = INT32_MAX;// best (closest) squared dist to the build site so far
     // TICKS. The death animation runs to 4s (kCorpseAnimTicks) and the body lingers
     // to corpseUntil; kRetiredTicks marks a record explicitly retired.
+    int corpseAnimationTicks() const { return corpseStatue>=0 || (type && type->instantCorpse && !underConstruction && deathType!=kDeathSelfDestruct) ? 0 : 120; }
     int32_t corpseUntil = 120;  // deadFor when the body is gone (120t = 4s, right after the
                              // death anim; corpse types extend by decomposetime)
     // Fixed: this is hp that went past zero, in the same units hp is now kept in.
@@ -1372,7 +1376,7 @@ public:
     // feature -- because those are refusals retail makes too and we keep. Read-only:
     // this is a query for the UI, and it changes no sim state.
     bool clearableForPlacement(const UnitType* type, float x, float z,
-                               std::vector<int>& out) const;
+                               std::vector<int>& out, int player = -1) const;
     // Mana deposit ("Sacred Stone") spots, in world px. Lodestones (onMana)
     // can only be built on one, but only when the map actually has any.
     void setManaSpots(std::vector<std::pair<float, float>> spots) {
@@ -1402,6 +1406,10 @@ public:
     void tickNavigationMovement(Unit& subject,Fixed maximum);
     SinCos steerGround(Unit& subject,RetailSteeringPoint start,RetailSteeringPoint end,
                        RetailSteeringPoint next,Fixed maximum);
+    bool featureReclaimable(const Feature& f) const {
+        return f.alive && f.work>Fixed() && (f.type<0 ||
+            (size_t(f.type)<featTypes_.size() && featTypes_[size_t(f.type)].reclaimable));
+    }
     const Feature* feature(int id) const;                 // by id, nullptr if none
     const Feature* featureAt(float x, float z) const;     // by cell (viewer burn/art sync)
     void setFeatureTypes(std::vector<FeatType> t) { featTypes_ = std::move(t); }
@@ -1883,6 +1891,8 @@ public:
     void clearHits() { hits_.clear(); }
 
 private:
+    bool placementCheck(const UnitType* type, float x, float z, int player,
+                        std::vector<int>* clearFeatures) const;
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot);

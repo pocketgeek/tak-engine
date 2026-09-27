@@ -352,7 +352,7 @@ int main(int argc,char** argv) {
     }
     auto cacheHash=cached.stateHash();cache.resources.samples[0][1]=9;
     if (cached.stateHash()==cacheHash) return 1;
-    auto& planner=cache.planner.emplace();
+    auto& planner=cache.planner.emplace(tak::sim::RetailBuildCache::Planner{});
     planner.types.push_back({{1},"test",100,false});
     auto checkPlannerHash=[&](auto change) {
         const auto before=cached.stateHash();change();return before!=cached.stateHash();

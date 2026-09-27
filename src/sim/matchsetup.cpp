@@ -82,7 +82,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
                 const Unit* site = world.unit(c.targetId);
                 if (b && b->type && site && site->type) {
                     const auto& menu = reg.buildable(b->type->id);
-                    if (std::find(menu.begin(), menu.end(), site->type->id) != menu.end()) {
+                    if (!b->type->builderLimited || std::find(menu.begin(), menu.end(), site->type->id) != menu.end()) {
                         redirect();
                         world.assist(c.unitId, c.targetId, c.queue);
                     }

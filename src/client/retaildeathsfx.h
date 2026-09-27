@@ -22,8 +22,8 @@ constexpr std::optional<RetailDeathSfxFamily> retailDeathSfxFamily(int32_t code)
 }
 
 // Unit-owned effect lists remain associated with the rendered unit through its
-// death animation. The port hands off the body at kCorpseAnimTicks; a statue
-// takes that path immediately and never runs Killed/Dying.
+// death animation. Each snapshot carries its handoff tick; constant building
+// deaths and statues retire immediately (statues never run Killed/Dying).
 constexpr bool retailAttachedSfxOwnerRemoved(bool alive,int deadForTicks,
                                               int corpseStatue,int deathAnimTicks) {
     return !alive && (corpseStatue>=0 || deadForTicks>=deathAnimTicks);

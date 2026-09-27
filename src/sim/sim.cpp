@@ -5,6 +5,7 @@
 #include "sim/retailhweffectdata.h"
 #include "sim/retailstorm.h"
 #include "sim/retailguided.h"
+#include "sim/retailinstantcorpse.h"
 
 #include <type_traits>
 
@@ -266,6 +267,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.noVeteran = info->numberOr("noveteran", 0) != 0;
             t.maxMana = float(info->numberOr("maxmana", 0));
             t.manaRegen = float(info->numberOr("manarechargerate", 0));
+            t.builderLimited = info->numberOr("builderlimited", 0) != 0;
+            t.canGuard = info->numberOr("canguard", 0) != 0;
+            t.canPatrol = info->numberOr("canpatrol", 0) != 0;
             t.canReclaim = info->numberOr("canreclaim", 0) != 0;
             t.canResurrect = info->numberOr("canresurrect", 0) != 0;
             t.canCapture = info->numberOr("cancapture", 0) != 0;
@@ -659,6 +663,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             if (vfs.has(scriptPath)) {
                 auto script=std::make_shared<cob::File>(cob::load(vfs.read(scriptPath),scriptPath));
                 t.simulationScript=script;
+                t.instantCorpse=t.isStructure() && !t.corpse.empty() && retailInstantCorpse(*script);
                 const auto modelPath="objects3d/"+t.id+".3do";
                 if(vfs.has(modelPath)) {
                     auto model=tdo::load(vfs.read(modelPath));
@@ -5009,6 +5014,11 @@ const Unit* World::lodestoneUpgradeSource(const UnitType* type,float x,float z,i
 }
 
 bool World::canPlace(const UnitType* type, float x, float z, int player) const {
+    return placementCheck(type,x,z,player,nullptr);
+}
+
+bool World::placementCheck(const UnitType* type, float x, float z, int player,
+                           std::vector<int>* clearFeatures) const {
     if (!type) return false;
     const Unit* replacing=lodestoneUpgradeSource(type,x,z,player);
     // Lodestones must sit on a mana deposit — but only on maps that have any
@@ -5042,16 +5052,33 @@ bool World::canPlace(const UnitType* type, float x, float z, int player) const {
     // Check the domain-appropriate grid so water units (Kraken) require water
     // and land units require land, rather than always testing the ground grid.
     const NavGrid& grid = navFor(type);
-    const auto walkable=[&](int gx,int gz) {
-        if (!replacing) return grid.walkable(gx,gz);
-        const int ox=footprintOrigin(replacing->x,replacing->type->footX);
-        const int oz=footprintOrigin(replacing->z,replacing->type->footZ);
-        if (gx<ox || gz<oz || gx>=ox+replacing->type->footX || gz>=oz+replacing->type->footZ)
-            return grid.walkable(gx,gz);
-        // Only ignore cells actually blocked by the consumed building.
-        const auto& yard=replacing->type->yardMap;
-        const char cell=yard.empty() ? 'o' : yard[size_t(gz-oz)*replacing->type->footX+gx-ox];
-        return (cell=='o' || cell=='O') ? grid.terrainWalkable(gx,gz) : grid.walkable(gx,gz);
+    const auto clearObstacle=[&](int gx,int gz) {
+        if (!clearFeatures) return false;
+        bool found=false;
+        for (const auto& f:features_) {
+            if (!f.alive || !f.blocks) continue;
+            const int ox=footprintOrigin(f.x,f.fx),oz=footprintOrigin(f.z,f.fz);
+            if (gx<ox || gz<oz || gx>=ox+f.fx || gz>=oz+f.fz) continue;
+            if (!featureReclaimable(f)) return false;
+            found=true;
+            if (std::find(clearFeatures->begin(),clearFeatures->end(),f.id)==clearFeatures->end())
+                clearFeatures->push_back(f.id);
+        }
+        return found;
+    };
+    const auto walkable=[&](const NavGrid& target,int gx,int gz) {
+        if (target.walkable(gx,gz)) return true;
+        if (!target.terrainWalkable(gx,gz)) return false;
+        if (replacing) {
+            const int ox=footprintOrigin(replacing->x,replacing->type->footX);
+            const int oz=footprintOrigin(replacing->z,replacing->type->footZ);
+            if (gx>=ox && gz>=oz && gx<ox+replacing->type->footX && gz<oz+replacing->type->footZ) {
+                const auto& yard=replacing->type->yardMap;
+                const char cell=yard.empty() ? 'o' : yard[size_t(gz-oz)*replacing->type->footX+gx-ox];
+                if (cell=='o' || cell=='O') return true;
+            }
+        }
+        return clearObstacle(gx,gz);
     };
     int cx = footprintOrigin(x, type->footX), cz = footprintOrigin(z, type->footZ);
     // Retail 507400 checks the entire building rectangle before its yard masks.
@@ -5081,7 +5108,7 @@ bool World::canPlace(const UnitType* type, float x, float z, int player) const {
                 if (gx < 0 || gz < 0 || gx + 1 >= terW_ || gz + 1 >= terH_)
                     return false;
                 const size_t at = size_t(gz) * terW_ + gx;
-                if (!obst_.empty() && obst_[at]) return false;
+                if (!obst_.empty() && obst_[at] && !clearObstacle(gx,gz)) return false;
                 const int high = std::max({heights_[at], heights_[at + 1],
                                           heights_[at + terW_], heights_[at + terW_ + 1]});
                 if (high > ceiling) return false;
@@ -5091,10 +5118,10 @@ bool World::canPlace(const UnitType* type, float x, float z, int player) const {
             for (int i = 0; i < type->footX; ++i) {
                 char c = type->yardMap[size_t(j) * type->footX + i];
                 if (c == 'w' || c == 'W') {
-                    if (!navWater_.walkable(cx + i, cz + j)) return false;   // slipway needs water
+                    if (!walkable(navWater_,cx + i, cz + j)) return false;   // slipway needs water
                 } else if (c == '.' || c == ' ') {
                     continue;                                                // not part of the footprint
-                } else if (!nav_.walkable(cx + i, cz + j)) {
+                } else if (!walkable(nav_,cx + i, cz + j)) {
                     return false;                                           // land base needs land
                 }
             }
@@ -5109,12 +5136,12 @@ bool World::canPlace(const UnitType* type, float x, float z, int player) const {
             for (int i = 0; i < type->footX; ++i) {
                 char c = type->yardMap[size_t(j) * type->footX + i];
                 if (c == '.' || c == ' ') continue;
-                if (!walkable(cx + i, cz + j)) return false;
+                if (!walkable(grid,cx + i, cz + j)) return false;
             }
     } else {
         for (int j = 0; j < type->footZ; ++j)
             for (int i = 0; i < type->footX; ++i)
-                if (!walkable(cx + i, cz + j)) return false;
+                if (!walkable(grid,cx + i, cz + j)) return false;
     }
     if (type->isStructure()) {
         // Retail's building branch (507400) checks occupied footprint cells.
@@ -5139,49 +5166,12 @@ bool World::canPlace(const UnitType* type, float x, float z, int player) const {
 }
 
 bool World::clearableForPlacement(const UnitType* type, float x, float z,
-                                  std::vector<int>& out) const {
+                                  std::vector<int>& out, int player) const {
     out.clear();
-    if (!type || type->maxVel > Fixed()) return false;   // buildings only
-    if (canPlace(type, x, z)) return true;            // nothing in the way already
-    const NavGrid& grid = navFor(type);
-    if (grid.empty()) return false;
-    int cx = footprintOrigin(x, type->footX), cz = footprintOrigin(z, type->footZ);
-    if (cx < 1 || cz < 1 || cx + type->footX >= terW_ || cz + type->footZ >= terH_)
-        return false;
-    // Which live features could be cleared, indexed by the cells they cover.
-    auto featureAt = [&](int gx, int gz) -> const Feature* {
-        for (const auto& f : features_) {
-            if (!f.alive || !f.blocks || f.work <= Fixed()) continue;   // not reclaimable
-            int fx0 = f.x.floorInt() / 16 - f.fx / 2, fz0 = f.z.floorInt() / 16 - f.fz / 2;
-            if (gx >= fx0 && gx < fx0 + f.fx && gz >= fz0 && gz < fz0 + f.fz) return &f;
-        }
-        return nullptr;
-    };
-    bool anyBlocked = false;
-    for (int j = 0; j < type->footZ; ++j)
-        for (int i = 0; i < type->footX; ++i) {
-            if (!type->yardMap.empty()) {
-                char c = type->yardMap[size_t(j) * type->footX + i];
-                if (c == '.' || c == ' ') continue;   // not part of the footprint
-            }
-            int gx = cx + i, gz = cz + j;
-            if (grid.walkable(gx, gz)) continue;                 // clear already
-            if (!grid.terrainWalkable(gx, gz)) return false;     // the GROUND says no
-            const Feature* f = featureAt(gx, gz);
-            if (!f) return false;   // an obstacle that isn't a clearable doodad
-            anyBlocked = true;
-            if (std::find(out.begin(), out.end(), f->id) == out.end()) out.push_back(f->id);
-        }
-    if (!anyBlocked) return false;   // blocked by something the cell walk didn't see
-    // A unit standing on the site still refuses, exactly as canPlace does -- clearing
-    // doodads can't move a body, and retail refuses here too.
-    for (const auto& u : units_) {
-        if (!u.alive()) continue;
-        float dx = u.x.toFloat() - x, dz = u.z.toFloat() - z;
-        float min = 16.0f * float(std::max(type->footX, type->footZ)) / 2 + 12;
-        if (dx * dx + dz * dz < min * min) return false;
-    }
-    return true;
+    if (!type || !type->isStructure()) return false;
+    if (placementCheck(type,x,z,player,&out)) return true;
+    out.clear();
+    return false;
 }
 
 int World::startBuild(int builderId, const UnitType* type, float x, float z,
@@ -5253,7 +5243,20 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
         b->underConstruction || !type) return;
-    if (!canPlace(type, x, z, b->player)) return;
+    std::vector<int> clearing;
+    if (!canPlace(type,x,z,b->player) &&
+        (!b->type->canReclaim || !b->type->canMove ||
+         !clearableForPlacement(type,x,z,clearing,b->player))) return;
+    // Stable nearest-first order, computed authoritatively on every peer.
+    std::sort(clearing.begin(),clearing.end(),[&](int a,int c) {
+        const auto distance=[&](int id) {
+            const auto* f=feature(id);
+            const int64_t dx=int64_t(f->x.v)-b->x.v,dz=int64_t(f->z.v)-b->z.v;
+            return dx*dx+dz*dz;
+        };
+        const auto da=distance(a),dc=distance(c);
+        return da!=dc ? da<dc : a<c;
+    });
     // ONE queue. A build is an order like any other and lives in Unit::orders, in
     // the position the player clicked it -- which is what makes "move here, build
     // that, move there" mean what it says, and what lets the order line draw it.
@@ -5265,6 +5268,7 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
         cancelBuilds(builderId);
         b->orders.clear();
     }
+    for (int id:clearing) reclaim(builderId,id,true);
     b->orders.push_back(makeBuildOrder(*b,type,Fixed::fromFloat(x),Fixed::fromFloat(z)));
 }
 
@@ -5391,7 +5395,7 @@ void World::assist(int builderId, int siteId, bool queue) {
         b->underConstruction)
         return;
     if (!site || !site->alive() || !site->underConstruction ||
-        !allied(site->player, b->player))
+        site->player != b->player)
         return;
     // Latch onto the existing site; tickConstruction walks there and resumes at
     // this builder's rate (buildTime / workerTime) from the site's current HP.
@@ -5449,8 +5453,8 @@ bool World::placeCorpse(Unit& corpse,int type) {
     corpseFootprints_[corpse.id]={cx,cz,type};
     corpse.corpseBlocks=definition.blocking;
     if (definition.blocking) blockCells(cx,cz,definition.fx,definition.fz,true);
-    corpse.x+=Fixed::fromInt(corpse.type->corpseAdjX*16);
-    corpse.z+=Fixed::fromInt(corpse.type->corpseAdjZ*16);
+    // 512ee0 passes the original position and orientation to 495360.
+    // corpseadjust moves the blocked cells, not the rendered model.
     return true;
 }
 
@@ -5773,7 +5777,7 @@ void World::reclaim(int builderId, int featureId, bool queue) {
                          builderId, c->type->id.c_str(), -featureId);
     } else {
         const Feature* f = feature(featureId);
-        if (!f || !f->alive) return;
+        if (!f || !featureReclaimable(*f)) return;
         tx = f->x.toFloat(); tz = f->z.toFloat();
     }
     // A reclaim is an ORDER, in the sequence the player gave it -- the same fix the
@@ -5816,7 +5820,7 @@ void World::tickReclaim(Unit& b, float dt) {
         }
         // Body still mid-death-anim: stand by until it settles (statues settle
         // instantly).
-        if (c->deadFor < (c->corpseStatue >= 0 ? 0 : kCorpseAnimTicks)) return;
+        if (c->deadFor < (c->corpseAnimationTicks())) return;
         float dx = (c->x - b.x).toFloat(), dz = (c->z - b.z).toFloat();
         float reach = 24.0f + 8.0f * float(std::max(c->type->footX, c->type->footZ)) +
                       (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
@@ -6792,7 +6796,7 @@ void World::tickAbilities(float dt) {
     auto isCorpse = [](const Unit& c) {
         // Statues stand from the instant of death (retail: severity 0, no Dying
         // anim); ordinary bodies appear after the 4s death animation.
-        const int from = c.corpseStatue >= 0 ? 0 : kCorpseAnimTicks;
+        const int from = c.corpseAnimationTicks();
         return c.type && !c.alive() && c.deadFor >= from && c.deadFor < c.corpseUntil;
     };
     auto corpseDef = [&](const Unit& c) -> const FeatType* {
@@ -8825,7 +8829,7 @@ void World::tick(float dt) {
         } surfaceUpdate{*this,u.id,u.x,u.z,u.heading};
         if (!u.alive()) {
             ++u.deadFor;
-            if (u.corpseStatue<0 && u.deadFor==kCorpseAnimTicks && u.deadFor<u.corpseUntil) {
+            if (u.corpseStatue<0 && u.deadFor==u.corpseAnimationTicks() && u.deadFor<u.corpseUntil) {
                 if (!placeCorpse(u,corpseTypeOf(u.type))) retireCorpse(u);
             }
             if (u.deadFor>=u.corpseUntil &&
@@ -8911,7 +8915,7 @@ void World::tick(float dt) {
                 // and EXPLODE every piece. An unfinished conjure never leaves a
                 // corpse (corpseType forced 0 at 0x5127f5). Statues place
                 // unconditionally.
-                bool gib = (u.deathType == 3 || u.underConstruction) &&
+                bool gib = ((u.deathType == 3 && !u.type->instantCorpse) || u.underConstruction) &&
                            u.corpseStatue < 0;
                 // A self-destructed unit leaves nothing: it is not gibbed (that
                 // is the explosion type) and it does not lie there as a wreck
@@ -8923,14 +8927,14 @@ void World::tick(float dt) {
                     if (u.corpseStatue < 0 && isWater(u.x.toFloat(), u.z.toFloat())) {
                         // Retail water graves sink and fade in seconds, never
                         // decompose, never get reclaimed (icd 0x512fbe).
-                        u.corpseUntil = kCorpseAnimTicks + int32_t(2.5f * kTick);
+                        u.corpseUntil = u.corpseAnimationTicks() + int32_t(2.5f * kTick);
                     } else {
                         int d30 = featTypes_[size_t(ct)].decomposeTicks;
                         // decomposetime 0 = never rots (building wrecks linger
                         // until reclaimed, like retail).
                         // decomposeTicks is ALREADY a tick count, so this is now a
                         // plain add rather than a round trip through seconds.
-                        const int starts=u.corpseStatue>=0 ? 0 : kCorpseAnimTicks;
+                        const int starts=u.corpseAnimationTicks();
                         u.corpseUntil = d30 > 0 ? starts + d30 : INT32_MAX;
                     }
                 } else {
@@ -8951,7 +8955,10 @@ void World::tick(float dt) {
                 refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),
                     footprintOrigin(u.z,u.type->footZ),u.type->footX,u.type->footZ);
             // Frozen/stone deaths bypass the ordinary death animation.
-            if (u.corpseStatue>=0 && !placeCorpse(u,u.corpseStatue)) retireCorpse(u);
+            if (u.corpseAnimationTicks()==0 && u.deadFor<u.corpseUntil) {
+                const int corpse=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
+                if (corpse>=0 && (u.corpseStatue>=0 || !u.underConstruction) && !placeCorpse(u,corpse)) retireCorpse(u);
+            }
             continue;
         }
 

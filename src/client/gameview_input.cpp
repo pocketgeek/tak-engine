@@ -384,56 +384,27 @@
 
     bool GameView::clearableAt(const tak::sim::UnitType* type, float x, float z,
                                std::vector<int>& outFeatures) {
+        const auto* builder=selectedBuilder();
+        if (!builder || !builder->type->canReclaim) return false;
         std::lock_guard<std::mutex> lk(simMutex_);
-        return world_.clearableForPlacement(type, x, z, outFeatures);
+        return world_.clearableForPlacement(type, x, z, outFeatures, localPlayer_);
     }
 
-    // Clear-then-build. Retail refuses a site blocked by a tree outright -- red ghost,
-    // dead click -- and expects you to reclaim it by hand first. This is OUR
-    // convenience on top, and it is deliberately a CLIENT MACRO: it emits nothing but
-    // the existing Reclaim and Build commands, in that order, so the simulation still
-    // does exactly what retail's does and the lockstep stream stays ordinary. The
-    // builder walks the doodads down (earning their mana, as any reclaim does) and
-    // then lays the foundation.
+    // The simulation queues footprint reclamation before admitting construction.
     void GameView::issueClearThenBuild(int builderId, const tak::sim::UnitType* type,
                                        float x, float z, const std::vector<int>& feats,
                                        bool queue) {
-        if (!type || feats.empty()) return;
-        // Nearest doodad first, so the builder works inward instead of criss-crossing.
-        std::vector<std::pair<float, int>> order;
-        const UnitR* b = frameUnitP(builderId);
-        for (int fid : feats) {
-            float fx = x, fz = z;
-            {   // live read: the worker can reallocate this vector under us
-                std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-                if (useSimThread_) lk.lock();
-                for (const auto& f : world_.features())
-                    if (f.id == fid) { fx = f.x.toFloat(); fz = f.z.toFloat(); break; }
-            }
-            if (!canPickPoint(fx, fz)) continue;
-            float dx = fx - (b ? b->x : x), dz = fz - (b ? b->z : z);
-            order.push_back({dx * dx + dz * dz, fid});
-        }
-        std::sort(order.begin(), order.end());
-        bool first = true;
-        for (auto& [d, fid] : order) {
-            tak::net::Command c;
-            c.kind = tak::net::Cmd::Reclaim;
-            c.unitId = builderId;
-            c.targetId = fid;
-            c.queue = uint8_t((first && !queue) ? 0 : 1);   // first replaces unless queuing
-            issue(c);
-            first = false;
-        }
+        const UnitR* b=frameUnitP(builderId);
+        if (!type || feats.empty() || !b || !b->type || !b->type->canReclaim) return;
         tak::net::Command bc;
         bc.kind = tak::net::Cmd::Build;
         bc.unitId = builderId;
         bc.x = x;
         bc.z = z;
-        bc.queue = 1;   // always behind the clearing
+        bc.queue = uint8_t(queue);
         std::snprintf(bc.type, sizeof bc.type, "%s", type->id.c_str());
         issue(bc);
-        notice_ = "CLEARING " + std::to_string(order.size());
+        notice_ = "CLEARING " + std::to_string(feats.size());
         noticeTimer_ = 2;
         voice(builderId, "move");
     }
@@ -501,7 +472,9 @@
         // and O(N) separate canPlaceLocked() calls would each risk waiting a full tick.
         std::lock_guard<std::mutex> lk(simMutex_);
         for (auto& [x, z] : buildLinePositions(x0, z0, x1, z1)) {
-            if (!world_.canPlace(placing_, x, z, localPlayer_)) continue;   // simMutex_ already held
+            std::vector<int> clearing;
+            if (!world_.canPlace(placing_,x,z,localPlayer_) &&
+                !world_.clearableForPlacement(placing_,x,z,clearing,localPlayer_)) continue;
             tak::net::Command c;
             c.kind = tak::net::Cmd::Build;
             c.unitId = builderId;

@@ -47,6 +47,13 @@
             missionSoundQueue_.clear();
         }
         replaySaved_ = false;   // a fresh game gets a fresh recording
+        resultParticipants_.reset();
+        if (room.mission.empty()) {
+            resultParticipants_=0;
+            for (int i=0;i<tak::net::kMaxSlots;++i)
+                if (room.slots[i].type==1 || room.slots[i].type==2)
+                    *resultParticipants_|=uint8_t(1u<<i);
+        }
         int maxSlot = 0;
         for (int i = 0; i < tak::net::kMaxSlots; ++i)
             if (room.slots[i].type == 1 || room.slots[i].type == 2) maxSlot = i;

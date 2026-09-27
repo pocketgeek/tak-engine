@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 186;      // 186: in-place lodestone upgrades
+constexpr uint32_t kNetVersion = 187;      // 187: authoritative clear-then-build orders
                                            // 184: stationary buildings aim without rotating their bodies
                                            // 182: authoritative area reclaim command and target selection
                                            // 181: reject building yards extending into the map border
