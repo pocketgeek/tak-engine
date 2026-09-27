@@ -73,6 +73,25 @@ extracted shipped mission roster has one direct GET40 use: `takx03_ph`, word2279
 with player0 and a 2500-point comparison. That story beat is score-gated, not
 elapsed-time-gated. No shipped nonzero score-player selector was found.
 
+### Scoring recheck after 0.7.5
+
+The player-score audit reconfirmed the native results read at `4b47ab`, the
+kill-score increment at `512c4c..512c63`, and the campaign GET/SET paths. The
+216-case native probe and data-backed `campaign_presentation_test` both passed.
+No replacement formula or simulation change was needed: this code was already
+included in 0.7.5.
+
+A temporary combat harness also issued an ordinary attack order from an Aramon
+Archer against a Taros Zombie with one remaining hit point. It used the loaded
+unit definitions and normal weapon, projectile, damage, and death processing,
+without directly assigning score or last-attacker fields. Both balance modes
+registered the kill at tick 49: Retail awarded 3 points and Crusades awarded 5,
+matching each registry's authored Zombie value. Another 120 ticks left the
+score unchanged, checking that corpse processing did not award points again.
+The existing render snapshot copies that accumulated score into the results
+row directly. The README results screenshot uses sample data with zero scores;
+it is not evidence of zero scoring in a played match.
+
 ## Validation
 
 `campaign_presentation_test` covers same-owner/enemy/allied victim scores and

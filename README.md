@@ -135,6 +135,20 @@ The AI considers income and available terrain when building its force.
 [The user guide](docs/user-guide.md#playing) explains standing orders,
 production queues, match options, and AI behavior in more detail.
 
+## Player scores
+
+The results screen uses retail scoring: destroying a completed unit adds that
+unit's authored **experience points** to the attacking player's score. Values
+come from the active balance data, so Retail and Crusades can award different
+points for the same unit. For example, a Taros Zombie is worth 3 points in Retail
+and 5 in Crusades.
+
+Building units, gathering mana, and losing your own units do not change your
+score. Destroying your own units or unfinished construction awards no points;
+retail does award points for destroying another player's units even if allied.
+Some campaign scripts explicitly control the score instead. See the
+[retail scoring evidence](docs/campaign-presentation-2026-09-26.md#result-score).
+
 ## Controls
 
 These are the engine's default bindings. Command, selection, view, and emote
