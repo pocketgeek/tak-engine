@@ -59,8 +59,29 @@ int main(int argc,char** argv) {
                     (unsigned long long)status.frames,(unsigned long long)status.dropped,(unsigned long long)status.bytes);
         if(overload) {require(delayed,"overload injected");require(status.dropped>=30,"late video slots skipped");require(status.state=="RECORDING","encoder stall did not restart stream");}
         require(status.frames>=30,"video frames encoded");require(status.bytes>10000,"packets written");
+        uint64_t pausedFrames=0;
+        if(overload) {
+            // Deterministically stop after the worker has entered an iteration
+            // but before audio catch-up. Previously it still encoded a video
+            // frame at the new timestamp after cancellation stopped the audio.
+            stream.testDelayOnce(10000);
+            const auto deadline=std::chrono::steady_clock::now()+5s;
+            while(!stream.testDelayInProgress() && std::chrono::steady_clock::now()<deadline)
+                std::this_thread::sleep_for(1ms);
+            require(stream.testDelayInProgress(),"worker paused before cancellation");
+            pausedFrames=stream.status().frames;
+            std::this_thread::sleep_for(200ms);
+            require(stream.testDelayInProgress(),"worker remains paused at stop boundary");
+        }
         auto stop=std::chrono::steady_clock::now();stream.stop();
         require(std::chrono::steady_clock::now()-stop<50ms,"stop does not block UI");
+        if(overload) {
+            const auto deadline=std::chrono::steady_clock::now()+5s;
+            while(stream.active() && std::chrono::steady_clock::now()<deadline)
+                std::this_thread::sleep_for(1ms);
+            require(!stream.active(),"cancel wakes paused encoder and finishes drain");
+            require(stream.status().frames==pausedFrames,"no video submitted after stop interrupted audio");
+        }
     }
     std::ifstream file(path,std::ios::binary);
     std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(file)),{});

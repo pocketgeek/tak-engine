@@ -71,6 +71,7 @@ struct Stream::Impl {
     std::atomic<uint64_t> dropped{0}, replaced{0};
 #ifdef TAK_STREAM_TESTING
     std::atomic<int> testDelay{0};
+    std::atomic<bool> testDelaying{false};
 #endif
     mutable std::mutex stateMutex;
     StreamStatus state;
@@ -285,9 +286,12 @@ struct Stream::Impl {
 #ifdef TAK_STREAM_TESTING
                     if (int delay = testDelay.exchange(0)) {
                         std::unique_lock lock(inputMutex);
+                        testDelaying = true;
                         wake.wait_for(lock, std::chrono::milliseconds(delay), [&]{return cancel.load();});
+                        testDelaying = false;
                     }
 #endif
+                    if (cancel) break;
                     int64_t elapsed = micros() - start;
                     // A busy encoder is not a broken connection. Skip expired video
                     // slots rather than trying to encode a growing backlog.
@@ -305,6 +309,9 @@ struct Stream::Impl {
                     while (apts <= audioDue && !cancel) {
                         audioFrame(e, apts); apts += e.af->nb_samples;
                     }
+                    // Stop may interrupt audio catch-up. Do not submit a newer
+                    // video timestamp after the audio timeline has stopped.
+                    if (cancel) break;
                     if (vpts * 1000000 / c.fps <= elapsed) {
                         check(av_frame_make_writable(e.vf));
                         { std::lock_guard lock(inputMutex);
@@ -410,6 +417,7 @@ bool Stream::startRecording(const StreamConfig& c, const std::string& path) {
 }
 #ifdef TAK_STREAM_TESTING
 void Stream::testDelayOnce(int milliseconds) { p_->testDelay = milliseconds; }
+bool Stream::testDelayInProgress() const { return p_->testDelaying; }
 bool Stream::startTestEndpoint(const StreamConfig& c, const std::string& url, const std::string& caFile) {
     if (active() || !url.starts_with("rtmps://localhost:")) return false;
     p_->testCaFile = caFile;
