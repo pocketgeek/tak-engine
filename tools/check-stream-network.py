@@ -81,7 +81,7 @@ class Proxy:
 
 def launch(exe, proxy, cert, seconds):
     return subprocess.Popen([exe, f'rtmps://localhost:{proxy.port}/live/test-key',
-                             str(cert), str(seconds)], stdout=subprocess.PIPE,
+                             str(cert), str(seconds)] + sys.argv[2:3], stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True)
 
 

@@ -16,7 +16,7 @@ struct StreamStatus {
     bool active = false;
     std::string state = "OFF", encoder;
     uint64_t frames = 0, dropped = 0, replaced = 0, bytes = 0;
-    int width = 0, height = 0;
+    int width = 0, height = 0, fps = 30;
 };
 // One application-owned encoder. All codec/network operations run on its worker.
 // Video/audio producers never wait for that worker or allocate on the audio thread.

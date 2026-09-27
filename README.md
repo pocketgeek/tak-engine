@@ -255,7 +255,8 @@ accelerated renderers, with a fallback for unsupported or exhausted targets.
 Development builds after 0.7.1 also add boat shadows, an intentional enhancement
 over retail Glide, controlled by the same Shadows option.
 
-The in-game stats panel shows whole-system CPU and GPU usage. When the client
+The in-game stats panel shows **Real Time**, **Game Time**, **Client CPU**
+(the game process’s share of total CPU capacity), and whole-system GPU usage. When the client
 launches a local server for a skirmish or campaign, **Server CPU** shows that
 server process’s share of total CPU capacity (0–100%). It is omitted for remote
 servers; unavailable samples display N/A.
@@ -295,7 +296,7 @@ For the evidence and remaining scope, see the [retail engine notes](docs/retail-
 Press **F9** at the title screen or in a game to stream game video and audio directly to YouTube.
 Paste a YouTube Studio stream key, choose 720p/1080p/1440p/4K or full window resolution and 30/60 FPS, then start.
 Automatic hardware encoding supports NVIDIA, AMD, Intel and Apple backends,
-with a CPU fallback. No separate FFmpeg installation is needed.
+with a CPU fallback for supported H.264 sizes; larger native sizes use hardware HEVC. No separate FFmpeg installation is needed.
 See [streaming setup and platform details](docs/streaming.md).
 
 ## Build and contribute

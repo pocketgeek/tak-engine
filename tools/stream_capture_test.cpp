@@ -17,12 +17,14 @@ int main(int argc,char** argv) {
         tak::Streaming streaming(ren);
         tak::video::StreamConfig c;c.encoder=argc>6?argv[6]:"libx264";
         if(argc>5 && std::string(argv[5])=="native") {c.width=w&~1;c.height=h&~1;c.bitrateKbps=30000;}
+        if(argc>7)c.fps=std::atoi(argv[7]);
+        if(c.encoder=="auto")c.encoder.clear();
         if(!streaming.stream().startRecording(c,path))return 1;
         SDL_Event e{};e.type=SDL_KEYDOWN;e.key.keysym.sym=SDLK_F9;
         if(!streaming.input(e,w,h)||!streaming.shown())return 2;
         Uint64 start=SDL_GetTicks64();
         uint64_t captureUs=0; unsigned calls=0;
-        while(SDL_GetTicks64()-start<1800){
+        while(SDL_GetTicks64()-start<4000){
             // Wide red left half, green right half; blue top-left corner lets
             // a decoder check both channel order and vertical orientation.
             SDL_SetRenderDrawColor(ren,255,0,0,255);SDL_RenderClear(ren);
@@ -31,7 +33,7 @@ int main(int argc,char** argv) {
             const auto before=SDL_GetPerformanceCounter();
             streaming.frame(w,h);
             captureUs+=(SDL_GetPerformanceCounter()-before)*1000000/SDL_GetPerformanceFrequency(); ++calls; // private panel drawn AFTER captured image
-            SDL_RenderPresent(ren);SDL_Delay(16);
+            SDL_RenderPresent(ren);SDL_Delay(8);
         }
         auto s=streaming.stream().status();
         std::printf("capture average_us=%llu calls=%u dropped=%llu\n", (unsigned long long)(captureUs/calls), calls, (unsigned long long)s.dropped);

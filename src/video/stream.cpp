@@ -30,6 +30,7 @@ void logCallback(void* obj, int level, const char* fmt, va_list args) {
     if (!privateStreamLog) av_log_default_callback(obj, level, fmt, args);
 }
 void check(int result) { if (result < 0) throw result; }
+struct HardwareUnavailable {};
 struct EncodeFailure {};
 struct Encoder {
     AVFormatContext* mux = nullptr;
@@ -56,7 +57,9 @@ bool valid(const StreamConfig& c) {
         (c.fps == 30 || c.fps == 60) && c.bitrateKbps >= 1000 && c.bitrateKbps <= 80000 &&
         (c.encoder.empty() || c.encoder == "libx264" || c.encoder == "h264_nvenc" ||
          c.encoder == "h264_amf" || c.encoder == "h264_qsv" ||
-         c.encoder == "h264_vaapi" || c.encoder == "h264_videotoolbox");
+         c.encoder == "h264_vaapi" || c.encoder == "h264_videotoolbox" ||
+         c.encoder == "hevc_nvenc" || c.encoder == "hevc_amf" || c.encoder == "hevc_qsv" ||
+         c.encoder == "hevc_vaapi" || c.encoder == "hevc_videotoolbox");
 }
 }
 struct Stream::Impl {
@@ -104,10 +107,13 @@ struct Stream::Impl {
         e.v->gop_size = c.fps * 2; e.v->max_b_frames = 0;
         e.v->thread_count = 4;
         e.v->pix_fmt = name == "libx264" ? AV_PIX_FMT_YUV420P : AV_PIX_FMT_NV12;
+        // NVENC accepts packed RGB and performs its own GPU color conversion.
+        // Avoid a CPU RGB->NV12 pass over every pixel of a native ultrawide frame.
+        if (name == "h264_nvenc" || name == "hevc_nvenc") e.v->pix_fmt = AV_PIX_FMT_RGBA;
         e.v->color_range = AVCOL_RANGE_MPEG; e.v->colorspace = AVCOL_SPC_BT709;
         e.v->color_primaries = AVCOL_PRI_BT709; e.v->color_trc = AVCOL_TRC_BT709;
         e.v->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-        if (name == "h264_vaapi") {
+        if (name == "h264_vaapi" || name == "hevc_vaapi") {
             if (av_hwdevice_ctx_create(&e.device, AV_HWDEVICE_TYPE_VAAPI, node, nullptr, 0) < 0) return false;
             e.pool = av_hwframe_ctx_alloc(e.device);
             if (!e.pool) return false;
@@ -121,12 +127,12 @@ struct Stream::Impl {
         if (name == "libx264") {
             av_dict_set(&opts, "preset", "veryfast", 0); av_dict_set(&opts, "tune", "zerolatency", 0);
             av_dict_set(&opts, "x264-params", "nal-hrd=cbr:force-cfr=1:scenecut=0", 0);
-        } else if (name == "h264_nvenc") {
+        } else if (name == "h264_nvenc" || name == "hevc_nvenc") {
             av_dict_set(&opts, "preset", "p4", 0); av_dict_set(&opts, "tune", "ll", 0);
             av_dict_set(&opts, "rc", "cbr", 0);
-        } else if (name == "h264_amf") {
+        } else if (name == "h264_amf" || name == "hevc_amf") {
             av_dict_set(&opts, "usage", "ultralowlatency", 0); av_dict_set(&opts, "rc", "cbr", 0);
-        } else if (name == "h264_videotoolbox") {
+        } else if (name == "h264_videotoolbox" || name == "hevc_videotoolbox") {
             av_dict_set(&opts, "realtime", "1", 0); av_dict_set(&opts, "allow_sw", "0", 0);
         }
         int result = avcodec_open2(e.v, codec, &opts); av_dict_free(&opts);
@@ -144,16 +150,29 @@ struct Stream::Impl {
             names = {"h264_nvenc", "h264_vaapi"};
 #endif
         }
-        names.push_back("libx264");
+        // H.264 hardware commonly stops at 4096 pixels per axis. Preserve
+        // native dimensions by trying hardware HEVC before considering the CPU.
+        const bool large = c.width > 4096 || c.height > 4096;
+        if (large && c.encoder.empty()) {
+#ifdef __APPLE__
+            names.push_back("hevc_videotoolbox");
+#elif defined(_WIN32)
+            names.insert(names.end(), {"hevc_nvenc", "hevc_amf", "hevc_qsv"});
+#else
+            names.insert(names.end(), {"hevc_nvenc", "hevc_vaapi"});
+#endif
+        }
+        if (!large || c.encoder == "libx264") names.push_back("libx264");
         for (const auto& name : names) {
             if (cancel) throw AVERROR_EXIT;
-            if (name == "h264_vaapi") {
+            if (name == "h264_vaapi" || name == "hevc_vaapi") {
                 for (int i = 128; i < 144; ++i) {
                     std::string node = "/dev/dri/renderD" + std::to_string(i);
                     if (openVideo(e, c, name, node.c_str())) return name;
                 }
             } else if (openVideo(e, c, name)) return name;
         }
+        if (large) throw HardwareUnavailable{};
         throw AVERROR_ENCODER_NOT_FOUND;
     }
     void open(Encoder& e, const StreamConfig& c, const std::string& dest, bool local) {
@@ -256,7 +275,8 @@ struct Stream::Impl {
                 Encoder e;
                 open(e, c, dest, local);
                 { std::lock_guard lock(audioMutex); count = read = 0; }
-                report(local ? "RECORDING" : "LIVE");
+                report(local ? "RECORDING" : c.encoder.empty() && e.v->codec_id == AV_CODEC_ID_H264 &&
+                    std::string(e.v->codec->name) == "libx264" ? "LIVE - CPU FALLBACK" : "LIVE");
                 int64_t start = micros(), vpts = 0, apts = 0, nextKey = 0;
                 bool haveVideo = false;
                 std::vector<uint8_t> frame;
@@ -302,13 +322,18 @@ struct Stream::Impl {
                             const int* coeff = sws_getCoefficients(SWS_CS_ITU709);
                             check(sws_setColorspaceDetails(e.scale, coeff, 1, coeff, 0, 0, 1<<16, 1<<16));
                             ptrdiff_t strides[4] = {e.vf->linesize[0], e.vf->linesize[1], e.vf->linesize[2], e.vf->linesize[3]};
-                            check(av_image_fill_black(e.vf->data, strides, static_cast<AVPixelFormat>(e.vf->format), AVCOL_RANGE_MPEG, c.width, c.height));
+                            if (dw != c.width || dh != c.height)
+                                check(av_image_fill_black(e.vf->data, strides, static_cast<AVPixelFormat>(e.vf->format), AVCOL_RANGE_MPEG, c.width, c.height));
                             const int x = ((c.width-dw)/2)&~1, y = ((c.height-dh)/2)&~1;
-                            uint8_t* out[4] = {e.vf->data[0] + y*e.vf->linesize[0]+x,
-                                e.vf->data[1]+y/2*e.vf->linesize[1]+(e.vf->format==AV_PIX_FMT_NV12 ? x : x/2),
+                            const bool packed = e.vf->format == AV_PIX_FMT_RGBA;
+                            uint8_t* out[4] = {e.vf->data[0] + y*e.vf->linesize[0]+x*(packed?4:1),
+                                e.vf->data[1] ? e.vf->data[1]+y/2*e.vf->linesize[1]+(e.vf->format==AV_PIX_FMT_NV12 ? x : x/2) : nullptr,
                                 e.vf->data[2] ? e.vf->data[2]+y/2*e.vf->linesize[2]+x/2 : nullptr, nullptr};
                             const uint8_t* in[] = {frame.data(), nullptr, nullptr, nullptr}; int pitch[] = {width*4,0,0,0};
-                            check(sws_scale(e.scale, in, pitch, 0, height, out, e.vf->linesize));
+                            if (packed && dw == width && dh == height) {
+                                for (int row=0; row<height; ++row)
+                                    std::memcpy(out[0]+size_t(row)*e.vf->linesize[0],frame.data()+size_t(row)*width*4,size_t(width)*4);
+                            } else check(sws_scale(e.scale, in, pitch, 0, height, out, e.vf->linesize));
                             haveVideo = true;
                             frame.clear();
                         }
@@ -336,9 +361,14 @@ struct Stream::Impl {
                     packets(e,e.v,e.vs,nullptr); packets(e,e.a,e.as,nullptr);
                     av_write_trailer(e.mux);
                 }
+            } catch (HardwareUnavailable) {
+                report("FAILED - NO GPU ENCODER FOR THIS SIZE"); break;
             } catch (EncodeFailure) {
                 if (cancel) break;
                 if (c.encoder == "libx264") { report("FAILED - ENCODER ERROR"); break; }
+                if (c.width > 4096 || c.height > 4096) {
+                    report("FAILED - GPU ENCODER ERROR; TRY 4K"); break;
+                }
                 c.encoder = "libx264";
                 report("RESTARTING WITH CPU ENCODER");
             } catch (int) {
@@ -356,7 +386,7 @@ struct Stream::Impl {
     bool start(const StreamConfig& c, std::string destination, bool local) {
         if (running || !valid(c)) return false;
         if (worker.joinable()) worker.join();
-        { std::lock_guard lock(stateMutex); state = {}; state.state = "STARTING"; state.width=c.width; state.height=c.height; }
+        { std::lock_guard lock(stateMutex); state = {}; state.state = "STARTING"; state.width=c.width; state.height=c.height; state.fps=c.fps; }
         { std::lock_guard lock(inputMutex); pixels.clear(); fresh = false; }
         { std::lock_guard lock(audioMutex); read = count = 0; }
         cancel = false; dropped = 0; replaced = 0; running = true;

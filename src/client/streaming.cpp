@@ -279,7 +279,7 @@ void Streaming::frame(int w,int h,bool drawPanel) {
     p_->wasActive=active;
     if(active&&now>=p_->nextCapture&&w>0&&h>0){
         p_->capture.get(p_->ren,w,h,p_->stream);
-        const uint64_t interval=1000000/p_->config.fps;
+        const uint64_t interval=1000000/p_->stream.status().fps;
         // Keep a stable cadence across uneven render frames; now + interval
         // loses a whole render frame whenever the deadline is slightly late.
         p_->nextCapture+=interval;

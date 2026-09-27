@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Static FFmpeg for retail Bink playback and H.264/AAC RTMPS streaming.
+# Static FFmpeg for retail Bink playback and H.264/HEVC/AAC RTMPS streaming.
 # Builds pinned static dependencies using build-stream-deps.sh. Only OS frameworks
 # and GPU driver runtimes remain external. PREFIX / JOBS / cross knobs supported.
 set -euo pipefail
@@ -34,9 +34,9 @@ cross_args=()
 platform="${TARGET_OS:-$(uname -s)}"
 stream_args=()
 case "$platform" in
-  Darwin|darwin) stream_args+=(--enable-securetransport --enable-videotoolbox --enable-encoder=h264_videotoolbox) ;;
-  MINGW*|MSYS*|mingw32) stream_args+=(--enable-schannel --enable-d3d11va --enable-dxva2 --enable-nvenc --enable-ffnvcodec --enable-amf --enable-libvpl --enable-encoder=h264_nvenc,h264_amf,h264_qsv) ;;
-  *) stream_args+=(--enable-openssl --enable-nvenc --enable-ffnvcodec --enable-vaapi --enable-encoder=h264_nvenc,h264_vaapi) ;;
+  Darwin|darwin) stream_args+=(--enable-securetransport --enable-videotoolbox --enable-encoder=h264_videotoolbox,hevc_videotoolbox) ;;
+  MINGW*|MSYS*|mingw32) stream_args+=(--enable-schannel --enable-d3d11va --enable-dxva2 --enable-nvenc --enable-ffnvcodec --enable-amf --enable-libvpl --enable-encoder=h264_nvenc,h264_amf,h264_qsv,hevc_nvenc,hevc_amf,hevc_qsv) ;;
+  *) stream_args+=(--enable-openssl --enable-nvenc --enable-ffnvcodec --enable-vaapi --enable-encoder=h264_nvenc,h264_vaapi,hevc_nvenc,hevc_vaapi) ;;
 esac
 cd "$SRC"
 # FFmpeg 7.1 verifies the certificate chain but not the hostname with OpenSSL.
@@ -48,7 +48,7 @@ fi
   --prefix="$PREFIX" \
   --disable-shared --enable-static --enable-pic --enable-small \
   --disable-programs --disable-doc --disable-htmlpages --disable-manpages --disable-txtpages \
-  --disable-everything --enable-network --disable-autodetect --disable-asm --disable-debug \
+  --disable-everything --enable-network --disable-autodetect --disable-debug \
   --disable-iconv --disable-zlib --disable-bzlib --disable-lzma --disable-sdl2 \
   --disable-audiotoolbox --disable-avfoundation --disable-coreimage --disable-appkit \
   --enable-gpl --enable-version3 --enable-libx264 --pkg-config-flags=--static \

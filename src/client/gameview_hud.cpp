@@ -604,17 +604,17 @@ namespace {
             ? (wallNow - gameStartMs_) / 1000 : 0;
         std::snprintf(b, sizeof b, "%llu:%02llu",
                       (unsigned long long)(elapsed / 60), (unsigned long long)(elapsed % 60));
-        rows.push_back({"TIME", b});
+        rows.push_back({"REAL TIME", b});
         const uint32_t gameSecs = front().gameTick / uint32_t(tak::net::kServerHz);
         std::snprintf(b, sizeof b, "%u:%02u", gameSecs / 60, gameSecs % 60);
         rows.push_back({"GAME TIME", b});
 
         const uint64_t now = SDL_GetTicks64();
         if (!statsSampleAt_ || now - statsSampleAt_ >= 1000) {
-            const auto cpu = tak::proc::systemCpuSample();
-            statsCpuPct_ = tak::proc::systemCpuPercent(statsSystemCpu_, cpu);
-            statsSystemCpu_ = cpu;
-            statsProcess_ = tak::proc::sample(0);   // MEM remains the game's footprint
+            const auto client = tak::proc::sample(0);
+            statsCpuPct_ = tak::proc::processCpuPercent(statsProcess_, client,
+                statsSampleAt_ ? double(now-statsSampleAt_)/1000.0 : 0.0, tak::proc::numCpus());
+            statsProcess_ = client;
             if(localServerPid_>0) {
                 const auto server=tak::proc::sample(localServerPid_);
                 statsServerCpuPct_=tak::proc::processCpuPercent(statsServer_,server,
@@ -634,7 +634,7 @@ namespace {
         }
         if (statsCpuPct_ >= 0) std::snprintf(b, sizeof b, "%.0f%%", statsCpuPct_);
         else std::snprintf(b, sizeof b, "N/A");
-        rows.push_back({"CPU", b});   // whole system; 100% = all logical cores busy
+        rows.push_back({"CLIENT CPU", b});   // client share of total machine CPU capacity, 0–100%
         if(localServerPid_>0) {
             if(statsServerCpuPct_>=0)std::snprintf(b,sizeof b,"%.0f%%",statsServerCpuPct_);
             else std::snprintf(b,sizeof b,"N/A");

@@ -48,6 +48,7 @@ jobs:
             git
             make
             patch
+            mingw-w64-x86_64-nasm
             zip
 
       # Static Bink/streaming FFmpeg so the bundle plays the door videos with no

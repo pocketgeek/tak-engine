@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install dependencies
-        run: brew install ninja pkg-config
+        run: brew install ninja pkg-config nasm
 
       # Static Bink/streaming FFmpeg so the bundle plays the door videos with no
       # runtime FFmpeg (see tools/build-ffmpeg-bink.sh). Cached by FFmpeg version.

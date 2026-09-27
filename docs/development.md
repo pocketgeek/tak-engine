@@ -8,8 +8,8 @@ It is separate from the multiplayer protocol version in `src/net/protocol.h`.
 ## Building
 
 Use CMake ≥ 3.24, a C++20 compiler (GCC/Clang or MinGW-w64), Ninja, Git,
-Make, and pkg-config. Linux streaming dependencies also need Python 3, patch,
-and Perl standard modules (`perl-core` on Fedora). Linux and macOS builds require the vendored static
+Make, and pkg-config. x86 FFmpeg builds also need NASM for SIMD support.
+Linux streaming dependencies need Python 3, patch, and Perl standard modules (`perl-core` on Fedora). Linux and macOS builds require the vendored static
 zlib, libjpeg-turbo, SDL2, and Bink/streaming FFmpeg libraries. Installing a system
 SDL2 package alone is not sufficient.
 

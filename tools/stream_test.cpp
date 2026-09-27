@@ -15,6 +15,7 @@ static uint32_t be24(const unsigned char* p){return uint32_t(p[0])<<16|uint32_t(
 int main(int argc,char** argv) {
     tak::video::StreamConfig config;
     config.encoder=argc>1?argv[1]:"libx264";
+    if(config.encoder=="auto")config.encoder.clear();
     auto path=std::filesystem::temp_directory_path()/("tak-stream-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".flv");
     {
         tak::video::Stream stream;
@@ -28,6 +29,7 @@ int main(int argc,char** argv) {
         config.width=1280;
         if(argc>2 && std::string(argv[2])=="4k") {config.width=3840;config.height=2160;config.bitrateKbps=30000;}
         if(argc>2 && std::string(argv[2])=="native") {config.width=1582;config.height=934;}
+        if(argc>2 && std::string(argv[2])=="wide") {config.width=7680;config.height=2160;config.bitrateKbps=30000;}
         if(argc>3)config.fps=std::atoi(argv[3]);
         config.key.clear();
         require(stream.startRecording(config,path.string()),"start recording");
@@ -73,9 +75,15 @@ int main(int argc,char** argv) {
         require(pos+11+len+4<=bytes.size(),"complete packet");
         auto* p=&bytes[pos+11];
         if(type==9&&len>=5) {
-            require((p[0]&15)==7,"H264 video");
-            if(p[1]==0)vc=true;
-            if(p[1]==1){require(ts>=vt,"monotonic video timestamp");vt=ts;++videos;if((p[0]>>4)==1)++keys;}
+            const bool enhanced=(p[0]&0x80)!=0;
+            if(enhanced)require(std::string(reinterpret_cast<const char*>(p+1),4)=="hvc1","HEVC fourcc");
+            else require((p[0]&15)==7,"H264 video");
+            const int packet=enhanced?(p[0]&15):p[1];
+            if(packet==0)vc=true;
+            if(packet==1 || (enhanced && packet==3)) {
+                require(ts>=vt,"monotonic video timestamp");vt=ts;++videos;
+                if(((p[0]>>4)&7)==1)++keys;
+            }
         }
         if(type==8&&len>=2) {
             require((p[0]>>4)==10,"AAC audio");

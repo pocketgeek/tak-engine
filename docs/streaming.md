@@ -13,7 +13,13 @@ The output dimensions stay fixed until you stop and restart; resizing the window
 letterboxes the new image. The supported input range is 2–8192 pixels per axis,
 subject to the encoder’s limits. Selecting a larger resolution raises a lower
 bitrate to 12,000 Kbps for 1440p or 30,000 Kbps for 4K; it remains adjustable. Automatic tries
-available hardware encoders before falling back to the CPU:
+available hardware H.264 encoders first. Above 4096 pixels on either axis, it
+then tries hardware HEVC to preserve native dimensions. If none supports that
+size, it reports failure instead of silently overloading the CPU. You can select
+CPU explicitly, or choose a smaller resolution. At smaller sizes, automatic
+CPU fallback remains available and is identified in the status line.
+
+Hardware H.264 and HEVC backends:
 
 | Platform | Hardware backends |
 | --- | --- |
@@ -21,12 +27,13 @@ available hardware encoders before falling back to the CPU:
 | Windows | NVIDIA NVENC; AMD AMF; Intel Quick Sync |
 | macOS | Apple VideoToolbox |
 
-A working GPU driver with H.264 encoding support is required for hardware
+A working GPU driver with the selected codec and resolution support is required for hardware
 encoding. The panel reports the encoder actually opened, connection state,
 encoded frames, missed output frames (**DROPPED**), superseded or busy capture
 submissions (**REPLACED**), and estimated encoded-payload bitrate. Replacing a
 capture does not itself mean an output frame was missed. Unsupported hardware falls back to the bundled x264 CPU encoder. Hardware
-that fails during encoding triggers a restart using the CPU.
+that fails during encoding triggers a restart using the CPU only at dimensions
+up to 4096 pixels per axis; larger sizes report an error.
 
 The stream contains the game view, HUD, cursor and mixed game audio, including
 music. Hardware cursors temporarily use the software drawing path so they appear
@@ -41,7 +48,7 @@ The key and preferences last for that application session
 only. Keys are masked, never written to settings, and excluded from encoder and
 network diagnostics. Ctrl+V pastes a key; Ctrl+A clears the key field.
 
-Uploads use RTMPS with certificate and hostname verification, H.264 video, AAC
+Uploads use RTMPS with certificate and hostname verification, H.264 or HEVC video, AAC
 stereo audio at 44.1 kHz / 128 Kbps, and two-second video keyframes. After a
 connection failure, the worker retries three times, waiting 2, 4 and 8 seconds.
 Stop interrupts network I/O; an unsuccessful stream reports failure in the game.
@@ -107,3 +114,12 @@ OpenGL capture downscales on the GPU before asynchronous readback when the
 stream is smaller than the window. Frame buffers transfer to the encoder worker
 without an extra full-frame copy on all render backends. The OpenGL path falls
 back to full-size readback when framebuffer scaling is unavailable.
+
+Native ultrawide streaming uses hardware HEVC when H.264 rejects its width.
+YouTube lists HEVC as an accepted RTMPS codec in its
+[encoder settings](https://support.google.com/youtube/answer/2853702?hl=en).
+FFmpeg CPU SIMD paths are enabled for efficient RGB-to-YUV conversion. NASM is a
+build-only dependency on x86; it adds no shipped runtime library.
+
+NVIDIA capture feeds RGB directly to NVENC, which performs color conversion on
+the GPU. Other hardware and CPU encoders use the SIMD-enabled FFmpeg converter.

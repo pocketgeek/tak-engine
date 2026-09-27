@@ -6,8 +6,8 @@
 #include <thread>
 #include <vector>
 int main(int argc,char** argv){
-    if(argc!=4)return 2;
-    tak::video::Stream stream;tak::video::StreamConfig c;c.encoder="libx264";
+    if(argc!=4 && argc!=5)return 2;
+    tak::video::Stream stream;tak::video::StreamConfig c;c.encoder=argc>4?argv[4]:"libx264";
     if(!stream.startTestEndpoint(c,argv[1],argv[2]))return 3;
     std::vector<uint8_t> pixels(320*240*4,100);
     std::string previous;
