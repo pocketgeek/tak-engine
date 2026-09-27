@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.1-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.5-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -21,11 +21,15 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/lobby.jpg"><img src="docs/img/lobby.jpg" alt="The create-game screen with map selection and preview"></a><br><sub>Maps and match setup</sub></td>
-    <td width="50%"><a href="docs/img/campaign.png"><img src="docs/img/campaign.png" alt="The Book of Darien campaign mission picker"></a><br><sub>Campaign selection</sub></td>
+    <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign mission picker"></a><br><sub>Campaign selection</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/img/streaming.jpg"><img src="docs/img/streaming.jpg" alt="YouTube streaming panel with Max 3840 and 60 FPS selected"></a><br><sub>Built-in YouTube streaming</sub></td>
+    <td width="50%"><a href="docs/img/results.jpg"><img src="docs/img/results.jpg" alt="Post-game statistics with aligned player columns"></a><br><sub>Post-game statistics (sample data)</sub></td>
   </tr>
 </table>
 
-<sub>Captured in v0.7.1. Army view: built-in benchmark. Naval view: development demo.</sub>
+<sub>Captured in v0.7.5. Army view: built-in benchmark. Naval view: development demo. Results: sample statistics.</sub>
 
 </div>
 
@@ -37,9 +41,28 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
+## New in 0.7.5
+
+- **YouTube streaming:** start from Settings or F9, paste a stream key, and stream
+  through the bundled encoder. Defaults are **Max 3840 / 60 FPS**; the width cap
+  preserves ultrawide aspect ratios. Streaming survives menu/match transitions,
+  supports hardware encoding, and recovers from connection failures.
+- **Performance:** reused unit geometry and shadow tiles, reduced animation
+  conversion and snapshot/checksum work, and faster GPU-assisted stream capture.
+  Streaming now keeps refresh-rate pacing when VSync is enabled.
+- **Live statistics:** Real Time and Game Time, living player units and kills,
+  separate client/local-server CPU percentages, and whole-device GPU usage.
+- **Campaigns:** corrected mission conditions and dialogue routing, more readable
+  objectives, and a loading screen during mission setup instead of a lobby flash.
+- **Combat and presentation:** corrected Harpy effects and weapon/death sound
+  routing, fixed results-screen text alignment and title-button seams, and stopped
+  stationary buildings rotating toward their targets.
+- **Naval play:** corrected Sea Fort water placement and factory-yard validation.
+  Animated boat shadows are now included as an optional enhancement over retail.
+
 ## Download
 
-Get **version 0.7.1** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.5** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -229,9 +252,9 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-Released **0.7.1 uses protocol 179**; current development builds use **184**
-for stationary building combat, following campaign, area-clearing and naval fixes. These builds
-cannot mix in a match.
+**0.7.5 uses protocol 184**, incorporating stationary building combat, campaign,
+area-clearing, and naval fixes. Version 0.7.1 uses 179; these versions cannot
+mix in a match.
 Version 0.7.0 uses 177. Older incompatible clients and recordings are rejected.
 The connection checks gameplay definitions, but
 that fingerprint does not cover every file: keep gameplay overrides, scripts,
@@ -250,9 +273,8 @@ UI scale, cursor size, and camera behavior. **Smooth GUI Art** requires a restar
 
 The shadow option controls unit, scenery, and projectile shadows. Shadows follow
 animated poses, including swaying trees; shading baked into terrain artwork
-remains visible. Version 0.7.1 uses per-unit shadow silhouettes on supported
-accelerated renderers, with a fallback for unsupported or exhausted targets.
-Development builds after 0.7.1 also add boat shadows, an intentional enhancement
+remains visible. Accelerated renderers use cached shadow silhouettes and tiles,
+with fallbacks where needed. Animated boat shadows are an intentional enhancement
 over retail Glide, controlled by the same Shadows option.
 
 The in-game stats panel shows **Real Time**, **Game Time**, **Client CPU**
@@ -293,11 +315,38 @@ For the evidence and remaining scope, see the [retail engine notes](docs/retail-
 
 ## YouTube streaming
 
-Press **F9** at the title screen or in a game to stream game video and audio directly to YouTube.
-Paste a YouTube Studio stream key, choose 720p/1080p/1440p/4K, full window resolution, or Max Width 3840 and 30/60 FPS, then start.
-Automatic hardware encoding supports NVIDIA, AMD, Intel and Apple backends,
-with a CPU fallback for supported H.264 sizes; larger native sizes use hardware HEVC. No separate FFmpeg installation is needed.
-See [streaming setup and platform details](docs/streaming.md).
+Open **Settings → YouTube Streaming** at the title screen, **Esc → YouTube
+Streaming** in a game, or press **F9**. Copy your YouTube Studio stream key,
+click **Paste**, and then **Start Streaming**. The key is masked, stays in memory,
+and is excluded from captures and diagnostics.
+
+The defaults are **Max 3840** and **60 FPS**. Max 3840 scales down to at most
+3840 pixels wide while preserving your window's aspect ratio: a 7680×2160
+window sends 3840×1080. Smaller windows are not enlarged. Output dimensions
+are fixed when you start; stop and restart to change them. Other choices are
+720p, 1080p, 1440p, 4K, and Full Resolution, with 30 or 60 FPS.
+
+Bitrate is adjustable from **3,000 to 80,000 Kbps**; the initial value is
+**6,000 Kbps**. Increase it for higher-resolution video as your upload permits.
+The highest selectable value is not a YouTube recommendation. Full Resolution
+can exceed YouTube's accepted dimensions even when your GPU can encode it;
+use Max 3840 or 4K if YouTube reports an unsupported resolution.
+
+Automatic encoding tries NVIDIA, AMD, Intel, or Apple hardware, with CPU fallback
+at smaller sizes and hardware HEVC for dimensions beyond common H.264 limits.
+The panel shows the encoder actually used. **Dropped** counts missed output
+frames; **Replaced** counts superseded capture submissions. Rendering slowdowns
+skip late frames without forcing reconnects. With VSync enabled, a refresh-rate
+pacing fallback keeps streaming from uncapping presentation.
+
+Closing the panel or returning to the title screen keeps the stream running.
+Stop it with **Stop Streaming** or exit the application. Game audio is included;
+title-screen capture is currently silent, and loading/modal screens retain the
+last captured frame. Microphone capture is not included.
+
+FFmpeg, its codecs, and additional non-system dependencies are linked statically;
+no separate FFmpeg installation is required. GPU encoding uses the installed
+system driver. See [streaming setup and platform details](docs/streaming.md).
 
 ## Build and contribute
 
