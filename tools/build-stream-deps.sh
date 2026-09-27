@@ -36,6 +36,10 @@ case "$platform" in
     mkdir -p "$PREFIX/include/AMF"
     cp -R "$root/amf/amf/public/include/." "$PREFIX/include/AMF/"
     fetch vpl https://github.com/intel/libvpl.git v2.14.0
+    # An undefined _MSC_VER is zero in MinGW. Upstream's old-MSVC fallback
+    # then shadows real CRT functions and breaks newer Windows SDK headers.
+    sed -i.bak 's/^#if _MSC_VER < 1400$/#if defined(_MSC_VER) \&\& _MSC_VER < 1400/' \
+      "$root/vpl/libvpl/src/windows/mfx_dispatcher_defs.h"
     vpl_args=()
     if [ -n "${CROSS_PREFIX:-}" ]; then
       vpl_args+=(-DCMAKE_SYSTEM_NAME=Windows "-DCMAKE_C_COMPILER=${CROSS_PREFIX}gcc" "-DCMAKE_CXX_COMPILER=${CROSS_PREFIX}g++")
