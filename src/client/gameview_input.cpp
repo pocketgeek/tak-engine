@@ -379,7 +379,7 @@
 
     bool GameView::canPlaceLocked(const tak::sim::UnitType* type, float x, float z) {
         std::lock_guard<std::mutex> lk(simMutex_);
-        return world_.canPlace(type, x, z);
+        return world_.canPlace(type, x, z, localPlayer_);
     }
 
     bool GameView::clearableAt(const tak::sim::UnitType* type, float x, float z,
@@ -501,7 +501,7 @@
         // and O(N) separate canPlaceLocked() calls would each risk waiting a full tick.
         std::lock_guard<std::mutex> lk(simMutex_);
         for (auto& [x, z] : buildLinePositions(x0, z0, x1, z1)) {
-            if (!world_.canPlace(placing_, x, z)) continue;   // simMutex_ already held
+            if (!world_.canPlace(placing_, x, z, localPlayer_)) continue;   // simMutex_ already held
             tak::net::Command c;
             c.kind = tak::net::Cmd::Build;
             c.unitId = builderId;

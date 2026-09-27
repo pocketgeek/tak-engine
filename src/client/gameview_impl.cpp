@@ -505,6 +505,16 @@
                                  target,siteX,siteZ);
                     return;
                 }
+            } else if (tak::devEnv("TAK_CONJURE_REPLACE") && targetType->onMana) {
+                float best=std::numeric_limits<float>::max();
+                for (const auto& [x,z]:world_.manaSpots()) {
+                    const float sx=tak::sim::footprintWaypoint(tak::sim::footprintCell(x,targetType->footX),targetType->footX).toFloat();
+                    const float sz=tak::sim::footprintWaypoint(tak::sim::footprintCell(z,targetType->footZ),targetType->footZ).toFloat();
+                    const float d=(sx-originX)*(sx-originX)+(sz-originZ)*(sz-originZ);
+                    if (d<best && world_.canPlace(targetType,sx,sz)) {best=d;siteX=sx;siteZ=sz;}
+                }
+                if (best==std::numeric_limits<float>::max())
+                    throw std::runtime_error("conjure replacement fixture has no free mana spot");
             } else if (tak::devEnv("TAK_CONJURE_TARGET")) {
                 bool found=false;
                 for (int r=0;r<=640 && !found;r+=32)
@@ -519,6 +529,17 @@
                     std::fprintf(stderr,"conjure fixture: no legal site for %s\n",target);
                     return;
                 }
+            }
+            if (const char* base=tak::devEnv("TAK_CONJURE_REPLACE")) {
+                const auto* baseType=registry_.find(base);
+                float bx=siteX,bz=siteZ,best=24.0f*24.0f;
+                for (const auto& [x,z]:world_.manaSpots()) {
+                    const float d=(x-siteX)*(x-siteX)+(z-siteZ)*(z-siteZ);
+                    if (d<best) {best=d;bx=x;bz=z;}
+                }
+                if (!baseType || !world_.canPlace(baseType,bx,bz))
+                    throw std::runtime_error("conjure replacement fixture has no legal base");
+                spawn(base,bx,bz,0,localPlayer_);
             }
             if (tak::devFlag("TAK_CONJURE_REPAIR")) {
                 const int targetId=spawn(target,siteX,siteZ,0,localPlayer_);
@@ -1620,6 +1641,21 @@
             for(size_t slot=0;slot<s.weaponReloads.size();++slot)
                 s.weaponReloads[slot]=u.reloads[slot];
             s.underConstruction = u.underConstruction; s.buildBegun = u.buildBegun;
+            s.replacementModel=nullptr;s.replacementOpacity=-1;
+            if (u.underConstruction && u.lodestoneReplacement) {
+                const float progress=u.constructionFraction();
+                // An abandoned/damaged site fades out instead of keeping the old
+                // building solid until the last unconjure tick.
+                const float healthFade=std::clamp(u.hp.toFloat()/
+                    (float(u.type->maxHp)*(0.05f+0.95f*progress)),0.0f,1.0f);
+                s.replacementOpacity=std::abs(2.0f*progress-1.0f)*healthFade;
+                if (progress<0.5f) {
+                    const auto& old=*u.lodestoneReplacement;
+                    s.replacementModel=old.type;
+                    s.replacementX=old.x.toFloat();s.replacementZ=old.z.toFloat();
+                    s.replacementHeading=tak::sim::radiansFromBam(old.heading);
+                }
+            }
             s.cloaked = u.cloaked; s.cloakOn = u.cloakOn; s.active = u.active;
             // The sim counts these in TICKS now (retail's representation); the HUD
             // wants seconds, so the conversion happens here, at the render boundary.
@@ -2019,6 +2055,8 @@
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
             if (u.type && u.alive() && !unitType_.count(u.id)) {
+                if (u.replacementModel && !visuals_.count(u.replacementModel->id))
+                    loadVisual(u.replacementModel->id);
                 registerUnit(u.id, u.type);
                 if (--regBudget <= 0) break;
             }
@@ -2143,7 +2181,9 @@
                     // Destroyed cargo remains hidden. Native 512860 propagates
                     // a zero-severity/type-8 death packet to attached passengers,
                     // bypassing their ordinary Killed/Dying presentation.
-                    if (u.embarked()) continue;
+                    // Explicit retirement includes a lodestone consumed by an
+                    // upgrade. It is not a combat death and has no death script.
+                    if (u.embarked() || u.deadFor>=float(tak::sim::World::kRetiredTicks)/30.0f) continue;
                     // Retail order (icd 0x512610): Killed(severity, corpseOut,
                     // deathType) runs first -- deathType 3 (explosion kill)
                     // EXPLODEs every piece there; no shipped script reads the

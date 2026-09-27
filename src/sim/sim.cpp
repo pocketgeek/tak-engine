@@ -4629,10 +4629,10 @@ void World::updateBodyIndex(const Unit& u) const {
             bodyTiles_[size_t(tz)*bodyTilesW_+tx].push_back(int(index));
 }
 
-World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h) const {
+World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h,int ignoreId) const {
     SearchBodyRect result{x,z,w,h,std::vector<const Unit*>(size_t(w)*h,nullptr)};
     auto stamp=[&](const Unit& u,const std::array<int,4>* bounds=nullptr) {
-        if (!u.alive() || u.embarked() || !u.type || (u.type->canFly && u.flightGroundMode!=1)) return;
+        if (u.id==ignoreId || !u.alive() || u.embarked() || !u.type || (u.type->canFly && u.flightGroundMode!=1)) return;
         const int ux=bounds ? (*bounds)[0] : footprintOrigin(u.x,u.type->footX);
         const int uz=bounds ? (*bounds)[1] : footprintOrigin(u.z,u.type->footZ);
         const int x0=std::max(x,ux),z0=std::max(z,uz);
@@ -4984,8 +4984,33 @@ void World::rebuildGrid() {
     }
 }
 
-bool World::canPlace(const UnitType* type, float x, float z) const {
+const Unit* World::lodestoneUpgradeSource(const UnitType* type,float x,float z,int player) const {
+    if (!type || !type->onMana || !type->isStructure() || player<0 || manaSpots_.empty()) return nullptr;
+    // Explicit retail pairs: do not treat arbitrary modded mana buildings as upgrades.
+    static constexpr const char* factions[]={"ara","tar","ver","zon","cre"};
+    std::string base;
+    for (const char* faction:factions)
+        if (type->id==std::string(faction)+"mana") base=std::string(faction)+"lode";
+    if (base.empty()) return nullptr;
+    const std::pair<float,float>* spot=nullptr;
+    float best=24.0f*24.0f;
+    for (const auto& candidate:manaSpots_) {
+        const float dx=candidate.first-x,dz=candidate.second-z;
+        if (dx*dx+dz*dz<best) {best=dx*dx+dz*dz;spot=&candidate;}
+    }
+    if (!spot) return nullptr;
+    for (const auto& u:units_) {
+        if (!u.alive() || u.hp<=Fixed() || u.underConstruction || u.player!=player ||
+            !u.type || u.type->id!=base || u.type->side!=type->side) continue;
+        const float dx=u.x.toFloat()-spot->first,dz=u.z.toFloat()-spot->second;
+        if (dx*dx+dz*dz<24.0f*24.0f) return &u;
+    }
+    return nullptr;
+}
+
+bool World::canPlace(const UnitType* type, float x, float z, int player) const {
     if (!type) return false;
+    const Unit* replacing=lodestoneUpgradeSource(type,x,z,player);
     // Lodestones must sit on a mana deposit — but only on maps that have any
     // (deposit-less maps let them build on open ground). And only ONE lodestone
     // per deposit: reject if another already occupies the target deposit.
@@ -5009,7 +5034,7 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
         // spots (~22-40px apart); a 44px exclusion merges those into one deposit
         // so a second lodestone can't squeeze onto the same stone.
         for (const auto& u : units_) {
-            if (!u.alive() || !u.type || !u.type->onMana) continue;
+            if (&u==replacing || !u.alive() || !u.type || !u.type->onMana) continue;
             float dx = u.x.toFloat() - sx, dz = u.z.toFloat() - sz;
             if (dx * dx + dz * dz < 44.0f * 44.0f) return false;   // deposit taken
         }
@@ -5017,6 +5042,17 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
     // Check the domain-appropriate grid so water units (Kraken) require water
     // and land units require land, rather than always testing the ground grid.
     const NavGrid& grid = navFor(type);
+    const auto walkable=[&](int gx,int gz) {
+        if (!replacing) return grid.walkable(gx,gz);
+        const int ox=footprintOrigin(replacing->x,replacing->type->footX);
+        const int oz=footprintOrigin(replacing->z,replacing->type->footZ);
+        if (gx<ox || gz<oz || gx>=ox+replacing->type->footX || gz>=oz+replacing->type->footZ)
+            return grid.walkable(gx,gz);
+        // Only ignore cells actually blocked by the consumed building.
+        const auto& yard=replacing->type->yardMap;
+        const char cell=yard.empty() ? 'o' : yard[size_t(gz-oz)*replacing->type->footX+gx-ox];
+        return (cell=='o' || cell=='O') ? grid.terrainWalkable(gx,gz) : grid.walkable(gx,gz);
+    };
     int cx = footprintOrigin(x, type->footX), cz = footprintOrigin(z, type->footZ);
     // Retail 507400 checks the entire building rectangle before its yard masks.
     // Even ignored '.' rows need the one-cell map border: the yard transition
@@ -5073,18 +5109,18 @@ bool World::canPlace(const UnitType* type, float x, float z) const {
             for (int i = 0; i < type->footX; ++i) {
                 char c = type->yardMap[size_t(j) * type->footX + i];
                 if (c == '.' || c == ' ') continue;
-                if (!grid.walkable(cx + i, cz + j)) return false;
+                if (!walkable(cx + i, cz + j)) return false;
             }
     } else {
         for (int j = 0; j < type->footZ; ++j)
             for (int i = 0; i < type->footX; ++i)
-                if (!grid.walkable(cx + i, cz + j)) return false;
+                if (!walkable(cx + i, cz + j)) return false;
     }
     if (type->isStructure()) {
         // Retail's building branch (507400) checks occupied footprint cells.
         // A radius based on the longest side rejects builders standing beside
         // a rectangular building after they reach its construction perimeter.
-        const auto bodies=searchBodyRect(cx,cz,type->footX,type->footZ);
+        const auto bodies=searchBodyRect(cx,cz,type->footX,type->footZ,replacing ? replacing->id : 0);
         for (size_t i=0;i<bodies.cells.size();++i) {
             if (!type->yardMap.empty() && type->yardMap[i]=='.') continue;
             // Native Y has no occupancy bits; w and C both test bodies.
@@ -5156,15 +5192,28 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
         b->underConstruction)
         return 0;
-    if (atUnitCap(b->player)) return 0;   // at the unit cap: can't start a new build
+    const Unit* replacing=lodestoneUpgradeSource(type,x,z,b->player);
+    if (!replacing && atUnitCap(b->player)) return 0;
     if (atTypeCap(b->player, type)) return 0;   // totalallowed: already fielding one
-    if (!canPlace(type, x, z)) return 0;
+    if (!canPlace(type, x, z, b->player)) return 0;
+    std::optional<Unit::LodestoneReplacement> replacement;
+    if (replacing) {
+        replacement=Unit::LodestoneReplacement{replacing->type,replacing->x,replacing->z,replacing->heading};
+        Unit* old=unit(replacing->id);
+        blockFoot(*old->type,old->x.toFloat(),old->z.toFloat(),false);
+        old->deadFor=kRetiredTicks; // consumed, not killed: no wreck, death sound or kill credit
+        old->orders.clear();
+        --players_[size_t(old->player)].unitCount;
+        gPlayersValid_=false;bodyIndexValid_=false;
+    }
     int8_t bsquad = b->squad;   // capture before spawn may realloc units_
     // Preserve retail birth orientation. Factory scripts query this heading to
     // counter-rotate their build pads into the fixed yard where appropriate.
     int id = spawn(type, x, z, std::nullopt, b->player);
     Unit* site = unit(id);
     site->underConstruction = true;
+    site->lodestoneReplacement=replacement;
+    site->buildBegun=bool(replacement);
     site->beingBuilt = true;   // its builder owns it this tick (no instant decay)
     site->hp = Fixed::fromFloat(type->maxHp * 0.05f);
     // Auto-join: a conjured MOBILE unit inherits the builder's squad (a building never does).
@@ -5204,7 +5253,7 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
         b->underConstruction || !type) return;
-    if (!canPlace(type, x, z)) return;
+    if (!canPlace(type, x, z, b->player)) return;
     // ONE queue. A build is an order like any other and lives in Unit::orders, in
     // the position the player clicked it -- which is what makes "move here, build
     // that, move there" mean what it says, and what lets the order line draw it.
@@ -5962,26 +6011,36 @@ static void turnBuilderToSite(Unit& b, const Unit& site) {
 }
 
 void World::emitConstruction(Unit& u,bool rising) {
+    if (rising && u.lodestoneReplacement && u.underConstruction)
+        rising=u.constructionFraction()>=0.5f;
     ++u.constructionEmissions[rising ? 1 : 0];
+    const UnitType* effectType=u.lodestoneReplacement && u.underConstruction &&
+        u.constructionFraction()<0.5f ? u.lodestoneReplacement->type : u.type;
     const int x=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
     const int z=std::clamp(u.z.floorInt()/16,0,std::max(0,terH_-1));
     const int32_t y=u.type->canFly ? u.flightY.v :
         int32_t(heights_.empty() ? 0 : heights_[size_t(z)*terW_+x])*65536;
     if (!u.constructionEmitter) {
         if (!u.cosmeticConstructionEmitter) {
-            auto& emitter=u.cosmeticConstructionEmitter.emplace();
-            const double halfX=double(u.type->footX)*8*65536;
-            const double halfZ=double(u.type->footZ)*8*65536;
-            emitter.radius=int32_t(u.type->buildMovementCode==0 ? std::min(halfX,halfZ) :
-                std::sqrt(halfX*halfX+halfZ*halfZ)+0.5);
-            emitter.height=u.type->modelTop;
-            emitter.capacity=uint32_t(std::max(0,emitter.radius>>16))/(u.type->buildMovementCode==1 ? 4u : 1u);
+            u.cosmeticConstructionEmitter.emplace();
             u.constructionVisualRandom=uint32_t(u.id);
         }
+        auto& emitter=*u.cosmeticConstructionEmitter;
+        const double halfX=double(effectType->footX)*8*65536;
+        const double halfZ=double(effectType->footZ)*8*65536;
+        emitter.radius=int32_t(effectType->buildMovementCode==0 ? std::min(halfX,halfZ) :
+            std::sqrt(halfX*halfX+halfZ*halfZ)+0.5);
+        emitter.height=effectType->modelTop;
+        emitter.capacity=uint32_t(std::max(0,emitter.radius>>16))/(effectType->buildMovementCode==1 ? 4u : 1u);
+        const size_t before=emitter.particles.size();
         u.cosmeticConstructionEmitter->emit(1,y,rising,[&] {
             u.constructionVisualRandom=u.constructionVisualRandom*0x343fdu+0x269ec3u;
             return (u.constructionVisualRandom>>16)&0x7fffu;
         });
+        if (effectType!=u.type) for (size_t i=before;i<emitter.particles.size();++i) {
+            emitter.particles[i].x+=u.lodestoneReplacement->x.v-u.x.v;
+            emitter.particles[i].z+=u.lodestoneReplacement->z.v-u.z.v;
+        }
         return;
     }
     unsigned draw=0;
@@ -6272,6 +6331,15 @@ void World::tickConstruction(Unit& b, float dt) {
     Player& tm = players_[size_t(b.player)];
     if (gInstantBuild) {
         site->hp = Fixed::fromFloat(site->type->maxHp);   // finishes this tick, free
+        if (site->lodestoneReplacement) site->lodestoneReplacement->completedWork=1;
+    } else if (site->lodestoneReplacement) {
+        auto& progress=site->lodestoneReplacement->completedWork;
+        const double work=std::min(1.0-progress,double(dt)/std::max(total,0.01f));
+        const double cost=site->type->buildCost*work;
+        if (tm.mana<cost) return;
+        tm.debitMana(cost);progress=std::min(1.0,progress+work);
+        site->hp=fxMin(Fixed::fromInt(site->type->maxHp),site->hp+
+            Fixed::fromFloat(float(site->type->maxHp*0.95*work)));
     } else {
         float cost = site->type->buildCost * dt / std::max(total, 0.01f);
         if (tm.mana < cost) return;
@@ -6280,7 +6348,8 @@ void World::tickConstruction(Unit& b, float dt) {
     }
     emitConstruction(b,false);
     emitConstruction(*site,true);
-    if (site->hp >= Fixed::fromFloat(site->type->maxHp)) {
+    if (site->lodestoneReplacement ? site->lodestoneReplacement->completedWork>=1 :
+        site->hp >= Fixed::fromFloat(site->type->maxHp)) {
         site->hp = Fixed::fromFloat(site->type->maxHp);
         site->underConstruction = false;
         b.buildSiteId = 0;
@@ -9889,6 +9958,11 @@ uint64_t World::stateHash() const {
         }
         mix(uint32_t(u.productionSiteId)); mix(uint32_t(u.buildProgress));
         mix(u.underConstruction); mix(u.buildBegun); mix(uint32_t(u.conjureRate.v));
+        if (u.lodestoneReplacement) {
+            const auto& old=*u.lodestoneReplacement;
+            mix(0x4c4f4445u);for (char c:old.type->id) mix(uint8_t(c));
+            mix(uint32_t(old.x.v));mix(uint32_t(old.z.v));mix(old.heading.v);mix(std::bit_cast<uint64_t>(old.completedWork));
+        }
         if (u.retailSite) {
             mix(0x53495445u);const auto& s=*u.retailSite;
             mixf(s.progress.remaining);mix(s.progress.hp);mix(s.progress.events);mix(s.progress.flags);

@@ -42,6 +42,17 @@ rosters. `hpitool where <dir> <path>` helps inspect archive resolution, and
 
 ## Playing
 
+To upgrade a lodestone, select a builder that offers the faction's advanced
+lodestone and place it on your completed basic lodestone's mana spot. This works
+for all five factions, including Creon's Mana Amplifier, with either balance set.
+The larger footprint must still fit. The basic lodestone dissolves during the
+first half of the advanced building's normal construction time; the advanced
+one materializes during the second half, with the faction's construction effects.
+The upgrade costs the advanced building's normal mana cost, produces no mana
+until complete, and needs no additional unit-cap slot. Stopping or destroying
+the unfinished upgrade removes it normally; the consumed basic lodestone is
+not refunded or restored.
+
 The engine is **client-server only** — every game runs on a `takserver`, and the
 AI runs *only* on the server. Single-player is just a private game on a server the
 client starts for you.

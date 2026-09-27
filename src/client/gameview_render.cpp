@@ -2157,17 +2157,20 @@
         if (u.underConstruction && !u.buildBegun) {clear();return;}
         auto ut=unitType_.find(u.id);
         if (ut==unitType_.end()) {clear();return;}
-        auto vt=visuals_.find(ut->second);
+        auto vt=visuals_.find(u.replacementModel ? u.replacementModel->id : ut->second);
         if (vt==visuals_.end()) {clear();return;}
         const Anim* anim = nullptr;
         auto at = anims_.find(u.id);
-        if (at != anims_.end()) anim = &at->second;
+        if (at != anims_.end() && !u.replacementModel) anim = &at->second;
 
         float zm = mapView_.zoom();
         int slot = colorSlot_[u.player & 7];
         // Interpolated pose so the unit glides between 30Hz sim ticks (lift computed at the
         // interpolated spot so it stays seated on the terrain as it moves).
         float ix, iz, ih; interpPose(u, ix, iz, ih);
+        if (u.replacementModel) {
+            ix=u.replacementX;iz=u.replacementZ;ih=u.replacementHeading;
+        }
         // A flyer holds its height above the coarse dilated datum, not the relief
         // directly beneath it -- see flyerGround.
         const bool flying = u.type && u.type->canFly;
@@ -2234,7 +2237,7 @@
         const float altitude=anim ? anim->altitude : 0.0f;
         const float birthP=birthProgress(u.id);
         const bool conjuring=u.type && (u.underConstruction || birthP<1.0f);
-        const float p=!u.type ? 1.0f : u.underConstruction
+        const float p=u.replacementOpacity>=0 ? u.replacementOpacity : !u.type ? 1.0f : u.underConstruction
             ? std::clamp(u.hp/u.type->maxHp,0.0f,1.0f) : birthP;
         thread_local std::vector<uint64_t> key;
         key.clear();
@@ -2638,6 +2641,12 @@
         }
         auto constructionParticles=[&](bool frontPass) {
             if (u.constructionParticles.empty()) return;
+            SDL_FPoint anchor{ax,ay};
+            if (u.replacementModel) {
+                // Particle offsets belong to the new site even while its old
+                // model is dissolving at the old footprint's center.
+                anchor=unitScreen(u);anchor.y+=12.0f*zm;
+            }
             std::string side=u.type->side;
             std::transform(side.begin(),side.end(),side.begin(),::tolower);
             const char* name=side=="tar" ? "tarosbuild" : side=="ver" ? "verunabuild" :
@@ -2657,7 +2666,7 @@
                 const float dx=float(high(origin[0],particle.x)-ox);
                 const float dy=float(high(origin[2],particle.z)-(high(origin[1],particle.y)>>1)
                                      -oz+(oy>>1));
-                SDL_FRect rect{ax+(dx-frame.ax)*zm,ay+(dy-frame.ay)*zm,
+                SDL_FRect rect{anchor.x+(dx-frame.ax)*zm,anchor.y+(dy-frame.ay)*zm,
                                float(frame.w)*zm,float(frame.h)*zm};
                 SDL_RenderCopyF(ren_,frame.tex,nullptr,&rect);
             }

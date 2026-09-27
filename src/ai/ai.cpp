@@ -362,6 +362,7 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     const bool factory=!registry_.buildable(t->id).empty();
     auto usable=[&](float x,float z) {
         const float dx=x-home.first,dz=z-home.second;
+        float approachX=x,approachZ=z;
         if (manaFootX>0) for (const auto& [mx,mz]:world.manaSpots()) {
             const int x0=tak::sim::footprintOrigin(x,t->footX);
             const int z0=tak::sim::footprintOrigin(z,t->footZ);
@@ -387,6 +388,10 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             const auto [cx,cz]=rectangle.navigationCell(
                 tak::sim::footprintOrigin(builder.x,builder.type->footX),
                 tak::sim::footprintOrigin(builder.z,builder.type->footZ));
+            if (world.lodestoneUpgradeSource(t,x,z,player_)) {
+                approachX=float(cx*16+builder.type->footX*8);
+                approachZ=float(cz*16+builder.type->footZ*8);
+            }
             const float ax=float(cx*16+builder.type->footX*8)-x;
             const float az=float(cz*16+builder.type->footZ*8)-z;
             const float clearance=float(std::max(t->footX,t->footZ))*8+12;
@@ -400,8 +405,8 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             if (std::abs(x-u.x.toFloat()) < float(t->footX+u.type->footX)*8+48 &&
                 std::abs(z-u.z.toFloat()) < float(t->footZ+u.type->footZ)*8+48) return false;
         }
-        return dx*dx+dz*dz<=radius*radius && world.canPlace(t,x,z) &&
-            (builder.type->canFly || world.pathExists(builder.type,x,z,builder.x.toFloat(),builder.z.toFloat()));
+        return dx*dx+dz*dz<=radius*radius && world.canPlace(t,x,z,player_) &&
+            (builder.type->canFly || world.pathExists(builder.type,approachX,approachZ,builder.x.toFloat(),builder.z.toFloat()));
     };
     if (t->onMana && world.hasManaSpots()) {
         float bestD = 1e18f;

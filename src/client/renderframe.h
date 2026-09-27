@@ -57,6 +57,9 @@ struct UnitR {
     std::vector<tak::sim::RetailConstructionParticle> constructionParticles;
     float buildProgress = 0;
     int constructionPercentLeft = 0;
+    const tak::sim::UnitType* replacementModel = nullptr;
+    float replacementX=0,replacementZ=0,replacementHeading=0;
+    float replacementOpacity=-1; // negative: ordinary construction presentation
     int scriptHealthPercent = 100;
     bool yardOpen = false;
     std::vector<const tak::sim::UnitType*> buildQueue;

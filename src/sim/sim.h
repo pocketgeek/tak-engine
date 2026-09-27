@@ -832,6 +832,20 @@ struct Unit {
     uint32_t fireAnimations = 0; // callback delivery, before script-triggered projectile creation
     int scriptAimTarget = 0;
     uint32_t firedWeapons = 0; // display event mask; each bit identifies an actual shot
+    // An upgrade consumes its old building when the new site is admitted. Keep
+    // its presentation independent of retired/reused unit slots.
+    struct LodestoneReplacement {
+        const UnitType* type = nullptr;
+        Fixed x,z;
+        Bam heading;
+        double completedWork=0; // paid work, independent of healing/damage
+    };
+    std::optional<LodestoneReplacement> lodestoneReplacement;
+    float constructionFraction() const {
+        if (!underConstruction) return 1.0f;
+        return std::clamp(retailSite ? 1.0f-retailSite->progress.remaining :
+            lodestoneReplacement ? float(lodestoneReplacement->completedWork) : (hp.toFloat()/std::max(1,type->maxHp)-0.05f)/0.95f,0.0f,1.0f);
+    }
     std::optional<RetailConstructionSite> retailSite;
     std::optional<RetailConstructionJob> retailBuild;
     std::optional<RetailConstructionEmitter> constructionEmitter;
@@ -1350,7 +1364,8 @@ public:
     // Cosmetic emote: make `player`'s monarchs headbang for 10s (Cmd::Headbang).
     void startHeadbang(int player);
     bool headbangActive(int player) const;
-    bool canPlace(const UnitType* type, float x, float z) const;
+    bool canPlace(const UnitType* type, float x, float z, int player = -1) const;
+    const Unit* lodestoneUpgradeSource(const UnitType* type, float x, float z, int player) const;
     // Would the site be placeable if the clearable doodads on it were gone? Fills
     // `out` with their feature ids, nearest-first is the caller's job. Returns false
     // when anything ELSE blocks -- terrain, a unit, a building, an unreclaimable
@@ -2082,7 +2097,7 @@ private:
     mutable std::vector<std::array<int,4>> bodyFootprints_;
     void rebuildBodyIndex() const;
     void updateBodyIndex(const Unit&) const;
-    SearchBodyRect searchBodyRect(int,int,int,int) const;
+    SearchBodyRect searchBodyRect(int,int,int,int,int ignoreId=0) const;
     int cellScoreWithBodies(const UnitType*,int,int,int,const SearchBodyRect*) const;
     bool gatePassageAt(int,int) const;
     bool gateWantsOpen(const Unit&) const;
