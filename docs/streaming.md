@@ -1,12 +1,13 @@
 # Streaming to YouTube
 
-At the title screen or in a game, press **F9**, or open **Options → YouTube Streaming** (under Esc during a game).
+At the title screen or in a game, press **F9**, or open **Settings → YouTube Streaming** at the title screen
+or **Esc → YouTube Streaming** during a game.
 Copy the stream key from YouTube Studio, click **Paste** beside the key field,
 select the video settings, and click
 **Start Streaming**. Follow the preview/status in YouTube Studio to make the
 broadcast public. See [YouTube's encoder setup guide](https://support.google.com/youtube/answer/2907883).
 
-The initial settings are 720p, 30 FPS and 6,000 Kbps video. The panel also offers
+The initial settings are Max Width 3840, 60 FPS and 6,000 Kbps video. The panel also offers
 1080p, 1440p, 4K (3840×2160), Full Resolution, Max Width 3840, 60 FPS, 3,000–80,000 Kbps,
 and automatic or CPU encoding. Full Resolution uses the actual window drawable
 size at Start Streaming, including high-DPI scaling, rounded down to even pixels.

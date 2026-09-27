@@ -1,3 +1,4 @@
+#include "client/streaming.h"
 #include <set>
 #include <functional>
 #include "client/gameview.h"
@@ -1896,7 +1897,7 @@
             SDL_RenderFillRectF(ren_, &dim);
 
             const float bw = 280, bh = 50, gap = 14, pad = 32, titlePx = 3.0f;
-            const int nBtn = canReturnToMenu_ ? 5 : 4;
+            const int nBtn = canReturnToMenu_ ? 6 : 5;
             const float titleH = 7 * titlePx + 24;
             const float pw = bw + pad * 2;
             const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap;
@@ -1928,6 +1929,11 @@
                 by += bh + gap;
             };
             btn("RESUME", [this] { exitMenu_ = false; });
+            btn("YOUTUBE STREAMING", [this] {
+                exitMenu_ = false;
+                SDL_Event event{};event.type=SDL_USEREVENT;event.user.code=tak::kStreamingEvent;
+                SDL_PushEvent(&event);
+            });
             btn("OPTIONS", [this] { exitMenu_ = false; openOptions(); });
             btn("CONTROLS", [this] { exitMenu_ = false; openHotkeys(); });   // hotkey rebinding
             if (canReturnToMenu_) btn("MAIN MENU", [this] { menuRequested_ = true; });

@@ -141,7 +141,7 @@ struct MainMenu::Impl {
     // The SETTINGS menu overlay -- the lower-right menu button opens THIS (OPTIONS / CONTROLS)
     // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
     bool settingsMenu_ = false;
-    SDL_FRect setBtnRect_[4]{};        // OPTIONS / CONTROLS / BENCHMARK / LOAD REPLAY (set each render)
+    SDL_FRect setBtnRect_[5]{};        // OPTIONS / CONTROLS / BENCHMARK / LOAD REPLAY / STREAMING
     bool benchMenu_ = false;          // benchmark intensity submenu (opened from SETTINGS)
     bool replayMenu_ = false;         // replay picker (opened from SETTINGS)
     int replayScroll_ = 0;            // first listed row
@@ -786,14 +786,14 @@ struct MainMenu::Impl {
         button(x0 + 196, "BACK", serverBackRect, false);
     }
 
-    // The SETTINGS menu overlay: OPTIONS / CONTROLS, styled like the in-game GAME MENU.
-    // Records the two hit-rects in setBtnRect_ for the click handler in run().
+    // The SETTINGS menu overlay, styled like the in-game GAME MENU.
+    // Records the button hit-rects in setBtnRect_ for the click handler in run().
     void renderSettingsMenu(int winW, int winH) {
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         SDL_FRect dim{0, 0, float(winW), float(winH)};
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
         SDL_RenderFillRectF(ren, &dim);
-        const int nBtn = 4;
+        const int nBtn = 5;
         const float bw = 320, bh = 54, gap = 16, pad = 34, titlePx = 3.2f;
         const float titleH = 7 * titlePx + 22;
         const float pw = bw + pad * 2;
@@ -807,7 +807,7 @@ struct MainMenu::Impl {
         shadowText("SETTINGS", px0 + (pw - tw("SETTINGS", titlePx)) / 2, py0 + pad, titlePx, {235, 225, 180, 255});
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
         { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
-        const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "BENCHMARK", "LOAD REPLAY"};
+        const char* labels[nBtn] = {"OPTIONS", "CONTROLS", "BENCHMARK", "LOAD REPLAY", "YOUTUBE STREAMING"};
         float by = py0 + pad + titleH;
         for (int i = 0; i < nBtn; ++i) {
             SDL_FRect r{px0 + pad, by, bw, bh};
@@ -1229,11 +1229,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                                 }
                             },
                             [settings] { saveSettings(*settings); }, 0, [] {},
-                            [music] { if (music) music->reopen(); },
-                            streaming ? std::function<void()>([] {
-                                SDL_Event event{}; event.type = SDL_USEREVENT;
-                                event.user.code = kStreamingEvent; SDL_PushEvent(&event);
-                            }) : std::function<void()>{});   // live output-device switch
+                            [music] { if (music) music->reopen(); });   // live output-device switch
+                    } else if (hit(d_->setBtnRect_[4]) && streaming) {
+                        d_->settingsMenu_ = false;
+                        SDL_Event event{};event.type=SDL_USEREVENT;event.user.code=kStreamingEvent;
+                        streaming->input(event,w,h);
                     } else if (hit(d_->setBtnRect_[1])) {   // CONTROLS -> hotkey rebinding
                         d_->settingsMenu_ = false;
                         d_->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,

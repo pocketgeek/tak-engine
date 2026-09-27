@@ -1,4 +1,3 @@
-#include "client/streaming.h"
 #include "client/retailaim.h"
 #include "gaf/nimbus.h"
 #include "client/gameview.h"
@@ -129,8 +128,7 @@
             [this] { saveSettings(*settings_); },
             sounds_.channelCount(),
             [this] { openHotkeys(); },
-            [this] { sounds_.reopenDevice(); },
-            [] { SDL_Event e{}; e.type=SDL_USEREVENT; e.user.code=tak::kStreamingEvent; SDL_PushEvent(&e); });
+            [this] { sounds_.reopenDevice(); });
     }
 
     void GameView::writeResume(uint32_t gid, uint64_t tok) const {

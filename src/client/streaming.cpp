@@ -163,7 +163,7 @@ struct Streaming::Impl {
     video::Stream stream;
     video::StreamConfig config;
     Capture capture;
-    int resolution=0; // 720p, 1080p, 1440p, 4K, full window, max width 3840
+    int resolution=5; // 720p, 1080p, 1440p, 4K, full window, max width 3840
     bool visible=false,editing=false,wasActive=false,wasTextInput=false;
     std::string error;
     uint64_t nextCapture=0, rateTime=0, rateBytes=0;
@@ -235,7 +235,7 @@ struct Streaming::Impl {
         text(error.empty()?"ESC / F9: CLOSE - STREAM CONTINUES UNTIL STOP":error,20,437);
     }
 };
-Streaming::Streaming(SDL_Renderer* ren):p_(std::make_unique<Impl>()) {p_->ren=ren;}
+Streaming::Streaming(SDL_Renderer* ren):p_(std::make_unique<Impl>()) {p_->ren=ren;p_->config.fps=60;}
 Streaming::~Streaming(){if(p_->visible)SDL_StopTextInput();}
 video::Stream& Streaming::stream(){return p_->stream;}
 bool Streaming::shown() const{return p_->visible;}
