@@ -749,11 +749,12 @@ struct Unit {
     // SQUARED px, which is why this one is NOT Fixed: 20px squared is 400, but a map
     // diagonal squared is ~1.3e8 -- far past 16.16's 32768 ceiling. Exact int instead.
     int32_t buildStuckD = INT32_MAX;// best (closest) squared dist to the build site so far
-    // TICKS. The death animation runs to 4s (kCorpseAnimTicks) and the body lingers
-    // to corpseUntil; kRetiredTicks marks a record explicitly retired.
-    int corpseAnimationTicks() const { return corpseStatue>=0 || (type && type->instantCorpse && !underConstruction && deathType!=kDeathSelfDestruct) ? 0 : 120; }
-    int32_t corpseUntil = 120;  // deadFor when the body is gone (120t = 4s, right after the
-                             // death anim; corpse types extend by decomposetime)
+    // INT32_MAX while an authored Dying callback still owns the body. SET26/31
+    // resolve the handoff; no Dying callback retires immediately.
+    int32_t deathAnimationTicks = 0;
+    bool deathHasCorpse = false;
+    int corpseAnimationTicks() const { return corpseStatue>=0 ? 0 : deathAnimationTicks; }
+    int32_t corpseUntil = 0;  // handoff plus authored decomposition/sinking lifetime
     // Fixed: this is hp that went past zero, in the same units hp is now kept in.
     Fixed overkill = Fixed();  // damage past the killing blow (retail severity input)
     uint8_t deathType = 1;   // damagetype of the killing blow (3 = explosion/gib)
@@ -2218,7 +2219,6 @@ public:
     // Corpse lifecycle, in ticks. Public because the RENDERER shares the contract:
     // it decides the death-animation window and the corpse cull from the same
     // numbers the sim counts with.
-    static constexpr int32_t kCorpseAnimTicks = 4 * 30;    // death anim, then the corpse
     static constexpr int32_t kRetiredTicks = 1000 * 30;    // record explicitly retired
     // Terrain accessors for offline analysis tools (tools/footprobe): the raw
     // heightmap and its dimensions. Read-only; nothing in the sim uses these.
@@ -2368,6 +2368,8 @@ private:
         cob::RetailScriptState state;
         bool activated=false,ready=false,yardOpen=false,buggerOff=false;
         uint32_t movementRate=0;
+        bool dying=false;
+        int deathStopValue=0;
         explicit UnitScript(const cob::File& file):state(file) {}
     };
     std::map<int,UnitScript> unitScripts_;
@@ -2382,6 +2384,8 @@ private:
     }
     struct ScriptHost;
     void tickUnitScript(Unit& unit);
+    void beginUnitDeath(Unit& unit);
+    void updateCorpseWindow(Unit& unit);
     // Enabled by setupMatch; a bare test World leaves it off.
     bool pathService_ = false;
     // The retry constants that lived here (kPathRetryTicks, kPathFailBackoff)

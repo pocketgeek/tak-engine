@@ -133,6 +133,9 @@ bool Vm::mayReachExplosion(std::span<const uint8_t> reachability) const {
 void Vm::exportNativePieces() {
     const auto convert=[](const RetailPiece& source,PieceState& target) {
         target.visible=source.visible;
+        target.cached=source.cached;
+        target.shaded=source.shaded;
+        target.rendered=source.rendered;
         for(int axis=0;axis<3;++axis) {
             target.move[axis]=float(source.move[axis])*kLinear;
             target.rot[axis]=float(source.turn[axis])*kAngle;
@@ -517,13 +520,15 @@ void Vm::run(Thread& t) {
                 t.pc += 2; break;
 
             case 0x10007000: case 0x10008000: case 0x10009000: case 0x1000A000:
-            case 0x1000D000: case 0x1000E000: case 0x10075000:
-                // CACHE / DONT_CACHE / SHADE / DONT_SHADE + the render-flag pair
-                // (0x9/0xA) and 0x10075000: 1-arg cosmetic render flags our flat
-                // renderer ignores. 0x1000A000 in particular is used by building Create
-                // scripts *before* they START_SCRIPT their ambient loops (flags,
-                // smoke) -- treating it as unknown killed the Create thread there, so
-                // buildings never started animating.
+            case 0x1000D000: case 0x1000E000:
+                if (size_t(arg(0)) < pieces_.size()) {
+                    auto& piece=pieces_[size_t(arg(0))];
+                    if(op==0x10007000 || op==0x10008000)piece.cached=op==0x10007000;
+                    if(op==0x10009000 || op==0x1000A000)piece.rendered=op==0x10009000;
+                    if(op==0x1000D000 || op==0x1000E000)piece.shaded=op==0x1000D000;
+                }
+                t.pc += 2; break;
+            case 0x10075000:
                 t.pc += 2; break;
             case 0x1000F000: {                                                // EMIT_SFX
                 int piece = arg(0);

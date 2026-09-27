@@ -149,7 +149,7 @@
         }
         for (const UnitR* _up : front().live) {
             const UnitR& r = *_up;   // this tick's snapshot (front().live mirrors world_.units())
-            if ((r.deadFor >= 4.0f && !r.corpsePhase) || r.embarked()) continue;
+            if ((r.deadFor >= float(r.corpseAnimationTicks)/30.0f && !r.corpsePhase) || r.embarked()) continue;
             if (r.corpsePhase && r.corpseFeat >= 0) {
                 static const bool kCorpLog = tak::devEnv("TAK_BURNLOG") != nullptr;
                 static float lastLog = -10;
@@ -217,6 +217,19 @@
             int slot = colorSlot_[u->player & 7];
             uint32_t bit = (slot >= 0 && slot < 32) ? (1u << slot) : 0u;
             if (!bit || !(atlasSeen & bit)) { atlasFor(slot); atlasSeen |= bit; }
+        }
+        thread_local std::vector<const PieceMeta*> palettePrepared;
+        palettePrepared.clear();
+        for(const auto* u:visUnits_) {
+            if(!isStructure(u->type))continue;
+            auto type=unitType_.find(u->id);
+            if(type==unitType_.end())continue;
+            auto visual=visuals_.find(u->replacementModel ? u->replacementModel->id : type->second);
+            if(visual!=visuals_.end() && std::find(palettePrepared.begin(),palettePrepared.end(),
+                &visual->second.meta)==palettePrepared.end()) {
+                palettePrepared.push_back(&visual->second.meta);
+                preparePaletteTextures(visual->second.meta);
+            }
         }
         // Retail updates registered model textures every simulation tick,
         // independently of visibility or the construction state of any unit.
@@ -1958,6 +1971,106 @@
         return nullptr;
     }
 
+    void GameView::preparePaletteTextures(const PieceMeta& meta) {
+        if(!palettePreparedModels_.insert(&meta).second)return;
+        std::set<std::string> names;
+        const auto gather=[&](const auto& self,const PieceMeta& piece)->void {
+            if(!piece.skip)names.insert(piece.primTex.begin(),piece.primTex.end());
+            for(const auto& child:piece.children)self(self,child);
+        };
+        gather(gather,meta);
+        std::vector<std::pair<size_t,const std::string*>> ordered;
+        for(const auto& name:names) {
+            const auto source=paletteTextureSources_.find(name);
+            if(source==paletteTextureSources_.end())continue;
+            size_t area=0;
+            for(const auto& frame:source->second.indexed)
+                area=std::max(area,size_t(frame.width)*frame.height);
+            ordered.push_back({area,&name});
+        }
+        std::stable_sort(ordered.begin(),ordered.end(),
+            [](const auto& a,const auto& b){return a.first>b.first;});
+        for(const auto& [area,name]:ordered)preparePaletteTexture(*name);
+    }
+
+    void GameView::preparePaletteTexture(const std::string& name) {
+        if(paletteTextureSheets_.count(name))return;
+        const auto source=paletteTextureSources_.find(name);
+        if(source==paletteTextureSources_.end())return;
+        auto& sheets=paletteTextureSheets_[name];
+        sheets.resize(source->second.indexed.size());
+        constexpr int side=2048;
+        constexpr size_t maxPages=16; // 256 MiB ceiling; shipped structure roster uses nine pages.
+        for(size_t frame=0;frame<sheets.size();++frame) {
+            const auto& input=source->second.indexed[frame];
+            const int w=input.width,h=input.height;
+            if(w<=0 || h<=0 || w*4>side || h*5>side)continue;
+            PaletteTexturePage* page=nullptr;
+            size_t freeIndex=0;
+            int bestArea=std::numeric_limits<int>::max();
+            for(auto& candidate:paletteTexturePages_)for(size_t i=0;i<candidate.free.size();++i) {
+                const auto& rect=candidate.free[i];
+                if(rect.w>=w*4 && rect.h>=h*5 && rect.w*rect.h<bestArea) {
+                    page=&candidate;freeIndex=i;bestArea=rect.w*rect.h;
+                }
+            }
+            if(!page) {
+                if(paletteTexturePages_.size()>=maxPages || gpuAllocBlocked() ||
+                   !gpuvram::wouldFit(size_t(side)*side*4))continue;
+                auto* texture=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
+                    SDL_TEXTUREACCESS_STATIC,side,side);
+                if(!texture) {noteGpuAllocFail();continue;}
+                SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+                SDL_SetTextureScaleMode(texture,SDL_ScaleModeNearest);
+                paletteTexturePages_.push_back({texture});page=&paletteTexturePages_.back();
+                freeIndex=0;
+            }
+            const auto available=page->free[freeIndex];
+            std::vector<uint8_t> pixels(size_t(w)*h*20*4);
+            for(int level=0;level<20;++level)for(size_t pixel=0;pixel<size_t(w)*h;++pixel) {
+                const auto index=input.rgba[pixel*4];
+                const auto remapped=source->second.shades[size_t(level+5)*256+index];
+                const size_t row=size_t(level/4)*h+pixel/size_t(w);
+                const size_t col=size_t(level%4)*w+pixel%size_t(w);
+                auto* output=pixels.data()+(row*size_t(w)*4+col)*4;
+                std::memcpy(output,source->second.palette.rgba[remapped],3);
+                output[3]=input.rgba[pixel*4+3];
+            }
+            SDL_Rect rect{available.x,available.y,w*4,h*5};
+            if(SDL_UpdateTexture(page->texture,&rect,pixels.data(),w*16)!=0)continue;
+            if(tak::devFlag("TAK_PALETTE_VERIFY")) {
+                // Exercise the actual uploaded subrect, including the four-column
+                // band layout, on software and accelerated SDL backends alike.
+                AaScaleReset scale(ren_);
+                auto* check=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
+                    SDL_TEXTUREACCESS_TARGET,rect.w,rect.h);
+                if(!check)throw std::runtime_error("palette verification target allocation failed");
+                auto* previous=SDL_GetRenderTarget(ren_);
+                SDL_BlendMode blend;SDL_GetTextureBlendMode(page->texture,&blend);
+                SDL_SetTextureBlendMode(page->texture,SDL_BLENDMODE_NONE);
+                SDL_SetRenderTarget(ren_,check);
+                const int copied=SDL_RenderCopy(ren_,page->texture,&rect,nullptr);
+                std::vector<uint8_t> readback(pixels.size());
+                const int read=SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,
+                    readback.data(),w*16);
+                SDL_SetRenderTarget(ren_,previous);
+                SDL_SetTextureBlendMode(page->texture,blend);
+                gpuvram::destroy(check);
+                if(copied || read || readback!=pixels)
+                    throw std::runtime_error("palette texture upload mismatch: "+name);
+                std::fprintf(stderr,"PALETTE_VERIFY %s frame=%zu levels=20 pixels=%zu pages=%zu\n",
+                    name.c_str(),frame,size_t(w)*h,paletteTexturePages_.size());
+            }
+            sheets[frame]={page->texture,{float(rect.x)/side,float(rect.y)/side,
+                                         float(w)/side,float(h)/side}};
+            page->free.erase(page->free.begin()+std::ptrdiff_t(freeIndex));
+            if(available.w>rect.w)page->free.push_back({rect.x+rect.w,rect.y,
+                available.w-rect.w,rect.h});
+            if(available.h>rect.h)page->free.push_back({rect.x,rect.y+rect.h,
+                available.w,available.h-rect.h});
+        }
+    }
+
     void GameView::animateGlowTextures() {
         AaScaleReset _sr(ren_);   // bakes render at 1:1 even when whole-frame AA is on
         if (animatedTex_.empty()) return;
@@ -2020,6 +2133,9 @@
         for (auto& [n, frames] : textures_)
             for (SDL_Texture* t : frames) if (t) gpuvram::destroy(t);
         textures_.clear();
+        for(auto& page:paletteTexturePages_)gpuvram::destroy(page.texture);
+        paletteTexturePages_.clear();paletteTextureSheets_.clear();palettePreparedModels_.clear();
+        paletteTextureSources_.clear();
         for (auto& page:shadowMaskPages_) {
             if(page.texture)gpuvram::destroy(page.texture);
             if(page.coverage)gpuvram::destroy(page.coverage);
@@ -2134,6 +2250,8 @@
                                 PreparedPiece& out) {
         const auto* piece=pieceFor(anim,object.name);
         out.hidden=piece && !piece->visible;
+        out.castsShadow=!piece || piece->castsShadow();
+        out.shaded=!piece || piece->shaded;
         out.transform=scriptTransform(parent,object.x,object.y,object.z,piece);
         out.rotated.resize(!meta.skip && !out.hidden ? object.vertices.size()/3 : 0);
         for (size_t i=0;i<out.rotated.size();++i) {
@@ -2259,7 +2377,7 @@
                 anim->vm ? std::span<const tak::cob::PieceState>(anim->vm->pieces()) :
                            std::span<const tak::cob::PieceState>{};
             for(const auto& pose:poses) {
-                word(pose.visible);
+                word(pose.visible);word(pose.cached);word(pose.shaded);word(pose.rendered);
                 for(float value:pose.move)real(value);
                 for(float value:pose.rot)real(value);
             }
@@ -2282,12 +2400,12 @@
         if (reuse) preparePiece(vt->second.model.root,vt->second.meta,base,anim,
                                 std::cos(facing),std::sin(facing),prepared);
         collect(scratch, atlas, vt->second.model.root, base, anim, facing, u.player, mirror,
-                true, false, nullptr, &vt->second.meta,false,reuse ? &prepared : nullptr);
+                true, false, nullptr, &vt->second.meta,false,reuse ? &prepared : nullptr,isStructure(u.type));
         if (tak::devFlag("TAK_GEOMETRY_VERIFY")) {
             thread_local std::vector<Tri> reference;
             reference.clear();
             collect(reference,atlas,vt->second.model.root,base,anim,facing,u.player,mirror,
-                    true,false,nullptr,&vt->second.meta);
+                    true,false,nullptr,&vt->second.meta,false,nullptr,isStructure(u.type));
             if (reference.size()!=scratch.size()) throw std::runtime_error("body geometry count mismatch");
             for (size_t i=0;i<scratch.size();++i) {
                 const auto& a=scratch[i];const auto& b=reference[i];
@@ -2397,7 +2515,7 @@
         // geometry, which is why living units keep both faces.
         //
         // "Dead" alone was too broad, and wrongly covered two upright cases:
-        //   * the death ANIMATION (deadFor < 4) -- still standing or mid-fall;
+        //   * the death ANIMATION (before the scripted handoff) -- still standing or mid-fall;
         //   * STATUES -- a petrified or frozen body stays upright, and its corpsePhase
         //     starts at deadFor >= 0, so "dead" caught it from the very first frame.
         // corpsePhase && !corpseStatue is exactly "finished falling, lying on the
@@ -2418,7 +2536,7 @@
             const Xform transform=pose ? pose->transform : scriptTransform(parent,object.x,object.y,object.z,piece);
             PieceMeta local;
             if (!cached) { pieceMetaFor(object,isRoot,local);cached=&local; }
-            if (!cached->skip && !(pose ? pose->hidden : piece && !piece->visible)) {
+            if (!cached->skip && (pose ? pose->castsShadow : !piece || piece->castsShadow())) {
                 for (size_t primitiveIndex=0;primitiveIndex<object.primitives.size();++primitiveIndex) {
                     if (int32_t(primitiveIndex)==object.selectionPrimitive) continue;
                     const auto& primitive=object.primitives[primitiveIndex];

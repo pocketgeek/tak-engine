@@ -183,6 +183,28 @@ int main(int argc, char** argv) {
             f.code={0xdeadbeef};
             check(cob::explosionReachability(f)[0],"unknown opcode conservatively requires serial execution");
         }
+        // Flags must survive the integer VM's sparse pose export. RENDER_OFF
+        // gates shadows only; DONT_CACHE moves body rendering to the other pass.
+        for(bool retail:{false,true})for(unsigned flags=0;flags<16;++flags) {
+            cob::File file;file.pieces={"body"};file.scripts={{"Flags",0},{"Reset",11}};
+            file.code={flags&1?0x10005000u:0x10006000u,0,
+                       flags&2?0x10007000u:0x10008000u,0,
+                       flags&4?0x1000d000u:0x1000e000u,0,
+                       flags&8?0x10009000u:0x1000a000u,0,
+                       0x10021001,0,0x10065000,
+                       0x10005000,0,0x10007000,0,0x1000d000,0,0x10009000,0,
+                       0x10021001,0,0x10065000};
+            cob::Vm vm(std::move(file),true);if(retail)vm.enableRetailAnimation();
+            vm.start("Flags");vm.tick(1.0f/30.0f);
+            const auto& piece=vm.pieces()[0];
+            check(piece.visible==bool(flags&1) && piece.cached==bool(flags&2) &&
+                  piece.shaded==bool(flags&4) && piece.rendered==bool(flags&8),
+                  "authored piece flags reach display pose");
+            check(piece.castsShadow()==((flags&11)==11),"native per-piece shadow admission");
+            vm.start("Reset");vm.tick(1.0f/30.0f);
+            check(piece.visible && piece.cached && piece.shaded && piece.rendered,
+                  "piece flags can be restored after sparse export");
+        }
         for(bool retail:{false,true})for(bool accepted:{false,true})
         for(unsigned later:{0u,0x10005000u,0x10006000u})
         for(unsigned flags:{0u,0x20u,0x40u,0x60u}) {

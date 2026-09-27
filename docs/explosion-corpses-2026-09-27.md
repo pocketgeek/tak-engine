@@ -1,5 +1,10 @@
 # Explosion corpses (2026-09-27)
 
+Historical first fix (protocol 188). The subsequent [native death lifecycle
+fix](native-death-lifecycle-2026-09-27.md) replaces the admission heuristic
+and four-second timer with live script execution, including the seven ordinary
+corpse refusals described below. Current development uses protocol 189.
+
 The 0.7.7 follow-up restores explosion-death corpses for 29 unit types whose
 shipped `Killed` handlers explicitly request corpse 1. Previously the simulation
 suppressed their corpses whenever the killing blow had damage type 3.

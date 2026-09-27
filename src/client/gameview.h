@@ -943,7 +943,7 @@ private:
     // share the exact rotated coordinates between the body and shadow passes.
     struct PreparedPiece {
         Xform transform;
-        bool hidden=false;
+        bool hidden=false, castsShadow=true, shaded=true;
         std::vector<std::array<float,3>> rotated;
         std::vector<PreparedPiece> children;
     };
@@ -980,21 +980,12 @@ private:
     }
     struct EffectAnim;   // defined below; Anim only needs the pointer type
     struct Anim {
-        struct PendingDeathEffect {
-            uint32_t tick = 0;
-            int32_t code = 0;
-            int ownerId = 0;
-            uint32_t ownerRetireTick = 0;
-            std::array<int32_t,3> position{};
-        };
         std::unique_ptr<tak::cob::Vm> vm;
         // Points at the shared per-TYPE CobCache.pieceNames (node-stable in cobCache_,
         // which outlives every Anim), not a per-unit copy -- ~25 MB saved at 38k units.
         const std::vector<std::string>* pieceNames = nullptr;
         bool dying = false;
         bool ownerVmStopRequested = false; // native SET26 removal / SET31 owner timer
-        bool ownerSfxRetirementPending = false;
-        uint32_t ownerSfxRetirementTick = 0;
         bool producing = false;
         bool building = false;   // mobile builder actively working a site (conjure anim)
         bool firing = false;
@@ -1028,7 +1019,6 @@ private:
         // The sim VM stops on death, but the display VM still runs Killed/Dying.
         // These captured damage-flame callbacks need the owner position and
         // retirement tick because their native effect lists are unit-attached.
-        std::vector<PendingDeathEffect> pendingDeathEffects;
         std::vector<tak::sim::World::ScriptEmission> pendingPoints;
         std::vector<std::pair<int32_t,int32_t>> pendingSnd; // name index + flags, drained on main
         std::span<const uint8_t> explosionReachability; // shared per-script control-flow map
@@ -1047,7 +1037,6 @@ private:
     // Refresh a cosmetic flame/smoke effect attached to its animated COB piece.
     // Effect classes and lifetimes still need a full native particle comparison.
     void emitSfx(const UnitR& u, Anim& a, int piece, int32_t sfx);
-    void emitDeathScriptSfx(const Anim::PendingDeathEffect& event);
     void emitPoint(const tak::sim::World::ScriptEmission& event);
     // COB EXPLODE: the piece flies off as a debris chunk (retail icd 0x50dd20)
     // plus the TA-flag extras (SMOKE/FIRE bits, BITMAPn explosion classes).
@@ -1422,6 +1411,21 @@ private:
     };
     std::map<std::string, ModelTextureAnimation> modelTextureAnimations_;
     void animateGlowTextures();
+    // Authored palette lookup sheets: each frame has the 20 reachable shade bands (5–24)
+    // arranged in a four-column sheet. Shared pages preserve batching across polygon light levels.
+    struct PaletteTextureSource {
+        tak::gaf::Palette palette;
+        std::vector<uint8_t> shades;
+        std::vector<tak::gaf::Frame> indexed;
+    };
+    struct PaletteTextureSheet { SDL_Texture* texture=nullptr; SDL_FRect uv{}; };
+    struct PaletteTexturePage { SDL_Texture* texture=nullptr; std::vector<SDL_Rect> free{{0,0,2048,2048}}; };
+    std::map<std::string,PaletteTextureSource> paletteTextureSources_;
+    std::map<std::string,std::vector<PaletteTextureSheet>> paletteTextureSheets_;
+    std::vector<PaletteTexturePage> paletteTexturePages_;
+    std::set<const PieceMeta*> palettePreparedModels_;
+    void preparePaletteTextures(const PieceMeta& meta);
+    void preparePaletteTexture(const std::string& name);
 
     // Per-type on-screen sprite box (offset from the draw anchor, px @ zoom 1), the
     // union over facings of the projected model bounds. Drives click-selection so a
@@ -1594,7 +1598,8 @@ private:
                  const Xform& parent, const Anim* anim, float heading, int player,
                  bool mirror = false, bool isRoot = true, bool shadow = false,
                  RadialExtent* ext = nullptr, const PieceMeta* meta = nullptr,
-                 bool shadowCull = false, const PreparedPiece* prepared = nullptr) {
+                 bool shadowCull = false, const PreparedPiece* prepared = nullptr,
+                 bool paletteLighting = false) {
         if (mirror || ext) prepared=nullptr; // special preview/extent paths use the reference transform
         const tak::cob::PieceState* ps = prepared ? nullptr : pieceFor(anim, o.name);
         // Retail tests visibility per piece; hidden parents still transform
@@ -1606,7 +1611,9 @@ private:
         // function either way.
         PieceMeta local;
         if (!meta) { pieceMetaFor(o, isRoot, local); meta = &local; }
-        const bool groundPlate = meta->skip || hidden;
+        const bool shadowDisabled = shadow && (prepared ? !prepared->castsShadow :
+                                                        ps && !ps->castsShadow());
+        const bool groundPlate = meta->skip || hidden || shadowDisabled;
         float cy = std::cos(heading), sy = std::sin(heading);
         for (size_t pi = 0; pi < o.primitives.size(); ++pi) {
             if (groundPlate) break;
@@ -1841,6 +1848,39 @@ private:
                     if (mirror) facing = -facing;
                     if (facing <= 0.0f) continue;
                 }
+                if(paletteLighting && !name.empty()) {
+                    auto lit=paletteTextureSheets_.find(name);
+                    if(lit!=paletteTextureSheets_.end()) {
+                        const size_t frame=animatedTex_.count(name)
+                            ? modelTextureAnimations_.at(name).frame
+                            : (size_t(colorSlot_[player&7])<lit->second.size()
+                                ? size_t(colorSlot_[player&7]) : 0);
+                        if(frame<lit->second.size() && lit->second[frame].texture) {
+                            int level=15;
+                            if(prepared ? prepared->shaded : !ps || ps->shaded) {
+                                // Native shades the primitive from its first three
+                                // vertices, not separately for each triangulated fan.
+                                const auto& a=vcache[0];const auto& b=vcache[1];const auto& c=vcache[2];
+                                const float ax=b.px-a.px,ay=b.py-a.py,az=b.pz-a.pz;
+                                const float bx=c.px-a.px,by=c.py-a.py,bz=c.pz-a.pz;
+                                float nx=ay*bz-az*by,ny=az*bx-ax*bz,nz=ax*by-ay*bx;
+                                if(mirror) {nx=-nx;ny=-ny;nz=-nz;}
+                                const float length=std::sqrt(nx*nx+ny*ny+nz*nz);
+                                const float dot=length>0 ? (0.464991f*nx+0.813733f*ny+
+                                                           0.348743f*nz)/length : 0;
+                                level=std::clamp(5+int(19*std::max(0.0f,dot)),5,24);
+                            }
+                            const auto& sheet=lit->second[frame];
+                            tri.tex=sheet.texture;
+                            static constexpr SDL_FPoint uv[4]={{0,0},{1,0},{1,1},{0,1}};
+                            for(int k=0;k<3;++k) {
+                                const auto c=uv[idx[k]&3];
+                                tri.v[k].tex_coord={sheet.uv.x+(float((level-5)%4)+c.x)*sheet.uv.w,
+                                    sheet.uv.y+(float((level-5)/4)+c.y)*sheet.uv.h};
+                            }
+                        }
+                    }
+                }
                 tri.depth = depth / 3;
                 out.push_back(tri);
             }
@@ -1848,7 +1888,7 @@ private:
         for (size_t ci = 0; ci < o.children.size(); ++ci) {
             const PieceMeta* cm = (ci < meta->children.size()) ? &meta->children[ci] : nullptr;
             collect(out, atlas, o.children[ci], xf, anim, heading, player, mirror, false,
-                    shadow, ext, cm, shadowCull, prepared ? &prepared->children[ci] : nullptr);
+                    shadow, ext, cm, shadowCull, prepared ? &prepared->children[ci] : nullptr,paletteLighting);
         }
     }
 
@@ -3242,7 +3282,6 @@ private:
         int life=15;
     };
     std::map<int,std::vector<DamageFlameSprite>> damageFlames_;
-    std::map<int,uint32_t> deathSfxOwnerRetireTicks_;
     std::array<std::vector<const EffectAnim*>,3> damageFlameClasses_;
     bool damageFlameClassesLoaded_=false;
     void loadDamageFlameClasses();

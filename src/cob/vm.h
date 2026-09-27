@@ -21,6 +21,10 @@ struct PieceState {
     float rot[3] = {0, 0, 0};       // radians
     float spin[3] = {0, 0, 0};      // current rate, radians/sec
     bool visible = true;
+    bool cached = true, shaded = true, rendered = true;
+    // Native RENDER_OFF disables this piece's projected shadow, not its body.
+    // Noncached pieces render in the dynamic body pass but have no shadow.
+    bool castsShadow() const { return visible && cached && rendered; }
 
     // Spin ramp: SPIN accelerates the rate toward spinTarget, STOP_SPIN
     // decelerates it toward 0, both at spinAccel rad/sec^2 (0 = jump instantly).

@@ -147,7 +147,7 @@ struct UnitR {
     int32_t animationSpeedPercent() const {
         return movementRefused || embarked() ? 0 : horizontalSpeedPercent;
     }
-    int corpseAnimationTicks = 120;
+    int corpseAnimationTicks = 0;
     bool corpsePhase = false;                  // dead, death anim done, body still lies
     uint8_t deathType = 1;                     // killing blow damagetype (3 = gib)
     uint8_t severity = 0;                      // retail Killed severity (1..100)

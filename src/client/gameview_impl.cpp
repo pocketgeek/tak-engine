@@ -700,6 +700,37 @@
     }
 
     void GameView::fireTest() {
+        if(tak::devFlag("TAK_PALETTE_ROSTER_TEST")) {
+            std::set<std::string> names;
+            const auto gather=[&](const auto& self,const PieceMeta& meta)->void {
+                if(!meta.skip)names.insert(meta.primTex.begin(),meta.primTex.end());
+                for(const auto& child:meta.children)self(self,child);
+            };
+            size_t structures=0;
+            for(const auto& [name,type]:registry_.types())if(type.isStructure()) {
+                if(loadVisual(name)) {gather(gather,visuals_.at(name).meta);++structures;}
+            }
+            size_t pixels=0,frames=0,missing=0;
+            for(const auto& name:names) {
+                auto source=paletteTextureSources_.find(name);
+                if(source==paletteTextureSources_.end())continue;
+                for(const auto& frame:source->second.indexed) {
+                    pixels+=size_t(frame.width)*frame.height;++frames;
+                }
+            }
+            std::fprintf(stderr,"PALETTE_ROSTER structures=%zu textures=%zu frames=%zu rawMiB=%.2f\n",
+                structures,names.size(),frames,double(pixels*20*4)/(1024*1024));
+            for(const auto& name:names) {
+                preparePaletteTexture(name);
+                auto sheet=paletteTextureSheets_.find(name);
+                if(sheet!=paletteTextureSheets_.end())for(const auto& frame:sheet->second)
+                    missing+=!frame.texture;
+            }
+            std::fprintf(stderr,"PALETTE_ROSTER pages=%zu missing=%zu\n",paletteTexturePages_.size(),missing);
+            if(missing)throw std::runtime_error("shipped structure palette sheets exceed capacity");
+            std::fprintf(stderr,"PASS: full structure palette texture roster fits bounded pages\n");
+            return;
+        }
         float cx = mapView_.map().blocksX * 16.0f, cz = mapView_.map().blocksY * 16.0f;
         if (tak::devEnv("TAK_WEAPON_IMPACT_EFFECT_TEST")) {
             // Every shipped travelling projectile has authoritative XYZ. Only
@@ -1328,6 +1359,78 @@
                 if(!hidden.empty())throw std::runtime_error("hidden child still draws geometry");
                 poses[0].visible=poses[1].visible=true;
             }
+            // RENDER_OFF and DONT_CACHE must keep the body while removing only
+            // this piece's shadow. Compare both collectors with all four flags.
+            poses[1].visible=false;
+            PieceMeta flagMeta;buildPieceMeta(root,flagMeta,false);
+            for(unsigned flags=0;flags<16;++flags) {
+                poses[0].visible=flags&1;poses[0].cached=flags&2;
+                poses[0].shaded=flags&4;poses[0].rendered=flags&8;
+                PreparedPiece prepared;
+                preparePiece(root,flagMeta,Xform{},&snapshot,std::cos(0.3f),std::sin(0.3f),prepared);
+                for(bool shadow:{false,true}) {
+                    std::vector<Tri> reference,fast;
+                    collect(reference,nullptr,root,Xform{},&snapshot,0.3f,0,false,false,shadow,
+                            nullptr,&flagMeta);
+                    collect(fast,nullptr,root,Xform{},&snapshot,0.3f,0,false,false,shadow,
+                            nullptr,&flagMeta,false,&prepared);
+                    const bool expected=shadow ? (flags&11)==11 : bool(flags&1);
+                    if(reference.empty()==expected || fast.size()!=reference.size())
+                        throw std::runtime_error("piece render/cache flags changed wrong body/shadow pass");
+                    for(size_t i=0;i<fast.size();++i)for(int v=0;v<3;++v)
+                        if(fast[i].v[v].position.x!=reference[i].v[v].position.x ||
+                           fast[i].v[v].position.y!=reference[i].v[v].position.y)
+                            throw std::runtime_error("piece flags prepared/reference transform mismatch");
+                }
+            }
+            std::fprintf(stderr,"PASS: all16 piece flags preserve native body/shadow admission in both collectors\n");
+            {
+                const auto* model=loadVisual("arakeep");
+                if(!model)throw std::runtime_error("missing palette lighting fixture model");
+                const auto& meta=visuals_.at("arakeep").meta;
+                preparePaletteTextures(meta);
+                std::vector<std::string> pieceNames;
+                const auto gather=[&](const auto& self,const tak::tdo::Object& object)->void {
+                    pieceNames.push_back(object.name);
+                    std::transform(pieceNames.back().begin(),pieceNames.back().end(),
+                                   pieceNames.back().begin(),::tolower);
+                    for(const auto& child:object.children)self(self,child);
+                };
+                gather(gather,model->root);
+                std::vector<tak::cob::PieceState> state(pieceNames.size());
+                Anim pose;pose.pieceNames=&pieceNames;pose.capturedPose=state;
+                std::vector<Tri> shaded,neutral,preparedGeometry;
+                auto* atlas=atlasFor(0);
+                collect(shaded,atlas,model->root,Xform{},&pose,0.4f,0,false,true,
+                        false,nullptr,&meta,false,nullptr,true);
+                PreparedPiece prepared;
+                preparePiece(model->root,meta,Xform{},&pose,std::cos(0.4f),std::sin(0.4f),prepared);
+                collect(preparedGeometry,atlas,model->root,Xform{},&pose,0.4f,0,false,true,
+                        false,nullptr,&meta,false,&prepared,true);
+                if(shaded.size()!=preparedGeometry.size())
+                    throw std::runtime_error("palette prepared geometry count mismatch");
+                for(auto& piece:state)piece.shaded=false;
+                collect(neutral,atlas,model->root,Xform{},&pose,0.4f,0,false,true,
+                        false,nullptr,&meta,false,nullptr,true);
+                if(shaded.empty() || neutral.size()!=shaded.size())
+                    throw std::runtime_error("palette lighting fixture geometry missing");
+                bool usesPalette=false,changed=false;
+                for(size_t i=0;i<shaded.size();++i) {
+                    for(const auto& page:paletteTexturePages_)
+                        usesPalette|=shaded[i].tex==page.texture;
+                    if(shaded[i].tex!=preparedGeometry[i].tex)
+                        throw std::runtime_error("palette prepared texture mismatch");
+                    for(int v=0;v<3;++v) {
+                        if(std::memcmp(&shaded[i].v[v],&preparedGeometry[i].v[v],sizeof(SDL_Vertex)))
+                            throw std::runtime_error("palette prepared vertex mismatch");
+                        changed|=shaded[i].v[v].tex_coord.x!=neutral[i].v[v].tex_coord.x ||
+                                 shaded[i].v[v].tex_coord.y!=neutral[i].v[v].tex_coord.y;
+                    }
+                }
+                if(!usesPalette || !changed)
+                    throw std::runtime_error("authored SHADE/DONT_SHADE did not select palette bands");
+                std::fprintf(stderr,"PASS: Aramon Keep palette lighting selects authored bands and matches prepared geometry\n");
+            }
             std::fprintf(stderr,"PASS: production body/shadow collector preserves visible children and hidden-parent transforms\n");
             return;
         }
@@ -1653,7 +1756,9 @@
             const auto* owner=world_.unit(event.unitId);
             if(event.code>=2 && event.code<=5 && owner && !owner->type->canFly)continue;
             const bool transient=event.code==263 || event.code==264;
-            if(owner && (transient || owner->alive()) && (noFog_ || alliedToLocal(owner->player) ||
+            if(owner && (transient || !tak::retailAttachedSfxOwnerRemoved(owner->alive(),
+                    owner->deadFor,owner->corpseStatue,owner->corpseAnimationTicks())) &&
+               (noFog_ || alliedToLocal(owner->player) ||
                world_.cellVisible(owner->x.toFloat(),owner->z.toFloat()))) {
                 smoke.emissions.push_back(event);
                 if(!transient)smokeOwners_.insert(event.unitId);
@@ -2265,14 +2370,17 @@
             if (!u.alive()) {
                 if (!a.dying) {
                     a.dying = true;
-                    a.vm->reset();
-                    a.vm->setStatic(0, 0);
                     // Destroyed cargo remains hidden. Native 512860 propagates
                     // a zero-severity/type-8 death packet to attached passengers,
                     // bypassing their ordinary Killed/Dying presentation.
                     // Explicit retirement includes a lodestone consumed by an
                     // upgrade. It is not a combat death and has no death script.
-                    if (u.embarked() || u.deadFor>=float(tak::sim::World::kRetiredTicks)/30.0f) continue;
+                    // Combat severity survives retirement, so a skipped render snapshot
+                    // must not swallow the authored death sound and detached effects.
+                    if (u.embarked() || (u.deadFor>=float(tak::sim::World::kRetiredTicks)/30.0f &&
+                                         !u.severity)) {
+                        a.vm->reset();a.ownerVmStopRequested=true;continue;
+                    }
                     // Retail order (icd 0x512610): Killed(severity, corpseOut,
                     // deathType) runs first -- deathType 3 (explosion kill)
                     // EXPLODEs every piece there; no shipped script reads the
@@ -2282,16 +2390,19 @@
                     // there, zero in `death`), the fall-over via CALL death,
                     // the final EXPLODEs.
                     int32_t dtype = u.deathType;
-                    if (dtype >= 14) {
+                    if (!u.severity) {
                         // Petrified/frozen: retail skips Killed AND Dying
                         // (severity forced 0) -- the victim simply freezes in
                         // its current pose and stands as the statue. reset()
                         // stops threads but leaves in-flight piece turns/moves
                         // active, so also stop display VM advancement.
-                        a.ownerVmStopRequested=true;
+                        a.vm->reset();a.ownerVmStopRequested=true;
                     } else {
-                        a.vm->start("Killed", {int32_t(u.severity), 0, dtype});
-                        a.vm->start("Dying", {dtype}) || a.vm->start("death");
+                        // Keep the existing pose/statics and let the authored
+                        // callbacks stop their own threads, as in the simulation.
+                        if (dtype!=tak::sim::Unit::kDeathSelfDestruct)
+                            a.vm->call("Killed", {int32_t(u.severity), 0, dtype});
+                        if (!a.vm->start("Dying", {dtype})) a.ownerVmStopRequested=true;
                     }
                     // Death audio belongs to Killed/Dying, including deliberately
                     // silent branches. Do not invent a cry from a filename.
@@ -2543,23 +2654,9 @@
         // Drain emit-sfx the VMs stashed (fire/smoke from FireControl-style loops),
         // now serially on the main thread, into the world-space effect system.
         for (auto& [id, a] : anims_) {
-            if(a.ownerSfxRetirementPending) {
-                auto it=deathSfxOwnerRetireTicks_.find(id);
-                if(it==deathSfxOwnerRetireTicks_.end())
-                    deathSfxOwnerRetireTicks_.emplace(id,a.ownerSfxRetirementTick);
-                else it->second=tak::retailEarlierTick(it->second,a.ownerSfxRetirementTick);
-                for(auto& event:a.pendingDeathEffects)
-                    event.ownerRetireTick=tak::retailEarlierTick(event.ownerRetireTick,
-                                                                 a.ownerSfxRetirementTick);
-                a.ownerSfxRetirementPending=false;
-            }
-            if (a.pendingPoints.empty() && a.pendingSfx.empty() && a.pendingSnd.empty() &&
-                a.pendingDeathEffects.empty()) continue;
+            if (a.pendingPoints.empty() && a.pendingSfx.empty() && a.pendingSnd.empty()) continue;
             const auto* u = frameUnitP(id);
             if (u && u->type && (noFog_ || cellVisibleR(u->x, u->z))) {
-                for(const auto& event:a.pendingDeathEffects) {
-                    emitDeathScriptSfx(event);
-                }
                 for(auto& event:a.pendingPoints) {
                     event.unitId=u->id;event.player=u->player;event.position=u->worldPosition;
                     event.heading=uint16_t(u->headingWord+32768);event.pitch=u->bodyPitch;event.roll=u->bodyRoll;
@@ -2581,7 +2678,6 @@
             a.pendingPoints.clear();
             a.pendingSfx.clear();
             a.pendingSnd.clear();
-            a.pendingDeathEffects.clear();
         }
     }
 
@@ -2769,18 +2865,9 @@
         }
         const auto random=[&] {return tak::sim::retailCrtRandom(smokeRandom_);};
         for(const auto& tick:ticks) {
-            if(tick.tick<=smokeTick_) {smokeSprites_.clear();featureSmokeSprites_.clear();damageFlames_.clear();pointParticles_.clear();deathSfxOwnerRetireTicks_.clear();smokeRandom_=1;}
+            if(tick.tick<=smokeTick_) {smokeSprites_.clear();featureSmokeSprites_.clear();damageFlames_.clear();pointParticles_.clear();smokeRandom_=1;}
             smokeTick_=tick.tick;
-            for(auto it=deathSfxOwnerRetireTicks_.begin();it!=deathSfxOwnerRetireTicks_.end();) {
-                if(tak::retailTickAtOrAfter(tick.tick,it->second)) {
-                    smokeSprites_.erase(it->first);damageFlames_.erase(it->first);
-                    pointParticles_.erase(it->first);it=deathSfxOwnerRetireTicks_.erase(it);
-                } else ++it;
-            }
             for(int owner:tick.removedOwners) {
-                const auto death=deathSfxOwnerRetireTicks_.find(owner);
-                if(death!=deathSfxOwnerRetireTicks_.end() &&
-                   !tak::retailTickAtOrAfter(tick.tick,death->second))continue;
                 smokeSprites_.erase(owner);damageFlames_.erase(owner);pointParticles_.erase(owner);
             }
             for(int id:tick.removedFeatures)featureSmokeSprites_.erase(id);
@@ -2907,27 +2994,6 @@
         else                { a.fireFx = ea;  a.fireT = 0;  a.firePiece = piece; }
     }
 
-    void GameView::emitDeathScriptSfx(const Anim::PendingDeathEffect& event) {
-        const auto family=tak::retailDeathSfxFamily(event.code);
-        // The corrected native Killed/Dying scan only found attached damage
-        // flames. Codes 263/264 and the smoke codes here belong to live script
-        // timelines and keep their existing simulation-side bridge.
-        if(!family || *family!=tak::RetailDeathSfxFamily::DamageFlame)return;
-        if(tak::retailTickAtOrAfter(front().gameTick,event.ownerRetireTick))return;
-        loadDamageFlameClasses();
-        auto& sprites=damageFlames_[event.ownerId];
-        const auto& variants=damageFlameClasses_[size_t(event.code-260)];
-        if(sprites.size()>=40 || variants.empty())return;
-        const auto* art=variants[size_t(uint64_t(tak::sim::retailCrtRandom(smokeRandom_))*
-                                       variants.size()/32768)];
-        DamageFlameSprite sprite;sprite.position=event.position;sprite.art=art;
-        sprite.clock.start(art->durations);sprites.push_back(sprite);
-        auto it=deathSfxOwnerRetireTicks_.find(event.ownerId);
-        if(it==deathSfxOwnerRetireTicks_.end())
-            deathSfxOwnerRetireTicks_.emplace(event.ownerId,event.ownerRetireTick);
-        else it->second=tak::retailEarlierTick(it->second,event.ownerRetireTick);
-    }
-
     bool GameView::explodePiece(const UnitR& u, Anim& a, int piece, int32_t flags) {
         bool accepted=false;
         float x, z, dAlt;
@@ -2935,7 +3001,12 @@
         if(!(flags&0x20) && a.pieceNames && piece>=0 &&
            size_t(piece)<a.pieceNames->size()) {
             const auto visualName=unitType_.find(u.id);
-            const auto visual=visualName==unitType_.end()?visuals_.end():visuals_.find(visualName->second);
+            // An immediate corpse handoff may already have swapped the body
+            // model. EXPLODE still detaches pieces from the original live model.
+            const auto visual=u.corpsePhase && u.type
+                ? visuals_.find(u.veteran>=10 && !u.type->veteranModel.empty()
+                    ? u.type->veteranModel : u.type->id)
+                : (visualName==unitType_.end()?visuals_.end():visuals_.find(visualName->second));
             if(visual!=visuals_.end()) {
                 const auto& wanted=(*a.pieceNames)[size_t(piece)];
                 const auto find=[&](auto&& self,const tak::tdo::Object& object)->const tak::tdo::Object* {
@@ -3166,37 +3237,12 @@
             // The VM is ticked on the worker pool, so emit-sfx only stashes into this
             // unit's own buffer (std::map nodes are pointer-stable); the main thread
             // drains it into effects_ after the parallel tick.
-            st.vm->onEmitSfx = [this,id,state=&st,buf = &st.pendingSfx,
+            st.vm->onEmitSfx = [buf = &st.pendingSfx,
                     points=&st.pendingPoints,vm=st.vm.get(),cache=&cobCache_.at(typeId),
                     flying=st.flying](int piece, int32_t sfx) {
-                // The authoritative script host is retired as soon as HP reaches
-                // zero, while the display VM runs the Killed/Dying callbacks.
-                // The reset-separated native death scan reaches attached damage
-                // flames 260..262. Capture only those callbacks before piece
-                // poses advance; detached 263/264 are live-script effects.
-                if(state->dying && sfx>=260 && sfx<=262) {
-                    const UnitR* unit=frameUnitP(id);
-                    if(!unit || !unit->type || piece<0 ||
-                       size_t(piece)>=vm->retailPieces().size())return;
-                    const int32_t deadForTicks=std::max(0,int32_t(unit->deadFor*30.0f+0.5f));
-                    if(tak::retailAttachedSfxOwnerRemovedSnapshot(false,deadForTicks,
-                           unit->corpseStatue,unit->corpseAnimationTicks))return;
-                    const auto& model=unit->type->productionModel;
-                    if(std::none_of(model.begin(),model.end(),[&](const auto& node) {
-                        return node.scriptPiece==piece;
-                    }))return;
-                    Anim::PendingDeathEffect event;
-                    event.tick=front().gameTick;
-                    event.code=sfx;
-                    event.ownerId=id;
-                    event.ownerRetireTick=tak::retailAttachedSfxRetirementTick(
-                        event.tick,deadForTicks,unit->corpseAnimationTicks);
-                    event.position=tak::sim::retailScriptEffectPosition(unit->worldPosition,
-                        model,vm->retailPieces(),piece,uint16_t(unit->headingWord+32768),
-                        unit->bodyPitch,unit->bodyRoll);
-                    state->pendingDeathEffects.push_back(event);
-                    return;
-                }
+                // Attached death flames now come from the same authoritative
+                // instruction stream as live emissions, exactly once per tick.
+                if(sfx>=260 && sfx<=262)return;
                 if(!flying && sfx>=2 && sfx<=5) {
                     if(piece<0 || size_t(piece)>=cache->pieceVertices.size() ||
                        cache->pieceVertices[size_t(piece)].size()<2)return;
@@ -3224,16 +3270,9 @@
             st.vm->onPlaySound = [buf = &st.pendingSnd](int32_t idx,int32_t flags) {
                 buf->emplace_back(idx,flags);
             };
-            st.vm->onSetUnitValue = [this,state=&st](int32_t valueId,int32_t) {
+            st.vm->onSetUnitValue = [state=&st](int32_t valueId,int32_t) {
                 if(tak::retailOwnerVmStopsOnSetUnitValue(valueId)) {
                     state->ownerVmStopRequested=true;
-                    if(const auto deadline=tak::retailOwnerVmRetirementTick(
-                           front().gameTick,valueId)) {
-                        state->ownerSfxRetirementTick=state->ownerSfxRetirementPending
-                            ? tak::retailEarlierTick(state->ownerSfxRetirementTick,*deadline)
-                            : *deadline;
-                        state->ownerSfxRetirementPending=true;
-                    }
                 }
             };
             st.vm->onExplode = [this,id, state=&st, vm=st.vm.get()](int piece, int32_t flags) {
@@ -3245,6 +3284,9 @@
                 constexpr float angle=2*3.14159265358979f/65536.0f;
                 for(size_t i=0;i<states.size();++i) {
                     pose[i].visible=states[i].visible;
+                    pose[i].cached=states[i].cached;
+                    pose[i].shaded=states[i].shaded;
+                    pose[i].rendered=states[i].rendered;
                     for(size_t axis=0;axis<3;++axis) {
                         pose[i].move[axis]=float(states[i].move[axis])/65536.0f;
                         pose[i].rot[axis]=float(states[i].turn[axis])*angle;
@@ -3296,11 +3338,32 @@
             auto pit = pals.find(stem.substr(0, 3));
             if (pit != pals.end()) pal = &pit->second;
             try {
-                for (auto& seq : tak::gaf::load(vread(path), *pal, 5, path)) {
+                const auto bytes=vread(path);
+                // Decode through an index-identity palette as well: palette colours
+                // are not unique, so reconstructing indices from RGB loses authored
+                // shade mappings. This also preserves composite-frame transparency.
+                tak::gaf::Palette indexPalette{};
+                for(int i=0;i<256;++i) {
+                    indexPalette.rgba[i][0]=uint8_t(i);
+                    indexPalette.rgba[i][3]=255;
+                }
+                auto indexed=tak::gaf::load(bytes,indexPalette,5,path);
+                const std::string bank=pit!=pals.end() ? pit->first : "ara";
+                std::vector<uint8_t> shades;
+                const std::string shadePath="palettes/"+bank+"_textures.shd";
+                if(vfs_.has(shadePath)) shades=vread(shadePath);
+                size_t sequenceIndex=0;
+                for (auto& seq : tak::gaf::load(bytes, *pal, 5, path)) {
+                    auto& indexSequence=indexed.at(sequenceIndex++);
                     if (seq.frames.empty()) continue;
                     std::string name = seq.name;
                     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                     if (textures_.count(name)) continue;
+                    if(shades.size()==32*256 && std::all_of(seq.frames.begin(),seq.frames.end(),
+                        [](const auto& frame){return frame.encoding==0 || frame.encoding==1;})) {
+                        paletteTextureSources_.emplace(name,PaletteTextureSource{
+                            *pal,shades,std::move(indexSequence.frames)});
+                    }
                     // Retail 4be8e3..4be978 retains every multi-frame sequence.
                     // Only ten-frame names containing "logo" select player colours;
                     // every other multi-frame model texture registers an animation.

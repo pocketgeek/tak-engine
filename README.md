@@ -298,8 +298,8 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-**The current development build uses protocol 188** for corrected explosion
-corpse selection. Released **0.7.7 uses protocol 187**, and versions 0.7.6 and
+**The current development build uses protocol 189** for script-controlled corpse selection
+and death lifetimes. Released **0.7.7 uses protocol 187**, and versions 0.7.6 and
 0.7.5 use protocol 184. These builds cannot share a match. Older incompatible
 clients and recordings are rejected.
 The connection checks gameplay definitions, but
@@ -322,6 +322,10 @@ animated poses, including swaying trees; shading baked into terrain artwork
 remains visible. Accelerated renderers use cached shadow silhouettes and tiles,
 with fallbacks where needed. Animated boat shadows are an intentional enhancement
 over retail Glide, controlled by the same Shadows option.
+
+Unit scripts control corpse selection and the handoff from death animation to
+wreck. Buildings also use the authored palette shading and per-piece shadow
+flags observed in retail Glide.
 
 The in-game stats panel shows **Real Time**, **Game Time**, **Client CPU**
 (the game process’s share of total CPU capacity), and whole-system GPU usage. When the client

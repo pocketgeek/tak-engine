@@ -15,6 +15,7 @@ COB event routing/host, unit updater/timer/removal, and list destructors execute
 from the retail binary. This is a lifecycle trace, not a rendered corpse test.
 """
 import argparse
+import json
 from pathlib import Path
 import subprocess
 import struct
@@ -54,6 +55,14 @@ def main():
                         help="native death-state type (for --native-death-state; default: 1)")
     parser.add_argument("--instant-corpse", action="store_true", help="verify immediate bitmap-only building death")
     parser.add_argument("--corpse-request", action="store_true", help="verify corpse 1 after the authored owner lifetime")
+    parser.add_argument("--get-unit-value-28", type=int, default=0,
+                        help="override COB water-depth query")
+    parser.add_argument("--warm-create", action="store_true",
+                        help="execute Create and one VM update before starting death")
+    parser.add_argument("--trace-json", action="store_true",
+                        help="report native corpse decision and retirement without unit-specific assertions")
+    parser.add_argument("--construction-remaining", type=float, default=0.0,
+                        help="native unit construction fraction (zero means complete)")
     args = parser.parse_args()
 
     script = args.scripts / f"{args.script}.cob"
@@ -78,6 +87,7 @@ def main():
             raw = struct.unpack("<" + "I" * count, uc.mem_read(sp, count * 4))
             if slot == 0x54:
                 value = (args.get_unit_value_17 if raw[0] == 17 else
+                         args.get_unit_value_28 if raw[0] == 28 else
                          100 if raw[0] == 4 else 1 if raw[0] == 18 else 0)
                 return count, value
             if slot == 0x38:
@@ -150,7 +160,7 @@ def main():
     put(p, 0x62D558, global_manager)
     put(p, global_manager, global_vtable)
     corpse_requests=[]
-    if args.instant_corpse or args.corpse_request:
+    if args.instant_corpse or args.corpse_request or args.trace_json:
         def corpse_request(uc, sp):
             corpse_requests.append(struct.unpack("<5I",uc.mem_read(sp,20)))
             return 5,1
@@ -230,6 +240,7 @@ def main():
         put(p, game + 0x14E88, unit)
         p.uc.mem_write(unit + 0x10C, struct.pack("<h", -1))
         p.uc.mem_write(unit + 0x111, b"\x64")
+    f32(p, unit + 0x108, args.construction_remaining)
     put(p, owner + 0x17C, sfx_list)
     put(p, sfx_list, sfx_vtable)
     put(p, sfx_list + 8, sentinel)
@@ -272,6 +283,12 @@ def main():
     p.uc.hook_add(UC_HOOK_CODE, lambda uc, address, size, _: recent.append(address)
                   if 0x401000 <= address < 0x5EA000 else None)
 
+    if args.warm_create and "create" in lower_names:
+        result, error = start("Create", [])
+        assert not error, ("Create", error)
+        result, error = p.call(0x56C870, (1,), ecx=vm)
+        assert not error, ("Create update", error)
+        trace.clear(); writes.clear(); callback_dispatches.clear()
     if args.native_death_state:
         result, error = p.call(0x512610, (unit, args.death_type))
         if error:
@@ -291,7 +308,7 @@ def main():
     # well below the separate 600-tick direct-VM sweep.
     delayed_set26_case = args.native_death_state and args.script.lower() == "crebomb"
     set26_owner_case = args.native_death_state and args.script.lower() in ("crefire", "crebomb")
-    update_horizon = 1500 if args.native_set26_roster or args.corpse_request else (256 if delayed_set26_case else 35)
+    update_horizon = 1500 if args.native_set26_roster or args.corpse_request or args.trace_json else (256 if delayed_set26_case else 35)
     snapshots = []
     for frame in range(1, update_horizon + 1):
         tick[0] = frame
@@ -311,6 +328,16 @@ def main():
         if u32(p, unit + 0xC0) == 0:
             break
 
+    if args.trace_json:
+        print(json.dumps({"script":args.script,"death_type":args.death_type,
+            "construction_remaining":args.construction_remaining,"warm_create":args.warm_create,
+            "corpse_requests":[list(row[1:]) for row in corpse_requests],
+            "retirement_ticks":[t for t,a in trace if a==0x512AE0],
+            "writes":writes,"callbacks":callback_dispatches,
+            "owner_alive":bool(u32(p,unit+0xC0)),
+            "owner_timer":f32(p,owner+0x18),
+            "vm_update_ticks":[t for t,a in trace if a==0x56C870]}))
+        return
     if args.corpse_request:
         assert args.native_death_state
         assert u32(p,unit+0xC0)==0,"owner did not retire within the bounded trace"

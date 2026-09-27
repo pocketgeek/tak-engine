@@ -7324,6 +7324,16 @@ struct World::ScriptHost {
     }
     void set(int id,int value) {
         switch (id) {
+        case 26: case 31:
+            if (factory.dying) {
+                // 51e380 advances a newly written timer in this same owner
+                // update. The initial death dispatch is outside that update.
+                const int elapsed=unit.alive() ? 0 : unit.deadFor+1;
+                const int delay=id==26 ? 1 : (elapsed==0 ? 35 : 34);
+                unit.deathAnimationTicks=std::min(unit.deathAnimationTicks,elapsed+delay);
+                factory.deathStopValue=id;
+            }
+            break;
         case 5: factory.ready=(value&1)!=0; unit.missionEvents|=4; break; // 50d49b
         case 18: {
             // 507ae0 refuses a yard transition while another body occupies
@@ -7759,18 +7769,62 @@ void World::notifyFlightOccupancy(Unit& u) {
 void World::tickUnitScript(Unit& u) {
     auto* script=size_t(u.id)<unitScriptById_.size() ? unitScriptById_[size_t(u.id)] : nullptr;
     if (!script) return;
-    if (!u.alive() || (u.hp<=Fixed() && !(u.retailSite && u.underConstruction))) {
+    if (!u.alive() && (u.deadFor>=kRetiredTicks || !script->dying ||
+                       u.deadFor+1>=u.corpseAnimationTicks())) {
         unitScriptById_[size_t(u.id)]=nullptr;
         unitScripts_.erase(u.id);return;
     }
+    // Keep the original VM until Killed can query its state. A dead owner keeps
+    // executing Dying, including waits and calls, until its native stop signal.
+    if (u.alive() && u.hp<=Fixed() && !(u.retailSite && u.underConstruction)) return;
     auto& factory=*script;
     const auto& file=*u.type->script();
     ScriptHost host{*this,u,factory};
-    factory.state.tick(file,1,host);
+    if (!factory.deathStopValue) factory.state.tick(file,1,host);
+    if (factory.dying) { updateCorpseWindow(u);return; }
     const bool activated=!u.underConstruction && !u.buildQueue.empty();
     if (u.type->productionScript && activated!=factory.activated) {
         factory.activated=activated;
         factory.state.notify(file,file.scriptIndex(activated ? "Activate" : "Deactivate"),host);
+    }
+}
+
+void World::updateCorpseWindow(Unit& u) {
+    const int starts=u.corpseAnimationTicks();
+    u.corpseUntil=starts;
+    if (!u.deathHasCorpse || starts==INT32_MAX) return;
+    const int ct=u.corpseStatue>=0 ? u.corpseStatue : corpseTypeOf(u.type);
+    if (ct<0) return;
+    const int duration=u.corpseStatue<0 && isWater(u.x.toFloat(),u.z.toFloat())
+        ? 75 : featTypes_[size_t(ct)].decomposeTicks;
+    u.corpseUntil=duration>0 ? int32_t(std::min(int64_t(INT32_MAX),int64_t(starts)+duration)) : INT32_MAX;
+}
+
+void World::beginUnitDeath(Unit& u) {
+    u.deathAnimationTicks=0;
+    u.deathHasCorpse=u.corpseStatue>=0;
+    auto* script=unitScript(u.id);
+    if (u.corpseStatue<0 && script) {
+        const auto& file=*u.type->script();
+        ScriptHost host{*this,u,*script};
+        script->dying=true;script->deathStopValue=0;
+        u.deathAnimationTicks=INT32_MAX;
+        std::array<uint32_t,4> args{u.severity,0,u.deathType,0};
+        // 512610 skips Killed for self destruction and zero-severity packets.
+        if (u.severity && u.deathType!=Unit::kDeathSelfDestruct)
+            script->state.query(file,file.scriptIndex("Killed"),args,host);
+        u.deathHasCorpse=(args[1]&15)==1 && !u.underConstruction && corpseTypeOf(u.type)>=0;
+        const bool dying=u.severity && script->state.startArguments(
+            file,file.scriptIndex("Dying"),{u.deathType,0,0,0},1);
+        if (dying && !script->deathStopValue) script->state.tick(file,0,host);
+        if (!dying && script->deathStopValue!=31) u.deathAnimationTicks=0;
+    }
+    if (u.deathType==9 && !u.underConstruction && corpseTypeOf(u.type)>=0)
+        u.deathHasCorpse=true;
+    updateCorpseWindow(u);
+    if (u.corpseAnimationTicks()==0 && script) {
+        unitScriptById_[size_t(u.id)]=nullptr;
+        unitScripts_.erase(u.id);
     }
 }
 
@@ -8890,16 +8944,17 @@ void World::tick(float dt) {
                 : (u.type->hasExplodeAs ? &u.type->explodeAs : nullptr);
             if (deathWeapon && u.deathType!=14 && u.deathType!=15)
                 deathBlasts_.push_back({deathWeapon, u.x.toFloat(), u.z.toFloat(), u.player, u.id});
-            // Corpse window: the body lies reclaimable (and, if its corpse def
-            // says so, resurrectable) until decomposetime runs out. Gibbed
-            // (overkill >= maxHp -- placeholder severity rule pending the icd
-            // Killed RE) or corpse-less units vanish with the death anim.
+            // Killed decides corpse admission; Dying controls when the original
+            // body retires. Only then does decomposition or water sinking begin.
             {
                 // Retail severity (icd 0x512610): ((overkill% + HP% one second
                 // before death) / 2), clamped 1..100. Passed to the COB Killed.
                 float okPct = u.overkill.toFloat() * 100.0f / std::max(float(u.maximumHp()), 1.0f);
                 u.severity = uint8_t(std::clamp((okPct + float(u.hpPct1s)) * 0.5f,
                                                 1.0f, 100.0f));
+                if (selfDestruct) u.severity=1;
+                else if (u.deathType==0 || (u.deathType>=6 && u.deathType<=11) || u.deathType>=14)
+                    u.severity=0;
                 // Dying while petrified/frozen leaves the FBI stone=/frozen=
                 // STATUE feature instead of the corpse (retail deathType 0xE/0xF
                 // path, 0x512d2a) -- blocking, permanent, and resurrectable
@@ -8911,36 +8966,7 @@ void World::tick(float dt) {
                     std::fprintf(stderr, "statue edge: %s statue=%d stoned=%d\n",
                                  u.type->id.c_str(), u.corpseStatue, u.stonedFor);
                 int ct = u.corpseStatue >= 0 ? u.corpseStatue : corpseTypeOf(u.type);
-                // Retail gib rule (icd 0x512610): deathType = the killing blow's
-                // FBI damagetype; many handlers refuse a corpse for explosion
-                // damage, but others explicitly request one. An unfinished conjure never leaves a
-                // corpse (corpseType forced 0 at 0x5127f5). Statues place
-                // unconditionally.
-                bool gib = ((u.deathType == 3 && !u.type->explosionCorpse) || u.underConstruction) &&
-                           u.corpseStatue < 0;
-                // A self-destructed unit leaves nothing: it is not gibbed (that
-                // is the explosion type) and it does not lie there as a wreck
-                // either -- it fades. Statues still place, as they do for every
-                // other death.
-                if (u.deathType == Unit::kDeathSelfDestruct && u.corpseStatue < 0)
-                    ct = -1;
-                if (ct >= 0 && !gib) {
-                    if (u.corpseStatue < 0 && isWater(u.x.toFloat(), u.z.toFloat())) {
-                        // Retail water graves sink and fade in seconds, never
-                        // decompose, never get reclaimed (icd 0x512fbe).
-                        u.corpseUntil = u.corpseAnimationTicks() + int32_t(2.5f * kTick);
-                    } else {
-                        int d30 = featTypes_[size_t(ct)].decomposeTicks;
-                        // decomposetime 0 = never rots (building wrecks linger
-                        // until reclaimed, like retail).
-                        // decomposeTicks is ALREADY a tick count, so this is now a
-                        // plain add rather than a round trip through seconds.
-                        const int starts=u.corpseAnimationTicks();
-                        u.corpseUntil = d30 > 0 ? starts + d30 : INT32_MAX;
-                    }
-                } else {
-                    u.corpseUntil = kCorpseAnimTicks;
-                }
+                beginUnitDeath(u);
                 u.corpseWork = Fixed::fromFloat(
                     std::max(ct >= 0 ? featTypes_[size_t(ct)].energy : 0.0f,
                              60.0f));   // ~0.5s minimum consume time
@@ -9772,6 +9798,7 @@ uint64_t World::stateHash() const {
     for (const auto& [id,factory]:unitScripts_) {
         mix(0x434f42564dull); mix(uint32_t(id));
         mix(factory.activated); mix(factory.ready); mix(factory.yardOpen); mix(factory.buggerOff);
+        if (factory.dying) { mix(0x44454144u);mix(factory.deathStopValue); }
         if (factory.movementRate) { mix(0x4d4f5645u);mix(factory.movementRate); }
         const auto& state=factory.state;
         mix(state.vm.active); mix(uint32_t(state.vm.ticksPerSecond));
@@ -10176,6 +10203,7 @@ uint64_t World::stateHash() const {
         (corpse.deadFor<kRetiredTicks || corpseFootprints_.contains(corpse.id))) {
         mix(uint32_t(corpse.id));mix(uint32_t(corpse.deadFor));mix(uint32_t(corpse.corpseUntil));
         mix(uint32_t(corpse.corpseStatue));mix(uint32_t(corpse.corpseWork.v));mix(corpse.corpseBlocks);
+        mix(uint32_t(corpse.deathAnimationTicks));mix(corpse.deathHasCorpse);
     }
     for (const auto& cell:mapPlacementCells_) {
         mix(cell.feature);

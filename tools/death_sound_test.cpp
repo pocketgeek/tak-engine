@@ -123,10 +123,10 @@ int main(int argc,char** argv) {
                     std::transform(sound.begin(),sound.end(),sound.begin(),::tolower);
                     if(sound.find("die")!=std::string::npos)auditSound(sound);
                 }
-                for(int deathType:{0,1,2,3,7,8,14,15}) {
+                for(int deathType:{0,1,2,3,5,7,8,14,15}) {
                     tak::cob::Vm vm(*file);vm.enableRetailAnimation();
                     bool stop=false,capture=false;
-                    vm.onGet=[](int query,const std::vector<int32_t>&){return query==4?100:0;};
+                    vm.onGet=[&](int query,const std::vector<int32_t>&){return query==4 && !capture ? 100:0;};
                     vm.onSetUnitValue=[&](int32_t id,int32_t){if(tak::retailOwnerVmStopsOnSetUnitValue(id))stop=true;};
                     vm.onPlaySound=[&](int32_t index,int32_t flags) {
                         if(!capture)return;
@@ -135,12 +135,13 @@ int main(int argc,char** argv) {
                         auditSound(file->name(uint32_t(index)));
                     };
                     vm.start("Create");for(int t=0;t<30;++t)vm.tick(1.f/30);
-                    vm.reset();vm.setStatic(0,0);stop=false;capture=true;
-                    if(deathType<14) {
-                        vm.start("Killed",{100,0,deathType});
-                        if(!vm.start("Dying",{deathType}))vm.start("death");
+                    stop=false;capture=true;
+                    const bool callbacks=(deathType>=1 && deathType<=5);
+                    if(callbacks) {
+                        if(deathType!=5)vm.call("Killed",{100,0,deathType});
+                        if(!vm.start("Dying",{deathType}))stop=true;
                     }
-                    for(int t=0;t<600 && !stop && deathType<14;++t)vm.tick(1.f/30);
+                    for(int t=0;t<600 && !stop && callbacks;++t)vm.tick(1.f/30);
                 }
             }
             std::cout<<(crusades?"Crusades":"Standard")<<": "<<scripts<<" scripts, "<<events<<" death sound events\n";

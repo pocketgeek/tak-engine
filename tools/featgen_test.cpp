@@ -84,7 +84,7 @@ int main() {
             world->unit(id)->hp={};
             world->tick(1.0f/30);
         }
-        check(reused.units().front().corpseUntil==World::kCorpseAnimTicks &&
+        check(reused.units().front().corpseUntil==0 &&
               reused.stateHash()==fresh.stateHash(),
               "corpse-less death after registry reuse matches a fresh referee");
     }
@@ -229,13 +229,17 @@ int main() {
         map.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
         UnitType building;building.footX=building.footZ=2;building.maxHp=100;
         building.corpseAdjX=-1;building.corpseAdjZ=2;
+        auto death=std::make_shared<tak::cob::File>();
+        death->scripts={{"Killed",0}};
+        death->code={0x10022000,0x10022000,0x10022000,
+            0x10021001,1,0x10023002,1,0x10021001,0,0x10065000};
+        building.simulationScript=death;
         FeatType wreck;wreck.name="wreck";wreck.fx=3;wreck.fz=1;wreck.blocking=true;
         map.setFeatureTypes({wreck});map.mapCorpse(&building,0);
         const int id=map.spawn(&building,176,176,0,0);
         map.unit(id)->hp=Fixed();map.tick(1.0f/30);
-        check(!map.unit(id)->corpseBlocks && RetailReplayProbe::grade(map,10,10)==7,
+        check(RetailReplayProbe::grade(map,10,10)==7,
               "a dying building releases its original body footprint");
-        for (int i=0;i<120;++i) map.tick(1.0f/30);
         check(map.unit(id)->corpseBlocks && RetailReplayProbe::grade(map,9,12)==1 &&
               RetailReplayProbe::grade(map,11,12)==1 && RetailReplayProbe::grade(map,9,13)==7,
               "the death lifecycle places the wreck's dimensions at the offset unit origin");

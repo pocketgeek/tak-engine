@@ -36,11 +36,13 @@ int main(int argc,char** argv) {
                 const int id=w.spawn(&type,512,512,std::nullopt,0);
                 w.unit(id)->hp={};w.unit(id)->deathType=3;
                 w.tick(1.f/30);
-                check(w.unit(id)->corpseUntil>w.unit(id)->corpseAnimationTicks(),
+                check(w.unit(id)->deathHasCorpse,
                       "explosion preserves the authored corpse on land and water");
-                for(int i=0;i<120;++i)w.tick(1.f/30);
-                check(w.unit(id)->deadFor==120 && w.unit(id)->corpseUntil>120,
-                      "restored corpse survives its existing death-animation handoff");
+                for(int i=0;i<1500 && w.unit(id)->deadFor<w.unit(id)->corpseAnimationTicks();++i)
+                    w.tick(1.f/30);
+                check(w.unit(id)->deadFor==w.unit(id)->corpseAnimationTicks() &&
+                      w.unit(id)->corpseUntil>w.unit(id)->deadFor,
+                      "restored corpse survives its authored death-animation handoff");
                 if(water) {
                     for(int i=0;i<76;++i)w.tick(1.f/30);
                     check(w.unit(id)->corpseUntil==0,"water corpse retains its sinking/expiry lifetime");
@@ -58,9 +60,15 @@ int main(int argc,char** argv) {
             const auto* type=registry.find("araat");
             w.setFeatureTypes(definitions.featureTypes());w.mapCorpse(type,definitions.corpseTypeOf(type));
             const int id=w.spawn(type,512,512,std::nullopt,0);
+            sim::UnitType builderType;builderType.maxHp=100;
+            if(unfinished) {
+                const int builder=w.spawn(&builderType,32,32,std::nullopt,0);
+                w.unit(builder)->buildSiteId=id;
+            }
             auto* unit=w.unit(id);unit->underConstruction=unfinished;unit->buildBegun=unfinished;
             unit->hp={};unit->deathType=unfinished?3:sim::Unit::kDeathSelfDestruct;
             w.tick(1.f/30);
+            check(w.unit(id)->deadFor==0,"actual death rather than abandoned-site removal");
             check(w.unit(id)->corpseUntil<=w.unit(id)->corpseAnimationTicks(),
                   "unfinished and self-destructed units remain excluded");
         }
