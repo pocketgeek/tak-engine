@@ -15,6 +15,11 @@
     void GameView::input(const SDL_Event& e, int winW, int winH) {
         winW_ = winW;
         winH_ = winH;
+        if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL ||
+            (e.type == SDL_KEYDOWN &&
+             (e.key.keysym.sym < SDLK_0 || e.key.keysym.sym > SDLK_9 ||
+              (e.key.keysym.mod & (KMOD_CTRL | KMOD_ALT)))))
+            lastRecalledSquad_ = 0;
         // A benchmark RUN is hands-off: swallow ALL input (mouse + keys). Only Esc
         // does anything -- it ends the run early and brings up the stats screen.
         if (benchmarkMode_ && !benchStatsShown_) {
@@ -118,6 +123,9 @@
             else if (placing_ || pendingCmd_) { placing_ = nullptr; pendingCmd_ = 0; }
             else if (!selection_.empty()) selection_.clear();
             else exitMenu_ = true;
+        } else if (e.type == SDL_KEYDOWN && e.key.repeat &&
+                   e.key.keysym.sym >= SDLK_0 && e.key.keysym.sym <= SDLK_9) {
+            // Holding a number is not a second press to follow the squad.
         } else if (e.type == SDL_KEYDOWN && handleKey(e.key.keysym.sym,
                                                        SDL_GetModState())) {
             // handled by the hotkey dispatcher

@@ -204,7 +204,7 @@ selection. **N** requires a current selection to cycle from.
 | **Ctrl+1–0** | Assign the selection to a group |
 | **Alt+1–0** | Assign the selection to a formation |
 | **Ctrl+Shift+1–0** / **Alt+Shift+1–0** | Append to a group / formation |
-| **1–0** | Recall the group or formation; **0** is squad 10 |
+| **1–0** | Select the group or formation; press again to track it; **0** is squad 10 |
 | **Ctrl+Esc** | Remove selected units from their squads |
 
 A unit belongs to one squad at a time. Each number holds either a group or a

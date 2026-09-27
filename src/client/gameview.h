@@ -2868,6 +2868,7 @@ private:
     // it -- a builder rides in a squad only to feed its products in, not to be commanded
     // with the fighters.
     void recallSquad(int num);
+    int lastRecalledSquad_ = 0; // consecutive number presses select, then track
 
     // Ctrl+Esc: drop the selected units from whatever squad each is in.
     void clearSquad();

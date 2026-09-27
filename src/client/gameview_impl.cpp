@@ -4093,6 +4093,7 @@
 
     void GameView::recallSquad(int num) {
         if (spectating_) return;
+        const bool follow = lastRecalledSquad_ == num;
         selection_.clear();
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
@@ -4100,7 +4101,10 @@
                 std::abs(int(u.squad)) == num && !u.type->isBuilder)
                 selection_.push_back(u.id);
         }
-        if (!selection_.empty()) { centerOn(selection_.front()); voice(selection_.front(), "select"); }
+        lastRecalledSquad_ = selection_.empty() ? 0 : num;
+        trackSel_ = follow && !selection_.empty();
+        if (trackSel_) centerOnSelection();
+        if (!selection_.empty()) voice(selection_.front(), "select");
     }
 
     void GameView::clearSquad() {
