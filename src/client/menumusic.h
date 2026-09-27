@@ -9,6 +9,7 @@
 #include <SDL.h>
 
 #include <atomic>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -21,6 +22,18 @@ namespace tak {
 class MenuMusic {
 public:
     ~MenuMusic() { stop(); }
+    MenuMusic() = default;
+    MenuMusic(const MenuMusic&) = delete;
+    MenuMusic& operator=(const MenuMusic&) = delete;
+
+    // The stream mixer accepts 11025 Hz signed PCM. Tap the volume-scaled
+    // device buffer, converting the menu WAV's native format/rate as needed.
+    void setAudioTap(void* context, void (*tap)(void*, const int16_t*, int, int)) {
+        if (dev_) SDL_LockAudioDevice(dev_);
+        tapContext_ = context; tap_ = tap;
+        resetTapConverter();
+        if (dev_) SDL_UnlockAudioDevice(dev_);
+    }
 
     // Play music/track<n>.wav on a loop. Idempotent: if this track is already
     // playing, does nothing (so it does NOT restart across menu -> lobby).
@@ -51,6 +64,8 @@ public:
         if (!dev_) { src_.clear(); return; }
         silence_ = have.silence;
         track_ = track;
+        resetTapConverter();
+        playing_.store(true);
         SDL_PauseAudioDevice(dev_, 0);   // the callback starts pulling
     }
 
@@ -61,10 +76,13 @@ public:
         if (!dev_ || src_.empty()) return;
         SDL_CloseAudioDevice(dev_);      // stops + joins the callback thread; pos_ is preserved
         dev_ = 0;
+        playing_.store(false);
         SDL_AudioSpec have{};
         dev_ = tak::openAudioDevice(0, &openWant_, &have, 0);
         if (!dev_) { src_.clear(); track_ = -1; return; }
         silence_ = have.silence;
+        resetTapConverter();
+        playing_.store(true);
         SDL_PauseAudioDevice(dev_, 0);
     }
 
@@ -84,14 +102,23 @@ public:
         // CloseAudioDevice stops + joins the callback thread, so it's safe to clear the
         // source it reads only after this returns.
         if (dev_) { SDL_CloseAudioDevice(dev_); dev_ = 0; }
+        playing_.store(false);
+        if (tapConverter_) { SDL_FreeAudioStream(tapConverter_); tapConverter_ = nullptr; }
         src_.clear();
         pos_ = 0;
         track_ = -1;
     }
 
-    bool playing() const { return dev_ != 0; }
+    bool playing() const { return playing_.load(); }
 
 private:
+    friend struct MenuMusicTestAccess;
+    void resetTapConverter() {
+        if (tapConverter_) SDL_FreeAudioStream(tapConverter_);
+        tapConverter_ = tap_ && !src_.empty()
+            ? SDL_NewAudioStream(fmt_, openWant_.channels, openWant_.freq,
+                                 AUDIO_S16SYS, 2, 11025) : nullptr;
+    }
     static void SDLCALL mixThunk(void* userdata, Uint8* stream, int len) {
         static_cast<MenuMusic*>(userdata)->fill(stream, len);
     }
@@ -115,8 +142,18 @@ private:
             out += take;
             need -= take;
         }
+        if (tap_ && tapConverter_ && SDL_AudioStreamPut(tapConverter_, stream, len) == 0) {
+            std::array<int16_t, 2048> pcm;
+            int bytes;
+            while ((bytes = SDL_AudioStreamGet(tapConverter_, pcm.data(), int(sizeof pcm))) > 0)
+                tap_(tapContext_, pcm.data(), bytes / (2 * int(sizeof(int16_t))), 2);
+        }
     }
 
+    void* tapContext_ = nullptr;
+    void (*tap_)(void*, const int16_t*, int, int) = nullptr;
+    SDL_AudioStream* tapConverter_ = nullptr;
+    std::atomic<bool> playing_{false}; // also read by the game's streaming audio callback
     SDL_AudioDeviceID dev_ = 0;
     SDL_AudioSpec openWant_{};    // spec used to open dev_, kept so reopen() can switch devices
     std::vector<uint8_t> src_;    // unscaled source, kept so volume can re-apply live

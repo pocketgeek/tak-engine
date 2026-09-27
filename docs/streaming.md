@@ -113,8 +113,9 @@ test tools, not engine runtime dependencies.
 
 Encoder slowdowns skip late video frames without reconnecting. Audio catches up
 independently; reconnects are reserved for connection/write failures. Title-screen
-account and settings overlays are excluded from the broadcast. The front-end
-currently streams title artwork with silence; mixed game audio begins in the game. During loading
+account and settings overlays are excluded from the broadcast. Title and lobby music is captured at the current master/music volume, then
+audio switches to the game mixer when the match starts. Menu click sounds and
+movie audio use separate players and are not captured. During loading
 and modal screens, the last captured frame remains on the stream.
 
 OpenGL capture downscales on the GPU before asynchronous readback when the

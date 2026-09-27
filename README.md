@@ -355,8 +355,8 @@ pacing fallback keeps streaming from uncapping presentation.
 
 Closing the panel or returning to the title screen keeps the stream running.
 Stop it with **Stop Streaming** or exit the application. Game audio is included;
-title-screen capture is currently silent, and loading/modal screens retain the
-last captured frame. Microphone capture is not included.
+title and lobby music is included too. Loading/modal screens retain the last
+captured frame. Microphone capture is not included.
 
 FFmpeg, its codecs, and additional non-system dependencies are linked statically;
 no separate FFmpeg installation is required. GPU encoding uses the installed

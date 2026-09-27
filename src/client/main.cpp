@@ -671,6 +671,12 @@ int main(int argc, char** argv) {
     if (fromMenu && shot.empty()) tak::MainMenu::playIntro(ren, dataRoot);
     auto streamingOwner = std::make_unique<tak::Streaming>(ren);
     auto& streaming = *streamingOwner;
+    menuMusic.setAudioTap(&streaming.stream(),
+        [](void* context, const int16_t* pcm, int frames, int channels) {
+            static_cast<tak::video::Stream*>(context)->audio(pcm,frames,channels);
+        });
+    struct GameStreamAudio { tak::video::Stream* stream; tak::MenuMusic* menu; };
+    GameStreamAudio gameStreamAudio{&streaming.stream(), &menuMusic};
     tak::PresentationPacer streamPacer;
     std::string menuConnectError;   // failed MP connect -> shown when the menu reopens
     std::string menuReplayError;    // refused replay -> shown on the picker when it reopens
@@ -759,7 +765,7 @@ int main(int argc, char** argv) {
                 continue;
             }
         }
-        if (!shot.empty()) { streamingOwner.reset(); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
+        if (!shot.empty()) { menuMusic.stop(); menuMusic.setAudioTap(nullptr,nullptr); streamingOwner.reset(); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
         if (choice != tak::MainMenu::Choice::SinglePlayer &&
             choice != tak::MainMenu::Choice::Multiplayer &&
             choice != tak::MainMenu::Choice::Benchmark &&
@@ -1260,9 +1266,12 @@ int main(int argc, char** argv) {
     // inherit that game's mode and just sit in the lobby instead of auto-hosting).
     const int autoOv = tak::devEnv("TAK_MPAUTO")
                            ? std::atoi(tak::devEnv("TAK_MPAUTO")) : mpAutoMode;
-    if (gameView) gameView->setAudioTap(&streaming.stream(),
+    if (gameView) gameView->setAudioTap(&gameStreamAudio,
         [](void* context, const int16_t* pcm, int frames, int channels) {
-            static_cast<tak::video::Stream*>(context)->audio(pcm,frames,channels);
+            auto& audio = *static_cast<GameStreamAudio*>(context);
+            // During the lobby the menu player owns streamed audio. Appending
+            // the game's silent buffers as well would double the audio timeline.
+            if (!audio.menu->playing()) audio.stream->audio(pcm,frames,channels);
         });
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
@@ -1925,6 +1934,8 @@ int main(int argc, char** argv) {
     }  // ---- end outer session loop ----
 
     if (aaTex) gpuvram::destroy(aaTex);
+    menuMusic.stop();
+    menuMusic.setAudioTap(nullptr,nullptr);
     streamingOwner.reset();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
