@@ -100,8 +100,10 @@ including their streaming checks and platform dependency checks. Windows/macOS
 also passed their deterministic simulation gates. The earlier macOS failure is
 recorded above; it was corrected before release.
 
-README screenshots are refreshed after tagging the release. Their capture
-provenance and scene descriptions are maintained in [capture details](img/README.md).
+All seven README scenes were freshly captured from tagged `v0.7.8` and visually
+inspected after the release tag. Identical deterministic scenes may produce
+identical image files. See [capture details](img/README.md) for provenance and
+scene descriptions. README local links and `git diff --check` passed.
 
 These checks cover the paths and workloads described above, not exhaustive
 visual equivalence with retail or performance on every GPU.

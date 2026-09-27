@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.7-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.8-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -16,7 +16,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
 <table>
   <tr>
-    <td width="50%"><a href="docs/img/gameplay.jpg"><img src="docs/img/gameplay.jpg" alt="Aramon barracks and troops in the local development demo"></a><br><sub>Aramon on Ulasem Arena</sub></td>
+    <td width="50%"><a href="docs/img/gameplay.jpg"><img src="docs/img/gameplay.jpg" alt="Aramon barracks and four troops in the local development demo"></a><br><sub>Aramon base on Ulasem Arena</sub></td>
     <td width="50%"><a href="docs/img/naval.jpg"><img src="docs/img/naval.jpg" alt="Veruna ships fighting on the water at Cairbray Coast Landing"></a><br><sub>Naval combat on Cairbray Coast Landing</sub></td>
   </tr>
   <tr>
@@ -29,7 +29,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured in v0.7.7. Army and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured in v0.7.8. Base and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -41,35 +41,33 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.7
+## New in 0.7.8
 
-- **Build through trees and rocks:** reclaim-capable mobile builders clear
-  reclaimable obstacles from a valid construction footprint, then build. This
-  works with queued sites and build lines; Stop cancels the job.
-- **Upgrade lodestones in place:** all five factions can replace their completed
-  basic lodestone with their advanced one on the same mana spot. The old building
-  dissolves and the new one materializes within the advanced building's normal
-  build time, with its normal mana cost and construction effects.
-- **Clearer, more accurate cursors:** construction assist, repair, reclaim, and
-  transport feedback checks the selected units and target. Unrestricted builders
-  can assist construction they own, including types outside their build menu;
-  restricted builders still require the target in their build menu.
-- **Building destruction:** corrected immediate ruin handoff for sixteen building
-  types, including the Aramon Keep, restored missing ruin meshes, and preserved
-  retail's separate rules for model position and blocked footprint.
-- **Fog and range:** previously explored terrain stays mapped under fog. The
-  **Double Sight/Radar** lobby option doubles both distances in skirmish and
-  multiplayer; campaigns keep their authored ranges.
-- **Match endings:** defeated players reach results after three seconds without
-  pausing survivors. Results show only starting participants, including defeated
-  players, and omit the generic “Enter: Continue” prompt.
-- **Factory orders:** selected production buildings show their rally/queued
-  orders while Shift is held, and expose move/patrol commands where applicable.
+- **More faithful wrecks:** restored the scripted explosion corpses for 29 unit
+  types across all five factions, including ships, siege weapons, and buildings.
+  Seven other types now correctly leave no wreck when their ordinary-death
+  scripts request none.
+- **Authored death timing:** death animations and wreck appearances now follow
+  each unit's script, replacing the generic four-second handoff. Immediate ruins,
+  delayed deaths, self-destruct, and unfinished construction retain their separate
+  rules.
+- **Glide-style building lighting:** buildings use the game's palette shading
+  tables and scripted piece flags. Scripted shadow suppression reaches the
+  renderer, while shared texture pages and cached geometry keep the work bounded.
+- **Reliable stream shutdown:** fixed a timing race when stopping a YouTube
+  stream, including during application shutdown.
 
-See the [0.7.7 validation report](docs/release-0.7.7-validation.md) for builds,
-tests, and remote multiplayer sweeps, and the
-[construction, cursor, and ruin audit](docs/construction-cursors-2026-09-27.md)
-for retail comparisons and their scope.
+See the [0.7.8 validation report](docs/release-0.7.8-validation.md),
+[native death lifecycle audit](docs/native-death-lifecycle-2026-09-27.md), and
+[explosion-corpse roster](docs/explosion-corpses-2026-09-27.md) for evidence
+and verification scope.
+
+Version 0.7.7 added automatic clearing of reclaimable construction obstacles,
+in-place lodestone upgrades for all factions, more accurate contextual cursors,
+Double Sight/Radar, explored-terrain memory, factory rally-order displays, and
+multiplayer defeat handling that lets survivors keep playing. See its
+[validation report](docs/release-0.7.7-validation.md) and
+[construction, cursor, and ruin audit](docs/construction-cursors-2026-09-27.md).
 
 Recent releases also added **YouTube streaming** with title/lobby music,
 **Max 3840 / 60 FPS** defaults, hardware encoding, and VSync pacing; improved
@@ -79,7 +77,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.7** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.8** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -298,8 +296,8 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-**The current development build uses protocol 189** for script-controlled corpse selection
-and death lifetimes. Released **0.7.7 uses protocol 187**, and versions 0.7.6 and
+**Version 0.7.8 uses protocol 189** for script-controlled corpse selection
+and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and
 0.7.5 use protocol 184. These builds cannot share a match. Older incompatible
 clients and recordings are rejected.
 The connection checks gameplay definitions, but
