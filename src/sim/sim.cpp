@@ -4341,7 +4341,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             }
         } else brakeGround(u,want);
         groundMovementHandled=true;
-    } else if (!hovering) {
+    } else if (!hovering && !u.type->isStructure()) {
         u.speed=fxMax(Fixed(),u.speed-u.type->brake);
         if (u.speed==Fixed()) {
             // Flyers use their flight turn rate while aiming too. Many have no
@@ -4366,7 +4366,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         // A bomb is let go, not aimed -- retail's Dropped weapon overrides its aim
         // virtual with a no-op, so the bomber is always considered on target (which
         // a hovering flyer with momentum could otherwise almost never satisfy).
-        if (sw.kind != Weapon::Kind::Dropped &&
+        if (!u.type->isStructure() && sw.kind != Weapon::Kind::Dropped &&
             std::abs(diff) >= std::max(sw.aimTol, int32_t(0.03f / kCobAngle))) return;
         fire(u, *target, sl);
     };
@@ -7584,7 +7584,7 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
     // Native readiness compares body heading with the mover's requested heading,
     // not the weapon's offset SweetSpot or lead point.
     const auto desired=retailDirection(target.x-u.x,target.z-u.z);
-    const bool aligned=!(u.type->canFly || u.type->turnInPlaceRate>0) ||
+    const bool aligned=u.type->isStructure() || !(u.type->canFly || u.type->turnInPlaceRate>0) ||
         std::abs(bamDiff(desired,u.heading))<=std::max(512,int(uint16_t(weapon.aimTol)));
     if(dropped ? available : aim.ready(solution->heading,solution->pitch,uint16_t(weapon.aimTol),available,aligned)) {
         const uint16_t nominal=uint16_t(int32_t(weapon.reload*kTick+0.5f));

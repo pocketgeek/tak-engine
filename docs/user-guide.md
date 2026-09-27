@@ -295,7 +295,8 @@ Debug builds also support direct playback:
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
 compatible engine behavior and game data. Released 0.7.1 uses protocol **179**;
-current development builds use **183** for corrected campaign conditions, following
+current development builds use **184** for stationary building combat, following
+183 for corrected campaign conditions and
 the area-clearing and naval fixes.
 These builds cannot mix in a match. Version 0.7.0 uses **177**.
 All multiplayer clients and servers must run the same compatible build.

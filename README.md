@@ -228,8 +228,8 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-Released **0.7.1 uses protocol 179**; current development builds use **183**
-for corrected campaign conditions, following the area-clearing and naval fixes. These builds
+Released **0.7.1 uses protocol 179**; current development builds use **184**
+for stationary building combat, following campaign, area-clearing and naval fixes. These builds
 cannot mix in a match.
 Version 0.7.0 uses 177. Older incompatible clients and recordings are rejected.
 The connection checks gameplay definitions, but

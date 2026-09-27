@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 183;      // 183: retail campaign conditions and event evaluation
+constexpr uint32_t kNetVersion = 184;      // 184: stationary buildings aim without rotating their bodies
                                            // 182: authoritative area reclaim command and target selection
                                            // 181: reject building yards extending into the map border
                                            // 180: water-yard building placement follows retail waterline rules
