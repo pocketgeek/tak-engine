@@ -28,7 +28,10 @@ public:
             store_(GL_PACK_ROW_LENGTH,0); store_(GL_PACK_SKIP_ROWS,0); store_(GL_PACK_SKIP_PIXELS,0);
             store_(GL_PACK_ALIGNMENT,1);
             bool delivered=false;
-            for(int i=0;i<2;++i) if(fences_[i]) {
+            // Slots can wrap while an older readback is still pending. Deliver
+            // ready frames in capture order so the newest image always wins.
+            const std::array<int,2> order = serial_[0] <= serial_[1] ? std::array<int,2>{0,1} : std::array<int,2>{1,0};
+            for(int i : order) if(fences_[i]) {
                 GLenum result=wait_(fences_[i],GL_SYNC_FLUSH_COMMANDS_BIT,0);
                 if(result==GL_ALREADY_SIGNALED || result==GL_CONDITION_SATISFIED) {
                     bind_(GL_PIXEL_PACK_BUFFER,buffers_[i]);
@@ -46,7 +49,7 @@ public:
                 bind_(GL_PIXEL_PACK_BUFFER,buffers_[i]);
                 data_(GL_PIXEL_PACK_BUFFER,GLsizeiptr(size_t(w)*h*4),nullptr,GL_STREAM_READ);
                 read_(0,0,w,h,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
-                fences_[i]=fence_(GL_SYNC_GPU_COMMANDS_COMPLETE,0);break;
+                fences_[i]=fence_(GL_SYNC_GPU_COMMANDS_COMPLETE,0);serial_[i]=++nextSerial_;break;
             }
             bind_(GL_PIXEL_PACK_BUFFER,GLuint(old));store_(GL_PACK_ALIGNMENT,align);
             store_(GL_PACK_ROW_LENGTH,rowLength); store_(GL_PACK_SKIP_ROWS,skipRows); store_(GL_PACK_SKIP_PIXELS,skipPixels);
@@ -74,6 +77,7 @@ private:
     }
     bool checked_=false,available_=false;
     int w_=0,h_=0;SDL_GLContext context_=nullptr;
+    std::array<uint64_t,2> serial_{};uint64_t nextSerial_=0;
     std::array<GLuint,2> buffers_{};std::array<GLsync,2> fences_{};
     std::vector<uint8_t> pixels_;
     void (APIENTRY *gen_)(GLsizei,GLuint*)=nullptr;
