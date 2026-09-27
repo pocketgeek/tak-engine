@@ -169,6 +169,14 @@ struct Streaming::Impl {
     uint64_t rateKbps=0;
     float x=0,y=0,u=1;
     SDL_FRect row(int n) const {return {x+20*u,y+(70+45*n)*u,600*u,34*u};}
+    SDL_FRect pasteRect() const {auto r=row(0);r.x+=500*u;r.w=100*u;return r;}
+    void pasteKey() {
+        char* clipboard=SDL_GetClipboardText();
+        if(!clipboard || !*clipboard) {error="CLIPBOARD IS EMPTY";SDL_free(clipboard);return;}
+        config.key=clipboard;SDL_free(clipboard);
+        if(config.key.size()>256)config.key.resize(256);
+        error.clear();editing=true;SDL_StartTextInput();
+    }
     void layout(int w,int h) {u=std::max(.4f,std::min({float(w)/680,float(h)/510,1.5f}));x=(w-640*u)/2;y=(h-470*u)/2;}
     void show(bool on) {
         if(on&&!visible)wasTextInput=SDL_IsTextInputActive();
@@ -195,7 +203,7 @@ struct Streaming::Impl {
         text("YOUTUBE STREAMING",20,20);
         text("GAME VIDEO AND AUDIO - KEY IS NOT SAVED",20,45);
         std::array<std::string,6> labels={
-            "STREAM KEY: " + (config.key.empty()?std::string("CLICK AND PASTE"):std::string(std::min<size_t>(config.key.size(),36),'*')),
+            "STREAM KEY: " + (config.key.empty()?std::string("NOT SET"):std::string(std::min<size_t>(config.key.size(),36),'*')),
             "RESOLUTION: " + std::string(resolution==4?"FULL ":"") +
                 std::to_string(resolution==4&&!s.active?(w&~1):config.width)+" X "+
                 std::to_string(resolution==4&&!s.active?(h&~1):config.height),
@@ -204,9 +212,15 @@ struct Streaming::Impl {
             "ENCODER: " + std::string(config.encoder.empty()?"AUTOMATIC":"CPU"),
             s.active?"STOP STREAMING":"START STREAMING"};
         for(int i=0;i<6;++i) {
-            auto r=row(i);SDL_SetRenderDrawColor(ren,i==0&&editing?55:35,45,60,255);SDL_RenderFillRectF(ren,&r);
+            auto r=row(i);if(i==0)r.w=490*u;
+            SDL_SetRenderDrawColor(ren,i==0&&editing?55:35,45,60,255);SDL_RenderFillRectF(ren,&r);
             drawBlockText(ren,labels[i],r.x+10*u,r.y+11*u,1.5f*u,{240,235,210,255});
         }
+        const auto paste=pasteRect();
+        SDL_SetRenderDrawColor(ren,s.active?35:50,s.active?40:65,s.active?45:85,255);
+        SDL_RenderFillRectF(ren,&paste);
+        drawBlockText(ren,"PASTE",paste.x+27*u,paste.y+11*u,1.5f*u,
+                      s.active?SDL_Color{110,115,120,255}:SDL_Color{240,235,210,255});
         text(s.state,20,352,{255,210,100,255});
         text(s.encoder+"  FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),20,375);
         text("REPLACED "+std::to_string(s.replaced)+"  RATE "+std::to_string(rateKbps)+" KBPS",20,398);
@@ -228,8 +242,7 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
         if(p_->editing&&!p_->stream.active()) {
             if(e.key.keysym.sym==SDLK_BACKSPACE && !p_->config.key.empty())p_->config.key.pop_back();
             if((e.key.keysym.mod & KMOD_CTRL) && e.key.keysym.sym==SDLK_v) {
-                char* t=SDL_GetClipboardText();if(t){p_->config.key=t;SDL_free(t);}
-                if(p_->config.key.size()>256)p_->config.key.resize(256);
+                p_->pasteKey();
             }
             if((e.key.keysym.mod & KMOD_CTRL) && e.key.keysym.sym==SDLK_a)p_->config.key.clear();
         }
@@ -237,6 +250,11 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
     if(e.type==SDL_TEXTINPUT && p_->editing && !p_->stream.active() && p_->config.key.size()<256)p_->config.key+=e.text.text;
     if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
         SDL_FPoint pt{float(e.button.x),float(e.button.y)};
+        const auto paste=p_->pasteRect();
+        if(SDL_PointInFRect(&pt,&paste)) {
+            if(!p_->stream.active())p_->pasteKey();
+            return true;
+        }
         for(int i=0;i<6;++i) {auto r=p_->row(i);if(!SDL_PointInFRect(&pt,&r))continue;
             if(i==5) {
                 if(p_->stream.active())p_->stream.stop();

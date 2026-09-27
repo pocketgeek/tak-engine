@@ -1,7 +1,8 @@
 # Streaming to YouTube
 
 At the title screen or in a game, press **F9**, or open **Options → YouTube Streaming** (under Esc during a game).
-Paste the stream key from YouTube Studio, select the video settings, and click
+Copy the stream key from YouTube Studio, click **Paste** beside the key field,
+select the video settings, and click
 **Start Streaming**. Follow the preview/status in YouTube Studio to make the
 broadcast public. See [YouTube's encoder setup guide](https://support.google.com/youtube/answer/2907883).
 
