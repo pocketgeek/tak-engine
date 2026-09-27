@@ -11,12 +11,19 @@ int main(int argc,char** argv) {
     SDL_Window* win=SDL_CreateWindow("capture test",0,0,w,h,SDL_WINDOW_HIDDEN);
     SDL_Renderer* ren=SDL_CreateRenderer(win,-1,argc>1?SDL_RENDERER_ACCELERATED:SDL_RENDERER_SOFTWARE);
     if(!ren){std::fprintf(stderr,"%s\n",SDL_GetError());return 1;}
+    const bool checkVsync=argc>1 && std::string(argv[1])=="gl-vsync";
+    if(checkVsync && SDL_RenderSetVSync(ren,1)!=0) {
+        std::fprintf(stderr,"VSync unavailable: %s\n",SDL_GetError());return 4;
+    }
+    const int swapBefore=checkVsync?SDL_GL_GetSwapInterval():0;
+    if(checkVsync && swapBefore!=1){std::fprintf(stderr,"native GL VSync not enabled\n");return 4;}
     SDL_RendererInfo info{};SDL_GetRendererInfo(ren,&info);
     std::string path=argc>2?argv[2]:(std::filesystem::temp_directory_path()/"tak-stream-capture.flv").string();
     {
         tak::Streaming streaming(ren);
         tak::video::StreamConfig c;c.encoder=argc>6?argv[6]:"libx264";
         if(argc>5 && std::string(argv[5])=="native") {c.width=w&~1;c.height=h&~1;c.bitrateKbps=30000;}
+        if(argc>5 && std::string(argv[5])=="4k") {c.width=3840;c.height=2160;c.bitrateKbps=30000;}
         if(argc>7)c.fps=std::atoi(argv[7]);
         if(c.encoder=="auto")c.encoder.clear();
         if(!streaming.stream().startRecording(c,path))return 1;
@@ -33,6 +40,9 @@ int main(int argc,char** argv) {
             const auto before=SDL_GetPerformanceCounter();
             streaming.frame(w,h);
             captureUs+=(SDL_GetPerformanceCounter()-before)*1000000/SDL_GetPerformanceFrequency(); ++calls; // private panel drawn AFTER captured image
+            if(checkVsync && SDL_GL_GetSwapInterval()!=swapBefore) {
+                std::fprintf(stderr,"stream capture changed swap interval\n");return 5;
+            }
             SDL_RenderPresent(ren);SDL_Delay(8);
         }
         auto s=streaming.stream().status();
@@ -41,6 +51,8 @@ int main(int argc,char** argv) {
         std::printf("capture backend=%s file=%s frames=%llu\n",info.name,path.c_str(),(unsigned long long)s.frames);
         streaming.stream().stop();
     }
+    if(checkVsync && SDL_GL_GetSwapInterval()!=swapBefore)return 6;
+    if(checkVsync)std::printf("swap interval unchanged: %d\n",swapBefore);
     SDL_DestroyRenderer(ren);SDL_DestroyWindow(win);SDL_Quit();
     if(argc<2)std::filesystem::remove(path);
 }
