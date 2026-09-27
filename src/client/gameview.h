@@ -2347,7 +2347,7 @@ private:
     // Benchmark metrics: one sample per 5s milestone (the 7 spawn stages + the 40s end).
     struct BenchSample {
         int gameSec = 0, liveUnits = 0;
-        double clientCpuPct = 0, serverCpuPct = 0;   // % of one core over the 5s interval
+        double clientCpuPct = -1, serverCpuPct = -1; // 0–100% total CPU capacity; -1 unavailable
         size_t clientRss = 0, serverRss = 0;         // bytes
         size_t gpuBytes = 0;                         // tracked client texture VRAM (gpuvram)
         double gpuPct = -1;                          // whole-GPU utilization %, -1 = unknown

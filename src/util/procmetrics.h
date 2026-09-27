@@ -70,4 +70,11 @@ struct GpuSample {
 };
 GpuSample gpuSample();
 
+// Shared display contract for the HUD and benchmark results.
+inline double systemGpuPercent(const GpuSample& sample) {
+    if(!sample.ok || !sample.systemWide || !std::isfinite(sample.utilPct) || sample.utilPct<0)
+        return -1;
+    return std::clamp(sample.utilPct,0.0,100.0);
+}
+
 }  // namespace tak::proc

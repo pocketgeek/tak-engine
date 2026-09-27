@@ -51,8 +51,9 @@
         double wallSec = benchPrevWallMs_ ? double(nowMs - benchPrevWallMs_) / 1000.0 : 0;
         tak::proc::Sample cli = tak::proc::sample(0);
         tak::proc::Sample srv = localServerPid_ ? tak::proc::sample(localServerPid_) : tak::proc::Sample{};
+        const int logicalCpus=tak::proc::numCpus();
         auto pct = [&](const tak::proc::Sample& n, const tak::proc::Sample& p) {
-            return (n.ok && wallSec > 0) ? (n.cpuSeconds - p.cpuSeconds) / wallSec * 100.0 : 0.0;
+            return tak::proc::processCpuPercent(p,n,wallSec,logicalCpus);
         };
         BenchSample s;
         s.gameSec = gameSec;
@@ -65,8 +66,8 @@
         s.simSpeed = actualSpeed_;
         s.gpuBytes = gpuvram::bytes();       // client GPU texture memory (bounded by the cap)
         tak::proc::GpuSample gpu = tak::proc::gpuSample();   // whole-device util % + VRAM
+        s.gpuPct = tak::proc::systemGpuPercent(gpu);
         if (gpu.ok) {
-            s.gpuPct = gpu.utilPct;
             s.gpuSysUsed = gpu.memUsed;
             if (benchGpuName_.empty()) { benchGpuName_ = gpu.name; benchGpuTotal_ = gpu.memTotal; }
         }
@@ -167,12 +168,14 @@
             auto cell = [&](const char* t) { blockText(t, cx, y, cellPx, {228, 231, 240, 255}); };
             std::snprintf(b, sizeof b, "%dS", s.gameSec); cell(b); cx += colW[0];
             std::snprintf(b, sizeof b, "%d", s.liveUnits); cell(b); cx += colW[1];
-            std::snprintf(b, sizeof b, "%.0f%%", s.clientCpuPct); cell(b); cx += colW[2];
+            if (s.clientCpuPct >= 0) std::snprintf(b, sizeof b, "%.0f%%", s.clientCpuPct);
+            else std::snprintf(b, sizeof b, "N/A");
+            cell(b); cx += colW[2];
             std::snprintf(b, sizeof b, "%zuMB", s.clientRss / (1024 * 1024)); cell(b); cx += colW[3];
             std::snprintf(b, sizeof b, "%zuMB", s.gpuBytes / (1024 * 1024)); cell(b); cx += colW[4];
             if (s.gpuPct >= 0) std::snprintf(b, sizeof b, "%.0f%%", s.gpuPct); else std::snprintf(b, sizeof b, "N/A");
             cell(b); cx += colW[5];
-            if (s.serverRss) std::snprintf(b, sizeof b, "%.0f%%", s.serverCpuPct); else std::snprintf(b, sizeof b, "N/A");
+            if (s.serverCpuPct >= 0) std::snprintf(b, sizeof b, "%.0f%%", s.serverCpuPct); else std::snprintf(b, sizeof b, "N/A");
             cell(b); cx += colW[6];
             if (s.serverRss) std::snprintf(b, sizeof b, "%zuMB", s.serverRss / (1024 * 1024)); else std::snprintf(b, sizeof b, "N/A");
             cell(b); cx += colW[7];

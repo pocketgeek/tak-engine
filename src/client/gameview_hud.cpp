@@ -640,8 +640,9 @@ namespace {
             else std::snprintf(b,sizeof b,"N/A");
             rows.push_back({"SERVER CPU",b});
         }
-        if (statsGpu_.ok && statsGpu_.utilPct >= 0)
-            std::snprintf(b, sizeof b, "%.0f%%", statsGpu_.utilPct);
+        const double gpuPct=tak::proc::systemGpuPercent(statsGpu_);
+        if (gpuPct >= 0)
+            std::snprintf(b, sizeof b, "%.0f%%", gpuPct);
         else std::snprintf(b, sizeof b, "N/A");
         rows.push_back({"GPU", b});
 

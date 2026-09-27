@@ -261,6 +261,9 @@ servers; unavailable samples display N/A.
 
 **Settings → Benchmark** provides a repeatable eight-AI load test and reports
 frame rate, simulation speed, memory, and other available performance metrics.
+Client and server CPU results each use 0–100% of total machine CPU capacity.
+GPU results use the same 0–100% whole-device measurement as the stats panel;
+unavailable measurements display N/A.
 Testing targets up to **16,000 total units**, not a guarantee of real-time play
 at that population. Map, unit mix, orders, hardware, and graphics settings all
 matter. See the [geometry and shadow reuse results](docs/render-reuse-2026-09-26.md),

@@ -25,5 +25,19 @@ int main() {
        processCpuPercent(processBefore,{},1,8)!=-1 ||
        processCpuPercent(processBefore,{12,0,true},0,8)!=-1 ||
        processCpuPercent(processBefore,{12,0,true},1,0)!=-1)return 1;
+    GpuSample gpu;
+    if(systemGpuPercent(gpu)!=-1)return 1;
+    gpu.ok=true;gpu.utilPct=35;
+    if(systemGpuPercent(gpu)!=-1)return 1; // process-only source is not a system metric
+    gpu.systemWide=true;
+    if(systemGpuPercent(gpu)!=35)return 1;
+    gpu.utilPct=150;
+    if(systemGpuPercent(gpu)!=100)return 1;
+    gpu.utilPct=0;
+    if(systemGpuPercent(gpu)!=0)return 1;
+    gpu.utilPct=-1;
+    if(systemGpuPercent(gpu)!=-1)return 1;
+    gpu.utilPct=std::nan("");
+    if(systemGpuPercent(gpu)!=-1)return 1;
     std::puts("systemcpu: total utilization and unavailable/reset counters passed");
 }
