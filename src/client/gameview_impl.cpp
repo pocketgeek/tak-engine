@@ -386,6 +386,32 @@
     }
 
     void GameView::testBuild() {
+        if (tak::devFlag("TAK_RUIN_TEST")) {
+            const bool previousShadows=shadowsOnFrame_;
+            shadowsOnFrame_=true;
+            int checked=0;
+            for (const auto& [name,type]:registry_.types()) {
+                if (!type.instantCorpse) continue;
+                const int corpse=world_.corpseTypeOf(&type);
+                if (corpse<0) throw std::runtime_error("building ruin definition missing");
+                const int id=spawn(name,512,512,0,localPlayer_);
+                UnitR unit;unit.id=id;unit.type=&type;unit.player=localPlayer_;
+                unit.x=unit.px=512;unit.z=unit.pz=512;
+                unit.deadFor=0;unit.corpsePhase=true;unit.corpseFeat=corpse;
+                maybeSwapCorpseModel(unit);
+                UnitGeom geometry;std::vector<Tri> scratch;
+                buildUnitGeom(unit,geometry,scratch);
+                // Flat rubble decals need not cast a separate raised shadow.
+                if (geometry.verts.empty())
+                    throw std::runtime_error("empty building ruin geometry: "+name);
+                std::fprintf(stderr,"PASS: %s ruin body=%zu shadow=%zu\n",name.c_str(),
+                    geometry.verts.size(),geometry.shadowVerts.size());
+                ++checked;
+            }
+            shadowsOnFrame_=previousShadows;
+            if (checked!=16) throw std::runtime_error("building ruin roster changed");
+            return;
+        }
 #ifndef NDEBUG
         if (tak::devFlag("TAK_CURSOR_TEST")) {
             noFog_=true;edgeScrollOn_=false;
@@ -2975,7 +3001,9 @@
         if (it == unitType_.end() || it->second == obj) return;
         if (!visuals_.count(obj)) {
             try {
-                loadVisual(obj);   // with its PieceMeta tree -- see loadVisual
+                // Static ruins can put their entire mesh in the root object.
+                // Only its selection polygon is a ground reference plate.
+                loadVisual(obj, false);
             } catch (const std::exception&) { return; }   // no corpse mesh: keep pose
         }
         it->second = obj;

@@ -904,9 +904,10 @@ private:
         };
         // Hidden pieces: ground-reference plates and deactivated-state duplicates
         // (*off), which the game shows only via activation scripts we don't run. The
-        // model ROOT is always the flat base plate (AraGP, zonnull, or just the unit
+        // live-unit ROOT is treated as the flat base plate (AraGP, zonnull, or the unit
         // name like zontrain/zonharpy1) with the real model in its children, so its
-        // own primitives are skipped unconditionally.
+        // own primitives are skipped. Static corpse models can instead put their
+        // visible mesh in the root, so their loader passes isRoot=false.
         m.skip = isRoot || ends("gp") || ends("null") || ends("off") ||
                  oname.find("ground") != std::string::npos ||
                  oname.find("gpoly") != std::string::npos ||
@@ -967,14 +968,14 @@ private:
     // good. Any unit whose icon was drawn before its first instance spawned wore a
     // square shadow -- reported on the Beast Handler, which sits in the Zhon conjure
     // menu. Routing every site through here is what stops a fourth one being added.
-    tak::tdo::Model* loadVisual(const std::string& key) {
+    tak::tdo::Model* loadVisual(const std::string& key, bool rootIsGround = true) {
         auto it = visuals_.find(key);
         if (it != visuals_.end()) return &it->second.model;
         Visual v{tak::tdo::load(vread("objects3d/" + key + ".3do")), {}};
         // Layout is built once and survives GPU target recreation. Rect pointers
         // remain valid for this view's lifetime, including unordered-map rehashes.
         if (!atlasLaidOut_) buildAtlasLayout();
-        buildPieceMeta(v.model.root, v.meta);   // fixed for the model's life
+        buildPieceMeta(v.model.root, v.meta, rootIsGround);   // fixed for the model's life
         return &visuals_.emplace(key, std::move(v)).first->second.model;
     }
     struct EffectAnim;   // defined below; Anim only needs the pointer type
@@ -1609,6 +1610,7 @@ private:
         float cy = std::cos(heading), sy = std::sin(heading);
         for (size_t pi = 0; pi < o.primitives.size(); ++pi) {
             if (groundPlate) break;
+            if (int32_t(pi) == o.selectionPrimitive) continue;
             const auto& p = o.primitives[pi];
             if (p.indices.size() < 3) continue;
             SDL_Texture* tex = nullptr;

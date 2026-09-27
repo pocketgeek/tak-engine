@@ -2420,6 +2420,7 @@
             if (!cached) { pieceMetaFor(object,isRoot,local);cached=&local; }
             if (!cached->skip && !(pose ? pose->hidden : piece && !piece->visible)) {
                 for (size_t primitiveIndex=0;primitiveIndex<object.primitives.size();++primitiveIndex) {
+                    if (int32_t(primitiveIndex)==object.selectionPrimitive) continue;
                     const auto& primitive=object.primitives[primitiveIndex];
                     if (primitive.indices.size()<3) continue;
                     SDL_Texture* mask=nullptr;

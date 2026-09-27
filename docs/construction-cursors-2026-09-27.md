@@ -67,6 +67,15 @@ the existing death-animation lifecycle. These buildings now display/block their
 ruin immediately, preserve it after explosion damage, and remove attached owner
 smoke at retirement. The ruin renders in its own rest pose.
 
+The release visual check also found that static ruins such as `arakeep_dead`
+put their visible mesh in the root object. Treating every root as a hidden
+live-unit ground plate discarded that entire mesh. Corpse loading now retains
+that geometry; the authored selection polygon is excluded from both body and
+shadow submission. `TAK_RUIN_TEST=1` exercises body/shadow geometry for all sixteen
+types with `TAK_GEOMETRY_VERIFY=1` comparing cached and reference paths. Flat
+rubble can have no separate raised shadow. The Keep's actual death-to-ruin
+transition was also captured and inspected in the accelerated engine renderer.
+
 `probe_corpse_origin.py` executes native corpse-placement argument routing and
 the feature position/orientation copy. `corpseadjustx/z` changes the map footprint
 anchor, **not** the model position. The ruin retains the original position and
