@@ -500,7 +500,7 @@ public:
     // plan (see MatchConfig::benchmark). Drives the createGame/seat path in mpAutoStep.
     void setBenchmark(int level) { benchmarkLevel_ = level; benchmarkMode_ = level > 0; }
     bool benchmarkMode() const { return benchmarkMode_; }
-    void setBenchmarkServerPid(long pid) { benchServerPid_ = pid; }   // local takserver, for its metrics
+    void setLocalServerPid(long pid) { localServerPid_ = pid; }   // owned local server; shared by HUD and benchmark metrics
     bool benchmarkStatsShown() const { return benchStatsShown_; }
     // Establish the t=0 baseline for the CPU% deltas (called once when the run starts).
     void benchmarkBaseline();
@@ -876,6 +876,7 @@ private:
         SDL_FRect uv{0,0,1,1};
     };
     struct PieceMeta {
+        bool animated = false;              // any animated texture in this subtree
         bool skip = false;                  // ground plate / *off duplicate: draws nothing
         std::vector<std::string> primTex;   // lowercased per primitive ("" = untextured)
         std::vector<const SDL_Rect*> primAtlas; // immutable atlas layout; shared by all colour slots
@@ -920,11 +921,27 @@ private:
             auto mask=shadowMasks_.find(name);
             m.primShadowMasks.push_back(mask==shadowMasks_.end() ? nullptr : &mask->second);
             m.primAnimated.push_back(animatedTex_.count(name)!=0);
+            m.animated |= m.primAnimated.back();
         }
         m.children.resize(o.children.size());
-        for (size_t i = 0; i < o.children.size(); ++i)
+        for (size_t i = 0; i < o.children.size(); ++i) {
             buildPieceMeta(o.children[i], m.children[i], false);
+            m.animated |= m.children[i].animated;
+        }
     }
+
+    // Per-worker scratch: evaluate each piece and unique vertex once, then
+    // share the exact rotated coordinates between the body and shadow passes.
+    struct PreparedPiece {
+        Xform transform;
+        bool hidden=false;
+        std::vector<std::array<float,3>> rotated;
+        std::vector<PreparedPiece> children;
+    };
+    struct Anim;
+    void preparePiece(const tak::tdo::Object& object,const PieceMeta& meta,
+                      const Xform& parent,const Anim* anim,float cy,float sy,
+                      PreparedPiece& out);
 
     struct Visual {
         tak::tdo::Model model;
@@ -1214,6 +1231,10 @@ private:
     // Per-unit screen-space geometry, built in parallel each frame (the expensive
     // model projection) so the single render thread only submits draw calls.
     struct UnitGeom {
+        std::vector<uint64_t> geometryKey; // exact inputs, never a probabilistic hash
+        uint64_t revision=0;
+        bool reused=false;
+        int owner=-1;
         std::vector<SDL_Vertex> verts;                  // transformed, coloured
         std::vector<std::pair<SDL_Texture*, int>> runs; // (texture, vertex count)
         float ax = 0, ay = 0, occY = 0, alt = 0;
@@ -1437,7 +1458,8 @@ private:
     uint64_t statsSampleAt_ = 0, statsGpuAt_ = 0;
     tak::proc::Sample statsProcess_;
     tak::proc::SystemCpuSample statsSystemCpu_;
-    double statsCpuPct_ = -1;
+    double statsCpuPct_ = -1, statsServerCpuPct_ = -1;
+    tak::proc::Sample statsServer_;
     tak::proc::GpuSample statsGpu_;
     std::future<tak::proc::GpuSample> statsGpuPending_;
     bool statsPanel_ = true;    // Options: live readout in the dead strip under the minimap
@@ -1512,7 +1534,7 @@ private:
     // it is built alongside the body geometry on the worker pool.
     void buildUnitShadow(const UnitR& u, UnitGeom& g, const tak::tdo::Object& root,
                          const PieceMeta& meta, const Anim* anim, float facing, float zm,
-                         std::vector<Tri>& scratch);
+                         std::vector<Tri>& scratch, const PreparedPiece* prepared = nullptr);
     void buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch);
 
     // Sprinkle the faction build/summon nano-sparkle over a screen footprint centred at
@@ -1564,12 +1586,13 @@ private:
                  const Xform& parent, const Anim* anim, float heading, int player,
                  bool mirror = false, bool isRoot = true, bool shadow = false,
                  RadialExtent* ext = nullptr, const PieceMeta* meta = nullptr,
-                 bool shadowCull = false) {
-        const tak::cob::PieceState* ps = pieceFor(anim, o.name);
+                 bool shadowCull = false, const PreparedPiece* prepared = nullptr) {
+        if (mirror || ext) prepared=nullptr; // special preview/extent paths use the reference transform
+        const tak::cob::PieceState* ps = prepared ? nullptr : pieceFor(anim, o.name);
         // Retail tests visibility per piece; hidden parents still transform
         // their children (including after a non-subtree EXPLODE).
-        const bool hidden = ps && !ps->visible;
-        Xform xf = scriptTransform(parent,o.x,o.y,o.z,ps);
+        const bool hidden = prepared ? prepared->hidden : ps && !ps->visible;
+        Xform xf = prepared ? prepared->transform : scriptTransform(parent,o.x,o.y,o.z,ps);
         // Precomputed when the model was registered; computed here only for a model
         // that has no cached tree (ghost previews, build-icon portraits). Same
         // function either way.
@@ -1645,10 +1668,11 @@ private:
                 if (vi + 2 >= o.vertices.size()) { vo.ok = false; continue; }
                 vo.ok = true;
                 float w[3];
-                xf.apply(o.vertices[vi], o.vertices[vi + 1], o.vertices[vi + 2], w);
+                if (!prepared) xf.apply(o.vertices[vi], o.vertices[vi + 1], o.vertices[vi + 2], w);
+                else { w[0]=0; w[1]=prepared->rotated[vi/3][1]; w[2]=0; }
                 const float wx = mirror ? -w[0] : w[0];   // un-mirror Zhon models on X
-                const float rx = wx * cy + w[2] * sy;
-                const float rz = -wx * sy + w[2] * cy;
+                const float rx = prepared ? prepared->rotated[vi/3][0] : wx * cy + w[2] * sy;
+                const float rz = prepared ? prepared->rotated[vi/3][2] : -wx * sy + w[2] * cy;
                 // TAK billboards lean back (+y and +z together); moving away (+z)
                 // reads upward on screen, adding to height. The coefficients are
                 // retail's own (icd 0x421dad): all of z, half of y.
@@ -1815,7 +1839,7 @@ private:
         for (size_t ci = 0; ci < o.children.size(); ++ci) {
             const PieceMeta* cm = (ci < meta->children.size()) ? &meta->children[ci] : nullptr;
             collect(out, atlas, o.children[ci], xf, anim, heading, player, mirror, false,
-                    shadow, ext, cm, shadowCull);
+                    shadow, ext, cm, shadowCull, prepared ? &prepared->children[ci] : nullptr);
         }
     }
 
@@ -1928,7 +1952,17 @@ private:
     std::unordered_map<SDL_Texture*,SDL_Texture*> shadowCoverageTextures_;
     // Bounded per-unit silhouette targets. Their 2048-square pages are
     // reused each frame and discarded with other render targets on device loss.
-    struct ShadowSilhouettePage { SDL_Texture* texture=nullptr; int x=0,y=0,rowHeight=0; };
+    struct ShadowTileStamp {
+        const UnitGeom* source; // revisions are local to a geometry slot
+        int owner,pixelX,pixelY,slotX,slotY,width,height;
+        uint64_t revision;
+        float scaleX,scaleY;
+        bool operator==(const ShadowTileStamp&) const = default;
+    };
+    struct ShadowSilhouettePage {
+        SDL_Texture* texture=nullptr; int x=0,y=0,rowHeight=0;
+        std::vector<ShadowTileStamp> stamps;
+    };
     std::vector<ShadowSilhouettePage> shadowSilhouettePages_;
     int shadowSilhouetteWidth_=0,shadowSilhouetteHeight_=0;
     bool shadowSilhouetteAtlasActive_ = false;
@@ -1937,6 +1971,7 @@ private:
     ShadowMaskFrame addShadowMask(std::span<const uint8_t> rgba,int width,int height);
     std::vector<Tri> tris_;
     std::vector<SDL_Vertex> triBatch_;   // reused per-unit vertex batch
+    uint64_t geometryFrame_=0;
     std::vector<UnitGeom> geomPool_;              // reused across frames (keeps capacity)
     // unit id -> slot in geomPool_, rebuilt each frame. A flat vector (ids are dense:
     // id == index+1) instead of an unordered_map, so no per-visible-unit node alloc
@@ -2325,7 +2360,7 @@ private:
     tak::proc::Sample benchCliPrev_, benchSrvPrev_;
     uint64_t benchPrevWallMs_ = 0;
     uint32_t benchNextTick_ = 300;      // next milestone tick (300,600,...,1800)
-    long benchServerPid_ = 0;           // local takserver pid (0 = N/A, e.g. headless)
+    long localServerPid_ = 0;           // local takserver pid (0 = N/A, e.g. headless)
     bool benchStatsShown_ = false;      // the benchmark stats overlay is up
     SDL_FRect benchDoneRect_{};          // the stats overlay's DONE button (set each render)
     int benchCamLeg_ = -1;              // benchmark flythrough: leg (faction) the camera is on

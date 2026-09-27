@@ -1079,6 +1079,7 @@ int main(int argc, char** argv) {
             gameView->setSettings(&settings);     // in-game Options edits + persists these
             if (mp) {
                 gameView->setMpClient(mp.get());
+                gameView->setLocalServerPid(localServerPid());
                 gameView->setMpMapId(args[0]);
                 if (fromMenu) { gameView->setExternalLobbyMusic();  // front-end owns the lobby BGM
                                 gameView->setCanReturnToMenu(); }   // in-game menu can return to it
@@ -1087,7 +1088,6 @@ int main(int argc, char** argv) {
                 else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
                 else if (benchmarkLaunch) {   // menu Benchmark: all-AI watch run + metrics
                     gameView->setBenchmark(benchmarkLevel);
-                    gameView->setBenchmarkServerPid(localServerPid());
                 }
                 if (const char* rp = tak::devEnv("TAK_RESUME")) gameView->setResumePath(rp);
             }

@@ -258,9 +258,9 @@
         // Bounded targets retain the output AA scale; unsupported or exhausted
         // targets fall back to the direct geometry path.
         shadowSilhouetteAtlasActive_ = false;
-        size_t shadowAtlasPackedUnits=0,shadowAtlasPackedPages=0;
+        size_t shadowAtlasPackedUnits=0,shadowAtlasPackedPages=0,shadowAtlasReusedUnits=0;
         const char* shadowAtlasFallback="not requested";
-        const auto buildShadowSilhouetteAtlas = [&]() -> bool {
+        const auto buildShadowSilhouetteAtlas = [&](bool force=false) -> bool {
             const auto fail=[&](const char* why) { shadowAtlasFallback=why; return false; };
             SDL_RendererInfo info{};
             if (SDL_GetRendererInfo(ren_, &info) != 0 ||
@@ -282,6 +282,7 @@
                 UnitGeom* geom;
                 size_t page;
                 int slotX,slotY,pixelX,pixelY,width,height;
+                bool dirty=true;
             };
             std::vector<Work> work;
             work.reserve(items.size());
@@ -406,13 +407,30 @@
             bool ok=true;
             auto& opaque=shadowAtlasOpaqueScratch_;
             for (size_t p=0;p<usedPages && ok;++p) {
+                auto& stamps=shadowSilhouettePages_[p].stamps;
+                size_t tile=0;
+                std::vector<SDL_Rect> dirtyRects;
+                for(Work& w:work) if(w.page==p) {
+                    const ShadowTileStamp stamp{w.geom,w.geom->owner,w.pixelX,w.pixelY,w.slotX,w.slotY,
+                        w.width,w.height,w.geom->revision,scaleX,scaleY};
+                    w.dirty=force || tak::devFlag("TAK_SHADOW_NOCACHE") || tile>=stamps.size() || stamps[tile]!=stamp;
+                    if(tile<stamps.size())stamps[tile]=stamp;else stamps.push_back(stamp);
+                    ++tile;
+                    if(!w.dirty)++shadowAtlasReusedUnits;
+                    if(w.dirty)dirtyRects.push_back({w.slotX,w.slotY,w.width+2,w.height+2});
+                }
+                stamps.resize(tile);
+                if(dirtyRects.empty())continue;
                 if (SDL_SetRenderTarget(ren_,shadowSilhouettePages_[p].texture)!=0) {ok=false;break;}
                 SDL_RenderSetScale(ren_,1.0f,1.0f);
                 SDL_RenderSetViewport(ren_,nullptr);
                 SDL_RenderSetClipRect(ren_,nullptr);
                 SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_NONE);
                 SDL_SetRenderDrawColor(ren_,0,0,0,0);
-                if (SDL_RenderClear(ren_)!=0) {ok=false;break;}
+                // Clear the padding too: a moved/reassigned tile must not inherit
+                // coverage from its old occupant. Current tiles never overlap.
+                if ((dirtyRects.size()==tile ? SDL_RenderClear(ren_) :
+                     SDL_RenderFillRects(ren_,dirtyRects.data(),int(dirtyRects.size())))!=0) {ok=false;break;}
                 // Tiles on a page never overlap. Batch opaque faces from every
                 // unit first, then group cutout faces by their coverage page. This
                 // avoids per-unit texture changes without changing unit silhouette
@@ -424,10 +442,10 @@
                 // cannot overlap; independent points keep this loop vectorizable
                 // without changing the established float operation order.
                 size_t pointCount=0;
-                for (const Work& w:work) if (w.page==p) pointCount+=w.geom->shadowVerts.size();
+                for (const Work& w:work) if (w.page==p && w.dirty) pointCount+=w.geom->shadowVerts.size();
                 opaque.resize(pointCount);
                 size_t pointOffset=0;
-                for (const Work& w:work) if (w.page==p) {
+                for (const Work& w:work) if (w.page==p && w.dirty) {
                     const SDL_FPoint* __restrict src=w.geom->shadowVerts.data();
                     const size_t count=w.geom->shadowVerts.size();
                     SDL_FPoint* __restrict dst=count ? opaque.data()+pointOffset : nullptr;
@@ -463,7 +481,10 @@
                 }
             }
             restoreRenderer();
-            if (!ok) return fail("target draw operation failed");
+            if (!ok) {
+                for(auto& page:shadowSilhouettePages_)page.stamps.clear();
+                return fail("target draw operation failed");
+            }
             shadowAtlasPackedPages=usedPages;
             for (const Work& w:work) {
                 UnitGeom& g=*w.geom;
@@ -485,6 +506,45 @@
         const double _sh0 = double(SDL_GetPerformanceCounter());
         if (!kNoShadow && !tak::devEnv("TAK_SHADOW_DIRECT")) {
             shadowSilhouetteAtlasActive_=buildShadowSilhouetteAtlas();
+            if(shadowSilhouetteAtlasActive_ && tak::devFlag("TAK_SHADOW_CACHE_VERIFY")) {
+                const auto readPages=[&] {
+                    auto* target=SDL_GetRenderTarget(ren_);
+                    float sx=1,sy=1;SDL_RenderGetScale(ren_,&sx,&sy);
+                    SDL_Rect viewport{},clip{};SDL_RenderGetViewport(ren_,&viewport);
+                    const bool clipped=SDL_RenderIsClipEnabled(ren_);
+                    SDL_RenderGetClipRect(ren_,&clip);
+                    std::vector<std::vector<uint32_t>> pixels(shadowSilhouettePages_.size());
+                    for(size_t i=0;i<pixels.size();++i) {
+                        pixels[i].resize(size_t(shadowSilhouetteWidth_)*shadowSilhouetteHeight_);
+                        if(SDL_SetRenderTarget(ren_,shadowSilhouettePages_[i].texture)!=0 ||
+                           SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,pixels[i].data(),
+                                                shadowSilhouetteWidth_*4)!=0)
+                            throw std::runtime_error("shadow cache verification read failed");
+                    }
+                    SDL_SetRenderTarget(ren_,target);
+                    SDL_RenderSetScale(ren_,sx,sy);SDL_RenderSetViewport(ren_,&viewport);
+                    SDL_RenderSetClipRect(ren_,clipped ? &clip : nullptr);
+                    return pixels;
+                };
+                const auto cached=readPages();
+                if(!buildShadowSilhouetteAtlas(true))
+                    throw std::runtime_error("shadow cache reference build failed");
+                const auto reference=readPages();
+                for(size_t p=0;p<shadowSilhouettePages_.size();++p)
+                    for(const auto& tile:shadowSilhouettePages_[p].stamps)
+                        for(int y=tile.slotY;y<tile.slotY+tile.height+2;++y) {
+                            const size_t offset=size_t(y)*shadowSilhouetteWidth_+tile.slotX;
+                            if(std::memcmp(cached[p].data()+offset,reference[p].data()+offset,
+                                           size_t(tile.width+2)*4)) {
+                                for(int x=0;x<tile.width+2;++x)if(cached[p][offset+x]!=reference[p][offset+x]) {
+                                    std::fprintf(stderr,"shadow mismatch page=%zu owner=%d slot=%d,%d at=%d,%d cached=%08x reference=%08x reused=%zu\n",
+                                        p,tile.owner,tile.slotX,tile.slotY,tile.slotX+x,y,cached[p][offset+x],reference[p][offset+x],shadowAtlasReusedUnits);
+                                    break;
+                                }
+                                throw std::runtime_error("retained shadow tile pixel mismatch");
+                            }
+                        }
+            }
             shadowAtlasFallback=shadowSilhouetteAtlasActive_ ? "active" : shadowAtlasFallback;
             static int lastState=-1;
             static const char* lastReason=nullptr;
@@ -498,6 +558,12 @@
                 lastState=state;lastUnits=shadowAtlasPackedUnits;lastPages=shadowAtlasPackedPages;
                 lastReason=shadowAtlasFallback;
             }
+        }
+        if(tak::devFlag("TAK_CACHE_STATS") && ++geometryFrame_%120==0) {
+            size_t reused=0;
+            for(size_t i=0;i<visUnits_.size();++i)reused+=geomPool_[i].reused;
+            std::fprintf(stderr,"CACHE geometry=%zu/%zu shadow_tiles=%zu/%zu\n",reused,
+                visUnits_.size(),shadowAtlasReusedUnits,shadowAtlasPackedUnits);
         }
         airShadows_.clear();
         airShadowOp_ = SIZE_MAX;
@@ -1927,6 +1993,7 @@
     }
 
     void GameView::invalidateRenderTargets() {
+        for(auto& geometry:geomPool_)geometry.geometryKey.clear();
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
         atlasTex_.clear();
         for (auto& page:shadowSilhouettePages_) gpuvram::destroy(page.texture);
@@ -2055,24 +2122,36 @@
         return atlas;
     }
 
+    void GameView::preparePiece(const tak::tdo::Object& object,const PieceMeta& meta,
+                                const Xform& parent,const Anim* anim,float cy,float sy,
+                                PreparedPiece& out) {
+        const auto* piece=pieceFor(anim,object.name);
+        out.hidden=piece && !piece->visible;
+        out.transform=scriptTransform(parent,object.x,object.y,object.z,piece);
+        out.rotated.resize(!meta.skip && !out.hidden ? object.vertices.size()/3 : 0);
+        for (size_t i=0;i<out.rotated.size();++i) {
+            float point[3];
+            out.transform.apply(object.vertices[i*3],object.vertices[i*3+1],object.vertices[i*3+2],point);
+            out.rotated[i]={point[0]*cy+point[2]*sy,point[1],-point[0]*sy+point[2]*cy};
+        }
+        if(out.children.size()<object.children.size())out.children.resize(object.children.size());
+        for (size_t i=0;i<object.children.size();++i)
+            preparePiece(object.children[i],meta.children[i],out.transform,anim,cy,sy,out.children[i]);
+    }
+
     void GameView::buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch) {
-        g.verts.clear();
-        g.runs.clear();
-        // With the body, not later: geometry slots are REUSED across units, and
-        // several paths below return early (an unstarted construction ghost, a
-        // missing type, a missing visual). Clearing the silhouette only in
-        // buildUnitShadow left the previous occupant's shadow in the slot, and the
-        // shadow pass submits whatever is there -- a ghost site would have drawn
-        // the shadow of whatever unit last used its slot.
-        g.shadowVerts.clear();
-        g.maskedShadowVerts.clear();
-        g.maskedShadowRuns.clear();
-        g.canFly = u.type && u.type->canFly;
-        if (u.underConstruction && !u.buildBegun) return;   // ghost drawn serially
-        auto ut = unitType_.find(u.id);   // defensive: a throw here would abort
-        if (ut == unitType_.end()) return;
-        auto vt = visuals_.find(ut->second);
-        if (vt == visuals_.end()) return;
+        g.reused=false;
+        const auto clear=[&] {
+            g.canFly=u.type && u.type->canFly;
+            g.geometryKey.clear();g.verts.clear();g.runs.clear();
+            g.shadowVerts.clear();g.maskedShadowVerts.clear();g.maskedShadowRuns.clear();
+            g.shadowAtlasPage=nullptr;
+        };
+        if (u.underConstruction && !u.buildBegun) {clear();return;}
+        auto ut=unitType_.find(u.id);
+        if (ut==unitType_.end()) {clear();return;}
+        auto vt=visuals_.find(ut->second);
+        if (vt==visuals_.end()) {clear();return;}
         const Anim* anim = nullptr;
         auto at = anims_.find(u.id);
         if (at != anims_.end()) anim = &at->second;
@@ -2096,7 +2175,6 @@
         scratch.clear();
         // Body attitude precedes the animated piece tree for both ground and
         // flying units. Convert the retail mirrored basis at the same boundary.
-        const Xform base=modelBodyTransform(u.bodyPitch,u.bodyRoll);
         // Retail applies the birth heading to buildings as well as movers.
         // Their scripts can counter-rotate a build pad independently of the body.
         float facing = -ih;
@@ -2141,8 +2219,74 @@
         bool mirror = false;
         SDL_Texture* atlas = (slot >= 0 && size_t(slot) < atlasTex_.size())
                                  ? atlasTex_[size_t(slot)] : nullptr;
+        // Cache complete screen geometry only while every generating input is
+        // identical. Camera, terrain anchor, heading, pose, tint, birth effects,
+        // shadow settings and animated textures all participate. Slots may change
+        // owners as visibility/depth order changes, so identity is explicit too.
+        const float occlusion=wallOcclusionY(u.x,u.z);
+        const float altitude=anim ? anim->altitude : 0.0f;
+        const float birthP=birthProgress(u.id);
+        const bool conjuring=u.type && (u.underConstruction || birthP<1.0f);
+        const float p=!u.type ? 1.0f : u.underConstruction
+            ? std::clamp(u.hp/u.type->maxHp,0.0f,1.0f) : birthP;
+        thread_local std::vector<uint64_t> key;
+        key.clear();
+        const auto word=[&](uint64_t value){key.push_back(value);};
+        const auto real=[&](float value){word(std::bit_cast<uint32_t>(value));};
+        word(uint64_t(u.id));word(reinterpret_cast<uintptr_t>(u.type));
+        word(reinterpret_cast<uintptr_t>(&vt->second));
+        word(reinterpret_cast<uintptr_t>(atlas));word(uint64_t(u.player));word(uint64_t(slot));
+        word(u.bodyPitch);word(u.bodyRoll);word(u.veteran);word(u.underConstruction);
+        word(u.type && u.type->ghost);word(u.corpsePhase);word(u.corpseStatue);
+        word(shadowsOnFrame_);word(conjuring);word(disco);
+        word(uint64_t(discoCol.r)|(uint64_t(discoCol.g)<<8)|(uint64_t(discoCol.b)<<16));
+        for(float value:{zm,ax,ay,occlusion,altitude,facing,discoBob,discoMix,p})real(value);
+        if(conjuring)real(animClock_);
+        if(vt->second.meta.animated)word(front().gameTick);
+        if(anim) {
+            word(reinterpret_cast<uintptr_t>(anim->pieceNames));
+            const auto poses=!anim->capturedPose.empty() ? anim->capturedPose :
+                anim->vm ? std::span<const tak::cob::PieceState>(anim->vm->pieces()) :
+                           std::span<const tak::cob::PieceState>{};
+            for(const auto& pose:poses) {
+                word(pose.visible);
+                for(float value:pose.move)real(value);
+                for(float value:pose.rot)real(value);
+            }
+        }
+        const bool cacheHit=!tak::devFlag("TAK_GEOMETRY_NOCACHE") &&
+            !tak::devFlag("TAK_GEOMETRY_REFERENCE") && key==g.geometryKey;
+        g.reused=cacheHit;
+        const bool verifyCache=cacheHit && tak::devFlag("TAK_GEOMETRY_VERIFY");
+        thread_local UnitGeom referenceGeom;
+        if(cacheHit && !verifyCache)return;
+        if(verifyCache)referenceGeom=g;
+        g.geometryKey=key;g.owner=u.id;
+        if(!cacheHit)++g.revision;
+        g.verts.clear();g.runs.clear();g.shadowVerts.clear();
+        g.maskedShadowVerts.clear();g.maskedShadowRuns.clear();
+        g.canFly=u.type && u.type->canFly;
+        const Xform base=modelBodyTransform(u.bodyPitch,u.bodyRoll);
+        thread_local PreparedPiece prepared;
+        const bool reuse=!tak::devFlag("TAK_GEOMETRY_REFERENCE");
+        if (reuse) preparePiece(vt->second.model.root,vt->second.meta,base,anim,
+                                std::cos(facing),std::sin(facing),prepared);
         collect(scratch, atlas, vt->second.model.root, base, anim, facing, u.player, mirror,
-                true, false, nullptr, &vt->second.meta);
+                true, false, nullptr, &vt->second.meta,false,reuse ? &prepared : nullptr);
+        if (tak::devFlag("TAK_GEOMETRY_VERIFY")) {
+            thread_local std::vector<Tri> reference;
+            reference.clear();
+            collect(reference,atlas,vt->second.model.root,base,anim,facing,u.player,mirror,
+                    true,false,nullptr,&vt->second.meta);
+            if (reference.size()!=scratch.size()) throw std::runtime_error("body geometry count mismatch");
+            for (size_t i=0;i<scratch.size();++i) {
+                const auto& a=scratch[i];const auto& b=reference[i];
+                if(a.tex!=b.tex || a.depth!=b.depth) throw std::runtime_error("body geometry order mismatch");
+                for(int j=0;j<3;++j)
+                    if(std::memcmp(&a.v[j],&b.v[j],sizeof(SDL_Vertex)))
+                        throw std::runtime_error("body geometry vertex mismatch");
+            }
+        }
         // Sort compact indices, not complete triangles. The collector's vertex
         // records stay put; stable indices preserve the exact equal-depth order.
         // Each render worker owns its scratch ordering between unit builds.
@@ -2152,16 +2296,11 @@
         std::stable_sort(triangleOrder.begin(),triangleOrder.end(),
             [&](size_t a,size_t b) { return scratch[a].depth>scratch[b].depth; });
         g.ax = ax; g.ay = ay;
-        g.alt = anim ? anim->altitude : 0.0f;
-        g.occY = wallOcclusionY(u.x, u.z);
+        g.alt = altitude;
+        g.occY = occlusion;
         // "Materialising" = the summon fade-in/shimmer: either a site still conjuring
         // (progress = HP fraction) or a unit just summoned from a building (progress =
         // its viewer-only birth ramp). Both fade alpha in and glow while p < 1.
-        float birthP = birthProgress(u.id);
-        bool conjuring = u.type && (u.underConstruction || birthP < 1.0f);
-        float p = !u.type ? 1.0f
-                  : u.underConstruction ? std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f)
-                                        : birthP;
         Uint8 alpha = Uint8(p * 255.0f);
         const bool spectral = u.type && u.type->ghost && !conjuring;
         float vetGold = (!conjuring && u.veteran >= 4)
@@ -2214,11 +2353,22 @@
         // vertices nobody looks at, which is most of the point of switching it off.
         if (shadowsOnFrame_)
             buildUnitShadow(u, g, vt->second.model.root, vt->second.meta, anim, facing,
-                            zm, scratch);
+                            zm, scratch,reuse ? &prepared : nullptr);
         else {
             g.shadowVerts.clear();
             g.maskedShadowVerts.clear();
             g.maskedShadowRuns.clear();
+        }
+        if(verifyCache) {
+            const auto bytes=[](const auto& a,const auto& b) {
+                return a.size()==b.size() && (a.empty() ||
+                    std::memcmp(a.data(),b.data(),a.size()*sizeof(a[0]))==0);
+            };
+            if(!bytes(g.verts,referenceGeom.verts) || !bytes(g.shadowVerts,referenceGeom.shadowVerts) ||
+               !bytes(g.maskedShadowVerts,referenceGeom.maskedShadowVerts) ||
+               g.runs!=referenceGeom.runs || g.maskedShadowRuns!=referenceGeom.maskedShadowRuns ||
+               g.shadowBounds!=referenceGeom.shadowBounds)
+                throw std::runtime_error("cached unit geometry mismatch");
         }
     }
 
@@ -2226,7 +2376,7 @@
     void GameView::buildUnitShadow(const UnitR& u, UnitGeom& g,
                                    const tak::tdo::Object& root, const PieceMeta& meta,
                                    const Anim* anim, float facing, float zm,
-                                   std::vector<Tri>& scratch) {
+                                   std::vector<Tri>& scratch, const PreparedPiece* prepared) {
         g.shadowVerts.clear();
         g.maskedShadowVerts.clear();
         g.maskedShadowRuns.clear();
@@ -2252,12 +2402,13 @@
         struct ShadowVertex { SDL_FPoint position;float x,y,z;bool valid; };
         thread_local std::vector<ShadowVertex> vertices;
         const auto collectShadow=[&](auto&& self,const tak::tdo::Object& object,
-                                     const Xform& parent,const PieceMeta* cached,bool isRoot)->void {
-            const auto* piece=pieceFor(anim,object.name);
-            const Xform transform=scriptTransform(parent,object.x,object.y,object.z,piece);
+                                     const Xform& parent,const PieceMeta* cached,bool isRoot,
+                                     const PreparedPiece* pose)->void {
+            const auto* piece=pose ? nullptr : pieceFor(anim,object.name);
+            const Xform transform=pose ? pose->transform : scriptTransform(parent,object.x,object.y,object.z,piece);
             PieceMeta local;
             if (!cached) { pieceMetaFor(object,isRoot,local);cached=&local; }
-            if (!cached->skip && !(piece && !piece->visible)) {
+            if (!cached->skip && !(pose ? pose->hidden : piece && !piece->visible)) {
                 for (size_t primitiveIndex=0;primitiveIndex<object.primitives.size();++primitiveIndex) {
                     const auto& primitive=object.primitives[primitiveIndex];
                     if (primitive.indices.size()<3) continue;
@@ -2286,12 +2437,17 @@
                         const size_t index=size_t(primitive.indices[i])*3;
                         vertex.valid=index+2<object.vertices.size();
                         if (!vertex.valid) continue;
-                        float position[3];
-                        transform.apply(object.vertices[index],object.vertices[index+1],
-                                        object.vertices[index+2],position);
-                        vertex.x=position[0]*cy+position[2]*sn;
-                        vertex.y=position[1];
-                        vertex.z=-position[0]*sn+position[2]*cy;
+                        if (pose) {
+                            const auto& point=pose->rotated[index/3];
+                            vertex.x=point[0];vertex.y=point[1];vertex.z=point[2];
+                        } else {
+                            float position[3];
+                            transform.apply(object.vertices[index],object.vertices[index+1],
+                                            object.vertices[index+2],position);
+                            vertex.x=position[0]*cy+position[2]*sn;
+                            vertex.y=position[1];
+                            vertex.z=-position[0]*sn+position[2]*cy;
+                        }
                         vertex.position={vertex.x+kShadowLX*vertex.y,
                                          -(vertex.z+kShadowLZ*vertex.y)*kProjZ};
                     }
@@ -2328,9 +2484,10 @@
             // Hidden parents still transform their visible children.
             for (size_t i=0;i<object.children.size();++i)
                 self(self,object.children[i],transform,
-                     i<cached->children.size() ? &cached->children[i] : nullptr,false);
+                     i<cached->children.size() ? &cached->children[i] : nullptr,false,
+                     pose ? &pose->children[i] : nullptr);
         };
-        collectShadow(collectShadow,root,modelBodyTransform(u.bodyPitch,u.bodyRoll),&meta,true);
+        collectShadow(collectShadow,root,modelBodyTransform(u.bodyPitch,u.bodyRoll),&meta,true,prepared);
         float minX=std::numeric_limits<float>::infinity();
         float minY=std::numeric_limits<float>::infinity();
         float maxX=-minX,maxY=-minY;

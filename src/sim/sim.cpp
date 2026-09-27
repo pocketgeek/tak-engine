@@ -2644,13 +2644,10 @@ bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float
 }
 
 bool World::scriptYardOpen(int unitId) const {
-    // Every render snapshot reads this for every unit. Spawn/removal already
-    // maintain the same node-stable index used by tickUnitScript; avoid a tree
-    // walk for each live script. Retain lookup for records outside that index.
-    if (size_t(unitId)<unitScriptById_.size())
-        if (const auto* script=unitScriptById_[size_t(unitId)]) return script->yardOpen;
-    const auto it=unitScripts_.find(unitId);
-    return it!=unitScripts_.end() && it->second.yardOpen;
+    // The index is maintained at every insertion/removal. A null entry is an
+    // authoritative miss too; do not repeat it as a map search for dead units.
+    const auto* script=unitScript(unitId);
+    return script && script->yardOpen;
 }
 
 bool World::canLoadInto(int unitId,int transportId) const {
@@ -7486,19 +7483,19 @@ std::array<int32_t,3> World::queryUnitScriptPoint(int unitId,bool sweetSpot,int 
     auto* u=unit(unitId);
     if(!u || !u->type)return {};
     std::array<int32_t,3> point{u->x.v,(u->type->canFly ? u->flightY : u->groundY).v,u->z.v};
-    const auto it=unitScripts_.find(unitId);
-    if(it==unitScripts_.end())return point;
+    const auto it=unitScript(unitId);
+    if(!it)return point;
     const auto& file=*u->type->script();
     std::array<uint32_t,4> args{0,uint32_t(slot),0,0};
-    ScriptHost host{*this,*u,it->second};
-    it->second.state.query(file,file.scriptIndex(sweetSpot ? "SweetSpot" : "QueryWeapon"),args,host);
+    ScriptHost host{*this,*u,*it};
+    it->state.query(file,file.scriptIndex(sweetSpot ? "SweetSpot" : "QueryWeapon"),args,host);
     const int32_t piece=std::bit_cast<int32_t>(args[0]);
-    if(piece<0 || size_t(piece)>=it->second.state.pieces.size())return point;
+    if(piece<0 || size_t(piece)>=it->state.pieces.size())return point;
     std::array<int32_t,3> offset{};
     if(sweetSpot) {
         if(size_t(piece)>=u->type->scriptPieceCenters.size())return point;
         offset=u->type->scriptPieceCenters[size_t(piece)];
-    } else offset=retailPieceOrigin(u->type->productionModel,it->second.state.pieces,piece,
+    } else offset=retailPieceOrigin(u->type->productionModel,it->state.pieces,piece,
         portHeadingToRetail(u->heading),u->groundPitch,u->groundRoll);
     for(size_t axis=0;axis<3;++axis)
         point[axis]=std::bit_cast<int32_t>(uint32_t(point[axis])+uint32_t(offset[axis]));
@@ -7541,8 +7538,8 @@ std::optional<World::WeaponAimSolution> World::queryWeaponAim(int unitId,int tar
 }
 
 void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
-    const auto it=unitScripts_.find(u.id);
-    if(it!=unitScripts_.end()) {
+    const auto it=unitScript(u.id);
+    if(it) {
         const auto& file=*u.type->script();
         for(size_t slot=0;slot<std::min(size_t(3),u.type->weapons.size());++slot) {
             // 51a7f0 retires all targets, but only the selected callback can
@@ -7553,15 +7550,15 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
             // Native 51a7f0 starts TargetCleared with immediate=0. The callback
             // thread runs in the next regular COB pass, not inline in target
             // retirement; its SET 21 remains script-owned and takes effect there.
-            it->second.state.startArguments(file,file.scriptIndex("TargetCleared"),{uint32_t(slot),0,0,0},1);
+            it->state.startArguments(file,file.scriptIndex("TargetCleared"),{uint32_t(slot),0,0,0},1);
         }
     }
     u.scriptAimTarget=0;
 }
 
 bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
-    const auto it=unitScripts_.find(u.id);
-    if(it==unitScripts_.end() || slot<0 || slot>=3)return false;
+    const auto it=unitScript(u.id);
+    if(!it || slot<0 || slot>=3)return false;
     const auto& file=*u.type->script();
     const int aimScript=file.scriptIndex("AimWeapon"),fireScript=file.scriptIndex("FireWeapon");
     // Native callback lookup may fail, but it never substitutes an immediate
@@ -7577,7 +7574,7 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
         u.weaponAnimations.add(tak::RetailWeaponAnimation::Aim,slot,solution->heading,solution->pitch);
         // Native 52fe30 starts AimWeapon with immediate=0. Starting the VM here
         // only queues its thread; the following unit-script phase runs its body.
-        it->second.state.startArguments(file,aimScript,{solution->heading,solution->pitch,uint32_t(slot),0},3);
+        it->state.startArguments(file,aimScript,{solution->heading,solution->pitch,uint32_t(slot),0},3);
     }
     const bool available=u.reloads[slot]==0 &&
         (u.type->maxMana<=0 || u.mana>=weapon.manaCost);
@@ -7595,7 +7592,7 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
         u.weaponAnimations.add(tak::RetailWeaponAnimation::Fire,slot);
         // Native 530140 also starts FireWeapon with immediate=0. SET 23 can
         // therefore only be observed by a later common weapon update.
-        it->second.state.startArguments(file,fireScript,{uint32_t(slot),0,0,0},1);
+        it->state.startArguments(file,fireScript,{uint32_t(slot),0,0,0},1);
     }
     if(aim.flags&16) {
         fire(u,target,slot,true);
@@ -7607,10 +7604,10 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
 void World::startWorkAnimation(Unit& u,Fixed targetX,Fixed targetZ) {
     if(u.workScriptWorking)return;
     u.workScriptWorking=true;
-    if(auto script=unitScripts_.find(u.id);script!=unitScripts_.end()) {
+    if(auto script=unitScript(u.id);script) {
         const auto& file=*u.type->script();
         const uint16_t heading=uint16_t(retailDirection(u.x-targetX,u.z-targetZ).v);
-        script->second.state.startArguments(file,file.scriptIndex("StartBuilding"),
+        script->state.startArguments(file,file.scriptIndex("StartBuilding"),
             {uint16_t(heading-portHeadingToRetail(u.heading)),1,0,0},2);
     }
 }
@@ -7623,9 +7620,9 @@ void World::stopWorkAnimation(Unit& u) {
 
 void World::notifyUnitScript(Unit& u,const char* name) {
     if (std::strcmp(name,"BeginFlight")==0) ++u.flightBeginCallbackSerial;
-    auto it=unitScripts_.find(u.id);
-    if (it==unitScripts_.end()) return;
-    auto& state=it->second;
+    auto it=unitScript(u.id);
+    if (!it) return;
+    auto& state=*it;
     const auto& file=*u.type->script();
     ScriptHost host{*this,u,state};
     state.state.notify(file,file.scriptIndex(name),host);
@@ -7650,9 +7647,9 @@ void World::notifyMovementRate(Unit& u) {
         auto& flags=u.retailBuild->flyingOwnerFlags;
         flags=(flags&~0xcu)|(rate<<2);
     }
-    const auto it=unitScripts_.find(u.id);
-    if (it==unitScripts_.end() || it->second.movementRate==rate) return;
-    auto& script=it->second;script.movementRate=rate;
+    const auto it=unitScript(u.id);
+    if (!it || it->movementRate==rate) return;
+    auto& script=*it;script.movementRate=rate;
     const auto& file=*u.type->script();
     ScriptHost host{*this,u,script};
     // Native 4db350 executes this edge at zero elapsed time before occupancy.
@@ -7669,9 +7666,9 @@ void World::notifyFlightOccupancy(Unit& u) {
     if (u.flightGroundMode!=2) return;
     constexpr uint32_t occupancy=5;
     if (occupancy==u.scriptOccupancy) return;
-    const auto it=unitScripts_.find(u.id);
-    if (it!=unitScripts_.end()) {
-        auto& script=it->second;const auto& file=*u.type->script();
+    const auto it=unitScript(u.id);
+    if (it) {
+        auto& script=*it;const auto& file=*u.type->script();
         ScriptHost host{*this,u,script};
         if (script.state.startArguments(file,file.scriptIndex("setSFXoccupy"),{occupancy,0,0,0},1))
             script.state.tick(file,0,host);

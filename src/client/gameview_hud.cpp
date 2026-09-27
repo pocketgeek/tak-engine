@@ -566,7 +566,7 @@ namespace {
         // so the ordering is the priority ordering: frame rate before link quality before
         // counts before process stats.
         //
-        // Labels are kept to the width budget below (<=9 chars) and values to <=7, which
+        // Labels are kept to the width budget below (<=10 chars) and values to <=7, which
         // is what lets the type size stay put instead of resizing when a value gains a
         // digit.
         struct Row { const char* label; std::string value; };
@@ -615,6 +615,12 @@ namespace {
             statsCpuPct_ = tak::proc::systemCpuPercent(statsSystemCpu_, cpu);
             statsSystemCpu_ = cpu;
             statsProcess_ = tak::proc::sample(0);   // MEM remains the game's footprint
+            if(localServerPid_>0) {
+                const auto server=tak::proc::sample(localServerPid_);
+                statsServerCpuPct_=tak::proc::processCpuPercent(statsServer_,server,
+                    statsSampleAt_ ? double(now-statsSampleAt_)/1000.0 : 0.0,tak::proc::numCpus());
+                statsServer_=server;
+            }
             statsSampleAt_ = now;
         }
         // GPU driver queries can spawn nvidia-smi. Never wait for them in a
@@ -629,6 +635,11 @@ namespace {
         if (statsCpuPct_ >= 0) std::snprintf(b, sizeof b, "%.0f%%", statsCpuPct_);
         else std::snprintf(b, sizeof b, "N/A");
         rows.push_back({"CPU", b});   // whole system; 100% = all logical cores busy
+        if(localServerPid_>0) {
+            if(statsServerCpuPct_>=0)std::snprintf(b,sizeof b,"%.0f%%",statsServerCpuPct_);
+            else std::snprintf(b,sizeof b,"N/A");
+            rows.push_back({"SERVER CPU",b});
+        }
         if (statsGpu_.ok && statsGpu_.utilPct >= 0)
             std::snprintf(b, sizeof b, "%.0f%%", statsGpu_.utilPct);
         else std::snprintf(b, sizeof b, "N/A");
@@ -644,9 +655,9 @@ namespace {
         // The block font the mana readout uses (5x7 cells, blockWidth = chars * 6 * px),
         // so the panel matches the HUD it sits in rather than introducing a second face.
         //
-        // Fixed size follows UI scale. Reserve nine label characters (GAME TIME),
+        // Fixed size follows UI scale. Reserve ten label characters (SERVER CPU),
         // one separator and seven value characters without overlapping columns.
-        constexpr int kColBudget = 17;
+        constexpr int kColBudget = 18;
         const float px = 1.7f * uiScale_;
         const tak::hud::StatsFit fit =
             tak::hud::fitStats(int(rows.size()), availW, availH, kColBudget,

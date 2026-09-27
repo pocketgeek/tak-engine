@@ -254,11 +254,17 @@ accelerated renderers, with a fallback for unsupported or exhausted targets.
 Development builds after 0.7.1 also add boat shadows, an intentional enhancement
 over retail Glide, controlled by the same Shadows option.
 
+The in-game stats panel shows whole-system CPU and GPU usage. When the client
+launches a local server for a skirmish or campaign, **Server CPU** shows that
+server process’s share of total CPU capacity (0–100%). It is omitted for remote
+servers; unavailable samples display N/A.
+
 **Settings → Benchmark** provides a repeatable eight-AI load test and reports
 frame rate, simulation speed, memory, and other available performance metrics.
 Testing targets up to **16,000 total units**, not a guarantee of real-time play
 at that population. Map, unit mix, orders, hardware, and graphics settings all
-matter. See the [rendering and animation improvements](docs/render-submission-2026-09-26.md),
+matter. See the [geometry and shadow reuse results](docs/render-reuse-2026-09-26.md),
+[rendering and animation improvements](docs/render-submission-2026-09-26.md),
 [engine profiling results](docs/performance-2026-09-26.md), and
 [earlier performance notes](docs/performance-2026-09-20.md).
 

@@ -42,7 +42,7 @@
     void GameView::benchmarkBaseline() {
         benchPrevWallMs_ = SDL_GetTicks64();
         benchCliPrev_ = tak::proc::sample(0);
-        benchSrvPrev_ = benchServerPid_ ? tak::proc::sample(benchServerPid_) : tak::proc::Sample{};
+        benchSrvPrev_ = localServerPid_ ? tak::proc::sample(localServerPid_) : tak::proc::Sample{};
         benchNextTick_ = 300; benchSamples_.clear(); benchStatsShown_ = false;
     }
 
@@ -50,7 +50,7 @@
         uint64_t nowMs = SDL_GetTicks64();
         double wallSec = benchPrevWallMs_ ? double(nowMs - benchPrevWallMs_) / 1000.0 : 0;
         tak::proc::Sample cli = tak::proc::sample(0);
-        tak::proc::Sample srv = benchServerPid_ ? tak::proc::sample(benchServerPid_) : tak::proc::Sample{};
+        tak::proc::Sample srv = localServerPid_ ? tak::proc::sample(localServerPid_) : tak::proc::Sample{};
         auto pct = [&](const tak::proc::Sample& n, const tak::proc::Sample& p) {
             return (n.ok && wallSec > 0) ? (n.cpuSeconds - p.cpuSeconds) / wallSec * 100.0 : 0.0;
         };

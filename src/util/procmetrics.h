@@ -6,6 +6,7 @@
 // /proc, macOS via libproc's proc_pid_rusage, Windows via GetProcessTimes/PSAPI.
 #include <algorithm>
 #include <cstddef>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -19,6 +20,15 @@ struct Sample {
 
 // Sample process `pid` (0 = this process). Returns ok=false if it can't be read.
 Sample sample(long pid);
+
+// Share of total machine CPU capacity, bounded like the system CPU display.
+inline double processCpuPercent(const Sample& previous,const Sample& current,
+                                double wallSeconds,int logicalCpus) {
+    if(!previous.ok || !current.ok || !(wallSeconds>0) || !std::isfinite(wallSeconds) ||
+       logicalCpus<=0 || !std::isfinite(current.cpuSeconds) || !std::isfinite(previous.cpuSeconds) ||
+       current.cpuSeconds<previous.cpuSeconds)return -1;
+    return std::clamp(100.0*(current.cpuSeconds-previous.cpuSeconds)/wallSeconds/logicalCpus,0.0,100.0);
+}
 
 // Cumulative OS CPU counters across all logical cores (units cancel in deltas).
 struct SystemCpuSample {

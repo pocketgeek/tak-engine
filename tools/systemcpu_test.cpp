@@ -16,5 +16,14 @@ int main() {
        gpuBusyPercent(100,1000,300,1100)!=100 ||
        gpuBusyPercent(100,1000,90,1100)!=-1 ||
        gpuBusyPercent(100,1000,110,1000)!=-1) return 1;
+    const Sample processBefore{10,0,true};
+    if(processCpuPercent(processBefore,{12,0,true},1,8)!=25 ||
+       processCpuPercent(processBefore,{10,0,true},1,8)!=0 ||
+       processCpuPercent(processBefore,{20,0,true},1,8)!=100 ||
+       processCpuPercent(processBefore,{9,0,true},1,8)!=-1 ||
+       processCpuPercent({},processBefore,1,8)!=-1 ||
+       processCpuPercent(processBefore,{},1,8)!=-1 ||
+       processCpuPercent(processBefore,{12,0,true},0,8)!=-1 ||
+       processCpuPercent(processBefore,{12,0,true},1,0)!=-1)return 1;
     std::puts("systemcpu: total utilization and unavailable/reset counters passed");
 }

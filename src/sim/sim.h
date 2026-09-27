@@ -2344,6 +2344,12 @@ private:
     // Non-owning direct lookup; the map still owns stable script objects and
     // supplies the unchanged ID-ordered state-hash traversal.
     std::vector<UnitScript*> unitScriptById_;
+    UnitScript* unitScript(int id) {
+        return size_t(id)<unitScriptById_.size() ? unitScriptById_[size_t(id)] : nullptr;
+    }
+    const UnitScript* unitScript(int id) const {
+        return size_t(id)<unitScriptById_.size() ? unitScriptById_[size_t(id)] : nullptr;
+    }
     struct ScriptHost;
     void tickUnitScript(Unit& unit);
     // Enabled by setupMatch; a bare test World leaves it off.
