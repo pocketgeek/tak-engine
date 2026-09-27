@@ -5,6 +5,7 @@
 #include <array>
 #include <cstring>
 #include <vector>
+#include <utility>
 
 namespace tak {
 namespace {
@@ -162,13 +163,19 @@ struct Streaming::Impl {
     video::Stream stream;
     video::StreamConfig config;
     Capture capture;
-    int resolution=0; // 720p, 1080p, 1440p, 4K, full window resolution
+    int resolution=0; // 720p, 1080p, 1440p, 4K, full window, max width 3840
     bool visible=false,editing=false,wasActive=false,wasTextInput=false;
     std::string error;
     uint64_t nextCapture=0, rateTime=0, rateBytes=0;
     uint64_t rateKbps=0;
     float x=0,y=0,u=1;
     SDL_FRect row(int n) const {return {x+20*u,y+(70+45*n)*u,600*u,34*u};}
+    std::pair<int,int> windowResolution(int w,int h) const {
+        if(resolution!=5)return {w&~1,h&~1};
+        const int width=std::max(2,std::min(w&~1,3840));
+        const int height=std::max(2,int(int64_t(h)*width/std::max(w,1))&~1);
+        return {width,height};
+    }
     SDL_FRect pasteRect() const {auto r=row(0);r.x+=500*u;r.w=100*u;return r;}
     void pasteKey() {
         char* clipboard=SDL_GetClipboardText();
@@ -202,11 +209,12 @@ struct Streaming::Impl {
         auto text=[&](const std::string& t,float px,float py,SDL_Color col=SDL_Color{235,235,235,255}) {drawBlockText(ren,t,x+px*u,y+py*u,1.5f*u,col);};
         text("YOUTUBE STREAMING",20,20);
         text("GAME VIDEO AND AUDIO - KEY IS NOT SAVED",20,45);
+        const auto [outputW,outputH]=resolution>=4&&!s.active ? windowResolution(w,h) :
+            std::pair<int,int>{config.width,config.height};
         std::array<std::string,6> labels={
             "STREAM KEY: " + (config.key.empty()?std::string("NOT SET"):std::string(std::min<size_t>(config.key.size(),36),'*')),
-            "RESOLUTION: " + std::string(resolution==4?"FULL ":"") +
-                std::to_string(resolution==4&&!s.active?(w&~1):config.width)+" X "+
-                std::to_string(resolution==4&&!s.active?(h&~1):config.height),
+            "RESOLUTION: " + std::string(resolution==5?"MAX 3840 / ":resolution==4?"FULL ":"") +
+                std::to_string(outputW)+" X "+std::to_string(outputH),
             "FRAME RATE: " + std::to_string(config.fps),
             "BITRATE: " + std::to_string(config.bitrateKbps)+" KBPS",
             "ENCODER: " + std::string(config.encoder.empty()?"AUTOMATIC":"CPU"),
@@ -259,7 +267,10 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
             if(i==5) {
                 if(p_->stream.active())p_->stream.stop();
                 else {
-                    if(p_->resolution==4){p_->config.width=w&~1;p_->config.height=h&~1;}
+                    if(p_->resolution>=4){
+                        const auto size=p_->windowResolution(w,h);
+                        p_->config.width=size.first;p_->config.height=size.second;
+                    }
                     if(w<2 || h<2 || p_->config.width>8192 || p_->config.height>8192)
                         p_->error="RESOLUTION MUST BE BETWEEN 2 AND 8192 PIXELS";
                     else if(!p_->stream.start(p_->config))p_->error="ENTER A VALID YOUTUBE STUDIO STREAM KEY";
@@ -268,11 +279,15 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
             } else if(!p_->stream.active()) {
                 p_->editing=i==0;if(p_->editing)SDL_StartTextInput();else SDL_StopTextInput();
                 if(i==1){
-                    p_->resolution=(p_->resolution+1)%5;
+                    p_->resolution=(p_->resolution+1)%6;
                     constexpr int widths[]={1280,1920,2560,3840};
                     constexpr int heights[]={720,1080,1440,2160};
-                    p_->config.width=p_->resolution==4?(w&~1):widths[p_->resolution];
-                    p_->config.height=p_->resolution==4?(h&~1):heights[p_->resolution];
+                    if(p_->resolution>=4){
+                        const auto size=p_->windowResolution(w,h);
+                        p_->config.width=size.first;p_->config.height=size.second;
+                    } else {
+                        p_->config.width=widths[p_->resolution];p_->config.height=heights[p_->resolution];
+                    }
                     const int64_t pixels=int64_t(p_->config.width)*p_->config.height;
                     p_->config.bitrateKbps=std::max(p_->config.bitrateKbps,pixels>2560*1440?30000:pixels>1920*1080?12000:6000);
                 }

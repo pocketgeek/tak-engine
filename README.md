@@ -294,7 +294,7 @@ For the evidence and remaining scope, see the [retail engine notes](docs/retail-
 ## YouTube streaming
 
 Press **F9** at the title screen or in a game to stream game video and audio directly to YouTube.
-Paste a YouTube Studio stream key, choose 720p/1080p/1440p/4K or full window resolution and 30/60 FPS, then start.
+Paste a YouTube Studio stream key, choose 720p/1080p/1440p/4K, full window resolution, or Max Width 3840 and 30/60 FPS, then start.
 Automatic hardware encoding supports NVIDIA, AMD, Intel and Apple backends,
 with a CPU fallback for supported H.264 sizes; larger native sizes use hardware HEVC. No separate FFmpeg installation is needed.
 See [streaming setup and platform details](docs/streaming.md).

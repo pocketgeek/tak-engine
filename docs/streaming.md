@@ -7,9 +7,14 @@ select the video settings, and click
 broadcast public. See [YouTube's encoder setup guide](https://support.google.com/youtube/answer/2907883).
 
 The initial settings are 720p, 30 FPS and 6,000 Kbps video. The panel also offers
-1080p, 1440p, 4K (3840×2160), Full Resolution, 60 FPS, 3,000–80,000 Kbps,
+1080p, 1440p, 4K (3840×2160), Full Resolution, Max Width 3840, 60 FPS, 3,000–80,000 Kbps,
 and automatic or CPU encoding. Full Resolution uses the actual window drawable
 size at Start Streaming, including high-DPI scaling, rounded down to even pixels.
+**Max Width 3840** scales down to at most 3840 pixels wide while preserving
+the window’s aspect ratio, without adding a 16:9 border or upscaling smaller
+windows. A 7680×2160 window produces 3840×1080. Dimensions are rounded down to
+even pixels and calculated when the stream starts.
+
 The output dimensions stay fixed until you stop and restart; resizing the window
 letterboxes the new image. The supported input range is 2–8192 pixels per axis,
 subject to the encoder’s limits. Selecting a larger resolution raises a lower
