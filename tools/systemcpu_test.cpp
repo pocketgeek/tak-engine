@@ -1,0 +1,20 @@
+#include "util/procmetrics.h"
+#include <cstdio>
+int main() {
+    using namespace tak::proc;
+    // Eight cores supply 800 counter ticks: two busy cores mean 25%, not 200%.
+    const SystemCpuSample before{1000,500,true};
+    if(systemCpuPercent(before,{1800,1100,true})!=25 ||
+       systemCpuPercent(before,{1800,500,true})!=100 ||
+       systemCpuPercent(before,{1800,1300,true})!=0 ||
+       systemCpuPercent({},before)!=-1 ||
+       systemCpuPercent(before,before)!=-1 ||
+       systemCpuPercent(before,{900,400,true})!=-1 ||
+       systemCpuPercent(before,{1100,700,true})!=-1) return 1;
+    if(gpuBusyPercent(100,1000,150,1100)!=50 ||
+       gpuBusyPercent(100,1000,100,1100)!=0 ||
+       gpuBusyPercent(100,1000,300,1100)!=100 ||
+       gpuBusyPercent(100,1000,90,1100)!=-1 ||
+       gpuBusyPercent(100,1000,110,1000)!=-1) return 1;
+    std::puts("systemcpu: total utilization and unavailable/reset counters passed");
+}

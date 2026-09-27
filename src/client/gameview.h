@@ -1434,6 +1434,7 @@ private:
     int healthBars_ = 1;        // 0=off 1=damaged-only 2=always (Options)
     uint64_t statsSampleAt_ = 0, statsGpuAt_ = 0;
     tak::proc::Sample statsProcess_;
+    tak::proc::SystemCpuSample statsSystemCpu_;
     double statsCpuPct_ = -1;
     tak::proc::GpuSample statsGpu_;
     std::future<tak::proc::GpuSample> statsGpuPending_;

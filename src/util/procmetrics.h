@@ -4,6 +4,7 @@
 // diffs two samples over a wall-clock interval to get CPU%. Works for THIS process (pid 0)
 // or another same-user process by pid (the local takserver via its child pid) -- Linux via
 // /proc, macOS via libproc's proc_pid_rusage, Windows via GetProcessTimes/PSAPI.
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -19,15 +20,34 @@ struct Sample {
 // Sample process `pid` (0 = this process). Returns ok=false if it can't be read.
 Sample sample(long pid);
 
+// Cumulative OS CPU counters across all logical cores (units cancel in deltas).
+struct SystemCpuSample {
+    uint64_t total = 0, idle = 0;
+    bool ok = false;
+};
+SystemCpuSample systemCpuSample();
+inline double systemCpuPercent(const SystemCpuSample& previous, const SystemCpuSample& current) {
+    if (!previous.ok || !current.ok || current.total <= previous.total || current.idle < previous.idle)
+        return -1;
+    const auto total = current.total - previous.total, idle = current.idle - previous.idle;
+    if (idle > total) return -1;
+    return 100.0 * double(total - idle) / double(total);
+}
+
 long selfPid();   // this process's pid
 int numCpus();    // online logical CPUs (to report CPU% of one core vs. all cores)
 
-// Best-effort GPU stats. Read from `nvidia-smi` if present (NVIDIA, any OS; whole
-// device), else Linux AMD sysfs (amdgpu; whole device), else Linux Intel (i915/xe)
-// via DRM client fdinfo -- which reports THIS process's GPU time + resident memory,
-// not the whole device (util% is diffed between calls). ok=false when no source is
-// available (e.g. macOS non-NVIDIA) -- callers show "N/A". Cheap-ish, but the
-// nvidia-smi path spawns a process, so sample sparingly (per benchmark milestone).
+// Perf busy and scheduled counters share nanosecond units. Parallel engines
+// are evaluated separately; their percentages must never be added together.
+inline double gpuBusyPercent(uint64_t oldBusy, uint64_t oldTime, uint64_t busy, uint64_t time) {
+    if (busy < oldBusy || time <= oldTime) return -1;
+    return std::clamp(100.0 * double(busy-oldBusy) / double(time-oldTime), 0.0, 100.0);
+}
+
+// Whole-device GPU statistics only: NVIDIA nvidia-smi, Linux AMD sysfs, or
+// macOS IOAccelerator, or Linux Intel i915 perf engine counters (busiest engine).
+// Unsupported or permission-blocked drivers report unavailable, never process-only
+// utilization. Queries may spawn a process: use sparingly or off the render thread.
 struct GpuSample {
     double utilPct = -1;    // GPU utilization %, -1 if unknown
     size_t memUsed = 0;     // device VRAM used (all processes), bytes; 0 if unknown

@@ -1,13 +1,15 @@
 #include "util/procmetrics.h"
 
+#include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <vector>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <set>
 #include <string>
 #include <thread>
-#include <mutex>
 
 #if defined(_WIN32)
 #  include <windows.h>
@@ -17,13 +19,15 @@
 #  include <unistd.h>
 #  include <sys/resource.h>
 #  include <mach/mach_time.h>
+#  include <mach/mach.h>
 #  include <CoreFoundation/CoreFoundation.h>
 #  include <IOKit/IOKitLib.h>
 #else   // Linux / other /proc systems
 #  include <cstdio>
 #  include <cstring>
-#  include <dirent.h>
 #  include <unistd.h>
+#  include <linux/perf_event.h>
+#  include <sys/syscall.h>
 #endif
 
 namespace tak::proc {
@@ -142,6 +146,49 @@ Sample sample(long pid) {
 
 #endif
 
+SystemCpuSample systemCpuSample() {
+    SystemCpuSample s;
+#if defined(_WIN32)
+    FILETIME idle{}, kernel{}, user{};
+    if (GetSystemTimes(&idle, &kernel, &user)) {
+        auto ticks = [](const FILETIME& f) {
+            return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime;
+        };
+        // Windows includes idle time in kernel time.
+        s.total = ticks(kernel) + ticks(user);
+        s.idle = ticks(idle);
+        s.ok = true;
+    }
+#elif defined(__APPLE__)
+    host_cpu_load_info_data_t cpu{};
+    mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
+    const mach_port_t host = mach_host_self();
+    if (host_statistics(host, HOST_CPU_LOAD_INFO, reinterpret_cast<host_info_t>(&cpu), &count) == KERN_SUCCESS) {
+        for (int i = 0; i < CPU_STATE_MAX; ++i) s.total += cpu.cpu_ticks[i];
+        s.idle = cpu.cpu_ticks[CPU_STATE_IDLE];
+        s.ok = true;
+    }
+    mach_port_deallocate(mach_task_self(), host);
+#else
+    if (FILE* f = std::fopen("/proc/stat", "r")) {
+        char line[512];
+        if (std::fgets(line, sizeof line, f)) {
+            unsigned long long user=0,nice=0,system=0,idle=0,wait=0,irq=0,softirq=0,steal=0;
+            if (std::sscanf(line, "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
+                            &user,&nice,&system,&idle,&wait,&irq,&softirq,&steal) >= 4) {
+                // Guest fields are already included in user/nice. I/O wait is
+                // idle CPU time; counting it as busy exaggerates utilization.
+                s.total = user + nice + system + idle + wait + irq + softirq + steal;
+                s.idle = idle + wait;
+                s.ok = true;
+            }
+        }
+        std::fclose(f);
+    }
+#endif
+    return s;
+}
+
 // ---- GPU stats (whole device) -----------------------------------------------
 
 namespace {
@@ -174,79 +221,69 @@ bool readLL(const char* path, long long& out) {
     return true;
 }
 
-// Intel (i915/xe) GPU via DRM client fdinfo (/proc/self/fdinfo/*). Engine busy time
-// is a cumulative ns counter per DRM client, so we diff it against wall time between
-// calls to get util%. This is THIS process's GPU time (not whole-device) -- the best
-// a non-root reader gets on Intel; memUsed is the resident GPU memory (memTotal is
-// unknown, an iGPU shares system RAM). Fails closed (returns false) if not Intel.
-bool intelGpuSample(GpuSample& g) {
-    DIR* d = opendir("/proc/self/fdinfo");
-    if (!d) return false;
-    std::set<long> seen;            // dedupe: many fds map to one DRM client
-    unsigned long long engineNs = 0;
-    size_t residentBytes = 0;
-    bool anyIntel = false;
-    struct dirent* de;
-    while ((de = readdir(d)) != nullptr) {
-        if (de->d_name[0] == '.') continue;
-        std::string path = std::string("/proc/self/fdinfo/") + de->d_name;
-        FILE* f = std::fopen(path.c_str(), "r");
-        if (!f) continue;
-        char line[256];
-        bool isIntel = false; long client = -1;
-        unsigned long long eNs = 0; size_t resB = 0;
-        while (std::fgets(line, sizeof line, f)) {
-            if (std::strncmp(line, "drm-driver:", 11) == 0)
-                isIntel = std::strstr(line, "i915") || std::strstr(line, "xe");
-            else if (std::strncmp(line, "drm-client-id:", 14) == 0)
-                client = std::atol(line + 14);
-            else if (std::strncmp(line, "drm-engine-", 11) == 0) {
-                char* c = std::strchr(line, ':');   // "<N> ns" only (skip capacity lines)
-                if (c && std::strstr(c, " ns")) eNs += std::strtoull(c + 1, nullptr, 10);
-            } else if (std::strncmp(line, "drm-resident-", 13) == 0) {
-                char* c = std::strchr(line, ':');
-                if (c) {
-                    unsigned long long v = std::strtoull(c + 1, nullptr, 10);
-                    if (std::strstr(c, "MiB")) resB += size_t(v) << 20;
-                    else if (std::strstr(c, "KiB")) resB += size_t(v) << 10;
-                    else resB += size_t(v);
-                }
-            }
-        }
-        std::fclose(f);
-        if (isIntel) {
-            anyIntel = true;
-            if (client < 0 || seen.insert(client).second) { engineNs += eNs; residentBytes += resB; }
+// i915 exports device-wide engine busy counters in nanoseconds through perf.
+// Sample all engines over the same interval; report the busiest engine rather
+// than summing parallel engines into a misleading value greater than 100%.
+bool intelSystemGpuSample(GpuSample& g) try {
+    struct Counter {
+        int fd;
+        uint64_t busy=0, enabled=0, running=0;
+    };
+    std::vector<Counter> counters;
+    struct Cleanup {
+        std::vector<Counter>& counters;
+        ~Cleanup() { for (const auto& c:counters) close(c.fd); }
+    } cleanup{counters};
+    std::error_code ec;
+    const std::filesystem::path root("/sys/bus/event_source/devices");
+    for (const auto& entry:std::filesystem::directory_iterator(root,ec)) {
+        const auto name=entry.path().filename().string();
+        if (name!="i915" && !name.starts_with("i915_")) continue;
+        long long type=0,cpu=0;
+        if (!readLL((entry.path()/"type").c_str(),type) ||
+            !readLL((entry.path()/"cpumask").c_str(),cpu)) continue;
+        std::error_code eventError;
+        for (const auto& event:std::filesystem::directory_iterator(entry.path()/"events",eventError)) {
+            if (!event.path().filename().string().ends_with("-busy")) continue;
+            unsigned long long config=0;
+            FILE* file=std::fopen(event.path().c_str(),"r");
+            if (!file) continue;
+            const bool parsed=std::fscanf(file,"config=%llx",&config)==1;
+            std::fclose(file);
+            if (!parsed) continue;
+            perf_event_attr attr{};
+            attr.size=sizeof(attr);attr.type=uint32_t(type);attr.config=config;
+            attr.read_format=PERF_FORMAT_TOTAL_TIME_ENABLED|PERF_FORMAT_TOTAL_TIME_RUNNING;
+            const int fd=int(syscall(__NR_perf_event_open,&attr,-1,int(cpu),-1,PERF_FLAG_FD_CLOEXEC));
+            if (fd<0) continue;   // kernel policy may require CAP_PERFMON
+            uint64_t values[3]{};
+            if (read(fd,values,sizeof(values))!=sizeof(values)) { close(fd);continue; }
+            counters.push_back({fd,values[0],values[1],values[2]});
         }
     }
-    closedir(d);
-    if (!anyIntel) return false;
-
-    unsigned long long wallNs = (unsigned long long)
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-    static unsigned long long prevEng = 0, prevWall = 0;
-    if (prevWall != 0 && wallNs > prevWall) {
-        double dEng = engineNs >= prevEng ? double(engineNs - prevEng) : 0.0;
-        double u = dEng / double(wallNs - prevWall) * 100.0;
-        g.utilPct = u < 0 ? 0.0 : (u > 100.0 ? 100.0 : u);
-    } else {
-        g.utilPct = 0.0;   // first sample: no delta yet
+    if (counters.empty()) return false;
+    // gpuSample runs on the HUD worker; no sleeps or perf queries on the render thread.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    double busiest=-1;
+    for (const auto& c:counters) {
+        uint64_t values[3]{};
+        if (read(c.fd,values,sizeof(values))!=sizeof(values) || values[0]<c.busy ||
+            values[1]<=c.enabled || values[2]<=c.running) continue;
+        // Busy ns / scheduled ns accounts for any perf multiplexing. Both are
+        // cumulative counters sampled at each boundary, not process wall time.
+        busiest=std::max(busiest,gpuBusyPercent(c.busy,c.running,values[0],values[2]));
     }
-    prevEng = engineNs; prevWall = wallNs;
-    g.memUsed = residentBytes;
-    g.memTotal = 0;        // integrated GPU shares system RAM -- no fixed VRAM total
-    g.name = "Intel GPU";
-    g.ok = true;
+    if (busiest<0) return false;
+    g.utilPct=busiest;g.systemWide=true;g.ok=true;g.name="Intel GPU (busiest engine)";
     return true;
+} catch (const std::filesystem::filesystem_error&) {
+    return false;   // hot-unplug or inaccessible sysfs: unavailable, never fatal
 }
+
 #endif
 }  // namespace
 
 GpuSample gpuSample() {
-    // Intel engine deltas are shared by the benchmark and live HUD sampler.
-    static std::mutex mutex;
-    const std::lock_guard<std::mutex> lock(mutex);
     GpuSample g;
 #if defined(__APPLE__)
     // No public PER-PROCESS GPU stat exists on Apple Silicon (Metal has no
@@ -272,7 +309,7 @@ GpuSample gpuSample() {
                     int v = -1;
                     if (num && CFGetTypeID(num) == CFNumberGetTypeID() &&
                         CFNumberGetValue(num, kCFNumberIntType, &v) && v >= 0) {
-                        g.utilPct = double(v);
+                        g.utilPct = std::clamp(double(v), 0.0, 100.0);
                         g.systemWide = true;
                         g.ok = true;
                     }
@@ -299,7 +336,13 @@ GpuSample gpuSample() {
         size_t p1 = line.find(','), p2 = p1 == std::string::npos ? p1 : line.find(',', p1 + 1),
                p3 = p2 == std::string::npos ? p2 : line.find(',', p2 + 1);
         if (p1 != std::string::npos && p2 != std::string::npos) {
-            g.utilPct = std::atof(line.substr(0, p1).c_str());
+            // Unsupported driver counters (N/A, [Not Supported]) are not 0%.
+            const std::string value = line.substr(0, p1);
+            char* end = nullptr;
+            const double percent = std::strtod(value.c_str(), &end);
+            if (end != value.c_str() && std::isfinite(percent) && percent >= 0)
+                g.utilPct = std::clamp(percent, 0.0, 100.0);
+            g.systemWide = true;
             g.memUsed = size_t(std::atoll(line.substr(p1 + 1, p2 - p1 - 1).c_str())) << 20;
             if (p3 != std::string::npos) {
                 g.memTotal = size_t(std::atoll(line.substr(p2 + 1, p3 - p2 - 1).c_str())) << 20;
@@ -322,16 +365,18 @@ GpuSample gpuSample() {
         std::snprintf(pused, sizeof pused, "/sys/class/drm/card%d/device/mem_info_vram_used", c);
         std::snprintf(ptot, sizeof ptot, "/sys/class/drm/card%d/device/mem_info_vram_total", c);
         long long busy = 0, used = 0, total = 0;
-        if (readLL(pbusy, busy)) {
-            g.utilPct = double(busy);
+        if (readLL(pbusy, busy) && busy >= 0) {
+            g.utilPct = std::clamp(double(busy), 0.0, 100.0);
+            g.systemWide = true;
             if (readLL(pused, used)) g.memUsed = size_t(used);
             if (readLL(ptot, total)) g.memTotal = size_t(total);
             g.ok = true;
             return g;
         }
     }
-    // Intel (i915/xe): DRM fdinfo. Only this process's GPU time, but better than N/A.
-    if (intelGpuSample(g)) return g;
+    if (intelSystemGpuSample(g)) return g;
+    // Do not substitute per-process DRM fdinfo for whole-device utilization.
+    // Drivers without a system-wide counter leave utilization unavailable.
 #endif
     return g;
 #endif   // !__APPLE__

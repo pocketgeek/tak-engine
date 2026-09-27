@@ -121,9 +121,13 @@ simulation can take longer than 60 seconds of wall-clock time.
 The in-game stats panel shows **Units** (your living units) with **Kills** directly
 below it. Spectators see the total living units in the match. **Time** is real
 elapsed match time; **Game Time** advances with the simulation. **CPU** measures
-the client process, with 100% equal to one logical CPU core; it can exceed 100%.
+total system utilization across all logical cores, from 0% to 100%.
 **GPU** shows the driver-reported utilization, or **N/A** when unavailable.
-NVIDIA/AMD and macOS report whole-device usage; Intel Linux reports this process.
+GPU utilization is whole-device, from 0% to 100%, including other applications.
+Intel Linux i915 uses system-wide perf engine counters and reports the busiest
+engine. Access follows the kernel perf permissions; blocked counters show N/A.
+The newer Xe driver is not yet supported by this sampler. No process-only
+utilization is substituted for unavailable system-wide readings.
 GPU readings refresh in the background so driver queries do not stall rendering.
 The **F4** player panel keeps player/team identity, defeat status and kills (plus
 mana for spectators); performance metrics, clocks and unit counts live in the side panel.

@@ -611,11 +611,10 @@ namespace {
 
         const uint64_t now = SDL_GetTicks64();
         if (!statsSampleAt_ || now - statsSampleAt_ >= 1000) {
-            const auto sample = tak::proc::sample(0);
-            statsCpuPct_ = sample.ok && statsProcess_.ok && now > statsSampleAt_
-                ? std::max(0.0, (sample.cpuSeconds - statsProcess_.cpuSeconds) *
-                    100000.0 / double(now - statsSampleAt_)) : -1;
-            statsProcess_ = sample;
+            const auto cpu = tak::proc::systemCpuSample();
+            statsCpuPct_ = tak::proc::systemCpuPercent(statsSystemCpu_, cpu);
+            statsSystemCpu_ = cpu;
+            statsProcess_ = tak::proc::sample(0);   // MEM remains the game's footprint
             statsSampleAt_ = now;
         }
         // GPU driver queries can spawn nvidia-smi. Never wait for them in a
@@ -629,7 +628,7 @@ namespace {
         }
         if (statsCpuPct_ >= 0) std::snprintf(b, sizeof b, "%.0f%%", statsCpuPct_);
         else std::snprintf(b, sizeof b, "N/A");
-        rows.push_back({"CPU", b});   // client process; 100% = one logical core
+        rows.push_back({"CPU", b});   // whole system; 100% = all logical cores busy
         if (statsGpu_.ok && statsGpu_.utilPct >= 0)
             std::snprintf(b, sizeof b, "%.0f%%", statsGpu_.utilPct);
         else std::snprintf(b, sizeof b, "N/A");
