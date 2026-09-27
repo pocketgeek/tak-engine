@@ -298,9 +298,10 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-**Version 0.7.7 uses protocol 187** for the construction, assist, building-death,
-and sight/radar changes. Versions 0.7.6 and 0.7.5 use protocol 184; these builds
-cannot share a match. Older incompatible clients and recordings are rejected.
+**The current development build uses protocol 188** for corrected explosion
+corpse selection. Released **0.7.7 uses protocol 187**, and versions 0.7.6 and
+0.7.5 use protocol 184. These builds cannot share a match. Older incompatible
+clients and recordings are rejected.
 The connection checks gameplay definitions, but
 that fingerprint does not cover every file: keep gameplay overrides, scripts,
 models, and maps compatible too.

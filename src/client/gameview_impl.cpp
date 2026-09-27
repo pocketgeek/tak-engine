@@ -391,7 +391,7 @@
             shadowsOnFrame_=true;
             int checked=0;
             for (const auto& [name,type]:registry_.types()) {
-                if (!type.instantCorpse) continue;
+                if (!type.explosionCorpse) continue;
                 const int corpse=world_.corpseTypeOf(&type);
                 if (corpse<0) throw std::runtime_error("building ruin definition missing");
                 const int id=spawn(name,512,512,0,localPlayer_);
@@ -409,7 +409,7 @@
                 ++checked;
             }
             shadowsOnFrame_=previousShadows;
-            if (checked!=16) throw std::runtime_error("building ruin roster changed");
+            if (checked!=45) throw std::runtime_error("explosion corpse roster changed");
             return;
         }
 #ifndef NDEBUG

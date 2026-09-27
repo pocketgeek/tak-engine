@@ -664,6 +664,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 auto script=std::make_shared<cob::File>(cob::load(vfs.read(scriptPath),scriptPath));
                 t.simulationScript=script;
                 t.instantCorpse=t.isStructure() && !t.corpse.empty() && retailInstantCorpse(*script);
+                t.explosionCorpse=!t.corpse.empty() && retailExplosionCorpse(*script);
                 const auto modelPath="objects3d/"+t.id+".3do";
                 if(vfs.has(modelPath)) {
                     auto model=tdo::load(vfs.read(modelPath));
@@ -8911,11 +8912,11 @@ void World::tick(float dt) {
                                  u.type->id.c_str(), u.corpseStatue, u.stonedFor);
                 int ct = u.corpseStatue >= 0 ? u.corpseStatue : corpseTypeOf(u.type);
                 // Retail gib rule (icd 0x512610): deathType = the killing blow's
-                // FBI damagetype; 3 (explosion) makes Killed refuse the corpse
-                // and EXPLODE every piece. An unfinished conjure never leaves a
+                // FBI damagetype; many handlers refuse a corpse for explosion
+                // damage, but others explicitly request one. An unfinished conjure never leaves a
                 // corpse (corpseType forced 0 at 0x5127f5). Statues place
                 // unconditionally.
-                bool gib = ((u.deathType == 3 && !u.type->instantCorpse) || u.underConstruction) &&
+                bool gib = ((u.deathType == 3 && !u.type->explosionCorpse) || u.underConstruction) &&
                            u.corpseStatue < 0;
                 // A self-destructed unit leaves nothing: it is not gibbed (that
                 // is the explosion type) and it does not lie there as a wreck

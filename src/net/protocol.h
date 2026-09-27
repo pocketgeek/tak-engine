@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 187;      // 187: authoritative clear-then-build orders
+constexpr uint32_t kNetVersion = 188;      // 188: authored explosion corpse admission
                                            // 184: stationary buildings aim without rotating their bodies
                                            // 182: authoritative area reclaim command and target selection
                                            // 181: reject building yards extending into the map border

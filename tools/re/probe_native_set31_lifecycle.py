@@ -53,6 +53,7 @@ def main():
     parser.add_argument("--death-type", type=int, default=1,
                         help="native death-state type (for --native-death-state; default: 1)")
     parser.add_argument("--instant-corpse", action="store_true", help="verify immediate bitmap-only building death")
+    parser.add_argument("--corpse-request", action="store_true", help="verify corpse 1 after the authored owner lifetime")
     args = parser.parse_args()
 
     script = args.scripts / f"{args.script}.cob"
@@ -149,7 +150,7 @@ def main():
     put(p, 0x62D558, global_manager)
     put(p, global_manager, global_vtable)
     corpse_requests=[]
-    if args.instant_corpse:
+    if args.instant_corpse or args.corpse_request:
         def corpse_request(uc, sp):
             corpse_requests.append(struct.unpack("<5I",uc.mem_read(sp,20)))
             return 5,1
@@ -290,7 +291,7 @@ def main():
     # well below the separate 600-tick direct-VM sweep.
     delayed_set26_case = args.native_death_state and args.script.lower() == "crebomb"
     set26_owner_case = args.native_death_state and args.script.lower() in ("crefire", "crebomb")
-    update_horizon = 1500 if args.native_set26_roster else (256 if delayed_set26_case else 35)
+    update_horizon = 1500 if args.native_set26_roster or args.corpse_request else (256 if delayed_set26_case else 35)
     snapshots = []
     for frame in range(1, update_horizon + 1):
         tick[0] = frame
@@ -310,6 +311,12 @@ def main():
         if u32(p, unit + 0xC0) == 0:
             break
 
+    if args.corpse_request:
+        assert args.native_death_state
+        assert u32(p,unit+0xC0)==0,"owner did not retire within the bounded trace"
+        assert len(corpse_requests)==1 and corpse_requests[0][1]==1,corpse_requests
+        print(f"PASS: {args.script} death type {args.death_type}: native corpse 1, owner retired by tick {tick[0]}")
+        return
     if args.instant_corpse:
         assert args.native_death_state and "Dying" not in names
         assert not writes,writes

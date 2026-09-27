@@ -329,6 +329,7 @@ struct UnitType {
     std::string soundClass;   // FBI soundcategory, keys gamedata/soundclasses
     std::string bodyType = "default";   // FBI bodytype (flesh/armor/wood/..) = hit-sound material
     bool instantCorpse = false; // proven constant Killed + no Dying callback
+    bool explosionCorpse = false; // Killed explicitly requests a corpse for death type 3
     std::string corpse;       // FBI corpse feature name
     std::string stoneFeat;    // FBI stone= statue feature (death while petrified)
     std::string frozenFeat;   // FBI frozen= statue feature (death while frozen)
