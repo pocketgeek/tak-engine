@@ -420,14 +420,22 @@
                 opaque.clear();
                 auto& maskBatches=shadowAtlasMaskScratch_;
                 for (auto& [texture,vertices]:maskBatches) vertices.clear();
+                // Allocate the page once, not once per unit. Source and destination
+                // cannot overlap; independent points keep this loop vectorizable
+                // without changing the established float operation order.
+                size_t pointCount=0;
+                for (const Work& w:work) if (w.page==p) pointCount+=w.geom->shadowVerts.size();
+                opaque.resize(pointCount);
+                size_t pointOffset=0;
                 for (const Work& w:work) if (w.page==p) {
-                    const size_t base=opaque.size();
-                    opaque.resize(base+w.geom->shadowVerts.size());
-                    for (size_t i=0;i<w.geom->shadowVerts.size();++i) {
-                        const auto& point=w.geom->shadowVerts[i];
-                        opaque[base+i]={point.x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f,
-                                        point.y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f};
+                    const SDL_FPoint* __restrict src=w.geom->shadowVerts.data();
+                    const size_t count=w.geom->shadowVerts.size();
+                    SDL_FPoint* __restrict dst=count ? opaque.data()+pointOffset : nullptr;
+                    for (size_t i=0;i<count;++i) {
+                        dst[i]={src[i].x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f,
+                                src[i].y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f};
                     }
+                    pointOffset+=count;
                     int offset=0;
                     for (const auto& run:w.geom->maskedShadowRuns) {
                         SDL_Texture* coverage=shadowCoverageTextures_.at(run.first);
@@ -784,8 +792,9 @@
             } else if (op.u) {
                 drawUnit(*op.u);
             } else if (op.count > 0 && op.tex) {   // null atlas page: skip, no white
-                SDL_RenderGeometry(ren_, op.tex, bodyVerts_.data() + op.start,
-                                   op.count, nullptr, 0);
+                bodySubmit_.draw(ren_,op.tex,
+                    std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)),
+                    !tak::devFlag("TAK_BODY_SDL_SUBMIT"));
             }
         }
         // Fallback drain: if the air layer produced no draw ops at all (every flyer
@@ -2134,8 +2143,14 @@
                                  ? atlasTex_[size_t(slot)] : nullptr;
         collect(scratch, atlas, vt->second.model.root, base, anim, facing, u.player, mirror,
                 true, false, nullptr, &vt->second.meta);
-        std::stable_sort(scratch.begin(), scratch.end(),
-                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        // Sort compact indices, not complete triangles. The collector's vertex
+        // records stay put; stable indices preserve the exact equal-depth order.
+        // Each render worker owns its scratch ordering between unit builds.
+        thread_local std::vector<size_t> triangleOrder;
+        triangleOrder.resize(scratch.size());
+        for (size_t i=0;i<triangleOrder.size();++i) triangleOrder[i]=i;
+        std::stable_sort(triangleOrder.begin(),triangleOrder.end(),
+            [&](size_t a,size_t b) { return scratch[a].depth>scratch[b].depth; });
         g.ax = ax; g.ay = ay;
         g.alt = anim ? anim->altitude : 0.0f;
         g.occY = wallOcclusionY(u.x, u.z);
@@ -2153,7 +2168,8 @@
                             ? float(std::min(u.veteran, 10) - 3) / 7.0f * 0.5f : 0.0f;
         SDL_Texture* cur = nullptr;
         int runStart = 0;
-        for (auto& t : scratch) {
+        for (size_t triangleIndex : triangleOrder) {
+            const auto& t=scratch[triangleIndex];
             if (t.tex != cur) {
                 if (int(g.verts.size()) > runStart)
                     g.runs.push_back({cur, int(g.verts.size()) - runStart});

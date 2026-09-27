@@ -1,5 +1,7 @@
 # Crowded-scene CPU/GPU profile — 2026-09-26
 
+Implemented follow-up: [rendering optimizations and network profile](render-optimization-2026-09-26.md).
+
 Measured development revision `19ee799`, optimized debug (`-O2`), on an Intel
 Core Ultra 9 275HX (24 logical CPUs) and NVIDIA RTX 5070 Laptop GPU, driver
 610.57.04. SDL used accelerated OpenGL through the offscreen EGL backend,

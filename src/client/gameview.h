@@ -118,6 +118,7 @@
 
 
 #include "client/shadowopaque.h"
+#include "client/geometrysubmit.h"
 #include "client/shadowmask.h"
 #include "client/appglobals.h"   // kProjY/kProjZ, kSortZ/kSortY
 
@@ -1236,6 +1237,7 @@ private:
         SDL_FRect shadowAtlasDst{};
     };
     tak::OpaqueShadowSubmit shadowOpaqueSubmit_;
+    tak::GeometrySubmit bodySubmit_;
     std::optional<bool> batchShadowMasks_;
     void drawUnitShadow(const UnitGeom& g) {
         if (!batchShadowMasks_.has_value()) {

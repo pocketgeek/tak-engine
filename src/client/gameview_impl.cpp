@@ -2495,7 +2495,12 @@
     void GameView::prepare(int winW, int winH) {
         if (initialCamera_ && !inLobbyPhase() && !spectating_ && !replayMode_) {
             const auto [x,z]=*initialCamera_;
-            mapView_.setZoom(1.25f);
+            float initialZoom=1.25f;
+            // Reproducible render profiling through the normal network path.
+            // devEnv is disabled in release; ordinary starting views stay fixed.
+            if (const char* zoom=tak::devEnv("TAK_PROFILE_ZOOM"))
+                initialZoom=std::clamp(float(std::atof(zoom)),0.1f,4.0f);
+            mapView_.setZoom(initialZoom);
             mapView_.setOffset(x-terrainLiftX(x,z)-float(mapViewW(winW))*0.5f/mapView_.zoom(),
                                z-terrainLift(x,z)-12.0f-float(winH-barH())*0.5f/mapView_.zoom());
             initialCamera_.reset();
